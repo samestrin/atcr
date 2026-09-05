@@ -5,6 +5,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // maxAnchorsPerFinding bounds how many anchors one finding contributes to a
@@ -36,10 +38,20 @@ const minAnchorLen = 3
 // set, as an earlier revision did, made the proposed remedy's own name the
 // evidence for discarding the finding that proposed it.
 //
-// truncated reports that more identifiers were named than maxAnchorsPerFinding
-// admits, so the returned set is a PREFIX of what the text actually named. A
+// truncated reports that the returned set is not a faithful reading of what the
+// text named — either more identifiers were named than maxAnchorsPerFinding
+// admits, or the call scan lost fidelity on a span (see collectCallAnchors). A
 // caller must never reach a no-match verdict on a truncated set: the one anchor
-// that would have matched may be among the dropped ones.
+// that would have matched may be among the ones it did not faithfully recover.
+//
+// The flag deliberately covers BOTH losses through one channel. The cap drops
+// whole anchors; the call scan can instead return a token the reviewer did not
+// write (spaceless prose glued to a call name) or return nothing for a span it
+// could not decide. All three make "searched everything the text named and found
+// none of it" a false statement, which is the only claim `truncated` exists to
+// block. Splitting them into separate flags would give validate.go three
+// conditions to get right instead of one, and the two newer losses reached
+// production precisely because they had no channel at all.
 //
 // It is a pure function of its inputs — no model call, no filesystem, no clock,
 // no map-iteration order — so the same finding text always yields the same
@@ -71,9 +83,9 @@ func extractAnchorSet(text string) (anchors []string, truncated bool) {
 	for _, d := range anchorDelimiters {
 		collectDelimitedAnchors(text, byte(d), seen)
 	}
-	collectCallAnchors(text, seen)
+	imprecise := collectCallAnchors(text, seen)
 	if len(seen) == 0 {
-		return nil, false
+		return nil, imprecise
 	}
 	out := make([]string, 0, len(seen))
 	for tok := range seen {
@@ -83,7 +95,7 @@ func extractAnchorSet(text string) (anchors []string, truncated bool) {
 	if len(out) > maxAnchorsPerFinding {
 		return out[:maxAnchorsPerFinding], true
 	}
-	return out, false
+	return out, imprecise
 }
 
 // anchorDelimiters are the paired characters a reviewer uses to mark a literal
@@ -126,29 +138,240 @@ func collectDelimitedAnchors(text string, d byte, seen map[string]struct{}) {
 // (BuildFileIndex() is called once per finding). The identifier run is read
 // backwards from the paren, so a qualified call (x.Parse() ) still yields its
 // trailing segment via addAnchor.
-func collectCallAnchors(text string, seen map[string]struct{}) {
+//
+// The run also terminates at a spaceless/spacing WORD BOUNDARY, because
+// isQualifiedIdentRune alone does not terminate at a word boundary in a script
+// that writes without inter-word spaces. `在配置中调用ParseConfig()` would
+// otherwise yield the pseudo-token `在配置中调用ParseConfig` — identifier-shaped,
+// carrying a signal from the interior e->C transition, and declared nowhere —
+// which resolve reads as tier4NoMatch, deleting a real finding and durably
+// charging the reviewer a phantom.
+//
+// The boundary is narrow on purpose: see isWordBoundary for why two different
+// spaceless scripts do NOT break the run (`データ_解析` is one name), and why an
+// underscore sitting on the boundary that does fire yields no anchor at all
+// rather than a fragment.
+//
+// imprecise reports that at least one span was NOT faithfully recovered, which
+// extractAnchorSet folds into its `truncated` return so validate.go cannot reach
+// a no-match verdict on the set. Two spans set it, and both are the SAME
+// undecidability seen from different sides:
+//
+//   - SILENCED — the underscore-on-the-boundary case above, which contributes no
+//     anchor. The silence keeps a misattributable fragment out of locate, but it
+//     is per-SPAN while its safety argument ("no anchor keeps the finding") is
+//     per-FINDING. With a co-cited anchor that is absent from the tree, silencing
+//     the one span that would have matched flips the whole finding to no-match —
+//     measured: a PROBLEM naming both `設定_loadFile()` and a co-cited absent
+//     `retryOnce` went tier4Resolved -> tier4NoMatch.
+//
+//   - GLUED — a run that crossed between two spaceless scripts and ended up
+//     holding an underscore. Because such a crossing does not break the run, the
+//     accepted span is either one snake_case name (`データ_解析`) or prose welded
+//     to one (`設定を解析_処理`, where the tree declares `解析_処理`), and nothing
+//     in the text separates them. The anchor is still contributed — dropping it
+//     would take the `データ_解析` direction back out — but the set is marked
+//     imprecise, so the glued reading can no longer DELETE a finding while the
+//     genuine reading can still resolve one.
+//
+// The asymmetry is deliberate: silence is right where a fragment could be
+// confidently misattributed, and an imprecise anchor is right where the token may
+// well be the real name. What neither may do is stand as proof that the tree was
+// searched for what the reviewer actually wrote.
+func collectCallAnchors(text string, seen map[string]struct{}) (imprecise bool) {
 	for i := 0; i < len(text); i++ {
 		if text[i] != '(' {
 			continue
 		}
 		start := i
-		for start > 0 && isQualifiedIdentByte(text[start-1]) {
-			start--
+		runScript := scriptUnset
+		atBoundary := false
+		crossedSpaceless := false
+		for start > 0 {
+			r, size := utf8.DecodeLastRuneInString(text[:start])
+			if !isQualifiedIdentRune(r) {
+				break
+			}
+			if s := spacelessScriptOf(r); s != scriptNeutral {
+				if isWordBoundary(runScript, s) {
+					atBoundary = true
+					break // the run has left the call name
+				}
+				if runScript != scriptUnset && s != runScript {
+					crossedSpaceless = true
+				}
+				runScript = s
+			}
+			start -= size
 		}
 		if start == i {
 			continue // "(" with no identifier before it
 		}
+		if atBoundary && text[start] == '_' {
+			imprecise = true
+			continue // undecidable: see isWordBoundary
+		}
+		if crossedSpaceless && strings.Contains(text[start:i], "_") {
+			imprecise = true // glued or genuine, and nothing here can tell
+		}
 		addAnchor(text[start:i], seen)
 	}
+	return imprecise
+}
+
+// The three sentinel values spacelessScriptOf and the backwards run use
+// alongside an index into spacelessScripts.
+//
+// scriptNeutral is the one that carries weight: a rune that says nothing about
+// which script the run is in. It covers every non-letter the identifier class
+// admits (digits, '_', '.', combining marks) AND letters whose script is
+// Common, which is where U+30FC KATAKANA-HIRAGANA PROLONGED SOUND MARK lives.
+// That mark is in most everyday Japanese loanword identifiers - データ,
+// ユーザー, サーバー, ロード, パーサー - and classifying it as a script of its
+// own would split `データ_解析` at its own vowel mark.
+const (
+	scriptUnset   = -3
+	scriptNeutral = -2
+	scriptSpacing = -1
+)
+
+// spacelessScripts are the scripts that do not put spaces between words, so
+// ordinary prose in them runs straight into an embedded identifier with nothing
+// between the two. They are the only scripts the backwards call scan can use as
+// a boundary signal, and they are exactly the scripts that need one.
+var spacelessScripts = []*unicode.RangeTable{
+	unicode.Han,
+	unicode.Hiragana,
+	unicode.Katakana,
+	unicode.Hangul,
+	unicode.Thai,
+	unicode.Lao,
+	unicode.Khmer,
+	unicode.Myanmar,
+	unicode.Tibetan,
+}
+
+// spacelessScriptOf classifies r for the backwards run: an index into
+// spacelessScripts, scriptSpacing for a letter from a script that separates
+// words with spaces, or scriptNeutral for anything that carries no script
+// signal at all.
+//
+// Neutral is not the same as "not a letter". Digits, '_', '.' and combining
+// marks are neutral because they occur inside names in every script — but so
+// is a Script=Common LETTER, and U+30FC (the katakana-hiragana prolonged sound
+// mark) is one. Treating it as its own script splits `データ_解析` at the mark
+// inside its own first word.
+func spacelessScriptOf(r rune) int {
+	if !unicode.IsLetter(r) || unicode.Is(unicode.Common, r) {
+		return scriptNeutral
+	}
+	for i, t := range spacelessScripts {
+		if unicode.Is(t, r) {
+			return i
+		}
+	}
+	return scriptSpacing
+}
+
+// isWordBoundary reports whether the run, currently in script `run`, has left
+// the call name on reaching a rune of script `next` (both already classified by
+// spacelessScriptOf, neither scriptNeutral).
+//
+// The rule is deliberately NOT "stop at any script change", and it is not "stop
+// at any spaceless-script change" either. It fires only where the two sides
+// CANNOT be one word: between a spaceless script and a space-separating one.
+//
+//   - A space-separating script beside Latin is one name. `नाम_load()` is a
+//     single identifier, and truncating it to `_load` sends validate.go's
+//     PathSuggestion at whatever else declares that fragment.
+//
+//   - Two DIFFERENT spaceless scripts are also one name, far more often than
+//     they are a boundary. Japanese identifiers mix Han and Kana routinely —
+//     `データ_解析`, `サバ_接続`, `解析_データ` — and breaking between them
+//     leaves a fragment that still carries a signal through its underscore.
+//     Ordinary Japanese PROSE glued to such a name (`設定を解析()`) is caught
+//     anyway, but ONLY while the glued run stays caseless and underscore-free:
+//     hasIdentifierSignal then rejects it and no anchor is produced. Measured,
+//     not assumed — `設定を解析()` yields no anchor.
+//
+//     Where the name carries an underscore the exemption fails: `設定を解析_処理()`
+//     yields the glued `設定を解析_処理`. That is the same undecidability as
+//     below, one script-pair over — the run is either prose plus `解析_処理` or
+//     the single name `設定を解析_処理`, and no rule separates them.
+//
+//     It is NOT silenced, because the silencing test below (a leading '_')
+//     cannot fire when no break occurred. collectCallAnchors instead marks the
+//     EXTRACTION imprecise, which is what keeps the glued reading from deleting
+//     a finding while the genuine reading can still resolve one. Before that
+//     signal existed the glued token reached resolve as ordinary evidence and
+//     returned tier4NoMatch.
+//
+//     An earlier revision of this paragraph called that outcome "no worse than
+//     before this rule existed, where the same input produced the fragment
+//     `解析_処理` — a fragment can additionally be misattributed, which the
+//     glued form cannot." That comparison was measured and is FALSE. It reaches
+//     past the rule's own parent to the pre-rune ASCII scan. Against the parent,
+//     `解析_処理` was not a fragment at all: collectSourceIdentifiers treats '_'
+//     as a word byte, so `func 解析_処理(` harvests exactly that one token, and
+//     the parent resolved it to the correct file. The glued form replaced the
+//     BEST outcome with the worst one. Do not restate a comparison here without
+//     running it.
+//
+// What remains undecidable is an underscore straddling the one boundary this
+// does fire on: `调用_ParseConfig()` is either prose glued onto `_ParseConfig`
+// or the tail of the single name `调用_ParseConfig`, and `設定_loadFile()` is
+// either prose or one mixed Han-Latin name. Nothing in the text separates them.
+// collectCallAnchors answers those with SILENCE — it contributes no anchor when
+// the accepted span begins with '_' — because a fragment could be CONFIDENTLY
+// misattributed, which is the one outcome nothing downstream can undo. The
+// silence is likewise reported as imprecise: it keeps the fragment out of
+// locate, but it is not evidence that the tree was searched.
+//
+// The one case still answered wrongly is a mixed name with no underscore
+// (`ตัวแปรParseConfig`), which truncates to its Latin tail and can be
+// CONFIDENTLY misattributed to another declaration of that tail. That is
+// tracked as follow-on work; it is not new here — the ASCII byte scan this
+// replaced produced the same tail.
+func isWordBoundary(run, next int) bool {
+	if run == scriptUnset || run == next {
+		return false
+	}
+	return run == scriptSpacing || next == scriptSpacing
 }
 
 // addAnchor normalizes one raw span and records it if it qualifies.
 func addAnchor(raw string, seen map[string]struct{}) {
-	tok := trailingSegment(strings.TrimSpace(raw))
+	tok := foldAnchorForm(trailingSegment(strings.TrimSpace(raw)))
 	if !isIdentifierShaped(tok) || !hasIdentifierSignal(tok) {
 		return
 	}
 	seen[tok] = struct{}{}
+}
+
+// foldAnchorForm puts one token in NFC, the single normalization form every
+// anchor and every symbol-index key is stored under.
+//
+// It exists because a Tier 4 lookup is a byte-exact Go map lookup: `módulo` typed
+// as o+U+0301 and `módulo` typed as U+00F3 are the SAME identifier to a compiler
+// and to a human, and two different keys to a map. Source files carry whichever
+// form their author's editor produced; reviewer models emit NFC. Left unfolded,
+// an NFD-spelled name misses an NFC-built index, resolve returns tier4NoMatch for
+// a construct plainly in the tree, and a real finding is deleted and charged to
+// the reviewer as a phantom — an ordinary case in any Spanish, Portuguese,
+// French, or Vietnamese codebase.
+//
+// NFC (never NFD) because it is what Go source is conventionally written in and
+// what the models emit, so the common path is a no-op. Both sides must call this;
+// folding either alone leaves exactly the mismatch it is meant to close.
+//
+// It is deliberately NOT a case fold: the anchor alphabet is case-sensitive
+// (isIdentifierShaped and hasIdentifierSignal both read case), and folding case
+// here would collide distinct declarations.
+func foldAnchorForm(tok string) string {
+	if norm.NFC.IsNormalString(tok) {
+		return tok // overwhelmingly the common path: no allocation
+	}
+	return norm.NFC.String(tok)
 }
 
 // trailingSegment reduces a qualified reference to the declared name the symbol
@@ -164,29 +387,47 @@ func trailingSegment(s string) string {
 	return s
 }
 
-// isQualifiedIdentByte reports whether b may appear in a qualified identifier
-// run scanned backwards from a call paren. '.' is included so a package- or
-// receiver-qualified call is captured whole and reduced by trailingSegment.
-func isQualifiedIdentByte(b byte) bool {
+// isQualifiedIdentRune reports whether r may appear in a qualified identifier
+// run scanned backwards from a call paren. The class is rune-based — letters,
+// digits, combining marks (the same alphabet isIdentifierShaped admits) plus
+// '_' — so a non-ASCII call name is captured WHOLE rather than truncated at a
+// multibyte rune's continuation byte into a fragment that names something
+// else. '.' is included so a package- or receiver-qualified call is captured
+// whole and reduced by trailingSegment.
+func isQualifiedIdentRune(r rune) bool {
 	switch {
-	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9':
+	case unicode.IsLetter(r), unicode.IsDigit(r):
 		return true
-	case b == '_', b == '.':
+	case unicode.In(r, unicode.Mn, unicode.Mc):
+		return true
+	case r == '_', r == '.':
 		return true
 	}
 	return false
 }
 
 // isIdentifierShaped reports whether tok is a bare identifier of usable length:
-// a letter or underscore followed by letters, digits, or underscores. A span
-// containing whitespace, punctuation, or any other character (a quoted English
-// phrase, a sentence fragment, a path) fails here.
+// a letter or underscore followed by letters, digits, underscores, or combining
+// marks. A span containing whitespace, punctuation, or any other character (a
+// quoted English phrase, a sentence fragment, a path) fails here.
 //
 // Letters are tested with unicode.IsLetter, not an ASCII range. Go, Python and
 // TypeScript all admit non-ASCII identifiers, and an ASCII-only test silently
 // dropped them — which is worse than it sounds here, because a finding whose
 // real subject was never extracted can still be judged "checked and found
 // nothing" on whatever co-cited ASCII anchor happened to miss.
+//
+// Combining marks (Mn and Mc) are admitted at non-initial positions for the
+// same reason: a macOS- or git-normalised file spells café as e + U+0301, and
+// Devanagari names carry vowel signs (नाम is न + ा + म), so a mark-rejecting
+// filter drops the name of a declaration the grammar (isDeclNameRune,
+// symbolindex.go) admits — the two must agree, or a grammar-admitted
+// declaration never reaches presentInSource. Admission here is only the SHAPE
+// half, though: a caseless-script name still carries no identifier signal
+// (hasIdentifierSignal), so it reaches present from the harvest but anchors a
+// finding only when it also carries an underscore. Me (enclosing marks) stays
+// rejected: it is outside ECMAScript ID_Continue, and a leading mark is never
+// legal, exactly as a leading digit is not.
 func isIdentifierShaped(tok string) bool {
 	if utf8.RuneCountInString(tok) < minAnchorLen {
 		return false
@@ -194,9 +435,9 @@ func isIdentifierShaped(tok string) bool {
 	for i, r := range tok {
 		switch {
 		case unicode.IsLetter(r), r == '_':
-		case unicode.IsDigit(r):
+		case unicode.IsDigit(r), unicode.In(r, unicode.Mn, unicode.Mc):
 			if i == 0 {
-				return false // an identifier never starts with a digit
+				return false // an identifier never starts with a digit or combining mark
 			}
 		default:
 			return false
@@ -231,7 +472,16 @@ func hasIdentifierSignal(tok string) bool {
 		if i > 0 && prevLower && unicode.IsUpper(r) {
 			return true
 		}
-		prevLower = unicode.IsLower(r)
+		// Only a cased rune moves the transition tracker: an uncased rune
+		// (a digit or a combining mark) carries prevLower across unchanged,
+		// so the NFD spelling of a camelCase name (cafe + U+0301 + Bar) keeps
+		// the signal its NFC spelling has.
+		switch {
+		case unicode.IsLower(r):
+			prevLower = true
+		case unicode.IsUpper(r):
+			prevLower = false
+		}
 	}
 	return false
 }

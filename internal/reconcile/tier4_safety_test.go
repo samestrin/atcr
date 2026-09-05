@@ -259,3 +259,75 @@ func TestTier4Safety_AmbiguousCaseOnlyMismatchIsNeverRouted(t *testing.T) {
 		"the cited file exists in the tracked tree — an ambiguous case mismatch is a Tier 3 concern, never fabrication evidence")
 	assert.Empty(t, res.Unresolved, "nothing may reach the sidecar on a case-only mismatch")
 }
+
+// TestTier4Safety_GluedSpacelessProseIsNeverNoMatch: two adjacent spaceless
+// scripts do not break the backwards run, so ordinary prose in such a script is
+// welded onto a snake_case call name. `設定を解析_処理()` yields the glued token
+// where the tree declares `解析_処理` — measured old-vs-new, resolve went
+// tier4Resolved -> tier4NoMatch, replacing the BEST outcome with the worst.
+//
+// The glued token cannot simply be dropped: the crossing it rides on is present
+// in `データ_解析` too, which is one real identifier and must keep yielding
+// whole. So the anchor is contributed and the EXTRACTION is marked imprecise,
+// which is what this test pins at the only layer that matters — the routing
+// decision in validateFindingPaths.
+func TestTier4Safety_GluedSpacelessProseIsNeverNoMatch(t *testing.T) {
+	name := string([]rune{0x89E3, 0x6790, 0x005F, 0x51E6, 0x7406}) // 解析_処理
+	prose := string([]rune{0x8A2D, 0x5B9A, 0x3092})                // 設定を
+	problem := prose + name + "() drops the returned error"
+
+	anchors, truncated := extractAnchorSet(problem)
+	require.Equal(t, []string{prose + name}, anchors, "the glued token is still the anchor")
+	require.True(t, truncated, "a glued span is not a faithful reading of what the reviewer wrote")
+
+	root := gitRepoWithSources(t, map[string]string{
+		"internal/jp/parse.go": "package jp\n\nfunc " + name + "() error { return nil }\n",
+	})
+	reviewDir := t.TempDir()
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+		"HIGH|internal/ghost/phantom.go:3|"+problem+"|fix it|correctness|10|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+	assert.Zero(t, res.Summary.UnresolvedFiltered,
+		"the tree declares the name the reviewer wrote; gluing prose onto it must not delete the finding")
+}
+
+// TestTier4Safety_SilencedSpanIsNeverNoMatch: the undecidable-underscore
+// suppression contributes no anchor for its span. That silence is per-SPAN
+// while its safety argument ("no anchor keeps the finding") is per-FINDING, so
+// with a co-cited anchor that is ABSENT from the tree, silencing the one span
+// that would have matched routes the whole finding out.
+//
+// Measured old-vs-new on this exact fixture: anchors went [_loadFile] (resolve
+// = tier4Resolved) to [retryOnce] alone (resolve = tier4NoMatch), so gate.go
+// deleted a real finding and scorecard.go charged the reviewer a phantom.
+//
+// `_loadFile` is the ordinary JS/TS private convention, and
+// collectSourceIdentifiers harvests it as its own token — verified.
+func TestTier4Safety_SilencedSpanIsNeverNoMatch(t *testing.T) {
+	glued := string([]rune{0x8A2D, 0x5B9A, 0x005F}) + "loadFile" // 設定_loadFile
+	problem := glued + "() ignores the deadline set by `retryOnce`"
+
+	anchors, truncated := extractAnchorSet(problem)
+	require.Equal(t, []string{"retryOnce"}, anchors, "the undecidable span contributes no anchor")
+	require.True(t, truncated, "the silence is a loss and must be reported as one")
+
+	root := gitRepoWithSources(t, map[string]string{
+		"src/loader.js": "function _loadFile() { return null; }\n",
+	})
+	reviewDir := t.TempDir()
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+		"HIGH|internal/ghost/phantom.go:3|"+problem+"|fix it|correctness|10|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+	assert.Zero(t, res.Summary.UnresolvedFiltered,
+		"a co-cited absent anchor must not route a finding whose other span was silenced")
+}
