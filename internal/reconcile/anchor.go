@@ -207,11 +207,21 @@ func collectCallAnchors(text string, seen map[string]struct{}) (imprecise bool) 
 		if start == i {
 			continue // "(" with no identifier before it
 		}
-		if atBoundary && text[start] == '_' {
+		// Both underscore tests below read the RECORDED anchor, never the raw
+		// span. The raw span is what the backwards run stopped on; the anchor is
+		// what addAnchor will actually key the tree search on, and the two differ
+		// by exactly the runes that make these guards leak: a leading
+		// script-neutral rune the break landed on (U+30FC, a combining mark) and
+		// a qualifier trailingSegment strips. Measured against the raw span:
+		// `parseー_解析()` escaped as the fragment `ー_解析`, `parse._解析()` as
+		// `_解析`, and `データ_モジュール.解析()` was marked imprecise although its
+		// only underscore lives in the stripped qualifier.
+		anchor := recordedAnchorForm(text[start:i])
+		if atBoundary && leadsWithUnderscore(anchor) {
 			imprecise = true
 			continue // undecidable: see isWordBoundary
 		}
-		if crossedSpaceless && strings.Contains(text[start:i], "_") {
+		if crossedSpaceless && strings.Contains(anchor, "_") {
 			imprecise = true // glued or genuine, and nothing here can tell
 		}
 		addAnchor(text[start:i], seen)
@@ -339,9 +349,40 @@ func isWordBoundary(run, next int) bool {
 	return run == scriptSpacing || next == scriptSpacing
 }
 
+// recordedAnchorForm reduces a raw span to the exact token addAnchor would
+// record for it. It is the single definition of "the anchor that is actually
+// recorded", and every predicate that means to talk about that anchor —
+// addAnchor itself and both underscore guards in collectCallAnchors — goes
+// through it, so the three cannot drift apart again.
+func recordedAnchorForm(raw string) string {
+	return foldAnchorForm(trailingSegment(strings.TrimSpace(raw)))
+}
+
+// leadsWithUnderscore reports whether tok begins with '_' once the leading
+// script-neutral runes are skipped.
+//
+// The skip is the point. collectCallAnchors' silencing guard fires at a
+// spaceless/spacing boundary, and the break lands on the first rune the run
+// could classify — which is NOT necessarily the underscore. U+30FC and a
+// combining mark are both script-neutral, so either can sit between the break
+// and the underscore, and a test on the first rune alone lets the fragment
+// through. Nothing script-bearing may be skipped: reaching a rune with a script
+// means the token starts with a real name, not with an orphaned underscore.
+func leadsWithUnderscore(tok string) bool {
+	for _, r := range tok {
+		if r == '_' {
+			return true
+		}
+		if spacelessScriptOf(r) != scriptNeutral {
+			return false
+		}
+	}
+	return false
+}
+
 // addAnchor normalizes one raw span and records it if it qualifies.
 func addAnchor(raw string, seen map[string]struct{}) {
-	tok := foldAnchorForm(trailingSegment(strings.TrimSpace(raw)))
+	tok := recordedAnchorForm(raw)
 	if !isIdentifierShaped(tok) || !hasIdentifierSignal(tok) {
 		return
 	}
