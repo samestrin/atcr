@@ -98,6 +98,17 @@ func extractAnchorSet(text string) (anchors []string, truncated bool) {
 	return out, imprecise
 }
 
+// extractFixAnchors returns the FIX anchors that may ground a PathSuggestion.
+//
+// STUB - returns the pre-fix behaviour so the RED test compiles. See T3.
+func extractFixAnchors(text string) []string {
+	anchors, truncated := extractAnchorSet(text)
+	if truncated {
+		return nil
+	}
+	return anchors
+}
+
 // anchorDelimiters are the paired characters a reviewer uses to mark a literal
 // identifier in prose. Each is its own closer, and each is scanned in its OWN
 // pass over the text (see extractAnchors) rather than in one interleaved pass.

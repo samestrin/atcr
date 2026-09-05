@@ -722,3 +722,70 @@ func TestExtractAnchorSet_SilencedSpanKeepsTruncatedAtCap(t *testing.T) {
 	assert.Equal(t, eight, silenced)
 	assert.True(t, silencedTruncated, "a silenced ninth anchor is still a loss, not a smaller set")
 }
+
+// TestExtractFixAnchors_DropsOnlyTheImpreciseMembers pins the consumer half of
+// the imprecise seam. The FIX set feeds resolve's SECONDARY anchors, which may
+// only LOCALIZE a finding whose subject already matched — never route one out —
+// so the two losses `truncated` folds together have different costs here and
+// must not be answered with the same blunt instrument.
+//
+// The CAP is a prefix: the anchors it dropped are unknown, so nothing about the
+// remainder can be trusted to be the FIX's best evidence and the set is
+// abandoned whole. A call-scan fidelity loss is per-SPAN: exactly the anchors
+// that came from a glued span are unreliable, and every other member is a
+// faithful reading of what the reviewer wrote.
+//
+// Measured before the fix, against the real symbolIndex: fix anchors
+// [parseTree データ_解析] resolved to pkg/tree.go (tier4Resolved) with the
+// secondary set and to "" (tier4Inconclusive) once validate.go nilled it. One
+// genuine Japanese snake_case call in a FIX cost the finding its correct
+// PathSuggestion even though the co-cited ASCII anchor was intact and precise.
+//
+// Dropping is the safe direction and nilling was never the safe one: a secondary
+// resolution can only ever ADD a suggestion (symbolindex.go:230-236 reaches it
+// only when a primary anchor already matched), so dropping an imprecise member
+// can lose a hint and can never delete a finding.
+func TestExtractFixAnchors_DropsOnlyTheImpreciseMembers(t *testing.T) {
+	han := string([]rune{0x89E3, 0x6790})               // 解析
+	kata := string([]rune{0x30C7, 0x30FC, 0x30BF})      // データ
+	setteiUnd := string([]rune{0x8A2D, 0x5B9A, 0x005F}) // 設定_
+	genuine := kata + "_" + han                         // データ_解析
+
+	t.Run("a glued member is dropped and the precise members survive", func(t *testing.T) {
+		got := extractFixAnchors("call `parseTree` instead of " + genuine + "()")
+		assert.Equal(t, []string{"parseTree"}, got)
+
+		all, truncated := extractAnchorSet("call `parseTree` instead of " + genuine + "()")
+		require.Equal(t, []string{"parseTree", genuine}, all, "both anchors are still extracted")
+		require.True(t, truncated, "and the SET is still imprecise - only the FIX consumer narrows")
+	})
+
+	t.Run("a silenced span drops nothing because it contributed nothing", func(t *testing.T) {
+		text := setteiUnd + "loadFile() - see `retryOnce` and `parseTree`"
+		got := extractFixAnchors(text)
+		assert.Equal(t, []string{"parseTree", "retryOnce"}, got,
+			"the silence lost a span, not a member: every anchor present is faithful")
+	})
+
+	t.Run("an ordinary FIX keeps its whole set", func(t *testing.T) {
+		assert.Equal(t, []string{"parseTree", "readTree"},
+			extractFixAnchors("call `readTree` then `parseTree`"))
+	})
+
+	t.Run("the cap abandons the set whole", func(t *testing.T) {
+		text := "`aOne` `bTwo` `cThree` `dFour` `eFive` `fSix` `gSeven` `hEight` `iNine`"
+		require.Len(t, mustAnchors(t, text), maxAnchorsPerFinding, "the fixture must actually cap")
+		assert.Nil(t, extractFixAnchors(text),
+			"a prefix of what the FIX named cannot ground a suggestion: the dropped anchors are unknown")
+	})
+
+	t.Run("a FIX whose every member is imprecise yields nothing", func(t *testing.T) {
+		assert.Nil(t, extractFixAnchors(genuine+"()"))
+	})
+}
+
+func mustAnchors(t *testing.T, text string) []string {
+	t.Helper()
+	a, _ := extractAnchorSet(text)
+	return a
+}
