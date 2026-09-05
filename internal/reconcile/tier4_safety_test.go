@@ -480,3 +480,42 @@ func TestTier4Safety_DroppedFixAnchorDisagreementRefusesTheSuggestion(t *testing
 	assert.Zero(t, res.Summary.UnresolvedFiltered,
 		"refusing a suggestion may never route a finding out: the subject is declared in the tree")
 }
+
+// TestTier4Safety_SpacelessPrefixShortTailIsNeverNoMatch is the routing-layer
+// half of the anchor.go:446 repair, and it is the same false-drop shape the
+// three parent blockers had: a REAL finding deleted from the primary report and
+// durably charged against the reviewer on the scorecard.
+//
+// `設定_a()` breaks at the Han/Latin boundary and leaves the fragment `_a`. Two
+// runes fails minAnchorLen, so the fragment-only question answers "silencing it
+// lost nothing" — but what was silenced is the whole span NAME `設定_a`, which
+// IS identifier-shaped, DOES carry an underscore signal, and is declared right
+// there in the tracked tree. With `truncated` reported false, validate.go's
+// `outcome == tier4NoMatch && !problemTruncated` arm fires on the co-cited
+// `retryOnce` alone and routes the finding out.
+//
+// Measured 12ffd732 -> 4ed1464a: truncated went TRUE -> FALSE on this exact
+// PROBLEM, so the regression arrived with the recorded-anchor repair.
+func TestTier4Safety_SpacelessPrefixShortTailIsNeverNoMatch(t *testing.T) {
+	settei := string([]rune{0x8A2D, 0x5B9A}) // 設定
+	problem := "the " + settei + "_a() helper drops the error that `retryOnce` returns"
+
+	anchors, truncated := extractAnchorSet(problem)
+	require.Equal(t, []string{"retryOnce"}, anchors, "the undecidable span contributes no anchor")
+	require.True(t, truncated, "the span name the break destroyed was searchable, so the loss is real")
+
+	root := gitRepoWithSources(t, map[string]string{
+		"src/loader.js": "function " + settei + "_a() { return null; }\n",
+	})
+	reviewDir := t.TempDir()
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+		"HIGH|internal/ghost/phantom.go:3|"+problem+"|fix it|correctness|10|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+	assert.Zero(t, res.Summary.UnresolvedFiltered,
+		"設定_a is declared in the tree: the finding is genuine and must not be routed out")
+}

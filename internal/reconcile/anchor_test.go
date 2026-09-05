@@ -733,6 +733,34 @@ func TestExtractAnchorSet_ImpreciseSpanMarksTruncated(t *testing.T) {
 			wantTruncated: false,
 		},
 		{
+			// The row above asks the question of the FRAGMENT, and that is only
+			// the right question when the fragment is what the break could have
+			// cost. Here it is not: the break split a SPACELESS-script prefix
+			// off a 1-2 rune tail, so the fragment `_a` fails minAnchorLen while
+			// the full span `設定_a` is identifier-shaped, carries an underscore
+			// signal, and is perfectly searchable. Silencing it deletes a name
+			// the tree may well declare, and reporting the set faithful lets a
+			// co-cited absent anchor route the whole finding out.
+			//
+			// The prefix's script is what separates this from the row above.
+			// `parse_解` breaks the other way (a SPACING-script prefix), which
+			// is the ordinary "a Latin word ran into a name" reading the
+			// fragment question answers correctly.
+			name:          "a spaceless prefix split off a short tail is a loss",
+			text:          "the " + settei + "_a() helper drops the error that `retryOnce` returns",
+			wantAnchors:   []string{"retryOnce"},
+			wantTruncated: true,
+		},
+		{
+			// Same shape in Hangul, and with the tail on the other side of the
+			// minAnchorLen boundary: the fragment `_i` is two runes, the full
+			// span `버퍼_i` is four.
+			name:          "a Hangul prefix split off a short tail is a loss",
+			text:          string([]rune{0xBC84, 0xD37C}) + "_i() drops the error that `retryOnce` returns",
+			wantAnchors:   []string{"retryOnce"},
+			wantTruncated: true,
+		},
+		{
 			// The suppression's other direction, and the one it must NOT take:
 			// the raw span begins with '_' but the RECORDED anchor does not,
 			// because a qualifier follows the underscore. Both readings of
