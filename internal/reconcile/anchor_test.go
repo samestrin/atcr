@@ -839,6 +839,20 @@ func TestExtractFixAnchors_DropsOnlyTheImpreciseMembers(t *testing.T) {
 				"the one whose answer is unknowable")
 	})
 
+	t.Run("a glued span whose token fails the shape test abandons the set, like a silence", func(t *testing.T) {
+		// A leading combining mark makes the recorded token unshaped, so the
+		// glued span contributes NO member - the one arm that discards the
+		// whole FIX set without a member to drop.
+		text := string(rune(0x0301)) + string([]rune{0x8A2D, 0x5B9A, 0x3092, 0x89E3, 0x6790, 0x005F, 0x51E6, 0x7406}) + "() drops the error - see `parseTree`"
+
+		all, truncated := extractAnchorSet(text)
+		require.Equal(t, []string{"parseTree"}, all, "the co-cited backticked anchor survives")
+		require.True(t, truncated, "the glued span still marks the set imprecise")
+
+		assert.Nil(t, extractFixAnchors(text),
+			"the glued token failed the shape test, so no member records the loss - same standing as a silence")
+	})
+
 	t.Run("an ordinary FIX keeps its whole set", func(t *testing.T) {
 		assert.Equal(t, []string{"parseTree", "readTree"},
 			extractFixAnchors("call `readTree` then `parseTree`"))
