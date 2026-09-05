@@ -147,10 +147,12 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 				findings[i].UnresolvedReason = UnresolvedReasonDocShield
 			}
 		case outcome == tier4NoMatch:
-			// The finding named more constructs than the anchor cap admits, so the
-			// set searched was a PREFIX of what it actually named — and the one
-			// anchor that would have matched may be among the dropped ones. A
-			// partial search cannot produce a "found nothing" verdict.
+			// problemTruncated: the set searched is not a faithful reading of what
+			// the PROBLEM named — see extractAnchorSet's doc for the losses the
+			// flag covers, of which the anchor cap is only one. Whichever loss it
+			// was, the one anchor that would have matched may be among what was
+			// not faithfully recovered, and a partial search cannot produce a
+			// "found nothing" verdict.
 		default:
 			// tier4Inconclusive: the PROBLEM named no identifier, the index could
 			// not be built or was incomplete, or the anchors matched real code

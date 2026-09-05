@@ -44,6 +44,17 @@ const minAnchorLen = 3
 // caller must never reach a no-match verdict on a truncated set: the one anchor
 // that would have matched may be among the ones it did not faithfully recover.
 //
+// Read that as a claim about those two losses ONLY, never as "truncated=false
+// means the set is faithful". One unfaithful reading is known to return FALSE:
+// a mixed name with no underscore truncates to its Latin tail and can be
+// CONFIDENTLY misattributed to another declaration of that tail — measured,
+// `使用ParseConfig() here` yields anchors=[ParseConfig] truncated=false. That
+// case is disclosed at isWordBoundary's doc (the `ตัวแปรParseConfig` paragraph)
+// and is tracked as follow-on work; it is deliberately NOT folded in here,
+// because the two losses above are ones the scan detects as it makes them and
+// this one is not detected at all. A caller that needs "the set is faithful"
+// rather than "these two losses did not occur" does not have it from this flag.
+//
 // The flag deliberately covers BOTH losses through one channel. The cap drops
 // whole anchors; the call scan can instead return a token the reviewer did not
 // write (spaceless prose glued to a call name) or return nothing for a span it
