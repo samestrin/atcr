@@ -268,6 +268,7 @@ func collectDelimitedAnchors(text string, d byte, seen map[string]struct{}) {
 // confidently misattributed, and an imprecise anchor is right where the token may
 // well be the real name. What neither may do is stand as proof that the tree was
 // searched for what the reviewer actually wrote.
+//
 // imprecise (the return) reports a per-SPAN loss; impreciseAnchors receives the
 // subset of `seen` that a glued span contributed, so a consumer that can repair
 // per-anchor has the names and one that cannot still has the flag.
@@ -318,7 +319,7 @@ func collectCallAnchors(text string, seen, impreciseAnchors map[string]struct{})
 		if glued {
 			imprecise = true // glued or genuine, and nothing here can tell
 		}
-		if addAnchor(text[start:i], seen) && glued {
+		if recordAnchor(anchor, seen) && glued {
 			impreciseAnchors[anchor] = struct{}{}
 		}
 	}
@@ -476,12 +477,25 @@ func leadsWithUnderscore(tok string) bool {
 	return false
 }
 
-// addAnchor normalizes one raw span and records it if it qualifies, reporting
-// whether it did. The caller needs that answer to attribute a per-span fidelity
-// loss to a NAME: a span can lose fidelity and still contribute nothing (its
-// token fails the shape or signal test), and such a span has no member to drop.
+// addAnchor normalizes one raw span and records it if it qualifies.
 func addAnchor(raw string, seen map[string]struct{}) bool {
-	tok := recordedAnchorForm(raw)
+	return recordAnchor(recordedAnchorForm(raw), seen)
+}
+
+// recordAnchor records an ALREADY-reduced token if it qualifies, reporting
+// whether it did.
+//
+// Two callers need the split. collectCallAnchors has already reduced the span
+// to ask its underscore questions of the recorded anchor, so handing the raw
+// span back to addAnchor would fold and re-scan it a second time — and worse,
+// would leave the guard's idea of the anchor and the recorded one as two
+// separately computed values that a later edit could let diverge. Passing the
+// token makes them the same value, not merely the same helper's output.
+//
+// The bool is what lets a per-span fidelity loss be attributed to a NAME: a
+// span can lose fidelity and still contribute nothing (its token fails the
+// shape or signal test), and such a span has no member to drop.
+func recordAnchor(tok string, seen map[string]struct{}) bool {
 	if !isIdentifierShaped(tok) || !hasIdentifierSignal(tok) {
 		return false
 	}
