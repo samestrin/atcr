@@ -506,6 +506,51 @@ func TestExtractAnchors_SnakeCaseSpacelessNameSurvivesBoundary(t *testing.T) {
 			problem: "設定_loadFile() drops the error",
 			want:    nil,
 		},
+		{
+			// MUTATION GUARD for isWordBoundary's `next == scriptSpacing`
+			// clause. Every other row above fires the boundary through
+			// `run == scriptSpacing` (Latin or Han prose reached first, a
+			// spaceless name after it). This is the only direction where the
+			// SPACELESS side is the run and the space-separating side is what
+			// the run reaches, so it is the only row the second clause decides.
+			//
+			// Measured with the clause deleted: the run never stops, and
+			// `parse_解析()` yields the glued anchor `parse_解析` where HEAD
+			// yields none - the name-final-spaceless direction of the boundary
+			// was entirely unpinned before this row.
+			name:    "a name-final spaceless run still stops at the boundary",
+			problem: "parse_解析() drops the error",
+			want:    nil,
+		},
+		{
+			// MUTATION GUARD for spacelessScriptOf's `!unicode.IsLetter(r)`
+			// clause. That clause is redundant for every ASCII non-letter the
+			// identifier class admits - '_', '.' and the digits are all
+			// Script=Common, so the SECOND clause already returns neutral for
+			// them - and its only real job is COMBINING MARKS, which are
+			// Script=Inherited and reach neither clause any other way.
+			//
+			// Its job is to make a mark TRANSPARENT to the backwards run, so a
+			// name is read across it rather than broken at it. Delete the clause
+			// and U+0301 classifies as scriptSpacing: the run, already in Han,
+			// treats the mark as a space-separating letter and stops dead.
+			// Measured with the clause deleted:
+			//
+			//   HEAD    ["解析_処理́"]   the name is read across the mark
+			//   mutant  []              the name is broken at the mark and lost
+			//
+			// The mark is placed at the end of a Han name rather than inside an
+			// ordinary word because that is the ONLY position where the clause
+			// decides anything. An Inherited mark surrounded by Latin classifies
+			// as scriptSpacing either way (Latin IS scriptSpacing), and a Thai
+			// tone mark inside a Thai name classifies as Thai either way - both
+			// measured, both identical under the mutant. The clause is only
+			// observable where an Inherited mark borders a spaceless run
+			// directly, which is what this row is.
+			name:    "a combining mark inside a spaceless name is read across, not broken at",
+			problem: "解析_処理" + string(rune(0x0301)) + "() drops the error",
+			want:    []string{"解析_処理" + string(rune(0x0301))},
+		},
 	}
 
 	for _, tc := range cases {
@@ -689,6 +734,31 @@ func TestExtractAnchorSet_ImpreciseSpanMarksTruncated(t *testing.T) {
 			text:          settei + "_pkg.loadFile() drops the error",
 			wantAnchors:   []string{"loadFile"},
 			wantTruncated: false,
+		},
+		{
+			// An NFD combining mark sitting where the break lands. Before the
+			// recorded-anchor repair this span was NOT suppressed by the guard
+			// at all: the break landed on U+0301, text[start] was its lead byte,
+			// and the fragment was saved from escaping only by isIdentifierShaped
+			// rejecting a leading Mn - a different predicate, reached by luck.
+			// The set was therefore reported as a CLEAN read of a span it had
+			// silently lost, which is the shape of the three blockers the parent
+			// branch closed.
+			//
+			// Measured 12ffd73 -> HEAD: (nil, false) -> (nil, true). The anchor
+			// list is unchanged; the honesty of the flag is the whole delta, so
+			// that is what this row asserts.
+			//
+			// NOT a mutation guard for spacelessScriptOf's !IsLetter clause:
+			// under that mutant the break lands one rune LATER (on the
+			// underscore, since the mark is no longer transparent), the guard
+			// fires by the ordinary leading-underscore path, and the result is
+			// identical. Measured. The clause is pinned in
+			// TestExtractAnchors_SnakeCaseSpacelessNameSurvivesBoundary instead.
+			name:          "a combining mark where the break lands is a loss, and says so",
+			text:          "cafe" + string(rune(0x0301)) + "_" + han + "() drops the error",
+			wantAnchors:   nil,
+			wantTruncated: true,
 		},
 	}
 
