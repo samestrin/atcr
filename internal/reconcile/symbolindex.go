@@ -38,6 +38,25 @@ const tier4UnavailableMetric = "atcr_tier4_index_unavailable_total"
 // problem, a symlink pointing out of the repo).
 const tier4IncompleteMetric = "atcr_tier4_index_incomplete_total"
 
+// tier4FixSetCappedMetric counts findings whose FIX anchor set was abandoned
+// whole because the anchor cap fired: which anchors the cap dropped is
+// unknowable, so no subset of the remainder can ground a suggestion. Without
+// it a run that lost every secondary anchor this way is indistinguishable in
+// telemetry from a FIX that named nothing.
+const tier4FixSetCappedMetric = "atcr_tier4_fix_set_capped_total"
+
+// tier4FixSetUnaccountedMetric counts findings whose FIX anchor set was
+// abandoned whole because a call-scan fidelity loss left NO member behind (a
+// silenced span, or a glued span whose token failed the shape or signal test):
+// what that span would have named is unknowable, exactly as the cap's dropped
+// anchors are.
+const tier4FixSetUnaccountedMetric = "atcr_tier4_fix_set_unaccounted_total"
+
+// tier4FixAnchorDroppedMetric counts individual FIX anchors dropped as
+// imprecise (a glued span contributed them): the set is narrowed, not
+// abandoned, so a suggestion that never landed can be attributed to the drop.
+const tier4FixAnchorDroppedMetric = "atcr_tier4_fix_anchor_dropped_total"
+
 // tier4Outcome is the verdict of a Tier 4 symbol lookup (Epic 35.16.6.5 T3).
 // The three values are NOT interchangeable, and the distinction between the
 // first two is the whole safety property of this epic: only tier4NoMatch is
