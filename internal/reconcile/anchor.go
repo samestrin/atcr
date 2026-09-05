@@ -55,6 +55,16 @@ const minAnchorLen = 3
 // this one is not detected at all. A caller that needs "the set is faithful"
 // rather than "these two losses did not occur" does not have it from this flag.
 //
+// A second unfaithful reading is also known to return FALSE, and this one is
+// ACCEPTED rather than tracked: a qualifier between same-script prose and the
+// name. `設定._解析()` records `_解析` with truncated=false — trailingSegment
+// strips `設定.`, and because 設定 and 解析 share a script no word boundary
+// fires, so the leading-underscore suppression in collectCallAnchors is never
+// consulted. `_解析` is exactly the confidently-misattributable fragment that
+// suppression exists to stop, reached by a third mechanism (a qualifier
+// between same-script prose and the name) rather than by a boundary. Closing
+// it means widening the boundary rule, which the epic's own scope rules out.
+//
 // The flag deliberately covers BOTH losses through one channel. The cap drops
 // whole anchors; the call scan can instead return a token the reviewer did not
 // write (spaceless prose glued to a call name) or return nothing for a span it
@@ -363,13 +373,20 @@ func collectCallAnchors(text string, seen, clean, impreciseInto map[string]struc
 		}
 		// Both underscore tests below read the RECORDED anchor, never the raw
 		// span. The raw span is what the backwards run stopped on; the anchor is
-		// what addAnchor will actually key the tree search on, and the two differ
-		// by exactly the runes that make these guards leak: a leading
+		// what recordAnchor will actually key the tree search on, and the two
+		// differ by exactly the runes that make these guards leak: a leading
 		// script-neutral rune the break landed on (U+30FC, a combining mark) and
 		// a qualifier trailingSegment strips. Measured against the raw span:
 		// `parseー_解析()` escaped as the fragment `ー_解析`, `parse._解析()` as
 		// `_解析`, and `データ_モジュール.解析()` was marked imprecise although its
 		// only underscore lives in the stripped qualifier.
+		//
+		// The qualifier case NOT caught here: `設定._解析()` — the same shape as
+		// `parse._解析()`, but 設定 and 解析 share a script, so no boundary
+		// fires, atBoundary stays false, and `_解析` is recorded with the set
+		// reported faithful. Accepted, not fixed: closing it means widening the
+		// boundary rule, which the epic's scope rules out. Also disclosed at
+		// extractAnchorSet's doc.
 		anchor := recordedAnchorForm(text[start:i])
 		if atBoundary && leadsWithUnderscore(anchor) {
 			// Silence is a LOSS only when something could have been lost. A
