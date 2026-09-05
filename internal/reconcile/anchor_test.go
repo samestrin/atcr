@@ -558,6 +558,7 @@ func TestExtractAnchorSet_ImpreciseSpanMarksTruncated(t *testing.T) {
 	setteiUnd := string([]rune{0x8A2D, 0x5B9A, 0x005F})                  // 設定_
 	prolonged := string(rune(0x30FC))                                    // ー (Script=Common, neutral)
 	katamodule := string([]rune{0x30E2, 0x30B8, 0x30E5, 0x30FC, 0x30EB}) // モジュール
+	settei := string([]rune{0x8A2D, 0x5B9A})                             // 設定
 
 	cases := []struct {
 		name          string
@@ -672,6 +673,21 @@ func TestExtractAnchorSet_ImpreciseSpanMarksTruncated(t *testing.T) {
 			name:          "an underscore only in the stripped qualifier is not imprecise",
 			text:          kata + "_" + katamodule + "." + han + "() is wrong, see `retryOnce`",
 			wantAnchors:   []string{"retryOnce"},
+			wantTruncated: false,
+		},
+		{
+			// The suppression's other direction, and the one it must NOT take:
+			// the raw span begins with '_' but the RECORDED anchor does not,
+			// because a qualifier follows the underscore. Both readings of
+			// `設定_pkg.loadFile()` — prose plus `_pkg.loadFile`, or the single
+			// name `設定_pkg` qualifying `loadFile` — reduce to the same trailing
+			// segment, so `loadFile` is a faithful reading either way and there
+			// is nothing to report. Measured against the raw-span test: the span
+			// was silenced and the set marked imprecise, losing a faithful anchor
+			// to a guard aimed at fragments.
+			name:          "a qualifier after the underscore leaves a faithful anchor",
+			text:          settei + "_pkg.loadFile() drops the error",
+			wantAnchors:   []string{"loadFile"},
 			wantTruncated: false,
 		},
 	}
