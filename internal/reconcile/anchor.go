@@ -183,7 +183,8 @@ func scanAnchors(text string) anchorScan {
 //
 //   - A call-scan fidelity loss that CONTRIBUTED a member is per-SPAN. That
 //     member may not be what the reviewer wrote, but every other member still
-//     is — so exactly those members are dropped and the rest stand.
+//     is — so exactly those members are dropped from the USABLE set and the
+//     rest stand. Dropped is not discarded: see the completeness note below.
 //
 //   - A call-scan fidelity loss that contributed NO member (a silenced span, or
 //     a glued span whose token failed the shape or signal test) has the cap's
@@ -209,6 +210,21 @@ func scanAnchors(text string) anchorScan {
 // alongside a precise ASCII anchor went tier4Resolved -> tier4Inconclusive
 // under the flat test, losing a correct PathSuggestion to a loss that never
 // touched the anchor that produced it.
+//
+// A dropped member is dropped from what may SOURCE a suggestion, not from what
+// the FIX named. The completeness argument the member-less case rests on cuts
+// here too — locate() refuses when two precise anchors DISAGREE, and a dropped
+// name is just as absent from that comparison as a silenced one — so the
+// dropped members ride along as VETO evidence (droppedFixAnchors, consumed by
+// symbolIndex.resolve). Measured: a FIX of "call `parseTree` instead of
+// データ_解析()" with the two names declared in DIFFERENT files stamped
+// "pkg/tree.go" while the members were merely discarded, where the complete set
+// refuses. Vetoing costs a suggestion and can never route a finding out, so
+// this stays the safe direction while closing the gap.
+//
+// Splitting it that way — dropped may not vote, may still veto — is what keeps
+// the per-anchor drop rather than abandoning the set whole the way the cap and
+// the member-less case do, which is the recorded decision for this seam.
 //
 // An anchor contributed by BOTH a glued span and a clean one (a backticked or
 // quoted citation, or an unglued call of the same name) is KEPT: the clean
