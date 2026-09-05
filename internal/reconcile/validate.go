@@ -155,6 +155,14 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 			// was, the one anchor that would have matched may be among what was
 			// not faithfully recovered, and a partial search cannot produce a
 			// "found nothing" verdict.
+			//
+			// Recorded trade: even an UNtruncated set is only a reading of the
+			// tokens that carry an identifier signal. A subject token that
+			// carries none (`解析` once its qualifier is stripped) is invisible
+			// to this gate — it is never searched for at all — so a no-match
+			// verdict can rest entirely on a co-cited anchor. That is the cost
+			// hasIdentifierSignal's doc states for rejecting signal-less prose,
+			// paid here.
 		default:
 			// tier4Inconclusive: the PROBLEM named no identifier, the index could
 			// not be built or was incomplete, or the anchors matched real code
