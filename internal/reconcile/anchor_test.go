@@ -721,6 +721,18 @@ func TestExtractAnchorSet_ImpreciseSpanMarksTruncated(t *testing.T) {
 			wantTruncated: false,
 		},
 		{
+			// The silence's flags must also ask whether the silenced fragment
+			// could ever have contributed an anchor. `_解` is 2 runes, so
+			// isIdentifierShaped rejects it (minAnchorLen) no matter what the
+			// reviewer meant - silencing it lost nothing, and reporting the set
+			// unfaithful would refuse a no-match verdict on a set whose every
+			// member IS a faithful reading.
+			name:          "a silenced fragment that could never qualify is not a loss",
+			text:          "`retryOnce` `parseTree` then parse_" + string(rune(0x89E3)) + "() drops the error",
+			wantAnchors:   []string{"parseTree", "retryOnce"},
+			wantTruncated: false,
+		},
+		{
 			// The suppression's other direction, and the one it must NOT take:
 			// the raw span begins with '_' but the RECORDED anchor does not,
 			// because a qualifier follows the underscore. Both readings of
