@@ -551,11 +551,13 @@ func TestExtractAnchors_SnakeCaseSpacelessNameSurvivesBoundary(t *testing.T) {
 // EXTRACTION imprecise, which blocks the no-match verdict while leaving the
 // resolution direction intact.
 func TestExtractAnchorSet_ImpreciseSpanMarksTruncated(t *testing.T) {
-	han := string([]rune{0x89E3, 0x6790})               // 解析
-	proseHan := string([]rune{0x8A2D, 0x5B9A, 0x3092})  // 設定を
-	suffix := string([]rune{0x51E6, 0x7406})            // 処理
-	kata := string([]rune{0x30C7, 0x30FC, 0x30BF})      // データ
-	setteiUnd := string([]rune{0x8A2D, 0x5B9A, 0x005F}) // 設定_
+	han := string([]rune{0x89E3, 0x6790})                                // 解析
+	proseHan := string([]rune{0x8A2D, 0x5B9A, 0x3092})                   // 設定を
+	suffix := string([]rune{0x51E6, 0x7406})                             // 処理
+	kata := string([]rune{0x30C7, 0x30FC, 0x30BF})                       // データ
+	setteiUnd := string([]rune{0x8A2D, 0x5B9A, 0x005F})                  // 設定_
+	prolonged := string(rune(0x30FC))                                    // ー (Script=Common, neutral)
+	katamodule := string([]rune{0x30E2, 0x30B8, 0x30E5, 0x30FC, 0x30EB}) // モジュール
 
 	cases := []struct {
 		name          string
@@ -636,6 +638,40 @@ func TestExtractAnchorSet_ImpreciseSpanMarksTruncated(t *testing.T) {
 			name:          "a clean spaceless/spacing boundary is not imprecise",
 			text:          string([]rune{0x5728, 0x005F, 0x914D, 0x7F6E, 0x4E2D, 0x8C03, 0x7528}) + "ParseConfig() timed out",
 			wantAnchors:   []string{"ParseConfig"},
+			wantTruncated: false,
+		},
+		{
+			// The suppression must read the anchor that is actually RECORDED,
+			// not the first byte of the raw span. U+30FC is script-neutral, so
+			// the break lands ON it and text[start] is its lead byte rather than
+			// the underscore one rune further in. Measured before the fix:
+			// the fragment `ー_解析` escaped as a confident anchor.
+			name:          "a script-neutral rune before the underscore does not let the fragment escape",
+			text:          "parse" + prolonged + "_" + han + "() drops the error",
+			wantAnchors:   nil,
+			wantTruncated: true,
+		},
+		{
+			// Same predicate one level down: the raw span begins with the
+			// qualifier separator, so the raw-byte test misses, but
+			// trailingSegment strips it and the RECORDED anchor is the leading-
+			// underscore fragment `_解析`. Measured before the fix: it escaped.
+			name:          "a stripped qualifier before the underscore does not let the fragment escape",
+			text:          "parse._" + han + "() drops the error",
+			wantAnchors:   nil,
+			wantTruncated: true,
+		},
+		{
+			// The glued guard must also read the RECORDED anchor. Here the
+			// underscore lives only in the qualifier trailingSegment strips, and
+			// the remaining `解析` carries no identifier signal, so the span
+			// contributes nothing at all. Marking the set imprecise on a span
+			// that contributed nothing refuses a no-match verdict for a set whose
+			// every member is a faithful reading - which keeps a fabricated
+			// finding out of the sidecar and out of the scorecard denominator.
+			name:          "an underscore only in the stripped qualifier is not imprecise",
+			text:          kata + "_" + katamodule + "." + han + "() is wrong, see `retryOnce`",
+			wantAnchors:   []string{"retryOnce"},
 			wantTruncated: false,
 		},
 	}
