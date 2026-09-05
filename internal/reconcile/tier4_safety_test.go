@@ -391,7 +391,7 @@ func TestTier4Safety_QualifierOnlyUnderscoreDoesNotShieldAPhantom(t *testing.T) 
 //
 // The PROBLEM anchor is deliberately declared in TWO files: that is what makes
 // the primary set match without localizing, which is the only state in which
-// resolve consults the secondary set at all (symbolindex.go:230-236). It is also
+// resolve consults the secondary set at all (resolve's primaryMatched guard). It is also
 // why this repair cannot cause a false route — with no primary match the
 // secondary is never read, so dropping a member of it can lose a hint and can
 // never delete a finding.

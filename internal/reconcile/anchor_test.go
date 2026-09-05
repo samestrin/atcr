@@ -794,27 +794,10 @@ func TestExtractAnchorSet_SilencedSpanKeepsTruncatedAtCap(t *testing.T) {
 }
 
 // TestExtractFixAnchors_DropsOnlyTheImpreciseMembers pins the consumer half of
-// the imprecise seam. The FIX set feeds resolve's SECONDARY anchors, which may
-// only LOCALIZE a finding whose subject already matched — never route one out —
-// so the two losses `truncated` folds together have different costs here and
-// must not be answered with the same blunt instrument.
-//
-// The CAP is a prefix: the anchors it dropped are unknown, so nothing about the
-// remainder can be trusted to be the FIX's best evidence and the set is
-// abandoned whole. A call-scan fidelity loss is per-SPAN: exactly the anchors
-// that came from a glued span are unreliable, and every other member is a
-// faithful reading of what the reviewer wrote.
-//
-// Measured before the fix, against the real symbolIndex: fix anchors
-// [parseTree データ_解析] resolved to pkg/tree.go (tier4Resolved) with the
-// secondary set and to "" (tier4Inconclusive) once validate.go nilled it. One
-// genuine Japanese snake_case call in a FIX cost the finding its correct
-// PathSuggestion even though the co-cited ASCII anchor was intact and precise.
-//
-// Dropping is the safe direction and nilling was never the safe one: a secondary
-// resolution can only ever ADD a suggestion (symbolindex.go:230-236 reaches it
-// only when a primary anchor already matched), so dropping an imprecise member
-// can lose a hint and can never delete a finding.
+// the imprecise seam: the per-anchor narrowing extractFixAnchors performs. The
+// full cap-vs-per-span-vs-unaccounted argument (and the measured examples) lives
+// in extractFixAnchors' doc — these rows pin that the code honors it, they do
+// not restate it.
 func TestExtractFixAnchors_DropsOnlyTheImpreciseMembers(t *testing.T) {
 	han := string([]rune{0x89E3, 0x6790})               // 解析
 	kata := string([]rune{0x30C7, 0x30FC, 0x30BF})      // データ

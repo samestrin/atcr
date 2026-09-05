@@ -155,7 +155,7 @@ func scanAnchors(text string) anchorScan {
 //
 // The FIX set feeds resolve's SECONDARY anchors, which may only LOCALIZE a
 // finding whose subject already matched somewhere in the tree — never route one
-// out (symbolindex.go:230-236). So the two losses extractAnchorSet folds into
+// out (resolve's primaryMatched guard). So the two losses extractAnchorSet folds into
 // `truncated` cost different things here and may not be answered alike:
 //
 //   - The CAP is a PREFIX. Which anchors it dropped is unknowable, so no
