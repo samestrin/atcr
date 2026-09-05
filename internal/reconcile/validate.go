@@ -127,9 +127,11 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 			tier4 = newTier4Index(root, idx.Paths())
 		}
 		problemAnchors, problemTruncated := extractAnchorSet(findings[i].Problem)
-		// The FIX narrows rather than nils: see extractFixAnchors, which drops
-		// the anchors a call-scan fidelity loss actually touched and abandons the
-		// set whole only for the cap, where the dropped members are unknowable.
+		// The FIX narrows rather than nils: extractFixAnchors drops the anchors
+		// a call-scan fidelity loss actually touched, and abandons the set whole
+		// for the cap OR for a fidelity loss that left no member behind (its
+		// `capped` and `unaccounted` disjuncts) — in both cases what was dropped
+		// is unknowable. See its doc for the full argument.
 		fixAnchors := extractFixAnchors(findings[i].Fix)
 		suggestion, outcome := tier4.resolve(ctx, problemAnchors, fixAnchors)
 		switch {
