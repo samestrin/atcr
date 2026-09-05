@@ -1487,6 +1487,114 @@ func TestCollectExportedIdentifiers_ProseCannotLicenseTokens(t *testing.T) {
 	}
 }
 
+// TestCollectExportedIdentifiers_UnicodeNames pins the EXACT harvested maps for
+// the Unicode lines the isESMExportBody docstring measures, so a change to
+// isIdentifierShaped, minAnchorLen or collectSourceIdentifiers cannot silently
+// falsify them. नाम and the NFD café are the mark-bearing cases: the grammar
+// admits the declaration, and the harvest must not drop the name. Literals are
+// escape-spelled so an editor's Unicode normalisation cannot rewrite a fixture
+// (an NFC/NFD flip would silently turn the NFD case into a second NFC one).
+func TestCollectExportedIdentifiers_UnicodeNames(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want map[string]uint8
+	}{
+		{
+			// The documented prose residual: a non-ASCII sentence the grammar
+			// admits harvests EVERY identifier-shaped token on the line.
+			name: "non-ASCII prose sentence admitted by the grammar harvests every token",
+			src:  "export module \u30c7\u30fc\u30bf\u8a2d\u5b9a, see MyWidget for details\n",
+			want: map[string]uint8{
+				"module": presenceSource, "\u30c7\u30fc\u30bf\u8a2d\u5b9a": presenceSource, "see": presenceSource,
+				"MyWidget": presenceSource, "for": presenceSource, "details": presenceSource,
+			},
+		},
+		{
+			// नाम carries the Mc vowel sign ा — the grammar admits the
+			// declaration, so the harvest must not drop the name.
+			name: "Devanagari declaration keeps its name",
+			src:  "export const \u0928\u093e\u092e = 1\n",
+			want: map[string]uint8{"const": presenceSource, "\u0928\u093e\u092e": presenceSource},
+		},
+		{
+			// The Latin-script sibling the docstring measures alongside
+			// the Japanese sentence — same residual, precomposed letters only.
+			name: "Latin-script prose sentence harvests the documented map",
+			src:  "export namespace Gr\u00f6\u00dfe (siehe MyWidget)\n",
+			want: map[string]uint8{
+				"namespace": presenceSource, "Gr\u00f6\u00dfe": presenceSource,
+				"siehe": presenceSource, "MyWidget": presenceSource,
+			},
+		},
+		{
+			// Both spellings of café converge on ONE key. The harvest folds to
+			// NFC (foldAnchorForm), so a name typed as o+U+0301 in one file and
+			// as the precomposed letter in another is the same map key rather
+			// than two keys the lookup can never reconcile. Before that fold
+			// this case measured the decomposed 6-byte key.
+			name: "NFD-spelled café folds to the precomposed key",
+			src:  "export const cafe\u0301 = 1\n",
+			want: map[string]uint8{"const": presenceSource, "caf\u00e9": presenceSource},
+		},
+		{
+			name: "precomposed café keeps its name",
+			src:  "export const caf\u00e9 = 1\n",
+			want: map[string]uint8{"const": presenceSource, "caf\u00e9": presenceSource},
+		},
+		{
+			// The Nl arm of the residual: a Roman numeral (U+2167, category Nl)
+			// can legally begin a name, so the grammar admits the sentence and
+			// the whole line harvests — MyWidget included. The numeral itself
+			// is one rune, below minAnchorLen, so it is absent from the map.
+			name: "letter-number second word harvests the documented map",
+			src:  "export module \u2167, see MyWidget for details\n",
+			want: map[string]uint8{
+				"module": presenceSource, "see": presenceSource,
+				"MyWidget": presenceSource, "for": presenceSource, "details": presenceSource,
+			},
+		},
+		{
+			// The Other_ID_Start arm, script-symbol flavour (U+2118).
+			name: "Other_ID_Start symbol second word harvests the documented map",
+			src:  "export namespace \u2118, see MyWidget for details\n",
+			want: map[string]uint8{
+				"namespace": presenceSource, "see": presenceSource,
+				"MyWidget": presenceSource, "for": presenceSource, "details": presenceSource,
+			},
+		},
+		{
+			// The Other_ID_Start arm with an ordinary Japanese prose character
+			// (U+309B, the dakuten) — not an exotic codepoint.
+			name: "Other_ID_Start dakuten second word harvests the documented map",
+			src:  "export namespace \u309b, see MyWidget for details\n",
+			want: map[string]uint8{
+				"namespace": presenceSource, "see": presenceSource,
+				"MyWidget": presenceSource, "for": presenceSource, "details": presenceSource,
+			},
+		},
+		{
+			// The Pc arm: a connector punctuation (U+FE4D) inside the second
+			// word keeps the name run alive to the comma. The harvest then
+			// drops the Pc-bearing token itself (isIdentifierShaped admits no
+			// Pc) but still takes every other word on the line.
+			name: "Pc-bearing second word harvests the documented map",
+			src:  "export type a\ufe4db, and MyWidget too\n",
+			want: map[string]uint8{
+				"type": presenceSource, "and": presenceSource,
+				"MyWidget": presenceSource, "too": presenceSource,
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out := make(map[string]uint8)
+			collectExportedIdentifiers([]byte(c.src), out)
+			assert.Equal(t, c.want, out)
+		})
+	}
+}
+
 // TestIsESMExportBody_RejectPaths pins the two arms of isESMExportBody that
 // answer "no", tested directly because neither is observable through
 // collectExportedIdentifiers.
@@ -1778,6 +1886,12 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 			"enum members: Red, Green, Blue",
 			"class hierarchy: see the diagram",
 			"function signatures: documented below",
+			// `module` is the one keyword in this list with a NON-zero shape, so
+			// its argument is the one that can be pinned bit by bit. The quoted
+			// bodies above kill only the declQuotedName bit; without this line,
+			// adding declTypeAnnotation to the table entry leaves the package
+			// green even though an ambient module never carries an annotation.
+			"module boundaries: enforced by BuildTool",
 		} {
 			assert.False(t, isESMExportBody([]byte(body)),
 				"%q is prose — admitting it lets a doc sentence license a confident PathSuggestion", body)
@@ -1836,6 +1950,12 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 			"function 'f'()",
 			"let 'x' = 1",
 			"var 'y' = 2",
+			// `const` completes the variable-binding trio. Without it the
+			// declTypeAnnotation passed at the const call site is pinned one bit
+			// at a time, and setting declQuotedName on that argument leaves the
+			// package green — the same unpinned-sibling defect the const-enum
+			// subtest below closes.
+			"const 'x' = 1",
 		} {
 			assert.False(t, isESMExportBody([]byte(body)),
 				"%q quotes a name after a non-module keyword — only an ambient module names a string", body)
@@ -1851,16 +1971,128 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 	})
 
 	// `const enum` is ONE keyword pair, and the pair binds no variable, so it
-	// takes no type annotation — `const enum E: number` is not a TypeScript
-	// form. Passing declTypeAnnotation to its declaresName call instead of 0
-	// also left the package green, so the 0 was untested; with the annotation
-	// admitted, that sentence-shaped body reaches the `:` arm and licenses a
-	// source presence.
-	t.Run("const enum takes no type annotation", func(t *testing.T) {
-		assert.False(t, isESMExportBody([]byte("const enum E: number")),
-			"`const enum E: number` binds no variable, so the colon is prose punctuation")
+	// carries neither of the extra shapes: no type annotation (`const enum E:
+	// number` is not a TypeScript form) and no quoted name (only an ambient
+	// module names a string). Its argument is 0, and 0 is pinned as a VALUE, not
+	// as a checklist of mutants someone happened to enumerate — one body per
+	// extra shape. Pinning it bit by bit is what let the first fix here pass:
+	// asserting only the colon left declQuotedName free, and with that bit set
+	// `const enum 'PHRASE' {` reaches followsDeclaredName's `{` arm and harvests
+	// its whole line into presentInSource.
+	t.Run("const enum takes no type annotation and no quoted name", func(t *testing.T) {
+		for _, body := range []string{
+			"const enum E: number", // declTypeAnnotation — the pair binds no variable
+			"const enum 'E' {}",    // declQuotedName — only an ambient module names a string
+		} {
+			assert.Falsef(t, isESMExportBody([]byte(body)), "%q is not a `const enum` form — its shape argument is 0", body)
+		}
 		assert.True(t, isESMExportBody([]byte("const enum Direction {}")),
 			"`const enum Direction {}` is the real form and must survive")
+	})
+
+	// The leading-digit rule is a property of the NAME, not of the alphabet the
+	// name is written in. The ASCII arm has always enforced it; the Unicode
+	// category arm did not, so `export module ٣٤, see MyWidget` scanned the
+	// Arabic-Indic digits as a declared name, reached followsDeclaredName's `,`
+	// arm, and put every token on the line — the fabricated MyWidget included —
+	// into presentInSource. `34` in the same sentence was rejected, so the two
+	// arms disagreed about one rule.
+	//
+	// Neither a digit nor a combining mark can legally START a JavaScript or
+	// TypeScript identifier — with one exception: the Other_ID_Start marks
+	// U+1885/U+1886, which ECMAScript admits as an identifier start and which
+	// a dedicated subtest pins positively. Tightening the rest drops no real
+	// declaration; the non-leading direction below is what proves the
+	// tightening did not simply evict Unicode names again.
+	t.Run("a declared name never starts with a digit or a combining mark", func(t *testing.T) {
+		// One representative rune per admitted non-leading class, at both
+		// positions. A full-range sweep over 0x80..0x10FFFF (about 1.1M
+		// iterations, 3120 assertions) pinned nothing these six assertions do
+		// not: the mutation kill set is identical, and the sweep's vacuity
+		// floor (asserted > 1000) tolerated a 68% filter collapse, so the
+		// loop bought runtime cost and a false sense of coverage, not signal.
+		for _, r := range []rune{
+			'٣', // U+0663 Nd — Arabic-Indic digit three
+			'́', // U+0301 Mn — combining acute accent
+			'ा', // U+093E Mc — Devanagari vowel sign AA
+		} {
+			require.Falsef(t, isDeclNameRune(r, true),
+				"U+%04X is category Nd or M and cannot begin an identifier", r)
+			require.Truef(t, isDeclNameRune(r, false),
+				"U+%04X is category Nd, Mn or Mc and must still be admitted inside a name", r)
+		}
+
+		// The representatives above draw from the same class rule the
+		// implementation uses, so on their own they can only catch a NARROWING
+		// of the name class. These runes sit OUTSIDE the admitted classes and
+		// must be rejected at either position; without them, widening
+		// `unicode.IsDigit` to `unicode.IsNumber` admits No inside a name —
+		// extending the prose residual — with the package still green.
+		// (Nl is NOT in this list: letter-numbers are in ECMAScript ID_Start
+		// and are admitted deliberately — pinned positively below.)
+		for _, r := range []rune{
+			'½', // U+00BD No — an other-number, in neither ID_Start nor ID_Continue
+			'—', // U+2014 Pd — a dash, the typographic-punctuation case
+			'“', // U+201C Pi — a curly quote
+			'⃝', // U+20DD Me — an enclosing mark; ID_Continue takes Mn and Mc only
+		} {
+			require.Falsef(t, isDeclNameRune(r, true),
+				"U+%04X is outside the admitted classes and must not begin a name", r)
+			require.Falsef(t, isDeclNameRune(r, false),
+				"U+%04X is outside the admitted classes and must not continue a name either", r)
+		}
+	})
+
+	// Category Nl (letter-numbers — Roman numerals like \u2167 and Ⅻ) IS in Unicode
+	// ID_Start, so `const \u2167 = 1` is legal JavaScript (V8 runs it). Rejecting
+	// Nl drops a real declaration out of presentInSource — the false-negative
+	// direction this class exists to prevent.
+	t.Run("a letter-number can begin and continue a declared name", func(t *testing.T) {
+		require.True(t, isDeclNameRune('\u2167', true),
+			"U+2167 is category Nl, which ECMAScript ID_Start includes")
+		require.True(t, isDeclNameRune('\u2167', false),
+			"U+2167 is category Nl, which ECMAScript ID_Continue includes")
+		assert.True(t, isESMExportBody([]byte("const \u2167 = 1")),
+			"`export const \u2167 = 1` is legal JavaScript and must stay admitted")
+	})
+
+	// Connector punctuation (Pc) is the non-ASCII analogue of `_`: ID_Continue
+	// includes it, so `const a‿b = 1` is legal JavaScript, but ID_Start does
+	// not, so a name never BEGINS with one. Both directions are pinned so a
+	// change either way fails loudly rather than drifting with a Unicode table.
+	t.Run("connector punctuation continues but never begins a declared name", func(t *testing.T) {
+		require.True(t, isDeclNameRune('‿', false),
+			"U+203F is category Pc, which ECMAScript ID_Continue includes")
+		require.False(t, isDeclNameRune('‿', true),
+			"U+203F is category Pc, which ECMAScript ID_Start excludes")
+		assert.True(t, isESMExportBody([]byte("const a‿b = 1")),
+			"`export const a‿b = 1` is legal JavaScript and must stay admitted")
+	})
+
+	t.Run("prose whose second word is non-ASCII digits is not a declaration", func(t *testing.T) {
+		assert.False(t, isESMExportBody([]byte("module ٣٤, see MyWidget")),
+			"Arabic-Indic digits cannot be a declared name, so the comma is prose punctuation")
+		assert.False(t, isESMExportBody([]byte("module 34, see MyWidget")),
+			"the ASCII arm already rejected this and must keep doing so")
+		assert.True(t, isESMExportBody([]byte("const a٣ = 1")),
+			"a non-ASCII digit INSIDE a name is legal and must stay admitted")
+	})
+
+	// U+1885 and U+1886 (MONGOLIAN LETTER ALI GALI BALUDA / THREE BALUDA) are
+	// category Mn AND members of Other_ID_Start, so ECMAScript admits them as
+	// an IdentifierStart (V8 runs `var ᢅ = 5`). A blanket mark rejection at
+	// the first position drops them — a regression against main, where
+	// `export const ᢅx = 1` was admitted — and takes every co-declared
+	// identifier on the line out of presentInSource with it.
+	t.Run("an Other_ID_Start mark can begin a declared name", func(t *testing.T) {
+		for _, r := range []rune{'ᢅ', 'ᢆ'} {
+			require.Truef(t, isDeclNameRune(r, true),
+				"U+%04X is category Mn but also Other_ID_Start, which ECMAScript admits as an identifier start", r)
+			require.Truef(t, isDeclNameRune(r, false),
+				"U+%04X is a combining mark and stays admitted inside a name", r)
+		}
+		assert.True(t, isESMExportBody([]byte("const ᢅx = 1")),
+			"`export const ᢅx = 1` was admitted at main and must stay admitted")
 	})
 }
 
@@ -1924,4 +2156,165 @@ func TestSymbolIndex_NamedInDocsRequiresEveryAnchorAccounted(t *testing.T) {
 		"the verdict must not depend on which anchor is examined first")
 	assert.True(t, lz.namedInDocs([]string{"quantumFlux", "DialPeer"}),
 		"a co-anchor declared in SOURCE was not invented, so it does not defeat the shield")
+}
+
+// constParser answers every Parse with one tree. parseByPath keys its answer off
+// the source bytes, which only works for fixtures whose content IS the basename;
+// a fixture carrying real source text needs this instead.
+type constParser struct{ tree astgroup.Node }
+
+func (p constParser) Parse([]byte) (astgroup.Node, error) { return p.tree, nil }
+
+func constFactory(tree astgroup.Node) parserFactory {
+	return func(string) (astgroup.Parser, error) { return constParser{tree}, nil }
+}
+
+// writeSource writes rel under root with real source text (not the basename
+// parseByPath keys on), for fixtures whose file BYTES are the thing under test.
+func writeSource(t *testing.T, root, rel, src string) {
+	t.Helper()
+	abs := filepath.Join(root, filepath.FromSlash(rel))
+	require.NoError(t, os.MkdirAll(filepath.Dir(abs), 0o755))
+	require.NoError(t, os.WriteFile(abs, []byte(src), 0o644))
+}
+
+// Two spellings of ONE identifier, `módulo_principal`. Go source files are NFC
+// or NFD at the author's editor's discretion; reviewer models emit NFC. Nothing
+// in the pipeline made the two agree, so which spelling reached which map was
+// the difference between a finding kept and a finding destroyed.
+const (
+	nameNFC = "m\u00f3dulo_principal"  // precomposed ó (U+00F3)
+	nameNFD = "mo\u0301dulo_principal" // o + combining acute (U+0301)
+)
+
+// TestSymbolIndex_UnicodeNormalizationCrossForm pins the CRITICAL: an anchor and
+// the index it is looked up in may be spelled in different Unicode normalization
+// forms, and a byte-exact map lookup then reports "nowhere in the tree" for a
+// construct that is plainly there — routing a real finding to tier4NoMatch, which
+// deletes it and durably charges the reviewer a phantom.
+//
+// Each case is pinned to ONE of the three folds the fix installs, verified by
+// removing each fold in turn: dropping the addAnchor fold reddens only the
+// NFD-anchor case, dropping the collectSourceIdentifiers fold reddens only the
+// source-text-only case, and dropping the byName fold reddens the NFD-file case
+// (and TestSymbolIndex_NormalizationSplitKeyIsNotPrecise, which pins the same
+// insert from the locate side).
+func TestSymbolIndex_UnicodeNormalizationCrossForm(t *testing.T) {
+	const rel = "internal/pago/modulo.go"
+
+	cases := []struct {
+		label   string
+		inFile  string // spelling the file bytes use
+		declare bool   // does the parser declare it (byName) or not (present only)?
+		inProse string // spelling the reviewer's PROBLEM prose uses
+		want    tier4Outcome
+		wantFil string
+	}{
+		// Folds the anchor (anchor.go addAnchor): index side is already NFC.
+		{"NFC file, NFD anchor", nameNFC, true, nameNFD, tier4Resolved, rel},
+		// Folds the byName insert (symbolindex.go): anchor side is already NFC.
+		{"NFD file, NFC anchor", nameNFD, true, nameNFC, tier4Resolved, rel},
+		// Folds collectSourceIdentifiers: undeclared, so only `present` can
+		// witness the construct — and witnessing it is what withholds no-match.
+		{"NFD source text only, NFC anchor", nameNFD, false, nameNFC, tier4Inconclusive, ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			root := t.TempDir()
+			writeSource(t, root, rel, "package pago\n\nfunc "+tc.inFile+"() {}\n")
+
+			tree := file()
+			if tc.declare {
+				tree = file(fn(tc.inFile, 3))
+			}
+			lz := newLazySymbolIndex(root, []string{rel})
+			lz.newParser = constFactory(tree)
+
+			anchors, _ := extractAnchorSet("the `" + tc.inProse + "` helper drops its guard")
+			require.Len(t, anchors, 1, "the prose names exactly one identifier-shaped anchor")
+
+			got, outcome := lz.resolve(context.Background(), anchors, nil)
+			require.NotEqual(t, tier4NoMatch, outcome,
+				"the construct IS in the tree under the other normalization form: no-match here deletes a real finding")
+			assert.Equal(t, tc.want, outcome)
+			assert.Equal(t, tc.wantFil, got)
+		})
+	}
+}
+
+// TestSymbolIndex_NormalizationSplitKeyIsNotPrecise pins the MEDIUM at locate:
+// one identifier declared in two files under two normalization forms produces
+// TWO byName keys of one file each, so locate's `len(files) != 1` test sees a
+// single-file answer and validate.go stamps it as a confident PathSuggestion —
+// while the `precise anchors disagree` guard never fires, because the two
+// spellings are never compared.
+func TestSymbolIndex_NormalizationSplitKeyIsNotPrecise(t *testing.T) {
+	root := t.TempDir()
+	writeTracked(t, root, "internal/a/uno.go", "internal/b/dos.go")
+
+	var calls int32
+	lz := newLazySymbolIndex(root, []string{"internal/a/uno.go", "internal/b/dos.go"})
+	lz.newParser = newStubFactory(fileTree{
+		"uno.go": file(fn(nameNFC, 10)),
+		"dos.go": file(fn(nameNFD, 20)),
+	}, &calls)
+
+	// Force the build, then interrogate locate directly — it is the function the
+	// wrong answer comes out of.
+	_, _ = lz.resolve(context.Background(), []string{nameNFC}, nil)
+	require.NotNil(t, lz.idx)
+
+	got, ok := lz.idx.locate([]string{nameNFC})
+	assert.False(t, ok, "a name declared in two files is not localizable, whichever form each file spells it in")
+	assert.Empty(t, got)
+
+	// End-to-end: the ambiguity must not reappear as a confident suggestion via
+	// the secondary (FIX-derived) anchor path either.
+	gotFile, outcome := lz.resolve(context.Background(), []string{nameNFC}, []string{nameNFD})
+	assert.Equal(t, tier4Inconclusive, outcome)
+	assert.Empty(t, gotFile)
+}
+
+// TestSymbolIndex_SpacelessScriptProseResolves is the end-to-end half of the
+// CRITICAL that TestExtractAnchors_SpacelessScriptBoundary pins at the unit
+// level: a reviewer writing in a script with no inter-word spaces names a
+// construct that IS declared in the tree, and the backwards call scan must hand
+// resolve the construct's name — not the name with the reviewer's prose glued
+// onto its front. A pseudo-token is in neither present nor byName, so the whole
+// path ends at tier4NoMatch: gate.go deletes the finding and scorecard.go
+// durably charges the reviewer a phantom for 180 days. Prose is escape-spelled
+// so an editor's Unicode normalisation cannot silently rewrite the fixture.
+func TestSymbolIndex_SpacelessScriptProseResolves(t *testing.T) {
+	const rel = "internal/config/parse.go"
+
+	cases := []struct {
+		label   string
+		inProse string
+	}{
+		{"Han", "\u5728\u914d\u7f6e\u4e2d\u8c03\u7528ParseConfig() \u65f6\u8d85\u65f6\u672a\u5904\u7406"},
+		{"Kana", "\u30ab\u30bf\u30ab\u30ca\u3067ParseConfig() \u3092\u547c\u3076"},
+		{"Hangul", "\ucf54\ub4dc\uc5d0\uc11cParseConfig() \ud638\ucd9c"},
+		{"Thai", "\u0e41\u0e25\u0e49\u0e27\u0e40\u0e23\u0e35\u0e22\u0e01ParseConfig() \u0e44\u0e21\u0e48\u0e08\u0e31\u0e14\u0e01\u0e32\u0e23"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			root := t.TempDir()
+			writeSource(t, root, rel, "package config\n\nfunc ParseConfig() {}\n")
+
+			lz := newLazySymbolIndex(root, []string{rel})
+			lz.newParser = constFactory(file(fn("ParseConfig", 3)))
+
+			anchors, _ := extractAnchorSet(tc.inProse)
+			require.Equal(t, []string{"ParseConfig"}, anchors,
+				"the call scan must stop at the script boundary, not glue the prose onto the name")
+
+			got, outcome := lz.resolve(context.Background(), anchors, nil)
+			require.NotEqual(t, tier4NoMatch, outcome,
+				"ParseConfig IS declared in the tree: no-match here deletes a real finding and charges a phantom")
+			assert.Equal(t, tier4Resolved, outcome)
+			assert.Equal(t, rel, got)
+		})
+	}
 }
