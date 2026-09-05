@@ -381,9 +381,11 @@ func collectDelimitedAnchors(text string, d byte, seen, clean map[string]struct{
 //
 // unaccounted reports that at least one loss left NO member behind — a silenced
 // span whose fragment could have qualified (or carries a combining mark, proof
-// the break landed mid-word), or a glued span whose token failed the shape or
-// signal test. A silenced fragment that could NEVER have qualified set nothing
-// here: silencing it lost nothing. The distinction matters to extractFixAnchors
+// the break landed mid-word), a silenced span whose FULL run could have
+// qualified where the break dropped a spaceless-script prefix, or a glued span
+// whose token failed the shape or signal test. A silence where neither the
+// fragment nor (where it is consulted) the full run could EVER have qualified
+// set nothing here: it lost nothing. The distinction matters to extractFixAnchors
 // and nowhere else: a loss with a member can be repaired by dropping that
 // member, and a loss without one cannot be repaired at all, because what the
 // span would have named is unknowable.
