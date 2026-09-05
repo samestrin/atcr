@@ -853,6 +853,12 @@ func TestExtractFixAnchors_DropsOnlyTheImpreciseMembers(t *testing.T) {
 			"the glued token failed the shape test, so no member records the loss - same standing as a silence")
 	})
 
+	t.Run("a backticked citation survives an incidental glued call of the same name", func(t *testing.T) {
+		text := "call `" + genuine + "` here, as in " + genuine + "() below"
+		assert.Equal(t, []string{genuine}, extractFixAnchors(text),
+			"the backticked citation is a clean contribution: an incidental glued call of the same name must not take it down")
+	})
+
 	t.Run("an ordinary FIX keeps its whole set", func(t *testing.T) {
 		assert.Equal(t, []string{"parseTree", "readTree"},
 			extractFixAnchors("call `readTree` then `parseTree`"))
