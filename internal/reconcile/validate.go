@@ -133,7 +133,7 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 			tier4 = newTier4Index(root, idx.Paths())
 		}
 		problemAnchors, problemScan := scanProblemAnchors(findings[i].Problem)
-		problemTruncated := problemScan.capped || problemScan.lostSpan
+		problemTruncated := problemScan.truncated()
 		// The FIX narrows rather than nils: extractFixAnchors drops the anchors
 		// a call-scan fidelity loss actually touched, and abandons the set whole
 		// for the cap OR for a fidelity loss that left no member behind (its
@@ -173,6 +173,14 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 			// Downgrading to tier4Inconclusive costs a suggestion and can never
 			// route a finding out — no-match is a different arm — so it is the
 			// same safe direction the FIX side takes.
+			//
+			// Scoped to `unaccounted`, NOT to `capped`, and the asymmetry with
+			// the FIX side (which abandons on both) is deliberate. The cap
+			// leaves the same kind of hole — a dropped member could have
+			// disagreed — but it only fires on a PROBLEM naming more than
+			// maxAnchorsPerFinding identifiers, so refusing there would cost the
+			// suggestion on every densely-cited finding to close a shape nobody
+			// has measured. Disclosed rather than folded in.
 		case outcome == tier4Resolved:
 			findings[i].PathSuggestion = suggestion
 		case outcome == tier4NoMatch && !problemTruncated:

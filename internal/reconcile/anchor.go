@@ -101,7 +101,14 @@ const minAnchorLen = 3
 // qualifies.
 func extractAnchorSet(text string) (anchors []string, truncated bool) {
 	anchors, s := scanProblemAnchors(text)
-	return anchors, s.capped || s.lostSpan
+	return anchors, s.truncated()
+}
+
+// truncated is the flat flag extractAnchorSet returns, as ONE definition. Both
+// the wrapper and validate.go need it, and spelling `capped || lostSpan` twice
+// is how the two would drift when a third loss is added.
+func (s anchorScan) truncated() bool {
+	return s.capped || s.lostSpan
 }
 
 // scanProblemAnchors is extractAnchorSet with the scan's fidelity-loss detail
