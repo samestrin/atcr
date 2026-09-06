@@ -41,6 +41,34 @@ func TestExtractAnchors_CapPrefersDelimitedAnchors(t *testing.T) {
 	assert.True(t, truncated, "the cap fired, so the set is still a prefix of what the text named")
 }
 
+// TestExtractAnchors_CapEvictsImpreciseBeforeAFaithfulCallShape pins the
+// no-backtick half of the provenance rule: a BARRED boundary-cut anchor must not
+// rank as a faithful member of the call-shape class. Nine call-shape candidates
+// against a cap of eight — 配置ParseConfig() is barred (the spaceless-script
+// boundary cut its name down to a tail that may not be what the reviewer wrote),
+// the eight zzCallN() calls are read faithfully — so the cap must evict the
+// barred member, not the lexically-last faithful one.
+//
+// Before the third provenance rank this fixture returned [ParseConfig zzCallA..
+// zzCallG]: "ParseConfig" sorts before every "zzCallN" by codepoint, so the
+// lexical tiebreak inside the single call-shape class kept the dead weight and
+// evicted the one anchor that genuinely sources a file.
+func TestExtractAnchors_CapEvictsImpreciseBeforeAFaithfulCallShape(t *testing.T) {
+	problem := "配置ParseConfig()"
+	for _, n := range []string{"zzCallA", "zzCallB", "zzCallC", "zzCallD", "zzCallE", "zzCallF", "zzCallG", "zzCallH"} {
+		problem += " " + n + "()"
+	}
+
+	got, truncated := extractAnchorSet(problem)
+
+	require.True(t, truncated, "nine call-shape candidates against a cap of eight: the cap must have fired")
+	assert.Equal(t,
+		[]string{"zzCallA", "zzCallB", "zzCallC", "zzCallD", "zzCallE", "zzCallF", "zzCallG", "zzCallH"}, got,
+		"every faithful call-shape anchor survives; the barred boundary-cut tail is evicted first")
+	assert.NotContains(t, got, "ParseConfig",
+		"an imprecise anchor is the cap's first eviction, ahead of every faithful call shape")
+}
+
 // TestExtractAnchors_CapIsStillLexicalWithinOneProvenance guards the other half of
 // the same rule: within a single provenance class nothing changed, so a finding
 // naming only backticked identifiers is capped exactly as it was before.
