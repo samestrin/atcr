@@ -1226,3 +1226,59 @@ func TestScanFixAnchors_SilencedSpanReconciledAgainstClean(t *testing.T) {
 	assert.Equal(t, []string{name}, fixAnchors,
 		"the set is no longer abandoned whole, so the intact precise anchor survives")
 }
+
+// TestReconcileSilenced_BothConditionsAreRequired pins reconcileSilenced's
+// contract at the unit level, because its two conjuncts are not equally
+// observable through scanAnchors.
+//
+// A loss is retracted only when the destroyed token was cited CLEANLY and
+// SURVIVES the anchor cap. The cap half is reachable from text and is pinned by
+// the table above ("the vouching token is dropped by the anchor cap"). The clean
+// half is not: to separate it you need a token that is simultaneously a silence
+// subject and contributed only by a GLUED span, and the boundary rules make that
+// shape unreachable today — a glued token must cross two spaceless scripts while
+// a silence subject must lead with an underscore after the break.
+//
+// That makes the clean conjunct defensive rather than currently load-bearing,
+// which is a reason to pin its MEANING here, not a reason to drop it: membership
+// in `anchors` says a token was collected, and `clean` says it was read
+// faithfully. Only the second is evidence about what the reviewer wrote, and if
+// the boundary rules ever widen, a glued misreading would otherwise start
+// vouching for the very loss it is an instance of.
+func TestReconcileSilenced_BothConditionsAreRequired(t *testing.T) {
+	set := func(toks ...string) map[string]struct{} {
+		m := make(map[string]struct{}, len(toks))
+		for _, tk := range toks {
+			m[tk] = struct{}{}
+		}
+		return m
+	}
+
+	t.Run("cited cleanly AND in the post-cap set retracts the loss", func(t *testing.T) {
+		assert.False(t, reconcileSilenced(set("parseTree"), set("parseTree"), []string{"parseTree"}),
+			"both conditions hold: the name is not unknowable")
+	})
+
+	t.Run("cited cleanly but capped OUT of the set keeps it", func(t *testing.T) {
+		assert.True(t, reconcileSilenced(set("parseTree"), set("parseTree"), []string{"other"}),
+			"locate is given the post-cap set, so a token that is not in it cannot "+
+				"stand as proof the set is complete")
+	})
+
+	t.Run("in the set but never cited cleanly keeps it", func(t *testing.T) {
+		assert.True(t, reconcileSilenced(set("parseTree"), set(), []string{"parseTree"}),
+			"membership says the token was COLLECTED; only `clean` says it was read "+
+				"faithfully, and only the second is evidence about what the reviewer wrote")
+	})
+
+	t.Run("a second unvouched loss keeps the flag", func(t *testing.T) {
+		assert.True(t,
+			reconcileSilenced(set("parseTree", "readTree"), set("parseTree"), []string{"parseTree"}),
+			"retraction is per token: one vouched loss does not clear another")
+	})
+
+	t.Run("no recorded loss is not a loss", func(t *testing.T) {
+		assert.False(t, reconcileSilenced(set(), set("parseTree"), []string{"parseTree"}),
+			"nothing was silenced, so there is nothing to retract or keep")
+	})
+}
