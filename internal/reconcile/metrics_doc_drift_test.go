@@ -122,27 +122,43 @@ func TestMetricsDocEveryTier4RowMapsToALiveConstant(t *testing.T) {
 			"zero matches means the row regex drifted from the table shape")
 }
 
-// TestMetricsDocProblemSetUnaccountedRowMatchesTheCode pins the two claims the
-// row got wrong, which are the two an operator acts on.
+// TestMetricsDocProblemSetUnaccountedRowMatchesTheCode pins the claims the
+// row got wrong, which are the ones an operator acts on.
 //
 // The row described the arm as "the PROBLEM anchor set resolved to exactly one
 // file". validate.go reads `outcome == tier4Resolved`, and resolve produces that
 // from locate(primary) AND from locate(secondary) under a matched primary — so
 // the counter also fires when the PROBLEM set localized nothing and the FIX set
-// produced the file. The row also omitted that it is a LOWER BOUND, which its
-// sibling FIX rows disclose: when the FIX is unaccounted too, resolve yields
-// tier4Inconclusive, the arm is never reached, and the counter stays flat
-// although a suggestion was equally lost.
+// produced the file. The row also omitted that it is a LOWER BOUND, and once
+// that was added it overstated it: the suppression holds only when the PROBLEM
+// set does not itself localize, because resolve returns at locate(primary)
+// before the secondary branch is ever consulted.
+//
+// The assertions name the affirmative phrasings, not bare keywords: a bare
+// Contains(row, "secondary") or Contains(row, "lower bound") passes on a row
+// that merely mentions the words inside a negation — "not sourced from the
+// secondary set" — which is the over-claim shape this guard was written to
+// remove, not to re-admit through the back door.
 func TestMetricsDocProblemSetUnaccountedRowMatchesTheCode(t *testing.T) {
 	row, ok := metricsDocRow(t, tier4ProblemSetUnaccountedMetric)
 	require.True(t, ok, "precondition: the row exists")
 
-	assert.Contains(t, row, "secondary",
-		"the row must name BOTH tier4Resolved producers: a reader told only about "+
-			"the PROBLEM set will misread every firing sourced from the FIX set")
-	assert.Contains(t, row, "lower bound",
-		"the row must disclose that it undercounts — when the FIX is unaccounted too "+
-			"the arm is never reached and the counter stays flat on an equal loss")
+	assert.Contains(t, row, "locate(primary)",
+		"the row must name the PRIMARY producer of tier4Resolved: a reader told "+
+			"only about the PROBLEM set will misread every firing sourced from the "+
+			"FIX set")
+	assert.Contains(t, row, "locate(secondary)",
+		"the row must name the SECONDARY producer under a matched primary, for "+
+			"the same reason")
+
+	assert.Regexp(t, regexp.MustCompile(`(?i)it is a \*?\*?lower bound`), row,
+		"the row must disclose affirmatively that it undercounts — 'this is not "+
+			"a lower bound' satisfies a bare keyword check and is exactly the "+
+			"wrong claim")
+	assert.Contains(t, row, "does not itself localize",
+		"the lower-bound sentence must carry its scope: resolve returns at "+
+			"locate(primary) when the PROBLEM set localizes, so an unconditional "+
+			"flatness claim describes behavior resolve does not have")
 }
 
 // TestMetricsDocContradictedRowLeadsWithItsNotClause pins the wording discipline
