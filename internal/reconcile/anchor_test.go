@@ -1042,3 +1042,263 @@ func TestDroppedFixAnchors_AbandonedArmsWithhold(t *testing.T) {
 			"the third disjunct: no member was narrowed out")
 	})
 }
+
+// TestScanAnchors_SilencedSpanReconciledAgainstClean pins the PROBLEM-side half
+// of the completeness argument that scanAnchors already makes for `imprecise`.
+//
+// `unaccounted` means "a fidelity loss left NO member behind, so what that span
+// would have named is unknowable". That claim is false the moment the SAME text
+// cites the destroyed name faithfully somewhere else: the name is not unknowable,
+// it is sitting in `scan.anchors`, and the counters and the withheld
+// PathSuggestion built on the flag inherit the error.
+//
+// scanAnchors already resolves exactly this conflict for `imprecise` — a token a
+// clean span also contributed is not imprecise (the delete-loop below the call
+// scan). This is that loop's counterpart for `unaccounted`, and it is written the
+// same way and in the same place for the same reason: `clean` is still being
+// filled WHILE collectCallAnchors runs, so a decision taken inline would depend
+// on whether the clean citation happened to appear before or after the silenced
+// span in the text.
+//
+// Measured at the parent branch's HEAD, both rows below reported
+// `unaccounted=true`; only the second one should.
+func TestScanAnchors_SilencedSpanReconciledAgainstClean(t *testing.T) {
+	settei := string([]rune{0x8A2D, 0x5B9A}) // 設定
+	han := string([]rune{0x89E3, 0x6790})    // 解析
+	name := settei + "_a"                    // 設定_a
+	// 設定_abc — the same spaceless-prefix shape as `name`, but with a tail long
+	// enough that the FRAGMENT `_abc` qualifies on its own. That is the whole
+	// difference between the two: `_a` fails minAnchorLen, `_abc` does not.
+	nameLongTail := settei + "_abc"
+	// 設定を解析_処理 — spaceless prose welded to a snake_case call name.
+	glued := string([]rune{0x8A2D, 0x5B9A, 0x3092, 0x89E3, 0x6790, 0x005F, 0x51E6, 0x7406})
+
+	cases := []struct {
+		name            string
+		text            string
+		wantUnaccounted bool
+		wantAnchors     []string
+		why             string
+	}{
+		{
+			name:            "backticked before the qualified call",
+			text:            "`" + name + "` is broken; pkg." + name + "() returns nil",
+			wantUnaccounted: false,
+			wantAnchors:     []string{name},
+			why: "the destroyed name was cited cleanly two words earlier and is " +
+				"already in the anchor set: nothing about it is unknowable",
+		},
+		{
+			name:            "backticked AFTER the qualified call",
+			text:            "pkg." + name + "() returns nil; see `" + name + "`",
+			wantUnaccounted: false,
+			wantAnchors:     []string{name},
+			why: "order must not decide it — the reconciliation runs after the " +
+				"scan, not inline where `clean` is still being filled",
+		},
+		{
+			name:            "cited cleanly by a QUOTED span, not a backticked one",
+			text:            `pkg.` + name + `() returns nil, see "` + name + `"`,
+			wantUnaccounted: false,
+			wantAnchors:     []string{name},
+			why: "every delimiter collectDelimitedAnchors scans contributes to `clean`, " +
+				"so the reconciliation must key on the set and not on the backtick",
+		},
+		{
+			name:            "the same name called again, still spaceless-broken",
+			text:            "pkg." + name + "() returns nil, unlike " + name + "()",
+			wantUnaccounted: true,
+			wantAnchors:     nil,
+			why: "a bare call of the same name is silenced by the SAME boundary rule, " +
+				"so it is not a clean citation and cannot vouch for the loss " +
+				"(measured: anchors=[] for this text)",
+		},
+		{
+			name:            "no clean citation anywhere in the text",
+			text:            "pkg." + name + "() returns nil",
+			wantUnaccounted: true,
+			wantAnchors:     nil,
+			why: "nothing contradicts the loss, so it stands: this is the row the " +
+				"silence guard exists for",
+		},
+		{
+			name:            "a DIFFERENT name is cited cleanly",
+			text:            "pkg." + name + "() returns nil, see `retryOnce`",
+			wantUnaccounted: true,
+			wantAnchors:     []string{"retryOnce"},
+			why: "reconciliation is per-TOKEN, not per-scan: a clean citation of " +
+				"some other name says nothing about what the break destroyed",
+		},
+		{
+			name:            "the FRAGMENT is cited cleanly, not the destroyed name",
+			text:            "`_a` is odd; pkg." + name + "() returns nil",
+			wantUnaccounted: true,
+			wantAnchors:     nil,
+			why: "the record is keyed on the FULL run's trailing segment, which is " +
+				"what the break destroyed — vouching for the boundary-reduced " +
+				"fragment vouches for nothing",
+		},
+		{
+			name:            "the QUALIFIER is cited cleanly, not the destroyed name",
+			text:            "`pkg` is odd; pkg." + name + "() returns nil",
+			wantUnaccounted: true,
+			wantAnchors:     nil,
+			why: "trailingSegment strips the qualifier before the record is keyed, so " +
+				"a clean citation of `pkg` cannot vouch for " + name,
+		},
+		{
+			name: "the vouching token is dropped by the anchor cap",
+			text: "`aOne` `bTwo` `cThree` `dFour` `eFive` `fSix` `gSeven` `hEight` " +
+				"`" + name + "` broken; pkg." + name + "() returns nil",
+			wantUnaccounted: true,
+			wantAnchors:     []string{"aOne", "bTwo", "cThree", "dFour", "eFive", "fSix", "gSeven", "hEight"},
+			why: "the citation must vouch from the set locate is actually GIVEN. " +
+				"maxAnchorsPerFinding slices the sorted set to 8 and " + name +
+				" sorts after every ASCII name, so it is cited cleanly and then " +
+				"thrown away - suppressing on it would stamp a suggestion sourced " +
+				"from the survivors alone, which is the wrong-file answer the " +
+				"complete set refused",
+		},
+		{
+			name:            "the FRAGMENT the predicate judged is the one cited cleanly",
+			text:            "`_" + han + "` is broken; parse_" + han + "() fails",
+			wantUnaccounted: false,
+			wantAnchors:     []string{"_" + han},
+			why: "this span is silenced by the FRAGMENT disjunct, which judges `_解析` " +
+				"and not the full run - so `_解析` is what the loss destroyed, it is " +
+				"cited in backticks, and the epic's success criterion (a name the " +
+				"reviewer cited cleanly is never an unknowable loss) applies to it",
+		},
+		{
+			name:            "the FRAGMENT is cited cleanly and QUALIFIES, but a spaceless prefix was dropped",
+			text:            "`_abc` is odd; " + nameLongTail + "() returns nil",
+			wantUnaccounted: true,
+			wantAnchors:     []string{"_abc"},
+			why: "the row above it judges a SPACING prefix (`parse`), where the fragment " +
+				"really is the name the reviewer meant. Here the break dropped a " +
+				"SPACELESS prefix, so 設定_abc is one written name and `_abc` is a " +
+				"boundary artefact of it — the same reason the `lost` decision " +
+				"already asks its question of the full run in this case. Vouching " +
+				"for the artefact retracts the loss for a name that is NOT in the " +
+				"anchor set",
+		},
+		{
+			name:            "the surviving anchor is GLUED, so it vouches for nothing",
+			text:            glued + "() is wrong and pkg." + name + "() returns nil",
+			wantUnaccounted: true,
+			wantAnchors:     []string{glued},
+			why: "membership in the anchor set is necessary but not sufficient: a glued " +
+				"span's token may be an unfaithful reading of what the reviewer " +
+				"wrote, so it is in `anchors` and `imprecise` but never in `clean` " +
+				"and may not retract anyone's loss - least of all its own",
+		},
+		{
+			name:            "two silenced spans, only one of them vouched for",
+			text:            "`" + name + "` broken; pkg." + name + "() and parse._" + han + "()",
+			wantUnaccounted: true,
+			wantAnchors:     []string{name},
+			why: "the record is a SET, so subtracting `clean` clears only the vouched " +
+				"token; the second span's loss is still unknowable and the flag " +
+				"must still stand — a per-scan boolean would have collapsed here",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := scanAnchors(tc.text)
+
+			assert.Equal(t, tc.wantUnaccounted, s.unaccounted, tc.why)
+
+			// lostSpan is deliberately NOT reconciled. `truncated` is built from
+			// it and the no-match direction reads that, so clearing it here
+			// would make tier4NoMatch reachable where it was not before — the
+			// one thing this repair must never do.
+			assert.True(t, s.lostSpan,
+				"the span really did lose fidelity; only the UNKNOWABILITY claim is retracted")
+
+			// The exact SET is asserted, not just membership: four rows above
+			// claim an EMPTY set in their prose ('measured: anchors=[] for
+			// this text'), and unaccounted's whole meaning — a loss left NO
+			// member behind — depends on it. A regression that started
+			// collecting a spurious anchor on those texts previously passed.
+			assert.Equal(t, tc.wantAnchors, s.anchors, tc.why)
+		})
+	}
+}
+
+// TestScanFixAnchors_SilencedSpanReconciledAgainstClean is the FIX-side
+// consequence of the reconciliation above, and it needs no separate repair:
+// scanFixAnchors abandons the whole set on `s.unaccounted`, so a PROBLEM-side
+// correction of that flag reaches the FIX side through the same field.
+//
+// Measured at the parent branch's HEAD this text yielded `fixAnchors=[]` while
+// `fixScan.anchors` held the intact precise anchor — an anchor discarded, and
+// atcr_tier4_fix_set_unaccounted_total incremented, for a name the text spelled
+// out faithfully.
+func TestScanFixAnchors_SilencedSpanReconciledAgainstClean(t *testing.T) {
+	settei := string([]rune{0x8A2D, 0x5B9A}) // 設定
+	name := settei + "_a"
+	text := "`" + name + "` is broken; pkg." + name + "() returns nil"
+
+	fixAnchors, s := scanFixAnchors(text)
+
+	require.False(t, s.unaccounted, "precondition: the loss is reconciled away")
+	assert.Equal(t, []string{name}, fixAnchors,
+		"the set is no longer abandoned whole, so the intact precise anchor survives")
+}
+
+// TestReconcileSilenced_BothConditionsAreRequired pins reconcileSilenced's
+// contract at the unit level, because its two conjuncts are not equally
+// observable through scanAnchors.
+//
+// A loss is retracted only when the destroyed token was cited CLEANLY and
+// SURVIVES the anchor cap. The cap half is reachable from text and is pinned by
+// the table above ("the vouching token is dropped by the anchor cap"). The clean
+// half is not: to separate it you need a token that is simultaneously a silence
+// subject and contributed only by a GLUED span, and the boundary rules make that
+// shape unreachable today — a glued token must cross two spaceless scripts while
+// a silence subject must lead with an underscore after the break.
+//
+// That makes the clean conjunct defensive rather than currently load-bearing,
+// which is a reason to pin its MEANING here, not a reason to drop it: membership
+// in `anchors` says a token was collected, and `clean` says it was read
+// faithfully. Only the second is evidence about what the reviewer wrote, and if
+// the boundary rules ever widen, a glued misreading would otherwise start
+// vouching for the very loss it is an instance of.
+func TestReconcileSilenced_BothConditionsAreRequired(t *testing.T) {
+	set := func(toks ...string) map[string]struct{} {
+		m := make(map[string]struct{}, len(toks))
+		for _, tk := range toks {
+			m[tk] = struct{}{}
+		}
+		return m
+	}
+
+	t.Run("cited cleanly AND in the post-cap set retracts the loss", func(t *testing.T) {
+		assert.False(t, reconcileSilenced(set("parseTree"), set("parseTree"), []string{"parseTree"}),
+			"both conditions hold: the name is not unknowable")
+	})
+
+	t.Run("cited cleanly but capped OUT of the set keeps it", func(t *testing.T) {
+		assert.True(t, reconcileSilenced(set("parseTree"), set("parseTree"), []string{"other"}),
+			"locate is given the post-cap set, so a token that is not in it cannot "+
+				"stand as proof the set is complete")
+	})
+
+	t.Run("in the set but never cited cleanly keeps it", func(t *testing.T) {
+		assert.True(t, reconcileSilenced(set("parseTree"), set(), []string{"parseTree"}),
+			"membership says the token was COLLECTED; only `clean` says it was read "+
+				"faithfully, and only the second is evidence about what the reviewer wrote")
+	})
+
+	t.Run("a second unvouched loss keeps the flag", func(t *testing.T) {
+		assert.True(t,
+			reconcileSilenced(set("parseTree", "readTree"), set("parseTree"), []string{"parseTree"}),
+			"retraction is per token: one vouched loss does not clear another")
+	})
+
+	t.Run("no recorded loss is not a loss", func(t *testing.T) {
+		assert.False(t, reconcileSilenced(set(), set("parseTree"), []string{"parseTree"}),
+			"nothing was silenced, so there is nothing to retract or keep")
+	})
+}

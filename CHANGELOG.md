@@ -1,3 +1,21 @@
+## [35.16.6.8.1.1.1] - 2026-09-06
+
+*Epic 35.16.6.8.1.1.1 — post-review residue from epic 35.16.6.8.1.1: anchor-set completeness and Tier-4 counter semantics.*
+
+### Added
+- A sixth Tier-4 counter, `atcr_tier4_fix_set_contradicted_total`, for the dropped-anchor veto. That arm produces a file and withholds it, returns "could not check", changes no field, and renders identically to two other outcomes — so it was the one remaining withhold path attributable only indirectly, through a counter (`atcr_tier4_fix_anchor_dropped_total`) that fires for every narrowing and therefore cannot isolate it. Documented in `docs/metrics.md`, written denial-first.
+
+### Fixed
+- A name the reviewer cited faithfully is no longer counted as an unknowable loss. A silenced span reported that what it destroyed was unknowable even when that exact name sat in the anchor set, cited in backticks two words earlier — so a CORRECT path suggestion (the subject's own file) was withheld and charged to telemetry as a loss. Measured: ``​`設定_a` is broken; pkg.設定_a() returns nil`` stamped `pkg/a.go` before the previous release and nothing after, with `atcr_tier4_problem_set_unaccounted_total` incrementing. The scan now records WHICH token each loss would have named and retracts the claim only for a token that was both cited cleanly and survives the anchor cap into the set the resolver is actually given — so a name the cap drops, and a glued re-reading of a name, still vouch for nothing. The same correction reaches the FIX side through the same field, so an intact precise anchor is no longer discarded alongside the silenced one.
+- `atcr_tier4_fix_set_unaccounted_total` no longer counts findings whose FIX never had an anchor set. The arm claimed a set was "abandoned whole" without the emptiness guard its sibling arm has always carried, so a FIX whose only span was a silenced one incremented an abandonment counter for an abandonment that could not have happened. Anyone summing the FIX-loss counters to estimate suggestions lost to anchor fidelity over-counted by exactly that population.
+
+### Changed
+- `atcr_tier4_problem_set_unaccounted_total`'s documentation named one of the arm's two producers and did not disclose that it undercounts. The arm reads a resolved outcome, and the resolver reaches that from the PROBLEM set AND from the FIX set under a matched primary, so the counter also fires when the PROBLEM set localized nothing. It is also a lower bound: when a finding's FIX is unaccounted too, the secondary branch cannot fire, the arm is never reached, and the counter stays flat although a suggestion was equally lost. Both corrections are now in `docs/metrics.md` and in the constant's own doc.
+- **Correction to the previous release's note:** that entry said `PathWarning` without a `PathSuggestion` conflated *three* distinct meanings. There were four — the dropped-anchor veto renders identically and was uncounted. The counter added there took the ambiguity from four to three, not to one; the veto counter added in this release closes the remaining gap.
+- `docs/metrics.md` and the constant docs now disclose the emptiness guard's exclusion, and a new drift test in `internal/reconcile/` reads the published catalog and fails when a counter constant has no row of its own, when the row's denial is not written first, or when its wording drifts from what the code does. The catalog is published for operators, so a row that over-claims misleads exactly the reader it exists for.
+
+*Shipped via /execute-epic (epic 35.16.6.8.1.1.1)*
+
 ## [35.16.6.8.1.1] - 2026-09-05
 
 *Epic 35.16.6.8.1.1 — post-review residue from epic 35.16.6.8.1 rounds 4+5.*
