@@ -2318,3 +2318,86 @@ func TestSymbolIndex_SpacelessScriptProseResolves(t *testing.T) {
 		})
 	}
 }
+
+// TestSymbolIndex_ContradictsBoundary pins all four branches of contradicts'
+// `len(files) == 1` predicate against a hand-built byName map.
+//
+// The veto branch alone was asserted, so the boundary survived mutation with
+// the whole suite green: replacing `len(files) == 1` with `len(files) >= 1` left
+// `go test ./internal/reconcile/` passing. Under that mutant a dropped anchor
+// merely too COMMON to localize (files[0] happens not to be the located file)
+// falsely vetoes, silently suppressing a CORRECT PathSuggestion, and nothing in
+// the suite reddens.
+//
+// contradicts is the veto half of the per-anchor drop and only the veto half: a
+// dropped anchor never NAMES the file. So the three non-veto branches are the
+// contract as much as the veto one — each is a distinct reason a dropped name is
+// not disagreement, and each must stay asserted independently.
+func TestSymbolIndex_ContradictsBoundary(t *testing.T) {
+	const located = "pkg/tree.go"
+
+	idx := &symbolIndex{byName: map[string][]string{
+		"onlyElsewhere": {"pkg/other.go"},
+		"inLocated":     {located},
+		"tooCommon":     {"pkg/one.go", "pkg/two.go"},
+		// A third file on the common name so the mutant cannot be satisfied by
+		// a two-element slice alone.
+		"veryCommon": {"pkg/one.go", "pkg/two.go", "pkg/three.go"},
+	}}
+
+	cases := []struct {
+		name    string
+		dropped []string
+		want    bool
+		why     string
+	}{
+		{
+			name:    "declared nowhere is not disagreement",
+			dropped: []string{"absentEverywhere"},
+			want:    false,
+			why:     "locate ignores an absent anchor, so the veto must ignore it too",
+		},
+		{
+			name:    "declared in exactly one OTHER file is disagreement",
+			dropped: []string{"onlyElsewhere"},
+			want:    true,
+			why:     "this is the disagreement locate would have refused on had the anchor still been in its set",
+		},
+		{
+			name:    "declared in two files is too common to localize",
+			dropped: []string{"tooCommon"},
+			want:    false,
+			why:     "locate skips a name declared in more than one file; a veto here suppresses a correct suggestion",
+		},
+		{
+			name:    "declared in three files is too common to localize",
+			dropped: []string{"veryCommon"},
+			want:    false,
+			why:     "same branch, past a two-element slice, so a >= 1 mutant cannot pass on arity alone",
+		},
+		{
+			name:    "declared in the located file itself agrees",
+			dropped: []string{"inLocated"},
+			want:    false,
+			why:     "the dropped name points at the SAME file: agreement, never disagreement",
+		},
+		{
+			name:    "no dropped anchors at all",
+			dropped: nil,
+			want:    false,
+			why:     "nothing was narrowed out, so there is nothing to veto with",
+		},
+		{
+			name:    "one disagreeing name among agreeing and absent ones still vetoes",
+			dropped: []string{"inLocated", "absentEverywhere", "tooCommon", "onlyElsewhere"},
+			want:    true,
+			why:     "the veto is existential: one disagreement is enough",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, idx.contradicts(located, tc.dropped), tc.why)
+		})
+	}
+}

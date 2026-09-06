@@ -44,6 +44,27 @@ const minAnchorLen = 3
 // caller must never reach a no-match verdict on a truncated set: the one anchor
 // that would have matched may be among the ones it did not faithfully recover.
 //
+// Read that as a claim about those two losses ONLY, never as "truncated=false
+// means the set is faithful". One unfaithful reading is known to return FALSE:
+// a mixed name with no underscore truncates to its Latin tail and can be
+// CONFIDENTLY misattributed to another declaration of that tail — measured,
+// `使用ParseConfig() here` yields anchors=[ParseConfig] truncated=false. That
+// case is disclosed at isWordBoundary's doc (the `ตัวแปรParseConfig` paragraph)
+// and is tracked as follow-on work; it is deliberately NOT folded in here,
+// because the two losses above are ones the scan detects as it makes them and
+// this one is not detected at all. A caller that needs "the set is faithful"
+// rather than "these two losses did not occur" does not have it from this flag.
+//
+// A second unfaithful reading is also known to return FALSE, and this one is
+// ACCEPTED rather than tracked: a qualifier between same-script prose and the
+// name. `設定._解析()` records `_解析` with truncated=false — trailingSegment
+// strips `設定.`, and because 設定 and 解析 share a script no word boundary
+// fires, so the leading-underscore suppression in collectCallAnchors is never
+// consulted. `_解析` is exactly the confidently-misattributable fragment that
+// suppression exists to stop, reached by a third mechanism (a qualifier
+// between same-script prose and the name) rather than by a boundary. Closing
+// it means widening the boundary rule, which the epic's own scope rules out.
+//
 // The flag deliberately covers BOTH losses through one channel. The cap drops
 // whole anchors; the call scan can instead return a token the reviewer did not
 // write (spaceless prose glued to a call name) or return nothing for a span it
@@ -79,13 +100,86 @@ const minAnchorLen = 3
 // The returned slice is deduped and lexically sorted; nil when nothing
 // qualifies.
 func extractAnchorSet(text string) (anchors []string, truncated bool) {
+	anchors, s := scanProblemAnchors(text)
+	return anchors, s.truncated()
+}
+
+// truncated is the flat flag extractAnchorSet returns, as ONE definition. Both
+// the wrapper and validate.go need it, and spelling `capped || lostSpan` twice
+// is how the two would drift when a third loss is added.
+func (s anchorScan) truncated() bool {
+	return s.capped || s.lostSpan
+}
+
+// scanProblemAnchors is extractAnchorSet with the scan's fidelity-loss detail
+// preserved, the PROBLEM-side sibling of scanFixAnchors.
+//
+// The PROBLEM set is never narrowed — a glued member may still be the subject,
+// and dropping it would manufacture the no-match verdict this tier exists to
+// withhold — so the anchors it returns are exactly extractAnchorSet's. What the
+// scan carries that the flat flag cannot is `unaccounted`: a loss with NO member
+// to point at, whose name is unknowable. locate() refuses when two precise
+// anchors DISAGREE, so its verdict rests on the set being COMPLETE as well as
+// faithful, and a silenced span is exactly the member whose answer is unknown.
+// validate.go must therefore be able to tell that loss apart from the cap, which
+// `truncated` folds it in with.
+func scanProblemAnchors(text string) ([]string, anchorScan) {
+	s := scanAnchors(text)
+	return s.anchors, s
+}
+
+// anchorScan is one extraction's full result, kept unflattened for the one
+// consumer that must tell the two losses apart.
+//
+// `truncated` is deliberately ONE flag on the SET, and stays that way: the
+// no-match direction reads it and must get exactly one condition right (see
+// extractAnchorSet's doc). This struct does not add a second flag beside it —
+// it records WHICH anchors a fidelity loss touched, which is a different
+// question and the only one a per-anchor repair can be built on.
+type anchorScan struct {
+	// anchors is the deduped, sorted, capped set - what extractAnchorSet returns.
+	anchors []string
+	// capped reports that maxAnchorsPerFinding dropped whole anchors. The set is
+	// a PREFIX of what the text named and the dropped members are unknowable.
+	capped bool
+	// lostSpan reports that the call scan lost fidelity on at least one span,
+	// whether or not that span contributed an anchor (a silenced span
+	// contributes none).
+	lostSpan bool
+	// unaccounted reports that at least one such loss left NO member behind, so
+	// it cannot be repaired by dropping one. What that span would have named is
+	// unknowable, exactly as the cap's dropped anchors are.
+	unaccounted bool
+	// imprecise holds the tokens a glued span contributed AND no clean span (a
+	// delimited citation or an unglued call) did. Every token in it may
+	// be an unfaithful reading of what the reviewer wrote; every member of
+	// anchors NOT in it is faithful WITH RESPECT TO THE LOSSES THIS SCAN DETECTS
+	// — the undetected mixed-no-underscore Latin-tail reading disclosed at
+	// extractAnchorSet's doc is not covered by that claim. It is keyed on what
+	// the scan recorded, not on the post-cap slice, so it can name a token the
+	// cap later dropped — harmless, since it is only ever consulted as a set to
+	// exclude.
+	imprecise map[string]struct{}
+}
+
+func scanAnchors(text string) anchorScan {
 	seen := make(map[string]struct{})
+	clean := make(map[string]struct{})
 	for _, d := range anchorDelimiters {
-		collectDelimitedAnchors(text, byte(d), seen)
+		collectDelimitedAnchors(text, byte(d), seen, clean)
 	}
-	imprecise := collectCallAnchors(text, seen)
+	imprecise := make(map[string]struct{})
+	lostSpan, unaccounted := collectCallAnchors(text, seen, clean, imprecise)
+	// A token a clean span also contributed was read faithfully at least once,
+	// so the glued reading is not the only evidence for it: it is not
+	// imprecise. Only a token whose EVERY contribution came from a glued span
+	// stays in the set.
+	for tok := range clean {
+		delete(imprecise, tok)
+	}
+	scan := anchorScan{lostSpan: lostSpan, unaccounted: unaccounted, imprecise: imprecise}
 	if len(seen) == 0 {
-		return nil, imprecise
+		return scan
 	}
 	out := make([]string, 0, len(seen))
 	for tok := range seen {
@@ -93,9 +187,130 @@ func extractAnchorSet(text string) (anchors []string, truncated bool) {
 	}
 	sort.Strings(out)
 	if len(out) > maxAnchorsPerFinding {
-		return out[:maxAnchorsPerFinding], true
+		scan.anchors, scan.capped = out[:maxAnchorsPerFinding], true
+		return scan
 	}
-	return out, imprecise
+	scan.anchors = out
+	return scan
+}
+
+// extractFixAnchors returns the FIX anchors that may ground a PathSuggestion.
+//
+// The FIX set feeds resolve's SECONDARY anchors, which may only LOCALIZE a
+// finding whose subject already matched somewhere in the tree — never route one
+// out (resolve's primaryMatched guard). So the two losses extractAnchorSet folds into
+// `truncated` cost different things here and may not be answered alike:
+//
+//   - The CAP is a PREFIX. Which anchors it dropped is unknowable, so no
+//     statement about the remainder is safe and the set is abandoned whole.
+//     This is the case the flat `if truncated` test was written for.
+//
+//   - A call-scan fidelity loss that CONTRIBUTED a member is per-SPAN. That
+//     member may not be what the reviewer wrote, but every other member still
+//     is — so exactly those members are dropped from the USABLE set and the
+//     rest stand. Dropped is not discarded: see the completeness note below.
+//
+//   - A call-scan fidelity loss that contributed NO member (a silenced span, or
+//     a glued span whose token failed the shape or signal test) has the cap's
+//     standing, not the glued one's, and abandons the set whole.
+//
+// That last case is the one worth stating plainly, because "it contributed
+// nothing, so it drops nothing" is a tempting and WRONG reading of it. Every
+// anchor still present is indeed faithful — but locate() does not only ask
+// whether the members present are faithful. It refuses to answer when two
+// precise anchors DISAGREE, so its verdict depends on the set being complete as
+// well as faithful, and the span that was silenced is exactly the one whose
+// answer is unknowable. Measured: a FIX of “調用_ParseConfig() then `parseTree`
+// “ with _ParseConfig and parseTree declared in different files yields
+// "pkg/tree.go" if the silence is ignored, where the faithful set would have
+// refused on disagreement — precisely the "a wrong guess that suggests the
+// wrong file is worse than no suggestion" rule resolve states for itself.
+//
+// Where a member IS dropped, dropping is the safe direction and nilling never
+// was. Losing a secondary anchor can only cost a suggestion the finding would
+// otherwise have carried; it can never move an outcome toward tier4NoMatch,
+// because the secondary locate is unreachable unless a primary anchor already
+// matched. Measured: a FIX naming one genuine Japanese snake_case call
+// alongside a precise ASCII anchor went tier4Resolved -> tier4Inconclusive
+// under the flat test, losing a correct PathSuggestion to a loss that never
+// touched the anchor that produced it.
+//
+// A dropped member is dropped from what may SOURCE a suggestion, not from what
+// the FIX named. The completeness argument the member-less case rests on cuts
+// here too — locate() refuses when two precise anchors DISAGREE, and a dropped
+// name is just as absent from that comparison as a silenced one — so the
+// dropped members ride along as VETO evidence (droppedFixAnchors, consumed by
+// symbolIndex.resolve). Measured: a FIX of "call `parseTree` instead of
+// データ_解析()" with the two names declared in DIFFERENT files stamped
+// "pkg/tree.go" while the members were merely discarded, where the complete set
+// refuses. Vetoing costs a suggestion and can never route a finding out, so
+// this stays the safe direction while closing the gap.
+//
+// Splitting it that way — dropped may not vote, may still veto — is what keeps
+// the per-anchor drop rather than abandoning the set whole the way the cap and
+// the member-less case do, which is the recorded decision for this seam.
+//
+// An anchor contributed by BOTH a glued span and a clean one (a backticked or
+// quoted citation, or an unglued call of the same name) is KEPT: the clean
+// contribution is proof the scan read the name faithfully at least once, so the
+// glued reading is not the only evidence for it. Only a token whose every
+// contribution came from a glued span is dropped.
+func extractFixAnchors(text string) []string {
+	anchors, _ := scanFixAnchors(text)
+	return anchors
+}
+
+// scanFixAnchors is extractFixAnchors with the scan's fidelity-loss detail
+// preserved, for the one caller (validate.go) that must report WHICH loss
+// fired - cap, member-less, or per-anchor drop - rather than only narrow the
+// set.
+func scanFixAnchors(text string) ([]string, anchorScan) {
+	s := scanAnchors(text)
+	if s.capped || s.unaccounted {
+		return nil, s
+	}
+	if len(s.imprecise) == 0 {
+		return s.anchors, s
+	}
+	out := make([]string, 0, len(s.anchors))
+	for _, tok := range s.anchors {
+		if _, bad := s.imprecise[tok]; !bad {
+			out = append(out, tok)
+		}
+	}
+	if len(out) == 0 {
+		return nil, s
+	}
+	return out, s
+}
+
+// droppedFixAnchors returns the members scanFixAnchors narrowed out of the
+// usable set: the anchors every contribution of which came from a glued span.
+// Sorted (it walks the already-sorted anchors), nil when none.
+//
+// A dropped member may not SOURCE a suggestion — the glued reading may not be
+// what the reviewer wrote, which is why it leaves the usable set. It is still
+// part of what the FIX named, so it may still CONTRADICT one: see resolve's
+// droppedSecondary argument. Discarding it outright left the set incomplete in
+// exactly the way the `unaccounted` arm nils the whole set to avoid.
+//
+// It reports nil on the two arms scanFixAnchors abandons the set for (capped,
+// unaccounted), mirroring that early return: nothing was narrowed away there,
+// so there is no per-anchor drop, and there is no located file for a dropped
+// name to contradict. It also intersects with the POST-cap anchors, since
+// imprecise is keyed on what the scan recorded and can name a token the cap
+// removed.
+func (s anchorScan) droppedFixAnchors() []string {
+	if s.capped || s.unaccounted || len(s.imprecise) == 0 {
+		return nil
+	}
+	var out []string
+	for _, tok := range s.anchors {
+		if _, bad := s.imprecise[tok]; bad {
+			out = append(out, tok)
+		}
+	}
+	return out
 }
 
 // anchorDelimiters are the paired characters a reviewer uses to mark a literal
@@ -119,7 +334,7 @@ const anchorDelimiters = "`\"'"
 // mid-sentence ends only the apostrophe pass; the backtick pass over the same
 // text is unaffected and still finds the identifiers after it. That containment
 // is the whole reason extractAnchorSet runs one pass per delimiter.
-func collectDelimitedAnchors(text string, d byte, seen map[string]struct{}) {
+func collectDelimitedAnchors(text string, d byte, seen, clean map[string]struct{}) {
 	for i := 0; i < len(text); i++ {
 		if text[i] != d {
 			continue
@@ -128,7 +343,9 @@ func collectDelimitedAnchors(text string, d byte, seen map[string]struct{}) {
 		if close < 0 {
 			return // no closer remains anywhere after i: nothing left to pair
 		}
-		addAnchor(text[i+1:i+1+close], seen)
+		if tok := recordedAnchorForm(text[i+1 : i+1+close]); recordAnchor(tok, seen) {
+			clean[tok] = struct{}{} // a delimited span is a faithful contribution
+		}
 		i += close + 1 // resume after the closer, never inside the span
 	}
 }
@@ -152,7 +369,7 @@ func collectDelimitedAnchors(text string, d byte, seen map[string]struct{}) {
 // underscore sitting on the boundary that does fire yields no anchor at all
 // rather than a fragment.
 //
-// imprecise reports that at least one span was NOT faithfully recovered, which
+// lostSpan reports that at least one span was NOT faithfully recovered, which
 // extractAnchorSet folds into its `truncated` return so validate.go cannot reach
 // a no-match verdict on the set. Two spans set it, and both are the SAME
 // undecidability seen from different sides:
@@ -178,7 +395,40 @@ func collectDelimitedAnchors(text string, d byte, seen map[string]struct{}) {
 // confidently misattributed, and an imprecise anchor is right where the token may
 // well be the real name. What neither may do is stand as proof that the tree was
 // searched for what the reviewer actually wrote.
-func collectCallAnchors(text string, seen map[string]struct{}) (imprecise bool) {
+//
+// lostSpan reports a per-SPAN loss and is what `truncated` is built from.
+// impreciseInto receives the subset of `seen` that a glued span contributed,
+// so a consumer that can repair per-anchor has the names and one that cannot
+// still has the flag. clean receives every token a span contributed FAITHFULLY
+// (an unglued call; the delimited scan marks its own), so scanAnchors can keep
+// a name that was read cleanly at least once out of the imprecise set.
+//
+// unaccounted reports that at least one loss left NO member behind — a silenced
+// span whose fragment could have qualified (or carries a combining mark, proof
+// the break landed mid-word), a silenced span whose FULL run could have
+// qualified where the break dropped a spaceless-script prefix, or a glued span
+// whose token failed the shape or signal test. A silence where neither the
+// fragment nor (where it is consulted) the full run could EVER have qualified
+// set nothing here: it lost nothing. The distinction matters to extractFixAnchors
+// and nowhere else: a loss with a member can be repaired by dropping that
+// member, and a loss without one cannot be repaired at all, because what the
+// span would have named is unknowable.
+//
+// Disclosed cost of the full-run question: the same unaccounted=true flows
+// through scanAnchors into scanFixAnchors, which abandons the FIX anchor set
+// WHOLE on it. So for a spaceless-prefix short tail — bare or qualified — an
+// intact, precise, ASCII sibling anchor is discarded along with the silenced
+// one, and atcr_tier4_fix_set_unaccounted_total increments. Measured: a FIX of
+// “call `parseTree` instead of 設定_a()“ yielded [parseTree] before the
+// widening and nothing after, with the scan still seeing parseTree in both.
+//
+// That is the SAFE direction and is why it is disclosed rather than fixed here:
+// an abandoned FIX set can only leave a suggestion unstamped, never route a
+// finding out. locate(nil) fails, so the secondary branch cannot fire, and a
+// matched primary anchor yields tier4Inconclusive ("could not check") rather
+// than tier4NoMatch ("checked and found nothing"), which is the only outcome
+// that sidecar-routes anything.
+func collectCallAnchors(text string, seen, clean, impreciseInto map[string]struct{}) (lostSpan, unaccounted bool) {
 	for i := 0; i < len(text); i++ {
 		if text[i] != '(' {
 			continue
@@ -186,6 +436,7 @@ func collectCallAnchors(text string, seen map[string]struct{}) (imprecise bool) 
 		start := i
 		runScript := scriptUnset
 		atBoundary := false
+		boundaryDroppedSpaceless := false
 		crossedSpaceless := false
 		for start > 0 {
 			r, size := utf8.DecodeLastRuneInString(text[:start])
@@ -195,6 +446,12 @@ func collectCallAnchors(text string, seen map[string]struct{}) (imprecise bool) 
 			if s := spacelessScriptOf(r); s != scriptNeutral {
 				if isWordBoundary(runScript, s) {
 					atBoundary = true
+					// Which side the break DROPPED, which the silence guard
+					// below needs and the fragment cannot report. isWordBoundary
+					// fires only between a spaceless script and a spacing one,
+					// so one side is always each; s is the side being left
+					// behind, and a non-negative s indexes spacelessScripts.
+					boundaryDroppedSpaceless = s >= 0
 					break // the run has left the call name
 				}
 				if runScript != scriptUnset && s != runScript {
@@ -207,16 +464,111 @@ func collectCallAnchors(text string, seen map[string]struct{}) (imprecise bool) 
 		if start == i {
 			continue // "(" with no identifier before it
 		}
-		if atBoundary && text[start] == '_' {
-			imprecise = true
+		// Both underscore tests below read the RECORDED anchor, never the raw
+		// span. The raw span is what the backwards run stopped on; the anchor is
+		// what recordAnchor will actually key the tree search on, and the two
+		// differ by exactly the runes that make these guards leak: a leading
+		// script-neutral rune the break landed on (U+30FC, a combining mark) and
+		// a qualifier trailingSegment strips. Measured against the raw span:
+		// `parseー_解析()` escaped as the fragment `ー_解析`, `parse._解析()` as
+		// `_解析`, and `データ_モジュール.解析()` was marked imprecise although its
+		// only underscore lives in the stripped qualifier.
+		//
+		// The qualifier case NOT caught here: `設定._解析()` — the same shape as
+		// `parse._解析()`, but 設定 and 解析 share a script, so no boundary
+		// fires, atBoundary stays false, and `_解析` is recorded with the set
+		// reported faithful. Accepted, not fixed: closing it means widening the
+		// boundary rule, which the epic's scope rules out. Also disclosed at
+		// extractAnchorSet's doc.
+		anchor := recordedAnchorForm(text[start:i])
+		if atBoundary && leadsWithUnderscore(anchor) {
+			// Silence is a LOSS only when something could have been lost. A
+			// fragment that could never have qualified (`_解` is two runes, a
+			// digit leads) left nothing behind, so the set is still a faithful
+			// read of every name the text could have contributed. The one
+			// exception is a leading combining mark: a mark never starts a
+			// word, so sitting at the break it proves the run stopped mid-word
+			// — the full name may have qualified, and that IS a loss with no
+			// member to point at.
+			r, _ := utf8.DecodeRuneInString(anchor)
+			lost := (isIdentifierShaped(anchor) && hasIdentifierSignal(anchor)) ||
+				unicode.In(r, unicode.Mn, unicode.Mc)
+			// The fragment is the right subject only when the fragment is what
+			// the break could have cost. When the break DROPPED a spaceless-
+			// script prefix, what was destroyed is the whole span name, and a
+			// prefix split off a 1-2 rune tail leaves a fragment that fails
+			// minAnchorLen while the full name is shaped, signalled and
+			// perfectly searchable — `設定_a` behind the fragment `_a`. Ask the
+			// question of the FULL run in that case: no boundary reduction,
+			// because that reduction is exactly what threw the evidence away.
+			//
+			// trailingSegment IS applied, and must be. isQualifiedIdentRune
+			// admits '.', so fullRunStart walks straight back through any
+			// qualifier and hands isIdentifierShaped `pkg.設定_a`, which it
+			// rejects on the '.' — disabling the guard for every qualified
+			// spelling of the very shape it was added for. The declared name
+			// the break destroyed is the trailing segment `設定_a`, so this
+			// branch and the fragment branch above now ask their question of
+			// the same reduction rather than of two different strings.
+			//
+			// The qualifier strip ONLY, deliberately not recordedAnchorForm:
+			// this branch asks whether something COULD have qualified, and the
+			// NFC fold is a normalization of a token that will be recorded, not
+			// a reduction that decides shape. Adding it here would change the
+			// rune count isIdentifierShaped's minAnchorLen reads on a composing
+			// sequence, which is a separate measurement this repair has not
+			// made.
+			//
+			// Deliberately NOT applied when the break dropped a SPACING-script
+			// prefix (`parse_解`). There the boundary rule is reading its own
+			// design case — a spaced-out Latin word running into a name — and
+			// widening the guard to it would refuse a no-match verdict for a
+			// set whose every member is a faithful reading.
+			if !lost && boundaryDroppedSpaceless {
+				full := trailingSegment(text[fullRunStart(text, start):i])
+				lost = isIdentifierShaped(full) && hasIdentifierSignal(full)
+			}
+			if lost {
+				lostSpan = true
+				unaccounted = true // silence: a loss with no member to point at
+			}
 			continue // undecidable: see isWordBoundary
 		}
-		if crossedSpaceless && strings.Contains(text[start:i], "_") {
-			imprecise = true // glued or genuine, and nothing here can tell
+		glued := crossedSpaceless && strings.Contains(anchor, "_")
+		if glued {
+			lostSpan = true // glued or genuine, and nothing here can tell
 		}
-		addAnchor(text[start:i], seen)
+		qualified := recordAnchor(anchor, seen)
+		if qualified && !glued {
+			clean[anchor] = struct{}{} // an unglued call is a faithful contribution
+		}
+		if glued {
+			if qualified {
+				impreciseInto[anchor] = struct{}{}
+			} else {
+				// The span lost fidelity and its token failed the shape or
+				// signal test, so there is no member a per-anchor repair could
+				// drop. Same standing as a silence.
+				unaccounted = true
+			}
+		}
 	}
-	return imprecise
+	return lostSpan, unaccounted
+}
+
+// fullRunStart continues the backwards identifier run from the index a word
+// boundary stopped it at, ignoring boundaries, and returns where the whole run
+// begins. It is how collectCallAnchors recovers the span name a break destroyed:
+// the same walk the caller performs, minus the one rule under suspicion.
+func fullRunStart(text string, start int) int {
+	for start > 0 {
+		r, size := utf8.DecodeLastRuneInString(text[:start])
+		if !isQualifiedIdentRune(r) {
+			break
+		}
+		start -= size
+	}
+	return start
 }
 
 // The three sentinel values spacelessScriptOf and the backwards run use
@@ -339,13 +691,59 @@ func isWordBoundary(run, next int) bool {
 	return run == scriptSpacing || next == scriptSpacing
 }
 
-// addAnchor normalizes one raw span and records it if it qualifies.
-func addAnchor(raw string, seen map[string]struct{}) {
-	tok := foldAnchorForm(trailingSegment(strings.TrimSpace(raw)))
+// recordedAnchorForm reduces a raw span to the exact token addAnchor would
+// record for it. It is the single definition of "the anchor that is actually
+// recorded", and every predicate that means to talk about that anchor —
+// addAnchor itself and both underscore guards in collectCallAnchors — goes
+// through it, so the three cannot drift apart again.
+func recordedAnchorForm(raw string) string {
+	return foldAnchorForm(trailingSegment(strings.TrimSpace(raw)))
+}
+
+// leadsWithUnderscore reports whether tok begins with '_' once the leading
+// script-neutral runes are skipped.
+//
+// The skip is the point. collectCallAnchors' silencing guard fires at a
+// spaceless/spacing boundary, and the break lands on the first rune the run
+// could classify — which is NOT necessarily the underscore. U+30FC and a
+// combining mark are both script-neutral, so either can sit between the break
+// and the underscore, and a test on the first rune alone lets the fragment
+// through. Nothing script-bearing may be skipped: reaching a rune with a script
+// means the token starts with a real name, not with an orphaned underscore.
+func leadsWithUnderscore(tok string) bool {
+	for _, r := range tok {
+		if r == '_' {
+			return true
+		}
+		if spacelessScriptOf(r) != scriptNeutral {
+			return false
+		}
+	}
+	return false
+}
+
+// recordAnchor records an ALREADY-reduced token if it qualifies, reporting
+// whether it did.
+//
+// Both scans call it with a token they reduced through recordedAnchorForm
+// themselves: the call scan has already reduced the span to ask its underscore
+// questions of the recorded anchor, so handing the raw span back would fold
+// and re-scan it a second time — and worse, would leave the guard's idea of
+// the anchor and the recorded one as two separately computed values that a
+// later edit could let diverge. Passing the token makes them the same value,
+// not merely the same helper's output.
+//
+// The bool is what lets a per-span fidelity loss be attributed to a NAME: a
+// span can lose fidelity and still contribute nothing (its token fails the
+// shape or signal test), and such a span has no member to drop. It also marks
+// the faithful contributions: a span that records outside the glued path is
+// evidence the name was read cleanly at least once.
+func recordAnchor(tok string, seen map[string]struct{}) bool {
 	if !isIdentifierShaped(tok) || !hasIdentifierSignal(tok) {
-		return
+		return false
 	}
 	seen[tok] = struct{}{}
+	return true
 }
 
 // foldAnchorForm puts one token in NFC, the single normalization form every
