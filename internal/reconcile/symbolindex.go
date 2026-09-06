@@ -164,6 +164,18 @@ const tier4ProblemSetUnaccountedMetric = "atcr_tier4_problem_set_unaccounted_tot
 // still withheld. That qualifier is scoped to the primary path only — the
 // secondary-path site above IS a veto of the FIX-sourced file.
 //
+// LAYERING, stated so the divergence from its siblings is deliberate rather
+// than discovered: the problem-side counters increment once per FINDING in
+// validateFindingPaths' loop, while BOTH of this counter's sites increment
+// inside symbolIndex.resolve — a decision procedure on the index that is
+// otherwise free of global side effects. The unit is therefore per-LOOKUP, and
+// it coincides with per-finding today only because validateFindingPaths
+// resolves each finding exactly once and is production's sole caller. A future
+// caller that resolves the same finding twice (a retry, a re-validation pass)
+// would double-count — if such a caller is ever added, both increments must
+// move out to validate.go beside their siblings rather than be silently
+// inflated here.
+//
 // Like every arm on the PathWarning-without-PathSuggestion rendering it can
 // never count a routed-out finding: barring an anchor from SOURCING never
 // removes it from the presence check or the no-match arm, so this arm is a
@@ -203,7 +215,8 @@ const tier4ProblemAnchorImpreciseMetric = "atcr_tier4_problem_anchor_imprecise_t
 // than discovered: the five FIX-side counters above increment once per FINDING
 // in validateFindingPaths' loop, while this one increments inside
 // symbolIndex.resolve (via resolveSecondary) — a decision procedure on the
-// index that is, except for this arm, free of global side effects. The unit
+// index that is, except for this arm and both arms of
+// tier4ProblemAnchorImpreciseMetric, free of global side effects. The unit
 // is therefore per-LOOKUP, and it coincides with per-finding today only
 // because validateFindingPaths resolves each finding exactly once and is
 // production's sole caller with a non-nil droppedSecondary. A future caller
