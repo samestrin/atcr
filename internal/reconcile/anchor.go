@@ -479,17 +479,30 @@ func scanFixAnchors(text string) ([]string, anchorScan) {
 // abandoned — it is the evidence the no-match verdict rests on — so its
 // boundary-cut members are always meaningful, and withholding them on a capped
 // set would hand resolve a set it believes is fully faithful.
-func (s anchorScan) boundaryCutAnchors() []string {
+// filterImprecise is the one walk both imprecise-filtering consumers share: it
+// collects the scan's anchors whose recorded imprecision kind the predicate
+// accepts, in the already-sorted anchor order. The empty-imprecise fast path is
+// shared too — it is behaviourally identical to falling through the loop, so
+// both callers keep one nil-guard policy. Callers keep their OWN arm guards
+// (capped/unaccounted): those differ deliberately between the PROBLEM and FIX
+// sides and are documented at each consumer.
+func (s anchorScan) filterImprecise(keep func(anchorImprecision) bool) []string {
 	if len(s.imprecise) == 0 {
 		return nil
 	}
 	var out []string
 	for _, tok := range s.anchors {
-		if s.imprecise[tok]&impreciseBoundaryCut != 0 {
+		if keep(s.imprecise[tok]) {
 			out = append(out, tok)
 		}
 	}
 	return out
+}
+
+func (s anchorScan) boundaryCutAnchors() []string {
+	return s.filterImprecise(func(kind anchorImprecision) bool {
+		return kind&impreciseBoundaryCut != 0
+	})
 }
 
 // droppedFixAnchors returns the members scanFixAnchors narrowed out of the
@@ -509,16 +522,12 @@ func (s anchorScan) boundaryCutAnchors() []string {
 // imprecise is keyed on what the scan recorded and can name a token the cap
 // removed.
 func (s anchorScan) droppedFixAnchors() []string {
-	if s.capped || s.unaccounted || len(s.imprecise) == 0 {
+	if s.capped || s.unaccounted {
 		return nil
 	}
-	var out []string
-	for _, tok := range s.anchors {
-		if _, bad := s.imprecise[tok]; bad {
-			out = append(out, tok)
-		}
-	}
-	return out
+	return s.filterImprecise(func(kind anchorImprecision) bool {
+		return kind != 0
+	})
 }
 
 // anchorDelimiters are the paired characters a reviewer uses to mark a literal
