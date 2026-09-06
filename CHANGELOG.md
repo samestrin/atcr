@@ -1,3 +1,21 @@
+## [35.16.6.8.2] - 2026-09-06
+
+*Epic 35.16.6.8.2 — post-review residue from epic 35.16.6.8.1: what a spaceless-script word boundary may and may not be evidence for.*
+
+### Fixed
+- A call name written straight after spaceless prose no longer produces a CONFIDENT path suggestion at a file that declares only its Latin tail. `配置ParseConfig()` is cut to `ParseConfig` by the word-boundary rule, and where the tree declares both the mixed name and the bare tail, the tail located exactly one file and the suggestion was stamped there — a wrong answer at the one seam nothing downstream can undo. Measured: that finding resolved to `internal/cfg/parse.go` before this release and now carries no suggestion at all. The finding itself is KEPT: the cut anchor is barred only from SOURCING a file, never removed from the presence check or the no-match arm, so barring one can never route a real finding out.
+- The anchor cap no longer evicts a name the reviewer backticked in favour of one recovered from a bare call shape. UTF-8 sorts every CJK-prefixed token after all ASCII, so the glued pseudo-token was always the first thing a lexical cap dropped; once the boundary rule rewrote it to its ASCII tail, the tail sorted to the FRONT and survived, pushing the lexically-last real anchor out. Measured: a finding backticking eight names alongside `在配置中调用ParseConfig()` resolved to the call's file before this release and resolves to the backticked `zLastThing`'s file now. Provenance decides only WHICH anchors survive — the returned set is still deduped and lexically sorted, and a finding naming one provenance class is capped exactly as before.
+
+### Added
+- `atcr_tier4_problem_anchor_imprecise_total`, for the primary resolution the barring withholds. That arm changes no field and renders identically to "could not check", to a no-match on a truncated set, and to the two FIX-side vetoes, so a counter is its only signal. Documented in `docs/metrics.md`, including the two things it is NOT: not a per-anchor count, and not the veto where the unnarrowed resolver refused on the same disagreement anyway.
+
+### Changed
+- A GLUED anchor and a BOUNDARY-CUT one are now recorded as different kinds of imprecision, and the two sides answer them differently. A glued token is the WHOLE run, so a file declaring it entire is evidence the reading was right — the PROBLEM side keeps letting it resolve, as `collectCallAnchors` has always promised for `データ_解析`. A boundary-cut token is a proper SUFFIX of a name whose prefix was destroyed, and a file declaring only that suffix is never such evidence. The FIX side bars both, because a FIX anchor only localizes a finding some primary anchor already matched, so barring one there can cost a suggestion and can never route a finding out.
+- A boundary break landing inside a QUALIFIER is no longer treated as a truncation. `调用cfg.ParseConfig()` breaks at the script boundary, but `cfg.` is discarded by the trailing-segment reduction either way, so the recorded `ParseConfig` is exactly the callee the reviewer wrote. An earlier cut of this work marked it imprecise and withheld a CORRECT suggestion on what is the most common shape in CJK review prose; the question is now asked of the recorded tokens rather than of where the break landed.
+- A barred PROBLEM anchor also VETOES a file the FIX set produced under a matched primary. Without it the barring merely swapped one confident answer for another: measured, a barred `ParseConfig` alongside a FIX naming `readTree` stamped `readTree`'s file where the unbarred call had stamped `ParseConfig`'s. A withheld suggestion is the intended outcome; a differently-wrong file is not.
+
+*Shipped via /execute-epic (epic 35.16.6.8.2)*
+
 ## [35.16.6.8.1.1.1] - 2026-09-06
 
 *Epic 35.16.6.8.1.1.1 — post-review residue from epic 35.16.6.8.1.1: anchor-set completeness and Tier-4 counter semantics.*
