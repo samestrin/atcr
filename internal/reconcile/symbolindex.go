@@ -104,10 +104,14 @@ const tier4FixSetAllDroppedMetric = "atcr_tier4_fix_set_all_dropped_total"
 // also fires when the PROBLEM set localized NOTHING and the FIX set produced the
 // file. "PROBLEM anchor set resolved to one file" would describe only the first.
 //
-// It is a LOWER BOUND, the way the sibling FIX rows are. When a finding's FIX is
-// unaccounted too, scanFixAnchors returns nil, the secondary branch cannot fire,
-// resolve yields tier4Inconclusive instead of tier4Resolved, the arm is never
-// reached, and this counter stays flat although a suggestion was equally lost.
+// It is a LOWER BOUND, the way the sibling FIX rows are — but only in one
+// sub-case: when the PROBLEM set localizes NOTHING and a finding's FIX is
+// unaccounted too, scanFixAnchors returns nil, the secondary branch cannot
+// fire, resolve yields tier4Inconclusive instead of tier4Resolved, the arm is
+// never reached, and this counter stays flat although a suggestion was equally
+// lost. When the PROBLEM set DOES localize, resolve returns at locate(primary)
+// before the secondary branch is ever consulted, so the arm IS reached and the
+// counter fires regardless of the FIX's losses.
 //
 // It is the PROBLEM-side counterpart of the four FIX counters above, added for
 // the same reason tier4FixSetAllDroppedMetric was: the arm is set-level and
