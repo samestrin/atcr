@@ -853,18 +853,20 @@ func collectCallAnchors(text string, seen, clean map[string]struct{}, impreciseI
 		// DIFFERENT token than the accepted span does is the anchor a proper
 		// suffix of what the text named.
 		//
-		// The second backwards walk is paid only by a span that both broke at a
-		// boundary and contributed an anchor, which is rare, and never by the
-		// silenced spans above (they have already continued).
+		// The second backwards walk is paid by ANY span that broke at a boundary —
+		// it runs before the anchor is known to qualify, and one reduction en
+		// route may allocate through norm.NFC.String — but the boundaryCut VALUE
+		// is only ever read under a qualified conjunct, so the computation is
+		// guarded below and the walk is paid only by spans whose anchor qualified.
+		qualified := recordAnchor(anchor, seen)
 		boundaryCut := false
-		if atBoundary {
+		if qualified && atBoundary {
 			boundaryCut = anchor != recordedAnchorForm(text[fullRunStart(text, start):i])
 		}
 		glued := crossedSpaceless && strings.Contains(anchor, "_")
 		if glued {
 			lostSpan = true // glued or genuine, and nothing here can tell
 		}
-		qualified := recordAnchor(anchor, seen)
 		// The !boundaryCut conjunct is a SECOND behavioural edit beside the
 		// impreciseBoundaryCut marking below, not a restatement of it: a
 		// boundary-cut token no longer vouches for a name in reconcileSilenced
