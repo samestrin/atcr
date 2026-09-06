@@ -557,7 +557,12 @@ func (x *symbolIndex) resolveSecondary(secondary, droppedSecondary []string) (st
 // maxAnchorsPerFinding, so the map would cost more to build than the scan it
 // replaces.
 func anchorsExcept(anchors, bar []string) []string {
-	if len(bar) == 0 || len(anchors) == 0 {
+	// No len(anchors) == 0 disjunct: it is unreachable by construction. resolve
+	// clamps bar to a subset of anchors at its boundary, so an empty anchor set
+	// always arrives with an empty bar and the len(bar) test above already
+	// returns; and even for a caller that skipped the clamp, falling through
+	// yields the same empty result the disjunct short-circuited to.
+	if len(bar) == 0 {
 		return anchors
 	}
 	out := make([]string, 0, len(anchors))
