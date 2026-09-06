@@ -227,9 +227,9 @@ func scanAnchors(text string) anchorScan {
 	silenced := make(map[string]struct{})
 	lostSpan := collectCallAnchors(text, seen, clean, imprecise, silenced)
 	// A token a clean span also contributed was read faithfully at least once,
-	// so the glued reading is not the only evidence for it: it is not
-	// imprecise. Only a token whose EVERY contribution came from a glued span
-	// stays in the set.
+	// so the unfaithful reading is not the only evidence for it: it is not
+	// imprecise. Only a token whose EVERY contribution came from an
+	// unfaithfully-read span (glued or boundary-cut) stays in the set.
 	//
 	// `silenced` is reconciled by the SAME loop and for the same reason, one
 	// step further: `unaccounted` claims the destroyed name is UNKNOWABLE, and a
@@ -426,7 +426,8 @@ func reconcileSilenced(silenced, clean map[string]struct{}, anchors []string) bo
 // quoted citation, or an unglued call of the same name) is KEPT: the clean
 // contribution is proof the scan read the name faithfully at least once, so the
 // glued reading is not the only evidence for it. Only a token whose every
-// contribution came from a glued span is dropped.
+// contribution came from an unfaithfully-read span (glued or boundary-cut) is
+// dropped.
 func extractFixAnchors(text string) []string {
 	anchors, _ := scanFixAnchors(text)
 	return anchors
@@ -506,8 +507,9 @@ func (s anchorScan) boundaryCutAnchors() []string {
 }
 
 // droppedFixAnchors returns the members scanFixAnchors narrowed out of the
-// usable set: the anchors every contribution of which came from a glued span.
-// Sorted (it walks the already-sorted anchors), nil when none.
+// usable set: the anchors every contribution of which came from an
+// unfaithfully-read span (glued or boundary-cut). Sorted (it walks the
+// already-sorted anchors), nil when none.
 //
 // A dropped member may not SOURCE a suggestion — the glued reading may not be
 // what the reviewer wrote, which is why it leaves the usable set. It is still
