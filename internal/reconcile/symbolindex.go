@@ -408,9 +408,16 @@ const (
 // disagreement locate() refuses on, and the secondary resolution is withheld.
 // Without that, narrowing the set produced a confident suggestion from half the
 // evidence: the very incompleteness the `unaccounted` arm abandons the set for.
-// barredPrimary holds the PROBLEM anchors the scan could not read faithfully
-// — a glued span's token, or the tail a spaceless-script word boundary cut a
-// call name down to. They may not SOURCE a suggestion, for the reason the FIX
+// barredPrimary holds the PROBLEM anchors a spaceless-script word boundary cut
+// down to an unfaithful TAIL of the name — boundary-cut anchors ONLY. A glued
+// token is deliberately NOT barred here, exactly the asymmetry anchorImprecision
+// documents: on the PROBLEM side a glued token is the whole run, so a file
+// declaring it entire is evidence the reading was right and the genuine
+// `データ_解析` reading must still resolve (pinned end to end by
+// TestRunReconcile_GluedProblemAnchorStillResolvesEndToEnd); the sole producer,
+// anchorScan.boundaryCutAnchors, reads impreciseBoundaryCut only and a glued
+// span's token therefore never enters this set. Barring glued tokens on the FIX
+// side (droppedFixAnchors) is the FIX-side-only rule. They may not SOURCE a suggestion, for the reason the FIX
 // side already refuses to let its own imprecise members source one: the reading
 // may not be what the reviewer wrote, and a file declaring only that misreading
 // is a CONFIDENT wrong answer, the one outcome nothing downstream can undo. They
