@@ -420,6 +420,14 @@ func TestTier4Safety_ImpreciseFixAnchorDoesNotCostTheSuggestion(t *testing.T) {
 	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
 		"HIGH|internal/ghost/phantom.go:3|"+problem+"|"+fix+"|correctness|10|ev|greta\n")
 
+	// The veto counter's placement is pinned HERE, on the negative side: a
+	// non-empty dropped set is the veto's PRECONDITION, never evidence it
+	// fired. This fixture resolves cleanly (the dropped member is declared
+	// nowhere, so nothing contradicts), so the counter must stay FLAT —
+	// hoisting the Inc() above the !contradicts check previously left the
+	// whole package green.
+	beforeContradicted := metrics.Counter(tier4FixSetContradictedMetric).Value()
+
 	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
 		ReconciledAt: time.Unix(1700000000, 0).UTC(),
 		Root:         root,
@@ -428,6 +436,10 @@ func TestTier4Safety_ImpreciseFixAnchorDoesNotCostTheSuggestion(t *testing.T) {
 	require.Len(t, res.Findings, 1)
 	assert.Equal(t, "pkg/tree.go", res.JSONFindings()[0].PathSuggestion,
 		"one imprecise FIX anchor must not cost the finding the suggestion its precise sibling grounds")
+	assert.Equal(t, beforeContradicted, metrics.Counter(tier4FixSetContradictedMetric).Value(),
+		"the veto did NOT fire here — the suggestion landed — so a counter that "+
+			"means 'the veto fired' must not move; only the with-veto fixture "+
+			"(TestTier4FixSetContradictedMetric) may increment it")
 	assert.Zero(t, res.Summary.UnresolvedFiltered,
 		"the subject is declared in the tree: nothing may route")
 }
