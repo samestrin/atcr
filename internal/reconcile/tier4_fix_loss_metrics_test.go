@@ -156,3 +156,59 @@ func TestTier4FixSetLossesAreNotExclusive(t *testing.T) {
 	assert.Equal(t, beforeUnaccounted+1, metrics.Counter(tier4FixSetUnaccountedMetric).Value(),
 		"the member-less loss fired too: each loss increments its OWN counter, as the comment claims")
 }
+
+// TestTier4FixSetUnaccountedMetricRequiresASetToAbandon pins the emptiness guard
+// on the unaccounted arm, matching the one its sibling arm has always carried.
+//
+// atcr_tier4_fix_set_unaccounted_total is documented as "the FIX anchor set was
+// abandoned whole". The all-dropped arm below it will not make that claim without
+// `len(fixScan.anchors) > 0` first — you cannot abandon a set that never existed.
+// The unaccounted arm made it unconditionally, so a FIX whose ONLY span is a
+// silenced one (scan.anchors empty, nothing ever collected) incremented an
+// abandonment counter for an abandonment that could not have happened.
+//
+// The cost is not cosmetic: the four FIX-loss counters exist to be SUMMED into an
+// estimate of suggestions lost to anchor fidelity, and this population inflates
+// that sum by findings that never had a suggestion to lose.
+//
+// Re-measured after the clean-reconciliation repair, which shrank this population
+// but did not close it: `pkg.設定_a() returns nil` still yields scan.anchors=[]
+// with unaccounted=true, because nothing in that text vouches for the name.
+func TestTier4FixSetUnaccountedMetricRequiresASetToAbandon(t *testing.T) {
+	settei := string([]rune{0x8A2D, 0x5B9A}) // 設定
+	emptyFix := "pkg." + settei + "_a() returns nil"
+
+	usable, scan := scanFixAnchors(emptyFix)
+	require.Nil(t, usable, "precondition: the set is nil-ed by the unaccounted arm")
+	require.True(t, scan.unaccounted, "precondition: the loss is genuinely unaccounted")
+	require.Empty(t, scan.anchors,
+		"precondition: the scan collected NOTHING - there was never a set to abandon")
+
+	beforeUnaccounted := metrics.Counter(tier4FixSetUnaccountedMetric).Value()
+	beforeAllDropped := metrics.Counter(tier4FixSetAllDroppedMetric).Value()
+	beforeDropped := metrics.Counter(tier4FixAnchorDroppedMetric).Value()
+
+	root := gitRepoWithSources(t, map[string]string{
+		"pkg/shared.go": "package pkg\n\nfunc sharedHelper() error { return nil }\n",
+	})
+	reviewDir := t.TempDir()
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+		"HIGH|internal/ghost/phantom.go:3|the `sharedHelper` path drops the returned error|"+
+			emptyFix+"|correctness|10|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Findings, 1)
+
+	assert.Equal(t, beforeUnaccounted, metrics.Counter(tier4FixSetUnaccountedMetric).Value(),
+		"a FIX that never had an anchor set cannot have had one abandoned whole: "+
+			"counting it here is exactly the over-count that stops the FIX-loss "+
+			"counters from being summable")
+	assert.Equal(t, beforeAllDropped, metrics.Counter(tier4FixSetAllDroppedMetric).Value(),
+		"and it must not silently land in the sibling set-level arm either")
+	assert.Equal(t, beforeDropped, metrics.Counter(tier4FixAnchorDroppedMetric).Value(),
+		"nor in the per-anchor arm: no anchor was dropped, because none was collected")
+}
