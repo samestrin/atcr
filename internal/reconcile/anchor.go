@@ -484,9 +484,18 @@ func collectCallAnchors(text string, seen, clean, impreciseInto map[string]struc
 			// prefix split off a 1-2 rune tail leaves a fragment that fails
 			// minAnchorLen while the full name is shaped, signalled and
 			// perfectly searchable — `設定_a` behind the fragment `_a`. Ask the
-			// question of the FULL run in that case, taken raw: no
-			// trailingSegment, no boundary reduction, because both reductions
-			// are exactly what threw the evidence away.
+			// question of the FULL run in that case: no boundary reduction,
+			// because that reduction is exactly what threw the evidence away.
+			//
+			// trailingSegment IS applied, and must be. isQualifiedIdentRune
+			// admits '.', so fullRunStart walks straight back through any
+			// qualifier and hands isIdentifierShaped `pkg.設定_a`, which it
+			// rejects on the '.' — disabling the guard for every qualified
+			// spelling of the very shape it was added for. The declared name
+			// the break destroyed is the trailing segment `設定_a`, which is
+			// also what recordAnchor would have keyed the tree search on, so
+			// this branch and the fragment branch above now ask their question
+			// of the same reduction rather than of two different strings.
 			//
 			// Deliberately NOT applied when the break dropped a SPACING-script
 			// prefix (`parse_解`). There the boundary rule is reading its own
@@ -494,7 +503,7 @@ func collectCallAnchors(text string, seen, clean, impreciseInto map[string]struc
 			// widening the guard to it would refuse a no-match verdict for a
 			// set whose every member is a faithful reading.
 			if !lost && boundaryDroppedSpaceless {
-				full := text[fullRunStart(text, start):i]
+				full := trailingSegment(text[fullRunStart(text, start):i])
 				lost = isIdentifierShaped(full) && hasIdentifierSignal(full)
 			}
 			if lost {
