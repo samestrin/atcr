@@ -135,10 +135,13 @@ const tier4FixSetAllDroppedMetric = "atcr_tier4_fix_set_all_dropped_total"
 const tier4ProblemSetUnaccountedMetric = "atcr_tier4_problem_set_unaccounted_total"
 
 // tier4ProblemAnchorImpreciseMetric counts a Tier 4 lookup where the PROBLEM
-// anchor set WOULD have localized to exactly one file and did not, because every
-// anchor that agreed on that file was one the scan could not read faithfully —
-// a glued span's token, or the tail a spaceless-script word boundary cut a call
-// name down to.
+// anchor set WOULD have localized to exactly one file and did not, because the
+// only anchor agreeing on that file is a BOUNDARY-CUT one — the tail a
+// spaceless-script word boundary cut a call name down to. A GLUED token is
+// deliberately NOT barred on this side (see anchorImprecision: a glued token is
+// the whole run, so a file declaring it entire is evidence the reading was
+// right), so it can never reach this counter through the primary path — glued
+// barring happens on the FIX side only.
 //
 // It is a SET-level count of suggestions the narrowing cost, not a per-anchor
 // count of barred members: an imprecise anchor that names nothing, or names a
