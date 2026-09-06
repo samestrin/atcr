@@ -111,12 +111,15 @@ func TestScanAnchors_BoundaryTruncatedCallAnchorIsImprecise(t *testing.T) {
 // 35.16.6.8.2's AC1 acceptance test, run against the real pipeline: a real git
 // repo, the real `git ls-files` candidate index, and the real embedded parser.
 //
-// The tree declares BOTH halves of the ambiguity — `配置ParseConfig` in
-// internal/zh/mix.go (what the reviewer actually wrote) and `ParseConfig` in
-// internal/cfg/parse.go (the Latin tail the boundary rule leaves behind). Before
-// this epic the tail located internal/cfg/parse.go in exactly one file and
-// validate.go stamped a CONFIDENT PathSuggestion there — a wrong answer at the one
-// seam symbolindex.go states nothing downstream can undo.
+// The tree declares ONLY the Latin tail — `ParseConfig` in
+// internal/cfg/parse.go, the tail the boundary rule leaves behind. Whether the
+// mixed name `配置ParseConfig` is also declared somewhere is irrelevant to the
+// asserted outcome, measured: the fixture ran identically with and without a
+// file declaring it, so no such file is present here (a decorative fixture file
+// reads as load-bearing and gets preserved by readers trusting the comment).
+// Before this epic the tail located internal/cfg/parse.go in exactly one file
+// and validate.go stamped a CONFIDENT PathSuggestion there — a wrong answer at
+// the one seam symbolindex.go states nothing downstream can undo.
 //
 // The finding must be KEPT either way. Withholding the suggestion costs a
 // "did you mean" clause; routing the finding out would delete a real finding and
@@ -124,8 +127,6 @@ func TestScanAnchors_BoundaryTruncatedCallAnchorIsImprecise(t *testing.T) {
 // tier4Inconclusive, never tier4NoMatch.
 func TestRunReconcile_BoundaryTruncatedAnchorWithholdsSuggestionEndToEnd(t *testing.T) {
 	root := gitRepoWithSources(t, map[string]string{
-		"internal/zh/mix.go": "package zh\n\n" +
-			"func 配置ParseConfig() error {\n\treturn nil\n}\n",
 		"internal/cfg/parse.go": "package cfg\n\n" +
 			"func ParseConfig() error {\n\treturn nil\n}\n",
 	})
@@ -214,7 +215,6 @@ func TestScanAnchors_GluedAndBoundaryCutAreDistinctKinds(t *testing.T) {
 // refused on the same disagreement anyway.
 func TestTier4ProblemAnchorImpreciseMetric(t *testing.T) {
 	root := gitRepoWithSources(t, map[string]string{
-		"internal/zh/mix.go":    "package zh\n\nfunc 配置ParseConfig() error { return nil }\n",
 		"internal/cfg/parse.go": "package cfg\n\nfunc ParseConfig() error { return nil }\n",
 		"pkg/tree.go":           "package pkg\n\nfunc readTree() error { return nil }\n",
 	})
