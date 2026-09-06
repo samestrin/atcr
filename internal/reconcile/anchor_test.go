@@ -1041,6 +1041,23 @@ func TestDroppedFixAnchors_AbandonedArmsWithhold(t *testing.T) {
 		assert.Nil(t, anchorScan{anchors: []string{"treeWalk"}}.droppedFixAnchors(),
 			"the third disjunct: no member was narrowed out")
 	})
+
+	t.Run("a boundary-cut member is dropped too", func(t *testing.T) {
+		// The KIND is the thing a kind-filter mutation flips, and every row above
+		// asserts map MEMBERSHIP over a map that holds impreciseGlued only — the
+		// literal could be impreciseBoundaryCut or even 0 with identical results.
+		// This row pins the other kind by name: the FIX side bars BOTH imprecision
+		// kinds (the PROBLEM side bars only boundary-cut), so a map holding only
+		// impreciseBoundaryCut must still report the member dropped. Verified
+		// against the gap: narrowing droppedFixAnchors' filter to impreciseGlued
+		// alone left the rows above green and only this one failing.
+		scan := anchorScan{
+			anchors:   []string{"dataParse", "treeWalk"},
+			imprecise: map[string]anchorImprecision{"dataParse": impreciseBoundaryCut},
+		}
+		assert.Equal(t, []string{"dataParse"}, scan.droppedFixAnchors(),
+			"the FIX side bars both imprecision kinds: a boundary-cut member is dropped exactly as a glued one is")
+	})
 }
 
 // TestScanAnchors_SilencedSpanReconciledAgainstClean pins the PROBLEM-side half
