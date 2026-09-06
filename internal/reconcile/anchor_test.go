@@ -1066,6 +1066,10 @@ func TestScanAnchors_SilencedSpanReconciledAgainstClean(t *testing.T) {
 	settei := string([]rune{0x8A2D, 0x5B9A}) // 設定
 	han := string([]rune{0x89E3, 0x6790})    // 解析
 	name := settei + "_a"                    // 設定_a
+	// 設定_abc — the same spaceless-prefix shape as `name`, but with a tail long
+	// enough that the FRAGMENT `_abc` qualifies on its own. That is the whole
+	// difference between the two: `_a` fails minAnchorLen, `_abc` does not.
+	nameLongTail := settei + "_abc"
 	// 設定を解析_処理 — spaceless prose welded to a snake_case call name.
 	glued := string([]rune{0x8A2D, 0x5B9A, 0x3092, 0x89E3, 0x6790, 0x005F, 0x51E6, 0x7406})
 
@@ -1164,6 +1168,19 @@ func TestScanAnchors_SilencedSpanReconciledAgainstClean(t *testing.T) {
 				"and not the full run - so `_解析` is what the loss destroyed, it is " +
 				"cited in backticks, and the epic's success criterion (a name the " +
 				"reviewer cited cleanly is never an unknowable loss) applies to it",
+		},
+		{
+			name:            "the FRAGMENT is cited cleanly and QUALIFIES, but a spaceless prefix was dropped",
+			text:            "`_abc` is odd; " + nameLongTail + "() returns nil",
+			wantUnaccounted: true,
+			wantAnchors:     []string{"_abc"},
+			why: "the row above it judges a SPACING prefix (`parse`), where the fragment " +
+				"really is the name the reviewer meant. Here the break dropped a " +
+				"SPACELESS prefix, so 設定_abc is one written name and `_abc` is a " +
+				"boundary artefact of it — the same reason the `lost` decision " +
+				"already asks its question of the full run in this case. Vouching " +
+				"for the artefact retracts the loss for a name that is NOT in the " +
+				"anchor set",
 		},
 		{
 			name:            "the surviving anchor is GLUED, so it vouches for nothing",
