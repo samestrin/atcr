@@ -98,3 +98,31 @@ func TestRunReconcile_CapPrefersDelimitedAnchorEndToEnd(t *testing.T) {
 	assert.Equal(t, "internal/other/z.go", got.PathSuggestion,
 		"the surviving backticked anchor localizes the finding; the evicted call-shape tail must not")
 }
+
+// TestExtractAnchors_CapReturnsLexicalOrderAcrossProvenanceClasses pins the half
+// of T2 the fixtures above cannot reach: that provenance decides only WHICH
+// anchors survive, never how the survivors are ORDERED.
+//
+// In every other fixture here the survivors are one provenance class, so
+// provenance order and codepoint order agree and a missing re-sort is invisible.
+// This one is deliberately built so they DISAGREE — the surviving call-shape
+// anchor is lexically FIRST, so a returned slice in provenance order would put it
+// LAST. extractAnchorSet's doc promises "deduped and lexically sorted", and
+// consumers read the slice; leaking the cap's ranking into it would be a silent
+// contract change.
+func TestExtractAnchors_CapReturnsLexicalOrderAcrossProvenanceClasses(t *testing.T) {
+	problem := ""
+	for _, n := range []string{"bTwo", "cThree", "dFour", "eFive", "fSix", "gSeven", "hEight"} {
+		problem += "`" + n + "` "
+	}
+	problem += "then aOne() and zLastCall() run"
+
+	got, truncated := extractAnchorSet(problem)
+
+	require.True(t, truncated, "nine candidates against a cap of eight: the cap must have fired")
+	require.Len(t, got, maxAnchorsPerFinding)
+	assert.Equal(t,
+		[]string{"aOne", "bTwo", "cThree", "dFour", "eFive", "fSix", "gSeven", "hEight"}, got,
+		"the seven marked-up names plus the lexically-first call shape survive, returned in plain lexical order")
+	assert.NotContains(t, got, "zLastCall", "the lexically-last call-shape anchor is the one the cap drops")
+}

@@ -126,7 +126,11 @@ func (s anchorScan) truncated() bool {
 //
 // The PROBLEM set is never narrowed — a glued member may still be the subject,
 // and dropping it would manufacture the no-match verdict this tier exists to
-// withhold — so the anchors it returns are exactly extractAnchorSet's. What the
+// withhold — so the anchors it returns are exactly extractAnchorSet's. That
+// stands unchanged after 35.16.6.8.2: the members barred from SOURCING a
+// suggestion travel as a separate list (boundaryCutAnchors) precisely so the set
+// itself stays whole for the presence check and the no-match arm. Barring is not
+// narrowing. What the
 // scan carries that the flat flag cannot is `unaccounted`: a loss with NO member
 // to point at, whose name is unknowable. locate() refuses when two precise
 // anchors DISAGREE, so its verdict rests on the set being COMPLETE as well as
