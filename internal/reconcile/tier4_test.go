@@ -70,6 +70,14 @@ func (f *fakeTier4) index() *symbolIndex {
 	return &symbolIndex{complete: true, byName: byName}
 }
 
+// fakeTier4 is the scripted Tier 4 resolver the wiring tests drive. The
+// compile-time assertion is the drift alarm the delegation pattern hides: the
+// fake satisfies tier4Resolver at every withFakeTier4 call site, so a signature
+// change to the interface surfaces as a build error at the assertion rather
+// than as a cascading failure at whatever test happened to construct the fake
+// first.
+var _ tier4Resolver = (*fakeTier4)(nil)
+
 // resolveWithDropped satisfies tier4Resolver with a per-anchor script.
 //
 // It mirrors the dropped-anchor veto too: a scripted resolver that ignored
