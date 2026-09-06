@@ -273,6 +273,18 @@ func scanAnchors(text string) anchorScan {
 		// anchor is the reviewer least likely to have meant", and the two agreed
 		// only by accident of encoding.
 		//
+		// Three classes, strongest first: DELIMITED (the reviewer marked the name
+		// up explicitly), then a faithful CALL SHAPE, then IMPRECISE — a token
+		// every contribution of which was an unfaithful reading (glued or
+		// boundary-cut; see anchorImprecision). The third rank keeps a barred
+		// anchor from riding the lexical tiebreak inside the call-shape class:
+		// "ParseConfig" (a boundary-cut tail) sorts before "zzCallH" by
+		// codepoint, so without it the cap evicted the faithful anchor and kept
+		// the one member that may source nothing. A delimited token is never
+		// imprecise — delimited spans feed `clean`, and `clean` is reconciled
+		// against `imprecise` above — so the two checks below compose into
+		// delimited > clean call-shape > imprecise.
+		//
 		// Within one class the order is unchanged, so a finding naming only
 		// backticked identifiers is capped exactly as before. The comparator is a
 		// strict total order over a deduped set — no two members compare equal —
@@ -283,6 +295,11 @@ func scanAnchors(text string) anchorScan {
 			_, dj := delimited[out[j]]
 			if di != dj {
 				return di
+			}
+			_, xi := imprecise[out[i]]
+			_, xj := imprecise[out[j]]
+			if xi != xj {
+				return !xi
 			}
 			return out[i] < out[j]
 		})
