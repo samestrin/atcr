@@ -148,8 +148,19 @@ func (f *fakeTier4) resolveWithDropped(_ context.Context, primary, barredPrimary
 		// through the double: a wiring test driven by withFakeTier4 would
 		// exercise the veto and see the counter stay flat while production
 		// increments it.
+		//
+		// Production's barred-primary veto is applied ON TOP of the delegated
+		// call: resolveSecondary knows nothing of barredPrimary, so resolve
+		// vets the FIX-sourced file itself before returning it. A fake that
+		// returned the secondary file unconditionally was LOOSER than
+		// production on exactly the input the veto exists for — it resolved
+		// where production withheld (pinned by the "barred primary vetoes a
+		// disagreeing secondary hit" mirror row).
 		if file, outcome := x.resolveSecondary(secondary, droppedSecondary); outcome == tier4Resolved {
-			return file, tier4Resolved
+			if !x.contradicts(file, barredPrimary) {
+				return file, tier4Resolved
+			}
+			return "", tier4Inconclusive
 		}
 		// A primary anchor IS declared somewhere, so the tree was not searched
 		// in vain even though nothing localized.
@@ -539,6 +550,23 @@ func TestFakeTier4_MirrorsResolveOnThePrimaryPath(t *testing.T) {
 			},
 			primary:     []string{"subjectName", "ParseConfig"},
 			barredP:     []string{"ParseConfig"},
+			wantOutcome: tier4Inconclusive,
+			wantFile:    "",
+		},
+		{
+			// The SECONDARY-path half of the same veto: the primary is barred and
+			// matches nothing, but the FIX set localizes a file the barred anchor
+			// is declared in exactly one OTHER file from. Production vetoes the
+			// FIX-sourced file ("could not check", not a differently-wrong
+			// answer); the fake must refuse it the same way.
+			name: "a barred primary vetoes a disagreeing secondary hit",
+			byName: map[string][]string{
+				"ParseConfig": {fileA},
+				"helperName":  {fileB},
+			},
+			primary:     []string{"ParseConfig"},
+			barredP:     []string{"ParseConfig"},
+			secondary:   []string{"helperName"},
 			wantOutcome: tier4Inconclusive,
 			wantFile:    "",
 		},
