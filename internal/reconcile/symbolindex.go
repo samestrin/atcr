@@ -158,6 +158,18 @@ const tier4ProblemSetUnaccountedMetric = "atcr_tier4_problem_set_unaccounted_tot
 // is per-anchor Add(n)). Read this counter ALONGSIDE the per-anchor row, never
 // summed with it: adding them double-counts every vetoed finding, in mismatched
 // units. The co-increment is pinned by TestTier4FixSetContradictedMetric.
+//
+// LAYERING, stated so the divergence from its siblings is deliberate rather
+// than discovered: the five FIX-side counters above increment once per FINDING
+// in validateFindingPaths' loop, while this one increments inside
+// symbolIndex.resolve (via resolveSecondary) — a decision procedure on the
+// index that is, except for this arm, free of global side effects. The unit
+// is therefore per-LOOKUP, and it coincides with per-finding today only
+// because validateFindingPaths resolves each finding exactly once and is
+// production's sole caller with a non-nil droppedSecondary. A future caller
+// that resolves the same finding twice (a retry, a re-validation pass) would
+// double-count — if such a caller is ever added, the increment must move out
+// to validate.go beside its siblings rather than be silently inflated here.
 const tier4FixSetContradictedMetric = "atcr_tier4_fix_set_contradicted_total"
 
 // tier4Outcome is the verdict of a Tier 4 symbol lookup (Epic 35.16.6.5 T3).
