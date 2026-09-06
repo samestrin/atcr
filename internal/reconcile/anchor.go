@@ -668,10 +668,31 @@ func collectCallAnchors(text string, seen, clean, impreciseInto, silencedInto ma
 				// recording the full run `parse_解析` there would leave the
 				// flag standing for a name the reviewer spelled out.
 				//
+				// boundaryDroppedSpaceless OVERRIDES that, and does so whether or
+				// not the fragment qualified. Which prefix the break dropped is
+				// the thing that decides whether the fragment is a name at all,
+				// and the fragment cannot report it: after a SPACING prefix
+				// (`parse_解析`) the reviewer wrote a word, a break, then a name,
+				// so `_解析` is the name; after a SPACELESS one (`設定_abc`) there
+				// was no break to write, the whole run is one declared name, and
+				// `_abc` is an artefact of the boundary rule rather than anything
+				// the text contains. Restricting the override to !fragmentQualified
+				// makes the subject turn on the TAIL's length instead — `設定_a`
+				// records `設定_a`, `設定_abc` records `_abc` — so a backticked
+				// `_abc` retracts the unknowable-loss claim for `設定_abc`, a name
+				// that is not in the anchor set at all. That is the one thing the
+				// epic's Risks table forbids: suppress ONLY when the destroyed
+				// token is provably in the anchor set.
+				//
+				// This is the same reduction the `lost` branch above already
+				// applies for this exact condition, so the two now agree on which
+				// string this span is about instead of asking their questions of
+				// different ones.
+				//
 				// Computed HERE, once `lost` is settled, because a span that
 				// recorded nothing has no use for either reduction.
 				destroyed := anchor
-				if !fragmentQualified {
+				if !fragmentQualified || boundaryDroppedSpaceless {
 					destroyed = recordedAnchorForm(fullRun())
 				}
 				// Both recorded subjects are in recordedAnchorForm, because
