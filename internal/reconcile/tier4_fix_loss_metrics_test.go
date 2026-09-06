@@ -212,3 +212,70 @@ func TestTier4FixSetUnaccountedMetricRequiresASetToAbandon(t *testing.T) {
 	assert.Equal(t, beforeDropped, metrics.Counter(tier4FixAnchorDroppedMetric).Value(),
 		"nor in the per-anchor arm: no anchor was dropped, because none was collected")
 }
+
+// TestTier4FixSetContradictedMetric pins the FOURTH withhold path on the
+// PathWarning-without-PathSuggestion rendering.
+//
+// tier4ProblemSetUnaccountedMetric's own doc argues that without it, that
+// rendering conflates THREE meanings. There is a fourth on the same path: the
+// contradicts() veto. locate(secondary) succeeds under a matched primary, a
+// narrowed-out anchor turns out to be declared in exactly one OTHER file, the
+// suggestion is withheld, resolve returns tier4Inconclusive, and nothing on the
+// finding changes. So the PROBLEM-side counter took the ambiguity from four
+// meanings to three, not to one.
+//
+// It is only INDIRECTLY attributable today: a non-empty droppedSecondary implies
+// atcr_tier4_fix_anchor_dropped_total fired, but that counter fires for every
+// narrowing, so it cannot isolate the veto. The before/after assertions below
+// pin exactly that distinction - the drop counter moves for the narrowing, and
+// the new counter moves for the veto, and neither stands in for the other.
+func TestTier4FixSetContradictedMetric(t *testing.T) {
+	kata := string([]rune{0x30C7, 0x30FC, 0x30BF}) // データ
+	han := string([]rune{0x89E3, 0x6790})          // 解析
+	glued := kata + "_" + han                      // データ_解析
+
+	// The FIX names a survivor that localizes AND a glued span whose token is
+	// narrowed out as imprecise - the dropped anchor the veto reads.
+	fix := "call `parseTree` instead of " + glued + "()"
+	usable, scan := scanFixAnchors(fix)
+	require.NotEmpty(t, usable, "precondition: a survivor remains to localize on")
+	require.NotEmpty(t, scan.droppedFixAnchors(),
+		"precondition: a narrowed-out anchor rides along as veto evidence")
+
+	beforeContradicted := metrics.Counter(tier4FixSetContradictedMetric).Value()
+	beforeDropped := metrics.Counter(tier4FixAnchorDroppedMetric).Value()
+
+	root := gitRepoWithSources(t, map[string]string{
+		// The PROBLEM subject, declared TWICE. That is what puts the finding on
+		// the secondary branch at all: locate(primary) skips an anchor declared
+		// in more than one file as "too common to localize" and returns false,
+		// while the presence scan still sets primaryMatched. A subject declared
+		// once would have resolved at locate(primary) and never reached the veto.
+		"pkg/shared.go":  "package pkg\n\nfunc sharedHelper() error { return nil }\n",
+		"pkg/shared2.go": "package pkg\n\nfunc sharedHelper() error { return nil }\n",
+		// The survivor locate(secondary) resolves to.
+		"pkg/tree.go": "package pkg\n\nfunc parseTree() error { return nil }\n",
+		// The dropped anchor, declared in exactly one OTHER file: the disagreement.
+		"other/glued.go": "package other\n\nfunc " + glued + "() error { return nil }\n",
+	})
+	reviewDir := t.TempDir()
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+		"HIGH|internal/ghost/phantom.go:3|the `sharedHelper` path drops the returned error|"+
+			fix+"|correctness|10|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Findings, 1)
+
+	assert.Empty(t, res.JSONFindings()[0].PathSuggestion,
+		"precondition: the veto withheld the suggestion locate(secondary) produced")
+	assert.Equal(t, beforeContradicted+1, metrics.Counter(tier4FixSetContradictedMetric).Value(),
+		"the veto produced a file and withheld it: without its own counter this arm "+
+			"renders identically to tier4Inconclusive and to a no-match on a truncated set")
+	assert.Equal(t, beforeDropped+1, metrics.Counter(tier4FixAnchorDroppedMetric).Value(),
+		"the drop counter still counts the NARROWING, which is a different event - "+
+			"it is the precondition of the veto, never evidence the veto fired")
+}

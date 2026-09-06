@@ -103,6 +103,27 @@ const tier4FixSetAllDroppedMetric = "atcr_tier4_fix_set_all_dropped_total"
 // produce an answer and the completeness check withheld it.
 const tier4ProblemSetUnaccountedMetric = "atcr_tier4_problem_set_unaccounted_total"
 
+// tier4FixSetContradictedMetric counts the fourth withhold path on the
+// PathWarning-without-PathSuggestion rendering, and the one that had no signal
+// at all.
+//
+// What it is NOT, first: it is NOT a count of dropped anchors, and it is NOT
+// implied by atcr_tier4_fix_anchor_dropped_total. That counter fires whenever a
+// glued span narrows the FIX set, whether or not the survivors then localize and
+// whether or not a dropped name disagrees; a non-empty droppedSecondary is a
+// PRECONDITION of this veto, never evidence that it fired. It is also NOT a
+// count of findings that lost a suggestion for any other reason - the cap, a
+// member-less fidelity loss, and a narrowing that consumed every member each
+// have their own counter and none of them reaches this arm.
+//
+// What it IS: a Tier 4 lookup where locate(secondary) DID produce a file under a
+// matched primary, and contradicts() then vetoed it because a narrowed-out anchor
+// is declared in exactly one OTHER file. resolve falls through to
+// tier4Inconclusive with no field change, and emit.go and internal/report render
+// it identically to "could not check" and to a no-match on a truncated set. Only
+// this counter separates it from those.
+const tier4FixSetContradictedMetric = "atcr_tier4_fix_set_contradicted_total"
+
 // tier4Outcome is the verdict of a Tier 4 symbol lookup (Epic 35.16.6.5 T3).
 // The three values are NOT interchangeable, and the distinction between the
 // first two is the whole safety property of this epic: only tier4NoMatch is
