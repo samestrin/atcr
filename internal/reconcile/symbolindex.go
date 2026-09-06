@@ -47,9 +47,12 @@ const tier4FixSetCappedMetric = "atcr_tier4_fix_set_capped_total"
 
 // tier4FixSetUnaccountedMetric counts findings whose FIX anchor set was
 // abandoned whole because a call-scan fidelity loss left NO member behind (a
-// silenced span, or a glued span whose token failed the shape or signal test):
-// what that span would have named is unknowable, exactly as the cap's dropped
-// anchors are.
+// silenced span, or a glued span whose token failed the shape or signal test)
+// AND whose destroyed name nothing else in the same text cited cleanly:
+// reconcileSilenced retracts the claim for a name the text vouched for
+// faithfully AND that survives the anchor cap into `anchors`, because that
+// name is not unknowable, it is sitting in the set. Otherwise what the span
+// would have named is unknowable, exactly as the cap's dropped anchors are.
 //
 // What it does NOT count, and the exclusion is deliberate: a FIX whose scan
 // collected no anchor AT ALL. "Abandoned whole" is a claim about a set that
