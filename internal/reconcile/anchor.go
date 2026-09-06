@@ -147,8 +147,15 @@ type anchorScan struct {
 	// contributes none).
 	lostSpan bool
 	// unaccounted reports that at least one such loss left NO member behind, so
-	// it cannot be repaired by dropping one. What that span would have named is
-	// unknowable, exactly as the cap's dropped anchors are.
+	// it cannot be repaired by dropping one, AND no clean span in the same text
+	// vouched for the token that loss would have named. What that span would
+	// have named is then unknowable, exactly as the cap's dropped anchors are.
+	//
+	// The second clause is what separates it from lostSpan. A silenced span
+	// whose destroyed name is cited faithfully two words earlier lost fidelity
+	// (lostSpan) but lost nothing UNKNOWABLE (not unaccounted) — the name is
+	// sitting in `anchors`. scanAnchors reconciles the two the same way, and in
+	// the same loop, that it reconciles `imprecise` against `clean`.
 	unaccounted bool
 	// imprecise holds the tokens a glued span contributed AND no clean span (a
 	// delimited citation or an unglued call) did. Every token in it may
@@ -169,15 +176,33 @@ func scanAnchors(text string) anchorScan {
 		collectDelimitedAnchors(text, byte(d), seen, clean)
 	}
 	imprecise := make(map[string]struct{})
-	lostSpan, unaccounted := collectCallAnchors(text, seen, clean, imprecise)
+	silenced := make(map[string]struct{})
+	lostSpan := collectCallAnchors(text, seen, clean, imprecise, silenced)
 	// A token a clean span also contributed was read faithfully at least once,
 	// so the glued reading is not the only evidence for it: it is not
 	// imprecise. Only a token whose EVERY contribution came from a glued span
 	// stays in the set.
+	//
+	// `silenced` is reconciled by the SAME loop and for the same reason, one
+	// step further: `unaccounted` claims the destroyed name is UNKNOWABLE, and a
+	// clean citation of that exact token is the evidence that refutes it — the
+	// name is not unknowable, it is sitting in `anchors`. Only a token nothing
+	// vouched for keeps the claim.
+	//
+	// Both reconciliations happen HERE, after the call scan, and not inline
+	// where the loss is detected: `clean` is still being filled while
+	// collectCallAnchors runs (an unglued call contributes to it too), so an
+	// inline decision would depend on whether the clean citation happened to sit
+	// before or after the silenced span in the text.
 	for tok := range clean {
 		delete(imprecise, tok)
+		delete(silenced, tok)
 	}
-	scan := anchorScan{lostSpan: lostSpan, unaccounted: unaccounted, imprecise: imprecise}
+	// lostSpan is deliberately NOT reconciled. `truncated` is built from it and
+	// the no-match direction reads that, so clearing it would make tier4NoMatch
+	// reachable where it was not before. The span really did lose fidelity; what
+	// is retracted is only the claim that what it lost is unknowable.
+	scan := anchorScan{lostSpan: lostSpan, unaccounted: len(silenced) > 0, imprecise: imprecise}
 	if len(seen) == 0 {
 		return scan
 	}
@@ -397,6 +422,15 @@ func collectDelimitedAnchors(text string, d byte, seen, clean map[string]struct{
 // searched for what the reviewer actually wrote.
 //
 // lostSpan reports a per-SPAN loss and is what `truncated` is built from.
+//
+// silencedInto receives, for each loss that left NO member behind, the token
+// that loss would have named — the full run's trailing segment in its recorded
+// form. It is a RECORD, not a verdict: this function cannot decide whether the
+// name is unknowable, because `clean` is still being filled while it runs.
+// scanAnchors subtracts `clean` from it afterwards and derives `unaccounted`
+// from what survives. Both producers of the claim write here, so the
+// reconciliation cannot close one path and leave the other short.
+//
 // impreciseInto receives the subset of `seen` that a glued span contributed,
 // so a consumer that can repair per-anchor has the names and one that cannot
 // still has the flag. clean receives every token a span contributed FAITHFULLY
@@ -428,7 +462,7 @@ func collectDelimitedAnchors(text string, d byte, seen, clean map[string]struct{
 // matched primary anchor yields tier4Inconclusive ("could not check") rather
 // than tier4NoMatch ("checked and found nothing"), which is the only outcome
 // that sidecar-routes anything.
-func collectCallAnchors(text string, seen, clean, impreciseInto map[string]struct{}) (lostSpan, unaccounted bool) {
+func collectCallAnchors(text string, seen, clean, impreciseInto, silencedInto map[string]struct{}) (lostSpan bool) {
 	for i := 0; i < len(text); i++ {
 		if text[i] != '(' {
 			continue
@@ -530,7 +564,29 @@ func collectCallAnchors(text string, seen, clean, impreciseInto map[string]struc
 			}
 			if lost {
 				lostSpan = true
-				unaccounted = true // silence: a loss with no member to point at
+				// silence: a loss with no member to point at. Record WHICH
+				// token it would have named rather than declaring the loss
+				// unaccounted here — scanAnchors reconciles the set against
+				// `clean` once the scan is done, and only a token nothing
+				// cited faithfully survives as unknowable.
+				//
+				// The subject is the FULL run's trailing segment for BOTH
+				// paths above, not the boundary-reduced fragment: the whole
+				// run is what the break destroyed, and its trailing segment is
+				// the declared name the symbol index keys on — the same
+				// reduction the boundaryDroppedSpaceless branch already asks
+				// its question of. There is exactly ONE producer of the
+				// unaccounted claim (this statement), so keying the record
+				// here is what keeps the repair from being a partial
+				// predicate that closes one path and leaves the other short.
+				//
+				// recordedAnchorForm, not the raw run: `clean` is keyed on the
+				// recorded form, so the lookup must be spelled the same way or
+				// an NFD-spelled citation would silently fail to vouch for its
+				// own NFC-spelled call. The fold is used ONLY as a map key
+				// here — the shape decision above still reads the unfolded
+				// run, for the rune-count reason stated there.
+				silencedInto[recordedAnchorForm(text[fullRunStart(text, start):i])] = struct{}{}
 			}
 			continue // undecidable: see isWordBoundary
 		}
@@ -548,12 +604,21 @@ func collectCallAnchors(text string, seen, clean, impreciseInto map[string]struc
 			} else {
 				// The span lost fidelity and its token failed the shape or
 				// signal test, so there is no member a per-anchor repair could
-				// drop. Same standing as a silence.
-				unaccounted = true
+				// drop. Same standing as a silence, and recorded the same way.
+				//
+				// This is the SECOND producer of the unaccounted claim, and it
+				// routes through the same set so the reconciliation cannot be a
+				// partial predicate that closes the silence path and leaves
+				// this one short. In practice it never reconciles away: a token
+				// that failed recordAnchor can never have entered `clean`,
+				// which only ever receives tokens recordAnchor accepted. That
+				// is the correct outcome, not an oversight — an unshaped token
+				// is not a name anything could have cited faithfully.
+				silencedInto[anchor] = struct{}{}
 			}
 		}
 	}
-	return lostSpan, unaccounted
+	return lostSpan
 }
 
 // fullRunStart continues the backwards identifier run from the index a word
