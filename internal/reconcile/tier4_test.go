@@ -346,3 +346,52 @@ func TestTier4_TruncatedFixAnchorSetYieldsNoSuggestion(t *testing.T) {
 	assert.Equal(t, []int{0}, unresolved,
 		"the PROBLEM anchor still matched nothing: sidecar-eligible")
 }
+
+// TestFakeTier4_MirrorsResolveOnThePrimaryPath pins the fake against the
+// production resolver on the one input where the two disagreed.
+//
+// fakeTier4.resolveWithDropped walked `append(primary, secondary...)` in ONE
+// loop and ran the droppedSecondary disagreement check on whichever anchor
+// matched first, so a PRIMARY hit could be vetoed. symbolIndex.resolve returns
+// the moment locate(primary) succeeds — droppedSecondary is not consulted on
+// that path at all, and contradicts is reached only from the secondary branch.
+// The fake was therefore STRICTER than the code it stands in for, while its own
+// doc claimed it "mirrors the dropped-anchor veto", which is what made the
+// divergence easy to trust.
+//
+// No assertion was self-guaranteed by it today, because no test scripts a
+// primary hit alongside a disagreeing dropped anchor. The risk is the NEXT
+// wiring test written against the fake: it would pass while asserting behaviour
+// production does not have. This test scripts exactly that input and requires
+// both resolvers to answer alike.
+func TestFakeTier4_MirrorsResolveOnThePrimaryPath(t *testing.T) {
+	const (
+		fileA = "pkg/a.go"
+		fileB = "pkg/b.go"
+	)
+	primary := []string{"subjectName"}
+	dropped := []string{"droppedName"}
+
+	production := &symbolIndex{
+		complete: true,
+		byName: map[string][]string{
+			"subjectName": {fileA},
+			"droppedName": {fileB},
+		},
+	}
+	prodFile, prodOutcome := production.resolve(primary, nil, dropped)
+	require.Equal(t, tier4Resolved, prodOutcome,
+		"production returns on the primary hit: droppedSecondary is never consulted there")
+	require.Equal(t, fileA, prodFile)
+
+	fake := &fakeTier4{byAnchor: map[string]string{
+		"subjectName": fileA,
+		"droppedName": fileB,
+	}}
+	fakeFile, fakeOutcome := fake.resolveWithDropped(context.Background(), primary, nil, dropped)
+
+	assert.Equal(t, prodOutcome, fakeOutcome,
+		"a fake stricter than production lets a wiring test assert behaviour the code does not have")
+	assert.Equal(t, prodFile, fakeFile,
+		"the primary hit names the file in both")
+}
