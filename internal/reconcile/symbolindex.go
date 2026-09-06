@@ -82,6 +82,27 @@ const tier4FixAnchorDroppedMetric = "atcr_tier4_fix_anchor_dropped_total"
 // is the defect this one exists to close.
 const tier4FixSetAllDroppedMetric = "atcr_tier4_fix_set_all_dropped_total"
 
+// tier4ProblemSetUnaccountedMetric counts findings whose PROBLEM anchor set
+// RESOLVED to exactly one file and had that suggestion withheld anyway, because
+// a call-scan fidelity loss left NO member behind: locate() refuses when two
+// precise anchors disagree, so its verdict rests on the set being COMPLETE, and
+// the silenced span is exactly the member whose answer is unknowable.
+//
+// It is the PROBLEM-side counterpart of the four FIX counters above, added for
+// the same reason tier4FixSetAllDroppedMetric was: the arm is set-level and
+// nothing else could say so. Without it, `PathWarning != "" && PathSuggestion
+// == ""` conflates three distinct meanings — tier4Inconclusive "could not
+// check", tier4NoMatch on a truncated set, and this arm's "resolved to one file
+// and withheld as untrustworthy" — and emit.go renders all three identically.
+//
+// What it is NOT: it does not count a finding that was routed out, and it never
+// can. This arm downgrades a suggestion, and a downgrade cannot reach the
+// no-match verdict that sidecar-routes anything. It is also NOT a count of
+// PROBLEM sets that lost a member — most such losses never resolve to one file
+// in the first place; this counts the narrower case where the resolver DID
+// produce an answer and the completeness check withheld it.
+const tier4ProblemSetUnaccountedMetric = "atcr_tier4_problem_set_unaccounted_total"
+
 // tier4Outcome is the verdict of a Tier 4 symbol lookup (Epic 35.16.6.5 T3).
 // The three values are NOT interchangeable, and the distinction between the
 // first two is the whole safety property of this epic: only tier4NoMatch is

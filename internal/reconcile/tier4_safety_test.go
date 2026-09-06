@@ -11,6 +11,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/samestrin/atcr/internal/metrics"
 )
 
 // The tests in this file all guard ONE property: a REAL finding must never be
@@ -590,6 +592,8 @@ func TestTier4Safety_UnaccountedProblemSetRefusesTheSuggestion(t *testing.T) {
 	require.Equal(t, []string{"readTree"}, anchors, "the silenced span contributes no anchor")
 	require.True(t, truncated, "the silence is a loss with no member to point at")
 
+	before := metrics.Counter(tier4ProblemSetUnaccountedMetric).Value()
+
 	root := gitRepoWithSources(t, map[string]string{
 		// The subject the silence destroyed, declared in exactly one file.
 		"pkg/a.go": "package a\n\nfunc " + silenced + "() error { return nil }\n",
@@ -611,4 +615,8 @@ func TestTier4Safety_UnaccountedProblemSetRefusesTheSuggestion(t *testing.T) {
 			"survivor alone is the confident wrong answer the complete set refused")
 	assert.Zero(t, res.Summary.UnresolvedFiltered,
 		"refusing a suggestion may never route a finding out")
+	assert.Equal(t, before+1, metrics.Counter(tier4ProblemSetUnaccountedMetric).Value(),
+		"a suggestion the resolver produced and the completeness check withheld must leave a "+
+			"durable signal: without one, PathWarning-without-PathSuggestion conflates this arm "+
+			"with tier4Inconclusive and with no-match on a truncated set")
 }
