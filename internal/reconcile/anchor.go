@@ -456,6 +456,13 @@ func collectDelimitedAnchors(text string, d byte, seen, clean map[string]struct{
 // “call `parseTree` instead of 設定_a()“ yielded [parseTree] before the
 // widening and nothing after, with the scan still seeing parseTree in both.
 //
+// The cost is narrower than it reads, and only this narrow: it is paid when
+// NOTHING in the same text cites the destroyed name cleanly. scanAnchors
+// reconciles the silence against `clean`, so “call `parseTree` instead of
+// `設定_a` in 設定_a()“ keeps BOTH anchors and increments nothing — the name is
+// in the set, so nothing about it is unknowable. The measured example above
+// still pays it, because there 設定_a is named only by the span that lost it.
+//
 // That is the SAFE direction and is why it is disclosed rather than fixed here:
 // an abandoned FIX set can only leave a suggestion unstamped, never route a
 // finding out. locate(nil) fails, so the secondary branch cannot fire, and a
