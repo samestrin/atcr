@@ -1042,3 +1042,125 @@ func TestDroppedFixAnchors_AbandonedArmsWithhold(t *testing.T) {
 			"the third disjunct: no member was narrowed out")
 	})
 }
+
+// TestScanAnchors_SilencedSpanReconciledAgainstClean pins the PROBLEM-side half
+// of the completeness argument that scanAnchors already makes for `imprecise`.
+//
+// `unaccounted` means "a fidelity loss left NO member behind, so what that span
+// would have named is unknowable". That claim is false the moment the SAME text
+// cites the destroyed name faithfully somewhere else: the name is not unknowable,
+// it is sitting in `scan.anchors`, and the counters and the withheld
+// PathSuggestion built on the flag inherit the error.
+//
+// scanAnchors already resolves exactly this conflict for `imprecise` — a token a
+// clean span also contributed is not imprecise (the delete-loop below the call
+// scan). This is that loop's counterpart for `unaccounted`, and it is written the
+// same way and in the same place for the same reason: `clean` is still being
+// filled WHILE collectCallAnchors runs, so a decision taken inline would depend
+// on whether the clean citation happened to appear before or after the silenced
+// span in the text.
+//
+// Measured at the parent branch's HEAD, both rows below reported
+// `unaccounted=true`; only the second one should.
+func TestScanAnchors_SilencedSpanReconciledAgainstClean(t *testing.T) {
+	settei := string([]rune{0x8A2D, 0x5B9A}) // 設定
+	name := settei + "_a"                    // 設定_a
+
+	cases := []struct {
+		name            string
+		text            string
+		wantUnaccounted bool
+		wantAnchor      string
+		why             string
+	}{
+		{
+			name:            "backticked before the qualified call",
+			text:            "`" + name + "` is broken; pkg." + name + "() returns nil",
+			wantUnaccounted: false,
+			wantAnchor:      name,
+			why: "the destroyed name was cited cleanly two words earlier and is " +
+				"already in the anchor set: nothing about it is unknowable",
+		},
+		{
+			name:            "backticked AFTER the qualified call",
+			text:            "pkg." + name + "() returns nil; see `" + name + "`",
+			wantUnaccounted: false,
+			wantAnchor:      name,
+			why: "order must not decide it — the reconciliation runs after the " +
+				"scan, not inline where `clean` is still being filled",
+		},
+		{
+			name:            "cited cleanly by a QUOTED span, not a backticked one",
+			text:            `pkg.` + name + `() returns nil, see "` + name + `"`,
+			wantUnaccounted: false,
+			wantAnchor:      name,
+			why: "every delimiter collectDelimitedAnchors scans contributes to `clean`, " +
+				"so the reconciliation must key on the set and not on the backtick",
+		},
+		{
+			name:            "the same name called again, still spaceless-broken",
+			text:            "pkg." + name + "() returns nil, unlike " + name + "()",
+			wantUnaccounted: true,
+			wantAnchor:      "",
+			why: "a bare call of the same name is silenced by the SAME boundary rule, " +
+				"so it is not a clean citation and cannot vouch for the loss " +
+				"(measured: anchors=[] for this text)",
+		},
+		{
+			name:            "no clean citation anywhere in the text",
+			text:            "pkg." + name + "() returns nil",
+			wantUnaccounted: true,
+			wantAnchor:      "",
+			why: "nothing contradicts the loss, so it stands: this is the row the " +
+				"silence guard exists for",
+		},
+		{
+			name:            "a DIFFERENT name is cited cleanly",
+			text:            "pkg." + name + "() returns nil, see `retryOnce`",
+			wantUnaccounted: true,
+			wantAnchor:      "retryOnce",
+			why: "reconciliation is per-TOKEN, not per-scan: a clean citation of " +
+				"some other name says nothing about what the break destroyed",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := scanAnchors(tc.text)
+
+			assert.Equal(t, tc.wantUnaccounted, s.unaccounted, tc.why)
+
+			// lostSpan is deliberately NOT reconciled. `truncated` is built from
+			// it and the no-match direction reads that, so clearing it here
+			// would make tier4NoMatch reachable where it was not before — the
+			// one thing this repair must never do.
+			assert.True(t, s.lostSpan,
+				"the span really did lose fidelity; only the UNKNOWABILITY claim is retracted")
+
+			if tc.wantAnchor != "" {
+				assert.Contains(t, s.anchors, tc.wantAnchor)
+			}
+		})
+	}
+}
+
+// TestScanFixAnchors_SilencedSpanReconciledAgainstClean is the FIX-side
+// consequence of the reconciliation above, and it needs no separate repair:
+// scanFixAnchors abandons the whole set on `s.unaccounted`, so a PROBLEM-side
+// correction of that flag reaches the FIX side through the same field.
+//
+// Measured at the parent branch's HEAD this text yielded `fixAnchors=[]` while
+// `fixScan.anchors` held the intact precise anchor — an anchor discarded, and
+// atcr_tier4_fix_set_unaccounted_total incremented, for a name the text spelled
+// out faithfully.
+func TestScanFixAnchors_SilencedSpanReconciledAgainstClean(t *testing.T) {
+	settei := string([]rune{0x8A2D, 0x5B9A}) // 設定
+	name := settei + "_a"
+	text := "`" + name + "` is broken; pkg." + name + "() returns nil"
+
+	fixAnchors, s := scanFixAnchors(text)
+
+	require.False(t, s.unaccounted, "precondition: the loss is reconciled away")
+	assert.Equal(t, []string{name}, fixAnchors,
+		"the set is no longer abandoned whole, so the intact precise anchor survives")
+}
