@@ -280,6 +280,59 @@ func TestTier4FixSetContradictedMetric(t *testing.T) {
 			"it is the precondition of the veto, never evidence the veto fired")
 }
 
+// TestTier4ProblemSetUnaccountedMetric_FixUnaccountedDoesNotSuppressThePrimaryProducer
+// pins the scope of the counter's LOWER-BOUND disclosure.
+//
+// The row's lower-bound sentence must be read as scoping to the sub-case where
+// the PROBLEM set localizes NOTHING: there, an unaccounted FIX collapses
+// scanFixAnchors to nil, the secondary branch cannot fire, resolve yields
+// tier4Inconclusive, and this arm is never reached. But resolve consults
+// locate(primary) FIRST and returns tier4Resolved the moment it succeeds, so
+// for a FIX-unaccounted finding whose PROBLEM set DOES localize, this arm IS
+// reached and the counter DOES fire. A sentence that stated the suppression
+// unconditionally described behavior resolve does not have.
+func TestTier4ProblemSetUnaccountedMetric_FixUnaccountedDoesNotSuppressThePrimaryProducer(t *testing.T) {
+	settei := string([]rune{0x8A2D, 0x5B9A}) // 設定
+
+	problem := "`sharedHelper` drops errors; pkg." + settei + "_a() loses them"
+	fix := "pkg." + settei + "_b() returns nil"
+
+	// Precondition: the PROBLEM scan carries an unaccounted loss AND a precise
+	// survivor, and the FIX scan is unaccounted with nil usable anchors, so the
+	// secondary branch can never fire on this finding.
+	_, problemScan := scanProblemAnchors(problem)
+	require.True(t, problemScan.unaccounted, "precondition: the PROBLEM set carries an unaccounted loss")
+	require.Equal(t, []string{"sharedHelper"}, problemScan.anchors,
+		"precondition: the PROBLEM set localizes on the surviving precise anchor")
+	fixAnchors, fixScan := scanFixAnchors(fix)
+	require.True(t, fixScan.unaccounted, "precondition: the FIX is unaccounted too")
+	require.Nil(t, fixAnchors, "precondition: scanFixAnchors abandoned the FIX set whole")
+
+	before := metrics.Counter(tier4ProblemSetUnaccountedMetric).Value()
+
+	root := gitRepoWithSources(t, map[string]string{
+		"pkg/shared.go": "package pkg\n\nfunc sharedHelper() error { return nil }\n",
+	})
+	reviewDir := t.TempDir()
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+		"HIGH|internal/ghost/phantom.go:3|"+problem+"|"+fix+"|correctness|10|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Findings, 1)
+
+	assert.Empty(t, res.JSONFindings()[0].PathSuggestion,
+		"the completeness gate still withholds the suggestion the PROBLEM survivors produced")
+	assert.Equal(t, before+1, metrics.Counter(tier4ProblemSetUnaccountedMetric).Value(),
+		"locate(primary) resolved before the secondary branch was ever consulted: "+
+			"an unaccounted FIX does NOT keep this arm from being reached, so the "+
+			"counter fires and the row must scope its lower-bound sentence to the "+
+			"sub-case where the PROBLEM set did not localize")
+}
+
 // TestTier4FixSetUnaccountedMetricSkipsACleanlyCitedName is the FIX-side
 // telemetry half of the clean reconciliation, asserted on the counter itself
 // rather than left to follow from scanFixAnchors' return.
