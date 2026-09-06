@@ -55,6 +55,21 @@ func (f *fakeTier4) namedInDocs(anchors []string) bool {
 	return true
 }
 
+// index builds a real *symbolIndex over the fake's byAnchor script, so every
+// LOCALIZATION question the fake answers is answered by production code.
+//
+// byAnchor maps one anchor to one file, which is exactly a PRECISE anchor in
+// symbolIndex terms, so the translation is total. complete is true because a
+// scripted resolver has no holes — the degraded-build cases are scripted
+// through buildState and inconc instead.
+func (f *fakeTier4) index() *symbolIndex {
+	byName := make(map[string][]string, len(f.byAnchor))
+	for anchor, file := range f.byAnchor {
+		byName[anchor] = []string{file}
+	}
+	return &symbolIndex{complete: true, byName: byName}
+}
+
 // resolveWithDropped satisfies tier4Resolver with a per-anchor script.
 //
 // It mirrors the dropped-anchor veto too: a scripted resolver that ignored
@@ -71,6 +86,23 @@ func (f *fakeTier4) namedInDocs(anchors []string) bool {
 // code it stands in for: a wiring test written against it would pass while
 // asserting behaviour production does not have. Pinned by
 // TestFakeTier4_MirrorsResolveOnThePrimaryPath.
+//
+// Every remaining localization question is DELEGATED to a real *symbolIndex
+// built from byAnchor, rather than re-implemented here. Two divergences
+// survived the veto repair in this same method, and both were hand-copied rules
+// drifting from the originals: the primary loop returned the FIRST hit where
+// locate() refuses when two precise anchors DISAGREE, and the secondary loop had
+// no equivalent of the primaryMatched gate, so it let the FIX set substitute for
+// an absent subject. Delegation removes that class — locate, contradicts, and
+// the gate are read from production, not restated — instead of pinning one
+// instance of it at a time.
+//
+// What stays scripted is what has no production equivalent: `inconc` marks an
+// anchor the index could not decide, which in production arises from an
+// incomplete build or a present-but-unlocalizable name rather than from a name
+// list. It is consulted per SET, in the order production consults the sets, so a
+// secondary script is never read on an input where production never looks at
+// the secondary set.
 func (f *fakeTier4) resolveWithDropped(_ context.Context, primary, secondary, droppedSecondary []string) (string, tier4Outcome) {
 	f.calls++
 	if len(primary) == 0 {
@@ -80,24 +112,33 @@ func (f *fakeTier4) resolveWithDropped(_ context.Context, primary, secondary, dr
 		if f.inconc[a] {
 			return "", tier4Inconclusive
 		}
-		if file, ok := f.byAnchor[a]; ok {
-			return file, tier4Resolved // production returns here without reading droppedSecondary
+	}
+
+	x := f.index()
+	if file, ok := x.locate(primary); ok {
+		return file, tier4Resolved // production returns here without reading droppedSecondary
+	}
+
+	// The secondary set may only LOCALIZE, never substitute for the subject.
+	primaryMatched := false
+	for _, a := range primary {
+		if len(x.byName[a]) > 0 {
+			primaryMatched = true
+			break
 		}
 	}
-	for _, a := range secondary {
-		if f.inconc[a] {
-			return "", tier4Inconclusive
-		}
-		file, ok := f.byAnchor[a]
-		if !ok {
-			continue
-		}
-		for _, d := range droppedSecondary {
-			if other, ok := f.byAnchor[d]; ok && other != file {
-				return "", tier4Inconclusive // a dropped name disagrees
+	if primaryMatched {
+		for _, a := range secondary {
+			if f.inconc[a] {
+				return "", tier4Inconclusive
 			}
 		}
-		return file, tier4Resolved
+		if file, ok := x.locate(secondary); ok && !x.contradicts(file, droppedSecondary) {
+			return file, tier4Resolved
+		}
+		// A primary anchor IS declared somewhere, so the tree was not searched
+		// in vain even though nothing localized.
+		return "", tier4Inconclusive
 	}
 	return "", tier4NoMatch
 }
