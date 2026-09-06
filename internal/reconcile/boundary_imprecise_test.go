@@ -299,6 +299,20 @@ func TestSymbolIndexResolve_BarredPrimaryVetoesTheSecondaryFile(t *testing.T) {
 	assert.Equal(t, tier4Inconclusive, outcome,
 		"a barred anchor declared in one OTHER file is the disagreement locate refuses on, secondary included")
 	assert.Empty(t, file)
+
+	// Both increment sites fire on exactly this input, and the counter is each
+	// arm's ONLY signal — a withheld suggestion leaves no field change — so the
+	// second site's Inc() is otherwise deletable with the suite green (measured:
+	// removing it left ./internal/reconcile/ passing). Site 1 counts the narrowed
+	// primary refusing a set that would have localized; site 2 counts the barred
+	// veto of the FIX-sourced file. docs/metrics.md promises "one finding can
+	// increment it twice"; this bracket is that promise's only pin.
+	before := metrics.Counter(tier4ProblemAnchorImpreciseMetric).Value()
+	file, outcome = x.resolve([]string{"ParseConfig"}, []string{"ParseConfig"}, []string{"readTree"}, nil)
+	assert.Equal(t, tier4Inconclusive, outcome)
+	assert.Equal(t, before+2, metrics.Counter(tier4ProblemAnchorImpreciseMetric).Value(),
+		"site 1 (primary narrowed away a localizable set) and site 2 (the barred veto) both fire on this input")
+	assert.Empty(t, file)
 }
 
 // TestSymbolIndexResolve_NonSubsetBarredAnchorIsIgnored pins resolve's defensive
