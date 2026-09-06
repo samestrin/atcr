@@ -150,6 +150,14 @@ const tier4ProblemSetUnaccountedMetric = "atcr_tier4_problem_set_unaccounted_tot
 // tier4Inconclusive with no field change, and emit.go and internal/report render
 // it identically to "could not check" and to a no-match on a truncated set. Only
 // this counter separates it from those.
+//
+// The FORWARD implication the denial above does not state: contradicts() returns
+// false on an empty dropped slice, so every increment of THIS counter is
+// accompanied by an increment of atcr_tier4_fix_anchor_dropped_total for the
+// same finding — and in different units (this one is set-level Inc(), that one
+// is per-anchor Add(n)). Read this counter ALONGSIDE the per-anchor row, never
+// summed with it: adding them double-counts every vetoed finding, in mismatched
+// units. The co-increment is pinned by TestTier4FixSetContradictedMetric.
 const tier4FixSetContradictedMetric = "atcr_tier4_fix_set_contradicted_total"
 
 // tier4Outcome is the verdict of a Tier 4 symbol lookup (Epic 35.16.6.5 T3).

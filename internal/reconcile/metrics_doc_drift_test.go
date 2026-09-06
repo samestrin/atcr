@@ -211,6 +211,15 @@ func TestMetricsDocContradictedRowLeadsWithItsNotClause(t *testing.T) {
 	assert.NotContains(t, row, "capped",
 		"the veto row must not borrow the cap's vocabulary: a dropped-anchor veto "+
 			"described in cap terms is the conflation the counter exists to separate")
+
+	// The FORWARD implication the NOT-clauses deny only in reverse: every veto
+	// increment is accompanied by a fix_anchor_dropped increment for the same
+	// finding, in different units. A row that names the sibling counter only in
+	// the denial still invites the double-counted, mismatched-unit sum.
+	assert.Contains(t, row, "accompanied",
+		"the row must disclose that every increment of this counter is ACCOMPANIED "+
+			"by an atcr_tier4_fix_anchor_dropped_total increment for the same "+
+			"finding, so the two are read alongside, never summed")
 }
 
 // TestMetricsDocFixSetUnaccountedRowDisclosesItsEmptinessGuard pins the exclusion
