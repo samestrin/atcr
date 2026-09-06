@@ -112,3 +112,47 @@ func TestTier4FixSetAllDroppedMetric(t *testing.T) {
 	assert.Equal(t, beforeUnaccounted, metrics.Counter(tier4FixSetUnaccountedMetric).Value(),
 		"a loss that left a member behind is not the member-less arm")
 }
+
+// TestTier4FixSetLossesAreNotExclusive pins that the two SET-LEVEL losses are
+// independent counters, not a first-match classification.
+//
+// A finding can be both: the anchor cap fires on eleven backticked names while a
+// silenced span in the same FIX leaves a loss with no member to point at. Under
+// the `switch { case capped: ...; case unaccounted: ... }` only the capped
+// counter fired, which made atcr_tier4_fix_set_unaccounted_total a LOWER BOUND
+// with nothing saying so — while the unavailable/incomplete pair in the same
+// docs/metrics.md both-increments on the same shape (symbolindex.go's readFiles
+// / complete pair). Two metric families in one document following opposite rules
+// is what an operator reading either one gets wrong.
+func TestTier4FixSetLossesAreNotExclusive(t *testing.T) {
+	eleven := "`aOne` `bTwo` `cThree` `dFour` `eFive` `fSix` `gSeven` `hEight` `iNine` `jTen` `kEleven`"
+	silenced := string([]rune{0x8A2D, 0x5B9A, 0x005F}) + "loadFile()" // 設定_loadFile()
+	bothFix := eleven + " and " + silenced
+
+	_, scan := scanFixAnchors(bothFix)
+	require.True(t, scan.capped, "eleven named anchors exceed maxAnchorsPerFinding")
+	require.True(t, scan.unaccounted, "the silenced span is a loss with no member to point at")
+
+	beforeCapped := metrics.Counter(tier4FixSetCappedMetric).Value()
+	beforeUnaccounted := metrics.Counter(tier4FixSetUnaccountedMetric).Value()
+
+	root := gitRepoWithSources(t, map[string]string{
+		"pkg/shared.go": "package pkg\n\nfunc sharedHelper() error { return nil }\n",
+	})
+	reviewDir := t.TempDir()
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+		"HIGH|internal/ghost/phantom.go:3|the `sharedHelper` path drops the returned error|"+
+			bothFix+"|correctness|10|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Findings, 1)
+
+	assert.Equal(t, beforeCapped+1, metrics.Counter(tier4FixSetCappedMetric).Value(),
+		"the cap fired and must be counted")
+	assert.Equal(t, beforeUnaccounted+1, metrics.Counter(tier4FixSetUnaccountedMetric).Value(),
+		"the member-less loss fired too: each loss increments its OWN counter, as the comment claims")
+}
