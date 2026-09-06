@@ -300,3 +300,30 @@ func TestSymbolIndexResolve_BarredPrimaryVetoesTheSecondaryFile(t *testing.T) {
 		"a barred anchor declared in one OTHER file is the disagreement locate refuses on, secondary included")
 	assert.Empty(t, file)
 }
+
+// TestSymbolIndexResolve_NonSubsetBarredAnchorIsIgnored pins resolve's defensive
+// clamp: barredPrimary is documented as a SUBSET of primary, and a caller that
+// violates it must not buy a veto from an anchor that is not part of the set at
+// all. Without the clamp, contradicts() consulted every barred member
+// unconditionally, so a barred name declared in exactly one OTHER file vetoed a
+// resolution the presence check and the no-match arm never saw a barred member
+// for. Production cannot reach this state (boundaryCutAnchors walks the anchor
+// set primary was built from) — that is exactly why the contract needs pinning
+// at the boundary rather than in a caller.
+func TestSymbolIndexResolve_NonSubsetBarredAnchorIsIgnored(t *testing.T) {
+	x := &symbolIndex{
+		complete: true,
+		byName: map[string][]string{
+			"anchorA": {"pkg/a.go"},
+			"barredB": {"pkg/b.go"},
+		},
+		present: map[string]uint8{"anchorA": presenceSource, "barredB": presenceSource},
+	}
+
+	// Verified against the unclamped code: this returned ("", tier4Inconclusive)
+	// — barredB vetoed a file it was never part of the set for.
+	file, outcome := x.resolve([]string{"anchorA"}, []string{"barredB"}, nil, nil)
+	assert.Equal(t, tier4Resolved, outcome,
+		"a barred name outside primary is ignored: it may not veto what the set itself resolves")
+	assert.Equal(t, "pkg/a.go", file)
+}

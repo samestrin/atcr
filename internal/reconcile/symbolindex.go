@@ -431,6 +431,26 @@ func (x *symbolIndex) resolve(primary, barredPrimary, secondary, droppedSecondar
 	if x == nil {
 		return "", tier4Inconclusive // index unavailable: could not check
 	}
+	// barredPrimary is documented as a SUBSET of primary (the sole producer,
+	// boundaryCutAnchors, walks the anchor set primary was built from), and both
+	// uses below trust it: anchorsExcept only subtracts, but contradicts()
+	// consults every member unconditionally, so a caller passing a name that is
+	// not in primary would take a veto from an anchor that is not part of the
+	// set at all — a name the presence check and the no-match arm never see.
+	// Clamping here enforces the documented contract at the boundary; for a
+	// well-formed caller (production always) the clamp is a no-op.
+	if len(barredPrimary) > 0 {
+		clamped := barredPrimary[:0:0]
+		for _, barred := range barredPrimary {
+			for _, p := range primary {
+				if barred == p {
+					clamped = append(clamped, barred)
+					break
+				}
+			}
+		}
+		barredPrimary = clamped
+	}
 	if file, ok := x.locate(anchorsExcept(primary, barredPrimary)); ok && !x.contradicts(file, barredPrimary) {
 		return file, tier4Resolved
 	}
