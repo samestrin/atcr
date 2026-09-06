@@ -413,6 +413,21 @@ func collectDelimitedAnchors(text string, d byte, seen, clean map[string]struct{
 // and nowhere else: a loss with a member can be repaired by dropping that
 // member, and a loss without one cannot be repaired at all, because what the
 // span would have named is unknowable.
+//
+// Disclosed cost of the full-run question: the same unaccounted=true flows
+// through scanAnchors into scanFixAnchors, which abandons the FIX anchor set
+// WHOLE on it. So for a spaceless-prefix short tail — bare or qualified — an
+// intact, precise, ASCII sibling anchor is discarded along with the silenced
+// one, and atcr_tier4_fix_set_unaccounted_total increments. Measured: a FIX of
+// “call `parseTree` instead of 設定_a()“ yielded [parseTree] before the
+// widening and nothing after, with the scan still seeing parseTree in both.
+//
+// That is the SAFE direction and is why it is disclosed rather than fixed here:
+// an abandoned FIX set can only leave a suggestion unstamped, never route a
+// finding out. locate(nil) fails, so the secondary branch cannot fire, and a
+// matched primary anchor yields tier4Inconclusive ("could not check") rather
+// than tier4NoMatch ("checked and found nothing"), which is the only outcome
+// that sidecar-routes anything.
 func collectCallAnchors(text string, seen, clean, impreciseInto map[string]struct{}) (lostSpan, unaccounted bool) {
 	for i := 0; i < len(text); i++ {
 		if text[i] != '(' {
