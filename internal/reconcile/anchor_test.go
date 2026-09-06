@@ -222,7 +222,7 @@ func TestExtractAnchors_Capped(t *testing.T) {
 	got := mergeAnchorsForTest(problem, "")
 	assert.Len(t, got, maxAnchorsPerFinding)
 	assert.Equal(t, []string{"aOne", "bTwo", "cThree", "dFour", "eFive", "fSix", "gSeven", "hEight"}, got,
-		"the cap keeps the lexically-first anchors so the truncation is deterministic too")
+		"one provenance class (all delimited): the cap keeps the lexically-first members of the class, so the truncation is deterministic too")
 }
 
 // TestExtractAnchors_ApostropheProse pins the per-delimiter scan: an apostrophe

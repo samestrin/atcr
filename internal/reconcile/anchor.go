@@ -370,9 +370,11 @@ func reconcileSilenced(silenced, clean map[string]struct{}, anchors []string) bo
 // out (resolve's primaryMatched guard). So the two losses extractAnchorSet folds into
 // `truncated` cost different things here and may not be answered alike:
 //
-//   - The CAP is a PREFIX. Which anchors it dropped is unknowable, so no
-//     statement about the remainder is safe and the set is abandoned whole.
-//     This is the case the flat `if truncated` test was written for.
+//   - The CAP evicts a STRICT SUBSET, chosen by provenance class first (delimited
+//     > faithful call shape > imprecise) and lexically within a class. Which
+//     anchors it dropped is unknowable, so no statement about the remainder is
+//     safe and the set is abandoned whole. This is the case the flat `if
+//     truncated` test was written for.
 //
 //   - A call-scan fidelity loss that CONTRIBUTED a member is per-SPAN. That
 //     member may not be what the reviewer wrote, but every other member still

@@ -38,7 +38,7 @@ func TestExtractAnchors_CapPrefersDelimitedAnchors(t *testing.T) {
 
 	assert.Equal(t, []string{"aOne", "bTwo", "cThree", "dFour", "eFive", "fSix", "gSeven", "zLastThing"}, got,
 		"the backticked names survive the cap, and the returned slice is still lexically sorted")
-	assert.True(t, truncated, "the cap fired, so the set is still a prefix of what the text named")
+	assert.True(t, truncated, "the cap fired, so the set is a strict subset of what the text named")
 }
 
 // TestExtractAnchors_CapEvictsImpreciseBeforeAFaithfulCallShape pins the
