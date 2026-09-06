@@ -279,3 +279,49 @@ func TestTier4FixSetContradictedMetric(t *testing.T) {
 		"the drop counter still counts the NARROWING, which is a different event - "+
 			"it is the precondition of the veto, never evidence the veto fired")
 }
+
+// TestTier4FixSetUnaccountedMetricSkipsACleanlyCitedName is the FIX-side
+// telemetry half of the clean reconciliation, asserted on the counter itself
+// rather than left to follow from scanFixAnchors' return.
+//
+// The two are not the same claim. `unaccounted=false` is a scan-level fact; what
+// an operator reads is the counter, and the arm that increments it lives in
+// validate.go behind its own conjuncts. Asserting only the scan value would let
+// the counter drift from the scan it is supposed to report on — which is the
+// class of defect this whole epic exists to close.
+func TestTier4FixSetUnaccountedMetricSkipsACleanlyCitedName(t *testing.T) {
+	settei := string([]rune{0x8A2D, 0x5B9A}) // 設定
+	name := settei + "_a"
+	// The destroyed name is cited in backticks in the SAME text, so the loss is
+	// reconciled away and the intact precise anchor survives the scan.
+	fix := "`" + name + "` is broken; pkg." + name + "() returns nil"
+
+	usable, scan := scanFixAnchors(fix)
+	require.NotEmpty(t, usable, "precondition: the set is no longer abandoned whole")
+	require.False(t, scan.unaccounted, "precondition: the loss is reconciled against clean")
+
+	beforeUnaccounted := metrics.Counter(tier4FixSetUnaccountedMetric).Value()
+	beforeAllDropped := metrics.Counter(tier4FixSetAllDroppedMetric).Value()
+
+	root := gitRepoWithSources(t, map[string]string{
+		"pkg/shared.go": "package pkg\n\nfunc sharedHelper() error { return nil }\n",
+		"pkg/a.go":      "package pkg\n\nfunc " + name + "() error { return nil }\n",
+	})
+	reviewDir := t.TempDir()
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+		"HIGH|internal/ghost/phantom.go:3|the `sharedHelper` path drops the returned error|"+
+			fix+"|correctness|10|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Findings, 1)
+
+	assert.Equal(t, beforeUnaccounted, metrics.Counter(tier4FixSetUnaccountedMetric).Value(),
+		"the name the break destroyed is spelled out faithfully two words earlier: "+
+			"nothing was lost that is unknowable, so the abandonment counter must stay flat")
+	assert.Equal(t, beforeAllDropped, metrics.Counter(tier4FixSetAllDroppedMetric).Value(),
+		"and the surviving anchor must not be narrowed away into the sibling arm either")
+}
