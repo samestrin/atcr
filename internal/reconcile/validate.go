@@ -142,21 +142,34 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 		// its own counter below, so a suggestion that never landed is
 		// attributable after the fact (docs/metrics.md).
 		fixAnchors, fixScan := scanFixAnchors(findings[i].Fix)
-		switch {
-		case fixScan.capped:
+		// Two INDEPENDENT ifs, not a first-match switch: one FIX can suffer both
+		// set-level losses at once (eleven backticked names past the cap AND a
+		// silenced span in the same text), and a switch made
+		// atcr_tier4_fix_set_unaccounted_total a silent lower bound. The
+		// unavailable/incomplete pair documented beside these both-increments on
+		// the same shape (symbolindex.go's readFiles/complete pair); two metric
+		// families in one document may not follow opposite rules.
+		setAbandoned := false
+		if fixScan.capped {
 			metrics.Counter(tier4FixSetCappedMetric).Inc()
-		case fixScan.unaccounted:
+			setAbandoned = true
+		}
+		if fixScan.unaccounted {
 			metrics.Counter(tier4FixSetUnaccountedMetric).Inc()
-		case len(fixAnchors) == 0 && len(fixScan.anchors) > 0:
-			// The narrowing removed the LAST member, so scanFixAnchors returned
-			// nil — abandoning the set whole, identically to the two arms above,
-			// but with capped and unaccounted both false. Left to `default` this
-			// counted as one NARROWED anchor, which is the opposite of what
-			// happened and the telemetry ambiguity the set-level counters exist
-			// to remove.
-			metrics.Counter(tier4FixSetAllDroppedMetric).Inc()
-		default:
-			if dropped := len(fixScan.anchors) - len(fixAnchors); dropped > 0 {
+			setAbandoned = true
+		}
+		if !setAbandoned {
+			// The per-anchor arms are still mutually exclusive with the two
+			// above and with each other: scanFixAnchors returns early on capped
+			// and unaccounted, so neither can coexist with a narrowing.
+			if len(fixAnchors) == 0 && len(fixScan.anchors) > 0 {
+				// The narrowing removed the LAST member, so scanFixAnchors
+				// returned nil — abandoning the set whole, identically to the
+				// two losses above, but with capped and unaccounted both false.
+				// Counted as a per-anchor drop this read as one NARROWED anchor,
+				// the opposite of what happened.
+				metrics.Counter(tier4FixSetAllDroppedMetric).Inc()
+			} else if dropped := len(fixScan.anchors) - len(fixAnchors); dropped > 0 {
 				metrics.Counter(tier4FixAnchorDroppedMetric).Add(int64(dropped))
 			}
 		}
