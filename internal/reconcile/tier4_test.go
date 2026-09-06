@@ -382,34 +382,100 @@ func TestTier4_TruncatedFixAnchorSetYieldsNoSuggestion(t *testing.T) {
 // wiring test written against the fake: it would pass while asserting behaviour
 // production does not have. This test scripts exactly that input and requires
 // both resolvers to answer alike.
+//
+// The table since covers the two divergences that survived that repair in the
+// SAME method, both making the fake LOOSER than production — the direction that
+// lets a wiring test assert a resolution the code refuses:
+//
+//   - the primary loop returned the FIRST byAnchor hit, while locate() refuses
+//     when two precise anchors DISAGREE (symbolindex.go locate, AC7)
+//   - the secondary loop had no equivalent of the primaryMatched gate, so it
+//     resolved on a secondary hit where production refuses to let the FIX set
+//     substitute for an absent subject — the verdict inversion that gate blocks
+//
+// One row per divergence is not the guard; comparing the two resolvers on the
+// same input is. The fake now delegates localization to a real symbolIndex, so
+// these rows pin that delegation rather than three hand-copied rules.
 func TestFakeTier4_MirrorsResolveOnThePrimaryPath(t *testing.T) {
 	const (
 		fileA = "pkg/a.go"
 		fileB = "pkg/b.go"
 	)
-	primary := []string{"subjectName"}
-	dropped := []string{"droppedName"}
 
-	production := &symbolIndex{
-		complete: true,
-		byName: map[string][]string{
-			"subjectName": {fileA},
-			"droppedName": {fileB},
+	cases := []struct {
+		name      string
+		byName    map[string][]string
+		primary   []string
+		secondary []string
+		dropped   []string
+		// wantOutcome is asserted of PRODUCTION first, so a row cannot silently
+		// become a comparison of two identical wrong answers.
+		wantOutcome tier4Outcome
+		wantFile    string
+	}{
+		{
+			// The original row: a primary hit alongside a disagreeing dropped
+			// anchor. symbolIndex.resolve returns the moment locate(primary)
+			// succeeds, so droppedSecondary is never consulted there.
+			name: "a primary hit is not vetoed by a disagreeing dropped anchor",
+			byName: map[string][]string{
+				"subjectName": {fileA},
+				"droppedName": {fileB},
+			},
+			primary:     []string{"subjectName"},
+			dropped:     []string{"droppedName"},
+			wantOutcome: tier4Resolved,
+			wantFile:    fileA,
+		},
+		{
+			// Divergence (a): two PRECISE primary anchors declared in different
+			// files. locate() refuses rather than picking one; the fake returned
+			// whichever the loop reached first.
+			name: "two disagreeing precise primary anchors resolve to nothing",
+			byName: map[string][]string{
+				"subjectName": {fileA},
+				"otherName":   {fileB},
+			},
+			primary:     []string{"subjectName", "otherName"},
+			wantOutcome: tier4Inconclusive,
+			wantFile:    "",
+		},
+		{
+			// Divergence (b): a secondary-only hit with no primary anchor
+			// present anywhere. Production refuses to let the FIX set stand in
+			// for an absent subject — rendering "did you mean X?" for a finding
+			// whose subject is fabricated is the verdict inversion the no-match
+			// direction exists to catch.
+			name: "a secondary hit cannot substitute for an absent subject",
+			byName: map[string][]string{
+				"helperName": {fileB},
+			},
+			primary:     []string{"absentSubject"},
+			secondary:   []string{"helperName"},
+			wantOutcome: tier4NoMatch,
+			wantFile:    "",
 		},
 	}
-	prodFile, prodOutcome := production.resolve(primary, nil, dropped)
-	require.Equal(t, tier4Resolved, prodOutcome,
-		"production returns on the primary hit: droppedSecondary is never consulted there")
-	require.Equal(t, fileA, prodFile)
 
-	fake := &fakeTier4{byAnchor: map[string]string{
-		"subjectName": fileA,
-		"droppedName": fileB,
-	}}
-	fakeFile, fakeOutcome := fake.resolveWithDropped(context.Background(), primary, nil, dropped)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			production := &symbolIndex{complete: true, byName: tc.byName}
+			prodFile, prodOutcome := production.resolve(tc.primary, tc.secondary, tc.dropped)
+			require.Equal(t, tc.wantOutcome, prodOutcome, "production outcome")
+			require.Equal(t, tc.wantFile, prodFile, "production file")
 
-	assert.Equal(t, prodOutcome, fakeOutcome,
-		"a fake stricter than production lets a wiring test assert behaviour the code does not have")
-	assert.Equal(t, prodFile, fakeFile,
-		"the primary hit names the file in both")
+			byAnchor := map[string]string{}
+			for name, files := range tc.byName {
+				require.Len(t, files, 1, "the fake's byAnchor can only express a precise anchor")
+				byAnchor[name] = files[0]
+			}
+			fake := &fakeTier4{byAnchor: byAnchor}
+			fakeFile, fakeOutcome := fake.resolveWithDropped(
+				context.Background(), tc.primary, tc.secondary, tc.dropped)
+
+			assert.Equal(t, prodOutcome, fakeOutcome,
+				"a fake that diverges from production lets a wiring test assert behaviour the code does not have")
+			assert.Equal(t, prodFile, fakeFile, "both resolvers name the same file")
+		})
+	}
 }
