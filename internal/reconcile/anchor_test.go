@@ -957,3 +957,54 @@ func TestLeadsWithUnderscore(t *testing.T) {
 		assert.Equal(t, tc.want, leadsWithUnderscore(tc.tok), "%q", tc.tok)
 	}
 }
+
+// TestDroppedFixAnchors_AbandonedArmsWithhold pins droppedFixAnchors' `s.capped
+// || s.unaccounted` disjuncts, which survive mutation: removing both and leaving
+// only `len(s.imprecise) == 0` left `go test ./internal/reconcile/` green.
+//
+// They survive because scanFixAnchors nils the anchors on both arms, so
+// locate(secondary) at symbolindex.go:264 can never succeed and there is nothing
+// for the veto to withhold — the disjuncts are a defensive assertion with no
+// reachable consumer today. That is exactly why no test can reach them through
+// the public seam, and exactly why one has to be built at the unit level: a
+// later change that let a capped scan keep its anchors would silently start
+// feeding cap-era dropped names to the veto with no test objecting.
+//
+// The literals below are therefore deliberate: an anchorScan carrying BOTH
+// anchors and a populated imprecise map alongside capped/unaccounted is a state
+// scanFixAnchors does not produce, and constructing it is the point.
+func TestDroppedFixAnchors_AbandonedArmsWithhold(t *testing.T) {
+	populated := func(capped, unaccounted bool) anchorScan {
+		return anchorScan{
+			anchors:     []string{"dataParse", "treeWalk"},
+			capped:      capped,
+			unaccounted: unaccounted,
+			imprecise:   map[string]struct{}{"dataParse": {}},
+		}
+	}
+
+	t.Run("a narrowed scan reports its dropped members", func(t *testing.T) {
+		assert.Equal(t, []string{"dataParse"}, populated(false, false).droppedFixAnchors(),
+			"the baseline the two arms below must differ from, or the test proves nothing")
+	})
+
+	t.Run("a capped scan withholds them", func(t *testing.T) {
+		assert.Nil(t, populated(true, false).droppedFixAnchors(),
+			"the cap abandons the set whole: nothing was narrowed away, and there is no located file to contradict")
+	})
+
+	t.Run("an unaccounted scan withholds them", func(t *testing.T) {
+		assert.Nil(t, populated(false, true).droppedFixAnchors(),
+			"a member-less loss abandons the set whole, with the cap's standing")
+	})
+
+	t.Run("both at once withholds them", func(t *testing.T) {
+		assert.Nil(t, populated(true, true).droppedFixAnchors(),
+			"the two losses are independent and either one alone is sufficient")
+	})
+
+	t.Run("an empty imprecise map has nothing to report", func(t *testing.T) {
+		assert.Nil(t, anchorScan{anchors: []string{"treeWalk"}}.droppedFixAnchors(),
+			"the third disjunct: no member was narrowed out")
+	})
+}
