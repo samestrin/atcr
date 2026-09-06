@@ -124,9 +124,14 @@ func (f *fakeTier4) resolveWithDropped(_ context.Context, primary, barredPrimary
 	}
 
 	// The secondary set may only LOCALIZE, never substitute for the subject.
+	// The gate is production's own conjunction, not a restatement of one half of
+	// it: "present" is the presenceSource bit OR a byName hit, so a subject the
+	// scan saw cited in source but could not localize still counts as matched
+	// and the secondary set may localize the finding. Aligning on byName alone
+	// made the fake return tier4NoMatch where production reaches resolveSecondary.
 	primaryMatched := false
 	for _, a := range primary {
-		if len(x.byName[a]) > 0 {
+		if x.present[a]&presenceSource != 0 || len(x.byName[a]) > 0 {
 			primaryMatched = true
 			break
 		}
