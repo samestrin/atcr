@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -37,30 +38,88 @@ func metricsDocRow(t *testing.T, name string) (string, bool) {
 	return "", false
 }
 
+// tier4MetricDeclRe extracts a Tier-4 counter constant's declaration from the
+// package's non-test sources. Deriving the set from source is the whole point:
+// a hand-typed literal list drifts the moment a counter is added and the list
+// is not updated, so the guard would silently stop guarding the very next
+// counter — the duplicated-literal failure findings_format_taxonomy_test.go was
+// written to avoid on category.go.
+var tier4MetricDeclRe = regexp.MustCompile(`(?m)^const\s+(tier4\w+Metric)\s*=\s*"(atcr_tier4_[a-z0-9_]+)"`)
+
+// tier4MetricConstants returns const-name -> metric-string for every Tier-4
+// counter this package declares, read from the package sources themselves.
+func tier4MetricConstants(t *testing.T) map[string]string {
+	t.Helper()
+	entries, err := os.ReadDir(".")
+	require.NoError(t, err)
+	out := map[string]string{}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		data, err := os.ReadFile(name)
+		require.NoError(t, err)
+		for _, m := range tier4MetricDeclRe.FindAllStringSubmatch(string(data), -1) {
+			out[m[1]] = m[2]
+		}
+	}
+	require.NotEmpty(t, out,
+		"the package must declare Tier-4 counter constants — an empty result means "+
+			"the declaration shape drifted from the regex and the guard is pinned "+
+			"against nothing, which is the silent-drift failure it exists to close")
+	return out
+}
+
 // TestMetricsDocDocumentsEveryTier4SetLevelCounter is the drift guard between
 // docs/metrics.md and the counter constants in this package.
 //
-// Every constant below names a counter an operator is expected to SUM with its
+// Every constant names a counter an operator is expected to SUM with its
 // siblings to estimate suggestions lost to anchor fidelity. A counter missing
 // from the catalog is worse than an undocumented one: the sum silently omits it,
 // and nothing in the tool says so.
 func TestMetricsDocDocumentsEveryTier4SetLevelCounter(t *testing.T) {
-	for _, name := range []string{
-		tier4FixSetCappedMetric,
-		tier4FixSetUnaccountedMetric,
-		tier4FixAnchorDroppedMetric,
-		tier4FixSetAllDroppedMetric,
-		tier4ProblemSetUnaccountedMetric,
-		tier4FixSetContradictedMetric,
-	} {
-		t.Run(name, func(t *testing.T) {
-			_, ok := metricsDocRow(t, name)
+	for constName, metric := range tier4MetricConstants(t) {
+		t.Run(constName, func(t *testing.T) {
+			_, ok := metricsDocRow(t, metric)
 			assert.True(t, ok,
-				"%s has no row of its own in %s — an operator summing the Tier 4 "+
+				"%s (= %s) has no row of its own in %s — an operator summing the Tier 4 "+
 					"set-level counters would omit it without being told",
-				name, metricsDocPath)
+				constName, metric, metricsDocPath)
 		})
 	}
+}
+
+// tier4DocRowRe matches a catalog table row leading with a backticked Tier-4
+// counter name, the reverse direction of the guard above.
+var tier4DocRowRe = regexp.MustCompile("^\\| `(atcr_tier4_[a-z0-9_]+)` \\|")
+
+// TestMetricsDocEveryTier4RowMapsToALiveConstant is the reverse direction of
+// the drift guard: a catalog row left behind by a DELETED or renamed constant
+// is the same doc-vs-code drift from the other side, and the forward guard
+// cannot see it because it only ever asks about live constants.
+func TestMetricsDocEveryTier4RowMapsToALiveConstant(t *testing.T) {
+	b, err := os.ReadFile(metricsDocPath)
+	require.NoError(t, err, "precondition: the published metric catalog must be readable")
+	live := map[string]bool{}
+	for _, metric := range tier4MetricConstants(t) {
+		live[metric] = true
+	}
+	documented := 0
+	for _, line := range strings.Split(string(b), "\n") {
+		m := tier4DocRowRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		documented++
+		assert.True(t, live[m[1]],
+			"%s rows %s but no live constant declares it — a deleted or renamed "+
+				"counter left its catalog row behind",
+			metricsDocPath, m[1])
+	}
+	require.Positive(t, documented,
+		"precondition: the catalog documents at least one atcr_tier4_ counter — "+
+			"zero matches means the row regex drifted from the table shape")
 }
 
 // TestMetricsDocProblemSetUnaccountedRowMatchesTheCode pins the two claims the
