@@ -209,6 +209,24 @@ func TestExtractAnchors_Deterministic(t *testing.T) {
 	for i := 0; i < 25; i++ {
 		assert.Equal(t, first, mergeAnchorsForTest(problem, fix), "run %d drifted", i)
 	}
+
+	// The fixture above never trips the cap, so the provenance comparator inside
+	// it is never executed — the one branch whose determinism argument (a strict
+	// total order over a deduped set) a map-iteration drift could break.
+	//
+	// nineAnchorProblem (8 delimited + 1 call-shape) does NOT work here, measured:
+	// its surviving SET is decided by class membership alone, so even a comparator
+	// made non-total WITHIN a class keeps it byte-stable and the loop below would
+	// prove nothing. The fixture needs two members competing for the evicted slot
+	// in the losing class: seven delimited names plus two bare calls fire the cap
+	// across two provenance classes AND make the within-class tiebreak observable.
+	// Verified: making the comparator non-total within a class produced two
+	// distinct survivor sets over 200 iterations, and only this loop caught it.
+	for i := 0; i < 25; i++ {
+		got := mergeAnchorsForTest("`aOne` `bTwo` `cThree` `dFour` `eFive` `fSix` `gSeven` then alphaCheck() and zebraCheck() run", "")
+		require.Equal(t, []string{"aOne", "alphaCheck", "bTwo", "cThree", "dFour", "eFive", "fSix", "gSeven"}, got,
+			"run %d drifted: the capped, provenance-ranked set must be byte-stable across map iterations", i)
+	}
 }
 
 // TestExtractAnchors_Capped bounds the work Tier 4 does per finding: a finding
