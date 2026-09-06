@@ -270,7 +270,7 @@ func TestTier4FixSetContradictedMetric(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, res.Findings, 1)
 
-	assert.Empty(t, res.JSONFindings()[0].PathSuggestion,
+	require.Empty(t, res.JSONFindings()[0].PathSuggestion,
 		"precondition: the veto withheld the suggestion locate(secondary) produced")
 	assert.Equal(t, beforeContradicted+1, metrics.Counter(tier4FixSetContradictedMetric).Value(),
 		"the veto produced a file and withheld it: without its own counter this arm "+
