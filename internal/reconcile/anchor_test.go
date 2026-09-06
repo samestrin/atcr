@@ -1064,6 +1064,7 @@ func TestDroppedFixAnchors_AbandonedArmsWithhold(t *testing.T) {
 // `unaccounted=true`; only the second one should.
 func TestScanAnchors_SilencedSpanReconciledAgainstClean(t *testing.T) {
 	settei := string([]rune{0x8A2D, 0x5B9A}) // 設定
+	han := string([]rune{0x89E3, 0x6790})    // 解析
 	name := settei + "_a"                    // 設定_a
 
 	cases := []struct {
@@ -1121,6 +1122,32 @@ func TestScanAnchors_SilencedSpanReconciledAgainstClean(t *testing.T) {
 			wantAnchor:      "retryOnce",
 			why: "reconciliation is per-TOKEN, not per-scan: a clean citation of " +
 				"some other name says nothing about what the break destroyed",
+		},
+		{
+			name:            "the FRAGMENT is cited cleanly, not the destroyed name",
+			text:            "`_a` is odd; pkg." + name + "() returns nil",
+			wantUnaccounted: true,
+			wantAnchor:      "",
+			why: "the record is keyed on the FULL run's trailing segment, which is " +
+				"what the break destroyed — vouching for the boundary-reduced " +
+				"fragment vouches for nothing",
+		},
+		{
+			name:            "the QUALIFIER is cited cleanly, not the destroyed name",
+			text:            "`pkg` is odd; pkg." + name + "() returns nil",
+			wantUnaccounted: true,
+			wantAnchor:      "",
+			why: "trailingSegment strips the qualifier before the record is keyed, so " +
+				"a clean citation of `pkg` cannot vouch for " + name,
+		},
+		{
+			name:            "two silenced spans, only one of them vouched for",
+			text:            "`" + name + "` broken; pkg." + name + "() and parse._" + han + "()",
+			wantUnaccounted: true,
+			wantAnchor:      name,
+			why: "the record is a SET, so subtracting `clean` clears only the vouched " +
+				"token; the second span's loss is still unknowable and the flag " +
+				"must still stand — a per-scan boolean would have collapsed here",
 		},
 	}
 
