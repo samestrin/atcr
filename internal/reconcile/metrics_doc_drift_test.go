@@ -193,6 +193,24 @@ func TestMetricsDocContradictedRowLeadsWithItsNotClause(t *testing.T) {
 		"the denial must come BEFORE the affirmative clause — 'contains NOT' would "+
 			"pass on a row whose denial was appended last, which is exactly the "+
 			"shape AC5 rules out")
+
+	// The affirmative content is checked against the CODE, not against keyword
+	// presence: a row that kept the NOT-clause tokens while describing the arm
+	// wrongly in every substantive claim ('counts every finding whose anchor
+	// set was capped, incremented once per dropped anchor — divide by two
+	// before summing') passed the keyword greps above.
+	assert.Contains(t, row, "locate(secondary)",
+		"the veto fires only when the secondary set produced a file under a "+
+			"matched primary — the row must say so, not merely gesture at losses")
+	assert.Contains(t, row, "contradicts",
+		"the veto is the contradicts() veto on the narrowed-out anchors: the row "+
+			"must name the mechanism an operator would grep for")
+	assert.Contains(t, row, "tier4Inconclusive",
+		"the row must name the outcome the veto falls through to, which is what "+
+			"makes this counter the arm's only signal")
+	assert.NotContains(t, row, "capped",
+		"the veto row must not borrow the cap's vocabulary: a dropped-anchor veto "+
+			"described in cap terms is the conflation the counter exists to separate")
 }
 
 // TestMetricsDocFixSetUnaccountedRowDisclosesItsEmptinessGuard pins the exclusion
@@ -212,4 +230,8 @@ func TestMetricsDocFixSetUnaccountedRowDisclosesItsEmptinessGuard(t *testing.T) 
 		"the row must disclose that a FIX whose scan collected no anchor at all is "+
 			"not counted here — otherwise an operator reads the counter as a "+
 			"complete census of member-less fidelity losses, which it is not")
+	assert.Contains(t, row, "len(fixScan.anchors)",
+		"the row must NAME the guard validate.go carries on the arm — a row that "+
+			"says 'not counted' without the mechanism passes on prose that disagrees "+
+			"with the code in every other claim")
 }
