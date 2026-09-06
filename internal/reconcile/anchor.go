@@ -229,6 +229,18 @@ func scanAnchors(text string) anchorScan {
 // reconcileSilenced decides which recorded losses keep their unaccounted claim,
 // and reports whether any survives.
 //
+// The `clean` conjunct is currently DEFENSIVE, not behaviourally reachable:
+// separating it from the anchors conjunct needs a token that is at once a
+// silence subject and contributed only by a glued (never clean) span, and the
+// boundary rules make that shape unreachable today — see
+// TestReconcileSilenced_BothConditionsAreRequired's own doc, which pins the
+// conjunct's MEANING precisely because the unit test is not a behavioural pin.
+// It stays because membership in `anchors` says a token was collected while
+// `clean` says it was read faithfully, and only the second is evidence about
+// what the reviewer wrote: if the boundary rules ever widen, a glued
+// mis-reading would otherwise start vouching for the very loss it is an
+// instance of.
+//
 // A loss is retracted only when the token it destroyed was BOTH cited cleanly
 // (`clean`) and survives into `anchors` — the post-cap set `locate` is actually
 // given. Both halves are load-bearing and neither implies the other:
