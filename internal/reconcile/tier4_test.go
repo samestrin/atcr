@@ -103,7 +103,7 @@ func (f *fakeTier4) index() *symbolIndex {
 // list. It is consulted per SET, in the order production consults the sets, so a
 // secondary script is never read on an input where production never looks at
 // the secondary set.
-func (f *fakeTier4) resolveWithDropped(_ context.Context, primary, secondary, droppedSecondary []string) (string, tier4Outcome) {
+func (f *fakeTier4) resolveWithDropped(_ context.Context, primary, imprecisePrimary, secondary, droppedSecondary []string) (string, tier4Outcome) {
 	f.calls++
 	if len(primary) == 0 {
 		return "", tier4Inconclusive
@@ -115,7 +115,11 @@ func (f *fakeTier4) resolveWithDropped(_ context.Context, primary, secondary, dr
 	}
 
 	x := f.index()
-	if file, ok := x.locate(primary); ok {
+	// The PRIMARY narrowing is delegated the same way locate and contradicts
+	// are: a fake that ignored imprecisePrimary would be LOOSER than production
+	// on exactly the input epic 35.16.6.8.2 added it for, so a wiring test that
+	// passed nil (or nothing) would pass while production withholds.
+	if file, ok := x.locate(anchorsExcept(primary, imprecisePrimary)); ok && !x.contradicts(file, imprecisePrimary) {
 		return file, tier4Resolved // production returns here without reading droppedSecondary
 	}
 
@@ -450,11 +454,12 @@ func TestFakeTier4_MirrorsResolveOnThePrimaryPath(t *testing.T) {
 	)
 
 	cases := []struct {
-		name      string
-		byName    map[string][]string
-		primary   []string
-		secondary []string
-		dropped   []string
+		name       string
+		byName     map[string][]string
+		primary    []string
+		impreciseP []string
+		secondary  []string
+		dropped    []string
 		// wantOutcome is asserted of PRODUCTION first, so a row cannot silently
 		// become a comparison of two identical wrong answers.
 		wantOutcome tier4Outcome
@@ -502,12 +507,42 @@ func TestFakeTier4_MirrorsResolveOnThePrimaryPath(t *testing.T) {
 			wantOutcome: tier4NoMatch,
 			wantFile:    "",
 		},
+		{
+			// Epic 35.16.6.8.2: an imprecise primary anchor may not SOURCE the
+			// file. A fake that ignored imprecisePrimary would resolve to fileA
+			// where production withholds — LOOSER than production, the direction
+			// that lets a wiring test assert a resolution the code refuses.
+			name: "an imprecise primary anchor does not source a resolution",
+			byName: map[string][]string{
+				"ParseConfig": {fileA},
+			},
+			primary:     []string{"ParseConfig"},
+			impreciseP:  []string{"ParseConfig"},
+			wantOutcome: tier4Inconclusive,
+			wantFile:    "",
+		},
+		{
+			// The VETO half of the same narrowing: a faithful anchor localizes
+			// fileA while a barred one is declared in exactly one OTHER file.
+			// That is the disagreement locate() would have refused on had the
+			// barred anchor still been allowed to source, so the suggestion is
+			// withheld rather than drawn from half the evidence.
+			name: "an imprecise primary anchor still vetoes a file it disagrees with",
+			byName: map[string][]string{
+				"subjectName": {fileA},
+				"ParseConfig": {fileB},
+			},
+			primary:     []string{"subjectName", "ParseConfig"},
+			impreciseP:  []string{"ParseConfig"},
+			wantOutcome: tier4Inconclusive,
+			wantFile:    "",
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			production := &symbolIndex{complete: true, byName: tc.byName}
-			prodFile, prodOutcome := production.resolve(tc.primary, tc.secondary, tc.dropped)
+			prodFile, prodOutcome := production.resolve(tc.primary, tc.impreciseP, tc.secondary, tc.dropped)
 			require.Equal(t, tc.wantOutcome, prodOutcome, "production outcome")
 			require.Equal(t, tc.wantFile, prodFile, "production file")
 
@@ -518,7 +553,7 @@ func TestFakeTier4_MirrorsResolveOnThePrimaryPath(t *testing.T) {
 			}
 			fake := &fakeTier4{byAnchor: byAnchor}
 			fakeFile, fakeOutcome := fake.resolveWithDropped(
-				context.Background(), tc.primary, tc.secondary, tc.dropped)
+				context.Background(), tc.primary, tc.impreciseP, tc.secondary, tc.dropped)
 
 			assert.Equal(t, prodOutcome, fakeOutcome,
 				"a fake that diverges from production lets a wiring test assert behaviour the code does not have")

@@ -134,6 +134,31 @@ const tier4FixSetAllDroppedMetric = "atcr_tier4_fix_set_all_dropped_total"
 // produce an answer and the completeness check withheld it.
 const tier4ProblemSetUnaccountedMetric = "atcr_tier4_problem_set_unaccounted_total"
 
+// tier4ProblemAnchorImpreciseMetric counts a Tier 4 lookup where the PROBLEM
+// anchor set WOULD have localized to exactly one file and did not, because every
+// anchor that agreed on that file was one the scan could not read faithfully —
+// a glued span's token, or the tail a spaceless-script word boundary cut a call
+// name down to.
+//
+// It is a SET-level count of suggestions the narrowing cost, not a per-anchor
+// count of barred members: an imprecise anchor that names nothing, or names a
+// file some faithful anchor agrees on, costs nothing and is silent here. That is
+// the same distinction atcr_tier4_fix_set_contradicted_total draws against
+// atcr_tier4_fix_anchor_dropped_total — a non-empty imprecise set is this arm's
+// precondition, never evidence it fired.
+//
+// It is also NOT the veto: when a faithful anchor localizes one file and a
+// barred anchor is declared in exactly one OTHER, the unnarrowed locate() saw
+// that disagreement too and refused, so the narrowing cost nothing and this
+// counter stays flat while the suggestion is still withheld.
+//
+// Like every arm on the PathWarning-without-PathSuggestion rendering it can
+// never count a routed-out finding: barring an anchor from SOURCING never
+// removes it from the presence check or the no-match arm, so this arm is a
+// downgrade and a downgrade cannot reach the verdict that sidecar-routes
+// anything.
+const tier4ProblemAnchorImpreciseMetric = "atcr_tier4_problem_anchor_imprecise_total"
+
 // tier4FixSetContradictedMetric counts the fourth withhold path on the
 // PathWarning-without-PathSuggestion rendering, and the one that had no signal
 // at all.
@@ -355,12 +380,37 @@ const (
 // disagreement locate() refuses on, and the secondary resolution is withheld.
 // Without that, narrowing the set produced a confident suggestion from half the
 // evidence: the very incompleteness the `unaccounted` arm abandons the set for.
-func (x *symbolIndex) resolve(primary, secondary, droppedSecondary []string) (string, tier4Outcome) {
+// imprecisePrimary holds the PROBLEM anchors the scan could not read faithfully
+// — a glued span's token, or the tail a spaceless-script word boundary cut a
+// call name down to. They may not SOURCE a suggestion, for the reason the FIX
+// side already refuses to let its own imprecise members source one: the reading
+// may not be what the reviewer wrote, and a file declaring only that misreading
+// is a CONFIDENT wrong answer, the one outcome nothing downstream can undo. They
+// are NOT removed from `primary` itself — the presence check and the no-match
+// arm below must still see them, or barring one from sourcing would flip a
+// finding whose subject IS in the tree to no-match and route a real finding out.
+// So the narrowing is applied at exactly one place, the locate that produces the
+// file, and the barred members ride along as VETO evidence exactly as
+// droppedSecondary does.
+func (x *symbolIndex) resolve(primary, imprecisePrimary, secondary, droppedSecondary []string) (string, tier4Outcome) {
 	if x == nil {
 		return "", tier4Inconclusive // index unavailable: could not check
 	}
-	if file, ok := x.locate(primary); ok {
+	if file, ok := x.locate(anchorsExcept(primary, imprecisePrimary)); ok && !x.contradicts(file, imprecisePrimary) {
 		return file, tier4Resolved
+	}
+	// The counter is this arm's ONLY signal, the same argument the four FIX
+	// counters and the problem-set-unaccounted arm were added on: a withheld
+	// suggestion leaves no field change and renders identically to "could not
+	// check". It fires on the one condition that means the narrowing COST a
+	// suggestion — the unnarrowed set would have localized. A veto (both halves
+	// locate, to different files) is deliberately silent here: locate(primary)
+	// sees that disagreement too and refuses, so nothing was lost to the
+	// narrowing there.
+	if len(imprecisePrimary) > 0 {
+		if _, wouldHaveResolved := x.locate(primary); wouldHaveResolved {
+			metrics.Counter(tier4ProblemAnchorImpreciseMetric).Inc()
+		}
 	}
 	// The secondary set may only LOCALIZE, never substitute for the subject:
 	// with no primary anchor present anywhere in the tree, a FIX-derived hit
@@ -429,6 +479,33 @@ func (x *symbolIndex) resolveSecondary(secondary, droppedSecondary []string) (st
 		metrics.Counter(tier4FixSetContradictedMetric).Inc()
 	}
 	return "", tier4Inconclusive
+}
+
+// anchorsExcept returns the members of anchors that are not in bar, preserving
+// order. It returns anchors itself when bar is empty, which is the overwhelming
+// common path — a finding whose prose the scan read faithfully throughout.
+//
+// bar is walked linearly rather than hashed: both slices are bounded by
+// maxAnchorsPerFinding, so the map would cost more to build than the scan it
+// replaces.
+func anchorsExcept(anchors, bar []string) []string {
+	if len(bar) == 0 || len(anchors) == 0 {
+		return anchors
+	}
+	out := make([]string, 0, len(anchors))
+	for _, a := range anchors {
+		barred := false
+		for _, b := range bar {
+			if a == b {
+				barred = true
+				break
+			}
+		}
+		if !barred {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // locate returns the single file declaring one of anchors, if exactly one such
@@ -503,22 +580,24 @@ func newLazySymbolIndex(root string, paths []string) *lazySymbolIndex {
 // every lookup — never tier4NoMatch — so nothing is routed to the sidecar on
 // the strength of an index that does not exist.
 func (lz *lazySymbolIndex) resolve(ctx context.Context, primary, secondary []string) (string, tier4Outcome) {
-	return lz.resolveWithDropped(ctx, primary, secondary, nil)
+	return lz.resolveWithDropped(ctx, primary, nil, secondary, nil)
 }
 
-// resolveWithDropped is resolve with the FIX anchors scanFixAnchors narrowed out
-// of secondary carried alongside, so a dropped member may still REFUSE a
-// secondary resolution it disagrees with. See symbolIndex.resolve.
+// resolveWithDropped is resolve with BOTH narrowings carried alongside the sets
+// they were taken from: the FIX anchors scanFixAnchors narrowed out of secondary,
+// and the PROBLEM anchors the scan could not read faithfully. A member of either
+// may not source a resolution and may still REFUSE one it disagrees with. See
+// symbolIndex.resolve.
 //
 // resolve is the nil-dropped case rather than the other way round: a caller that
 // has no narrowing to report (every test fixture, and any future non-FIX
 // consumer) must not have to say so.
-func (lz *lazySymbolIndex) resolveWithDropped(ctx context.Context, primary, secondary, droppedSecondary []string) (string, tier4Outcome) {
+func (lz *lazySymbolIndex) resolveWithDropped(ctx context.Context, primary, imprecisePrimary, secondary, droppedSecondary []string) (string, tier4Outcome) {
 	if lz == nil {
 		return "", tier4Inconclusive
 	}
 	lz.once.Do(func() { lz.build(ctx) })
-	return lz.idx.resolve(primary, secondary, droppedSecondary)
+	return lz.idx.resolve(primary, imprecisePrimary, secondary, droppedSecondary)
 }
 
 // state reports what the build actually achieved, for Summary.UnresolvedState.

@@ -16,12 +16,16 @@ import (
 // construct it describes lives in exactly one tracked file, in several, or
 // nowhere at all. *lazySymbolIndex is the production implementation.
 type tier4Resolver interface {
-	// droppedSecondary carries the FIX anchors scanFixAnchors narrowed out of
-	// secondary. They may not source a resolution — the glued reading of them
-	// may not be what the reviewer wrote — but a dropped name declared in a
-	// file other than the located one is the disagreement locate refuses on, so
-	// narrowing may not silently complete a set it left incomplete.
-	resolveWithDropped(ctx context.Context, primary, secondary, droppedSecondary []string) (string, tier4Outcome)
+	// imprecisePrimary and droppedSecondary carry the members of each set the
+	// scan could not read faithfully. They may not source a resolution — the
+	// glued, or boundary-truncated, reading of them may not be what the reviewer
+	// wrote — but a barred name declared in a file other than the located one is
+	// the disagreement locate refuses on, so narrowing may not silently complete
+	// a set it left incomplete. imprecisePrimary is a SUBSET of primary, not a
+	// replacement for it: primary is still the full set, because the presence
+	// check and the no-match arm must see every anchor or barring one would
+	// route a real finding out.
+	resolveWithDropped(ctx context.Context, primary, imprecisePrimary, secondary, droppedSecondary []string) (string, tier4Outcome)
 	// namedInDocs reports whether the doc-extension heuristic explains a no-match
 	// over these anchors: at least one was named in a documentation file and
 	// nowhere in source, and EVERY other anchor is accounted for somewhere in the
@@ -188,7 +192,14 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 		// source a suggestion, but a dropped name declared in another file is
 		// the disagreement locate refuses on, so narrowing must not silently
 		// complete a set it left incomplete (symbolIndex.resolve).
-		suggestion, outcome := tier4.resolveWithDropped(ctx, problemAnchors, fixAnchors, fixScan.droppedFixAnchors())
+		// The PROBLEM set is passed WHOLE, with the members the scan could not
+		// read faithfully named alongside it rather than removed from it. Removing
+		// them would take an anchor out of the presence check and the no-match arm
+		// as well as out of the locate that sources the suggestion, and a subject
+		// that IS declared in the tree would then be judged "checked and found
+		// nothing" — routing out a real finding to avoid a wrong suggestion, which
+		// is a strictly worse trade than the one this narrowing makes.
+		suggestion, outcome := tier4.resolveWithDropped(ctx, problemAnchors, problemScan.impreciseAnchors(), fixAnchors, fixScan.droppedFixAnchors())
 		switch {
 		case outcome == tier4Resolved && problemScan.unaccounted:
 			// The PROBLEM set lost a member with no name to point at, and
