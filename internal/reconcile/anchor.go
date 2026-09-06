@@ -495,16 +495,19 @@ func collectDelimitedAnchors(text string, d byte, seen, clean map[string]struct{
 // (an unglued call; the delimited scan marks its own), so scanAnchors can keep
 // a name that was read cleanly at least once out of the imprecise set.
 //
-// unaccounted reports that at least one loss left NO member behind — a silenced
-// span whose fragment could have qualified (or carries a combining mark, proof
-// the break landed mid-word), a silenced span whose FULL run could have
-// qualified where the break dropped a spaceless-script prefix, or a glued span
-// whose token failed the shape or signal test. A silence where neither the
-// fragment nor (where it is consulted) the full run could EVER have qualified
-// set nothing here: it lost nothing. The distinction matters to extractFixAnchors
-// and nowhere else: a loss with a member can be repaired by dropping that
-// member, and a loss without one cannot be repaired at all, because what the
-// span would have named is unknowable.
+// silencedInto records a subject on three shapes: a silenced span whose
+// fragment could have qualified (or carries a combining mark, proof the break
+// landed mid-word), a silenced span whose FULL run could have qualified where
+// the break dropped a spaceless-script prefix, or a glued span whose token
+// failed the shape or signal test. A silence where neither the fragment nor
+// (where it is consulted) the full run could EVER have qualified records
+// nothing here: it lost nothing. What is RECORDED is a candidate, not the
+// verdict — scanAnchors derives `unaccounted` from these records via
+// reconcileSilenced once `clean` is complete, and retracts the claim for a
+// token the same text cited cleanly and the cap kept. The member-less
+// distinction matters to extractFixAnchors and nowhere else: a loss with a
+// member can be repaired by dropping that member, and a loss without one cannot
+// be repaired at all, because what the span would have named is not in the set.
 //
 // Disclosed cost of the full-run question: the same unaccounted=true flows
 // through scanAnchors into scanFixAnchors, which abandons the FIX anchor set
