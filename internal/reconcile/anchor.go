@@ -205,9 +205,11 @@ func scanAnchors(text string) anchorScan {
 	// is retracted is only the claim that what it lost is unknowable.
 	scan := anchorScan{lostSpan: lostSpan, imprecise: imprecise}
 	if len(seen) == 0 {
-		// No anchor survived at all, so nothing can vouch for anything: every
-		// recorded loss keeps its claim.
-		scan.unaccounted = len(silenced) > 0
+		// No anchor survived at all, so nothing can vouch for anything: the
+		// reconciliation loop below can never decrement, and every recorded loss
+		// keeps its claim. Both producers of the verdict still route through
+		// reconcileSilenced, so the predicate has exactly one definition.
+		scan.unaccounted = reconcileSilenced(silenced, clean, scan.anchors)
 		return scan
 	}
 	out := make([]string, 0, len(seen))
