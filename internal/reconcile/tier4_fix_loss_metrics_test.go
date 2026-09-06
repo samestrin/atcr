@@ -167,7 +167,7 @@ func TestTier4FixSetLossesAreNotExclusive(t *testing.T) {
 // silenced one (scan.anchors empty, nothing ever collected) incremented an
 // abandonment counter for an abandonment that could not have happened.
 //
-// The cost is not cosmetic: the four FIX-loss counters exist to be SUMMED into an
+// The cost is not cosmetic: the five FIX-loss counters exist to be SUMMED into an
 // estimate of suggestions lost to anchor fidelity, and this population inflates
 // that sum by findings that never had a suggestion to lose.
 //

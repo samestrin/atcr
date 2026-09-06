@@ -113,7 +113,7 @@ const tier4FixSetAllDroppedMetric = "atcr_tier4_fix_set_all_dropped_total"
 // before the secondary branch is ever consulted, so the arm IS reached and the
 // counter fires regardless of the FIX's losses.
 //
-// It is the PROBLEM-side counterpart of the four FIX counters above, added for
+// It is the PROBLEM-side counterpart of the five FIX counters around it, added for
 // the same reason tier4FixSetAllDroppedMetric was: the arm is set-level and
 // nothing else could say so. Without it, `PathWarning != "" && PathSuggestion
 // == ""` conflates four distinct meanings — tier4Inconclusive "could not
@@ -365,7 +365,7 @@ func (x *symbolIndex) resolve(primary, secondary, droppedSecondary []string) (st
 			// "could not check" and from a no-match on a truncated set - same
 			// tier4Inconclusive, no field change, same render at emit.go and
 			// internal/report. The counter is the only thing that separates
-			// them, which is the argument the four FIX counters were added on.
+			// them, which is the argument the five FIX counters were added on.
 			metrics.Counter(tier4FixSetContradictedMetric).Inc()
 		}
 	}
