@@ -244,3 +244,26 @@ func TestMetricsDocFixSetUnaccountedRowDisclosesItsEmptinessGuard(t *testing.T) 
 			"says 'not counted' without the mechanism passes on prose that disagrees "+
 			"with the code in every other claim")
 }
+
+// TestMetricsDocFixSetUnaccountedRowDisclosesTheReconciliation pins the row's
+// second-scope disclosure, mirroring the PROBLEM row's pin above.
+//
+// After reconcileSilenced, a silenced span whose destroyed name was cited
+// cleanly in the same text AND survives the anchor cap does NOT abandon the
+// set and does NOT increment this counter. A row that still describes every
+// member-less loss as an abandonment overstates the counter — and it disagrees
+// with the PROBLEM-side row, which already names the same reconciliation, so
+// the two sibling rows would describe one mechanism by two different rules.
+func TestMetricsDocFixSetUnaccountedRowDisclosesTheReconciliation(t *testing.T) {
+	row, ok := metricsDocRow(t, tier4FixSetUnaccountedMetric)
+	require.True(t, ok, "precondition: the row exists")
+
+	assert.Contains(t, row, "cited cleanly",
+		"the row must disclose the reconcileSilenced retraction — a loss whose "+
+			"destroyed name was cited cleanly does not fire this counter — the way "+
+			"the PROBLEM-side row already does")
+	assert.Contains(t, row, "survives",
+		"the retraction also requires the name to survive the anchor cap into "+
+			"the set locate is given; a row naming only the clean citation omits "+
+			"the conjunct the cap half of the predicate enforces")
+}
