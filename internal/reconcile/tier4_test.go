@@ -61,12 +61,30 @@ func (f *fakeTier4) namedInDocs(anchors []string) bool {
 // droppedSecondary would let a wiring regression (validate.go passing nil, or
 // not passing the narrowed-out members at all) pass against behaviour
 // production does not have.
+//
+// It mirrors WHERE production applies that veto, which is the SECONDARY half
+// only. symbolIndex.resolve returns the moment locate(primary) succeeds —
+// droppedSecondary is not consulted on that path at all, and contradicts is
+// reached only from the secondary branch. A single loop over
+// `append(primary, secondary...)` ran the check on whichever anchor matched
+// first, so a primary hit could be vetoed and the fake was STRICTER than the
+// code it stands in for: a wiring test written against it would pass while
+// asserting behaviour production does not have. Pinned by
+// TestFakeTier4_MirrorsResolveOnThePrimaryPath.
 func (f *fakeTier4) resolveWithDropped(_ context.Context, primary, secondary, droppedSecondary []string) (string, tier4Outcome) {
 	f.calls++
 	if len(primary) == 0 {
 		return "", tier4Inconclusive
 	}
-	for _, a := range append(append([]string{}, primary...), secondary...) {
+	for _, a := range primary {
+		if f.inconc[a] {
+			return "", tier4Inconclusive
+		}
+		if file, ok := f.byAnchor[a]; ok {
+			return file, tier4Resolved // production returns here without reading droppedSecondary
+		}
+	}
+	for _, a := range secondary {
 		if f.inconc[a] {
 			return "", tier4Inconclusive
 		}
