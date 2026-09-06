@@ -813,16 +813,41 @@ func collectCallAnchors(text string, seen, clean map[string]struct{}, impreciseI
 			}
 			continue // undecidable: see isWordBoundary
 		}
+		// A break is a TRUNCATION of the anchor only when it destroyed part of the
+		// token that is actually recorded. `调用cfg.ParseConfig()` breaks at the
+		// 用/c boundary, but trailingSegment discards `cfg.` regardless, so the
+		// recorded `ParseConfig` is exactly the callee the reviewer wrote and
+		// nothing about it is a misreading — a boundary landing in a QUALIFIER is
+		// the most common shape in CJK review prose, and treating it as a
+		// truncation withheld a correct suggestion on every one of them. Asking
+		// the question of the recorded forms, rather than of where the break
+		// landed, is what tells the two apart: only when the full run reduces to a
+		// DIFFERENT token than the accepted span does is the anchor a proper
+		// suffix of what the text named.
+		//
+		// The second backwards walk is paid only by a span that both broke at a
+		// boundary and contributed an anchor, which is rare, and never by the
+		// silenced spans above (they have already continued).
+		boundaryCut := false
+		if atBoundary {
+			boundaryCut = anchor != recordedAnchorForm(text[fullRunStart(text, start):i])
+		}
 		glued := crossedSpaceless && strings.Contains(anchor, "_")
 		if glued {
 			lostSpan = true // glued or genuine, and nothing here can tell
 		}
 		qualified := recordAnchor(anchor, seen)
-		if qualified && !glued && !atBoundary {
-			clean[anchor] = struct{}{} // an unglued, unbroken call is a faithful contribution
+		// The !boundaryCut conjunct is a SECOND behavioural edit beside the
+		// impreciseBoundaryCut marking below, not a restatement of it: a
+		// boundary-cut token no longer vouches for a name in reconcileSilenced
+		// either, because a misreading is not evidence of what the reviewer wrote.
+		// Reverting the marking alone would leave this one in place.
+		if qualified && !glued && !boundaryCut {
+			clean[anchor] = struct{}{} // an unglued, untruncated call is a faithful contribution
 		}
-		// TRUNCATED — the boundary fired and the surviving span was accepted as
-		// an anchor. It is either the whole call name (prose ran into it) or the
+		// TRUNCATED — the boundary fired, it cost the recorded token some of its
+		// text, and what survived was accepted as an anchor. It is either the
+		// whole call name (prose ran into it) or the
 		// TAIL of a mixed name the reviewer wrote whole (`配置ParseConfig`), and
 		// nothing in the text separates the two: the same undecidability the
 		// glued span carries, reached by the boundary instead of an underscore.
@@ -839,7 +864,7 @@ func collectCallAnchors(text string, seen, clean map[string]struct{}, impreciseI
 		// direction. Setting it would make tier4NoMatch unreachable for every
 		// finding whose prose runs spaceless prose into a call, which is a
 		// separate decision on a separate set of evidence.
-		if qualified && atBoundary {
+		if qualified && boundaryCut {
 			impreciseInto[anchor] |= impreciseBoundaryCut
 		}
 		if glued {

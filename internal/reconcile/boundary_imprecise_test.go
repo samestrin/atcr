@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/samestrin/atcr/internal/stream"
 )
 
@@ -58,8 +59,23 @@ func TestScanAnchors_BoundaryTruncatedCallAnchorIsImprecise(t *testing.T) {
 			wantImprecise: nil,
 		},
 		{
-			name:          "a qualified call after a spaceless prefix is imprecise on its trailing segment",
+			// A break landing in the QUALIFIER truncates nothing that survives
+			// trailingSegment: `cfg.` is discarded either way, so the recorded
+			// `ParseConfig` is exactly the callee the reviewer wrote. This is the
+			// most common shape in CJK review prose, and a first cut of this epic
+			// marked it imprecise — withholding a CORRECT suggestion on every one
+			// of them, which is the plan's own named risk.
+			name:          "a break inside the qualifier of a qualified call stays precise",
 			text:          "配置cfg.ParseConfig() ignores the returned error",
+			wantAnchors:   []string{"ParseConfig"},
+			wantImprecise: nil,
+		},
+		{
+			// The same shape with the break inside the recorded segment itself.
+			// The qualifier is present in both rows, so the pair isolates WHERE
+			// the break landed as the thing that decides the answer.
+			name:          "a break inside the trailing segment of a qualified call is cut",
+			text:          "cfg.配置ParseConfig() ignores the returned error",
 			wantAnchors:   []string{"ParseConfig"},
 			wantImprecise: []string{"ParseConfig"},
 		},
@@ -185,4 +201,89 @@ func TestScanAnchors_GluedAndBoundaryCutAreDistinctKinds(t *testing.T) {
 	assert.Equal(t, impreciseBoundaryCut, cut.imprecise["ParseConfig"])
 	assert.Equal(t, []string{"ParseConfig"}, cut.boundaryCutAnchors(),
 		"a boundary-cut anchor is a proper suffix of what the reviewer wrote and may never source one")
+}
+
+// TestTier4ProblemAnchorImpreciseMetric pins the counter epic 35.16.6.8.2 added.
+// Without it, deleting the whole increment arm left the suite GREEN — and that
+// counter is the arm's ONLY signal: a withheld suggestion changes no field and
+// renders identically to "could not check", to a no-match on a truncated set, and
+// to the FIX-side veto. Every sibling Tier-4 counter is pinned the same way.
+//
+// The two rows are the arm's two halves: the shape that fires it, and the veto
+// shape the catalog says is deliberately silent because the unnarrowed locate()
+// refused on the same disagreement anyway.
+func TestTier4ProblemAnchorImpreciseMetric(t *testing.T) {
+	root := gitRepoWithSources(t, map[string]string{
+		"internal/zh/mix.go":    "package zh\n\nfunc 配置ParseConfig() error { return nil }\n",
+		"internal/cfg/parse.go": "package cfg\n\nfunc ParseConfig() error { return nil }\n",
+		"pkg/tree.go":           "package pkg\n\nfunc readTree() error { return nil }\n",
+	})
+
+	t.Run("a barred primary resolution is counted", func(t *testing.T) {
+		before := metrics.Counter(tier4ProblemAnchorImpreciseMetric).Value()
+
+		reviewDir := t.TempDir()
+		writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+			"HIGH|internal/ghost/phantom.go:3|配置ParseConfig() ignores the returned error|check it|correctness|10|ev|greta\n")
+
+		res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+			ReconciledAt: time.Unix(1700000000, 0).UTC(),
+			Root:         root,
+		})
+		require.NoError(t, err)
+		require.Len(t, res.Findings, 1)
+		require.Empty(t, res.JSONFindings()[0].PathSuggestion)
+
+		assert.Equal(t, before+1, metrics.Counter(tier4ProblemAnchorImpreciseMetric).Value(),
+			"the unnarrowed set would have localized internal/cfg/parse.go; barring it must leave a signal")
+	})
+
+	t.Run("a faithful anchor that localizes anyway leaves it flat", func(t *testing.T) {
+		before := metrics.Counter(tier4ProblemAnchorImpreciseMetric).Value()
+
+		reviewDir := t.TempDir()
+		// `readTree` is cited cleanly and localizes on its own, so the barred
+		// tail cost nothing: the unnarrowed locate() saw the same two files
+		// disagree and refused too.
+		writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+			"HIGH|internal/ghost/phantom.go:4|`readTree` and 配置ParseConfig() disagree|check both|correctness|10|ev|greta\n")
+
+		_, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+			ReconciledAt: time.Unix(1700000000, 0).UTC(),
+			Root:         root,
+		})
+		require.NoError(t, err)
+
+		assert.Equal(t, before, metrics.Counter(tier4ProblemAnchorImpreciseMetric).Value(),
+			"the catalog promises this arm is silent where the barring changed no answer")
+	})
+}
+
+// TestSymbolIndexResolve_BarredPrimaryVetoesTheSecondaryFile pins the second half
+// of the barring: a barred PROBLEM anchor may not SOURCE a file and must still
+// REFUSE one the FIX set produced that it disagrees with.
+//
+// Without the veto the epic merely SWAPS one confident answer for another —
+// measured, the barred `ParseConfig` (internal/cfg/parse.go) alongside a FIX
+// naming `readTree` (pkg/tree.go) stamped pkg/tree.go, where the unbarred call
+// had stamped internal/cfg/parse.go. The Success Criterion asks for a withheld
+// suggestion, not a differently-wrong one.
+func TestSymbolIndexResolve_BarredPrimaryVetoesTheSecondaryFile(t *testing.T) {
+	x := &symbolIndex{
+		complete: true,
+		byName: map[string][]string{
+			"ParseConfig": {"internal/cfg/parse.go"},
+			"readTree":    {"pkg/tree.go"},
+		},
+		present: map[string]uint8{"ParseConfig": presenceSource, "readTree": presenceSource},
+	}
+
+	file, outcome := x.resolve([]string{"ParseConfig"}, nil, []string{"readTree"}, nil)
+	require.Equal(t, tier4Resolved, outcome, "unbarred, the primary localizes on its own")
+	require.Equal(t, "internal/cfg/parse.go", file)
+
+	file, outcome = x.resolve([]string{"ParseConfig"}, []string{"ParseConfig"}, []string{"readTree"}, nil)
+	assert.Equal(t, tier4Inconclusive, outcome,
+		"a barred anchor declared in one OTHER file is the disagreement locate refuses on, secondary included")
+	assert.Empty(t, file)
 }

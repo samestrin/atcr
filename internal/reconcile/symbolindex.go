@@ -430,7 +430,20 @@ func (x *symbolIndex) resolve(primary, barredPrimary, secondary, droppedSecondar
 	}
 	if primaryMatched {
 		if file, outcome := x.resolveSecondary(secondary, droppedSecondary); outcome == tier4Resolved {
-			return file, tier4Resolved
+			// The barred PROBLEM anchors veto HERE as well as on the primary
+			// locate. Barring one from sourcing does not make it stop being part
+			// of what the PROBLEM named, so a barred name declared in exactly one
+			// OTHER file is the same disagreement locate() refuses on — and
+			// without this the epic would merely SWAP one confident answer for
+			// another: measured, a barred `ParseConfig` (internal/cfg/parse.go)
+			// alongside a FIX naming `readTree` (pkg/tree.go) stamped
+			// pkg/tree.go, where the unbarred call had stamped
+			// internal/cfg/parse.go. Withholding is the outcome this epic's
+			// Success Criteria ask for; a different confident file is not.
+			if !x.contradicts(file, barredPrimary) {
+				return file, tier4Resolved
+			}
+			metrics.Counter(tier4ProblemAnchorImpreciseMetric).Inc()
 		}
 	}
 	if len(primary) == 0 {
