@@ -148,8 +148,10 @@ type anchorScan struct {
 	lostSpan bool
 	// unaccounted reports that at least one such loss left NO member behind, so
 	// it cannot be repaired by dropping one, AND no clean span in the same text
-	// vouched for the token that loss would have named. What that span would
-	// have named is then unknowable, exactly as the cap's dropped anchors are.
+	// vouched for the token that loss would have named, AND that token survives
+	// the anchor cap into `anchors` — the post-cap set locate is actually given.
+	// What that span would have named is then unknowable, exactly as the cap's
+	// dropped anchors are.
 	//
 	// The second clause is what separates it from lostSpan. A silenced span
 	// whose destroyed name is cited faithfully two words earlier lost fidelity
