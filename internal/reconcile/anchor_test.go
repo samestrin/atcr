@@ -800,6 +800,40 @@ func TestExtractAnchorSet_ImpreciseSpanMarksTruncated(t *testing.T) {
 			wantAnchors:   nil,
 			wantTruncated: true,
 		},
+		{
+			// The QUALIFIED spelling of the row above ("a spaceless prefix split
+			// off a short tail is a loss"). isQualifiedIdentRune admits '.', so
+			// fullRunStart walks straight back THROUGH the qualifier and the raw
+			// full run is `pkg.設定_a` — which isIdentifierShaped rejects on the
+			// '.', clearing the loss and reporting a set it silently truncated.
+			// The full-run question must be asked of the same reduction the
+			// fragment path one branch up already asks of (recordedAnchorForm),
+			// so the two halves of one guard agree on which string they mean.
+			//
+			// Measured 12ffd732 (merge-base) -> HEAD: truncated TRUE -> FALSE,
+			// i.e. the bare-form repair did not reach the qualified form.
+			name:          "a qualified spaceless prefix split off a short tail is a loss",
+			text:          "the pkg." + settei + "_a() helper drops the error that `retryOnce` returns",
+			wantAnchors:   []string{"retryOnce"},
+			wantTruncated: true,
+		},
+		{
+			// Same, with the qualifier in the SAME script as the prefix, so
+			// nothing about the boundary rule can be credited for the repair.
+			name:          "a same-script qualifier before a spaceless prefix is still a loss",
+			text:          "the " + settei + "." + settei + "_a() helper drops the error that `retryOnce` returns",
+			wantAnchors:   []string{"retryOnce"},
+			wantTruncated: true,
+		},
+		{
+			// A receiver-qualified spelling with a different Han name, pinning
+			// that the repair is the qualifier strip and not a property of the
+			// particular identifier.
+			name:          "a receiver-qualified spaceless prefix split off a short tail is a loss",
+			text:          "obj." + han + "_x() drops the error that `retryOnce` returns",
+			wantAnchors:   []string{"retryOnce"},
+			wantTruncated: true,
+		},
 	}
 
 	for _, tc := range cases {

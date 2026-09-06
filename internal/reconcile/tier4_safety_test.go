@@ -520,6 +520,48 @@ func TestTier4Safety_SpacelessPrefixShortTailIsNeverNoMatch(t *testing.T) {
 		"設定_a is declared in the tree: the finding is genuine and must not be routed out")
 }
 
+// TestTier4Safety_QualifiedSpacelessPrefixShortTailIsNeverNoMatch is the
+// QUALIFIED spelling of the test above, and the half the bare-form repair left
+// open.
+//
+// The full-span silence guard took its subject RAW — `text[fullRunStart(...):i]`
+// — and isQualifiedIdentRune admits '.', so fullRunStart walked back through the
+// qualifier and handed isIdentifierShaped the string `pkg.設定_a`, which it
+// rejects on the '.'. The loss was therefore cleared for every qualified
+// spelling of exactly the shape the guard was added for, and a tail of 3+ runes
+// already fires through the fragment path, so the qualified SHORT tail was the
+// only remaining leak — and it leaked the same way the parent blocker did: a
+// genuine finding deleted from the primary report and durably charged against
+// the reviewer on the scorecard.
+//
+// Measured base-vs-HEAD on this exact PROBLEM: the bare form gave findings=1
+// UnresolvedFiltered=0 while the qualified form gave findings=0
+// UnresolvedFiltered=1.
+func TestTier4Safety_QualifiedSpacelessPrefixShortTailIsNeverNoMatch(t *testing.T) {
+	settei := string([]rune{0x8A2D, 0x5B9A}) // 設定
+	problem := "the pkg." + settei + "_a() helper drops the error that `retryOnce` returns"
+
+	anchors, truncated := extractAnchorSet(problem)
+	require.Equal(t, []string{"retryOnce"}, anchors, "the undecidable span contributes no anchor")
+	require.True(t, truncated, "the qualifier must not disable the full-span loss question")
+
+	root := gitRepoWithSources(t, map[string]string{
+		"src/loader.js": "function " + settei + "_a() { return null; }\n",
+	})
+	reviewDir := t.TempDir()
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+		"HIGH|internal/ghost/phantom.go:3|"+problem+"|fix it|correctness|10|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+	assert.Zero(t, res.Summary.UnresolvedFiltered,
+		"設定_a is declared in the tree: the qualified spelling of a genuine finding "+
+			"must not be routed out either")
+}
+
 // TestTier4Safety_UnaccountedProblemSetRefusesTheSuggestion closes the
 // PROBLEM-side half of the completeness argument this package already makes for
 // the FIX side.
