@@ -1,0 +1,100 @@
+package reconcile
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// nineAnchorProblem is epic 35.16.6.8.2 T2's fixture: eight names the reviewer
+// marked up explicitly, plus a ninth the scanner recovered from a bare call shape
+// welded to spaceless prose. Nine candidates against a cap of eight, so exactly
+// one must lose.
+const nineAnchorProblem = "`aOne` `bTwo` `cThree` `dFour` `eFive` `fSix` `gSeven` `zLastThing` " +
+	"在配置中调用ParseConfig()"
+
+// TestExtractAnchors_CapPrefersDelimitedAnchors pins T2: the anchor cap drops the
+// anchor recovered from a bare call shape before it drops one the reviewer
+// backticked.
+//
+// UTF-8 sorts every CJK-prefixed token after all ASCII, so before the
+// spaceless-script boundary rule the pseudo-token `在配置中调用ParseConfig` was
+// always the first thing a plain lexical cap dropped. The boundary rule rewrites
+// it to its ASCII tail, which sorts to the FRONT and survives — evicting the
+// lexically-last name the reviewer actually wrote. Ordering by codepoint answers
+// "which anchor sorts last", when the question the cap is really asking is "which
+// anchor is the reviewer least likely to have meant".
+//
+// The RETURNED slice stays lexically sorted. Provenance decides only WHICH
+// anchors survive; extractAnchorSet's documented "deduped and lexically sorted"
+// contract is unchanged, and TestExtractAnchors_Deterministic still passes
+// unmodified.
+func TestExtractAnchors_CapPrefersDelimitedAnchors(t *testing.T) {
+	got, truncated := extractAnchorSet(nineAnchorProblem)
+
+	assert.Equal(t, []string{"aOne", "bTwo", "cThree", "dFour", "eFive", "fSix", "gSeven", "zLastThing"}, got,
+		"the backticked names survive the cap, and the returned slice is still lexically sorted")
+	assert.True(t, truncated, "the cap fired, so the set is still a prefix of what the text named")
+}
+
+// TestExtractAnchors_CapIsStillLexicalWithinOneProvenance guards the other half of
+// the same rule: within a single provenance class nothing changed, so a finding
+// naming only backticked identifiers is capped exactly as it was before.
+func TestExtractAnchors_CapIsStillLexicalWithinOneProvenance(t *testing.T) {
+	problem := ""
+	for _, n := range []string{"aOne", "bTwo", "cThree", "dFour", "eFive", "fSix", "gSeven", "hEight", "iNine"} {
+		problem += "`" + n + "` "
+	}
+	got, truncated := extractAnchorSet(problem)
+
+	assert.Equal(t, []string{"aOne", "bTwo", "cThree", "dFour", "eFive", "fSix", "gSeven", "hEight"}, got,
+		"nine delimited anchors are one provenance class: the cap keeps the lexically-first eight, as before")
+	assert.True(t, truncated)
+}
+
+// TestExtractAnchors_CapPrefersDelimitedOverAnUngluedCall extends the rule past
+// the shape that motivated it: provenance is DELIMITED vs CALL-SHAPE, not
+// ASCII vs non-ASCII. An ordinary unglued ASCII call is still a name the reviewer
+// did not mark up, so it loses to nine backticked ones just as the glued call does.
+func TestExtractAnchors_CapPrefersDelimitedOverAnUngluedCall(t *testing.T) {
+	problem := ""
+	for _, n := range []string{"aOne", "bTwo", "cThree", "dFour", "eFive", "fSix", "gSeven", "zLastThing"} {
+		problem += "`" + n + "` "
+	}
+	problem += "and BuildFileIndex() is called once per finding"
+
+	got, _ := extractAnchorSet(problem)
+	assert.NotContains(t, got, "BuildFileIndex",
+		"a bare call shape is evicted before a name the reviewer marked up")
+	assert.Contains(t, got, "zLastThing")
+}
+
+// TestRunReconcile_CapPrefersDelimitedAnchorEndToEnd is AC3's second half against
+// the real pipeline: with the backticked `zLastThing` surviving the cap, the
+// finding resolves to the file declaring it rather than losing its suggestion to a
+// pseudo-token's ASCII tail.
+func TestRunReconcile_CapPrefersDelimitedAnchorEndToEnd(t *testing.T) {
+	root := gitRepoWithSources(t, map[string]string{
+		"internal/other/z.go":   "package other\n\nfunc zLastThing() error {\n\treturn nil\n}\n",
+		"internal/cfg/parse.go": "package cfg\n\nfunc ParseConfig() error {\n\treturn nil\n}\n",
+	})
+
+	reviewDir := t.TempDir()
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+		"HIGH|internal/tokens/renewal.go:31|"+nineAnchorProblem+"|check the error|correctness|20|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Findings, 1)
+
+	got := res.JSONFindings()[0]
+	assert.Equal(t, "internal/other/z.go", got.PathSuggestion,
+		"the surviving backticked anchor localizes the finding; the evicted call-shape tail must not")
+}
