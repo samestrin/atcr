@@ -492,10 +492,17 @@ func collectCallAnchors(text string, seen, clean, impreciseInto map[string]struc
 			// qualifier and hands isIdentifierShaped `pkg.設定_a`, which it
 			// rejects on the '.' — disabling the guard for every qualified
 			// spelling of the very shape it was added for. The declared name
-			// the break destroyed is the trailing segment `設定_a`, which is
-			// also what recordAnchor would have keyed the tree search on, so
-			// this branch and the fragment branch above now ask their question
-			// of the same reduction rather than of two different strings.
+			// the break destroyed is the trailing segment `設定_a`, so this
+			// branch and the fragment branch above now ask their question of
+			// the same reduction rather than of two different strings.
+			//
+			// The qualifier strip ONLY, deliberately not recordedAnchorForm:
+			// this branch asks whether something COULD have qualified, and the
+			// NFC fold is a normalization of a token that will be recorded, not
+			// a reduction that decides shape. Adding it here would change the
+			// rune count isIdentifierShaped's minAnchorLen reads on a composing
+			// sequence, which is a separate measurement this repair has not
+			// made.
 			//
 			// Deliberately NOT applied when the break dropped a SPACING-script
 			// prefix (`parse_解`). There the boundary rule is reading its own
