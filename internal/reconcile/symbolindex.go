@@ -364,17 +364,8 @@ func (x *symbolIndex) resolve(primary, secondary, droppedSecondary []string) (st
 		}
 	}
 	if primaryMatched {
-		if file, ok := x.locate(secondary); ok {
-			if !x.contradicts(file, droppedSecondary) {
-				return file, tier4Resolved
-			}
-			// The veto: a file WAS produced and is being withheld. Falling
-			// through from here is indistinguishable at every consumer from
-			// "could not check" and from a no-match on a truncated set - same
-			// tier4Inconclusive, no field change, same render at emit.go and
-			// internal/report. The counter is the only thing that separates
-			// them, which is the argument the five FIX counters were added on.
-			metrics.Counter(tier4FixSetContradictedMetric).Inc()
+		if file, outcome := x.resolveSecondary(secondary, droppedSecondary); outcome == tier4Resolved {
+			return file, tier4Resolved
 		}
 	}
 	if len(primary) == 0 {
@@ -398,6 +389,31 @@ func (x *symbolIndex) resolve(primary, secondary, droppedSecondary []string) (st
 		}
 	}
 	return "", tier4NoMatch // searched the whole tree, found nothing: sidecar-eligible
+}
+
+// resolveSecondary applies the SECONDARY half of the decision: a FIX set may
+// LOCALIZE a finding under a matched primary, and the contradicts() veto
+// withholds the produced file — counting it — when a narrowed-out anchor is
+// declared in exactly one OTHER file. It is its own method so the one consumer
+// that reimplements resolve's control flow (fakeTier4.resolveWithDropped, in
+// tier4_test.go) DELEGATES this arm instead of restating it: a hand-copied
+// veto without the counter leaves the arm unobservable through the test
+// double, and a hand-copied veto with a restated counter is the drift this
+// package's fake was already burned by twice.
+func (x *symbolIndex) resolveSecondary(secondary, droppedSecondary []string) (string, tier4Outcome) {
+	if file, ok := x.locate(secondary); ok {
+		if !x.contradicts(file, droppedSecondary) {
+			return file, tier4Resolved
+		}
+		// The veto: a file WAS produced and is being withheld. Falling
+		// through from here is indistinguishable at every consumer from
+		// "could not check" and from a no-match on a truncated set - same
+		// tier4Inconclusive, no field change, same render at emit.go and
+		// internal/report. The counter is the only thing that separates
+		// them, which is the argument the five FIX counters were added on.
+		metrics.Counter(tier4FixSetContradictedMetric).Inc()
+	}
+	return "", tier4Inconclusive
 }
 
 // locate returns the single file declaring one of anchors, if exactly one such
