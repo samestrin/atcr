@@ -145,12 +145,24 @@ const tier4ProblemSetUnaccountedMetric = "atcr_tier4_problem_set_unaccounted_tot
 // file some faithful anchor agrees on, costs nothing and is silent here. That is
 // the same distinction atcr_tier4_fix_set_contradicted_total draws against
 // atcr_tier4_fix_anchor_dropped_total — a non-empty imprecise set is this arm's
-// precondition, never evidence it fired.
+// precondition, never evidence that it fired.
 //
-// It is also NOT the veto: when a faithful anchor localizes one file and a
-// barred anchor is declared in exactly one OTHER, the unnarrowed locate() saw
-// that disagreement too and refused, so the narrowing cost nothing and this
-// counter stays flat while the suggestion is still withheld.
+// It has TWO increment sites, and one finding can increment it twice. The first
+// is the primary path: the PROBLEM set would have localized to exactly one file
+// and did not, because the only anchor agreeing on that file is barred. The
+// second is the barred veto on the secondary path: under a matched primary, a
+// file the FIX set produced is refused when the barred set disagrees with it
+// (resolve's barredPrimary arm) — the file was produced and then vetoed, which
+// is the same "barring changed an answer" event, counted here rather than by a
+// separate counter. docs/metrics.md documents both sites in its row for this
+// counter; the two must not drift apart.
+//
+// The first site is NOT the dropped-anchor veto: when a faithful anchor
+// localizes one file and a barred anchor is declared in exactly one OTHER, the
+// unnarrowed locate() saw that disagreement too and refused, so the narrowing
+// cost nothing and the primary-path site stays flat while the suggestion is
+// still withheld. That qualifier is scoped to the primary path only — the
+// secondary-path site above IS a veto of the FIX-sourced file.
 //
 // Like every arm on the PathWarning-without-PathSuggestion rendering it can
 // never count a routed-out finding: barring an anchor from SOURCING never
