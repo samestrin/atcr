@@ -248,11 +248,24 @@ func TestTier4ProblemAnchorImpreciseMetric(t *testing.T) {
 		writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
 			"HIGH|internal/ghost/phantom.go:4|`readTree` and 配置ParseConfig() disagree|check both|correctness|10|ev|greta\n")
 
-		_, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
 			ReconciledAt: time.Unix(1700000000, 0).UTC(),
 			Root:         root,
 		})
 		require.NoError(t, err)
+
+		// A flat counter is the DEFAULT of every failure mode — a dead resolver,
+		// a finding routed out before this arm, an anchor scan that produced
+		// nothing — so flatness alone cannot distinguish "the arm was reached and
+		// stayed silent" from "this run never reached the arm". These two
+		// assertions are the positive control the header comment describes: the
+		// run produced exactly one finding and it DID carry a barred member (the
+		// counter subtest above proves the arm fires on this shape), so the
+		// silence below is meaningful. Verified: with boundaryCutAnchors killed,
+		// this subtest stayed green before the control was added.
+		require.Len(t, res.Findings, 1, "the run must reach resolution with its finding intact for the flatness below to mean anything")
+		assert.Empty(t, res.JSONFindings()[0].PathSuggestion,
+			"the faithful readTree suggestion is stamped; the barred tail contributes nothing")
 
 		assert.Equal(t, before, metrics.Counter(tier4ProblemAnchorImpreciseMetric).Value(),
 			"the catalog promises this arm is silent where the barring changed no answer")
