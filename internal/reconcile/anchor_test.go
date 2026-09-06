@@ -1013,7 +1013,7 @@ func TestDroppedFixAnchors_AbandonedArmsWithhold(t *testing.T) {
 			anchors:     []string{"dataParse", "treeWalk"},
 			capped:      capped,
 			unaccounted: unaccounted,
-			imprecise:   map[string]struct{}{"dataParse": {}},
+			imprecise:   map[string]anchorImprecision{"dataParse": impreciseGlued},
 		}
 	}
 

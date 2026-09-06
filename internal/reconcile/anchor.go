@@ -132,6 +132,31 @@ func scanProblemAnchors(text string) ([]string, anchorScan) {
 	return s.anchors, s
 }
 
+// anchorImprecision records WHICH fidelity loss produced an imprecise anchor.
+// It is a bitmask because one token can be reached by both losses in the same
+// text, and because the two are not interchangeable to the two consumers:
+//
+//   - impreciseGlued means the accepted span is the WHOLE run and the only
+//     question is whether prose is welded to the front of it. A file declaring
+//     that entire token is strong evidence the reading was right, which is why
+//     collectCallAnchors' doc commits to the genuine `データ_解析` reading still
+//     being able to RESOLVE a finding. The PROBLEM side therefore lets it source.
+//
+//   - impreciseBoundaryCut means the accepted span is a PROPER SUFFIX of what
+//     the reviewer wrote — the word boundary threw the prefix away. A file
+//     declaring only that suffix is exactly the confident misattribution, never
+//     evidence the reading was right, so no consumer may source from it.
+//
+// The FIX side bars both, because a FIX anchor only ever LOCALIZES a finding
+// some primary anchor already matched: barring one there can cost a suggestion
+// and can never route a finding out, so it takes the safe direction for both.
+type anchorImprecision uint8
+
+const (
+	impreciseGlued anchorImprecision = 1 << iota
+	impreciseBoundaryCut
+)
+
 // anchorScan is one extraction's full result, kept unflattened for the one
 // consumer that must tell the two losses apart.
 //
@@ -163,18 +188,22 @@ type anchorScan struct {
 	// sitting in `anchors`. scanAnchors reconciles the two the same way, and in
 	// the same loop, that it reconciles `imprecise` against `clean`.
 	unaccounted bool
-	// imprecise holds the tokens a glued OR boundary-truncated span contributed
-	// AND no clean span (a delimited citation or an unglued, unbroken call) did.
-	// Every token in it may be an unfaithful reading of what the reviewer wrote;
-	// every member of anchors NOT in it is faithful WITH RESPECT TO THE LOSSES
-	// THIS SCAN DETECTS. The mixed-no-underscore Latin-tail reading disclosed at
-	// extractAnchorSet's doc IS one of those losses since 35.16.6.8.2 — it is
-	// recorded here even though it is deliberately absent from `truncated`,
-	// which is exactly the asymmetry this set exists to express. It is keyed on what
-	// the scan recorded, not on the post-cap slice, so it can name a token the
-	// cap later dropped — harmless, since it is only ever consulted as a set to
-	// exclude.
-	imprecise map[string]struct{}
+	// imprecise holds the tokens an unfaithfully-read span contributed AND no
+	// clean span (a delimited citation or an unglued, unbroken call) did, each
+	// mapped to WHICH loss produced it. Every token in it may be an unfaithful
+	// reading of what the reviewer wrote; every member of anchors NOT in it is
+	// faithful WITH RESPECT TO THE LOSSES THIS SCAN DETECTS. The
+	// mixed-no-underscore Latin-tail reading disclosed at extractAnchorSet's doc
+	// IS one of those losses since 35.16.6.8.2 — recorded here even though it is
+	// deliberately absent from `truncated`, which is exactly the asymmetry this
+	// set exists to express. It is keyed on what the scan recorded, not on the
+	// post-cap slice, so it can name a token the cap later dropped — harmless,
+	// since it is only ever consulted as a set to exclude.
+	//
+	// The KIND is load-bearing and the two may not be merged: the FIX side bars
+	// both from sourcing, while the PROBLEM side bars only impreciseBoundaryCut.
+	// See anchorImprecision.
+	imprecise map[string]anchorImprecision
 }
 
 func scanAnchors(text string) anchorScan {
@@ -183,7 +212,7 @@ func scanAnchors(text string) anchorScan {
 	for _, d := range anchorDelimiters {
 		collectDelimitedAnchors(text, byte(d), seen, clean)
 	}
-	imprecise := make(map[string]struct{})
+	imprecise := make(map[string]anchorImprecision)
 	silenced := make(map[string]struct{})
 	lostSpan := collectCallAnchors(text, seen, clean, imprecise, silenced)
 	// A token a clean span also contributed was read faithfully at least once,
@@ -373,26 +402,36 @@ func scanFixAnchors(text string) ([]string, anchorScan) {
 	return out, s
 }
 
-// impreciseAnchors returns the members of the scan's anchor set the scan could
-// not read faithfully: a glued span's token, or the tail a spaceless-script word
-// boundary cut a call name down to, in either case with no clean span in the
-// same text vouching for it. Sorted (it walks the already-sorted anchors), nil
-// when none.
+// boundaryCutAnchors returns the members of the scan's anchor set that are a
+// PROPER SUFFIX of what the reviewer wrote — the tail a spaceless-script word
+// boundary cut a call name down to, with no clean span in the same text vouching
+// for it. Sorted (it walks the already-sorted anchors), nil when none.
 //
-// It is the PROBLEM-side sibling of droppedFixAnchors and differs from it in one
-// deliberate way: it does NOT withhold on the capped or unaccounted arms. Those
-// two exist because scanFixAnchors abandons the FIX set whole there, so there is
-// no narrowed set for a dropped member to be dropped FROM. The PROBLEM set is
-// never abandoned — it is the evidence the no-match verdict rests on — so its
-// imprecise members are always meaningful, and withholding them on a capped set
-// would hand resolve a set it believes is fully faithful.
-func (s anchorScan) impreciseAnchors() []string {
+// It is the PROBLEM-side sibling of droppedFixAnchors and differs from it in two
+// deliberate ways.
+//
+// It reads ONLY impreciseBoundaryCut, never impreciseGlued. A glued token is the
+// whole run, so a file declaring that entire token is evidence the reading was
+// right, and collectCallAnchors' doc commits to the genuine `データ_解析` reading
+// still being able to resolve a finding — barring it here would take that
+// direction back out. A boundary-cut token is a suffix of a name whose prefix was
+// destroyed, so a file declaring only the suffix is never such evidence. The FIX
+// side bars both because barring there can only cost a suggestion; the PROBLEM
+// side is the one that must keep the genuine reading usable.
+//
+// It also does NOT withhold on the capped or unaccounted arms. Those exist
+// because scanFixAnchors abandons the FIX set whole there, so there is no
+// narrowed set for a dropped member to be dropped FROM. The PROBLEM set is never
+// abandoned — it is the evidence the no-match verdict rests on — so its
+// boundary-cut members are always meaningful, and withholding them on a capped
+// set would hand resolve a set it believes is fully faithful.
+func (s anchorScan) boundaryCutAnchors() []string {
 	if len(s.imprecise) == 0 {
 		return nil
 	}
 	var out []string
 	for _, tok := range s.anchors {
-		if _, bad := s.imprecise[tok]; bad {
+		if s.imprecise[tok]&impreciseBoundaryCut != 0 {
 			out = append(out, tok)
 		}
 	}
@@ -562,7 +601,7 @@ func collectDelimitedAnchors(text string, d byte, seen, clean map[string]struct{
 // matched primary anchor yields tier4Inconclusive ("could not check") rather
 // than tier4NoMatch ("checked and found nothing"), which is the only outcome
 // that sidecar-routes anything.
-func collectCallAnchors(text string, seen, clean, impreciseInto, silencedInto map[string]struct{}) (lostSpan bool) {
+func collectCallAnchors(text string, seen, clean map[string]struct{}, impreciseInto map[string]anchorImprecision, silencedInto map[string]struct{}) (lostSpan bool) {
 	for i := 0; i < len(text); i++ {
 		if text[i] != '(' {
 			continue
@@ -763,11 +802,11 @@ func collectCallAnchors(text string, seen, clean, impreciseInto, silencedInto ma
 		// finding whose prose runs spaceless prose into a call, which is a
 		// separate decision on a separate set of evidence.
 		if qualified && atBoundary {
-			impreciseInto[anchor] = struct{}{}
+			impreciseInto[anchor] |= impreciseBoundaryCut
 		}
 		if glued {
 			if qualified {
-				impreciseInto[anchor] = struct{}{}
+				impreciseInto[anchor] |= impreciseGlued
 			} else {
 				// The span lost fidelity and its token failed the shape or
 				// signal test, so there is no member a per-anchor repair could

@@ -380,7 +380,7 @@ const (
 // disagreement locate() refuses on, and the secondary resolution is withheld.
 // Without that, narrowing the set produced a confident suggestion from half the
 // evidence: the very incompleteness the `unaccounted` arm abandons the set for.
-// imprecisePrimary holds the PROBLEM anchors the scan could not read faithfully
+// barredPrimary holds the PROBLEM anchors the scan could not read faithfully
 // — a glued span's token, or the tail a spaceless-script word boundary cut a
 // call name down to. They may not SOURCE a suggestion, for the reason the FIX
 // side already refuses to let its own imprecise members source one: the reading
@@ -392,11 +392,11 @@ const (
 // So the narrowing is applied at exactly one place, the locate that produces the
 // file, and the barred members ride along as VETO evidence exactly as
 // droppedSecondary does.
-func (x *symbolIndex) resolve(primary, imprecisePrimary, secondary, droppedSecondary []string) (string, tier4Outcome) {
+func (x *symbolIndex) resolve(primary, barredPrimary, secondary, droppedSecondary []string) (string, tier4Outcome) {
 	if x == nil {
 		return "", tier4Inconclusive // index unavailable: could not check
 	}
-	if file, ok := x.locate(anchorsExcept(primary, imprecisePrimary)); ok && !x.contradicts(file, imprecisePrimary) {
+	if file, ok := x.locate(anchorsExcept(primary, barredPrimary)); ok && !x.contradicts(file, barredPrimary) {
 		return file, tier4Resolved
 	}
 	// The counter is this arm's ONLY signal, the same argument the four FIX
@@ -407,7 +407,7 @@ func (x *symbolIndex) resolve(primary, imprecisePrimary, secondary, droppedSecon
 	// locate, to different files) is deliberately silent here: locate(primary)
 	// sees that disagreement too and refuses, so nothing was lost to the
 	// narrowing there.
-	if len(imprecisePrimary) > 0 {
+	if len(barredPrimary) > 0 {
 		if _, wouldHaveResolved := x.locate(primary); wouldHaveResolved {
 			metrics.Counter(tier4ProblemAnchorImpreciseMetric).Inc()
 		}
@@ -592,12 +592,12 @@ func (lz *lazySymbolIndex) resolve(ctx context.Context, primary, secondary []str
 // resolve is the nil-dropped case rather than the other way round: a caller that
 // has no narrowing to report (every test fixture, and any future non-FIX
 // consumer) must not have to say so.
-func (lz *lazySymbolIndex) resolveWithDropped(ctx context.Context, primary, imprecisePrimary, secondary, droppedSecondary []string) (string, tier4Outcome) {
+func (lz *lazySymbolIndex) resolveWithDropped(ctx context.Context, primary, barredPrimary, secondary, droppedSecondary []string) (string, tier4Outcome) {
 	if lz == nil {
 		return "", tier4Inconclusive
 	}
 	lz.once.Do(func() { lz.build(ctx) })
-	return lz.idx.resolve(primary, imprecisePrimary, secondary, droppedSecondary)
+	return lz.idx.resolve(primary, barredPrimary, secondary, droppedSecondary)
 }
 
 // state reports what the build actually achieved, for Summary.UnresolvedState.

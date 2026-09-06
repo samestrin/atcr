@@ -137,3 +137,52 @@ func TestRunReconcile_BoundaryTruncatedAnchorWithholdsSuggestionEndToEnd(t *test
 	assert.Empty(t, unresolved, "an inconclusive Tier 4 verdict is never sidecar-routed")
 	assert.Zero(t, res.Summary.UnresolvedFiltered)
 }
+
+// TestRunReconcile_GluedProblemAnchorStillResolvesEndToEnd is the guard on the
+// narrowing epic 35.16.6.8.2 added: it bars a BOUNDARY-CUT anchor from sourcing a
+// suggestion and must NOT bar a GLUED one.
+//
+// collectCallAnchors' doc commits to exactly that distinction — "the anchor is
+// still contributed — dropping it would take the `データ_解析` direction back
+// out" — and a first cut of this epic barred both, silently retracting that
+// commitment with no test objecting. A glued token is the WHOLE run, so a file
+// declaring that entire token is evidence the reading was right; a boundary-cut
+// token is a proper suffix of a name whose prefix was destroyed, and a file
+// declaring only the suffix is never such evidence.
+func TestRunReconcile_GluedProblemAnchorStillResolvesEndToEnd(t *testing.T) {
+	root := gitRepoWithSources(t, map[string]string{
+		"internal/jp/parse.go": "package jp\n\nfunc データ_解析() error {\n\treturn nil\n}\n",
+	})
+
+	reviewDir := t.TempDir()
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+		"HIGH|internal/tokens/renewal.go:31|データ_解析() ignores the returned error|check the error|correctness|20|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Findings, 1)
+
+	got := res.JSONFindings()[0]
+	assert.Equal(t, "internal/jp/parse.go", got.PathSuggestion,
+		"a glued anchor is imprecise, not unsourceable: the genuine reading must still resolve")
+}
+
+// TestScanAnchors_GluedAndBoundaryCutAreDistinctKinds pins the same distinction
+// at the unit level, where the two kinds are actually recorded. Merging them into
+// one flag is the change this test exists to fail.
+func TestScanAnchors_GluedAndBoundaryCutAreDistinctKinds(t *testing.T) {
+	glued := scanAnchors("データ_解析() ignores the returned error")
+	require.Equal(t, []string{"データ_解析"}, glued.anchors)
+	assert.Equal(t, impreciseGlued, glued.imprecise["データ_解析"])
+	assert.Nil(t, glued.boundaryCutAnchors(),
+		"a glued anchor may still SOURCE a suggestion — only its ability to delete a finding was removed")
+
+	cut := scanAnchors("配置ParseConfig() ignores the returned error")
+	require.Equal(t, []string{"ParseConfig"}, cut.anchors)
+	assert.Equal(t, impreciseBoundaryCut, cut.imprecise["ParseConfig"])
+	assert.Equal(t, []string{"ParseConfig"}, cut.boundaryCutAnchors(),
+		"a boundary-cut anchor is a proper suffix of what the reviewer wrote and may never source one")
+}
