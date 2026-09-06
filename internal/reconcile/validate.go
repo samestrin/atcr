@@ -154,7 +154,18 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 			metrics.Counter(tier4FixSetCappedMetric).Inc()
 			setAbandoned = true
 		}
-		if fixScan.unaccounted {
+		// The `len(fixScan.anchors) > 0` conjunct is the same one the all-dropped
+		// arm below carries, and it is here for the same reason: this counter
+		// claims the set was ABANDONED WHOLE, and a FIX whose only span was a
+		// silenced one never had a set to abandon. Without it the five FIX-loss
+		// counters cannot be summed into an estimate of suggestions lost to anchor
+		// fidelity - the sum is inflated by findings that never had a suggestion.
+		//
+		// Dropping setAbandoned with it is deliberate and inert: both arms guarded
+		// by !setAbandoned require a non-empty fixScan.anchors themselves (the
+		// first explicitly, the second via dropped > 0), so an empty scan set
+		// reaches neither.
+		if fixScan.unaccounted && len(fixScan.anchors) > 0 {
 			metrics.Counter(tier4FixSetUnaccountedMetric).Inc()
 			setAbandoned = true
 		}
@@ -208,7 +219,7 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 			// it `PathWarning != "" && PathSuggestion == ""` conflates this arm
 			// with tier4Inconclusive and with no-match on a truncated set, which
 			// emit.go renders identically — the same telemetry ambiguity the
-			// four FIX-side counters were added to remove.
+			// five FIX-side counters were added to remove.
 			metrics.Counter(tier4ProblemSetUnaccountedMetric).Inc()
 		case outcome == tier4Resolved:
 			findings[i].PathSuggestion = suggestion

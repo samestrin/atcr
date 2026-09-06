@@ -47,9 +47,21 @@ const tier4FixSetCappedMetric = "atcr_tier4_fix_set_capped_total"
 
 // tier4FixSetUnaccountedMetric counts findings whose FIX anchor set was
 // abandoned whole because a call-scan fidelity loss left NO member behind (a
-// silenced span, or a glued span whose token failed the shape or signal test):
-// what that span would have named is unknowable, exactly as the cap's dropped
-// anchors are.
+// silenced span, or a glued span whose token failed the shape or signal test)
+// AND whose destroyed name nothing else in the same text cited cleanly:
+// reconcileSilenced retracts the claim for a name the text vouched for
+// faithfully AND that survives the anchor cap into `anchors`, because that
+// name is not unknowable, it is sitting in the set. Otherwise what the span
+// would have named is unknowable, exactly as the cap's dropped anchors are.
+//
+// What it does NOT count, and the exclusion is deliberate: a FIX whose scan
+// collected no anchor AT ALL. "Abandoned whole" is a claim about a set that
+// existed, and a FIX whose only span was a silenced one never had one - so the
+// arm carries the same len(fixScan.anchors) > 0 guard tier4FixSetAllDroppedMetric
+// does. That population is silent by design: nothing was lost, because nothing
+// was there. Counting it would inflate any sum of the FIX-loss counters by
+// findings that never had a suggestion to lose, which is the one thing these
+// counters exist to support.
 const tier4FixSetUnaccountedMetric = "atcr_tier4_fix_set_unaccounted_total"
 
 // tier4FixAnchorDroppedMetric counts individual FIX anchors dropped as
@@ -82,18 +94,37 @@ const tier4FixAnchorDroppedMetric = "atcr_tier4_fix_anchor_dropped_total"
 // is the defect this one exists to close.
 const tier4FixSetAllDroppedMetric = "atcr_tier4_fix_set_all_dropped_total"
 
-// tier4ProblemSetUnaccountedMetric counts findings whose PROBLEM anchor set
-// RESOLVED to exactly one file and had that suggestion withheld anyway, because
-// a call-scan fidelity loss left NO member behind: locate() refuses when two
-// precise anchors disagree, so its verdict rests on the set being COMPLETE, and
-// the silenced span is exactly the member whose answer is unknowable.
+// tier4ProblemSetUnaccountedMetric counts a Tier 4 lookup that RESOLVED to
+// exactly one file while the PROBLEM anchor set carried an unaccounted fidelity
+// loss, and had that suggestion withheld: locate() refuses when two precise
+// anchors disagree, so its verdict rests on the set being COMPLETE, and a
+// silenced span whose destroyed name nothing else in the text vouched for is
+// exactly the member whose answer is unknowable.
 //
-// It is the PROBLEM-side counterpart of the four FIX counters above, added for
+// BOTH producers of that resolution are counted, not just the obvious one. The
+// arm reads `outcome == tier4Resolved`, and resolve reaches tier4Resolved from
+// locate(primary) AND from locate(secondary) under a matched primary. So this
+// also fires when the PROBLEM set localized NOTHING and the FIX set produced the
+// file. "PROBLEM anchor set resolved to one file" would describe only the first.
+//
+// It is a LOWER BOUND, the way the sibling FIX rows are — but only in one
+// sub-case: when the PROBLEM set localizes NOTHING and a finding's FIX is
+// unaccounted too, scanFixAnchors returns nil, the secondary branch cannot
+// fire, resolve yields tier4Inconclusive instead of tier4Resolved, the arm is
+// never reached, and this counter stays flat although a suggestion was equally
+// lost. When the PROBLEM set DOES localize, resolve returns at locate(primary)
+// before the secondary branch is ever consulted, so the arm IS reached and the
+// counter fires regardless of the FIX's losses.
+//
+// It is the PROBLEM-side counterpart of the five FIX counters around it, added for
 // the same reason tier4FixSetAllDroppedMetric was: the arm is set-level and
 // nothing else could say so. Without it, `PathWarning != "" && PathSuggestion
-// == ""` conflates three distinct meanings — tier4Inconclusive "could not
-// check", tier4NoMatch on a truncated set, and this arm's "resolved to one file
-// and withheld as untrustworthy" — and emit.go renders all three identically.
+// == ""` conflates four distinct meanings — tier4Inconclusive "could not
+// check", tier4NoMatch on a truncated set, the contradicts() veto counted by
+// tier4FixSetContradictedMetric, and this arm's "resolved to one file and
+// withheld as untrustworthy" — and emit.go renders all four identically. This
+// counter and the veto's separate the last two out; without BOTH, the pair is
+// still a conflation.
 //
 // What it is NOT: it does not count a finding that was routed out, and it never
 // can. This arm downgrades a suggestion, and a downgrade cannot reach the
@@ -102,6 +133,47 @@ const tier4FixSetAllDroppedMetric = "atcr_tier4_fix_set_all_dropped_total"
 // in the first place; this counts the narrower case where the resolver DID
 // produce an answer and the completeness check withheld it.
 const tier4ProblemSetUnaccountedMetric = "atcr_tier4_problem_set_unaccounted_total"
+
+// tier4FixSetContradictedMetric counts the fourth withhold path on the
+// PathWarning-without-PathSuggestion rendering, and the one that had no signal
+// at all.
+//
+// What it is NOT, first: it is NOT a count of dropped anchors, and it is NOT
+// implied by atcr_tier4_fix_anchor_dropped_total. That counter fires whenever a
+// glued span narrows the FIX set, whether or not the survivors then localize and
+// whether or not a dropped name disagrees; a non-empty droppedSecondary is a
+// PRECONDITION of this veto, never evidence that it fired. It is also NOT a
+// count of findings that lost a suggestion for any other reason - the cap, a
+// member-less fidelity loss, and a narrowing that consumed every member each
+// have their own counter and none of them reaches this arm.
+//
+// What it IS: a Tier 4 lookup where locate(secondary) DID produce a file under a
+// matched primary, and contradicts() then vetoed it because a narrowed-out anchor
+// is declared in exactly one OTHER file. resolve falls through to
+// tier4Inconclusive with no field change, and emit.go and internal/report render
+// it identically to "could not check" and to a no-match on a truncated set. Only
+// this counter separates it from those.
+//
+// The FORWARD implication the denial above does not state: contradicts() returns
+// false on an empty dropped slice, so every increment of THIS counter is
+// accompanied by an increment of atcr_tier4_fix_anchor_dropped_total for the
+// same finding — and in different units (this one is set-level Inc(), that one
+// is per-anchor Add(n)). Read this counter ALONGSIDE the per-anchor row, never
+// summed with it: adding them double-counts every vetoed finding, in mismatched
+// units. The co-increment is pinned by TestTier4FixSetContradictedMetric.
+//
+// LAYERING, stated so the divergence from its siblings is deliberate rather
+// than discovered: the five FIX-side counters above increment once per FINDING
+// in validateFindingPaths' loop, while this one increments inside
+// symbolIndex.resolve (via resolveSecondary) — a decision procedure on the
+// index that is, except for this arm, free of global side effects. The unit
+// is therefore per-LOOKUP, and it coincides with per-finding today only
+// because validateFindingPaths resolves each finding exactly once and is
+// production's sole caller with a non-nil droppedSecondary. A future caller
+// that resolves the same finding twice (a retry, a re-validation pass) would
+// double-count — if such a caller is ever added, the increment must move out
+// to validate.go beside its siblings rather than be silently inflated here.
+const tier4FixSetContradictedMetric = "atcr_tier4_fix_set_contradicted_total"
 
 // tier4Outcome is the verdict of a Tier 4 symbol lookup (Epic 35.16.6.5 T3).
 // The three values are NOT interchangeable, and the distinction between the
@@ -307,7 +379,7 @@ func (x *symbolIndex) resolve(primary, secondary, droppedSecondary []string) (st
 		}
 	}
 	if primaryMatched {
-		if file, ok := x.locate(secondary); ok && !x.contradicts(file, droppedSecondary) {
+		if file, outcome := x.resolveSecondary(secondary, droppedSecondary); outcome == tier4Resolved {
 			return file, tier4Resolved
 		}
 	}
@@ -332,6 +404,31 @@ func (x *symbolIndex) resolve(primary, secondary, droppedSecondary []string) (st
 		}
 	}
 	return "", tier4NoMatch // searched the whole tree, found nothing: sidecar-eligible
+}
+
+// resolveSecondary applies the SECONDARY half of the decision: a FIX set may
+// LOCALIZE a finding under a matched primary, and the contradicts() veto
+// withholds the produced file — counting it — when a narrowed-out anchor is
+// declared in exactly one OTHER file. It is its own method so the one consumer
+// that reimplements resolve's control flow (fakeTier4.resolveWithDropped, in
+// tier4_test.go) DELEGATES this arm instead of restating it: a hand-copied
+// veto without the counter leaves the arm unobservable through the test
+// double, and a hand-copied veto with a restated counter is the drift this
+// package's fake was already burned by twice.
+func (x *symbolIndex) resolveSecondary(secondary, droppedSecondary []string) (string, tier4Outcome) {
+	if file, ok := x.locate(secondary); ok {
+		if !x.contradicts(file, droppedSecondary) {
+			return file, tier4Resolved
+		}
+		// The veto: a file WAS produced and is being withheld. Falling
+		// through from here is indistinguishable at every consumer from
+		// "could not check" and from a no-match on a truncated set - same
+		// tier4Inconclusive, no field change, same render at emit.go and
+		// internal/report. The counter is the only thing that separates
+		// them, which is the argument the five FIX counters were added on.
+		metrics.Counter(tier4FixSetContradictedMetric).Inc()
+	}
+	return "", tier4Inconclusive
 }
 
 // locate returns the single file declaring one of anchors, if exactly one such

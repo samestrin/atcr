@@ -133,7 +133,13 @@ func (f *fakeTier4) resolveWithDropped(_ context.Context, primary, secondary, dr
 				return "", tier4Inconclusive
 			}
 		}
-		if file, ok := x.locate(secondary); ok && !x.contradicts(file, droppedSecondary) {
+		// DELEGATED, not restated: resolveSecondary carries the contradicts()
+		// veto AND its counter. A fake that reimplemented this arm
+		// control-flow-for left tier4FixSetContradictedMetric unobservable
+		// through the double: a wiring test driven by withFakeTier4 would
+		// exercise the veto and see the counter stay flat while production
+		// increments it.
+		if file, outcome := x.resolveSecondary(secondary, droppedSecondary); outcome == tier4Resolved {
 			return file, tier4Resolved
 		}
 		// A primary anchor IS declared somewhere, so the tree was not searched

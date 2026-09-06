@@ -420,6 +420,14 @@ func TestTier4Safety_ImpreciseFixAnchorDoesNotCostTheSuggestion(t *testing.T) {
 	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
 		"HIGH|internal/ghost/phantom.go:3|"+problem+"|"+fix+"|correctness|10|ev|greta\n")
 
+	// The veto counter's placement is pinned HERE, on the negative side: a
+	// non-empty dropped set is the veto's PRECONDITION, never evidence it
+	// fired. This fixture resolves cleanly (the dropped member is declared
+	// nowhere, so nothing contradicts), so the counter must stay FLAT —
+	// hoisting the Inc() above the !contradicts check previously left the
+	// whole package green.
+	beforeContradicted := metrics.Counter(tier4FixSetContradictedMetric).Value()
+
 	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
 		ReconciledAt: time.Unix(1700000000, 0).UTC(),
 		Root:         root,
@@ -428,6 +436,10 @@ func TestTier4Safety_ImpreciseFixAnchorDoesNotCostTheSuggestion(t *testing.T) {
 	require.Len(t, res.Findings, 1)
 	assert.Equal(t, "pkg/tree.go", res.JSONFindings()[0].PathSuggestion,
 		"one imprecise FIX anchor must not cost the finding the suggestion its precise sibling grounds")
+	assert.Equal(t, beforeContradicted, metrics.Counter(tier4FixSetContradictedMetric).Value(),
+		"the veto did NOT fire here — the suggestion landed — so a counter that "+
+			"means 'the veto fired' must not move; only the with-veto fixture "+
+			"(TestTier4FixSetContradictedMetric) may increment it")
 	assert.Zero(t, res.Summary.UnresolvedFiltered,
 		"the subject is declared in the tree: nothing may route")
 }
@@ -619,4 +631,56 @@ func TestTier4Safety_UnaccountedProblemSetRefusesTheSuggestion(t *testing.T) {
 		"a suggestion the resolver produced and the completeness check withheld must leave a "+
 			"durable signal: without one, PathWarning-without-PathSuggestion conflates this arm "+
 			"with tier4Inconclusive and with no-match on a truncated set")
+}
+
+// TestTier4Safety_CleanlyCitedNameIsNotAnUnknowableLoss is the end-to-end
+// consequence of reconciling `unaccounted` against `clean`, and the inverse of
+// TestTier4Safety_UnaccountedProblemSetRefusesTheSuggestion above.
+//
+// That test pins the case where the silence destroyed a name NOTHING else in the
+// text vouches for: the loss is real, the completeness check is right to withhold
+// the suggestion, and the counter is right to record it. This one pins the case
+// the widened guard could not tell apart from it — the destroyed name cited in
+// backticks two words earlier, already sitting in scan.anchors.
+//
+// Measured at the parent branch's HEAD: PathSuggestion went from `pkg/a.go`
+// (correct) at base to "" at HEAD for this exact PROBLEM, with
+// atcr_tier4_problem_set_unaccounted_total +1 — a CORRECT suggestion (the
+// subject's own file) destroyed, and charged to telemetry as an unknowable loss.
+func TestTier4Safety_CleanlyCitedNameIsNotAnUnknowableLoss(t *testing.T) {
+	settei := string([]rune{0x8A2D, 0x5B9A}) // 設定
+	name := settei + "_a"
+	problem := "`" + name + "` is broken; pkg." + name + "() returns nil"
+
+	anchors, truncated := extractAnchorSet(problem)
+	require.Equal(t, []string{name}, anchors,
+		"the backticked span contributes the very name the call span's break destroyed")
+	require.True(t, truncated,
+		"the span really did lose fidelity — only the UNKNOWABILITY claim is retracted, "+
+			"so the no-match direction still reads exactly what it read before")
+
+	before := metrics.Counter(tier4ProblemSetUnaccountedMetric).Value()
+
+	root := gitRepoWithSources(t, map[string]string{
+		// The subject, declared in exactly one file.
+		"pkg/a.go": "package a\n\nfunc " + name + "() error { return nil }\n",
+	})
+	reviewDir := t.TempDir()
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+		"HIGH|internal/ghost/phantom.go:3|"+problem+"|fix it|correctness|10|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Findings, 1)
+	assert.Equal(t, "pkg/a.go", res.JSONFindings()[0].PathSuggestion,
+		"the name is in the anchor set and declared in exactly one file: the set is "+
+			"COMPLETE, so locate's verdict stands and the suggestion must be stamped")
+	assert.Zero(t, res.Summary.UnresolvedFiltered,
+		"stamping a suggestion may never route a finding out either")
+	assert.Equal(t, before, metrics.Counter(tier4ProblemSetUnaccountedMetric).Value(),
+		"nothing was lost that the text did not also spell out faithfully, so the "+
+			"unknowable-loss counter must stay flat")
 }
