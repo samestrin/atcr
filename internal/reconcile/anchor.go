@@ -595,24 +595,19 @@ func collectCallAnchors(text string, seen, clean, impreciseInto, silencedInto ma
 			r, _ := utf8.DecodeRuneInString(anchor)
 			fragmentQualified := isIdentifierShaped(anchor) && hasIdentifierSignal(anchor)
 			lost := fragmentQualified || unicode.In(r, unicode.Mn, unicode.Mc)
-			// The subject of the loss is the string the disjunct that FIRED
-			// actually judged, which is not the same string for all three.
-			// The fragment disjunct asks its question of `anchor` and accepts
-			// it as a name in its own right, so `anchor` is what that loss
-			// destroyed. The leading-combining-mark disjunct and the
-			// boundaryDroppedSpaceless branch below both reason explicitly
-			// about the FULL name the break truncated, so theirs is the full
-			// run's trailing segment.
-			//
-			// Keying the record on one string for all three would record a
-			// subject no predicate judged: measured, "`_解析` is broken;
-			// parse_解析() fails" is silenced on the FRAGMENT `_解析`, which
-			// the backticks cite and the anchor set already holds — recording
-			// the full run `parse_解析` there would leave the flag standing
-			// for a name the reviewer spelled out.
-			destroyed := anchor
-			if !fragmentQualified {
-				destroyed = recordedAnchorForm(text[fullRunStart(text, start):i])
+			// fullRunStart runs AT MOST ONCE and only on demand: `full` below
+			// (unfolded, for the shape question) and `destroyed` inside the
+			// record (folded, for the map key) are then two reductions of the
+			// SAME index rather than two separately-computed values a later
+			// edit could let diverge, and a span whose fragment already
+			// qualified — or that records no loss at all — pays neither the
+			// second backwards walk nor the fold.
+			runStart := -1
+			fullRun := func() string {
+				if runStart < 0 {
+					runStart = fullRunStart(text, start)
+				}
+				return text[runStart:i]
 			}
 			// The fragment is the right subject only when the fragment is what
 			// the break could have cost. When the break DROPPED a spaceless-
@@ -646,7 +641,7 @@ func collectCallAnchors(text string, seen, clean, impreciseInto, silencedInto ma
 			// widening the guard to it would refuse a no-match verdict for a
 			// set whose every member is a faithful reading.
 			if !lost && boundaryDroppedSpaceless {
-				full := trailingSegment(text[fullRunStart(text, start):i])
+				full := trailingSegment(fullRun())
 				lost = isIdentifierShaped(full) && hasIdentifierSignal(full)
 			}
 			if lost {
@@ -657,12 +652,33 @@ func collectCallAnchors(text string, seen, clean, impreciseInto, silencedInto ma
 				// `clean` once the scan is done, and only a token nothing
 				// cited faithfully survives as unknowable.
 				//
-				// `destroyed` was chosen above to match whichever disjunct
-				// fired. Both are in recordedAnchorForm, because `clean` is
-				// keyed on that form — an NFD-spelled citation must be able to
-				// vouch for its own NFC-spelled call. The fold is used ONLY as
-				// a map key; the shape decisions above still read the unfolded
-				// run, for the rune-count reason stated there.
+				// The subject of the loss is the string the disjunct that FIRED
+				// actually judged, which is not the same string for all three.
+				// The fragment disjunct asks its question of `anchor` and
+				// accepts it as a name in its own right, so `anchor` is what
+				// that loss destroyed. The leading-combining-mark disjunct and
+				// the boundaryDroppedSpaceless branch above both reason
+				// explicitly about the FULL name the break truncated, so theirs
+				// is the full run's trailing segment.
+				//
+				// Keying the record on one string for all three would record a
+				// subject no predicate judged: measured, "`_解析` is broken;
+				// parse_解析() fails" is silenced on the FRAGMENT `_解析`, which
+				// the backticks cite and the anchor set already holds —
+				// recording the full run `parse_解析` there would leave the
+				// flag standing for a name the reviewer spelled out.
+				//
+				// Computed HERE, once `lost` is settled, because a span that
+				// recorded nothing has no use for either reduction.
+				destroyed := anchor
+				if !fragmentQualified {
+					destroyed = recordedAnchorForm(fullRun())
+				}
+				// Both recorded subjects are in recordedAnchorForm, because
+				// `clean` is keyed on that form — an NFD-spelled citation must
+				// be able to vouch for its own NFC-spelled call. The fold is
+				// used ONLY as a map key; the shape decisions above still read
+				// the unfolded run, for the rune-count reason stated there.
 				silencedInto[destroyed] = struct{}{}
 			}
 			continue // undecidable: see isWordBoundary
