@@ -95,7 +95,11 @@ func TestExtractAnchors_CapPrefersDelimitedOverAnUngluedCall(t *testing.T) {
 	}
 	problem += "and BuildFileIndex() is called once per finding"
 
-	got, _ := extractAnchorSet(problem)
+	got, truncated := extractAnchorSet(problem)
+	// The cap FIRING is the precondition the claims below rest on: without it,
+	// NotContains(BuildFileIndex) would also pass if the bare call were never a
+	// candidate at all. Removing the call clause from the fixture must fail here.
+	require.True(t, truncated, "nine candidates against a cap of eight: the cap must have fired, or the eviction claims below prove nothing")
 	assert.NotContains(t, got, "BuildFileIndex",
 		"a bare call shape is evicted before a name the reviewer marked up")
 	assert.Contains(t, got, "zLastThing")
