@@ -13,9 +13,15 @@ import (
 // Tier 4 lookup. A finding naming more identifiers than this is almost
 // certainly prose about a whole subsystem rather than a citation of one
 // construct, and searching every token would trade a precise lookup for an
-// index sweep. Truncation is applied AFTER the sort, so it drops the lexically-
-// last anchors deterministically rather than whichever ones the scanner
-// happened to reach first (AC2).
+// index sweep. Truncation is applied AFTER a sort, so it drops a deterministic
+// set rather than whichever anchors the scanner happened to reach first (AC2).
+//
+// That sort is by PROVENANCE first: an anchor the reviewer marked up explicitly
+// (a backtick or quote span) outranks one the scanner recovered from a bare call
+// shape, and codepoint order breaks ties only within a class. The survivors are
+// re-sorted lexically before they are returned, so the cap's ranking never leaks
+// into the returned slice. See scanAnchors for why codepoint order alone was the
+// wrong question to ask here.
 const maxAnchorsPerFinding = 8
 
 // minAnchorLen is the shortest token accepted as an anchor. Two-character
@@ -209,8 +215,9 @@ type anchorScan struct {
 func scanAnchors(text string) anchorScan {
 	seen := make(map[string]struct{})
 	clean := make(map[string]struct{})
+	delimited := make(map[string]struct{})
 	for _, d := range anchorDelimiters {
-		collectDelimitedAnchors(text, byte(d), seen, clean)
+		collectDelimitedAnchors(text, byte(d), seen, clean, delimited)
 	}
 	imprecise := make(map[string]anchorImprecision)
 	silenced := make(map[string]struct{})
@@ -251,12 +258,38 @@ func scanAnchors(text string) anchorScan {
 	for tok := range seen {
 		out = append(out, tok)
 	}
-	sort.Strings(out)
 	if len(out) > maxAnchorsPerFinding {
-		scan.anchors, scan.capped = out[:maxAnchorsPerFinding], true
-	} else {
-		scan.anchors = out
+		// PROVENANCE decides which anchors survive; codepoint order decides only
+		// how the survivors are then presented. UTF-8 sorts every CJK-prefixed
+		// token after all ASCII, so a plain lexical cap used to drop the glued
+		// pseudo-token first — and once the boundary rule rewrote that token to
+		// its ASCII tail, the tail sorted to the FRONT and evicted the
+		// lexically-last name the reviewer had actually backticked. Codepoint
+		// order answers "which anchor sorts last" when the cap is asking "which
+		// anchor is the reviewer least likely to have meant", and the two agreed
+		// only by accident of encoding.
+		//
+		// Within one class the order is unchanged, so a finding naming only
+		// backticked identifiers is capped exactly as before. The comparator is a
+		// strict total order over a deduped set — no two members compare equal —
+		// so it is deterministic despite reading a slice built from map iteration
+		// (AC2).
+		sort.Slice(out, func(i, j int) bool {
+			_, di := delimited[out[i]]
+			_, dj := delimited[out[j]]
+			if di != dj {
+				return di
+			}
+			return out[i] < out[j]
+		})
+		out, scan.capped = out[:maxAnchorsPerFinding], true
 	}
+	// Sorted AFTER the cap, not before it, so the returned slice keeps
+	// extractAnchorSet's documented "deduped and lexically sorted" contract while
+	// the selection above is free to order by something else. Reversing the two
+	// would leak provenance order into every consumer that reads the slice.
+	sort.Strings(out)
+	scan.anchors = out
 	scan.unaccounted = reconcileSilenced(silenced, clean, scan.anchors)
 	return scan
 }
@@ -488,7 +521,7 @@ const anchorDelimiters = "`\"'"
 // mid-sentence ends only the apostrophe pass; the backtick pass over the same
 // text is unaffected and still finds the identifiers after it. That containment
 // is the whole reason extractAnchorSet runs one pass per delimiter.
-func collectDelimitedAnchors(text string, d byte, seen, clean map[string]struct{}) {
+func collectDelimitedAnchors(text string, d byte, seen, clean, delimited map[string]struct{}) {
 	for i := 0; i < len(text); i++ {
 		if text[i] != d {
 			continue
@@ -498,7 +531,8 @@ func collectDelimitedAnchors(text string, d byte, seen, clean map[string]struct{
 			return // no closer remains anywhere after i: nothing left to pair
 		}
 		if tok := recordedAnchorForm(text[i+1 : i+1+close]); recordAnchor(tok, seen) {
-			clean[tok] = struct{}{} // a delimited span is a faithful contribution
+			clean[tok] = struct{}{}     // a delimited span is a faithful contribution
+			delimited[tok] = struct{}{} // ...and one the reviewer marked up deliberately
 		}
 		i += close + 1 // resume after the closer, never inside the span
 	}
