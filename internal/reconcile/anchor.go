@@ -292,15 +292,18 @@ func reconcileSilenced(silenced, clean map[string]struct{}, anchors []string) bo
 //
 //   - A call-scan fidelity loss that contributed NO member (a silenced span, or
 //     a glued span whose token failed the shape or signal test) has the cap's
-//     standing, not the glued one's, and abandons the set whole.
+//     standing, not the glued one's, and abandons the set whole — UNLESS the
+//     name the loss destroyed was cited cleanly elsewhere in the same text AND
+//     survives into `anchors`: reconcileSilenced retracts the claim there,
+//     because the name is not unknowable, it is sitting in the set.
 //
 // That last case is the one worth stating plainly, because "it contributed
 // nothing, so it drops nothing" is a tempting and WRONG reading of it. Every
 // anchor still present is indeed faithful — but locate() does not only ask
 // whether the members present are faithful. It refuses to answer when two
 // precise anchors DISAGREE, so its verdict depends on the set being complete as
-// well as faithful, and the span that was silenced is exactly the one whose
-// answer is unknowable. Measured: a FIX of “調用_ParseConfig() then `parseTree`
+// well as faithful, and a silenced span nothing else in the text vouched for
+// is exactly the one whose answer is unknowable. Measured: a FIX of “調用_ParseConfig() then `parseTree`
 // “ with _ParseConfig and parseTree declared in different files yields
 // "pkg/tree.go" if the silence is ignored, where the faithful set would have
 // refused on disagreement — precisely the "a wrong guess that suggests the
