@@ -6,9 +6,10 @@
 //
 //	go build -ldflags "-X github.com/samestrin/atcr/internal/version.Version=1.2.3" ./cmd/atcr
 //
-// The default "0.0.0" is a deliberate neutral placeholder: the repo carries no
-// git tags and go.mod declares no semver, so an unstamped (dev) build reports
-// 0.0.0 rather than a misleading real-looking version.
+// The default "0.0.0" is a deliberate neutral placeholder: a dev build is not
+// linked from a release tag, so it has no version to report and reports 0.0.0
+// rather than a misleading real-looking one. docs/release-process.md documents
+// the bare vX.Y.Z tag series a release build is stamped from.
 package version
 
 // Version is the ATCR build version. Overridden at link time for releases; the

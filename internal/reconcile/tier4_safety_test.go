@@ -11,6 +11,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/samestrin/atcr/internal/metrics"
 )
 
 // The tests in this file all guard ONE property: a REAL finding must never be
@@ -330,4 +332,291 @@ func TestTier4Safety_SilencedSpanIsNeverNoMatch(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, res.Summary.UnresolvedFiltered,
 		"a co-cited absent anchor must not route a finding whose other span was silenced")
+}
+
+// TestTier4Safety_QualifierOnlyUnderscoreDoesNotShieldAPhantom is the routing-
+// layer half of the anchor.go:214 repair. The anchor-layer test asserts a flag;
+// this asserts the decision that flag exists to make, which is the only place a
+// wrong answer costs anything.
+//
+// `データ_モジュール.解析()` crosses two spaceless scripts and carries an
+// underscore, so the raw-span glued guard marked the whole extraction imprecise.
+// But trailingSegment strips the qualifier that held the underscore, and the
+// remaining `解析` carries no identifier signal, so the span contributed no
+// anchor at all: every member of the set (here the co-cited `retryOnce`) is a
+// faithful reading. Refusing a no-match verdict on it leaves a fabricated
+// finding in res.Findings instead of res.Unresolved (gate.go:264-269), where it
+// also escapes the chargeableUnresolved denominator at
+// internal/scorecard/scorecard.go:374-377.
+//
+// This is the INVERSE of the three blockers the parent branch closed: the error
+// was in the safe direction (an unfiltered phantom, not a deleted real finding),
+// which is why it shipped as residue rather than as a release blocker.
+func TestTier4Safety_QualifierOnlyUnderscoreDoesNotShieldAPhantom(t *testing.T) {
+	kata := string([]rune{0x30C7, 0x30FC, 0x30BF})                   // データ
+	module := string([]rune{0x30E2, 0x30B8, 0x30E5, 0x30FC, 0x30EB}) // モジュール
+	han := string([]rune{0x89E3, 0x6790})                            // 解析
+	problem := kata + "_" + module + "." + han + "() is wrong, see `retryOnce`"
+
+	anchors, truncated := extractAnchorSet(problem)
+	require.Equal(t, []string{"retryOnce"}, anchors,
+		"the qualified span contributes nothing: 解析 carries no identifier signal")
+	require.False(t, truncated,
+		"the only underscore is in the qualifier trailingSegment strips, so nothing was lost")
+
+	root := gitRepoWithSources(t, map[string]string{
+		"internal/auth/session.go": "package auth\n\nfunc loadSession() error { return nil }\n",
+	})
+	reviewDir := t.TempDir()
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+		"HIGH|internal/ghost/phantom.go:3|"+problem+"|fix it|correctness|10|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Summary.UnresolvedFiltered,
+		"nothing the reviewer named is in the tree and nothing was lost reading it: the finding must route")
+}
+
+// TestTier4Safety_ImpreciseFixAnchorDoesNotCostTheSuggestion is the routing-
+// layer half of the validate.go:137 repair, and it is the direction the FIX set
+// is FOR: a suggestion, never a routing decision.
+//
+// The FIX names two constructs. `parseTree` is precise ASCII, declared in
+// exactly one tracked file. `データ_解析()` is a genuine Japanese snake_case call
+// whose crossing makes it indistinguishable from prose glued to a name, so it is
+// imprecise — and under the old flat `if fixTruncated { fixAnchors = nil }` it
+// took the intact anchor down with it, costing the finding a correct
+// PathSuggestion it had every right to.
+//
+// The PROBLEM anchor is deliberately declared in TWO files: that is what makes
+// the primary set match without localizing, which is the only state in which
+// resolve consults the secondary set at all (resolve's primaryMatched guard). It is also
+// why this repair cannot cause a false route — with no primary match the
+// secondary is never read, so dropping a member of it can lose a hint and can
+// never delete a finding.
+func TestTier4Safety_ImpreciseFixAnchorDoesNotCostTheSuggestion(t *testing.T) {
+	kata := string([]rune{0x30C7, 0x30FC, 0x30BF}) // データ
+	han := string([]rune{0x89E3, 0x6790})          // 解析
+	genuine := kata + "_" + han                    // データ_解析
+
+	problem := "the `sharedHelper` path drops the returned error"
+	fix := "call `parseTree` instead of " + genuine + "()"
+
+	require.Equal(t, []string{"parseTree"}, extractFixAnchors(fix),
+		"the imprecise member is dropped and the precise one survives")
+
+	root := gitRepoWithSources(t, map[string]string{
+		// sharedHelper is declared TWICE, so it matches the tree without
+		// localizing to one file - primaryMatched, locate fails.
+		"internal/a/one.go": "package a\n\nfunc sharedHelper() error { return nil }\n",
+		"internal/b/two.go": "package b\n\nfunc sharedHelper() error { return nil }\n",
+		// The FIX's precise anchor, declared in exactly one file.
+		"pkg/tree.go": "package pkg\n\nfunc parseTree() error { return nil }\n",
+	})
+	reviewDir := t.TempDir()
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+		"HIGH|internal/ghost/phantom.go:3|"+problem+"|"+fix+"|correctness|10|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Findings, 1)
+	assert.Equal(t, "pkg/tree.go", res.JSONFindings()[0].PathSuggestion,
+		"one imprecise FIX anchor must not cost the finding the suggestion its precise sibling grounds")
+	assert.Zero(t, res.Summary.UnresolvedFiltered,
+		"the subject is declared in the tree: nothing may route")
+}
+
+// TestTier4Safety_DroppedFixAnchorDisagreementRefusesTheSuggestion is the same
+// fixture as the test above with ONE file added: the dropped member is now
+// genuinely declared, and it is declared somewhere ELSE.
+//
+// That is the case the per-anchor drop was silently getting wrong. Narrowing the
+// FIX set removed データ_解析 from what locate() sees, so locate agreed with
+// itself on `parseTree` alone and stamped pkg/tree.go — where the complete set
+// would have found two precise anchors DISAGREEING and refused. The finding then
+// carried a confident suggestion built from half the evidence, which is the
+// outcome the `unaccounted` arm nils the whole set to avoid, reached one branch
+// over.
+//
+// Dropping the member from the USABLE set stays right (it may be an unfaithful
+// reading, so it may not SOURCE a suggestion). Discarding it as evidence was the
+// error: a dropped name may still contradict.
+func TestTier4Safety_DroppedFixAnchorDisagreementRefusesTheSuggestion(t *testing.T) {
+	kata := string([]rune{0x30C7, 0x30FC, 0x30BF}) // データ
+	han := string([]rune{0x89E3, 0x6790})          // 解析
+	genuine := kata + "_" + han                    // データ_解析
+
+	problem := "the `sharedHelper` path drops the returned error"
+	fix := "call `parseTree` instead of " + genuine + "()"
+
+	require.Equal(t, []string{"parseTree"}, extractFixAnchors(fix),
+		"the usable set is unchanged: the imprecise member still may not source a suggestion")
+
+	root := gitRepoWithSources(t, map[string]string{
+		// Same primaryMatched-without-localizing subject as the sibling test.
+		"internal/a/one.go": "package a\n\nfunc sharedHelper() error { return nil }\n",
+		"internal/b/two.go": "package b\n\nfunc sharedHelper() error { return nil }\n",
+		"pkg/tree.go":       "package pkg\n\nfunc parseTree() error { return nil }\n",
+		// The only difference: the dropped member is declared, in ANOTHER file.
+		"pkg/data.go": "package pkg\n\nfunc " + genuine + "() error { return nil }\n",
+	})
+	reviewDir := t.TempDir()
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+		"HIGH|internal/ghost/phantom.go:3|"+problem+"|"+fix+"|correctness|10|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Findings, 1)
+	assert.Empty(t, res.JSONFindings()[0].PathSuggestion,
+		"the dropped member is declared in a DIFFERENT file: that is the disagreement locate refuses on, "+
+			"and a wrong guess at the wrong file is worse than no suggestion")
+	assert.Zero(t, res.Summary.UnresolvedFiltered,
+		"refusing a suggestion may never route a finding out: the subject is declared in the tree")
+}
+
+// TestTier4Safety_SpacelessPrefixShortTailIsNeverNoMatch is the routing-layer
+// half of the anchor.go:446 repair, and it is the same false-drop shape the
+// three parent blockers had: a REAL finding deleted from the primary report and
+// durably charged against the reviewer on the scorecard.
+//
+// `設定_a()` breaks at the Han/Latin boundary and leaves the fragment `_a`. Two
+// runes fails minAnchorLen, so the fragment-only question answers "silencing it
+// lost nothing" — but what was silenced is the whole span NAME `設定_a`, which
+// IS identifier-shaped, DOES carry an underscore signal, and is declared right
+// there in the tracked tree. With `truncated` reported false, validate.go's
+// `outcome == tier4NoMatch && !problemTruncated` arm fires on the co-cited
+// `retryOnce` alone and routes the finding out.
+//
+// Measured 12ffd732 -> 4ed1464a: truncated went TRUE -> FALSE on this exact
+// PROBLEM, so the regression arrived with the recorded-anchor repair.
+func TestTier4Safety_SpacelessPrefixShortTailIsNeverNoMatch(t *testing.T) {
+	settei := string([]rune{0x8A2D, 0x5B9A}) // 設定
+	problem := "the " + settei + "_a() helper drops the error that `retryOnce` returns"
+
+	anchors, truncated := extractAnchorSet(problem)
+	require.Equal(t, []string{"retryOnce"}, anchors, "the undecidable span contributes no anchor")
+	require.True(t, truncated, "the span name the break destroyed was searchable, so the loss is real")
+
+	root := gitRepoWithSources(t, map[string]string{
+		"src/loader.js": "function " + settei + "_a() { return null; }\n",
+	})
+	reviewDir := t.TempDir()
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+		"HIGH|internal/ghost/phantom.go:3|"+problem+"|fix it|correctness|10|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+	assert.Zero(t, res.Summary.UnresolvedFiltered,
+		"設定_a is declared in the tree: the finding is genuine and must not be routed out")
+}
+
+// TestTier4Safety_QualifiedSpacelessPrefixShortTailIsNeverNoMatch is the
+// QUALIFIED spelling of the test above, and the half the bare-form repair left
+// open.
+//
+// The full-span silence guard took its subject RAW — `text[fullRunStart(...):i]`
+// — and isQualifiedIdentRune admits '.', so fullRunStart walked back through the
+// qualifier and handed isIdentifierShaped the string `pkg.設定_a`, which it
+// rejects on the '.'. The loss was therefore cleared for every qualified
+// spelling of exactly the shape the guard was added for, and a tail of 3+ runes
+// already fires through the fragment path, so the qualified SHORT tail was the
+// only remaining leak — and it leaked the same way the parent blocker did: a
+// genuine finding deleted from the primary report and durably charged against
+// the reviewer on the scorecard.
+//
+// Measured base-vs-HEAD on this exact PROBLEM: the bare form gave findings=1
+// UnresolvedFiltered=0 while the qualified form gave findings=0
+// UnresolvedFiltered=1.
+func TestTier4Safety_QualifiedSpacelessPrefixShortTailIsNeverNoMatch(t *testing.T) {
+	settei := string([]rune{0x8A2D, 0x5B9A}) // 設定
+	problem := "the pkg." + settei + "_a() helper drops the error that `retryOnce` returns"
+
+	anchors, truncated := extractAnchorSet(problem)
+	require.Equal(t, []string{"retryOnce"}, anchors, "the undecidable span contributes no anchor")
+	require.True(t, truncated, "the qualifier must not disable the full-span loss question")
+
+	root := gitRepoWithSources(t, map[string]string{
+		"src/loader.js": "function " + settei + "_a() { return null; }\n",
+	})
+	reviewDir := t.TempDir()
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+		"HIGH|internal/ghost/phantom.go:3|"+problem+"|fix it|correctness|10|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+	assert.Zero(t, res.Summary.UnresolvedFiltered,
+		"設定_a is declared in the tree: the qualified spelling of a genuine finding "+
+			"must not be routed out either")
+}
+
+// TestTier4Safety_UnaccountedProblemSetRefusesTheSuggestion closes the
+// PROBLEM-side half of the completeness argument this package already makes for
+// the FIX side.
+//
+// locate() refuses when two precise anchors DISAGREE, so its verdict depends on
+// the set being COMPLETE as well as faithful. scanAnchors computes `unaccounted`
+// for the PROBLEM set too — a silenced span whose name is unknowable — but
+// extractAnchorSet flattens it into `truncated`, and validate.go consults that
+// only on the no-match arm. So a PROBLEM set that lost a DISAGREEING precise
+// anchor to the silence stamps a confident PathSuggestion where the complete set
+// would have refused.
+//
+// Measured: `parse._解析() and `readTree“ gave anchors=[_解析 readTree]
+// truncated=false before the widened silencing and anchors=[readTree]
+// truncated=true after. With _解析 declared only in pkg/a.go and readTree only in
+// pkg/b.go, locate() saw two precise anchors disagree and refused; now it
+// localizes on the survivor and points at pkg/b.go for a finding whose subject
+// is in pkg/a.go. Removing one side of a disagreement converts a refusal into a
+// confident wrong answer.
+func TestTier4Safety_UnaccountedProblemSetRefusesTheSuggestion(t *testing.T) {
+	han := string([]rune{0x89E3, 0x6790}) // 解析
+	silenced := "_" + han                 // _解析
+	problem := "parse." + silenced + "() and `readTree`"
+
+	anchors, truncated := extractAnchorSet(problem)
+	require.Equal(t, []string{"readTree"}, anchors, "the silenced span contributes no anchor")
+	require.True(t, truncated, "the silence is a loss with no member to point at")
+
+	before := metrics.Counter(tier4ProblemSetUnaccountedMetric).Value()
+
+	root := gitRepoWithSources(t, map[string]string{
+		// The subject the silence destroyed, declared in exactly one file.
+		"pkg/a.go": "package a\n\nfunc " + silenced + "() error { return nil }\n",
+		// The survivor, declared in exactly one OTHER file.
+		"pkg/b.go": "package b\n\nfunc readTree() error { return nil }\n",
+	})
+	reviewDir := t.TempDir()
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+		"HIGH|internal/ghost/phantom.go:3|"+problem+"|fix it|correctness|10|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Findings, 1)
+	assert.Empty(t, res.JSONFindings()[0].PathSuggestion,
+		"the PROBLEM set lost a member whose name is unknowable: a suggestion sourced from the "+
+			"survivor alone is the confident wrong answer the complete set refused")
+	assert.Zero(t, res.Summary.UnresolvedFiltered,
+		"refusing a suggestion may never route a finding out")
+	assert.Equal(t, before+1, metrics.Counter(tier4ProblemSetUnaccountedMetric).Value(),
+		"a suggestion the resolver produced and the completeness check withheld must leave a "+
+			"durable signal: without one, PathWarning-without-PathSuggestion conflates this arm "+
+			"with tier4Inconclusive and with no-match on a truncated set")
 }

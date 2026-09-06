@@ -38,6 +38,71 @@ const tier4UnavailableMetric = "atcr_tier4_index_unavailable_total"
 // problem, a symlink pointing out of the repo).
 const tier4IncompleteMetric = "atcr_tier4_index_incomplete_total"
 
+// tier4FixSetCappedMetric counts findings whose FIX anchor set was abandoned
+// whole because the anchor cap fired: which anchors the cap dropped is
+// unknowable, so no subset of the remainder can ground a suggestion. Without
+// it a run that lost every secondary anchor this way is indistinguishable in
+// telemetry from a FIX that named nothing.
+const tier4FixSetCappedMetric = "atcr_tier4_fix_set_capped_total"
+
+// tier4FixSetUnaccountedMetric counts findings whose FIX anchor set was
+// abandoned whole because a call-scan fidelity loss left NO member behind (a
+// silenced span, or a glued span whose token failed the shape or signal test):
+// what that span would have named is unknowable, exactly as the cap's dropped
+// anchors are.
+const tier4FixSetUnaccountedMetric = "atcr_tier4_fix_set_unaccounted_total"
+
+// tier4FixAnchorDroppedMetric counts individual FIX anchors dropped as
+// imprecise (a glued span contributed them): the set is narrowed, not
+// abandoned, so a suggestion that never landed can be attributed to the drop.
+//
+// It counts a NARROWING, never an abandonment. When the narrowing removes the
+// LAST member the set is abandoned whole, and that run is counted by
+// tier4FixSetAllDroppedMetric instead — see its doc for why the two may not
+// share a counter.
+const tier4FixAnchorDroppedMetric = "atcr_tier4_fix_anchor_dropped_total"
+
+// tier4FixSetAllDroppedMetric counts findings whose FIX anchor set was
+// abandoned whole because the imprecise narrowing removed its LAST member.
+//
+// It is a fourth set-level counter rather than a reading of the three that
+// existed, because that arm is set-level and none of the three could say so.
+// scanFixAnchors returns nil there — identically to the capped and unaccounted
+// arms — but leaves capped=false and unaccounted=false, so the only counter
+// that could fire was the per-anchor one, whose documented meaning is "the set
+// is narrowed rather than abandoned". A run where no secondary anchor survived
+// at all was therefore reported as one narrowed anchor: exactly the telemetry
+// ambiguity tier4FixSetCappedMetric and tier4FixSetUnaccountedMetric were added
+// to remove, reintroduced one branch over.
+//
+// It is not folded into tier4FixSetUnaccountedMetric either, though both
+// abandon the set. Unaccounted means a loss that left NO member to repair;
+// this arm means the repair ran and consumed every member. The causes differ,
+// so the fixes differ, and a counter whose name does not match what it counts
+// is the defect this one exists to close.
+const tier4FixSetAllDroppedMetric = "atcr_tier4_fix_set_all_dropped_total"
+
+// tier4ProblemSetUnaccountedMetric counts findings whose PROBLEM anchor set
+// RESOLVED to exactly one file and had that suggestion withheld anyway, because
+// a call-scan fidelity loss left NO member behind: locate() refuses when two
+// precise anchors disagree, so its verdict rests on the set being COMPLETE, and
+// the silenced span is exactly the member whose answer is unknowable.
+//
+// It is the PROBLEM-side counterpart of the four FIX counters above, added for
+// the same reason tier4FixSetAllDroppedMetric was: the arm is set-level and
+// nothing else could say so. Without it, `PathWarning != "" && PathSuggestion
+// == ""` conflates three distinct meanings — tier4Inconclusive "could not
+// check", tier4NoMatch on a truncated set, and this arm's "resolved to one file
+// and withheld as untrustworthy" — and emit.go renders all three identically.
+//
+// What it is NOT: it does not count a finding that was routed out, and it never
+// can. This arm downgrades a suggestion, and a downgrade cannot reach the
+// no-match verdict that sidecar-routes anything. It is also NOT a count of
+// PROBLEM sets that lost a member — most such losses never resolve to one file
+// in the first place; this counts the narrower case where the resolver DID
+// produce an answer and the completeness check withheld it.
+const tier4ProblemSetUnaccountedMetric = "atcr_tier4_problem_set_unaccounted_total"
+
 // tier4Outcome is the verdict of a Tier 4 symbol lookup (Epic 35.16.6.5 T3).
 // The three values are NOT interchangeable, and the distinction between the
 // first two is the whole safety property of this epic: only tier4NoMatch is
@@ -211,7 +276,14 @@ const (
 // Disagreement between two precise anchors is inconclusive, not a coin flip: a
 // wrong Tier 4 guess that suggests the wrong file is worse than no suggestion
 // (the suggest-never-auto-correct constraint inherited from 5.4).
-func (x *symbolIndex) resolve(primary, secondary []string) (string, tier4Outcome) {
+// droppedSecondary holds the FIX anchors scanFixAnchors narrowed out of
+// secondary. They may not SOURCE a resolution — the glued reading of them may
+// not be what the reviewer wrote — but they are still part of what the FIX
+// named, so a dropped name declared in a file OTHER than the located one is the
+// disagreement locate() refuses on, and the secondary resolution is withheld.
+// Without that, narrowing the set produced a confident suggestion from half the
+// evidence: the very incompleteness the `unaccounted` arm abandons the set for.
+func (x *symbolIndex) resolve(primary, secondary, droppedSecondary []string) (string, tier4Outcome) {
 	if x == nil {
 		return "", tier4Inconclusive // index unavailable: could not check
 	}
@@ -235,7 +307,7 @@ func (x *symbolIndex) resolve(primary, secondary []string) (string, tier4Outcome
 		}
 	}
 	if primaryMatched {
-		if file, ok := x.locate(secondary); ok {
+		if file, ok := x.locate(secondary); ok && !x.contradicts(file, droppedSecondary) {
 			return file, tier4Resolved
 		}
 	}
@@ -281,6 +353,24 @@ func (x *symbolIndex) locate(anchors []string) (string, bool) {
 	return precise, precise != ""
 }
 
+// contradicts reports whether any dropped anchor is declared in exactly one file
+// OTHER than file — the disagreement locate() would have refused on had that
+// anchor still been in the set it was given.
+//
+// It is the veto half of the per-anchor drop, and only the veto half: a dropped
+// anchor never names the file. An anchor declared nowhere, or in many files, is
+// ignored here exactly as locate ignores it — "absent, or too common to
+// localize" is not disagreement.
+func (x *symbolIndex) contradicts(file string, dropped []string) bool {
+	for _, a := range dropped {
+		files := x.byName[a]
+		if len(files) == 1 && files[0] != file {
+			return true
+		}
+	}
+	return false
+}
+
 // parserFactory obtains a parser for a language id. It is the seam that lets
 // index-build behavior be tested without standing up the wazero runtime; the
 // production value is astgroup.SharedHost().Parser, so the index reuses the
@@ -316,11 +406,22 @@ func newLazySymbolIndex(root string, paths []string) *lazySymbolIndex {
 // every lookup — never tier4NoMatch — so nothing is routed to the sidecar on
 // the strength of an index that does not exist.
 func (lz *lazySymbolIndex) resolve(ctx context.Context, primary, secondary []string) (string, tier4Outcome) {
+	return lz.resolveWithDropped(ctx, primary, secondary, nil)
+}
+
+// resolveWithDropped is resolve with the FIX anchors scanFixAnchors narrowed out
+// of secondary carried alongside, so a dropped member may still REFUSE a
+// secondary resolution it disagrees with. See symbolIndex.resolve.
+//
+// resolve is the nil-dropped case rather than the other way round: a caller that
+// has no narrowing to report (every test fixture, and any future non-FIX
+// consumer) must not have to say so.
+func (lz *lazySymbolIndex) resolveWithDropped(ctx context.Context, primary, secondary, droppedSecondary []string) (string, tier4Outcome) {
 	if lz == nil {
 		return "", tier4Inconclusive
 	}
 	lz.once.Do(func() { lz.build(ctx) })
-	return lz.idx.resolve(primary, secondary)
+	return lz.idx.resolve(primary, secondary, droppedSecondary)
 }
 
 // state reports what the build actually achieved, for Summary.UnresolvedState.

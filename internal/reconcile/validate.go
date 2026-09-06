@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/samestrin/atcr/internal/astgroup"
+	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/samestrin/atcr/internal/stream"
 	reclib "github.com/samestrin/atcr/reconcile"
 )
@@ -15,7 +16,12 @@ import (
 // construct it describes lives in exactly one tracked file, in several, or
 // nowhere at all. *lazySymbolIndex is the production implementation.
 type tier4Resolver interface {
-	resolve(ctx context.Context, primary, secondary []string) (string, tier4Outcome)
+	// droppedSecondary carries the FIX anchors scanFixAnchors narrowed out of
+	// secondary. They may not source a resolution — the glued reading of them
+	// may not be what the reviewer wrote — but a dropped name declared in a
+	// file other than the located one is the disagreement locate refuses on, so
+	// narrowing may not silently complete a set it left incomplete.
+	resolveWithDropped(ctx context.Context, primary, secondary, droppedSecondary []string) (string, tier4Outcome)
 	// namedInDocs reports whether the doc-extension heuristic explains a no-match
 	// over these anchors: at least one was named in a documentation file and
 	// nowhere in source, and EVERY other anchor is accounted for somewhere in the
@@ -126,18 +132,84 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 		if tier4 == nil {
 			tier4 = newTier4Index(root, idx.Paths())
 		}
-		problemAnchors, problemTruncated := extractAnchorSet(findings[i].Problem)
-		fixAnchors, fixTruncated := extractAnchorSet(findings[i].Fix)
-		if fixTruncated {
-			// The FIX named more constructs than the anchor cap admits, so the
-			// set that would be searched is a PREFIX of what it actually named —
-			// the same partial-search condition the no-match direction below
-			// refuses to accept. A partial search cannot ground a suggestion
-			// either, so a truncated FIX contributes no secondary anchors.
-			fixAnchors = nil
+		problemAnchors, problemScan := scanProblemAnchors(findings[i].Problem)
+		problemTruncated := problemScan.truncated()
+		// The FIX narrows rather than nils: extractFixAnchors drops the anchors
+		// a call-scan fidelity loss actually touched, and abandons the set whole
+		// for the cap OR for a fidelity loss that left no member behind (its
+		// `capped` and `unaccounted` disjuncts) — in both cases what was dropped
+		// is unknowable. See its doc for the full argument. Each loss increments
+		// its own counter below, so a suggestion that never landed is
+		// attributable after the fact (docs/metrics.md).
+		fixAnchors, fixScan := scanFixAnchors(findings[i].Fix)
+		// Two INDEPENDENT ifs, not a first-match switch: one FIX can suffer both
+		// set-level losses at once (eleven backticked names past the cap AND a
+		// silenced span in the same text), and a switch made
+		// atcr_tier4_fix_set_unaccounted_total a silent lower bound. The
+		// unavailable/incomplete pair documented beside these both-increments on
+		// the same shape (symbolindex.go's readFiles/complete pair); two metric
+		// families in one document may not follow opposite rules.
+		setAbandoned := false
+		if fixScan.capped {
+			metrics.Counter(tier4FixSetCappedMetric).Inc()
+			setAbandoned = true
 		}
-		suggestion, outcome := tier4.resolve(ctx, problemAnchors, fixAnchors)
+		if fixScan.unaccounted {
+			metrics.Counter(tier4FixSetUnaccountedMetric).Inc()
+			setAbandoned = true
+		}
+		if !setAbandoned {
+			// The per-anchor arms are still mutually exclusive with the two
+			// above and with each other: scanFixAnchors returns early on capped
+			// and unaccounted, so neither can coexist with a narrowing.
+			if len(fixAnchors) == 0 && len(fixScan.anchors) > 0 {
+				// The narrowing removed the LAST member, so scanFixAnchors
+				// returned nil — abandoning the set whole, identically to the
+				// two losses above, but with capped and unaccounted both false.
+				// Counted as a per-anchor drop this read as one NARROWED anchor,
+				// the opposite of what happened.
+				metrics.Counter(tier4FixSetAllDroppedMetric).Inc()
+			} else if dropped := len(fixScan.anchors) - len(fixAnchors); dropped > 0 {
+				metrics.Counter(tier4FixAnchorDroppedMetric).Add(int64(dropped))
+			}
+		}
+		// The narrowed-out members ride along as VETO evidence: they may not
+		// source a suggestion, but a dropped name declared in another file is
+		// the disagreement locate refuses on, so narrowing must not silently
+		// complete a set it left incomplete (symbolIndex.resolve).
+		suggestion, outcome := tier4.resolveWithDropped(ctx, problemAnchors, fixAnchors, fixScan.droppedFixAnchors())
 		switch {
+		case outcome == tier4Resolved && problemScan.unaccounted:
+			// The PROBLEM set lost a member with no name to point at, and
+			// locate() refuses when two precise anchors DISAGREE — so its
+			// verdict rests on the set being COMPLETE, not merely faithful, and
+			// the silenced span is exactly the member whose answer is unknown.
+			// Resolving on the survivors alone converts that refusal into a
+			// confident wrong answer: measured, `parse._解析() and `readTree``
+			// points at readTree's file for a finding whose subject is declared
+			// in _解析's.
+			//
+			// This is the completeness argument extractFixAnchors already makes
+			// for the FIX side, applied to the other set feeding the same call.
+			// Downgrading to tier4Inconclusive costs a suggestion and can never
+			// route a finding out — no-match is a different arm — so it is the
+			// same safe direction the FIX side takes.
+			//
+			// Scoped to `unaccounted`, NOT to `capped`, and the asymmetry with
+			// the FIX side (which abandons on both) is deliberate. The cap
+			// leaves the same kind of hole — a dropped member could have
+			// disagreed — but it only fires on a PROBLEM naming more than
+			// maxAnchorsPerFinding identifiers, so refusing there would cost the
+			// suggestion on every densely-cited finding to close a shape nobody
+			// has measured. Disclosed rather than folded in.
+			//
+			// The counter is the arm's ONLY signal: no UnresolvedReason, no
+			// field change, and `outcome` is not read after the switch. Without
+			// it `PathWarning != "" && PathSuggestion == ""` conflates this arm
+			// with tier4Inconclusive and with no-match on a truncated set, which
+			// emit.go renders identically — the same telemetry ambiguity the
+			// four FIX-side counters were added to remove.
+			metrics.Counter(tier4ProblemSetUnaccountedMetric).Inc()
 		case outcome == tier4Resolved:
 			findings[i].PathSuggestion = suggestion
 		case outcome == tier4NoMatch && !problemTruncated:
@@ -152,10 +224,20 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 				findings[i].UnresolvedReason = UnresolvedReasonDocShield
 			}
 		case outcome == tier4NoMatch:
-			// The finding named more constructs than the anchor cap admits, so the
-			// set searched was a PREFIX of what it actually named — and the one
-			// anchor that would have matched may be among the dropped ones. A
-			// partial search cannot produce a "found nothing" verdict.
+			// problemTruncated: the set searched is not a faithful reading of what
+			// the PROBLEM named — see extractAnchorSet's doc for the losses the
+			// flag covers, of which the anchor cap is only one. Whichever loss it
+			// was, the one anchor that would have matched may be among what was
+			// not faithfully recovered, and a partial search cannot produce a
+			// "found nothing" verdict.
+			//
+			// Recorded trade: even an UNtruncated set is only a reading of the
+			// tokens that carry an identifier signal. A subject token that
+			// carries none (`解析` once its qualifier is stripped) is invisible
+			// to this gate — it is never searched for at all — so a no-match
+			// verdict can rest entirely on a co-cited anchor. That is the cost
+			// hasIdentifierSignal's doc states for rejecting signal-less prose,
+			// paid here.
 		default:
 			// tier4Inconclusive: the PROBLEM named no identifier, the index could
 			// not be built or was incomplete, or the anchors matched real code
