@@ -202,6 +202,14 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 			// maxAnchorsPerFinding identifiers, so refusing there would cost the
 			// suggestion on every densely-cited finding to close a shape nobody
 			// has measured. Disclosed rather than folded in.
+			//
+			// The counter is the arm's ONLY signal: no UnresolvedReason, no
+			// field change, and `outcome` is not read after the switch. Without
+			// it `PathWarning != "" && PathSuggestion == ""` conflates this arm
+			// with tier4Inconclusive and with no-match on a truncated set, which
+			// emit.go renders identically — the same telemetry ambiguity the
+			// four FIX-side counters were added to remove.
+			metrics.Counter(tier4ProblemSetUnaccountedMetric).Inc()
 		case outcome == tier4Resolved:
 			findings[i].PathSuggestion = suggestion
 		case outcome == tier4NoMatch && !problemTruncated:
