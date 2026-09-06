@@ -98,11 +98,43 @@ func TestMetricsDocContradictedRowLeadsWithItsNotClause(t *testing.T) {
 	row, ok := metricsDocRow(t, tier4FixSetContradictedMetric)
 	require.True(t, ok, "precondition: the row exists")
 
-	assert.Contains(t, row, "NOT",
+	deny := strings.Index(row, "NOT")
+	require.GreaterOrEqual(t, deny, 0,
 		"the row must carry an explicit NOT-clause, as the PROBLEM counter's const "+
 			"doc does — that is the discipline that keeps a new counter from "+
 			"repeating the over-claim this epic was filed to fix")
 	assert.Contains(t, row, tier4FixAnchorDroppedMetric,
 		"the NOT-clause must name the counter this one is most likely to be "+
 			"conflated with, since a dropped anchor is the veto's precondition")
+
+	// AC5 asks for NOT-clause FIRST, not merely present. A denial appended after
+	// the affirmative clause reads as a footnote, and the failure mode being
+	// guarded against is a reader who stops at the first sentence.
+	affirm := strings.Index(row, "What it counts")
+	require.GreaterOrEqual(t, affirm, 0,
+		"the row must state what it counts in a locatable clause, so the ordering "+
+			"below is measurable rather than assumed")
+	assert.Less(t, deny, affirm,
+		"the denial must come BEFORE the affirmative clause — 'contains NOT' would "+
+			"pass on a row whose denial was appended last, which is exactly the "+
+			"shape AC5 rules out")
+}
+
+// TestMetricsDocFixSetUnaccountedRowDisclosesItsEmptinessGuard pins the exclusion
+// the emptiness guard introduced.
+//
+// The guard narrowed what the counter counts: a FIX whose scan collected no
+// anchor at all is now silent, because you cannot abandon a set that never
+// existed. A row that still promised to count every set "abandoned whole because
+// a call-scan fidelity loss left NO member behind" would be the same doc-vs-code
+// over-claim this epic was filed to remove — reintroduced by the epic itself, on
+// the row next to the one it came to fix.
+func TestMetricsDocFixSetUnaccountedRowDisclosesItsEmptinessGuard(t *testing.T) {
+	row, ok := metricsDocRow(t, tier4FixSetUnaccountedMetric)
+	require.True(t, ok, "precondition: the row exists")
+
+	assert.Contains(t, row, "NOT count",
+		"the row must disclose that a FIX whose scan collected no anchor at all is "+
+			"not counted here — otherwise an operator reads the counter as a "+
+			"complete census of member-less fidelity losses, which it is not")
 }

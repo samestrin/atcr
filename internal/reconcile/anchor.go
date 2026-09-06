@@ -196,14 +196,16 @@ func scanAnchors(text string) anchorScan {
 	// before or after the silenced span in the text.
 	for tok := range clean {
 		delete(imprecise, tok)
-		delete(silenced, tok)
 	}
 	// lostSpan is deliberately NOT reconciled. `truncated` is built from it and
 	// the no-match direction reads that, so clearing it would make tier4NoMatch
 	// reachable where it was not before. The span really did lose fidelity; what
 	// is retracted is only the claim that what it lost is unknowable.
-	scan := anchorScan{lostSpan: lostSpan, unaccounted: len(silenced) > 0, imprecise: imprecise}
+	scan := anchorScan{lostSpan: lostSpan, imprecise: imprecise}
 	if len(seen) == 0 {
+		// No anchor survived at all, so nothing can vouch for anything: every
+		// recorded loss keeps its claim.
+		scan.unaccounted = len(silenced) > 0
 		return scan
 	}
 	out := make([]string, 0, len(seen))
@@ -213,10 +215,47 @@ func scanAnchors(text string) anchorScan {
 	sort.Strings(out)
 	if len(out) > maxAnchorsPerFinding {
 		scan.anchors, scan.capped = out[:maxAnchorsPerFinding], true
-		return scan
+	} else {
+		scan.anchors = out
 	}
-	scan.anchors = out
+	scan.unaccounted = reconcileSilenced(silenced, clean, scan.anchors)
 	return scan
+}
+
+// reconcileSilenced decides which recorded losses keep their unaccounted claim,
+// and reports whether any survives.
+//
+// A loss is retracted only when the token it destroyed was BOTH cited cleanly
+// (`clean`) and survives into `anchors` — the post-cap set `locate` is actually
+// given. Both halves are load-bearing and neither implies the other:
+//
+//   - Without the `clean` half, a glued or silenced re-reading of the name would
+//     vouch for the very loss it is an instance of.
+//   - Without the `anchors` half, the CAP breaks the argument. maxAnchorsPerFinding
+//     slices a sorted set, so a name cited perfectly in backticks can be dropped
+//     from the set anyway — and then `unaccounted` would be cleared for a token
+//     locate never sees. The completeness check exists precisely so a set missing
+//     a member cannot stamp a suggestion sourced from the survivors alone;
+//     clearing it there converts a withheld suggestion into a WRONG one, which
+//     this package rules worse than no suggestion at all.
+//
+// Reconciling against the post-cap set makes the retraction mean what its own
+// justification says: the destroyed name is not unknowable, because it is
+// sitting in the set locate will read.
+func reconcileSilenced(silenced, clean map[string]struct{}, anchors []string) bool {
+	if len(silenced) == 0 {
+		return false
+	}
+	remaining := len(silenced)
+	for _, tok := range anchors {
+		if _, vouched := clean[tok]; !vouched {
+			continue
+		}
+		if _, lost := silenced[tok]; lost {
+			remaining--
+		}
+	}
+	return remaining > 0
 }
 
 // extractFixAnchors returns the FIX anchors that may ground a PathSuggestion.
@@ -532,8 +571,27 @@ func collectCallAnchors(text string, seen, clean, impreciseInto, silencedInto ma
 			// — the full name may have qualified, and that IS a loss with no
 			// member to point at.
 			r, _ := utf8.DecodeRuneInString(anchor)
-			lost := (isIdentifierShaped(anchor) && hasIdentifierSignal(anchor)) ||
-				unicode.In(r, unicode.Mn, unicode.Mc)
+			fragmentQualified := isIdentifierShaped(anchor) && hasIdentifierSignal(anchor)
+			lost := fragmentQualified || unicode.In(r, unicode.Mn, unicode.Mc)
+			// The subject of the loss is the string the disjunct that FIRED
+			// actually judged, which is not the same string for all three.
+			// The fragment disjunct asks its question of `anchor` and accepts
+			// it as a name in its own right, so `anchor` is what that loss
+			// destroyed. The leading-combining-mark disjunct and the
+			// boundaryDroppedSpaceless branch below both reason explicitly
+			// about the FULL name the break truncated, so theirs is the full
+			// run's trailing segment.
+			//
+			// Keying the record on one string for all three would record a
+			// subject no predicate judged: measured, "`_解析` is broken;
+			// parse_解析() fails" is silenced on the FRAGMENT `_解析`, which
+			// the backticks cite and the anchor set already holds — recording
+			// the full run `parse_解析` there would leave the flag standing
+			// for a name the reviewer spelled out.
+			destroyed := anchor
+			if !fragmentQualified {
+				destroyed = recordedAnchorForm(text[fullRunStart(text, start):i])
+			}
 			// The fragment is the right subject only when the fragment is what
 			// the break could have cost. When the break DROPPED a spaceless-
 			// script prefix, what was destroyed is the whole span name, and a
@@ -577,23 +635,13 @@ func collectCallAnchors(text string, seen, clean, impreciseInto, silencedInto ma
 				// `clean` once the scan is done, and only a token nothing
 				// cited faithfully survives as unknowable.
 				//
-				// The subject is the FULL run's trailing segment for BOTH
-				// paths above, not the boundary-reduced fragment: the whole
-				// run is what the break destroyed, and its trailing segment is
-				// the declared name the symbol index keys on — the same
-				// reduction the boundaryDroppedSpaceless branch already asks
-				// its question of. There is exactly ONE producer of the
-				// unaccounted claim (this statement), so keying the record
-				// here is what keeps the repair from being a partial
-				// predicate that closes one path and leaves the other short.
-				//
-				// recordedAnchorForm, not the raw run: `clean` is keyed on the
-				// recorded form, so the lookup must be spelled the same way or
-				// an NFD-spelled citation would silently fail to vouch for its
-				// own NFC-spelled call. The fold is used ONLY as a map key
-				// here — the shape decision above still reads the unfolded
+				// `destroyed` was chosen above to match whichever disjunct
+				// fired. Both are in recordedAnchorForm, because `clean` is
+				// keyed on that form — an NFD-spelled citation must be able to
+				// vouch for its own NFC-spelled call. The fold is used ONLY as
+				// a map key; the shape decisions above still read the unfolded
 				// run, for the rune-count reason stated there.
-				silencedInto[recordedAnchorForm(text[fullRunStart(text, start):i])] = struct{}{}
+				silencedInto[destroyed] = struct{}{}
 			}
 			continue // undecidable: see isWordBoundary
 		}

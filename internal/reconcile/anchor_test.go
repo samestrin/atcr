@@ -1066,6 +1066,8 @@ func TestScanAnchors_SilencedSpanReconciledAgainstClean(t *testing.T) {
 	settei := string([]rune{0x8A2D, 0x5B9A}) // 設定
 	han := string([]rune{0x89E3, 0x6790})    // 解析
 	name := settei + "_a"                    // 設定_a
+	// 設定を解析_処理 — spaceless prose welded to a snake_case call name.
+	glued := string([]rune{0x8A2D, 0x5B9A, 0x3092, 0x89E3, 0x6790, 0x005F, 0x51E6, 0x7406})
 
 	cases := []struct {
 		name            string
@@ -1139,6 +1141,39 @@ func TestScanAnchors_SilencedSpanReconciledAgainstClean(t *testing.T) {
 			wantAnchor:      "",
 			why: "trailingSegment strips the qualifier before the record is keyed, so " +
 				"a clean citation of `pkg` cannot vouch for " + name,
+		},
+		{
+			name: "the vouching token is dropped by the anchor cap",
+			text: "`aOne` `bTwo` `cThree` `dFour` `eFive` `fSix` `gSeven` `hEight` " +
+				"`" + name + "` broken; pkg." + name + "() returns nil",
+			wantUnaccounted: true,
+			wantAnchor:      "aOne",
+			why: "the citation must vouch from the set locate is actually GIVEN. " +
+				"maxAnchorsPerFinding slices the sorted set to 8 and " + name +
+				" sorts after every ASCII name, so it is cited cleanly and then " +
+				"thrown away - suppressing on it would stamp a suggestion sourced " +
+				"from the survivors alone, which is the wrong-file answer the " +
+				"complete set refused",
+		},
+		{
+			name:            "the FRAGMENT the predicate judged is the one cited cleanly",
+			text:            "`_" + han + "` is broken; parse_" + han + "() fails",
+			wantUnaccounted: false,
+			wantAnchor:      "_" + han,
+			why: "this span is silenced by the FRAGMENT disjunct, which judges `_解析` " +
+				"and not the full run - so `_解析` is what the loss destroyed, it is " +
+				"cited in backticks, and the epic's success criterion (a name the " +
+				"reviewer cited cleanly is never an unknowable loss) applies to it",
+		},
+		{
+			name:            "the surviving anchor is GLUED, so it vouches for nothing",
+			text:            glued + "() is wrong and pkg." + name + "() returns nil",
+			wantUnaccounted: true,
+			wantAnchor:      glued,
+			why: "membership in the anchor set is necessary but not sufficient: a glued " +
+				"span's token may be an unfaithful reading of what the reviewer " +
+				"wrote, so it is in `anchors` and `imprecise` but never in `clean` " +
+				"and may not retract anyone's loss - least of all its own",
 		},
 		{
 			name:            "two silenced spans, only one of them vouched for",

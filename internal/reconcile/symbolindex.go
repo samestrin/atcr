@@ -50,6 +50,15 @@ const tier4FixSetCappedMetric = "atcr_tier4_fix_set_capped_total"
 // silenced span, or a glued span whose token failed the shape or signal test):
 // what that span would have named is unknowable, exactly as the cap's dropped
 // anchors are.
+//
+// What it does NOT count, and the exclusion is deliberate: a FIX whose scan
+// collected no anchor AT ALL. "Abandoned whole" is a claim about a set that
+// existed, and a FIX whose only span was a silenced one never had one - so the
+// arm carries the same len(fixScan.anchors) > 0 guard tier4FixSetAllDroppedMetric
+// does. That population is silent by design: nothing was lost, because nothing
+// was there. Counting it would inflate any sum of the FIX-loss counters by
+// findings that never had a suggestion to lose, which is the one thing these
+// counters exist to support.
 const tier4FixSetUnaccountedMetric = "atcr_tier4_fix_set_unaccounted_total"
 
 // tier4FixAnchorDroppedMetric counts individual FIX anchors dropped as
