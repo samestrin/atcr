@@ -166,7 +166,7 @@ func (f *fakeTier4) resolveWithDropped(_ context.Context, primary, barredPrimary
 		// where production withheld (pinned by the "barred primary vetoes a
 		// disagreeing secondary hit" mirror row).
 		if file, outcome := x.resolveSecondary(secondary, droppedSecondary); outcome == tier4Resolved {
-			if !x.contradicts(file, barredPrimary) {
+			if file, ok := x.vetoResolvedSecondary(file, barredPrimary); ok {
 				return file, tier4Resolved
 			}
 			return "", tier4Inconclusive
@@ -627,4 +627,31 @@ func TestFakeTier4_CountsProblemAnchorImprecise(t *testing.T) {
 
 	assert.Equal(t, before+1, metrics.Counter(tier4ProblemAnchorImpreciseMetric).Value(),
 		"the barred tail cost a suggestion the unnarrowed set would have localized; the fake must carry the primary arm's counter")
+}
+
+// TestFakeTier4_CountsProblemAnchorImprecise/secondary veto pins the counter's
+// SECOND site through the double: production counts a secondary hit withheld by
+// the barred-primary veto, and the fake must carry that increment too. The two
+// sites necessarily co-fire through the fake — the veto is only reachable when
+// the narrowed primary locate failed while the unnarrowed one would have
+// localized, which is exactly the first site's condition — so the assertion is
+// +2, one per site.
+func TestFakeTier4_CountsProblemAnchorImprecise_SecondaryVeto(t *testing.T) {
+	fake := &fakeTier4{byAnchor: map[string]string{
+		"ParseConfig": "internal/cfg/parse.go",
+		"readTree":    "pkg/tree.go",
+	}}
+
+	before := metrics.Counter(tier4ProblemAnchorImpreciseMetric).Value()
+
+	// The barred ParseConfig is declared in exactly one OTHER file than the
+	// secondary hit readTree localizes — the disagreement locate() would have
+	// refused on — so the FIX-sourced file is withheld and counted.
+	file, outcome := fake.resolveWithDropped(context.Background(),
+		[]string{"ParseConfig"}, []string{"ParseConfig"}, []string{"readTree"}, nil)
+	assert.Empty(t, file, "the veto withholds the FIX-sourced file")
+	assert.Equal(t, tier4Inconclusive, outcome, "a veto renders as could-not-check, not as a different answer")
+
+	assert.Equal(t, before+2, metrics.Counter(tier4ProblemAnchorImpreciseMetric).Value(),
+		"both counting sites must be observable through the double: the cost narrowing and the vetoed secondary hit")
 }

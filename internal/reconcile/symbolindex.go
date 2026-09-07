@@ -477,6 +477,31 @@ func (x *symbolIndex) resolvePrimary(primary, barredPrimary []string) (string, b
 	return "", false
 }
 
+// vetoResolvedSecondary applies the barred-primary veto ON TOP of a secondary
+// hit resolveSecondary already produced: barring one from sourcing does not
+// make it stop being part of what the PROBLEM named, so a barred name declared
+// in exactly one OTHER file is the same disagreement locate() refuses on — and
+// without this the epic would merely SWAP one confident answer for another:
+// measured, a barred `ParseConfig` (internal/cfg/parse.go) alongside a FIX
+// naming `readTree` (pkg/tree.go) stamped pkg/tree.go, where the unbarred call
+// had stamped internal/cfg/parse.go. Withholding is the outcome this epic's
+// Success Criteria ask for; a different confident file is not.
+//
+// The counter is the arm's ONLY signal — a withheld suggestion leaves no field
+// change and renders identically to "could not check" — so it lives HERE and
+// not at the callers, the same delegation rule resolvePrimary and
+// resolveSecondary follow: the one consumer that reimplements resolve's control
+// flow (fakeTier4.resolveWithDropped) delegates the veto with its counter
+// instead of restating the contradicts() half alone. Returns (file, true) when
+// the secondary file survives the veto.
+func (x *symbolIndex) vetoResolvedSecondary(file string, barredPrimary []string) (string, bool) {
+	if !x.contradicts(file, barredPrimary) {
+		return file, true
+	}
+	metrics.Counter(tier4ProblemAnchorImpreciseMetric).Inc()
+	return "", false
+}
+
 func (x *symbolIndex) resolve(primary, barredPrimary, secondary, droppedSecondary []string) (string, tier4Outcome) {
 	if x == nil {
 		return "", tier4Inconclusive // index unavailable: could not check
@@ -502,20 +527,9 @@ func (x *symbolIndex) resolve(primary, barredPrimary, secondary, droppedSecondar
 	}
 	if primaryMatched {
 		if file, outcome := x.resolveSecondary(secondary, droppedSecondary); outcome == tier4Resolved {
-			// The barred PROBLEM anchors veto HERE as well as on the primary
-			// locate. Barring one from sourcing does not make it stop being part
-			// of what the PROBLEM named, so a barred name declared in exactly one
-			// OTHER file is the same disagreement locate() refuses on — and
-			// without this the epic would merely SWAP one confident answer for
-			// another: measured, a barred `ParseConfig` (internal/cfg/parse.go)
-			// alongside a FIX naming `readTree` (pkg/tree.go) stamped
-			// pkg/tree.go, where the unbarred call had stamped
-			// internal/cfg/parse.go. Withholding is the outcome this epic's
-			// Success Criteria ask for; a different confident file is not.
-			if !x.contradicts(file, barredPrimary) {
+			if file, ok := x.vetoResolvedSecondary(file, barredPrimary); ok {
 				return file, tier4Resolved
 			}
-			metrics.Counter(tier4ProblemAnchorImpreciseMetric).Inc()
 		}
 	}
 	if len(primary) == 0 {
