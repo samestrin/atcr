@@ -825,11 +825,6 @@ func TestSkepticToolBudget_ReservesAtMostHalfTheInputRoom(t *testing.T) {
 	// overhead has exactly one definition here too.
 	halfRoom := func(window int) int { return payload.InputRoomTokens(model, &window) / 2 }
 
-	// toBytes mirrors payload's conservative ~3.5 B/token ratio, pinned by
-	// payload's own sizing tests. Used only to state AC2 in the units the window
-	// is declared in.
-	toBytes := func(tokens int) int64 { return int64(tokens) * 7 / 2 }
-
 	t.Run("the derived ceiling is pinned across the small-window band", func(t *testing.T) {
 		t.Parallel()
 		for _, tc := range []struct {
@@ -954,24 +949,21 @@ func TestSkepticToolBudget_ReservesAtMostHalfTheInputRoom(t *testing.T) {
 		}
 	})
 
-	t.Run("ceiling plus reservation and overhead never exceeds the window", func(t *testing.T) {
+	t.Run("the ceiling holds real room back for the reply", func(t *testing.T) {
 		t.Parallel()
+		// The old partition arithmetic (ceiling + toBytes(reserved+overhead) <=
+		// toBytes(window)) was an identity once both sides converted at the same
+		// test-local 7/2 restatement of payload's ratio — it pinned nothing the
+		// derivation-equality subtest above does not, and the bare literals would
+		// have desynced silently if the ratio ever moved. Both remaining bounds
+		// read the production path directly. (That the ceiling is derived from
+		// exactly the reservation the policy takes is owned by the half-room
+		// subtest above.)
 		for window := 4097; window <= 20480; window++ {
-			overhead := window - payload.InputRoomTokens(model, &window)
-			reserved := min(payload.DefaultOutputTokens, halfRoom(window))
-			claimed := ceilingFor(window, nil) + toBytes(reserved+overhead)
-
-			// The three shares partition the window exactly, so this can only fail by
-			// the ceiling being derived from something other than what was reserved.
-			assert.LessOrEqualf(t, claimed, toBytes(window),
-				"window %d: ceiling + reservation + overhead must fit inside the window", window)
-
-			// Fitting is not the same as leaving room, and the byte arithmetic above
-			// cannot tell them apart — an exact partition satisfies it even when the
-			// reply's share is zero. What has to hold is that the DERIVED ceiling is
-			// smaller than the one this window would yield with nothing reserved:
-			// that difference IS the reply's room, measured on the production value
-			// rather than on the test's own expression for it.
+			// Fitting is not the same as leaving room. The DERIVED ceiling must be
+			// smaller than the one this window yields with nothing reserved: that
+			// difference IS the reply's room, measured on production values rather
+			// than on a test-side expression for them.
 			unreserved := payload.EffectiveByteBudget(model, &window, 0)
 			if payload.InputRoomTokens(model, &window) <= 1 {
 				// The degenerate end of the band: a window whose whole input room is
