@@ -341,3 +341,43 @@ func TestSymbolIndexResolve_NonSubsetBarredAnchorIsIgnored(t *testing.T) {
 		"a barred name outside primary is ignored: it may not veto what the set itself resolves")
 	assert.Equal(t, "pkg/a.go", file)
 }
+
+// TestBoundaryCutAnchors_DoesNotWithholdOnAbandonedArms pins boundaryCutAnchors'
+// documented behaviour on the capped and unaccounted arms: it does NOT withhold
+// there, mirroring the guard structure TestDroppedFixAnchors_AbandonedArmsWithhold
+// pins for its FIX-side sibling. The PROBLEM set is never abandoned — it is the
+// evidence the no-match verdict rests on — so its boundary-cut members stay
+// meaningful on a capped or unaccounted scan, and a future edit adding the
+// sibling's `s.capped || s.unaccounted` guard here must fail. Verified against
+// the gap: adding exactly that guard left the whole package green before this
+// test existed.
+func TestBoundaryCutAnchors_DoesNotWithholdOnAbandonedArms(t *testing.T) {
+	populated := func(capped, unaccounted bool) anchorScan {
+		return anchorScan{
+			anchors:     []string{"dataParse", "treeWalk"},
+			capped:      capped,
+			unaccounted: unaccounted,
+			imprecise:   map[string]anchorImprecision{"dataParse": impreciseBoundaryCut},
+		}
+	}
+
+	t.Run("a narrowed scan reports its boundary-cut members", func(t *testing.T) {
+		assert.Equal(t, []string{"dataParse"}, populated(false, false).boundaryCutAnchors(),
+			"the baseline the two arms below must match, or the test proves nothing")
+	})
+
+	t.Run("a capped scan still reports them", func(t *testing.T) {
+		assert.Equal(t, []string{"dataParse"}, populated(true, false).boundaryCutAnchors(),
+			"the PROBLEM set is never abandoned: its barred members ride along on a capped scan too")
+	})
+
+	t.Run("an unaccounted scan still reports them", func(t *testing.T) {
+		assert.Equal(t, []string{"dataParse"}, populated(false, true).boundaryCutAnchors(),
+			"a member-less loss abandons only the FIX set; the PROBLEM set's evidence stands")
+	})
+
+	t.Run("both at once still reports them", func(t *testing.T) {
+		assert.Equal(t, []string{"dataParse"}, populated(true, true).boundaryCutAnchors(),
+			"neither arm withholds here, unlike the FIX-side sibling")
+	})
+}
