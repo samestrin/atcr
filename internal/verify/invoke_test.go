@@ -344,6 +344,31 @@ func TestBuildSkepticAgent_ClampsToolBudgetToDeclaredWindow(t *testing.T) {
 			"no declaration, no clamp — nothing is derived from a window nobody stated")
 	})
 
+	t.Run("an unlimited budget is clamped like any other", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		sk.Config.ContextWindowTokens = &small
+		// ToolBudgetBytes unset: the engine reads 0 as UNLIMITED, which is exactly
+		// the state a declared window contradicts.
+
+		assert.Equal(t, payload.EffectiveByteBudget(sk.Config.Model, &small, 0),
+			buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+			"unlimited is not a smaller number — a declared window must bound it")
+	})
+
+	t.Run("a non-positive ceiling is never forwarded", func(t *testing.T) {
+		t.Parallel()
+		tiny := 1 // prompt overhead alone exhausts it
+		sk := testSkeptic()
+		sk.Config.ContextWindowTokens = &tiny
+		sk.Config.ToolBudgetBytes = int64Ptr(4096)
+
+		require.Zero(t, payload.EffectiveByteBudget(sk.Config.Model, &tiny, 0),
+			"the fixture must actually produce a zero ceiling, or the guard below is untested")
+		assert.Equal(t, int64(4096), buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+			"forwarding a derived 0 would mean UNLIMITED to the engine — the exact inversion of the clamp")
+	})
+
 	t.Run("the output cap is reserved out of the window", func(t *testing.T) {
 		t.Parallel()
 		sk := testSkeptic()
