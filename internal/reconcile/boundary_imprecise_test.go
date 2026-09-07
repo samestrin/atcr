@@ -41,6 +41,22 @@ func TestScanAnchors_BoundaryTruncatedCallAnchorIsImprecise(t *testing.T) {
 			wantImprecise: []string{"ParseConfig"},
 		},
 		{
+			// The disclosed accepted qualifier gap: a QUALIFIED call whose prose
+			// and name share one script fires no boundary at all (設定 is the
+			// qualifier discarded by the trailing-segment reduction, and ._解析
+			// never breaks between scripts), so _解析 records as a clean anchor
+			// with no imprecision and truncated stays false. Confirmed as a real,
+			// currently-unpinned gap (resolve-td --apply-answers, 95%): a
+			// boundary-rule widening that started firing on same-script prose
+			// would otherwise pass the whole package green while silently
+			// changing this shape's classification.
+			name:          "same-script qualified call records no imprecision",
+			text:          "設定._解析() ignores the returned error",
+			wantAnchors:   []string{"_解析"},
+			wantImprecise: nil,
+			wantTruncated: false,
+		},
+		{
 			name:          "a clean citation of the same name retracts the imprecision",
 			text:          "配置ParseConfig() ignores the error returned by `ParseConfig`",
 			wantAnchors:   []string{"ParseConfig"},
