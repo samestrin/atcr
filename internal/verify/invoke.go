@@ -297,12 +297,20 @@ func logSkepticFailure(logger *slog.Logger, skeptic, class, detail string) {
 // the operator actually declared one. A zero (or negative, which no load-time
 // validation guarantees here) declaration gets minSkepticToolBudget instead:
 // bounding the loop at one byte is the honest reading of a window that cannot
-// hold a tool result, and it trips visibly (logged as budget_truncated) rather
-// than silently widening into the unlimited state the declaration contradicts.
+// hold a tool result, and it is not the unlimited state the declaration
+// contradicts.
 //
-// The second return says which of the two the caller got: true only when the
-// returned number is the window-derived ceiling rather than the operator's own
-// declaration. invokeSkeptic needs the distinction because the two carry
+// That floor returns derived = FALSE, which is the one place this function
+// reports "not derived" for a number the operator did not declare. It is
+// deliberate: a 1-byte ceiling trips on the first tool result by construction, so
+// treating the trip as a derived one would let a skeptic that read ONE BYTE hand
+// reconcile's gate a live confirmed/refuted — the same "answers from a starved
+// view without signalling it" failure that ruled out reserving all but one token.
+// A window at or below the prompt overhead cannot fund a trustworthy
+// investigation, so its trip must say so: unverifiable.
+//
+// The second return therefore means "a trip on this number must NOT void the
+// verdict", which is true only for a real window-derived ceiling. invokeSkeptic needs the distinction because the two carry
 // different authority — see tripsVoidTheVerdict. Note what that means for a
 // declaration at or ABOVE the derived ceiling: it is not the number enforced (the
 // smaller derived one is), so a trip is a DERIVED trip and truncates the read
@@ -334,7 +342,10 @@ func skepticToolBudget(c registry.AgentConfig) (budget int64, derived bool) {
 			// the loop, which is the property that must not be lost.
 			return declared, false
 		}
-		return minSkepticToolBudget, true
+		// derived = false: see the floor paragraph above. A 1-byte ceiling trips on
+		// the first result, and that trip must void the verdict rather than pass a
+		// zero-evidence answer to the gate.
+		return minSkepticToolBudget, false
 	}
 	if declared > 0 && declared < ceiling {
 		return declared, false
@@ -346,8 +357,9 @@ func skepticToolBudget(c registry.AgentConfig) (budget int64, derived bool) {
 // no input room to derive a ceiling from and the operator declared no budget of
 // their own. It exists only to stay off the engine's UNLIMITED sentinel: one byte
 // trips on the first tool result, which is the correct outcome for a window that
-// cannot hold one, and the trip is reported (budget_truncated) so an operator
-// sees the cause rather than a silently unbounded read.
+// cannot hold one. skepticToolBudget returns it with derived = false, so the trip
+// collapses the run to unverifiable and the operator sees a named failure rather
+// than either a silently unbounded read or a verdict formed from one byte.
 const minSkepticToolBudget int64 = 1
 
 // reservedOutputTokens resolves the output-token cap this lane must SUBTRACT from

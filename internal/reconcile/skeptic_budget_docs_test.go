@@ -2,11 +2,14 @@ package reconcile
 
 import (
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/samestrin/atcr/internal/payload"
 )
 
 // readDoc loads one docs/*.md file for the drift checks below. The published
@@ -67,6 +70,16 @@ func TestDocs_ToolBudgetBytesRowStatesTheSkepticClamp(t *testing.T) {
 		"payload.EffectiveByteBudget returns 0 on effectiveTokens <= 0, so a window EXACTLY equal to the overhead also derives nothing")
 	assert.NotContains(t, row, "floored at",
 		"reservedOutputTokens DEFAULTS to the built-in 8192 when max_tokens is unset; it never floors, so max_tokens: 100 really does reserve 100")
+	assert.Contains(t, row, "only a declaration BELOW the derived ceiling",
+		"a declaration at or above the derived ceiling is never enforced, so an operator must be told which declarations actually bind")
+
+	// One operand anchored to the CODE, not to a string literal. Every other
+	// assertion here compares one document against another author's prose, so a
+	// revert of internal/verify alone — the rollback plan's stated unit — would
+	// leave both documents describing a clamp the lane no longer performs with the
+	// suite still green. This one fails when the constant moves.
+	assert.Contains(t, row, "`"+strconv.Itoa(payload.DefaultOutputTokens)+"`",
+		"the row must publish the CURRENT built-in reservation, not the number it had when the sentence was written")
 }
 
 // TestDocs_ContextWindowRowDoesNotRestateTheSkepticClamp pins the
@@ -88,6 +101,8 @@ func TestDocs_ContextWindowRowDoesNotRestateTheSkepticClamp(t *testing.T) {
 		"a second copy of the formula is what drifted — this row cross-references the tool_budget_bytes row instead")
 	assert.NotContains(t, row, "floored",
 		"the reservation is a default, not a floor, in every row that mentions it")
+	assert.Contains(t, row, "(#tool-using-reviewer-fields-active-in-20)",
+		"absence of the old formula is not the fix — the row must actually POINT at the one description of the clamp")
 }
 
 // docBullet returns the single "- **`field`**" bullet naming want, or the first
@@ -135,6 +150,12 @@ func TestDocs_VerificationPerFindingBudgetsMatchTheSkepticLane(t *testing.T) {
 		"reservedOutputTokens DEFAULTS to the built-in 8192 when max_tokens is unset; neither this lane nor the review lane floors")
 	assert.NotContains(t, bullet, "so tool output cannot walk a small-window skeptic past its own window",
 		"the promise is what drifted: state the cap that makes it true, not the outcome alone")
+	assert.Contains(t, bullet, "at or below the prompt overhead",
+		"the threshold correction must hold in BOTH documents — asserting it in only one is how the pair drifted last time")
+	assert.Contains(t, bullet, "only a declaration BELOW the derived ceiling",
+		"the same qualifier the registry row carries: a larger declaration is never the number enforced")
+	assert.Contains(t, bullet, "`"+strconv.Itoa(payload.DefaultOutputTokens)+"`",
+		"anchored to the code so a production-only revert cannot leave this bullet quietly wrong")
 }
 
 // TestDocs_CrossExaminationPerSeatBudgetsMatchTheDebateLane pins

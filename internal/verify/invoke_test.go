@@ -736,8 +736,29 @@ func TestSkepticToolBudget_ReservesOnlyWhatTheWindowCanAfford(t *testing.T) {
 		for window := 4097; window <= 20480; window++ {
 			overhead := window - payload.InputRoomTokens(model, &window)
 			reserved := min(payload.DefaultOutputTokens, halfRoom(window))
-			assert.LessOrEqualf(t, ceilingFor(window, nil)+toBytes(reserved+overhead), toBytes(window),
-				"window %d: the ceiling must always leave room for a reply", window)
+			claimed := ceilingFor(window, nil) + toBytes(reserved+overhead)
+
+			// The three shares partition the window exactly, so this can only fail by
+			// the ceiling being derived from something other than what was reserved.
+			assert.LessOrEqualf(t, claimed, toBytes(window),
+				"window %d: ceiling + reservation + overhead must fit inside the window", window)
+
+			// Fitting is not the same as leaving room, and the byte arithmetic above
+			// cannot tell them apart — an exact partition satisfies it even when the
+			// reply's share is zero. What actually has to hold is that the reply gets
+			// a real share wherever the window can fund one.
+			if payload.InputRoomTokens(model, &window) <= 1 {
+				// The degenerate end of the band: a window whose whole input room is
+				// ONE token cannot both be read from and reserved against, so halving
+				// floors the reservation to 0 and the ceiling really is 100% of the
+				// room. Stated outright rather than hidden inside an assertion that
+				// reads as if it were not.
+				assert.Zerof(t, reserved,
+					"window %d: one token of input room cannot fund a reservation", window)
+				continue
+			}
+			assert.Positivef(t, reserved,
+				"window %d: the ceiling must leave real room for a reply, not merely fit", window)
 		}
 	})
 
@@ -797,16 +818,19 @@ func TestBuildSkepticAgent_NeverForwardsTheEngineUnlimitedSentinel(t *testing.T)
 			"a declared window must never widen the tool loop it exists to bound")
 	})
 
-	t.Run("a negative declared budget is clamped rather than forwarded", func(t *testing.T) {
+	t.Run("a negative declared budget loses to a derivable ceiling", func(t *testing.T) {
 		t.Parallel()
 		window := 128000
 		sk := testSkeptic()
 		sk.Config.ContextWindowTokens = &window
 		sk.Config.ToolBudgetBytes = int64Ptr(-1)
 
+		// This pins the OUTCOME, not the clamp: a negative already fails the
+		// `declared > 0` test, so the ceiling wins here with or without the clamp.
+		// The sub-test below is the one that fails when the clamp is deleted.
 		assert.Equal(t, payload.EffectiveByteBudget(sk.Config.Model, &window, payload.DefaultOutputTokens),
 			buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
-			"a negative budget must lose to the derived ceiling, not slip past the `declared > 0` test")
+			"a negative budget must lose to the derived ceiling")
 	})
 
 	t.Run("a negative declared budget with no window is clamped to zero", func(t *testing.T) {
@@ -820,6 +844,50 @@ func TestBuildSkepticAgent_NeverForwardsTheEngineUnlimitedSentinel(t *testing.T)
 		assert.Zero(t, buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
 			"an undeclared window derives nothing, but a negative must still not reach the engine")
 	})
+}
+
+// TestInvokeSkeptic_FlooredWindowTripYieldsUnverifiable pins what the 1-byte
+// floor MEANS to the caller, which is a separate question from what it is.
+//
+// The floor exists so a declared window at or below the prompt overhead cannot
+// reach internal/fanout/loop.go as the engine's UNLIMITED sentinel. But a 1-byte
+// ceiling trips on the first tool result by construction, so if that trip were
+// classified as a DERIVED trip, tripsVoidTheVerdict would keep the answer and a
+// skeptic that read one byte would hand reconcile's gate a live confirmed or
+// refuted. That is the same failure — a verdict formed from a starved view, with
+// nothing in the record to say so — that ruled out reserving all but one token.
+// A window this small cannot fund a trustworthy investigation, so the run is
+// unverifiable and says so.
+func TestInvokeSkeptic_FlooredWindowTripYieldsUnverifiable(t *testing.T) {
+	t.Parallel()
+
+	window := 4096 // exactly the prompt overhead: no input room to derive from
+	sk := testSkeptic()
+	sk.Config.ContextWindowTokens = &window
+	// ToolBudgetBytes deliberately unset: the shape that would otherwise be 0.
+
+	enforced, derived := skepticToolBudget(sk.Config)
+	require.Equal(t, minSkepticToolBudget, enforced,
+		"the fixture must land on the floor, or nothing below is exercised")
+	require.False(t, derived,
+		"the floor is not a window-derived ceiling: a trip on it must void the verdict")
+
+	disp := &fakeDispatcher{result: tools.ToolResult{
+		Content:       strings.Repeat("x", int(enforced)+1),
+		OriginalBytes: int(enforced) + 1,
+	}}
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		toolCallTurn("read_file"),
+		{content: `{"verdict": "refuted", "reasoning": "answered from a one-byte view"}`},
+	}}
+
+	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp, false)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	assert.Equal(t, verdictUnverifiable, v.Verdict,
+		"a window that cannot hold one tool result must not produce a verdict the CI gate acts on")
+	assert.Contains(t, tripped, "tool_budget_bytes",
+		"the trip is reported so an operator can see the window is the cause")
 }
 
 // TestInvokeSkeptic_DeclaredCeilingAboveTheDerivedOneIsNotEnforced settles what
