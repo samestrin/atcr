@@ -312,8 +312,9 @@ func logSkepticFailure(logger *slog.Logger, skeptic, class, detail string) {
 // UNLIMITED (internal/fanout/loop.go guards on `> 0`), so where a window has no
 // input room at all — at or below the prompt overhead, where no reservation makes
 // it fit — there is no ceiling to derive and the declared value stands only when
-// the operator actually declared one. A zero (or negative, which no load-time
-// validation guarantees here) declaration gets minSkepticToolBudget instead:
+// the operator actually declared one. A zero (or negative — load-time validation
+// rejects a negative, so only a programmatically built AgentConfig can carry one
+// here) declaration gets minSkepticToolBudget instead:
 // bounding the loop at one byte is the honest reading of a window that cannot
 // hold a tool result, and it is not the unlimited state the declaration
 // contradicts.
@@ -345,12 +346,14 @@ func skepticToolBudget(c registry.AgentConfig) (budget int64, derived bool) {
 	if declared < 0 {
 		// Normalisation, not a behaviour change: internal/fanout/loop.go guards on
 		// `> 0`, so a negative and a 0 are already the SAME unlimited state, and a
-		// negative loses every `declared > 0` test below either way. What the clamp
-		// buys is that this function never PROPAGATES a value the engine has no
-		// defined reading for — load-time validation rejects a negative, but a
-		// programmatically built AgentConfig never passes through it, so without
-		// this line the sentinel the caller receives depends on which construction
-		// path built the config.
+		// negative loses every `declared > 0` test below either way — on the three
+		// ceiling-derived exits this clamp changes nothing. It is load-bearing on
+		// exactly one exit: the no-declared-window return below forwards `declared`
+		// verbatim, and without this line that forwarded value would be a negative
+		// the engine has no defined reading for. Load-time validation rejects a
+		// negative (internal/registry/config.go), but a programmatically built
+		// AgentConfig never passes through it, so without the clamp the sentinel
+		// the caller receives depends on which construction path built the config.
 		declared = 0
 	}
 	if c.ContextWindowTokens == nil {
