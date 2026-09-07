@@ -300,12 +300,14 @@ func logSkepticFailure(logger *slog.Logger, skeptic, class, detail string) {
 //
 // Only a DECLARED window clamps, and only downward:
 //
-//   - No declaration → today's value, unchanged. Deriving from the table's
-//     conservative default would silently shrink every unsized roster, which is a
-//     separate decision on separate evidence. The one exception: a negative
-//     incoming value — reachable only through a programmatically built config —
-//     gets the same floor as a starved window, never the engine's UNLIMITED
-//     sentinel.
+//   - No declaration — or a window value the resolution chain rejects (<= 0 or
+//     above the cap, reachable only through a programmatically built config) —
+//     → today's value, unchanged. Deriving from the table's conservative default
+//     would silently shrink every unsized roster, and would harden one
+//     construction path while trusting the same path's bogus window — a separate
+//     decision on separate evidence. The one exception: a negative incoming
+//     value gets the same floor as a starved window, never the engine's
+//     UNLIMITED sentinel.
 //   - A declared budget SMALLER than the ceiling wins. This is a ceiling, never a
 //     floor: an operator asking for less still gets less.
 //   - A ZERO budget (the engine's "unlimited") is clamped like any other, because
@@ -368,6 +370,19 @@ func skepticToolBudget(c registry.AgentConfig) (budget int64, derived bool) {
 			// with the floor — so the same floor applies here: the loop is bounded,
 			// the trip (derived = false) voids the verdict, and a config that never
 			// passed load validation never buys an unbounded read.
+			return minSkepticToolBudget, false
+		}
+		return declared, false
+	}
+	// Gate on the resolution TIER, not on pointer non-nilness: ResolveContextWindow
+	// discards any declaration <= 0 or above the cap and falls through to the table
+	// or the conservative default, so a non-nil out-of-range value is NOT a
+	// declaration. Deriving a ceiling from the table default for one would harden
+	// the negative-budget construction path (above) while accepting the same
+	// path's bogus window as truth — inconsistent on one threat model. A
+	// non-declaration behaves like no declaration: the value forwards untouched.
+	if _, src := payload.ResolveContextWindow(c.Model, c.ContextWindowTokens); src != payload.WindowSourceDeclaration {
+		if incoming < 0 {
 			return minSkepticToolBudget, false
 		}
 		return declared, false
