@@ -243,3 +243,52 @@ func TestInvokeSkeptic_NilDispatcher(t *testing.T) {
 	_, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat("{}"), nil, false)
 	require.Error(t, err)
 }
+
+// TestInvokeSkeptic_ForwardsDeclaredMaxTokens pins that an agent's max_tokens
+// declaration reaches the skeptic REQUEST, not merely the Agent literal.
+//
+// llmclient.Invocation carries MaxTokens and its own doc warns that a reasoning
+// model spends the budget on chain-of-thought before emitting visible content, but
+// the skeptic Invocation forwarded every other per-agent budget (MaxTurns,
+// ToolBudgetBytes, MaxRetries, InitialBackoffMs) and omitted this one — so the
+// provider default applied and the declaration was silently inert. Under a low
+// provider default the skeptic finishes mid-reasoning and returns no verdict,
+// which the engine records as unverifiable while the run still reports success:
+// the same silent-loss mode the review fan-out already fixed with resolveMaxTokens.
+// Measured 2026-09-06 through litellm on a TRIVIAL 7-line snippet: glm-5.3-flash
+// emitted 5,885 chars of reasoning, minimax-m3 13,618 and 3,270 output tokens.
+//
+// The undeclared row is load-bearing, not filler. Only the DECLARATION is
+// forwarded — no built-in default is imposed here, unlike the review fan-out's
+// third tier — so an undeclared skeptic keeps the provider default it has today
+// and this fix cannot newly truncate one. Changing that is a separate decision on
+// separate evidence.
+func TestInvokeSkeptic_ForwardsDeclaredMaxTokens(t *testing.T) {
+	t.Parallel()
+
+	t.Run("declared", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		sk.Config.MaxTokens = intPtr(24000)
+		cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed"}`}}}
+
+		_, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+		require.NoError(t, err)
+
+		got := cc.lastInvocation().MaxTokens
+		require.NotNil(t, got, "the declaration must reach the request body, not stop at the Agent literal")
+		assert.Equal(t, 24000, *got)
+	})
+
+	t.Run("undeclared keeps the provider default", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed"}`}}}
+
+		_, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+		require.NoError(t, err)
+
+		assert.Nil(t, cc.lastInvocation().MaxTokens,
+			"no declaration means no cap is sent: this fix removes an omission, it does not impose a new default")
+	})
+}
