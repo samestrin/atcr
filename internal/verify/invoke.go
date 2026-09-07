@@ -328,8 +328,9 @@ func logSkepticFailure(logger *slog.Logger, skeptic, class, detail string) {
 // investigation, so its trip must say so: unverifiable.
 //
 // The second return therefore means "a trip on this number must NOT void the
-// verdict", which is true only for a real window-derived ceiling. invokeSkeptic needs the distinction because the two carry
-// different authority — see tripsVoidTheVerdict. Note what that means for a
+// verdict", which is true only for a real window-derived ceiling. invokeSkeptic
+// needs the distinction because the two carry different authority — see
+// tripsVoidTheVerdict. Note what that means for a
 // declaration at or ABOVE the derived ceiling: it is not the number enforced (the
 // smaller derived one is), so a trip is a DERIVED trip and truncates the read
 // without voiding the verdict. Voiding it would blame the operator for a bound
