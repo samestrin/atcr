@@ -72,6 +72,8 @@ func TestDocs_ToolBudgetBytesRowStatesTheSkepticClamp(t *testing.T) {
 		"reservedOutputTokens DEFAULTS to the built-in 8192 when max_tokens is unset; it never floors, so max_tokens: 100 really does reserve 100")
 	assert.Contains(t, row, "only a declaration BELOW the derived ceiling",
 		"a declaration at or above the derived ceiling is never enforced, so an operator must be told which declarations actually bind")
+	assert.NotContains(t, row, "declaration voids the verdict",
+		"the unqualified form must never appear: only the qualified 'only a declaration BELOW the derived ceiling' clause carries the semantics, so rewording away the qualifier must fail here")
 
 	// One operand anchored to the CODE, not to a string literal. Every other
 	// assertion here compares one document against another author's prose, so a
@@ -173,6 +175,8 @@ func TestDocs_VerificationPerFindingBudgetsMatchTheSkepticLane(t *testing.T) {
 		"the threshold correction must hold in BOTH documents — asserting it in only one is how the pair drifted last time")
 	assert.Contains(t, bullet, "only a declaration BELOW the derived ceiling",
 		"the same qualifier the registry row carries: a larger declaration is never the number enforced")
+	assert.NotContains(t, bullet, "declaration voids the verdict",
+		"the unqualified form must never appear here either — the qualifier is load-bearing in both documents or in neither")
 	assert.Contains(t, bullet, "`"+strconv.Itoa(payload.DefaultOutputTokens)+"`",
 		"anchored to the code so a production-only revert cannot leave this bullet quietly wrong")
 	assert.Contains(t, bullet, "1-byte floor",
