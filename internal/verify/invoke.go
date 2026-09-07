@@ -283,6 +283,15 @@ func logSkepticFailure(logger *slog.Logger, skeptic, class, detail string) {
 	logger.Debug("skeptic failure detail", "skeptic", skeptic, "class", class, "detail", detail)
 }
 
+// minSkepticToolBudget is the floor a DECLARED window falls back to when it has
+// no input room to derive a ceiling from and the operator declared no budget of
+// their own. It exists only to stay off the engine's UNLIMITED sentinel: one byte
+// trips on the first tool result, which is the correct outcome for a window that
+// cannot hold one. skepticToolBudget returns it with derived = false, so the trip
+// collapses the run to unverifiable and the operator sees a named failure rather
+// than either a silently unbounded read or a verdict formed from one byte.
+const minSkepticToolBudget int64 = 1
+
 // skepticToolBudget resolves the skeptic's tool-output ceiling, clamping the flat
 // per-agent tool_budget_bytes to what the agent's DECLARED context window can
 // actually hold.
@@ -449,15 +458,6 @@ func skepticToolBudget(c registry.AgentConfig) (budget int64, derived bool) {
 	}
 	return ceiling, true
 }
-
-// minSkepticToolBudget is the floor a DECLARED window falls back to when it has
-// no input room to derive a ceiling from and the operator declared no budget of
-// their own. It exists only to stay off the engine's UNLIMITED sentinel: one byte
-// trips on the first tool result, which is the correct outcome for a window that
-// cannot hold one. skepticToolBudget returns it with derived = false, so the trip
-// collapses the run to unverifiable and the operator sees a named failure rather
-// than either a silently unbounded read or a verdict formed from one byte.
-const minSkepticToolBudget int64 = 1
 
 // reservedOutputTokens resolves the output-token cap this lane STARTS from when
 // deriving the tool ceiling: the agent's own max_tokens declaration, else
