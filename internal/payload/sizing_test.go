@@ -191,6 +191,10 @@ func TestInputRoomTokens_NeverReportsADeficit(t *testing.T) {
 		want     int
 	}{
 		{"a window well above the overhead reports the remainder", 32768, 32768 - promptOverheadTokens},
+		// Hard-coded on purpose: every row above states its expectation relative to
+		// promptOverheadTokens, so moving the constant leaves them all vacuously
+		// green. This row pins the overhead to an independent number (32768 - 4096).
+		{"the default window", 32768, 28672},
 		{"a window one token above the overhead reports one token", promptOverheadTokens + 1, 1},
 		{"a window exactly at the overhead reports no room", promptOverheadTokens, 0},
 		{"a window below the overhead reports no room rather than a deficit", 1, 0},
