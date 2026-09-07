@@ -1019,6 +1019,38 @@ func TestSkepticToolBudget_FloorIsOneByte(t *testing.T) {
 // nothing in the record to say so — that ruled out reserving all but one token.
 // A window this small cannot fund a trustworthy investigation, so the run is
 // unverifiable and says so.
+// TestInvokeSkeptic_FlooredWindowNeverRunsTheEngine pins the short-circuit: a
+// window whose enforced ceiling is the floor cannot fund one tool result, so
+// there is nothing to investigate and no run to spend. Driving the engine would
+// either hand reconcile a live verdict from a window that cannot hold even the
+// prompt overhead (a completer that never calls a tool) or deliver a full first
+// tool result into that window before the deferred end-of-turn trip fires (a
+// guaranteed provider-side overflow). The lane returns unverifiable WITHOUT any
+// provider request.
+func TestInvokeSkeptic_FlooredWindowNeverRunsTheEngine(t *testing.T) {
+	t.Parallel()
+
+	window := 4096 // exactly the prompt overhead: no input room to derive from
+	sk := testSkeptic()
+	sk.Config.ContextWindowTokens = &window
+
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		// No tool call: the completer would hand back a live refuted from zero
+		// investigation. A tool-calling completer never gets the chance either.
+		{content: `{"verdict": "refuted", "reasoning": "no investigation was possible"}`},
+	}}
+	disp := &fakeDispatcher{result: tools.ToolResult{Content: "never dispatched"}}
+
+	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp, false)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	assert.Equal(t, verdictUnverifiable, v.Verdict,
+		"a window that cannot fund one tool result cannot fund a trustworthy investigation — no verdict may reach the gate")
+	assert.Empty(t, tripped, "no run, no trip — the budget slice must not carry noise")
+	assert.Equal(t, 0, cc.chatCalls, "the engine must never run: no provider request is issued at all")
+	assert.Equal(t, 0, disp.calls, "no tool is dispatched")
+}
+
 func TestInvokeSkeptic_FlooredWindowTripYieldsUnverifiable(t *testing.T) {
 	t.Parallel()
 
