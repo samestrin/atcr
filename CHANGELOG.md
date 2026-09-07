@@ -1,3 +1,21 @@
+## [35.16.6.8.2.1] - 2026-09-07
+
+*Epic 35.16.6.8.2.1 — post-review residue from epic 35.16.6.8.2: the skeptic tool-ceiling derivation seam, and three documents describing a clamp the code no longer performed.*
+
+### Fixed
+- A skeptic's tool-output ceiling no longer swings ~9000x on a one-token config change. `skepticToolBudget` derived from two discrete formulas — the full output reservation above the reservation's own threshold, NOTHING reserved below it — so it was non-monotonic in both operands: a declared window of `12288` derived `28672` bytes while `12289` derived `3`, and at window `12000` a `max_tokens` of `7903` derived `3` bytes where `7904` derived `27664`. A larger window and a smaller reservation both made the skeptic worse off. One continuous derivation replaces both arms: the resolved output cap, capped at half the window's input room. Every window at or above `2 * reserved + 4096` tokens (`20480` at the built-in default) derives exactly what it derived before — including all 26 declared windows in the shipped roster, whose ceilings are byte-identical.
+- A declared `context_window_tokens` can no longer produce an UNBOUNDED skeptic tool loop. The previous fallback returned the declared `tool_budget_bytes` when no ceiling could be derived, which for the dominant roster shape (no declaration) is `0` — the value `internal/fanout/loop.go` reads as unlimited. A window at or below the prompt overhead with no declared budget now yields a 1-byte floor, and its trip marks the run `unverifiable` rather than letting a skeptic that read one byte hand the CI gate a live verdict.
+- A negative `tool_budget_bytes` on a programmatically built config is normalised at the top of the derivation instead of being propagated to a caller that has no defined reading for it.
+
+### Changed
+- `docs/registry.md` (both the `context_window_tokens` and `tool_budget_bytes` rows) and `docs/verification.md`'s "Per-finding budgets" bullet now describe the clamp the lane actually performs. Three corrections in each place where they applied: the output reservation is the agent's `max_tokens` **when declared, else** the built-in `8192` — a default, never a floor, so `max_tokens: 100` really does reserve `100`; the no-ceiling threshold is **at or below** the prompt overhead, not below it; and the half-room cap is named, including the part of its band that could have funded the full reservation and is capped anyway. The `context_window_tokens` row now cross-references the `tool_budget_bytes` row instead of restating the formula — two descriptions of one clamp is how the pair drifted apart in the first place.
+- `internal/reconcile/skeptic_budget_docs_test.go` asserts each load-bearing clause in **both** documents, and anchors one operand to `payload.DefaultOutputTokens` itself. The previous guard asserted three substrings that no reworded clause touched, which is why the sweep that corrected one document and left the other behind passed it clean; reverting either document alone, or the production constant, now fails.
+
+### Added
+- `payload.InputRoomTokens`, so a caller sizing a reservation against what a window can fund reads the prompt overhead from the package that defines it rather than restating the constant.
+
+*Shipped via /execute-epic (epic 35.16.6.8.2.1)*
+
 ## [35.16.6.8.2] - 2026-09-06
 
 *Epic 35.16.6.8.2 — post-review residue from epic 35.16.6.8.1: what a spaceless-script word boundary may and may not be evidence for.*
