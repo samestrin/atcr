@@ -12,6 +12,8 @@ import (
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/payload"
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/tools"
 )
 
@@ -113,7 +115,7 @@ func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool) fanout.Agent {
 		Exec:            exec,
 		SupportsFC:      c.SupportsFC,
 		MaxTurns:        derefInt(c.MaxTurns),
-		ToolBudgetBytes: derefInt64(c.ToolBudgetBytes),
+		ToolBudgetBytes: skepticToolBudget(c),
 		// Retry/backoff (Epic 4.6): forward the skeptic's per-agent budget the same
 		// way as the other per-finding budgets. A nil pointer becomes 0; the engine
 		// applies the override only when InitialBackoffMs > 0, so an unset budget
@@ -187,6 +189,53 @@ func logSkepticFailure(logger *slog.Logger, skeptic, class, detail string) {
 	detail = strings.ReplaceAll(detail, "\n", " ")
 	logger.Warn("skeptic failed", "skeptic", skeptic, "class", class)
 	logger.Debug("skeptic failure detail", "skeptic", skeptic, "class", class, "detail", detail)
+}
+
+// skepticToolBudget resolves the skeptic's tool-output ceiling, clamping the flat
+// per-agent tool_budget_bytes to what the agent's DECLARED context window can
+// actually hold.
+//
+// A skeptic reads real files through the tool loop, so its input grows with tool
+// output — but tool_budget_bytes is a flat number with no relation to the model
+// behind it, so an agent declared at 32768 tokens and one declared at 512000 got
+// the same budget and the small one could be walked past its window by a few large
+// reads. context_window_tokens was inert in this lane; this is the one budget here
+// it can bound.
+//
+// The derivation is payload.EffectiveByteBudget, the same one the review fan-out
+// sizes payloads with, so the window resolution chain (declaration → static model
+// table → conservative default) and the output reservation have exactly one
+// definition. The output cap passed is the agent's own max_tokens declaration:
+// tokens promised to the response are not available to tool output.
+//
+// Only a DECLARED window clamps, and only downward:
+//
+//   - No declaration → today's value, unchanged. Deriving from the table's
+//     conservative default would silently shrink every unsized roster, which is a
+//     separate decision on separate evidence.
+//   - A declared budget SMALLER than the ceiling wins. This is a ceiling, never a
+//     floor: an operator asking for less still gets less.
+//   - A ZERO budget (the engine's "unlimited") is clamped like any other, because
+//     unlimited is exactly the state a declared window contradicts.
+//
+// A non-positive ceiling is never forwarded. The engine reads 0 as UNLIMITED, so
+// emitting it for a window whose output cap and prompt overhead already exhaust it
+// would invert the clamp into its opposite. That state is a misconfiguration the
+// review lane refuses on with a named remedy; this lane leaves the declared value
+// alone rather than inventing a second failure mode for it.
+func skepticToolBudget(c registry.AgentConfig) int64 {
+	declared := derefInt64(c.ToolBudgetBytes)
+	if c.ContextWindowTokens == nil {
+		return declared
+	}
+	ceiling := payload.EffectiveByteBudget(c.Model, c.ContextWindowTokens, derefInt(c.MaxTokens))
+	if ceiling <= 0 {
+		return declared
+	}
+	if declared > 0 && declared < ceiling {
+		return declared
+	}
+	return ceiling
 }
 
 func derefInt(p *int) int {
