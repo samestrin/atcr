@@ -1247,6 +1247,49 @@ func TestInvokeSkeptic_DeclaredCeilingAboveTheDerivedOneIsNotEnforced(t *testing
 		"the trip is still reported for audit — it is the VERDICT that survives, not the silence")
 }
 
+// TestInvokeSkeptic_TruncationIsNotLoggedAsAFailure pins the surviving-verdict
+// path's log vocabulary: a derived-ceiling trip truncates the read but the
+// answer STANDS, so raising the failure helper's Warn("skeptic failed") on this
+// path false-alarms every operator alerting on skeptic failures — and the
+// reservation shrinkage makes truncated runs common. The path gets its own Info
+// record and a detail that does not claim the run halted.
+func TestInvokeSkeptic_TruncationIsNotLoggedAsAFailure(t *testing.T) {
+	t.Parallel()
+
+	window := 12288
+	sk := testSkeptic()
+	sk.Config.ContextWindowTokens = &window
+	ceiling := payload.EffectiveByteBudget(testSkeptic().Config.Model, &window, payload.DefaultOutputTokens)
+	require.Equal(t, int64(14336), ceiling, "fixture must sit in the derived band")
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	ctx := log.NewContext(context.Background(), logger)
+
+	disp := &fakeDispatcher{result: tools.ToolResult{
+		Content:       strings.Repeat("x", int(ceiling)+1),
+		OriginalBytes: int(ceiling) + 1,
+	}}
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		toolCallTurn("read_file"),
+		{content: `{"verdict": "refuted", "reasoning": "the cited line does not do what the finding claims"}`},
+	}}
+
+	v, tripped, err := invokeSkeptic(ctx, sk, "prompt", cc, disp, false)
+	require.NoError(t, err)
+	require.Equal(t, verdictRefuted, v.Verdict, "fixture must exercise the surviving-verdict path")
+	require.Contains(t, tripped, "tool_budget_bytes")
+
+	out := buf.String()
+	assert.NotContains(t, out, "skeptic failed",
+		"a truncated run with a surviving verdict is not a failure — no Warn may fire on this path")
+	assert.Contains(t, out, "skeptic truncated",
+		"the truncation gets its own record so the audit trail keeps the fact")
+	assert.Contains(t, out, "class=budget_truncated")
+	assert.NotContains(t, out, "skeptic run halted",
+		"the detail must not claim the run halted — it returned a verdict")
+}
+
 // TestInvokeSkeptic_DeclaredCeilingAtTheDerivedOnePinsProvenance pins the
 // EQUALITY boundary the two documents describe as "only a declaration BELOW the
 // derived ceiling": an operator declaring EXACTLY the derived ceiling is
