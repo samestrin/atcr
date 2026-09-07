@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/tools"
 )
@@ -290,5 +291,68 @@ func TestInvokeSkeptic_ForwardsDeclaredMaxTokens(t *testing.T) {
 
 		assert.Nil(t, cc.lastInvocation().MaxTokens,
 			"no declaration means no cap is sent: this fix removes an omission, it does not impose a new default")
+	})
+}
+
+// TestBuildSkepticAgent_ClampsToolBudgetToDeclaredWindow pins that a skeptic's
+// context_window_tokens declaration reaches the ONE budget in this lane it can
+// bound: the tool-output ceiling.
+//
+// A skeptic reads real files through the tool loop, so its input grows with tool
+// output — but ToolBudgetBytes is a flat per-agent number, not window-derived, so
+// an agent declared at 32768 tokens and one declared at 512000 got the same tool
+// budget and the small one could be walked past its window by a few large reads.
+// The declaration was inert here (docs/registry.md said as much).
+//
+// Only a DECLARED window clamps. An undeclared agent keeps exactly today's
+// behaviour, so this cannot newly starve a roster nobody has sized.
+func TestBuildSkepticAgent_ClampsToolBudgetToDeclaredWindow(t *testing.T) {
+	t.Parallel()
+
+	small := 32768
+	large := 512000
+
+	t.Run("a small declared window shrinks the effective tool budget", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		sk.Config.ContextWindowTokens = &small
+		sk.Config.ToolBudgetBytes = int64Ptr(4 << 20) // 4 MiB: far past a 32k window
+
+		got := buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes
+		want := payload.EffectiveByteBudget(sk.Config.Model, &small, 0)
+		require.Positive(t, want, "the fixture must leave real input room, or the clamp below proves nothing")
+		assert.Equal(t, want, got, "a declared window bounds what the tool loop may pour into it")
+		assert.Less(t, got, int64(4<<20), "the flat per-agent number must lose to the smaller window-derived ceiling")
+	})
+
+	t.Run("a larger window leaves a smaller declared budget alone", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		sk.Config.ContextWindowTokens = &large
+		sk.Config.ToolBudgetBytes = int64Ptr(4096)
+
+		assert.Equal(t, int64(4096), buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+			"the clamp is a ceiling, never a floor: an operator asking for less still gets less")
+	})
+
+	t.Run("an undeclared window keeps today's behaviour", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		sk.Config.ToolBudgetBytes = int64Ptr(4 << 20)
+
+		assert.Equal(t, int64(4<<20), buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+			"no declaration, no clamp — nothing is derived from a window nobody stated")
+	})
+
+	t.Run("the output cap is reserved out of the window", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		sk.Config.ContextWindowTokens = &small
+		sk.Config.MaxTokens = intPtr(8000)
+
+		got := buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes
+		assert.Equal(t, payload.EffectiveByteBudget(sk.Config.Model, &small, 8000), got)
+		assert.Less(t, got, payload.EffectiveByteBudget(sk.Config.Model, &small, 0),
+			"tokens promised to the response are not available to tool output")
 	})
 }
