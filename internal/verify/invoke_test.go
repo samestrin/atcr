@@ -1007,18 +1007,6 @@ func TestSkepticToolBudget_FloorIsOneByte(t *testing.T) {
 		"the floor is not a derived ceiling — its trip must void the verdict")
 }
 
-// TestInvokeSkeptic_FlooredWindowTripYieldsUnverifiable pins what the 1-byte
-// floor MEANS to the caller, which is a separate question from what it is.
-//
-// The floor exists so a declared window at or below the prompt overhead cannot
-// reach internal/fanout/loop.go as the engine's UNLIMITED sentinel. But a 1-byte
-// ceiling trips on the first tool result by construction, so if that trip were
-// classified as a DERIVED trip, tripsVoidTheVerdict would keep the answer and a
-// skeptic that read one byte would hand reconcile's gate a live confirmed or
-// refuted. That is the same failure — a verdict formed from a starved view, with
-// nothing in the record to say so — that ruled out reserving all but one token.
-// A window this small cannot fund a trustworthy investigation, so the run is
-// unverifiable and says so.
 // TestInvokeSkeptic_FlooredWindowNeverRunsTheEngine pins the short-circuit: a
 // window whose enforced ceiling is the floor cannot fund one tool result, so
 // there is nothing to investigate and no run to spend. Driving the engine would
@@ -1051,7 +1039,19 @@ func TestInvokeSkeptic_FlooredWindowNeverRunsTheEngine(t *testing.T) {
 	assert.Equal(t, 0, disp.calls, "no tool is dispatched")
 }
 
-func TestInvokeSkeptic_FlooredWindowTripYieldsUnverifiable(t *testing.T) {
+// TestInvokeSkeptic_FlooredWindowYieldsUnverifiable pins what the floor MEANS
+// to the caller.
+//
+// The floor exists so a declared window at or below the prompt overhead cannot
+// reach internal/fanout/loop.go as the engine's UNLIMITED sentinel, and so a
+// window that cannot fund one tool result never produces a verdict the CI gate
+// acts on — whether the completer would have answered from one byte (the trip
+// path this used to exercise) or from no investigation at all. invokeSkeptic
+// short-circuits before the engine: the verdict is unverifiable, the notes name
+// the window, and no provider request is issued — the old engine-driven trip
+// could not protect the no-tool path and delivered the full first result into a
+// window that cannot hold it before the deferred trip fired.
+func TestInvokeSkeptic_FlooredWindowYieldsUnverifiable(t *testing.T) {
 	t.Parallel()
 
 	window := 4096 // exactly the prompt overhead: no input room to derive from
@@ -1063,12 +1063,9 @@ func TestInvokeSkeptic_FlooredWindowTripYieldsUnverifiable(t *testing.T) {
 	require.Equal(t, minSkepticToolBudget, enforced,
 		"the fixture must land on the floor, or nothing below is exercised")
 	require.False(t, derived,
-		"the floor is not a window-derived ceiling: a trip on it must void the verdict")
+		"the floor is not a window-derived ceiling")
 
-	disp := &fakeDispatcher{result: tools.ToolResult{
-		Content:       strings.Repeat("x", int(enforced)+1),
-		OriginalBytes: int(enforced) + 1,
-	}}
+	disp := &fakeDispatcher{result: tools.ToolResult{Content: "never dispatched"}}
 	cc := &fakeChatCompleter{turns: []chatTurn{
 		toolCallTurn("read_file"),
 		{content: `{"verdict": "refuted", "reasoning": "answered from a one-byte view"}`},
@@ -1079,8 +1076,11 @@ func TestInvokeSkeptic_FlooredWindowTripYieldsUnverifiable(t *testing.T) {
 	require.NotNil(t, v)
 	assert.Equal(t, verdictUnverifiable, v.Verdict,
 		"a window that cannot hold one tool result must not produce a verdict the CI gate acts on")
-	assert.Contains(t, tripped, "tool_budget_bytes",
-		"the trip is reported so an operator can see the window is the cause")
+	assert.Equal(t, "window_below_prompt_overhead", v.Notes,
+		"the notes name the window as the cause, not a generic budget trip")
+	assert.Empty(t, tripped, "no run, no trip")
+	assert.Equal(t, 0, cc.chatCalls, "no provider request is issued at all")
+	assert.Equal(t, 0, disp.calls, "no tool is dispatched")
 }
 
 // TestInvokeSkeptic_DeclaredCeilingAboveTheDerivedOneIsNotEnforced settles what

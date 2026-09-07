@@ -89,6 +89,21 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 		"capped", capped,
 		"floored", agent.ToolBudgetBytes == minSkepticToolBudget,
 	)
+	if agent.ToolBudgetBytes == minSkepticToolBudget {
+		// The enforced ceiling is the floor: the declared window cannot fund one
+		// tool result, so no trustworthy investigation is possible and the run
+		// cannot be spent usefully. Driving the engine would either hand reconcile
+		// a live verdict from a window that cannot hold even the prompt overhead
+		// (a completer that never calls a tool) or deliver a full first tool
+		// result into that window before the deferred end-of-turn trip fires (a
+		// guaranteed provider-side overflow). Short-circuit instead: named,
+		// structural, and no provider request is issued at all. A declared 1-byte
+		// budget lands here too — the same outcome its own first trip would
+		// produce, minus the doomed run.
+		logger.Warn("skeptic failed", "skeptic", skeptic.Name, "class", "window_too_small")
+		logger.Debug("skeptic failure detail", "skeptic", skeptic.Name, "class", "window_too_small", "detail", "window_below_prompt_overhead")
+		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "window_below_prompt_overhead", Skeptic: skeptic.Name}, nil, nil
+	}
 	engine := fanout.NewEngine(cc, fanout.WithDispatcher(disp), fanout.WithLogger(logger))
 	results := engine.Run(ctx, []fanout.Slot{{Primary: agent}})
 	// Engine.Run returns one Result per slot in input order, so one slot yields
