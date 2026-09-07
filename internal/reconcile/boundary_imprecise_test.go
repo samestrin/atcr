@@ -409,3 +409,35 @@ func TestBoundaryCutAnchors_DoesNotWithholdOnAbandonedArms(t *testing.T) {
 			"neither arm withholds here, unlike the FIX-side sibling")
 	})
 }
+
+// TestRunReconcile_BarredPrimaryKeepsDeclaredSubjectUnrouted pins the
+// load-bearing half of the whole-PROBLEM-set claim: the barred members ride
+// alongside primary rather than being removed from it, so a subject that IS
+// declared in the tree can never be judged "checked and found nothing" by the
+// anchors that survived the narrowing. Removing them from the set instead of
+// naming them alongside it routes a real finding to unresolved.json — the
+// strictly-worse trade validate.go's comment rules out. Verified against the
+// narrowed-primary mutation: this fixture fails under it (the finding is routed
+// and unresolved.json is non-empty).
+func TestRunReconcile_BarredPrimaryKeepsDeclaredSubjectUnrouted(t *testing.T) {
+	root := gitRepoWithSources(t, map[string]string{
+		"internal/cfg/parse.go": "package cfg\n\nfunc ParseConfig() error { return nil }\n",
+	})
+
+	reviewDir := t.TempDir()
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+		"HIGH|internal/ghost/phantom.go:3|配置ParseConfig() and `totallyAbsentHelper` both ignore the returned error|check both|correctness|10|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Findings, 1, "the finding is KEPT — its subject is declared, so nothing may route it out")
+
+	unresolved, err := ReadUnresolvedFindings(reviewDir)
+	require.NoError(t, err)
+	assert.Empty(t, unresolved,
+		"the barred anchor rode along as veto evidence; the declared subject must reach tier4Inconclusive, never tier4NoMatch")
+	assert.Zero(t, res.Summary.UnresolvedFiltered)
+}

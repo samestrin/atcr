@@ -574,6 +574,26 @@ func TestFakeTier4_MirrorsResolveOnThePrimaryPath(t *testing.T) {
 			wantFile:    "",
 		},
 		{
+			// The WHOLE-set contract resolve itself must honor: the barred
+			// members ride ALONGSIDE primary, and the presence check and the
+			// no-match arm must still see them. Here the barred ParseConfig IS
+			// the declared subject and absentName is in the tree nowhere: with
+			// the set whole, the declared member reaches the presence check and
+			// the verdict is tier4Inconclusive — never tier4NoMatch. (This row
+			// drives resolve directly, so it pins the procedure; the validate.go
+			// call site that must pass the set whole is pinned end-to-end by
+			// TestRunReconcile_BarredPrimaryKeepsDeclaredSubjectUnrouted, which
+			// fails under the narrowed-primary mutation.)
+			name: "a barred-and-present anchor keeps an absent co-anchor from routing the finding out",
+			byName: map[string][]string{
+				"ParseConfig": {fileA},
+			},
+			primary:     []string{"ParseConfig", "absentName"},
+			barredP:     []string{"ParseConfig"},
+			wantOutcome: tier4Inconclusive,
+			wantFile:    "",
+		},
+		{
 			// The SECONDARY-path half of the same veto: the primary is barred and
 			// matches nothing, but the FIX set localizes a file the barred anchor
 			// is declared in exactly one OTHER file from. Production vetoes the
