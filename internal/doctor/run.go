@@ -190,6 +190,15 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 		if s, h, ok := zeroBudgetVerdict(tgt.Model, at.ContextWindowTokens, reviewCap, pr.maxTokens, status); ok {
 			status, hint = s, h
 		}
+		if clause, ok := smallWindowClause(tgt.Model, at.ContextWindowTokens, at.WindowSource, status); ok {
+			// An at-or-below-overhead window ALWAYS trips zeroBudgetVerdict too (its
+			// input budget is closed for any cap), so this APPENDS the skeptic
+			// lane's consequence to the payload hint rather than replacing it: both
+			// consequences are real, they share one remedy, and zeroBudget's
+			// marker/probe remedies stay intact for the rows that need them.
+			status = StatusOKWarning
+			hint += " Separately: " + clause
+		}
 		rep.Agents = append(rep.Agents, AgentResult{
 			Agent:               at.Agent,
 			Serial:              at.Serial,
@@ -272,6 +281,13 @@ const zeroBudgetRemedy = "lower its max_tokens, or raise (or drop) its context_w
 // then passes at the higher cap because the nonce prompt is trivial. Leaving the row's
 // original hint in place there would have preserved the exact trap this row was filed
 // for.
+//
+// smallWindowVerdict extends this pattern to the skeptic lane's own floor: a
+// DECLARED window at or below the prompt overhead derives no tool ceiling at
+// all, so every verification that agent reviews collapses to unverifiable — a
+// consequence this verdict's hint (about review's payload sizing) never named.
+// See smallWindowVerdict below; it runs after this one in Run, so the more
+// specific verification-lane warning wins the row where both fire.
 func zeroBudgetVerdict(model string, window, maxTokens, probeMaxTokens int, status string) (string, string, bool) {
 	if !healthy(status) || maxTokens <= 0 || window <= 0 {
 		return "", "", false
@@ -320,6 +336,46 @@ func zeroBudgetVerdict(model string, window, maxTokens, probeMaxTokens int, stat
 			"only the smallest single file, or refuse the run outright under on_overflow fail/fallback. Do NOT raise the "+
 			"cap here: it is reserved out of this same window. Remedy: %s%s",
 		lead, window, maxTokens, disclaimer, zeroBudgetRemedy, probeRemedy), true
+}
+
+// smallWindowClause reports the verification-lane consequence doctor owes an
+// agent whose DECLARED context window sits at or below the prompt overhead. It
+// extends the zeroBudgetVerdict pattern to the skeptic lane's own floor: the
+// tool ceiling derives nothing there, so every verification that agent reviews
+// yields unverifiable (notes window_below_prompt_overhead) — and reconcile's
+// CI gate does not exclude unverifiable. The value is legal config (registry
+// admits 1..10000000) nothing rejects at load, and the probe cannot catch it
+// (the nonce prompt is trivial), so doctor is the one surface holding the
+// number and the only place the operator hears it before a run spends its
+// budget on guaranteed-unverifiable findings.
+//
+// Run APPENDS the returned clause to zeroBudgetVerdict's hint (which always
+// fires for these windows — an at-or-below-overhead window closes review's
+// input budget for any cap) rather than replacing it: both consequences are
+// real, they share one remedy (zeroBudgetRemedy), and the payload hint's
+// marker/probe remedies stay intact for the rows that need them.
+//
+// Guards, mirroring zeroBudgetVerdict: window 0 means the window did NOT
+// resolve (defensive for other callers); only a HEALTHY probe is touched; and
+// only a DECLARATION tier fires — a table/default row is the sizing layer's own
+// conservative claim, not an operator statement, so warning on it would tell
+// operators to change a number they never wrote. The room is asked of
+// payload.InputRoomTokens rather than recomputed: the overhead constant stays
+// owned by the package that reserves it, the same rule zeroBudgetVerdict
+// follows for EffectiveByteBudget.
+func smallWindowClause(model string, window int, windowSource, status string) (string, bool) {
+	if !healthy(status) || window <= 0 || windowSource != payload.WindowSourceDeclaration {
+		return "", false
+	}
+	if payload.InputRoomTokens(model, &window) > 0 {
+		return "", false
+	}
+	return fmt.Sprintf("the DECLARED context_window_tokens (%d tokens) is at or below the "+
+		"prompt overhead, so the skeptic lane cannot derive a tool ceiling for this agent: every "+
+		"verification it reviews yields unverifiable (notes window_below_prompt_overhead), and "+
+		"reconcile's CI gate does not exclude unverifiable. The value is legal config, so nothing "+
+		"rejects it at load — the remedy is the window one above: raise (or drop) the declaration.",
+		window), true
 }
 
 // reviewDefaultMaxTokens is the cap `atcr review` applies to an agent that

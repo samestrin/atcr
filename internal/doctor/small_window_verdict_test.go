@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"context"
+	"github.com/samestrin/atcr/internal/payload"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/llmclient"
@@ -55,4 +56,36 @@ func TestRun_SmallDeclaredWindowWarnsAboutVerificationCollapse(t *testing.T) {
 		"the notes token the skeptic lane emits must match the hint, so an operator can connect the two")
 	assert.Contains(t, got.Hint, zeroBudgetRemedy,
 		"the remedy is the same declaration knob the zeroBudget verdict points at")
+}
+
+// TestSmallWindowClause_Guards pins the pure clause's contract for callers
+// other than Run: only a DECLARATION tier, only a healthy probe, and only a
+// window that genuinely has no input room fire it. Run composes the clause as
+// an append to zeroBudgetVerdict's hint, which always fires for these windows.
+func TestSmallWindowClause_Guards(t *testing.T) {
+	t.Parallel()
+
+	clause, ok := smallWindowClause("m", 4096, payload.WindowSourceDeclaration, StatusOK)
+	require.True(t, ok, "a declared at-overhead window is exactly the case the warning exists for")
+	assert.Contains(t, clause, "4096")
+	assert.Contains(t, clause, "unverifiable")
+	assert.Contains(t, clause, "window_below_prompt_overhead")
+
+	_, ok = smallWindowClause("m", 4096, payload.WindowSourceTable, StatusOK)
+	assert.False(t, ok, "a table row is the sizing layer's claim, not an operator statement — no warning")
+
+	_, ok = smallWindowClause("m", 4096, payload.WindowSourceDefault, StatusOK)
+	assert.False(t, ok, "the default tier is never an operator statement — no warning")
+
+	_, ok = smallWindowClause("m", 8192, payload.WindowSourceDeclaration, StatusOK)
+	assert.False(t, ok, "a window above the overhead still has input room — no warning")
+
+	_, ok = smallWindowClause("m", 4097, payload.WindowSourceDeclaration, StatusOK)
+	assert.False(t, ok, "input room 1 is not the at-or-below-overhead case this warning names")
+
+	_, ok = smallWindowClause("m", 4096, payload.WindowSourceDeclaration, "auth_failed")
+	assert.False(t, ok, "an unhealthy probe has a louder problem the warning must not overwrite")
+
+	_, ok = smallWindowClause("m", 0, payload.WindowSourceDeclaration, StatusOK)
+	assert.False(t, ok, "window 0 means the window did not resolve, not a zero-token window")
 }
