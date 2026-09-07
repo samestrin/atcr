@@ -275,10 +275,16 @@ func logSkepticFailure(logger *slog.Logger, skeptic, class, detail string) {
 //     unlimited is exactly the state a declared window contradicts.
 //
 // A non-positive ceiling is never forwarded. The engine reads 0 as UNLIMITED, so
-// emitting it for a window whose output cap and prompt overhead already exhaust it
-// would invert the clamp into its opposite. That state is a misconfiguration the
-// review lane refuses on with a named remedy; this lane leaves the declared value
-// alone rather than inventing a second failure mode for it.
+// emitting it would invert the clamp into its opposite — and the window that
+// cannot afford the reservation is the SMALLEST one, i.e. exactly the case this
+// clamp exists for. So the reservation is a claim on the window, never a veto
+// over it: when it exhausts the window, the ceiling is derived again with nothing
+// reserved (the value this lane shipped before the reservation was floored — a
+// bound, not a new risk) rather than collapsing to the declared value. Only a
+// window with no input room at all — below the prompt overhead, where no
+// reservation makes it fit — has no ceiling to derive; there the declared value
+// stands, since that state is a misconfiguration the review lane refuses on with
+// a named remedy and this lane does not invent a second failure mode for it.
 //
 // The second return says which of the two the caller got: true only when the
 // returned number is the window-derived ceiling rather than the operator's own
@@ -291,6 +297,19 @@ func skepticToolBudget(c registry.AgentConfig) (budget int64, derived bool) {
 	}
 	ceiling := payload.EffectiveByteBudget(c.Model, c.ContextWindowTokens, reservedOutputTokens(c))
 	if ceiling <= 0 {
+		// The reservation is a CLAIM on the window, never a veto over it. A window
+		// too small to afford the full reservation still has input room to bound,
+		// and falling through to `declared` here hands the dominant roster shape
+		// (no tool_budget_bytes) a 0, which the engine reads as UNLIMITED — so the
+		// smallest window, the exact case this clamp exists for, would be the one
+		// case it stops protecting. Derive again with nothing reserved before
+		// giving up; that is the ceiling this lane shipped before the reservation
+		// was floored, so it is a bound rather than a new risk.
+		ceiling = payload.EffectiveByteBudget(c.Model, c.ContextWindowTokens, 0)
+	}
+	if ceiling <= 0 {
+		// Genuinely no input room — the prompt overhead alone exhausts the window.
+		// There is no ceiling to derive, so the declared value stands.
 		return declared, false
 	}
 	if declared > 0 && declared < ceiling {
