@@ -741,6 +741,22 @@ func TestSkepticToolBudget_ReservesOnlyWhatTheWindowCanAfford(t *testing.T) {
 		}
 	})
 
+	t.Run("a declaration the window chain rejects is halved on the RESOLVED window", func(t *testing.T) {
+		t.Parallel()
+		// Above ContextWindowTokensCap, so ResolveContextWindow falls through the
+		// declaration to the table/default tier. The reservation cap must be taken
+		// against the window that is actually resolved, not the raw declaration —
+		// EffectiveByteBudget resolves it that way, so a cap computed from the
+		// declaration would size the reservation for a window nobody uses.
+		overCap := 10000001
+		require.NotEqual(t, overCap, payload.ContextWindowTokens(model, &overCap),
+			"precondition: this declaration must be rejected by the window chain, or the two readings agree by accident")
+
+		reserved := min(payload.DefaultOutputTokens, halfRoom(overCap))
+		assert.Equal(t, payload.EffectiveByteBudget(model, &overCap, reserved), ceilingFor(overCap, nil),
+			"both halves of the derivation must read the same resolved window")
+	})
+
 	t.Run("the measured inversions no longer occur", func(t *testing.T) {
 		t.Parallel()
 		assert.Equal(t, ceilingFor(12000, intPtr(7904)), ceilingFor(12000, intPtr(7903)),
