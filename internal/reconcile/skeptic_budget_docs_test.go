@@ -102,8 +102,10 @@ func TestDocs_ToolBudgetBytesRowStatesTheSkepticClamp(t *testing.T) {
 	// figure fails this guard the moment the formula it summarizes moves.
 	assert.Contains(t, row, "(`"+strconv.Itoa(2*payload.DefaultOutputTokens+4096)+"` at the built-in default)",
 		"the published cap boundary must equal 2*DefaultOutputTokens+4096 computed from code, not a number that went stale when the formula changed")
-	assert.Contains(t, row, "one token",
-		"the ceiling leaves reply room EXCEPT where the whole input room is one token; the unqualified promise is what drifted last time")
+	assert.Contains(t, row, "whole input room is one token",
+		"the ceiling leaves reply room EXCEPT where the whole input room is one token; the bare two-word check matched an unrelated sentence anywhere in the row and broke on faithful rewording, so the phrase carries the claim")
+	assert.Contains(t, row, "a DEFAULT, not a floor",
+		"the positive form of the banned wording: a reworded restatement of the old wrong claim ('floored at') must fail here even when it avoids the banned phrase verbatim")
 }
 
 // TestDocs_ContextWindowRowDoesNotRestateTheSkepticClamp pins the
@@ -188,8 +190,10 @@ func TestDocs_VerificationPerFindingBudgetsMatchTheSkepticLane(t *testing.T) {
 		"the same exception the registry row carries: the floor's trip DOES yield unverifiable, so the derived-trip promise needs its carve-out here too")
 	assert.Contains(t, bullet, "(`"+strconv.Itoa(2*payload.DefaultOutputTokens+4096)+"` at the built-in default)",
 		"the bullet must publish the same code-anchored cap boundary the registry row publishes — asserting it in both documents is what stops the pair drifting")
-	assert.Contains(t, bullet, "one token",
-		"the reply-room promise is qualified in both documents or in neither")
+	assert.Contains(t, bullet, "whole input room is one token",
+		"the reply-room promise is qualified in both documents or in neither, and the qualifying phrase must carry the claim")
+	assert.Contains(t, bullet, "a DEFAULT, not a floor",
+		"the positive form of the banned wording, here too")
 }
 
 // TestDocs_CrossExaminationPerSeatBudgetsMatchTheDebateLane pins
