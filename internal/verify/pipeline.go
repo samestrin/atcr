@@ -579,6 +579,18 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 //     e.g. 1 confirmed + 1 refuted, or 1+1+1): no skeptic "won", so record every
 //     participant's model so Model stays consistent with Skeptic rather than
 //     misattributing the outcome to the lone unverifiable voter.
+//
+// Model and TrippedBudgets part company on the tie arm, and deliberately. Model
+// is a roster — who spoke — so a tie lists everyone. A budget is a CAUSAL claim:
+// "this is why the record says unverifiable". On a tie the cause is the tie, so
+// only a participant whose own verdict was unverifiable contributes a budget.
+// Crediting everyone collapsed three distinguishable histories into one record:
+// (a) a DECLARED budget voided a skeptic's verdict; (b) a DERIVED ceiling
+// truncated a read and the verdict stood; (c) a tie produced unverifiable and
+// some participant happened to be truncated. Case (c) was impossible before the
+// derived-ceiling exemption — a tripped skeptic was always itself unverifiable,
+// so it was never a distinct contributor — and it is the one this rule
+// separates, without touching (b) on the decisive arm.
 func winningAttribution(skeptics []Skeptic, perSkeptic []*reclib.Verification, perTripped [][]string, winner string) (string, []string) {
 	// A verdict is decisive when no other verdict matches or exceeds its count;
 	// equality anywhere means aggregateVerdicts resolved a tie to unverifiable.
@@ -616,6 +628,15 @@ func winningAttribution(skeptics []Skeptic, perSkeptic []*reclib.Verification, p
 		if m := skeptics[i].Config.Model; m != "" && !seenModel[m] {
 			seenModel[m] = true
 			models = append(models, m)
+		}
+		// On a TIE, credit a budget only from a participant whose OWN verdict was
+		// unverifiable. Model is still taken from everyone (above) so it stays
+		// consistent with Skeptic, but a budget is a causal claim, not a roster:
+		// crediting a skeptic that voted confirmed while carrying an exempted
+		// derived trip makes a tie serialize identically to a verdict a declared
+		// budget actually voided. See the three histories in the doc above.
+		if !decisive && v.Verdict != verdictUnverifiable {
+			continue
 		}
 		for _, b := range perTripped[i] {
 			if !seenBudget[b] {
