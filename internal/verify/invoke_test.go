@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -539,5 +540,75 @@ func TestBuildSkepticAgent_ReservesTheSameOutputCapAsTheReviewLane(t *testing.T)
 
 		assert.Equal(t, int64(4<<20), buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
 			"no declared window, no derivation — the reservation never enters the picture")
+	})
+}
+
+// TestBuildSkepticAgent_ReservationNeverCostsTheCeilingItself pins the boundary
+// the output reservation must not cross: it may SHRINK the derived ceiling, but
+// it may not be the reason there is no ceiling at all.
+//
+// Raising the reservation from derefInt(c.MaxTokens) (0 when undeclared) to
+// reservedOutputTokens (floored at payload.DefaultOutputTokens) also moved
+// payload.EffectiveByteBudget's zero-return threshold, because effectiveTokens =
+// window - outputTokens - promptOverheadTokens. The threshold went from
+// `window <= 4096` to `window <= 12288`. An agent declaring a window anywhere in
+// that band — legal config, internal/registry/config.go admits 1..10000000 — then
+// takes skepticToolBudget's `if ceiling <= 0` arm and gets `declared`, which for
+// the dominant roster shape (no tool_budget_bytes) is 0. internal/fanout/loop.go
+// reads 0 as UNLIMITED, so the SMALLEST window — the exact case this clamp's own
+// doc says it exists for — was the one case it stopped protecting, and it was
+// strictly better before: window 8000 derived 13664 bytes with a zero
+// reservation.
+//
+// The reservation is a claim on the window, not a veto over it. Where the window
+// cannot afford the full reservation, the ceiling must still be derived without
+// it rather than collapsing to unlimited. Where the window genuinely has no input
+// room at all (below the prompt overhead), there is no ceiling to derive and the
+// declared value stands — that case is unchanged and is pinned below too.
+func TestBuildSkepticAgent_ReservationNeverCostsTheCeilingItself(t *testing.T) {
+	t.Parallel()
+
+	// Every window in the band the raised reservation newly zeroed, plus one on
+	// each side of it.
+	for _, window := range []int{4097, 8000, 12288, 12289, 20000} {
+		window := window
+		t.Run(fmt.Sprintf("window %d keeps a real ceiling", window), func(t *testing.T) {
+			t.Parallel()
+			sk := testSkeptic()
+			sk.Config.ContextWindowTokens = &window
+			// ToolBudgetBytes deliberately unset: the dominant roster shape, and the
+			// one where falling back to `declared` means UNLIMITED.
+
+			require.Positive(t, payload.EffectiveByteBudget(sk.Config.Model, &window, 0),
+				"precondition: this window has input room once nothing is reserved, so a zero ceiling can only be the reservation's doing")
+
+			got := buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes
+			assert.Positive(t, got,
+				"a declared window must still bound the tool loop — forwarding 0 hands the smallest-window skeptic an unlimited read")
+		})
+	}
+
+	t.Run("a window that can afford the reservation still pays it", func(t *testing.T) {
+		t.Parallel()
+		window := 128000
+		sk := testSkeptic()
+		sk.Config.ContextWindowTokens = &window
+
+		assert.Equal(t, payload.EffectiveByteBudget(sk.Config.Model, &window, payload.DefaultOutputTokens),
+			buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+			"the fallback is for windows that cannot afford the reservation, not a retreat from reserving at all")
+	})
+
+	t.Run("a window with no input room at all derives nothing", func(t *testing.T) {
+		t.Parallel()
+		tiny := 1 // below the prompt overhead: no reservation makes this fit
+		sk := testSkeptic()
+		sk.Config.ContextWindowTokens = &tiny
+		sk.Config.ToolBudgetBytes = int64Ptr(4096)
+
+		require.Zero(t, payload.EffectiveByteBudget(sk.Config.Model, &tiny, 0),
+			"precondition: this window has no room even with nothing reserved, so there is genuinely no ceiling to derive")
+		assert.Equal(t, int64(4096), buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+			"the declared value still stands where no ceiling exists — this arm is not what the fix removes")
 	})
 }
