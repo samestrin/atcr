@@ -16,16 +16,20 @@ import (
 // construct it describes lives in exactly one tracked file, in several, or
 // nowhere at all. *lazySymbolIndex is the production implementation.
 type tier4Resolver interface {
-	// barredPrimary and droppedSecondary carry the members of each set that may
-	// not SOURCE a resolution: the reading of them may not be what the reviewer
-	// wrote. A barred name declared in a file other than the located one is still
-	// the disagreement locate refuses on, so narrowing may not silently complete
-	// a set it left incomplete. barredPrimary is a SUBSET of primary, not a
-	// replacement for it: primary is still the full set, because the presence
+	// The four sets travel in one anchorSets value rather than as four adjacent
+	// []string parameters: see that type for why the compiler has to be the one
+	// telling them apart.
+	//
+	// sets.barredPrimary and sets.droppedSecondary carry the members of each set
+	// that may not SOURCE a resolution: the reading of them may not be what the
+	// reviewer wrote. A barred name declared in a file other than the located one
+	// is still the disagreement locate refuses on, so narrowing may not silently
+	// complete a set it left incomplete. barredPrimary is a SUBSET of primary, not
+	// a replacement for it: primary is still the full set, because the presence
 	// check and the no-match arm must see every anchor or barring one would route
 	// a real finding out. The two sets are narrowed by different rules — see
 	// anchorScan.boundaryCutAnchors and anchorScan.droppedFixAnchors.
-	resolveWithDropped(ctx context.Context, primary, barredPrimary, secondary, droppedSecondary []string) (string, tier4Outcome)
+	resolveWithDropped(ctx context.Context, sets anchorSets) (string, tier4Outcome)
 	// namedInDocs reports whether the doc-extension heuristic explains a no-match
 	// over these anchors: at least one was named in a documentation file and
 	// nowhere in source, and EVERY other anchor is accounted for somewhere in the
@@ -223,7 +227,12 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 		// manufacture one, which is the same safe direction the unaccounted arm
 		// below takes.
 		primaryAllBarred := len(problemAnchors) > 0 && len(barredPrimary) == len(problemAnchors)
-		suggestion, outcome := tier4.resolveWithDropped(ctx, problemAnchors, barredPrimary, fixAnchors, fixScan.droppedFixAnchors())
+		suggestion, outcome := tier4.resolveWithDropped(ctx, anchorSets{
+			primary:          problemAnchors,
+			barredPrimary:    barredPrimary,
+			secondary:        fixAnchors,
+			droppedSecondary: fixScan.droppedFixAnchors(),
+		})
 		switch {
 		case outcome == tier4Resolved && problemScan.unaccounted:
 			// The PROBLEM set lost a member with no name to point at, and

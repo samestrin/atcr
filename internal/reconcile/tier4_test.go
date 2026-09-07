@@ -112,7 +112,9 @@ var _ tier4Resolver = (*fakeTier4)(nil)
 // list. It is consulted per SET, in the order production consults the sets, so a
 // secondary script is never read on an input where production never looks at
 // the secondary set.
-func (f *fakeTier4) resolveWithDropped(_ context.Context, primary, barredPrimary, secondary, droppedSecondary []string) (string, tier4Outcome) {
+func (f *fakeTier4) resolveWithDropped(_ context.Context, sets anchorSets) (string, tier4Outcome) {
+	primary, barredPrimary := sets.primary, sets.barredPrimary
+	secondary, droppedSecondary := sets.secondary, sets.droppedSecondary
 	f.calls++
 	if len(primary) == 0 {
 		return "", tier4Inconclusive
@@ -615,7 +617,12 @@ func TestFakeTier4_MirrorsResolveOnThePrimaryPath(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			production := &symbolIndex{complete: true, byName: tc.byName}
-			prodFile, prodOutcome := production.resolve(tc.primary, tc.barredP, tc.secondary, tc.dropped)
+			prodFile, prodOutcome := production.resolve(anchorSets{
+				primary:          tc.primary,
+				barredPrimary:    tc.barredP,
+				secondary:        tc.secondary,
+				droppedSecondary: tc.dropped,
+			})
 			require.Equal(t, tc.wantOutcome, prodOutcome, "production outcome")
 			require.Equal(t, tc.wantFile, prodFile, "production file")
 
@@ -625,8 +632,12 @@ func TestFakeTier4_MirrorsResolveOnThePrimaryPath(t *testing.T) {
 				byAnchor[name] = files[0]
 			}
 			fake := &fakeTier4{byAnchor: byAnchor}
-			fakeFile, fakeOutcome := fake.resolveWithDropped(
-				context.Background(), tc.primary, tc.barredP, tc.secondary, tc.dropped)
+			fakeFile, fakeOutcome := fake.resolveWithDropped(context.Background(), anchorSets{
+				primary:          tc.primary,
+				barredPrimary:    tc.barredP,
+				secondary:        tc.secondary,
+				droppedSecondary: tc.dropped,
+			})
 
 			assert.Equal(t, prodOutcome, fakeOutcome,
 				"a fake that diverges from production lets a wiring test assert behaviour the code does not have")
@@ -678,8 +689,11 @@ func TestFakeTier4_CountsProblemAnchorImprecise_SecondaryVeto(t *testing.T) {
 	// The barred ParseConfig is declared in exactly one OTHER file than the
 	// secondary hit readTree localizes — the disagreement locate() would have
 	// refused on — so the FIX-sourced file is withheld and counted.
-	file, outcome := fake.resolveWithDropped(context.Background(),
-		[]string{"ParseConfig"}, []string{"ParseConfig"}, []string{"readTree"}, nil)
+	file, outcome := fake.resolveWithDropped(context.Background(), anchorSets{
+		primary:       []string{"ParseConfig"},
+		barredPrimary: []string{"ParseConfig"},
+		secondary:     []string{"readTree"},
+	})
 	assert.Empty(t, file, "the veto withholds the FIX-sourced file")
 	assert.Equal(t, tier4Inconclusive, outcome, "a veto renders as could-not-check, not as a different answer")
 

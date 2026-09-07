@@ -319,11 +319,11 @@ func TestSymbolIndexResolve_BarredPrimaryVetoesTheSecondaryFile(t *testing.T) {
 		present: map[string]uint8{"ParseConfig": presenceSource, "readTree": presenceSource},
 	}
 
-	file, outcome := x.resolve([]string{"ParseConfig"}, nil, []string{"readTree"}, nil)
+	file, outcome := x.resolve(anchorSets{primary: []string{"ParseConfig"}, secondary: []string{"readTree"}})
 	require.Equal(t, tier4Resolved, outcome, "unbarred, the primary localizes on its own")
 	require.Equal(t, "internal/cfg/parse.go", file)
 
-	file, outcome = x.resolve([]string{"ParseConfig"}, []string{"ParseConfig"}, []string{"readTree"}, nil)
+	file, outcome = x.resolve(anchorSets{primary: []string{"ParseConfig"}, barredPrimary: []string{"ParseConfig"}, secondary: []string{"readTree"}})
 	assert.Equal(t, tier4Inconclusive, outcome,
 		"a barred anchor declared in one OTHER file is the disagreement locate refuses on, secondary included")
 	assert.Empty(t, file)
@@ -336,7 +336,7 @@ func TestSymbolIndexResolve_BarredPrimaryVetoesTheSecondaryFile(t *testing.T) {
 	// veto of the FIX-sourced file. docs/metrics.md promises "one finding can
 	// increment it twice"; this bracket is that promise's only pin.
 	before := metrics.Counter(tier4ProblemAnchorImpreciseMetric).Value()
-	file, outcome = x.resolve([]string{"ParseConfig"}, []string{"ParseConfig"}, []string{"readTree"}, nil)
+	file, outcome = x.resolve(anchorSets{primary: []string{"ParseConfig"}, barredPrimary: []string{"ParseConfig"}, secondary: []string{"readTree"}})
 	assert.Equal(t, tier4Inconclusive, outcome)
 	assert.Equal(t, before+2, metrics.Counter(tier4ProblemAnchorImpreciseMetric).Value(),
 		"site 1 (primary narrowed away a localizable set) and site 2 (the barred veto) both fire on this input")
@@ -364,7 +364,7 @@ func TestSymbolIndexResolve_NonSubsetBarredAnchorIsIgnored(t *testing.T) {
 
 	// Verified against the unclamped code: this returned ("", tier4Inconclusive)
 	// — barredB vetoed a file it was never part of the set for.
-	file, outcome := x.resolve([]string{"anchorA"}, []string{"barredB"}, nil, nil)
+	file, outcome := x.resolve(anchorSets{primary: []string{"anchorA"}, barredPrimary: []string{"barredB"}})
 	assert.Equal(t, tier4Resolved, outcome,
 		"a barred name outside primary is ignored: it may not veto what the set itself resolves")
 	assert.Equal(t, "pkg/a.go", file)

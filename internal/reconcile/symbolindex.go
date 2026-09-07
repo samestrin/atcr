@@ -502,7 +502,38 @@ func (x *symbolIndex) vetoResolvedSecondary(file string, barredPrimary []string)
 	return "", false
 }
 
-func (x *symbolIndex) resolve(primary, barredPrimary, secondary, droppedSecondary []string) (string, tier4Outcome) {
+// anchorSets carries the four anchor lists the Tier 4 decision procedure
+// adjudicates. They are four adjacent []string parameters otherwise, and the
+// compiler cannot tell them apart: transposing barredPrimary with
+// droppedSecondary compiles cleanly and silently swaps which set may SOURCE a
+// resolution with which may only VETO one — across two call sites, an interface
+// contract, and the fake that reimplements the control flow.
+//
+// The two "may not source" lists are narrowed by DIFFERENT rules and are not
+// interchangeable: barredPrimary is the boundary-cut subset of primary (see
+// anchorScan.boundaryCutAnchors), droppedSecondary is what scanFixAnchors
+// narrowed out of secondary (anchorScan.droppedFixAnchors). Naming them at every
+// call site is what makes a transposition a compile error instead of a wrong
+// suggestion nothing downstream can undo.
+type anchorSets struct {
+	// primary is the PROBLEM set, WHOLE — barred members included. The presence
+	// check and the no-match arm must see every anchor, or barring one would
+	// route a real finding out.
+	primary []string
+	// barredPrimary is the subset of primary that may not SOURCE a resolution,
+	// while still refusing one it disagrees with.
+	barredPrimary []string
+	// secondary is the FIX set, which may only LOCALIZE a finding whose subject
+	// already matched somewhere in the tree.
+	secondary []string
+	// droppedSecondary is what was narrowed out of secondary: it may not source a
+	// resolution and may still contradict one.
+	droppedSecondary []string
+}
+
+func (x *symbolIndex) resolve(sets anchorSets) (string, tier4Outcome) {
+	primary, barredPrimary := sets.primary, sets.barredPrimary
+	secondary, droppedSecondary := sets.secondary, sets.droppedSecondary
 	if x == nil {
 		return "", tier4Inconclusive // index unavailable: could not check
 	}
@@ -684,7 +715,7 @@ func newLazySymbolIndex(root string, paths []string) *lazySymbolIndex {
 // every lookup — never tier4NoMatch — so nothing is routed to the sidecar on
 // the strength of an index that does not exist.
 func (lz *lazySymbolIndex) resolve(ctx context.Context, primary, secondary []string) (string, tier4Outcome) {
-	return lz.resolveWithDropped(ctx, primary, nil, secondary, nil)
+	return lz.resolveWithDropped(ctx, anchorSets{primary: primary, secondary: secondary})
 }
 
 // resolveWithDropped is resolve with BOTH narrowings carried alongside the sets
@@ -696,12 +727,12 @@ func (lz *lazySymbolIndex) resolve(ctx context.Context, primary, secondary []str
 // resolve is the nil-dropped case rather than the other way round: a caller that
 // has no narrowing to report (every test fixture, and any future non-FIX
 // consumer) must not have to say so.
-func (lz *lazySymbolIndex) resolveWithDropped(ctx context.Context, primary, barredPrimary, secondary, droppedSecondary []string) (string, tier4Outcome) {
+func (lz *lazySymbolIndex) resolveWithDropped(ctx context.Context, sets anchorSets) (string, tier4Outcome) {
 	if lz == nil {
 		return "", tier4Inconclusive
 	}
 	lz.once.Do(func() { lz.build(ctx) })
-	return lz.idx.resolve(primary, barredPrimary, secondary, droppedSecondary)
+	return lz.idx.resolve(sets)
 }
 
 // state reports what the build actually achieved, for Summary.UnresolvedState.
