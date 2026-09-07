@@ -64,10 +64,13 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 	}
 
 	logger := log.FromContext(ctx)
-	agent := buildSkepticAgent(skeptic, prompt, exec)
-	// Whether the tool ceiling the loop enforces came from the operator or was
-	// derived from the declared window decides what a trip on it MEANS below.
-	_, derivedBudget := skepticToolBudget(skeptic.Config)
+	// buildSkepticAgent evaluates skepticToolBudget ONCE and returns both the
+	// agent carrying the enforced ceiling and that ceiling's provenance. The
+	// trust classification below is therefore derived from the number actually
+	// enforced — not re-derived by a second, independent call and assumed equal
+	// to it (a future override, settings tier or clamp inside buildSkepticAgent
+	// would otherwise desync the two with no test able to catch it).
+	agent, derivedBudget := buildSkepticAgent(skeptic, prompt, exec)
 	engine := fanout.NewEngine(cc, fanout.WithDispatcher(disp), fanout.WithLogger(logger))
 	results := engine.Run(ctx, []fanout.Slot{{Primary: agent}})
 	// Engine.Run returns one Result per slot in input order, so one slot yields
@@ -152,9 +155,13 @@ func tripsVoidTheVerdict(tripped []string, derivedBudget bool) bool {
 // only" (TimeoutSecs→0). The provider's BaseURL/APIKeyEnv are threaded onto the
 // Invocation so llmclient.Chat can route the call (without them a production
 // skeptic would hit an empty endpoint with no key).
-func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool) fanout.Agent {
+//
+// It returns (agent, derived) from a SINGLE skepticToolBudget evaluation: the
+// bool is the provenance of the very budget installed on the agent, so callers
+// never re-derive the ceiling and assume the two agree.
+func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool) (agent fanout.Agent, derived bool) {
 	c := skeptic.Config
-	budget, _ := skepticToolBudget(c)
+	budget, derived := skepticToolBudget(c)
 	return fanout.Agent{
 		Name:        skeptic.Name,
 		Provider:    c.Provider,
@@ -197,7 +204,7 @@ func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool) fanout.Agent {
 			// today's behaviour exactly.
 			MaxTokens: c.MaxTokens,
 		},
-	}
+	}, derived
 }
 
 // failureNotes builds a diagnostic note for a halted skeptic run, naming the

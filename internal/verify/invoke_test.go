@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
@@ -21,6 +22,13 @@ import (
 
 func intPtr(i int) *int       { return &i }
 func int64Ptr(i int64) *int64 { return &i }
+
+// agentBudget keeps the derivation-through-the-builder assertions readable now
+// that buildSkepticAgent returns (agent, derived) from a single
+// skepticToolBudget evaluation: it discards the provenance half that budget-only
+// assertions do not need. Tests that DO assert the provenance use the pair
+// directly.
+func agentBudget(agent fanout.Agent, _ bool) int64 { return agent.ToolBudgetBytes }
 
 func testSkeptic() Skeptic {
 	return Skeptic{
@@ -58,9 +66,10 @@ func TestBuildSkepticAgent_ForwardsProviderAndBudgets(t *testing.T) {
 	sk.Config.TimeoutSecs = intPtr(30)
 	sk.Config.MaxRetries = intPtr(4)
 	sk.Config.InitialBackoffMs = intPtr(200)
-	a := buildSkepticAgent(sk, "the prompt", false)
+	a, derived := buildSkepticAgent(sk, "the prompt", false)
 	assert.True(t, a.Tools)
 	assert.True(t, a.SupportsFC)
+	assert.False(t, derived, "a declared 4096 budget below the derived ceiling is the enforced number — its provenance is declared, not derived")
 	assert.Equal(t, 7, a.MaxTurns)
 	assert.Equal(t, int64(4096), a.ToolBudgetBytes)
 	assert.Equal(t, 30, a.TimeoutSecs)
@@ -320,7 +329,7 @@ func TestBuildSkepticAgent_ClampsToolBudgetToDeclaredWindow(t *testing.T) {
 		sk.Config.ContextWindowTokens = &small
 		sk.Config.ToolBudgetBytes = int64Ptr(4 << 20) // 4 MiB: far past a 32k window
 
-		got := buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes
+		got := agentBudget(buildSkepticAgent(sk, "prompt", false))
 		// Reserve the built-in output cap, the same number the review lane floors
 		// at — an undeclared agent is still promised the provider's own default.
 		want := payload.EffectiveByteBudget(sk.Config.Model, &small, payload.DefaultOutputTokens)
@@ -335,7 +344,7 @@ func TestBuildSkepticAgent_ClampsToolBudgetToDeclaredWindow(t *testing.T) {
 		sk.Config.ContextWindowTokens = &large
 		sk.Config.ToolBudgetBytes = int64Ptr(4096)
 
-		assert.Equal(t, int64(4096), buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+		assert.Equal(t, int64(4096), agentBudget(buildSkepticAgent(sk, "prompt", false)),
 			"the clamp is a ceiling, never a floor: an operator asking for less still gets less")
 	})
 
@@ -344,7 +353,7 @@ func TestBuildSkepticAgent_ClampsToolBudgetToDeclaredWindow(t *testing.T) {
 		sk := testSkeptic()
 		sk.Config.ToolBudgetBytes = int64Ptr(4 << 20)
 
-		assert.Equal(t, int64(4<<20), buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+		assert.Equal(t, int64(4<<20), agentBudget(buildSkepticAgent(sk, "prompt", false)),
 			"no declaration, no clamp — nothing is derived from a window nobody stated")
 	})
 
@@ -356,7 +365,7 @@ func TestBuildSkepticAgent_ClampsToolBudgetToDeclaredWindow(t *testing.T) {
 		// the state a declared window contradicts.
 
 		assert.Equal(t, payload.EffectiveByteBudget(sk.Config.Model, &small, payload.DefaultOutputTokens),
-			buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+			agentBudget(buildSkepticAgent(sk, "prompt", false)),
 			"unlimited is not a smaller number — a declared window must bound it")
 	})
 
@@ -369,7 +378,7 @@ func TestBuildSkepticAgent_ClampsToolBudgetToDeclaredWindow(t *testing.T) {
 
 		require.Zero(t, payload.EffectiveByteBudget(sk.Config.Model, &tiny, payload.DefaultOutputTokens),
 			"the fixture must actually produce a zero ceiling, or the guard below is untested")
-		assert.Equal(t, int64(4096), buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+		assert.Equal(t, int64(4096), agentBudget(buildSkepticAgent(sk, "prompt", false)),
 			"forwarding a derived 0 would mean UNLIMITED to the engine — the exact inversion of the clamp")
 	})
 
@@ -379,12 +388,56 @@ func TestBuildSkepticAgent_ClampsToolBudgetToDeclaredWindow(t *testing.T) {
 		sk.Config.ContextWindowTokens = &small
 		sk.Config.MaxTokens = intPtr(8000)
 
-		got := buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes
+		got := agentBudget(buildSkepticAgent(sk, "prompt", false))
 		assert.Equal(t, payload.EffectiveByteBudget(sk.Config.Model, &small, 8000), got)
 		assert.Less(t, got, payload.EffectiveByteBudget(sk.Config.Model, &small, 0),
 			"tokens promised to the response are not available to tool output")
 		assert.Greater(t, got, payload.EffectiveByteBudget(sk.Config.Model, &small, payload.DefaultOutputTokens),
 			"a declaration BELOW the built-in default must reserve less than the default, not fall back to it")
+	})
+}
+
+// TestBuildSkepticAgent_ProvenanceDescribesTheEnforcedBudget pins the pair
+// contract: the bool buildSkepticAgent returns is the provenance of the very
+// budget it installed on the agent — one skepticToolBudget evaluation, not two
+// independent calls whose agreement is assumed. Before the single-evaluation
+// fix, invokeSkeptic re-derived the flag at invoke.go:70 and a future override
+// inside buildSkepticAgent could have desynced the enforced ceiling from its
+// trust classification with no test able to catch it.
+func TestBuildSkepticAgent_ProvenanceDescribesTheEnforcedBudget(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a derived ceiling reports derived", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		window := 12288
+		sk.Config.ContextWindowTokens = &window
+		agent, derived := buildSkepticAgent(sk, "prompt", false)
+		_, wantDerived := skepticToolBudget(sk.Config)
+		require.Equal(t, int64(14336), agent.ToolBudgetBytes)
+		require.True(t, derived)
+		require.Equal(t, wantDerived, derived, "the returned provenance must describe the installed budget")
+	})
+
+	t.Run("a declared budget below the ceiling reports not-derived", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		window := 128000
+		sk.Config.ContextWindowTokens = &window
+		sk.Config.ToolBudgetBytes = int64Ptr(4096)
+		agent, derived := buildSkepticAgent(sk, "prompt", false)
+		require.Equal(t, int64(4096), agent.ToolBudgetBytes)
+		require.False(t, derived)
+	})
+
+	t.Run("a floored window reports not-derived with the 1-byte budget", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		window := 4096
+		sk.Config.ContextWindowTokens = &window
+		agent, derived := buildSkepticAgent(sk, "prompt", false)
+		require.EqualValues(t, 1, agent.ToolBudgetBytes)
+		require.False(t, derived)
 	})
 }
 
@@ -513,7 +566,7 @@ func TestBuildSkepticAgent_ReservesTheSameOutputCapAsTheReviewLane(t *testing.T)
 		// MaxTokens deliberately nil: the provider will apply its own default, so
 		// the ceiling must reserve something rather than pretend output is free.
 
-		got := buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes
+		got := agentBudget(buildSkepticAgent(sk, "prompt", false))
 		want := payload.EffectiveByteBudget(sk.Config.Model, &window, payload.DefaultOutputTokens)
 		require.Positive(t, want, "the fixture must leave input room, or the assertion below proves nothing")
 		assert.Equal(t, want, got,
@@ -532,7 +585,7 @@ func TestBuildSkepticAgent_ReservesTheSameOutputCapAsTheReviewLane(t *testing.T)
 		sk.Config.MaxTokens = &declared
 
 		assert.Equal(t, payload.EffectiveByteBudget(sk.Config.Model, &window, declared),
-			buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+			agentBudget(buildSkepticAgent(sk, "prompt", false)),
 			"the declaration is the cap the provider will honour, so it is the cap to reserve")
 	})
 
@@ -541,7 +594,7 @@ func TestBuildSkepticAgent_ReservesTheSameOutputCapAsTheReviewLane(t *testing.T)
 		sk := testSkeptic()
 		sk.Config.ToolBudgetBytes = int64Ptr(4 << 20)
 
-		assert.Equal(t, int64(4<<20), buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+		assert.Equal(t, int64(4<<20), agentBudget(buildSkepticAgent(sk, "prompt", false)),
 			"no declared window, no derivation — the reservation never enters the picture")
 	})
 }
@@ -588,7 +641,7 @@ func TestBuildSkepticAgent_ReservationNeverCostsTheCeilingItself(t *testing.T) {
 			require.Positive(t, payload.EffectiveByteBudget(sk.Config.Model, &window, 0),
 				"precondition: this window has input room once nothing is reserved, so a zero ceiling can only be the reservation's doing")
 
-			got := buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes
+			got := agentBudget(buildSkepticAgent(sk, "prompt", false))
 			assert.Positive(t, got,
 				"a declared window must still bound the tool loop — forwarding 0 hands the smallest-window skeptic an unlimited read")
 		})
@@ -601,7 +654,7 @@ func TestBuildSkepticAgent_ReservationNeverCostsTheCeilingItself(t *testing.T) {
 		sk.Config.ContextWindowTokens = &window
 
 		assert.Equal(t, payload.EffectiveByteBudget(sk.Config.Model, &window, payload.DefaultOutputTokens),
-			buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+			agentBudget(buildSkepticAgent(sk, "prompt", false)),
 			"the fallback is for windows that cannot afford the reservation, not a retreat from reserving at all")
 	})
 
@@ -614,7 +667,7 @@ func TestBuildSkepticAgent_ReservationNeverCostsTheCeilingItself(t *testing.T) {
 
 		require.Zero(t, payload.EffectiveByteBudget(sk.Config.Model, &tiny, 0),
 			"precondition: this window has no room even with nothing reserved, so there is genuinely no ceiling to derive")
-		assert.Equal(t, int64(4096), buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+		assert.Equal(t, int64(4096), agentBudget(buildSkepticAgent(sk, "prompt", false)),
 			"the declared value still stands where no ceiling exists — this arm is not what the fix removes")
 	})
 }
@@ -819,7 +872,7 @@ func TestBuildSkepticAgent_NeverForwardsTheEngineUnlimitedSentinel(t *testing.T)
 
 		require.Zero(t, payload.EffectiveByteBudget(sk.Config.Model, &window, 0),
 			"precondition: this window has no input room even with nothing reserved")
-		assert.Positive(t, buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+		assert.Positive(t, agentBudget(buildSkepticAgent(sk, "prompt", false)),
 			"a declared window must never widen the tool loop it exists to bound")
 	})
 
@@ -838,7 +891,7 @@ func TestBuildSkepticAgent_NeverForwardsTheEngineUnlimitedSentinel(t *testing.T)
 		// unlimited state). What it prevents is this function handing its caller a
 		// sentinel the engine has no defined reading for.
 		assert.Equal(t, payload.EffectiveByteBudget(sk.Config.Model, &window, payload.DefaultOutputTokens),
-			buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+			agentBudget(buildSkepticAgent(sk, "prompt", false)),
 			"a negative budget must lose to the derived ceiling")
 	})
 
@@ -851,7 +904,7 @@ func TestBuildSkepticAgent_NeverForwardsTheEngineUnlimitedSentinel(t *testing.T)
 		// still reached loop.go unbounded — the exact outcome the parent test's
 		// name promises cannot happen. The floor closes it.
 
-		assert.EqualValues(t, 1, buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+		assert.EqualValues(t, 1, agentBudget(buildSkepticAgent(sk, "prompt", false)),
 			"a negative budget must reach the engine as the 1-byte floor, never as the 0-as-UNLIMITED sentinel")
 	})
 }
