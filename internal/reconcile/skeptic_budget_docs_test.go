@@ -82,6 +82,15 @@ func TestDocs_ToolBudgetBytesRowStatesTheSkepticClamp(t *testing.T) {
 		"the row must publish the CURRENT built-in reservation, not the number it had when the sentence was written")
 	assert.Contains(t, row, "1-byte floor",
 		"the floor is the one path where a ceiling the operator never declared voids the verdict — a row that omits it contradicts the lane")
+
+	// The negative path the skeptic lane clamps is reachable only OUTSIDE load
+	// validation: registry files reject a negative tool_budget_bytes, but a
+	// programmatically built AgentConfig never passes through that validation, so
+	// the row's "rejected at load" cell and its floor sentence describe two
+	// different construction paths. The row must say so, or a reader takes
+	// "rejected at load" as meaning the skeptic lane never sees a negative.
+	assert.Contains(t, row, "programmatically built",
+		"the row must state that load validation does not govern every construction path and name what the skeptic lane does with a negative")
 	assert.Contains(t, row, "one token",
 		"the ceiling leaves reply room EXCEPT where the whole input room is one token; the unqualified promise is what drifted last time")
 }
