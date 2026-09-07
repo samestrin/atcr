@@ -470,3 +470,68 @@ func TestInvokeSkeptic_DerivedToolBudgetTripDoesNotVoidTheVerdict(t *testing.T) 
 		assert.Contains(t, tripped, "max_turns")
 	})
 }
+
+// TestBuildSkepticAgent_ReservesTheSameOutputCapAsTheReviewLane pins the second
+// half of skepticToolBudget's own argument.
+//
+// The derivation's doc claims it is "the same one the review fan-out sizes
+// payloads with, so the window resolution chain ... and the output reservation
+// have exactly one definition". The window chain was shared; the output
+// reservation was not. The review lane resolves declaration → the built-in
+// payload.DefaultOutputTokens (fanout.resolveMaxTokens FLOORS at it); this lane
+// passed derefInt(c.MaxTokens), which is 0 when nothing is declared.
+//
+// The undeclared case is the DOMINANT one — 23 of the 29 window-declaring roster
+// agents declare no max_tokens — and it is also the case where reserving nothing
+// is least defensible: when the declaration is nil the lane forwards nil to
+// llmclient.Invocation.MaxTokens, which omits the field so the PROVIDER's own
+// default applies. The ceiling then reserves zero output tokens while the
+// provider reserves an unknown, non-zero amount — defeating the clamp's own
+// stated premise that tokens promised to the response are not available to tool
+// output.
+func TestBuildSkepticAgent_ReservesTheSameOutputCapAsTheReviewLane(t *testing.T) {
+	t.Parallel()
+
+	// Large enough that the built-in reservation still leaves real input room —
+	// the point is that the ceiling SHRINKS, not that it collapses.
+	window := 128000
+
+	t.Run("an undeclared max_tokens still reserves the built-in default", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		sk.Config.ContextWindowTokens = &window
+		// MaxTokens deliberately nil: the provider will apply its own default, so
+		// the ceiling must reserve something rather than pretend output is free.
+
+		got := buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes
+		want := payload.EffectiveByteBudget(sk.Config.Model, &window, payload.DefaultOutputTokens)
+		require.Positive(t, want, "the fixture must leave input room, or the assertion below proves nothing")
+		assert.Equal(t, want, got,
+			"an undeclared agent must reserve the same output cap the review lane floors at")
+		assert.Less(t, got, payload.EffectiveByteBudget(sk.Config.Model, &window, 0),
+			"reserving nothing was the bug: it hands tool output room the response will take back")
+	})
+
+	t.Run("a declared max_tokens still wins over the default", func(t *testing.T) {
+		t.Parallel()
+		declared := 16384
+		require.NotEqual(t, payload.DefaultOutputTokens, declared,
+			"precondition: the declaration must differ from the constant, or this proves nothing")
+		sk := testSkeptic()
+		sk.Config.ContextWindowTokens = &window
+		sk.Config.MaxTokens = &declared
+
+		assert.Equal(t, payload.EffectiveByteBudget(sk.Config.Model, &window, declared),
+			buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+			"the declaration is the cap the provider will honour, so it is the cap to reserve")
+	})
+
+	t.Run("an undeclared window reserves nothing, because it clamps nothing", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		sk.Config.ToolBudgetBytes = int64Ptr(4 << 20)
+
+		assert.Equal(t, int64(4<<20), buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+			"no declared window, no derivation — the reservation never enters the picture")
+	})
+}
