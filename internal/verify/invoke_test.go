@@ -815,6 +815,20 @@ func TestSkepticToolBudget_ReservesOnlyWhatTheWindowCanAfford(t *testing.T) {
 				prev = got
 			}
 		}
+		// Non-positive max_tokens means UNSET — the same unset-sentinel convention
+		// fanout.resolveMaxTokens uses (changing it is a cross-lane decision, not
+		// this lane's to make) — so a non-positive declaration reserves the
+		// built-in 8192 and derives a SMALLER ceiling than a declaration of 1 does
+		// (window 8192: 0 derived 7168, 1 derived 14332). That inversion is
+		// deliberate, not a monotonicity bug; pinning it here makes any future
+		// clamp a visible, deliberate change instead of a silent one.
+		for _, window := range []int{8192, 12288, 20480, 40960, 128000} {
+			window := window
+			assert.Equal(t, ceilingFor(window, nil), ceilingFor(window, intPtr(0)),
+				"window %d: max_tokens 0 means unset — the derived ceiling must equal the nil case", window)
+			assert.Equal(t, ceilingFor(window, nil), ceilingFor(window, intPtr(-5)),
+				"window %d: a negative max_tokens is the same unset sentinel", window)
+		}
 	})
 
 	t.Run("the reservation never claims more than half the window's input room", func(t *testing.T) {
