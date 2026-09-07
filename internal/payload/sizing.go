@@ -101,6 +101,9 @@ func EffectiveByteBudget(model string, declared *int, outputTokens int) int64 {
 	return int64(effectiveTokens) * conservativeBytesPerTokenNum / conservativeBytesPerTokenDen
 }
 
+// InputRoomTokens is a compiling stub (RED). Real derivation lands in GREEN.
+func InputRoomTokens(model string, declared *int) int { return 0 }
+
 // ChunkMaxLines converts a model's effective input budget into a per-chunk diff
 // line count for the Epic 14.3 chunker (chunkDiff). A small-window model gets a
 // smaller maxLines (more, smaller chunks) and a large-window model a larger

@@ -612,3 +612,235 @@ func TestBuildSkepticAgent_ReservationNeverCostsTheCeilingItself(t *testing.T) {
 			"the declared value still stands where no ceiling exists — this arm is not what the fix removes")
 	})
 }
+
+// TestSkepticToolBudget_ReservesOnlyWhatTheWindowCanAfford pins the derivation
+// seam itself: ONE continuous formula, not two discrete arms with an inversion
+// between them.
+//
+// The two-arm shape derived a full-reservation ceiling above the reservation's
+// own threshold and an UNRESERVED one below it, so the function was
+// non-monotonic in both operands and the lower arm left nothing for the reply.
+// Measured on the shipped code: window 12288 derived 28672 bytes while 12289
+// derived 3, and at window 12000 a max_tokens of 7903 derived 3 bytes where 7904
+// derived 27664 — a ~9000x swing in the direction opposite to the documented
+// reservation semantics, off a one-token config change.
+//
+// The replacement reserves what the window can AFFORD: the agent's resolved
+// output cap, capped at half the window's input room. Half rather than
+// all-but-one-token, because a reservation that claims the whole room derives a
+// 1-token (3-byte) ceiling across the entire band — and a trip on a DERIVED
+// ceiling does not void the verdict, so the skeptic would answer from a 3-byte
+// view without signalling it.
+func TestSkepticToolBudget_ReservesOnlyWhatTheWindowCanAfford(t *testing.T) {
+	t.Parallel()
+
+	model := testSkeptic().Config.Model
+
+	// ceilingFor reports the number the tool loop would enforce for a window and
+	// an optional max_tokens declaration.
+	ceilingFor := func(window int, maxTokens *int) int64 {
+		c := testSkeptic().Config
+		c.ContextWindowTokens = &window
+		c.MaxTokens = maxTokens
+		budget, _ := skepticToolBudget(c)
+		return budget
+	}
+
+	// halfRoom is the reservation cap: half of what the window leaves for input
+	// once the fixed prompt overhead is removed. Derived through payload so the
+	// overhead has exactly one definition here too.
+	halfRoom := func(window int) int { return payload.InputRoomTokens(model, &window) / 2 }
+
+	// toBytes mirrors payload's conservative ~3.5 B/token ratio, pinned by
+	// payload's own sizing tests. Used only to state AC2 in the units the window
+	// is declared in.
+	toBytes := func(tokens int) int64 { return int64(tokens) * 7 / 2 }
+
+	t.Run("the derived ceiling is pinned across the small-window band", func(t *testing.T) {
+		t.Parallel()
+		for _, tc := range []struct {
+			window int
+			want   int64
+			why    string
+		}{
+			{4097, 3, "the window's whole input room really is 1 token — a 3-byte ceiling here is arithmetic, not starvation"},
+			{12288, 14336, "roughly half the unreserved fallback this replaces: the exchange that buys reply room"},
+			{12289, 14339, "the first arm derived 3 bytes here; the seam is gone"},
+			{20479, 28672, "the last window below the cap boundary already reserves the full default"},
+			{20480, 28672, "at 2*reserved+overhead the cap stops binding — unchanged from today"},
+			{40960, 100352, "well past the boundary: identical to today, which bounds the blast radius"},
+		} {
+			assert.Equal(t, tc.want, ceilingFor(tc.window, nil),
+				"window %d: %s", tc.window, tc.why)
+		}
+	})
+
+	t.Run("windows at or above the cap boundary derive exactly what they derive today", func(t *testing.T) {
+		t.Parallel()
+		// 2*DefaultOutputTokens + promptOverhead is where the half-room cap stops
+		// binding. Above it the reservation is the full resolved output cap, so the
+		// change cannot regress any roster window that already had real room.
+		for _, window := range []int{20480, 32768, 40960, 128000, 512000} {
+			window := window
+			assert.Equal(t, payload.EffectiveByteBudget(model, &window, payload.DefaultOutputTokens),
+				ceilingFor(window, nil),
+				"window %d must be untouched by the small-window fix", window)
+		}
+	})
+
+	t.Run("the ceiling never decreases as the window grows", func(t *testing.T) {
+		t.Parallel()
+		prev := int64(-1)
+		for window := 4097; window <= 40960; window++ {
+			got := ceilingFor(window, nil)
+			require.GreaterOrEqualf(t, got, prev,
+				"window %d derived %d after %d derived %d — a larger window must never buy a smaller read",
+				window, got, window-1, prev)
+			prev = got
+		}
+	})
+
+	t.Run("the ceiling never increases as the reservation grows", func(t *testing.T) {
+		t.Parallel()
+		for _, window := range []int{8192, 12288, 20480, 40960, 128000} {
+			window := window
+			prev := int64(1) << 62
+			for reservation := 1; reservation <= 20000; reservation++ {
+				got := ceilingFor(window, intPtr(reservation))
+				require.LessOrEqualf(t, got, prev,
+					"window %d: max_tokens %d derived %d after %d derived %d — more output reserved must never mean more input allowed",
+					window, reservation, got, reservation-1, prev)
+				prev = got
+			}
+		}
+	})
+
+	t.Run("the reservation never claims more than half the window's input room", func(t *testing.T) {
+		t.Parallel()
+		for window := 4097; window <= 40960; window++ {
+			window := window
+			reserved := min(payload.DefaultOutputTokens, halfRoom(window))
+			require.Equalf(t, payload.EffectiveByteBudget(model, &window, reserved), ceilingFor(window, nil),
+				"window %d must derive from a reservation capped at half its input room (%d)", window, halfRoom(window))
+		}
+	})
+
+	t.Run("ceiling plus reservation and overhead never exceeds the window", func(t *testing.T) {
+		t.Parallel()
+		for window := 4097; window <= 20480; window++ {
+			overhead := window - payload.InputRoomTokens(model, &window)
+			reserved := min(payload.DefaultOutputTokens, halfRoom(window))
+			assert.LessOrEqualf(t, ceilingFor(window, nil)+toBytes(reserved+overhead), toBytes(window),
+				"window %d: the ceiling must always leave room for a reply", window)
+		}
+	})
+
+	t.Run("the measured inversions no longer occur", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, ceilingFor(12000, intPtr(7904)), ceilingFor(12000, intPtr(7903)),
+			"a one-token max_tokens change swung the ceiling from 3 bytes to 27664")
+		assert.Equal(t, int64(13832), ceilingFor(12000, intPtr(7903)),
+			"and the surviving value must be a usable read, not the 3-byte residue")
+		assert.Greater(t, ceilingFor(12289, nil), ceilingFor(12288, nil),
+			"12288 derived 28672 while 12289 derived 3 — the seam ran backwards")
+	})
+}
+
+// TestBuildSkepticAgent_NeverForwardsTheEngineUnlimitedSentinel pins the two
+// remaining routes by which this lane could hand internal/fanout/loop.go a value
+// its `ToolBudgetBytes > 0` guard reads as UNLIMITED.
+//
+// A declared window is a statement that the loop must be bounded, so no
+// declaration may end in an unbounded loop. Returning `declared` when no ceiling
+// can be derived left `context_window_tokens: 4096` — legal config, registry
+// admits 1..10000000 — unbounded for the dominant roster shape that declares no
+// tool_budget_bytes. Separately, a NEGATIVE ToolBudgetBytes survives the
+// `declared > 0` test and reaches the engine as UNLIMITED too; load-time
+// validation rejects it, but a programmatically built AgentConfig never passes
+// through that validation.
+func TestBuildSkepticAgent_NeverForwardsTheEngineUnlimitedSentinel(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a window at the exact prompt overhead still bounds the loop", func(t *testing.T) {
+		t.Parallel()
+		window := 4096 // the boundary: input room is exactly zero, so nothing can be derived
+		sk := testSkeptic()
+		sk.Config.ContextWindowTokens = &window
+		// ToolBudgetBytes deliberately unset — the shape that turns "no ceiling"
+		// into "unlimited".
+
+		require.Zero(t, payload.EffectiveByteBudget(sk.Config.Model, &window, 0),
+			"precondition: this window has no input room even with nothing reserved")
+		assert.Positive(t, buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+			"a declared window must never widen the tool loop it exists to bound")
+	})
+
+	t.Run("a negative declared budget is clamped rather than forwarded", func(t *testing.T) {
+		t.Parallel()
+		window := 128000
+		sk := testSkeptic()
+		sk.Config.ContextWindowTokens = &window
+		sk.Config.ToolBudgetBytes = int64Ptr(-1)
+
+		assert.Equal(t, payload.EffectiveByteBudget(sk.Config.Model, &window, payload.DefaultOutputTokens),
+			buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+			"a negative budget must lose to the derived ceiling, not slip past the `declared > 0` test")
+	})
+
+	t.Run("a negative declared budget with no window is clamped to zero", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		sk.Config.ToolBudgetBytes = int64Ptr(-4096)
+		// No window: there is nothing to derive, so the value is forwarded as-is —
+		// but it must be normalised to the engine's own sentinel rather than a
+		// negative the engine has no defined reading for.
+
+		assert.Zero(t, buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+			"an undeclared window derives nothing, but a negative must still not reach the engine")
+	})
+}
+
+// TestInvokeSkeptic_DeclaredCeilingAboveTheDerivedOneIsNotEnforced settles what
+// `derived` MEANS when the operator declared a ceiling the derivation overrides.
+//
+// tripsVoidTheVerdict reads `derived == false` as "the enforced ceiling is the
+// operator's, so a trip on it means the run is untrustworthy". A declaration at
+// or ABOVE the derived ceiling is never the number enforced — the derived one is
+// smaller and wins — so the trip is a derived-ceiling trip and truncates the read
+// without voiding the verdict. That is the documented behaviour, and it is the
+// only reading consistent with what the engine actually enforced: voiding a
+// verdict over a ceiling the operator's declaration never set would blame the
+// operator for a bound this lane chose.
+func TestInvokeSkeptic_DeclaredCeilingAboveTheDerivedOneIsNotEnforced(t *testing.T) {
+	t.Parallel()
+
+	// Inside the band where the half-room cap binds, so the derived ceiling is
+	// materially smaller than the declaration below it.
+	window := 12288
+	sk := testSkeptic()
+	sk.Config.ContextWindowTokens = &window
+	sk.Config.ToolBudgetBytes = int64Ptr(1 << 20) // far above the derived ceiling
+
+	enforced, derived := skepticToolBudget(sk.Config)
+	require.True(t, derived,
+		"a declaration above the derived ceiling is not the number enforced, so the trip is a derived one")
+	require.Equal(t, int64(14336), enforced,
+		"the fixture must sit in the band the half-room cap governs")
+
+	disp := &fakeDispatcher{result: tools.ToolResult{
+		Content:       strings.Repeat("x", int(enforced)+1),
+		OriginalBytes: int(enforced) + 1,
+	}}
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		toolCallTurn("read_file"),
+		{content: `{"verdict": "refuted", "reasoning": "the cited line does not do what the finding claims"}`},
+	}}
+
+	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp, false)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	assert.Equal(t, verdictRefuted, v.Verdict,
+		"the operator's declaration was never enforced here, so its overrun cannot be what makes the run untrustworthy")
+	assert.Contains(t, tripped, "tool_budget_bytes",
+		"the trip is still reported for audit — it is the VERDICT that survives, not the silence")
+}
