@@ -58,3 +58,39 @@ func TestDocs_ToolBudgetBytesRowStatesTheSkepticClamp(t *testing.T) {
 	assert.Contains(t, row, "EffectiveByteBudget",
 		"naming the derivation is what makes the ceiling checkable rather than folklore")
 }
+
+// docBullet returns the single "- **`field`**" bullet naming want, or the first
+// bullet containing want when the bullet is titled in prose rather than by field.
+func docBullet(t *testing.T, doc, want string) string {
+	t.Helper()
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "- ") && strings.Contains(line, want) {
+			return line
+		}
+	}
+	t.Fatalf("docs has no bullet containing %q", want)
+	return ""
+}
+
+// TestDocs_VerificationPerFindingBudgetsMatchTheSkepticLane pins
+// docs/verification.md's Cost Controls bullet against internal/verify/invoke.go.
+//
+// The bullet said a skeptic "reuses the reviewer tool-loop budgets: max_turns,
+// tool_budget_bytes, and timeout_secs" and that "a tripped budget yields
+// unverifiable". Both statements acquired exceptions in the same lane: the tool
+// budget is clamped to the declared window, and a trip on THAT derived ceiling
+// no longer voids the verdict. The bullet also never named max_tokens, which the
+// lane forwards to the provider. A reader could not learn any of the three.
+func TestDocs_VerificationPerFindingBudgetsMatchTheSkepticLane(t *testing.T) {
+	doc := readDoc(t, "verification.md")
+	bullet := docBullet(t, doc, "Per-finding budgets")
+
+	assert.Contains(t, bullet, "max_tokens",
+		"the lane forwards the output cap to the provider; a budget list that omits it is incomplete")
+	assert.Contains(t, bullet, "context_window_tokens",
+		"the tool budget is no longer reused verbatim — a declared window clamps it")
+	assert.Contains(t, bullet, "EffectiveByteBudget",
+		"naming the derivation is what lets a reader check the ceiling instead of guessing it")
+	assert.NotContains(t, bullet, "A tripped budget yields `unverifiable`, never a dropped finding.",
+		"the unqualified claim is false for a trip on the derived ceiling, which truncates without voiding the verdict")
+}
