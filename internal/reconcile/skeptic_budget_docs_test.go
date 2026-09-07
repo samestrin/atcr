@@ -131,17 +131,36 @@ func TestDocs_ContextWindowRowDoesNotRestateTheSkepticClamp(t *testing.T) {
 		"absence of the old formula is not the fix — the row must actually POINT at the one description of the clamp")
 }
 
-// docBullet returns the single "- **`field`**" bullet naming want, or the first
-// bullet containing want when the bullet is titled in prose rather than by field.
-func docBullet(t *testing.T, doc, want string) string {
-	t.Helper()
+// findBulletLines returns every "- " line of doc containing want. Split out of
+// docBullet so the match-count contract is unit-testable: a second, earlier
+// bullet mentioning the same substring (a summary or changelog-style line) must
+// fail loudly instead of silently asserting against the wrong bullet.
+func findBulletLines(doc, want string) []string {
+	var lines []string
 	for _, line := range strings.Split(doc, "\n") {
 		if strings.HasPrefix(line, "- ") && strings.Contains(line, want) {
-			return line
+			lines = append(lines, line)
 		}
 	}
-	t.Fatalf("docs has no bullet containing %q", want)
-	return ""
+	return lines
+}
+
+// docBullet returns the single "- **`field`**" bullet naming want, or the single
+// bullet containing want when the bullet is titled in prose rather than by
+// field. Mirrors docTableRow's "one row is the unit that drifts" rationale: it
+// fails loudly both when no bullet matches AND when more than one does, because
+// a decoy bullet earlier in the document would otherwise pin the guard to the
+// wrong line while the real one drifts unchecked.
+func docBullet(t *testing.T, doc, want string) string {
+	t.Helper()
+	matches := findBulletLines(doc, want)
+	if len(matches) == 0 {
+		t.Fatalf("docs has no bullet containing %q", want)
+	}
+	if len(matches) > 1 {
+		t.Fatalf("docs has %d bullets containing %q — the drift guard must pin exactly one, or it asserts against an arbitrary one (decoy bullet?)", len(matches), want)
+	}
+	return matches[0]
 }
 
 // TestDocs_VerificationPerFindingBudgetsMatchTheSkepticLane pins
@@ -215,4 +234,21 @@ func TestDocs_CrossExaminationPerSeatBudgetsMatchTheDebateLane(t *testing.T) {
 		"the asymmetry with the skeptic lane is only discoverable if the clamp that does NOT apply here is named")
 	assert.Contains(t, bullet, "skeptic",
 		"naming the lane that behaves differently is what makes the asymmetry findable")
+}
+
+// TestFindBulletLines_RequiresExactlyOneMatch pins the helper docBullet is built
+// on: it must surface EVERY matching bullet so docBullet can fail loudly on a
+// decoy, mirroring the "one row is the unit that drifts" rationale of
+// docTableRow. Under the old first-match behaviour a decoy bullet earlier in the
+// document silently redirected the guard; this test is what makes that failure
+// mode loud.
+func TestFindBulletLines_RequiresExactlyOneMatch(t *testing.T) {
+	doc := "- alpha mention of Per-finding budgets\n- real: **Per-finding budgets** — the actual bullet\n- unrelated\n"
+	matches := findBulletLines(doc, "Per-finding budgets")
+	require.Len(t, matches, 2,
+		"the helper must collect all matches — docBullet fails loudly on the ambiguity instead of asserting the first one")
+	require.Empty(t, findBulletLines(doc, "Per-seat budgets"),
+		"no match must come back empty so docBullet's no-match fatal still fires")
+	require.Len(t, findBulletLines("- **Per-seat budgets** — fine\n", "Per-seat budgets"), 1,
+		"the healthy single-match case must pass through unchanged")
 }
