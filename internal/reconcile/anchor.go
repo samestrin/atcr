@@ -296,6 +296,16 @@ func scanAnchors(text string) anchorScan {
 		// strict total order over a deduped set — no two members compare equal —
 		// so it is deterministic despite reading a slice built from map iteration
 		// (AC2).
+		//
+		// This ordering also decides `unaccounted`, and that coupling is not
+		// obvious from either site. reconcileSilenced retracts a loss only when
+		// the destroyed token survives into the POST-cap set, so a clean vouch
+		// delivered by a bare CALL is call-shape class and eight delimited names
+		// evict it — where a plain lexical cap kept it. Keeping the claim there
+		// is the intended outcome (the vouching token is precisely what locate
+		// will not see), not an accident of ordering, and
+		// TestScanAnchors_CapCanRetractACleanCallShapeVouch fails if either half
+		// is edited away.
 		sort.Slice(out, func(i, j int) bool {
 			_, di := explicitAnchors[out[i]]
 			_, dj := explicitAnchors[out[j]]

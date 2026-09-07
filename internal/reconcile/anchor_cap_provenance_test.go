@@ -158,3 +158,50 @@ func TestExtractAnchors_CapReturnsLexicalOrderAcrossProvenanceClasses(t *testing
 		"the seven marked-up names plus the lexically-first call shape survive, returned in plain lexical order")
 	assert.NotContains(t, got, "zLastCall", "the lexically-last call-shape anchor is the one the cap drops")
 }
+
+// TestScanAnchors_CapCanRetractACleanCallShapeVouch pins the coupling between the
+// provenance cap and reconcileSilenced's `anchors` conjunct, which nothing else
+// in the suite holds.
+//
+// reconcileSilenced retracts a silence only when the destroyed token is BOTH in
+// `clean` AND survives into the POST-cap anchor set, so which anchors the cap
+// evicts decides `unaccounted`. A clean citation delivered by a BARE CALL is
+// call-shape class, so it now ranks below every delimited anchor and eight
+// backticked names evict it — where the old lexical cap kept it, `_解析` sorting
+// ahead of every lowercase ASCII name.
+//
+// unaccounted=true is the INTENDED value on the capped row, not a defect: the
+// vouching token is exactly what the cap removed, so it is not sitting in the set
+// locate will read, and reconcileSilenced's doc states that clearing the claim for
+// a token locate never sees converts a withheld suggestion into a wrong one. What
+// was missing was any test that fails if the coupling is edited away — reconciling
+// against the PRE-cap `clean` set, or reordering cap and reconciliation, passes
+// every other anchor test in the package.
+//
+// The two rows differ ONLY by the eight backticked names, so the flip is
+// attributable to the cap and to nothing else in the text.
+func TestScanAnchors_CapCanRetractACleanCallShapeVouch(t *testing.T) {
+	// `parse_解析()` breaks at the Latin/Han boundary, dropping a SPACING-script
+	// prefix, so the silence is recorded against the fragment `_解析` itself.
+	// The bare `_解析()` call re-cites that exact token with no boundary and no
+	// glue, so it is a CLEAN contribution — and a call-shape one.
+	const silencedPlusCleanCall = "parse_解析() and _解析() ok"
+	eight := ""
+	for _, n := range []string{"aOne", "bTwo", "cThree", "dFour", "eFive", "fSix", "gSeven", "hEight"} {
+		eight += "`" + n + "` "
+	}
+
+	uncapped := scanAnchors(silencedPlusCleanCall)
+	require.False(t, uncapped.capped, "one anchor against a cap of eight: the cap must not have fired")
+	require.True(t, uncapped.lostSpan, "the spaceless-script break really did cost the span its prefix")
+	assert.Equal(t, []string{"_解析"}, uncapped.anchors)
+	assert.False(t, uncapped.unaccounted,
+		"the destroyed name is cited cleanly by a bare call AND survives into the set: nothing about it is unknowable")
+
+	capped := scanAnchors(eight + silencedPlusCleanCall)
+	require.True(t, capped.capped, "nine candidates against a cap of eight: the cap must have fired")
+	assert.NotContains(t, capped.anchors, "_解析",
+		"a call-shape anchor ranks below every delimited one, so the vouching token is the cap's first eviction")
+	assert.True(t, capped.unaccounted,
+		"the vouch was evicted, so the destroyed name is NOT in the set locate reads and the loss keeps its claim")
+}
