@@ -404,6 +404,45 @@ func TestBuildSkepticAgent_ClampsToolBudgetToDeclaredWindow(t *testing.T) {
 // fix, invokeSkeptic re-derived the flag at invoke.go:70 and a future override
 // inside buildSkepticAgent could have desynced the enforced ceiling from its
 // trust classification with no test able to catch it.
+// TestInvokeSkeptic_LogsTheEnforcedCeiling pins the once-per-invocation Debug
+// record of the ceiling this lane enforces and its provenance. failureNotes
+// alone renders a 400 KB read and a 3-byte derived ceiling as byte-identical
+// class=budget_truncated lines, and the floored case goes down the voiding
+// branch as a generic budget_tripped indistinguishable from a max_turns trip —
+// so an operator whose roster is systematically starving cannot see the cause.
+// Mirrors executor_ceiling_test.go's Debug-buffer pattern (executor_ceiling_skip).
+func TestInvokeSkeptic_LogsTheEnforcedCeiling(t *testing.T) {
+	t.Parallel()
+
+	window := 4096 // floored: the whole input room is gone to the prompt overhead
+	sk := testSkeptic()
+	sk.Config.ContextWindowTokens = &window
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	ctx := log.NewContext(context.Background(), logger)
+
+	disp := &fakeDispatcher{result: tools.ToolResult{
+		Content:       strings.Repeat("x", 2),
+		OriginalBytes: 2,
+	}}
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		toolCallTurn("read_file"),
+		{content: `{"verdict": "refuted", "reasoning": "one-byte view"}`},
+	}}
+
+	v, _, err := invokeSkeptic(ctx, sk, "prompt", cc, disp, false)
+	require.NoError(t, err)
+	require.Equal(t, verdictUnverifiable, v.Verdict)
+
+	out := buf.String()
+	assert.Contains(t, out, "skeptic tool ceiling",
+		"the enforced ceiling and its provenance are logged once per invocation")
+	assert.Contains(t, out, "budget=1", "the floor value is named, not just a generic trip class")
+	assert.Contains(t, out, "floored=true", "a floored window is distinguishable from an ordinary budget trip or a dead call")
+	assert.Contains(t, out, "derived=false", "a floored ceiling is not a derived one — its trip voids the verdict")
+}
+
 func TestBuildSkepticAgent_ProvenanceDescribesTheEnforcedBudget(t *testing.T) {
 	t.Parallel()
 
@@ -456,6 +495,10 @@ func TestBuildSkepticAgent_ProvenanceDescribesTheEnforcedBudget(t *testing.T) {
 //
 // A DECLARED budget keeps its enforcement semantics: an operator who asks for a
 // ceiling is asking for the trip to mean something.
+//
+// TestInvokeSkeptic_LogsTheEnforcedCeiling (below, after the engine-run tests)
+// pins the companion Debug record: the ceiling this lane enforces and its
+// provenance, once per invocation.
 func TestInvokeSkeptic_DerivedToolBudgetTripDoesNotVoidTheVerdict(t *testing.T) {
 	t.Parallel()
 
