@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -379,5 +380,93 @@ func TestBuildSkepticAgent_ClampsToolBudgetToDeclaredWindow(t *testing.T) {
 		assert.Equal(t, payload.EffectiveByteBudget(sk.Config.Model, &small, 8000), got)
 		assert.Less(t, got, payload.EffectiveByteBudget(sk.Config.Model, &small, 0),
 			"tokens promised to the response are not available to tool output")
+	})
+}
+
+// TestInvokeSkeptic_DerivedToolBudgetTripDoesNotVoidTheVerdict pins the boundary
+// the window-derived tool budget must not cross: it may TRUNCATE what a skeptic
+// reads, but it may not VOID what the skeptic concluded.
+//
+// The clamp gave every window-declaring roster agent a positive tool ceiling
+// where derefInt64 previously returned 0 (unlimited) — 29 of 29 agents in the
+// shipped registry declare context_window_tokens and none declares
+// tool_budget_bytes. Under invoke.go's collapse, ANY tripped budget rewrites the
+// model's answer to "unverifiable", and reconcile/gate.go excludes only
+// "refuted" from the CI gate. So a skeptic that reads a few large files and
+// correctly refutes a false-positive HIGH finding would newly BLOCK the gate —
+// on a budget the operator never configured.
+//
+// A DECLARED budget keeps its enforcement semantics: an operator who asks for a
+// ceiling is asking for the trip to mean something.
+func TestInvokeSkeptic_DerivedToolBudgetTripDoesNotVoidTheVerdict(t *testing.T) {
+	t.Parallel()
+
+	// A window small enough that one oversized read exceeds the derived ceiling.
+	window := 5000
+
+	newSkeptic := func() Skeptic {
+		sk := testSkeptic()
+		sk.Config.ContextWindowTokens = &window
+		return sk
+	}
+	ceiling := payload.EffectiveByteBudget(testSkeptic().Config.Model, &window, 0)
+	require.Positive(t, ceiling, "the fixture must derive a real ceiling, or nothing below is exercised")
+
+	// One tool result that overruns the ceiling, then a real final answer — the
+	// loop trips at end-of-turn and calls requestFinalAnswer, so the model DOES
+	// speak before the collapse decides whether to listen.
+	overrunDispatcher := func() *fakeDispatcher {
+		return &fakeDispatcher{result: tools.ToolResult{
+			Content:       strings.Repeat("x", int(ceiling)+1),
+			OriginalBytes: int(ceiling) + 1,
+		}}
+	}
+	refutingTurns := func() *fakeChatCompleter {
+		return &fakeChatCompleter{turns: []chatTurn{
+			toolCallTurn("read_file"),
+			{content: `{"verdict": "refuted", "reasoning": "the cited line does not do what the finding claims"}`},
+		}}
+	}
+
+	t.Run("a derived ceiling truncates but does not overrule the skeptic", func(t *testing.T) {
+		t.Parallel()
+		sk := newSkeptic()
+		// ToolBudgetBytes deliberately unset: the ceiling is entirely derived, so
+		// there is no operator intent for the trip to enforce.
+
+		v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", refutingTurns(), overrunDispatcher(), false)
+		require.NoError(t, err)
+		require.NotNil(t, v)
+		assert.Equal(t, verdictRefuted, v.Verdict,
+			"a budget the operator never configured must not rewrite a real verdict into one that blocks the gate")
+		assert.Contains(t, tripped, "tool_budget_bytes",
+			"the trip is still reported for audit — it is the VERDICT that must survive, not the silence")
+	})
+
+	t.Run("a declared ceiling keeps its enforcement semantics", func(t *testing.T) {
+		t.Parallel()
+		sk := newSkeptic()
+		sk.Config.ToolBudgetBytes = int64Ptr(ceiling / 2) // smaller than the ceiling: the declaration wins
+
+		v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", refutingTurns(), overrunDispatcher(), false)
+		require.NoError(t, err)
+		require.NotNil(t, v)
+		assert.Equal(t, verdictUnverifiable, v.Verdict,
+			"an operator who declares a tool budget is asking for the trip to mean the run is untrustworthy")
+		assert.Contains(t, tripped, "tool_budget_bytes")
+	})
+
+	t.Run("a trip on any other budget still voids the verdict", func(t *testing.T) {
+		t.Parallel()
+		sk := newSkeptic()
+		sk.Config.MaxTurns = intPtr(2)
+		cc := &fakeChatCompleter{turns: []chatTurn{toolCallTurn("read_file"), toolCallTurn("read_file")}}
+
+		v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+		require.NoError(t, err)
+		require.NotNil(t, v)
+		assert.Equal(t, verdictUnverifiable, v.Verdict,
+			"the exemption is scoped to the derived tool budget alone — max_turns still halts a run")
+		assert.Contains(t, tripped, "max_turns")
 	})
 }
