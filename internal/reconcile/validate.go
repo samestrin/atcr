@@ -199,7 +199,31 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 		// IS declared in the tree would then be judged "checked and found nothing"
 		// — routing out a real finding to avoid a wrong suggestion, which is a
 		// strictly worse trade than the one this narrowing makes.
-		suggestion, outcome := tier4.resolveWithDropped(ctx, problemAnchors, problemScan.boundaryCutAnchors(), fixAnchors, fixScan.droppedFixAnchors())
+		barredPrimary := problemScan.boundaryCutAnchors()
+		// Barring a boundary-cut anchor from SOURCING a suggestion and letting it
+		// drive the no-match verdict rest on ONE premise and cannot be split: if
+		// `配置ParseConfig()` may have been truncated to a tail that is not what
+		// the reviewer wrote, then that tail is equally not evidence the tree
+		// LACKS the subject. Measured against AC1's fixture minus
+		// internal/cfg/parse.go — the tree declares only 配置ParseConfig, the scan
+		// records ParseConfig, present and byName are both empty for it,
+		// primaryMatched is false and problemTruncated is false (the boundaryCut
+		// marking deliberately does not set lostSpan) — so resolve returned
+		// tier4NoMatch and a real finding was deleted from report.md, routed to
+		// unresolved.json, and durably charged to the reviewer as a phantom.
+		//
+		// Gated on the WHOLE set, not on any barred member. One faithful anchor is
+		// evidence enough to answer with, and TestRunReconcile_BarredPrimaryKeeps-
+		// DeclaredSubjectUnrouted already pins that barring is not narrowing;
+		// widening this to "any boundary-cut member" would make tier4NoMatch
+		// unreachable for every finding whose prose runs spaceless prose into a
+		// call, which is the separate decision collectCallAnchors declines.
+		//
+		// Downgrading to "could not check" can only cost a routing, never
+		// manufacture one, which is the same safe direction the unaccounted arm
+		// below takes.
+		primaryAllBarred := len(problemAnchors) > 0 && len(barredPrimary) == len(problemAnchors)
+		suggestion, outcome := tier4.resolveWithDropped(ctx, problemAnchors, barredPrimary, fixAnchors, fixScan.droppedFixAnchors())
 		switch {
 		case outcome == tier4Resolved && problemScan.unaccounted:
 			// The PROBLEM set lost a member with no name to point at, and
@@ -234,7 +258,7 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 			metrics.Counter(tier4ProblemSetUnaccountedMetric).Inc()
 		case outcome == tier4Resolved:
 			findings[i].PathSuggestion = suggestion
-		case outcome == tier4NoMatch && !problemTruncated:
+		case outcome == tier4NoMatch && !problemTruncated && !primaryAllBarred:
 			unresolved = append(unresolved, i)
 			if tier4.namedInDocs(problemAnchors) {
 				// The subject IS named in the tree, just only in a file isDocExt
@@ -246,12 +270,19 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 				findings[i].UnresolvedReason = UnresolvedReasonDocShield
 			}
 		case outcome == tier4NoMatch:
+			// Reached on either of two readings the set cannot answer from.
+			//
 			// problemTruncated: the set searched is not a faithful reading of what
 			// the PROBLEM named — see extractAnchorSet's doc for the losses the
 			// flag covers, of which the anchor cap is only one. Whichever loss it
 			// was, the one anchor that would have matched may be among what was
 			// not faithfully recovered, and a partial search cannot produce a
 			// "found nothing" verdict.
+			//
+			// primaryAllBarred: every member IS a faithful reading of some token,
+			// but each is a proper SUFFIX of a name the reviewer may have written
+			// whole, so the set contains no evidence about the subject either way.
+			// See the note at its assignment above.
 			//
 			// Recorded trade: even an UNtruncated set is only a reading of the
 			// tokens that carry an identifier signal. A subject token that
