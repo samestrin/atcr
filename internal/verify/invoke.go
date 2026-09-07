@@ -291,8 +291,12 @@ func logSkepticFailure(logger *slog.Logger, skeptic, class, detail string) {
 // usable read, and the alternative (reserve the full cap regardless) is what
 // derived a 1-token ceiling at window 12289. The cap splits the shortfall
 // instead of assigning all of it to the read. Every window at or above the
-// boundary reserves the full cap and cannot overshoot at all, which is where the
-// entire shipped roster sits.
+// boundary reserves the full RESOLVED cap, which bounds overshoot only for
+// agents that DECLARE max_tokens: for an undeclared agent the wire carries no
+// output cap at all (buildSkepticAgent forwards a nil verbatim and the provider
+// applies its own default), so the built-in 8192 is an estimate against an
+// unknown cap, not a guarantee. This repo ships no registry, so no claim is
+// made here about where any shipped roster sits.
 //
 // Only a DECLARED window clamps, and only downward:
 //
