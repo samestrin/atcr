@@ -202,8 +202,13 @@ func TestInputRoomTokens_NeverReportsADeficit(t *testing.T) {
 	}
 
 	// The two derivations must agree about the overhead: input room is exactly
-	// what EffectiveByteBudget has left to convert once nothing is reserved.
-	for _, declared := range []int{1, promptOverheadTokens, promptOverheadTokens + 1, 12288, 128000} {
+	// what EffectiveByteBudget has left to convert once nothing is reserved. The
+	// window list spans the whole declared range — the overhead boundary, the
+	// first token past it, the shipped default, and the 10,000,000 cap — so a
+	// second subtraction added to EffectiveByteBudget (a safety margin, a
+	// tool-schema allowance) or a silent clamp in InputRoomTokens fails here
+	// instead of desyncing the skeptic lane's /2 reservation cap.
+	for _, declared := range []int{1, promptOverheadTokens, promptOverheadTokens + 1, 12288, 32768, 128000, 10000000} {
 		declared := declared
 		room := InputRoomTokens(unknown, &declared)
 		if got, want := EffectiveByteBudget(unknown, &declared, 0), int64(room)*conservativeBytesPerTokenNum/conservativeBytesPerTokenDen; got != want {
