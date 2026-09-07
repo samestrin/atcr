@@ -257,8 +257,12 @@ func logSkepticFailure(logger *slog.Logger, skeptic, class, detail string) {
 // The derivation is payload.EffectiveByteBudget, the same one the review fan-out
 // sizes payloads with, so the window resolution chain (declaration → static model
 // table → conservative default) and the output reservation have exactly one
-// definition. The output cap passed is the agent's own max_tokens declaration:
-// tokens promised to the response are not available to tool output.
+// definition. The output cap passed is reservedOutputTokens: the agent's own
+// max_tokens declaration, floored at payload.DefaultOutputTokens exactly as the
+// review lane's resolveMaxTokens floors it. Tokens promised to the response are
+// not available to tool output, and an agent that declares no cap is still
+// promised the provider's own default — so it reserves the same conservative
+// number rather than reserving nothing.
 //
 // Only a DECLARED window clamps, and only downward:
 //
@@ -285,7 +289,7 @@ func skepticToolBudget(c registry.AgentConfig) (budget int64, derived bool) {
 	if c.ContextWindowTokens == nil {
 		return declared, false
 	}
-	ceiling := payload.EffectiveByteBudget(c.Model, c.ContextWindowTokens, derefInt(c.MaxTokens))
+	ceiling := payload.EffectiveByteBudget(c.Model, c.ContextWindowTokens, reservedOutputTokens(c))
 	if ceiling <= 0 {
 		return declared, false
 	}
@@ -293,6 +297,33 @@ func skepticToolBudget(c registry.AgentConfig) (budget int64, derived bool) {
 		return declared, false
 	}
 	return ceiling, true
+}
+
+// reservedOutputTokens resolves the output-token cap this lane must SUBTRACT from
+// the window when deriving the tool ceiling: the agent's own max_tokens
+// declaration, else payload.DefaultOutputTokens.
+//
+// The floor is the whole point. The review lane resolves the same chain through
+// fanout.resolveMaxTokens, which also floors at that constant, so the two lanes
+// now reserve the same number for the same agent — which is what
+// skepticToolBudget's doc has always CLAIMED ("exactly one definition") and did
+// not deliver. Reserving derefInt(c.MaxTokens) meant reserving ZERO for the 23 of
+// 29 window-declaring roster agents that declare no cap, i.e. exactly the case
+// where the reservation matters most: with no declaration, buildSkepticAgent
+// forwards a nil MaxTokens and llmclient omits the field, so the PROVIDER applies
+// its own non-zero default. Reserving nothing against an unknown-but-positive
+// output budget is the one reading of the window that cannot be right.
+//
+// This is deliberately NOT the same decision as what to SEND. buildSkepticAgent
+// still forwards the declaration alone (a nil stays nil), because imposing a
+// built-in cap on the wire would newly truncate every undeclared skeptic at a
+// value nothing measured. Reserving conservatively costs a slice of tool budget;
+// sending a cap changes what the model is allowed to say.
+func reservedOutputTokens(c registry.AgentConfig) int {
+	if c.MaxTokens != nil && *c.MaxTokens > 0 {
+		return *c.MaxTokens
+	}
+	return payload.DefaultOutputTokens
 }
 
 func derefInt(p *int) int {

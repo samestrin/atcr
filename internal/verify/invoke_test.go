@@ -320,7 +320,9 @@ func TestBuildSkepticAgent_ClampsToolBudgetToDeclaredWindow(t *testing.T) {
 		sk.Config.ToolBudgetBytes = int64Ptr(4 << 20) // 4 MiB: far past a 32k window
 
 		got := buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes
-		want := payload.EffectiveByteBudget(sk.Config.Model, &small, 0)
+		// Reserve the built-in output cap, the same number the review lane floors
+		// at — an undeclared agent is still promised the provider's own default.
+		want := payload.EffectiveByteBudget(sk.Config.Model, &small, payload.DefaultOutputTokens)
 		require.Positive(t, want, "the fixture must leave real input room, or the clamp below proves nothing")
 		assert.Equal(t, want, got, "a declared window bounds what the tool loop may pour into it")
 		assert.Less(t, got, int64(4<<20), "the flat per-agent number must lose to the smaller window-derived ceiling")
@@ -352,7 +354,7 @@ func TestBuildSkepticAgent_ClampsToolBudgetToDeclaredWindow(t *testing.T) {
 		// ToolBudgetBytes unset: the engine reads 0 as UNLIMITED, which is exactly
 		// the state a declared window contradicts.
 
-		assert.Equal(t, payload.EffectiveByteBudget(sk.Config.Model, &small, 0),
+		assert.Equal(t, payload.EffectiveByteBudget(sk.Config.Model, &small, payload.DefaultOutputTokens),
 			buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
 			"unlimited is not a smaller number — a declared window must bound it")
 	})
@@ -364,7 +366,7 @@ func TestBuildSkepticAgent_ClampsToolBudgetToDeclaredWindow(t *testing.T) {
 		sk.Config.ContextWindowTokens = &tiny
 		sk.Config.ToolBudgetBytes = int64Ptr(4096)
 
-		require.Zero(t, payload.EffectiveByteBudget(sk.Config.Model, &tiny, 0),
+		require.Zero(t, payload.EffectiveByteBudget(sk.Config.Model, &tiny, payload.DefaultOutputTokens),
 			"the fixture must actually produce a zero ceiling, or the guard below is untested")
 		assert.Equal(t, int64(4096), buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
 			"forwarding a derived 0 would mean UNLIMITED to the engine — the exact inversion of the clamp")
@@ -380,6 +382,8 @@ func TestBuildSkepticAgent_ClampsToolBudgetToDeclaredWindow(t *testing.T) {
 		assert.Equal(t, payload.EffectiveByteBudget(sk.Config.Model, &small, 8000), got)
 		assert.Less(t, got, payload.EffectiveByteBudget(sk.Config.Model, &small, 0),
 			"tokens promised to the response are not available to tool output")
+		assert.Greater(t, got, payload.EffectiveByteBudget(sk.Config.Model, &small, payload.DefaultOutputTokens),
+			"a declaration BELOW the built-in default must reserve less than the default, not fall back to it")
 	})
 }
 
@@ -401,15 +405,17 @@ func TestBuildSkepticAgent_ClampsToolBudgetToDeclaredWindow(t *testing.T) {
 func TestInvokeSkeptic_DerivedToolBudgetTripDoesNotVoidTheVerdict(t *testing.T) {
 	t.Parallel()
 
-	// A window small enough that one oversized read exceeds the derived ceiling.
-	window := 5000
+	// Small enough that one oversized read exceeds the derived ceiling, but past
+	// the output+overhead reservation (8192+4096 tokens) that would otherwise
+	// leave nothing to derive from.
+	window := 20000
 
 	newSkeptic := func() Skeptic {
 		sk := testSkeptic()
 		sk.Config.ContextWindowTokens = &window
 		return sk
 	}
-	ceiling := payload.EffectiveByteBudget(testSkeptic().Config.Model, &window, 0)
+	ceiling := payload.EffectiveByteBudget(testSkeptic().Config.Model, &window, payload.DefaultOutputTokens)
 	require.Positive(t, ceiling, "the fixture must derive a real ceiling, or nothing below is exercised")
 
 	// One tool result that overruns the ceiling, then a real final answer — the
