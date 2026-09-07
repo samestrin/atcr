@@ -441,3 +441,93 @@ func TestRunReconcile_BarredPrimaryKeepsDeclaredSubjectUnrouted(t *testing.T) {
 		"the barred anchor rode along as veto evidence; the declared subject must reach tier4Inconclusive, never tier4NoMatch")
 	assert.Zero(t, res.Summary.UnresolvedFiltered)
 }
+
+// TestScanAnchors_SpacelessBreakRecordsAMemberlessLoss closes an asymmetry in the
+// silence guard: a spaceless-script break that drops the prefix and leaves a tail
+// too short to qualify recorded NOTHING — no anchor, no lostSpan, no silence —
+// while the underscore-leading spelling of the identical shape recorded a loss.
+//
+// Measured before the fix: "配置aB() breaks and retryOnce() is never called"
+// reported truncated=false, and "設定_a() breaks and retryOnce() is never called"
+// reported truncated=true. Only the second went through the
+// boundaryDroppedSpaceless + fullRun() branch, because that branch sits under
+// leadsWithUnderscore(anchor) — and whether the tail happens to start with an
+// underscore says nothing about whether the break destroyed a searchable name.
+//
+// The consequence of recording nothing is not cosmetic. With the other name
+// absent from the tree, the first text reaches tier4NoMatch and validate.go
+// sidecar-routes a real finding and charges the reviewer a phantom — the exact
+// outcome the truncated channel exists to prevent.
+//
+// The loss is recorded the way the glued-and-unqualified span next to it already
+// is: same standing as a silence, keyed on the full run, so scanAnchors can still
+// retract it if the destroyed name is cited cleanly elsewhere.
+func TestScanAnchors_SpacelessBreakRecordsAMemberlessLoss(t *testing.T) {
+	cases := []struct {
+		name          string
+		text          string
+		wantLostSpan  bool
+		wantAnchors   []string
+		wantUnaccount bool
+		why           string
+	}{
+		{
+			name:          "short tail, full run qualifies",
+			text:          "配置aB() breaks and retryOnce() is never called",
+			wantLostSpan:  true,
+			wantAnchors:   []string{"retryOnce"},
+			wantUnaccount: true,
+			why: "the tail `aB` fails minAnchorLen so nothing is recorded for the span, " +
+				"but the full run `配置aB` is shaped and signalled: a searchable name was destroyed",
+		},
+		{
+			name:          "underscore-leading tail, same shape",
+			text:          "設定_a() breaks and retryOnce() is never called",
+			wantLostSpan:  true,
+			wantAnchors:   []string{"retryOnce"},
+			wantUnaccount: true,
+			why:           "the pre-existing arm — the two spellings of one shape must agree",
+		},
+		{
+			name:          "full run does NOT qualify",
+			text:          "配置ab() breaks and retryOnce() is never called",
+			wantLostSpan:  false,
+			wantAnchors:   []string{"retryOnce"},
+			wantUnaccount: false,
+			why: "`配置ab` carries no identifier signal — no underscore, no case change — " +
+				"so the break cost the text nothing searchable and there is no loss to record",
+		},
+		{
+			name:          "tail qualified on its own",
+			text:          "配置ParseConfig() breaks and retryOnce() is never called",
+			wantLostSpan:  false,
+			wantAnchors:   []string{"ParseConfig", "retryOnce"},
+			wantUnaccount: false,
+			why: "the tail WAS recorded, so the span has a member and takes the per-anchor " +
+				"boundaryCut path; setting lostSpan here is a separate decision on separate evidence",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := scanAnchors(tc.text)
+			assert.Equal(t, tc.wantLostSpan, s.lostSpan, tc.why)
+			assert.Equal(t, tc.wantAnchors, s.anchors, tc.why)
+			assert.Equal(t, tc.wantUnaccount, s.unaccounted, tc.why)
+		})
+	}
+}
+
+// TestScanAnchors_SpacelessBreakLossIsRetractedByACleanCitation pins that the new
+// record is a SILENCE and not a flat flag: a clean citation of the destroyed name
+// in the same text retracts the unknowable claim, exactly as it does for every
+// other member-less loss. lostSpan stays true — the span really did lose fidelity;
+// what is retracted is only the claim that what it lost is unknowable.
+func TestScanAnchors_SpacelessBreakLossIsRetractedByACleanCitation(t *testing.T) {
+	s := scanAnchors("`配置aB` is broken; 配置aB() is never called")
+
+	assert.True(t, s.lostSpan, "the break really did cost the span its prefix")
+	assert.Contains(t, s.anchors, "配置aB", "the backticked citation is a clean contribution")
+	assert.False(t, s.unaccounted,
+		"the destroyed name is cited cleanly and sits in the set locate reads: nothing about it is unknowable")
+}
