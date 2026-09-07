@@ -880,6 +880,19 @@ func collectCallAnchors(text string, seen, clean map[string]struct{}, impreciseI
 		// boundary-cut token no longer vouches for a name in reconcileSilenced
 		// either, because a misreading is not evidence of what the reviewer wrote.
 		// Reverting the marking alone would leave this one in place.
+		//
+		// That retraction is provably unreachable today, so `unaccounted` cannot
+		// flip false->true from this conjunct: reconcileSilenced only retracts a
+		// loss whose destroyed token is BOTH cited cleanly and present in the
+		// anchor set, and a silenced span's destroyed token is either
+		// underscore-leading (the fragment branch, reached only under
+		// leadsWithUnderscore) or a full spaceless run (the boundaryDroppedSpaceless
+		// branch) — while an anchor reaching THIS write is neither. An
+		// underscore-leading token at a boundary took the silence branch's
+		// `continue` and never got here, and a boundary-cut anchor is by definition
+		// a proper tail (anchor != recordedAnchorForm(fullRun)), so the same token
+		// can never be both a silence's subject and a member `clean` held. If the
+		// boundary rules ever widen, this comment is the first thing to re-check.
 		if qualified && !glued && !boundaryCut {
 			clean[anchor] = struct{}{} // an unglued, untruncated call is a faithful contribution
 		}
