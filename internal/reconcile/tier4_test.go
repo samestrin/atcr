@@ -128,7 +128,7 @@ func (f *fakeTier4) resolveWithDropped(_ context.Context, primary, barredPrimary
 	// are: a fake that ignored barredPrimary would be LOOSER than production
 	// on exactly the input epic 35.16.6.8.2 added it for, so a wiring test that
 	// passed nil (or nothing) would pass while production withholds.
-	if file, ok := x.locate(anchorsExcept(primary, barredPrimary)); ok && !x.contradicts(file, barredPrimary) {
+	if file, ok := x.resolvePrimary(primary, barredPrimary); ok {
 		return file, tier4Resolved // production returns here without reading droppedSecondary
 	}
 

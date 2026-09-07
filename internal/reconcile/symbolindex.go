@@ -427,10 +427,17 @@ const (
 // So the narrowing is applied at exactly one place, the locate that produces the
 // file, and the barred members ride along as VETO evidence exactly as
 // droppedSecondary does.
-func (x *symbolIndex) resolve(primary, barredPrimary, secondary, droppedSecondary []string) (string, tier4Outcome) {
-	if x == nil {
-		return "", tier4Inconclusive // index unavailable: could not check
-	}
+// resolvePrimary applies the PRIMARY half of the decision: the barred members
+// are clamped to primary, the narrowed set localizes the finding unless
+// contradicts() vetoes it, and a narrowing that COST a resolution — the
+// unnarrowed set would have localized — is counted. It is its own method for
+// the same reason resolveSecondary is: the one consumer that reimplements
+// resolve's control flow (fakeTier4.resolveWithDropped, in tier4_test.go)
+// DELEGATES this arm instead of restating it, so tier4ProblemAnchorImpreciseMetric
+// stays observable through the test double and the barring rule cannot drift
+// between production and the fake. Returns (file, true) when the narrowed
+// primary set resolved.
+func (x *symbolIndex) resolvePrimary(primary, barredPrimary []string) (string, bool) {
 	// barredPrimary is documented as a SUBSET of primary (the sole producer,
 	// boundaryCutAnchors, walks the anchor set primary was built from), and both
 	// uses below trust it: anchorsExcept only subtracts, but contradicts()
@@ -452,7 +459,7 @@ func (x *symbolIndex) resolve(primary, barredPrimary, secondary, droppedSecondar
 		barredPrimary = clamped
 	}
 	if file, ok := x.locate(anchorsExcept(primary, barredPrimary)); ok && !x.contradicts(file, barredPrimary) {
-		return file, tier4Resolved
+		return file, true
 	}
 	// The counter is this arm's ONLY signal, the same argument the four FIX
 	// counters and the problem-set-unaccounted arm were added on: a withheld
@@ -466,6 +473,16 @@ func (x *symbolIndex) resolve(primary, barredPrimary, secondary, droppedSecondar
 		if _, wouldHaveResolved := x.locate(primary); wouldHaveResolved {
 			metrics.Counter(tier4ProblemAnchorImpreciseMetric).Inc()
 		}
+	}
+	return "", false
+}
+
+func (x *symbolIndex) resolve(primary, barredPrimary, secondary, droppedSecondary []string) (string, tier4Outcome) {
+	if x == nil {
+		return "", tier4Inconclusive // index unavailable: could not check
+	}
+	if file, ok := x.resolvePrimary(primary, barredPrimary); ok {
+		return file, tier4Resolved
 	}
 	// The secondary set may only LOCALIZE, never substitute for the subject:
 	// with no primary anchor present anywhere in the tree, a FIX-derived hit
