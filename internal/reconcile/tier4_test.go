@@ -126,6 +126,11 @@ func (f *fakeTier4) resolveWithDropped(_ context.Context, sets anchorSets) (stri
 	}
 
 	x := f.index()
+	// DELEGATED, like every other rule in this method: production clamps the
+	// barred set to primary once, before either arm reads it. A fake that skipped
+	// the clamp would be STRICTER than production on exactly the input the clamp
+	// exists for — a non-subset barred name would still veto here.
+	barredPrimary = clampBarredToPrimary(primary, barredPrimary)
 	// The PRIMARY narrowing is delegated the same way locate and contradicts
 	// are: a fake that ignored barredPrimary would be LOOSER than production
 	// on exactly the input epic 35.16.6.8.2 added it for, so a wiring test that

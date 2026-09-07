@@ -438,26 +438,13 @@ const (
 // between production and the fake. Returns (file, true) when the narrowed
 // primary set resolved.
 func (x *symbolIndex) resolvePrimary(primary, barredPrimary []string) (string, bool) {
-	// barredPrimary is documented as a SUBSET of primary (the sole producer,
-	// boundaryCutAnchors, walks the anchor set primary was built from), and both
-	// uses below trust it: anchorsExcept only subtracts, but contradicts()
-	// consults every member unconditionally, so a caller passing a name that is
-	// not in primary would take a veto from an anchor that is not part of the
-	// set at all — a name the presence check and the no-match arm never see.
-	// Clamping here enforces the documented contract at the boundary; for a
-	// well-formed caller (production always) the clamp is a no-op.
-	if len(barredPrimary) > 0 {
-		clamped := barredPrimary[:0:0]
-		for _, barred := range barredPrimary {
-			for _, p := range primary {
-				if barred == p {
-					clamped = append(clamped, barred)
-					break
-				}
-			}
-		}
-		barredPrimary = clamped
-	}
+	// PRECONDITION: barredPrimary is already clamped to primary. This arm used to
+	// clamp it here, but the clamp rebound a PARAMETER-LOCAL copy, so the OTHER
+	// arm that trusts the same invariant — resolve's
+	// vetoResolvedSecondary(file, barredPrimary) — still read the caller's
+	// unclamped slice and a non-subset name could still veto there. The clamp
+	// therefore belongs to the control flow that feeds BOTH arms; every caller
+	// runs clampBarredToPrimary before reaching either.
 	if file, ok := x.locate(anchorsExcept(primary, barredPrimary)); ok && !x.contradicts(file, barredPrimary) {
 		return file, true
 	}
@@ -531,9 +518,43 @@ type anchorSets struct {
 	droppedSecondary []string
 }
 
+// clampBarredToPrimary drops any barred name that is not a member of primary.
+//
+// barredPrimary is documented as a SUBSET of primary (its sole producer,
+// boundaryCutAnchors, walks the anchor set primary was built from), and BOTH
+// arms of the decision trust that: anchorsExcept only subtracts, but
+// contradicts() consults every member unconditionally, so a name outside primary
+// would take a veto from an anchor that is not part of the set at all — one the
+// presence check and the no-match arm never see.
+//
+// It is a free function applied ONCE per control flow, before either arm reads
+// the slice, rather than a narrowing inside one arm. Clamping inside
+// resolvePrimary rebound only that call's parameter, which left the secondary
+// arm's veto reading the unclamped slice and made the enforcement claim false
+// for half the procedure. For a well-formed caller (production always) it is a
+// no-op that returns the input unchanged.
+func clampBarredToPrimary(primary, barredPrimary []string) []string {
+	if len(barredPrimary) == 0 {
+		return barredPrimary
+	}
+	clamped := barredPrimary[:0:0]
+	for _, barred := range barredPrimary {
+		for _, p := range primary {
+			if barred == p {
+				clamped = append(clamped, barred)
+				break
+			}
+		}
+	}
+	return clamped
+}
+
 func (x *symbolIndex) resolve(sets anchorSets) (string, tier4Outcome) {
 	primary, barredPrimary := sets.primary, sets.barredPrimary
 	secondary, droppedSecondary := sets.secondary, sets.droppedSecondary
+	// Clamp ONCE, here, so resolvePrimary's narrowing and
+	// vetoResolvedSecondary's veto adjudicate the same set.
+	barredPrimary = clampBarredToPrimary(primary, barredPrimary)
 	if x == nil {
 		return "", tier4Inconclusive // index unavailable: could not check
 	}
