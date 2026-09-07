@@ -44,7 +44,10 @@ type Dispatcher interface {
 // The second return is the tripped-budget slice (e.g. ["max_turns"]): the same
 // budgets failureNotes folds into Notes for humans, surfaced structurally so the
 // caller can populate VerificationResult.TrippedBudgets (AC1). It is non-empty
-// only on a halted run; a clean verdict returns nil.
+// only on a halted run; a clean verdict returns nil. A halted run does NOT always
+// mean an unverifiable verdict — see tripsVoidTheVerdict, under which a trip on a
+// window-DERIVED tool ceiling is reported here while the skeptic's own verdict
+// survives.
 //
 // Read-only contract: callers must not mutate the returned tripped-budget slice.
 // It aliases the fanout.Result's backing memory; mutating it corrupts the engine
@@ -62,6 +65,9 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 
 	logger := log.FromContext(ctx)
 	agent := buildSkepticAgent(skeptic, prompt, exec)
+	// Whether the tool ceiling the loop enforces came from the operator or was
+	// derived from the declared window decides what a trip on it MEANS below.
+	_, derivedBudget := skepticToolBudget(skeptic.Config)
 	engine := fanout.NewEngine(cc, fanout.WithDispatcher(disp), fanout.WithLogger(logger))
 	results := engine.Run(ctx, []fanout.Slot{{Primary: agent}})
 	// Engine.Run returns one Result per slot in input order, so one slot yields
@@ -72,12 +78,13 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 	}
 	res := results[0]
 
-	// A non-OK status (provider error, timeout) or ANY tripped budget means the
-	// skeptic could not complete a trustworthy investigation — even though the tool
-	// loop returns StatusOK after a budget trip (partial-success final answer), a
-	// trip must not be read as a real verdict. Both collapse to unverifiable. The
-	// tripped-budget slice is returned so the caller records it structurally.
-	if res.Status != fanout.StatusOK || len(res.TrippedBudgets) > 0 {
+	// A non-OK status (provider error, timeout) or a VOIDING tripped budget means
+	// the skeptic could not complete a trustworthy investigation — even though the
+	// tool loop returns StatusOK after a budget trip (partial-success final
+	// answer), such a trip must not be read as a real verdict. Both collapse to
+	// unverifiable. The tripped-budget slice is returned either way so the caller
+	// records it structurally, including on the surviving-verdict path below.
+	if res.Status != fanout.StatusOK || tripsVoidTheVerdict(res.TrippedBudgets, derivedBudget) {
 		notes := failureNotes(res)
 		logSkepticFailure(logger, skeptic.Name, failureClass(res), notes)
 		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: notes, Skeptic: skeptic.Name}, res.TrippedBudgets, nil
@@ -88,7 +95,51 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 	if v.Verdict == verdictUnverifiable {
 		logSkepticFailure(logger, skeptic.Name, "malformed_output", v.Notes)
 	}
+	if len(res.TrippedBudgets) > 0 {
+		// Reached only via the derived-ceiling exemption: the read was truncated
+		// but the answer stands. Report the trip so the audit record says the
+		// skeptic worked from a shortened view, and log it so an operator whose
+		// roster is systematically hitting the derived ceiling can see it.
+		logSkepticFailure(logger, skeptic.Name, "budget_truncated", failureNotes(res))
+		return v, res.TrippedBudgets, nil
+	}
 	return v, nil, nil
+}
+
+// budgetToolBytes is fanout's tripped-budget marker for the tool-output ceiling.
+// fanout keeps its own copy unexported, so the string is duplicated here rather
+// than imported; TestInvokeSkeptic_DerivedToolBudgetTripDoesNotVoidTheVerdict
+// drives a real engine run and asserts on this literal, so the two copies cannot
+// drift apart silently.
+const budgetToolBytes = "tool_budget_bytes"
+
+// tripsVoidTheVerdict reports whether a halted run's tripped budgets should
+// discard the model's answer and substitute "unverifiable".
+//
+// Every budget voids the verdict EXCEPT a tool-bytes trip against a ceiling this
+// lane DERIVED from the agent's declared context window. That exception exists
+// because the derived ceiling is not an operator's instruction: in the shipped
+// roster every agent declares context_window_tokens and none declares
+// tool_budget_bytes, so before the clamp the engine enforced nothing here and a
+// skeptic could read as much as it liked. Treating the derived ceiling as a
+// declared one would mean a skeptic that reads a few large files and correctly
+// REFUTES a false positive gets its answer rewritten to "unverifiable" — and
+// reconcile.IsFailing excludes only "refuted" from the CI gate, so the rewrite
+// turns a passing run into a failing one on a budget nobody configured.
+//
+// A DECLARED tool_budget_bytes keeps the old semantics in full: an operator who
+// states a ceiling is stating that overrunning it makes the run untrustworthy.
+// The derived ceiling only ever means "stop reading", never "you were wrong".
+func tripsVoidTheVerdict(tripped []string, derivedBudget bool) bool {
+	if !derivedBudget {
+		return len(tripped) > 0
+	}
+	for _, b := range tripped {
+		if b != budgetToolBytes {
+			return true
+		}
+	}
+	return false
 }
 
 // buildSkepticAgent assembles the tool-enabled fanout.Agent for a skeptic. Tools
@@ -103,6 +154,7 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 // skeptic would hit an empty endpoint with no key).
 func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool) fanout.Agent {
 	c := skeptic.Config
+	budget, _ := skepticToolBudget(c)
 	return fanout.Agent{
 		Name:        skeptic.Name,
 		Provider:    c.Provider,
@@ -115,7 +167,7 @@ func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool) fanout.Agent {
 		Exec:            exec,
 		SupportsFC:      c.SupportsFC,
 		MaxTurns:        derefInt(c.MaxTurns),
-		ToolBudgetBytes: skepticToolBudget(c),
+		ToolBudgetBytes: budget,
 		// Retry/backoff (Epic 4.6): forward the skeptic's per-agent budget the same
 		// way as the other per-finding budgets. A nil pointer becomes 0; the engine
 		// applies the override only when InitialBackoffMs > 0, so an unset budget
@@ -223,19 +275,24 @@ func logSkepticFailure(logger *slog.Logger, skeptic, class, detail string) {
 // would invert the clamp into its opposite. That state is a misconfiguration the
 // review lane refuses on with a named remedy; this lane leaves the declared value
 // alone rather than inventing a second failure mode for it.
-func skepticToolBudget(c registry.AgentConfig) int64 {
+//
+// The second return says which of the two the caller got: true only when the
+// returned number is the window-derived ceiling rather than the operator's own
+// declaration. invokeSkeptic needs the distinction because the two carry
+// different authority — see tripsVoidTheVerdict.
+func skepticToolBudget(c registry.AgentConfig) (budget int64, derived bool) {
 	declared := derefInt64(c.ToolBudgetBytes)
 	if c.ContextWindowTokens == nil {
-		return declared
+		return declared, false
 	}
 	ceiling := payload.EffectiveByteBudget(c.Model, c.ContextWindowTokens, derefInt(c.MaxTokens))
 	if ceiling <= 0 {
-		return declared
+		return declared, false
 	}
 	if declared > 0 && declared < ceiling {
-		return declared
+		return declared, false
 	}
-	return ceiling
+	return ceiling, true
 }
 
 func derefInt(p *int) int {
