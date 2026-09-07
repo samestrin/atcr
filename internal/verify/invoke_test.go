@@ -874,6 +874,47 @@ func TestSkepticToolBudget_ReservesOnlyWhatTheWindowCanAfford(t *testing.T) {
 		}
 	})
 
+	// The full-range sweep the original property tests never ran: windows from 1
+	// (the floor region the 4097-start excluded, so the 4096/4097 seam — where
+	// the derived flag flips one token past the prompt overhead — passed green),
+	// and the declared-budget axis (the other operand that decides which arm
+	// returns). Pins the CURRENT shape: the seam itself is a known open design
+	// question deferred on TD rows invoke.go:353 and invoke.go:355, so any
+	// change to it lands as a visible, deliberate act against this sweep.
+	t.Run("the declared-budget axis and the floor boundary are pinned across the whole window range", func(t *testing.T) {
+		t.Parallel()
+		const declared = 1000 // not a reachable derived ceiling (ceilings are multiples of 7/2), so no equality seam
+		var prevUndeclared int64 = -1
+		for window := 1; window <= 40960; window++ {
+			window := window
+			c := testSkeptic().Config
+			c.ContextWindowTokens = &window
+			undeclared, undeclaredDerived := skepticToolBudget(c)
+			require.GreaterOrEqualf(t, undeclared, int64(1), "window %d: never below the floor", window)
+			// Literal 1, not minSkepticToolBudget: comparing the floor against its
+			// own constant is circular (bumping the constant would pass vacuously —
+			// TestSkepticToolBudget_FloorIsOneByte owns the value pin).
+			require.Equalf(t, undeclared == 1, !undeclaredDerived,
+				"window %d: derived must be false exactly when the floor is enforced", window)
+			if prevUndeclared >= 0 {
+				require.GreaterOrEqualf(t, undeclared, prevUndeclared,
+					"window %d derived %d after %d derived %d — the ceiling must not decrease as the window grows", window, undeclared, window-1, prevUndeclared)
+			}
+			prevUndeclared = undeclared
+
+			c.ToolBudgetBytes = int64Ptr(declared)
+			budget, derived := skepticToolBudget(c)
+			require.Equalf(t, budget != int64(declared), derived,
+				"window %d: derived must be true exactly when the derived ceiling won over the declaration", window)
+			want := int64(declared)
+			if derived {
+				want = undeclared
+			}
+			require.Equalf(t, budget, want,
+				"window %d: the enforced number must be the derived ceiling or the declaration", window)
+		}
+	})
+
 	t.Run("the ceiling never increases as the reservation grows", func(t *testing.T) {
 		t.Parallel()
 		for _, window := range []int{8192, 12288, 20480, 40960, 128000} {
