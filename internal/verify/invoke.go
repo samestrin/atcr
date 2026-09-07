@@ -302,7 +302,10 @@ func logSkepticFailure(logger *slog.Logger, skeptic, class, detail string) {
 //
 //   - No declaration → today's value, unchanged. Deriving from the table's
 //     conservative default would silently shrink every unsized roster, which is a
-//     separate decision on separate evidence.
+//     separate decision on separate evidence. The one exception: a negative
+//     incoming value — reachable only through a programmatically built config —
+//     gets the same floor as a starved window, never the engine's UNLIMITED
+//     sentinel.
 //   - A declared budget SMALLER than the ceiling wins. This is a ceiling, never a
 //     floor: an operator asking for less still gets less.
 //   - A ZERO budget (the engine's "unlimited") is clamped like any other, because
@@ -342,21 +345,31 @@ func logSkepticFailure(logger *slog.Logger, skeptic, class, detail string) {
 // skepticToolBudget returns the tool ceiling and whether a trip on it truncates
 // (true) or voids (false) the verdict.
 func skepticToolBudget(c registry.AgentConfig) (budget int64, derived bool) {
-	declared := derefInt64(c.ToolBudgetBytes)
+	incoming := derefInt64(c.ToolBudgetBytes)
+	declared := incoming
 	if declared < 0 {
 		// Normalisation, not a behaviour change: internal/fanout/loop.go guards on
 		// `> 0`, so a negative and a 0 are already the SAME unlimited state, and a
-		// negative loses every `declared > 0` test below either way — on the three
-		// ceiling-derived exits this clamp changes nothing. It is load-bearing on
-		// exactly one exit: the no-declared-window return below forwards `declared`
-		// verbatim, and without this line that forwarded value would be a negative
-		// the engine has no defined reading for. Load-time validation rejects a
-		// negative (internal/registry/config.go), but a programmatically built
-		// AgentConfig never passes through it, so without the clamp the sentinel
-		// the caller receives depends on which construction path built the config.
+		// negative loses every `declared > 0` test below either way. Nothing here
+		// propagates a value the engine has no defined reading for: on the
+		// no-declared-window path a NEGATIVE incoming value returns the floor
+		// (below), and everywhere else the `declared > 0` guards reject it before
+		// it can be returned. Load-time validation rejects a negative
+		// (internal/registry/config.go), but a programmatically built AgentConfig
+		// never passes through it, so without this handling the sentinel the
+		// caller receives depends on which construction path built the config.
 		declared = 0
 	}
 	if c.ContextWindowTokens == nil {
+		if incoming < 0 {
+			// A negative declaration must not reach the engine as UNLIMITED on this
+			// path either. Normalising it to 0 forwards exactly the engine's own
+			// 0-as-UNLIMITED sentinel — the leak the declared-window path closes
+			// with the floor — so the same floor applies here: the loop is bounded,
+			// the trip (derived = false) voids the verdict, and a config that never
+			// passed load validation never buys an unbounded read.
+			return minSkepticToolBudget, false
+		}
 		return declared, false
 	}
 	// Reserve what the window can AFFORD: the resolved output cap, never more than
