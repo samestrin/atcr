@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/samestrin/atcr/internal/stream"
 	reclib "github.com/samestrin/atcr/reconcile"
 	"github.com/stretchr/testify/assert"
@@ -601,4 +602,29 @@ func TestFakeTier4_MirrorsResolveOnThePrimaryPath(t *testing.T) {
 			assert.Equal(t, prodFile, fakeFile, "both resolvers name the same file")
 		})
 	}
+}
+
+// TestFakeTier4_CountsProblemAnchorImprecise pins the counter's observability
+// through the double. The secondary arm delegates to resolveSecondary and so
+// carries its counter for free; the primary arm was hand-copied, so a wiring
+// test driven through withFakeTier4 over a boundary-cut PROBLEM saw
+// tier4ProblemAnchorImpreciseMetric stay flat while production incremented it —
+// the exact drift class the fake's own doc says delegation exists to kill.
+func TestFakeTier4_CountsProblemAnchorImprecise(t *testing.T) {
+	root := tier4Repo(t, "internal/cfg/parse.go")
+	fake := &fakeTier4{byAnchor: map[string]string{"ParseConfig": "internal/cfg/parse.go"}}
+	withFakeTier4(t, fake)
+
+	before := metrics.Counter(tier4ProblemAnchorImpreciseMetric).Value()
+
+	findings := []JSONFinding{{
+		File:    "internal/tokens/renewal.go",
+		Line:    31,
+		Problem: "配置ParseConfig() ignores the returned error",
+		Fix:     "check the returned error before reissuing",
+	}}
+	_, _ = validateFindingPaths(context.Background(), findings, root)
+
+	assert.Equal(t, before+1, metrics.Counter(tier4ProblemAnchorImpreciseMetric).Value(),
+		"the barred tail cost a suggestion the unnarrowed set would have localized; the fake must carry the primary arm's counter")
 }
