@@ -297,6 +297,19 @@ func scanAnchors(text string) anchorScan {
 		// so it is deterministic despite reading a slice built from map iteration
 		// (AC2).
 		//
+		// Recorded cost of the BREADTH, which is wider than the CJK pseudo-token
+		// case that motivated the rule: the demotion is DELIMITED vs CALL SHAPE,
+		// not ASCII vs non-ASCII, so a faithful unglued ASCII call — typically the
+		// finding's own subject, `processPayment()` — is deterministically the
+		// first eviction whenever eight backticked names are present. That is the
+		// rule epic 35.16.6.8.2 T2 decided on purpose, and what bounds it is that
+		// the cap sets `capped`, `capped` feeds truncated(), and validate.go's
+		// routing arm is gated on !problemTruncated. So evicting the subject can
+		// cost a SUGGESTION and nothing more; it can never produce the no-match
+		// verdict that deletes a real finding. Pinned end-to-end by
+		// TestRunReconcile_CapEvictingTheSubjectCannotRouteAFinding, which fails if
+		// any link in that chain is removed.
+		//
 		// This ordering also decides `unaccounted`, and that coupling is not
 		// obvious from either site. reconcileSilenced retracts a loss only when
 		// the destroyed token survives into the POST-cap set, so a clean vouch

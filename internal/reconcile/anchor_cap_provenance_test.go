@@ -205,3 +205,61 @@ func TestScanAnchors_CapCanRetractACleanCallShapeVouch(t *testing.T) {
 	assert.True(t, capped.unaccounted,
 		"the vouch was evicted, so the destroyed name is NOT in the set locate reads and the loss keeps its claim")
 }
+
+// TestRunReconcile_CapEvictingTheSubjectCannotRouteAFinding records the measured
+// cost of the broad provenance rule and pins the bound on it.
+//
+// The comparator demotes EVERY call-shape anchor below every delimited one, so a
+// faithful unglued ASCII call — typically the finding's own subject — is
+// deterministically the first eviction whenever eight backticked names are
+// present. That is broader than the CJK pseudo-token case that motivated it, and
+// epic 35.16.6.8.2 T2 decided it deliberately: a name the reviewer marked up is
+// better evidence of what they meant than one recovered from a bare call shape.
+//
+// The measurement that makes the breadth affordable is this: the cap sets
+// `capped`, `capped` feeds `truncated`, and validate.go's routing arm is gated on
+// !problemTruncated. So a capped PROBLEM set can never produce tier4NoMatch
+// routing, no matter which member was evicted — the subject included. What the
+// eviction can still cost is a SUGGESTION, and only that; validate.go's
+// unaccounted arm already discloses that it is scoped to `unaccounted` and not to
+// `capped` for the same reason.
+//
+// This test is that bound, not a restatement of the ordering: it fails if the cap
+// stops setting `capped`, if `truncated` stops reading it, or if the routing arm
+// stops consulting it — any one of which turns the deliberate demotion into a
+// mechanism for deleting real findings.
+func TestRunReconcile_CapEvictingTheSubjectCannotRouteAFinding(t *testing.T) {
+	// The tree declares the SUBJECT and none of the eight backticked names.
+	root := gitRepoWithSources(t, map[string]string{
+		"internal/pay/charge.go": "package pay\n\nfunc processPayment() error {\n\treturn nil\n}\n",
+	})
+
+	problem := ""
+	for _, n := range []string{"absentA", "absentB", "absentC", "absentD", "absentE", "absentF", "absentG", "absentH"} {
+		problem += "`" + n + "` "
+	}
+	problem += "are unchecked when processPayment() runs"
+
+	scan := scanAnchors(problem)
+	require.True(t, scan.capped, "nine candidates against a cap of eight: the cap must have fired")
+	require.NotContains(t, scan.anchors, "processPayment",
+		"the faithful call shape is the first eviction — this is the measured cost the rule accepts")
+	require.True(t, scan.truncated(), "the cap must reach validate.go through truncated(), or the bound below is vacuous")
+
+	reviewDir := t.TempDir()
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+		"HIGH|internal/ghost/phantom.go:3|"+problem+"|check them|correctness|10|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+
+	unresolved, err := ReadUnresolvedFindings(reviewDir)
+	require.NoError(t, err)
+	assert.Len(t, res.Findings, 1,
+		"the eight surviving anchors are all absent from the tree, yet the finding is KEPT: a capped set may not answer no-match")
+	assert.Empty(t, unresolved,
+		"the evicted subject can cost a suggestion and nothing more — routing is gated on !problemTruncated")
+}
