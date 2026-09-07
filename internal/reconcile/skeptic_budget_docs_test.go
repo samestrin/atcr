@@ -94,3 +94,24 @@ func TestDocs_VerificationPerFindingBudgetsMatchTheSkepticLane(t *testing.T) {
 	assert.NotContains(t, bullet, "A tripped budget yields `unverifiable`, never a dropped finding.",
 		"the unqualified claim is false for a trip on the derived ceiling, which truncates without voiding the verdict")
 }
+
+// TestDocs_CrossExaminationPerSeatBudgetsMatchTheDebateLane pins
+// docs/cross-examination.md's Cost Controls bullet against
+// internal/debate/protocol.go.
+//
+// The bullet listed max_turns, tool_budget_bytes and timeout_secs as what a seat
+// reuses. protocol.go also forwards max_tokens, and — unlike the skeptic lane —
+// does NOT clamp tool_budget_bytes to a declared window (it calls derefInt64
+// verbatim). The asymmetry between the two tool-using verification lanes is the
+// kind a reader can only discover by reading both files, so it is stated here.
+func TestDocs_CrossExaminationPerSeatBudgetsMatchTheDebateLane(t *testing.T) {
+	doc := readDoc(t, "cross-examination.md")
+	bullet := docBullet(t, doc, "Per-seat budgets")
+
+	assert.Contains(t, bullet, "max_tokens",
+		"the lane forwards the output cap to the provider; a budget list that omits it is incomplete")
+	assert.Contains(t, bullet, "context_window_tokens",
+		"the asymmetry with the skeptic lane is only discoverable if the clamp that does NOT apply here is named")
+	assert.Contains(t, bullet, "skeptic",
+		"naming the lane that behaves differently is what makes the asymmetry findable")
+}
