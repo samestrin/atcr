@@ -121,6 +121,37 @@ func InputRoomTokens(model string, declared *int) int {
 	return room
 }
 
+// MinUsableReadBytes is the smallest tool-output budget a window must be able to
+// fund for a tool-driven lane to read anything conclusive: one maximum-size tool
+// result. Below it a lane is not reading a file, it is reading a fragment of one.
+//
+// It MIRRORS tools.DefaultMaxResultBytes, which this package cannot import —
+// internal/tools sits above internal/payload in the dependency direction
+// enforced by internal/boundaries_test.go, and inverting that for one constant
+// would drag the dispatcher and its sandbox backend underneath the sizing layer.
+// internal/verify's TestMinTrustworthyCeilingMirrorsTheDispatcherCap pins the
+// two literals together, so the duplication cannot drift silently.
+const MinUsableReadBytes int64 = 64 * 1024
+
+// WindowFundsAUsableRead reports whether a window can derive a tool-output
+// ceiling of at least MinUsableReadBytes under the half-room reservation policy
+// — the same policy internal/verify's skepticToolBudget applies, expressed here
+// so a pre-flight diagnostic can ask the question without importing the lane
+// that answers it at run time.
+//
+// outputTokens is the agent's own max_tokens declaration, or nil for the
+// built-in DefaultOutputTokens; passing the same value the lane resolves is what
+// keeps a warning about a config from describing a different config than the one
+// the run will use.
+func WindowFundsAUsableRead(model string, declared *int, outputTokens *int) bool {
+	outCap := DefaultOutputTokens
+	if outputTokens != nil && *outputTokens > 0 {
+		outCap = *outputTokens
+	}
+	reserved := min(outCap, InputRoomTokens(model, declared)/2)
+	return EffectiveByteBudget(model, declared, reserved) >= MinUsableReadBytes
+}
+
 // ChunkMaxLines converts a model's effective input budget into a per-chunk diff
 // line count for the Epic 14.3 chunker (chunkDiff). A small-window model gets a
 // smaller maxLines (more, smaller chunks) and a large-window model a larger

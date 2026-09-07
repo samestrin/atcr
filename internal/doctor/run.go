@@ -190,14 +190,22 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 		if s, h, ok := zeroBudgetVerdict(tgt.Model, at.ContextWindowTokens, reviewCap, pr.maxTokens, status); ok {
 			status, hint = s, h
 		}
-		if clause, ok := smallWindowClause(tgt.Model, at.ContextWindowTokens, at.WindowSource, status); ok {
-			// An at-or-below-overhead window ALWAYS trips zeroBudgetVerdict too (its
-			// input budget is closed for any cap), so this APPENDS the skeptic
-			// lane's consequence to the payload hint rather than replacing it: both
-			// consequences are real, they share one remedy, and zeroBudget's
-			// marker/probe remedies stay intact for the rows that need them.
+		if clause, ok := smallWindowClause(tgt.Model, at.ContextWindowTokens, at.DeclaredMaxTokens, at.WindowSource, status); ok {
+			// zeroBudgetVerdict co-fires only while the window is at or below
+			// maxTokens + the prompt overhead. The skeptic lane's floor now reaches
+			// much further up (it refuses any derived ceiling below one tool
+			// result), so above that point there is no payload hint to append to
+			// and the clause stands alone — appending to "" would leak the
+			// separator as leading whitespace and read as a continuation of
+			// nothing. Where zeroBudget DID fire, this still APPENDS rather than
+			// replaces: both consequences are real, they share one remedy, and
+			// zeroBudget's marker/probe remedies stay intact for those rows.
 			status = StatusOKWarning
-			hint += " Separately: " + clause
+			if hint == "" {
+				hint = "endpoint is healthy, but " + clause
+			} else {
+				hint += " Separately: " + clause
+			}
 		}
 		rep.Agents = append(rep.Agents, AgentResult{
 			Agent:               at.Agent,
@@ -363,18 +371,19 @@ func zeroBudgetVerdict(model string, window, maxTokens, probeMaxTokens int, stat
 // payload.InputRoomTokens rather than recomputed: the overhead constant stays
 // owned by the package that reserves it, the same rule zeroBudgetVerdict
 // follows for EffectiveByteBudget.
-func smallWindowClause(model string, window int, windowSource, status string) (string, bool) {
+func smallWindowClause(model string, window, maxTokens int, windowSource, status string) (string, bool) {
 	if !healthy(status) || window <= 0 || windowSource != payload.WindowSourceDeclaration {
 		return "", false
 	}
-	if payload.InputRoomTokens(model, &window) > 0 {
+	if payload.WindowFundsAUsableRead(model, &window, &maxTokens) {
 		return "", false
 	}
-	return fmt.Sprintf("the DECLARED context_window_tokens (%d tokens) is at or below the "+
-		"prompt overhead, so the skeptic lane cannot derive a tool ceiling for this agent: every "+
-		"verification it reviews yields unverifiable (notes window_below_prompt_overhead), and "+
-		"reconcile's CI gate does not exclude unverifiable. The value is legal config, so nothing "+
-		"rejects it at load — the remedy is the window one above: raise (or drop) the declaration.",
+	return fmt.Sprintf("the DECLARED context_window_tokens (%d tokens) is too small for the "+
+		"skeptic lane to derive a trustworthy tool ceiling for this agent — it cannot fund even "+
+		"one tool result — so every verification it reviews yields unverifiable (notes "+
+		"window_below_prompt_overhead), and reconcile's CI gate does not exclude unverifiable. "+
+		"The value is legal config, so nothing rejects it at load — the remedy is the window one "+
+		"above: raise (or drop) the declaration.",
 		window), true
 }
 

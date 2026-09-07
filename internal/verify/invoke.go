@@ -381,9 +381,25 @@ func logSkepticFailure(logger *slog.Logger, skeptic, class, detail string) {
 // than either a silently unbounded read or a verdict formed from one byte.
 const minSkepticToolBudget int64 = 1
 
-// minTrustworthyCeilingBytes is a deliberately wrong compiling stub so the RED
-// test naming it can be committed past `go vet`. Replaced in the GREEN commit.
-const minTrustworthyCeilingBytes int64 = 0
+// minTrustworthyCeilingBytes is the smallest derived ceiling this lane will
+// treat as a real investigation: one tool result, sourced from the dispatcher's
+// own per-result cap rather than restated, so the two cannot drift.
+//
+// Below it, a skeptic cannot have read enough for its answer to mean anything —
+// the ceiling truncates the FIRST result it is handed, so whatever the model
+// concluded, it concluded from a fragment. `derived = true` would let that
+// answer through tripsVoidTheVerdict and into reconcile's CI gate as a live
+// confirmed/refuted, which is the failure the floor already exists to prevent
+// at one byte. The only difference between one byte and sixty-five thousand is
+// where the line sits, and the line belongs at one result, not at one byte.
+//
+// Scope, measured when the threshold was chosen (2026-09-07): every agent in
+// the live registry declares 98304 tokens or more and derives 301056 bytes, so
+// no shipped agent's classification changes. Windows below 31013 tokens do
+// change — they now take the floor and their skeptic short-circuits to
+// unverifiable without a provider call — and `atcr doctor` warns for that whole
+// band so the operator hears it before a run, not after.
+const minTrustworthyCeilingBytes int64 = payload.MinUsableReadBytes
 
 // skepticToolBudget resolves the skeptic's tool-output ceiling, clamping the flat
 // per-agent tool_budget_bytes to what the agent's DECLARED context window can
@@ -546,17 +562,27 @@ func skepticToolBudget(c registry.AgentConfig) (budget int64, derived bool) {
 	// half the input room. See the half-room paragraph above for why half.
 	reserved := min(reservedOutputTokens(c), payload.InputRoomTokens(c.Model, c.ContextWindowTokens)/2)
 	ceiling := payload.EffectiveByteBudget(c.Model, c.ContextWindowTokens, reserved)
-	if ceiling <= 0 {
-		// No input room at all — the prompt overhead alone exhausts the window, so
-		// the reservation is not what cost the ceiling (it is already 0 here).
-		if declared > 0 {
-			// A real operator bound. It is not the derived ceiling, but it does bound
-			// the loop, which is the property that must not be lost.
-			return declared, false
-		}
-		// derived = false: see the floor paragraph above. A 1-byte ceiling trips on
-		// the first result, and that trip must void the verdict rather than pass a
-		// zero-evidence answer to the gate.
+	if ceiling < minTrustworthyCeilingBytes {
+		// The window cannot fund one real tool result. That covers the old
+		// no-input-room case (ceiling 0, the prompt overhead alone exhausts the
+		// window) and every window up to 31012 tokens, whose ceiling is positive
+		// but too small to read anything conclusive from.
+		//
+		// The declaration does NOT get an escape hatch here, and removing that
+		// hatch is half of this branch's point. It used to return the operator's
+		// full tool_budget_bytes on the no-room path, on the reasoning that a real
+		// operator bound still bounds the loop — but it bounds it at a number the
+		// window cannot hold either way, so it bought no protection while making
+		// the enforced ceiling swing ~350000x across one token of window (window
+		// 4096 with 1<<20 declared returned 1048576 with derived = false; window
+		// 4097 returned 3 with derived = true, flipping the trip from
+		// verdict-voiding to verdict-preserving at the same time).
+		//
+		// derived = false: see the floor paragraph above. The floor trips on the
+		// first result, and that trip must void the verdict rather than pass a
+		// fragment-derived answer to the gate. invokeSkeptic reads the floor and
+		// short-circuits before the engine, so no provider request is spent on a
+		// run whose answer could not be trusted anyway.
 		return minSkepticToolBudget, false
 	}
 	if declared > 0 && declared < ceiling {

@@ -112,3 +112,46 @@ func TestSkepticToolBudget_UntrustworthyCeilingsTakeTheFloor(t *testing.T) {
 		}
 	})
 }
+
+// TestMinTrustworthyCeilingMirrorsTheDispatcherCap is the anti-drift pin for a
+// constant that is deliberately written twice.
+//
+// payload.MinUsableReadBytes must equal tools.DefaultMaxResultBytes — "one real
+// tool result" is the whole justification for the threshold, so a change to the
+// dispatcher's per-result cap that left the sizing constant behind would leave
+// the skeptic lane refusing windows that can now fund a read, or accepting ones
+// that cannot. payload cannot import tools (internal/boundaries_test.go pins the
+// direction: tools sits above payload, and inverting it for one constant would
+// drag the dispatcher and its sandbox backend underneath the sizing layer), so
+// the literal is restated there and reconciled here — internal/verify is the
+// lane that imports BOTH, which is what makes this the right home for the pin.
+func TestMinTrustworthyCeilingMirrorsTheDispatcherCap(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, int64(tools.DefaultMaxResultBytes), payload.MinUsableReadBytes,
+		"payload.MinUsableReadBytes restates tools.DefaultMaxResultBytes across a layering boundary — the two must not drift")
+	assert.Equal(t, payload.MinUsableReadBytes, minTrustworthyCeilingBytes,
+		"the skeptic lane's gate must be the shared constant, not a second copy of the number")
+}
+
+// TestWindowFundsAUsableRead_AgreesWithTheLane pins the OTHER half of the same
+// contract: `atcr doctor` warns about a starving window by asking
+// payload.WindowFundsAUsableRead, while the run-time collapse is decided by
+// skepticToolBudget. If those two ever disagree, doctor warns about windows that
+// work or stays silent about windows that do not — and the mitigation TD row
+// internal/verify/invoke.go:366 was closed on stops being true.
+func TestWindowFundsAUsableRead_AgreesWithTheLane(t *testing.T) {
+	t.Parallel()
+
+	model := testSkeptic().Config.Model
+	for window := 1; window <= 40960; window++ {
+		w := window
+		sk := testSkeptic()
+		sk.Config.ContextWindowTokens = &w
+		budget, derived := skepticToolBudget(sk.Config)
+		floored := !derived && budget == minSkepticToolBudget
+
+		require.Equalf(t, floored, !payload.WindowFundsAUsableRead(model, &w, nil),
+			"window %d: doctor's predicate and the lane's own gate must reach the same verdict", window)
+	}
+}
