@@ -381,6 +381,10 @@ func logSkepticFailure(logger *slog.Logger, skeptic, class, detail string) {
 // than either a silently unbounded read or a verdict formed from one byte.
 const minSkepticToolBudget int64 = 1
 
+// minTrustworthyCeilingBytes is a deliberately wrong compiling stub so the RED
+// test naming it can be committed past `go vet`. Replaced in the GREEN commit.
+const minTrustworthyCeilingBytes int64 = 0
+
 // skepticToolBudget resolves the skeptic's tool-output ceiling, clamping the flat
 // per-agent tool_budget_bytes to what the agent's DECLARED context window can
 // actually hold.
