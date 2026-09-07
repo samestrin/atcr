@@ -127,6 +127,21 @@ func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool) fanout.Agent {
 			Model:       c.Model,
 			Temperature: c.Temperature,
 			Prompt:      prompt,
+			// Output cap (max_tokens): forwarded like every other per-agent
+			// budget above. Omitting it left the provider default in force and a
+			// declaration silently inert, which matters most for the model class
+			// llmclient.Invocation.MaxTokens' own doc warns about — a reasoning
+			// model spends the budget on chain-of-thought before emitting visible
+			// content, so under a low default the skeptic finishes mid-reasoning
+			// and the engine records "unverifiable" while the run reports success.
+			//
+			// The DECLARATION only. The review fan-out resolves three tiers
+			// (--max-tokens flag > declaration > payload.DefaultOutputTokens), but
+			// this lane has no flag to read and imposing the built-in default here
+			// would newly cap every UNDECLARED skeptic at a value nothing measured
+			// — a separate decision on separate evidence. A nil pointer keeps
+			// today's behaviour exactly.
+			MaxTokens: c.MaxTokens,
 		},
 	}
 }
