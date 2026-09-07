@@ -1259,7 +1259,11 @@ func TestInvokeSkeptic_TruncationIsNotLoggedAsAFailure(t *testing.T) {
 	window := 12288
 	sk := testSkeptic()
 	sk.Config.ContextWindowTokens = &window
-	ceiling := payload.EffectiveByteBudget(testSkeptic().Config.Model, &window, payload.DefaultOutputTokens)
+	// The production derivation at this window: reserved = min(8192, room/2 = 4096)
+	// → ceiling 14336 (the half-room cap binds — passing the raw DefaultOutputTokens
+	// would exhaust the window and derive 0).
+	reserved := min(payload.DefaultOutputTokens, payload.InputRoomTokens(testSkeptic().Config.Model, &window)/2)
+	ceiling := payload.EffectiveByteBudget(testSkeptic().Config.Model, &window, reserved)
 	require.Equal(t, int64(14336), ceiling, "fixture must sit in the derived band")
 
 	var buf bytes.Buffer
