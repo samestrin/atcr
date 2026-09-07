@@ -3,6 +3,7 @@ package verify
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
@@ -574,6 +576,76 @@ func TestInvokeSkeptic_DerivedToolBudgetTripDoesNotVoidTheVerdict(t *testing.T) 
 		assert.Equal(t, verdictUnverifiable, v.Verdict,
 			"the exemption is scoped to the derived tool budget alone — max_turns still halts a run")
 		assert.Contains(t, tripped, "max_turns")
+	})
+}
+
+// TestInvokeSkeptic_TripsOnFixedAndCumulativeOverruns closes the fixture hole
+// the earlier trip tests left open: their dispatcher results were sized FROM the
+// value under test (strings.Repeat("x", ceiling+1)), so the trip was guaranteed
+// by construction and no test could detect an enforced ceiling too large to be
+// meaningful (the surviving minSkepticToolBudget=4096 mutation proved it). These
+// two tests drive the trip INDEPENDENTLY of the derivation: a fixed-size result
+// against a window whose derived ceiling falls below it, and a multi-turn
+// cumulative overrun through the real accumulation path.
+func TestInvokeSkeptic_TripsOnFixedAndCumulativeOverruns(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a fixed-size result trips a ceiling it knows nothing about", func(t *testing.T) {
+		t.Parallel()
+		window := 8192 // room 4096, reserved 2048, derived ceiling 7168 bytes
+		sk := testSkeptic()
+		sk.Config.ContextWindowTokens = &window
+		ceiling := payload.EffectiveByteBudget(testSkeptic().Config.Model, &window, payload.InputRoomTokens(testSkeptic().Config.Model, &window)/2)
+		require.Equal(t, int64(7168), ceiling,
+			"the fixture must derive the 7168-byte ceiling, or the 8 KiB result below overruns nothing")
+
+		disp := &fakeDispatcher{result: tools.ToolResult{
+			// OriginalBytes rides the transcript record (fanout/loop.go:288); the
+			// budget accumulates len(Content) — the loop never reads OriginalBytes
+			// for accounting, so this fixture keeps the two honestly distinct.
+			Content:       strings.Repeat("x", 8192), // FIXED size — independent of the ceiling under test
+			OriginalBytes: 8192,
+		}}
+		cc := &fakeChatCompleter{turns: []chatTurn{
+			toolCallTurn("read_file"),
+			{content: `{"verdict": "refuted", "reasoning": "the cited line does not do what the finding claims"}`},
+		}}
+
+		v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp, false)
+		require.NoError(t, err)
+		require.NotNil(t, v)
+		assert.Equal(t, verdictRefuted, v.Verdict,
+			"the ceiling is derived, so the trip truncates without voiding the verdict")
+		assert.Contains(t, tripped, "tool_budget_bytes",
+			"an 8 KiB result against a 7168-byte ceiling must trip — this is the assertion the ceiling-inflation mutation must fail")
+	})
+
+	t.Run("a cumulative multi-turn overrun trips through the real accumulation path", func(t *testing.T) {
+		t.Parallel()
+		window := 8192 // derived ceiling 7168 bytes
+		sk := testSkeptic()
+		sk.Config.ContextWindowTokens = &window
+
+		disp := &fakeDispatcher{result: tools.ToolResult{
+			Content:       strings.Repeat("x", 4096), // 4 KiB per turn — each turn alone is under the ceiling
+			OriginalBytes: 4096,
+		}}
+		// Distinct arguments on each call — the loop treats an identical repeat as
+		// a nudge (no re-dispatch), so a genuine cumulative overrun needs two
+		// DIFFERENT tool calls.
+		cc := &fakeChatCompleter{turns: []chatTurn{
+			{toolCalls: []llmclient.ToolCall{{ID: "call_1", Type: "function", Function: llmclient.FunctionCall{Name: "read_file", Arguments: json.RawMessage(`{"path":"a.go"}`)}}}},
+			{toolCalls: []llmclient.ToolCall{{ID: "call_2", Type: "function", Function: llmclient.FunctionCall{Name: "read_file", Arguments: json.RawMessage(`{"path":"b.go"}`)}}}},
+			{content: `{"verdict": "refuted", "reasoning": "the two reads together covered the file"}`},
+		}}
+
+		v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp, false)
+		require.NoError(t, err)
+		require.NotNil(t, v)
+		assert.Equal(t, verdictRefuted, v.Verdict,
+			"the accumulation path must behave like the single-turn path: derived trip, verdict survives")
+		assert.Contains(t, tripped, "tool_budget_bytes",
+			"the cumulative overrun must trip in this lane, not only in internal/fanout's own budget tests")
 	})
 }
 
