@@ -10,7 +10,7 @@ False positives are the adoption killer for LLM code review: a panel that is mos
 - **What it reads:** `reconciled/findings.json` (the deduped findings).
 - **What it writes:** `reconciled/verification.json` (the audit record) and re-emitted `reconciled/findings.json` / `summary.json` with v2 confidence; it appends `"verify"` to the manifest stages.
 - **Re-runnable and idempotent:** verifying the same reconciled input twice yields the same artifacts. Already-verified findings are skipped unless you pass `--fresh`.
-- **Never drops a finding:** a skeptic failure (timeout, provider error, tripped budget, malformed output) yields an `unverifiable` verdict — never a dropped finding and never a failed run by itself.
+- **Never drops a finding:** a skeptic failure (timeout, provider error, a tripped budget you declared, malformed output) yields an `unverifiable` verdict — never a dropped finding and never a failed run by itself. (One trip is not a failure: overrunning a `tool_budget_bytes` ceiling this lane *derived* from the agent's declared context window truncates the reading and keeps the verdict — see Cost Controls.)
 
 Run it standalone, chained off a review, or as an MCP tool:
 
@@ -41,7 +41,7 @@ A skeptic returns a strict, parseable envelope:
 
 - `confirmed` — the skeptic checked the evidence and the finding holds.
 - `refuted` — the skeptic found concrete evidence the finding is wrong (a false positive).
-- `unverifiable` — the skeptic could not establish either way (ambiguous evidence, evidence outside the snapshot jail, a tripped budget, a provider error).
+- `unverifiable` — the skeptic could not establish either way (ambiguous evidence, evidence outside the snapshot jail, a declared budget tripped, a provider error). A *derived* `tool_budget_bytes` ceiling is the exception — it truncates without overruling the skeptic, so `trippedBudgets` can be non-empty on a `confirmed` or `refuted` record.
 
 Parsing is defensive. The parser unmarshals the JSON; if that fails it scans for a `{...}` object (so a verdict wrapped in markdown fences or surrounded by prose is still recovered); a verdict outside the enum, an empty response, or output that cannot be parsed at all all fall back to `unverifiable` with the raw text preserved in the notes. Malformed skeptic output therefore degrades safely — it never forges a `confirmed` or `refuted`.
 
