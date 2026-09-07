@@ -79,8 +79,11 @@ func TestDocs_ToolBudgetBytesRowStatesTheSkepticClamp(t *testing.T) {
 	// assertion here compares one document against another author's prose, so a
 	// revert of internal/verify alone — the rollback plan's stated unit — would
 	// leave both documents describing a clamp the lane no longer performs with the
-	// suite still green. This one fails when the constant moves.
-	assert.Contains(t, row, "`"+strconv.Itoa(payload.DefaultOutputTokens)+"`",
+	// suite still green. This one fails when the constant moves, and the phrase
+	// is chosen so a bare backticked literal cannot match vacuously: the row
+	// also contains `0`, `100` and `20480`, so a bare "`8192`" check would pass
+	// with DefaultOutputTokens set to any of those.
+	assert.Contains(t, row, "the built-in `"+strconv.Itoa(payload.DefaultOutputTokens)+"`",
 		"the row must publish the CURRENT built-in reservation, not the number it had when the sentence was written")
 	assert.Contains(t, row, "1-byte floor",
 		"the floor is the one path where a ceiling the operator never declared voids the verdict — a row that omits it contradicts the lane")
@@ -177,7 +180,9 @@ func TestDocs_VerificationPerFindingBudgetsMatchTheSkepticLane(t *testing.T) {
 		"the same qualifier the registry row carries: a larger declaration is never the number enforced")
 	assert.NotContains(t, bullet, "declaration voids the verdict",
 		"the unqualified form must never appear here either — the qualifier is load-bearing in both documents or in neither")
-	assert.Contains(t, bullet, "`"+strconv.Itoa(payload.DefaultOutputTokens)+"`",
+	// Same non-colliding phrase anchor as the registry row: a bare backticked
+	// literal would match the `0`/`100` literals this bullet already carries.
+	assert.Contains(t, bullet, "the built-in `"+strconv.Itoa(payload.DefaultOutputTokens)+"`",
 		"anchored to the code so a production-only revert cannot leave this bullet quietly wrong")
 	assert.Contains(t, bullet, "1-byte floor",
 		"the same exception the registry row carries: the floor's trip DOES yield unverifiable, so the derived-trip promise needs its carve-out here too")
