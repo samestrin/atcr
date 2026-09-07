@@ -370,6 +370,48 @@ func TestSymbolIndexResolve_NonSubsetBarredAnchorIsIgnored(t *testing.T) {
 	assert.Equal(t, "pkg/a.go", file)
 }
 
+// TestSymbolIndexResolve_NonSubsetBarredAnchorIsIgnoredOnTheSecondaryPath pins
+// the OTHER arm that trusts the same subset invariant.
+//
+// The clamp above lived inside resolvePrimary, where it rebound a
+// PARAMETER-LOCAL copy. resolve's own barredPrimary was therefore still the
+// caller's unclamped slice when it reached
+// `x.vetoResolvedSecondary(file, barredPrimary)`, and contradicts() consults
+// every member unconditionally — so a name outside primary could still veto a
+// FIX-sourced file on this path. The clamp's own comment claimed to "enforce the
+// documented contract at the boundary" and the commit that added it said "a
+// non-subset barred name can no longer veto"; both were false for this arm
+// against their own diff, and the test above could not see it because it
+// exercises the primary path only.
+//
+// Fixture: anchorA is cited in SOURCE but not declared, so the primary set
+// cannot locate and primaryMatched still holds — the one shape that reaches
+// resolveSecondary. barredB is declared in exactly one OTHER file and is NOT a
+// member of primary. fixC localizes to pkg/c.go.
+func TestSymbolIndexResolve_NonSubsetBarredAnchorIsIgnoredOnTheSecondaryPath(t *testing.T) {
+	x := &symbolIndex{
+		complete: true,
+		byName: map[string][]string{
+			"barredB": {"pkg/b.go"},
+			"fixC":    {"pkg/c.go"},
+		},
+		present: map[string]uint8{
+			"anchorA": presenceSource, // cited, never declared: matched but not localizable
+			"barredB": presenceSource,
+			"fixC":    presenceSource,
+		},
+	}
+
+	file, outcome := x.resolve(anchorSets{
+		primary:       []string{"anchorA"},
+		barredPrimary: []string{"barredB"},
+		secondary:     []string{"fixC"},
+	})
+	assert.Equal(t, tier4Resolved, outcome,
+		"a barred name outside primary may not veto the FIX-sourced file either — the clamp binds both arms")
+	assert.Equal(t, "pkg/c.go", file)
+}
+
 // TestBoundaryCutAnchors_DoesNotWithholdOnAbandonedArms pins boundaryCutAnchors'
 // documented behaviour on the capped and unaccounted arms: it does NOT withhold
 // there, mirroring the guard structure TestDroppedFixAnchors_AbandonedArmsWithhold
