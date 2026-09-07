@@ -337,6 +337,9 @@ func logSkepticFailure(logger *slog.Logger, skeptic, class, detail string) {
 // this lane chose. An operator who wants a trip to mean "untrustworthy" must
 // declare a ceiling BELOW the derived one, which is also the only declaration the
 // engine will actually enforce.
+//
+// skepticToolBudget returns the tool ceiling and whether a trip on it truncates
+// (true) or voids (false) the verdict.
 func skepticToolBudget(c registry.AgentConfig) (budget int64, derived bool) {
 	declared := derefInt64(c.ToolBudgetBytes)
 	if declared < 0 {
