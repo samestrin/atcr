@@ -886,6 +886,36 @@ func collectCallAnchors(text string, seen, clean map[string]struct{}, impreciseI
 		// is only ever read under a qualified conjunct, so the computation is
 		// guarded below and the walk is paid only by spans whose anchor qualified.
 		qualified := recordAnchor(anchor, seen)
+		// A spaceless-script break that dropped the prefix and left a tail too
+		// short or too signal-free to record has the SAME standing as the
+		// underscore-leading spelling of that shape, and used to record nothing at
+		// all — no anchor, no lostSpan, no silence. The guarded branch above
+		// asks the full-run question only under leadsWithUnderscore(anchor), and
+		// whether the surviving tail happens to start with an underscore says
+		// nothing about whether the break destroyed a searchable name. Measured:
+		// "配置aB() breaks and retryOnce() is never called" reported
+		// truncated=false where "設定_a() …" reported true, so with the other
+		// name absent from the tree the first text reached tier4NoMatch and
+		// validate.go charged the reviewer a phantom.
+		//
+		// Scoped to !qualified deliberately. A span whose tail DID record has a
+		// member, and is handled by the impreciseBoundaryCut marking below, which
+		// documents at length why it does not set lostSpan; widening to it would
+		// make tier4NoMatch unreachable for every finding whose prose runs
+		// spaceless prose into a call — a separate decision on separate evidence.
+		//
+		// Recorded as a silence rather than a bare flag, keyed on the full run's
+		// recordedAnchorForm, so scanAnchors' reconciliation can still retract the
+		// unknowable claim when the destroyed name is cited cleanly elsewhere.
+		// This is the same treatment the glued-and-unqualified span below gets,
+		// and for the same reason.
+		if !qualified && atBoundary && boundaryDroppedSpaceless {
+			full := trailingSegment(text[fullRunStart(text, start):i])
+			if isIdentifierShaped(full) && hasIdentifierSignal(full) {
+				lostSpan = true
+				silencedInto[recordedAnchorForm(full)] = struct{}{}
+			}
+		}
 		boundaryCut := false
 		if qualified && atBoundary {
 			boundaryCut = anchor != recordedAnchorForm(text[fullRunStart(text, start):i])
