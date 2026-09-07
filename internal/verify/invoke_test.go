@@ -854,6 +854,40 @@ func TestBuildSkepticAgent_NeverForwardsTheEngineUnlimitedSentinel(t *testing.T)
 	})
 }
 
+// TestSkepticToolBudget_NonDeclarationWindowIsNotTreatedAsOne pins the gate on
+// the resolution TIER, not on pointer non-nilness. payload.ResolveContextWindow
+// discards any declaration <= 0 or above the cap and falls through to the table
+// or the 32768 default, so a programmatically built config carrying such a value
+// was deriving the ceiling from the TABLE DEFAULT and labelling it derived — the
+// exact out-of-scope case the function's doc excludes. A non-declaration must
+// behave like no declaration: the value forwards untouched, derived = false.
+func TestSkepticToolBudget_NonDeclarationWindowIsNotTreatedAsOne(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		window int
+	}{
+		{"zero", 0},
+		{"negative", -1},
+		{"above the cap", 10000001},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			sk := testSkeptic()
+			sk.Config.ContextWindowTokens = &tc.window
+			// ToolBudgetBytes unset: the forwarded value is 0, the engine's default
+			// reading — nothing derived, nothing clamped.
+			budget, derived := skepticToolBudget(sk.Config)
+			require.False(t, derived,
+				"window declaration %d is rejected by the resolution chain, so deriving a ceiling from the table default would harden the wrong threat — it must behave like no declaration", tc.window)
+			require.EqualValues(t, 0, budget,
+				"a non-declaration window leaves the (unset) budget untouched")
+		})
+	}
+}
+
 // TestSkepticToolBudget_FloorIsOneByte pins the VALUE of the floor with a
 // literal, not with the production constant. minSkepticToolBudget compared
 // against itself is circular: bumping the constant to 4096 (or deleting the
