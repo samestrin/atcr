@@ -469,9 +469,20 @@ func TestTier4_TruncatedFixAnchorSetYieldsNoSuggestion(t *testing.T) {
 //     resolved on a secondary hit where production refuses to let the FIX set
 //     substitute for an absent subject — the verdict inversion that gate blocks
 //
-// One row per divergence is not the guard; comparing the two resolvers on the
-// same input is. The fake now delegates localization to a real symbolIndex, so
-// these rows pin that delegation rather than three hand-copied rules.
+// What the comparison does and does not guard. The fake delegates every
+// localization arm to the same symbolIndex methods production runs
+// (resolvePrimary, resolveSecondary, vetoResolvedSecondary), so on those paths
+// assert.Equal(prodOutcome, fakeOutcome) cannot fail: both answers are computed
+// by the same code, and a change to production flows through the fake
+// unchanged. The comparison's real signal is the fake's SCRIPTED parts — the
+// early returns, the inconc consultation order, and the primaryMatched gate —
+// where a restatement changes an outcome; a restatement that only loses a
+// counter passes here silently, which is why the delegated arms' counters are
+// pinned separately by TestFakeTier4_CountsProblemAnchorImprecise. Production
+// behaviour itself is pinned only by the require.Equal(wantOutcome,
+// prodOutcome) lines. These rows pin production and the fake's control flow —
+// not the fidelity of any arm the fake delegates, because there is no
+// restatement left to diverge.
 func TestFakeTier4_MirrorsResolveOnThePrimaryPath(t *testing.T) {
 	const (
 		fileA = "pkg/a.go"
