@@ -209,6 +209,24 @@ func TestExtractAnchors_Deterministic(t *testing.T) {
 	for i := 0; i < 25; i++ {
 		assert.Equal(t, first, mergeAnchorsForTest(problem, fix), "run %d drifted", i)
 	}
+
+	// The fixture above never trips the cap, so the provenance comparator inside
+	// it is never executed — the one branch whose determinism argument (a strict
+	// total order over a deduped set) a map-iteration drift could break.
+	//
+	// nineAnchorProblem (8 delimited + 1 call-shape) does NOT work here, measured:
+	// its surviving SET is decided by class membership alone, so even a comparator
+	// made non-total WITHIN a class keeps it byte-stable and the loop below would
+	// prove nothing. The fixture needs two members competing for the evicted slot
+	// in the losing class: seven delimited names plus two bare calls fire the cap
+	// across two provenance classes AND make the within-class tiebreak observable.
+	// Verified: making the comparator non-total within a class produced two
+	// distinct survivor sets over 200 iterations, and only this loop caught it.
+	for i := 0; i < 25; i++ {
+		got := mergeAnchorsForTest("`aOne` `bTwo` `cThree` `dFour` `eFive` `fSix` `gSeven` then alphaCheck() and zebraCheck() run", "")
+		require.Equal(t, []string{"aOne", "alphaCheck", "bTwo", "cThree", "dFour", "eFive", "fSix", "gSeven"}, got,
+			"run %d drifted: the capped, provenance-ranked set must be byte-stable across map iterations", i)
+	}
 }
 
 // TestExtractAnchors_Capped bounds the work Tier 4 does per finding: a finding
@@ -222,7 +240,7 @@ func TestExtractAnchors_Capped(t *testing.T) {
 	got := mergeAnchorsForTest(problem, "")
 	assert.Len(t, got, maxAnchorsPerFinding)
 	assert.Equal(t, []string{"aOne", "bTwo", "cThree", "dFour", "eFive", "fSix", "gSeven", "hEight"}, got,
-		"the cap keeps the lexically-first anchors so the truncation is deterministic too")
+		"one provenance class (all delimited): the cap keeps the lexically-first members of the class, so the truncation is deterministic too")
 }
 
 // TestExtractAnchors_ApostropheProse pins the per-delimiter scan: an apostrophe
@@ -1013,7 +1031,7 @@ func TestDroppedFixAnchors_AbandonedArmsWithhold(t *testing.T) {
 			anchors:     []string{"dataParse", "treeWalk"},
 			capped:      capped,
 			unaccounted: unaccounted,
-			imprecise:   map[string]struct{}{"dataParse": {}},
+			imprecise:   map[string]anchorImprecision{"dataParse": impreciseGlued},
 		}
 	}
 
@@ -1040,6 +1058,23 @@ func TestDroppedFixAnchors_AbandonedArmsWithhold(t *testing.T) {
 	t.Run("an empty imprecise map has nothing to report", func(t *testing.T) {
 		assert.Nil(t, anchorScan{anchors: []string{"treeWalk"}}.droppedFixAnchors(),
 			"the third disjunct: no member was narrowed out")
+	})
+
+	t.Run("a boundary-cut member is dropped too", func(t *testing.T) {
+		// The KIND is the thing a kind-filter mutation flips, and every row above
+		// asserts map MEMBERSHIP over a map that holds impreciseGlued only — the
+		// literal could be impreciseBoundaryCut or even 0 with identical results.
+		// This row pins the other kind by name: the FIX side bars BOTH imprecision
+		// kinds (the PROBLEM side bars only boundary-cut), so a map holding only
+		// impreciseBoundaryCut must still report the member dropped. Verified
+		// against the gap: narrowing droppedFixAnchors' filter to impreciseGlued
+		// alone left the rows above green and only this one failing.
+		scan := anchorScan{
+			anchors:   []string{"dataParse", "treeWalk"},
+			imprecise: map[string]anchorImprecision{"dataParse": impreciseBoundaryCut},
+		}
+		assert.Equal(t, []string{"dataParse"}, scan.droppedFixAnchors(),
+			"the FIX side bars both imprecision kinds: a boundary-cut member is dropped exactly as a glued one is")
 	})
 }
 
@@ -1170,6 +1205,18 @@ func TestScanAnchors_SilencedSpanReconciledAgainstClean(t *testing.T) {
 				"reviewer cited cleanly is never an unknowable loss) applies to it",
 		},
 		{
+			name:            "TWO spans silenced on the SAME fragment, cited cleanly once",
+			text:            "`_" + han + "` is broken; parse_" + han + "() and read_" + han + "() both fail",
+			wantUnaccounted: false,
+			wantAnchors:     []string{"_" + han},
+			why: "both spacing-prefix spans destroyed the SAME token — `_解析` is the " +
+				"name the reviewer wrote in each — so the record collapses to one " +
+				"entry and the single clean citation retracts both losses. This is " +
+				"the N-span extension of the row above, not a second loss standing " +
+				"beside it: `silenced` counts NAMES, not spans, and the epic's " +
+				"criterion applies to the shared name exactly once",
+		},
+		{
 			name:            "the FRAGMENT is cited cleanly and QUALIFIES, but a spaceless prefix was dropped",
 			text:            "`_abc` is odd; " + nameLongTail + "() returns nil",
 			wantUnaccounted: true,
@@ -1253,18 +1300,22 @@ func TestScanFixAnchors_SilencedSpanReconciledAgainstClean(t *testing.T) {
 //
 // A loss is retracted only when the destroyed token was cited CLEANLY and
 // SURVIVES the anchor cap. The cap half is reachable from text and is pinned by
-// the table above ("the vouching token is dropped by the anchor cap"). The clean
-// half is not: to separate it you need a token that is simultaneously a silence
-// subject and contributed only by a GLUED span, and the boundary rules make that
-// shape unreachable today — a glued token must cross two spaceless scripts while
-// a silence subject must lead with an underscore after the break.
+// the table above ("the vouching token is dropped by the anchor cap"). The
+// clean half is reachable too, and pinned at the text level by
+// TestScanAnchors_CleanConjunctReachableInText: in "parse_解析データ() then
+// _解析データ()", the silence subject `_解析データ` leads with an underscore AND is
+// contributed by a glued span (the run crosses Han into Katakana), so one token
+// is at once a silence subject and a glued-only contribution. This test's doc
+// previously called that shape unreachable — "a glued token must cross two
+// spaceless scripts while a silence subject must lead with an underscore" — but
+// the two conditions are not exclusive: the underscore sits at the head of a
+// token whose body crosses scripts, and that text disproves the claim.
 //
-// That makes the clean conjunct defensive rather than currently load-bearing,
-// which is a reason to pin its MEANING here, not a reason to drop it: membership
-// in `anchors` says a token was collected, and `clean` says it was read
-// faithfully. Only the second is evidence about what the reviewer wrote, and if
-// the boundary rules ever widen, a glued misreading would otherwise start
-// vouching for the very loss it is an instance of.
+// This test still pins the conjunct's MEANING at the unit level, one conjunct
+// at a time: membership in `anchors` says a token was collected, and `clean`
+// says it was read faithfully. Only the second is evidence about what the
+// reviewer wrote — a glued misreading may not vouch for the very loss it is an
+// instance of.
 func TestReconcileSilenced_BothConditionsAreRequired(t *testing.T) {
 	set := func(toks ...string) map[string]struct{} {
 		m := make(map[string]struct{}, len(toks))
@@ -1301,4 +1352,22 @@ func TestReconcileSilenced_BothConditionsAreRequired(t *testing.T) {
 		assert.False(t, reconcileSilenced(set(), set("parseTree"), []string{"parseTree"}),
 			"nothing was silenced, so there is nothing to retract or keep")
 	})
+}
+
+// TestScanAnchors_CleanConjunctReachableInText pins the `clean` half of
+// reconcileSilenced at the text level. The shape its doc called unreachable is
+// reachable: in "parse_解析データ() then _解析データ()", the first span's silence
+// subject `_解析データ` leads with an underscore, and the second span contributes
+// the SAME token as a GLUED reading (its run crosses Han into Katakana), so the
+// token lands in `anchors` and `imprecise` but never in `clean`. The clean
+// conjunct is what stops that mis-reading from vouching for the loss it is an
+// instance of; deleting it flips this text to unaccounted=false.
+func TestScanAnchors_CleanConjunctReachableInText(t *testing.T) {
+	kata := string([]rune{0x89E3, 0x6790, 0x30C7, 0x30FC, 0x30BF}) // 解析データ
+
+	s := scanAnchors("parse_" + kata + "() then _" + kata + "() ok")
+
+	assert.True(t, s.unaccounted,
+		"the only anchor sharing the silence subject is a GLUED reading of it; "+
+			"a mis-reading is not a clean citation and may not retract the loss")
 }

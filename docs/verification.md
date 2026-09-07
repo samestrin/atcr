@@ -10,7 +10,7 @@ False positives are the adoption killer for LLM code review: a panel that is mos
 - **What it reads:** `reconciled/findings.json` (the deduped findings).
 - **What it writes:** `reconciled/verification.json` (the audit record) and re-emitted `reconciled/findings.json` / `summary.json` with v2 confidence; it appends `"verify"` to the manifest stages.
 - **Re-runnable and idempotent:** verifying the same reconciled input twice yields the same artifacts. Already-verified findings are skipped unless you pass `--fresh`.
-- **Never drops a finding:** a skeptic failure (timeout, provider error, tripped budget, malformed output) yields an `unverifiable` verdict — never a dropped finding and never a failed run by itself.
+- **Never drops a finding:** a skeptic failure (timeout, provider error, a tripped budget you declared, malformed output) yields an `unverifiable` verdict — never a dropped finding and never a failed run by itself. (One trip is not a failure: overrunning a `tool_budget_bytes` ceiling this lane *derived* from the agent's declared context window truncates the reading and keeps the verdict — see Cost Controls.)
 
 Run it standalone, chained off a review, or as an MCP tool:
 
@@ -41,7 +41,7 @@ A skeptic returns a strict, parseable envelope:
 
 - `confirmed` — the skeptic checked the evidence and the finding holds.
 - `refuted` — the skeptic found concrete evidence the finding is wrong (a false positive).
-- `unverifiable` — the skeptic could not establish either way (ambiguous evidence, evidence outside the snapshot jail, a tripped budget, a provider error).
+- `unverifiable` — the skeptic could not establish either way (ambiguous evidence, evidence outside the snapshot jail, a declared budget tripped, a provider error). A *derived* `tool_budget_bytes` ceiling is the exception — it truncates without overruling the skeptic, so `trippedBudgets` can be non-empty on a `confirmed` or `refuted` record.
 
 Parsing is defensive. The parser unmarshals the JSON; if that fails it scans for a `{...}` object (so a verdict wrapped in markdown fences or surrounded by prose is still recovered); a verdict outside the enum, an empty response, or output that cannot be parsed at all all fall back to `unverifiable` with the raw text preserved in the notes. Malformed skeptic output therefore degrades safely — it never forges a `confirmed` or `refuted`.
 
@@ -96,7 +96,7 @@ Verification roughly doubles per-finding cost, so it is bounded several ways:
 - **`verify.votes`** (registry, default `1`) — skeptics consulted per finding. With one vote the single verdict passes through; with multiple, a clear majority wins and a tie becomes `unverifiable` (with all reasonings preserved).
 - **`--thorough`** — forces 3 skeptics with majority rule for the run, regardless of `verify.votes`.
 - **`--fresh`** — re-verify every finding, even those already carrying a verdict from a previous run. Without it, already-verified findings are skipped (idempotent re-runs are cheap).
-- **Per-finding budgets** — each skeptic reuses the reviewer tool-loop budgets: `max_turns`, `tool_budget_bytes`, and `timeout_secs` from the skeptic's agent config. A tripped budget yields `unverifiable`, never a dropped finding.
+- **Per-finding budgets** — each skeptic reuses the reviewer tool-loop budgets `max_turns` and `timeout_secs` from the skeptic's agent config, and forwards that config's `max_tokens` output cap to the provider (the declaration only — this lane has no `--max-tokens` flag and imposes no built-in default, so an agent that declares nothing keeps its provider's own). `tool_budget_bytes` is **not** reused verbatim: when the agent declares [`context_window_tokens`](registry.md#agent-fields) the budget — a `0` included — is clamped down to `EffectiveByteBudget(model, context_window_tokens, reserved_output)`, where `reserved_output` is the agent's `max_tokens` declaration floored at the built-in `8192` the review lane also floors at (an agent that declares no cap is still promised the provider's own default, so the ceiling reserves for it rather than reserving nothing), so tool output cannot walk a small-window skeptic past its own window. Tripping `max_turns` or `timeout_secs`, or a `tool_budget_bytes` ceiling **you declared**, yields `unverifiable`. Tripping a ceiling this lane *derived* does not: it stops the reading and keeps the verdict, because a budget the operator never configured must not turn a correct `refuted` into a result that blocks CI. Either way the finding is never dropped.
 
 Note: findings are verified concurrently through a bounded worker pool (`verify.max_parallel`, default `4`); the skeptics within a single finding run sequentially, so a `--thorough` run is `votes` provider calls back to back per finding, with up to `verify.max_parallel` findings in flight at once.
 

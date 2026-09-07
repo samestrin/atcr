@@ -16,12 +16,20 @@ import (
 // construct it describes lives in exactly one tracked file, in several, or
 // nowhere at all. *lazySymbolIndex is the production implementation.
 type tier4Resolver interface {
-	// droppedSecondary carries the FIX anchors scanFixAnchors narrowed out of
-	// secondary. They may not source a resolution — the glued reading of them
-	// may not be what the reviewer wrote — but a dropped name declared in a
-	// file other than the located one is the disagreement locate refuses on, so
-	// narrowing may not silently complete a set it left incomplete.
-	resolveWithDropped(ctx context.Context, primary, secondary, droppedSecondary []string) (string, tier4Outcome)
+	// The four sets travel in one anchorSets value rather than as four adjacent
+	// []string parameters: see that type for why the compiler has to be the one
+	// telling them apart.
+	//
+	// sets.barredPrimary and sets.droppedSecondary carry the members of each set
+	// that may not SOURCE a resolution: the reading of them may not be what the
+	// reviewer wrote. A barred name declared in a file other than the located one
+	// is still the disagreement locate refuses on, so narrowing may not silently
+	// complete a set it left incomplete. barredPrimary is a SUBSET of primary, not
+	// a replacement for it: primary is still the full set, because the presence
+	// check and the no-match arm must see every anchor or barring one would route
+	// a real finding out. The two sets are narrowed by different rules — see
+	// anchorScan.boundaryCutAnchors and anchorScan.droppedFixAnchors.
+	resolveWithDropped(ctx context.Context, sets anchorSets) (string, tier4Outcome)
 	// namedInDocs reports whether the doc-extension heuristic explains a no-match
 	// over these anchors: at least one was named in a documentation file and
 	// nowhere in source, and EVERY other anchor is accounted for somewhere in the
@@ -188,7 +196,43 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 		// source a suggestion, but a dropped name declared in another file is
 		// the disagreement locate refuses on, so narrowing must not silently
 		// complete a set it left incomplete (symbolIndex.resolve).
-		suggestion, outcome := tier4.resolveWithDropped(ctx, problemAnchors, fixAnchors, fixScan.droppedFixAnchors())
+		// The PROBLEM set is passed WHOLE, with the members that may not source a
+		// suggestion named alongside it rather than removed from it. Removing them
+		// would take an anchor out of the presence check and the no-match arm as
+		// well as out of the locate that sources the suggestion, and a subject that
+		// IS declared in the tree would then be judged "checked and found nothing"
+		// — routing out a real finding to avoid a wrong suggestion, which is a
+		// strictly worse trade than the one this narrowing makes.
+		barredPrimary := problemScan.boundaryCutAnchors()
+		// Barring a boundary-cut anchor from SOURCING a suggestion and letting it
+		// drive the no-match verdict rest on ONE premise and cannot be split: if
+		// `配置ParseConfig()` may have been truncated to a tail that is not what
+		// the reviewer wrote, then that tail is equally not evidence the tree
+		// LACKS the subject. Measured against AC1's fixture minus
+		// internal/cfg/parse.go — the tree declares only 配置ParseConfig, the scan
+		// records ParseConfig, present and byName are both empty for it,
+		// primaryMatched is false and problemTruncated is false (the boundaryCut
+		// marking deliberately does not set lostSpan) — so resolve returned
+		// tier4NoMatch and a real finding was deleted from report.md, routed to
+		// unresolved.json, and durably charged to the reviewer as a phantom.
+		//
+		// Gated on the WHOLE set, not on any barred member. One faithful anchor is
+		// evidence enough to answer with, and TestRunReconcile_BarredPrimaryKeeps-
+		// DeclaredSubjectUnrouted already pins that barring is not narrowing;
+		// widening this to "any boundary-cut member" would make tier4NoMatch
+		// unreachable for every finding whose prose runs spaceless prose into a
+		// call, which is the separate decision collectCallAnchors declines.
+		//
+		// Downgrading to "could not check" can only cost a routing, never
+		// manufacture one, which is the same safe direction the unaccounted arm
+		// below takes.
+		primaryAllBarred := len(problemAnchors) > 0 && len(barredPrimary) == len(problemAnchors)
+		suggestion, outcome := tier4.resolveWithDropped(ctx, anchorSets{
+			primary:          problemAnchors,
+			barredPrimary:    barredPrimary,
+			secondary:        fixAnchors,
+			droppedSecondary: fixScan.droppedFixAnchors(),
+		})
 		switch {
 		case outcome == tier4Resolved && problemScan.unaccounted:
 			// The PROBLEM set lost a member with no name to point at, and
@@ -223,7 +267,7 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 			metrics.Counter(tier4ProblemSetUnaccountedMetric).Inc()
 		case outcome == tier4Resolved:
 			findings[i].PathSuggestion = suggestion
-		case outcome == tier4NoMatch && !problemTruncated:
+		case outcome == tier4NoMatch && !problemTruncated && !primaryAllBarred:
 			unresolved = append(unresolved, i)
 			if tier4.namedInDocs(problemAnchors) {
 				// The subject IS named in the tree, just only in a file isDocExt
@@ -235,12 +279,19 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 				findings[i].UnresolvedReason = UnresolvedReasonDocShield
 			}
 		case outcome == tier4NoMatch:
+			// Reached on either of two readings the set cannot answer from.
+			//
 			// problemTruncated: the set searched is not a faithful reading of what
 			// the PROBLEM named — see extractAnchorSet's doc for the losses the
 			// flag covers, of which the anchor cap is only one. Whichever loss it
 			// was, the one anchor that would have matched may be among what was
 			// not faithfully recovered, and a partial search cannot produce a
 			// "found nothing" verdict.
+			//
+			// primaryAllBarred: every member IS a faithful reading of some token,
+			// but each is a proper SUFFIX of a name the reviewer may have written
+			// whole, so the set contains no evidence about the subject either way.
+			// See the note at its assignment above.
 			//
 			// Recorded trade: even an UNtruncated set is only a reading of the
 			// tokens that carry an identifier signal. A subject token that

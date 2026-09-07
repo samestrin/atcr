@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/tools"
 )
@@ -242,4 +245,370 @@ func TestInvokeSkeptic_NilDispatcher(t *testing.T) {
 	t.Parallel()
 	_, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat("{}"), nil, false)
 	require.Error(t, err)
+}
+
+// TestInvokeSkeptic_ForwardsDeclaredMaxTokens pins that an agent's max_tokens
+// declaration reaches the skeptic REQUEST, not merely the Agent literal.
+//
+// llmclient.Invocation carries MaxTokens and its own doc warns that a reasoning
+// model spends the budget on chain-of-thought before emitting visible content, but
+// the skeptic Invocation forwarded every other per-agent budget (MaxTurns,
+// ToolBudgetBytes, MaxRetries, InitialBackoffMs) and omitted this one — so the
+// provider default applied and the declaration was silently inert. Under a low
+// provider default the skeptic finishes mid-reasoning and returns no verdict,
+// which the engine records as unverifiable while the run still reports success:
+// the same silent-loss mode the review fan-out already fixed with resolveMaxTokens.
+// Measured 2026-09-06 through litellm on a TRIVIAL 7-line snippet: glm-5.3-flash
+// emitted 5,885 chars of reasoning, minimax-m3 13,618 and 3,270 output tokens.
+//
+// The undeclared row is load-bearing, not filler. Only the DECLARATION is
+// forwarded — no built-in default is imposed here, unlike the review fan-out's
+// third tier — so an undeclared skeptic keeps the provider default it has today
+// and this fix cannot newly truncate one. Changing that is a separate decision on
+// separate evidence.
+func TestInvokeSkeptic_ForwardsDeclaredMaxTokens(t *testing.T) {
+	t.Parallel()
+
+	t.Run("declared", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		sk.Config.MaxTokens = intPtr(24000)
+		cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed"}`}}}
+
+		_, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+		require.NoError(t, err)
+
+		got := cc.lastInvocation().MaxTokens
+		require.NotNil(t, got, "the declaration must reach the request body, not stop at the Agent literal")
+		assert.Equal(t, 24000, *got)
+	})
+
+	t.Run("undeclared keeps the provider default", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed"}`}}}
+
+		_, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+		require.NoError(t, err)
+
+		assert.Nil(t, cc.lastInvocation().MaxTokens,
+			"no declaration means no cap is sent: this fix removes an omission, it does not impose a new default")
+	})
+}
+
+// TestBuildSkepticAgent_ClampsToolBudgetToDeclaredWindow pins that a skeptic's
+// context_window_tokens declaration reaches the ONE budget in this lane it can
+// bound: the tool-output ceiling.
+//
+// A skeptic reads real files through the tool loop, so its input grows with tool
+// output — but ToolBudgetBytes is a flat per-agent number, not window-derived, so
+// an agent declared at 32768 tokens and one declared at 512000 got the same tool
+// budget and the small one could be walked past its window by a few large reads.
+// The declaration was inert here (docs/registry.md said as much).
+//
+// Only a DECLARED window clamps. An undeclared agent keeps exactly today's
+// behaviour, so this cannot newly starve a roster nobody has sized.
+func TestBuildSkepticAgent_ClampsToolBudgetToDeclaredWindow(t *testing.T) {
+	t.Parallel()
+
+	small := 32768
+	large := 512000
+
+	t.Run("a small declared window shrinks the effective tool budget", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		sk.Config.ContextWindowTokens = &small
+		sk.Config.ToolBudgetBytes = int64Ptr(4 << 20) // 4 MiB: far past a 32k window
+
+		got := buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes
+		// Reserve the built-in output cap, the same number the review lane floors
+		// at — an undeclared agent is still promised the provider's own default.
+		want := payload.EffectiveByteBudget(sk.Config.Model, &small, payload.DefaultOutputTokens)
+		require.Positive(t, want, "the fixture must leave real input room, or the clamp below proves nothing")
+		assert.Equal(t, want, got, "a declared window bounds what the tool loop may pour into it")
+		assert.Less(t, got, int64(4<<20), "the flat per-agent number must lose to the smaller window-derived ceiling")
+	})
+
+	t.Run("a larger window leaves a smaller declared budget alone", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		sk.Config.ContextWindowTokens = &large
+		sk.Config.ToolBudgetBytes = int64Ptr(4096)
+
+		assert.Equal(t, int64(4096), buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+			"the clamp is a ceiling, never a floor: an operator asking for less still gets less")
+	})
+
+	t.Run("an undeclared window keeps today's behaviour", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		sk.Config.ToolBudgetBytes = int64Ptr(4 << 20)
+
+		assert.Equal(t, int64(4<<20), buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+			"no declaration, no clamp — nothing is derived from a window nobody stated")
+	})
+
+	t.Run("an unlimited budget is clamped like any other", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		sk.Config.ContextWindowTokens = &small
+		// ToolBudgetBytes unset: the engine reads 0 as UNLIMITED, which is exactly
+		// the state a declared window contradicts.
+
+		assert.Equal(t, payload.EffectiveByteBudget(sk.Config.Model, &small, payload.DefaultOutputTokens),
+			buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+			"unlimited is not a smaller number — a declared window must bound it")
+	})
+
+	t.Run("a non-positive ceiling is never forwarded", func(t *testing.T) {
+		t.Parallel()
+		tiny := 1 // prompt overhead alone exhausts it
+		sk := testSkeptic()
+		sk.Config.ContextWindowTokens = &tiny
+		sk.Config.ToolBudgetBytes = int64Ptr(4096)
+
+		require.Zero(t, payload.EffectiveByteBudget(sk.Config.Model, &tiny, payload.DefaultOutputTokens),
+			"the fixture must actually produce a zero ceiling, or the guard below is untested")
+		assert.Equal(t, int64(4096), buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+			"forwarding a derived 0 would mean UNLIMITED to the engine — the exact inversion of the clamp")
+	})
+
+	t.Run("the output cap is reserved out of the window", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		sk.Config.ContextWindowTokens = &small
+		sk.Config.MaxTokens = intPtr(8000)
+
+		got := buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes
+		assert.Equal(t, payload.EffectiveByteBudget(sk.Config.Model, &small, 8000), got)
+		assert.Less(t, got, payload.EffectiveByteBudget(sk.Config.Model, &small, 0),
+			"tokens promised to the response are not available to tool output")
+		assert.Greater(t, got, payload.EffectiveByteBudget(sk.Config.Model, &small, payload.DefaultOutputTokens),
+			"a declaration BELOW the built-in default must reserve less than the default, not fall back to it")
+	})
+}
+
+// TestInvokeSkeptic_DerivedToolBudgetTripDoesNotVoidTheVerdict pins the boundary
+// the window-derived tool budget must not cross: it may TRUNCATE what a skeptic
+// reads, but it may not VOID what the skeptic concluded.
+//
+// The clamp gave every window-declaring roster agent a positive tool ceiling
+// where derefInt64 previously returned 0 (unlimited) — 29 of 29 agents in the
+// shipped registry declare context_window_tokens and none declares
+// tool_budget_bytes. Under invoke.go's collapse, ANY tripped budget rewrites the
+// model's answer to "unverifiable", and reconcile/gate.go excludes only
+// "refuted" from the CI gate. So a skeptic that reads a few large files and
+// correctly refutes a false-positive HIGH finding would newly BLOCK the gate —
+// on a budget the operator never configured.
+//
+// A DECLARED budget keeps its enforcement semantics: an operator who asks for a
+// ceiling is asking for the trip to mean something.
+func TestInvokeSkeptic_DerivedToolBudgetTripDoesNotVoidTheVerdict(t *testing.T) {
+	t.Parallel()
+
+	// Small enough that one oversized read exceeds the derived ceiling, but past
+	// the output+overhead reservation (8192+4096 tokens) that would otherwise
+	// leave nothing to derive from.
+	window := 20000
+
+	newSkeptic := func() Skeptic {
+		sk := testSkeptic()
+		sk.Config.ContextWindowTokens = &window
+		return sk
+	}
+	ceiling := payload.EffectiveByteBudget(testSkeptic().Config.Model, &window, payload.DefaultOutputTokens)
+	require.Positive(t, ceiling, "the fixture must derive a real ceiling, or nothing below is exercised")
+
+	// One tool result that overruns the ceiling, then a real final answer — the
+	// loop trips at end-of-turn and calls requestFinalAnswer, so the model DOES
+	// speak before the collapse decides whether to listen.
+	overrunDispatcher := func() *fakeDispatcher {
+		return &fakeDispatcher{result: tools.ToolResult{
+			Content:       strings.Repeat("x", int(ceiling)+1),
+			OriginalBytes: int(ceiling) + 1,
+		}}
+	}
+	refutingTurns := func() *fakeChatCompleter {
+		return &fakeChatCompleter{turns: []chatTurn{
+			toolCallTurn("read_file"),
+			{content: `{"verdict": "refuted", "reasoning": "the cited line does not do what the finding claims"}`},
+		}}
+	}
+
+	t.Run("a derived ceiling truncates but does not overrule the skeptic", func(t *testing.T) {
+		t.Parallel()
+		sk := newSkeptic()
+		// ToolBudgetBytes deliberately unset: the ceiling is entirely derived, so
+		// there is no operator intent for the trip to enforce.
+
+		v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", refutingTurns(), overrunDispatcher(), false)
+		require.NoError(t, err)
+		require.NotNil(t, v)
+		assert.Equal(t, verdictRefuted, v.Verdict,
+			"a budget the operator never configured must not rewrite a real verdict into one that blocks the gate")
+		assert.Contains(t, tripped, "tool_budget_bytes",
+			"the trip is still reported for audit — it is the VERDICT that must survive, not the silence")
+	})
+
+	t.Run("a declared ceiling keeps its enforcement semantics", func(t *testing.T) {
+		t.Parallel()
+		sk := newSkeptic()
+		sk.Config.ToolBudgetBytes = int64Ptr(ceiling / 2) // smaller than the ceiling: the declaration wins
+
+		v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", refutingTurns(), overrunDispatcher(), false)
+		require.NoError(t, err)
+		require.NotNil(t, v)
+		assert.Equal(t, verdictUnverifiable, v.Verdict,
+			"an operator who declares a tool budget is asking for the trip to mean the run is untrustworthy")
+		assert.Contains(t, tripped, "tool_budget_bytes")
+	})
+
+	t.Run("a trip on any other budget still voids the verdict", func(t *testing.T) {
+		t.Parallel()
+		sk := newSkeptic()
+		sk.Config.MaxTurns = intPtr(2)
+		cc := &fakeChatCompleter{turns: []chatTurn{toolCallTurn("read_file"), toolCallTurn("read_file")}}
+
+		v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+		require.NoError(t, err)
+		require.NotNil(t, v)
+		assert.Equal(t, verdictUnverifiable, v.Verdict,
+			"the exemption is scoped to the derived tool budget alone — max_turns still halts a run")
+		assert.Contains(t, tripped, "max_turns")
+	})
+}
+
+// TestBuildSkepticAgent_ReservesTheSameOutputCapAsTheReviewLane pins the second
+// half of skepticToolBudget's own argument.
+//
+// The derivation's doc claims it is "the same one the review fan-out sizes
+// payloads with, so the window resolution chain ... and the output reservation
+// have exactly one definition". The window chain was shared; the output
+// reservation was not. The review lane resolves declaration → the built-in
+// payload.DefaultOutputTokens (fanout.resolveMaxTokens FLOORS at it); this lane
+// passed derefInt(c.MaxTokens), which is 0 when nothing is declared.
+//
+// The undeclared case is the DOMINANT one — 23 of the 29 window-declaring roster
+// agents declare no max_tokens — and it is also the case where reserving nothing
+// is least defensible: when the declaration is nil the lane forwards nil to
+// llmclient.Invocation.MaxTokens, which omits the field so the PROVIDER's own
+// default applies. The ceiling then reserves zero output tokens while the
+// provider reserves an unknown, non-zero amount — defeating the clamp's own
+// stated premise that tokens promised to the response are not available to tool
+// output.
+func TestBuildSkepticAgent_ReservesTheSameOutputCapAsTheReviewLane(t *testing.T) {
+	t.Parallel()
+
+	// Large enough that the built-in reservation still leaves real input room —
+	// the point is that the ceiling SHRINKS, not that it collapses.
+	window := 128000
+
+	t.Run("an undeclared max_tokens still reserves the built-in default", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		sk.Config.ContextWindowTokens = &window
+		// MaxTokens deliberately nil: the provider will apply its own default, so
+		// the ceiling must reserve something rather than pretend output is free.
+
+		got := buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes
+		want := payload.EffectiveByteBudget(sk.Config.Model, &window, payload.DefaultOutputTokens)
+		require.Positive(t, want, "the fixture must leave input room, or the assertion below proves nothing")
+		assert.Equal(t, want, got,
+			"an undeclared agent must reserve the same output cap the review lane floors at")
+		assert.Less(t, got, payload.EffectiveByteBudget(sk.Config.Model, &window, 0),
+			"reserving nothing was the bug: it hands tool output room the response will take back")
+	})
+
+	t.Run("a declared max_tokens still wins over the default", func(t *testing.T) {
+		t.Parallel()
+		declared := 16384
+		require.NotEqual(t, payload.DefaultOutputTokens, declared,
+			"precondition: the declaration must differ from the constant, or this proves nothing")
+		sk := testSkeptic()
+		sk.Config.ContextWindowTokens = &window
+		sk.Config.MaxTokens = &declared
+
+		assert.Equal(t, payload.EffectiveByteBudget(sk.Config.Model, &window, declared),
+			buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+			"the declaration is the cap the provider will honour, so it is the cap to reserve")
+	})
+
+	t.Run("an undeclared window reserves nothing, because it clamps nothing", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		sk.Config.ToolBudgetBytes = int64Ptr(4 << 20)
+
+		assert.Equal(t, int64(4<<20), buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+			"no declared window, no derivation — the reservation never enters the picture")
+	})
+}
+
+// TestBuildSkepticAgent_ReservationNeverCostsTheCeilingItself pins the boundary
+// the output reservation must not cross: it may SHRINK the derived ceiling, but
+// it may not be the reason there is no ceiling at all.
+//
+// Raising the reservation from derefInt(c.MaxTokens) (0 when undeclared) to
+// reservedOutputTokens (floored at payload.DefaultOutputTokens) also moved
+// payload.EffectiveByteBudget's zero-return threshold, because effectiveTokens =
+// window - outputTokens - promptOverheadTokens. The threshold went from
+// `window <= 4096` to `window <= 12288`. An agent declaring a window anywhere in
+// that band — legal config, internal/registry/config.go admits 1..10000000 — then
+// takes skepticToolBudget's `if ceiling <= 0` arm and gets `declared`, which for
+// the dominant roster shape (no tool_budget_bytes) is 0. internal/fanout/loop.go
+// reads 0 as UNLIMITED, so the SMALLEST window — the exact case this clamp's own
+// doc says it exists for — was the one case it stopped protecting, and it was
+// strictly better before: window 8000 derived 13664 bytes with a zero
+// reservation.
+//
+// The reservation is a claim on the window, not a veto over it. Where the window
+// cannot afford the full reservation, the ceiling must still be derived without
+// it rather than collapsing to unlimited. Where the window genuinely has no input
+// room at all (below the prompt overhead), there is no ceiling to derive and the
+// declared value stands — that case is unchanged and is pinned below too.
+func TestBuildSkepticAgent_ReservationNeverCostsTheCeilingItself(t *testing.T) {
+	t.Parallel()
+
+	// Every window in the band the raised reservation newly zeroed, plus one on
+	// each side of it.
+	for _, window := range []int{4097, 8000, 12288, 12289, 20000} {
+		window := window
+		t.Run(fmt.Sprintf("window %d keeps a real ceiling", window), func(t *testing.T) {
+			t.Parallel()
+			sk := testSkeptic()
+			sk.Config.ContextWindowTokens = &window
+			// ToolBudgetBytes deliberately unset: the dominant roster shape, and the
+			// one where falling back to `declared` means UNLIMITED.
+
+			require.Positive(t, payload.EffectiveByteBudget(sk.Config.Model, &window, 0),
+				"precondition: this window has input room once nothing is reserved, so a zero ceiling can only be the reservation's doing")
+
+			got := buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes
+			assert.Positive(t, got,
+				"a declared window must still bound the tool loop — forwarding 0 hands the smallest-window skeptic an unlimited read")
+		})
+	}
+
+	t.Run("a window that can afford the reservation still pays it", func(t *testing.T) {
+		t.Parallel()
+		window := 128000
+		sk := testSkeptic()
+		sk.Config.ContextWindowTokens = &window
+
+		assert.Equal(t, payload.EffectiveByteBudget(sk.Config.Model, &window, payload.DefaultOutputTokens),
+			buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+			"the fallback is for windows that cannot afford the reservation, not a retreat from reserving at all")
+	})
+
+	t.Run("a window with no input room at all derives nothing", func(t *testing.T) {
+		t.Parallel()
+		tiny := 1 // below the prompt overhead: no reservation makes this fit
+		sk := testSkeptic()
+		sk.Config.ContextWindowTokens = &tiny
+		sk.Config.ToolBudgetBytes = int64Ptr(4096)
+
+		require.Zero(t, payload.EffectiveByteBudget(sk.Config.Model, &tiny, 0),
+			"precondition: this window has no room even with nothing reserved, so there is genuinely no ceiling to derive")
+		assert.Equal(t, int64(4096), buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+			"the declared value still stands where no ceiling exists — this arm is not what the fix removes")
+	})
 }
