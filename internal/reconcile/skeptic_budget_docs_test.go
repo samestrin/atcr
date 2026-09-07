@@ -57,6 +57,37 @@ func TestDocs_ToolBudgetBytesRowStatesTheSkepticClamp(t *testing.T) {
 		"a reader needs to know WHICH declaration triggers the clamp")
 	assert.Contains(t, row, "EffectiveByteBudget",
 		"naming the derivation is what makes the ceiling checkable rather than folklore")
+
+	// The reservation clauses. Asserted as load-bearing PHRASES rather than whole
+	// sentences, so ordinary rewording does not break the guard but losing the
+	// meaning does.
+	assert.Contains(t, row, "half the window's input room",
+		"the reservation is capped at half the input room — a row that omits the cap describes a clamp the lane stopped performing")
+	assert.Contains(t, row, "at or below the prompt overhead",
+		"payload.EffectiveByteBudget returns 0 on effectiveTokens <= 0, so a window EXACTLY equal to the overhead also derives nothing")
+	assert.NotContains(t, row, "floored at",
+		"reservedOutputTokens DEFAULTS to the built-in 8192 when max_tokens is unset; it never floors, so max_tokens: 100 really does reserve 100")
+}
+
+// TestDocs_ContextWindowRowDoesNotRestateTheSkepticClamp pins the
+// context_window_tokens row against the tool_budget_bytes row in the same table.
+//
+// Both rows described the same clamp, in different words, and they drifted: row
+// 239 was corrected while row 71 kept an EffectiveByteBudget(model, declaration,
+// max_tokens) formula that understates the reservation for every agent declaring
+// no max_tokens and never mentions the half-room cap at all. Two descriptions of
+// one behaviour is the drift mechanism itself, so the row now points at the
+// other rather than restating it.
+func TestDocs_ContextWindowRowDoesNotRestateTheSkepticClamp(t *testing.T) {
+	doc := readDoc(t, "registry.md")
+	row := docTableRow(t, doc, "context_window_tokens")
+
+	assert.Contains(t, row, "tool_budget_bytes",
+		"the row must still tell a reader WHICH budget the declaration bounds in the skeptic lane")
+	assert.NotContains(t, row, "EffectiveByteBudget(",
+		"a second copy of the formula is what drifted — this row cross-references the tool_budget_bytes row instead")
+	assert.NotContains(t, row, "floored",
+		"the reservation is a default, not a floor, in every row that mentions it")
 }
 
 // docBullet returns the single "- **`field`**" bullet naming want, or the first
@@ -93,6 +124,17 @@ func TestDocs_VerificationPerFindingBudgetsMatchTheSkepticLane(t *testing.T) {
 		"naming the derivation is what lets a reader check the ceiling instead of guessing it")
 	assert.NotContains(t, bullet, "A tripped budget yields `unverifiable`, never a dropped finding.",
 		"the unqualified claim is false for a trip on the derived ceiling, which truncates without voiding the verdict")
+
+	// The same two clauses registry.md's tool_budget_bytes row carries. Asserting
+	// them in BOTH documents is what stops the pair drifting apart again: the
+	// downstream sweep that corrected the registry row left this bullet behind,
+	// and the guard passed anyway because it asserted neither clause.
+	assert.Contains(t, bullet, "half the window's input room",
+		"the reservation is capped at half the input room — without the cap the bullet promises a clamp the lane stopped performing")
+	assert.NotContains(t, bullet, "floored at",
+		"reservedOutputTokens DEFAULTS to the built-in 8192 when max_tokens is unset; neither this lane nor the review lane floors")
+	assert.NotContains(t, bullet, "so tool output cannot walk a small-window skeptic past its own window",
+		"the promise is what drifted: state the cap that makes it true, not the outcome alone")
 }
 
 // TestDocs_CrossExaminationPerSeatBudgetsMatchTheDebateLane pins
