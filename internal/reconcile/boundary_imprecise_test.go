@@ -151,12 +151,24 @@ func TestRunReconcile_BoundaryTruncatedAnchorWithholdsSuggestionEndToEnd(t *test
 	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
 		"HIGH|internal/tokens/renewal.go:31|配置ParseConfig() ignores the returned error|check the error|correctness|20|ev|greta\n")
 
+	// The counter bracket is this test's positive control (resolve-td
+	// --apply-answers, 90%): every field assertion below — PathValid false, a
+	// warning, no suggestion, nothing sidecar-routed — is ALSO what a dead
+	// resolver, a failed parse, or an empty anchor set produces, so without the
+	// bracket the test cannot tell "the barring withheld it" from "Tier 4 never
+	// reached a verdict". The bracket proves the run reached the barred-primary
+	// arm and incremented exactly once (measured DELTA=1: the FIX text carries no
+	// anchors, so only the primary-path site fires), mirroring the pattern in
+	// TestTier4ProblemAnchorImpreciseMetric's first subtest.
+	before := metrics.Counter(tier4ProblemAnchorImpreciseMetric).Value()
 	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
 		ReconciledAt: time.Unix(1700000000, 0).UTC(),
 		Root:         root,
 	})
 	require.NoError(t, err)
 	require.Len(t, res.Findings, 1, "the finding is KEPT — withholding a suggestion never routes one out")
+	assert.Equal(t, before+1, metrics.Counter(tier4ProblemAnchorImpreciseMetric).Value(),
+		"the AC1 mechanism fired: the barred tail, not some upstream refusal, withheld the suggestion")
 
 	got := res.JSONFindings()[0]
 	assert.Equal(t, "internal/tokens/renewal.go", got.File, "suggest-only: File is never rewritten")
