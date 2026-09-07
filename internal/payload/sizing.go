@@ -103,8 +103,8 @@ func EffectiveByteBudget(model string, declared *int, outputTokens int) int64 {
 
 // InputRoomTokens reports how many tokens a model's resolved window leaves for
 // INPUT once the fixed prompt overhead is removed, before any output reservation
-// is taken out of it. Never negative: a window at or below the overhead has no
-// input room at all, which is 0 rather than a deficit.
+// is taken out of it. Returns 0 when the window is at or below the prompt
+// overhead — the window has no input room at all, never a negative number.
 //
 // It exists so a caller can size a reservation against what the window can
 // actually fund — "reserve the output cap, but never more than half the input
