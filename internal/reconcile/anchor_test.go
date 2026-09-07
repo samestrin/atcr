@@ -1205,6 +1205,18 @@ func TestScanAnchors_SilencedSpanReconciledAgainstClean(t *testing.T) {
 				"reviewer cited cleanly is never an unknowable loss) applies to it",
 		},
 		{
+			name:            "TWO spans silenced on the SAME fragment, cited cleanly once",
+			text:            "`_" + han + "` is broken; parse_" + han + "() and read_" + han + "() both fail",
+			wantUnaccounted: false,
+			wantAnchors:     []string{"_" + han},
+			why: "both spacing-prefix spans destroyed the SAME token — `_解析` is the " +
+				"name the reviewer wrote in each — so the record collapses to one " +
+				"entry and the single clean citation retracts both losses. This is " +
+				"the N-span extension of the row above, not a second loss standing " +
+				"beside it: `silenced` counts NAMES, not spans, and the epic's " +
+				"criterion applies to the shared name exactly once",
+		},
+		{
 			name:            "the FRAGMENT is cited cleanly and QUALIFIES, but a spaceless prefix was dropped",
 			text:            "`_abc` is odd; " + nameLongTail + "() returns nil",
 			wantUnaccounted: true,

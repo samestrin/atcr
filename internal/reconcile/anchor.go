@@ -654,6 +654,16 @@ func collectDelimitedAnchors(text string, d byte, seen, clean, explicitAnchors m
 // member can be repaired by dropping that member, and a loss without one cannot
 // be repaired at all, because what the span would have named is not in the set.
 //
+// The record is a set of NAMES, not a ledger of SPANS: two spans that destroyed
+// the same token collapse to one entry, so one clean citation of a shared
+// destroyed name retracts every span that destroyed it. That is the intended
+// N-span extension of the single-span criterion, not a defect of it — for a
+// spacing-prefix span the fragment IS the name the reviewer wrote, so two spans
+// reducing to the same fragment destroyed the same name, and citing it makes it
+// knowable once, not once per span. (Pinned by
+// TestScanAnchors_SilencedSpanReconciledAgainstClean's "TWO spans silenced on
+// the SAME fragment" row.)
+//
 // Disclosed cost of the full-run question: the same unaccounted=true flows
 // through scanAnchors into scanFixAnchors, which abandons the FIX anchor set
 // WHOLE on it. So for a spaceless-prefix short tail — bare or qualified — an
