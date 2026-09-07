@@ -8,6 +8,7 @@ import (
 	reclib "github.com/samestrin/atcr/reconcile"
 	"log/slog"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
@@ -204,11 +205,30 @@ func (d *boundedDispatcher) Execute(ctx context.Context, name string, args json.
 		if out.OriginalBytes == 0 {
 			out.OriginalBytes = len(out.Content)
 		}
-		out.Content = out.Content[:d.remaining]
+		out.Content = safeRuneCut(out.Content, int(d.remaining))
 		out.Truncated = true
 	}
 	d.remaining -= int64(len(out.Content))
 	return out, nil
+}
+
+// safeRuneCut returns s truncated to at most n bytes without splitting a
+// multi-byte UTF-8 rune, so the result is always valid UTF-8. It mirrors the
+// unexported helper internal/tools uses for its own caps — the tool content is
+// serialised into a JSON request body, and a raw byte slice through the middle
+// of a rune produces the replacement character (or a provider-side reject)
+// rather than a clean short read.
+func safeRuneCut(s string, n int) string {
+	if n >= len(s) {
+		return s
+	}
+	if n <= 0 {
+		return ""
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // budgetToolBytes is fanout's tripped-budget marker for the tool-output ceiling.
