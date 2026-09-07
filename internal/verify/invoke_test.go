@@ -406,10 +406,13 @@ func TestBuildSkepticAgent_ClampsToolBudgetToDeclaredWindow(t *testing.T) {
 func TestInvokeSkeptic_DerivedToolBudgetTripDoesNotVoidTheVerdict(t *testing.T) {
 	t.Parallel()
 
-	// Small enough that one oversized read exceeds the derived ceiling, but past
-	// the output+overhead reservation (8192+4096 tokens) that would otherwise
-	// leave nothing to derive from.
-	window := 20000
+	// Small enough that one oversized read exceeds the derived ceiling, and at the
+	// boundary (2*DefaultOutputTokens + prompt overhead) where the half-room
+	// reservation cap stops binding — so the ceiling this fixture computes below
+	// from EffectiveByteBudget IS the ceiling the lane enforces. Inside the band
+	// the cap governs, the two would differ and the oversized read would no longer
+	// overrun anything.
+	window := 20480
 
 	newSkeptic := func() Skeptic {
 		sk := testSkeptic()
@@ -561,9 +564,12 @@ func TestBuildSkepticAgent_ReservesTheSameOutputCapAsTheReviewLane(t *testing.T)
 // reservation.
 //
 // The reservation is a claim on the window, not a veto over it. Where the window
-// cannot afford the full reservation, the ceiling must still be derived without
-// it rather than collapsing to unlimited. Where the window genuinely has no input
-// room at all (below the prompt overhead), there is no ceiling to derive and the
+// cannot afford the full reservation, the claim SHRINKS to what the window can
+// fund (capped at half its input room) rather than the ceiling collapsing to
+// unlimited — see TestSkepticToolBudget_ReservesOnlyWhatTheWindowCanAfford for
+// the derivation that replaced this file's original "derive again with nothing
+// reserved" second arm. Where the window genuinely has no input room at all (at
+// or below the prompt overhead), there is no ceiling to derive and a POSITIVE
 // declared value stands — that case is unchanged and is pinned below too.
 func TestBuildSkepticAgent_ReservationNeverCostsTheCeilingItself(t *testing.T) {
 	t.Parallel()

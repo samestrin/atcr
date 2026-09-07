@@ -101,8 +101,25 @@ func EffectiveByteBudget(model string, declared *int, outputTokens int) int64 {
 	return int64(effectiveTokens) * conservativeBytesPerTokenNum / conservativeBytesPerTokenDen
 }
 
-// InputRoomTokens is a compiling stub (RED). Real derivation lands in GREEN.
-func InputRoomTokens(model string, declared *int) int { return 0 }
+// InputRoomTokens reports how many tokens a model's resolved window leaves for
+// INPUT once the fixed prompt overhead is removed, before any output reservation
+// is taken out of it. Never negative: a window at or below the overhead has no
+// input room at all, which is 0 rather than a deficit.
+//
+// It exists so a caller can size a reservation against what the window can
+// actually fund — "reserve the output cap, but never more than half the input
+// room" is a policy that needs the room as a number, and the only alternative is
+// re-stating promptOverheadTokens outside this package. EffectiveByteBudget
+// subtracts the same constant, so a reservation derived from this function and
+// the budget derived from that one cannot disagree about the overhead. Its first
+// caller is internal/verify's skeptic tool ceiling.
+func InputRoomTokens(model string, declared *int) int {
+	room := ContextWindowTokens(model, declared) - promptOverheadTokens
+	if room < 0 {
+		return 0
+	}
+	return room
+}
 
 // ChunkMaxLines converts a model's effective input budget into a per-chunk diff
 // line count for the Epic 14.3 chunker (chunkDiff). A small-window model gets a
