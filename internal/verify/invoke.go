@@ -71,6 +71,24 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 	// to it (a future override, settings tier or clamp inside buildSkepticAgent
 	// would otherwise desync the two with no test able to catch it).
 	agent, derivedBudget := buildSkepticAgent(skeptic, prompt, exec)
+	// The ceiling this lane will enforce, with its provenance, once per
+	// invocation. failureNotes alone renders a 400 KB read and a 3-byte derived
+	// ceiling as byte-identical class=budget_truncated lines, and the floored
+	// case goes down the voiding branch below as a generic budget_tripped
+	// indistinguishable from a max_turns trip — so an operator whose roster is
+	// systematically starving cannot see the cause. The same package already has
+	// the pattern: the executor lane names its ceiling via executor_ceiling_skip.
+	capped := false
+	if _, src := payload.ResolveContextWindow(skeptic.Config.Model, skeptic.Config.ContextWindowTokens); src == payload.WindowSourceDeclaration {
+		capped = payload.InputRoomTokens(skeptic.Config.Model, skeptic.Config.ContextWindowTokens)/2 < reservedOutputTokens(skeptic.Config)
+	}
+	logger.Debug("skeptic tool ceiling",
+		"skeptic", skeptic.Name,
+		"budget", agent.ToolBudgetBytes,
+		"derived", derivedBudget,
+		"capped", capped,
+		"floored", agent.ToolBudgetBytes == minSkepticToolBudget,
+	)
 	engine := fanout.NewEngine(cc, fanout.WithDispatcher(disp), fanout.WithLogger(logger))
 	results := engine.Run(ctx, []fanout.Slot{{Primary: agent}})
 	// Engine.Run returns one Result per slot in input order, so one slot yields
