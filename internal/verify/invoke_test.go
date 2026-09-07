@@ -840,16 +840,17 @@ func TestBuildSkepticAgent_NeverForwardsTheEngineUnlimitedSentinel(t *testing.T)
 			"a negative budget must lose to the derived ceiling")
 	})
 
-	t.Run("a negative declared budget with no window is clamped to zero", func(t *testing.T) {
+	t.Run("a negative declared budget with no window gets the floor, not the UNLIMITED sentinel", func(t *testing.T) {
 		t.Parallel()
 		sk := testSkeptic()
 		sk.Config.ToolBudgetBytes = int64Ptr(-4096)
-		// No window: there is nothing to derive, so the value is forwarded as-is —
-		// but it must be normalised to the engine's own sentinel rather than a
-		// negative the engine has no defined reading for.
+		// No window: there is nothing to derive. Normalising the negative to 0
+		// alone forwarded the engine's own 0-as-UNLIMITED sentinel, so the value
+		// still reached loop.go unbounded — the exact outcome the parent test's
+		// name promises cannot happen. The floor closes it.
 
-		assert.Zero(t, buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
-			"an undeclared window derives nothing, so the value is forwarded — but as the engine's own sentinel, not a negative it has no reading for")
+		assert.EqualValues(t, 1, buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
+			"a negative budget must reach the engine as the 1-byte floor, never as the 0-as-UNLIMITED sentinel")
 	})
 }
 
