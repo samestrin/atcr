@@ -734,7 +734,7 @@ func TestBuildSkepticAgent_ReservesTheSameOutputCapAsTheReviewLane(t *testing.T)
 // The reservation is a claim on the window, not a veto over it. Where the window
 // cannot afford the full reservation, the claim SHRINKS to what the window can
 // fund (capped at half its input room) rather than the ceiling collapsing to
-// unlimited — see TestSkepticToolBudget_ReservesOnlyWhatTheWindowCanAfford for
+// unlimited — see TestSkepticToolBudget_ReservesAtMostHalfTheInputRoom for
 // the derivation that replaced this file's original "derive again with nothing
 // reserved" second arm. Where the window genuinely has no input room at all (at
 // or below the prompt overhead), there is no ceiling to derive and a POSITIVE
@@ -787,7 +787,7 @@ func TestBuildSkepticAgent_ReservationNeverCostsTheCeilingItself(t *testing.T) {
 	})
 }
 
-// TestSkepticToolBudget_ReservesOnlyWhatTheWindowCanAfford pins the derivation
+// TestSkepticToolBudget_ReservesAtMostHalfTheInputRoom pins the derivation
 // seam itself: ONE continuous formula, not two discrete arms with an inversion
 // between them.
 //
@@ -805,7 +805,7 @@ func TestBuildSkepticAgent_ReservationNeverCostsTheCeilingItself(t *testing.T) {
 // 1-token (3-byte) ceiling across the entire band — and a trip on a DERIVED
 // ceiling does not void the verdict, so the skeptic would answer from a 3-byte
 // view without signalling it.
-func TestSkepticToolBudget_ReservesOnlyWhatTheWindowCanAfford(t *testing.T) {
+func TestSkepticToolBudget_ReservesAtMostHalfTheInputRoom(t *testing.T) {
 	t.Parallel()
 
 	model := testSkeptic().Config.Model
