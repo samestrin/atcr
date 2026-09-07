@@ -354,9 +354,11 @@ const minSkepticToolBudget int64 = 1
 // the window when deriving the tool ceiling: the agent's own max_tokens
 // declaration, else payload.DefaultOutputTokens.
 //
-// The floor is the whole point. The review lane resolves the same chain through
-// fanout.resolveMaxTokens, which also floors at that constant, so the two lanes
-// now reserve the same number for the same agent — which is what
+// The DEFAULT is the whole point — and it is a default, not a floor: a declared
+// max_tokens of 100 reserves 100, not the built-in. The review lane resolves the
+// same chain through fanout.resolveMaxTokens, which defaults to the same constant
+// the same way, so the two lanes reserve the same number for the same agent —
+// which is what
 // skepticToolBudget's doc has always CLAIMED ("exactly one definition") and did
 // not deliver. Reserving derefInt(c.MaxTokens) meant reserving ZERO for the 23 of
 // 29 window-declaring roster agents that declare no cap, i.e. exactly the case
