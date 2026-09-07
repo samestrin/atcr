@@ -104,7 +104,7 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 		logger.Debug("skeptic failure detail", "skeptic", skeptic.Name, "class", "window_too_small", "detail", "window_below_prompt_overhead")
 		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "window_below_prompt_overhead", Skeptic: skeptic.Name}, nil, nil
 	}
-	engine := fanout.NewEngine(cc, fanout.WithDispatcher(disp), fanout.WithLogger(logger))
+	engine := fanout.NewEngine(cc, fanout.WithDispatcher(clampDispatcher(disp, agent.ToolBudgetBytes)), fanout.WithLogger(logger))
 	results := engine.Run(ctx, []fanout.Slot{{Primary: agent}})
 	// Engine.Run returns one Result per slot in input order, so one slot yields
 	// exactly one result. Guard the index anyway: a zero-length return must not
@@ -145,6 +145,70 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 		return v, res.TrippedBudgets, nil
 	}
 	return v, nil, nil
+}
+
+// boundedDispatcher wraps a Dispatcher so the bytes it hands the tool loop can
+// never carry a skeptic past the ceiling this lane derived for it.
+//
+// It exists because internal/fanout/loop.go's byte-budget check is a DEFERRED
+// end-of-turn trip: a turn's results are appended to the message list in full
+// and the ceiling is consulted only once they are already in hand, after which
+// requestFinalAnswer re-sends that message list to the provider. A single result
+// is capped independently at tools.DefaultMaxResultBytes (64 KiB), which for
+// every window below roughly 31000 tokens is larger than the whole derived
+// ceiling — so ONE read_file could walk a small window past its own budget
+// before anything tripped, and the clamp only ever stopped the SECOND turn.
+//
+// The wrapper is per-invocation, not per-dispatcher: buildDispatcher builds ONE
+// dispatcher for the whole verify run while each skeptic derives its own
+// ceiling, so clamping tools.Limits centrally would impose the smallest roster
+// window on every agent. Wrapping here keeps each skeptic bounded by its own
+// number and leaves the shared dispatcher untouched.
+type boundedDispatcher struct {
+	inner     Dispatcher
+	remaining int64
+}
+
+// clampDispatcher returns disp bounded to at most budget+1 bytes of cumulative
+// tool content, or disp unchanged when budget is the engine's UNLIMITED
+// sentinel (<= 0) and there is nothing to bound against.
+//
+// The allowance is budget+1, not budget, and the extra byte is load-bearing:
+// loop.go trips on `ToolBytes > ToolBudgetBytes`, so a wrapper that delivered at
+// most the budget exactly would leave the comparison false forever. The loop
+// would never trip, the tripped-budget slice would stay empty, and the skeptic
+// would spend every remaining turn receiving empty results instead of being sent
+// to its final answer. One byte over is the smallest overrun that still lets the
+// existing trip semantics — including the derived-ceiling exemption in
+// tripsVoidTheVerdict — fire exactly as they did before.
+func clampDispatcher(disp Dispatcher, budget int64) Dispatcher {
+	if budget <= 0 {
+		return disp
+	}
+	return &boundedDispatcher{inner: disp, remaining: budget + 1}
+}
+
+// Execute forwards to the wrapped dispatcher and truncates the result's Content
+// to whatever allowance is left, marking it Truncated and preserving
+// OriginalBytes so the transcript records what the tool actually produced.
+//
+// Not safe for concurrent use, and it does not need to be: each wrapper serves
+// exactly one invokeSkeptic call, and dispatchTurn executes a turn's calls
+// sequentially.
+func (d *boundedDispatcher) Execute(ctx context.Context, name string, args json.RawMessage) (tools.ToolResult, error) {
+	out, err := d.inner.Execute(ctx, name, args)
+	if err != nil {
+		return out, err
+	}
+	if int64(len(out.Content)) > d.remaining {
+		if out.OriginalBytes == 0 {
+			out.OriginalBytes = len(out.Content)
+		}
+		out.Content = out.Content[:d.remaining]
+		out.Truncated = true
+	}
+	d.remaining -= int64(len(out.Content))
+	return out, nil
 }
 
 // budgetToolBytes is fanout's tripped-budget marker for the tool-output ceiling.
@@ -307,6 +371,19 @@ const minSkepticToolBudget int64 = 1
 // the same budget and the small one could be walked past its window by a few large
 // reads. context_window_tokens was inert in this lane; this is the one budget here
 // it can bound.
+//
+// What the ceiling bounds is the CUMULATIVE tool content delivered across the
+// whole run, and that is true only because invokeSkeptic wraps the dispatcher in
+// boundedDispatcher. The engine's own check (internal/fanout/loop.go) is a
+// deferred end-of-turn trip: a turn's results land in the message list in full
+// and the ceiling is read afterwards, so the engine alone bounds the SECOND turn
+// and never the first. A single result is capped separately at
+// tools.DefaultMaxResultBytes (64 KiB), which is larger than the whole ceiling
+// derived for any window below roughly 31000 tokens — so without the wrapper one
+// read_file would deliver ~18700 tokens into a 12288-token window whose ceiling
+// is ~4096, and requestFinalAnswer would then re-send that oversized message
+// list to the provider. Read the two together: this function decides the number,
+// boundedDispatcher is what makes the number real on turn one.
 //
 // The derivation is payload.EffectiveByteBudget, the same one the review fan-out
 // sizes payloads with, so the window resolution chain (declaration → static model
