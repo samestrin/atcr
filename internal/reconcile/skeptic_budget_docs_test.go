@@ -91,6 +91,12 @@ func TestDocs_ToolBudgetBytesRowStatesTheSkepticClamp(t *testing.T) {
 	// "rejected at load" as meaning the skeptic lane never sees a negative.
 	assert.Contains(t, row, "programmatically built",
 		"the row must state that load validation does not govern every construction path and name what the skeptic lane does with a negative")
+
+	// Code-anchored boundary. The row publishes the cap-binding threshold as a
+	// number; deriving it here from payload's constants means the published
+	// figure fails this guard the moment the formula it summarizes moves.
+	assert.Contains(t, row, "(`"+strconv.Itoa(2*payload.DefaultOutputTokens+4096)+"` at the built-in default)",
+		"the published cap boundary must equal 2*DefaultOutputTokens+4096 computed from code, not a number that went stale when the formula changed")
 	assert.Contains(t, row, "one token",
 		"the ceiling leaves reply room EXCEPT where the whole input room is one token; the unqualified promise is what drifted last time")
 }
@@ -171,6 +177,8 @@ func TestDocs_VerificationPerFindingBudgetsMatchTheSkepticLane(t *testing.T) {
 		"anchored to the code so a production-only revert cannot leave this bullet quietly wrong")
 	assert.Contains(t, bullet, "1-byte floor",
 		"the same exception the registry row carries: the floor's trip DOES yield unverifiable, so the derived-trip promise needs its carve-out here too")
+	assert.Contains(t, bullet, "(`"+strconv.Itoa(2*payload.DefaultOutputTokens+4096)+"` at the built-in default)",
+		"the bullet must publish the same code-anchored cap boundary the registry row publishes — asserting it in both documents is what stops the pair drifting")
 	assert.Contains(t, bullet, "one token",
 		"the reply-room promise is qualified in both documents or in neither")
 }

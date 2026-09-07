@@ -853,6 +853,27 @@ func TestBuildSkepticAgent_NeverForwardsTheEngineUnlimitedSentinel(t *testing.T)
 	})
 }
 
+// TestSkepticToolBudget_FloorIsOneByte pins the VALUE of the floor with a
+// literal, not with the production constant. minSkepticToolBudget compared
+// against itself is circular: bumping the constant to 4096 (or deleting the
+// floor so the declared 0 is returned) left every existing test green while both
+// published documents still promised a 1-byte floor. The literal below fails in
+// both of those worlds.
+func TestSkepticToolBudget_FloorIsOneByte(t *testing.T) {
+	t.Parallel()
+
+	sk := testSkeptic()
+	window := 4096 // at the prompt overhead: no input room, nothing to derive
+	sk.Config.ContextWindowTokens = &window
+	// ToolBudgetBytes unset — the shape the floor exists to catch.
+
+	budget, derived := skepticToolBudget(sk.Config)
+	require.EqualValues(t, 1, budget,
+		"the floor is published as a 1-byte ceiling; any other value contradicts the docs and the trip semantics")
+	require.False(t, derived,
+		"the floor is not a derived ceiling — its trip must void the verdict")
+}
+
 // TestInvokeSkeptic_FlooredWindowTripYieldsUnverifiable pins what the 1-byte
 // floor MEANS to the caller, which is a separate question from what it is.
 //
