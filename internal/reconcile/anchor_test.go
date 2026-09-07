@@ -1300,18 +1300,22 @@ func TestScanFixAnchors_SilencedSpanReconciledAgainstClean(t *testing.T) {
 //
 // A loss is retracted only when the destroyed token was cited CLEANLY and
 // SURVIVES the anchor cap. The cap half is reachable from text and is pinned by
-// the table above ("the vouching token is dropped by the anchor cap"). The clean
-// half is not: to separate it you need a token that is simultaneously a silence
-// subject and contributed only by a GLUED span, and the boundary rules make that
-// shape unreachable today — a glued token must cross two spaceless scripts while
-// a silence subject must lead with an underscore after the break.
+// the table above ("the vouching token is dropped by the anchor cap"). The
+// clean half is reachable too, and pinned at the text level by
+// TestScanAnchors_CleanConjunctReachableInText: in "parse_解析データ() then
+// _解析データ()", the silence subject `_解析データ` leads with an underscore AND is
+// contributed by a glued span (the run crosses Han into Katakana), so one token
+// is at once a silence subject and a glued-only contribution. This test's doc
+// previously called that shape unreachable — "a glued token must cross two
+// spaceless scripts while a silence subject must lead with an underscore" — but
+// the two conditions are not exclusive: the underscore sits at the head of a
+// token whose body crosses scripts, and that text disproves the claim.
 //
-// That makes the clean conjunct defensive rather than currently load-bearing,
-// which is a reason to pin its MEANING here, not a reason to drop it: membership
-// in `anchors` says a token was collected, and `clean` says it was read
-// faithfully. Only the second is evidence about what the reviewer wrote, and if
-// the boundary rules ever widen, a glued misreading would otherwise start
-// vouching for the very loss it is an instance of.
+// This test still pins the conjunct's MEANING at the unit level, one conjunct
+// at a time: membership in `anchors` says a token was collected, and `clean`
+// says it was read faithfully. Only the second is evidence about what the
+// reviewer wrote — a glued misreading may not vouch for the very loss it is an
+// instance of.
 func TestReconcileSilenced_BothConditionsAreRequired(t *testing.T) {
 	set := func(toks ...string) map[string]struct{} {
 		m := make(map[string]struct{}, len(toks))
@@ -1348,4 +1352,22 @@ func TestReconcileSilenced_BothConditionsAreRequired(t *testing.T) {
 		assert.False(t, reconcileSilenced(set(), set("parseTree"), []string{"parseTree"}),
 			"nothing was silenced, so there is nothing to retract or keep")
 	})
+}
+
+// TestScanAnchors_CleanConjunctReachableInText pins the `clean` half of
+// reconcileSilenced at the text level. The shape its doc called unreachable is
+// reachable: in "parse_解析データ() then _解析データ()", the first span's silence
+// subject `_解析データ` leads with an underscore, and the second span contributes
+// the SAME token as a GLUED reading (its run crosses Han into Katakana), so the
+// token lands in `anchors` and `imprecise` but never in `clean`. The clean
+// conjunct is what stops that mis-reading from vouching for the loss it is an
+// instance of; deleting it flips this text to unaccounted=false.
+func TestScanAnchors_CleanConjunctReachableInText(t *testing.T) {
+	kata := string([]rune{0x89E3, 0x6790, 0x30C7, 0x30FC, 0x30BF}) // 解析データ
+
+	s := scanAnchors("parse_" + kata + "() then _" + kata + "() ok")
+
+	assert.True(t, s.unaccounted,
+		"the only anchor sharing the silence subject is a GLUED reading of it; "+
+			"a mis-reading is not a clean citation and may not retract the loss")
 }

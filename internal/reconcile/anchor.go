@@ -324,17 +324,16 @@ func scanAnchors(text string) anchorScan {
 // reconcileSilenced decides which recorded losses keep their unaccounted claim,
 // and reports whether any survives.
 //
-// The `clean` conjunct is currently DEFENSIVE, not behaviourally reachable:
-// separating it from the anchors conjunct needs a token that is at once a
-// silence subject and contributed only by a glued (never clean) span, and the
-// boundary rules make that shape unreachable today — see
-// TestReconcileSilenced_BothConditionsAreRequired's own doc, which pins the
-// conjunct's MEANING precisely because the unit test is not a behavioural pin.
-// It stays because membership in `anchors` says a token was collected while
-// `clean` says it was read faithfully, and only the second is evidence about
-// what the reviewer wrote: if the boundary rules ever widen, a glued
-// mis-reading would otherwise start vouching for the very loss it is an
-// instance of.
+// The `clean` conjunct is behaviourally reachable, and pinned at the text
+// level by TestScanAnchors_CleanConjunctReachableInText: separating it from the
+// anchors conjunct needs a token that is at once a silence subject and
+// contributed only by a glued (never clean) span, and "parse_解析データ() then
+// _解析データ()" is exactly that shape — the silence subject `_解析データ` leads with
+// an underscore and is the very token the glued span contributes (its run
+// crosses Han into Katakana). It stays because membership in `anchors` says a
+// token was collected while `clean` says it was read faithfully, and only the
+// second is evidence about what the reviewer wrote: without the conjunct, a
+// glued mis-reading vouches for the very loss it is an instance of.
 //
 // A loss is retracted only when the token it destroyed was BOTH cited cleanly
 // (`clean`) and survives into `anchors` — the post-cap set `locate` is actually
