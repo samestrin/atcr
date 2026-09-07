@@ -1246,3 +1246,44 @@ func TestInvokeSkeptic_DeclaredCeilingAboveTheDerivedOneIsNotEnforced(t *testing
 	assert.Contains(t, tripped, "tool_budget_bytes",
 		"the trip is still reported for audit — it is the VERDICT that survives, not the silence")
 }
+
+// TestInvokeSkeptic_DeclaredCeilingAtTheDerivedOnePinsProvenance pins the
+// EQUALITY boundary the two documents describe as "only a declaration BELOW the
+// derived ceiling": an operator declaring EXACTLY the derived ceiling is
+// indistinguishable from it by value, and the shipped comparison (strictly
+// less-than) classifies it as DERIVED — the trip truncates and the verdict
+// survives. That classification is an open design question (TD rows
+// invoke.go:368 and invoke.go:296 argue for provenance-based classification,
+// which would flip this to voiding); this test pins the shipped behaviour so
+// either resolution of that question lands as a visible, deliberate act — under
+// the proposed `<=` mutation this test FAILS.
+func TestInvokeSkeptic_DeclaredCeilingAtTheDerivedOnePinsProvenance(t *testing.T) {
+	t.Parallel()
+
+	window := 12288
+	sk := testSkeptic()
+	sk.Config.ContextWindowTokens = &window
+	sk.Config.ToolBudgetBytes = int64Ptr(14336) // EXACTLY the derived ceiling
+
+	enforced, derived := skepticToolBudget(sk.Config)
+	require.Equal(t, int64(14336), enforced,
+		"the enforced number is the same either way at equality — only the provenance differs")
+	require.True(t, derived,
+		"the shipped strictly-less comparison classifies an equal declaration as DERIVED (a trip truncates, the verdict survives)")
+
+	disp := &fakeDispatcher{result: tools.ToolResult{
+		Content:       strings.Repeat("x", int(enforced)+1),
+		OriginalBytes: int(enforced) + 1,
+	}}
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		toolCallTurn("read_file"),
+		{content: `{"verdict": "refuted", "reasoning": "the cited line does not do what the finding claims"}`},
+	}}
+
+	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp, false)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	assert.Equal(t, verdictRefuted, v.Verdict,
+		"at equality the trip is classified as derived, so a valid refuted survives the CI gate")
+	assert.Contains(t, tripped, "tool_budget_bytes")
+}
