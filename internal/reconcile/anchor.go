@@ -219,9 +219,15 @@ type anchorScan struct {
 func scanAnchors(text string) anchorScan {
 	seen := make(map[string]struct{})
 	clean := make(map[string]struct{})
-	delimited := make(map[string]struct{})
+	// explicitAnchors tracks the tokens the reviewer marked up deliberately —
+	// the spans collectDelimitedAnchors found inside delimiter pairs. The old
+	// name `delimited` shadowed the intent: every delimited span contributes
+	// here, but the set's ROLE is provenance (the cap's strongest class), not
+	// "all delimited tokens", and a reader of the cap comparator below needs
+	// that role, not the scan mechanics.
+	explicitAnchors := make(map[string]struct{})
 	for _, d := range anchorDelimiters {
-		collectDelimitedAnchors(text, byte(d), seen, clean, delimited)
+		collectDelimitedAnchors(text, byte(d), seen, clean, explicitAnchors)
 	}
 	imprecise := make(map[string]anchorImprecision)
 	silenced := make(map[string]struct{})
@@ -291,8 +297,8 @@ func scanAnchors(text string) anchorScan {
 		// so it is deterministic despite reading a slice built from map iteration
 		// (AC2).
 		sort.Slice(out, func(i, j int) bool {
-			_, di := delimited[out[i]]
-			_, dj := delimited[out[j]]
+			_, di := explicitAnchors[out[i]]
+			_, dj := explicitAnchors[out[j]]
 			if di != dj {
 				return di
 			}
@@ -555,7 +561,7 @@ const anchorDelimiters = "`\"'"
 // mid-sentence ends only the apostrophe pass; the backtick pass over the same
 // text is unaffected and still finds the identifiers after it. That containment
 // is the whole reason extractAnchorSet runs one pass per delimiter.
-func collectDelimitedAnchors(text string, d byte, seen, clean, delimited map[string]struct{}) {
+func collectDelimitedAnchors(text string, d byte, seen, clean, explicitAnchors map[string]struct{}) {
 	for i := 0; i < len(text); i++ {
 		if text[i] != d {
 			continue
@@ -565,8 +571,8 @@ func collectDelimitedAnchors(text string, d byte, seen, clean, delimited map[str
 			return // no closer remains anywhere after i: nothing left to pair
 		}
 		if tok := recordedAnchorForm(text[i+1 : i+1+close]); recordAnchor(tok, seen) {
-			clean[tok] = struct{}{}     // a delimited span is a faithful contribution
-			delimited[tok] = struct{}{} // ...and one the reviewer marked up deliberately
+			clean[tok] = struct{}{}           // a delimited span is a faithful contribution
+			explicitAnchors[tok] = struct{}{} // ...and one the reviewer marked up deliberately
 		}
 		i += close + 1 // resume after the closer, never inside the span
 	}
