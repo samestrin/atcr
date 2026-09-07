@@ -80,6 +80,10 @@ func TestDocs_ToolBudgetBytesRowStatesTheSkepticClamp(t *testing.T) {
 	// suite still green. This one fails when the constant moves.
 	assert.Contains(t, row, "`"+strconv.Itoa(payload.DefaultOutputTokens)+"`",
 		"the row must publish the CURRENT built-in reservation, not the number it had when the sentence was written")
+	assert.Contains(t, row, "1-byte floor",
+		"the floor is the one path where a ceiling the operator never declared voids the verdict — a row that omits it contradicts the lane")
+	assert.Contains(t, row, "one token",
+		"the ceiling leaves reply room EXCEPT where the whole input room is one token; the unqualified promise is what drifted last time")
 }
 
 // TestDocs_ContextWindowRowDoesNotRestateTheSkepticClamp pins the
@@ -156,6 +160,10 @@ func TestDocs_VerificationPerFindingBudgetsMatchTheSkepticLane(t *testing.T) {
 		"the same qualifier the registry row carries: a larger declaration is never the number enforced")
 	assert.Contains(t, bullet, "`"+strconv.Itoa(payload.DefaultOutputTokens)+"`",
 		"anchored to the code so a production-only revert cannot leave this bullet quietly wrong")
+	assert.Contains(t, bullet, "1-byte floor",
+		"the same exception the registry row carries: the floor's trip DOES yield unverifiable, so the derived-trip promise needs its carve-out here too")
+	assert.Contains(t, bullet, "one token",
+		"the reply-room promise is qualified in both documents or in neither")
 }
 
 // TestDocs_CrossExaminationPerSeatBudgetsMatchTheDebateLane pins

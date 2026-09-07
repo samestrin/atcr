@@ -745,20 +745,23 @@ func TestSkepticToolBudget_ReservesOnlyWhatTheWindowCanAfford(t *testing.T) {
 
 			// Fitting is not the same as leaving room, and the byte arithmetic above
 			// cannot tell them apart — an exact partition satisfies it even when the
-			// reply's share is zero. What actually has to hold is that the reply gets
-			// a real share wherever the window can fund one.
+			// reply's share is zero. What has to hold is that the DERIVED ceiling is
+			// smaller than the one this window would yield with nothing reserved:
+			// that difference IS the reply's room, measured on the production value
+			// rather than on the test's own expression for it.
+			unreserved := payload.EffectiveByteBudget(model, &window, 0)
 			if payload.InputRoomTokens(model, &window) <= 1 {
 				// The degenerate end of the band: a window whose whole input room is
 				// ONE token cannot both be read from and reserved against, so halving
 				// floors the reservation to 0 and the ceiling really is 100% of the
 				// room. Stated outright rather than hidden inside an assertion that
 				// reads as if it were not.
-				assert.Zerof(t, reserved,
-					"window %d: one token of input room cannot fund a reservation", window)
+				assert.Equalf(t, unreserved, ceilingFor(window, nil),
+					"window %d: one token of input room cannot fund a reservation, so nothing is held back", window)
 				continue
 			}
-			assert.Positivef(t, reserved,
-				"window %d: the ceiling must leave real room for a reply, not merely fit", window)
+			assert.Lessf(t, ceilingFor(window, nil), unreserved,
+				"window %d: the ceiling must hold real room back for the reply, not merely fit", window)
 		}
 	})
 
@@ -827,7 +830,11 @@ func TestBuildSkepticAgent_NeverForwardsTheEngineUnlimitedSentinel(t *testing.T)
 
 		// This pins the OUTCOME, not the clamp: a negative already fails the
 		// `declared > 0` test, so the ceiling wins here with or without the clamp.
-		// The sub-test below is the one that fails when the clamp is deleted.
+		// The sub-test below is the one that fails when the clamp is deleted — and
+		// even there the clamp changes the VALUE returned, not the engine's reading
+		// of it (loop.go guards on `> 0`, so a negative and a 0 are the same
+		// unlimited state). What it prevents is this function handing its caller a
+		// sentinel the engine has no defined reading for.
 		assert.Equal(t, payload.EffectiveByteBudget(sk.Config.Model, &window, payload.DefaultOutputTokens),
 			buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
 			"a negative budget must lose to the derived ceiling")
@@ -842,7 +849,7 @@ func TestBuildSkepticAgent_NeverForwardsTheEngineUnlimitedSentinel(t *testing.T)
 		// negative the engine has no defined reading for.
 
 		assert.Zero(t, buildSkepticAgent(sk, "prompt", false).ToolBudgetBytes,
-			"an undeclared window derives nothing, but a negative must still not reach the engine")
+			"an undeclared window derives nothing, so the value is forwarded — but as the engine's own sentinel, not a negative it has no reading for")
 	})
 }
 

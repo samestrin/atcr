@@ -265,9 +265,10 @@ func logSkepticFailure(logger *slog.Logger, skeptic, class, detail string) {
 // nothing.
 //
 // The half-room cap is what makes the derivation CONTINUOUS. The reservation is a
-// claim on the window, never a veto over it: a window too small to fund the full
-// cap must still be bounded, so the claim shrinks to what the window can fund
-// instead of switching to a second formula. This lane previously did switch —
+// claim on the window, never a veto over it: rather than switching formulas when
+// the full cap no longer fits, the claim is always at most half the input room —
+// so the read and the reply divide a small window instead of one of them taking
+// all of it. This lane previously did switch —
 // full reservation above the reservation's own threshold, NOTHING reserved below
 // it — which made the ceiling non-monotonic in both operands (window 12288
 // derived 28672 bytes, 12289 derived 3) and left the lower band with a ceiling
@@ -276,9 +277,22 @@ func logSkepticFailure(logger *slog.Logger, skeptic, class, detail string) {
 // deliberate: an all-but-one-token clamp is monotonic too, but derives a 1-token
 // (3-byte) ceiling across the whole band, and a trip on a DERIVED ceiling does
 // not void the verdict — so the skeptic would answer from a 3-byte view without
-// signalling it. The cap binds only while half the input room is smaller than the
-// reservation, i.e. only below 2*reserved + prompt overhead (20480 tokens at the
+// signalling it. The cap binds while half the input room is smaller than the
+// reservation, i.e. below 2*reserved + prompt overhead (20480 tokens at the
 // built-in default); every larger window derives exactly what it always did.
+//
+// Be precise about what the cap does and does not buy, because part of that band
+// can fund the full reservation and is capped anyway. At window 16384 the room is
+// 12288 tokens: the full 8192 WOULD fit, leaving 4096 for the read, but the cap
+// reserves 6144 and leaves 6144. So the reservation is no longer an upper bound
+// on the reply — a reply that actually spends its whole max_tokens can still
+// overshoot a window in this band. That is the deliberate trade: below
+// 2*reserved + overhead the window cannot host both a full-length reply and a
+// usable read, and the alternative (reserve the full cap regardless) is what
+// derived a 1-token ceiling at window 12289. The cap splits the shortfall
+// instead of assigning all of it to the read. Every window at or above the
+// boundary reserves the full cap and cannot overshoot at all, which is where the
+// entire shipped roster sits.
 //
 // Only a DECLARED window clamps, and only downward:
 //
@@ -321,10 +335,14 @@ func logSkepticFailure(logger *slog.Logger, skeptic, class, detail string) {
 func skepticToolBudget(c registry.AgentConfig) (budget int64, derived bool) {
 	declared := derefInt64(c.ToolBudgetBytes)
 	if declared < 0 {
-		// Load-time validation rejects a negative budget, but a programmatically
-		// built AgentConfig never passes through it — and a negative survives the
-		// `declared > 0` test below to reach the engine's `> 0` guard as UNLIMITED,
-		// the exact inversion this function exists to prevent.
+		// Normalisation, not a behaviour change: internal/fanout/loop.go guards on
+		// `> 0`, so a negative and a 0 are already the SAME unlimited state, and a
+		// negative loses every `declared > 0` test below either way. What the clamp
+		// buys is that this function never PROPAGATES a value the engine has no
+		// defined reading for — load-time validation rejects a negative, but a
+		// programmatically built AgentConfig never passes through it, so without
+		// this line the sentinel the caller receives depends on which construction
+		// path built the config.
 		declared = 0
 	}
 	if c.ContextWindowTokens == nil {
@@ -362,14 +380,18 @@ func skepticToolBudget(c registry.AgentConfig) (budget int64, derived bool) {
 // than either a silently unbounded read or a verdict formed from one byte.
 const minSkepticToolBudget int64 = 1
 
-// reservedOutputTokens resolves the output-token cap this lane must SUBTRACT from
-// the window when deriving the tool ceiling: the agent's own max_tokens
-// declaration, else payload.DefaultOutputTokens.
+// reservedOutputTokens resolves the output-token cap this lane STARTS from when
+// deriving the tool ceiling: the agent's own max_tokens declaration, else
+// payload.DefaultOutputTokens. It is the reservation the caller ASKS for, not
+// necessarily the one it takes — skepticToolBudget caps it at half the window's
+// input room, so below 2*reserved + prompt overhead the number actually
+// subtracted is smaller than this one.
 //
 // The DEFAULT is the whole point — and it is a default, not a floor: a declared
 // max_tokens of 100 reserves 100, not the built-in. The review lane resolves the
 // same chain through fanout.resolveMaxTokens, which defaults to the same constant
-// the same way, so the two lanes reserve the same number for the same agent —
+// the same way, so the two lanes ask for the same number for the same agent (this
+// lane may then cap it to fit a small window) —
 // which is what
 // skepticToolBudget's doc has always CLAIMED ("exactly one definition") and did
 // not deliver. Reserving derefInt(c.MaxTokens) meant reserving ZERO for the 23 of
