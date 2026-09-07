@@ -531,3 +531,64 @@ func TestScanAnchors_SpacelessBreakLossIsRetractedByACleanCitation(t *testing.T)
 	assert.False(t, s.unaccounted,
 		"the destroyed name is cited cleanly and sits in the set locate reads: nothing about it is unknowable")
 }
+
+// TestRunReconcile_AllPrimaryBoundaryCutIsNotEvidenceOfAbsence closes the split
+// between barring a boundary-cut anchor from SOURCING a suggestion and letting it
+// drive tier4NoMatch. The two rest on one premise and cannot be separated: if
+// `配置ParseConfig()` may have been truncated to a tail that is not what the
+// reviewer wrote, then that tail is equally not evidence the tree LACKS the
+// subject.
+//
+// This is AC1's own fixture minus internal/cfg/parse.go. The tree declares only
+// `配置ParseConfig`; the scan records the tail `ParseConfig`, so present and byName
+// are both empty for it, primaryMatched is false, and problemTruncated is false
+// (the boundaryCut marking deliberately does not set lostSpan). Before the fix
+// resolve returned tier4NoMatch and the real finding was deleted from report.md,
+// routed to unresolved.json, and durably charged to the reviewer as a phantom —
+// the one outcome nothing downstream can undo.
+//
+// The guard is scoped to a PROBLEM set in which EVERY primary anchor is
+// boundary-cut. One faithful anchor is enough evidence to answer with, which is
+// why the second subtest must still route: barring is not narrowing, and this
+// gate may not become a blanket "any boundary-cut anchor blocks no-match".
+func TestRunReconcile_AllPrimaryBoundaryCutIsNotEvidenceOfAbsence(t *testing.T) {
+	// No file declares ParseConfig, 配置ParseConfig, or totallyAbsentHelper.
+	root := gitRepoWithSources(t, map[string]string{
+		"pkg/tree.go": "package pkg\n\nfunc readTree() error { return nil }\n",
+	})
+
+	run := func(t *testing.T, problem string) (Result, []JSONFinding) {
+		t.Helper()
+		reviewDir := t.TempDir()
+		writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+			"HIGH|internal/ghost/phantom.go:3|"+problem+"|check it|correctness|10|ev|greta\n")
+
+		res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+			ReconciledAt: time.Unix(1700000000, 0).UTC(),
+			Root:         root,
+		})
+		require.NoError(t, err)
+		unresolved, err := ReadUnresolvedFindings(reviewDir)
+		require.NoError(t, err)
+		return res, unresolved
+	}
+
+	t.Run("the only primary anchor is a boundary-cut tail", func(t *testing.T) {
+		res, unresolved := run(t, "配置ParseConfig() ignores the returned error")
+
+		require.Len(t, res.Findings, 1,
+			"a tail that may not be what the reviewer wrote is not evidence the tree lacks the subject")
+		assert.Empty(t, unresolved,
+			"the finding must reach tier4Inconclusive (could not check), never tier4NoMatch (checked and found nothing)")
+		assert.Zero(t, res.Summary.UnresolvedFiltered)
+	})
+
+	t.Run("a faithful anchor alongside it still answers", func(t *testing.T) {
+		res, unresolved := run(t, "配置ParseConfig() and `totallyAbsentHelper` both ignore the returned error")
+
+		assert.Empty(t, res.Findings,
+			"`totallyAbsentHelper` is a faithful reading and is absent from the tree: the set can still answer")
+		assert.Len(t, unresolved, 1,
+			"one faithful anchor is enough evidence — the guard may not become a blanket no-match block")
+	})
+}
