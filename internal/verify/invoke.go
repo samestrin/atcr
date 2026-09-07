@@ -134,9 +134,14 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 	if len(res.TrippedBudgets) > 0 {
 		// Reached only via the derived-ceiling exemption: the read was truncated
 		// but the answer stands. Report the trip so the audit record says the
-		// skeptic worked from a shortened view, and log it so an operator whose
-		// roster is systematically hitting the derived ceiling can see it.
-		logSkepticFailure(logger, skeptic.Name, "budget_truncated", failureNotes(res))
+		// skeptic worked from a shortened view. This is NOT a failure — the verdict
+		// survived — so it gets its own Info record instead of the failure helper
+		// (whose Warn("skeptic failed") false-alarms every operator alerting on
+		// skeptic failures, and whose detail claims a run halted that returned a
+		// verdict), and its own detail text.
+		logger.Info("skeptic truncated", "skeptic", skeptic.Name, "class", "budget_truncated")
+		detail := fmt.Sprintf("skeptic run truncated (status: %s); tripped budgets: %s", res.Status, strings.Join(res.TrippedBudgets, ", "))
+		logger.Debug("skeptic truncation detail", "skeptic", skeptic.Name, "class", "budget_truncated", "detail", detail)
 		return v, res.TrippedBudgets, nil
 	}
 	return v, nil, nil
