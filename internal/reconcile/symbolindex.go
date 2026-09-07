@@ -134,6 +134,58 @@ const tier4FixSetAllDroppedMetric = "atcr_tier4_fix_set_all_dropped_total"
 // produce an answer and the completeness check withheld it.
 const tier4ProblemSetUnaccountedMetric = "atcr_tier4_problem_set_unaccounted_total"
 
+// tier4ProblemAnchorImpreciseMetric counts a Tier 4 lookup where the PROBLEM
+// anchor set WOULD have localized to exactly one file and did not, because the
+// only anchor agreeing on that file is a BOUNDARY-CUT one — the tail a
+// spaceless-script word boundary cut a call name down to. A GLUED token is
+// deliberately NOT barred on this side (see anchorImprecision: a glued token is
+// the whole run, so a file declaring it entire is evidence the reading was
+// right), so it can never reach this counter through the primary path — glued
+// barring happens on the FIX side only.
+//
+// It is a SET-level count of suggestions the narrowing cost, not a per-anchor
+// count of barred members: an imprecise anchor that names nothing, or names a
+// file some faithful anchor agrees on, costs nothing and is silent here. That is
+// the same distinction atcr_tier4_fix_set_contradicted_total draws against
+// atcr_tier4_fix_anchor_dropped_total — a non-empty imprecise set is this arm's
+// precondition, never evidence that it fired.
+//
+// It has TWO increment sites, and one finding can increment it twice. The first
+// is the primary path: the PROBLEM set would have localized to exactly one file
+// and did not, because the only anchor agreeing on that file is barred. The
+// second is the barred veto on the secondary path: under a matched primary, a
+// file the FIX set produced is refused when the barred set disagrees with it
+// (resolve's barredPrimary arm) — the file was produced and then vetoed, which
+// is the same "barring changed an answer" event, counted here rather than by a
+// separate counter. docs/metrics.md documents both sites in its row for this
+// counter; the two must not drift apart.
+//
+// The first site is NOT the dropped-anchor veto: when a faithful anchor
+// localizes one file and a barred anchor is declared in exactly one OTHER, the
+// unnarrowed locate() saw that disagreement too and refused, so the narrowing
+// cost nothing and the primary-path site stays flat while the suggestion is
+// still withheld. That qualifier is scoped to the primary path only — the
+// secondary-path site above IS a veto of the FIX-sourced file.
+//
+// LAYERING, stated so the divergence from its siblings is deliberate rather
+// than discovered: the problem-side counters increment once per FINDING in
+// validateFindingPaths' loop, while BOTH of this counter's sites increment
+// inside symbolIndex.resolve — a decision procedure on the index that is
+// otherwise free of global side effects. The unit is therefore per-LOOKUP, and
+// it coincides with per-finding today only because validateFindingPaths
+// resolves each finding exactly once and is production's sole caller. A future
+// caller that resolves the same finding twice (a retry, a re-validation pass)
+// would double-count — if such a caller is ever added, both increments must
+// move out to validate.go beside their siblings rather than be silently
+// inflated here.
+//
+// Like every arm on the PathWarning-without-PathSuggestion rendering it can
+// never count a routed-out finding: barring an anchor from SOURCING never
+// removes it from the presence check or the no-match arm, so this arm is a
+// downgrade and a downgrade cannot reach the verdict that sidecar-routes
+// anything.
+const tier4ProblemAnchorImpreciseMetric = "atcr_tier4_problem_anchor_imprecise_total"
+
 // tier4FixSetContradictedMetric counts the fourth withhold path on the
 // PathWarning-without-PathSuggestion rendering, and the one that had no signal
 // at all.
@@ -166,7 +218,8 @@ const tier4ProblemSetUnaccountedMetric = "atcr_tier4_problem_set_unaccounted_tot
 // than discovered: the five FIX-side counters above increment once per FINDING
 // in validateFindingPaths' loop, while this one increments inside
 // symbolIndex.resolve (via resolveSecondary) — a decision procedure on the
-// index that is, except for this arm, free of global side effects. The unit
+// index that is, except for this arm and both arms of
+// tier4ProblemAnchorImpreciseMetric, free of global side effects. The unit
 // is therefore per-LOOKUP, and it coincides with per-finding today only
 // because validateFindingPaths resolves each finding exactly once and is
 // production's sole caller with a non-nil droppedSecondary. A future caller
@@ -355,11 +408,157 @@ const (
 // disagreement locate() refuses on, and the secondary resolution is withheld.
 // Without that, narrowing the set produced a confident suggestion from half the
 // evidence: the very incompleteness the `unaccounted` arm abandons the set for.
-func (x *symbolIndex) resolve(primary, secondary, droppedSecondary []string) (string, tier4Outcome) {
+// barredPrimary holds the PROBLEM anchors a spaceless-script word boundary cut
+// down to an unfaithful TAIL of the name — boundary-cut anchors ONLY. A glued
+// token is deliberately NOT barred here, exactly the asymmetry anchorImprecision
+// documents: on the PROBLEM side a glued token is the whole run, so a file
+// declaring it entire is evidence the reading was right and the genuine
+// `データ_解析` reading must still resolve (pinned end to end by
+// TestRunReconcile_GluedProblemAnchorStillResolvesEndToEnd); the sole producer,
+// anchorScan.boundaryCutAnchors, reads impreciseBoundaryCut only and a glued
+// span's token therefore never enters this set. Barring glued tokens on the FIX
+// side (droppedFixAnchors) is the FIX-side-only rule. They may not SOURCE a suggestion, for the reason the FIX
+// side already refuses to let its own imprecise members source one: the reading
+// may not be what the reviewer wrote, and a file declaring only that misreading
+// is a CONFIDENT wrong answer, the one outcome nothing downstream can undo. They
+// are NOT removed from `primary` itself — the presence check and the no-match
+// arm below must still see them, or barring one from sourcing would flip a
+// finding whose subject IS in the tree to no-match and route a real finding out.
+// So the narrowing is applied at exactly one place, the locate that produces the
+// file, and the barred members ride along as VETO evidence exactly as
+// droppedSecondary does.
+// resolvePrimary applies the PRIMARY half of the decision: the barred members
+// are clamped to primary, the narrowed set localizes the finding unless
+// contradicts() vetoes it, and a narrowing that COST a resolution — the
+// unnarrowed set would have localized — is counted. It is its own method for
+// the same reason resolveSecondary is: the one consumer that reimplements
+// resolve's control flow (fakeTier4.resolveWithDropped, in tier4_test.go)
+// DELEGATES this arm instead of restating it, so tier4ProblemAnchorImpreciseMetric
+// stays observable through the test double and the barring rule cannot drift
+// between production and the fake. Returns (file, true) when the narrowed
+// primary set resolved.
+func (x *symbolIndex) resolvePrimary(primary, barredPrimary []string) (string, bool) {
+	// PRECONDITION: barredPrimary is already clamped to primary. This arm used to
+	// clamp it here, but the clamp rebound a PARAMETER-LOCAL copy, so the OTHER
+	// arm that trusts the same invariant — resolve's
+	// vetoResolvedSecondary(file, barredPrimary) — still read the caller's
+	// unclamped slice and a non-subset name could still veto there. The clamp
+	// therefore belongs to the control flow that feeds BOTH arms; every caller
+	// runs clampBarredToPrimary before reaching either.
+	if file, ok := x.locate(anchorsExcept(primary, barredPrimary)); ok && !x.contradicts(file, barredPrimary) {
+		return file, true
+	}
+	// The counter is this arm's ONLY signal, the same argument the four FIX
+	// counters and the problem-set-unaccounted arm were added on: a withheld
+	// suggestion leaves no field change and renders identically to "could not
+	// check". It fires on the one condition that means the narrowing COST a
+	// suggestion — the unnarrowed set would have localized. A veto (both halves
+	// locate, to different files) is deliberately silent here: locate(primary)
+	// sees that disagreement too and refuses, so nothing was lost to the
+	// narrowing there.
+	if len(barredPrimary) > 0 {
+		if _, wouldHaveResolved := x.locate(primary); wouldHaveResolved {
+			metrics.Counter(tier4ProblemAnchorImpreciseMetric).Inc()
+		}
+	}
+	return "", false
+}
+
+// vetoResolvedSecondary applies the barred-primary veto ON TOP of a secondary
+// hit resolveSecondary already produced: barring one from sourcing does not
+// make it stop being part of what the PROBLEM named, so a barred name declared
+// in exactly one OTHER file is the same disagreement locate() refuses on — and
+// without this the epic would merely SWAP one confident answer for another:
+// measured, a barred `ParseConfig` (internal/cfg/parse.go) alongside a FIX
+// naming `readTree` (pkg/tree.go) stamped pkg/tree.go, where the unbarred call
+// had stamped internal/cfg/parse.go. Withholding is the outcome this epic's
+// Success Criteria ask for; a different confident file is not.
+//
+// The counter is the arm's ONLY signal — a withheld suggestion leaves no field
+// change and renders identically to "could not check" — so it lives HERE and
+// not at the callers, the same delegation rule resolvePrimary and
+// resolveSecondary follow: the one consumer that reimplements resolve's control
+// flow (fakeTier4.resolveWithDropped) delegates the veto with its counter
+// instead of restating the contradicts() half alone. Returns (file, true) when
+// the secondary file survives the veto.
+func (x *symbolIndex) vetoResolvedSecondary(file string, barredPrimary []string) (string, bool) {
+	if !x.contradicts(file, barredPrimary) {
+		return file, true
+	}
+	metrics.Counter(tier4ProblemAnchorImpreciseMetric).Inc()
+	return "", false
+}
+
+// anchorSets carries the four anchor lists the Tier 4 decision procedure
+// adjudicates. They are four adjacent []string parameters otherwise, and the
+// compiler cannot tell them apart: transposing barredPrimary with
+// droppedSecondary compiles cleanly and silently swaps which set may SOURCE a
+// resolution with which may only VETO one — across two call sites, an interface
+// contract, and the fake that reimplements the control flow.
+//
+// The two "may not source" lists are narrowed by DIFFERENT rules and are not
+// interchangeable: barredPrimary is the boundary-cut subset of primary (see
+// anchorScan.boundaryCutAnchors), droppedSecondary is what scanFixAnchors
+// narrowed out of secondary (anchorScan.droppedFixAnchors). Naming them at every
+// call site is what makes a transposition a compile error instead of a wrong
+// suggestion nothing downstream can undo.
+type anchorSets struct {
+	// primary is the PROBLEM set, WHOLE — barred members included. The presence
+	// check and the no-match arm must see every anchor, or barring one would
+	// route a real finding out.
+	primary []string
+	// barredPrimary is the subset of primary that may not SOURCE a resolution,
+	// while still refusing one it disagrees with.
+	barredPrimary []string
+	// secondary is the FIX set, which may only LOCALIZE a finding whose subject
+	// already matched somewhere in the tree.
+	secondary []string
+	// droppedSecondary is what was narrowed out of secondary: it may not source a
+	// resolution and may still contradict one.
+	droppedSecondary []string
+}
+
+// clampBarredToPrimary drops any barred name that is not a member of primary.
+//
+// barredPrimary is documented as a SUBSET of primary (its sole producer,
+// boundaryCutAnchors, walks the anchor set primary was built from), and BOTH
+// arms of the decision trust that: anchorsExcept only subtracts, but
+// contradicts() consults every member unconditionally, so a name outside primary
+// would take a veto from an anchor that is not part of the set at all — one the
+// presence check and the no-match arm never see.
+//
+// It is a free function applied ONCE per control flow, before either arm reads
+// the slice, rather than a narrowing inside one arm. Clamping inside
+// resolvePrimary rebound only that call's parameter, which left the secondary
+// arm's veto reading the unclamped slice and made the enforcement claim false
+// for half the procedure. For a well-formed caller (production always) it is a
+// no-op that returns the input unchanged.
+func clampBarredToPrimary(primary, barredPrimary []string) []string {
+	if len(barredPrimary) == 0 {
+		return barredPrimary
+	}
+	clamped := barredPrimary[:0:0]
+	for _, barred := range barredPrimary {
+		for _, p := range primary {
+			if barred == p {
+				clamped = append(clamped, barred)
+				break
+			}
+		}
+	}
+	return clamped
+}
+
+func (x *symbolIndex) resolve(sets anchorSets) (string, tier4Outcome) {
+	primary, barredPrimary := sets.primary, sets.barredPrimary
+	secondary, droppedSecondary := sets.secondary, sets.droppedSecondary
+	// Clamp ONCE, here, so resolvePrimary's narrowing and
+	// vetoResolvedSecondary's veto adjudicate the same set.
+	barredPrimary = clampBarredToPrimary(primary, barredPrimary)
 	if x == nil {
 		return "", tier4Inconclusive // index unavailable: could not check
 	}
-	if file, ok := x.locate(primary); ok {
+	if file, ok := x.resolvePrimary(primary, barredPrimary); ok {
 		return file, tier4Resolved
 	}
 	// The secondary set may only LOCALIZE, never substitute for the subject:
@@ -380,7 +579,9 @@ func (x *symbolIndex) resolve(primary, secondary, droppedSecondary []string) (st
 	}
 	if primaryMatched {
 		if file, outcome := x.resolveSecondary(secondary, droppedSecondary); outcome == tier4Resolved {
-			return file, tier4Resolved
+			if file, ok := x.vetoResolvedSecondary(file, barredPrimary); ok {
+				return file, tier4Resolved
+			}
 		}
 	}
 	if len(primary) == 0 {
@@ -429,6 +630,38 @@ func (x *symbolIndex) resolveSecondary(secondary, droppedSecondary []string) (st
 		metrics.Counter(tier4FixSetContradictedMetric).Inc()
 	}
 	return "", tier4Inconclusive
+}
+
+// anchorsExcept returns the members of anchors that are not in bar, preserving
+// order. It returns anchors itself when bar is empty, which is the overwhelming
+// common path — a finding whose prose the scan read faithfully throughout.
+//
+// bar is walked linearly rather than hashed: both slices are bounded by
+// maxAnchorsPerFinding, so the map would cost more to build than the scan it
+// replaces.
+func anchorsExcept(anchors, bar []string) []string {
+	// No len(anchors) == 0 disjunct: it is unreachable by construction. resolve
+	// clamps bar to a subset of anchors at its boundary, so an empty anchor set
+	// always arrives with an empty bar and the len(bar) test above already
+	// returns; and even for a caller that skipped the clamp, falling through
+	// yields the same empty result the disjunct short-circuited to.
+	if len(bar) == 0 {
+		return anchors
+	}
+	out := make([]string, 0, len(anchors))
+	for _, a := range anchors {
+		barred := false
+		for _, b := range bar {
+			if a == b {
+				barred = true
+				break
+			}
+		}
+		if !barred {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // locate returns the single file declaring one of anchors, if exactly one such
@@ -503,22 +736,24 @@ func newLazySymbolIndex(root string, paths []string) *lazySymbolIndex {
 // every lookup — never tier4NoMatch — so nothing is routed to the sidecar on
 // the strength of an index that does not exist.
 func (lz *lazySymbolIndex) resolve(ctx context.Context, primary, secondary []string) (string, tier4Outcome) {
-	return lz.resolveWithDropped(ctx, primary, secondary, nil)
+	return lz.resolveWithDropped(ctx, anchorSets{primary: primary, secondary: secondary})
 }
 
-// resolveWithDropped is resolve with the FIX anchors scanFixAnchors narrowed out
-// of secondary carried alongside, so a dropped member may still REFUSE a
-// secondary resolution it disagrees with. See symbolIndex.resolve.
+// resolveWithDropped is resolve with BOTH narrowings carried alongside the sets
+// they were taken from: the FIX anchors scanFixAnchors narrowed out of secondary,
+// and the PROBLEM anchors the scan could not read faithfully. A member of either
+// may not source a resolution and may still REFUSE one it disagrees with. See
+// symbolIndex.resolve.
 //
 // resolve is the nil-dropped case rather than the other way round: a caller that
 // has no narrowing to report (every test fixture, and any future non-FIX
 // consumer) must not have to say so.
-func (lz *lazySymbolIndex) resolveWithDropped(ctx context.Context, primary, secondary, droppedSecondary []string) (string, tier4Outcome) {
+func (lz *lazySymbolIndex) resolveWithDropped(ctx context.Context, sets anchorSets) (string, tier4Outcome) {
 	if lz == nil {
 		return "", tier4Inconclusive
 	}
 	lz.once.Do(func() { lz.build(ctx) })
-	return lz.idx.resolve(primary, secondary, droppedSecondary)
+	return lz.idx.resolve(sets)
 }
 
 // state reports what the build actually achieved, for Summary.UnresolvedState.

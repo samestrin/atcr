@@ -33,19 +33,33 @@ type fakeChatCompleter struct {
 	turns     []chatTurn
 	idx       int
 	chatCalls int
+	// lastInv records the Invocation the engine actually sent, so a test can
+	// assert what reaches the provider rather than only what the Agent literal
+	// was built with. Read it through lastInvocation, never directly.
+	lastInv llmclient.Invocation
 }
 
-func (f *fakeChatCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
+// lastInvocation returns the Invocation from the most recent Complete or Chat
+// call, zero-valued if neither has been called.
+func (f *fakeChatCompleter) lastInvocation() llmclient.Invocation {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	return f.lastInv
+}
+
+func (f *fakeChatCompleter) Complete(_ context.Context, inv llmclient.Invocation) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lastInv = inv
 	if len(f.turns) > 0 {
 		return f.turns[0].content, nil
 	}
 	return "", nil
 }
 
-func (f *fakeChatCompleter) Chat(ctx context.Context, _ llmclient.Invocation, _ []llmclient.Message, _ []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+func (f *fakeChatCompleter) Chat(ctx context.Context, inv llmclient.Invocation, _ []llmclient.Message, _ []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
 	f.mu.Lock()
+	f.lastInv = inv
 	call := f.idx
 	f.idx++
 	f.chatCalls++

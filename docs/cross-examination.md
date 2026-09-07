@@ -102,7 +102,7 @@ A debated item costs at least three provider calls (one per seat), each with a t
 - **`debate.triggers`** — disable a trigger class to skip it entirely.
 - **`debate.max_items`** (default `5`; `0` = unlimited) — the cost cap. Disputed items beyond it are recorded as overflow, never debated.
 - **3-turn hard cap** — non-configurable; a debate is never an open-ended conversation.
-- **Per-seat budgets** — each seat reuses the reviewer tool-loop budgets (`max_turns`, `tool_budget_bytes`, `timeout_secs`) from its agent config. A tripped budget halts the seat; a halted judge yields an unresolved item.
+- **Per-seat budgets** — each seat reuses the reviewer tool-loop budgets (`max_turns`, `tool_budget_bytes`, `timeout_secs`) from its agent config, and forwards that config's `max_tokens` output cap to the provider (the declaration only — this lane has no `--max-tokens` flag and imposes no built-in default). A tripped budget halts the seat; a halted judge yields an unresolved item. ⚠️ Unlike the **skeptic** lane ([verification.md](verification.md#cost-controls)), a debate seat's `tool_budget_bytes` is used **verbatim**: declaring [`context_window_tokens`](registry.md#agent-fields) does *not* clamp it here, so a small-window seat can still be walked past its window by a few large tool reads. Set `tool_budget_bytes` explicitly for such a seat.
 
 ## Artifacts
 

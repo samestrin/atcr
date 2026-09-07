@@ -563,9 +563,13 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 //
 // perSkeptic[i] and perTripped[i] are the verdict and tripped-budget slice of
 // skeptics[i] (verifyFinding builds the three slices together, so indices align).
-// Models are deduplicated and joined in selection order. Tripped budgets attach
-// only to unverifiable verdicts (a budget trip collapses a skeptic to
-// unverifiable), so a confirmed/refuted winner contributes none.
+// Models are deduplicated and joined in selection order, and so are the tripped
+// budgets of every skeptic credited. Most trips do collapse their skeptic to
+// unverifiable, but not all: invokeSkeptic exempts a trip on a window-DERIVED
+// tool ceiling, so a confirmed or refuted winner can legitimately carry
+// tool_budget_bytes. The loop below therefore credits budgets by who WON, never
+// by what they voted — attaching them to unverifiable alone would drop exactly
+// the audit line that says a decisive skeptic answered from a truncated read.
 //
 // Attribution depends on whether `winner` was decisive or a tie sentinel:
 //   - Decisive (a strict plurality, e.g. 2 confirmed > 1 refuted → confirmed):

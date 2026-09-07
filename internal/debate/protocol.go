@@ -169,6 +169,12 @@ func buildDebateAgent(seat Caster, prompt string) fanout.Agent {
 			Model:       c.Model,
 			Temperature: c.Temperature,
 			Prompt:      prompt,
+			// Output cap (max_tokens): forwarded like every other per-agent budget
+			// above, for the reason stated at verify.buildSkepticAgent — a judge
+			// that finishes mid-reasoning returns no parseable outcome and the item
+			// is recorded unresolved while the run reports success. The DECLARATION
+			// only; a nil pointer keeps the provider default.
+			MaxTokens: c.MaxTokens,
 		},
 	}
 }

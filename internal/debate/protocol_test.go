@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/samestrin/atcr/internal/reconcile"
+	"github.com/samestrin/atcr/internal/registry"
 )
 
 func debateItem() reconcile.DisagreementItem {
@@ -131,4 +132,30 @@ func transcriptRoles(t *testing.T, path string) []string {
 	}
 	require.NoError(t, sc.Err())
 	return roles
+}
+
+// TestBuildDebateAgent_ForwardsDeclaredMaxTokens is the debate seat's half of the
+// same omission the skeptic lane carried: the Invocation forwarded every other
+// per-agent budget and dropped max_tokens, so a declaration was silently inert and
+// the provider default applied. A judge that finishes mid-reasoning returns no
+// parseable outcome and the item is recorded unresolved while the run reports
+// success.
+//
+// Only the DECLARATION is forwarded; no built-in default is imposed, so an
+// undeclared seat keeps the provider default it has today.
+func TestBuildDebateAgent_ForwardsDeclaredMaxTokens(t *testing.T) {
+	seat := Caster{
+		Label:  LabelJudge,
+		Agent:  "judge-1",
+		Config: registry.AgentConfig{Provider: "p", Model: "judge-model", SupportsFC: true},
+	}
+
+	assert.Nil(t, buildDebateAgent(seat, "prompt").Invocation.MaxTokens,
+		"no declaration means no cap is sent")
+
+	declared := 24000
+	seat.Config.MaxTokens = &declared
+	got := buildDebateAgent(seat, "prompt").Invocation.MaxTokens
+	require.NotNil(t, got, "the seat's max_tokens declaration must reach the request")
+	assert.Equal(t, 24000, *got)
 }

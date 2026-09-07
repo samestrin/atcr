@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/samestrin/atcr/internal/stream"
 	reclib "github.com/samestrin/atcr/reconcile"
 	"github.com/stretchr/testify/assert"
@@ -70,6 +71,14 @@ func (f *fakeTier4) index() *symbolIndex {
 	return &symbolIndex{complete: true, byName: byName}
 }
 
+// fakeTier4 is the scripted Tier 4 resolver the wiring tests drive. The
+// compile-time assertion is the drift alarm the delegation pattern hides: the
+// fake satisfies tier4Resolver at every withFakeTier4 call site, so a signature
+// change to the interface surfaces as a build error at the assertion rather
+// than as a cascading failure at whatever test happened to construct the fake
+// first.
+var _ tier4Resolver = (*fakeTier4)(nil)
+
 // resolveWithDropped satisfies tier4Resolver with a per-anchor script.
 //
 // It mirrors the dropped-anchor veto too: a scripted resolver that ignored
@@ -103,7 +112,9 @@ func (f *fakeTier4) index() *symbolIndex {
 // list. It is consulted per SET, in the order production consults the sets, so a
 // secondary script is never read on an input where production never looks at
 // the secondary set.
-func (f *fakeTier4) resolveWithDropped(_ context.Context, primary, secondary, droppedSecondary []string) (string, tier4Outcome) {
+func (f *fakeTier4) resolveWithDropped(_ context.Context, sets anchorSets) (string, tier4Outcome) {
+	primary, barredPrimary := sets.primary, sets.barredPrimary
+	secondary, droppedSecondary := sets.secondary, sets.droppedSecondary
 	f.calls++
 	if len(primary) == 0 {
 		return "", tier4Inconclusive
@@ -115,14 +126,28 @@ func (f *fakeTier4) resolveWithDropped(_ context.Context, primary, secondary, dr
 	}
 
 	x := f.index()
-	if file, ok := x.locate(primary); ok {
+	// DELEGATED, like every other rule in this method: production clamps the
+	// barred set to primary once, before either arm reads it. A fake that skipped
+	// the clamp would be STRICTER than production on exactly the input the clamp
+	// exists for — a non-subset barred name would still veto here.
+	barredPrimary = clampBarredToPrimary(primary, barredPrimary)
+	// The PRIMARY narrowing is delegated the same way locate and contradicts
+	// are: a fake that ignored barredPrimary would be LOOSER than production
+	// on exactly the input epic 35.16.6.8.2 added it for, so a wiring test that
+	// passed nil (or nothing) would pass while production withholds.
+	if file, ok := x.resolvePrimary(primary, barredPrimary); ok {
 		return file, tier4Resolved // production returns here without reading droppedSecondary
 	}
 
 	// The secondary set may only LOCALIZE, never substitute for the subject.
+	// The gate is production's own conjunction, not a restatement of one half of
+	// it: "present" is the presenceSource bit OR a byName hit, so a subject the
+	// scan saw cited in source but could not localize still counts as matched
+	// and the secondary set may localize the finding. Aligning on byName alone
+	// made the fake return tier4NoMatch where production reaches resolveSecondary.
 	primaryMatched := false
 	for _, a := range primary {
-		if len(x.byName[a]) > 0 {
+		if x.present[a]&presenceSource != 0 || len(x.byName[a]) > 0 {
 			primaryMatched = true
 			break
 		}
@@ -139,8 +164,19 @@ func (f *fakeTier4) resolveWithDropped(_ context.Context, primary, secondary, dr
 		// through the double: a wiring test driven by withFakeTier4 would
 		// exercise the veto and see the counter stay flat while production
 		// increments it.
+		//
+		// Production's barred-primary veto is applied ON TOP of the delegated
+		// call: resolveSecondary knows nothing of barredPrimary, so resolve
+		// vets the FIX-sourced file itself before returning it. A fake that
+		// returned the secondary file unconditionally was LOOSER than
+		// production on exactly the input the veto exists for — it resolved
+		// where production withheld (pinned by the "barred primary vetoes a
+		// disagreeing secondary hit" mirror row).
 		if file, outcome := x.resolveSecondary(secondary, droppedSecondary); outcome == tier4Resolved {
-			return file, tier4Resolved
+			if file, ok := x.vetoResolvedSecondary(file, barredPrimary); ok {
+				return file, tier4Resolved
+			}
+			return "", tier4Inconclusive
 		}
 		// A primary anchor IS declared somewhere, so the tree was not searched
 		// in vain even though nothing localized.
@@ -440,9 +476,20 @@ func TestTier4_TruncatedFixAnchorSetYieldsNoSuggestion(t *testing.T) {
 //     resolved on a secondary hit where production refuses to let the FIX set
 //     substitute for an absent subject — the verdict inversion that gate blocks
 //
-// One row per divergence is not the guard; comparing the two resolvers on the
-// same input is. The fake now delegates localization to a real symbolIndex, so
-// these rows pin that delegation rather than three hand-copied rules.
+// What the comparison does and does not guard. The fake delegates every
+// localization arm to the same symbolIndex methods production runs
+// (resolvePrimary, resolveSecondary, vetoResolvedSecondary), so on those paths
+// assert.Equal(prodOutcome, fakeOutcome) cannot fail: both answers are computed
+// by the same code, and a change to production flows through the fake
+// unchanged. The comparison's real signal is the fake's SCRIPTED parts — the
+// early returns, the inconc consultation order, and the primaryMatched gate —
+// where a restatement changes an outcome; a restatement that only loses a
+// counter passes here silently, which is why the delegated arms' counters are
+// pinned separately by TestFakeTier4_CountsProblemAnchorImprecise. Production
+// behaviour itself is pinned only by the require.Equal(wantOutcome,
+// prodOutcome) lines. These rows pin production and the fake's control flow —
+// not the fidelity of any arm the fake delegates, because there is no
+// restatement left to diverge.
 func TestFakeTier4_MirrorsResolveOnThePrimaryPath(t *testing.T) {
 	const (
 		fileA = "pkg/a.go"
@@ -453,6 +500,7 @@ func TestFakeTier4_MirrorsResolveOnThePrimaryPath(t *testing.T) {
 		name      string
 		byName    map[string][]string
 		primary   []string
+		barredP   []string
 		secondary []string
 		dropped   []string
 		// wantOutcome is asserted of PRODUCTION first, so a row cannot silently
@@ -502,12 +550,84 @@ func TestFakeTier4_MirrorsResolveOnThePrimaryPath(t *testing.T) {
 			wantOutcome: tier4NoMatch,
 			wantFile:    "",
 		},
+		{
+			// Epic 35.16.6.8.2: an imprecise primary anchor may not SOURCE the
+			// file. A fake that ignored barredPrimary would resolve to fileA
+			// where production withholds — LOOSER than production, the direction
+			// that lets a wiring test assert a resolution the code refuses.
+			name: "an imprecise primary anchor does not source a resolution",
+			byName: map[string][]string{
+				"ParseConfig": {fileA},
+			},
+			primary:     []string{"ParseConfig"},
+			barredP:     []string{"ParseConfig"},
+			wantOutcome: tier4Inconclusive,
+			wantFile:    "",
+		},
+		{
+			// The VETO half of the same narrowing: a faithful anchor localizes
+			// fileA while a barred one is declared in exactly one OTHER file.
+			// That is the disagreement locate() would have refused on had the
+			// barred anchor still been allowed to source, so the suggestion is
+			// withheld rather than drawn from half the evidence.
+			name: "an imprecise primary anchor still vetoes a file it disagrees with",
+			byName: map[string][]string{
+				"subjectName": {fileA},
+				"ParseConfig": {fileB},
+			},
+			primary:     []string{"subjectName", "ParseConfig"},
+			barredP:     []string{"ParseConfig"},
+			wantOutcome: tier4Inconclusive,
+			wantFile:    "",
+		},
+		{
+			// The WHOLE-set contract resolve itself must honor: the barred
+			// members ride ALONGSIDE primary, and the presence check and the
+			// no-match arm must still see them. Here the barred ParseConfig IS
+			// the declared subject and absentName is in the tree nowhere: with
+			// the set whole, the declared member reaches the presence check and
+			// the verdict is tier4Inconclusive — never tier4NoMatch. (This row
+			// drives resolve directly, so it pins the procedure; the validate.go
+			// call site that must pass the set whole is pinned end-to-end by
+			// TestRunReconcile_BarredPrimaryKeepsDeclaredSubjectUnrouted, which
+			// fails under the narrowed-primary mutation.)
+			name: "a barred-and-present anchor keeps an absent co-anchor from routing the finding out",
+			byName: map[string][]string{
+				"ParseConfig": {fileA},
+			},
+			primary:     []string{"ParseConfig", "absentName"},
+			barredP:     []string{"ParseConfig"},
+			wantOutcome: tier4Inconclusive,
+			wantFile:    "",
+		},
+		{
+			// The SECONDARY-path half of the same veto: the primary is barred and
+			// matches nothing, but the FIX set localizes a file the barred anchor
+			// is declared in exactly one OTHER file from. Production vetoes the
+			// FIX-sourced file ("could not check", not a differently-wrong
+			// answer); the fake must refuse it the same way.
+			name: "a barred primary vetoes a disagreeing secondary hit",
+			byName: map[string][]string{
+				"ParseConfig": {fileA},
+				"helperName":  {fileB},
+			},
+			primary:     []string{"ParseConfig"},
+			barredP:     []string{"ParseConfig"},
+			secondary:   []string{"helperName"},
+			wantOutcome: tier4Inconclusive,
+			wantFile:    "",
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			production := &symbolIndex{complete: true, byName: tc.byName}
-			prodFile, prodOutcome := production.resolve(tc.primary, tc.secondary, tc.dropped)
+			prodFile, prodOutcome := production.resolve(anchorSets{
+				primary:          tc.primary,
+				barredPrimary:    tc.barredP,
+				secondary:        tc.secondary,
+				droppedSecondary: tc.dropped,
+			})
 			require.Equal(t, tc.wantOutcome, prodOutcome, "production outcome")
 			require.Equal(t, tc.wantFile, prodFile, "production file")
 
@@ -517,12 +637,71 @@ func TestFakeTier4_MirrorsResolveOnThePrimaryPath(t *testing.T) {
 				byAnchor[name] = files[0]
 			}
 			fake := &fakeTier4{byAnchor: byAnchor}
-			fakeFile, fakeOutcome := fake.resolveWithDropped(
-				context.Background(), tc.primary, tc.secondary, tc.dropped)
+			fakeFile, fakeOutcome := fake.resolveWithDropped(context.Background(), anchorSets{
+				primary:          tc.primary,
+				barredPrimary:    tc.barredP,
+				secondary:        tc.secondary,
+				droppedSecondary: tc.dropped,
+			})
 
 			assert.Equal(t, prodOutcome, fakeOutcome,
 				"a fake that diverges from production lets a wiring test assert behaviour the code does not have")
 			assert.Equal(t, prodFile, fakeFile, "both resolvers name the same file")
 		})
 	}
+}
+
+// TestFakeTier4_CountsProblemAnchorImprecise pins the counter's observability
+// through the double. The secondary arm delegates to resolveSecondary and so
+// carries its counter for free; the primary arm was hand-copied, so a wiring
+// test driven through withFakeTier4 over a boundary-cut PROBLEM saw
+// tier4ProblemAnchorImpreciseMetric stay flat while production incremented it —
+// the exact drift class the fake's own doc says delegation exists to kill.
+func TestFakeTier4_CountsProblemAnchorImprecise(t *testing.T) {
+	root := tier4Repo(t, "internal/cfg/parse.go")
+	fake := &fakeTier4{byAnchor: map[string]string{"ParseConfig": "internal/cfg/parse.go"}}
+	withFakeTier4(t, fake)
+
+	before := metrics.Counter(tier4ProblemAnchorImpreciseMetric).Value()
+
+	findings := []JSONFinding{{
+		File:    "internal/tokens/renewal.go",
+		Line:    31,
+		Problem: "配置ParseConfig() ignores the returned error",
+		Fix:     "check the returned error before reissuing",
+	}}
+	_, _ = validateFindingPaths(context.Background(), findings, root)
+
+	assert.Equal(t, before+1, metrics.Counter(tier4ProblemAnchorImpreciseMetric).Value(),
+		"the barred tail cost a suggestion the unnarrowed set would have localized; the fake must carry the primary arm's counter")
+}
+
+// TestFakeTier4_CountsProblemAnchorImprecise/secondary veto pins the counter's
+// SECOND site through the double: production counts a secondary hit withheld by
+// the barred-primary veto, and the fake must carry that increment too. The two
+// sites necessarily co-fire through the fake — the veto is only reachable when
+// the narrowed primary locate failed while the unnarrowed one would have
+// localized, which is exactly the first site's condition — so the assertion is
+// +2, one per site.
+func TestFakeTier4_CountsProblemAnchorImprecise_SecondaryVeto(t *testing.T) {
+	fake := &fakeTier4{byAnchor: map[string]string{
+		"ParseConfig": "internal/cfg/parse.go",
+		"readTree":    "pkg/tree.go",
+	}}
+
+	before := metrics.Counter(tier4ProblemAnchorImpreciseMetric).Value()
+
+	// The barred ParseConfig is declared in exactly one OTHER file than the
+	// secondary hit readTree localizes — the disagreement locate() would have
+	// refused on — so the FIX-sourced file is withheld and counted.
+	file, outcome := fake.resolveWithDropped(context.Background(), anchorSets{
+		primary:       []string{"ParseConfig"},
+		barredPrimary: []string{"ParseConfig"},
+		secondary:     []string{"readTree"},
+	})
+	assert.Empty(t, file, "the veto withholds the FIX-sourced file")
+	assert.Equal(t, tier4Inconclusive, outcome, "a veto renders as could-not-check, not as a different answer")
+
+	assert.Equal(t, before+2, metrics.Counter(tier4ProblemAnchorImpreciseMetric).Value(),
+		"both counting sites must be observable through the double: the cost narrowing and the vetoed secondary hit")
 }
