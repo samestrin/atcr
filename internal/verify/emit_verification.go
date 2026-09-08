@@ -105,6 +105,18 @@ type VerificationResult struct {
 	// the top level, and modelled keys always win a collision so a stale extra can
 	// never shadow a value this struct computed.
 	//
+	// Scoped to the SKIP path, and narrower than debate's unconditional round-trip.
+	// It is carried only where a prior record both exists and still describes the
+	// standing verdict; a re-verified finding (including every `--fresh` run) is
+	// rebuilt from this run's own vote and carries none, and the reject arms have
+	// either no prior to read or one this guard just rejected. Widening it to the
+	// re-verified path means consulting the prior there, which fires loadPrior on
+	// runs where nothing is skipped — the eager load
+	// TestRunVerify_CorruptPriorNoWarningWhenNoSkippedFindings exists to prevent. No in-tree
+	// stage writes an unmodelled key today, so the gap is a documented boundary
+	// rather than a live loss; TestRunVerify_ExtraPreservationIsScopedToTheSkipPath
+	// pins both halves of it.
+	//
 	// Scoped to the RECORD. VerificationFile's own top-level keys are not preserved,
 	// and deliberately: computeVerificationBytes builds that envelope from computed
 	// values on every write and never reads a prior one, so there is nothing to

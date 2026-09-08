@@ -1478,3 +1478,53 @@ func TestRunVerify_ARejectedPriorAddsNoCaveatToAnUntruncatedVerdict(t *testing.T
 	assert.Empty(t, readVerificationRecords(t, recon)[0].TrippedBudgets,
 		"the rejected prior's list belongs to the run this guard rejected — carrying it would caveat a verdict that was never truncated")
 }
+
+// TestRunVerify_ExtraPreservationIsScopedToTheSkipPath pins the boundary the Extra
+// catch-all actually covers, so the contract on VerificationResult and the code
+// cannot drift apart again.
+//
+// Extra is carried only where a prior record is both present and still describes
+// the standing verdict — the skip path. A re-verified finding is rebuilt from this
+// run's own vote and carries none, and it CANNOT: reading the prior there would
+// fire loadPrior on every --fresh run, which is exactly the eager load
+// TestRunVerify_CorruptPriorNoWarningWhenNoSkippedFindings exists to keep out. Nothing
+// in-tree writes an unmodelled key today, so this is a documented boundary rather
+// than a live loss — but a stage that starts writing one must widen this test
+// deliberately, not discover the gap in production.
+func TestRunVerify_ExtraPreservationIsScopedToTheSkipPath(t *testing.T) {
+	prior := []byte(`{"findings":[
+		{"file":"a.go","line":1,"problem":"boom","verdict":"confirmed","skeptic":"otto",
+		 "model":"m-x","reasoning":"otto read token.go:42","durationMs":1840,
+		 "trippedBudgets":[],"escalationTier":"tier-2"}
+	]}`)
+	mk := func() string {
+		dir := pipelineReview(t, []reconcile.JSONFinding{{
+			Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+			Reviewers: []string{"rev"}, Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "otto"},
+		}})
+		require.NoError(t, os.WriteFile(filepath.Join(dir, reconciledSubdir, "verification.json"), prior, 0o644))
+		return dir
+	}
+
+	// Skip path: the prior stands, so its unmodelled key rides through the re-emit.
+	dir := mk()
+	_, err := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	})
+	require.NoError(t, err)
+	data, rerr := os.ReadFile(filepath.Join(dir, reconciledSubdir, "verification.json"))
+	require.NoError(t, rerr)
+	assert.Contains(t, string(data), `"escalationTier": "tier-2"`,
+		"the skip path re-emits the record, so a key this struct does not model must survive it")
+
+	// Rich path: this run produced the verdict, and no prior is consulted.
+	dir = mk()
+	_, err = runVerify(context.Background(), dir, skepticRegistry(), Options{Fresh: true},
+		scriptedHarness(`{"verdict":"refuted","reasoning":"stale"}`))
+	require.NoError(t, err)
+	data, rerr = os.ReadFile(filepath.Join(dir, reconciledSubdir, "verification.json"))
+	require.NoError(t, rerr)
+	assert.NotContains(t, string(data), "escalationTier",
+		"a re-verified record is built from this run's vote — widening this needs the eager prior load the lazy-load guard rules out")
+}
