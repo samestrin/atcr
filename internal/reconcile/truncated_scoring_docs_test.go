@@ -153,4 +153,6 @@ func TestScorecardDoc_ConditionalFieldsParagraphNamesBothOmissions(t *testing.T)
 		"the paragraph must announce that there is more than one omission case")
 	assert.Contains(t, para, "survived_skeptic_rate",
 		"the second case applies to one named key, not to all three — the paragraph must say which")
+	assert.Contains(t, para, "findings_verified + findings_refuted",
+		"\"second\" alone is satisfied by any sentence using the word — the paragraph must state the condition the emitter gates on")
 }
