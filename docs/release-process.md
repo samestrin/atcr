@@ -270,6 +270,17 @@ execute against the commit being published.
    _not_ use `git push --tags`, which would also push every app `v*` tag and fire
    the app release workflow.
 
+   [`.githooks/pre-push`](../.githooks/pre-push) exempts this push from its
+   pinned-reconcile build: when every ref being pushed matches
+   `refs/tags/reconcile/*`, the `GOWORK=off go build ./...` gate is skipped. It
+   has to be — the pin is not bumped until step 4 below, so at this moment the
+   root module by construction does not build against the pinned reconcile, and
+   the only other way through would be `git push --no-verify`, which also
+   disables gofmt, golangci-lint, the suite and the reconcile module checks. The
+   tag is still gated: `reconcile-module.yml` runs the module's own three checks
+   on it (step 3). A push that carries a branch **alongside** the tag runs the
+   pin gate as usual.
+
 3. **Let the module CI gate run.** The `reconcile/v*` tag push fires
    [`reconcile-module.yml`](../.github/workflows/reconcile-module.yml) on
    `ubuntu-latest` (`gofmt`, `golangci-lint`, `go test -race`
