@@ -41,7 +41,12 @@ func newDebtBackfillCmd() *cobra.Command {
 			"rewritten from a guess. Within a repaired id only the LINES still carrying the\n" +
 			"stale excerpt are written, so a resolution trail's --reason is left intact.\n" +
 			"Run --dry-run first: it prints the before and after of every line it would\n" +
-			"touch.",
+			"touch. Each line is named by a `<shard>:<line>` locator whose shard name has\n" +
+			"had terminal-driving runes stripped and token-breaking ones percent-encoded,\n" +
+			"so it may not be the literal filename on disk. Where two names reduce to the\n" +
+			"same token, each gets a `#xxxxxx` suffix — the first 6 hex of sha256 over the\n" +
+			"raw filename — so the listing never leaves it ambiguous which file would be\n" +
+			"rewritten. The suffix is appended only where a collision exists.",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: runDebtBackfill,
 	}
@@ -119,6 +124,32 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 		// SET of shard names on disk, so it cannot be detected one row at a time — nor
 		// from the change set alone, which cannot see an unchanged colliding file.
 		locators := locatorNames(res.ShardNames, res.Changes)
+
+		// The suffix needs a legend, or it does not do its job. Unannotated, "#a1b2c3"
+		// reads as part of the filename — which is also the documented residual case, a
+		// real file named that way — and the operator cannot map it back to a file by
+		// eye, because it hashes raw bytes they are not shown. The mechanism's whole
+		// security value is the operator understanding that a suffix means "this is not
+		// the plain name you think it is", and nothing else on this surface says so.
+		//
+		// A locator counts as suffixed when it differs from the bare sanitized name,
+		// rather than by searching for a "#" — a shard genuinely named with a "#" would
+		// otherwise summon a legend explaining a suffix that was never appended.
+		//
+		// Emitted only when at least one locator carries a suffix, matching the suffix's
+		// own conditional appearance: an unconditional legend on every ordinary run is a
+		// line the operator learns to skip, and it is most needed on the runs that are
+		// not ordinary.
+		for _, c := range res.Changes {
+			if locators[c.Shard] != sanitizeLocator(c.Shard) {
+				_, _ = fmt.Fprint(cmd.OutOrStdout(),
+					"  note: some shard names collide once unprintable runes are stripped; "+
+						"#xxxxxx is the first 6 hex of sha256 over the RAW filename, appended only "+
+						"to tell colliding names apart — it is not part of the file's name\n")
+				break
+			}
+		}
+
 		for _, c := range res.Changes {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %s:%d %q\n    before: %q\n    after:  %q\n",
 				locators[c.Shard], c.Line, c.ID, c.Before, c.After)
