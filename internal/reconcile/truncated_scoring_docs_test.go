@@ -46,6 +46,8 @@ func TestTruncatedScoringDocs_DescribeTheKeyTheScoreActuallyReads(t *testing.T) 
 				"the document must say the SCORE reads trippedBudgets — naming truncated as the key is the drift this guards")
 			assert.Contains(t, doc, "debate",
 				"a reader told the two artifacts hold the same fact must also be told what keeps them in step")
+			assert.Contains(t, doc, "`tool_budget_bytes` entry in `verification.json`",
+				"naming the debate stage is not enough — the document must say WHAT the ruling clears, or a reader is free to assume it clears the verdict too (it does not: runDebate never rewrites that file's verdict field)")
 		})
 	}
 }
@@ -213,4 +215,6 @@ func TestVerificationDoc_DebateSyncClaimIsScopedToTheCaveat(t *testing.T) {
 		"debate never rewrites verification.json's verdict field, so a ruling cannot restore the verdict to the score")
 	assert.Contains(t, para, "verdict it is counted under",
 		"the paragraph must say WHICH verdict the score still uses, or a reader assumes the judge's")
+	assert.Contains(t, para, "never rewrites",
+		"a reworded overclaim slips past the NotContains above — the paragraph has to state the negation outright")
 }
