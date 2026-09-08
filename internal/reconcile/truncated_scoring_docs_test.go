@@ -190,4 +190,6 @@ func TestScorecardDoc_PublicEnvelopeRowStatesTheAllTruncatedOmission(t *testing.
 		"absence now has a second cause — a group whose verdicts were all truncated — and the row must name it")
 	assert.NotContains(t, row, "The omission is the disambiguator.",
 		"omission no longer disambiguates 'no verification' from 'verification ran'; leaving the claim tells a board consumer to read absence wrongly")
+	assert.Contains(t, row, "no countable verdict",
+		"naming truncation is not enough — the row must give the reading absence now supports, or a consumer keeps the old one")
 }
