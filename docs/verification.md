@@ -165,9 +165,32 @@ It is then carried forward on every later re-verify that copies the blank `model
 it accounts for — without that carry it would last a single generation, because
 the run that stamps it also writes the file the next run reads, and by then the
 verdicts match and the reject arm no longer fires. So a record without it either
-carries a `model` or never had one to carry. The two markers never co-occur: the
-carry happens only on the arm that copies `model`, which is the arm a
-`debateJudge` record skips.
+carries a `model` or never had one to carry.
+
+The two markers never co-occur, and each stage holds up one half of that. On the
+verify side the carry happens only on the arm that copies `model`, which is the
+arm a `debateJudge` record skips. On the debate side the judge stamp
+**drops `modelWithheldReason`** as it writes `debateJudge`: a record whose verdict
+a ruling has just corrected no longer has the mismatch the reason describes, so
+leaving it standing would have the record claim its attribution was rejected over
+a disagreement it no longer has. Reading a record a debate touched, expect the
+judge marker and no reason.
+
+A debate also repairs a **partial-write residue** in this file. `atomicwrite.WriteGroup`
+stages every artifact and then renames them in sequence with no rollback, so a
+publish that fails after `findings.json` lands leaves that file with the caveat
+cleared while `verification.json` keeps both its `tool_budget_bytes` entry and its
+pre-debate verdict — and `filterAlreadyDebated` then excludes the finding from
+every later run, so no fresh ruling revisits it. The next `atcr debate` reconciles
+it: a record reading `confirmed` or `refuted` beside that entry can only be the
+derived-ceiling exemption, so a `findings.json` that says the caveat is gone proves
+a ruling cleared it and the matching write was lost. The judge is recovered from
+`reconciled/debate.json`, which is the first entry of the same atomic group and
+therefore survives the rename that lost this file. An `unverifiable` verdict beside
+the same entry is deliberately **not** repaired — that is the declared-ceiling
+voiding path, indistinguishable on disk from a residue whose verdict happened to be
+`unverifiable`, and deleting a real voiding record would silently disable
+reconcile's all-unverifiable gate. That residual is accepted, not overlooked.
 
 The per-finding `model` (the different-model evidence) lives here, in `verification.json`, not in the `findings.json` block — the report's Skeptic section shows verdict/skeptic/reasoning and does not perform a registry lookup. Skeptic runs do not persist transcripts — only reviewer fan-out and debate do.
 

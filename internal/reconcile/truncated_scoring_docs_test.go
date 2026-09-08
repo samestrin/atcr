@@ -274,7 +274,10 @@ func TestVerificationDoc_NamesAllThreeCausesOfAnEmptyModel(t *testing.T) {
 //     reader has no reason to expect the marker to disappear from a record a debate
 //     touched.
 func TestVerificationDoc_NamesTheDebateSideRepairAndMarkerDeletion(t *testing.T) {
-	doc := readDoc(t, "verification.md")
+	// Prose wraps. Searching the raw text makes a claim look absent because a line
+	// break fell between two of its words, which fails this guard for the one reason
+	// it is not meant to catch.
+	doc := flattenWhitespace(readDoc(t, "verification.md"))
 
 	// Fatals if either explanation was removed outright, and scopes the assertions
 	// below to the paragraph that carries it — a bare document-wide Contains passes
@@ -288,4 +291,15 @@ func TestVerificationDoc_NamesTheDebateSideRepairAndMarkerDeletion(t *testing.T)
 	deletion := docParagraph(t, doc, "drops `modelWithheldReason`")
 	assert.Contains(t, deletion, "debateJudge",
 		"the deletion is the debate-side half of the never-co-occur claim: the judge marker replaces the withheld-reason one")
+}
+
+// flattenWhitespace collapses runs of spaces and single newlines inside each
+// paragraph to one space, leaving the blank lines docParagraph splits on intact.
+// A claim spanning a line break then matches as the sentence a reader sees.
+func flattenWhitespace(doc string) string {
+	blocks := strings.Split(doc, "\n\n")
+	for i, b := range blocks {
+		blocks[i] = strings.Join(strings.Fields(b), " ")
+	}
+	return strings.Join(blocks, "\n\n")
 }
