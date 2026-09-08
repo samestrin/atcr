@@ -526,3 +526,92 @@ func TestLocatorNames_FallsBackToTheChangeSetWhenTheListingFails(t *testing.T) {
 	assert.NotEqual(t, names[changes[0].Shard], names[changes[1].Shard],
 		"two distinct shard files must never render as one identical locator")
 }
+
+// The listing filter — non-directory entries ending in ".jsonl" — was covered by no
+// test: deleting it left the whole ./cli/ suite green. The one existing case that puts
+// a non-shard file in the store names it "notes.txt", which cannot collide with the
+// shard under test, so it is insensitive to the filter.
+//
+// Two decoys are planted here, one for each half of the filter:
+//
+//   - a DIRECTORY named exactly like the genuine shard ("2026-08.jsonl/"). Without the
+//     IsDir half it enters the collision map under the genuine shard's own token, and
+//     the locator the operator approves gains a "#hash" suffix that names nothing.
+//   - a non-".jsonl" twin ("2026-08<U+200B>.jsonl.tmp") whose name reduces to the same
+//     token once Cf is stripped. Without the suffix half it collides the same way. A
+//     ".tmp" beside a shard is not hypothetical: the rewrite pass itself stages through
+//     os.CreateTemp in this directory, so a crashed run leaves exactly this shape.
+//
+// The assertion is that the genuine locator prints BARE. The filter's absence is
+// fail-SAFE — more names enter the map, so the output gains spurious suffixes rather
+// than losing needed ones — which is why the row was non-blocking; it is pinned anyway
+// because a future NARROWING of the filter would otherwise be silent, and this is the
+// surface an operator approves an in-place rewrite from.
+func TestDebtBackfillJustifications_DryRunIgnoresNonShardEntriesWhenDisambiguating(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	reviewRoot := filepath.Join(root, "reviews")
+	rd := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+	require.NoError(t, os.MkdirAll(rd, 0o750))
+	require.NoError(t, os.MkdirAll(store, 0o750))
+	body := "## Findings\n\nSome preamble.\n\n```\n- internal/thing.go:42 quoted example row\n\n" +
+		"- **internal/thing.go:42** the real narrative explaining the defect.\n"
+	require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"), []byte(body), 0o600))
+
+	// A directory whose name is byte-identical to the genuine shard's.
+	require.NoError(t, os.MkdirAll(filepath.Join(store, "2026-09.jsonl"), 0o750))
+	// A non-".jsonl" entry whose name reduces to the genuine shard's token once the
+	// zero-width space is stripped.
+	require.NoError(t, os.WriteFile(filepath.Join(store, "2026-08​.jsonl.tmp"), []byte("staged\n"), 0o600))
+
+	rec := `{"schema_version":3,"id":"aaaa1111","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
+		`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
+		`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+		`"justification":"- **internal/thing.go:42** the real narrative explaining the defect.",` +
+		`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":8}}`
+	require.NoError(t, os.WriteFile(filepath.Join(store, "2026-08.jsonl"), []byte(rec+"\n"), 0o600))
+
+	code, out := execCmdCapture(t, "debt", "backfill-justifications",
+		"--store", store, "--review-root", reviewRoot, "--dry-run")
+	require.Equal(t, 0, code, out)
+	assert.Contains(t, out, "2026-08.jsonl:1 ",
+		"a .tmp twin is not a shard, so the genuine locator must print bare")
+	assert.NotRegexp(t, `2026-08\.jsonl#[0-9a-f]{6}`, out,
+		"no non-shard entry may push a genuine locator into its disambiguated form")
+}
+
+// The IsDir half in isolation: a directory named exactly like the CHANGED shard. It is
+// split from the .tmp case above so a mutation that removes only one half of the filter
+// is still caught — with both decoys in one assertion, either half alone keeps the test
+// red and the other half's coverage is unproven.
+func TestDebtBackfillJustifications_DryRunIgnoresADirectoryNamedLikeTheChangedShard(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	reviewRoot := filepath.Join(root, "reviews")
+	rd := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+	require.NoError(t, os.MkdirAll(rd, 0o750))
+	require.NoError(t, os.MkdirAll(store, 0o750))
+	body := "## Findings\n\nSome preamble.\n\n```\n- internal/thing.go:42 quoted example row\n\n" +
+		"- **internal/thing.go:42** the real narrative explaining the defect.\n"
+	require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"), []byte(body), 0o600))
+
+	// The decoy directory's name reduces to the changed shard's token once Cf is
+	// stripped, so without the IsDir half it is a genuine collision — not merely an
+	// extra name that happens to differ.
+	require.NoError(t, os.MkdirAll(filepath.Join(store, "2026-08​.jsonl"), 0o750))
+
+	rec := `{"schema_version":3,"id":"aaaa1111","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
+		`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
+		`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+		`"justification":"- **internal/thing.go:42** the real narrative explaining the defect.",` +
+		`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":8}}`
+	require.NoError(t, os.WriteFile(filepath.Join(store, "2026-08.jsonl"), []byte(rec+"\n"), 0o600))
+
+	code, out := execCmdCapture(t, "debt", "backfill-justifications",
+		"--store", store, "--review-root", reviewRoot, "--dry-run")
+	require.Equal(t, 0, code, out)
+	assert.Contains(t, out, "2026-08.jsonl:1 ",
+		"a directory is not a shard, so the genuine locator must print bare")
+	assert.NotRegexp(t, `2026-08\.jsonl#[0-9a-f]{6}`, out,
+		"a directory entry must not push a genuine locator into its disambiguated form")
+}
