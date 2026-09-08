@@ -242,14 +242,15 @@ already-paid-for work of cases `1..N-1` would otherwise be lost.
   comparing it against today's two-lane signature would report a panel change that
   never happened and send you to discard every already-paid completed case. So an
   **unstamped** checkpoint whose recorded roster equals the **parallel-lane-only**
-  projection of your current config resumes **once** across an
-  **added serial reviewer**, and is then **upgraded to the union form** in place —
-  after which the ordinary fail-closed rule applies to it like any other checkpoint.
-  The exception is
-  narrow by construction: a parallel reviewer whose model or persona drifted still
-  mismatches, a stamped checkpoint never qualifies, and a checkpoint that records an
-  empty roster is rejected outright because an empty roster proves nothing about the
-  panel.
+  projection of your current config resumes across an **added serial reviewer** rather
+  than failing closed, and its roster is **upgraded to the union form**.
+  That upgrade is **written back only if the resumed run scores at least one further
+  case** — the checkpoint is saved after a case executes, so a resume that replays
+  every completed case, or aborts before the first one, leaves the legacy form on disk
+  and takes this exception again next time. The exception is narrow by construction: a
+  parallel reviewer whose model or persona drifted still mismatches, a stamped
+  checkpoint never qualifies, and a checkpoint that records an empty roster is rejected
+  outright because an empty roster proves nothing about the panel.
 
 Checkpointing is **opt-in**: without `--checkpoint`, behavior is unchanged — a
 total-roster case failure still aborts the run (a transient infrastructure failure

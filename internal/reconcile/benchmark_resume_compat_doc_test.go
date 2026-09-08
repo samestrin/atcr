@@ -12,8 +12,8 @@ import (
 // model swapped), the run fails closed with a clear message". Epic 35.16.6.6
 // deliberately added an exception the bullet did not mention — validateCheckpointRoster
 // carries a pre-serial-lane compatibility arm that RESUMES an unstamped checkpoint
-// across an added serial reviewer, once — so a user-facing document promised a check
-// the binary does not perform for that case. The existing
+// across an added serial reviewer — so a user-facing document promised a check the
+// binary does not perform for that case. The existing
 // benchmark_publishable_doc_test.go covers the configured-roster publishable-identity
 // gate only and does not reach the Resume bullet at all.
 //
@@ -56,8 +56,13 @@ func TestBenchmarkDoc_ResumeCompatExceptionMatchesTheCode(t *testing.T) {
 			// The doc must name the precondition, not merely admit that some
 			// exception exists — an operator cannot tell whether their own
 			// checkpoint is covered otherwise.
-			inDoc:   "roster_format",
-			inCode:  `cp.RosterFormat == ""`,
+			inDoc: "roster_format",
+			// The needle carries the FULL arm, not `cp.RosterFormat == ""` alone.
+			// That shorter string now occurs twice in the file — the compat arm and
+			// the empty-recorded-roster branch below it — so it stays satisfied when
+			// the stamp test is deleted from the arm, which is exactly the deletion
+			// that makes the doc's "a stamped checkpoint never qualifies" false.
+			inCode:  `if cp.RosterFormat == "" && len(recorded) > 0 && equalStrings(`,
 			because: "the arm fires only on an UNSTAMPED checkpoint, so a stamped one is unaffected",
 		},
 		{
@@ -76,7 +81,20 @@ func TestBenchmarkDoc_ResumeCompatExceptionMatchesTheCode(t *testing.T) {
 			name:    "and is upgraded to the union form",
 			inDoc:   "upgraded to the union form",
 			inCode:  "cp.RosterFormat = rosterFormatUnion",
-			because: "the in-place upgrade is what makes the exception a once-only allowance rather than a standing hole",
+			because: "the upgrade is what stops the exception being a standing hole",
+		},
+		{
+			// The upgrade is applied to the in-memory struct, and saveCheckpoint runs
+			// only after a case actually EXECUTES. A resume that replays every
+			// completed case, or aborts before the first one, therefore leaves the
+			// legacy form on disk and takes the exception again next time. The doc
+			// said "once ... in place", which promised a durability the binary does
+			// not provide — the same class of drift this whole test exists to close,
+			// so it is pinned rather than merely corrected.
+			name:    "the upgrade persists only if the resumed run scores a further case",
+			inDoc:   "written back only if the resumed run scores at least one further",
+			inCode:  "a write happens only",
+			because: "saveCheckpoint runs after a scored case, so a pure-replay resume never persists the upgrade",
 		},
 	} {
 		t.Run(claim.name, func(t *testing.T) {
