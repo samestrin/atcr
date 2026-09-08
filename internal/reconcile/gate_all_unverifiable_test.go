@@ -130,3 +130,40 @@ func TestValidateRequireVerified_TalliesFromTheVerdictsNotTheCounts(t *testing.T
 	require.Error(t, ValidateRequireVerified(dir),
 		"a file with no verdictCounts block still records an all-unverifiable run")
 }
+
+// TestAllUnverifiableCollapse_TakesOnlyThePathItReads pins the signature.
+//
+// The function took a reviewDir it never used. verPath is already absolute and
+// every read goes through it; the doc comment above it discusses findings.json,
+// which the function deliberately does NOT read. An unused parameter on a new
+// unexported function invites the next caller to assume it means something.
+//
+// A signature is pinned by calling it: this file fails to COMPILE if reviewDir
+// comes back, which is the only assertion available for "this parameter does not
+// exist" and a stronger one than any runtime check.
+func TestAllUnverifiableCollapse_TakesOnlyThePathItReads(t *testing.T) {
+	dir := t.TempDir()
+	verPath := filepath.Join(dir, "verification.json")
+	require.NoError(t, os.WriteFile(verPath, []byte(`{"findings":[{"verdict":"unverifiable"}]}`), 0o600))
+
+	err := allUnverifiableCollapse(verPath)
+	require.Error(t, err, "one finding, unverifiable — the collapse the gate must not pass over")
+	assert.Contains(t, err.Error(), "atcr doctor")
+}
+
+// TestAllUnverifiableCollapse_UnreadableFileIsNotAnError covers the ReadFile
+// fallback the caller's os.Stat almost always makes unreachable.
+//
+// It can otherwise only fire if the file disappears between that successful Stat
+// and this read. A directory at the path reaches the same branch deterministically
+// and without fault injection: Stat succeeds, IsDir() is false only for files, so
+// the caller skips it — but called directly, ReadFile fails and the function must
+// return nil, exactly the pre-change behaviour.
+func TestAllUnverifiableCollapse_UnreadableFileIsNotAnError(t *testing.T) {
+	dir := t.TempDir()
+	notAFile := filepath.Join(dir, "verification.json")
+	require.NoError(t, os.MkdirAll(notAFile, 0o755))
+
+	assert.NoError(t, allUnverifiableCollapse(notAFile),
+		"the stage still ran, which is all this function ever claimed to check — an unreadable snapshot is not a gate failure")
+}
