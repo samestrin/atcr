@@ -164,3 +164,19 @@ func TestPrePush_PinGateRunsWhenABranchTargetsAReconcileTag(t *testing.T) {
 	assert.Contains(t, out, pinGateEcho,
 		"a BRANCH pushed onto the reconcile tag namespace is not the documented step-2 push and must still be gated")
 }
+
+// TestPrePush_PinGateRunsForAReconcileTagDelete pins the one claim the hook
+// comment and docs/release-process.md make about the force-update gap's
+// boundary: a DELETE is still gated.
+//
+// git sends the literal "(delete)" as the local ref for a tag deletion, which
+// fails the refs/tags/reconcile/* pattern. That is incidental rather than
+// designed, so it is exactly the kind of behaviour a refactor of the pattern
+// could drop without noticing — and the documented gap would then be wider than
+// what is written down.
+func TestPrePush_PinGateRunsForAReconcileTagDelete(t *testing.T) {
+	out := runPrePushWithStubbedTools(t,
+		"(delete) 0000000000000000000000000000000000000000 refs/tags/reconcile/v0.9.0 1111111111111111111111111111111111111111\n")
+	assert.Contains(t, out, pinGateEcho,
+		"a tag delete is not the documented step-2 push; the docs state it stays gated, so it must")
+}

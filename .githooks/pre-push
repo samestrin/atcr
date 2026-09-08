@@ -49,6 +49,21 @@ pushed_refs="$(cat)"
 # on `reconcile/v*` tags. A push carrying anything else — a branch, an app `v*`
 # tag, or an unrecognised shape including no refs at all — still runs the gate.
 #
+# KNOWN GAP, documented rather than latent (docs/release-process.md, step 2): a
+# FORCE-UPDATE of an EXISTING reconcile tag is exempted too. The refspec is
+# byte-identical to the fresh step-2 push, and git gives the hook nothing on
+# stdin to tell them apart — the remote sha is the only hint, and reading it
+# would mean a network round-trip in a pre-push hook. That is the one shape
+# where the gate would matter most, since the root go.mod may already pin
+# exactly that version, and reconcile-module.yml does NOT compensate: it runs
+# only the module's own gofmt/lint/test, never GOWORK=off go build ./... on the
+# root. Bounded by the Go proxy caching an immutable version, so a moved tag
+# largely cannot change what an existing pin resolves to. Run the pin gate by
+# hand before force-updating a tag.
+#
+# A tag DELETE is still gated: git sends the literal "(delete)" as the local
+# ref, which fails the pattern below.
+#
 # No .github/workflows/ci.yml mirror is needed for this one: that workflow fires
 # only on `push: branches: [main]` and `pull_request`, so it never runs for a tag
 # push at all.
