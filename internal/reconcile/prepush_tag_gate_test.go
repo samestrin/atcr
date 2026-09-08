@@ -148,3 +148,19 @@ func TestPrePush_PinGateRunsWhenAReconcileTagTargetsSomethingElse(t *testing.T) 
 	assert.Contains(t, out, pinGateEcho,
 		"a reconcile tag pushed onto a branch is not the documented step-2 push and must still be gated")
 }
+
+// TestPrePush_PinGateRunsWhenABranchTargetsAReconcileTag is the mirror of the
+// test above, and the half that had no counterpart.
+//
+// The hook checks BOTH sides of the refspec, in two separate case blocks. Only
+// the remote-side block was pinned: removing the local_ref block left the whole
+// reconcile suite green, so a later refactor could drop it silently and re-open
+// the skip for `git push origin main:refs/tags/reconcile/v9` — a branch written
+// onto the reconcile tag namespace, which is emphatically not the documented
+// step-2 push and must still be gated.
+func TestPrePush_PinGateRunsWhenABranchTargetsAReconcileTag(t *testing.T) {
+	out := runPrePushWithStubbedTools(t,
+		"refs/heads/main 1111111111111111111111111111111111111111 refs/tags/reconcile/v0.9.0 0000000000000000000000000000000000000000\n")
+	assert.Contains(t, out, pinGateEcho,
+		"a BRANCH pushed onto the reconcile tag namespace is not the documented step-2 push and must still be gated")
+}
