@@ -193,3 +193,101 @@ func parseVerification(t *testing.T, data []byte) map[string][]string {
 	}
 	return out
 }
+
+// overturnedRulingOnA is the ruling shape the sync got wrong: the judge read the
+// evidence itself and REVERSED the skeptic's confirmed to refuted.
+func overturnedRulingOnA() map[FindingKey]ruleApply {
+	return map[FindingKey]ruleApply{
+		{File: "a.go", Line: 1, Problem: "p1"}: {
+			verdict: reclib.VerdictRefuted, survived: false, judge: "greta",
+		},
+	}
+}
+
+// TestSyncVerificationTruncation_CarriesTheRuledVerdictWithTheCaveat pins that
+// the two fields describing ONE verdict move together.
+//
+// Clearing tool_budget_bytes takes the finding out of the score's truncated
+// exclusion and puts it back into survived_skeptic_rate. The verdict it is then
+// counted under comes from the SAME file — and runDebate deliberately never
+// rewrites it (debate.go's atomic-group scope note). So on an OVERTURN the sync
+// used to restore a finding to the ratio under the pre-debate verdict: the judge
+// refuted it, and the score credited the reviewer for a confirm.
+//
+// Before the caveat was cleared at all, such a finding was excluded from both
+// numerator and denominator, so this is a regression the sync itself introduced.
+func TestSyncVerificationTruncation_CarriesTheRuledVerdictWithTheCaveat(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeVerificationFixture(t, reviewDir, staleVerification)
+
+	findings := ruledFindings()
+	applyRulings(findings, overturnedRulingOnA())
+	require.Equal(t, reclib.VerdictRefuted, findings[0].Verification.Verdict,
+		"precondition: the judge overturned the skeptic's confirmed")
+	require.False(t, findings[0].Verification.Truncated,
+		"precondition: the ruling cleared the caveat, so the sync owes a rewrite")
+
+	_, data, err := syncVerificationTruncation(reviewDir, findings)
+	require.NoError(t, err)
+	require.NotNil(t, data)
+
+	assert.Equal(t, reclib.VerdictRefuted, parseVerdicts(t, data)["a.go"],
+		"the caveat and the verdict describe the same verdict — clearing one while leaving the other stale hands the score a verdict the judge replaced")
+}
+
+// TestOverturnedRulingDoesNotCreditTheReviewer is the cross-stage half: the same
+// artifacts the pipeline leaves on disk, read by the scorecard that consumes them.
+func TestOverturnedRulingDoesNotCreditTheReviewer(t *testing.T) {
+	reviewDir := t.TempDir()
+	verPath := writeVerificationFixture(t, reviewDir, staleVerification)
+
+	findings := ruledFindings()
+	applyRulings(findings, overturnedRulingOnA())
+
+	_, data, err := syncVerificationTruncation(reviewDir, findings)
+	require.NoError(t, err)
+	require.NotNil(t, data)
+	require.NoError(t, os.WriteFile(verPath, data, 0o600))
+
+	storeDir := t.TempDir()
+	require.NoError(t, scorecard.Emit(scorecard.EmitInput{
+		RunID: "2026-06-01T00:00:00Z-run",
+		Findings: []scorecard.Finding{
+			{File: "a.go", Line: 1, Problem: "p1", Reviewers: []string{"bruce"}},
+			{File: "b.go", Line: 2, Problem: "p2", Reviewers: []string{"bruce"}},
+		},
+		Reviewers:        map[string]scorecard.ReviewerMeta{"bruce": {Model: "m"}},
+		VerificationPath: verPath,
+	}, scorecard.EmitOpts{Dir: storeDir}))
+
+	recs, err := scorecard.ReadRecords(filepath.Join(storeDir, "2026-06.jsonl"), scorecard.ReadOpts{})
+	require.NoError(t, err)
+
+	var bruce *scorecard.Record
+	for i := range recs {
+		if recs[i].Reviewer == "bruce" && recs[i].RecordType == scorecard.RecordTypeReviewer {
+			bruce = &recs[i]
+		}
+	}
+	require.NotNil(t, bruce, "no reviewer record for bruce")
+	require.NotNil(t, bruce.SurvivedSkepticRate)
+	assert.InDelta(t, 0.0, *bruce.SurvivedSkepticRate, 1e-9,
+		"the judge refuted both findings — crediting either is the stale-verdict leak")
+}
+
+// parseVerdicts maps each finding's file to its recorded verdict.
+func parseVerdicts(t *testing.T, data []byte) map[string]string {
+	t.Helper()
+	var vf struct {
+		Findings []struct {
+			File    string `json:"file"`
+			Verdict string `json:"verdict"`
+		} `json:"findings"`
+	}
+	require.NoError(t, json.Unmarshal(data, &vf))
+	out := map[string]string{}
+	for _, f := range vf.Findings {
+		out[f.File] = f.Verdict
+	}
+	return out
+}
