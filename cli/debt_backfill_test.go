@@ -615,3 +615,47 @@ func TestDebtBackfillJustifications_DryRunIgnoresADirectoryNamedLikeTheChangedSh
 	assert.NotRegexp(t, `2026-08\.jsonl#[0-9a-f]{6}`, out,
 		"a directory entry must not push a genuine locator into its disambiguated form")
 }
+
+// The whole justification for stripping rather than quoting the shard is that
+// `<shard>:<line>` stays ONE unambiguously parseable, copy-pasteable token. A colon
+// or a space surviving inside the shard name breaks exactly that: "2026:08.jsonl:1"
+// has two candidate splits and "2026 08.jsonl:1" is two tokens on a terminal. Both
+// are ordinary POSIX filenames in a world-appendable store directory, so the property
+// the comment at cli/debt_backfill.go:112-114 defends has to actually hold.
+func TestDebtBackfillJustifications_DryRunLocatorStaysOneParseableToken(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		shard string
+		want  string
+	}{
+		{name: "colon", shard: "2026:08.jsonl", want: "2026%3A08.jsonl:1"},
+		{name: "space", shard: "2026 08.jsonl", want: "2026%2008.jsonl:1"},
+		{name: "percent is escaped first so the encoding is reversible", shard: "2026%3A08.jsonl", want: "2026%253A08.jsonl:1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			store := filepath.Join(root, "debt")
+			reviewRoot := filepath.Join(root, "reviews")
+			rd := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+			require.NoError(t, os.MkdirAll(rd, 0o750))
+			require.NoError(t, os.MkdirAll(store, 0o750))
+			body := "## Findings\n\nSome preamble.\n\n```\n- internal/thing.go:42 quoted example row\n\n" +
+				"- **internal/thing.go:42** the real narrative explaining the defect.\n"
+			require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"), []byte(body), 0o600))
+
+			rec := `{"schema_version":3,"id":"aaaa1111","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
+				`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
+				`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+				`"justification":"- **internal/thing.go:42** the real narrative explaining the defect.",` +
+				`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":8}}`
+			require.NoError(t, os.WriteFile(filepath.Join(store, tc.shard), []byte(rec+"\n"), 0o600))
+
+			code, out := execCmdCapture(t, "debt", "backfill-justifications",
+				"--store", store, "--review-root", reviewRoot, "--dry-run")
+			require.Equal(t, 0, code, out)
+			require.Contains(t, out, "aaaa1111", "the dry run must have listed the record")
+			assert.Contains(t, out, tc.want,
+				"the locator must split on exactly one colon, into one shard name and one line number")
+		})
+	}
+}
