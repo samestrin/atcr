@@ -634,6 +634,19 @@ func isPartialWriteResidue(rec map[string]any) bool {
 // skipped: there is no attribution to restore, and writing a verdict without one
 // would leave internal/verify's carry-forward guard reading the record as
 // verify-owned and lending the superseded skeptic's model to it.
+//
+// The judge alone is NOT enough to admit an item. debate.go:457 assigns
+// ir.Judge = cast.Judge.Agent BEFORE the ruling runs, so debate.json also carries
+// a judge on items that applied nothing to findings.json — an `unresolved`
+// outcome (judge_halted, unparseable_ruling) and a gray-zone item, whose decision
+// is cluster-level. This projection therefore mirrors the live map's own
+// admission rule (debate.go:217-249) rather than restating it loosely: an item
+// this switch would have skipped never entered `rulings` in the run that produced
+// the file, so it must not enter this reconstruction of it either. Attributing a
+// verdict to a judge that never ruled it is not a cosmetic error —
+// internal/verify/pipeline.go:434 reads a non-empty debateJudge as "a judge
+// produced this verdict" and withholds the real skeptic's model on every later
+// re-verify.
 func priorDebateRulings(reviewDir string) map[FindingKey]ruleApply {
 	df, found, err := ReadDebateFile(reviewDir)
 	if err != nil || !found {
@@ -641,7 +654,7 @@ func priorDebateRulings(reviewDir string) map[FindingKey]ruleApply {
 	}
 	out := map[FindingKey]ruleApply{}
 	for _, it := range df.Items {
-		if it.Judge == "" {
+		if it.Judge == "" || it.Outcome == OutcomeUnresolved || it.Kind == reconcile.KindGrayZone {
 			continue
 		}
 		out[FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}] = ruleApply{
