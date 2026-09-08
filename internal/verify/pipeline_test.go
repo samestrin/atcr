@@ -1406,3 +1406,75 @@ func readVerificationRecords(t *testing.T, reconDir string) []VerificationResult
 	require.NotEmpty(t, vf.Findings)
 	return vf.Findings
 }
+
+// TestRunVerify_ARejectedPriorStillRecordsTheTruncatedRead keeps the truncation
+// caveat on the record the SCORE reads.
+//
+// internal/scorecard excludes a truncated verdict from the reviewer's durable
+// survived_skeptic_rate, and it keys that exclusion on trippedBudgets in
+// reconciled/verification.json — deliberately, because RunReconcile strips
+// findings.json's verification blocks before the scorecard is emitted
+// (scorecard.go:543-551). On both reject arms this record was rebuilt with no
+// budgets at all, so a confirmed verdict reached from a shortened read was
+// republished as a clean one and credited to the reviewer, permanently, with
+// nothing left on disk saying otherwise.
+//
+// The prior's own list is not the answer — it describes a run this guard just
+// rejected. The findings.json block's Truncated flag describes THIS verdict, and
+// internal/verify sets it from the same voter set it credits budgets from
+// (votes.go:64,72), so re-deriving the entry from it restores the same fact.
+func TestRunVerify_ARejectedPriorStillRecordsTheTruncatedRead(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+		Reviewers: []string{"rev"},
+		Verification: &reclib.Verification{
+			Verdict: "confirmed", Skeptic: "otto", Truncated: true,
+		},
+	}})
+	recon := filepath.Join(dir, reconciledSubdir)
+	// A prior whose verdict no longer matches: the guard rejects its attribution.
+	require.NoError(t, os.WriteFile(filepath.Join(recon, "verification.json"), []byte(`{"findings":[
+		{"file":"a.go","line":1,"problem":"boom","verdict":"refuted","skeptic":"otto",
+		 "model":"m-x","reasoning":"otto read token.go:42","durationMs":1840,
+		 "trippedBudgets":["tool_budget_bytes"]}
+	]}`), 0o644))
+
+	_, runErr := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	})
+	require.NoError(t, runErr)
+
+	got := readVerificationRecords(t, recon)[0]
+	require.Equal(t, "verdict_shifted", got.ModelWithheldReason,
+		"precondition: this is the reject arm")
+	assert.Contains(t, got.TrippedBudgets, budgetToolBytes,
+		"the block still says the verdict was answered from a shortened read — dropping the entry credits a partial read to the reviewer as a full-confidence one")
+}
+
+// TestRunVerify_ARejectedPriorAddsNoCaveatToAnUntruncatedVerdict is the scope
+// guard for the re-derivation above. The flag is the whole evidence: a block that
+// does not carry it describes a verdict reached from a complete read, and
+// inventing a budget entry there would exclude a sound verdict from the ratio.
+func TestRunVerify_ARejectedPriorAddsNoCaveatToAnUntruncatedVerdict(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+		Reviewers:    []string{"rev"},
+		Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "otto"},
+	}})
+	recon := filepath.Join(dir, reconciledSubdir)
+	require.NoError(t, os.WriteFile(filepath.Join(recon, "verification.json"), []byte(`{"findings":[
+		{"file":"a.go","line":1,"problem":"boom","verdict":"refuted","skeptic":"otto",
+		 "model":"m-x","reasoning":"otto read token.go:42","durationMs":1840,
+		 "trippedBudgets":["tool_budget_bytes"]}
+	]}`), 0o644))
+
+	_, runErr := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	})
+	require.NoError(t, runErr)
+
+	assert.Empty(t, readVerificationRecords(t, recon)[0].TrippedBudgets,
+		"the rejected prior's list belongs to the run this guard rejected — carrying it would caveat a verdict that was never truncated")
+}
