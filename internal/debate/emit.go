@@ -353,7 +353,7 @@ type ruledVerdict struct {
 	reasoning string
 }
 
-func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFinding, clearedCaveats map[FindingKey]ruleApply) (string, []byte, error) {
+func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFinding, clearedCaveats map[FindingKey]ruleApply, rulings map[FindingKey]ruleApply) (string, []byte, error) {
 	// debate.go calls this unconditionally, including on a run that ruled nothing —
 	// and on one whose every ruling left the caveat standing (applyRulings skips an
 	// out-of-enum verdict). Neither changed how a recorded verdict was reached, so

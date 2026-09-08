@@ -339,7 +339,7 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// recompute the scope note above rules out; leaving it is what let report.md
 	// and survived_skeptic_rate disagree. It joins the atomic group so the two
 	// artifacts can never be published out of step.
-	verPath, verBytes, err := syncVerificationTruncation(reviewDir, findings, clearedCaveats)
+	verPath, verBytes, err := syncVerificationTruncation(reviewDir, findings, clearedCaveats, rulings)
 	if err != nil {
 		return Result{}, err
 	}
