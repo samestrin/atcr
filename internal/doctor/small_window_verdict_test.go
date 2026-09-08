@@ -157,3 +157,28 @@ func TestRun_UnderivableCeilingWindowWarnsWithoutZeroBudget(t *testing.T) {
 	assert.Equal(t, strings.TrimSpace(got.Hint), got.Hint,
 		"a hint glued onto an empty string leaks its separator whitespace")
 }
+
+// TestSmallWindowClause_NamesEveryToolUsingLane closes a scope the clause
+// understated.
+//
+// The small-window protection is skeptic-lane-only. internal/verify derives a
+// tool ceiling, floors it, and clamps the dispatcher; internal/debate does none
+// of that — driveSeat wires the dispatcher raw and buildDebateAgent forwards a
+// nil ToolBudgetBytes as 0, which internal/fanout reads as UNLIMITED. So the
+// same agent this clause refuses to run as a skeptic is, as judge or
+// challenger, handed 64 KiB tool results into a window that cannot hold them.
+//
+// Naming only the verification lane told the operator the blast radius was
+// narrower than it is, and the debate lane's failure is the worse of the two: it
+// does not degrade to a named unverifiable, it overflows.
+func TestSmallWindowClause_NamesEveryToolUsingLane(t *testing.T) {
+	t.Parallel()
+
+	clause, ok := smallWindowClause("m", 4096, 0, payload.WindowSourceDeclaration, StatusOK)
+	require.True(t, ok)
+
+	assert.Contains(t, clause, "debate",
+		"the debate lane uses tools with no ceiling at all — an operator told only about verification will not look there")
+	assert.Contains(t, clause, "unverifiable",
+		"the verification-lane consequence stays: both lanes are affected, in different ways")
+}
