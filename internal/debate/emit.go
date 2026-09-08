@@ -461,6 +461,23 @@ func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFindi
 			// the verdict anywhere else would be the verification.json recompute
 			// debate.go's atomic-group scope note rules out.
 			rec["verdict"] = settled.verdict
+			// The verdict does not travel alone. rec["skeptic"], rec["model"],
+			// rec["reasoning"] and rec["durationMs"] were written by the verify stage
+			// and describe the run this ruling REPLACED — emit_verification.go's
+			// record contract says as much ("Model names only the skeptics whose
+			// verdict produced the recorded outcome"). Rewriting the verdict without
+			// saying who produced it published a refutation credited to the confirming
+			// argument it overturned. Naming the judge here is what makes the record
+			// readable again and points at reconciled/debate.json for the transcript;
+			// it is also the one field a debate rewrite adds that verify never writes,
+			// which is why internal/verify/pipeline.go's carry-forward guard keys on it.
+			//
+			// The verify-written fields are deliberately left in place rather than
+			// overwritten: they are the audit trail of the superseded run, and the
+			// radar reads Skeptic (reconcile.isVerificationTie) to detect
+			// verification ties.
+			rec["debateJudge"] = settled.judge
+			rec["debateReasoning"] = settled.reasoning
 		}
 	}
 	if !changed {

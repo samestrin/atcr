@@ -409,9 +409,28 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 			prior = pk[key]
 		}
 		if !priorLoadFailed && strings.EqualFold(strings.TrimSpace(prior.Verdict), strings.TrimSpace(f.Verification.Verdict)) {
-			rec.Model = prior.Model
-			rec.DurationMs = prior.DurationMs
+			// Verdict equality alone is no longer sufficient evidence that the prior
+			// describes the SAME run. internal/debate writes a judge's verdict into
+			// verification.json (syncVerificationTruncation), which makes the two
+			// artifacts agree by construction on an overturn — the guard above then
+			// matches on precisely the records whose Model/DurationMs belong to the
+			// skeptic run the judge REPLACED, and re-applies that mis-attribution on
+			// every re-verify. DebateJudge is what the rewrite does not equalise: it
+			// is empty on every record the verify stage alone produced.
+			if prior.DebateJudge == "" {
+				rec.Model = prior.Model
+				rec.DurationMs = prior.DurationMs
+			}
+			// TrippedBudgets is exempt from that split: it records what the run cost,
+			// not who produced the verdict, and debate's rewrite already corrected the
+			// one entry a ruling invalidates. Dropping it here would lose the max_turns
+			// and timeout trips that rewrite deliberately preserved.
 			rec.TrippedBudgets = prior.TrippedBudgets
+			// The judge attribution DOES describe the standing verdict, so it survives
+			// the re-verify rather than being silently dropped along with the metadata
+			// it exists to disclaim.
+			rec.DebateJudge = prior.DebateJudge
+			rec.DebateReasoning = prior.DebateReasoning
 		}
 		// Coerce nil TrippedBudgets to empty slice to avoid null in JSON output.
 		if rec.TrippedBudgets == nil {

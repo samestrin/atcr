@@ -136,6 +136,16 @@ Note: findings are verified concurrently through a bounded worker pool (`verify.
 }
 ```
 
+A record `atcr debate` later ruled on carries two more fields, `debateJudge` and
+`debateReasoning`, and they change how the rest of the record reads. A ruling that
+clears a finding's `tool_budget_bytes` caveat also rewrites that record's
+`verdict` to the judge's; `skeptic`, `model`, `reasoning` and `durationMs` keep
+describing the **superseded skeptic run**. `debateJudge` names the agent that
+produced the standing verdict and `debateReasoning` carries its argument in brief
+— the full transcript is in `reconciled/debate.json`. Both are absent on every
+record the verify stage alone wrote, which is what lets a re-verify tell a judge's
+verdict from a skeptic's and withhold the skeptic's `model`/`durationMs` from it.
+
 The per-finding `model` (the different-model evidence) lives here, in `verification.json`, not in the `findings.json` block — the report's Skeptic section shows verdict/skeptic/reasoning and does not perform a registry lookup. Skeptic runs do not persist transcripts — only reviewer fan-out and debate do.
 
 ## Diff-Smell: the deterministic sibling
