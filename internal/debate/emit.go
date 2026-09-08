@@ -313,10 +313,11 @@ const budgetToolBytes = "tool_budget_bytes"
 func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFinding) (string, []byte, error) {
 	// Only findings whose recorded verdict now carries NO caveat can owe a
 	// correction. A finding the judge left alone keeps whatever verify concluded.
-	cleared := map[FindingKey]bool{}
+	// The value is the verdict that correction has to carry with it.
+	cleared := map[FindingKey]string{}
 	for _, f := range findings {
 		if f.Verification != nil && !f.Verification.Truncated {
-			cleared[FindingKey{File: f.File, Line: f.Line, Problem: f.Problem}] = true
+			cleared[FindingKey{File: f.File, Line: f.Line, Problem: f.Problem}] = f.Verification.Verdict
 		}
 	}
 	if len(cleared) == 0 {
@@ -356,18 +357,37 @@ func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFindi
 		if n, ok := rec["line"].(float64); ok {
 			line = int(n)
 		}
-		if !cleared[FindingKey{File: file, Line: line, Problem: problem}] {
+		verdict, ok := cleared[FindingKey{File: file, Line: line, Problem: problem}]
+		if !ok {
 			continue
 		}
 		kept := make([]any, 0, len(budgets))
+		dropped := false
 		for _, b := range budgets {
 			if s, ok := b.(string); ok && s == budgetToolBytes {
+				dropped = true
 				changed = true
 				continue
 			}
 			kept = append(kept, b)
 		}
 		rec["trippedBudgets"] = kept
+		if dropped {
+			// The caveat and the verdict describe ONE verdict, and dropping the
+			// caveat is what puts this finding back into survived_skeptic_rate.
+			// internal/scorecard then reads the verdict from this same record, which
+			// runDebate otherwise never rewrites — so on an OVERTURN the finding
+			// re-entered the ratio under the verdict the judge had just replaced,
+			// crediting the reviewer for a confirm that no longer exists. Before the
+			// caveat was cleared at all it was excluded from both numerator and
+			// denominator, so leaving this stale is strictly worse than the state
+			// the sync was added to fix.
+			//
+			// Scoped deliberately to records whose caveat this call dropped. Writing
+			// the verdict anywhere else would be the verification.json recompute
+			// debate.go's atomic-group scope note rules out.
+			rec["verdict"] = verdict
+		}
 	}
 	if !changed {
 		return "", nil, nil
