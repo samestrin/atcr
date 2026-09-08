@@ -188,6 +188,16 @@ type boundedDispatcher struct {
 // to its final answer. One byte over is the smallest overrun that still lets the
 // existing trip semantics — including the derived-ceiling exemption in
 // tripsVoidTheVerdict — fire exactly as they did before.
+//
+// Leaving budget <= 0 UNWRAPPED is deliberate, and worth stating because that is
+// the dominant roster shape: an agent declaring neither context_window_tokens nor
+// tool_budget_bytes gets declared == 0 from skepticToolBudget, so first-turn
+// delivery is unbounded for exactly the agents most likely to be misconfigured.
+// 0 is the engine's UNLIMITED sentinel; wrapping it would mean inventing a
+// ceiling for an operator who declared none, and this clamp exists to enforce a
+// window's arithmetic, not to impose one where there is no window. The bound for
+// that case is loop.go's own budget check, which likewise no-ops at 0.
+// TestClampDispatcher_ZeroBudgetIsDeliberatelyUnwrapped pins it.
 func clampDispatcher(disp Dispatcher, budget int64) Dispatcher {
 	if budget <= 0 {
 		return disp
