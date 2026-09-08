@@ -251,10 +251,10 @@ already-paid-for work of cases `1..N-1` would otherwise be lost.
   parallel reviewer whose model or persona drifted still mismatches, a stamped
   checkpoint never qualifies, and a checkpoint that records an empty roster is rejected
   outright because an empty roster proves nothing about the panel. The resulting
-  run-result is not apples-to-apples for the reviewer that was added: because the
-  replayed cases were reviewed by the parallel lane alone, that reviewer's coverage
-  spans only the cases executed after the resume, and the run-result's per-reviewer
-  coverage array names the cases each reviewer actually scored.
+  run-result is not apples-to-apples for the reviewer that was added: the replayed
+  cases were reviewed by the parallel lane alone, so the newly-added serial reviewer's
+  coverage spans only the cases executed after the resume, and the run-result's
+  per-reviewer coverage array names the cases each reviewer actually scored.
 
 Checkpointing is **opt-in**: without `--checkpoint`, behavior is unchanged — a
 total-roster case failure still aborts the run (a transient infrastructure failure
