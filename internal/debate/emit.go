@@ -353,14 +353,13 @@ type ruledVerdict struct {
 	reasoning string
 }
 
-func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFinding, clearedCaveats map[FindingKey]ruleApply) (string, []byte, error) {
-	// debate.go calls this unconditionally, including on a run that ruled nothing —
-	// and on one whose every ruling left the caveat standing (applyRulings skips an
-	// out-of-enum verdict). Neither changed how a recorded verdict was reached, so
-	// neither is owed a correction; reading the snapshot at all would only risk one.
-	if len(clearedCaveats) == 0 {
-		return "", nil, nil
-	}
+func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFinding, clearedCaveats map[FindingKey]ruleApply, rulings map[FindingKey]ruleApply) (string, []byte, error) {
+	// debate.go calls this unconditionally, including on a run that ruled nothing.
+	// A no-ruling run used to return here without reading anything, but the
+	// reconciling pass below has to look at a run that ruled nothing THIS time to
+	// find what a PRIOR run's failed publish left behind — so the cheap exit now
+	// lives after the candidate set is built, and still fires before the snapshot
+	// is opened whenever that set comes out empty.
 	// A correction is owed only where a RULING cleared the caveat, which is why the
 	// set comes from applyRulings rather than being recomputed here. The post-apply
 	// Truncated flag cannot express it: applyRulings forces it false on EVERY
@@ -384,7 +383,47 @@ func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFindi
 		}
 		cleared[key] = ruledVerdict{verdict: f.Verification.Verdict, judge: ra.judge, reasoning: ra.reasoning}
 	}
-	if len(cleared) == 0 {
+	// pending carries the findings a ruling settled whose caveat THIS call did not
+	// clear. Two different histories land here and both leave `cleared` empty:
+	//
+	//   - a SECOND debate over one review dir. Run 1 cleared the caveat, so run 2
+	//     has none left to clear — yet the record still names run 1's judge for a
+	//     verdict run 2 replaced.
+	//   - a publish that failed part-way. WriteGroup renames in sequence with no
+	//     rollback, so findings.json can land with the caveat cleared while this
+	//     file keeps both its tool_budget_bytes entry and its pre-debate verdict.
+	//     filterAlreadyDebated then excludes the finding from every later run, so
+	//     no ruling ever revisits it.
+	//
+	// The judge is taken from THIS run's ruling when there is one, and otherwise
+	// from the prior reconciled/debate.json. debate.json is the first entry of the
+	// same atomic group, so a failure that lost this file left that one standing —
+	// it is the only place the residue's judge survives.
+	//
+	// Which of the two a record actually is, and whether it is owed anything, is
+	// decided per record below against what is on disk. Nothing here rewrites a
+	// verdict on the strength of the ruling alone.
+	priorRulings := priorDebateRulings(reviewDir)
+	pending := map[FindingKey]ruledVerdict{}
+	for _, f := range findings {
+		key := FindingKey{File: f.File, Line: f.Line, Problem: f.Problem}
+		// Truncated still set means no ruling cleared this finding's caveat and none
+		// is owed; f.Verification nil means RunReconcile rebuilt the block away and
+		// there is no standing verdict to carry.
+		if _, done := cleared[key]; done || f.Verification == nil || f.Verification.Truncated {
+			continue
+		}
+		var judge, reasoning string
+		if ra, hit := rulings[key]; hit && validVerdict(ra.verdict) {
+			judge, reasoning = ra.judge, ra.reasoning
+		} else if pr, hit := priorRulings[key]; hit {
+			judge, reasoning = pr.judge, pr.reasoning
+		} else {
+			continue
+		}
+		pending[key] = ruledVerdict{verdict: f.Verification.Verdict, judge: judge, reasoning: reasoning}
+	}
+	if len(cleared) == 0 && len(pending) == 0 {
 		return "", nil, nil
 	}
 
@@ -426,18 +465,70 @@ func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFindi
 		if !ok {
 			continue
 		}
-		budgets, ok := rec["trippedBudgets"].([]any)
-		if !ok || len(budgets) == 0 {
-			continue
-		}
 		file, _ := rec["file"].(string)
 		problem, _ := rec["problem"].(string)
 		line := 0
 		if n, ok := rec["line"].(float64); ok {
 			line = int(n)
 		}
-		settled, ok := cleared[FindingKey{File: file, Line: line, Problem: problem}]
+		key := FindingKey{File: file, Line: line, Problem: problem}
+		settled, ok := cleared[key]
 		if !ok {
+			// pending and cleared are disjoint by construction, so anything reaching
+			// here is a ruling whose caveat this call did not clear. What it is owed
+			// depends on the record in front of it, never on the ruling alone.
+			p, hit := pending[key]
+			if !hit {
+				continue
+			}
+			switch {
+			case isPartialWriteResidue(rec):
+				// The record still carries the tool-bytes entry beside a verdict that
+				// SURVIVED its trip, while findings.json says the caveat is gone. Only a
+				// ruling clears that flag, so the ruling landed there and the write that
+				// was owed here did not. Fall through to the drop path below and finish it.
+				settled = p
+			case recordedDebateJudge(rec) != "":
+				// A prior debate already owns this record, and this ruling replaced the
+				// verdict it names. Keep the attribution current — the verdict alone is
+				// what makes report.md and the score credit the superseded judge.
+				//
+				// Gated on the EXISTING judge, not on the ruling: that field is empty on
+				// every record the verify stage produced, so without the gate this branch
+				// would stamp judges onto verify-owned records a ruling merely touched —
+				// the recompute debate.go's scope note rules out.
+				//
+				// A record already saying all three is left strictly alone. This pass
+				// draws its candidates from the prior debate.json, so every finding a
+				// debate ever ruled stays a candidate forever; marking the file changed
+				// for an identical value would republish verification.json — and mint a
+				// fresh .debate.bak, spending the one snapshot generation that exists —
+				// on every later `atcr debate`, with nothing to show for it.
+				//
+				// The modelWithheldReason clause is REPAIR-ONLY and unreachable from any
+				// in-tree writer: internal/verify stamps that marker only on arms that
+				// carry no DebateJudge, and stampJudge deletes it wherever it installs
+				// one, so the two never co-occur on a file this repo produced. It is kept
+				// because a hand-edited or foreign file that does carry both is exactly
+				// the file worth correcting, and the cost of the clause when it cannot
+				// fire is one map lookup. Do not read its presence as evidence that the
+				// state occurs — TestSyncVerificationTruncation_ClearsAStaleWithheldReasonOnTheRuledRecord
+				// covers the reachable half, which is the CLEARED path, not this arm.
+				if sameRecordedString(rec, "verdict", p.verdict) &&
+					sameRecordedString(rec, "debateJudge", p.judge) &&
+					sameRecordedString(rec, "debateReasoning", p.reasoning) &&
+					rec["modelWithheldReason"] == nil {
+					continue
+				}
+				stampJudge(rec, p)
+				changed = true
+				continue
+			default:
+				continue
+			}
+		}
+		budgets, ok := rec["trippedBudgets"].([]any)
+		if !ok || len(budgets) == 0 {
 			continue
 		}
 		kept := make([]any, 0, len(budgets))
@@ -465,7 +556,6 @@ func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFindi
 			// Scoped deliberately to records whose caveat this call dropped. Writing
 			// the verdict anywhere else would be the verification.json recompute
 			// debate.go's atomic-group scope note rules out.
-			rec["verdict"] = settled.verdict
 			// The verdict does not travel alone. rec["skeptic"], rec["model"],
 			// rec["reasoning"] and rec["durationMs"] were written by the verify stage
 			// and describe the run this ruling REPLACED — emit_verification.go's
@@ -481,8 +571,7 @@ func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFindi
 			// overwritten: they are the audit trail of the superseded run, and the
 			// radar reads Skeptic (reconcile.isVerificationTie) to detect
 			// verification ties.
-			rec["debateJudge"] = settled.judge
-			rec["debateReasoning"] = settled.reasoning
+			stampJudge(rec, settled)
 		}
 	}
 	if !changed {
@@ -499,4 +588,113 @@ func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFindi
 		return "", nil, err
 	}
 	return path, append(out, '\n'), nil
+}
+
+// recordedDebateJudge reads a verification.json record's debateJudge. It is empty
+// on every record the verify stage alone produced and non-empty only where a
+// debate rewrote one, which makes it this stage's marker for "already mine".
+func recordedDebateJudge(rec map[string]any) string {
+	judge, _ := rec["debateJudge"].(string)
+	return judge
+}
+
+// isPartialWriteResidue reports whether a verification.json record is what a
+// WriteGroup publish that failed after findings.json leaves behind.
+//
+// The signature is a surviving verdict — confirmed or refuted — beside a
+// tool_budget_bytes entry. Only the DERIVED-ceiling exemption produces that pair:
+// the read was shortened but the skeptic's answer stood, and internal/verify sets
+// Verification.Truncated alongside it. The caller has already established that
+// findings.json no longer carries that flag, and applyRulings is the only thing
+// that clears it — so the ruling landed there while the matching correction here
+// did not.
+//
+// An `unverifiable` verdict beside the same entry is deliberately NOT residue. It
+// is the DECLARED-ceiling voiding path, where internal/verify throws the answer
+// out and records the trip as the only account of why (see
+// TestSyncVerificationTruncation_LeavesARuledDeclaredBudgetVoidingAlone). On disk
+// it is indistinguishable from a residue whose verdict happened to be
+// unverifiable, so both are declined: deleting a real voiding record also flips an
+// all-unverifiable file to not-all-unverifiable and silently disables reconcile's
+// gate. That residual is accepted, not overlooked.
+func isPartialWriteResidue(rec map[string]any) bool {
+	verdict, _ := rec["verdict"].(string)
+	if verdict != reclib.VerdictConfirmed && verdict != reclib.VerdictRefuted {
+		return false
+	}
+	budgets, ok := rec["trippedBudgets"].([]any)
+	if !ok {
+		return false
+	}
+	for _, b := range budgets {
+		if s, ok := b.(string); ok && s == budgetToolBytes {
+			return true
+		}
+	}
+	return false
+}
+
+// priorDebateRulings projects the on-disk reconciled/debate.json into the rulings
+// a PREVIOUS run recorded, keyed the way findings are. It is the residue repair's
+// only source for the judge: debate.json is the first entry of runDebate's atomic
+// group, so a rename failure that lost verification.json left it on disk.
+//
+// Best-effort in the same spirit as the rest of the stage — an absent or
+// unreadable file yields no rulings rather than an error. Items with no judge are
+// skipped: there is no attribution to restore, and writing a verdict without one
+// would leave internal/verify's carry-forward guard reading the record as
+// verify-owned and lending the superseded skeptic's model to it.
+//
+// The judge alone is NOT enough to admit an item. debate.go:457 assigns
+// ir.Judge = cast.Judge.Agent BEFORE the ruling runs, so debate.json also carries
+// a judge on items that applied nothing to findings.json — an `unresolved`
+// outcome (judge_halted, unparseable_ruling) and a gray-zone item, whose decision
+// is cluster-level. This projection therefore mirrors the live map's own
+// admission rule (debate.go:217-249) rather than restating it loosely: an item
+// this switch would have skipped never entered `rulings` in the run that produced
+// the file, so it must not enter this reconstruction of it either. Attributing a
+// verdict to a judge that never ruled it is not a cosmetic error —
+// internal/verify/pipeline.go:434 reads a non-empty debateJudge as "a judge
+// produced this verdict" and withholds the real skeptic's model on every later
+// re-verify.
+func priorDebateRulings(reviewDir string) map[FindingKey]ruleApply {
+	df, found, err := ReadDebateFile(reviewDir)
+	if err != nil || !found {
+		return nil
+	}
+	out := map[FindingKey]ruleApply{}
+	for _, it := range df.Items {
+		if it.Judge == "" || it.Outcome == OutcomeUnresolved || it.Kind == reconcile.KindGrayZone {
+			continue
+		}
+		out[FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}] = ruleApply{
+			judge: it.Judge, reasoning: it.Reasoning,
+		}
+	}
+	return out
+}
+
+// sameRecordedString reports whether a verification.json record already holds want
+// at key. A missing key compares equal only to the empty string, which keeps an
+// absent omitempty field from counting as a difference worth republishing for.
+func sameRecordedString(rec map[string]any, key, want string) bool {
+	got, _ := rec[key].(string)
+	return got == want
+}
+
+// stampJudge writes the settled verdict and its attribution onto a
+// verification.json record.
+//
+// It also drops modelWithheldReason. internal/verify sets that marker when a
+// re-verify rejects a prior whose verdict no longer matches the standing one —
+// which is precisely how this file reads while a ruling's correction is still
+// owed. The write below removes that mismatch and installs debateJudge, the marker
+// for a DELIBERATE withholding, and VerificationResult's contract states the two
+// never co-occur. Leaving the reason standing would have the record claim its
+// attribution was rejected over a disagreement it no longer has.
+func stampJudge(rec map[string]any, settled ruledVerdict) {
+	rec["verdict"] = settled.verdict
+	rec["debateJudge"] = settled.judge
+	rec["debateReasoning"] = settled.reasoning
+	delete(rec, "modelWithheldReason")
 }

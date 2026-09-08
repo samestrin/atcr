@@ -393,22 +393,59 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		// EqualFold is harmless for the normal path and protective for hand-edited
 		// verification.json files where a human might write "Confirmed" or "CONFIRMED".
 		//
-		// This carry-forward is PARTIAL by design, and that used to desync it from
-		// the truncated flag on the findings.json block, which always survives: a
+		// This carry-forward is PARTIAL by design, and that desyncs it from the
+		// truncated flag on the findings.json block, which always survives: a
 		// re-verify over a review whose verification.json was missing, corrupt or
-		// verdict-shifted produced artifacts where report.md showed the truncated
-		// caveat and the scorecard did not. It is no longer a score decision —
-		// internal/scorecard keys its precision exclusion on findings.json, the same
-		// artifact report.md renders from (see settledTruncationByKey), so the two
-		// cannot disagree regardless of what this block carries. Do not reintroduce
-		// a structural reader of trippedBudgets without carrying both signals
-		// together.
+		// verdict-shifted rebuilds this record with no budgets at all, while the
+		// block still says the verdict was answered from a shortened read.
+		//
+		// That IS a score decision. internal/scorecard excludes a truncated verdict
+		// from the reviewer's durable survived_skeptic_rate and keys the exclusion on
+		// trippedBudgets HERE, not on findings.json's flag — deliberately, because
+		// RunReconcile strips every verification block before the scorecard is
+		// emitted, so keying on findings.json would read an artifact that is empty by
+		// then (internal/scorecard/scorecard.go:543-551). A dropped entry therefore
+		// republishes a partial-read confirm as a clean one and credits it to the
+		// reviewer permanently.
+		//
+		// The reject arms below re-derive the entry from the block's own flag rather
+		// than carrying the prior's list, which describes the run they just rejected.
+		// max_turns and timeout trips are not recoverable that way and are genuinely
+		// lost on those arms; neither reaches the ratio, which reads only
+		// tool_budget_bytes.
 		pk := loadPrior()
 		var prior VerificationResult
+		var hadPrior bool
 		if pk != nil {
-			prior = pk[key]
+			prior, hadPrior = pk[key]
 		}
-		if !priorLoadFailed && strings.EqualFold(strings.TrimSpace(prior.Verdict), strings.TrimSpace(f.Verification.Verdict)) {
+		// Distinguish "no attribution existed" from "an attribution was rejected".
+		// Both leave Model empty, and until this marker they were the same bytes on
+		// disk — see the three-cause note on VerificationResult. Only the reject arms
+		// stamp a reason; a first-ever verify and the carry-forward path leave it
+		// unset, and so does the debate arm below, whose marker is DebateJudge.
+		// carried is the single decision the rest of this block reads: the switch's
+		// default arm IS the carry-forward case, so naming it here keeps the reason
+		// stamped, the caveat re-derived, and the metadata carried from ever
+		// disagreeing about which arm this record took.
+		carried := false
+		switch {
+		case priorLoadFailed:
+			rec.ModelWithheldReason = withheldPriorUnreadable
+		case !hadPrior:
+			// Nothing to carry and nothing withheld.
+		case !strings.EqualFold(strings.TrimSpace(prior.Verdict), strings.TrimSpace(f.Verification.Verdict)):
+			rec.ModelWithheldReason = withheldVerdictShifted
+		default:
+			carried = true
+		}
+		// Every arm that does NOT carry the prior's budgets re-derives the truncation
+		// caveat from the block's own flag, which describes THIS verdict. Without it
+		// the score reads a partial-read verdict as a clean one (see the note above).
+		if !carried && f.Verification.Truncated {
+			rec.TrippedBudgets = []string{budgetToolBytes}
+		}
+		if carried {
 			// Verdict equality alone is no longer sufficient evidence that the prior
 			// describes the SAME run. internal/debate writes a judge's verdict into
 			// verification.json (syncVerificationTruncation), which makes the two
@@ -420,12 +457,26 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 			if prior.DebateJudge == "" {
 				rec.Model = prior.Model
 				rec.DurationMs = prior.DurationMs
+				// The reason travels with the values it explains. A marker stamped on
+				// one run is read back by the NEXT one against a prior whose verdict now
+				// matches by construction — this branch — so without carrying it the
+				// marker lasts exactly one generation and the record decays to bytes
+				// indistinguishable from "no skeptic ran". prior.Model is empty on
+				// exactly the records that carry a reason, so this copies a reason only
+				// alongside the blank it accounts for.
+				rec.ModelWithheldReason = prior.ModelWithheldReason
 			}
 			// TrippedBudgets is exempt from that split: it records what the run cost,
 			// not who produced the verdict, and debate's rewrite already corrected the
 			// one entry a ruling invalidates. Dropping it here would lose the max_turns
 			// and timeout trips that rewrite deliberately preserved.
 			rec.TrippedBudgets = prior.TrippedBudgets
+			// Keys the record type does not model travel with TrippedBudgets, for the same
+			// reason: they belong to the run the prior recorded, not to whoever produced
+			// the verdict. This record is rebuilt from the findings.json block on every
+			// re-verify, so without carrying them the codec's catch-all preserves nothing
+			// on the only path that actually re-emits the file.
+			rec.Extra = prior.Extra
 			// The judge attribution DOES describe the standing verdict, so it survives
 			// the re-verify rather than being silently dropped along with the metadata
 			// it exists to disclaim.

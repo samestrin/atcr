@@ -5,6 +5,8 @@ import (
 	reclib "github.com/samestrin/atcr/reconcile"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -461,4 +463,138 @@ func TestReadVerificationResults(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(bad, reconciledSubdir, "verification.json"), []byte("{not json"), 0o644))
 	_, err = ReadVerificationResults(bad)
 	assert.Error(t, err)
+}
+
+// TestVerificationResult_PreservesUnmodelledKeys pins the round-trip against
+// silent field loss. reconciled/verification.json is re-emitted on every
+// re-verify: the pipeline reads the prior file into VerificationResult and writes
+// it back through computeVerificationBytes, so any key this struct does not model
+// was dropped on the way. internal/debate's rewrite of the same file deliberately
+// round-trips through map[string]any for exactly this reason — the verify stage,
+// which owns the file, was the lossier of the two.
+func TestVerificationResult_PreservesUnmodelledKeys(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, reconciledSubdir), 0o755))
+	body := `{"findings":[
+		{"file":"a.go","line":1,"problem":"p","verdict":"confirmed","skeptic":"otto",
+		 "model":"m-x","reasoning":"r","durationMs":5,"trippedBudgets":[],
+		 "escalationTier":"tier-2","futureBlock":{"k":1}}
+	],"verdictCounts":{"confirmed":1,"refuted":0,"unverifiable":0}}`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, reconciledSubdir, "verification.json"), []byte(body), 0o600))
+
+	got, err := ReadVerificationResults(dir)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "m-x", got[0].Model, "precondition: the modelled fields still decode normally")
+
+	_, data, err := computeVerificationBytes(dir, got, CountVerdicts(got))
+	require.NoError(t, err)
+
+	rec := firstVerificationRecord(t, data)
+	assert.Equal(t, "tier-2", rec["escalationTier"],
+		"a key this struct does not model must survive the re-emit, not be dropped on every re-verify")
+	assert.Equal(t, map[string]any{"k": float64(1)}, rec["futureBlock"],
+		"nested unmodelled values must survive whole, not be flattened or dropped")
+	assert.Equal(t, "confirmed", rec["verdict"], "the modelled fields are still written")
+	assert.Contains(t, string(data), "\n      \"file\": \"a.go\"",
+		"a record carrying extras must still be written indented — a custom marshaller that returns compact JSON would make the file a single line")
+}
+
+// TestVerificationResult_NoExtrasKeepsStructFieldOrder is the scope guard for the
+// preservation above. A record carrying no unmodelled keys — every record this
+// repo produces today — must serialize byte-for-byte as it did before, in struct
+// order rather than the alphabetical order a map round-trip would impose.
+func TestVerificationResult_NoExtrasKeepsStructFieldOrder(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	results := []VerificationResult{{
+		File: "a.go", Line: 7, Problem: "boom", Verdict: "confirmed", Skeptic: "s1",
+		Model: "m-x", Reasoning: "ok", DurationMs: 99, TrippedBudgets: []string{"timeout_secs"},
+	}}
+	_, data, err := computeVerificationBytes(dir, results, CountVerdicts(results))
+	require.NoError(t, err)
+
+	s := string(data)
+	order := []string{`"file"`, `"line"`, `"problem"`, `"verdict"`, `"skeptic"`, `"model"`, `"reasoning"`, `"durationMs"`, `"trippedBudgets"`}
+	prev := -1
+	for _, k := range order {
+		at := strings.Index(s, k)
+		require.NotEqual(t, -1, at, "field %s must still be emitted", k)
+		assert.Greater(t, at, prev, "field %s moved: struct order must survive, or every stored snapshot re-orders on the next verify", k)
+		prev = at
+	}
+	assert.NotContains(t, s, `"debateJudge"`, "omitempty must still elide an unset debate attribution")
+}
+
+// firstVerificationRecord returns the first findings record as a raw map, so a
+// test can assert on keys the typed struct deliberately does not carry.
+func firstVerificationRecord(t *testing.T, data []byte) map[string]any {
+	t.Helper()
+	var doc struct {
+		Findings []map[string]any `json:"findings"`
+	}
+	require.NoError(t, json.Unmarshal(data, &doc))
+	require.NotEmpty(t, doc.Findings)
+	return doc.Findings[0]
+}
+
+// TestJSONFieldNames exercises the name-resolution branches VerificationResult
+// itself cannot reach. Every field on that struct is exported and carries an
+// explicit json name, so the unexported skip and the name-less-tag fallback are
+// dead against it — and dead code that decides which keys are "modelled" is
+// precisely the code that must not be wrong when the next field lands.
+//
+// A key missing from this set is not an inert omission: MarshalJSON lets a stale
+// Extra entry through for any key it does not recognise, so the entry would
+// overwrite the value the struct just computed for that field.
+func TestJSONFieldNames(t *testing.T) {
+	t.Parallel()
+	type sample struct {
+		Named    string `json:"named"`
+		OmitOnly string `json:",omitempty"`
+		Untagged string
+		Skipped  string `json:"-"`
+		hidden   string //nolint:unused // exercises the unexported-field skip
+	}
+	got := jsonFieldNames(reflect.TypeOf(sample{}))
+
+	assert.Equal(t, map[string]bool{"named": true, "OmitOnly": true, "Untagged": true}, got,
+		"a name-less or absent tag keys on the FIELD name, exactly as encoding/json does")
+
+	// Cross-check against encoding/json itself rather than restating the rule: a
+	// hand-written expectation can drift from the marshaller it is meant to mirror.
+	data, err := json.Marshal(sample{Named: "a", OmitOnly: "b", Untagged: "c", Skipped: "d"})
+	require.NoError(t, err)
+	var emitted map[string]any
+	require.NoError(t, json.Unmarshal(data, &emitted))
+	for k := range emitted {
+		assert.True(t, got[k], "encoding/json emits %q, so it must count as modelled", k)
+	}
+	assert.Len(t, got, len(emitted), "and nothing beyond what encoding/json emits may be claimed as modelled")
+}
+
+// TestVerificationResult_ModelledKeyInExtraNeverShadowsTheStructValue covers the
+// collision guard in MarshalJSON. UnmarshalJSON never files a modelled key into
+// Extra, so this state only arises from a hand-built value — but the guard is what
+// makes "modelled keys always win" a property of the type rather than a property
+// of how it happened to be constructed.
+func TestVerificationResult_ModelledKeyInExtraNeverShadowsTheStructValue(t *testing.T) {
+	t.Parallel()
+	r := VerificationResult{
+		File: "a.go", Line: 1, Problem: "boom", Verdict: "confirmed", Model: "m-x",
+		Extra: map[string]json.RawMessage{
+			"model":          json.RawMessage(`"stale-model"`),
+			"escalationTier": json.RawMessage(`"tier-2"`),
+		},
+	}
+	data, err := json.Marshal(r)
+	require.NoError(t, err)
+
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(data, &got))
+	assert.Equal(t, "m-x", got["model"],
+		"the struct computed this value — a stale extra of the same name must not replace it")
+	assert.Equal(t, "tier-2", got["escalationTier"],
+		"an unmodelled key still rides through; only the collision is refused")
 }

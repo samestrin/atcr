@@ -1224,3 +1224,307 @@ func TestRunVerify_SkipDoesNotLendSkepticMetadataToAJudgeVerdict(t *testing.T) {
 	assert.Equal(t, "greta", vf.Findings[0].DebateJudge,
 		"the judge attribution is the one piece of the prior that DOES describe the standing verdict, so it carries forward")
 }
+
+// TestRunVerify_SkipPreservesUnmodelledPriorKeys pins the pipeline half of the
+// unmodelled-key preservation. computeVerificationBytes writes what the pipeline
+// hands it, and the pipeline builds each record FRESH from the findings.json block
+// and then carries selected fields forward from the prior file — so a key the
+// struct does not model is dropped here even once the codec keeps it. The keys
+// travel with trippedBudgets: like it, they describe the run the prior recorded,
+// not who produced the verdict.
+func TestRunVerify_SkipPreservesUnmodelledPriorKeys(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+		Reviewers: []string{"rev"}, Verification: &reclib.Verification{Verdict: "refuted", Skeptic: "otto"},
+	}})
+	recon := filepath.Join(dir, reconciledSubdir)
+	require.NoError(t, os.WriteFile(filepath.Join(recon, "verification.json"), []byte(`{"findings":[
+		{"file":"a.go","line":1,"problem":"boom","verdict":"refuted","skeptic":"otto",
+		 "model":"m-x","reasoning":"read token.go:42","durationMs":1840,
+		 "trippedBudgets":[],"escalationTier":"tier-2"}
+	]}`), 0o644))
+
+	_, runErr := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	})
+	require.NoError(t, runErr)
+
+	data, rerr := os.ReadFile(filepath.Join(recon, "verification.json"))
+	require.NoError(t, rerr)
+	var doc struct {
+		Findings []map[string]any `json:"findings"`
+	}
+	require.NoError(t, json.Unmarshal(data, &doc))
+	require.Len(t, doc.Findings, 1)
+	assert.Equal(t, "tier-2", doc.Findings[0]["escalationTier"],
+		"a key the prior carried and this struct does not model must survive the re-emit, not be dropped on every re-verify")
+}
+
+// TestRunVerify_NamesWhyTheSkepticModelWasWithheld pins the disambiguator for an
+// empty `model`.
+//
+// Three unrelated histories all leave the field blank: no skeptic ever ran for the
+// finding; a debate replaced the verdict, so the carry-forward is withheld on
+// purpose (debateJudge says so); or the guard rejected a prior whose verdict no
+// longer matches. The third had no marker at all, so it was indistinguishable from
+// the first — an absent attribution and a REJECTED one read the same to every
+// consumer of the file.
+func TestRunVerify_NamesWhyTheSkepticModelWasWithheld(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+		Reviewers: []string{"rev"}, Verification: &reclib.Verification{Verdict: "refuted", Skeptic: "otto"},
+	}})
+	// The prior records a DIFFERENT verdict, so its model/durationMs describe a run
+	// that no longer produced the recorded outcome and the guard rejects them.
+	recon := filepath.Join(dir, reconciledSubdir)
+	require.NoError(t, os.WriteFile(filepath.Join(recon, "verification.json"), []byte(`{"findings":[
+		{"file":"a.go","line":1,"problem":"boom","verdict":"confirmed","skeptic":"otto",
+		 "model":"m-x","reasoning":"otto read token.go:42","durationMs":1840,"trippedBudgets":[]}
+	]}`), 0o644))
+
+	_, runErr := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	})
+	require.NoError(t, runErr)
+
+	data, rerr := os.ReadFile(filepath.Join(recon, "verification.json"))
+	require.NoError(t, rerr)
+	var vf VerificationFile
+	require.NoError(t, json.Unmarshal(data, &vf))
+	require.Len(t, vf.Findings, 1)
+	require.Empty(t, vf.Findings[0].Model, "precondition: the guard rejected the prior, so no model is carried")
+	assert.Equal(t, "verdict_shifted", vf.Findings[0].ModelWithheldReason,
+		"a REJECTED attribution must be distinguishable from one that never existed")
+}
+
+// TestRunVerify_LeavesTheWithheldReasonUnsetWhenThereWasNoPrior is the scope guard
+// for the marker above. A first-ever verify withheld nothing — there was no
+// attribution to reject — and stamping a reason there would make the field mean
+// "blank" rather than "blank for this reason", which is the ambiguity it exists to
+// remove.
+func TestRunVerify_LeavesTheWithheldReasonUnsetWhenThereWasNoPrior(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+		Reviewers: []string{"rev"}, Verification: &reclib.Verification{Verdict: "refuted", Skeptic: "otto"},
+	}})
+	// No verification.json at all: nothing was carried, and nothing was withheld.
+	recon := filepath.Join(dir, reconciledSubdir)
+	_ = os.Remove(filepath.Join(recon, "verification.json"))
+
+	_, runErr := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	})
+	require.NoError(t, runErr)
+
+	data, rerr := os.ReadFile(filepath.Join(recon, "verification.json"))
+	require.NoError(t, rerr)
+	assert.NotContains(t, string(data), "modelWithheldReason",
+		"omitempty must keep the field off a record that withheld nothing, or its presence stops meaning anything")
+}
+
+// TestRunVerify_NamesAnUnreadablePriorSeparately keeps the two withheld reasons
+// distinct. Collapsing them would move the ambiguity one level down: a prior that
+// DISAGREES with the standing verdict and a prior that could not be read at all
+// are different facts about the run, and docs/verification.md documents both
+// values by name.
+func TestRunVerify_NamesAnUnreadablePriorSeparately(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+		Reviewers: []string{"rev"}, Verification: &reclib.Verification{Verdict: "refuted", Skeptic: "otto"},
+	}})
+	recon := filepath.Join(dir, reconciledSubdir)
+	require.NoError(t, os.WriteFile(filepath.Join(recon, "verification.json"), []byte("{not json"), 0o644))
+
+	_, runErr := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	})
+	require.NoError(t, runErr)
+
+	data, rerr := os.ReadFile(filepath.Join(recon, "verification.json"))
+	require.NoError(t, rerr)
+	var vf VerificationFile
+	require.NoError(t, json.Unmarshal(data, &vf))
+	require.Len(t, vf.Findings, 1)
+	assert.Equal(t, "prior_unreadable", vf.Findings[0].ModelWithheldReason,
+		"an unreadable prior withheld every attribution in the run — saying 'verdict_shifted' would assert a comparison that never happened")
+}
+
+// TestRunVerify_TheWithheldReasonSurvivesTheNextReVerify pins the marker's
+// lifetime.
+//
+// A marker that lasts one generation removes no ambiguity: the run that stamps it
+// also writes the file the NEXT run reads, and by then the prior's verdict matches
+// the block by construction. The carry-forward branch takes over, copies an empty
+// model, and — without carrying the reason with it — emits a record byte-identical
+// to "no skeptic ever ran". The history is a REJECTED attribution; the bytes say
+// there was none. That is the exact confusion this field was added to end, one
+// generation later.
+func TestRunVerify_TheWithheldReasonSurvivesTheNextReVerify(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+		Reviewers: []string{"rev"}, Verification: &reclib.Verification{Verdict: "refuted", Skeptic: "otto"},
+	}})
+	recon := filepath.Join(dir, reconciledSubdir)
+	require.NoError(t, os.WriteFile(filepath.Join(recon, "verification.json"), []byte(`{"findings":[
+		{"file":"a.go","line":1,"problem":"boom","verdict":"confirmed","skeptic":"otto",
+		 "model":"m-x","reasoning":"otto read token.go:42","durationMs":1840,"trippedBudgets":[]}
+	]}`), 0o644))
+
+	noHarness := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	}
+
+	// Run B rejects the prior and stamps the reason.
+	_, runErr := runVerify(context.Background(), dir, skepticRegistry(), Options{}, noHarness)
+	require.NoError(t, runErr)
+	require.Equal(t, "verdict_shifted", readVerificationRecords(t, recon)[0].ModelWithheldReason,
+		"precondition: the guard rejected the prior")
+
+	// Run C reads run B's own output. The verdict now matches, so this is the
+	// ordinary carry-forward path.
+	_, runErr = runVerify(context.Background(), dir, skepticRegistry(), Options{}, noHarness)
+	require.NoError(t, runErr)
+
+	got := readVerificationRecords(t, recon)[0]
+	require.Empty(t, got.Model, "precondition: there is still no model to carry")
+	assert.Equal(t, "verdict_shifted", got.ModelWithheldReason,
+		"the model is still empty for the same reason — dropping the marker returns the record to the ambiguity it was added to remove")
+}
+
+// readVerificationRecords decodes reconciled/verification.json's findings.
+func readVerificationRecords(t *testing.T, reconDir string) []VerificationResult {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(reconDir, "verification.json"))
+	require.NoError(t, err)
+	var vf VerificationFile
+	require.NoError(t, json.Unmarshal(data, &vf))
+	require.NotEmpty(t, vf.Findings)
+	return vf.Findings
+}
+
+// TestRunVerify_ARejectedPriorStillRecordsTheTruncatedRead keeps the truncation
+// caveat on the record the SCORE reads.
+//
+// internal/scorecard excludes a truncated verdict from the reviewer's durable
+// survived_skeptic_rate, and it keys that exclusion on trippedBudgets in
+// reconciled/verification.json — deliberately, because RunReconcile strips
+// findings.json's verification blocks before the scorecard is emitted
+// (scorecard.go:543-551). On both reject arms this record was rebuilt with no
+// budgets at all, so a confirmed verdict reached from a shortened read was
+// republished as a clean one and credited to the reviewer, permanently, with
+// nothing left on disk saying otherwise.
+//
+// The prior's own list is not the answer — it describes a run this guard just
+// rejected. The findings.json block's Truncated flag describes THIS verdict, and
+// internal/verify sets it from the same voter set it credits budgets from
+// (votes.go:64,72), so re-deriving the entry from it restores the same fact.
+func TestRunVerify_ARejectedPriorStillRecordsTheTruncatedRead(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+		Reviewers: []string{"rev"},
+		Verification: &reclib.Verification{
+			Verdict: "confirmed", Skeptic: "otto", Truncated: true,
+		},
+	}})
+	recon := filepath.Join(dir, reconciledSubdir)
+	// A prior whose verdict no longer matches: the guard rejects its attribution.
+	require.NoError(t, os.WriteFile(filepath.Join(recon, "verification.json"), []byte(`{"findings":[
+		{"file":"a.go","line":1,"problem":"boom","verdict":"refuted","skeptic":"otto",
+		 "model":"m-x","reasoning":"otto read token.go:42","durationMs":1840,
+		 "trippedBudgets":["tool_budget_bytes"]}
+	]}`), 0o644))
+
+	_, runErr := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	})
+	require.NoError(t, runErr)
+
+	got := readVerificationRecords(t, recon)[0]
+	require.Equal(t, "verdict_shifted", got.ModelWithheldReason,
+		"precondition: this is the reject arm")
+	assert.Contains(t, got.TrippedBudgets, budgetToolBytes,
+		"the block still says the verdict was answered from a shortened read — dropping the entry credits a partial read to the reviewer as a full-confidence one")
+}
+
+// TestRunVerify_ARejectedPriorAddsNoCaveatToAnUntruncatedVerdict is the scope
+// guard for the re-derivation above. The flag is the whole evidence: a block that
+// does not carry it describes a verdict reached from a complete read, and
+// inventing a budget entry there would exclude a sound verdict from the ratio.
+func TestRunVerify_ARejectedPriorAddsNoCaveatToAnUntruncatedVerdict(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+		Reviewers:    []string{"rev"},
+		Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "otto"},
+	}})
+	recon := filepath.Join(dir, reconciledSubdir)
+	require.NoError(t, os.WriteFile(filepath.Join(recon, "verification.json"), []byte(`{"findings":[
+		{"file":"a.go","line":1,"problem":"boom","verdict":"refuted","skeptic":"otto",
+		 "model":"m-x","reasoning":"otto read token.go:42","durationMs":1840,
+		 "trippedBudgets":["tool_budget_bytes"]}
+	]}`), 0o644))
+
+	_, runErr := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	})
+	require.NoError(t, runErr)
+
+	assert.Empty(t, readVerificationRecords(t, recon)[0].TrippedBudgets,
+		"the rejected prior's list belongs to the run this guard rejected — carrying it would caveat a verdict that was never truncated")
+}
+
+// TestRunVerify_ExtraPreservationIsScopedToTheSkipPath pins the boundary the Extra
+// catch-all actually covers, so the contract on VerificationResult and the code
+// cannot drift apart again.
+//
+// Extra is carried only where a prior record is both present and still describes
+// the standing verdict — the skip path. A re-verified finding is rebuilt from this
+// run's own vote and carries none, and it CANNOT: reading the prior there would
+// fire loadPrior on every --fresh run, which is exactly the eager load
+// TestRunVerify_CorruptPriorNoWarningWhenNoSkippedFindings exists to keep out. Nothing
+// in-tree writes an unmodelled key today, so this is a documented boundary rather
+// than a live loss — but a stage that starts writing one must widen this test
+// deliberately, not discover the gap in production.
+func TestRunVerify_ExtraPreservationIsScopedToTheSkipPath(t *testing.T) {
+	prior := []byte(`{"findings":[
+		{"file":"a.go","line":1,"problem":"boom","verdict":"confirmed","skeptic":"otto",
+		 "model":"m-x","reasoning":"otto read token.go:42","durationMs":1840,
+		 "trippedBudgets":[],"escalationTier":"tier-2"}
+	]}`)
+	mk := func() string {
+		dir := pipelineReview(t, []reconcile.JSONFinding{{
+			Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+			Reviewers: []string{"rev"}, Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "otto"},
+		}})
+		require.NoError(t, os.WriteFile(filepath.Join(dir, reconciledSubdir, "verification.json"), prior, 0o644))
+		return dir
+	}
+
+	// Skip path: the prior stands, so its unmodelled key rides through the re-emit.
+	dir := mk()
+	_, err := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	})
+	require.NoError(t, err)
+	data, rerr := os.ReadFile(filepath.Join(dir, reconciledSubdir, "verification.json"))
+	require.NoError(t, rerr)
+	assert.Contains(t, string(data), `"escalationTier": "tier-2"`,
+		"the skip path re-emits the record, so a key this struct does not model must survive it")
+
+	// Rich path: this run produced the verdict, and no prior is consulted.
+	dir = mk()
+	_, err = runVerify(context.Background(), dir, skepticRegistry(), Options{Fresh: true},
+		scriptedHarness(`{"verdict":"refuted","reasoning":"stale"}`))
+	require.NoError(t, err)
+	data, rerr = os.ReadFile(filepath.Join(dir, reconciledSubdir, "verification.json"))
+	require.NoError(t, rerr)
+	assert.NotContains(t, string(data), "escalationTier",
+		"a re-verified record is built from this run's vote — widening this needs the eager prior load the lazy-load guard rules out")
+}

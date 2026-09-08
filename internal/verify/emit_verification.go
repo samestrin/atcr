@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -29,6 +30,21 @@ const reconciledSubdir = "reconciled"
 // verdict produced the recorded outcome — a winners-only subset on a decisive vote,
 // all participants on a tie, and "" when no skeptic executed. So for a multi-vote
 // run Model may list fewer entries than Skeptic by design (see winningAttribution).
+//
+// An empty Model has THREE distinct causes, and reading it as one is how a
+// deliberate withholding got mistaken for an absence:
+//
+//  1. No skeptic executed for this finding. Nothing was ever attributed; there is
+//     no prior record to carry from. Both fields below stay empty.
+//  2. A debate replaced the verdict, so the skeptic attribution is withheld on
+//     purpose — it describes the run the judge superseded. DebateJudge is the
+//     marker: it is non-empty on exactly these records.
+//  3. The re-verify guard REJECTED a prior whose verdict no longer matches, or
+//     could not read the prior at all. ModelWithheldReason is the marker, and it
+//     exists because cases 1 and 3 were otherwise byte-identical on disk.
+//
+// The two markers are disjoint by construction: case 2 takes the carry-forward
+// path and never sets ModelWithheldReason, case 3 never reaches DebateJudge.
 // DurationMs is the wall-clock of the run that produced the verdict; for a finding
 // skipped on a later re-run it is carried forward unchanged, not recomputed.
 type VerificationResult struct {
@@ -53,7 +69,169 @@ type VerificationResult struct {
 	// at reconciled/debate.json for the full transcript.
 	DebateJudge     string `json:"debateJudge,omitempty"`
 	DebateReasoning string `json:"debateReasoning,omitempty"`
+
+	// ModelWithheldReason names why Model is empty when the emptiness is a
+	// DECISION rather than an absence — case 3 above. It ORIGINATES only on the
+	// re-verify guard's reject path, and is thereafter carried forward alongside
+	// the blank Model it accounts for, so its presence is the whole signal: a
+	// record without it either carries a model or never had one to carry.
+	//
+	// The carry matters because the run that stamps the reason also writes the file
+	// the next run reads: by then the prior's verdict matches the block by
+	// construction, the reject arm no longer fires, and a marker that did not
+	// travel would last exactly one generation before the record decayed back into
+	// case 1. It is carried only on the arm that copies Model — never beside a
+	// DebateJudge — so the two markers stay disjoint.
+	//
+	// Leaving Model blank could not carry this on its own. Cases 1 and 3 both
+	// produce exactly `"model": ""`, so a consumer reading blankness alone learns
+	// nothing about which happened.
+	//
+	// DurationMs is withheld on exactly the same paths and is covered by the same
+	// marker. The name follows Model because that is the field a reader consults
+	// for attribution; a second field per withheld value would say nothing extra.
+	ModelWithheldReason string `json:"modelWithheldReason,omitempty"`
+
+	// Extra holds every key of the on-disk record this struct does not model,
+	// verbatim. reconciled/verification.json is re-emitted on every re-verify by
+	// decoding it into this type and writing it back through
+	// computeVerificationBytes, so without a catch-all any key added by another
+	// stage, an older build, or a future field was silently dropped on the way —
+	// internal/debate round-trips its own rewrite of this same file through
+	// map[string]any for exactly that reason, leaving the stage that OWNS the file
+	// the lossier of the two.
+	//
+	// It is not itself a field of the record: the marshaller merges it back in at
+	// the top level, and modelled keys always win a collision so a stale extra can
+	// never shadow a value this struct computed.
+	//
+	// Scoped to the SKIP path, and narrower than debate's unconditional round-trip.
+	// It is carried only where a prior record both exists and still describes the
+	// standing verdict; a re-verified finding (including every `--fresh` run) is
+	// rebuilt from this run's own vote and carries none, and the reject arms have
+	// either no prior to read or one this guard just rejected. Widening it to the
+	// re-verified path means consulting the prior there, which fires loadPrior on
+	// runs where nothing is skipped — the eager load
+	// TestRunVerify_CorruptPriorNoWarningWhenNoSkippedFindings exists to prevent. No in-tree
+	// stage writes an unmodelled key today, so the gap is a documented boundary
+	// rather than a live loss; TestRunVerify_ExtraPreservationIsScopedToTheSkipPath
+	// pins both halves of it.
+	//
+	// Scoped to the RECORD. VerificationFile's own top-level keys are not preserved,
+	// and deliberately: computeVerificationBytes builds that envelope from computed
+	// values on every write and never reads a prior one, so there is nothing to
+	// carry. The same holds for the sibling artifacts findings.json and summary.json,
+	// which their own writers rebuild whole.
+	Extra map[string]json.RawMessage `json:"-"`
 }
+
+// verificationResultFields is the set of JSON keys VerificationResult models,
+// derived from the struct tags rather than listed by hand — a field added above
+// without updating a hand-written list would otherwise be decoded twice (once
+// typed, once into Extra) and then emitted from the stale copy.
+var verificationResultFields = jsonFieldNames(reflect.TypeOf(VerificationResult{}))
+
+// jsonFieldNames returns the JSON keys encoding/json would emit for rt.
+//
+// It is a free function rather than an inline literal so its branches can be
+// tested: every field of VerificationResult today is exported and carries an
+// explicit json name, so the unexported skip and the name-less-tag fallback are
+// unreachable through that type alone and a test over it proves nothing about
+// them. They exist for the NEXT field added above, which is exactly when a silent
+// mismatch here would be most expensive — see TestJSONFieldNames.
+func jsonFieldNames(rt reflect.Type) map[string]bool {
+	out := map[string]bool{}
+	for i := 0; i < rt.NumField(); i++ {
+		f := rt.Field(i)
+		if f.PkgPath != "" {
+			continue // unexported: encoding/json never emits it
+		}
+		tag := f.Tag.Get("json")
+		if tag == "-" {
+			continue
+		}
+		// Mirror encoding/json's own name resolution: an absent or name-less tag
+		// means the key is the FIELD name. Reading only the tag would leave such a
+		// field out of this set, and MarshalJSON would then let a stale Extra entry
+		// overwrite the value the struct just computed for it.
+		name, _, _ := strings.Cut(tag, ",")
+		if name == "" {
+			name = f.Name
+		}
+		out[name] = true
+	}
+	return out
+}
+
+// verificationResultAlias strips the marshaller methods below so they can call
+// encoding/json on the struct without recursing into themselves.
+type verificationResultAlias VerificationResult
+
+// MarshalJSON emits the modelled fields in struct order, then merges Extra back
+// in. With no extras — every record this repo produces today — the output is
+// byte-for-byte what the plain struct produced, so field order and omitempty are
+// unchanged; only a record that actually carries unmodelled keys pays the
+// map round-trip (and its alphabetical key order).
+func (r VerificationResult) MarshalJSON() ([]byte, error) {
+	base, err := json.Marshal(verificationResultAlias(r))
+	if err != nil {
+		return nil, err
+	}
+	if len(r.Extra) == 0 {
+		return base, nil
+	}
+	var merged map[string]json.RawMessage
+	if err := json.Unmarshal(base, &merged); err != nil {
+		return nil, err
+	}
+	for k, v := range r.Extra {
+		// Modelled keys win: UnmarshalJSON never puts one in Extra, but a
+		// hand-built value could, and a stale extra must not shadow a computed field.
+		if verificationResultFields[k] {
+			continue
+		}
+		merged[k] = v
+	}
+	return json.Marshal(merged)
+}
+
+// UnmarshalJSON decodes the modelled fields normally and captures everything else
+// into Extra so the re-emit above can put it back.
+func (r *VerificationResult) UnmarshalJSON(data []byte) error {
+	var alias verificationResultAlias
+	if err := json.Unmarshal(data, &alias); err != nil {
+		return err
+	}
+	*r = VerificationResult(alias)
+	var all map[string]json.RawMessage
+	if err := json.Unmarshal(data, &all); err != nil {
+		return err
+	}
+	for k := range all {
+		if verificationResultFields[k] {
+			delete(all, k)
+		}
+	}
+	if len(all) > 0 {
+		r.Extra = all
+	}
+	return nil
+}
+
+// Reasons a re-verify withheld a prior record's skeptic attribution. They are the
+// only values ModelWithheldReason takes. Two rather than one because collapsing
+// them would recreate, one level down, the ambiguity the field exists to remove:
+// a prior that disagrees with the standing verdict and a prior that could not be
+// read are different facts about the run.
+const (
+	// withheldVerdictShifted: a prior record for this finding exists, but its
+	// verdict no longer matches the standing one, so its model/durationMs describe
+	// an outcome that is no longer recorded.
+	withheldVerdictShifted = "verdict_shifted"
+	// withheldPriorUnreadable: reconciled/verification.json could not be parsed, so
+	// no prior metadata was available to carry for any finding in the run.
+	withheldPriorUnreadable = "prior_unreadable"
+)
 
 // VerdictCounts tallies the three verdict outcomes across a verification run.
 type VerdictCounts struct {

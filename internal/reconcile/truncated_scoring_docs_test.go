@@ -200,21 +200,106 @@ func TestScorecardDoc_PublicEnvelopeRowStatesTheAllTruncatedOmission(t *testing.
 // hand-off actually reaches.
 //
 // TestTruncatedScoringDocs_DescribeTheKeyTheScoreActuallyReads asserts only that
-// the word "debate" appears, so it cannot see this: the document said a ruling
-// "restores the verdict to the score as well as to the report". It does not.
-// syncVerificationTruncation clears the tool_budget_bytes entry, and runDebate
-// deliberately never rewrites verification.json's `verdict` field (see the scope
-// note at internal/debate/debate.go:271) — so an OVERTURNED ruling is still
-// counted under the stale verify-stage verdict. The sync restores the finding to
-// the ratio; it does not restore the judge's verdict to it.
+// the word "debate" appears, so it cannot see this. The guard used to require the
+// paragraph to say runDebate "never rewrites" verification.json's verdict field —
+// and passed only because it was pinned to a doc that had gone stale.
+// syncVerificationTruncation's write block DOES set rec["verdict"] to the settled
+// verdict, scoped to the records whose tool_budget_bytes caveat the ruling
+// cleared, and stamps debateJudge/debateReasoning beside it so the record names
+// the judge rather than the superseded skeptic run.
+//
+// So the claim is SCOPED, not absent: a ruling restores both the finding and its
+// verdict on the records it cleared, and leaves the verify-stage verdict standing
+// on a ruled finding that never carried the caveat. A doc that flatly negates the
+// restoration, or asserts it without naming the residual case, must fail here.
 func TestVerificationDoc_DebateSyncClaimIsScopedToTheCaveat(t *testing.T) {
 	doc := readDoc(t, "verification.md")
 	para := docParagraph(t, doc, "kept in step from the debate side")
 
-	assert.NotContains(t, para, "restores the verdict to the score",
-		"debate never rewrites verification.json's verdict field, so a ruling cannot restore the verdict to the score")
+	assert.Contains(t, para, "restores the verdict to the score",
+		"emit.go's write block sets the settled verdict on every record whose caveat the ruling cleared — a paragraph that omits it leaves readers counting an overturn under the pre-debate verdict")
+	assert.NotContains(t, para, "never rewrites",
+		"the flat negation is the drift this guard exists to catch: runDebate does rewrite the verdict field, on the cleared records")
+	assert.Contains(t, para, "never carried the caveat",
+		"stating the restoration is not enough — the residual case it does NOT reach has to be named, or the claim over-reads")
 	assert.Contains(t, para, "verdict it is counted under",
-		"the paragraph must say WHICH verdict the score still uses, or a reader assumes the judge's")
-	assert.Contains(t, para, "never rewrites",
-		"a reworded overclaim slips past the NotContains above — the paragraph has to state the negation outright")
+		"the paragraph must say WHICH verdict the score uses in that residual case, or a reader assumes the judge's")
+	assert.Contains(t, para, "debateJudge",
+		"the same write stamps the judge; without it the record's skeptic/model read as the producer of the standing verdict")
+}
+
+// TestVerificationDoc_NamesAllThreeCausesOfAnEmptyModel pins the disambiguation
+// the document has to carry for a reader of reconciled/verification.json.
+//
+// Three unrelated histories leave `model` blank, and two of them serialize
+// identically, so a document that names only "no skeptic executed" tells a reader
+// to draw that conclusion from bytes that do not support it. The markers are what
+// separate them — debateJudge for a withheld attribution, modelWithheldReason for
+// a rejected one — and a doc that describes the blank without naming both leaves
+// the reader exactly where they started.
+func TestVerificationDoc_NamesAllThreeCausesOfAnEmptyModel(t *testing.T) {
+	doc := readDoc(t, "verification.md")
+	// Fatals if the explanation was removed outright.
+	docParagraph(t, doc, "An empty `model` has three distinct causes")
+
+	for _, want := range []struct{ text, why string }{
+		{"No skeptic ran", "case 1 — the absence — must stay named, or the markers below have nothing to contrast with"},
+		{"A debate replaced the verdict", "case 2 is the deliberate withholding debateJudge marks"},
+		{"The re-verify guard rejected the prior record", "case 3 is the one that had no marker at all until modelWithheldReason"},
+		{"`debateJudge` is the marker", "naming the case without naming its marker leaves it unreadable from the file"},
+		{"`modelWithheldReason` is the marker", "same, for the case this field was added to disambiguate"},
+		{"verdict_shifted", "a marker whose values are undocumented is not readable — internal/verify emits this one"},
+		{"prior_unreadable", "the second emitted value; documenting one and not the other re-opens the ambiguity one level down"},
+	} {
+		assert.Contains(t, doc, want.text, want.why)
+	}
+}
+
+// TestVerificationDoc_NamesTheDebateSideRepairAndMarkerDeletion pins the two
+// debate-side behaviours a reader of reconciled/verification.json cannot infer
+// from the file alone.
+//
+// Both are writes the DEBATE stage makes to a file the VERIFY stage owns, and the
+// document is where that hand-off is described:
+//
+//   - The partial-write residue repair (internal/debate/emit.go, isPartialWriteResidue).
+//     atomicwrite.WriteGroup renames in sequence with no rollback, so a publish that
+//     fails after findings.json leaves verification.json holding both its
+//     tool_budget_bytes entry and its pre-debate verdict. A later debate repairs it.
+//     Undocumented, a reader takes that record at face value and concludes a caveat
+//     stands that findings.json says was cleared.
+//   - stampJudge deleting modelWithheldReason. That deletion is what makes the
+//     "the two markers never co-occur" claim above hold on the debate side; without
+//     it stated, the claim reads as a property of internal/verify alone, and a
+//     reader has no reason to expect the marker to disappear from a record a debate
+//     touched.
+func TestVerificationDoc_NamesTheDebateSideRepairAndMarkerDeletion(t *testing.T) {
+	// Prose wraps. Searching the raw text makes a claim look absent because a line
+	// break fell between two of its words, which fails this guard for the one reason
+	// it is not meant to catch.
+	doc := flattenWhitespace(readDoc(t, "verification.md"))
+
+	// Fatals if either explanation was removed outright, and scopes the assertions
+	// below to the paragraph that carries it — a bare document-wide Contains passes
+	// on an unrelated mention elsewhere in the file.
+	repair := docParagraph(t, doc, "partial-write residue")
+	assert.Contains(t, repair, "WriteGroup",
+		"naming the mechanism is what tells a reader WHEN the residue occurs — a publish that failed part-way, not an ordinary run")
+	assert.Contains(t, repair, "tool_budget_bytes",
+		"the residue is identified by that entry surviving beside a verdict findings.json already settled")
+
+	deletion := docParagraph(t, doc, "drops `modelWithheldReason`")
+	assert.Contains(t, deletion, "debateJudge",
+		"the deletion is the debate-side half of the never-co-occur claim: the judge marker replaces the withheld-reason one")
+}
+
+// flattenWhitespace collapses runs of spaces and single newlines inside each
+// paragraph to one space, leaving the blank lines docParagraph splits on intact.
+// A claim spanning a line break then matches as the sentence a reader sees.
+func flattenWhitespace(doc string) string {
+	blocks := strings.Split(doc, "\n\n")
+	for i, b := range blocks {
+		blocks[i] = strings.Join(strings.Fields(b), " ")
+	}
+	return strings.Join(blocks, "\n\n")
 }

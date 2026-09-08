@@ -1,3 +1,17 @@
+## [Technical Debt] - 2026-09-08
+
+### Fixed
+- A second `atcr debate` over the same review dir no longer leaves `verification.json` naming the first debate's judge for a verdict the second replaced — the standing judge is now re-stamped on every ruling that touches an already-debated record.
+- Unmodelled keys in `verification.json` records no longer disappear when `computeVerificationTruncation` rewrites the file — unrecognized fields are now preserved through the compare-and-write pass.
+- `docs/verification.md`'s debate-sync description no longer disagrees with what the code emits; the guarding test now matches the corrected doc.
+- A partial-write residue in `verification.json` — left behind when a `WriteGroup` publish fails after `findings.json` lands but before this file does — is now repaired: the next `atcr debate` recovers the judge from `reconciled/debate.json` and restores the record, while a genuine declared-budget voiding record (indistinguishable on disk) is deliberately left alone.
+- An empty `model` field in `verification.json` is no longer ambiguous between "no skeptic ran," "a debate withheld it," and "the re-verify guard rejected the prior record." The third case now carries a `modelWithheldReason` marker (`verdict_shifted` or `prior_unreadable`), and that marker now carries forward correctly on subsequent re-verifies instead of being lost after one generation.
+- A rejected prior record no longer silently drops the truncation caveat that `survived_skeptic_rate` relies on — the caveat is now re-derived on every arm that rejects a prior verdict.
+- The `Extra` contract is narrowed to the skip path it actually covers, closing a gap that let it apply beyond its intended scope.
+- Three defensive tag-resolution guards that were previously unreachable in practice are now exercised by tests and made reachable.
+- A duplicate record reader is folded into `parseRecord`, removing redundant parsing logic.
+- `docs/verification.md` now documents the debate-side residue repair and the `modelWithheldReason` marker's deletion behavior.
+
 ## [35.16.6.8.2.1] - 2026-09-07
 
 *Epic 35.16.6.8.2.1 — post-review residue from epic 35.16.6.8.2: the skeptic tool-ceiling derivation seam, and three documents describing a clamp the code no longer performed.*
