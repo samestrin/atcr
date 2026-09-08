@@ -49,24 +49,27 @@ func TestValidateRequireVerified_AllUnverifiableIsNotACleanReview(t *testing.T) 
 	assert.Contains(t, err.Error(), "unverifiable")
 }
 
-// TestValidateRequireVerified_AllUnverifiableNamesTheStarvingWindow checks the
-// message points at the cause when findings.json records it. An operator told
-// only "all unverifiable" has to go looking; one told the window is below the
-// prompt overhead has the fix.
-func TestValidateRequireVerified_AllUnverifiableNamesTheStarvingWindow(t *testing.T) {
+// TestValidateRequireVerified_AllUnverifiablePointsAtTheDiagnostic checks the
+// message gives the operator somewhere to go.
+//
+// It deliberately does NOT splice a cause out of findings.json: this runs after
+// RunReconcile, which rebuilds that file from sources/ and strips every
+// verification block, so the skeptic lane's own notes are gone by then. Naming
+// the command that can still diagnose it is the honest substitute — an
+// enrichment that never fires would read, in review, as one that works.
+func TestValidateRequireVerified_AllUnverifiablePointsAtTheDiagnostic(t *testing.T) {
 	dir := t.TempDir()
 	writeReconciledFile(t, dir, "verification.json", `{
 		"findings":[{"file":"a.go","line":1,"problem":"p1","verdict":"unverifiable","skeptic":"bruce"}],
 		"verdictCounts":{"confirmed":0,"refuted":0,"unverifiable":1}
 	}`)
-	writeReconciledFile(t, dir, "findings.json", `[
-		{"file":"a.go","line":1,"problem":"p1","verification":{"verdict":"unverifiable","skeptic":"bruce","notes":"window_below_prompt_overhead"}}
-	]`)
 
 	err := ValidateRequireVerified(dir)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "window_below_prompt_overhead",
-		"the cause is recorded in findings.json — name it rather than leaving the operator to find it")
+	assert.Contains(t, err.Error(), "atcr doctor",
+		"the operator needs the command that can identify the starving agent")
+	assert.Contains(t, err.Error(), "context_window_tokens",
+		"and the field to look at when they run it")
 }
 
 // TestValidateRequireVerified_OneConfirmedIsEnough is the boundary. The check

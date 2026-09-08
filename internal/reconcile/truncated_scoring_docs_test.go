@@ -26,11 +26,11 @@ var truncatedScoringDocs = []string{
 // TestTruncatedScoringDocs_DescribeTheKeyTheScoreActuallyReads pins the first
 // claim in both documents.
 //
-// internal/scorecard resolves the exclusion from findings.json's
-// verification.truncated (settledTruncationByKey), falling back to
-// verification.json's trippedBudgets only where findings.json says nothing. A
-// document that named the snapshot as the key would send a reader to set a field
-// that does not move the score.
+// internal/scorecard reads verification.json's trippedBudgets, NOT the truncated
+// flag on findings.json that report.md renders — the scorecard is emitted during
+// reconcile, which rebuilds findings.json from sources/ and strips its
+// verification blocks first. A document naming truncated as the key would send a
+// reader to set a field that cannot move the score.
 func TestTruncatedScoringDocs_DescribeTheKeyTheScoreActuallyReads(t *testing.T) {
 	for _, name := range truncatedScoringDocs {
 		t.Run(name, func(t *testing.T) {
@@ -39,10 +39,13 @@ func TestTruncatedScoringDocs_DescribeTheKeyTheScoreActuallyReads(t *testing.T) 
 			assert.Contains(t, doc, "survived_skeptic_rate",
 				"the document must name the metric the exclusion applies to")
 			assert.Contains(t, doc, "trippedBudgets",
-				"naming the snapshot field explicitly is what stops a reader assuming it is the key")
+				"the score's actual key must be named, not left implied by the truncated field beside it")
 			assert.True(t,
-				strings.Contains(doc, "not on `trippedBudgets`") || strings.Contains(doc, "not `trippedBudgets`"),
-				"the document must say trippedBudgets is NOT the key — internal/scorecard keys on findings.json's truncated field")
+				strings.Contains(doc, "the score reads `trippedBudgets`") ||
+					strings.Contains(doc, "keys on `trippedBudgets`"),
+				"the document must say the SCORE reads trippedBudgets — naming truncated as the key is the drift this guards")
+			assert.Contains(t, doc, "debate",
+				"a reader told the two artifacts hold the same fact must also be told what keeps them in step")
 		})
 	}
 }

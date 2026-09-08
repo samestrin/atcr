@@ -24,6 +24,10 @@ const (
 	debateSubdir = "debate"
 	// reconciledSubdir is the reconciled artifact directory (matches reconcile).
 	reconciledSubdir = "reconciled"
+	// verificationFile is the verify stage's snapshot under reconciled/. This
+	// stage does not recompute it; syncVerificationTruncation corrects exactly one
+	// entry a ruling invalidates.
+	verificationFile = "verification.json"
 	// manifestFile is the provenance file at the review-dir root.
 	manifestFile = "manifest.json"
 	// debateStage is the stage name a debate run records in the manifest.
@@ -272,4 +276,106 @@ func overflowItems(items []reconcile.DisagreementItem) []OverflowItem {
 		out = append(out, OverflowItem{File: it.File, Line: it.Line, Kind: it.Kind, Severity: it.Severity})
 	}
 	return out
+}
+
+// budgetToolBytes is the tripped-budget marker for the tool-output ceiling.
+// internal/verify and internal/fanout each keep their own unexported copy; this
+// is a third, for the same reason theirs are duplicated — what the stages share
+// is verification.json's on-disk shape, not a Go symbol.
+const budgetToolBytes = "tool_budget_bytes"
+
+// syncVerificationTruncation returns the rewritten reconciled/verification.json
+// for a debate run whose rulings invalidated a recorded truncation caveat, or
+// ("", nil, nil) when nothing is owed.
+//
+// This is NOT the recompute debate.go rules out. That prohibition is about
+// verdicts and tallies: verification.json is a point-in-time record of what the
+// VERIFY stage concluded, and rewriting its verdicts would destroy the audit
+// trail findings.json and debate.json already supersede. What is corrected here
+// is a single entry that a ruling made factually false, on exactly the findings
+// that were ruled.
+//
+// applyRulings clears Verification.Truncated on a ruling because the recorded
+// verdict is now the judge's, produced from the judge's own read. The matching
+// tool_budget_bytes entry in verification.json describes the SAME fact about the
+// SAME verdict, and leaving it made report.md and the reviewer's durable
+// survived_skeptic_rate disagree: the report showed a ruling with no caveat while
+// the score still dropped the finding.
+//
+// It has to be this artifact rather than findings.json. internal/scorecard is
+// emitted from EmitForReconcile, which runs after RunReconcile — and RunReconcile
+// rebuilds findings.json from sources/, stripping every verification block on the
+// way. verification.json is the only record of a verdict still standing by then.
+//
+// Best-effort in the same spirit as the rest of the stage: an absent or
+// unparseable snapshot yields no rewrite rather than an error, so a debate over a
+// review that was never verified still completes.
+func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFinding) (string, []byte, error) {
+	// Only findings whose recorded verdict now carries NO caveat can owe a
+	// correction. A finding the judge left alone keeps whatever verify concluded.
+	cleared := map[FindingKey]bool{}
+	for _, f := range findings {
+		if f.Verification != nil && !f.Verification.Truncated {
+			cleared[FindingKey{File: f.File, Line: f.Line, Problem: f.Problem}] = true
+		}
+	}
+	if len(cleared) == 0 {
+		return "", nil, nil
+	}
+
+	path := filepath.Join(reviewDir, reconciledSubdir, verificationFile)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", nil, nil
+	}
+	// Decoded into a generic map so every field this stage does not understand —
+	// present or added later — survives the rewrite byte-for-byte in value. Only
+	// the one entry below is touched.
+	var doc map[string]any
+	if json.Unmarshal(data, &doc) != nil {
+		return "", nil, nil
+	}
+	raw, ok := doc["findings"].([]any)
+	if !ok {
+		return "", nil, nil
+	}
+
+	changed := false
+	for _, item := range raw {
+		rec, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		budgets, ok := rec["trippedBudgets"].([]any)
+		if !ok || len(budgets) == 0 {
+			continue
+		}
+		file, _ := rec["file"].(string)
+		problem, _ := rec["problem"].(string)
+		line := 0
+		if n, ok := rec["line"].(float64); ok {
+			line = int(n)
+		}
+		if !cleared[FindingKey{File: file, Line: line, Problem: problem}] {
+			continue
+		}
+		kept := make([]any, 0, len(budgets))
+		for _, b := range budgets {
+			if s, ok := b.(string); ok && s == budgetToolBytes {
+				changed = true
+				continue
+			}
+			kept = append(kept, b)
+		}
+		rec["trippedBudgets"] = kept
+	}
+	if !changed {
+		return "", nil, nil
+	}
+
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return "", nil, err
+	}
+	return path, append(out, '\n'), nil
 }

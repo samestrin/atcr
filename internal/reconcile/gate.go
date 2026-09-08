@@ -190,17 +190,13 @@ func allUnverifiableCollapse(reviewDir, verPath string) error {
 		}
 	}
 
-	cause := ""
-	if findings, ferr := ReadReconciledFindings(reviewDir); ferr == nil {
-		for _, f := range findings {
-			if f.Verification != nil && strings.TrimSpace(f.Verification.Notes) != "" {
-				cause = " cause recorded on the verdicts: " + strings.TrimSpace(f.Verification.Notes) + "."
-				break
-			}
-		}
-	}
-
-	return fmt.Errorf("all %d verdict(s) came back unverifiable; the gate counts only VERIFIED findings, so it will pass over every one of them.%s Check 'atcr doctor' for agents whose context_window_tokens cannot fund a tool read", len(vf.Findings), cause)
+	// No cause is spliced in from findings.json here, deliberately. This function
+	// runs after RunReconcile, which rebuilds findings.json from sources/ and
+	// strips every verification block — so its notes (where the skeptic lane
+	// records window_below_prompt_overhead) are gone by the time anyone could read
+	// them. An enrichment that never fires reads, in review, as one that works.
+	// Point at the command that CAN diagnose it instead.
+	return fmt.Errorf("all %d verdict(s) came back unverifiable; the gate counts only VERIFIED findings, so it will pass over every one of them. Run 'atcr doctor': the usual cause is an agent whose declared context_window_tokens cannot fund one tool read, which makes every check it runs unverifiable", len(vf.Findings))
 }
 
 // RunReconcile discovers sources under reviewDir/sources, runs the deterministic
