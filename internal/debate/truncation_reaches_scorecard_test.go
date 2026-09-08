@@ -1359,7 +1359,7 @@ func TestRunDebate_SecondRunRecordsTheStandingJudge(t *testing.T) {
 		Options{}, harness(&fakeChatCompleter{turns: overturnTurns("dave re-read a.go:10")}))
 	require.NoError(t, err)
 
-	rec := readVerificationRecord(t, dir)
+	rec := readVerificationRecord(t, dir, "a.go")
 	require.Equal(t, reclib.VerdictRefuted, rec["verdict"],
 		"precondition: dave overturned, so findings.json now carries refuted")
 	assert.Equal(t, "dave", rec["debateJudge"],
@@ -1368,21 +1368,11 @@ func TestRunDebate_SecondRunRecordsTheStandingJudge(t *testing.T) {
 		"carol's reasoning argues for the ruling dave superseded")
 }
 
-// readVerificationRecord reads the single record back out of the review dir's
+// readVerificationRecord reads one record back out of the review dir's
 // reconciled/verification.json, as the file stands on disk after a debate.
-func readVerificationRecord(t *testing.T, reviewDir string) map[string]any {
+func readVerificationRecord(t *testing.T, reviewDir, file string) map[string]any {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(reviewDir, reconciledSubdir, verificationFile))
 	require.NoError(t, err)
-	return firstRecordOf(t, data)
-}
-
-func firstRecordOf(t *testing.T, data []byte) map[string]any {
-	t.Helper()
-	var doc struct {
-		Findings []map[string]any `json:"findings"`
-	}
-	require.NoError(t, json.Unmarshal(data, &doc))
-	require.NotEmpty(t, doc.Findings)
-	return doc.Findings[0]
+	return parseRecord(t, data, file)
 }
