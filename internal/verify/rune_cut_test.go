@@ -127,3 +127,41 @@ func TestRuneCeilCut_InvalidUTF8DoesNotBypassTheClamp(t *testing.T) {
 	assert.LessOrEqual(t, len(got), 4+utf8.UTFMax,
 		"the overshoot is bounded by the longest UTF-8 encoding, never by the length of the content")
 }
+
+// TestBoundedDispatcher_BackfillsOriginalBytesWhenTheInnerDispatcherOmitsThem
+// covers the defensive branch that keeps the transcript honest for ANY
+// Dispatcher implementation.
+//
+// The production *tools.Dispatcher always sets OriginalBytes (capResult sets it
+// to the pre-cap size when capped and to len(Content) when not), so this branch
+// never fires in production and was uncovered. It is kept rather than deleted
+// because the field it protects is typed as the Dispatcher INTERFACE, whose
+// contract nothing enforces: an implementation that leaves OriginalBytes zero is
+// legal, and without the backfill its truncated results would record "the tool
+// produced 0 bytes" while handing back a shortened read.
+func TestBoundedDispatcher_BackfillsOriginalBytesWhenTheInnerDispatcherOmitsThem(t *testing.T) {
+	content := strings.Repeat("a", 40)
+	// OriginalBytes deliberately left zero — the shape the branch exists for.
+	d := clampDispatcher(&fakeDispatcher{result: tools.ToolResult{Content: content}}, 10)
+
+	out, err := d.Execute(context.Background(), "read", json.RawMessage(`{}`))
+	require.NoError(t, err)
+	require.True(t, out.Truncated)
+	assert.Equal(t, len(content), out.OriginalBytes,
+		"the transcript must record what the tool actually produced, even when the dispatcher did not")
+}
+
+// TestBoundedDispatcher_DoesNotOverwriteAnOriginalBytesTheDispatcherSet is the
+// boundary: the backfill is a backfill. A dispatcher that already capped its
+// result knows the true pre-cap size, and this wrapper must not replace it with
+// the smaller post-cap length it happens to see.
+func TestBoundedDispatcher_DoesNotOverwriteAnOriginalBytesTheDispatcherSet(t *testing.T) {
+	content := strings.Repeat("a", 40)
+	d := clampDispatcher(&fakeDispatcher{result: tools.ToolResult{Content: content, OriginalBytes: 999}}, 10)
+
+	out, err := d.Execute(context.Background(), "read", json.RawMessage(`{}`))
+	require.NoError(t, err)
+	require.True(t, out.Truncated)
+	assert.Equal(t, 999, out.OriginalBytes,
+		"an already-capped result's pre-cap size is the true original — this wrapper only fills a gap")
+}

@@ -223,6 +223,13 @@ func (d *boundedDispatcher) Execute(ctx context.Context, name string, args json.
 		// result marked Truncated with its full content is a lie in the transcript
 		// and, downstream, an unearned truncated caveat on the verdict.
 		if cut := runeCeilCut(out.Content, int(d.remaining)); len(cut) < len(out.Content) {
+			// Backfill, not an overwrite. The production *tools.Dispatcher always
+			// sets OriginalBytes (capResult: the pre-cap size when capped, otherwise
+			// len(Content)), so this never fires there — but the field it protects
+			// is reached through the Dispatcher INTERFACE, whose contract nothing
+			// enforces. An implementation leaving it zero would otherwise record
+			// "the tool produced 0 bytes" beside a shortened read. Pinned by
+			// TestBoundedDispatcher_BackfillsOriginalBytesWhenTheInnerDispatcherOmitsThem.
 			if out.OriginalBytes == 0 {
 				out.OriginalBytes = len(out.Content)
 			}
