@@ -552,13 +552,26 @@ func TestRunDebate_SnapshotsVerificationBeforeRewritingIt(t *testing.T) {
 }
 
 // TestRunDebate_TakesNoSnapshotWhenItRewritesNothing keeps the snapshot paired
-// with an actual rewrite. A .bak written by a run that changed nothing would
+// with an actual rewrite. A snapshot written by a run that changed nothing would
 // overwrite the genuinely-prior state kept from the last run that did.
+//
+// It asserts on debateBakSuffix, not ".bak". The two are not interchangeable and
+// checking the wrong one pins nothing: runDebate writes only
+// verification.json.debate.bak, so os.IsNotExist on verification.json.bak is true
+// by construction for every possible implementation of this stage. The whole
+// package stayed green with the snapshot hoisted out of the `if verBytes != nil`
+// pairing — the exact regression this test names — while that assertion stood.
 func TestRunDebate_TakesNoSnapshotWhenItRewritesNothing(t *testing.T) {
 	dir := reviewDirWith(t, []reconcile.JSONFinding{truncatedSplitFinding()})
 	verPath := writeVerificationFixture(t, dir, `{"findings":[
 		{"file":"a.go","line":10,"problem":"nil deref","verdict":"confirmed","skeptic":"bob","trippedBudgets":[]}
 	]}`)
+	// internal/verify's one backed-up generation. Seeding it is what makes the
+	// two-names invariant testable here: a run that rewrites nothing owes no
+	// snapshot under EITHER name, and this is the name that is not debate's to
+	// spend even when it does.
+	preVerify := `{"findings":[{"file":"a.go","line":10,"problem":"nil deref","verdict":"unverifiable","skeptic":"bob","trippedBudgets":[]}]}`
+	require.NoError(t, os.WriteFile(verPath+".bak", []byte(preVerify), 0o600))
 
 	cc := &fakeChatCompleter{turns: []chatTurn{
 		{content: "proposer defends"},
@@ -568,9 +581,14 @@ func TestRunDebate_TakesNoSnapshotWhenItRewritesNothing(t *testing.T) {
 	_, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
 	require.NoError(t, err)
 
-	_, err = os.Stat(verPath + ".bak")
+	_, err = os.Stat(verPath + debateBakSuffix)
 	assert.True(t, os.IsNotExist(err),
-		"no tool_budget_bytes entry means no rewrite, and a snapshot of an unchanged file would clobber a real prior state")
+		"no tool_budget_bytes entry means no rewrite, and a snapshot of an unchanged file would clobber the generation kept from the last run that did")
+
+	bak, rerr := os.ReadFile(verPath + ".bak")
+	require.NoError(t, rerr)
+	assert.Equal(t, preVerify, string(bak),
+		"verify's one backed-up generation is not debate's to spend, under this name or any other")
 }
 
 // TestSyncVerificationTruncation_LeavesARuledDeclaredBudgetVoidingAlone is the
