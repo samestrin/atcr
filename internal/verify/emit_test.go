@@ -496,6 +496,8 @@ func TestVerificationResult_PreservesUnmodelledKeys(t *testing.T) {
 	assert.Equal(t, map[string]any{"k": float64(1)}, rec["futureBlock"],
 		"nested unmodelled values must survive whole, not be flattened or dropped")
 	assert.Equal(t, "confirmed", rec["verdict"], "the modelled fields are still written")
+	assert.Contains(t, string(data), "\n      \"file\": \"a.go\"",
+		"a record carrying extras must still be written indented — a custom marshaller that returns compact JSON would make the file a single line")
 }
 
 // TestVerificationResult_NoExtrasKeepsStructFieldOrder is the scope guard for the

@@ -67,6 +67,12 @@ type VerificationResult struct {
 	// It is not itself a field of the record: the marshaller merges it back in at
 	// the top level, and modelled keys always win a collision so a stale extra can
 	// never shadow a value this struct computed.
+	//
+	// Scoped to the RECORD. VerificationFile's own top-level keys are not preserved,
+	// and deliberately: computeVerificationBytes builds that envelope from computed
+	// values on every write and never reads a prior one, so there is nothing to
+	// carry. The same holds for the sibling artifacts findings.json and summary.json,
+	// which their own writers rebuild whole.
 	Extra map[string]json.RawMessage `json:"-"`
 }
 
@@ -78,10 +84,23 @@ var verificationResultFields = func() map[string]bool {
 	out := map[string]bool{}
 	rt := reflect.TypeOf(VerificationResult{})
 	for i := 0; i < rt.NumField(); i++ {
-		name, _, _ := strings.Cut(rt.Field(i).Tag.Get("json"), ",")
-		if name != "" && name != "-" {
-			out[name] = true
+		f := rt.Field(i)
+		if f.PkgPath != "" {
+			continue // unexported: encoding/json never emits it
 		}
+		tag := f.Tag.Get("json")
+		if tag == "-" {
+			continue
+		}
+		// Mirror encoding/json's own name resolution: an absent or name-less tag
+		// means the key is the FIELD name. Reading only the tag would leave such a
+		// field out of this set, and MarshalJSON would then let a stale Extra entry
+		// overwrite the value the struct just computed for it.
+		name, _, _ := strings.Cut(tag, ",")
+		if name == "" {
+			name = f.Name
+		}
+		out[name] = true
 	}
 	return out
 }()
