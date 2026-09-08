@@ -1260,3 +1260,67 @@ func TestRunVerify_SkipPreservesUnmodelledPriorKeys(t *testing.T) {
 	assert.Equal(t, "tier-2", doc.Findings[0]["escalationTier"],
 		"a key the prior carried and this struct does not model must survive the re-emit, not be dropped on every re-verify")
 }
+
+// TestRunVerify_NamesWhyTheSkepticModelWasWithheld pins the disambiguator for an
+// empty `model`.
+//
+// Three unrelated histories all leave the field blank: no skeptic ever ran for the
+// finding; a debate replaced the verdict, so the carry-forward is withheld on
+// purpose (debateJudge says so); or the guard rejected a prior whose verdict no
+// longer matches. The third had no marker at all, so it was indistinguishable from
+// the first — an absent attribution and a REJECTED one read the same to every
+// consumer of the file.
+func TestRunVerify_NamesWhyTheSkepticModelWasWithheld(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+		Reviewers: []string{"rev"}, Verification: &reclib.Verification{Verdict: "refuted", Skeptic: "otto"},
+	}})
+	// The prior records a DIFFERENT verdict, so its model/durationMs describe a run
+	// that no longer produced the recorded outcome and the guard rejects them.
+	recon := filepath.Join(dir, reconciledSubdir)
+	require.NoError(t, os.WriteFile(filepath.Join(recon, "verification.json"), []byte(`{"findings":[
+		{"file":"a.go","line":1,"problem":"boom","verdict":"confirmed","skeptic":"otto",
+		 "model":"m-x","reasoning":"otto read token.go:42","durationMs":1840,"trippedBudgets":[]}
+	]}`), 0o644))
+
+	_, runErr := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	})
+	require.NoError(t, runErr)
+
+	data, rerr := os.ReadFile(filepath.Join(recon, "verification.json"))
+	require.NoError(t, rerr)
+	var vf VerificationFile
+	require.NoError(t, json.Unmarshal(data, &vf))
+	require.Len(t, vf.Findings, 1)
+	require.Empty(t, vf.Findings[0].Model, "precondition: the guard rejected the prior, so no model is carried")
+	assert.Equal(t, "verdict_shifted", vf.Findings[0].ModelWithheldReason,
+		"a REJECTED attribution must be distinguishable from one that never existed")
+}
+
+// TestRunVerify_LeavesTheWithheldReasonUnsetWhenThereWasNoPrior is the scope guard
+// for the marker above. A first-ever verify withheld nothing — there was no
+// attribution to reject — and stamping a reason there would make the field mean
+// "blank" rather than "blank for this reason", which is the ambiguity it exists to
+// remove.
+func TestRunVerify_LeavesTheWithheldReasonUnsetWhenThereWasNoPrior(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+		Reviewers: []string{"rev"}, Verification: &reclib.Verification{Verdict: "refuted", Skeptic: "otto"},
+	}})
+	// No verification.json at all: nothing was carried, and nothing was withheld.
+	recon := filepath.Join(dir, reconciledSubdir)
+	_ = os.Remove(filepath.Join(recon, "verification.json"))
+
+	_, runErr := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	})
+	require.NoError(t, runErr)
+
+	data, rerr := os.ReadFile(filepath.Join(recon, "verification.json"))
+	require.NoError(t, rerr)
+	assert.NotContains(t, string(data), "modelWithheldReason",
+		"omitempty must keep the field off a record that withheld nothing, or its presence stops meaning anything")
+}

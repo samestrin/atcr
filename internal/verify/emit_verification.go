@@ -55,6 +55,10 @@ type VerificationResult struct {
 	DebateJudge     string `json:"debateJudge,omitempty"`
 	DebateReasoning string `json:"debateReasoning,omitempty"`
 
+	// ModelWithheldReason names why Model is empty when the emptiness is a
+	// DECISION rather than an absence.
+	ModelWithheldReason string `json:"modelWithheldReason,omitempty"`
+
 	// Extra holds every key of the on-disk record this struct does not model,
 	// verbatim. reconciled/verification.json is re-emitted on every re-verify by
 	// decoding it into this type and writing it back through
