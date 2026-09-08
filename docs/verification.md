@@ -41,7 +41,7 @@ A skeptic returns a strict, parseable envelope:
 
 - `confirmed` — the skeptic checked the evidence and the finding holds.
 - `refuted` — the skeptic found concrete evidence the finding is wrong (a false positive).
-- `unverifiable` — the skeptic could not establish either way (ambiguous evidence, evidence outside the snapshot jail, a declared budget tripped, a provider error). A *derived* `tool_budget_bytes` ceiling is the exception — it truncates without overruling the skeptic, so `trippedBudgets` can be non-empty on a `confirmed` or `refuted` record. Such a finding also carries `truncated: true` on its `verification` block, which is what carries the fact to the artifacts a human reads AND to the score: `report.md` appends `(answered from a truncated read)` to the skeptic line, and the reviewer's durable `survived_skeptic_rate` excludes the verdict entirely (neither numerator nor denominator) rather than charging a partial read as a full-confidence one. The exclusion keys on `trippedBudgets` in `reconciled/verification.json`, not on the `truncated` flag `report.md` renders from: the scorecard is emitted during `atcr reconcile`, which rebuilds `findings.json` from `sources/` and strips its `verification` blocks, leaving `verification.json` as the only verdict record still standing at that moment. The two copies are kept in step from the debate side — a judge ruling that clears `truncated` also clears the matching `tool_budget_bytes` entry in `verification.json`, in the same atomic write — so a ruling restores the finding to the ratio. It does **not** restore the judge's verdict to the score: `runDebate` deliberately never rewrites `verification.json`'s `verdict` field (see the atomic-group scope note in `internal/debate/debate.go`), so the verdict it is counted under is still the verify stage's. An OVERTURNED ruling therefore has `report.md` rendering the judge's outcome while the score counts the pre-debate one. **When every verdict in a run is truncated, `survived_skeptic_rate` is omitted rather than published as `0.0`**: nothing is left to divide, and a published `0.0` is indistinguishable from a reviewer whose findings were all refuted.
+- `unverifiable` — the skeptic could not establish either way (ambiguous evidence, evidence outside the snapshot jail, a declared budget tripped, a provider error). A *derived* `tool_budget_bytes` ceiling is the exception — it truncates without overruling the skeptic, so `trippedBudgets` can be non-empty on a `confirmed` or `refuted` record. Such a finding also carries `truncated: true` on its `verification` block, which is what carries the fact to the artifacts a human reads AND to the score: `report.md` appends `(answered from a truncated read)` to the skeptic line, and the reviewer's durable `survived_skeptic_rate` excludes the verdict entirely (neither numerator nor denominator) rather than charging a partial read as a full-confidence one. The exclusion keys on `trippedBudgets` in `reconciled/verification.json`, not on the `truncated` flag `report.md` renders from: the scorecard is emitted during `atcr reconcile`, which rebuilds `findings.json` from `sources/` and strips its `verification` blocks, leaving `verification.json` as the only verdict record still standing at that moment. The two copies are kept in step from the debate side — a judge ruling that clears `truncated` also clears the matching `tool_budget_bytes` entry in `verification.json`, in the same atomic write — so a ruling restores the finding to the ratio. On those same records it also **restores the verdict to the score**: `syncVerificationTruncation`'s write block sets `verdict` to the settled one and stamps `debateJudge` and `debateReasoning` beside it, so the record names the judge that produced the standing outcome while the `skeptic`/`model`/`durationMs` fields stay in place as the audit trail of the run the ruling superseded. An OVERTURNED ruling is therefore counted under the judge's verdict, matching what `report.md` renders. A second debate over the same review dir keeps that attribution current: a record already carrying a `debateJudge` is re-stamped with the standing judge rather than left naming the one whose ruling was replaced. The restoration is scoped to records the ruling actually cleared — a ruled finding that **never carried the caveat** is not reached by this write, so the verdict it is counted under is still the verify stage's. **When every verdict in a run is truncated, `survived_skeptic_rate` is omitted rather than published as `0.0`**: nothing is left to divide, and a published `0.0` is indistinguishable from a reviewer whose findings were all refuted.
 
   `trippedBudgets` on a finding is attributed by who *won*, and it is a causal claim — "this is why the record says what it says" — not a roster of everyone who tripped something. On a decisive verdict only the winners' budgets are recorded, which is what keeps the derived-ceiling line above visible on a `confirmed` or `refuted`. On a **tie** (`1 confirmed + 1 refuted`, or a three-way split) nobody won and the recorded verdict is `unverifiable` *because of the tie*, so only a participant whose own verdict was `unverifiable` contributes a budget. Without that rule a tie whose confirmed participant merely read from a truncated view serializes identically to a verdict a declared budget actually voided. `model` follows the opposite rule on the same arm — it lists every participant, because it names who spoke rather than what caused the outcome.
 
@@ -145,6 +145,52 @@ produced the standing verdict and `debateReasoning` carries its argument in brie
 — the full transcript is in `reconciled/debate.json`. Both are absent on every
 record the verify stage alone wrote, which is what lets a re-verify tell a judge's
 verdict from a skeptic's and withhold the skeptic's `model`/`durationMs` from it.
+
+An empty `model` has three distinct causes, and they are told apart by markers
+rather than by the blank itself — two of them produce the identical `"model": ""`,
+so blankness alone carries no information:
+
+1. **No skeptic ran** for the finding. Nothing was ever attributed, and neither
+   marker below is present.
+2. **A debate replaced the verdict**, so the skeptic attribution is withheld on
+   purpose: `model` and `durationMs` describe the run the judge superseded.
+   `debateJudge` is the marker.
+3. **The re-verify guard rejected the prior record** — its verdict no longer
+   matches the standing one — or `verification.json` could not be read at all.
+   `modelWithheldReason` is the marker, set to `verdict_shifted` or
+   `prior_unreadable`.
+
+`modelWithheldReason` is `omitempty` and **originates** only on that reject path.
+It is then carried forward on every later re-verify that copies the blank `model`
+it accounts for — without that carry it would last a single generation, because
+the run that stamps it also writes the file the next run reads, and by then the
+verdicts match and the reject arm no longer fires. So a record without it either
+carries a `model` or never had one to carry.
+
+The two markers never co-occur, and each stage holds up one half of that. On the
+verify side the carry happens only on the arm that copies `model`, which is the
+arm a `debateJudge` record skips. On the debate side the judge stamp
+**drops `modelWithheldReason`** as it writes `debateJudge`: a record whose verdict
+a ruling has just corrected no longer has the mismatch the reason describes, so
+leaving it standing would have the record claim its attribution was rejected over
+a disagreement it no longer has. Reading a record a debate touched, expect the
+judge marker and no reason.
+
+A debate also repairs a **partial-write residue** in this file. `atomicwrite.WriteGroup`
+stages every artifact and then renames them in sequence with no rollback, so a
+publish that fails after `findings.json` lands leaves that file with the caveat
+cleared while `verification.json` keeps both its `tool_budget_bytes` entry and its
+pre-debate verdict — and `filterAlreadyDebated` then excludes the finding from
+every later run, so no fresh ruling revisits it. The next `atcr debate` reconciles
+it: a record reading `confirmed` or `refuted` beside that entry can only be the
+derived-ceiling exemption, so a `findings.json` that says the caveat is gone proves
+a ruling cleared it and the matching write was lost. The judge is recovered from
+`reconciled/debate.json`, which is the first entry of the same atomic group and
+therefore survives the rename that lost this file. An `unverifiable` verdict beside
+the same entry is deliberately **not** repaired — that is the declared-ceiling
+voiding path, indistinguishable on disk from a residue whose verdict happened to be
+`unverifiable`, and deleting a real voiding record would silently disable
+reconcile's all-unverifiable gate. That residual is accepted, not overlooked.
 
 The per-finding `model` (the different-model evidence) lives here, in `verification.json`, not in the `findings.json` block — the report's Skeptic section shows verdict/skeptic/reasoning and does not perform a registry lookup. Skeptic runs do not persist transcripts — only reviewer fan-out and debate do.
 
