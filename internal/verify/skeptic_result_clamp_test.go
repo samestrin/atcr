@@ -94,6 +94,8 @@ func TestInvokeSkeptic_CeilingBoundsTheFirstTurnDelivery(t *testing.T) {
 			"the trip is still reported for audit — the read WAS shortened")
 		assert.LessOrEqual(t, cc.toolBytesDelivered(), int(ceiling)+1,
 			"one turn's results must not walk the window past the ceiling this lane derived for it")
+		assert.Empty(t, cc.appendOnlyViolation(),
+			"toolBytesDelivered dedupes by index; if the engine's message list stopped being append-only the assertion above would pass vacuously")
 	})
 
 	t.Run("a declared ceiling below one tool result bounds a single-result first turn", func(t *testing.T) {
@@ -127,5 +129,7 @@ func TestInvokeSkeptic_CeilingBoundsTheFirstTurnDelivery(t *testing.T) {
 		assert.Contains(t, tripped, "tool_budget_bytes")
 		assert.LessOrEqual(t, cc.toolBytesDelivered(), int(declared)+1,
 			"a single tool result must not walk the window past the ceiling the operator declared")
+		assert.Empty(t, cc.appendOnlyViolation(),
+			"toolBytesDelivered dedupes by index; if the engine's message list stopped being append-only the assertion above would pass vacuously")
 	})
 }

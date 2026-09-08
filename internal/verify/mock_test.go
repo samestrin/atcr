@@ -3,6 +3,7 @@ package verify
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 
@@ -47,6 +48,34 @@ type fakeChatCompleter struct {
 	// message list. Read it through toolBytesDelivered, never directly.
 	toolBytesSeen int
 	msgsSeen      int
+	// seenSig fingerprints every message index already counted (role plus content
+	// length). The dedupe above ASSUMES the engine's message list only ever grows
+	// — never reordered, never trimmed — and that assumption was load-bearing and
+	// unstated: if it stopped holding, toolBytesSeen would under-count and every
+	// assertion built on it would pass vacuously. Comparing the prefix on each
+	// call turns the assumption into something a test can fail on. See
+	// appendOnlyViolation.
+	seenSig   []string
+	violation string
+}
+
+// msgSig fingerprints one message for the append-only check: role plus content
+// length is enough to catch a reorder or a trim, and cheap enough to run on
+// every Chat call.
+func msgSig(m llmclient.Message) string {
+	n := 0
+	if m.Content != nil {
+		n = len(*m.Content)
+	}
+	return fmt.Sprintf("%s/%d", m.Role, n)
+}
+
+// appendOnlyViolation returns a description of the first observed breach of the
+// append-only assumption toolBytesSeen depends on, or "" when none occurred.
+func (f *fakeChatCompleter) appendOnlyViolation() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.violation
 }
 
 // toolBytesDelivered returns the total bytes of role:"tool" content the engine
@@ -78,10 +107,25 @@ func (f *fakeChatCompleter) Complete(_ context.Context, inv llmclient.Invocation
 func (f *fakeChatCompleter) Chat(ctx context.Context, inv llmclient.Invocation, msgs []llmclient.Message, _ []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
 	f.mu.Lock()
 	f.lastInv = inv
+	if f.violation == "" {
+		if len(msgs) < f.msgsSeen {
+			f.violation = fmt.Sprintf("message list shrank from %d to %d: the dedupe below under-counts and every toolBytesDelivered assertion passes vacuously", f.msgsSeen, len(msgs))
+		} else {
+			for i := 0; i < f.msgsSeen && i < len(msgs); i++ {
+				if got := msgSig(msgs[i]); got != f.seenSig[i] {
+					f.violation = fmt.Sprintf("message %d changed from %s to %s: the list was reordered or rewritten, so already-counted bytes are no longer what was counted", i, f.seenSig[i], got)
+					break
+				}
+			}
+		}
+	}
 	for i := f.msgsSeen; i < len(msgs); i++ {
 		if msgs[i].Role == "tool" && msgs[i].Content != nil {
 			f.toolBytesSeen += len(*msgs[i].Content)
 		}
+	}
+	for i := len(f.seenSig); i < len(msgs); i++ {
+		f.seenSig = append(f.seenSig, msgSig(msgs[i]))
 	}
 	if len(msgs) > f.msgsSeen {
 		f.msgsSeen = len(msgs)
