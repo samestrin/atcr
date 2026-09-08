@@ -193,3 +193,24 @@ func TestScorecardDoc_PublicEnvelopeRowStatesTheAllTruncatedOmission(t *testing.
 	assert.Contains(t, row, "no countable verdict",
 		"naming truncation is not enough — the row must give the reading absence now supports, or a consumer keeps the old one")
 }
+
+// TestVerificationDoc_DebateSyncClaimIsScopedToTheCaveat pins how far the debate
+// hand-off actually reaches.
+//
+// TestTruncatedScoringDocs_DescribeTheKeyTheScoreActuallyReads asserts only that
+// the word "debate" appears, so it cannot see this: the document said a ruling
+// "restores the verdict to the score as well as to the report". It does not.
+// syncVerificationTruncation clears the tool_budget_bytes entry, and runDebate
+// deliberately never rewrites verification.json's `verdict` field (see the scope
+// note at internal/debate/debate.go:271) — so an OVERTURNED ruling is still
+// counted under the stale verify-stage verdict. The sync restores the finding to
+// the ratio; it does not restore the judge's verdict to it.
+func TestVerificationDoc_DebateSyncClaimIsScopedToTheCaveat(t *testing.T) {
+	doc := readDoc(t, "verification.md")
+	para := docParagraph(t, doc, "kept in step from the debate side")
+
+	assert.NotContains(t, para, "restores the verdict to the score",
+		"debate never rewrites verification.json's verdict field, so a ruling cannot restore the verdict to the score")
+	assert.Contains(t, para, "verdict it is counted under",
+		"the paragraph must say WHICH verdict the score still uses, or a reader assumes the judge's")
+}
