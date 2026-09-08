@@ -839,3 +839,50 @@ func TestRunDebate_FailedPublishTakesNoSnapshot(t *testing.T) {
 	_, serr := os.Stat(verPath + ".debate.bak")
 	assert.True(t, os.IsNotExist(serr), "a snapshot of a generation that was never replaced records a lie")
 }
+
+// TestSyncVerificationTruncation_VerdictRewriteIsScopedToTheDroppedRecord is the
+// mutation guard for the `if dropped` branch.
+//
+// That branch is what scopes the verdict rewrite to the records whose
+// tool_budget_bytes caveat THIS call dropped. Without it, every record in
+// `cleared` has its verdict overwritten whenever ANY record in the file dropped a
+// caveat, because `changed` is file-scoped — the verification.json recompute
+// debate.go's atomic-group scope note rules out, and a strictly wider version of
+// the declared-ceiling defect above.
+//
+// The whole suite stayed green with the guard mutated to `if dropped || true`,
+// because every prior fixture gave the undropped record the same verdict the
+// ruling settled on. This one does not: b.go's record says confirmed and the
+// judge overturned it to refuted, so an unscoped rewrite is visible.
+func TestSyncVerificationTruncation_VerdictRewriteIsScopedToTheDroppedRecord(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeVerificationFixture(t, reviewDir, `{"findings":[
+		{"file":"a.go","line":1,"problem":"p1","verdict":"confirmed","skeptic":"bruce","trippedBudgets":["tool_budget_bytes"]},
+		{"file":"b.go","line":2,"problem":"p2","verdict":"confirmed","skeptic":"bruce","trippedBudgets":["max_turns"]}
+	]}`)
+
+	findings := ruledFindings()
+	// b.go reached its verdict from a shortened read too, so a ruling on it clears
+	// a caveat and puts it in `cleared` — but its record carries no tool-bytes
+	// entry for this call to drop.
+	findings[1].Verification.Verdict = reclib.VerdictConfirmed
+	findings[1].Verification.Truncated = true
+
+	rulings := judgeRulingOnA()
+	rulings[FindingKey{File: "b.go", Line: 2, Problem: "p2"}] = ruleApply{
+		verdict: reclib.VerdictRefuted, survived: false, judge: "greta", reasoning: "false positive",
+	}
+	cleared := applyRulings(findings, rulings)
+	require.Len(t, cleared, 2, "precondition: both findings were ruled and both carried a caveat")
+
+	_, data, err := syncVerificationTruncation(reviewDir, findings, cleared)
+	require.NoError(t, err)
+	require.NotNil(t, data, "a.go's tool-bytes entry was dropped, so the file is rewritten")
+
+	got := parseVerdicts(t, data)
+	assert.Equal(t, "confirmed", got["a.go"], "a.go's caveat was dropped, so its verdict is corrected with it")
+	assert.Equal(t, "confirmed", got["b.go"],
+		"b.go carried no tool-bytes entry for this call to drop — rewriting its verdict is the file-wide recompute the scope note rules out")
+	assert.Nil(t, parseRecord(t, data, "b.go")["debateJudge"],
+		"and no judge is attributed to a verdict this call did not write")
+}
