@@ -31,12 +31,16 @@ const needleProximity = 400
 // direction is the one that misleads an operator, because the doc would keep promising
 // an exception the binary no longer grants (or, worse, keep describing an arm whose
 // conditions have quietly changed). So each claim is asserted twice: once as the
-// sentence the doc makes, once as the construct in cli/benchmark_checkpoint.go that
+// sentence the doc makes, once as the construct in the cli package sources that
 // makes the sentence true. Deleting either half fails this test.
 //
-// Each code-side needle is BEHAVIOUR-BEARING rather than incidental: every one of them
-// is a term the arm cannot fire without, so deleting the behaviour it stands for turns
-// this test red rather than leaving it green through a real removal.
+// Each code-side needle is BEHAVIOUR-BEARING rather than incidental, and none of
+// them is comment text: each is either a condition the described behaviour cannot
+// fire without (the unstamped gate, the parallel-lane-only projection compare, the
+// empty-roster rejection) or the effect that makes the doc's sentence true (the
+// in-place roster upgrade, the runner's save-after-scored-case write-back).
+// Deleting the behaviour a needle stands for turns this test red rather than
+// leaving it green through a real removal.
 //
 // The code half is matched as TEXT rather than by calling the function:
 // validateCheckpointRoster, runCheckpoint and rosterFormatUnion are unexported members
