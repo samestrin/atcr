@@ -1352,3 +1352,57 @@ func TestRunVerify_NamesAnUnreadablePriorSeparately(t *testing.T) {
 	assert.Equal(t, "prior_unreadable", vf.Findings[0].ModelWithheldReason,
 		"an unreadable prior withheld every attribution in the run — saying 'verdict_shifted' would assert a comparison that never happened")
 }
+
+// TestRunVerify_TheWithheldReasonSurvivesTheNextReVerify pins the marker's
+// lifetime.
+//
+// A marker that lasts one generation removes no ambiguity: the run that stamps it
+// also writes the file the NEXT run reads, and by then the prior's verdict matches
+// the block by construction. The carry-forward branch takes over, copies an empty
+// model, and — without carrying the reason with it — emits a record byte-identical
+// to "no skeptic ever ran". The history is a REJECTED attribution; the bytes say
+// there was none. That is the exact confusion this field was added to end, one
+// generation later.
+func TestRunVerify_TheWithheldReasonSurvivesTheNextReVerify(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+		Reviewers: []string{"rev"}, Verification: &reclib.Verification{Verdict: "refuted", Skeptic: "otto"},
+	}})
+	recon := filepath.Join(dir, reconciledSubdir)
+	require.NoError(t, os.WriteFile(filepath.Join(recon, "verification.json"), []byte(`{"findings":[
+		{"file":"a.go","line":1,"problem":"boom","verdict":"confirmed","skeptic":"otto",
+		 "model":"m-x","reasoning":"otto read token.go:42","durationMs":1840,"trippedBudgets":[]}
+	]}`), 0o644))
+
+	noHarness := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	}
+
+	// Run B rejects the prior and stamps the reason.
+	_, runErr := runVerify(context.Background(), dir, skepticRegistry(), Options{}, noHarness)
+	require.NoError(t, runErr)
+	require.Equal(t, "verdict_shifted", readVerificationRecords(t, recon)[0].ModelWithheldReason,
+		"precondition: the guard rejected the prior")
+
+	// Run C reads run B's own output. The verdict now matches, so this is the
+	// ordinary carry-forward path.
+	_, runErr = runVerify(context.Background(), dir, skepticRegistry(), Options{}, noHarness)
+	require.NoError(t, runErr)
+
+	got := readVerificationRecords(t, recon)[0]
+	require.Empty(t, got.Model, "precondition: there is still no model to carry")
+	assert.Equal(t, "verdict_shifted", got.ModelWithheldReason,
+		"the model is still empty for the same reason — dropping the marker returns the record to the ambiguity it was added to remove")
+}
+
+// readVerificationRecords decodes reconciled/verification.json's findings.
+func readVerificationRecords(t *testing.T, reconDir string) []VerificationResult {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(reconDir, "verification.json"))
+	require.NoError(t, err)
+	var vf VerificationFile
+	require.NoError(t, json.Unmarshal(data, &vf))
+	require.NotEmpty(t, vf.Findings)
+	return vf.Findings
+}
