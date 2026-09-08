@@ -301,7 +301,7 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// every ruling it applies, so the post-apply flag cannot distinguish a caveat
 	// this run dropped from one that was never there. syncVerificationTruncation
 	// needs the former.
-	var clearedCaveats map[FindingKey]bool
+	var clearedCaveats map[FindingKey]ruleApply
 	if len(rulings) > 0 {
 		clearedCaveats = applyRulings(findings, rulings)
 	}

@@ -116,8 +116,8 @@ func itemID(item reconcile.DisagreementItem) string {
 // false there is no way to tell a caveat this run dropped from one that was never
 // there, and a finding whose verdict internal/verify VOIDED under a declared
 // ceiling is in the second group.
-func applyRulings(findings []reconcile.JSONFinding, rulings map[FindingKey]ruleApply) map[FindingKey]bool {
-	clearedCaveats := map[FindingKey]bool{}
+func applyRulings(findings []reconcile.JSONFinding, rulings map[FindingKey]ruleApply) map[FindingKey]ruleApply {
+	clearedCaveats := map[FindingKey]ruleApply{}
 	for i := range findings {
 		key := FindingKey{File: findings[i].File, Line: findings[i].Line, Problem: findings[i].Problem}
 		ra, ok := rulings[key]
@@ -156,7 +156,7 @@ func applyRulings(findings []reconcile.JSONFinding, rulings map[FindingKey]ruleA
 				// voiding path records a DECLARED ceiling overruling the verdict, with
 				// Truncated left false). Reading the post-apply flag downstream cannot
 				// tell the two apart, because this line erases the difference.
-				clearedCaveats[key] = true
+				clearedCaveats[key] = ra
 			}
 			v.Truncated = false
 		} else {
@@ -338,7 +338,17 @@ const budgetToolBytes = "tool_budget_bytes"
 // scorecard that reads verdicts from it anyway. Closing it means either debate
 // rewriting every ruled verdict here, or the scorecard deriving settled verdicts
 // from findings.json; both are larger decisions than this correction.
-func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFinding, clearedCaveats map[FindingKey]bool) (string, []byte, error) {
+// ruledVerdict is the verdict a ruling settled on, together with the judge that
+// produced it. Both travel to verification.json: the verdict alone would leave the
+// record's skeptic/model/reasoning/durationMs — written by the verify stage and
+// describing the run the judge replaced — claiming an outcome they did not produce.
+type ruledVerdict struct {
+	verdict   string
+	judge     string
+	reasoning string
+}
+
+func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFinding, clearedCaveats map[FindingKey]ruleApply) (string, []byte, error) {
 	// debate.go calls this unconditionally, including on a run that ruled nothing —
 	// and on one whose every ruling left the caveat standing (applyRulings skips an
 	// out-of-enum verdict). Neither changed how a recorded verdict was reached, so
@@ -360,13 +370,14 @@ func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFindi
 	// (internal/reconcile/gate.go).
 	//
 	// The value is the verdict the correction has to carry with it.
-	cleared := map[FindingKey]string{}
+	cleared := map[FindingKey]ruledVerdict{}
 	for _, f := range findings {
 		key := FindingKey{File: f.File, Line: f.Line, Problem: f.Problem}
-		if !clearedCaveats[key] || f.Verification == nil {
+		ra, ok := clearedCaveats[key]
+		if !ok || f.Verification == nil {
 			continue
 		}
-		cleared[key] = f.Verification.Verdict
+		cleared[key] = ruledVerdict{verdict: f.Verification.Verdict, judge: ra.judge, reasoning: ra.reasoning}
 	}
 	if len(cleared) == 0 {
 		return "", nil, nil
@@ -420,7 +431,7 @@ func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFindi
 		if n, ok := rec["line"].(float64); ok {
 			line = int(n)
 		}
-		verdict, ok := cleared[FindingKey{File: file, Line: line, Problem: problem}]
+		settled, ok := cleared[FindingKey{File: file, Line: line, Problem: problem}]
 		if !ok {
 			continue
 		}
@@ -449,7 +460,7 @@ func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFindi
 			// Scoped deliberately to records whose caveat this call dropped. Writing
 			// the verdict anywhere else would be the verification.json recompute
 			// debate.go's atomic-group scope note rules out.
-			rec["verdict"] = verdict
+			rec["verdict"] = settled.verdict
 		}
 	}
 	if !changed {

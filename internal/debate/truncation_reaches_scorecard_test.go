@@ -668,3 +668,91 @@ func TestDebateRulingLeavesTheAllUnverifiableGateStanding(t *testing.T) {
 	assert.Error(t, reconcile.ValidateRequireVerified(reviewDir),
 		"a debate ruling must not turn an all-unverifiable run into one the gate waves through")
 }
+
+// TestSyncVerificationTruncation_AttributesTheRewrittenVerdictToTheJudge pins the
+// other half of the record the verdict rewrite touches.
+//
+// internal/verify/emit_verification.go states this record's contract explicitly:
+// "Model names only the skeptics whose verdict produced the recorded outcome" and
+// "DurationMs is the wall-clock of the run that produced the verdict", and
+// docs/verification.md documents the fields as one coherent audit unit. Rewriting
+// rec["verdict"] alone left skeptic/model/reasoning/durationMs as the verify stage
+// wrote them, so on an OVERTURN the published record read as a refutation
+// justified by the confirming argument it replaced, credited to a model that never
+// produced it. reconciled/debate.json holds the judge's real reasoning, and nothing
+// in this file pointed at it.
+func TestSyncVerificationTruncation_AttributesTheRewrittenVerdictToTheJudge(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeVerificationFixture(t, reviewDir, `{"findings":[
+		{"file":"a.go","line":1,"problem":"p1","verdict":"confirmed","skeptic":"otto",
+		 "model":"claude-sonnet-4-6","reasoning":"read token.go:42 - jwt.Parse is called without Verify",
+		 "durationMs":1840,"trippedBudgets":["tool_budget_bytes"]}
+	]}`)
+
+	findings := ruledFindings()
+	rulings := map[FindingKey]ruleApply{
+		{File: "a.go", Line: 1, Problem: "p1"}: {
+			verdict: reclib.VerdictRefuted, survived: false, judge: "greta",
+			reasoning: "the call site guards the parse; the skeptic read the wrong overload",
+		},
+	}
+	cleared := applyRulings(findings, rulings)
+
+	_, data, err := syncVerificationTruncation(reviewDir, findings, cleared)
+	require.NoError(t, err)
+	require.NotNil(t, data)
+
+	rec := parseRecord(t, data, "a.go")
+	require.Equal(t, reclib.VerdictRefuted, rec["verdict"], "precondition: the judge overturned the skeptic")
+	assert.Equal(t, "greta", rec["debateJudge"],
+		"a record whose verdict a judge produced must name that judge, or it mis-attributes the outcome to the skeptic beside it")
+	assert.Equal(t, "the call site guards the parse; the skeptic read the wrong overload", rec["debateReasoning"],
+		"the reasoning field beside it still argues for the verdict the judge replaced — the judge's own must be reachable from this file")
+}
+
+// TestSyncVerificationTruncation_LeavesAnUnrewrittenRecordUnattributed keeps the
+// attribution paired with an actual verdict rewrite. A record this call did not
+// rewrite still holds the verify stage's own coherent verdict+provenance unit, and
+// stamping a judge onto it would be the mis-attribution in reverse.
+func TestSyncVerificationTruncation_LeavesAnUnrewrittenRecordUnattributed(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeVerificationFixture(t, reviewDir, `{"findings":[
+		{"file":"a.go","line":1,"problem":"p1","verdict":"confirmed","skeptic":"otto","trippedBudgets":["tool_budget_bytes"]},
+		{"file":"b.go","line":2,"problem":"p2","verdict":"refuted","skeptic":"otto","trippedBudgets":["max_turns"]}
+	]}`)
+
+	findings := ruledFindings()
+	findings[1].Verification.Truncated = true
+	rulings := judgeRulingOnA()
+	rulings[FindingKey{File: "b.go", Line: 2, Problem: "p2"}] = ruleApply{
+		verdict: reclib.VerdictRefuted, survived: true, judge: "greta", reasoning: "stands",
+	}
+	cleared := applyRulings(findings, rulings)
+
+	_, data, err := syncVerificationTruncation(reviewDir, findings, cleared)
+	require.NoError(t, err)
+	require.NotNil(t, data)
+
+	b := parseRecord(t, data, "b.go")
+	assert.Equal(t, []any{"max_turns"}, b["trippedBudgets"],
+		"b.go carried no tool-bytes entry, so this call dropped nothing on it")
+	assert.Nil(t, b["debateJudge"],
+		"no verdict was rewritten on b.go — attributing its untouched verify record to a judge is the same mis-attribution in reverse")
+}
+
+// parseRecord returns the raw record for one file, so a test can assert on fields
+// the typed helpers above deliberately do not carry.
+func parseRecord(t *testing.T, data []byte, file string) map[string]any {
+	t.Helper()
+	var doc struct {
+		Findings []map[string]any `json:"findings"`
+	}
+	require.NoError(t, json.Unmarshal(data, &doc))
+	for _, r := range doc.Findings {
+		if s, _ := r["file"].(string); s == file {
+			return r
+		}
+	}
+	t.Fatalf("no record for %q", file)
+	return nil
+}

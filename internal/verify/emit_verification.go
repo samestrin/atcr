@@ -41,6 +41,18 @@ type VerificationResult struct {
 	Reasoning      string   `json:"reasoning"`
 	DurationMs     int      `json:"durationMs"`
 	TrippedBudgets []string `json:"trippedBudgets"`
+
+	// DebateJudge/DebateReasoning name the judge that PRODUCED the recorded
+	// verdict when internal/debate overturned or upheld it after the fact. They
+	// are empty on every record the verify stage alone produced, which is what
+	// makes them the marker the carry-forward guard in pipeline.go keys on: a
+	// debate rewrite equalises Verdict with the findings.json block, so verdict
+	// equality can no longer distinguish "the same skeptic run" from "a judge
+	// replaced it". Skeptic/Model/DurationMs continue to describe the SUPERSEDED
+	// skeptic run — this pair is what says so out loud, and what points a reader
+	// at reconciled/debate.json for the full transcript.
+	DebateJudge     string `json:"debateJudge,omitempty"`
+	DebateReasoning string `json:"debateReasoning,omitempty"`
 }
 
 // VerdictCounts tallies the three verdict outcomes across a verification run.
