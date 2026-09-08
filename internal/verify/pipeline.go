@@ -426,6 +426,12 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 			// one entry a ruling invalidates. Dropping it here would lose the max_turns
 			// and timeout trips that rewrite deliberately preserved.
 			rec.TrippedBudgets = prior.TrippedBudgets
+			// Keys the record type does not model travel with TrippedBudgets, for the same
+			// reason: they belong to the run the prior recorded, not to whoever produced
+			// the verdict. This record is rebuilt from the findings.json block on every
+			// re-verify, so without carrying them the codec's catch-all preserves nothing
+			// on the only path that actually re-emits the file.
+			rec.Extra = prior.Extra
 			// The judge attribution DOES describe the standing verdict, so it survives
 			// the re-verify rather than being silently dropped along with the metadata
 			// it exists to disclaim.

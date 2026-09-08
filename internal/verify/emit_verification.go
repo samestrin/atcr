@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -53,6 +54,91 @@ type VerificationResult struct {
 	// at reconciled/debate.json for the full transcript.
 	DebateJudge     string `json:"debateJudge,omitempty"`
 	DebateReasoning string `json:"debateReasoning,omitempty"`
+
+	// Extra holds every key of the on-disk record this struct does not model,
+	// verbatim. reconciled/verification.json is re-emitted on every re-verify by
+	// decoding it into this type and writing it back through
+	// computeVerificationBytes, so without a catch-all any key added by another
+	// stage, an older build, or a future field was silently dropped on the way —
+	// internal/debate round-trips its own rewrite of this same file through
+	// map[string]any for exactly that reason, leaving the stage that OWNS the file
+	// the lossier of the two.
+	//
+	// It is not itself a field of the record: the marshaller merges it back in at
+	// the top level, and modelled keys always win a collision so a stale extra can
+	// never shadow a value this struct computed.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// verificationResultFields is the set of JSON keys VerificationResult models,
+// derived from the struct tags rather than listed by hand — a field added above
+// without updating a hand-written list would otherwise be decoded twice (once
+// typed, once into Extra) and then emitted from the stale copy.
+var verificationResultFields = func() map[string]bool {
+	out := map[string]bool{}
+	rt := reflect.TypeOf(VerificationResult{})
+	for i := 0; i < rt.NumField(); i++ {
+		name, _, _ := strings.Cut(rt.Field(i).Tag.Get("json"), ",")
+		if name != "" && name != "-" {
+			out[name] = true
+		}
+	}
+	return out
+}()
+
+// verificationResultAlias strips the marshaller methods below so they can call
+// encoding/json on the struct without recursing into themselves.
+type verificationResultAlias VerificationResult
+
+// MarshalJSON emits the modelled fields in struct order, then merges Extra back
+// in. With no extras — every record this repo produces today — the output is
+// byte-for-byte what the plain struct produced, so field order and omitempty are
+// unchanged; only a record that actually carries unmodelled keys pays the
+// map round-trip (and its alphabetical key order).
+func (r VerificationResult) MarshalJSON() ([]byte, error) {
+	base, err := json.Marshal(verificationResultAlias(r))
+	if err != nil {
+		return nil, err
+	}
+	if len(r.Extra) == 0 {
+		return base, nil
+	}
+	var merged map[string]json.RawMessage
+	if err := json.Unmarshal(base, &merged); err != nil {
+		return nil, err
+	}
+	for k, v := range r.Extra {
+		// Modelled keys win: UnmarshalJSON never puts one in Extra, but a
+		// hand-built value could, and a stale extra must not shadow a computed field.
+		if verificationResultFields[k] {
+			continue
+		}
+		merged[k] = v
+	}
+	return json.Marshal(merged)
+}
+
+// UnmarshalJSON decodes the modelled fields normally and captures everything else
+// into Extra so the re-emit above can put it back.
+func (r *VerificationResult) UnmarshalJSON(data []byte) error {
+	var alias verificationResultAlias
+	if err := json.Unmarshal(data, &alias); err != nil {
+		return err
+	}
+	*r = VerificationResult(alias)
+	var all map[string]json.RawMessage
+	if err := json.Unmarshal(data, &all); err != nil {
+		return err
+	}
+	for k := range all {
+		if verificationResultFields[k] {
+			delete(all, k)
+		}
+	}
+	if len(all) > 0 {
+		r.Extra = all
+	}
+	return nil
 }
 
 // VerdictCounts tallies the three verdict outcomes across a verification run.
