@@ -674,3 +674,49 @@ func TestDebtBackfillJustifications_DryRunLocatorStaysOneParseableToken(t *testi
 		})
 	}
 }
+
+// locatorNames keys collisions on the sanitized token's BYTES, so it only detects the
+// ambiguity its own lossy Cf strip introduces. Two shard names that RENDER identically
+// but differ in bytes get distinct keys and no suffix at all — leaving the operator
+// reading two rows that look like the same filename, which is exactly the
+// which-file-would-be-rewritten ambiguity this function exists to remove.
+//
+// NFKC folding closes the compatibility-equivalent half of that: NFC e-acute beside
+// NFD e+U+0301, and U+00A0 beside a space. It does NOT close visual confusables that
+// are not compatibility-equivalent — see the residual case pinned below.
+func TestLocatorNames_FoldsCompatibilityEquivalentShardNames(t *testing.T) {
+	for _, tc := range []struct{ name, a, b string }{
+		{name: "NFC vs NFD e-acute", a: "café.jsonl", b: "café.jsonl"},
+		{name: "no-break space vs space", a: "a b.jsonl", b: "a b.jsonl"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			changes := []localdebt.JustificationChange{
+				{Shard: tc.a, Line: 1, ID: "aaaa1111"},
+				{Shard: tc.b, Line: 1, ID: "bbbb2222"},
+			}
+			names := locatorNames([]string{tc.a, tc.b}, changes)
+			assert.NotEqual(t, names[tc.a], names[tc.b],
+				"two shard names that render alike must never render as one identical locator")
+			assert.Contains(t, names[tc.a], "#", "the collision must be marked, not merely survived")
+			assert.Contains(t, names[tc.b], "#", "on both rows, or the operator cannot tell which is which")
+		})
+	}
+}
+
+// The residual class, pinned so it is a known limit rather than a surprise: a visual
+// confusable that is NOT compatibility-equivalent — here U+2011 NON-BREAKING HYPHEN
+// beside an ASCII hyphen-minus — folds to U+2010 under NFKC, not to U+002D, so the two
+// names keep distinct keys and print bare. Closing it needs a confusables table, not a
+// normalizer. This test documents the boundary; if a future change closes the gap it
+// will fail here and should be updated deliberately.
+func TestLocatorNames_DoesNotFoldVisualConfusablesThatAreNotCompatibilityEquivalent(t *testing.T) {
+	const ascii, nbHyphen = "2026-08.jsonl", "2026‑08.jsonl"
+	changes := []localdebt.JustificationChange{
+		{Shard: ascii, Line: 1, ID: "aaaa1111"},
+		{Shard: nbHyphen, Line: 1, ID: "bbbb2222"},
+	}
+	names := locatorNames([]string{ascii, nbHyphen}, changes)
+	assert.NotContains(t, names[ascii], "#",
+		"NFKC maps U+2011 to U+2010, not to U+002D, so this pair is not detected as a collision")
+	assert.NotContains(t, names[nbHyphen], "#")
+}
