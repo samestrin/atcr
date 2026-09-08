@@ -109,6 +109,13 @@ func itemID(item reconcile.DisagreementItem) string {
 // prior verification gets a fresh block with the judge as the producing agent. A
 // finding with no ruling is left untouched, so a non-debated finding's block is
 // byte-identical.
+// It returns the keys whose truncation caveat this call actually CLEARED — the
+// findings that carried Verification.Truncated=true before the line below set it
+// false. That is strictly narrower than "every ruling applied", and the narrower
+// set is the one syncVerificationTruncation needs: once Truncated has been forced
+// false there is no way to tell a caveat this run dropped from one that was never
+// there, and a finding whose verdict internal/verify VOIDED under a declared
+// ceiling is in the second group.
 func applyRulings(findings []reconcile.JSONFinding, rulings map[FindingKey]ruleApply) map[FindingKey]bool {
 	clearedCaveats := map[FindingKey]bool{}
 	for i := range findings {
@@ -142,6 +149,15 @@ func applyRulings(findings []reconcile.JSONFinding, rulings map[FindingKey]ruleA
 			// but carrying its truncation caveat onto a verdict it did not produce
 			// would attach "answered from a truncated read" to the wrong agent's
 			// answer — in the report and in the precision-ratio exclusion alike.
+			if v.Truncated {
+				// Record the flip, not the ruling. A caveat this call did NOT clear is
+				// one that was never there — and verification.json's tool_budget_bytes
+				// entry then describes something else entirely (internal/verify's
+				// voiding path records a DECLARED ceiling overruling the verdict, with
+				// Truncated left false). Reading the post-apply flag downstream cannot
+				// tell the two apart, because this line erases the difference.
+				clearedCaveats[key] = true
+			}
 			v.Truncated = false
 		} else {
 			// No prior verification (debate ran standalone): the judge is the only
@@ -155,7 +171,6 @@ func applyRulings(findings []reconcile.JSONFinding, rulings map[FindingKey]ruleA
 			}
 		}
 		findings[i].Confidence = reclib.ConfidenceForVerdict(findings[i].Confidence, ra.verdict)
-		clearedCaveats[key] = true
 	}
 	return clearedCaveats
 }
@@ -324,30 +339,34 @@ const budgetToolBytes = "tool_budget_bytes"
 // rewriting every ruled verdict here, or the scorecard deriving settled verdicts
 // from findings.json; both are larger decisions than this correction.
 func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFinding, clearedCaveats map[FindingKey]bool) (string, []byte, error) {
-	// debate.go calls this unconditionally, including on a run that ruled nothing.
-	// Such a run changed no verdict, so it is owed no correction — and reading the
-	// snapshot at all would only risk one.
+	// debate.go calls this unconditionally, including on a run that ruled nothing —
+	// and on one whose every ruling left the caveat standing (applyRulings skips an
+	// out-of-enum verdict). Neither changed how a recorded verdict was reached, so
+	// neither is owed a correction; reading the snapshot at all would only risk one.
 	if len(clearedCaveats) == 0 {
 		return "", nil, nil
 	}
-	// A correction is owed only where a RULING cleared the caveat. Keying on the
-	// post-apply Truncated flag alone was far too wide: it is false on most
-	// findings, ruled or not. internal/verify's voiding path records
-	// Verification{Verdict: unverifiable} for a verdict a DECLARED ceiling overruled
-	// and never sets Truncated, so those findings entered the set and had the only
-	// record of WHY they were voided deleted — by a run that never ruled on them,
-	// with no verification.json.bak on this path to recover from.
+	// A correction is owed only where a RULING cleared the caveat, which is why the
+	// set comes from applyRulings rather than being recomputed here. The post-apply
+	// Truncated flag cannot express it: applyRulings forces it false on EVERY
+	// ruling, so `!Truncated` was true by construction for every ruled finding.
+	// internal/verify's voiding path records Verification{Verdict: unverifiable}
+	// for a verdict a DECLARED ceiling overruled and never sets Truncated, so such
+	// a finding walked into the set the moment it was ruled — and had the only
+	// record of WHY its verdict was voided deleted, and the voided verdict itself
+	// overwritten. envelope.go can only produce confirmed/refuted, so that flip is
+	// one-directional: it turns an all-unverifiable file into a not-all-unverifiable
+	// one and silently disables reconcile's all-unverifiable gate
+	// (internal/reconcile/gate.go).
 	//
 	// The value is the verdict the correction has to carry with it.
 	cleared := map[FindingKey]string{}
 	for _, f := range findings {
 		key := FindingKey{File: f.File, Line: f.Line, Problem: f.Problem}
-		if !clearedCaveats[key] {
+		if !clearedCaveats[key] || f.Verification == nil {
 			continue
 		}
-		if f.Verification != nil && !f.Verification.Truncated {
-			cleared[key] = f.Verification.Verdict
-		}
+		cleared[key] = f.Verification.Verdict
 	}
 	if len(cleared) == 0 {
 		return "", nil, nil
