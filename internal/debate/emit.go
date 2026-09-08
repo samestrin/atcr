@@ -504,6 +504,16 @@ func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFindi
 				// for an identical value would republish verification.json — and mint a
 				// fresh .debate.bak, spending the one snapshot generation that exists —
 				// on every later `atcr debate`, with nothing to show for it.
+				//
+				// The modelWithheldReason clause is REPAIR-ONLY and unreachable from any
+				// in-tree writer: internal/verify stamps that marker only on arms that
+				// carry no DebateJudge, and stampJudge deletes it wherever it installs
+				// one, so the two never co-occur on a file this repo produced. It is kept
+				// because a hand-edited or foreign file that does carry both is exactly
+				// the file worth correcting, and the cost of the clause when it cannot
+				// fire is one map lookup. Do not read its presence as evidence that the
+				// state occurs — TestSyncVerificationTruncation_ClearsAStaleWithheldReasonOnTheRuledRecord
+				// covers the reachable half, which is the CLEARED path, not this arm.
 				if sameRecordedString(rec, "verdict", p.verdict) &&
 					sameRecordedString(rec, "debateJudge", p.judge) &&
 					sameRecordedString(rec, "debateReasoning", p.reasoning) &&

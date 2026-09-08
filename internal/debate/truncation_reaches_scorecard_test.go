@@ -1118,6 +1118,12 @@ func TestSyncVerificationTruncation_ARepairedRecordIsNotRewrittenAgain(t *testin
 // debateJudge is the marker for a DELIBERATE withholding, and the contract on
 // VerificationResult says the two never co-occur. Leaving both makes the record
 // claim its attribution was rejected for a verdict mismatch it no longer has.
+//
+// This is the REACHABLE half: verify stamps the reason on a record carrying no
+// judge, and a later ruling clears that record's caveat. The pending pass's own
+// modelWithheldReason clause sits behind an existing debateJudge and is therefore
+// repair-only — see the note at that clause; no fixture here should be read as
+// evidence that a record carrying both markers occurs in practice.
 func TestSyncVerificationTruncation_ClearsAStaleWithheldReasonOnTheRuledRecord(t *testing.T) {
 	reviewDir := t.TempDir()
 	writeVerificationFixture(t, reviewDir, `{"findings":[
