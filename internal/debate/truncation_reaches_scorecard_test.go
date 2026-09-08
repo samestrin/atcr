@@ -1135,3 +1135,65 @@ func TestSyncVerificationTruncation_ClearsAStaleWithheldReasonOnTheRuledRecord(t
 	assert.Nil(t, rec["modelWithheldReason"],
 		"debateJudge is the marker for a deliberate withholding — a verdict-mismatch reason beside it describes a mismatch the write just removed")
 }
+
+// TestSyncVerificationTruncation_IgnoresAPriorItemThatSettledNothing keeps the
+// residue repair's judge honest.
+//
+// debate.go:457 assigns ir.Judge = cast.Judge.Agent BEFORE the ruling runs, so
+// reconciled/debate.json carries a judge on items that applied nothing to
+// findings.json: an `unresolved` outcome (judge_halted, unparseable_ruling) and a
+// gray-zone item, whose decision is cluster-level and never enters the
+// single-finding rulings map (debate.go:218-239). Projecting those back as
+// rulings attributes a verdict to an agent that never ruled it — and because
+// internal/verify/pipeline.go:434 reads a non-empty debateJudge as "a judge
+// produced this verdict", the real skeptic's model and durationMs are then
+// withheld on every later re-verify.
+//
+// priorDebateRulings must therefore mirror the live map's own admission rule,
+// not merely require a judge to be present.
+func TestSyncVerificationTruncation_IgnoresAPriorItemThatSettledNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		item ItemResult
+		why  string
+	}{
+		{
+			name: "unresolved",
+			item: ItemResult{
+				File: "a.go", Line: 1, Problem: "p1", Kind: "verification_disagreement",
+				Outcome: OutcomeUnresolved, Reason: "judge_halted",
+				Judge: "greta", Reasoning: "judge halted",
+			},
+			why: "an unresolved item settles nothing — debate.go:218 skips it before the rulings map is touched",
+		},
+		{
+			name: "gray_zone",
+			item: ItemResult{
+				File: "a.go", Line: 1, Problem: "p1", Kind: reconcile.KindGrayZone,
+				Outcome: OutcomeUphold, ClusterDecision: ClusterSeparate,
+				Judge: "greta", Reasoning: "the two findings are distinct",
+			},
+			why: "a gray-zone ruling is a cluster-level decision — debate.go:220 keeps it out of the per-finding rulings map",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reviewDir := t.TempDir()
+			// The residue shape: a surviving verdict beside a tool-bytes entry.
+			writeVerificationFixture(t, reviewDir, `{"findings":[
+				{"file":"a.go","line":1,"problem":"p1","verdict":"confirmed","skeptic":"otto",
+				 "model":"m-x","reasoning":"otto read token.go:42","durationMs":1840,
+				 "trippedBudgets":["tool_budget_bytes"]}
+			]}`)
+			writeDebateFixture(t, reviewDir, tc.item)
+
+			findings := []reconcile.JSONFinding{{
+				File: "a.go", Line: 1, Problem: "p1", Reviewers: []string{"otto"},
+				Verification: &reclib.Verification{Verdict: reclib.VerdictRefuted, Skeptic: "otto"},
+			}}
+
+			_, data, err := syncVerificationTruncation(reviewDir, findings, nil, nil)
+			require.NoError(t, err)
+			assert.Nil(t, data, tc.why)
+		})
+	}
+}
