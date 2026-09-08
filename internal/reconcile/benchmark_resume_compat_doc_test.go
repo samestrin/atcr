@@ -184,6 +184,12 @@ func TestBenchmarkDoc_ResumeCompatExceptionMatchesTheCode(t *testing.T) {
 	// the bullet keeps saying so and the code keeps the fail-closed default.
 	assert.Contains(t, doc, "fails closed",
 		"the Resume bullet must still state the default, or the exception reads as the rule")
-	assert.Contains(t, code, "errCheckpointRosterMismatch",
+	// The needle is the fail-closed return's own format text, not the sentinel
+	// identifier: errCheckpointRosterMismatch is shared by the var declaration,
+	// two comments, and every other return site, so deleting this specific
+	// return — the exact statement the guard exists to keep — left the old
+	// needle satisfied four times over. "recorded [%s], configured [%s]"
+	// occurs only in that return, so neutering it fails this assertion.
+	assert.Contains(t, code, "recorded [%s], configured [%s]",
 		"the fail-closed default must still be reachable")
 }
