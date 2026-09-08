@@ -30,6 +30,21 @@ const reconciledSubdir = "reconciled"
 // verdict produced the recorded outcome — a winners-only subset on a decisive vote,
 // all participants on a tie, and "" when no skeptic executed. So for a multi-vote
 // run Model may list fewer entries than Skeptic by design (see winningAttribution).
+//
+// An empty Model has THREE distinct causes, and reading it as one is how a
+// deliberate withholding got mistaken for an absence:
+//
+//  1. No skeptic executed for this finding. Nothing was ever attributed; there is
+//     no prior record to carry from. Both fields below stay empty.
+//  2. A debate replaced the verdict, so the skeptic attribution is withheld on
+//     purpose — it describes the run the judge superseded. DebateJudge is the
+//     marker: it is non-empty on exactly these records.
+//  3. The re-verify guard REJECTED a prior whose verdict no longer matches, or
+//     could not read the prior at all. ModelWithheldReason is the marker, and it
+//     exists because cases 1 and 3 were otherwise byte-identical on disk.
+//
+// The two markers are disjoint by construction: case 2 takes the carry-forward
+// path and never sets ModelWithheldReason, case 3 never reaches DebateJudge.
 // DurationMs is the wall-clock of the run that produced the verdict; for a finding
 // skipped on a later re-run it is carried forward unchanged, not recomputed.
 type VerificationResult struct {
@@ -56,7 +71,14 @@ type VerificationResult struct {
 	DebateReasoning string `json:"debateReasoning,omitempty"`
 
 	// ModelWithheldReason names why Model is empty when the emptiness is a
-	// DECISION rather than an absence.
+	// DECISION rather than an absence — case 3 above. It is set ONLY on the
+	// re-verify guard's reject path and is absent everywhere else, so its presence
+	// is the whole signal: a record without it either carries a model or never had
+	// one to carry.
+	//
+	// Leaving Model blank could not carry this on its own. Cases 1 and 3 both
+	// produce exactly `"model": ""`, so a consumer reading blankness alone learns
+	// nothing about which happened.
 	ModelWithheldReason string `json:"modelWithheldReason,omitempty"`
 
 	// Extra holds every key of the on-disk record this struct does not model,
@@ -163,6 +185,21 @@ func (r *VerificationResult) UnmarshalJSON(data []byte) error {
 	}
 	return nil
 }
+
+// Reasons a re-verify withheld a prior record's skeptic attribution. They are the
+// only values ModelWithheldReason takes. Two rather than one because collapsing
+// them would recreate, one level down, the ambiguity the field exists to remove:
+// a prior that disagrees with the standing verdict and a prior that could not be
+// read are different facts about the run.
+const (
+	// withheldVerdictShifted: a prior record for this finding exists, but its
+	// verdict no longer matches the standing one, so its model/durationMs describe
+	// an outcome that is no longer recorded.
+	withheldVerdictShifted = "verdict_shifted"
+	// withheldPriorUnreadable: reconciled/verification.json could not be parsed, so
+	// no prior metadata was available to carry for any finding in the run.
+	withheldPriorUnreadable = "prior_unreadable"
+)
 
 // VerdictCounts tallies the three verdict outcomes across a verification run.
 type VerdictCounts struct {

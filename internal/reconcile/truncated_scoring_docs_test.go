@@ -227,3 +227,30 @@ func TestVerificationDoc_DebateSyncClaimIsScopedToTheCaveat(t *testing.T) {
 	assert.Contains(t, para, "debateJudge",
 		"the same write stamps the judge; without it the record's skeptic/model read as the producer of the standing verdict")
 }
+
+// TestVerificationDoc_NamesAllThreeCausesOfAnEmptyModel pins the disambiguation
+// the document has to carry for a reader of reconciled/verification.json.
+//
+// Three unrelated histories leave `model` blank, and two of them serialize
+// identically, so a document that names only "no skeptic executed" tells a reader
+// to draw that conclusion from bytes that do not support it. The markers are what
+// separate them — debateJudge for a withheld attribution, modelWithheldReason for
+// a rejected one — and a doc that describes the blank without naming both leaves
+// the reader exactly where they started.
+func TestVerificationDoc_NamesAllThreeCausesOfAnEmptyModel(t *testing.T) {
+	doc := readDoc(t, "verification.md")
+	// Fatals if the explanation was removed outright.
+	docParagraph(t, doc, "An empty `model` has three distinct causes")
+
+	for _, want := range []struct{ text, why string }{
+		{"No skeptic ran", "case 1 — the absence — must stay named, or the markers below have nothing to contrast with"},
+		{"A debate replaced the verdict", "case 2 is the deliberate withholding debateJudge marks"},
+		{"The re-verify guard rejected the prior record", "case 3 is the one that had no marker at all until modelWithheldReason"},
+		{"`debateJudge` is the marker", "naming the case without naming its marker leaves it unreadable from the file"},
+		{"`modelWithheldReason` is the marker", "same, for the case this field was added to disambiguate"},
+		{"verdict_shifted", "a marker whose values are undocumented is not readable — internal/verify emits this one"},
+		{"prior_unreadable", "the second emitted value; documenting one and not the other re-opens the ambiguity one level down"},
+	} {
+		assert.Contains(t, doc, want.text, want.why)
+	}
+}

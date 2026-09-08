@@ -405,10 +405,24 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		// together.
 		pk := loadPrior()
 		var prior VerificationResult
+		var hadPrior bool
 		if pk != nil {
-			prior = pk[key]
+			prior, hadPrior = pk[key]
 		}
-		if !priorLoadFailed && strings.EqualFold(strings.TrimSpace(prior.Verdict), strings.TrimSpace(f.Verification.Verdict)) {
+		// Distinguish "no attribution existed" from "an attribution was rejected".
+		// Both leave Model empty, and until this marker they were the same bytes on
+		// disk — see the three-cause note on VerificationResult. Only the reject arms
+		// stamp a reason; a first-ever verify and the carry-forward path leave it
+		// unset, and so does the debate arm below, whose marker is DebateJudge.
+		switch {
+		case priorLoadFailed:
+			rec.ModelWithheldReason = withheldPriorUnreadable
+		case !hadPrior:
+			// Nothing to carry and nothing withheld.
+		case !strings.EqualFold(strings.TrimSpace(prior.Verdict), strings.TrimSpace(f.Verification.Verdict)):
+			rec.ModelWithheldReason = withheldVerdictShifted
+		}
+		if hadPrior && !priorLoadFailed && strings.EqualFold(strings.TrimSpace(prior.Verdict), strings.TrimSpace(f.Verification.Verdict)) {
 			// Verdict equality alone is no longer sufficient evidence that the prior
 			// describes the SAME run. internal/debate writes a judge's verdict into
 			// verification.json (syncVerificationTruncation), which makes the two

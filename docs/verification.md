@@ -146,6 +146,25 @@ produced the standing verdict and `debateReasoning` carries its argument in brie
 record the verify stage alone wrote, which is what lets a re-verify tell a judge's
 verdict from a skeptic's and withhold the skeptic's `model`/`durationMs` from it.
 
+An empty `model` has three distinct causes, and they are told apart by markers
+rather than by the blank itself — two of them produce the identical `"model": ""`,
+so blankness alone carries no information:
+
+1. **No skeptic ran** for the finding. Nothing was ever attributed, and neither
+   marker below is present.
+2. **A debate replaced the verdict**, so the skeptic attribution is withheld on
+   purpose: `model` and `durationMs` describe the run the judge superseded.
+   `debateJudge` is the marker.
+3. **The re-verify guard rejected the prior record** — its verdict no longer
+   matches the standing one — or `verification.json` could not be read at all.
+   `modelWithheldReason` is the marker, set to `verdict_shifted` or
+   `prior_unreadable`.
+
+`modelWithheldReason` is `omitempty` and is written **only** on that reject path,
+so a record without it either carries a `model` or never had one to carry. The two
+markers never co-occur: case 2 takes the carry-forward path, case 3 never reaches
+it.
+
 The per-finding `model` (the different-model evidence) lives here, in `verification.json`, not in the `findings.json` block — the report's Skeptic section shows verdict/skeptic/reasoning and does not perform a registry lookup. Skeptic runs do not persist transcripts — only reviewer fan-out and debate do.
 
 ## Diff-Smell: the deterministic sibling

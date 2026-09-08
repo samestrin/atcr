@@ -1324,3 +1324,31 @@ func TestRunVerify_LeavesTheWithheldReasonUnsetWhenThereWasNoPrior(t *testing.T)
 	assert.NotContains(t, string(data), "modelWithheldReason",
 		"omitempty must keep the field off a record that withheld nothing, or its presence stops meaning anything")
 }
+
+// TestRunVerify_NamesAnUnreadablePriorSeparately keeps the two withheld reasons
+// distinct. Collapsing them would move the ambiguity one level down: a prior that
+// DISAGREES with the standing verdict and a prior that could not be read at all
+// are different facts about the run, and docs/verification.md documents both
+// values by name.
+func TestRunVerify_NamesAnUnreadablePriorSeparately(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+		Reviewers: []string{"rev"}, Verification: &reclib.Verification{Verdict: "refuted", Skeptic: "otto"},
+	}})
+	recon := filepath.Join(dir, reconciledSubdir)
+	require.NoError(t, os.WriteFile(filepath.Join(recon, "verification.json"), []byte("{not json"), 0o644))
+
+	_, runErr := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	})
+	require.NoError(t, runErr)
+
+	data, rerr := os.ReadFile(filepath.Join(recon, "verification.json"))
+	require.NoError(t, rerr)
+	var vf VerificationFile
+	require.NoError(t, json.Unmarshal(data, &vf))
+	require.Len(t, vf.Findings, 1)
+	assert.Equal(t, "prior_unreadable", vf.Findings[0].ModelWithheldReason,
+		"an unreadable prior withheld every attribution in the run — saying 'verdict_shifted' would assert a comparison that never happened")
+}
