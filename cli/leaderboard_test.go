@@ -1027,7 +1027,7 @@ func TestRunLeaderboardExport_WhitespaceOnlyIdentityIsAlreadyEmptyNotAScrubCasua
 
 			require.NoError(t, runLeaderboardExport(cmd, []scorecard.Record{rec}, scorecard.FilterOpts{}, ""),
 				"a whitespace-only identity is already empty in the store, the case this arm excludes")
-			require.Empty(t, errBuf.String(),
+			require.NotContains(t, errBuf.String(), "empty once scrubbed",
 				"reporting it as a scrub casualty prints an unactionable message about a blank value")
 
 			var env struct {
@@ -1079,4 +1079,122 @@ func TestRenderLeaderboard_ShowsDocShieldedOnlyWhenNonzero(t *testing.T) {
 		assert.Regexp(t, `\s4\s*$`, lines[2], "the shielded row must end with its count")
 		assert.Regexp(t, `\s0\s*$`, lines[1], "a row with none shows 0, not a blank the reader must interpret")
 	})
+}
+
+// A whitespace-only identity is kept and published — that is the deliberate scoping
+// TestRunLeaderboardExport_WhitespaceOnlyIdentityIsAlreadyEmptyNotAScrubCasualty pins —
+// but keeping it silently is a strict LOSS of diagnostic. Before the TrimSpace widening
+// such a record hard-failed locally with actionable text; after it, the operator got a
+// clean local export carrying `model: ""`, which is precisely the document the sibling
+// skip message calls out as one that "would be rejected at the leaderboard". They then
+// learned about it from the board's rejection instead of from their own terminal.
+//
+// So the record still publishes AND is named on stderr. Both halves are asserted here:
+// dropping the record would re-open the hole the scoping exists to avoid, and dropping
+// the line would restore the silence.
+//
+// The wording is deliberately distinct from the skip report's "is empty once scrubbed":
+// this is not a scrub casualty, and an operator scanning stderr must be able to tell a
+// DROPPED record from a KEPT one at a glance. The blank value itself is never printed —
+// `model " "` is what made the old message unactionable.
+func TestRunLeaderboardExport_BlankIdentityIsNamedOnStderrAndStillPublishes(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		field string
+		rec   scorecard.Record
+	}{
+		{
+			name:  "space-only model",
+			field: "model",
+			rec: scorecard.Record{
+				SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-blank",
+				Reviewer: "greta", Model: " ", FindingsRaised: 3, FindingsCorroborated: 2,
+			},
+		},
+		{
+			// U+00A0 is category Zs — neither Cc nor Cf — so the printability arm lets
+			// it through, and strings.Fields treats it as whitespace. It reaches the
+			// operator as a blank exactly like a plain space does.
+			name:  "no-break-space model",
+			field: "model",
+			rec: scorecard.Record{
+				SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-blank",
+				Reviewer: "greta", Model: "\u00A0", FindingsRaised: 3, FindingsCorroborated: 2,
+			},
+		},
+		{
+			name:  "space-only reviewer",
+			field: "reviewer",
+			rec: scorecard.Record{
+				SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-blank",
+				Reviewer: "  ", Model: "claude-sonnet", FindingsRaised: 3, FindingsCorroborated: 2,
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exportTestCmd()
+			var out, errBuf bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&errBuf)
+
+			require.NoError(t, runLeaderboardExport(cmd, []scorecard.Record{tc.rec}, scorecard.FilterOpts{}, ""))
+
+			report := errBuf.String()
+			require.Contains(t, report, "blank after trimming",
+				"the operator must learn about the blank identity here, not from the board's rejection")
+			require.Contains(t, report, "the record has no "+tc.field,
+				"the line must name WHICH identity is missing")
+			require.Contains(t, report, fmt.Sprintf("%q", "2026-08-29T00:00:00Z-blank"),
+				"the line must name the record, or it cannot be acted on")
+			require.NotContains(t, report, "empty once scrubbed",
+				"a kept record must not be reported under the message that means DROPPED")
+
+			var env struct {
+				Reviewers []struct {
+					Model string `json:"model"`
+				} `json:"reviewers"`
+			}
+			require.NoError(t, json.Unmarshal(out.Bytes(), &env))
+			require.Len(t, env.Reviewers, 1,
+				"warning about the record must not drop it — that is the pre-existing, deliberate behavior")
+		})
+	}
+}
+
+// One line per record, not one per field: an operator repairs the record, and a second
+// line about its other blank identity is noise. The report must still name the record
+// once, and the record must still publish.
+func TestRunLeaderboardExport_BothIdentitiesBlankReportsTheRecordOnce(t *testing.T) {
+	rec := scorecard.Record{
+		SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-both",
+		Reviewer: " ", Model: " ", FindingsRaised: 3, FindingsCorroborated: 2,
+	}
+	cmd := exportTestCmd()
+	var out, errBuf bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errBuf)
+
+	require.NoError(t, runLeaderboardExport(cmd, []scorecard.Record{rec}, scorecard.FilterOpts{}, ""))
+	assert.Equal(t, 1, strings.Count(errBuf.String(), "blank after trimming"),
+		"a record with two blank identities is still one record to repair")
+
+	var env struct {
+		Reviewers []struct{} `json:"reviewers"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &env))
+	require.Len(t, env.Reviewers, 1)
+}
+
+// The blank arm must not shadow the HARD failure beside it. Reporting the blank model
+// and moving to the next RECORD would skip the reviewer field entirely, so a
+// non-printing rune there — a misattribution vector the export exists to stop — would
+// publish. The report is once-per-record; the CHECKS still run on every field.
+func TestRunLeaderboardExport_BlankModelDoesNotShadowANonPrintingReviewer(t *testing.T) {
+	rec := scorecard.Record{
+		SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-mixed",
+		Reviewer: "gre\u200Bta", Model: " ", FindingsRaised: 3, FindingsCorroborated: 2,
+	}
+	err := runLeaderboardExport(exportTestCmd(), []scorecard.Record{rec}, scorecard.FilterOpts{}, "")
+	require.Error(t, err, "a non-printing rune must abort the export even when an earlier field was blank")
+	require.Contains(t, err.Error(), "non-printing rune")
 }
