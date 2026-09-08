@@ -561,8 +561,12 @@ func TestDebtBackfillJustifications_DryRunIgnoresNonShardEntriesWhenDisambiguati
 	// A directory whose name is byte-identical to the genuine shard's.
 	require.NoError(t, os.MkdirAll(filepath.Join(store, "2026-09.jsonl"), 0o750))
 	// A non-".jsonl" entry whose name reduces to the genuine shard's token once the
-	// zero-width space is stripped.
-	require.NoError(t, os.WriteFile(filepath.Join(store, "2026-08​.jsonl.tmp"), []byte("staged\n"), 0o600))
+	// trailing zero-width space is stripped. The ZWSP is at the END on purpose: it is
+	// what makes the name fail HasSuffix(".jsonl") while still sanitizing to
+	// "2026-08.jsonl", so the suffix half of the filter is the only thing keeping it
+	// out of the collision map. A ".tmp" extension would NOT work as a decoy — it
+	// sanitizes to a different token and so collides with nothing.
+	require.NoError(t, os.WriteFile(filepath.Join(store, "2026-08.jsonl\u200B"), []byte("staged\n"), 0o600))
 
 	rec := `{"schema_version":3,"id":"aaaa1111","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
 		`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
@@ -598,7 +602,7 @@ func TestDebtBackfillJustifications_DryRunIgnoresADirectoryNamedLikeTheChangedSh
 	// The decoy directory's name reduces to the changed shard's token once Cf is
 	// stripped, so without the IsDir half it is a genuine collision — not merely an
 	// extra name that happens to differ.
-	require.NoError(t, os.MkdirAll(filepath.Join(store, "2026-08​.jsonl"), 0o750))
+	require.NoError(t, os.MkdirAll(filepath.Join(store, "2026-08\u200B.jsonl"), 0o750))
 
 	rec := `{"schema_version":3,"id":"aaaa1111","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
 		`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
