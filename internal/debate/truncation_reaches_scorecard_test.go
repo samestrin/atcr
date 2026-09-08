@@ -756,3 +756,86 @@ func parseRecord(t *testing.T, data []byte, file string) map[string]any {
 	t.Fatalf("no record for %q", file)
 	return nil
 }
+
+// TestRunDebate_SnapshotDoesNotClobberVerifyBackup pins the one generation the
+// debate snapshot was silently consuming.
+//
+// atomicfs.BackupToDotBak is documented as "replacing any existing backup" and
+// keeps exactly ONE generation. internal/verify already writes
+// verification.json.bak (backupExistingVerification), contracted as "the
+// generation the last verify replaced". debate always runs after verify
+// (cli/review.go, and standalone `atcr debate` likewise), so a debate snapshot
+// under the same name overwrites verify's pre-verify generation with the
+// post-verify one, and the pre-verify state becomes unrecoverable.
+//
+// Two stages backing up one file need two names.
+func TestRunDebate_SnapshotDoesNotClobberVerifyBackup(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{truncatedSplitFinding()})
+	postVerify := `{"findings":[
+		{"file":"a.go","line":10,"problem":"nil deref","verdict":"confirmed","skeptic":"bob","trippedBudgets":["tool_budget_bytes"]}
+	]}`
+	verPath := writeVerificationFixture(t, dir, postVerify)
+	// What internal/verify left behind: the generation the last verify replaced.
+	preVerify := `{"findings":[{"file":"a.go","line":10,"problem":"nil deref","verdict":"unverifiable","skeptic":"bob","trippedBudgets":[]}]}`
+	require.NoError(t, os.WriteFile(verPath+".bak", []byte(preVerify), 0o600))
+
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "challenger attacks"},
+		{content: `{"outcome":"overturn","reasoning":"false positive"}`},
+	}}
+	_, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+
+	bak, err := os.ReadFile(verPath + ".bak")
+	require.NoError(t, err)
+	assert.Equal(t, preVerify, string(bak),
+		"verify's one backed-up generation is not debate's to spend")
+
+	debateBak, err := os.ReadFile(verPath + ".debate.bak")
+	require.NoError(t, err, "debate rewrote verification.json, so its own prior generation must be recoverable")
+	assert.Equal(t, postVerify, string(debateBak), "debate's snapshot is the PRE-debate bytes, verbatim")
+}
+
+// TestRunDebate_FailedPublishTakesNoSnapshot pins the sharper sub-case.
+//
+// The snapshot was taken BEFORE atomicwrite.WriteGroup, and WriteGroup stages
+// every entry before renaming any — so a publish that fails leaves
+// verification.json untouched while the snapshot beside it has already been
+// spent. A backup that records a generation the run never replaced is worse than
+// no backup: it looks current and is not.
+func TestRunDebate_FailedPublishTakesNoSnapshot(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{truncatedSplitFinding()})
+	body := `{"findings":[
+		{"file":"a.go","line":10,"problem":"nil deref","verdict":"confirmed","skeptic":"bob","trippedBudgets":["tool_budget_bytes"]}
+	]}`
+	verPath := writeVerificationFixture(t, dir, body)
+	preVerify := `{"findings":[{"file":"a.go","line":10,"problem":"nil deref","verdict":"unverifiable","skeptic":"bob","trippedBudgets":[]}]}`
+	require.NoError(t, os.WriteFile(verPath+".bak", []byte(preVerify), 0o600))
+
+	// A directory where debate.json belongs makes WriteGroup's FIRST rename fail,
+	// after every temp is staged. That is the window the defect lives in: staging
+	// succeeded, so a snapshot taken ahead of the group has already been spent,
+	// and then nothing is published. A read-only reconciled/ would not reproduce
+	// it — the same permission that stops the group also stops the snapshot.
+	recon := filepath.Dir(verPath)
+	require.NoError(t, os.MkdirAll(filepath.Join(recon, "debate.json", "occupied"), 0o755))
+
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "challenger attacks"},
+		{content: `{"outcome":"overturn","reasoning":"false positive"}`},
+	}}
+	_, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.Error(t, err, "precondition: the publish cannot write into a read-only reconciled/")
+
+	got, rerr := os.ReadFile(verPath)
+	require.NoError(t, rerr)
+	require.Equal(t, body, string(got), "precondition: nothing was published")
+
+	bak, rerr := os.ReadFile(verPath + ".bak")
+	require.NoError(t, rerr)
+	assert.Equal(t, preVerify, string(bak), "a failed publish replaced nothing, so it owes no snapshot")
+	_, serr := os.Stat(verPath + ".debate.bak")
+	assert.True(t, os.IsNotExist(serr), "a snapshot of a generation that was never replaced records a lie")
+}
