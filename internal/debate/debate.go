@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/samestrin/atcr/internal/atomicfs"
 	"github.com/samestrin/atcr/internal/atomicwrite"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/hookobs"
@@ -349,15 +348,31 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		// (backupExistingVerification). This stage's rewrite is the lossier of the
 		// two: it round-trips through map[string]any, so the file that comes back
 		// is key-sorted rather than in the struct order verify wrote, and is no
-		// longer byte-comparable with it even where no value changed. Without the
-		// .bak the pre-debate state was simply gone.
+		// longer byte-comparable with it even where no value changed. Without a
+		// snapshot the pre-debate state was simply gone.
 		//
-		// Best-effort, like the rest of the stage: a failed snapshot is worth a
-		// warning, not a lost correction. Paired with verBytes != nil deliberately
-		// — snapshotting on a run that rewrites nothing would clobber the genuinely
-		// prior state kept from the last run that did.
-		if _, err := atomicfs.BackupToDotBak(verPath); err != nil {
-			log.FromContext(ctx).Warn("debate: could not snapshot verification.json before rewriting it", "path", verPath, "err", err)
+		// It gets its OWN name rather than verification.json.bak. That file belongs
+		// to internal/verify (backupExistingVerification), which contracts it as
+		// "the generation the last verify replaced" and, via
+		// atomicfs.BackupToDotBak, keeps exactly one. debate always runs after
+		// verify — cli/review.go runs verify then debate, and standalone `atcr
+		// debate` follows a verify too — so a debate snapshot under that name
+		// overwrites the pre-verify generation with the post-verify one on every
+		// run that clears a caveat, and the pre-verify state becomes unrecoverable.
+		// Two stages backing up one file need two names.
+		//
+		// It also joins the atomic group instead of being copied ahead of it.
+		// WriteGroup stages every entry before renaming any, so a publish that
+		// fails after staging used to leave verification.json untouched and the
+		// snapshot beside it already spent — a backup recording a generation the
+		// run never replaced. As a group entry it lands only when the rewrite does.
+		// Best-effort in the same spirit as the rest of the stage: an unreadable
+		// current file yields no snapshot rather than a lost correction, which is
+		// the same outcome the copy-based version produced.
+		if prior, rerr := os.ReadFile(verPath); rerr != nil {
+			log.FromContext(ctx).Warn("debate: could not snapshot verification.json before rewriting it", "path", verPath, "err", rerr)
+		} else {
+			artifacts = append(artifacts, atomicwrite.Entry{Path: verPath + debateBakSuffix, Data: prior})
 		}
 		artifacts = append(artifacts, atomicwrite.Entry{Path: verPath, Data: verBytes})
 	}

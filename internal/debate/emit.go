@@ -28,6 +28,11 @@ const (
 	// stage does not recompute it; syncVerificationTruncation corrects exactly one
 	// entry a ruling invalidates.
 	verificationFile = "verification.json"
+	// debateBakSuffix names THIS stage's snapshot of verificationFile. It is
+	// deliberately not ".bak": that name belongs to internal/verify
+	// (backupExistingVerification), which keeps exactly one generation and would
+	// lose its pre-verify one to every debate run that clears a caveat.
+	debateBakSuffix = ".debate.bak"
 	// manifestFile is the provenance file at the review-dir root.
 	manifestFile = "manifest.json"
 	// debateStage is the stage name a debate run records in the manifest.

@@ -546,7 +546,7 @@ func TestRunDebate_SnapshotsVerificationBeforeRewritingIt(t *testing.T) {
 	_, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
 	require.NoError(t, err)
 
-	bak, err := os.ReadFile(verPath + ".bak")
+	bak, err := os.ReadFile(verPath + ".debate.bak")
 	require.NoError(t, err, "debate rewrote verification.json, so the state it replaced must be recoverable")
 	assert.Equal(t, body, string(bak), "the snapshot is the PRE-debate bytes, verbatim")
 }
