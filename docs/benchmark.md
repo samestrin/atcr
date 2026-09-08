@@ -236,6 +236,20 @@ already-paid-for work of cases `1..N-1` would otherwise be lost.
   **fails closed** with a clear message (remove the checkpoint to start fresh) rather
   than silently mixing inconsistent work into a new run. The roster check is separate
   because the reproducibility hash covers only suite content, not the panel.
+- **One exception, for checkpoints written before the serial lane existed.** The
+  recorded roster covers both reviewer lanes and is stamped `roster_format` to say so.
+  A checkpoint written before that stamp existed recorded the parallel lane alone, so
+  comparing it against today's two-lane signature would report a panel change that
+  never happened and send you to discard every already-paid completed case. So an
+  **unstamped** checkpoint whose recorded roster equals the **parallel-lane-only**
+  projection of your current config resumes **once** across an
+  **added serial reviewer**, and is then **upgraded to the union form** in place —
+  after which the ordinary fail-closed rule applies to it like any other checkpoint.
+  The exception is
+  narrow by construction: a parallel reviewer whose model or persona drifted still
+  mismatches, a stamped checkpoint never qualifies, and a checkpoint that records an
+  empty roster is rejected outright because an empty roster proves nothing about the
+  panel.
 
 Checkpointing is **opt-in**: without `--checkpoint`, behavior is unchanged — a
 total-roster case failure still aborts the run (a transient infrastructure failure
