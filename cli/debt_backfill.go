@@ -111,7 +111,9 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 	// control, and it is the rune that reorders which line appears to be named. The
 	// shard cannot take %q: that would put the line number outside the quoted name and
 	// break `<shard>:<line>` as one copy-pasteable token. It takes sanitizeLocator
-	// instead, which removes the terminal-controlling categories.
+	// instead, which removes the terminal-controlling categories AND percent-encodes the
+	// colon and whitespace that would otherwise break that one-token property from
+	// inside the name - the property is asserted here, so it has to be enforced there.
 	if dryRun {
 		// Resolved once over the whole store directory: a collision is a property of the
 		// SET of shard names on disk, so it cannot be detected one row at a time — nor
@@ -125,8 +127,9 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// sanitizeLocator is sanitizeCell plus category Cf, for a field rendered UNQUOTED on
-// a terminal surface.
+// sanitizeLocator is sanitizeCell plus category Cf, plus a percent-encoding of the
+// runes that would break the token from inside, for a field rendered UNQUOTED on a
+// terminal surface.
 //
 // sanitizeCell keeps Cf on purpose: it feeds table cells whose neighbours are quoted,
 // and a legitimate identity may carry a joiner. That trade does not hold for the
@@ -141,10 +144,18 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 // whole; quoting it would push the line number outside the name.
 //
 // This is NOT equivalent to the %q applied to the id beside it. %q escapes everything
-// strconv.IsPrint rejects, which includes Zs runes (U+00A0, U+2000-U+200A) and Co
-// private-use runes that neither sanitizeCell nor this strip touches. What is removed
-// here is exactly the set that can drive a terminal: C0/ESC/DEL, C1, U+2028/U+2029 and
-// Cf. Stripping also means the printed locator is not guaranteed to be the literal
+// strconv.IsPrint rejects, which includes Co private-use runes this function leaves
+// alone. What is REMOVED here is exactly the set that can drive a terminal: C0/ESC/DEL,
+// C1, U+2028/U+2029 and Cf.
+//
+// A second, separate pass then percent-encodes `%`, `:` and every unicode.IsSpace rune
+// - not because they drive a terminal, but because they break the one-token property
+// this whole design is built on. A colon inside the name gives `<shard>:<line>` two
+// candidate splits; whitespace ends the token, so half the name is what a copy-paste
+// picks up. `%` is encoded first, so the escape stays reversible and a file genuinely
+// named "2026%3A08.jsonl" cannot render as the encoded form of "2026:08.jsonl".
+//
+// Stripping also means the printed locator is not guaranteed to be the literal
 // filename on disk — and, because it is lossy, that two DIFFERENT filenames can reduce
 // to the same token. Callers rendering a SET of locators must therefore go through
 // locatorNames, which appends a per-file suffix where that collision actually happens;
@@ -154,12 +165,39 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 // `leaderboard --table` share that helper, and Cf pass-through there is the documented
 // behavior, not an oversight.
 func sanitizeLocator(s string) string {
-	return strings.Map(func(r rune) rune {
+	stripped := strings.Map(func(r rune) rune {
 		if unicode.Is(unicode.Cf, r) {
 			return -1
 		}
 		return r
 	}, sanitizeCell(s))
+
+	// Percent-encode the three things that would break `<shard>:<line>` as ONE
+	// unambiguously parseable, copy-pasteable token — which is the entire reason the
+	// shard is stripped instead of quoted (see the header above and the id/shard
+	// contrast at the call site).
+	//
+	// A colon inside the shard name gives the token two candidate splits: printed raw,
+	// "2026:08.jsonl:1" is as readable as shard "2026" line "08.jsonl:1". Whitespace
+	// ends the token at a terminal, so "2026 08.jsonl:1" is two tokens, not one, and a
+	// copy-paste picks up half a name. Neither is exotic: both are ordinary POSIX
+	// filenames, and this directory is world-appendable.
+	//
+	// `%` is encoded FIRST (as %25) so the encoding is reversible — otherwise a file
+	// genuinely named "2026%3A08.jsonl" would render identically to the encoded form of
+	// "2026:08.jsonl", which is the same which-file-is-it ambiguity locatorNames exists
+	// to remove, reintroduced by the escape itself.
+	var b strings.Builder
+	for _, r := range stripped {
+		if r == '%' || r == ':' || unicode.IsSpace(r) {
+			for _, by := range []byte(string(r)) {
+				fmt.Fprintf(&b, "%%%02X", by)
+			}
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 func pluralLines(n int) string {
