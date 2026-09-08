@@ -474,7 +474,7 @@ func TestRewriteJustifications_RewritesOnlyLinesCarryingTheStaleText(t *testing.
 		line("aaaa1111", "an operator's typed --reason from a resolution trail"),
 	)
 
-	changes, err := rewriteJustifications(store, map[string]replacement{
+	changes, _, err := rewriteJustifications(store, map[string]replacement{
 		"aaaa1111": {from: stale, to: fresh},
 	}, false)
 	require.NoError(t, err)
@@ -520,7 +520,7 @@ func TestRewriteJustifications_WrapsItsIOErrors(t *testing.T) {
 		require.NoError(t, os.Mkdir(dir, 0o000))
 		t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
-		_, err := rewriteJustifications(dir, want, false)
+		_, _, err := rewriteJustifications(dir, want, false)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "reading localdebt dir for backfill",
 			"the wrap names the operation; a bare os error reads as if it came from elsewhere in the debt namespace")
@@ -538,7 +538,7 @@ func TestRewriteJustifications_WrapsItsIOErrors(t *testing.T) {
 		require.NoError(t, os.Chmod(dir, 0o500))
 		t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
-		_, err := rewriteJustifications(dir, want, false)
+		_, _, err := rewriteJustifications(dir, want, false)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "creating temp file for backfill")
 	})
@@ -555,7 +555,7 @@ func TestRewriteJustifications_WrapsItsIOErrors(t *testing.T) {
 		require.NoError(t, os.Chmod(dir, 0o500))
 		t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
-		changes, err := rewriteJustifications(dir, want, true)
+		changes, _, err := rewriteJustifications(dir, want, true)
 		require.NoError(t, err)
 		require.Len(t, changes, 1)
 		assert.Equal(t, stale, changes[0].Before)
@@ -582,7 +582,7 @@ func TestRewriteJustifications_ErrorPathsDoNotLeakRawUntrustedNames(t *testing.T
 		require.NoError(t, os.Chmod(path, 0o000))
 		t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
 
-		_, err := rewriteJustifications(dir, map[string]replacement{"x": {from: "a", to: "b"}}, false)
+		_, _, err := rewriteJustifications(dir, map[string]replacement{"x": {from: "a", to: "b"}}, false)
 		require.Error(t, err)
 		require.NotContains(t, err.Error(), "\u202E",
 			"a raw bidi override in an error reorders the report the operator reads")
@@ -709,7 +709,7 @@ func TestRewriteJustifications_LeavesNoTempDebrisOnASuccessfulRewrite(t *testing
 			`"category":"correctness","est_minutes":10,"evidence":"e","reviewers":["dax"],`+
 			`"confidence":"HIGH","justification":`+strconv.Quote(stale)+`}`)
 
-	changes, err := rewriteJustifications(dir, map[string]replacement{
+	changes, _, err := rewriteJustifications(dir, map[string]replacement{
 		"aaaa1111": {from: stale, to: "the replayed excerpt"},
 	}, false)
 	require.NoError(t, err)

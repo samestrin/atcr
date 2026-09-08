@@ -187,11 +187,12 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 		if len(want) == 0 {
 			return nil
 		}
-		changes, rerr := rewriteJustifications(dir, want, dryRun)
+		changes, shards, rerr := rewriteJustifications(dir, want, dryRun)
 		if rerr != nil {
 			return rerr
 		}
 		res.Changes = changes
+		res.ShardNames = shards
 		res.RewrittenLines = len(changes)
 		return nil
 	})
@@ -304,22 +305,27 @@ func pathHasSuffix(p, rel string) bool {
 // and each is a single fmt.Errorf over an os error whose worst outcome is a less
 // precise message, never a wrong write. Said here rather than pinned with a fake, the
 // same stance repoRoot's error arm takes in cli/debt_backfill.go.
-func rewriteJustifications(dir string, want map[string]replacement, dryRun bool) ([]JustificationChange, error) {
+func rewriteJustifications(dir string, want map[string]replacement, dryRun bool) ([]JustificationChange, []string, error) {
 	var changes []JustificationChange
+	var shards []string
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, fmt.Errorf("reading localdebt dir for backfill: %w", quotedPathErr(err))
+		return nil, nil, fmt.Errorf("reading localdebt dir for backfill: %w", quotedPathErr(err))
 	}
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
 		}
+		// Recorded for EVERY shard, before the want-lookup below can skip the file:
+		// the caller disambiguates locators against the set of names on disk, and an
+		// unchanged shard is exactly the collision its change set cannot see.
+		shards = append(shards, e.Name())
 		path := filepath.Join(dir, e.Name())
 		// path is dir + an entry name os.ReadDir just returned, inside the store
 		// directory this pass already holds the lock on — not caller input.
 		b, rerr := os.ReadFile(path)
 		if rerr != nil {
-			return nil, fmt.Errorf("reading shard for backfill: %w", quotedPathErr(rerr))
+			return nil, nil, fmt.Errorf("reading shard for backfill: %w", quotedPathErr(rerr))
 		}
 		lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
 		changed := false
@@ -356,7 +362,7 @@ func rewriteJustifications(dir string, want map[string]replacement, dryRun bool)
 			m["justification"] = rep.to
 			enc, merr := json.Marshal(m)
 			if merr != nil {
-				return nil, reencodeErr(id, merr)
+				return nil, nil, reencodeErr(id, merr)
 			}
 			lines[i] = string(enc)
 			changed = true
@@ -369,7 +375,7 @@ func rewriteJustifications(dir string, want map[string]replacement, dryRun bool)
 		}
 		tmp, terr := os.CreateTemp(dir, "."+e.Name()+".tmp-*")
 		if terr != nil {
-			return nil, fmt.Errorf("creating temp file for backfill: %w", quotedPathErr(terr))
+			return nil, nil, fmt.Errorf("creating temp file for backfill: %w", quotedPathErr(terr))
 		}
 		_, werr := tmp.WriteString(strings.Join(lines, "\n") + "\n")
 		if cerr := tmp.Close(); werr == nil {
@@ -377,14 +383,14 @@ func rewriteJustifications(dir string, want map[string]replacement, dryRun bool)
 		}
 		if werr != nil {
 			_ = os.Remove(tmp.Name())
-			return nil, fmt.Errorf("writing backfilled shard: %w", quotedPathErr(werr))
+			return nil, nil, fmt.Errorf("writing backfilled shard: %w", quotedPathErr(werr))
 		}
 		if rnerr := os.Rename(tmp.Name(), path); rnerr != nil {
 			_ = os.Remove(tmp.Name())
-			return nil, fmt.Errorf("publishing backfilled shard: %w", quotedPathErr(rnerr))
+			return nil, nil, fmt.Errorf("publishing backfilled shard: %w", quotedPathErr(rnerr))
 		}
 	}
-	return changes, nil
+	return changes, shards, nil
 }
 
 // reencodeErr wraps a json.Marshal failure with the record id ESCAPED. The id is read
