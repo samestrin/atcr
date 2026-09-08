@@ -109,7 +109,8 @@ func itemID(item reconcile.DisagreementItem) string {
 // prior verification gets a fresh block with the judge as the producing agent. A
 // finding with no ruling is left untouched, so a non-debated finding's block is
 // byte-identical.
-func applyRulings(findings []reconcile.JSONFinding, rulings map[FindingKey]ruleApply) {
+func applyRulings(findings []reconcile.JSONFinding, rulings map[FindingKey]ruleApply) map[FindingKey]bool {
+	clearedCaveats := map[FindingKey]bool{}
 	for i := range findings {
 		key := FindingKey{File: findings[i].File, Line: findings[i].Line, Problem: findings[i].Problem}
 		ra, ok := rulings[key]
@@ -154,7 +155,9 @@ func applyRulings(findings []reconcile.JSONFinding, rulings map[FindingKey]ruleA
 			}
 		}
 		findings[i].Confidence = reclib.ConfidenceForVerdict(findings[i].Confidence, ra.verdict)
+		clearedCaveats[key] = true
 	}
+	return clearedCaveats
 }
 
 // validVerdict reports whether v is a canonical reconcile verdict. applyRulings
@@ -320,11 +323,11 @@ const budgetToolBytes = "tool_budget_bytes"
 // scorecard that reads verdicts from it anyway. Closing it means either debate
 // rewriting every ruled verdict here, or the scorecard deriving settled verdicts
 // from findings.json; both are larger decisions than this correction.
-func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFinding, rulings map[FindingKey]ruleApply) (string, []byte, error) {
+func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFinding, clearedCaveats map[FindingKey]bool) (string, []byte, error) {
 	// debate.go calls this unconditionally, including on a run that ruled nothing.
 	// Such a run changed no verdict, so it is owed no correction — and reading the
 	// snapshot at all would only risk one.
-	if len(rulings) == 0 {
+	if len(clearedCaveats) == 0 {
 		return "", nil, nil
 	}
 	// A correction is owed only where a RULING cleared the caveat. Keying on the
@@ -339,7 +342,7 @@ func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFindi
 	cleared := map[FindingKey]string{}
 	for _, f := range findings {
 		key := FindingKey{File: f.File, Line: f.Line, Problem: f.Problem}
-		if _, ruled := rulings[key]; !ruled {
+		if !clearedCaveats[key] {
 			continue
 		}
 		if f.Verification != nil && !f.Verification.Truncated {

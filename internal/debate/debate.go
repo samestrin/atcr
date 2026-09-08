@@ -296,8 +296,14 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	if loc := firstClusterRulingCollision(rulings, mergeClusters); loc != "" {
 		log.FromContext(ctx).Warn("debate: gray-zone cluster member collides with a single-finding ruling key (Epic 6.1 invariant broken)", "location", loc)
 	}
+	// The set of findings whose truncation caveat a ruling actually cleared. It is
+	// NOT "every ruled finding": applyRulings force-clears Verification.Truncated on
+	// every ruling it applies, so the post-apply flag cannot distinguish a caveat
+	// this run dropped from one that was never there. syncVerificationTruncation
+	// needs the former.
+	var clearedCaveats map[FindingKey]bool
 	if len(rulings) > 0 {
-		applyRulings(findings, rulings)
+		clearedCaveats = applyRulings(findings, rulings)
 	}
 	if len(mergeClusters) > 0 {
 		// Epic 6.1: union gray-zone clusters the judge ruled "merge" directly in the
@@ -334,7 +340,7 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// recompute the scope note above rules out; leaving it is what let report.md
 	// and survived_skeptic_rate disagree. It joins the atomic group so the two
 	// artifacts can never be published out of step.
-	verPath, verBytes, err := syncVerificationTruncation(reviewDir, findings, rulings)
+	verPath, verBytes, err := syncVerificationTruncation(reviewDir, findings, clearedCaveats)
 	if err != nil {
 		return Result{}, err
 	}

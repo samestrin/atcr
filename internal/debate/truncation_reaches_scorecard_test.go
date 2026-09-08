@@ -60,10 +60,10 @@ func TestSyncVerificationTruncation_ClearsTheTripTheRulingInvalidated(t *testing
 	writeVerificationFixture(t, reviewDir, staleVerification)
 
 	findings := ruledFindings()
-	applyRulings(findings, judgeRulingOnA())
+	cleared := applyRulings(findings, judgeRulingOnA())
 	require.False(t, findings[0].Verification.Truncated, "precondition: the ruling cleared the caveat")
 
-	path, data, err := syncVerificationTruncation(reviewDir, findings, judgeRulingOnA())
+	path, data, err := syncVerificationTruncation(reviewDir, findings, cleared)
 	require.NoError(t, err)
 	require.NotNil(t, data, "the trip the ruling invalidated is still on disk, so a rewrite is owed")
 	require.Equal(t, filepath.Join(reviewDir, "reconciled", "verification.json"), path)
@@ -98,9 +98,9 @@ func TestSyncVerificationTruncation_KeepsOtherTrippedBudgets(t *testing.T) {
 	]}`)
 
 	findings := ruledFindings()
-	applyRulings(findings, judgeRulingOnA())
+	cleared := applyRulings(findings, judgeRulingOnA())
 
-	_, data, err := syncVerificationTruncation(reviewDir, findings, judgeRulingOnA())
+	_, data, err := syncVerificationTruncation(reviewDir, findings, cleared)
 	require.NoError(t, err)
 	require.NotNil(t, data)
 
@@ -116,9 +116,9 @@ func TestSyncVerificationTruncation_MissingFileIsNotAnError(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(reviewDir, "reconciled"), 0o755))
 
 	findings := ruledFindings()
-	applyRulings(findings, judgeRulingOnA())
+	cleared := applyRulings(findings, judgeRulingOnA())
 
-	path, data, err := syncVerificationTruncation(reviewDir, findings, judgeRulingOnA())
+	path, data, err := syncVerificationTruncation(reviewDir, findings, cleared)
 	assert.NoError(t, err)
 	assert.Nil(t, data)
 	assert.Empty(t, path)
@@ -136,9 +136,9 @@ func TestJudgeRulingClearingTruncationReachesTheScorecard(t *testing.T) {
 	verPath := writeVerificationFixture(t, reviewDir, staleVerification)
 
 	findings := ruledFindings()
-	applyRulings(findings, judgeRulingOnA())
+	cleared := applyRulings(findings, judgeRulingOnA())
 
-	_, data, err := syncVerificationTruncation(reviewDir, findings, judgeRulingOnA())
+	_, data, err := syncVerificationTruncation(reviewDir, findings, cleared)
 	require.NoError(t, err)
 	require.NotNil(t, data)
 	require.NoError(t, os.WriteFile(verPath, data, 0o600))
@@ -222,13 +222,13 @@ func TestSyncVerificationTruncation_CarriesTheRuledVerdictWithTheCaveat(t *testi
 	writeVerificationFixture(t, reviewDir, staleVerification)
 
 	findings := ruledFindings()
-	applyRulings(findings, overturnedRulingOnA())
+	cleared := applyRulings(findings, overturnedRulingOnA())
 	require.Equal(t, reclib.VerdictRefuted, findings[0].Verification.Verdict,
 		"precondition: the judge overturned the skeptic's confirmed")
 	require.False(t, findings[0].Verification.Truncated,
 		"precondition: the ruling cleared the caveat, so the sync owes a rewrite")
 
-	_, data, err := syncVerificationTruncation(reviewDir, findings, overturnedRulingOnA())
+	_, data, err := syncVerificationTruncation(reviewDir, findings, cleared)
 	require.NoError(t, err)
 	require.NotNil(t, data)
 
@@ -243,9 +243,9 @@ func TestOverturnedRulingDoesNotCreditTheReviewer(t *testing.T) {
 	verPath := writeVerificationFixture(t, reviewDir, staleVerification)
 
 	findings := ruledFindings()
-	applyRulings(findings, overturnedRulingOnA())
+	cleared := applyRulings(findings, overturnedRulingOnA())
 
-	_, data, err := syncVerificationTruncation(reviewDir, findings, overturnedRulingOnA())
+	_, data, err := syncVerificationTruncation(reviewDir, findings, cleared)
 	require.NoError(t, err)
 	require.NotNil(t, data)
 	require.NoError(t, os.WriteFile(verPath, data, 0o600))
@@ -321,9 +321,9 @@ func TestSyncVerificationTruncation_LeavesADeclaredBudgetVoidingAlone(t *testing
 		File: "c.go", Line: 3, Problem: "p3", Reviewers: []string{"bruce"},
 		Verification: &reclib.Verification{Verdict: reclib.VerdictUnverifiable, Skeptic: "bruce"},
 	})
-	applyRulings(findings, judgeRulingOnA())
+	cleared := applyRulings(findings, judgeRulingOnA())
 
-	_, data, err := syncVerificationTruncation(reviewDir, findings, judgeRulingOnA())
+	_, data, err := syncVerificationTruncation(reviewDir, findings, cleared)
 	require.NoError(t, err)
 	require.NotNil(t, data, "a.go WAS ruled, so a rewrite is still owed")
 
@@ -454,9 +454,9 @@ func TestSyncVerificationTruncation_BestEffortFallbacks(t *testing.T) {
 			writeVerificationFixture(t, reviewDir, tc.body)
 
 			findings := ruledFindings()
-			applyRulings(findings, judgeRulingOnA())
+			cleared := applyRulings(findings, judgeRulingOnA())
 
-			path, data, err := syncVerificationTruncation(reviewDir, findings, judgeRulingOnA())
+			path, data, err := syncVerificationTruncation(reviewDir, findings, cleared)
 			assert.NoError(t, err, "a debate over an unusable snapshot must still complete")
 			assert.Nil(t, data, "nothing legible to correct means no rewrite is proposed")
 			assert.Empty(t, path)
@@ -476,9 +476,9 @@ func TestSyncVerificationTruncation_NonObjectItemsAreSkippedNotFatal(t *testing.
 	]}`)
 
 	findings := ruledFindings()
-	applyRulings(findings, judgeRulingOnA())
+	cleared := applyRulings(findings, judgeRulingOnA())
 
-	_, data, err := syncVerificationTruncation(reviewDir, findings, judgeRulingOnA())
+	_, data, err := syncVerificationTruncation(reviewDir, findings, cleared)
 	require.NoError(t, err)
 	require.NotNil(t, data, "the well-formed neighbour is still owed its correction")
 
@@ -513,11 +513,11 @@ func TestSyncVerificationTruncation_RuledButCaveatStillStandsRewritesNothing(t *
 		{File: "a.go", Line: 1, Problem: "p1"}: {verdict: "not-a-verdict", judge: "greta"},
 	}
 	findings := ruledFindings()
-	applyRulings(findings, badRuling)
+	cleared := applyRulings(findings, badRuling)
 	require.True(t, findings[0].Verification.Truncated,
 		"precondition: applyRulings rejected the out-of-enum verdict, so the caveat still describes the standing verdict")
 
-	path, data, err := syncVerificationTruncation(reviewDir, findings, badRuling)
+	path, data, err := syncVerificationTruncation(reviewDir, findings, cleared)
 	require.NoError(t, err)
 	assert.Nil(t, data, "the caveat still describes the recorded verdict — there is nothing to correct")
 	assert.Empty(t, path)
@@ -571,4 +571,100 @@ func TestRunDebate_TakesNoSnapshotWhenItRewritesNothing(t *testing.T) {
 	_, err = os.Stat(verPath + ".bak")
 	assert.True(t, os.IsNotExist(err),
 		"no tool_budget_bytes entry means no rewrite, and a snapshot of an unchanged file would clobber a real prior state")
+}
+
+// TestSyncVerificationTruncation_LeavesARuledDeclaredBudgetVoidingAlone is the
+// ruled counterpart of TestSyncVerificationTruncation_LeavesADeclaredBudgetVoidingAlone,
+// and the case that guard could not reach.
+//
+// applyRulings force-clears Verification.Truncated on every ruling it applies
+// (emit.go: the recorded verdict is the judge's, produced from the judge's own
+// read). syncVerificationTruncation then read that POST-apply flag, so
+// `!Truncated` was true by construction for every ruled finding — the gate
+// admitted findings whose caveat no ruling had ever cleared.
+//
+// internal/verify's voiding path (invoke.go) records
+// Verification{Verdict: unverifiable, TrippedBudgets: ["tool_budget_bytes"]} for a
+// verdict a DECLARED ceiling overruled, and never sets Truncated. Radar tiering is
+// verdict-independent, so such a finding can be debated on a severity split. The
+// ruling then deleted the only record of WHY the verdict was voided AND overwrote
+// the verdict itself — and since envelope.go can only produce confirmed/refuted,
+// the flip is one-directional. An all-unverifiable file becomes
+// not-all-unverifiable, which silently disables reconcile's all-unverifiable
+// safety gate.
+func TestSyncVerificationTruncation_LeavesARuledDeclaredBudgetVoidingAlone(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeVerificationFixture(t, reviewDir, `{"findings":[
+		{"file":"a.go","line":1,"problem":"p1","verdict":"confirmed","skeptic":"bruce","trippedBudgets":["tool_budget_bytes"]},
+		{"file":"c.go","line":3,"problem":"p3","verdict":"unverifiable","skeptic":"bruce","trippedBudgets":["tool_budget_bytes"]}
+	]}`)
+
+	findings := append(ruledFindings(), reconcile.JSONFinding{
+		// The verify voiding path's exact shape: a DECLARED ceiling overruled the
+		// verdict. Truncated is false because the answer was thrown out, not merely
+		// shortened.
+		File: "c.go", Line: 3, Problem: "p3", Reviewers: []string{"bruce"},
+		Verification: &reclib.Verification{Verdict: reclib.VerdictUnverifiable, Skeptic: "bruce"},
+	})
+	rulings := judgeRulingOnA()
+	rulings[FindingKey{File: "c.go", Line: 3, Problem: "p3"}] = ruleApply{
+		verdict: reclib.VerdictConfirmed, survived: true, judge: "greta",
+	}
+
+	cleared := applyRulings(findings, rulings)
+
+	_, data, err := syncVerificationTruncation(reviewDir, findings, cleared)
+	require.NoError(t, err)
+	require.NotNil(t, data, "a.go carried a real caveat the ruling cleared, so a rewrite is still owed")
+
+	got := parseVerification(t, data)
+	assert.Empty(t, got["a.go"], "a.go's caveat described the shortened read the ruling replaced")
+	assert.Equal(t, []string{"tool_budget_bytes"}, got["c.go"],
+		"c.go's trip is the record of a VOIDED verdict, not of a shortened read — no ruling cleared it")
+	assert.Equal(t, "unverifiable", parseVerdicts(t, data)["c.go"],
+		"overwriting a voided verdict is what disables reconcile's all-unverifiable gate")
+}
+
+// TestDebateRulingLeavesTheAllUnverifiableGateStanding is the gate-level guard
+// for the same defect, one stage further out.
+//
+// internal/reconcile/gate.go returns nil at the FIRST non-unverifiable verdict,
+// so a single rewritten record is enough: `atcr reconcile --require-verified`
+// then exits 0 with no output over an under-funded roster instead of printing the
+// "run atcr doctor" diagnostic. Neither package's own suite sees this seam —
+// debate asserts a JSON field, reconcile asserts an error — and the artifact in
+// between is the one the gate actually reads.
+func TestDebateRulingLeavesTheAllUnverifiableGateStanding(t *testing.T) {
+	reviewDir := t.TempDir()
+	verPath := writeVerificationFixture(t, reviewDir, `{"findings":[
+		{"file":"c.go","line":3,"problem":"p3","verdict":"unverifiable","skeptic":"bruce","trippedBudgets":["tool_budget_bytes"]},
+		{"file":"d.go","line":4,"problem":"p4","verdict":"unverifiable","skeptic":"bruce","trippedBudgets":["tool_budget_bytes"]}
+	]}`)
+	require.Error(t, reconcile.ValidateRequireVerified(reviewDir),
+		"precondition: every verdict is unverifiable, so the gate must refuse to pass silently")
+
+	findings := []reconcile.JSONFinding{{
+		File: "c.go", Line: 3, Problem: "p3", Reviewers: []string{"bruce"},
+		Verification: &reclib.Verification{Verdict: reclib.VerdictUnverifiable, Skeptic: "bruce"},
+	}, {
+		File: "d.go", Line: 4, Problem: "p4", Reviewers: []string{"bruce"},
+		Verification: &reclib.Verification{Verdict: reclib.VerdictUnverifiable, Skeptic: "bruce"},
+	}}
+	// A severity split upholds one item. Radar tiering is verdict-independent, so
+	// this is an ordinary ruling, not a contrived one.
+	rulings := map[FindingKey]ruleApply{
+		{File: "c.go", Line: 3, Problem: "p3"}: {
+			verdict: reclib.VerdictConfirmed, survived: true, judge: "greta",
+		},
+	}
+	cleared := applyRulings(findings, rulings)
+
+	_, data, err := syncVerificationTruncation(reviewDir, findings, cleared)
+	require.NoError(t, err)
+	if data != nil {
+		require.NoError(t, os.WriteFile(verPath, data, 0o600))
+	}
+
+	assert.Error(t, reconcile.ValidateRequireVerified(reviewDir),
+		"a debate ruling must not turn an all-unverifiable run into one the gate waves through")
 }
