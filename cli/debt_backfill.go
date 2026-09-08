@@ -253,7 +253,7 @@ func pluralLines(n int) string {
 // stable across runs and independent of directory order. The token itself is not:
 // the suffix is appended only where a collision actually exists, so whether a file
 // prints bare or suffixed varies with whether its colliding sibling is present in
-// the store listing (or the change-set fallback) on that run — an operator comparing
+// the store listing on that run — an operator comparing
 // two dry runs can see the same file print bare in one and suffixed in the other.
 // The ordinary single-shard listing is unchanged: no collision, no suffix.
 //
@@ -276,10 +276,6 @@ func pluralLines(n int) string {
 // hypothetical. Taking the locked pass's own observation instead means the printed
 // locators and the computed rewrite describe ONE snapshot, and it leaves exactly one
 // shard filter in the tree (localdebt's) rather than two copies to keep in step.
-//
-// An empty `shards` is not fatal: the rewrite the operator is about to approve has
-// already been computed, so the dry run falls back to the change set (the pre-existing
-// behavior) rather than losing the collision map entirely.
 //
 // Residual case, accepted rather than overlooked: a store file literally named like an
 // already-disambiguated token ("2026-08.jsonl#a1b2c3") would print the same as the
