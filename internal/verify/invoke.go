@@ -572,23 +572,18 @@ const minTrustworthyCeilingBytes int64 = payload.MinUsableReadBytes
 // skepticToolBudget returns the tool ceiling and whether a trip on it truncates
 // (true) or voids (false) the verdict.
 func skepticToolBudget(c registry.AgentConfig) (budget int64, derived bool) {
-	incoming := derefInt64(c.ToolBudgetBytes)
-	declared := incoming
-	if declared < 0 {
-		// Normalisation, not a behaviour change: internal/fanout/loop.go guards on
-		// `> 0`, so a negative and a 0 are already the SAME unlimited state, and a
-		// negative loses every `declared > 0` test below either way. Nothing here
-		// propagates a value the engine has no defined reading for: on the
-		// no-declared-window path a NEGATIVE incoming value returns the floor
-		// (below), and everywhere else the `declared > 0` guards reject it before
-		// it can be returned. Load-time validation rejects a negative
-		// (internal/registry/config.go), but a programmatically built AgentConfig
-		// never passes through it, so without this handling the sentinel the
-		// caller receives depends on which construction path built the config.
-		declared = 0
-	}
+	// No negative-to-zero normalisation here, deliberately: the two `declared < 0`
+	// guards below own that contract between them, and a negative value can reach
+	// no other exit. Both window-less paths return the floor before falling through
+	// to `return declared`, and on the declared-window path a negative fails the
+	// `declared > 0` test, so the ceiling is returned instead. A normalisation
+	// would therefore change nothing observable — mutation-verified: disabling it
+	// left the whole suite green. Load-time validation rejects a negative
+	// (internal/registry/config.go); only a programmatically built AgentConfig
+	// reaches here with one, and the guards below are what bound it.
+	declared := derefInt64(c.ToolBudgetBytes)
 	if c.ContextWindowTokens == nil {
-		if incoming < 0 {
+		if declared < 0 {
 			// A negative declaration must not reach the engine as UNLIMITED on this
 			// path either. Normalising it to 0 forwards exactly the engine's own
 			// 0-as-UNLIMITED sentinel — the leak the declared-window path closes
@@ -607,7 +602,7 @@ func skepticToolBudget(c registry.AgentConfig) (budget int64, derived bool) {
 	// path's bogus window as truth — inconsistent on one threat model. A
 	// non-declaration behaves like no declaration: the value forwards untouched.
 	if _, src := payload.ResolveContextWindow(c.Model, c.ContextWindowTokens); src != payload.WindowSourceDeclaration {
-		if incoming < 0 {
+		if declared < 0 {
 			return minSkepticToolBudget, false
 		}
 		return declared, false
