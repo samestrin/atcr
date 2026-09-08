@@ -1,6 +1,7 @@
 package debate
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -350,4 +351,80 @@ func TestSyncVerificationTruncation_NoRulingsRewritesNothing(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, data, "no ruling was applied, so there is nothing this stage may correct")
 	assert.Empty(t, path)
+}
+
+// truncatedSplitFinding is splitFinding() carrying the verify-stage shape this
+// sync exists for: a verdict reached from a shortened read.
+func truncatedSplitFinding() reconcile.JSONFinding {
+	f := splitFinding()
+	f.Verification = &reclib.Verification{
+		Verdict: reclib.VerdictConfirmed, Skeptic: "bob", Truncated: true,
+	}
+	return f
+}
+
+// TestRunDebate_PublishesTheCorrectedVerificationSnapshot is the wiring proof.
+//
+// syncVerificationTruncation is unit-tested in isolation everywhere above — the
+// tests call it directly and inspect its return value. None of them prove
+// runDebate joins that output to the artifacts it actually writes, which is the
+// entire user-visible deliverable: disabling the append in debate.go left
+// internal/debate, cli AND internal/mcp green.
+//
+// This drives the real entry point and reads the file off disk afterwards.
+func TestRunDebate_PublishesTheCorrectedVerificationSnapshot(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{truncatedSplitFinding()})
+	verPath := writeVerificationFixture(t, dir, `{"findings":[
+		{"file":"a.go","line":10,"problem":"nil deref","verdict":"confirmed","skeptic":"bob","trippedBudgets":["max_turns","tool_budget_bytes"]}
+	]}`)
+
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "challenger attacks"},
+		{content: `{"outcome":"overturn","reasoning":"false positive"}`},
+	}}
+
+	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	require.Equal(t, 1, res.Overturned, "precondition: the judge ruled, so a correction is owed")
+
+	// findings.json is the half already covered; assert it so a failure below is
+	// unambiguously about the OTHER artifact rather than about the ruling.
+	f := readFindings(t, dir)
+	require.Len(t, f, 1)
+	require.False(t, f[0].Verification.Truncated, "the ruling cleared the caveat")
+
+	onDisk, err := os.ReadFile(verPath)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"max_turns"}, parseVerification(t, onDisk)["a.go"],
+		"the corrected snapshot must reach DISK — a return value runDebate never publishes fixes nothing")
+	assert.Equal(t, reclib.VerdictRefuted, parseVerdicts(t, onDisk)["a.go"],
+		"and it must carry the judge's verdict, since the score reads it from this same record")
+}
+
+// TestRunDebate_LeavesTheVerificationSnapshotAloneWithNoRuling is the negative
+// half of the wiring: runDebate calls the sync unconditionally, so a run that
+// rules nothing must still leave the snapshot byte-identical.
+func TestRunDebate_LeavesTheVerificationSnapshotAloneWithNoRuling(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{truncatedSplitFinding()})
+	body := `{"findings":[
+		{"file":"a.go","line":10,"problem":"nil deref","verdict":"confirmed","skeptic":"bob","trippedBudgets":["tool_budget_bytes"]}
+	]}`
+	verPath := writeVerificationFixture(t, dir, body)
+
+	// The judge halts: an item is selected but no ruling is applied.
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "challenger attacks"},
+		{content: `not a parseable ruling`},
+	}}
+
+	_, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+
+	onDisk, err := os.ReadFile(verPath)
+	require.NoError(t, err)
+	assert.Equal(t, body, string(onDisk),
+		"nothing was ruled, so the verify snapshot must not be rewritten at all — not even reformatted")
 }
