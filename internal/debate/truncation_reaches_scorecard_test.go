@@ -1237,3 +1237,48 @@ func TestSyncVerificationTruncation_LeavesAStandingCaveatAlone(t *testing.T) {
 	assert.Nil(t, data,
 		"Truncated is still set, so no ruling applied to this finding — correcting a record on the strength of the ruling alone is the recompute the scope note forbids")
 }
+
+// TestSyncVerificationTruncation_PrefersThePriorJudgeOverAnUnparseableRuling pins
+// the validVerdict check on THIS run's ruling.
+//
+// applyRulings deliberately declines an out-of-enum verdict, so a ruling can sit
+// in the rulings map having settled nothing. Taking its judge anyway would
+// attribute the standing verdict — which the PRIOR debate produced — to the agent
+// whose ruling this run could not parse. The check is what sends the lookup on to
+// reconciled/debate.json, where the judge that actually settled it is recorded.
+func TestSyncVerificationTruncation_PrefersThePriorJudgeOverAnUnparseableRuling(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeVerificationFixture(t, reviewDir, `{"findings":[
+		{"file":"a.go","line":1,"problem":"p1","verdict":"confirmed","skeptic":"otto",
+		 "model":"m-x","reasoning":"otto read token.go:42","durationMs":1840,
+		 "trippedBudgets":[],"debateJudge":"greta","debateReasoning":"greta overturned the skeptic"}
+	]}`)
+	writeDebateFixture(t, reviewDir, ItemResult{
+		File: "a.go", Line: 1, Problem: "p1", Kind: "verification_disagreement",
+		Outcome: OutcomeOverturn, Judge: "greta", Reasoning: "greta overturned the skeptic",
+	})
+
+	findings := []reconcile.JSONFinding{{
+		File: "a.go", Line: 1, Problem: "p1", Reviewers: []string{"otto"},
+		Verification: &reclib.Verification{Verdict: reclib.VerdictRefuted, Skeptic: "otto"},
+	}}
+	// This run ruled, but the ruling did not parse into a verdict — applyRulings
+	// applied nothing from it, so it settled nothing.
+	rulings := map[FindingKey]ruleApply{
+		{File: "a.go", Line: 1, Problem: "p1"}: {
+			verdict: "not_a_verdict", judge: "hank", reasoning: "hank's ruling was unparseable",
+		},
+	}
+
+	_, data, err := syncVerificationTruncation(reviewDir, findings, nil, rulings)
+	require.NoError(t, err)
+	require.NotNil(t, data, "the record still names confirmed for a verdict findings.json now reports as refuted")
+
+	rec := parseRecord(t, data, "a.go")
+	assert.Equal(t, reclib.VerdictRefuted, rec["verdict"],
+		"the standing verdict is the one findings.json carries")
+	assert.Equal(t, "greta", rec["debateJudge"],
+		"greta produced the standing verdict — crediting hank names the judge whose ruling settled nothing")
+	assert.Equal(t, "greta overturned the skeptic", rec["debateReasoning"],
+		"the reasoning must argue for the verdict actually recorded")
+}
