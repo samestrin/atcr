@@ -165,3 +165,31 @@ func TestBoundedDispatcher_DoesNotOverwriteAnOriginalBytesTheDispatcherSet(t *te
 	assert.Equal(t, 999, out.OriginalBytes,
 		"an already-capped result's pre-cap size is the true original — this wrapper only fills a gap")
 }
+
+// TestBoundedDispatcher_RoundingUpToTheFullContentIsNotTruncation pins the guard
+// that TestBoundedDispatcher_ResultThatFitsIsNotMarkedTruncated cannot reach.
+//
+// That test gives the result a budget it fits inside, so `len(Content) >
+// remaining` is false and the whole block is skipped — the inner `len(cut) <
+// len(out.Content)` guard is never evaluated. Neutralising that condition to
+// `true` therefore left the entire internal/verify suite green.
+//
+// This is the case that does reach it, on ordinary input: a single three-byte
+// rune against an allowance of two. The outer test passes (3 > 2), runeCeilCut
+// finds no rune boundary below the end and hands back all three bytes, and only
+// the inner guard stops an UNCUT result being stamped Truncated — a lie in the
+// transcript and, downstream, an unearned truncated caveat on the verdict.
+func TestBoundedDispatcher_RoundingUpToTheFullContentIsNotTruncation(t *testing.T) {
+	// clampDispatcher leaves budget <= 0 unwrapped, so 1 is the smallest budget
+	// that wraps; remaining is budget+1 = 2, one byte short of the em dash.
+	d := clampDispatcher(&fakeDispatcher{result: tools.ToolResult{Content: emDash}}, 1)
+
+	out, err := d.Execute(context.Background(), "read", json.RawMessage(`{}`))
+	require.NoError(t, err)
+
+	require.Greater(t, len(emDash), 2, "precondition: the content must exceed the allowance, or the guard is not reached")
+	assert.False(t, out.Truncated,
+		"the walk-up returned every byte the tool produced — nothing was removed, so nothing may be claimed")
+	assert.Equal(t, emDash, out.Content, "an uncut result must be delivered whole")
+	assert.Zero(t, out.OriginalBytes, "nothing was cut, so nothing is restated")
+}
