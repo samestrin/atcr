@@ -254,3 +254,38 @@ func TestVerificationDoc_NamesAllThreeCausesOfAnEmptyModel(t *testing.T) {
 		assert.Contains(t, doc, want.text, want.why)
 	}
 }
+
+// TestVerificationDoc_NamesTheDebateSideRepairAndMarkerDeletion pins the two
+// debate-side behaviours a reader of reconciled/verification.json cannot infer
+// from the file alone.
+//
+// Both are writes the DEBATE stage makes to a file the VERIFY stage owns, and the
+// document is where that hand-off is described:
+//
+//   - The partial-write residue repair (internal/debate/emit.go, isPartialWriteResidue).
+//     atomicwrite.WriteGroup renames in sequence with no rollback, so a publish that
+//     fails after findings.json leaves verification.json holding both its
+//     tool_budget_bytes entry and its pre-debate verdict. A later debate repairs it.
+//     Undocumented, a reader takes that record at face value and concludes a caveat
+//     stands that findings.json says was cleared.
+//   - stampJudge deleting modelWithheldReason. That deletion is what makes the
+//     "the two markers never co-occur" claim above hold on the debate side; without
+//     it stated, the claim reads as a property of internal/verify alone, and a
+//     reader has no reason to expect the marker to disappear from a record a debate
+//     touched.
+func TestVerificationDoc_NamesTheDebateSideRepairAndMarkerDeletion(t *testing.T) {
+	doc := readDoc(t, "verification.md")
+
+	// Fatals if either explanation was removed outright, and scopes the assertions
+	// below to the paragraph that carries it — a bare document-wide Contains passes
+	// on an unrelated mention elsewhere in the file.
+	repair := docParagraph(t, doc, "partial-write residue")
+	assert.Contains(t, repair, "WriteGroup",
+		"naming the mechanism is what tells a reader WHEN the residue occurs — a publish that failed part-way, not an ordinary run")
+	assert.Contains(t, repair, "tool_budget_bytes",
+		"the residue is identified by that entry surviving beside a verdict findings.json already settled")
+
+	deletion := docParagraph(t, doc, "drops `modelWithheldReason`")
+	assert.Contains(t, deletion, "debateJudge",
+		"the deletion is the debate-side half of the never-co-occur claim: the judge marker replaces the withheld-reason one")
+}
