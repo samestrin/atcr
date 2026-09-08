@@ -140,6 +140,12 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 		// (whose Warn("skeptic failed") false-alarms every operator alerting on
 		// skeptic failures, and whose detail claims a run halted that returned a
 		// verdict), and its own detail text.
+		// Mark the VERDICT, not just the log line and the tripped-budget slice.
+		// The slice reaches reconciled/verification.json alone; this object is
+		// what rides the finding into findings.json and report.md, so without the
+		// marker a confirmed formed from a shortened read renders with no caveat
+		// and is charged to the reviewer's durable precision score as a full read.
+		v.Truncated = true
 		logger.Info("skeptic truncated", "skeptic", skeptic.Name, "class", "budget_truncated")
 		detail := fmt.Sprintf("skeptic run truncated (status: %s); tripped budgets: %s", res.Status, strings.Join(res.TrippedBudgets, ", "))
 		logger.Debug("skeptic truncation detail", "skeptic", skeptic.Name, "class", "budget_truncated", "detail", detail)

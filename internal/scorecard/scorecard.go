@@ -517,6 +517,13 @@ func verdictTallies(in EmitInput, w io.Writer) (verified, refuted map[string]int
 			_, _ = fmt.Fprintf(w, "scorecard: verification finding %s:%d has no matching raised finding; verdict attribution skipped\n", vfind.File, vfind.Line)
 			continue
 		}
+		// A verdict reached from a truncated read leaves the precision ratio
+		// entirely — neither numerator nor denominator. It is NOT counted against
+		// the reviewer: the point is that a partial read is not evidence about the
+		// reviewer in either direction, and survived_skeptic_rate is durable.
+		if truncatedRead(vfind.TrippedBudgets) {
+			continue
+		}
 		switch normalizeVerdict(vfind.Verdict) {
 		case verdictConfirmed:
 			for _, r := range revs {
@@ -541,7 +548,35 @@ type verificationFile struct {
 		Line    int    `json:"line"`
 		Problem string `json:"problem"`
 		Verdict string `json:"verdict"`
+		// TrippedBudgets names every per-finding budget that halted the skeptic
+		// run. It is parsed for ONE purpose: a tool_budget_bytes trip riding a
+		// confirmed or refuted verdict means the answer stands but was reached
+		// from a shortened read (internal/verify's tripsVoidTheVerdict exempts a
+		// window-DERIVED ceiling), and such a verdict must not move a durable
+		// per-reviewer precision score. Dropping it at unmarshal is what made that
+		// impossible to act on.
+		TrippedBudgets []string `json:"trippedBudgets"`
 	} `json:"findings"`
+}
+
+// budgetToolBytes is the tripped-budget marker internal/verify records for the
+// tool-output ceiling. It is restated here rather than imported: this package
+// deliberately has no dependency on verify (see verificationFile above), and the
+// string is part of verification.json's on-disk shape, which is the contract
+// both sides actually share.
+const budgetToolBytes = "tool_budget_bytes"
+
+// truncatedRead reports whether a verdict was reached from a shortened tool
+// read. A DECLARED ceiling's trip voids the verdict to unverifiable, which the
+// tally never counts, so on a confirmed/refuted record this marker can only mean
+// the exempted derived-ceiling case.
+func truncatedRead(trippedBudgets []string) bool {
+	for _, b := range trippedBudgets {
+		if b == budgetToolBytes {
+			return true
+		}
+	}
+	return false
 }
 
 // Verdict values (lower-cased) matching internal/verify's enum.

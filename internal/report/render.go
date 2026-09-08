@@ -797,6 +797,14 @@ func writeSkepticBlock(b *bytes.Buffer, v *reclib.Verification) {
 	if canonicalize(v.Verdict) == canonicalize(reclib.VerdictUnverifiable) {
 		annotation = " (skeptic could not verify)"
 	}
+	// A verdict reached from a shortened read still STANDS — the ceiling that
+	// truncated it was derived from the agent's window, not declared by an
+	// operator — so this is a caveat appended to whatever the verdict is, never a
+	// downgrade and never a replacement for the unverifiable note above. The two
+	// facts are independent: a skeptic can fail to verify AND have been truncated.
+	if v.Truncated {
+		annotation += " (answered from a truncated read)"
+	}
 	label := "Skeptic"
 	if v.ChallengeSurvived {
 		label = "Judge"
