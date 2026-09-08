@@ -94,8 +94,17 @@ func docSection(t *testing.T, doc, heading string) string {
 	if start < 0 {
 		t.Fatalf("docs has no heading %q", heading)
 	}
+	// Fenced code blocks in these sections hold shell examples whose comments
+	// start with "#". Treating one as a heading truncates the section before the
+	// table it exists to reach, and the check then fails for a reason that has
+	// nothing to do with the doc it guards.
+	inFence := false
 	for i := start; i < len(lines); i++ {
-		if strings.HasPrefix(lines[i], "#") {
+		if strings.HasPrefix(lines[i], "```") {
+			inFence = !inFence
+			continue
+		}
+		if !inFence && strings.HasPrefix(lines[i], "#") {
 			return strings.Join(lines[start:i], "\n")
 		}
 	}
@@ -155,4 +164,30 @@ func TestScorecardDoc_ConditionalFieldsParagraphNamesBothOmissions(t *testing.T)
 		"the second case applies to one named key, not to all three — the paragraph must say which")
 	assert.Contains(t, para, "findings_verified + findings_refuted",
 		"\"second\" alone is satisfied by any sentence using the word — the paragraph must state the condition the emitter gates on")
+}
+
+// TestScorecardDoc_PublicEnvelopeRowStatesTheAllTruncatedOmission pins the row in
+// the PUBLIC submission envelope — a different table, with a different audience,
+// from the stored-record row above.
+//
+// The row named exactly one reason for absence ("no verification ran for the
+// group") and made it load-bearing: "the omission is the disambiguator".
+// internal/scorecard/export.go now also omits the key for a group where
+// verification DID run and no countable verdict survived — a stored 0.0 used to
+// satisfy its len(storedRates) > 0 branch and is no longer produced. A board
+// consumer reading absence as "no verify stage" is wrong under the new behaviour,
+// so the row has to name both causes.
+//
+// This is a scorecard.md-only check rather than an entry in truncatedScoringDocs:
+// that list carries assertions about `trippedBudgets` and the debate hand-off,
+// which are the verification stage's contract and have no business being demanded
+// of the submission-envelope schema.
+func TestScorecardDoc_PublicEnvelopeRowStatesTheAllTruncatedOmission(t *testing.T) {
+	section := docSection(t, readDoc(t, "scorecard.md"), "### `atcr leaderboard --export [--output path]`")
+	row := docTableRow(t, section, "survived_skeptic_rate")
+
+	assert.Contains(t, row, "truncated",
+		"absence now has a second cause — a group whose verdicts were all truncated — and the row must name it")
+	assert.NotContains(t, row, "The omission is the disambiguator.",
+		"omission no longer disambiguates 'no verification' from 'verification ran'; leaving the claim tells a board consumer to read absence wrongly")
 }
