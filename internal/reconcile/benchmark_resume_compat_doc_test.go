@@ -1,11 +1,20 @@
 package reconcile
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// needleProximity is how far (in characters) an inCodeNear companion may sit
+// from its needle and still count as the same condition. It tolerates
+// conjunct reorder and re-wrapping as the arm grows (roughly a dozen added
+// conjuncts), while staying far below the >1000 characters that separate the
+// compat arm from the decoy unstamped gate inside the empty-recorded-roster
+// branch.
+const needleProximity = 400
 
 // docs/benchmark.md's Resume bullet stated an UNCONDITIONAL fail-closed guarantee:
 // "If the suite content changed, or the roster changed (a reviewer added/removed, or a
@@ -50,6 +59,13 @@ func TestBenchmarkDoc_ResumeCompatExceptionMatchesTheCode(t *testing.T) {
 		inDoc   string
 		inCode  string
 		because string
+		// inCodeCount, when > 0, requires the needle to occur exactly that many
+		// times instead of the default at-least-once Contains.
+		inCodeCount int
+		// inCodeNear, when set, must appear within needleProximity characters of
+		// the inCode occurrence — the same condition, tolerant of conjunct
+		// reorder and source re-wrapping.
+		inCodeNear string
 	}{
 		{
 			name: "the exception is scoped to a checkpoint written before roster_format was stamped",
@@ -57,13 +73,20 @@ func TestBenchmarkDoc_ResumeCompatExceptionMatchesTheCode(t *testing.T) {
 			// exception exists — an operator cannot tell whether their own
 			// checkpoint is covered otherwise.
 			inDoc: "roster_format",
-			// The needle carries the FULL arm, not `cp.RosterFormat == ""` alone.
-			// That shorter string now occurs twice in the file — the compat arm and
-			// the empty-recorded-roster branch below it — so it stays satisfied when
-			// the stamp test is deleted from the arm, which is exactly the deletion
-			// that makes the doc's "a stamped checkpoint never qualifies" false.
-			inCode:  `if cp.RosterFormat == "" && len(recorded) > 0 && equalStrings(`,
-			because: "the arm fires only on an UNSTAMPED checkpoint, so a stamped one is unaffected",
+			// The needle pairs the projection compare with the unstamped gate by
+			// PROXIMITY instead of pinning the full conjunct list: conjunct order,
+			// the exact emptiness term, and re-wrapping a growing condition are
+			// the cli package's own concern (its mutation tests own them), and
+			// none of them changes what the doc claims. `cp.RosterFormat == ""`
+			// alone occurs twice in the file — the compat arm and the
+			// empty-recorded-roster branch — so it stays satisfied when the stamp
+			// test is deleted from the arm, which is exactly the deletion that
+			// makes the doc's "a stamped checkpoint never qualifies" false; the
+			// proximity window keeps that decoy gate from satisfying the pair.
+			inCode:      "equalStrings(recorded, sortedCopy(legacyRoster))",
+			inCodeCount: 1,
+			inCodeNear:  `cp.RosterFormat == ""`,
+			because:     "the arm fires only on an UNSTAMPED checkpoint, so a stamped one is unaffected",
 		},
 		{
 			name:    "the recorded roster must equal the parallel-lane-only projection",
@@ -112,8 +135,29 @@ func TestBenchmarkDoc_ResumeCompatExceptionMatchesTheCode(t *testing.T) {
 		t.Run(claim.name, func(t *testing.T) {
 			assert.Contains(t, doc, claim.inDoc,
 				"docs/benchmark.md's Resume bullet must still name this half of the exception (%s)", claim.because)
-			assert.Contains(t, code, claim.inCode,
-				"cli/benchmark_checkpoint.go must still implement it, or the doc describes an exception the binary no longer grants")
+			if claim.inCodeCount > 0 {
+				require.Equal(t, claim.inCodeCount, strings.Count(code, claim.inCode),
+					"cli/benchmark_checkpoint.go must implement %q exactly %d time(s), or the doc describes an exception the binary no longer grants", claim.inCode, claim.inCodeCount)
+			} else {
+				assert.Contains(t, code, claim.inCode,
+					"cli/benchmark_checkpoint.go must still implement it, or the doc describes an exception the binary no longer grants")
+			}
+			if claim.inCodeNear != "" {
+				anchor := strings.Index(code, claim.inCode)
+				if assert.NotEqual(t, -1, anchor,
+					"cli/benchmark_checkpoint.go must still contain %q — the doc's claim has no code half", claim.inCode) {
+					lo := anchor - needleProximity
+					if lo < 0 {
+						lo = 0
+					}
+					hi := anchor + len(claim.inCode) + needleProximity
+					if hi > len(code) {
+						hi = len(code)
+					}
+					assert.Contains(t, code[lo:hi], claim.inCodeNear,
+						"the unstamped gate must sit in the same condition as %q — the doc describes their conjunction", claim.inCode)
+				}
+			}
 		})
 	}
 
