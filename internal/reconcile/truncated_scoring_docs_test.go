@@ -120,3 +120,37 @@ func TestScorecardDoc_StoredRateStatesItsOwnCondition(t *testing.T) {
 	assert.Contains(t, row, "findings_verified + findings_refuted",
 		"the row must name the countable-verdict condition the emitter actually gates on")
 }
+
+// docParagraph returns the blank-line-delimited block of prose containing want.
+// A paragraph is the unit that drifts for a prose claim, the same way a table row
+// is for a field: a caveat added two paragraphs down is not one a reader of THIS
+// paragraph will see. docBullet cannot serve here — these blocks are wrapped
+// bold-lead paragraphs, not list items.
+func docParagraph(t *testing.T, doc, want string) string {
+	t.Helper()
+	for _, block := range strings.Split(doc, "\n\n") {
+		if strings.Contains(block, want) {
+			return block
+		}
+	}
+	t.Fatalf("docs has no paragraph containing %q", want)
+	return ""
+}
+
+// TestScorecardDoc_ConditionalFieldsParagraphNamesBothOmissions pins the prose
+// that sits under the field-reference table.
+//
+// The paragraph gave verification's absence as the ONLY reason the three keys are
+// omitted. internal/scorecard/scorecard.go has a second, narrower one: verification
+// ran, but v+r == 0, so survived_skeptic_rate alone is dropped while both counts
+// still ship. A paragraph that names one case and says "these three" positively
+// denies the other.
+func TestScorecardDoc_ConditionalFieldsParagraphNamesBothOmissions(t *testing.T) {
+	section := docSection(t, readDoc(t, "scorecard.md"), "### Field reference")
+	para := docParagraph(t, section, "Conditional verification fields")
+
+	assert.Contains(t, para, "second",
+		"the paragraph must announce that there is more than one omission case")
+	assert.Contains(t, para, "survived_skeptic_rate",
+		"the second case applies to one named key, not to all three — the paragraph must say which")
+}
