@@ -55,9 +55,17 @@ pushed_refs="$(cat)"
 skip_pin_gate=0
 if [ -n "$pushed_refs" ]; then
   skip_pin_gate=1
-  while IFS=' ' read -r local_ref _rest; do
+  # BOTH sides of the refspec must be a reconcile tag. Matching only the local
+  # side would also exempt `git push origin refs/tags/reconcile/v1:refs/heads/main`
+  # — a reconcile tag being written onto a branch, which is emphatically not the
+  # documented step-2 push and must still be gated.
+  while IFS=' ' read -r local_ref _local_sha remote_ref _rest; do
     [ -n "$local_ref" ] || continue
     case "$local_ref" in
+      refs/tags/reconcile/*) ;;
+      *) skip_pin_gate=0 ;;
+    esac
+    case "$remote_ref" in
       refs/tags/reconcile/*) ;;
       *) skip_pin_gate=0 ;;
     esac

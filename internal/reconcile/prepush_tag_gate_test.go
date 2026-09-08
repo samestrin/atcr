@@ -137,3 +137,14 @@ func repoRootDir(t *testing.T) string {
 	require.NoError(t, err)
 	return abs
 }
+
+// TestPrePush_PinGateRunsWhenAReconcileTagTargetsSomethingElse covers the
+// refspec whose LOCAL side is a reconcile tag but whose remote side is not.
+// Exempting on the local ref alone would let a reconcile tag be written onto a
+// branch with the pin gate skipped.
+func TestPrePush_PinGateRunsWhenAReconcileTagTargetsSomethingElse(t *testing.T) {
+	out := runPrePushWithStubbedTools(t,
+		"refs/tags/reconcile/v0.9.0 1111111111111111111111111111111111111111 refs/heads/main 0000000000000000000000000000000000000000\n")
+	assert.Contains(t, out, pinGateEcho,
+		"a reconcile tag pushed onto a branch is not the documented step-2 push and must still be gated")
+}
