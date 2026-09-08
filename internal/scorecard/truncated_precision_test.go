@@ -80,3 +80,25 @@ func TestEmit_TruncatedUnverifiableChangesNothing(t *testing.T) {
 	require.NotNil(t, bruce.SurvivedSkepticRate)
 	assert.InDelta(t, 1.0, *bruce.SurvivedSkepticRate, 1e-9)
 }
+
+// TestBudgetToolBytes_PinsTheOnDiskMarker is the anti-drift pin for a string
+// this package deliberately restates.
+//
+// internal/verify and internal/fanout each keep their own unexported copy of
+// this marker, so there is no symbol to import — and scorecard has no dependency
+// on verify by design (see verificationFile). What the two sides genuinely share
+// is verification.json's on-disk shape, so the literal is what gets pinned here:
+// if the marker ever changes, this test fails alongside verify's own engine-driven
+// assertion on the same literal, and the precision exclusion cannot silently stop
+// matching anything.
+func TestBudgetToolBytes_PinsTheOnDiskMarker(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "tool_budget_bytes", budgetToolBytes,
+		"the marker is verification.json's on-disk value; changing it silently disables the truncated-verdict exclusion")
+	assert.True(t, truncatedRead([]string{"max_turns", "tool_budget_bytes"}),
+		"the marker is matched anywhere in the slice, not only as the sole entry")
+	assert.False(t, truncatedRead([]string{"max_turns", "timeout_secs"}),
+		"an unrelated budget trip is not a truncated read")
+	assert.False(t, truncatedRead(nil), "no budgets, no truncation")
+}

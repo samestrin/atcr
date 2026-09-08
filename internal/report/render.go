@@ -830,8 +830,18 @@ func writeRefutedSection(b *bytes.Buffer, refuted []reconcile.JSONFinding) {
 	b.WriteString("\n## Refuted Findings\n\n")
 	fmt.Fprintf(b, "<details>\n<summary>Refuted Findings (%d)</summary>\n\n", len(refuted))
 	for _, f := range refuted {
-		fmt.Fprintf(b, "- %s — confidence %s, skeptic: %s\n",
-			codeSpan(f.File, f.Line), esc(f.Confidence), esc(skepticName(f.Verification)))
+		// The truncation caveat matters MOST here. This section is the only place
+		// a refuted finding appears, refuted is the verdict reconcile's gate
+		// excludes, and refuting a false positive off a few large reads is the
+		// exact case the derived-ceiling exemption was built to allow — so a
+		// refuted-from-a-shortened-read drops a finding out of CI, and this line
+		// is the only place a human would see why to look twice.
+		truncated := ""
+		if f.Verification != nil && f.Verification.Truncated {
+			truncated = " (answered from a truncated read)"
+		}
+		fmt.Fprintf(b, "- %s — confidence %s, skeptic: %s%s\n",
+			codeSpan(f.File, f.Line), esc(f.Confidence), esc(skepticName(f.Verification)), truncated)
 		writePathWarning(b, f)
 		fmt.Fprintf(b, "  - Problem: %s\n", escTrunc(f.Problem))
 		if f.Verification != nil && strings.TrimSpace(f.Verification.Notes) != "" {

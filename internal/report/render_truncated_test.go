@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/samestrin/atcr/internal/reconcile"
 	reclib "github.com/samestrin/atcr/reconcile"
 )
 
@@ -59,4 +60,45 @@ func TestWriteSkepticBlock_AnnotatesATruncatedRead(t *testing.T) {
 		assert.Contains(t, out, "could not verify", "the existing unverifiable annotation must survive")
 		assert.Contains(t, out, "truncated", "the two facts are independent and both belong on the line")
 	})
+}
+
+// TestRenderReport_RefutedSectionCarriesTheTruncationCaveat closes the gap the
+// per-finding annotation alone leaves open, and it is the highest-stakes one.
+//
+// A refuted finding does NOT go through writeSkepticBlock — it is rendered in
+// the collapsed "Refuted Findings" section by writeRefutedSection, which builds
+// its own abbreviated line. And refuted is precisely the verdict the
+// derived-ceiling exemption exists to protect (a skeptic that reads large files
+// and correctly refutes a false positive), AND the verdict reconcile's gate
+// EXCLUDES. So a refuted-from-a-truncated-read silently removes a finding from
+// CI, in the one place the report offered no caveat at all.
+func TestRenderReport_RefutedSectionCarriesTheTruncationCaveat(t *testing.T) {
+	t.Parallel()
+
+	var b bytes.Buffer
+	writeRefutedSection(&b, []reconcile.JSONFinding{{
+		File: "db/query.go", Line: 13, Confidence: "LOW", Problem: "sql built by concatenation",
+		Verification: &reclib.Verification{
+			Verdict: reclib.VerdictRefuted, Skeptic: "otto", Truncated: true,
+			Notes: "the input is bound, not concatenated",
+		},
+	}})
+	out := b.String()
+	assert.Contains(t, strings.ToLower(out), "truncated",
+		"the gate DROPS a refuted finding — a reader must see it was refuted from a shortened read")
+}
+
+// TestRenderReport_RefutedSectionSilentOnAFullRead is the other half: the
+// caveat must be absent when the read was complete, or it says nothing.
+func TestRenderReport_RefutedSectionSilentOnAFullRead(t *testing.T) {
+	t.Parallel()
+
+	var b bytes.Buffer
+	writeRefutedSection(&b, []reconcile.JSONFinding{{
+		File: "db/query.go", Line: 13, Confidence: "LOW", Problem: "sql built by concatenation",
+		Verification: &reclib.Verification{
+			Verdict: reclib.VerdictRefuted, Skeptic: "otto",
+		},
+	}})
+	assert.NotContains(t, strings.ToLower(b.String()), "truncated")
 }

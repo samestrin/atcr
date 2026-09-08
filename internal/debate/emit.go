@@ -131,6 +131,13 @@ func applyRulings(findings []reconcile.JSONFinding, rulings map[FindingKey]ruleA
 			// separately in reconciled/debate.json (ItemResult.Judge/Reasoning).
 			v.Verdict = ra.verdict
 			v.ChallengeSurvived = ra.survived
+			// Truncated describes how the RECORDED verdict was reached, and this
+			// verdict is now the judge's, produced from the judge's own read. The
+			// block deliberately keeps the original skeptic's name as provenance,
+			// but carrying its truncation caveat onto a verdict it did not produce
+			// would attach "answered from a truncated read" to the wrong agent's
+			// answer — in the report and in the precision-ratio exclusion alike.
+			v.Truncated = false
 		} else {
 			// No prior verification (debate ran standalone): the judge is the only
 			// agent that produced this verdict, so record it as the skeptic with its
