@@ -342,7 +342,7 @@ described above, which hard-fails the export before the keep-and-warn arm runs; 
 whitespace that survives that rejection (space, non-breaking space) takes the
 kept-and-warned shape below. A **whitespace-only** identity is additionally **named on
 stderr** ("blank
-after trimming — the record has no model"), because it publishes as `model: ""`, which
+after trimming — the record has no model/reviewer"), because it publishes as `model: ""`, which
 would be rejected at the leaderboard — the same consequence the skip report above names
 for the same shape. The warning is deliberately worded apart from the skip
 report above so a kept record is not mistaken for a dropped one. An identity already
