@@ -522,3 +522,53 @@ func TestSyncVerificationTruncation_RuledButCaveatStillStandsRewritesNothing(t *
 	assert.Nil(t, data, "the caveat still describes the recorded verdict — there is nothing to correct")
 	assert.Empty(t, path)
 }
+
+// TestRunDebate_SnapshotsVerificationBeforeRewritingIt pins the recovery path.
+//
+// internal/verify snapshots verification.json to .bak before every rewrite
+// (backupExistingVerification). debate rewrites the same file and did not, so the
+// pre-debate state was unrecoverable — and this stage's rewrite is lossier than
+// verify's: the generic-map round-trip re-sorts every key, so the file that comes
+// back is not byte-comparable with the one verify wrote even where no value
+// changed.
+func TestRunDebate_SnapshotsVerificationBeforeRewritingIt(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{truncatedSplitFinding()})
+	body := `{"findings":[
+		{"file":"a.go","line":10,"problem":"nil deref","verdict":"confirmed","skeptic":"bob","trippedBudgets":["tool_budget_bytes"]}
+	]}`
+	verPath := writeVerificationFixture(t, dir, body)
+
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "challenger attacks"},
+		{content: `{"outcome":"overturn","reasoning":"false positive"}`},
+	}}
+	_, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+
+	bak, err := os.ReadFile(verPath + ".bak")
+	require.NoError(t, err, "debate rewrote verification.json, so the state it replaced must be recoverable")
+	assert.Equal(t, body, string(bak), "the snapshot is the PRE-debate bytes, verbatim")
+}
+
+// TestRunDebate_TakesNoSnapshotWhenItRewritesNothing keeps the snapshot paired
+// with an actual rewrite. A .bak written by a run that changed nothing would
+// overwrite the genuinely-prior state kept from the last run that did.
+func TestRunDebate_TakesNoSnapshotWhenItRewritesNothing(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{truncatedSplitFinding()})
+	verPath := writeVerificationFixture(t, dir, `{"findings":[
+		{"file":"a.go","line":10,"problem":"nil deref","verdict":"confirmed","skeptic":"bob","trippedBudgets":[]}
+	]}`)
+
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "challenger attacks"},
+		{content: `{"outcome":"overturn","reasoning":"false positive"}`},
+	}}
+	_, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+
+	_, err = os.Stat(verPath + ".bak")
+	assert.True(t, os.IsNotExist(err),
+		"no tool_budget_bytes entry means no rewrite, and a snapshot of an unchanged file would clobber a real prior state")
+}
