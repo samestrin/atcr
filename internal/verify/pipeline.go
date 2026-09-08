@@ -434,6 +434,14 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 			if prior.DebateJudge == "" {
 				rec.Model = prior.Model
 				rec.DurationMs = prior.DurationMs
+				// The reason travels with the values it explains. A marker stamped on
+				// one run is read back by the NEXT one against a prior whose verdict now
+				// matches by construction — this branch — so without carrying it the
+				// marker lasts exactly one generation and the record decays to bytes
+				// indistinguishable from "no skeptic ran". prior.Model is empty on
+				// exactly the records that carry a reason, so this copies a reason only
+				// alongside the blank it accounts for.
+				rec.ModelWithheldReason = prior.ModelWithheldReason
 			}
 			// TrippedBudgets is exempt from that split: it records what the run cost,
 			// not who produced the verdict, and debate's rewrite already corrected the

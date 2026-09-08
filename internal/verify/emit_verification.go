@@ -71,10 +71,17 @@ type VerificationResult struct {
 	DebateReasoning string `json:"debateReasoning,omitempty"`
 
 	// ModelWithheldReason names why Model is empty when the emptiness is a
-	// DECISION rather than an absence — case 3 above. It is set ONLY on the
-	// re-verify guard's reject path and is absent everywhere else, so its presence
-	// is the whole signal: a record without it either carries a model or never had
-	// one to carry.
+	// DECISION rather than an absence — case 3 above. It ORIGINATES only on the
+	// re-verify guard's reject path, and is thereafter carried forward alongside
+	// the blank Model it accounts for, so its presence is the whole signal: a
+	// record without it either carries a model or never had one to carry.
+	//
+	// The carry matters because the run that stamps the reason also writes the file
+	// the next run reads: by then the prior's verdict matches the block by
+	// construction, the reject arm no longer fires, and a marker that did not
+	// travel would last exactly one generation before the record decayed back into
+	// case 1. It is carried only on the arm that copies Model — never beside a
+	// DebateJudge — so the two markers stay disjoint.
 	//
 	// Leaving Model blank could not carry this on its own. Cases 1 and 3 both
 	// produce exactly `"model": ""`, so a consumer reading blankness alone learns

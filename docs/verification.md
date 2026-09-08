@@ -160,10 +160,14 @@ so blankness alone carries no information:
    `modelWithheldReason` is the marker, set to `verdict_shifted` or
    `prior_unreadable`.
 
-`modelWithheldReason` is `omitempty` and is written **only** on that reject path,
-so a record without it either carries a `model` or never had one to carry. The two
-markers never co-occur: case 2 takes the carry-forward path, case 3 never reaches
-it.
+`modelWithheldReason` is `omitempty` and **originates** only on that reject path.
+It is then carried forward on every later re-verify that copies the blank `model`
+it accounts for — without that carry it would last a single generation, because
+the run that stamps it also writes the file the next run reads, and by then the
+verdicts match and the reject arm no longer fires. So a record without it either
+carries a `model` or never had one to carry. The two markers never co-occur: the
+carry happens only on the arm that copies `model`, which is the arm a
+`debateJudge` record skips.
 
 The per-finding `model` (the different-model evidence) lives here, in `verification.json`, not in the `findings.json` block — the report's Skeptic section shows verdict/skeptic/reasoning and does not perform a registry lookup. Skeptic runs do not persist transcripts — only reviewer fan-out and debate do.
 
