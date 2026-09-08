@@ -1198,3 +1198,39 @@ func TestRunLeaderboardExport_BlankModelDoesNotShadowANonPrintingReviewer(t *tes
 	require.Error(t, err, "a non-printing rune must abort the export even when an earlier field was blank")
 	require.Contains(t, err.Error(), "non-printing rune")
 }
+
+// The blank notice says the record STILL PUBLISHES, so it must not be printed for a
+// record that is then dropped. A record can carry both shapes at once — a blank model
+// beside a scrub-casualty reviewer — and printing both lines would have the export
+// contradict itself on the one surface the operator acts from.
+func TestRunLeaderboardExport_BlankNoticeIsSuppressedWhenTheRecordIsDropped(t *testing.T) {
+	clean := scorecard.Record{
+		SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-clean",
+		Reviewer: "greta", Model: "claude-sonnet", FindingsRaised: 3, FindingsCorroborated: 2,
+	}
+	// Blank model (kept-shape) AND a path-shaped reviewer the scrub empties (drop-shape).
+	doomed := scorecard.Record{
+		SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-doomed",
+		Reviewer: "~/models/greta", Model: " ", FindingsRaised: 3, FindingsCorroborated: 1,
+	}
+
+	cmd := exportTestCmd()
+	var out, errBuf bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errBuf)
+	require.NoError(t, runLeaderboardExport(cmd, []scorecard.Record{clean, doomed}, scorecard.FilterOpts{}, ""))
+
+	report := errBuf.String()
+	assert.Contains(t, report, "empty once scrubbed", "the drop must still be reported")
+	assert.NotContains(t, report, "blank after trimming",
+		"a dropped record must not also be announced as one that still publishes")
+
+	var env struct {
+		Reviewers []struct {
+			Model string `json:"model"`
+		} `json:"reviewers"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &env))
+	require.Len(t, env.Reviewers, 1, "only the clean record may publish")
+	require.Equal(t, "claude-sonnet", env.Reviewers[0].Model)
+}

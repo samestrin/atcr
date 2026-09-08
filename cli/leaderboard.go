@@ -364,13 +364,21 @@ func selectPublishableRecordIdentities(cmd *cobra.Command, filtered []scorecard.
 	kept := make([]scorecard.Record, 0, len(filtered))
 	for _, rec := range filtered {
 		publishable := true
-		// One blank report per RECORD, not per field: the operator repairs the record,
-		// and a second line about its other blank identity is noise — the same trade the
-		// scrub-casualty report below makes with its `break`. It is a flag rather than a
-		// break because the checks must keep running: breaking out on a blank model
-		// would skip the reviewer field entirely, so a non-printing rune there — a
+		// The blank-identity notice is HELD rather than printed where it is found, for
+		// two reasons.
+		//
+		// It is one line per RECORD, not per field: the operator repairs the record, and
+		// a second line about its other blank identity is noise — the same trade the
+		// scrub-casualty report below makes with its `break`. Holding it also means the
+		// field loop keeps RUNNING, which a `break` would not: breaking out on a blank
+		// model would skip the reviewer field entirely, so a non-printing rune there — a
 		// misattribution vector that must HARD-fail — would publish.
-		blankReported := false
+		//
+		// And it is only printed if the record actually survives. The notice says the
+		// record still publishes; a record whose OTHER identity is a scrub casualty is
+		// dropped, and printing both lines for it would contradict itself on the one
+		// surface the operator acts from.
+		blankNotice := ""
 		// Reviewer is the field Export scrubs into the envelope's `persona`; the pair
 		// is (persona, model) there, not (reviewer, model).
 		for _, f := range []struct{ name, value string }{
@@ -439,13 +447,12 @@ func selectPublishableRecordIdentities(cmd *cobra.Command, filtered []scorecard.
 				// wording is deliberately distinct from the skip report's "empty once
 				// scrubbed" so an operator scanning stderr can tell a KEPT record from
 				// a DROPPED one without reading to the end of the line.
-				if !blankReported {
-					_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+				if blankNotice == "" {
+					blankNotice = fmt.Sprintf(
 						"scorecard record %q: %s is blank after trimming — the record has no %s; "+
 							"it still publishes, but the leaderboard does not count an empty identity — "+
 							"edit or remove that record in the scorecard store to have it counted\n",
 						rec.RunID, f.name, f.name)
-					blankReported = true
 				}
 			} else if trimmed != "" && scorecard.ScrubPublicString(f.value) == "" {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
@@ -463,6 +470,9 @@ func selectPublishableRecordIdentities(cmd *cobra.Command, filtered []scorecard.
 			}
 		}
 		if publishable {
+			if blankNotice != "" {
+				_, _ = fmt.Fprint(cmd.ErrOrStderr(), blankNotice)
+			}
 			kept = append(kept, rec)
 		}
 	}
