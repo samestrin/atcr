@@ -208,38 +208,50 @@ func (d *boundedDispatcher) Execute(ctx context.Context, name string, args json.
 		return out, err
 	}
 	if int64(len(out.Content)) > d.remaining {
-		if out.OriginalBytes == 0 {
-			out.OriginalBytes = len(out.Content)
+		// Rounding up can reach the end of the content (the allowance lands inside
+		// the final rune). Nothing was removed then, so nothing is claimed: a
+		// result marked Truncated with its full content is a lie in the transcript
+		// and, downstream, an unearned truncated caveat on the verdict.
+		if cut := runeCeilCut(out.Content, int(d.remaining)); len(cut) < len(out.Content) {
+			if out.OriginalBytes == 0 {
+				out.OriginalBytes = len(out.Content)
+			}
+			out.Content = cut
+			out.Truncated = true
 		}
-		out.Content = safeRuneCut(out.Content, int(d.remaining))
-		out.Truncated = true
 	}
 	d.remaining -= int64(len(out.Content))
 	return out, nil
 }
 
-// safeRuneCut returns s truncated to at most n bytes without splitting a
-// multi-byte UTF-8 rune, so the result is always valid UTF-8. It mirrors the
-// unexported helper internal/tools uses for its own caps — the tool content is
-// serialised into a JSON request body, and a raw byte slice through the middle
-// of a rune produces the replacement character (or a provider-side reject)
-// rather than a clean short read.
-func safeRuneCut(s string, n int) string {
+// runeCeilCut returns the shortest rune-aligned prefix of s that is at LEAST n
+// bytes long (all of s when no such boundary exists below its end), so the
+// result is always valid UTF-8. The tool content is serialised into a JSON
+// request body, and a raw byte slice through the middle of a rune produces the
+// replacement character, or a provider-side reject, rather than a clean short
+// read.
+//
+// It rounds UP, unlike the "at most n bytes" helper internal/tools uses for its
+// own display caps, and the direction is the whole point here. clampDispatcher
+// allows budget+1 bytes because internal/fanout/loop.go trips on
+// `ToolBytes > ToolBudgetBytes` — strictly greater — so an allowance the cut
+// FALLS SHORT of leaves the comparison false and the tool_budget_bytes trip
+// slips a turn. Walking the offset down to a boundary did exactly that on any
+// content containing a multi-byte rune, i.e. on ordinary source text: the clamp
+// defeated the trip it was added to preserve. Overshooting by the 1–3 bytes that
+// complete the straddling rune costs nothing; falling short costs the trip.
+func runeCeilCut(s string, n int) string {
 	if n >= len(s) {
 		return s
 	}
 	if n <= 0 {
 		return ""
 	}
-	for n > 0 && !utf8.RuneStart(s[n]) {
-		n--
+	for n < len(s) && !utf8.RuneStart(s[n]) {
+		n++
 	}
 	return s[:n]
 }
-
-// runeCeilCut is the boundedDispatcher's cut. Stub: delegates to the backward
-// walk so the behaviour under test is unchanged.
-func runeCeilCut(s string, n int) string { return safeRuneCut(s, n) }
 
 // budgetToolBytes is fanout's tripped-budget marker for the tool-output ceiling.
 // fanout keeps its own copy unexported, so the string is duplicated here rather
