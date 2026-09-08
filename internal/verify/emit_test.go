@@ -5,6 +5,7 @@ import (
 	reclib "github.com/samestrin/atcr/reconcile"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -536,4 +537,64 @@ func firstVerificationRecord(t *testing.T, data []byte) map[string]any {
 	require.NoError(t, json.Unmarshal(data, &doc))
 	require.NotEmpty(t, doc.Findings)
 	return doc.Findings[0]
+}
+
+// TestJSONFieldNames exercises the name-resolution branches VerificationResult
+// itself cannot reach. Every field on that struct is exported and carries an
+// explicit json name, so the unexported skip and the name-less-tag fallback are
+// dead against it — and dead code that decides which keys are "modelled" is
+// precisely the code that must not be wrong when the next field lands.
+//
+// A key missing from this set is not an inert omission: MarshalJSON lets a stale
+// Extra entry through for any key it does not recognise, so the entry would
+// overwrite the value the struct just computed for that field.
+func TestJSONFieldNames(t *testing.T) {
+	t.Parallel()
+	type sample struct {
+		Named    string `json:"named"`
+		OmitOnly string `json:",omitempty"`
+		Untagged string
+		Skipped  string `json:"-"`
+		hidden   string //nolint:unused // exercises the unexported-field skip
+	}
+	got := jsonFieldNames(reflect.TypeOf(sample{}))
+
+	assert.Equal(t, map[string]bool{"named": true, "OmitOnly": true, "Untagged": true}, got,
+		"a name-less or absent tag keys on the FIELD name, exactly as encoding/json does")
+
+	// Cross-check against encoding/json itself rather than restating the rule: a
+	// hand-written expectation can drift from the marshaller it is meant to mirror.
+	data, err := json.Marshal(sample{Named: "a", OmitOnly: "b", Untagged: "c", Skipped: "d"})
+	require.NoError(t, err)
+	var emitted map[string]any
+	require.NoError(t, json.Unmarshal(data, &emitted))
+	for k := range emitted {
+		assert.True(t, got[k], "encoding/json emits %q, so it must count as modelled", k)
+	}
+	assert.Len(t, got, len(emitted), "and nothing beyond what encoding/json emits may be claimed as modelled")
+}
+
+// TestVerificationResult_ModelledKeyInExtraNeverShadowsTheStructValue covers the
+// collision guard in MarshalJSON. UnmarshalJSON never files a modelled key into
+// Extra, so this state only arises from a hand-built value — but the guard is what
+// makes "modelled keys always win" a property of the type rather than a property
+// of how it happened to be constructed.
+func TestVerificationResult_ModelledKeyInExtraNeverShadowsTheStructValue(t *testing.T) {
+	t.Parallel()
+	r := VerificationResult{
+		File: "a.go", Line: 1, Problem: "boom", Verdict: "confirmed", Model: "m-x",
+		Extra: map[string]json.RawMessage{
+			"model":          json.RawMessage(`"stale-model"`),
+			"escalationTier": json.RawMessage(`"tier-2"`),
+		},
+	}
+	data, err := json.Marshal(r)
+	require.NoError(t, err)
+
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(data, &got))
+	assert.Equal(t, "m-x", got["model"],
+		"the struct computed this value — a stale extra of the same name must not replace it")
+	assert.Equal(t, "tier-2", got["escalationTier"],
+		"an unmodelled key still rides through; only the collision is refused")
 }

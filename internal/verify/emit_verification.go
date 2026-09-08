@@ -129,9 +129,18 @@ type VerificationResult struct {
 // derived from the struct tags rather than listed by hand — a field added above
 // without updating a hand-written list would otherwise be decoded twice (once
 // typed, once into Extra) and then emitted from the stale copy.
-var verificationResultFields = func() map[string]bool {
+var verificationResultFields = jsonFieldNames(reflect.TypeOf(VerificationResult{}))
+
+// jsonFieldNames returns the JSON keys encoding/json would emit for rt.
+//
+// It is a free function rather than an inline literal so its branches can be
+// tested: every field of VerificationResult today is exported and carries an
+// explicit json name, so the unexported skip and the name-less-tag fallback are
+// unreachable through that type alone and a test over it proves nothing about
+// them. They exist for the NEXT field added above, which is exactly when a silent
+// mismatch here would be most expensive — see TestJSONFieldNames.
+func jsonFieldNames(rt reflect.Type) map[string]bool {
 	out := map[string]bool{}
-	rt := reflect.TypeOf(VerificationResult{})
 	for i := 0; i < rt.NumField(); i++ {
 		f := rt.Field(i)
 		if f.PkgPath != "" {
@@ -152,7 +161,7 @@ var verificationResultFields = func() map[string]bool {
 		out[name] = true
 	}
 	return out
-}()
+}
 
 // verificationResultAlias strips the marshaller methods below so they can call
 // encoding/json on the struct without recursing into themselves.
