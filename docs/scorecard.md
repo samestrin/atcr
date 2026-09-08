@@ -338,7 +338,8 @@ empty — or whitespace-only, which is the same thing to every reader of the sto
 a record written without a model, not a scrub casualty: it is left alone and still
 publishes. A **whitespace-only** identity is additionally **named on stderr** ("blank
 after trimming — the record has no model"), because it publishes as `model: ""`, which
-the leaderboard does not count; the warning is deliberately worded apart from the skip
+would be rejected at the leaderboard — the same consequence the skip report above names
+for the same shape. The warning is deliberately worded apart from the skip
 report above so a kept record is not mistaken for a dropped one. An identity already
 empty in the store is not warned about — that shape is ordinary history, and reporting
 it would name a large fraction of an unrotated store on every export.

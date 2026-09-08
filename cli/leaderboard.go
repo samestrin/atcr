@@ -448,9 +448,15 @@ func selectPublishableRecordIdentities(cmd *cobra.Command, filtered []scorecard.
 				// scrubbed" so an operator scanning stderr can tell a KEPT record from
 				// a DROPPED one without reading to the end of the line.
 				if blankNotice == "" {
+					// "would be rejected at the leaderboard" is the SAME clause the skip
+					// message below uses for the same published shape (an empty
+					// identity). Two different consequences printed to one stderr for
+					// one shape would leave the operator guessing which is true; the
+					// repo states the consequence in exactly one place, so both
+					// messages quote it.
 					blankNotice = fmt.Sprintf(
 						"scorecard record %q: %s is blank after trimming — the record has no %s; "+
-							"it still publishes, but the leaderboard does not count an empty identity — "+
+							"it is kept, but publishing \"\" would be rejected at the leaderboard — "+
 							"edit or remove that record in the scorecard store to have it counted\n",
 						rec.RunID, f.name, f.name)
 				}

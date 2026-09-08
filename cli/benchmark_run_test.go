@@ -1599,14 +1599,19 @@ func TestRosterSignatureOf_DoesNotMutateItsInput(t *testing.T) {
 
 // A serial-only project (agents: [], serial_agents: [...]) is a supported config —
 // internal/registry/project.go rejects only BOTH lanes empty. For such a project the
-// parallel-lane-only projection is an EMPTY slice, and rosterSignatureOf returns
-// make([]string, 0), which is non-nil. The compat arm's `legacyRoster != nil` test is
-// therefore always true, and sortedCopy of an empty slice is nil, so the arm's
-// equalStrings(nil, nil) comparison is vacuous: a checkpoint recording `"roster": []`
-// (which decodes to a non-nil zero-length slice and so clears the fail-closed
-// cp.Roster == nil guard) resumes against ANY serial panel — any reviewers, any
-// models, any personas. That is precisely the AC4 panel-mixing the guard exists to
-// refuse.
+// parallel-lane-only projection is an EMPTY slice, and sortedCopy of it is nil, so the
+// compat arm's equalStrings comparison would be vacuous — nil against nil — for a
+// checkpoint recording `"roster": []`. That value decodes to a non-nil zero-length slice
+// and so clears the fail-closed cp.Roster == nil guard, and without an emptiness test in
+// the arm it would resume against ANY serial panel: any reviewers, any models, any
+// personas. That is precisely the AC4 panel-mixing the guard exists to refuse.
+//
+// `len(recorded) > 0` in
+// `cp.RosterFormat == "" && len(recorded) > 0 && equalStrings(recorded, sortedCopy(legacyRoster))`
+// is the term under test here. It is the only emptiness term the arm carries: its former
+// sibling `len(legacyRoster) > 0` was removed as unfalsifiable, because equalStrings
+// compares lengths first, so when exactly one slice is empty the arm cannot fire anyway
+// and only the both-empty case needs blocking — which either term alone blocks.
 func TestValidateCheckpointRoster_EmptyRecordedRosterIsNeverExcused(t *testing.T) {
 	serialOnly := func(serialModel string) *fanout.ReviewConfig {
 		c := benchCfg([3]string{"dax", serialModel, "dax"}, [3]string{"greta", "m-greta", "greta"})
@@ -1661,8 +1666,13 @@ func TestValidateCheckpointRoster_EmptyRecordedRosterNamesItsOwnCause(t *testing
 	msg := err.Error()
 	assert.Contains(t, msg, "records an empty reviewer roster",
 		"the message must name what is actually wrong with the checkpoint")
-	assert.Contains(t, msg, "before the serial lane joined the roster signature",
-		"and why a shipped binary produced it, or the operator reads it as corruption")
+	assert.Contains(t, msg, "pre-serial-lane binary wrote for a project with no parallel lane",
+		"and how a shipped binary produced it, or the operator reads it as corruption")
+	assert.Contains(t, msg, "truncated or hand-edited",
+		"the cause is offered, not asserted: the same branch is reachable by a corrupt file, "+
+			"and a confident wrong diagnosis is worse than the generic text it replaces")
+	assert.Contains(t, msg, "current panel [",
+		"the configured panel is still carried, so this message loses the operator no data")
 	assert.NotContains(t, msg, "configured [",
 		"the generic drift text blames a panel change that did not happen")
 }
@@ -1681,6 +1691,6 @@ func TestValidateCheckpointRoster_StampedEmptyRosterKeepsTheGenericMessage(t *te
 	err := validateCheckpointRoster(cp, rosterSignature(c), rosterSignatureOf(c, c.Project.Agents))
 	require.Error(t, err)
 	assert.ErrorIs(t, err, errCheckpointRosterMismatch)
-	assert.NotContains(t, err.Error(), "before the serial lane joined the roster signature",
-		"a stamped roster was not written by the pre-serial-lane binary; naming that cause would be a guess")
+	assert.NotContains(t, err.Error(), "pre-serial-lane binary",
+		"a stamped roster was not written by the pre-serial-lane binary; offering that cause would be a guess")
 }

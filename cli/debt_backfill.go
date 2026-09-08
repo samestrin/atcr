@@ -230,9 +230,15 @@ func locatorNames(shards []string, changes []localdebt.JustificationChange) map[
 	for _, shard := range shards {
 		add(shard)
 	}
-	// Unconditional, not an else: a changed shard must be in the map even if the
-	// snapshot did not carry it, so a change can never print without its own name
-	// considered.
+	// A TOTALITY invariant, not a live fallback — and the distinction is stated because
+	// this function used to read the directory itself, when the loop genuinely rescued a
+	// change whose shard the failed listing had missed. It cannot fire for the one caller
+	// that exists today: every JustificationChange.Shard is an os.ReadDir entry name from
+	// the same locked walk that produced `shards`, so the snapshot is a superset of the
+	// change set by construction. It is kept so locatorNames stays TOTAL over `changes`
+	// for any caller — a change must never print without its own name considered, and a
+	// caller passing a partial snapshot would otherwise silently lose collisions rather
+	// than fail. Do not read it as a guard against a state this caller can reach.
 	for _, c := range changes {
 		add(c.Shard)
 	}

@@ -321,10 +321,16 @@ func validateCheckpointRoster(cp *runCheckpoint, roster, legacyRoster []string) 
 	// with neither is rejected at config load — so naming that cause for it would be a
 	// guess; it falls through to the generic text instead.
 	if cp.RosterFormat == "" && len(recorded) == 0 {
-		return fmt.Errorf("%w: checkpoint records an empty reviewer roster; it was written "+
-			"before the serial lane joined the roster signature, by a project with no parallel "+
-			"lane, so its roster proves nothing about the panel and cannot be migrated — remove "+
-			"the checkpoint to start fresh", errCheckpointRosterMismatch)
+		// The cause is HEDGED, not asserted. A hand-edited or truncated checkpoint
+		// reaches this same branch, and a confident wrong diagnosis is worse than the
+		// generic text it replaces. The configured panel is carried too, under
+		// "current panel" rather than the generic message's "configured", so the
+		// operator loses no data relative to that message.
+		return fmt.Errorf("%w: checkpoint records an empty reviewer roster, so it proves "+
+			"nothing about the panel and cannot be migrated; this is the shape a "+
+			"pre-serial-lane binary wrote for a project with no parallel lane, but a "+
+			"truncated or hand-edited file reads the same — current panel [%s]; remove the "+
+			"checkpoint to start fresh", errCheckpointRosterMismatch, strings.Join(current, " "))
 	}
 	return fmt.Errorf("%w: recorded [%s], configured [%s]; remove the checkpoint to start fresh",
 		errCheckpointRosterMismatch, strings.Join(recorded, " "), strings.Join(current, " "))

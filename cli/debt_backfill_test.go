@@ -487,30 +487,28 @@ func TestDebtBackfillJustifications_DryRunLeavesAUniqueLocatorBareAlongsideOther
 		"an unambiguous locator must print bare even when the store holds other shards")
 }
 
-// The snapshot is the disambiguator's PRIMARY source, but it is allowed to be empty:
-// the rewrite the operator is about to approve has already been computed, so a locator
-// map must still be produced rather than abort. That fallback loop is unconditional on
-// purpose — a changed shard must be in the collision map even when the snapshot
-// supplied nothing — and every other test in this file drives the real command, which
-// hands locatorNames the locked walk's own listing, so the snapshot always covers the
-// change set and the fallback never carries the result.
+// locatorNames is TOTAL over its change set: every change gets a locator, and any
+// collision among the changes themselves is resolved, whatever the snapshot contains.
+//
+// This is a unit-level invariant, deliberately, and the comment says so rather than
+// dressing it as a live fallback. The one production caller passes the locked walk's own
+// listing, which is a superset of the change set by construction, so the change-set loop
+// in locatorNames cannot fire for it. This test is the ONLY thing that exercises that
+// loop, and it exists so a future caller passing a partial snapshot fails loudly here
+// instead of silently printing a bare locator for an ambiguous name — the exact
+// misattribution the disambiguator exists to prevent, on the surface an operator
+// approves an in-place rewrite from.
 //
 // The premise CHANGED when the listing moved under the lock. This test used to pass a
-// nonexistent directory and rely on os.ReadDir failing inside locatorNames. That path
-// no longer exists: the single walk now runs inside rewriteJustifications, and a walk
-// that fails there aborts the whole backfill with an error, so `cli` never reaches the
-// listing with a broken directory at all. What `cli` CAN still observe is a snapshot
-// that contributed nothing — BackfillResult.ShardNames is documented nil when no
-// rewrite was needed — so that is what is exercised here.
-//
-// Without the fallback, a dry run with an empty snapshot prints a changed shard's
-// locator bare with NO collision considered at all, reintroducing exactly the
-// misattribution the disambiguator exists to prevent, on the one surface an operator
-// approves an in-place rewrite from.
-func TestLocatorNames_FallsBackToTheChangeSetWhenTheSnapshotIsEmpty(t *testing.T) {
+// nonexistent directory and rely on os.ReadDir failing inside locatorNames. That path no
+// longer exists: the single walk now runs inside rewriteJustifications, and a walk that
+// fails there aborts the whole backfill, so `cli` never reaches the listing with a broken
+// directory at all.
+func TestLocatorNames_IsTotalOverItsChangeSetWithoutASnapshot(t *testing.T) {
 	// Two DIFFERENT shard files whose names reduce to the same token once Cf is
 	// stripped — the collision the disambiguator exists to resolve. Both are in the
-	// change set, so the fallback is the only thing that can see either of them.
+	// change set and neither is in the snapshot, so the change-set loop is the only
+	// thing that can see either of them.
 	changes := []localdebt.JustificationChange{
 		{ID: "aaaa1110", Shard: "2026-08\u202e-a.jsonl", Line: 1},
 		{ID: "aaaa1111", Shard: "2026-08\u200b-a.jsonl", Line: 1},
@@ -521,7 +519,7 @@ func TestLocatorNames_FallsBackToTheChangeSetWhenTheSnapshotIsEmpty(t *testing.T
 	require.Len(t, names, 2, "every changed shard must get a printable locator")
 	for _, c := range changes {
 		assert.Regexp(t, `^2026-08-a\.jsonl#[0-9a-f]{6}$`, names[c.Shard],
-			"with the listing gone the change set alone must still expose the collision, "+
+			"with no snapshot the change set alone must still expose the collision, "+
 				"so the locator carries its disambiguating suffix")
 	}
 	assert.NotEqual(t, names[changes[0].Shard], names[changes[1].Shard],
@@ -533,15 +531,18 @@ func TestLocatorNames_FallsBackToTheChangeSetWhenTheSnapshotIsEmpty(t *testing.T
 // a non-shard file in the store names it "notes.txt", which cannot collide with the
 // shard under test, so it is insensitive to the filter.
 //
-// Two decoys are planted here, one for each half of the filter:
+// This case covers the SUFFIX half. Its decoy is a non-".jsonl" entry whose name is the
+// genuine shard's plus a TRAILING zero-width space: the ZWSP is what makes the name fail
+// HasSuffix(".jsonl"), while sanitizeLocator strips Cf and so reduces it back to
+// "2026-08.jsonl" — a genuine collision that only the suffix half keeps out of the map.
+// The trailing position is load-bearing; an extension like ".tmp" would sanitize to a
+// different token and collide with nothing, so it would prove nothing.
 //
-//   - a DIRECTORY named exactly like the genuine shard ("2026-08.jsonl/"). Without the
-//     IsDir half it enters the collision map under the genuine shard's own token, and
-//     the locator the operator approves gains a "#hash" suffix that names nothing.
-//   - a non-".jsonl" twin ("2026-08<U+200B>.jsonl.tmp") whose name reduces to the same
-//     token once Cf is stripped. Without the suffix half it collides the same way. A
-//     ".tmp" beside a shard is not hypothetical: the rewrite pass itself stages through
-//     os.CreateTemp in this directory, so a crashed run leaves exactly this shape.
+// The IsDir half is covered separately, by
+// TestDebtBackfillJustifications_DryRunIgnoresADirectoryNamedLikeTheChangedShard. They
+// are split so a mutation removing only one half is still attributable: with both decoys
+// in one assertion, either half alone keeps the test red and the other half's coverage is
+// unproven.
 //
 // The assertion is that the genuine locator prints BARE. The filter's absence is
 // fail-SAFE — more names enter the map, so the output gains spurious suffixes rather
@@ -559,14 +560,8 @@ func TestDebtBackfillJustifications_DryRunIgnoresNonShardEntriesWhenDisambiguati
 		"- **internal/thing.go:42** the real narrative explaining the defect.\n"
 	require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"), []byte(body), 0o600))
 
-	// A directory whose name is byte-identical to the genuine shard's.
-	require.NoError(t, os.MkdirAll(filepath.Join(store, "2026-09.jsonl"), 0o750))
-	// A non-".jsonl" entry whose name reduces to the genuine shard's token once the
-	// trailing zero-width space is stripped. The ZWSP is at the END on purpose: it is
-	// what makes the name fail HasSuffix(".jsonl") while still sanitizing to
-	// "2026-08.jsonl", so the suffix half of the filter is the only thing keeping it
-	// out of the collision map. A ".tmp" extension would NOT work as a decoy — it
-	// sanitizes to a different token and so collides with nothing.
+	// The decoy: not a ".jsonl" by HasSuffix, but the genuine shard's token once Cf is
+	// stripped. See the header for why the ZWSP has to be trailing.
 	require.NoError(t, os.WriteFile(filepath.Join(store, "2026-08.jsonl\u200B"), []byte("staged\n"), 0o600))
 
 	rec := `{"schema_version":3,"id":"aaaa1111","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
@@ -580,15 +575,15 @@ func TestDebtBackfillJustifications_DryRunIgnoresNonShardEntriesWhenDisambiguati
 		"--store", store, "--review-root", reviewRoot, "--dry-run")
 	require.Equal(t, 0, code, out)
 	assert.Contains(t, out, "2026-08.jsonl:1 ",
-		"a .tmp twin is not a shard, so the genuine locator must print bare")
+		"an entry that is not a .jsonl is not a shard, so the genuine locator must print bare")
 	assert.NotRegexp(t, `2026-08\.jsonl#[0-9a-f]{6}`, out,
 		"no non-shard entry may push a genuine locator into its disambiguated form")
 }
 
-// The IsDir half in isolation: a directory named exactly like the CHANGED shard. It is
-// split from the .tmp case above so a mutation that removes only one half of the filter
-// is still caught — with both decoys in one assertion, either half alone keeps the test
-// red and the other half's coverage is unproven.
+// The IsDir half in isolation: a DIRECTORY whose name reduces to the changed shard's
+// token once Cf is stripped, so without the IsDir half it is a genuine collision rather
+// than merely an extra name. Split from the suffix case above for the reason given in
+// that test's header.
 func TestDebtBackfillJustifications_DryRunIgnoresADirectoryNamedLikeTheChangedShard(t *testing.T) {
 	root := t.TempDir()
 	store := filepath.Join(root, "debt")
