@@ -980,3 +980,95 @@ func TestSyncVerificationTruncation_DoesNotStampAJudgeOnAVerifyOwnedRecord(t *te
 	assert.Nil(t, data,
 		"no debateJudge on the record means verify owns it — the trip records why the verdict was voided and must survive")
 }
+
+// writeDebateFixture lands a reconciled/debate.json naming one ruled item, which
+// is the on-disk evidence the residue repair below keys on. debate.json is the
+// FIRST entry of runDebate's atomic group, so it is on disk in exactly the state
+// a rename that failed later leaves behind.
+func writeDebateFixture(t *testing.T, reviewDir string, items ...ItemResult) {
+	t.Helper()
+	require.NoError(t, writeDebateFile(reviewDir, DebateFile{
+		SchemaVersion: DebateSchemaVersion, Items: items,
+	}))
+}
+
+// TestSyncVerificationTruncation_RepairsAPartialWriteResidue pins the reconciling
+// pass over a publish that failed part-way.
+//
+// atomicwrite.WriteGroup stages every entry then renames them in sequence with no
+// rollback, so a rename that fails after findings.json lands leaves findings.json
+// with Truncated cleared while verification.json keeps its tool_budget_bytes entry
+// and its pre-debate verdict. filterAlreadyDebated then excludes the finding from
+// a later run, so nothing ever revisits it.
+//
+// The repair is gated on the ON-DISK verdict. A record reading confirmed or
+// refuted beside a tool_budget_bytes entry can only be the derived-ceiling
+// exemption — the read was shortened but the answer stood — so a findings.json
+// that says the caveat is gone proves a ruling cleared it and the write was lost.
+// The judge comes from reconciled/debate.json, which is written earlier in the
+// same group and therefore survives the failure that lost this file.
+func TestSyncVerificationTruncation_RepairsAPartialWriteResidue(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeVerificationFixture(t, reviewDir, `{"findings":[
+		{"file":"a.go","line":1,"problem":"p1","verdict":"confirmed","skeptic":"otto",
+		 "model":"m-x","reasoning":"otto read token.go:42","durationMs":1840,
+		 "trippedBudgets":["tool_budget_bytes"]}
+	]}`)
+	writeDebateFixture(t, reviewDir, ItemResult{
+		File: "a.go", Line: 1, Problem: "p1", Kind: "verification_disagreement",
+		Outcome: "overturned", Judge: "greta", Reasoning: "greta re-read the call site",
+	})
+
+	// findings.json as the lost publish left it: the ruling landed here.
+	findings := []reconcile.JSONFinding{{
+		File: "a.go", Line: 1, Problem: "p1", Reviewers: []string{"otto"},
+		Verification: &reclib.Verification{Verdict: reclib.VerdictRefuted, Skeptic: "otto"},
+	}}
+
+	// No ruling this run — filterAlreadyDebated is why this finding never comes back.
+	_, data, err := syncVerificationTruncation(reviewDir, findings, nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, data, "the two artifacts disagree about a caveat findings.json says is gone")
+
+	rec := parseRecord(t, data, "a.go")
+	assert.Empty(t, rec["trippedBudgets"],
+		"findings.json says the ruling cleared the caveat — the entry that survived the failed rename is the residue")
+	assert.Equal(t, reclib.VerdictRefuted, rec["verdict"],
+		"dropping the caveat alone returns the finding to the ratio under the verdict the judge replaced")
+	assert.Equal(t, "greta", rec["debateJudge"],
+		"the judge is recoverable from reconciled/debate.json, which the same failed publish left standing")
+	assert.Equal(t, "greta re-read the call site", rec["debateReasoning"],
+		"the reasoning beside the record still argues for the verdict the judge overturned")
+}
+
+// TestSyncVerificationTruncation_LeavesAnUnverifiableResidueCandidateAlone is the
+// scope guard for the repair above, mirroring
+// TestSyncVerificationTruncation_LeavesARuledDeclaredBudgetVoidingAlone one
+// generation later.
+//
+// An `unverifiable` verdict beside a tool_budget_bytes entry is the DECLARED-
+// ceiling voiding path: internal/verify throws the answer out and records the trip
+// as the only account of why. It is indistinguishable on disk from a residue whose
+// verdict happened to be unverifiable, so the repair declines both rather than
+// deleting a real voiding record. That residual is accepted, not overlooked.
+func TestSyncVerificationTruncation_LeavesAnUnverifiableResidueCandidateAlone(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeVerificationFixture(t, reviewDir, `{"findings":[
+		{"file":"c.go","line":3,"problem":"p3","verdict":"unverifiable","skeptic":"bruce",
+		 "trippedBudgets":["tool_budget_bytes"]}
+	]}`)
+	writeDebateFixture(t, reviewDir, ItemResult{
+		File: "c.go", Line: 3, Problem: "p3", Kind: "severity_split",
+		Outcome: "upheld", Judge: "greta", Reasoning: "severity settled",
+	})
+
+	findings := []reconcile.JSONFinding{{
+		File: "c.go", Line: 3, Problem: "p3", Reviewers: []string{"bruce"},
+		Verification: &reclib.Verification{Verdict: reclib.VerdictUnverifiable, Skeptic: "bruce"},
+	}}
+
+	_, data, err := syncVerificationTruncation(reviewDir, findings, nil, nil)
+	require.NoError(t, err)
+	assert.Nil(t, data,
+		"the trip is the only record of why a declared ceiling voided this verdict — an unverifiable record is never repaired")
+}
