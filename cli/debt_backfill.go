@@ -8,6 +8,7 @@ import (
 	"unicode"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/samestrin/atcr/internal/localdebt"
 )
@@ -158,6 +159,22 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// stripTerminalDrivers removes exactly the rune categories that can drive a terminal:
+// sanitizeCell's C0/ESC/DEL and C1, plus U+2028/U+2029, plus category Cf. It is the
+// shared first half of sanitizeLocator (which then percent-encodes for token safety)
+// and collisionKey (which then folds for equivalence). Splitting it out is what lets
+// the fold see the ORIGINAL runes: NFKC over an already-encoded token cannot map
+// "%C2%A0" back to "%20", so folding after encoding would silently do nothing for the
+// no-break-space case it exists to catch.
+func stripTerminalDrivers(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, sanitizeCell(s))
+}
+
 // sanitizeLocator is sanitizeCell plus category Cf, plus a percent-encoding of the
 // runes that would break the token from inside, for a field rendered UNQUOTED on a
 // terminal surface.
@@ -196,12 +213,7 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 // `leaderboard --table` share that helper, and Cf pass-through there is the documented
 // behavior, not an oversight.
 func sanitizeLocator(s string) string {
-	stripped := strings.Map(func(r rune) rune {
-		if unicode.Is(unicode.Cf, r) {
-			return -1
-		}
-		return r
-	}, sanitizeCell(s))
+	stripped := stripTerminalDrivers(s)
 
 	// Percent-encode the three things that would break `<shard>:<line>` as ONE
 	// unambiguously parseable, copy-pasteable token — which is the entire reason the
@@ -285,7 +297,7 @@ func pluralLines(n int) string {
 func locatorNames(shards []string, changes []localdebt.JustificationChange) map[string]string {
 	rawByToken := map[string]map[string]bool{}
 	add := func(shard string) {
-		t := sanitizeLocator(shard)
+		t := collisionKey(shard)
 		if rawByToken[t] == nil {
 			rawByToken[t] = map[string]bool{}
 		}
@@ -317,12 +329,47 @@ func locatorNames(shards []string, changes []localdebt.JustificationChange) map[
 	// change set together. A size hint cannot affect correctness, only allocation.
 	out := make(map[string]string, len(rawByToken))
 	for _, c := range changes {
+		// Keyed on the folded form, PRINTED as the plain sanitized token: the operator
+		// should still see the name as close to the file as this surface can render it,
+		// with the suffix — not a normalized spelling — doing the telling-apart.
 		t := sanitizeLocator(c.Shard)
-		if len(rawByToken[t]) > 1 {
+		if len(rawByToken[collisionKey(c.Shard)]) > 1 {
 			sum := sha256.Sum256([]byte(c.Shard))
 			t += "#" + hex.EncodeToString(sum[:])[:6]
 		}
 		out[c.Shard] = t
 	}
 	return out
+}
+
+// collisionKey is the value locatorNames groups shard names by: the shard name with
+// terminal-driving runes stripped, then folded through NFKC.
+//
+// It folds the STRIPPED name, not the printed token. sanitizeLocator percent-encodes
+// after stripping, and "%20" and "%C2%A0" are both plain ASCII by then — so a fold
+// applied to the token could no longer see that a space and a no-break space were ever
+// equivalent.
+//
+// Keying on the printed token's raw BYTES would detect only the ambiguity the Cf strip
+// itself introduces. Two names that RENDER identically but differ in bytes would get
+// distinct keys and no suffix at all — and two rows carrying what looks like the same
+// filename is the exact which-file-would-be-rewritten ambiguity this whole mechanism
+// exists to remove, arrived at by a different route. NFKC closes the
+// compatibility-equivalent half of it: NFC e-acute beside NFD e+U+0301, or U+00A0
+// beside a space.
+//
+// It is a coarse net, and deliberately so: over-grouping costs a redundant suffix on a
+// pair that would have read distinctly, which is noise. Under-grouping costs the
+// operator an unmarked ambiguity on the surface they approve an in-place rewrite from.
+//
+// KNOWN LIMIT, stated so the guarantee is not overstated: NFKC folds compatibility
+// equivalents, not visual confusables. U+2011 NON-BREAKING HYPHEN maps to U+2010, not
+// to ASCII U+002D, so "2026-08.jsonl" and "2026\u2011 08.jsonl" keep distinct keys and
+// both print bare. Closing that needs a confusables table rather than a normalizer, and
+// the residual is the same ambiguity that exists today rather than a worse one — the
+// same footing as the already-disambiguated-name case above. It is pinned by
+// TestLocatorNames_DoesNotFoldVisualConfusablesThatAreNotCompatibilityEquivalent so the
+// boundary is a decision on record, not a gap nobody noticed.
+func collisionKey(shard string) string {
+	return norm.NFKC.String(stripTerminalDrivers(shard))
 }
