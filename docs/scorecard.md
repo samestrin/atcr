@@ -336,7 +336,12 @@ hand-editing a JSONL store. If every selected record is dropped, the ordinary
 no-records error is raised instead of an empty envelope. An identity that is already
 empty — or whitespace-only, which is the same thing to every reader of the store — is
 a record written without a model, not a scrub casualty: it is left alone and still
-publishes.
+publishes. A **whitespace-only** identity is additionally **named on stderr** ("blank
+after trimming — the record has no model"), because it publishes as `model: ""`, which
+the leaderboard does not count; the warning is deliberately worded apart from the skip
+report above so a kept record is not mistaken for a dropped one. An identity already
+empty in the store is not warned about — that shape is ordinary history, and reporting
+it would name a large fraction of an unrotated store on every export.
 
 `benchmark export` applies the same rule as a **hard rejection** rather than a skip.
 The asymmetry is deliberate: it validates one just-produced run-result file, where

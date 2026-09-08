@@ -364,6 +364,13 @@ func selectPublishableRecordIdentities(cmd *cobra.Command, filtered []scorecard.
 	kept := make([]scorecard.Record, 0, len(filtered))
 	for _, rec := range filtered {
 		publishable := true
+		// One blank report per RECORD, not per field: the operator repairs the record,
+		// and a second line about its other blank identity is noise — the same trade the
+		// scrub-casualty report below makes with its `break`. It is a flag rather than a
+		// break because the checks must keep running: breaking out on a blank model
+		// would skip the reviewer field entirely, so a non-printing rune there — a
+		// misattribution vector that must HARD-fail — would publish.
+		blankReported := false
 		// Reviewer is the field Export scrubs into the envelope's `persona`; the pair
 		// is (persona, model) there, not (reviewer, model).
 		for _, f := range []struct{ name, value string }{
@@ -407,7 +414,40 @@ func selectPublishableRecordIdentities(cmd *cobra.Command, filtered []scorecard.
 			// reader of the store, and reporting it as a scrub casualty printed
 			// `model " ", which is empty once scrubbed` — a message an operator cannot
 			// act on.
-			if strings.TrimSpace(f.value) != "" && scorecard.ScrubPublicString(f.value) == "" {
+			// Three mutually exclusive shapes, chained so each term stays falsifiable:
+			// an identity ALREADY empty in the store falls through both arms untouched,
+			// one that is blank only after trimming is reported and kept, and one the
+			// scrub empties is reported and dropped.
+			//
+			// The already-empty case is deliberately left silent. It is a record written
+			// without a model — pre-existing, documented, and a data question about
+			// existing history rather than an identity-printability one — so `f.value !=
+			// ""` below is the term that keeps this change scoped to the whitespace
+			// shape. Deleting it starts reporting every model-less record in an
+			// unrotated store.
+			if trimmed := strings.TrimSpace(f.value); f.value != "" && trimmed == "" {
+				// Blank, and therefore KEPT. Scoping the scrub-casualty arm off an
+				// already-empty identity is deliberate (see above), but doing it
+				// silently was a strict loss: before that scoping such a record
+				// hard-failed locally with actionable text, and after it the operator
+				// got a clean local export carrying model:"" — precisely the document
+				// the sibling message calls one that "would be rejected at the
+				// leaderboard" — and learned about it from the board instead.
+				//
+				// The blank value is NOT printed. `model " "` is what made the old
+				// message unactionable, and a U+00A0 renders as nothing at all. The
+				// wording is deliberately distinct from the skip report's "empty once
+				// scrubbed" so an operator scanning stderr can tell a KEPT record from
+				// a DROPPED one without reading to the end of the line.
+				if !blankReported {
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+						"scorecard record %q: %s is blank after trimming — the record has no %s; "+
+							"it still publishes, but the leaderboard does not count an empty identity — "+
+							"edit or remove that record in the scorecard store to have it counted\n",
+						rec.RunID, f.name, f.name)
+					blankReported = true
+				}
+			} else if trimmed != "" && scorecard.ScrubPublicString(f.value) == "" {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
 					"skipping scorecard record %q: %s %q is empty once scrubbed for publication; "+
 						"publishing \"\" would be rejected at the leaderboard — "+
@@ -415,7 +455,10 @@ func selectPublishableRecordIdentities(cmd *cobra.Command, filtered []scorecard.
 					rec.RunID, f.name, f.value)
 				publishable = false
 				// One report per record, not one per field: the operator repairs the
-				// record, and a second line about its other identity is noise.
+				// record, and a second line about its other identity is noise. A break
+				// is safe HERE and not in the blank arm above, because the record is
+				// already dropped — nothing it carries can reach the envelope, so a
+				// check skipped on its other field cannot let anything through.
 				break
 			}
 		}
