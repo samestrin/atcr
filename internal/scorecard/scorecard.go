@@ -404,10 +404,24 @@ func Emit(in EmitInput, opts EmitOpts) error {
 		}
 		if hasVerification {
 			v, r := verified[name], refuted[name]
-			rate := ratio(v, v+r)
 			rec.FindingsVerified = &v
 			rec.FindingsRefuted = &r
-			rec.SurvivedSkepticRate = &rate
+			// The RATE is gated on a countable verdict surviving, not merely on a
+			// verification.json being present. With v+r == 0 — every verdict
+			// truncated, or this reviewer's findings drew none — ratio(0,0) is 0,
+			// and a published 0.0 is indistinguishable from a reviewer whose
+			// findings were ALL refuted: the strongest negative signal the metric
+			// carries, applied to a reviewer that was never measured. The counts
+			// above still ship; they say "nothing was countable", which is true.
+			//
+			// internal/scorecard/export.go states this rule at its own gate and
+			// cannot enforce it: a stored 0.0 satisfies its len(storedRates) > 0
+			// branch. The gate has to live here, where the degenerate ratio is
+			// produced.
+			if v+r > 0 {
+				rate := ratio(v, v+r)
+				rec.SurvivedSkepticRate = &rate
+			}
 			aggVerified += v
 			aggRefuted += r
 		}
@@ -432,8 +446,12 @@ func Emit(in EmitInput, opts EmitOpts) error {
 	if hasVerification {
 		agg.FindingsVerified = &aggVerified
 		agg.FindingsRefuted = &aggRefuted
-		rate := ratio(aggVerified, aggVerified+aggRefuted)
-		agg.SurvivedSkepticRate = &rate
+		// Same gate as the per-reviewer record above: an aggregate over zero
+		// countable verdicts has no rate, and a 0.0 there misreports the whole run.
+		if aggVerified+aggRefuted > 0 {
+			rate := ratio(aggVerified, aggVerified+aggRefuted)
+			agg.SurvivedSkepticRate = &rate
+		}
 	}
 	// Aggregate is appended LAST so it is the final line of the run's batch.
 	records = append(records, agg)
