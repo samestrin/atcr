@@ -358,7 +358,7 @@ func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFindi
 	// and on one whose every ruling left the caveat standing (applyRulings skips an
 	// out-of-enum verdict). Neither changed how a recorded verdict was reached, so
 	// neither is owed a correction; reading the snapshot at all would only risk one.
-	if len(clearedCaveats) == 0 {
+	if len(clearedCaveats) == 0 && len(rulings) == 0 {
 		return "", nil, nil
 	}
 	// A correction is owed only where a RULING cleared the caveat, which is why the
@@ -384,7 +384,30 @@ func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFindi
 		}
 		cleared[key] = ruledVerdict{verdict: f.Verification.Verdict, judge: ra.judge, reasoning: ra.reasoning}
 	}
-	if len(cleared) == 0 {
+	// A SECOND debate over one review dir rules findings whose caveat run 1 already
+	// cleared, so `cleared` is empty for them and the correction above never fires —
+	// yet run 1's judge is still stamped on the record for a verdict run 2 replaced.
+	// reruled carries those: a ruling applied this run whose caveat was NOT cleared
+	// by it, i.e. exactly the rulings the set above cannot speak for.
+	//
+	// Whether such a record is owed a correction is decided per record below, on the
+	// on-disk debateJudge — the marker that says a PRIOR debate already owns it. A
+	// record the verify stage alone produced is left alone: a ruling that cleared no
+	// caveat on a verify-owned record is the declared-ceiling voiding debate.go's
+	// scope note keeps out of this stage.
+	reruled := map[FindingKey]ruledVerdict{}
+	for _, f := range findings {
+		key := FindingKey{File: f.File, Line: f.Line, Problem: f.Problem}
+		if _, done := cleared[key]; done || f.Verification == nil {
+			continue
+		}
+		ra, ok := rulings[key]
+		if !ok || !validVerdict(ra.verdict) {
+			continue
+		}
+		reruled[key] = ruledVerdict{verdict: f.Verification.Verdict, judge: ra.judge, reasoning: ra.reasoning}
+	}
+	if len(cleared) == 0 && len(reruled) == 0 {
 		return "", nil, nil
 	}
 
@@ -426,17 +449,36 @@ func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFindi
 		if !ok {
 			continue
 		}
-		budgets, ok := rec["trippedBudgets"].([]any)
-		if !ok || len(budgets) == 0 {
-			continue
-		}
 		file, _ := rec["file"].(string)
 		problem, _ := rec["problem"].(string)
 		line := 0
 		if n, ok := rec["line"].(float64); ok {
 			line = int(n)
 		}
-		settled, ok := cleared[FindingKey{File: file, Line: line, Problem: problem}]
+		key := FindingKey{File: file, Line: line, Problem: problem}
+		if restated, ok := reruled[key]; ok {
+			// Gated on an EXISTING debateJudge, not on the ruling alone. That field is
+			// empty on every record the verify stage produced and non-empty only where a
+			// prior debate rewrote one, so it is the one signal that says "this verdict
+			// and its attribution are debate's to keep current". Without the gate this
+			// branch would start stamping judges onto verify-owned records a ruling
+			// merely touched — the recompute the scope note rules out, and the reverse of
+			// the mis-attribution the stamp exists to prevent.
+			if judge, _ := rec["debateJudge"].(string); judge != "" {
+				rec["verdict"] = restated.verdict
+				rec["debateJudge"] = restated.judge
+				rec["debateReasoning"] = restated.reasoning
+				changed = true
+			}
+			// reruled and cleared are disjoint by construction (the loop that builds
+			// reruled skips every key already in cleared), so nothing below applies.
+			continue
+		}
+		budgets, ok := rec["trippedBudgets"].([]any)
+		if !ok || len(budgets) == 0 {
+			continue
+		}
+		settled, ok := cleared[key]
 		if !ok {
 			continue
 		}
