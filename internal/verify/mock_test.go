@@ -3,6 +3,7 @@ package verify
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 
@@ -37,6 +38,52 @@ type fakeChatCompleter struct {
 	// assert what reaches the provider rather than only what the Agent literal
 	// was built with. Read it through lastInvocation, never directly.
 	lastInv llmclient.Invocation
+	// toolBytesSeen accumulates the length of every role:"tool" message that has
+	// ever reached this completer, deduplicated across calls by counting only the
+	// messages past the previous call's length — the engine re-sends the whole
+	// conversation each turn, so summing the slice on every call would count the
+	// same result once per subsequent turn. It is what a test asserts on when the
+	// question is "how much tool output actually entered the model's context",
+	// which no other field can answer: the Invocation carries the prompt, not the
+	// message list. Read it through toolBytesDelivered, never directly.
+	toolBytesSeen int
+	msgsSeen      int
+	// seenSig fingerprints every message index already counted (role plus content
+	// length). The dedupe above ASSUMES the engine's message list only ever grows
+	// — never reordered, never trimmed — and that assumption was load-bearing and
+	// unstated: if it stopped holding, toolBytesSeen would under-count and every
+	// assertion built on it would pass vacuously. Comparing the prefix on each
+	// call turns the assumption into something a test can fail on. See
+	// appendOnlyViolation.
+	seenSig   []string
+	violation string
+}
+
+// msgSig fingerprints one message for the append-only check: role plus content
+// length is enough to catch a reorder or a trim, and cheap enough to run on
+// every Chat call.
+func msgSig(m llmclient.Message) string {
+	n := 0
+	if m.Content != nil {
+		n = len(*m.Content)
+	}
+	return fmt.Sprintf("%s/%d", m.Role, n)
+}
+
+// appendOnlyViolation returns a description of the first observed breach of the
+// append-only assumption toolBytesSeen depends on, or "" when none occurred.
+func (f *fakeChatCompleter) appendOnlyViolation() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.violation
+}
+
+// toolBytesDelivered returns the total bytes of role:"tool" content the engine
+// has delivered to this completer across every Chat call.
+func (f *fakeChatCompleter) toolBytesDelivered() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.toolBytesSeen
 }
 
 // lastInvocation returns the Invocation from the most recent Complete or Chat
@@ -57,9 +104,32 @@ func (f *fakeChatCompleter) Complete(_ context.Context, inv llmclient.Invocation
 	return "", nil
 }
 
-func (f *fakeChatCompleter) Chat(ctx context.Context, inv llmclient.Invocation, _ []llmclient.Message, _ []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+func (f *fakeChatCompleter) Chat(ctx context.Context, inv llmclient.Invocation, msgs []llmclient.Message, _ []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
 	f.mu.Lock()
 	f.lastInv = inv
+	if f.violation == "" {
+		if len(msgs) < f.msgsSeen {
+			f.violation = fmt.Sprintf("message list shrank from %d to %d: the dedupe below under-counts and every toolBytesDelivered assertion passes vacuously", f.msgsSeen, len(msgs))
+		} else {
+			for i := 0; i < f.msgsSeen && i < len(msgs); i++ {
+				if got := msgSig(msgs[i]); got != f.seenSig[i] {
+					f.violation = fmt.Sprintf("message %d changed from %s to %s: the list was reordered or rewritten, so already-counted bytes are no longer what was counted", i, f.seenSig[i], got)
+					break
+				}
+			}
+		}
+	}
+	for i := f.msgsSeen; i < len(msgs); i++ {
+		if msgs[i].Role == "tool" && msgs[i].Content != nil {
+			f.toolBytesSeen += len(*msgs[i].Content)
+		}
+	}
+	for i := len(f.seenSig); i < len(msgs); i++ {
+		f.seenSig = append(f.seenSig, msgSig(msgs[i]))
+	}
+	if len(msgs) > f.msgsSeen {
+		f.msgsSeen = len(msgs)
+	}
 	call := f.idx
 	f.idx++
 	f.chatCalls++

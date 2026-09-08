@@ -172,3 +172,57 @@ func TestPromptOverheadTokens_IsPublishedInRegistryDocs(t *testing.T) {
 		t.Fatalf("docs/registry.md must publish the budget formula with the current prompt overhead (%d); wanted the substring %q", promptOverheadTokens, want)
 	}
 }
+
+// TestInputRoomTokens_NeverReportsADeficit pins the contract InputRoomTokens
+// publishes: the tokens a resolved window leaves for input, never a negative.
+//
+// A caller sizing a reservation against this number divides it (internal/verify
+// caps the skeptic's output reservation at half the input room). A negative
+// return would make that half a negative reservation, and the only reason it does
+// not currently corrupt the ceiling is that EffectiveByteBudget separately clamps
+// a negative outputTokens to 0 — a second guard in a different package. The
+// contract is stated here so it does not depend on that coincidence.
+func TestInputRoomTokens_NeverReportsADeficit(t *testing.T) {
+	unknown := "no-such-model-in-the-table"
+
+	for _, tc := range []struct {
+		name     string
+		declared int
+		want     int
+	}{
+		{"a window well above the overhead reports the remainder", 32768, 32768 - promptOverheadTokens},
+		// Hard-coded on purpose: every row above states its expectation relative to
+		// promptOverheadTokens, so moving the constant leaves them all vacuously
+		// green. This row pins the overhead to an independent number (32768 - 4096).
+		{"the default window", 32768, 28672},
+		{"a window one token above the overhead reports one token", promptOverheadTokens + 1, 1},
+		{"a window exactly at the overhead reports no room", promptOverheadTokens, 0},
+		{"a window below the overhead reports no room rather than a deficit", 1, 0},
+	} {
+		declared := tc.declared
+		if got := InputRoomTokens(unknown, &declared); got != tc.want {
+			t.Errorf("%s: InputRoomTokens(declared=%d) = %d, want %d", tc.name, declared, got, tc.want)
+		}
+	}
+
+	// The two derivations must agree about the overhead: input room is exactly
+	// what EffectiveByteBudget has left to convert once nothing is reserved. The
+	// window list spans the whole declared range — the overhead boundary, the
+	// first token past it, the shipped default, and the 10,000,000 cap — so a
+	// second subtraction added to EffectiveByteBudget (a safety margin, a
+	// tool-schema allowance) or a silent clamp in InputRoomTokens fails here
+	// instead of desyncing the skeptic lane's /2 reservation cap.
+	for _, declared := range []int{1, promptOverheadTokens, promptOverheadTokens + 1, 12288, 32768, 128000, 10000000} {
+		declared := declared
+		room := InputRoomTokens(unknown, &declared)
+		if got, want := EffectiveByteBudget(unknown, &declared, 0), int64(room)*conservativeBytesPerTokenNum/conservativeBytesPerTokenDen; got != want {
+			t.Errorf("declared=%d: EffectiveByteBudget with nothing reserved = %d, but the reported input room converts to %d", declared, got, want)
+		}
+	}
+
+	// An undeclared window resolves through the table/default tier, and the room
+	// reported must follow that resolution rather than assuming a declaration.
+	if got, want := InputRoomTokens(unknown, nil), ContextWindowTokens(unknown, nil)-promptOverheadTokens; got != want {
+		t.Errorf("undeclared: InputRoomTokens = %d, want %d", got, want)
+	}
+}

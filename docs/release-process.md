@@ -270,6 +270,33 @@ execute against the commit being published.
    _not_ use `git push --tags`, which would also push every app `v*` tag and fire
    the app release workflow.
 
+   [`.githooks/pre-push`](../.githooks/pre-push) exempts this push from its
+   pinned-reconcile build: when every ref being pushed matches
+   `refs/tags/reconcile/*`, the `GOWORK=off go build ./...` gate is skipped. It
+   has to be — the pin is not bumped until step 4 below, so at this moment the
+   root module by construction does not build against the pinned reconcile, and
+   the only other way through would be `git push --no-verify`, which also
+   disables gofmt, golangci-lint, the suite and the reconcile module checks. The
+   tag is still gated: `reconcile-module.yml` runs the module's own three checks
+   on it (step 3). A push that carries a branch **alongside** the tag runs the
+   pin gate as usual.
+
+   **Known gap — a force-update of an EXISTING `reconcile/vX.Y.Z` tag.** The hook
+   matches on the refspec shape alone, so `git push --force origin
+   reconcile/v0.1.1` is indistinguishable from the fresh tag push above and is
+   exempted too. That is the one shape where the gate would matter most: the root
+   `go.mod` may already pin exactly that version, so the build the gate would run
+   is the meaningful one. The compensating control does not cover it either —
+   `reconcile-module.yml` runs only the module's own `gofmt`/`golangci-lint`/`go
+   test`, never `GOWORK=off go build ./...` on the root.
+
+   Impact is bounded, not zero: the Go proxy caches an immutable version, so a
+   moved tag largely cannot change what an existing pin resolves to. Treat a tag
+   force-update as a manual step and run `GOWORK=off go build ./...` yourself
+   before it. (A tag **delete** is still gated — git sends the literal `(delete)`
+   as the local ref, which fails the pattern — and several reconcile tags in one
+   push behave like one.)
+
 3. **Let the module CI gate run.** The `reconcile/v*` tag push fires
    [`reconcile-module.yml`](../.github/workflows/reconcile-module.yml) on
    `ubuntu-latest` (`gofmt`, `golangci-lint`, `go test -race`

@@ -2,11 +2,14 @@ package reconcile
 
 import (
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/samestrin/atcr/internal/payload"
 )
 
 // readDoc loads one docs/*.md file for the drift checks below. The published
@@ -57,19 +60,107 @@ func TestDocs_ToolBudgetBytesRowStatesTheSkepticClamp(t *testing.T) {
 		"a reader needs to know WHICH declaration triggers the clamp")
 	assert.Contains(t, row, "EffectiveByteBudget",
 		"naming the derivation is what makes the ceiling checkable rather than folklore")
+
+	// The reservation clauses. Asserted as load-bearing PHRASES rather than whole
+	// sentences, so ordinary rewording does not break the guard but losing the
+	// meaning does.
+	assert.Contains(t, row, "half the window's input room",
+		"the reservation is capped at half the input room — a row that omits the cap describes a clamp the lane stopped performing")
+	assert.Contains(t, row, "at or below the prompt overhead",
+		"payload.EffectiveByteBudget returns 0 on effectiveTokens <= 0, so a window EXACTLY equal to the overhead also derives nothing")
+	assert.NotContains(t, row, "floored at",
+		"reservedOutputTokens DEFAULTS to the built-in 8192 when max_tokens is unset; it never floors, so max_tokens: 100 really does reserve 100")
+	assert.Contains(t, row, "only a declaration BELOW the derived ceiling",
+		"a declaration at or above the derived ceiling is never enforced, so an operator must be told which declarations actually bind")
+	assert.NotContains(t, row, "declaration voids the verdict",
+		"the unqualified form must never appear: only the qualified 'only a declaration BELOW the derived ceiling' clause carries the semantics, so rewording away the qualifier must fail here")
+
+	// One operand anchored to the CODE, not to a string literal. Every other
+	// assertion here compares one document against another author's prose, so a
+	// revert of internal/verify alone — the rollback plan's stated unit — would
+	// leave both documents describing a clamp the lane no longer performs with the
+	// suite still green. This one fails when the constant moves, and the phrase
+	// is chosen so a bare backticked literal cannot match vacuously: the row
+	// also contains `0`, `100` and `20480`, so a bare "`8192`" check would pass
+	// with DefaultOutputTokens set to any of those.
+	assert.Contains(t, row, "the built-in `"+strconv.Itoa(payload.DefaultOutputTokens)+"`",
+		"the row must publish the CURRENT built-in reservation, not the number it had when the sentence was written")
+	assert.Contains(t, row, "1-byte floor",
+		"the floor is the one path where a ceiling the operator never declared voids the verdict — a row that omits it contradicts the lane")
+
+	// The negative path the skeptic lane clamps is reachable only OUTSIDE load
+	// validation: registry files reject a negative tool_budget_bytes, but a
+	// programmatically built AgentConfig never passes through that validation, so
+	// the row's "rejected at load" cell and its floor sentence describe two
+	// different construction paths. The row must say so, or a reader takes
+	// "rejected at load" as meaning the skeptic lane never sees a negative.
+	assert.Contains(t, row, "programmatically built",
+		"the row must state that load validation does not govern every construction path and name what the skeptic lane does with a negative")
+
+	// Code-anchored boundary. The row publishes the cap-binding threshold as a
+	// number; deriving it here from payload's constants means the published
+	// figure fails this guard the moment the formula it summarizes moves.
+	assert.Contains(t, row, "(`"+strconv.Itoa(2*payload.DefaultOutputTokens+4096)+"` at the built-in default)",
+		"the published cap boundary must equal 2*DefaultOutputTokens+4096 computed from code, not a number that went stale when the formula changed")
+	assert.Contains(t, row, "whole input room is one token",
+		"the ceiling leaves reply room EXCEPT where the whole input room is one token; the bare two-word check matched an unrelated sentence anywhere in the row and broke on faithful rewording, so the phrase carries the claim")
+	assert.Contains(t, row, "a DEFAULT, not a floor",
+		"the positive form of the banned wording: a reworded restatement of the old wrong claim ('floored at') must fail here even when it avoids the banned phrase verbatim")
 }
 
-// docBullet returns the single "- **`field`**" bullet naming want, or the first
-// bullet containing want when the bullet is titled in prose rather than by field.
-func docBullet(t *testing.T, doc, want string) string {
-	t.Helper()
+// TestDocs_ContextWindowRowDoesNotRestateTheSkepticClamp pins the
+// context_window_tokens row against the tool_budget_bytes row in the same table.
+//
+// Both rows described the same clamp, in different words, and they drifted: row
+// 239 was corrected while row 71 kept an EffectiveByteBudget(model, declaration,
+// max_tokens) formula that understates the reservation for every agent declaring
+// no max_tokens and never mentions the half-room cap at all. Two descriptions of
+// one behaviour is the drift mechanism itself, so the row now points at the
+// other rather than restating it.
+func TestDocs_ContextWindowRowDoesNotRestateTheSkepticClamp(t *testing.T) {
+	doc := readDoc(t, "registry.md")
+	row := docTableRow(t, doc, "context_window_tokens")
+
+	assert.Contains(t, row, "tool_budget_bytes",
+		"the row must still tell a reader WHICH budget the declaration bounds in the skeptic lane")
+	assert.NotContains(t, row, "EffectiveByteBudget(",
+		"a second copy of the formula is what drifted — this row cross-references the tool_budget_bytes row instead")
+	assert.NotContains(t, row, "floored",
+		"the reservation is a default, not a floor, in every row that mentions it")
+	assert.Contains(t, row, "(#tool-using-reviewer-fields-active-in-20)",
+		"absence of the old formula is not the fix — the row must actually POINT at the one description of the clamp")
+}
+
+// findBulletLines returns every "- " line of doc containing want. Split out of
+// docBullet so the match-count contract is unit-testable: a second, earlier
+// bullet mentioning the same substring (a summary or changelog-style line) must
+// fail loudly instead of silently asserting against the wrong bullet.
+func findBulletLines(doc, want string) []string {
+	var lines []string
 	for _, line := range strings.Split(doc, "\n") {
 		if strings.HasPrefix(line, "- ") && strings.Contains(line, want) {
-			return line
+			lines = append(lines, line)
 		}
 	}
-	t.Fatalf("docs has no bullet containing %q", want)
-	return ""
+	return lines
+}
+
+// docBullet returns the single "- **`field`**" bullet naming want, or the single
+// bullet containing want when the bullet is titled in prose rather than by
+// field. Mirrors docTableRow's "one row is the unit that drifts" rationale: it
+// fails loudly both when no bullet matches AND when more than one does, because
+// a decoy bullet earlier in the document would otherwise pin the guard to the
+// wrong line while the real one drifts unchecked.
+func docBullet(t *testing.T, doc, want string) string {
+	t.Helper()
+	matches := findBulletLines(doc, want)
+	if len(matches) == 0 {
+		t.Fatalf("docs has no bullet containing %q", want)
+	}
+	if len(matches) > 1 {
+		t.Fatalf("docs has %d bullets containing %q — the drift guard must pin exactly one, or it asserts against an arbitrary one (decoy bullet?)", len(matches), want)
+	}
+	return matches[0]
 }
 
 // TestDocs_VerificationPerFindingBudgetsMatchTheSkepticLane pins
@@ -93,6 +184,35 @@ func TestDocs_VerificationPerFindingBudgetsMatchTheSkepticLane(t *testing.T) {
 		"naming the derivation is what lets a reader check the ceiling instead of guessing it")
 	assert.NotContains(t, bullet, "A tripped budget yields `unverifiable`, never a dropped finding.",
 		"the unqualified claim is false for a trip on the derived ceiling, which truncates without voiding the verdict")
+
+	// The same two clauses registry.md's tool_budget_bytes row carries. Asserting
+	// them in BOTH documents is what stops the pair drifting apart again: the
+	// downstream sweep that corrected the registry row left this bullet behind,
+	// and the guard passed anyway because it asserted neither clause.
+	assert.Contains(t, bullet, "half the window's input room",
+		"the reservation is capped at half the input room — without the cap the bullet promises a clamp the lane stopped performing")
+	assert.NotContains(t, bullet, "floored at",
+		"reservedOutputTokens DEFAULTS to the built-in 8192 when max_tokens is unset; neither this lane nor the review lane floors")
+	assert.NotContains(t, bullet, "so tool output cannot walk a small-window skeptic past its own window",
+		"the promise is what drifted: state the cap that makes it true, not the outcome alone")
+	assert.Contains(t, bullet, "at or below the prompt overhead",
+		"the threshold correction must hold in BOTH documents — asserting it in only one is how the pair drifted last time")
+	assert.Contains(t, bullet, "only a declaration BELOW the derived ceiling",
+		"the same qualifier the registry row carries: a larger declaration is never the number enforced")
+	assert.NotContains(t, bullet, "declaration voids the verdict",
+		"the unqualified form must never appear here either — the qualifier is load-bearing in both documents or in neither")
+	// Same non-colliding phrase anchor as the registry row: a bare backticked
+	// literal would match the `0`/`100` literals this bullet already carries.
+	assert.Contains(t, bullet, "the built-in `"+strconv.Itoa(payload.DefaultOutputTokens)+"`",
+		"anchored to the code so a production-only revert cannot leave this bullet quietly wrong")
+	assert.Contains(t, bullet, "1-byte floor",
+		"the same exception the registry row carries: the floor's trip DOES yield unverifiable, so the derived-trip promise needs its carve-out here too")
+	assert.Contains(t, bullet, "(`"+strconv.Itoa(2*payload.DefaultOutputTokens+4096)+"` at the built-in default)",
+		"the bullet must publish the same code-anchored cap boundary the registry row publishes — asserting it in both documents is what stops the pair drifting")
+	assert.Contains(t, bullet, "whole input room is one token",
+		"the reply-room promise is qualified in both documents or in neither, and the qualifying phrase must carry the claim")
+	assert.Contains(t, bullet, "a DEFAULT, not a floor",
+		"the positive form of the banned wording, here too")
 }
 
 // TestDocs_CrossExaminationPerSeatBudgetsMatchTheDebateLane pins
@@ -114,4 +234,21 @@ func TestDocs_CrossExaminationPerSeatBudgetsMatchTheDebateLane(t *testing.T) {
 		"the asymmetry with the skeptic lane is only discoverable if the clamp that does NOT apply here is named")
 	assert.Contains(t, bullet, "skeptic",
 		"naming the lane that behaves differently is what makes the asymmetry findable")
+}
+
+// TestFindBulletLines_RequiresExactlyOneMatch pins the helper docBullet is built
+// on: it must surface EVERY matching bullet so docBullet can fail loudly on a
+// decoy, mirroring the "one row is the unit that drifts" rationale of
+// docTableRow. Under the old first-match behaviour a decoy bullet earlier in the
+// document silently redirected the guard; this test is what makes that failure
+// mode loud.
+func TestFindBulletLines_RequiresExactlyOneMatch(t *testing.T) {
+	doc := "- alpha mention of Per-finding budgets\n- real: **Per-finding budgets** — the actual bullet\n- unrelated\n"
+	matches := findBulletLines(doc, "Per-finding budgets")
+	require.Len(t, matches, 2,
+		"the helper must collect all matches — docBullet fails loudly on the ambiguity instead of asserting the first one")
+	require.Empty(t, findBulletLines(doc, "Per-seat budgets"),
+		"no match must come back empty so docBullet's no-match fatal still fires")
+	require.Len(t, findBulletLines("- **Per-seat budgets** — fine\n", "Per-seat budgets"), 1,
+		"the healthy single-match case must pass through unchanged")
 }

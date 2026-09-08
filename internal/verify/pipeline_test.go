@@ -1172,3 +1172,55 @@ func (c *ctxRecordingChat) Chat(ctx context.Context, _ llmclient.Invocation, _ [
 	content := `{}`
 	return &llmclient.ChatResponse{Message: llmclient.Message{Role: "assistant", Content: &content}, FinishReason: "stop"}, nil
 }
+
+// TestRunVerify_SkipDoesNotLendSkepticMetadataToAJudgeVerdict covers the case the
+// verdict-equality guard stopped catching.
+//
+// The guard's stated rule is that "a stale or hand-edited prior with a different
+// verdict must not lend its audit metadata to a now-different outcome", and it
+// enforced it with EqualFold(prior.Verdict, block.Verdict). That worked while an
+// overturned finding left the two artifacts disagreeing: verification.json still
+// held the verify verdict, findings.json held the judge's, so the guard fired.
+// internal/debate now writes the judge's verdict into verification.json too, which
+// makes the two equal BY CONSTRUCTION on an overturn — so on a re-verify without
+// --fresh the finding is skipped, the carry-forward fires, and the record again
+// claims the judge's refuted was produced by the skeptic's model in the skeptic's
+// wall-clock. The mis-attribution becomes self-perpetuating across re-verifies
+// instead of being cleared on the first one.
+//
+// debateJudge is what the rewrite does NOT equalise: it is empty on every record
+// the verify stage alone produced.
+func TestRunVerify_SkipDoesNotLendSkepticMetadataToAJudgeVerdict(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+		Reviewers: []string{"rev"}, Verification: &reclib.Verification{Verdict: "refuted", Skeptic: "otto"},
+	}})
+	// The artifact internal/debate leaves behind after an overturn: the judge's
+	// verdict, the superseded skeptic run's model/durationMs, and the judge
+	// attribution that says which is which.
+	recon := filepath.Join(dir, reconciledSubdir)
+	require.NoError(t, os.WriteFile(filepath.Join(recon, "verification.json"), []byte(`{"findings":[
+		{"file":"a.go","line":1,"problem":"boom","verdict":"refuted","skeptic":"otto",
+		 "model":"claude-sonnet-4-6","reasoning":"read token.go:42","durationMs":1840,
+		 "trippedBudgets":[],"debateJudge":"greta","debateReasoning":"the call site guards the parse"}
+	]}`), 0o644))
+
+	_, runErr := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	})
+	require.NoError(t, runErr)
+
+	data, rerr := os.ReadFile(filepath.Join(recon, "verification.json"))
+	require.NoError(t, rerr)
+	var vf VerificationFile
+	require.NoError(t, json.Unmarshal(data, &vf))
+	require.Len(t, vf.Findings, 1)
+	assert.Equal(t, "refuted", vf.Findings[0].Verdict, "a skipped finding keeps its verdict")
+	assert.Empty(t, vf.Findings[0].Model,
+		"the model in the prior ran the skeptic verdict the judge REPLACED — lending it to the judge's outcome is the mis-attribution this guard exists to stop")
+	assert.Zero(t, vf.Findings[0].DurationMs,
+		"the wall-clock in the prior measured the superseded skeptic run, not the ruling")
+	assert.Equal(t, "greta", vf.Findings[0].DebateJudge,
+		"the judge attribution is the one piece of the prior that DOES describe the standing verdict, so it carries forward")
+}

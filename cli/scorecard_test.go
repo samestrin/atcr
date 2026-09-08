@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -226,4 +227,82 @@ func TestRenderScorecard_ShowsDocShieldedOnlyWhenNonzero(t *testing.T) {
 		assert.Regexp(t, `(?m)^greta\b.*\s4\s*$`, out, "greta's row must carry its shielded count")
 		assert.Regexp(t, `(?m)^bruce\b.*\s0\s*$`, out, "bruce shows 0 rather than a blank")
 	})
+}
+
+// TestScorecardCmd_AllTruncatedReviewerRendersNotMeasured pins the one surface a
+// human reads against the omission the emitter exists to produce.
+//
+// internal/scorecard omits survived_skeptic_rate when no countable verdict
+// survived — a published 0.0 is indistinguishable from a reviewer whose findings
+// were ALL refuted, the strongest negative signal the metric carries. The table
+// then gated SURV% on FindingsVerified, which Emit always sets under
+// hasVerification, so the not-measured rendering was unreachable and `survived :=
+// 0.0` printed 0%. The record says "not measured" and the table said "0%".
+func TestScorecardCmd_AllTruncatedReviewerRendersNotMeasured(t *testing.T) {
+	isolate(t)
+	runID := "2026-06-14T10:00:00Z-trunc"
+	rec := reviewerRec(runID, "bruce", "claude-sonnet-4-6", 1, 0)
+	// The all-truncated shape: verification ran, both counts present at zero, and
+	// the rate deliberately absent.
+	v, r := 0, 0
+	rec.FindingsVerified = &v
+	rec.FindingsRefuted = &r
+	rec.SurvivedSkepticRate = nil
+	storeRecord(t, rec)
+
+	code, out := execCmdCapture(t, "scorecard", runID)
+	require.Equal(t, 0, code, out)
+	require.Contains(t, out, "SURV%", "verification ran, so the columns still show")
+	assert.Equal(t, "-", survCell(t, out, "bruce"),
+		"an absent rate must render as not-measured — printing 0% republishes the ambiguity the emitter dropped the key to remove")
+}
+
+// TestScorecardCmd_RefutedReviewerStillRendersZeroPercent is the other half: a
+// rate that is genuinely 0.0 is a real measurement and must still print. Without
+// this, "render - when absent" could be satisfied by never printing 0% at all.
+func TestScorecardCmd_RefutedReviewerStillRendersZeroPercent(t *testing.T) {
+	isolate(t)
+	runID := "2026-06-14T10:00:00Z-refuted"
+	rec := reviewerRec(runID, "bruce", "claude-sonnet-4-6", 1, 0)
+	v, r := 0, 3
+	rate := 0.0
+	rec.FindingsVerified = &v
+	rec.FindingsRefuted = &r
+	rec.SurvivedSkepticRate = &rate
+	storeRecord(t, rec)
+
+	code, out := execCmdCapture(t, "scorecard", runID)
+	require.Equal(t, 0, code, out)
+	assert.Equal(t, "0%", survCell(t, out, "bruce"),
+		"every one of this reviewer's findings was refuted — that IS a measured 0% and must not be hidden")
+}
+
+// survCell returns the SURV% cell of the named reviewer's row. Asserting on the
+// whole table cannot work here: CORR% renders "50%", which contains "0%", so a
+// substring check on the output passes and fails for the wrong reasons.
+func survCell(t *testing.T, out, reviewer string) string {
+	t.Helper()
+	var header, row []string
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) == 0 {
+			continue
+		}
+		if f[0] == "REVIEWER" {
+			header = f
+		}
+		if f[0] == reviewer {
+			row = f
+		}
+	}
+	require.NotNil(t, header, "no header row in output:\n%s", out)
+	require.NotNil(t, row, "no row for reviewer %q in output:\n%s", reviewer, out)
+	require.Equal(t, len(header), len(row), "header/row column mismatch:\n%s", out)
+	for i, h := range header {
+		if h == "SURV%" {
+			return row[i]
+		}
+	}
+	t.Fatalf("no SURV%% column in output:\n%s", out)
+	return ""
 }

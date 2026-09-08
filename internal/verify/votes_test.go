@@ -120,3 +120,81 @@ func TestAggregateVerdicts_MajorityRefuterAbsentFromSkeptic(t *testing.T) {
 	carolInNotes := strings.Contains(got.Notes, "disagrees")
 	assert.Equal(t, carolInSkeptic, carolInNotes, "dissenter name and reasoning must be consistent (both present or both absent)")
 }
+
+// truncatedV is v with the shortened-read caveat set.
+func truncatedV(verdict, skeptic, notes string) *reclib.Verification {
+	x := v(verdict, skeptic, notes)
+	x.Truncated = true
+	return x
+}
+
+// TestAggregateVerdicts_TieDropsALosingVotersTruncation pins the tie arm's
+// narrowing of the Truncated caveat — the counterpart of the decisive-vote rule
+// TestWinningAttribution already covers.
+//
+// A tie's verdict is unverifiable, and that verdict comes from the TIE, not from
+// any one voter. Annotating it with a losing confirmed voter's truncation would
+// say "this unverifiable was reached from a shortened read" about a verdict that
+// voter never produced — and the caveat is no longer cosmetic: it drives the
+// per-reviewer precision exclusion in internal/scorecard.
+//
+// Mutation-verified as unpinned: replacing
+// anyTruncated(filterByVerdict(valid, verdictUnverifiable)) with
+// anyTruncated(valid) left the whole suite green.
+func TestAggregateVerdicts_TieDropsALosingVotersTruncation(t *testing.T) {
+	t.Parallel()
+	got := aggregateVerdicts([]*reclib.Verification{
+		truncatedV(verdictConfirmed, "s1", "reason-confirm"),
+		v(verdictRefuted, "s2", "reason-refute"),
+	})
+	require.NotNil(t, got)
+	require.Equal(t, verdictUnverifiable, got.Verdict)
+	assert.False(t, got.Truncated,
+		"the truncation belongs to a confirmed verdict this record does not report — carrying it forward describes the wrong answer")
+}
+
+// TestAggregateVerdicts_TieKeepsAnUnverifiableVotersTruncation is the other half
+// of the same rule: a voter who was ITSELF unverifiable from a shortened read
+// describes the verdict the tie actually reports, so its caveat survives.
+func TestAggregateVerdicts_TieKeepsAnUnverifiableVotersTruncation(t *testing.T) {
+	t.Parallel()
+	got := aggregateVerdicts([]*reclib.Verification{
+		truncatedV(verdictUnverifiable, "s1", "ran out of budget"),
+		v(verdictConfirmed, "s2", "holds"),
+	})
+	require.NotNil(t, got)
+	require.Equal(t, verdictUnverifiable, got.Verdict)
+	assert.True(t, got.Truncated,
+		"an unverifiable voter's shortened read is exactly what the tie's unverifiable reports")
+}
+
+// TestAggregateVerdicts_DecisiveVoteKeepsTheWinnersTruncation states the
+// symmetric decisive-vote case in the same place, so the two arms of
+// anyTruncated's contract can be read side by side.
+func TestAggregateVerdicts_DecisiveVoteKeepsTheWinnersTruncation(t *testing.T) {
+	t.Parallel()
+	got := aggregateVerdicts([]*reclib.Verification{
+		truncatedV(verdictConfirmed, "s1", "holds"),
+		v(verdictConfirmed, "s2", "also holds"),
+		v(verdictRefuted, "s3", "nope"),
+	})
+	require.NotNil(t, got)
+	require.Equal(t, verdictConfirmed, got.Verdict)
+	assert.True(t, got.Truncated,
+		"a winning voter read short, and the record reports that winner's verdict")
+}
+
+// TestAggregateVerdicts_DecisiveVoteIgnoresALosersTruncation completes the
+// matrix: a losing voter's caveat never reaches a decisive record either.
+func TestAggregateVerdicts_DecisiveVoteIgnoresALosersTruncation(t *testing.T) {
+	t.Parallel()
+	got := aggregateVerdicts([]*reclib.Verification{
+		v(verdictConfirmed, "s1", "holds"),
+		v(verdictConfirmed, "s2", "also holds"),
+		truncatedV(verdictRefuted, "s3", "nope"),
+	})
+	require.NotNil(t, got)
+	require.Equal(t, verdictConfirmed, got.Verdict)
+	assert.False(t, got.Truncated,
+		"the shortened read belongs to the refuter, whose verdict lost and is not what this record reports")
+}
