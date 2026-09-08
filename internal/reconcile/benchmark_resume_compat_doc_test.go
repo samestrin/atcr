@@ -148,12 +148,14 @@ func TestBenchmarkDoc_ResumeCompatExceptionMatchesTheCode(t *testing.T) {
 			assert.Contains(t, doc, claim.inDoc,
 				"docs/benchmark.md's Resume bullet must still name this half of the exception (%s)", claim.because)
 			target := code
+			targetName := "cli/benchmark_checkpoint.go"
 			if claim.inCodeFile != "" {
 				target = readRepoFile(t, claim.inCodeFile)
+				targetName = strings.TrimPrefix(claim.inCodeFile, "../../")
 			}
 			if claim.inCodeCount > 0 {
 				require.Equal(t, claim.inCodeCount, strings.Count(target, claim.inCode),
-					"%s must implement %q exactly %d time(s), or the doc describes an exception the binary no longer grants", claim.inCodeFile, claim.inCode, claim.inCodeCount)
+					"%s must implement %q exactly %d time(s), or the doc describes an exception the binary no longer grants", targetName, claim.inCode, claim.inCodeCount)
 			} else {
 				assert.Contains(t, target, claim.inCode,
 					"cli/benchmark_checkpoint.go must still implement it, or the doc describes an exception the binary no longer grants")
