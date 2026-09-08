@@ -310,6 +310,16 @@ const budgetToolBytes = "tool_budget_bytes"
 // Best-effort in the same spirit as the rest of the stage: an absent or
 // unparseable snapshot yields no rewrite rather than an error, so a debate over a
 // review that was never verified still completes.
+//
+// Residual, deliberately out of scope here: the verdict is corrected ONLY on the
+// records whose caveat this call drops. A judge that overturns a finding whose
+// verify verdict carried no tool_budget_bytes leaves this file's verdict stale,
+// and internal/scorecard still counts it. That is not a regression this function
+// introduced — it is the standing consequence of debate.go's scope note (the
+// verify snapshot's verdicts are a point-in-time audit artifact) meeting a
+// scorecard that reads verdicts from it anyway. Closing it means either debate
+// rewriting every ruled verdict here, or the scorecard deriving settled verdicts
+// from findings.json; both are larger decisions than this correction.
 func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFinding) (string, []byte, error) {
 	// Only findings whose recorded verdict now carries NO caveat can owe a
 	// correction. A finding the judge left alone keeps whatever verify concluded.
