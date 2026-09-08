@@ -346,12 +346,21 @@ func zeroBudgetVerdict(model string, window, maxTokens, probeMaxTokens int, stat
 		lead, window, maxTokens, disclaimer, zeroBudgetRemedy, probeRemedy), true
 }
 
-// smallWindowClause reports the verification-lane consequence doctor owes an
-// agent whose DECLARED context window sits at or below the prompt overhead. It
+// smallWindowClause reports the tool-lane consequences doctor owes an agent
+// whose DECLARED context window sits at or below the prompt overhead. It
 // extends the zeroBudgetVerdict pattern to the skeptic lane's own floor: the
 // tool ceiling derives nothing there, so every verification that agent reviews
 // yields unverifiable (notes window_below_prompt_overhead) — and reconcile's
-// CI gate does not exclude unverifiable. The value is legal config (registry
+// CI gate does not exclude unverifiable.
+//
+// It names the DEBATE lane too, because the protection is skeptic-lane-only and
+// an operator told about one lane will not look at the other. internal/verify
+// derives a ceiling, floors it, and clamps the dispatcher; internal/debate's
+// driveSeat wires the dispatcher raw and buildDebateAgent forwards a nil
+// ToolBudgetBytes as 0, which internal/fanout reads as UNLIMITED — so the same
+// agent this clause refuses to run as a skeptic is, as judge or challenger,
+// handed 64 KiB results into a window that cannot hold them. That failure is the
+// worse of the two: it does not degrade to a named verdict, it overflows. The value is legal config (registry
 // admits 1..10000000) nothing rejects at load, and the probe cannot catch it
 // (the nonce prompt is trivial), so doctor is the one surface holding the
 // number and the only place the operator hears it before a run spends its
@@ -382,6 +391,9 @@ func smallWindowClause(model string, window, maxTokens int, windowSource, status
 		"skeptic lane to derive a trustworthy tool ceiling for this agent — it cannot fund even "+
 		"one tool result — so every verification it reviews yields unverifiable (notes "+
 		"window_below_prompt_overhead), and reconcile's CI gate does not exclude unverifiable. "+
+		"The debate lane (judge and challenger seats) uses tools through the same window with NO "+
+		"ceiling derived and no clamp applied, so there the same declaration overflows the window "+
+		"rather than degrading to a named verdict. "+
 		"The value is legal config, so nothing rejects it at load — the remedy is the window one "+
 		"above: raise (or drop) the declaration.",
 		window), true
