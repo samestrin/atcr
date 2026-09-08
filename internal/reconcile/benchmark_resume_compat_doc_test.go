@@ -59,6 +59,10 @@ func TestBenchmarkDoc_ResumeCompatExceptionMatchesTheCode(t *testing.T) {
 		inDoc   string
 		inCode  string
 		because string
+		// inCodeFile, when set, reads the code needle from that file instead of
+		// cli/benchmark_checkpoint.go — some doc claims are made true by a
+		// construct that lives in the runner, not the checkpoint writer.
+		inCodeFile string
 		// inCodeCount, when > 0, requires the needle to occur exactly that many
 		// times instead of the default at-least-once Contains.
 		inCodeCount int
@@ -119,31 +123,43 @@ func TestBenchmarkDoc_ResumeCompatExceptionMatchesTheCode(t *testing.T) {
 			because: "an empty roster proves nothing about the panel, so it must never be excused",
 		},
 		{
-			// The upgrade is applied to the in-memory struct, and saveCheckpoint runs
-			// only after a case actually EXECUTES. A resume that replays every
+			// The upgrade is applied to the in-memory struct, and the runner's save
+			// runs only after a case actually EXECUTES. A resume that replays every
 			// completed case, or aborts before the first one, therefore leaves the
 			// legacy form on disk and takes the exception again next time. The doc
 			// said "once ... in place", which promised a durability the binary does
 			// not provide — the same class of drift this whole test exists to close,
-			// so it is pinned rather than merely corrected.
-			name:    "the upgrade persists only if the resumed run scores a further case",
-			inDoc:   "written back only if the resumed run scores at least one further",
-			inCode:  "a write happens only",
-			because: "saveCheckpoint runs after a scored case, so a pure-replay resume never persists the upgrade",
+			// so it is pinned rather than merely corrected. The needle is the
+			// runner's save CALL SITE, not the prose comment describing it, and
+			// inCodeCount pins it to exactly one call in the runner, so an added
+			// unconditional save trips this guard. Moving the single call out of
+			// the per-case loop cannot happen silently: its error path reads the
+			// loop's case variable, so the compiler, not this test, enforces that
+			// the save stays inside the loop body.
+			name:        "the upgrade persists only if the resumed run scores a further case",
+			inDoc:       "written back only if the resumed run scores at least one further",
+			inCode:      "saveCheckpoint(checkpointPath, cp)",
+			inCodeFile:  "../../cli/benchmark_run.go",
+			inCodeCount: 1,
+			because:     "the runner's single save call sits inside the per-case loop, after the scored case is appended",
 		},
 	} {
 		t.Run(claim.name, func(t *testing.T) {
 			assert.Contains(t, doc, claim.inDoc,
 				"docs/benchmark.md's Resume bullet must still name this half of the exception (%s)", claim.because)
+			target := code
+			if claim.inCodeFile != "" {
+				target = readRepoFile(t, claim.inCodeFile)
+			}
 			if claim.inCodeCount > 0 {
-				require.Equal(t, claim.inCodeCount, strings.Count(code, claim.inCode),
-					"cli/benchmark_checkpoint.go must implement %q exactly %d time(s), or the doc describes an exception the binary no longer grants", claim.inCode, claim.inCodeCount)
+				require.Equal(t, claim.inCodeCount, strings.Count(target, claim.inCode),
+					"%s must implement %q exactly %d time(s), or the doc describes an exception the binary no longer grants", claim.inCodeFile, claim.inCode, claim.inCodeCount)
 			} else {
-				assert.Contains(t, code, claim.inCode,
+				assert.Contains(t, target, claim.inCode,
 					"cli/benchmark_checkpoint.go must still implement it, or the doc describes an exception the binary no longer grants")
 			}
 			if claim.inCodeNear != "" {
-				anchor := strings.Index(code, claim.inCode)
+				anchor := strings.Index(target, claim.inCode)
 				if assert.NotEqual(t, -1, anchor,
 					"cli/benchmark_checkpoint.go must still contain %q — the doc's claim has no code half", claim.inCode) {
 					lo := anchor - needleProximity
@@ -151,10 +167,10 @@ func TestBenchmarkDoc_ResumeCompatExceptionMatchesTheCode(t *testing.T) {
 						lo = 0
 					}
 					hi := anchor + len(claim.inCode) + needleProximity
-					if hi > len(code) {
-						hi = len(code)
+					if hi > len(target) {
+						hi = len(target)
 					}
-					assert.Contains(t, code[lo:hi], claim.inCodeNear,
+					assert.Contains(t, target[lo:hi], claim.inCodeNear,
 						"the unstamped gate must sit in the same condition as %q — the doc describes their conjunction", claim.inCode)
 				}
 			}
