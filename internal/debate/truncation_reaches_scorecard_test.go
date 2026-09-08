@@ -291,3 +291,63 @@ func parseVerdicts(t *testing.T, data []byte) map[string]string {
 	}
 	return out
 }
+
+// TestSyncVerificationTruncation_LeavesADeclaredBudgetVoidingAlone is the
+// containment guard the `cleared` set was missing.
+//
+// `cleared` admitted every finding with a non-nil Verification whose Truncated
+// was false — which is most of them, ruled or not. internal/verify's voiding path
+// (invoke.go) records Verification{Verdict: unverifiable} for a verdict a DECLARED
+// tool_budget_bytes ceiling overruled, and never sets Truncated, so such a finding
+// walked straight into `cleared`. Its tool_budget_bytes entry — the only record of
+// WHY that verdict was voided — was then deleted from verification.json by a
+// debate run that never ruled on it. There is no verification.json.bak on this
+// path, so the deletion is unrecoverable.
+//
+// This contradicted the function's own doc ("on exactly the findings that were
+// ruled") and debate.go's atomic-group note ("one entry, on ruled findings only").
+func TestSyncVerificationTruncation_LeavesADeclaredBudgetVoidingAlone(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeVerificationFixture(t, reviewDir, `{"findings":[
+		{"file":"a.go","line":1,"problem":"p1","verdict":"confirmed","skeptic":"bruce","trippedBudgets":["tool_budget_bytes"]},
+		{"file":"c.go","line":3,"problem":"p3","verdict":"unverifiable","skeptic":"bruce","trippedBudgets":["tool_budget_bytes"]}
+	]}`)
+
+	findings := append(ruledFindings(), reconcile.JSONFinding{
+		// The verify voiding path's exact shape: a verdict a DECLARED ceiling
+		// overruled. Truncated is false because the read was not merely shortened —
+		// the answer was thrown out.
+		File: "c.go", Line: 3, Problem: "p3", Reviewers: []string{"bruce"},
+		Verification: &reclib.Verification{Verdict: reclib.VerdictUnverifiable, Skeptic: "bruce"},
+	})
+	applyRulings(findings, judgeRulingOnA())
+
+	_, data, err := syncVerificationTruncation(reviewDir, findings)
+	require.NoError(t, err)
+	require.NotNil(t, data, "a.go WAS ruled, so a rewrite is still owed")
+
+	got := parseVerification(t, data)
+	assert.Empty(t, got["a.go"], "a.go was ruled — its caveat goes")
+	assert.Equal(t, []string{"tool_budget_bytes"}, got["c.go"],
+		"c.go was never ruled — deleting the only record of why its verdict was voided is not this stage's to do")
+}
+
+// TestSyncVerificationTruncation_NoRulingsRewritesNothing pins the early exit.
+// debate.go calls this unconditionally, including on a run that ruled nothing at
+// all; such a run has no correction to make by construction.
+func TestSyncVerificationTruncation_NoRulingsRewritesNothing(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeVerificationFixture(t, reviewDir, `{"findings":[
+		{"file":"c.go","line":3,"problem":"p3","verdict":"unverifiable","skeptic":"bruce","trippedBudgets":["tool_budget_bytes"]}
+	]}`)
+
+	findings := []reconcile.JSONFinding{{
+		File: "c.go", Line: 3, Problem: "p3", Reviewers: []string{"bruce"},
+		Verification: &reclib.Verification{Verdict: reclib.VerdictUnverifiable, Skeptic: "bruce"},
+	}}
+
+	path, data, err := syncVerificationTruncation(reviewDir, findings)
+	require.NoError(t, err)
+	assert.Nil(t, data, "no ruling was applied, so there is nothing this stage may correct")
+	assert.Empty(t, path)
+}
