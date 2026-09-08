@@ -135,7 +135,7 @@ func CountFailingJSON(findings []JSONFinding, threshold string, requireVerified 
 func ValidateRequireVerified(reviewDir string) error {
 	verPath := filepath.Join(reviewDir, "reconciled", "verification.json")
 	if info, err := os.Stat(verPath); err == nil && !info.IsDir() {
-		return allUnverifiableCollapse(reviewDir, verPath)
+		return allUnverifiableCollapse(verPath)
 	}
 	data, err := os.ReadFile(filepath.Join(reviewDir, "manifest.json"))
 	if err == nil {
@@ -171,7 +171,16 @@ func ValidateRequireVerified(reviewDir string) error {
 // tally comes from the verdicts themselves, never from the denormalized
 // verdictCounts block, so a file written before that block existed — or one
 // whose summary drifted from its findings — is not silently exempt.
-func allUnverifiableCollapse(reviewDir, verPath string) error {
+// verPath is the only input: it is already absolute and every read goes through
+// it. A reviewDir parameter would be unused, and an unused parameter on an
+// unexported function invites the next caller to assume it does something with
+// the review dir — which this function deliberately does not.
+func allUnverifiableCollapse(verPath string) error {
+	// The caller reaches this only after a successful os.Stat, so a failure here
+	// needs the file to vanish in between. Called directly it is ordinary. Either
+	// way the fallback is behaviour-preserving: nil is what the gate returned
+	// before this check existed, and an unreadable snapshot is not evidence of a
+	// collapse. Pinned by TestAllUnverifiableCollapse_UnreadableFileIsNotAnError.
 	data, err := os.ReadFile(verPath)
 	if err != nil {
 		return nil
