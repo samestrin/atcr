@@ -133,8 +133,9 @@ func CountFailingJSON(findings []JSONFinding, threshold string, requireVerified 
 // a gate over a review where verify never ran trivially passes everything.
 // Best-effort: any read error is treated as "not run".
 func ValidateRequireVerified(reviewDir string) error {
-	if info, err := os.Stat(filepath.Join(reviewDir, "reconciled", "verification.json")); err == nil && !info.IsDir() {
-		return nil
+	verPath := filepath.Join(reviewDir, "reconciled", "verification.json")
+	if info, err := os.Stat(verPath); err == nil && !info.IsDir() {
+		return allUnverifiableCollapse(reviewDir, verPath)
 	}
 	data, err := os.ReadFile(filepath.Join(reviewDir, "manifest.json"))
 	if err == nil {
@@ -150,6 +151,56 @@ func ValidateRequireVerified(reviewDir string) error {
 		}
 	}
 	return errors.New("verify stage has not run for this review; the gate counts only VERIFIED findings, so it will pass — run 'atcr verify' first")
+}
+
+// allUnverifiableCollapse reports the second way --require-verified passes
+// green over an unreviewed change: the verify stage DID run, and every verdict
+// it produced was unverifiable. The gate counts only confirmed findings, so it
+// then counts nothing — outwardly identical to a review that found nothing.
+//
+// This is reachable from ordinary configuration rather than from corruption. A
+// registry declaring a context_window_tokens whose ceiling cannot fund one real
+// tool result makes internal/verify floor and short-circuit every check
+// (notes window_below_prompt_overhead); with verify.votes >= 2, one such agent
+// forcing a plurality tie does the same to findings a healthy skeptic confirmed.
+// atcr doctor warns about the roster, but doctor is a separate opt-in command —
+// this is the path the gate itself takes.
+//
+// Best-effort in the same spirit as the caller: anything unreadable returns nil
+// (the stage still ran, which is all this function ever claimed to check). The
+// tally comes from the verdicts themselves, never from the denormalized
+// verdictCounts block, so a file written before that block existed — or one
+// whose summary drifted from its findings — is not silently exempt.
+func allUnverifiableCollapse(reviewDir, verPath string) error {
+	data, err := os.ReadFile(verPath)
+	if err != nil {
+		return nil
+	}
+	var vf struct {
+		Findings []struct {
+			Verdict string `json:"verdict"`
+		} `json:"findings"`
+	}
+	if json.Unmarshal(data, &vf) != nil || len(vf.Findings) == 0 {
+		return nil
+	}
+	for _, f := range vf.Findings {
+		if strings.ToLower(strings.TrimSpace(f.Verdict)) != VerdictUnverifiable {
+			return nil
+		}
+	}
+
+	cause := ""
+	if findings, ferr := ReadReconciledFindings(reviewDir); ferr == nil {
+		for _, f := range findings {
+			if f.Verification != nil && strings.TrimSpace(f.Verification.Notes) != "" {
+				cause = " cause recorded on the verdicts: " + strings.TrimSpace(f.Verification.Notes) + "."
+				break
+			}
+		}
+	}
+
+	return fmt.Errorf("all %d verdict(s) came back unverifiable; the gate counts only VERIFIED findings, so it will pass over every one of them.%s Check 'atcr doctor' for agents whose context_window_tokens cannot fund a tool read", len(vf.Findings), cause)
 }
 
 // RunReconcile discovers sources under reviewDir/sources, runs the deterministic
