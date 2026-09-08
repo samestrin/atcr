@@ -308,7 +308,14 @@ func locatorNames(shards []string, changes []localdebt.JustificationChange) map[
 		add(c.Shard)
 	}
 
-	out := make(map[string]string, len(changes))
+	// Sized by SHARD cardinality, which is what this map is keyed by — not by
+	// len(changes), which counts changed LINES. A repair touching tens of thousands of
+	// lines across a dozen month shards would otherwise pre-allocate two to four orders
+	// of magnitude more buckets than the map can ever hold. rawByToken is fully
+	// populated by this point (both add loops are above), and its length is a tight
+	// upper bound: one entry per distinct sanitized token over the snapshot and the
+	// change set together. A size hint cannot affect correctness, only allocation.
+	out := make(map[string]string, len(rawByToken))
 	for _, c := range changes {
 		t := sanitizeLocator(c.Shard)
 		if len(rawByToken[t]) > 1 {
