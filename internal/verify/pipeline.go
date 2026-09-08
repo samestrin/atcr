@@ -393,16 +393,26 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		// EqualFold is harmless for the normal path and protective for hand-edited
 		// verification.json files where a human might write "Confirmed" or "CONFIRMED".
 		//
-		// This carry-forward is PARTIAL by design, and that used to desync it from
-		// the truncated flag on the findings.json block, which always survives: a
+		// This carry-forward is PARTIAL by design, and that desyncs it from the
+		// truncated flag on the findings.json block, which always survives: a
 		// re-verify over a review whose verification.json was missing, corrupt or
-		// verdict-shifted produced artifacts where report.md showed the truncated
-		// caveat and the scorecard did not. It is no longer a score decision —
-		// internal/scorecard keys its precision exclusion on findings.json, the same
-		// artifact report.md renders from (see settledTruncationByKey), so the two
-		// cannot disagree regardless of what this block carries. Do not reintroduce
-		// a structural reader of trippedBudgets without carrying both signals
-		// together.
+		// verdict-shifted rebuilds this record with no budgets at all, while the
+		// block still says the verdict was answered from a shortened read.
+		//
+		// That IS a score decision. internal/scorecard excludes a truncated verdict
+		// from the reviewer's durable survived_skeptic_rate and keys the exclusion on
+		// trippedBudgets HERE, not on findings.json's flag — deliberately, because
+		// RunReconcile strips every verification block before the scorecard is
+		// emitted, so keying on findings.json would read an artifact that is empty by
+		// then (internal/scorecard/scorecard.go:543-551). A dropped entry therefore
+		// republishes a partial-read confirm as a clean one and credits it to the
+		// reviewer permanently.
+		//
+		// The reject arms below re-derive the entry from the block's own flag rather
+		// than carrying the prior's list, which describes the run they just rejected.
+		// max_turns and timeout trips are not recoverable that way and are genuinely
+		// lost on those arms; neither reaches the ratio, which reads only
+		// tool_budget_bytes.
 		pk := loadPrior()
 		var prior VerificationResult
 		var hadPrior bool
@@ -414,6 +424,7 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		// disk — see the three-cause note on VerificationResult. Only the reject arms
 		// stamp a reason; a first-ever verify and the carry-forward path leave it
 		// unset, and so does the debate arm below, whose marker is DebateJudge.
+		carried := false
 		switch {
 		case priorLoadFailed:
 			rec.ModelWithheldReason = withheldPriorUnreadable
@@ -421,6 +432,14 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 			// Nothing to carry and nothing withheld.
 		case !strings.EqualFold(strings.TrimSpace(prior.Verdict), strings.TrimSpace(f.Verification.Verdict)):
 			rec.ModelWithheldReason = withheldVerdictShifted
+		default:
+			carried = true
+		}
+		// Every arm that does NOT carry the prior's budgets re-derives the truncation
+		// caveat from the block's own flag, which describes THIS verdict. Without it
+		// the score reads a partial-read verdict as a clean one (see the note above).
+		if !carried && f.Verification.Truncated {
+			rec.TrippedBudgets = []string{budgetToolBytes}
 		}
 		if hadPrior && !priorLoadFailed && strings.EqualFold(strings.TrimSpace(prior.Verdict), strings.TrimSpace(f.Verification.Verdict)) {
 			// Verdict equality alone is no longer sufficient evidence that the prior
