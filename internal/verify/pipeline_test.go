@@ -1224,3 +1224,39 @@ func TestRunVerify_SkipDoesNotLendSkepticMetadataToAJudgeVerdict(t *testing.T) {
 	assert.Equal(t, "greta", vf.Findings[0].DebateJudge,
 		"the judge attribution is the one piece of the prior that DOES describe the standing verdict, so it carries forward")
 }
+
+// TestRunVerify_SkipPreservesUnmodelledPriorKeys pins the pipeline half of the
+// unmodelled-key preservation. computeVerificationBytes writes what the pipeline
+// hands it, and the pipeline builds each record FRESH from the findings.json block
+// and then carries selected fields forward from the prior file — so a key the
+// struct does not model is dropped here even once the codec keeps it. The keys
+// travel with trippedBudgets: like it, they describe the run the prior recorded,
+// not who produced the verdict.
+func TestRunVerify_SkipPreservesUnmodelledPriorKeys(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+		Reviewers: []string{"rev"}, Verification: &reclib.Verification{Verdict: "refuted", Skeptic: "otto"},
+	}})
+	recon := filepath.Join(dir, reconciledSubdir)
+	require.NoError(t, os.WriteFile(filepath.Join(recon, "verification.json"), []byte(`{"findings":[
+		{"file":"a.go","line":1,"problem":"boom","verdict":"refuted","skeptic":"otto",
+		 "model":"m-x","reasoning":"read token.go:42","durationMs":1840,
+		 "trippedBudgets":[],"escalationTier":"tier-2"}
+	]}`), 0o644))
+
+	_, runErr := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	})
+	require.NoError(t, runErr)
+
+	data, rerr := os.ReadFile(filepath.Join(recon, "verification.json"))
+	require.NoError(t, rerr)
+	var doc struct {
+		Findings []map[string]any `json:"findings"`
+	}
+	require.NoError(t, json.Unmarshal(data, &doc))
+	require.Len(t, doc.Findings, 1)
+	assert.Equal(t, "tier-2", doc.Findings[0]["escalationTier"],
+		"a key the prior carried and this struct does not model must survive the re-emit, not be dropped on every re-verify")
+}

@@ -5,6 +5,7 @@ import (
 	reclib "github.com/samestrin/atcr/reconcile"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -461,4 +462,76 @@ func TestReadVerificationResults(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(bad, reconciledSubdir, "verification.json"), []byte("{not json"), 0o644))
 	_, err = ReadVerificationResults(bad)
 	assert.Error(t, err)
+}
+
+// TestVerificationResult_PreservesUnmodelledKeys pins the round-trip against
+// silent field loss. reconciled/verification.json is re-emitted on every
+// re-verify: the pipeline reads the prior file into VerificationResult and writes
+// it back through computeVerificationBytes, so any key this struct does not model
+// was dropped on the way. internal/debate's rewrite of the same file deliberately
+// round-trips through map[string]any for exactly this reason — the verify stage,
+// which owns the file, was the lossier of the two.
+func TestVerificationResult_PreservesUnmodelledKeys(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, reconciledSubdir), 0o755))
+	body := `{"findings":[
+		{"file":"a.go","line":1,"problem":"p","verdict":"confirmed","skeptic":"otto",
+		 "model":"m-x","reasoning":"r","durationMs":5,"trippedBudgets":[],
+		 "escalationTier":"tier-2","futureBlock":{"k":1}}
+	],"verdictCounts":{"confirmed":1,"refuted":0,"unverifiable":0}}`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, reconciledSubdir, "verification.json"), []byte(body), 0o600))
+
+	got, err := ReadVerificationResults(dir)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "m-x", got[0].Model, "precondition: the modelled fields still decode normally")
+
+	_, data, err := computeVerificationBytes(dir, got, CountVerdicts(got))
+	require.NoError(t, err)
+
+	rec := firstVerificationRecord(t, data)
+	assert.Equal(t, "tier-2", rec["escalationTier"],
+		"a key this struct does not model must survive the re-emit, not be dropped on every re-verify")
+	assert.Equal(t, map[string]any{"k": float64(1)}, rec["futureBlock"],
+		"nested unmodelled values must survive whole, not be flattened or dropped")
+	assert.Equal(t, "confirmed", rec["verdict"], "the modelled fields are still written")
+}
+
+// TestVerificationResult_NoExtrasKeepsStructFieldOrder is the scope guard for the
+// preservation above. A record carrying no unmodelled keys — every record this
+// repo produces today — must serialize byte-for-byte as it did before, in struct
+// order rather than the alphabetical order a map round-trip would impose.
+func TestVerificationResult_NoExtrasKeepsStructFieldOrder(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	results := []VerificationResult{{
+		File: "a.go", Line: 7, Problem: "boom", Verdict: "confirmed", Skeptic: "s1",
+		Model: "m-x", Reasoning: "ok", DurationMs: 99, TrippedBudgets: []string{"timeout_secs"},
+	}}
+	_, data, err := computeVerificationBytes(dir, results, CountVerdicts(results))
+	require.NoError(t, err)
+
+	s := string(data)
+	order := []string{`"file"`, `"line"`, `"problem"`, `"verdict"`, `"skeptic"`, `"model"`, `"reasoning"`, `"durationMs"`, `"trippedBudgets"`}
+	prev := -1
+	for _, k := range order {
+		at := strings.Index(s, k)
+		require.NotEqual(t, -1, at, "field %s must still be emitted", k)
+		assert.Greater(t, at, prev, "field %s moved: struct order must survive, or every stored snapshot re-orders on the next verify", k)
+		prev = at
+	}
+	assert.NotContains(t, s, `"debateJudge"`, "omitempty must still elide an unset debate attribution")
+}
+
+// firstVerificationRecord returns the first findings record as a raw map, so a
+// test can assert on keys the typed struct deliberately does not carry.
+func firstVerificationRecord(t *testing.T, data []byte) map[string]any {
+	t.Helper()
+	var doc struct {
+		Findings []map[string]any `json:"findings"`
+	}
+	require.NoError(t, json.Unmarshal(data, &doc))
+	require.NotEmpty(t, doc.Findings)
+	return doc.Findings[0]
 }
