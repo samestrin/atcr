@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/samestrin/atcr/internal/reconcile"
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/scorecard"
 	reclib "github.com/samestrin/atcr/reconcile"
 
@@ -909,9 +910,11 @@ func TestSyncVerificationTruncation_VerdictRewriteIsScopedToTheDroppedRecord(t *
 // attribution a SECOND debate over one review dir was leaving stale.
 //
 // Run 1's ruling clears Verification.Truncated and lands debateJudge in
-// verification.json. Run 2 rules the same finding again — an overturn leaves
-// ChallengeSurvived false, so filterAlreadyDebated does not exclude it — but the
-// caveat is already gone, so applyRulings reports nothing cleared and the sync
+// verification.json. Run 2 rules the same finding again — reachable after a
+// re-reconcile, which strips the verification block and lets the finding be
+// re-verified and re-surfaced, while verification.json is never recomputed (see
+// TestRunDebate_SecondRunRecordsTheStandingJudge for the end-to-end shape) — but
+// the caveat is already gone, so applyRulings reports nothing cleared and the sync
 // used to return no rewrite at all. findings.json then carried run 2's verdict
 // while verification.json still named run 1's judge for it: the record credited
 // the SUPERSEDED judge with the standing outcome, which is the same
@@ -1281,4 +1284,99 @@ func TestSyncVerificationTruncation_PrefersThePriorJudgeOverAnUnparseableRuling(
 		"greta produced the standing verdict — crediting hank names the judge whose ruling settled nothing")
 	assert.Equal(t, "greta overturned the skeptic", rec["debateReasoning"],
 		"the reasoning must argue for the verdict actually recorded")
+}
+
+// judgeRoster is debateRoster with the judge seat named explicitly, so a test can
+// run two debates over one review dir under two different judges.
+func judgeRoster(judge string) *registry.Registry {
+	reg := rosterReg(map[string][2]string{
+		"alice": {"model-a", registry.RoleReviewer},
+		"bob":   {"model-b", registry.RoleSkeptic},
+		judge:   {"model-c", registry.RoleJudge},
+	})
+	for n, a := range reg.Agents {
+		a.SupportsFC = true
+		reg.Agents[n] = a
+	}
+	return reg
+}
+
+// overturnTurns scripts proposer, challenger and an overturn ruling. An overturn
+// leaves ChallengeSurvived false, so filterAlreadyDebated does not exclude the
+// finding from a later run — which is what makes a second debate reachable.
+func overturnTurns(reasoning string) []chatTurn {
+	return []chatTurn{
+		{content: "proposer defends"},
+		{content: "challenger attacks"},
+		{content: `{"outcome":"overturn","reasoning":"` + reasoning + `"}`},
+	}
+}
+
+// TestRunDebate_SecondRunRecordsTheStandingJudge is the end-to-end guard on the
+// rulings argument runDebate hands syncVerificationTruncation.
+//
+// Every other test of that pass calls the function directly, so the CALL SITE is
+// untested: passing nil there leaves the whole suite green while the pass falls
+// back to the prior reconciled/debate.json for its judge — the run this one just
+// superseded — and the record then names the replaced judge for the standing
+// verdict.
+//
+// The fixture is a review dir as it stands when a SECOND debate is reachable.
+// Back-to-back debates cannot reach it: an overturn makes the finding refuted, and
+// BuildDisagreements never surfaces a refuted finding, while an uphold or split
+// sets ChallengeSurvived and filterAlreadyDebated excludes it. What does reach it
+// is a re-reconcile — RunReconcile rebuilds findings.json from sources/ and strips
+// every verification block, so a re-verified finding becomes debatable again while
+// verification.json, which no stage recomputes, still carries run 1's judge.
+func TestRunDebate_SecondRunRecordsTheStandingJudge(t *testing.T) {
+	f := splitFinding()
+	// Post-round-trip: re-verified, caveat already cleared by run 1, and not yet
+	// challenge-survived, so the radar surfaces it again.
+	f.Verification = &reclib.Verification{
+		Verdict: reclib.VerdictConfirmed, Skeptic: "bob", Notes: "bob re-read a.go:10",
+	}
+	dir := reviewDirWith(t, []reconcile.JSONFinding{f})
+	// verification.json survives the re-reconcile untouched, still naming run 1.
+	writeVerificationFixture(t, dir, `{"findings":[
+		{"file":"a.go","line":10,"problem":"nil deref","verdict":"confirmed","skeptic":"bob",
+		 "model":"model-b","reasoning":"bob read a.go:10","durationMs":1200,
+		 "trippedBudgets":[],"debateJudge":"carol","debateReasoning":"carol upheld the skeptic"}
+	]}`)
+	// Run 1's debate.json is still on disk — it is what the nil-argument fallback
+	// would read, and it names the judge this run replaces.
+	writeDebateFixture(t, dir, ItemResult{
+		File: "a.go", Line: 10, Problem: "nil deref", Kind: reconcile.KindSeveritySplit,
+		Outcome: OutcomeUphold, Judge: "carol", Reasoning: "carol upheld the skeptic",
+	})
+
+	_, err := runDebate(context.Background(), dir, judgeRoster("dave"),
+		Options{}, harness(&fakeChatCompleter{turns: overturnTurns("dave re-read a.go:10")}))
+	require.NoError(t, err)
+
+	rec := readVerificationRecord(t, dir)
+	require.Equal(t, reclib.VerdictRefuted, rec["verdict"],
+		"precondition: dave overturned, so findings.json now carries refuted")
+	assert.Equal(t, "dave", rec["debateJudge"],
+		"dave produced the standing verdict — naming carol credits the judge this run replaced")
+	assert.Equal(t, "dave re-read a.go:10", rec["debateReasoning"],
+		"carol's reasoning argues for the ruling dave superseded")
+}
+
+// readVerificationRecord reads the single record back out of the review dir's
+// reconciled/verification.json, as the file stands on disk after a debate.
+func readVerificationRecord(t *testing.T, reviewDir string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(reviewDir, reconciledSubdir, verificationFile))
+	require.NoError(t, err)
+	return firstRecordOf(t, data)
+}
+
+func firstRecordOf(t *testing.T, data []byte) map[string]any {
+	t.Helper()
+	var doc struct {
+		Findings []map[string]any `json:"findings"`
+	}
+	require.NoError(t, json.Unmarshal(data, &doc))
+	require.NotEmpty(t, doc.Findings)
+	return doc.Findings[0]
 }
