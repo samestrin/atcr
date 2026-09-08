@@ -392,6 +392,17 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		// intentional: parseVerdict normalizes verdicts to lowercase on write, so
 		// EqualFold is harmless for the normal path and protective for hand-edited
 		// verification.json files where a human might write "Confirmed" or "CONFIRMED".
+		//
+		// This carry-forward is PARTIAL by design, and that used to desync it from
+		// the truncated flag on the findings.json block, which always survives: a
+		// re-verify over a review whose verification.json was missing, corrupt or
+		// verdict-shifted produced artifacts where report.md showed the truncated
+		// caveat and the scorecard did not. It is no longer a score decision —
+		// internal/scorecard keys its precision exclusion on findings.json, the same
+		// artifact report.md renders from (see settledTruncationByKey), so the two
+		// cannot disagree regardless of what this block carries. Do not reintroduce
+		// a structural reader of trippedBudgets without carrying both signals
+		// together.
 		pk := loadPrior()
 		var prior VerificationResult
 		if pk != nil {
