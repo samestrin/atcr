@@ -200,21 +200,30 @@ func TestScorecardDoc_PublicEnvelopeRowStatesTheAllTruncatedOmission(t *testing.
 // hand-off actually reaches.
 //
 // TestTruncatedScoringDocs_DescribeTheKeyTheScoreActuallyReads asserts only that
-// the word "debate" appears, so it cannot see this: the document said a ruling
-// "restores the verdict to the score as well as to the report". It does not.
-// syncVerificationTruncation clears the tool_budget_bytes entry, and runDebate
-// deliberately never rewrites verification.json's `verdict` field (see the scope
-// note at internal/debate/debate.go:271) — so an OVERTURNED ruling is still
-// counted under the stale verify-stage verdict. The sync restores the finding to
-// the ratio; it does not restore the judge's verdict to it.
+// the word "debate" appears, so it cannot see this. The guard used to require the
+// paragraph to say runDebate "never rewrites" verification.json's verdict field —
+// and passed only because it was pinned to a doc that had gone stale.
+// syncVerificationTruncation's write block DOES set rec["verdict"] to the settled
+// verdict, scoped to the records whose tool_budget_bytes caveat the ruling
+// cleared, and stamps debateJudge/debateReasoning beside it so the record names
+// the judge rather than the superseded skeptic run.
+//
+// So the claim is SCOPED, not absent: a ruling restores both the finding and its
+// verdict on the records it cleared, and leaves the verify-stage verdict standing
+// on a ruled finding that never carried the caveat. A doc that flatly negates the
+// restoration, or asserts it without naming the residual case, must fail here.
 func TestVerificationDoc_DebateSyncClaimIsScopedToTheCaveat(t *testing.T) {
 	doc := readDoc(t, "verification.md")
 	para := docParagraph(t, doc, "kept in step from the debate side")
 
-	assert.NotContains(t, para, "restores the verdict to the score",
-		"debate never rewrites verification.json's verdict field, so a ruling cannot restore the verdict to the score")
+	assert.Contains(t, para, "restores the verdict to the score",
+		"emit.go's write block sets the settled verdict on every record whose caveat the ruling cleared — a paragraph that omits it leaves readers counting an overturn under the pre-debate verdict")
+	assert.NotContains(t, para, "never rewrites",
+		"the flat negation is the drift this guard exists to catch: runDebate does rewrite the verdict field, on the cleared records")
+	assert.Contains(t, para, "never carried the caveat",
+		"stating the restoration is not enough — the residual case it does NOT reach has to be named, or the claim over-reads")
 	assert.Contains(t, para, "verdict it is counted under",
-		"the paragraph must say WHICH verdict the score still uses, or a reader assumes the judge's")
-	assert.Contains(t, para, "never rewrites",
-		"a reworded overclaim slips past the NotContains above — the paragraph has to state the negation outright")
+		"the paragraph must say WHICH verdict the score uses in that residual case, or a reader assumes the judge's")
+	assert.Contains(t, para, "debateJudge",
+		"the same write stamps the judge; without it the record's skeptic/model read as the producer of the standing verdict")
 }
