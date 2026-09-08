@@ -1694,3 +1694,47 @@ func TestValidateCheckpointRoster_StampedEmptyRosterKeepsTheGenericMessage(t *te
 	assert.NotContains(t, err.Error(), "pre-serial-lane binary",
 		"a stamped roster was not written by the pre-serial-lane binary; offering that cause would be a guess")
 }
+
+// The load-bearing premise of the whole AC5 branch is that `"roster": []` on disk
+// decodes to a NON-NIL zero-length slice, and therefore clears the fail-closed
+// `cp.Roster == nil` guard rather than tripping it. Every other AC5 test asserts
+// that premise only in prose, constructing `&runCheckpoint{Roster: []string{}}` by
+// hand — so the one thing that would falsify it, the Roster tag gaining `omitempty`
+// (a plausible tidy-up, since RosterFormat beside it has one), leaves them all green
+// while the branch becomes unreachable for newly-written files.
+//
+// The round trip goes through saveCheckpoint, not hand-written JSON, because that is
+// the half `omitempty` governs: it drops the key on the WRITE, and a missing key then
+// decodes to nil on the read. A test that hand-writes `"roster":[]` and only unmarshals
+// cannot detect the mutation at all — decoding an explicit empty array yields a non-nil
+// slice with or without the tag. Mutation-verified in a detached worktree: adding
+// `omitempty` to the Roster tag fails this test on `cp.Roster != nil`.
+func TestCheckpoint_EmptyRosterRoundTripsNonNil(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ckpt.json")
+	require.NoError(t, saveCheckpoint(path, &runCheckpoint{
+		ReproHash:    "h",
+		Suite:        "s",
+		SuiteVersion: "1.0.0",
+		Roster:       []string{},
+	}))
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"roster":[]`,
+		"the empty lane must survive the write as an explicit key; omitempty here would erase it")
+
+	cp, err := loadCheckpoint(path)
+	require.NoError(t, err)
+	require.NotNil(t, cp)
+	require.NotNil(t, cp.Roster,
+		"an empty roster must round-trip to a non-nil slice; were it nil the AC5 branch would be "+
+			"unreachable and the cp.Roster == nil guard would swallow the case")
+	assert.Empty(t, cp.Roster, "and it must stay zero-length, which is what the AC5 branch keys on")
+
+	// The premise proven above is exactly what the branch consumes: a non-nil empty
+	// roster clears the nil guard and reaches the named empty-roster rejection.
+	err = validateCheckpointRoster(cp, []string{"dax=m-dax=dax"}, nil)
+	require.ErrorIs(t, err, errCheckpointRosterMismatch)
+	assert.Contains(t, err.Error(), "records an empty reviewer roster",
+		"the round-tripped value takes the named branch, not the nil guard")
+}
