@@ -183,6 +183,15 @@ func loadCheckpoint(path string) (*runCheckpoint, error) {
 // would otherwise become an arbitrary key in the published outcomes tally, and the
 // tally label "unknown" would pose as genuine absence.
 func validateCheckpointIntegrity(cp *runCheckpoint) error {
+	// RosterFormat gets the same allowlist treatment as Outcome, and for the same
+	// reason: the resume path reads it twice (the pre-serial-lane compat arm and the
+	// empty-recorded-roster message both gate on it being ""), so a value from
+	// outside the vocabulary — hand-edited, or written by a newer binary an operator
+	// downgraded from — silently disables both and hands back the generic drift text
+	// those arms exist to replace.
+	if cp.RosterFormat != "" && cp.RosterFormat != rosterFormatUnion {
+		return fmt.Errorf("%w: unknown roster_format %q", errCheckpointCorrupt, cp.RosterFormat)
+	}
 	seen := make(map[int]struct{}, len(cp.Cases))
 	for i, c := range cp.Cases {
 		if c.Index < 0 {
