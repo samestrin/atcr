@@ -58,17 +58,36 @@ func aggregateVerdicts(perSkeptic []*reclib.Verification) *reclib.Verification {
 
 	if tie {
 		return &reclib.Verification{
-			Verdict: verdictUnverifiable,
-			Skeptic: joinSkeptics(valid),
-			Notes:   combineReasonings(valid),
+			Verdict:   verdictUnverifiable,
+			Skeptic:   joinSkeptics(valid),
+			Notes:     combineReasonings(valid),
+			Truncated: anyTruncated(filterByVerdict(valid, verdictUnverifiable)),
 		}
 	}
 	winners := filterByVerdict(valid, winner)
 	return &reclib.Verification{
-		Verdict: winner,
-		Skeptic: joinSkeptics(winners),
-		Notes:   combineReasonings(winners),
+		Verdict:   winner,
+		Skeptic:   joinSkeptics(winners),
+		Notes:     combineReasonings(winners),
+		Truncated: anyTruncated(winners),
 	}
+}
+
+// anyTruncated reports whether any of vs reached its verdict from a shortened
+// read. It is applied to the SAME set winningAttribution credits tripped budgets
+// from — the skeptics whose verdict the record actually reports — so the caveat
+// on a finding and the budgets on its audit row cannot disagree about who is
+// being described. On a decisive vote that is the winners; on a tie it is the
+// participants who were themselves unverifiable, because a tie's unverifiable
+// comes from the tie and annotating it with a losing voter's truncation would
+// describe a verdict the record does not report.
+func anyTruncated(vs []*reclib.Verification) bool {
+	for _, v := range vs {
+		if v != nil && v.Truncated {
+			return true
+		}
+	}
+	return false
 }
 
 func filterByVerdict(vs []*reclib.Verification, verdict string) []*reclib.Verification {

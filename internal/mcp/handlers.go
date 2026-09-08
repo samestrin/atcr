@@ -477,10 +477,11 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		debtPersisted = true
 	}
 
-	// TD-004: warn when verify never ran — the gate would trivially pass everything.
+	// TD-004: warn when the gate would trivially pass everything — because verify
+	// never ran, or because every verdict came back unverifiable. verr names which.
 	if in.RequireVerified {
 		if verr := reconcile.ValidateRequireVerified(dir); verr != nil {
-			e.logger().Warn("require_verified: verify stage not complete", "detail", verr.Error())
+			e.logger().Warn("require_verified: no verified findings for the gate to count", "detail", verr.Error())
 		}
 	}
 

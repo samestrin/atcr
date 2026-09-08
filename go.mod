@@ -36,6 +36,6 @@ require (
 )
 
 require (
-	github.com/samestrin/atcr/reconcile v0.7.0
+	github.com/samestrin/atcr/reconcile v0.8.0
 	golang.org/x/text v0.23.0
 )

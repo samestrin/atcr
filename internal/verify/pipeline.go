@@ -392,15 +392,45 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		// intentional: parseVerdict normalizes verdicts to lowercase on write, so
 		// EqualFold is harmless for the normal path and protective for hand-edited
 		// verification.json files where a human might write "Confirmed" or "CONFIRMED".
+		//
+		// This carry-forward is PARTIAL by design, and that used to desync it from
+		// the truncated flag on the findings.json block, which always survives: a
+		// re-verify over a review whose verification.json was missing, corrupt or
+		// verdict-shifted produced artifacts where report.md showed the truncated
+		// caveat and the scorecard did not. It is no longer a score decision —
+		// internal/scorecard keys its precision exclusion on findings.json, the same
+		// artifact report.md renders from (see settledTruncationByKey), so the two
+		// cannot disagree regardless of what this block carries. Do not reintroduce
+		// a structural reader of trippedBudgets without carrying both signals
+		// together.
 		pk := loadPrior()
 		var prior VerificationResult
 		if pk != nil {
 			prior = pk[key]
 		}
 		if !priorLoadFailed && strings.EqualFold(strings.TrimSpace(prior.Verdict), strings.TrimSpace(f.Verification.Verdict)) {
-			rec.Model = prior.Model
-			rec.DurationMs = prior.DurationMs
+			// Verdict equality alone is no longer sufficient evidence that the prior
+			// describes the SAME run. internal/debate writes a judge's verdict into
+			// verification.json (syncVerificationTruncation), which makes the two
+			// artifacts agree by construction on an overturn — the guard above then
+			// matches on precisely the records whose Model/DurationMs belong to the
+			// skeptic run the judge REPLACED, and re-applies that mis-attribution on
+			// every re-verify. DebateJudge is what the rewrite does not equalise: it
+			// is empty on every record the verify stage alone produced.
+			if prior.DebateJudge == "" {
+				rec.Model = prior.Model
+				rec.DurationMs = prior.DurationMs
+			}
+			// TrippedBudgets is exempt from that split: it records what the run cost,
+			// not who produced the verdict, and debate's rewrite already corrected the
+			// one entry a ruling invalidates. Dropping it here would lose the max_turns
+			// and timeout trips that rewrite deliberately preserved.
 			rec.TrippedBudgets = prior.TrippedBudgets
+			// The judge attribution DOES describe the standing verdict, so it survives
+			// the re-verify rather than being silently dropped along with the metadata
+			// it exists to disclaim.
+			rec.DebateJudge = prior.DebateJudge
+			rec.DebateReasoning = prior.DebateReasoning
 		}
 		// Coerce nil TrippedBudgets to empty slice to avoid null in JSON output.
 		if rec.TrippedBudgets == nil {
@@ -579,6 +609,18 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 //     e.g. 1 confirmed + 1 refuted, or 1+1+1): no skeptic "won", so record every
 //     participant's model so Model stays consistent with Skeptic rather than
 //     misattributing the outcome to the lone unverifiable voter.
+//
+// Model and TrippedBudgets part company on the tie arm, and deliberately. Model
+// is a roster — who spoke — so a tie lists everyone. A budget is a CAUSAL claim:
+// "this is why the record says unverifiable". On a tie the cause is the tie, so
+// only a participant whose own verdict was unverifiable contributes a budget.
+// Crediting everyone collapsed three distinguishable histories into one record:
+// (a) a DECLARED budget voided a skeptic's verdict; (b) a DERIVED ceiling
+// truncated a read and the verdict stood; (c) a tie produced unverifiable and
+// some participant happened to be truncated. Case (c) was impossible before the
+// derived-ceiling exemption — a tripped skeptic was always itself unverifiable,
+// so it was never a distinct contributor — and it is the one this rule
+// separates, without touching (b) on the decisive arm.
 func winningAttribution(skeptics []Skeptic, perSkeptic []*reclib.Verification, perTripped [][]string, winner string) (string, []string) {
 	// A verdict is decisive when no other verdict matches or exceeds its count;
 	// equality anywhere means aggregateVerdicts resolved a tie to unverifiable.
@@ -616,6 +658,15 @@ func winningAttribution(skeptics []Skeptic, perSkeptic []*reclib.Verification, p
 		if m := skeptics[i].Config.Model; m != "" && !seenModel[m] {
 			seenModel[m] = true
 			models = append(models, m)
+		}
+		// On a TIE, credit a budget only from a participant whose OWN verdict was
+		// unverifiable. Model is still taken from everyone (above) so it stays
+		// consistent with Skeptic, but a budget is a causal claim, not a roster:
+		// crediting a skeptic that voted confirmed while carrying an exempted
+		// derived trip makes a tie serialize identically to a verdict a declared
+		// budget actually voided. See the three histories in the doc above.
+		if !decisive && v.Verdict != verdictUnverifiable {
+			continue
 		}
 		for _, b := range perTripped[i] {
 			if !seenBudget[b] {

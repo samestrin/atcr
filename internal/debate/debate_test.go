@@ -683,3 +683,35 @@ func TestRunDebate_DuplicateFindingKeyMutatesOnlyOne(t *testing.T) {
 	assert.Equal(t, reclib.VerdictConfirmed, f[0].Verification.Verdict)
 	assert.True(t, f[0].Verification.ChallengeSurvived)
 }
+
+// TestApplyRulings_ClearsTheSkepticsTruncationCaveat pins that a judge's verdict
+// does not inherit the earlier skeptic's truncated-read marker.
+//
+// applyRulings deliberately MUTATES the existing verification block in place so
+// the original skeptic's name survives as provenance. reclib.Verification's
+// Truncated marker describes how the RECORDED verdict was reached, though, and
+// after a ruling that verdict is the judge's — produced from the judge's own
+// read. Carrying the caveat forward would print "answered from a truncated read"
+// against the wrong agent's answer, and would drop the finding out of the
+// reviewer precision ratio for a truncation that did not produce this verdict.
+func TestApplyRulings_ClearsTheSkepticsTruncationCaveat(t *testing.T) {
+	findings := []reconcile.JSONFinding{{
+		File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM",
+		Verification: &reclib.Verification{
+			Verdict: reclib.VerdictConfirmed, Skeptic: "otto", Truncated: true,
+		},
+	}}
+	applyRulings(findings, map[FindingKey]ruleApply{
+		{File: "a.go", Line: 1, Problem: "boom"}: {
+			verdict: reclib.VerdictRefuted, survived: false, judge: "carol", reasoning: "read it whole",
+		},
+	})
+
+	require.NotNil(t, findings[0].Verification)
+	assert.Equal(t, reclib.VerdictRefuted, findings[0].Verification.Verdict,
+		"precondition: the judge overwrote the verdict")
+	assert.Equal(t, "otto", findings[0].Verification.Skeptic,
+		"precondition: skeptic provenance is preserved in place, by design")
+	assert.False(t, findings[0].Verification.Truncated,
+		"the judge's verdict came from the judge's own read — the skeptic's truncation does not describe it")
+}

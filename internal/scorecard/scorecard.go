@@ -403,10 +403,24 @@ func Emit(in EmitInput, opts EmitOpts) error {
 		}
 		if hasVerification {
 			v, r := verified[name], refuted[name]
-			rate := ratio(v, v+r)
 			rec.FindingsVerified = &v
 			rec.FindingsRefuted = &r
-			rec.SurvivedSkepticRate = &rate
+			// The RATE is gated on a countable verdict surviving, not merely on a
+			// verification.json being present. With v+r == 0 — every verdict
+			// truncated, or this reviewer's findings drew none — ratio(0,0) is 0,
+			// and a published 0.0 is indistinguishable from a reviewer whose
+			// findings were ALL refuted: the strongest negative signal the metric
+			// carries, applied to a reviewer that was never measured. The counts
+			// above still ship; they say "nothing was countable", which is true.
+			//
+			// internal/scorecard/export.go states this rule at its own gate and
+			// cannot enforce it: a stored 0.0 satisfies its len(storedRates) > 0
+			// branch. The gate has to live here, where the degenerate ratio is
+			// produced.
+			if v+r > 0 {
+				rate := ratio(v, v+r)
+				rec.SurvivedSkepticRate = &rate
+			}
 			aggVerified += v
 			aggRefuted += r
 		}
@@ -431,8 +445,12 @@ func Emit(in EmitInput, opts EmitOpts) error {
 	if hasVerification {
 		agg.FindingsVerified = &aggVerified
 		agg.FindingsRefuted = &aggRefuted
-		rate := ratio(aggVerified, aggVerified+aggRefuted)
-		agg.SurvivedSkepticRate = &rate
+		// Same gate as the per-reviewer record above: an aggregate over zero
+		// countable verdicts has no rate, and a 0.0 there misreports the whole run.
+		if aggVerified+aggRefuted > 0 {
+			rate := ratio(aggVerified, aggVerified+aggRefuted)
+			agg.SurvivedSkepticRate = &rate
+		}
 	}
 	// Aggregate is appended LAST so it is the final line of the run's batch.
 	records = append(records, agg)
@@ -517,6 +535,23 @@ func verdictTallies(in EmitInput, w io.Writer) (verified, refuted map[string]int
 			_, _ = fmt.Fprintf(w, "scorecard: verification finding %s:%d has no matching raised finding; verdict attribution skipped\n", vfind.File, vfind.Line)
 			continue
 		}
+		// A verdict reached from a truncated read leaves the precision ratio
+		// entirely — neither numerator nor denominator. It is NOT counted against
+		// the reviewer: the point is that a partial read is not evidence about the
+		// reviewer in either direction, and survived_skeptic_rate is durable.
+		//
+		// The signal is read from verification.json, deliberately, and NOT from the
+		// truncated flag on findings.json's verification block that report.md
+		// renders. The two carry the same fact, but only this one survives to the
+		// moment this code runs: EmitForReconcile is called after RunReconcile,
+		// which rebuilds findings.json from sources/ and strips every verification
+		// block in the process, while verification.json is never recomputed. Keying
+		// on findings.json would read an artifact that is empty by then — a gate
+		// that silently never fires. internal/debate keeps this entry honest when a
+		// judge ruling clears the caveat (see syncVerificationTruncation).
+		if truncatedRead(vfind.TrippedBudgets) {
+			continue
+		}
 		switch normalizeVerdict(vfind.Verdict) {
 		case verdictConfirmed:
 			for _, r := range revs {
@@ -541,7 +576,35 @@ type verificationFile struct {
 		Line    int    `json:"line"`
 		Problem string `json:"problem"`
 		Verdict string `json:"verdict"`
+		// TrippedBudgets names every per-finding budget that halted the skeptic
+		// run. It is parsed for ONE purpose: a tool_budget_bytes trip riding a
+		// confirmed or refuted verdict means the answer stands but was reached
+		// from a shortened read (internal/verify's tripsVoidTheVerdict exempts a
+		// window-DERIVED ceiling), and such a verdict must not move a durable
+		// per-reviewer precision score. Dropping it at unmarshal is what made that
+		// impossible to act on.
+		TrippedBudgets []string `json:"trippedBudgets"`
 	} `json:"findings"`
+}
+
+// budgetToolBytes is the tripped-budget marker internal/verify records for the
+// tool-output ceiling. It is restated here rather than imported: this package
+// deliberately has no dependency on verify (see verificationFile above), and the
+// string is part of verification.json's on-disk shape, which is the contract
+// both sides actually share.
+const budgetToolBytes = "tool_budget_bytes"
+
+// truncatedRead reports whether a verdict was reached from a shortened tool
+// read. A DECLARED ceiling's trip voids the verdict to unverifiable, which the
+// tally never counts, so on a confirmed/refuted record this marker can only mean
+// the exempted derived-ceiling case.
+func truncatedRead(trippedBudgets []string) bool {
+	for _, b := range trippedBudgets {
+		if b == budgetToolBytes {
+			return true
+		}
+	}
+	return false
 }
 
 // Verdict values (lower-cased) matching internal/verify's enum.

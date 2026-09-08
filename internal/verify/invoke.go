@@ -8,6 +8,7 @@ import (
 	reclib "github.com/samestrin/atcr/reconcile"
 	"log/slog"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
@@ -64,11 +65,47 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 	}
 
 	logger := log.FromContext(ctx)
-	agent := buildSkepticAgent(skeptic, prompt, exec)
-	// Whether the tool ceiling the loop enforces came from the operator or was
-	// derived from the declared window decides what a trip on it MEANS below.
-	_, derivedBudget := skepticToolBudget(skeptic.Config)
-	engine := fanout.NewEngine(cc, fanout.WithDispatcher(disp), fanout.WithLogger(logger))
+	// buildSkepticAgent evaluates skepticToolBudget ONCE and returns both the
+	// agent carrying the enforced ceiling and that ceiling's provenance. The
+	// trust classification below is therefore derived from the number actually
+	// enforced — not re-derived by a second, independent call and assumed equal
+	// to it (a future override, settings tier or clamp inside buildSkepticAgent
+	// would otherwise desync the two with no test able to catch it).
+	agent, derivedBudget := buildSkepticAgent(skeptic, prompt, exec)
+	// The ceiling this lane will enforce, with its provenance, once per
+	// invocation. failureNotes alone renders a 400 KB read and a 3-byte derived
+	// ceiling as byte-identical class=budget_truncated lines, and the floored
+	// case goes down the voiding branch below as a generic budget_tripped
+	// indistinguishable from a max_turns trip — so an operator whose roster is
+	// systematically starving cannot see the cause. The same package already has
+	// the pattern: the executor lane names its ceiling via executor_ceiling_skip.
+	capped := false
+	if _, src := payload.ResolveContextWindow(skeptic.Config.Model, skeptic.Config.ContextWindowTokens); src == payload.WindowSourceDeclaration {
+		capped = payload.InputRoomTokens(skeptic.Config.Model, skeptic.Config.ContextWindowTokens)/2 < reservedOutputTokens(skeptic.Config)
+	}
+	logger.Debug("skeptic tool ceiling",
+		"skeptic", skeptic.Name,
+		"budget", agent.ToolBudgetBytes,
+		"derived", derivedBudget,
+		"capped", capped,
+		"floored", agent.ToolBudgetBytes == minSkepticToolBudget,
+	)
+	if agent.ToolBudgetBytes == minSkepticToolBudget {
+		// The enforced ceiling is the floor: the declared window cannot fund one
+		// tool result, so no trustworthy investigation is possible and the run
+		// cannot be spent usefully. Driving the engine would either hand reconcile
+		// a live verdict from a window that cannot hold even the prompt overhead
+		// (a completer that never calls a tool) or deliver a full first tool
+		// result into that window before the deferred end-of-turn trip fires (a
+		// guaranteed provider-side overflow). Short-circuit instead: named,
+		// structural, and no provider request is issued at all. A declared 1-byte
+		// budget lands here too — the same outcome its own first trip would
+		// produce, minus the doomed run.
+		logger.Warn("skeptic failed", "skeptic", skeptic.Name, "class", "window_too_small")
+		logger.Debug("skeptic failure detail", "skeptic", skeptic.Name, "class", "window_too_small", "detail", "window_below_prompt_overhead")
+		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "window_below_prompt_overhead", Skeptic: skeptic.Name}, nil, nil
+	}
+	engine := fanout.NewEngine(cc, fanout.WithDispatcher(clampDispatcher(disp, agent.ToolBudgetBytes)), fanout.WithLogger(logger))
 	results := engine.Run(ctx, []fanout.Slot{{Primary: agent}})
 	// Engine.Run returns one Result per slot in input order, so one slot yields
 	// exactly one result. Guard the index anyway: a zero-length return must not
@@ -98,12 +135,154 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 	if len(res.TrippedBudgets) > 0 {
 		// Reached only via the derived-ceiling exemption: the read was truncated
 		// but the answer stands. Report the trip so the audit record says the
-		// skeptic worked from a shortened view, and log it so an operator whose
-		// roster is systematically hitting the derived ceiling can see it.
-		logSkepticFailure(logger, skeptic.Name, "budget_truncated", failureNotes(res))
+		// skeptic worked from a shortened view. This is NOT a failure — the verdict
+		// survived — so it gets its own Info record instead of the failure helper
+		// (whose Warn("skeptic failed") false-alarms every operator alerting on
+		// skeptic failures, and whose detail claims a run halted that returned a
+		// verdict), and its own detail text.
+		// Mark the VERDICT, not just the log line and the tripped-budget slice.
+		// The slice reaches reconciled/verification.json alone; this object is
+		// what rides the finding into findings.json and report.md, so without the
+		// marker a confirmed formed from a shortened read renders with no caveat
+		// and is charged to the reviewer's durable precision score as a full read.
+		v.Truncated = true
+		logger.Info("skeptic truncated", "skeptic", skeptic.Name, "class", "budget_truncated")
+		detail := fmt.Sprintf("skeptic run truncated (status: %s); tripped budgets: %s", res.Status, strings.Join(res.TrippedBudgets, ", "))
+		logger.Debug("skeptic truncation detail", "skeptic", skeptic.Name, "class", "budget_truncated", "detail", detail)
 		return v, res.TrippedBudgets, nil
 	}
 	return v, nil, nil
+}
+
+// boundedDispatcher wraps a Dispatcher so the bytes it hands the tool loop can
+// never carry a skeptic past the ceiling this lane derived for it.
+//
+// It exists because internal/fanout/loop.go's byte-budget check is a DEFERRED
+// end-of-turn trip: a turn's results are appended to the message list in full
+// and the ceiling is consulted only once they are already in hand, after which
+// requestFinalAnswer re-sends that message list to the provider. A single result
+// is capped independently at tools.DefaultMaxResultBytes (64 KiB), which for
+// every window below roughly 31000 tokens is larger than the whole derived
+// ceiling — so ONE read_file could walk a small window past its own budget
+// before anything tripped, and the clamp only ever stopped the SECOND turn.
+//
+// The wrapper is per-invocation, not per-dispatcher: buildDispatcher builds ONE
+// dispatcher for the whole verify run while each skeptic derives its own
+// ceiling, so clamping tools.Limits centrally would impose the smallest roster
+// window on every agent. Wrapping here keeps each skeptic bounded by its own
+// number and leaves the shared dispatcher untouched.
+type boundedDispatcher struct {
+	inner     Dispatcher
+	remaining int64
+}
+
+// clampDispatcher returns disp bounded to at most budget+1 bytes of cumulative
+// tool content, or disp unchanged when budget is the engine's UNLIMITED
+// sentinel (<= 0) and there is nothing to bound against.
+//
+// The allowance is budget+1, not budget, and the extra byte is load-bearing:
+// loop.go trips on `ToolBytes > ToolBudgetBytes`, so a wrapper that delivered at
+// most the budget exactly would leave the comparison false forever. The loop
+// would never trip, the tripped-budget slice would stay empty, and the skeptic
+// would spend every remaining turn receiving empty results instead of being sent
+// to its final answer. One byte over is the smallest overrun that still lets the
+// existing trip semantics — including the derived-ceiling exemption in
+// tripsVoidTheVerdict — fire exactly as they did before.
+//
+// Leaving budget <= 0 UNWRAPPED is deliberate, and worth stating because that is
+// the dominant roster shape: an agent declaring neither context_window_tokens nor
+// tool_budget_bytes gets declared == 0 from skepticToolBudget, so first-turn
+// delivery is unbounded for exactly the agents most likely to be misconfigured.
+// 0 is the engine's UNLIMITED sentinel; wrapping it would mean inventing a
+// ceiling for an operator who declared none, and this clamp exists to enforce a
+// window's arithmetic, not to impose one where there is no window. The bound for
+// that case is loop.go's own budget check, which likewise no-ops at 0.
+// TestClampDispatcher_ZeroBudgetIsDeliberatelyUnwrapped pins it.
+func clampDispatcher(disp Dispatcher, budget int64) Dispatcher {
+	if budget <= 0 {
+		return disp
+	}
+	return &boundedDispatcher{inner: disp, remaining: budget + 1}
+}
+
+// Execute forwards to the wrapped dispatcher and truncates the result's Content
+// to whatever allowance is left, marking it Truncated and preserving
+// OriginalBytes so the transcript records what the tool actually produced.
+//
+// Not safe for concurrent use, and it does not need to be: each wrapper serves
+// exactly one invokeSkeptic call, and dispatchTurn executes a turn's calls
+// sequentially.
+func (d *boundedDispatcher) Execute(ctx context.Context, name string, args json.RawMessage) (tools.ToolResult, error) {
+	out, err := d.inner.Execute(ctx, name, args)
+	if err != nil {
+		return out, err
+	}
+	if int64(len(out.Content)) > d.remaining {
+		// Rounding up can reach the end of the content (the allowance lands inside
+		// the final rune). Nothing was removed then, so nothing is claimed: a
+		// result marked Truncated with its full content is a lie in the transcript
+		// and, downstream, an unearned truncated caveat on the verdict.
+		if cut := runeCeilCut(out.Content, int(d.remaining)); len(cut) < len(out.Content) {
+			// Backfill, not an overwrite. The production *tools.Dispatcher always
+			// sets OriginalBytes (capResult: the pre-cap size when capped, otherwise
+			// len(Content)), so this never fires there — but the field it protects
+			// is reached through the Dispatcher INTERFACE, whose contract nothing
+			// enforces. An implementation leaving it zero would otherwise record
+			// "the tool produced 0 bytes" beside a shortened read. Pinned by
+			// TestBoundedDispatcher_BackfillsOriginalBytesWhenTheInnerDispatcherOmitsThem.
+			if out.OriginalBytes == 0 {
+				out.OriginalBytes = len(out.Content)
+			}
+			out.Content = cut
+			out.Truncated = true
+		}
+	}
+	d.remaining -= int64(len(out.Content))
+	return out, nil
+}
+
+// runeCeilCut returns the shortest rune-aligned prefix of s that is at LEAST n
+// bytes long (all of s when no such boundary exists below its end), so the
+// result is always valid UTF-8. The tool content is serialised into a JSON
+// request body, and a raw byte slice through the middle of a rune produces the
+// replacement character, or a provider-side reject, rather than a clean short
+// read.
+//
+// It rounds UP, unlike the "at most n bytes" helper internal/tools uses for its
+// own display caps, and the direction is the whole point here. clampDispatcher
+// allows budget+1 bytes because internal/fanout/loop.go trips on
+// `ToolBytes > ToolBudgetBytes` — strictly greater — so an allowance the cut
+// FALLS SHORT of leaves the comparison false and the tool_budget_bytes trip
+// slips a turn. Walking the offset down to a boundary did exactly that on any
+// content containing a multi-byte rune, i.e. on ordinary source text: the clamp
+// defeated the trip it was added to preserve. Overshooting by the 1–3 bytes that
+// complete the straddling rune costs nothing; falling short costs the trip.
+func runeCeilCut(s string, n int) string {
+	if n >= len(s) {
+		return s
+	}
+	if n <= 0 {
+		return ""
+	}
+	// The walk is bounded by the longest UTF-8 encoding: a rune straddling the
+	// offset can need at most utf8.UTFMax-1 more bytes to complete. Without the
+	// bound, content that is not valid UTF-8 (no RuneStart byte anywhere after n)
+	// would walk to the end and deliver the WHOLE result — bypassing the clamp
+	// entirely on exactly the malformed input it is least safe to trust. Give up
+	// and cut at the requested offset instead: the bytes were already not valid
+	// UTF-8, so nothing is made worse, and the ceiling is still enforced.
+	limit := min(n+utf8.UTFMax, len(s))
+	for i := n; i < limit; i++ {
+		if utf8.RuneStart(s[i]) {
+			return s[:i]
+		}
+	}
+	if limit == len(s) {
+		// The tail past n is all continuation bytes and shorter than one encoding:
+		// it is the rest of the rune straddling the offset. Keep it.
+		return s
+	}
+	return s[:n]
 }
 
 // budgetToolBytes is fanout's tripped-budget marker for the tool-output ceiling.
@@ -152,9 +331,13 @@ func tripsVoidTheVerdict(tripped []string, derivedBudget bool) bool {
 // only" (TimeoutSecs→0). The provider's BaseURL/APIKeyEnv are threaded onto the
 // Invocation so llmclient.Chat can route the call (without them a production
 // skeptic would hit an empty endpoint with no key).
-func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool) fanout.Agent {
+//
+// It returns (agent, derived) from a SINGLE skepticToolBudget evaluation: the
+// bool is the provenance of the very budget installed on the agent, so callers
+// never re-derive the ceiling and assume the two agree.
+func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool) (agent fanout.Agent, derived bool) {
 	c := skeptic.Config
-	budget, _ := skepticToolBudget(c)
+	budget, derived := skepticToolBudget(c)
 	return fanout.Agent{
 		Name:        skeptic.Name,
 		Provider:    c.Provider,
@@ -197,7 +380,7 @@ func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool) fanout.Agent {
 			// today's behaviour exactly.
 			MaxTokens: c.MaxTokens,
 		},
-	}
+	}, derived
 }
 
 // failureNotes builds a diagnostic note for a halted skeptic run, naming the
@@ -243,6 +426,35 @@ func logSkepticFailure(logger *slog.Logger, skeptic, class, detail string) {
 	logger.Debug("skeptic failure detail", "skeptic", skeptic, "class", class, "detail", detail)
 }
 
+// minSkepticToolBudget is the floor a DECLARED window falls back to when it has
+// no input room to derive a ceiling from and the operator declared no budget of
+// their own. It exists only to stay off the engine's UNLIMITED sentinel: one byte
+// trips on the first tool result, which is the correct outcome for a window that
+// cannot hold one. skepticToolBudget returns it with derived = false, so the trip
+// collapses the run to unverifiable and the operator sees a named failure rather
+// than either a silently unbounded read or a verdict formed from one byte.
+const minSkepticToolBudget int64 = 1
+
+// minTrustworthyCeilingBytes is the smallest derived ceiling this lane will
+// treat as a real investigation: one tool result, sourced from the dispatcher's
+// own per-result cap rather than restated, so the two cannot drift.
+//
+// Below it, a skeptic cannot have read enough for its answer to mean anything —
+// the ceiling truncates the FIRST result it is handed, so whatever the model
+// concluded, it concluded from a fragment. `derived = true` would let that
+// answer through tripsVoidTheVerdict and into reconcile's CI gate as a live
+// confirmed/refuted, which is the failure the floor already exists to prevent
+// at one byte. The only difference between one byte and sixty-five thousand is
+// where the line sits, and the line belongs at one result, not at one byte.
+//
+// Scope, measured when the threshold was chosen (2026-09-07): every agent in
+// the live registry declares 98304 tokens or more and derives 301056 bytes, so
+// no shipped agent's classification changes. Windows below 31013 tokens do
+// change — they now take the floor and their skeptic short-circuits to
+// unverifiable without a provider call — and `atcr doctor` warns for that whole
+// band so the operator hears it before a run, not after.
+const minTrustworthyCeilingBytes int64 = payload.MinUsableReadBytes
+
 // skepticToolBudget resolves the skeptic's tool-output ceiling, clamping the flat
 // per-agent tool_budget_bytes to what the agent's DECLARED context window can
 // actually hold.
@@ -254,63 +466,173 @@ func logSkepticFailure(logger *slog.Logger, skeptic, class, detail string) {
 // reads. context_window_tokens was inert in this lane; this is the one budget here
 // it can bound.
 //
+// What the ceiling bounds is the CUMULATIVE tool content delivered across the
+// whole run, and that is true only because invokeSkeptic wraps the dispatcher in
+// boundedDispatcher. The engine's own check (internal/fanout/loop.go) is a
+// deferred end-of-turn trip: a turn's results land in the message list in full
+// and the ceiling is read afterwards, so the engine alone bounds the SECOND turn
+// and never the first. A single result is capped separately at
+// tools.DefaultMaxResultBytes (64 KiB), which is larger than the whole ceiling
+// derived for any window below roughly 31000 tokens — so without the wrapper one
+// read_file would deliver ~18700 tokens into a 12288-token window whose ceiling
+// is ~4096, and requestFinalAnswer would then re-send that oversized message
+// list to the provider. Read the two together: this function decides the number,
+// boundedDispatcher is what makes the number real on turn one.
+//
 // The derivation is payload.EffectiveByteBudget, the same one the review fan-out
 // sizes payloads with, so the window resolution chain (declaration → static model
 // table → conservative default) and the output reservation have exactly one
-// definition. The output cap passed is reservedOutputTokens: the agent's own
-// max_tokens declaration, floored at payload.DefaultOutputTokens exactly as the
-// review lane's resolveMaxTokens floors it. Tokens promised to the response are
-// not available to tool output, and an agent that declares no cap is still
-// promised the provider's own default — so it reserves the same conservative
-// number rather than reserving nothing.
+// definition. The output cap passed is reservedOutputTokens — the agent's own
+// max_tokens declaration, else payload.DefaultOutputTokens — capped at HALF the
+// window's input room. Tokens promised to the response are not available to tool
+// output, and an agent that declares no cap is still promised the provider's own
+// default, so it reserves the same conservative number rather than reserving
+// nothing.
+//
+// The half-room cap is what makes the derivation CONTINUOUS. The reservation is a
+// claim on the window, never a veto over it: rather than switching formulas when
+// the full cap no longer fits, the claim is always at most half the input room —
+// so the read and the reply divide a small window instead of one of them taking
+// all of it. This lane previously did switch —
+// full reservation above the reservation's own threshold, NOTHING reserved below
+// it — which made the ceiling non-monotonic in both operands (window 12288
+// derived 28672 bytes, 12289 derived 3) and left the lower band with a ceiling
+// equal to 100% of its input room, i.e. no room for the reply the reservation
+// exists to protect. Halving rather than claiming all but one token is
+// deliberate: an all-but-one-token clamp is monotonic too, but derives a 1-token
+// (3-byte) ceiling across the whole band, and a trip on a DERIVED ceiling does
+// not void the verdict — so the skeptic would answer from a 3-byte view without
+// signalling it. The cap binds while half the input room is smaller than the
+// reservation, i.e. below 2*reserved + prompt overhead (20480 tokens at the
+// built-in default); every larger window derives exactly what it always did.
+//
+// Be precise about what the cap does and does not buy, because part of that band
+// can fund the full reservation and is capped anyway. At window 16384 the room is
+// 12288 tokens: the full 8192 WOULD fit, leaving 4096 for the read, but the cap
+// reserves 6144 and leaves 6144. So the reservation is no longer an upper bound
+// on the reply — a reply that actually spends its whole max_tokens can still
+// overshoot a window in this band. That is the deliberate trade: below
+// 2*reserved + overhead the window cannot host both a full-length reply and a
+// usable read, and the alternative (reserve the full cap regardless) is what
+// derived a 1-token ceiling at window 12289. The cap splits the shortfall
+// instead of assigning all of it to the read. Every window at or above the
+// boundary reserves the full RESOLVED cap, which bounds overshoot only for
+// agents that DECLARE max_tokens: for an undeclared agent the wire carries no
+// output cap at all (buildSkepticAgent forwards a nil verbatim and the provider
+// applies its own default), so the built-in 8192 is an estimate against an
+// unknown cap, not a guarantee. This repo ships no registry, so no claim is
+// made here about where any shipped roster sits.
 //
 // Only a DECLARED window clamps, and only downward:
 //
-//   - No declaration → today's value, unchanged. Deriving from the table's
-//     conservative default would silently shrink every unsized roster, which is a
-//     separate decision on separate evidence.
+//   - No declaration — or a window value the resolution chain rejects (<= 0 or
+//     above the cap, reachable only through a programmatically built config) —
+//     → today's value, unchanged. Deriving from the table's conservative default
+//     would silently shrink every unsized roster, and would harden one
+//     construction path while trusting the same path's bogus window — a separate
+//     decision on separate evidence. The one exception: a negative incoming
+//     value gets the same floor as a starved window, never the engine's
+//     UNLIMITED sentinel.
 //   - A declared budget SMALLER than the ceiling wins. This is a ceiling, never a
 //     floor: an operator asking for less still gets less.
 //   - A ZERO budget (the engine's "unlimited") is clamped like any other, because
 //     unlimited is exactly the state a declared window contradicts.
 //
-// A non-positive ceiling is never forwarded. The engine reads 0 as UNLIMITED, so
-// emitting it would invert the clamp into its opposite — and the window that
-// cannot afford the reservation is the SMALLEST one, i.e. exactly the case this
-// clamp exists for. So the reservation is a claim on the window, never a veto
-// over it: when it exhausts the window, the ceiling is derived again with nothing
-// reserved (the value this lane shipped before the reservation was floored — a
-// bound, not a new risk) rather than collapsing to the declared value. Only a
-// window with no input room at all — below the prompt overhead, where no
-// reservation makes it fit — has no ceiling to derive; there the declared value
-// stands, since that state is a misconfiguration the review lane refuses on with
-// a named remedy and this lane does not invent a second failure mode for it.
+// A declared window never ends in an unbounded loop. The engine reads 0 as
+// UNLIMITED (internal/fanout/loop.go guards on `> 0`), so where a window has no
+// input room at all — at or below the prompt overhead, where no reservation makes
+// it fit — there is no ceiling to derive and the declared value stands only when
+// the operator actually declared one. A zero (or negative — load-time validation
+// rejects a negative, so only a programmatically built AgentConfig can carry one
+// here) declaration gets minSkepticToolBudget instead:
+// bounding the loop at one byte is the honest reading of a window that cannot
+// hold a tool result, and it is not the unlimited state the declaration
+// contradicts.
 //
-// The second return says which of the two the caller got: true only when the
-// returned number is the window-derived ceiling rather than the operator's own
-// declaration. invokeSkeptic needs the distinction because the two carry
-// different authority — see tripsVoidTheVerdict.
+// That floor returns derived = FALSE, which is the one place this function
+// reports "not derived" for a number the operator did not declare. It is
+// deliberate: a 1-byte ceiling trips on the first tool result by construction, so
+// treating the trip as a derived one would let a skeptic that read ONE BYTE hand
+// reconcile's gate a live confirmed/refuted — the same "answers from a starved
+// view without signalling it" failure that ruled out reserving all but one token.
+// A window at or below the prompt overhead cannot fund a trustworthy
+// investigation, so its trip must say so: unverifiable.
+//
+// The second return therefore means "a trip on this number must NOT void the
+// verdict", which is true only for a real window-derived ceiling. invokeSkeptic
+// needs the distinction because the two carry different authority — see
+// tripsVoidTheVerdict. Note what that means for a
+// declaration at or ABOVE the derived ceiling: it is not the number enforced (the
+// smaller derived one is), so a trip is a DERIVED trip and truncates the read
+// without voiding the verdict. Voiding it would blame the operator for a bound
+// this lane chose. An operator who wants a trip to mean "untrustworthy" must
+// declare a ceiling BELOW the derived one, which is also the only declaration the
+// engine will actually enforce.
+//
+// skepticToolBudget returns the tool ceiling and whether a trip on it truncates
+// (true) or voids (false) the verdict.
 func skepticToolBudget(c registry.AgentConfig) (budget int64, derived bool) {
+	// No negative-to-zero normalisation here, deliberately: the two `declared < 0`
+	// guards below own that contract between them, and a negative value can reach
+	// no other exit. Both window-less paths return the floor before falling through
+	// to `return declared`, and on the declared-window path a negative fails the
+	// `declared > 0` test, so the ceiling is returned instead. A normalisation
+	// would therefore change nothing observable — mutation-verified: disabling it
+	// left the whole suite green. Load-time validation rejects a negative
+	// (internal/registry/config.go); only a programmatically built AgentConfig
+	// reaches here with one, and the guards below are what bound it.
 	declared := derefInt64(c.ToolBudgetBytes)
 	if c.ContextWindowTokens == nil {
+		if declared < 0 {
+			// A negative declaration must not reach the engine as UNLIMITED on this
+			// path either. Normalising it to 0 forwards exactly the engine's own
+			// 0-as-UNLIMITED sentinel — the leak the declared-window path closes
+			// with the floor — so the same floor applies here: the loop is bounded,
+			// the trip (derived = false) voids the verdict, and a config that never
+			// passed load validation never buys an unbounded read.
+			return minSkepticToolBudget, false
+		}
 		return declared, false
 	}
-	ceiling := payload.EffectiveByteBudget(c.Model, c.ContextWindowTokens, reservedOutputTokens(c))
-	if ceiling <= 0 {
-		// The reservation is a CLAIM on the window, never a veto over it. A window
-		// too small to afford the full reservation still has input room to bound,
-		// and falling through to `declared` here hands the dominant roster shape
-		// (no tool_budget_bytes) a 0, which the engine reads as UNLIMITED — so the
-		// smallest window, the exact case this clamp exists for, would be the one
-		// case it stops protecting. Derive again with nothing reserved before
-		// giving up; that is the ceiling this lane shipped before the reservation
-		// was floored, so it is a bound rather than a new risk.
-		ceiling = payload.EffectiveByteBudget(c.Model, c.ContextWindowTokens, 0)
-	}
-	if ceiling <= 0 {
-		// Genuinely no input room — the prompt overhead alone exhausts the window.
-		// There is no ceiling to derive, so the declared value stands.
+	// Gate on the resolution TIER, not on pointer non-nilness: ResolveContextWindow
+	// discards any declaration <= 0 or above the cap and falls through to the table
+	// or the conservative default, so a non-nil out-of-range value is NOT a
+	// declaration. Deriving a ceiling from the table default for one would harden
+	// the negative-budget construction path (above) while accepting the same
+	// path's bogus window as truth — inconsistent on one threat model. A
+	// non-declaration behaves like no declaration: the value forwards untouched.
+	if _, src := payload.ResolveContextWindow(c.Model, c.ContextWindowTokens); src != payload.WindowSourceDeclaration {
+		if declared < 0 {
+			return minSkepticToolBudget, false
+		}
 		return declared, false
+	}
+	// Reserve what the window can AFFORD: the resolved output cap, never more than
+	// half the input room. See the half-room paragraph above for why half.
+	reserved := min(reservedOutputTokens(c), payload.InputRoomTokens(c.Model, c.ContextWindowTokens)/2)
+	ceiling := payload.EffectiveByteBudget(c.Model, c.ContextWindowTokens, reserved)
+	if ceiling < minTrustworthyCeilingBytes {
+		// The window cannot fund one real tool result. That covers the old
+		// no-input-room case (ceiling 0, the prompt overhead alone exhausts the
+		// window) and every window up to 31012 tokens, whose ceiling is positive
+		// but too small to read anything conclusive from.
+		//
+		// The declaration does NOT get an escape hatch here, and removing that
+		// hatch is half of this branch's point. It used to return the operator's
+		// full tool_budget_bytes on the no-room path, on the reasoning that a real
+		// operator bound still bounds the loop — but it bounds it at a number the
+		// window cannot hold either way, so it bought no protection while making
+		// the enforced ceiling swing ~350000x across one token of window (window
+		// 4096 with 1<<20 declared returned 1048576 with derived = false; window
+		// 4097 returned 3 with derived = true, flipping the trip from
+		// verdict-voiding to verdict-preserving at the same time).
+		//
+		// derived = false: see the floor paragraph above. The floor trips on the
+		// first result, and that trip must void the verdict rather than pass a
+		// fragment-derived answer to the gate. invokeSkeptic reads the floor and
+		// short-circuits before the engine, so no provider request is spent on a
+		// run whose answer could not be trusted anyway.
+		return minSkepticToolBudget, false
 	}
 	if declared > 0 && declared < ceiling {
 		return declared, false
@@ -318,13 +640,19 @@ func skepticToolBudget(c registry.AgentConfig) (budget int64, derived bool) {
 	return ceiling, true
 }
 
-// reservedOutputTokens resolves the output-token cap this lane must SUBTRACT from
-// the window when deriving the tool ceiling: the agent's own max_tokens
-// declaration, else payload.DefaultOutputTokens.
+// reservedOutputTokens resolves the output-token cap this lane STARTS from when
+// deriving the tool ceiling: the agent's own max_tokens declaration, else
+// payload.DefaultOutputTokens. It is the reservation the caller ASKS for, not
+// necessarily the one it takes — skepticToolBudget caps it at half the window's
+// input room, so below 2*reserved + prompt overhead the number actually
+// subtracted is smaller than this one.
 //
-// The floor is the whole point. The review lane resolves the same chain through
-// fanout.resolveMaxTokens, which also floors at that constant, so the two lanes
-// now reserve the same number for the same agent — which is what
+// The DEFAULT is the whole point — and it is a default, not a floor: a declared
+// max_tokens of 100 reserves 100, not the built-in. The review lane resolves the
+// same chain through fanout.resolveMaxTokens, which defaults to the same constant
+// the same way, so the two lanes ask for the same number for the same agent (this
+// lane may then cap it to fit a small window) —
+// which is what
 // skepticToolBudget's doc has always CLAIMED ("exactly one definition") and did
 // not deliver. Reserving derefInt(c.MaxTokens) meant reserving ZERO for the 23 of
 // 29 window-declaring roster agents that declare no cap, i.e. exactly the case

@@ -196,15 +196,21 @@ func renderScorecard(w io.Writer, recs []scorecard.Record) error {
 			formatPercent(r.CorroborationRate), r.CostUSD, r.LatencyMS)
 		if hasVer {
 			if r.FindingsVerified != nil {
-				survived := 0.0
-				if r.SurvivedSkepticRate != nil {
-					survived = *r.SurvivedSkepticRate
-				}
 				refuted := 0
 				if r.FindingsRefuted != nil {
 					refuted = *r.FindingsRefuted
 				}
-				row += fmt.Sprintf("\t%d\t%d\t%s", *r.FindingsVerified, refuted, formatPercent(survived))
+				// SURV% follows its OWN pointer, not FindingsVerified's. Emit sets
+				// both counts whenever verification ran but omits the rate when no
+				// countable verdict survived it, precisely so a reviewer that was
+				// never measured cannot be read as one whose findings were all
+				// refuted. Defaulting the absent rate to 0.0 here printed 0% and put
+				// that ambiguity straight back on the one surface a human reads.
+				surv := "-"
+				if r.SurvivedSkepticRate != nil {
+					surv = formatPercent(*r.SurvivedSkepticRate)
+				}
+				row += fmt.Sprintf("\t%d\t%d\t%s", *r.FindingsVerified, refuted, surv)
 			} else {
 				row += "\t-\t-\t-"
 			}

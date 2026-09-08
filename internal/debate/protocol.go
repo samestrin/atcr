@@ -114,6 +114,21 @@ func (rec *Record) runTurn(ctx context.Context, seat Caster, turn int, prompt st
 // mirroring verify.invokeSkeptic. It returns the seat's final content and the
 // engine status; a tripped budget or non-OK status both surface as a non-OK
 // status so the caller treats the turn as halted.
+//
+// It mirrors invokeSkeptic's LOOP but not its small-window protection, and that
+// difference is deliberate rather than overlooked. verify derives a tool ceiling
+// from the declared context window, floors it, and wraps the dispatcher in a
+// clamp; here the dispatcher is wired raw and buildDebateAgent forwards a nil
+// ToolBudgetBytes as 0, which internal/fanout reads as UNLIMITED. So an agent
+// whose window cannot fund one tool result is refused as a skeptic and accepted
+// as a judge, where a 64 KiB result simply overflows the window.
+//
+// Extending the derivation here is not a copy of verify's: the skeptic floor
+// converts a starved run into a named `unverifiable` verdict, and a debate seat
+// has no such verdict to degrade to — what a starved judge should DO is an open
+// design question, not a mechanical port. Until it is answered, the operator is
+// warned instead: internal/doctor's smallWindowClause names this lane explicitly
+// alongside the verification one.
 func driveSeat(ctx context.Context, seat Caster, prompt string, cc fanout.ChatCompleter, disp Dispatcher) (string, string) {
 	if cc == nil {
 		return "", fanout.StatusFailed

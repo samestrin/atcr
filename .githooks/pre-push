@@ -31,6 +31,64 @@ unset GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
 
 fail=0
 
+# Git feeds a pre-push hook one line per pushed ref on stdin:
+#   <local ref> <local sha> <remote ref> <remote sha>
+# Slurp it once, here, before anything shells out — any gate below could
+# otherwise consume it.
+pushed_refs="$(cat)"
+
+# Is this push made up ENTIRELY of reconcile module tags? docs/release-process.md
+# publishes the reconcile subtree by pushing a `reconcile/vX.Y.Z` tag cut from the
+# branch tip (step 2), and only bumps the root go.mod pin afterwards (step 4). So
+# at the moment that tag is pushed the root module by construction does NOT build
+# against the pinned reconcile, and the step-3 gate below can only be passed with
+# `git push --no-verify` — which also disables gofmt, golangci-lint, the suite and
+# the reconcile module checks. Scope the gate instead of training that reflex.
+#
+# The tag is not left unguarded: reconcile-module.yml runs the module's own gate
+# on `reconcile/v*` tags. A push carrying anything else — a branch, an app `v*`
+# tag, or an unrecognised shape including no refs at all — still runs the gate.
+#
+# KNOWN GAP, documented rather than latent (docs/release-process.md, step 2): a
+# FORCE-UPDATE of an EXISTING reconcile tag is exempted too. The refspec is
+# byte-identical to the fresh step-2 push, and git gives the hook nothing on
+# stdin to tell them apart — the remote sha is the only hint, and reading it
+# would mean a network round-trip in a pre-push hook. That is the one shape
+# where the gate would matter most, since the root go.mod may already pin
+# exactly that version, and reconcile-module.yml does NOT compensate: it runs
+# only the module's own gofmt/lint/test, never GOWORK=off go build ./... on the
+# root. Bounded by the Go proxy caching an immutable version, so a moved tag
+# largely cannot change what an existing pin resolves to. Run the pin gate by
+# hand before force-updating a tag.
+#
+# A tag DELETE is still gated: git sends the literal "(delete)" as the local
+# ref, which fails the pattern below.
+#
+# No .github/workflows/ci.yml mirror is needed for this one: that workflow fires
+# only on `push: branches: [main]` and `pull_request`, so it never runs for a tag
+# push at all.
+skip_pin_gate=0
+if [ -n "$pushed_refs" ]; then
+  skip_pin_gate=1
+  # BOTH sides of the refspec must be a reconcile tag. Matching only the local
+  # side would also exempt `git push origin refs/tags/reconcile/v1:refs/heads/main`
+  # — a reconcile tag being written onto a branch, which is emphatically not the
+  # documented step-2 push and must still be gated.
+  while IFS=' ' read -r local_ref _local_sha remote_ref _rest; do
+    [ -n "$local_ref" ] || continue
+    case "$local_ref" in
+      refs/tags/reconcile/*) ;;
+      *) skip_pin_gate=0 ;;
+    esac
+    case "$remote_ref" in
+      refs/tags/reconcile/*) ;;
+      *) skip_pin_gate=0 ;;
+    esac
+  done <<EOF
+$pushed_refs
+EOF
+fi
+
 # Repository integrity tripwire. The test suite is not supposed to be able to
 # modify this repository; when it has, it did so silently and the damage was
 # only noticed later. Snapshot the things that were actually corrupted, and
@@ -67,12 +125,18 @@ fi
 
 # The root module against the PINNED reconcile, not the go.work one (see header).
 # Build only — the suite above already ran; this is purely a pin-drift check.
-echo "pre-push: GOWORK=off go build ./... (root against the pinned reconcile)"
-if ! GOWORK=off go build ./...; then
-  echo "pre-push FAILED: root does not build against the pinned reconcile version."
-  echo "  Your go.work is masking go.mod. Either bump the pin (see docs/release-process.md)"
-  echo "  or stop depending on the unreleased reconcile change."
-  fail=1
+# Skipped for a reconcile-tag-only push; see skip_pin_gate above.
+if [ "$skip_pin_gate" -eq 1 ]; then
+  echo "pre-push: reconcile tag-only push — skipping the pinned-reconcile build"
+  echo "  (the pin is bumped after the tag; see docs/release-process.md step 2)"
+else
+  echo "pre-push: GOWORK=off go build ./... (root against the pinned reconcile)"
+  if ! GOWORK=off go build ./...; then
+    echo "pre-push FAILED: root does not build against the pinned reconcile version."
+    echo "  Your go.work is masking go.mod. Either bump the pin (see docs/release-process.md)"
+    echo "  or stop depending on the unreleased reconcile change."
+    fail=1
+  fi
 fi
 
 # reconcile: the same three checks as ci.yml's reconcile-module job, minus -race

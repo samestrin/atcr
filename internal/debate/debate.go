@@ -53,10 +53,18 @@ type Result struct {
 // judge rulings: it re-emits findings.json with the settled verdicts/severities,
 // writes reconciled/debate.json, records "debate" in the manifest stages, and
 // writes per-item transcripts under debate/. It deliberately does NOT re-emit the
-// verify-stage snapshots summary.json (verdictCounts) or verification.json: after
-// debate, findings.json together with debate.json is the authoritative record of
-// settled verdicts/severities, while those two snapshots remain as-of-verify audit
-// artifacts that may legitimately lag findings.json (see the artifacts group below).
+// verify-stage snapshots summary.json (verdictCounts) or verification.json's
+// VERDICTS: after debate, findings.json together with debate.json is the
+// authoritative record of settled verdicts/severities, while those snapshots
+// remain as-of-verify audit artifacts that may legitimately lag findings.json
+// (see the artifacts group below).
+//
+// The one exception is a fact, not a verdict: when a ruling clears a finding's
+// truncation caveat it also clears the matching tool_budget_bytes entry in
+// verification.json, because that entry describes how the SAME recorded verdict
+// was reached and is the copy internal/scorecard reads. See
+// syncVerificationTruncation for why the correction has to land there rather
+// than on findings.json.
 //
 // It is the single orchestrator shared by `atcr debate`, `atcr review
 // --verify --debate`, and the atcr_debate MCP tool. repoRoot is the git repo the
@@ -261,10 +269,12 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// atomic group so a mid-sequence failure cannot leave partial state
 	// (e.g. findings.json updated but manifest.json or debate.json missing).
 	//
-	// Scope note: the atomic group is exactly debate.json + findings.json +
-	// manifest.json. The verify-stage snapshots summary.json (verdictCounts) and
-	// verification.json are intentionally NOT recomputed here — they are
-	// point-in-time verify audit artifacts. findings.json (with debate.json) is the
+	// Scope note: the atomic group is debate.json + findings.json + manifest.json,
+	// plus verification.json ONLY when a ruling invalidated a truncation caveat it
+	// records (syncVerificationTruncation — one entry, on ruled findings only).
+	// The verify-stage snapshots are otherwise NOT recomputed here: summary.json
+	// (verdictCounts) and verification.json's verdicts are point-in-time verify
+	// audit artifacts. findings.json (with debate.json) is the
 	// authoritative post-debate record; any consumer needing settled verdict counts
 	// must derive them from findings.json, not from the now-stale summary.json.
 	debatePath, debateBytes, err := computeDebateBytes(reviewDir, DebateFile{
@@ -285,8 +295,14 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	if loc := firstClusterRulingCollision(rulings, mergeClusters); loc != "" {
 		log.FromContext(ctx).Warn("debate: gray-zone cluster member collides with a single-finding ruling key (Epic 6.1 invariant broken)", "location", loc)
 	}
+	// The set of findings whose truncation caveat a ruling actually cleared. It is
+	// NOT "every ruled finding": applyRulings force-clears Verification.Truncated on
+	// every ruling it applies, so the post-apply flag cannot distinguish a caveat
+	// this run dropped from one that was never there. syncVerificationTruncation
+	// needs the former.
+	var clearedCaveats map[FindingKey]ruleApply
 	if len(rulings) > 0 {
-		applyRulings(findings, rulings)
+		clearedCaveats = applyRulings(findings, rulings)
 	}
 	if len(mergeClusters) > 0 {
 		// Epic 6.1: union gray-zone clusters the judge ruled "merge" directly in the
@@ -315,6 +331,50 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	artifacts := []atomicwrite.Entry{
 		{Path: debatePath, Data: debateBytes},
 		{Path: findingsPath, Data: findingsBytes},
+	}
+	// A ruling that cleared a finding's truncation caveat also invalidates the
+	// matching tool_budget_bytes entry in the verify snapshot — the same fact
+	// about the same verdict, and the one internal/scorecard actually reads (see
+	// syncVerificationTruncation). Correcting exactly that entry is not the
+	// recompute the scope note above rules out; leaving it is what let report.md
+	// and survived_skeptic_rate disagree. It joins the atomic group so the two
+	// artifacts can never be published out of step.
+	verPath, verBytes, err := syncVerificationTruncation(reviewDir, findings, clearedCaveats)
+	if err != nil {
+		return Result{}, err
+	}
+	if verBytes != nil {
+		// Snapshot before replacing it, the way internal/verify does
+		// (backupExistingVerification). This stage's rewrite is the lossier of the
+		// two: it round-trips through map[string]any, so the file that comes back
+		// is key-sorted rather than in the struct order verify wrote, and is no
+		// longer byte-comparable with it even where no value changed. Without a
+		// snapshot the pre-debate state was simply gone.
+		//
+		// It gets its OWN name rather than verification.json.bak. That file belongs
+		// to internal/verify (backupExistingVerification), which contracts it as
+		// "the generation the last verify replaced" and, via
+		// atomicfs.BackupToDotBak, keeps exactly one. debate always runs after
+		// verify — cli/review.go runs verify then debate, and standalone `atcr
+		// debate` follows a verify too — so a debate snapshot under that name
+		// overwrites the pre-verify generation with the post-verify one on every
+		// run that clears a caveat, and the pre-verify state becomes unrecoverable.
+		// Two stages backing up one file need two names.
+		//
+		// It also joins the atomic group instead of being copied ahead of it.
+		// WriteGroup stages every entry before renaming any, so a publish that
+		// fails after staging used to leave verification.json untouched and the
+		// snapshot beside it already spent — a backup recording a generation the
+		// run never replaced. As a group entry it lands only when the rewrite does.
+		// Best-effort in the same spirit as the rest of the stage: an unreadable
+		// current file yields no snapshot rather than a lost correction, which is
+		// the same outcome the copy-based version produced.
+		if prior, rerr := os.ReadFile(verPath); rerr != nil {
+			log.FromContext(ctx).Warn("debate: could not snapshot verification.json before rewriting it", "path", verPath, "err", rerr)
+		} else {
+			artifacts = append(artifacts, atomicwrite.Entry{Path: verPath + debateBakSuffix, Data: prior})
+		}
+		artifacts = append(artifacts, atomicwrite.Entry{Path: verPath, Data: verBytes})
 	}
 	if manifestBytes != nil {
 		artifacts = append(artifacts, atomicwrite.Entry{Path: manifestPath, Data: manifestBytes})

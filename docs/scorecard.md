@@ -67,7 +67,7 @@ increments it and leaves old records readable (see [Schema versioning](#schema-v
 | `latency_ms` | int | always | Reviewer wall-clock latency in milliseconds. |
 | `findings_verified` | int | conditional | Findings confirmed by the skeptic stage. Present only when verification data drove the run. |
 | `findings_refuted` | int | conditional | Findings refuted by the skeptic stage. Conditional, same as above. |
-| `survived_skeptic_rate` | float | conditional | `findings_verified / (findings_verified + findings_refuted)`. Conditional, same as above. |
+| `survived_skeptic_rate` | float | conditional | `findings_verified / (findings_verified + findings_refuted)`. Present only when `findings_verified + findings_refuted > 0` — a *stricter* condition than the two counts above, which are present whenever verification ran. When verification ran but nothing countable survived (every verdict truncated, or this reviewer's findings drew none) the two counts still ship as `0` and this key is omitted: `0/0` would publish `0.0`, which is indistinguishable from a reviewer whose findings were all refuted. Read the three keys individually, not as a set. |
 | `raised_includes_unresolved` | bool | conditional | Superseded but retained. `true` when `findings_raised` counts the Tier-4-routed findings (every record written from Epic 35.16.6.5 onward); omitted on records written before it. The denominator has since changed meaning a second time (the 35.16.6.8 `doc_shield` carve-out), which a bool cannot express — `raised_denominator` below is the era discriminator a new reader should use. This field stays because existing readers and stores depend on it, and because `true` is still exactly right about the one thing it claims: routed findings are in the denominator. |
 | `raised_denominator` | int | conditional | Which definition of `findings_raised` produced this record: `1` = routed findings excluded (everything before 35.16.6.5; never stamped — it is what an absent discriminator means), `2` = routed findings included (35.16.6.5, stamped as `raised_includes_unresolved: true` before this field existed), `3` = routed findings included EXCEPT the doc-shielded ones (35.16.6.8, the current definition; those are counted in `findings_doc_shielded`). Omitted on records that predate the discriminator — their era is read from `raised_includes_unresolved` instead. `TrustPriors` splits eras on this value (see `unresolvedEraRuns`), so a rate is never averaged across two definitions. |
 
@@ -77,7 +77,14 @@ increments it and leaves old records readable (see [Schema versioning](#schema-v
 absent, these three keys are **omitted entirely** from the record, and the
 `atcr scorecard` / `atcr leaderboard` tables omit the corresponding columns. An
 absent, unreadable, or malformed verification file degrades gracefully to "no
-verification" — it never fails the run.
+verification" — it never fails the run. There is a **second, narrower omission
+case** that drops one of the three on its own: when verification DID run but no
+countable verdict survived (`findings_verified + findings_refuted == 0` — every
+verdict truncated, or this reviewer's findings drew none), both counts still ship
+as `0` and `survived_skeptic_rate` alone is omitted, because `0/0` would publish
+`0.0` and a published `0.0` reads as a reviewer whose findings were all refuted.
+So the three keys travel together only in the first case; read each on its own
+condition.
 
 **Aggregate record.** The aggregate row sums `findings_*`, `cost_usd`, and token
 counts across reviewers, takes the slowest reviewer's latency as the run latency
@@ -298,7 +305,7 @@ echoed** (they would leak query parameters about your local dataset):
 | `runs` | int | always | Number of runs aggregated into this row. |
 | `findings_raised_avg` | float | always | Mean findings raised **per run** (not the total). |
 | `corroboration_rate` | float | always | Corroborated / raised across the group (clamped to `[0,1]`). |
-| `survived_skeptic_rate` | float | **omitempty** | Verified / (verified + refuted). **Omitted entirely** when no verification ran for the group; present as `0.0` only when verification ran and every finding was refuted. The omission is the disambiguator. |
+| `survived_skeptic_rate` | float | **omitempty** | Verified / (verified + refuted). **Omitted entirely** in two cases: no verification ran for the group, **and** verification ran but no countable verdict survived it (every verdict truncated, or none drawn) — a group in that state carries no stored rate to fall back on, so nothing is published rather than a `0.0`. Present as `0.0` only when verification ran and every finding was refuted. Absence therefore means "no countable verdict", NOT "no verify stage": the two are not distinguishable from this key alone. |
 | `cost_per_corroborated_finding_usd` | float | **omitempty** | Total cost ÷ corroborated findings. **Omitted entirely** when there are zero corroborated findings (the metric is undefined — this is what distinguishes a paid-but-ineffective reviewer from a genuinely free one); present as `0.0` only when corroborated findings exist AND the reviewer's cost was genuinely zero. Never Inf/NaN when present. |
 | `latency_p50_ms` | int | always | Median (p50) of per-run latencies — not the mean. |
 | `raised_denominator` | int | always | Which definition of "findings raised" produced this row's `findings_raised_avg` and `corroboration_rate` (`1`/`2`/`3` for production eras, `100` for a benchmark-suite row — a different axis, never compared ordinally). **Not omitempty:** a submission that does not say which definition it used is exactly the ambiguity the field exists to remove, so the key is always present. |
