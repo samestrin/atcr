@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/benchmark"
@@ -341,8 +342,28 @@ func validateCheckpointRoster(cp *runCheckpoint, roster, legacyRoster []string) 
 			"truncated or hand-edited file reads the same — current panel [%s]; remove the "+
 			"checkpoint to start fresh", errCheckpointRosterMismatch, strings.Join(current, " "))
 	}
+	// The recorded half is quoted per entry; the configured half is not. The
+	// asymmetry is the point: `recorded` is sortedCopy(cp.Roster), read verbatim out
+	// of an operator-supplied, hand-editable checkpoint, while `current` is built
+	// from config this binary already parsed. A U+202E inside a roster entry would
+	// otherwise reorder the very message the operator reads when deciding whether to
+	// delete a checkpoint holding every already-paid case — the same untrusted-on-a-
+	// terminal class sanitizeLocator and reencodeErr harden against elsewhere. The
+	// `recorded [` and `configured [` framing is unchanged, so the message keeps the
+	// shape its tests and the operator's eye already know.
 	return fmt.Errorf("%w: recorded [%s], configured [%s]; remove the checkpoint to start fresh",
-		errCheckpointRosterMismatch, strings.Join(recorded, " "), strings.Join(current, " "))
+		errCheckpointRosterMismatch, quotedJoin(recorded), strings.Join(current, " "))
+}
+
+// quotedJoin renders each entry with %q and joins them with a space, so a control
+// or format rune carried in untrusted input reaches the terminal as its escape
+// rather than as a live rune.
+func quotedJoin(s []string) string {
+	out := make([]string, len(s))
+	for i, v := range s {
+		out[i] = strconv.Quote(v)
+	}
+	return strings.Join(out, " ")
 }
 
 // sortedCopy returns a sorted copy of s without mutating the input.
