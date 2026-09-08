@@ -77,7 +77,14 @@ increments it and leaves old records readable (see [Schema versioning](#schema-v
 absent, these three keys are **omitted entirely** from the record, and the
 `atcr scorecard` / `atcr leaderboard` tables omit the corresponding columns. An
 absent, unreadable, or malformed verification file degrades gracefully to "no
-verification" — it never fails the run.
+verification" — it never fails the run. There is a **second, narrower omission
+case** that drops one of the three on its own: when verification DID run but no
+countable verdict survived (`findings_verified + findings_refuted == 0` — every
+verdict truncated, or this reviewer's findings drew none), both counts still ship
+as `0` and `survived_skeptic_rate` alone is omitted, because `0/0` would publish
+`0.0` and a published `0.0` reads as a reviewer whose findings were all refuted.
+So the three keys travel together only in the first case; read each on its own
+condition.
 
 **Aggregate record.** The aggregate row sums `findings_*`, `cost_usd`, and token
 counts across reviewers, takes the slowest reviewer's latency as the run latency
