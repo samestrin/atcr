@@ -79,6 +79,10 @@ type VerificationResult struct {
 	// Leaving Model blank could not carry this on its own. Cases 1 and 3 both
 	// produce exactly `"model": ""`, so a consumer reading blankness alone learns
 	// nothing about which happened.
+	//
+	// DurationMs is withheld on exactly the same paths and is covered by the same
+	// marker. The name follows Model because that is the field a reader consults
+	// for attribution; a second field per withheld value would say nothing extra.
 	ModelWithheldReason string `json:"modelWithheldReason,omitempty"`
 
 	// Extra holds every key of the on-disk record this struct does not model,
