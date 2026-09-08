@@ -1072,3 +1072,35 @@ func TestSyncVerificationTruncation_LeavesAnUnverifiableResidueCandidateAlone(t 
 	assert.Nil(t, data,
 		"the trip is the only record of why a declared ceiling voided this verdict — an unverifiable record is never repaired")
 }
+
+// TestSyncVerificationTruncation_ARepairedRecordIsNotRewrittenAgain pins the
+// idempotence the reconciling pass needs to be safe to run every time.
+//
+// The pass draws its candidates from the prior reconciled/debate.json, so a
+// finding a debate ruled stays a candidate on every later run. Marking the file
+// changed when the record already says what the ruling settled would republish
+// verification.json — and mint a fresh verification.json.debate.bak, consuming the
+// one snapshot generation that exists — on every subsequent `atcr debate`, with
+// nothing to show for it.
+func TestSyncVerificationTruncation_ARepairedRecordIsNotRewrittenAgain(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeVerificationFixture(t, reviewDir, `{"findings":[
+		{"file":"a.go","line":1,"problem":"p1","verdict":"refuted","skeptic":"otto",
+		 "model":"m-x","reasoning":"otto read token.go:42","durationMs":1840,
+		 "trippedBudgets":[],"debateJudge":"greta","debateReasoning":"greta re-read the call site"}
+	]}`)
+	writeDebateFixture(t, reviewDir, ItemResult{
+		File: "a.go", Line: 1, Problem: "p1", Kind: "verification_disagreement",
+		Outcome: "overturned", Judge: "greta", Reasoning: "greta re-read the call site",
+	})
+
+	findings := []reconcile.JSONFinding{{
+		File: "a.go", Line: 1, Problem: "p1", Reviewers: []string{"otto"},
+		Verification: &reclib.Verification{Verdict: reclib.VerdictRefuted, Skeptic: "otto"},
+	}}
+
+	_, data, err := syncVerificationTruncation(reviewDir, findings, nil, nil)
+	require.NoError(t, err)
+	assert.Nil(t, data,
+		"the record already carries the settled verdict and its judge — republishing it burns the one snapshot generation for no change")
+}

@@ -497,6 +497,18 @@ func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFindi
 				// every record the verify stage produced, so without the gate this branch
 				// would stamp judges onto verify-owned records a ruling merely touched —
 				// the recompute debate.go's scope note rules out.
+				//
+				// A record already saying all three is left strictly alone. This pass
+				// draws its candidates from the prior debate.json, so every finding a
+				// debate ever ruled stays a candidate forever; marking the file changed
+				// for an identical value would republish verification.json — and mint a
+				// fresh .debate.bak, spending the one snapshot generation that exists —
+				// on every later `atcr debate`, with nothing to show for it.
+				if sameRecordedString(rec, "verdict", p.verdict) &&
+					sameRecordedString(rec, "debateJudge", p.judge) &&
+					sameRecordedString(rec, "debateReasoning", p.reasoning) {
+					continue
+				}
 				rec["verdict"] = p.verdict
 				rec["debateJudge"] = p.judge
 				rec["debateReasoning"] = p.reasoning
@@ -640,4 +652,12 @@ func priorDebateRulings(reviewDir string) map[FindingKey]ruleApply {
 		}
 	}
 	return out
+}
+
+// sameRecordedString reports whether a verification.json record already holds want
+// at key. A missing key compares equal only to the empty string, which keeps an
+// absent omitempty field from counting as a difference worth republishing for.
+func sameRecordedString(rec map[string]any, key, want string) bool {
+	got, _ := rec[key].(string)
+	return got == want
 }
