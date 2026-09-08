@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/samestrin/atcr/internal/atomicfs"
 	"github.com/samestrin/atcr/internal/atomicwrite"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/hookobs"
@@ -338,6 +339,20 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		return Result{}, err
 	}
 	if verBytes != nil {
+		// Snapshot before replacing it, the way internal/verify does
+		// (backupExistingVerification). This stage's rewrite is the lossier of the
+		// two: it round-trips through map[string]any, so the file that comes back
+		// is key-sorted rather than in the struct order verify wrote, and is no
+		// longer byte-comparable with it even where no value changed. Without the
+		// .bak the pre-debate state was simply gone.
+		//
+		// Best-effort, like the rest of the stage: a failed snapshot is worth a
+		// warning, not a lost correction. Paired with verBytes != nil deliberately
+		// — snapshotting on a run that rewrites nothing would clobber the genuinely
+		// prior state kept from the last run that did.
+		if _, err := atomicfs.BackupToDotBak(verPath); err != nil {
+			log.FromContext(ctx).Warn("debate: could not snapshot verification.json before rewriting it", "path", verPath, "err", err)
+		}
 		artifacts = append(artifacts, atomicwrite.Entry{Path: verPath, Data: verBytes})
 	}
 	if manifestBytes != nil {

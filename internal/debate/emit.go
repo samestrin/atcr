@@ -358,6 +358,21 @@ func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFindi
 	// Decoded into a generic map so every field this stage does not understand —
 	// present or added later — survives the rewrite byte-for-byte in value. Only
 	// the one entry below is touched.
+	//
+	// The round-trip is lossless in VALUE but not in LAYOUT: json.MarshalIndent
+	// over map[string]any emits keys alphabetically at every level, so a
+	// debate-written verification.json is key-sorted rather than in the struct
+	// order internal/verify/emit_verification.go writes. Every in-tree reader goes
+	// through encoding/json, so nothing breaks — but a verify-written and a
+	// debate-written snapshot are NOT byte-comparable, which makes golden fixtures
+	// and manual diffs across the two stages noisy. Do not add one. runDebate
+	// takes a .bak before publishing this, so the pre-debate bytes remain
+	// recoverable.
+	//
+	// Residual: a JSON number round-trips through float64 here, so an int64 field
+	// added later above 2^53 would lose precision (9007199254740993 becomes
+	// 9007199254740992). No current field is exposed to that; a future one would
+	// need decoding with json.Number.
 	var doc map[string]any
 	if json.Unmarshal(data, &doc) != nil {
 		return "", nil, nil
