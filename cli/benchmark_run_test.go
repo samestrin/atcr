@@ -1693,6 +1693,17 @@ func TestValidateCheckpointRoster_StampedEmptyRosterKeepsTheGenericMessage(t *te
 	assert.ErrorIs(t, err, errCheckpointRosterMismatch)
 	assert.NotContains(t, err.Error(), "pre-serial-lane binary",
 		"a stamped roster was not written by the pre-serial-lane binary; offering that cause would be a guess")
+
+	// The test is named for the message it KEEPS, so it must pin that message and not
+	// only the one it avoids. Without these two the whole generic return could be
+	// replaced by a bare `return errCheckpointRosterMismatch` — losing the recorded and
+	// configured diagnostics the operator repairs the checkpoint from — and this test
+	// would stay green. Mutation-verified: stubbing that return to the bare sentinel
+	// fails here.
+	assert.Contains(t, err.Error(), "recorded [",
+		"the generic drift text is what this case falls through to; it carries what the checkpoint recorded")
+	assert.Contains(t, err.Error(), "configured [",
+		"and the panel configured now, which is the pair the operator compares")
 }
 
 // The load-bearing premise of the whole AC5 branch is that `"roster": []` on disk
