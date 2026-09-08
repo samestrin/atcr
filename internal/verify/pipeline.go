@@ -424,6 +424,10 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		// disk — see the three-cause note on VerificationResult. Only the reject arms
 		// stamp a reason; a first-ever verify and the carry-forward path leave it
 		// unset, and so does the debate arm below, whose marker is DebateJudge.
+		// carried is the single decision the rest of this block reads: the switch's
+		// default arm IS the carry-forward case, so naming it here keeps the reason
+		// stamped, the caveat re-derived, and the metadata carried from ever
+		// disagreeing about which arm this record took.
 		carried := false
 		switch {
 		case priorLoadFailed:
@@ -441,7 +445,7 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		if !carried && f.Verification.Truncated {
 			rec.TrippedBudgets = []string{budgetToolBytes}
 		}
-		if hadPrior && !priorLoadFailed && strings.EqualFold(strings.TrimSpace(prior.Verdict), strings.TrimSpace(f.Verification.Verdict)) {
+		if carried {
 			// Verdict equality alone is no longer sufficient evidence that the prior
 			// describes the SAME run. internal/debate writes a judge's verdict into
 			// verification.json (syncVerificationTruncation), which makes the two
