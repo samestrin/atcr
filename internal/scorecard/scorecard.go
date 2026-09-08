@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 
 	"github.com/samestrin/atcr/internal/llmclient"
@@ -504,6 +505,11 @@ func verdictTallies(in EmitInput, w io.Writer) (verified, refuted map[string]int
 		}
 	}
 
+	// findings.json is the AUTHORITATIVE post-debate record of how each recorded
+	// verdict was reached; verification.json is a point-in-time verify snapshot
+	// that later stages deliberately do not recompute. Consult the authority.
+	settledTruncation := settledTruncationByKey(filepath.Dir(in.VerificationPath), w)
+
 	verified = map[string]int{}
 	refuted = map[string]int{}
 	for _, vfind := range vf.Findings {
@@ -521,7 +527,22 @@ func verdictTallies(in EmitInput, w io.Writer) (verified, refuted map[string]int
 		// entirely — neither numerator nor denominator. It is NOT counted against
 		// the reviewer: the point is that a partial read is not evidence about the
 		// reviewer in either direction, and survived_skeptic_rate is durable.
-		if truncatedRead(vfind.TrippedBudgets) {
+		//
+		// Which artifact says so matters. report.md renders its truncated caveat
+		// from findings.json's verification.truncated, and the debate stage
+		// updates ONLY that: internal/debate/emit.go clears Truncated on a judge
+		// ruling (the recorded verdict is the judge's, produced from the judge's
+		// own read) while internal/debate/debate.go states verification.json is
+		// intentionally not recomputed. Keying the exclusion on the stale snapshot
+		// let report.md show a ruling with no caveat while the score still dropped
+		// it. Follow findings.json where it speaks; fall back to the snapshot's
+		// trippedBudgets per finding where it does not.
+		fk := findingKey(vfind.File, vfind.Line, vfind.Problem)
+		truncated, settled := settledTruncation[fk]
+		if !settled {
+			truncated = truncatedRead(vfind.TrippedBudgets)
+		}
+		if truncated {
 			continue
 		}
 		switch normalizeVerdict(vfind.Verdict) {
@@ -570,6 +591,59 @@ const budgetToolBytes = "tool_budget_bytes"
 // read. A DECLARED ceiling's trip voids the verdict to unverifiable, which the
 // tally never counts, so on a confirmed/refuted record this marker can only mean
 // the exempted derived-ceiling case.
+// settledFindingsFile is the minimal subset of reconciled/findings.json this
+// package parses: each finding's location plus whether its RECORDED verdict was
+// reached from a shortened read. It mirrors internal/reconcile.JSONFinding but
+// stays local for the same reason verificationFile does — the emitter parses an
+// on-disk contract, not a Go type, and a local struct keeps a schema addition in
+// either direction from silently changing what the score reads.
+type settledFindingsFile []struct {
+	File         string `json:"file"`
+	Line         int    `json:"line"`
+	Problem      string `json:"problem"`
+	Verification *struct {
+		Truncated bool `json:"truncated"`
+	} `json:"verification"`
+}
+
+// settledTruncationByKey reads reconciled/findings.json from reconDir and returns
+// the settled truncation state per finding key. A finding present in the file
+// answers for itself — INCLUDING answering "not truncated", which is the whole
+// point after a judge ruling clears the caveat.
+//
+// An absent, unreadable, or malformed file returns an empty map, which leaves
+// every verdict on the verification.json fallback. That is the fail-safe
+// direction: a corrupt post-debate record must not promote a verdict the
+// pipeline marked partial to full weight in a durable trust score.
+func settledTruncationByKey(reconDir string, w io.Writer) map[string]bool {
+	if reconDir == "" {
+		return nil
+	}
+	data, err := os.ReadFile(filepath.Join(reconDir, reconcile.FindingsJSON))
+	if err != nil {
+		if !os.IsNotExist(err) {
+			_, _ = fmt.Fprintf(w, "scorecard: findings read failed: %v\n", err)
+		}
+		return nil
+	}
+	var ff settledFindingsFile
+	if err := json.Unmarshal(data, &ff); err != nil {
+		_, _ = fmt.Fprintf(w, "scorecard: findings parse failed: %v\n", err)
+		return nil
+	}
+	out := make(map[string]bool, len(ff))
+	for _, f := range ff {
+		if f.Verification == nil {
+			// No verification block: this finding carries no verdict at all, so it
+			// has nothing to say about how one was reached. Leave it unsettled
+			// rather than asserting "not truncated" about a verdict it never held.
+			continue
+		}
+		out[findingKey(f.File, f.Line, f.Problem)] = f.Verification.Truncated
+	}
+	return out
+}
+
 func truncatedRead(trippedBudgets []string) bool {
 	for _, b := range trippedBudgets {
 		if b == budgetToolBytes {
