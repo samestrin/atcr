@@ -237,6 +237,10 @@ func safeRuneCut(s string, n int) string {
 	return s[:n]
 }
 
+// runeCeilCut is the boundedDispatcher's cut. Stub: delegates to the backward
+// walk so the behaviour under test is unchanged.
+func runeCeilCut(s string, n int) string { return safeRuneCut(s, n) }
+
 // budgetToolBytes is fanout's tripped-budget marker for the tool-output ceiling.
 // fanout keeps its own copy unexported, so the string is duplicated here rather
 // than imported; TestInvokeSkeptic_DerivedToolBudgetTripDoesNotVoidTheVerdict
