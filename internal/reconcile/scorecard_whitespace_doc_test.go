@@ -67,6 +67,19 @@ func TestScorecardDoc_WhitespaceControlRuneCarveOut(t *testing.T) {
 		t.Errorf("cli/benchmark_coverage.go firstNonPrintingRune must keep the IsControl/Cf predicate the carve-out is written against (%s)", predicateNeedle)
 	}
 
+	// Bidirectional grounding for the stderr quote: cli/leaderboard.go formats the
+	// blank-identity notice with the FIELD NAME substituted ("the record has no %s"),
+	// so the blank field being `reviewer` reads "the record has no reviewer". The doc
+	// must not hardcode "model" as the only field in the quoted message.
+	codeMsgNeedle := "the record has no %s"
+	if !strings.Contains(leaderboard, codeMsgNeedle) {
+		t.Errorf("cli/leaderboard.go must keep the field-substituted blank-identity message the doc quotes (%s)", codeMsgNeedle)
+	}
+	docMsgNeedle := "the record has no model/reviewer"
+	if !strings.Contains(doc, docMsgNeedle) {
+		t.Errorf("docs/scorecard.md must quote the blank-identity message for both fields, not hardcode one (%s)", docMsgNeedle)
+	}
+
 	// Membership probe: every rune the carve-out names as "whitespace that is also a
 	// control rune" IS a control rune (so firstNonPrintingRune really rejects it),
 	// and ordinary/NBSP whitespace is NOT (so it really stays in the keep-and-warn
