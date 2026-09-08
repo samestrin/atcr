@@ -1628,3 +1628,59 @@ func TestValidateCheckpointRoster_EmptyRecordedRosterIsNeverExcused(t *testing.T
 	require.Error(t, err, "an empty recorded roster proves nothing about the panel; excusing it resumes across any serial reviewer set")
 	assert.ErrorIs(t, err, errCheckpointRosterMismatch)
 }
+
+// The rejection above is CORRECT and stays — the alternative is resuming against any
+// serial panel. What was wrong is the message. The generic drift text reads "recorded
+// [], configured [dax=m-dax=dax greta=m-greta=greta]; remove the checkpoint to start
+// fresh", which blames a panel change that did not happen and sends the operator to
+// discard a checkpoint holding every already-paid completed case of a suite that
+// routinely exceeds ten minutes of LLM wall-clock. The cause is undiagnosable from that
+// line: the checkpoint was written before the serial lane joined the signature, by a
+// project with no parallel lane, so its roster records nothing and cannot be migrated.
+//
+// That case is reachable by a SHIPPED binary, not only by hand-editing. serial_agents
+// predates the checkpoint Roster field, at merge-base rosterSignature built from
+// cfg.Project.Agents alone, and the Roster tag carries no omitempty — so a serial-only
+// project round-trips `"roster": []` as a non-nil empty slice that clears the
+// cp.Roster == nil guard and falls through to the generic error.
+func TestValidateCheckpointRoster_EmptyRecordedRosterNamesItsOwnCause(t *testing.T) {
+	serialOnly := func() *fanout.ReviewConfig {
+		c := benchCfg([3]string{"dax", "m-dax", "dax"}, [3]string{"greta", "m-greta", "greta"})
+		c.Project.Agents = nil
+		c.Project.SerialAgents = []string{"dax", "greta"}
+		return c
+	}
+	current := serialOnly()
+	legacy := rosterSignatureOf(current, current.Project.Agents)
+
+	err := validateCheckpointRoster(&runCheckpoint{Roster: []string{}}, rosterSignature(current), legacy)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errCheckpointRosterMismatch,
+		"the round-3 blocker stays closed: this is still a rejection, only a better-explained one")
+
+	msg := err.Error()
+	assert.Contains(t, msg, "records an empty reviewer roster",
+		"the message must name what is actually wrong with the checkpoint")
+	assert.Contains(t, msg, "before the serial lane joined the roster signature",
+		"and why a shipped binary produced it, or the operator reads it as corruption")
+	assert.NotContains(t, msg, "configured [",
+		"the generic drift text blames a panel change that did not happen")
+}
+
+// The distinct message is scoped to an UNSTAMPED checkpoint. A union-stamped one
+// recording an empty roster cannot have come from the pre-serial-lane binary — this
+// binary writes both lanes, and a project with neither is rejected by
+// internal/registry/project.go — so blaming that cause would be a guess. It falls
+// through to the generic drift text instead.
+func TestValidateCheckpointRoster_StampedEmptyRosterKeepsTheGenericMessage(t *testing.T) {
+	c := benchCfg([3]string{"greta", "m-greta", "greta"}, [3]string{"dax", "m-dax", "dax"})
+	c.Project.Agents = []string{"greta"}
+	c.Project.SerialAgents = []string{"dax"}
+
+	cp := &runCheckpoint{Roster: []string{}, RosterFormat: rosterFormatUnion}
+	err := validateCheckpointRoster(cp, rosterSignature(c), rosterSignatureOf(c, c.Project.Agents))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errCheckpointRosterMismatch)
+	assert.NotContains(t, err.Error(), "before the serial lane joined the roster signature",
+		"a stamped roster was not written by the pre-serial-lane binary; naming that cause would be a guess")
+}
