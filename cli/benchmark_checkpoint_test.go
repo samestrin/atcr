@@ -254,3 +254,42 @@ func TestSaveCheckpoint_PreservesPriorOnWriteFailure(t *testing.T) {
 	assert.Len(t, cp.Cases, 1, "prior valid checkpoint must survive a failed overwrite")
 	assert.Equal(t, "case-01", cp.Cases[0].CaseID)
 }
+
+// RosterFormat is read twice on the resume path (the compat arm and the
+// empty-recorded-roster message both gate on it being ""), so an
+// out-of-vocabulary value silently disables both and hands the operator the
+// generic drift text those arms exist to replace. Reject it at load, the same
+// way the Outcome allowlist is enforced one level down.
+func TestLoadCheckpoint_RosterFormatAllowlist(t *testing.T) {
+	cases := []struct {
+		name    string
+		format  string
+		wantErr bool
+	}{
+		{name: "absent is the legacy shape", format: "", wantErr: false},
+		{name: "union is what this binary writes", format: rosterFormatUnion, wantErr: false},
+		{name: "out-of-vocabulary value is corrupt", format: "v2", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "ckpt.json")
+			data, err := json.Marshal(&runCheckpoint{
+				ReproHash:    "hash",
+				Suite:        "suite",
+				SuiteVersion: "1.0.0",
+				Roster:       []string{"a=m"},
+				RosterFormat: tc.format,
+			})
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(path, data, 0o600))
+			_, err = loadCheckpoint(path)
+			if !tc.wantErr {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.ErrorIs(t, err, errCheckpointCorrupt)
+			assert.Contains(t, err.Error(), `"v2"`, "the offending value must be quoted so the operator can find it in the file")
+		})
+	}
+}
