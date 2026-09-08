@@ -53,6 +53,23 @@ type BackfillResult struct {
 	// --dry-run is documented as the safety step to run first, so it has to be able
 	// to show what it would touch; a bare counter cannot.
 	Changes []JustificationChange
+
+	// ShardNames is every shard file name the rewrite pass's own walk observed, in
+	// os.ReadDir order, taken INSIDE the withLock region.
+	//
+	// It exists so a caller rendering Changes describes the same directory snapshot
+	// the rewrite was computed against. `atcr debt backfill-justifications --dry-run`
+	// disambiguates colliding shard locators, which is a property of the SET of names
+	// on disk and so cannot be derived from Changes alone — an unchanged file can
+	// collide with a changed one. Resolving that set with a SECOND os.ReadDir after
+	// this function returns reads the directory outside the lock, so a concurrent
+	// writer removing a colliding shard in that window suppresses the disambiguating
+	// suffix and the operator approves a bare locator for a name that was ambiguous
+	// when the rewrite was computed.
+	//
+	// It is nil when no rewrite was needed: with nothing to write there is nothing to
+	// describe, and the pass returns before it walks the directory at all.
+	ShardNames []string
 }
 
 // JustificationChange is one shard line the backfill rewrote or would rewrite.

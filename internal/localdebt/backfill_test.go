@@ -723,3 +723,47 @@ func TestRewriteJustifications_LeavesNoTempDebrisOnASuccessfulRewrite(t *testing
 	}
 	require.Len(t, entries, 1, "the store must hold exactly the one shard it started with")
 }
+
+// The dry-run listing in cli/ resolves locator collisions, and it must describe the
+// SAME directory snapshot the rewrite was computed against. Before this, `cli` ran its
+// own os.ReadDir after BackfillJustifications had already returned — outside the
+// withLock region rewriteJustifications' walk ran inside — so a concurrent writer that
+// removed a colliding shard in that window suppressed the "#hash" suffix the listing
+// exists to add, and the operator approved a bare token for a name that WAS ambiguous
+// when the rewrite was computed. atcr's own CLAUDE.md notes concurrent sessions share
+// this tree, so that writer is not hypothetical.
+//
+// ShardNames closes the window by carrying the locked walk's own observation out to the
+// caller, so there is exactly one listing and one filter rather than two that must be
+// kept in step.
+func TestBackfillJustifications_ReturnsTheShardNamesObservedUnderTheLock(t *testing.T) {
+	dir := t.TempDir()
+	reviewRoot := t.TempDir()
+	rd := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+	require.NoError(t, os.MkdirAll(rd, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"),
+		[]byte("## Findings\n\n- **internal/thing.go:42** the real narrative explaining the defect.\n"), 0o600))
+
+	rec := `{"schema_version":3,"id":"aaaa1111","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
+		`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
+		`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+		`"justification":"stale text that the replay will replace",` +
+		`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":3}}`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "2026-08.jsonl"), []byte(rec+"\n"), 0o600))
+	// An unchanged shard: it produces no JustificationChange, so the change set alone
+	// cannot see it — only the directory snapshot can. That is the whole reason the
+	// snapshot has to travel out rather than being reconstructed from Changes.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "2026-07.jsonl"), []byte(""), 0o600))
+	// Non-shard entries, one for each half of the walk's filter. Neither may appear in
+	// the snapshot, or the caller's collision map gains names that are not shards.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("not a shard\n"), 0o600))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "2026-06.jsonl"), 0o750))
+
+	res, err := BackfillJustifications(dir, reviewRoot, true)
+	require.NoError(t, err)
+	require.NotEmpty(t, res.Changes, "the fixture must produce a change, or the snapshot proves nothing")
+
+	assert.ElementsMatch(t, []string{"2026-07.jsonl", "2026-08.jsonl"}, res.ShardNames,
+		"the snapshot must carry every shard the locked walk saw — including one with "+
+			"nothing to repair — and nothing that is not a shard")
+}
