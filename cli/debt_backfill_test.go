@@ -333,6 +333,11 @@ func TestDebtBackfillJustifications_DryRunStripsBidiFromTheShardLocator(t *testi
 	// about the locator rather than about a line that was never printed.
 	require.Contains(t, out, "aaaa1111", "the dry run must have listed the record")
 
+	// The legend is a collision remedy, like the suffix it explains: no collision, no
+	// suffix, no note. Printing it unconditionally would train the operator to skip it.
+	assert.NotContains(t, out, "shard names collide",
+		"a listing with no suffixed locator must not carry the suffix legend")
+
 	assert.NotContains(t, out, "\u202E", "a bidi override in a shard filename must never reach the terminal raw")
 	// Stripped, not quoted: `<shard>:<line>` has to stay ONE copy-pasteable token, so
 	// the line number cannot be pushed outside a quoted name.
@@ -455,6 +460,16 @@ func TestDebtBackfillJustifications_DryRunDisambiguatesAgainstAnUnchangedShardOn
 	assert.Regexp(t, `^2026-08\.jsonl#[0-9a-f]{6}$`, locators[0][1],
 		"a shard whose sanitized name collides with a real file on disk must be disambiguated, "+
 			"even when that file produced no rewrite")
+
+	// The suffix is only as useful as the operator's ability to read it. Unannotated it
+	// looks like part of the filename — which is also the documented residual case — and
+	// it cannot be mapped back to a file by eye, since it is a hash of raw bytes that are
+	// not shown. The security value of the whole mechanism rests on the operator knowing
+	// that a suffix means "this is not the plain name you think it is".
+	assert.Contains(t, out, "shard names collide once unprintable runes are stripped",
+		"a suffixed listing must say why the names are suffixed")
+	assert.Contains(t, out, "#xxxxxx",
+		"and name the suffix's form, so the operator can tell it from a real filename")
 }
 
 // The disambiguator stays a collision remedy when the store holds other shards: a name
