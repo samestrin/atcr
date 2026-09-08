@@ -113,3 +113,17 @@ func TestBoundedDispatcher_ResultThatFitsIsNotMarkedTruncated(t *testing.T) {
 	assert.Equal(t, "ab"+emDash, out.Content)
 	assert.Zero(t, out.OriginalBytes, "nothing was cut, so nothing is restated")
 }
+
+// TestRuneCeilCut_InvalidUTF8DoesNotBypassTheClamp bounds the forward walk.
+// Content that is not valid UTF-8 has no RuneStart byte to walk to; an unbounded
+// search would run to the end and hand back the WHOLE result, defeating the
+// ceiling on precisely the input least worth trusting.
+func TestRuneCeilCut_InvalidUTF8DoesNotBypassTheClamp(t *testing.T) {
+	// 0x80 is a continuation byte: never a rune start, so there is no boundary
+	// anywhere after the offset.
+	s := "ab" + strings.Repeat("\x80", 500)
+
+	got := runeCeilCut(s, 4)
+	assert.LessOrEqual(t, len(got), 4+utf8.UTFMax,
+		"the overshoot is bounded by the longest UTF-8 encoding, never by the length of the content")
+}

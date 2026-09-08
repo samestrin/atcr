@@ -247,8 +247,23 @@ func runeCeilCut(s string, n int) string {
 	if n <= 0 {
 		return ""
 	}
-	for n < len(s) && !utf8.RuneStart(s[n]) {
-		n++
+	// The walk is bounded by the longest UTF-8 encoding: a rune straddling the
+	// offset can need at most utf8.UTFMax-1 more bytes to complete. Without the
+	// bound, content that is not valid UTF-8 (no RuneStart byte anywhere after n)
+	// would walk to the end and deliver the WHOLE result — bypassing the clamp
+	// entirely on exactly the malformed input it is least safe to trust. Give up
+	// and cut at the requested offset instead: the bytes were already not valid
+	// UTF-8, so nothing is made worse, and the ceiling is still enforced.
+	limit := min(n+utf8.UTFMax, len(s))
+	for i := n; i < limit; i++ {
+		if utf8.RuneStart(s[i]) {
+			return s[:i]
+		}
+	}
+	if limit == len(s) {
+		// The tail past n is all continuation bytes and shorter than one encoding:
+		// it is the rest of the rune straddling the offset. Keep it.
+		return s
 	}
 	return s[:n]
 }
