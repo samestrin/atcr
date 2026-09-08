@@ -154,8 +154,10 @@ func TestRunReconcile_RequireVerifiedWarning(t *testing.T) {
 	var logBuf, errBuf bytes.Buffer
 	runReconcileWithLogger(t, &logBuf, &errBuf, "--require-verified", "--fail-on", "LOW", "r")
 
-	assert.Contains(t, logBuf.String(), "--require-verified set but verify never ran",
+	assert.Contains(t, logBuf.String(), "--require-verified set but the gate has no verified findings to count",
 		"the warning must be visible at the default info level")
+	assert.Contains(t, logBuf.String(), "verify stage has not run",
+		"the detail names WHICH way the gate was left with nothing to count")
 }
 
 // TestRunReconcile_UsesContextLogger verifies the warning routes through the

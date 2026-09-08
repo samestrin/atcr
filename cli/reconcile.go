@@ -300,12 +300,14 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	noLocalDebt, _ := cmd.Flags().GetBool("no-local-debt")
 	persistedRoot := persistLocalDebt(reviewDir, res, storeRoot, storeOK, noLocalDebt, cmd.ErrOrStderr())
 
-	// TD-004: warn when verify never ran — the gate would trivially pass
-	// everything. Routed through the context logger so it honors LOG_LEVEL and is
-	// correlated; visible at the default info level.
+	// TD-004: warn when the gate would trivially pass everything — because verify
+	// never ran, or because it ran and every verdict came back unverifiable. The
+	// message stays neutral about which; verr names the case. Routed through the
+	// context logger so it honors LOG_LEVEL and is correlated; visible at the
+	// default info level.
 	if requireVerified {
 		if verr := reconcile.ValidateRequireVerified(reviewDir); verr != nil {
-			logger.Warn("--require-verified set but verify never ran", "detail", verr)
+			logger.Warn("--require-verified set but the gate has no verified findings to count", "detail", verr)
 		}
 	}
 
