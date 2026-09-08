@@ -62,7 +62,7 @@ func TestSyncVerificationTruncation_ClearsTheTripTheRulingInvalidated(t *testing
 	applyRulings(findings, judgeRulingOnA())
 	require.False(t, findings[0].Verification.Truncated, "precondition: the ruling cleared the caveat")
 
-	path, data, err := syncVerificationTruncation(reviewDir, findings)
+	path, data, err := syncVerificationTruncation(reviewDir, findings, judgeRulingOnA())
 	require.NoError(t, err)
 	require.NotNil(t, data, "the trip the ruling invalidated is still on disk, so a rewrite is owed")
 	require.Equal(t, filepath.Join(reviewDir, "reconciled", "verification.json"), path)
@@ -81,7 +81,7 @@ func TestSyncVerificationTruncation_LeavesAnUnruledFindingAlone(t *testing.T) {
 	writeVerificationFixture(t, reviewDir, staleVerification)
 
 	// No ruling applied at all: nothing about how any verdict was reached changed.
-	path, data, err := syncVerificationTruncation(reviewDir, ruledFindings())
+	path, data, err := syncVerificationTruncation(reviewDir, ruledFindings(), nil)
 	require.NoError(t, err)
 	assert.Nil(t, data, "no ruling cleared a caveat, so verification.json is not rewritten at all")
 	assert.Empty(t, path)
@@ -99,7 +99,7 @@ func TestSyncVerificationTruncation_KeepsOtherTrippedBudgets(t *testing.T) {
 	findings := ruledFindings()
 	applyRulings(findings, judgeRulingOnA())
 
-	_, data, err := syncVerificationTruncation(reviewDir, findings)
+	_, data, err := syncVerificationTruncation(reviewDir, findings, judgeRulingOnA())
 	require.NoError(t, err)
 	require.NotNil(t, data)
 
@@ -117,7 +117,7 @@ func TestSyncVerificationTruncation_MissingFileIsNotAnError(t *testing.T) {
 	findings := ruledFindings()
 	applyRulings(findings, judgeRulingOnA())
 
-	path, data, err := syncVerificationTruncation(reviewDir, findings)
+	path, data, err := syncVerificationTruncation(reviewDir, findings, judgeRulingOnA())
 	assert.NoError(t, err)
 	assert.Nil(t, data)
 	assert.Empty(t, path)
@@ -137,7 +137,7 @@ func TestJudgeRulingClearingTruncationReachesTheScorecard(t *testing.T) {
 	findings := ruledFindings()
 	applyRulings(findings, judgeRulingOnA())
 
-	_, data, err := syncVerificationTruncation(reviewDir, findings)
+	_, data, err := syncVerificationTruncation(reviewDir, findings, judgeRulingOnA())
 	require.NoError(t, err)
 	require.NotNil(t, data)
 	require.NoError(t, os.WriteFile(verPath, data, 0o600))
@@ -227,7 +227,7 @@ func TestSyncVerificationTruncation_CarriesTheRuledVerdictWithTheCaveat(t *testi
 	require.False(t, findings[0].Verification.Truncated,
 		"precondition: the ruling cleared the caveat, so the sync owes a rewrite")
 
-	_, data, err := syncVerificationTruncation(reviewDir, findings)
+	_, data, err := syncVerificationTruncation(reviewDir, findings, overturnedRulingOnA())
 	require.NoError(t, err)
 	require.NotNil(t, data)
 
@@ -244,7 +244,7 @@ func TestOverturnedRulingDoesNotCreditTheReviewer(t *testing.T) {
 	findings := ruledFindings()
 	applyRulings(findings, overturnedRulingOnA())
 
-	_, data, err := syncVerificationTruncation(reviewDir, findings)
+	_, data, err := syncVerificationTruncation(reviewDir, findings, overturnedRulingOnA())
 	require.NoError(t, err)
 	require.NotNil(t, data)
 	require.NoError(t, os.WriteFile(verPath, data, 0o600))
@@ -322,7 +322,7 @@ func TestSyncVerificationTruncation_LeavesADeclaredBudgetVoidingAlone(t *testing
 	})
 	applyRulings(findings, judgeRulingOnA())
 
-	_, data, err := syncVerificationTruncation(reviewDir, findings)
+	_, data, err := syncVerificationTruncation(reviewDir, findings, judgeRulingOnA())
 	require.NoError(t, err)
 	require.NotNil(t, data, "a.go WAS ruled, so a rewrite is still owed")
 
@@ -346,7 +346,7 @@ func TestSyncVerificationTruncation_NoRulingsRewritesNothing(t *testing.T) {
 		Verification: &reclib.Verification{Verdict: reclib.VerdictUnverifiable, Skeptic: "bruce"},
 	}}
 
-	path, data, err := syncVerificationTruncation(reviewDir, findings)
+	path, data, err := syncVerificationTruncation(reviewDir, findings, nil)
 	require.NoError(t, err)
 	assert.Nil(t, data, "no ruling was applied, so there is nothing this stage may correct")
 	assert.Empty(t, path)

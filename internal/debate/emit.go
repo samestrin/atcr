@@ -320,14 +320,30 @@ const budgetToolBytes = "tool_budget_bytes"
 // scorecard that reads verdicts from it anyway. Closing it means either debate
 // rewriting every ruled verdict here, or the scorecard deriving settled verdicts
 // from findings.json; both are larger decisions than this correction.
-func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFinding) (string, []byte, error) {
-	// Only findings whose recorded verdict now carries NO caveat can owe a
-	// correction. A finding the judge left alone keeps whatever verify concluded.
-	// The value is the verdict that correction has to carry with it.
+func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFinding, rulings map[FindingKey]ruleApply) (string, []byte, error) {
+	// debate.go calls this unconditionally, including on a run that ruled nothing.
+	// Such a run changed no verdict, so it is owed no correction — and reading the
+	// snapshot at all would only risk one.
+	if len(rulings) == 0 {
+		return "", nil, nil
+	}
+	// A correction is owed only where a RULING cleared the caveat. Keying on the
+	// post-apply Truncated flag alone was far too wide: it is false on most
+	// findings, ruled or not. internal/verify's voiding path records
+	// Verification{Verdict: unverifiable} for a verdict a DECLARED ceiling overruled
+	// and never sets Truncated, so those findings entered the set and had the only
+	// record of WHY they were voided deleted — by a run that never ruled on them,
+	// with no verification.json.bak on this path to recover from.
+	//
+	// The value is the verdict the correction has to carry with it.
 	cleared := map[FindingKey]string{}
 	for _, f := range findings {
+		key := FindingKey{File: f.File, Line: f.Line, Problem: f.Problem}
+		if _, ruled := rulings[key]; !ruled {
+			continue
+		}
 		if f.Verification != nil && !f.Verification.Truncated {
-			cleared[FindingKey{File: f.File, Line: f.Line, Problem: f.Problem}] = f.Verification.Verdict
+			cleared[key] = f.Verification.Verdict
 		}
 	}
 	if len(cleared) == 0 {
