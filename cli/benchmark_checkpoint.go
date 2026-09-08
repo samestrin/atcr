@@ -288,10 +288,43 @@ func validateCheckpointRoster(cp *runCheckpoint, roster, legacyRoster []string) 
 	// a resume that replays every already-completed case, or aborts before the first
 	// one, returns without saving: the legacy form stays on disk and this arm
 	// re-fires on each such resume.
-	if cp.RosterFormat == "" && len(legacyRoster) > 0 && len(recorded) > 0 && equalStrings(recorded, sortedCopy(legacyRoster)) {
+	// ONE emptiness term, not two. `len(legacyRoster) > 0` sat here beside it and was
+	// unfalsifiable: equalStrings compares lengths first, so when exactly one slice is
+	// empty the arm cannot fire regardless, and only the BOTH-empty case needs blocking
+	// — which either term alone blocks. A redundant conjunct reads as a live guard while
+	// protecting nothing, which is how a future edit loses a protection it appears to
+	// have. `len(recorded) > 0` is the one kept because it states the arm's actual
+	// precondition: an empty recorded roster proves nothing about the panel, so it must
+	// never be excused. Dropping it lets `"roster": []` compare equal to a serial-only
+	// project's empty parallel projection and resume against ANY serial panel.
+	if cp.RosterFormat == "" && len(recorded) > 0 && equalStrings(recorded, sortedCopy(legacyRoster)) {
 		cp.Roster = current
 		cp.RosterFormat = rosterFormatUnion
 		return nil
+	}
+	// The empty-recorded-roster case, named rather than left to the generic drift text
+	// below. It is reachable from a SHIPPED binary, not only by hand-editing: at
+	// merge-base rosterSignature built from cfg.Project.Agents alone, serial_agents
+	// predates the Roster field, and internal/registry/project.go rejects only BOTH
+	// lanes empty — so a serial-only project wrote `"roster": []`, and the Roster tag
+	// carries no omitempty, so it round-trips as a non-nil empty slice that clears the
+	// cp.Roster == nil guard above.
+	//
+	// The rejection is CORRECT and stays: the alternative is resuming against any serial
+	// panel, which the arm above exists to refuse. What was wrong is the diagnosis. The
+	// generic text reports "recorded [], configured [...]", blaming a panel change that
+	// never happened and sending the operator to discard a checkpoint holding every
+	// already-paid completed case.
+	//
+	// Scoped to an UNSTAMPED checkpoint. A union-stamped empty roster cannot have come
+	// from the pre-serial-lane binary — this binary writes both lanes, and a project
+	// with neither is rejected at config load — so naming that cause for it would be a
+	// guess; it falls through to the generic text instead.
+	if cp.RosterFormat == "" && len(recorded) == 0 {
+		return fmt.Errorf("%w: checkpoint records an empty reviewer roster; it was written "+
+			"before the serial lane joined the roster signature, by a project with no parallel "+
+			"lane, so its roster proves nothing about the panel and cannot be migrated — remove "+
+			"the checkpoint to start fresh", errCheckpointRosterMismatch)
 	}
 	return fmt.Errorf("%w: recorded [%s], configured [%s]; remove the checkpoint to start fresh",
 		errCheckpointRosterMismatch, strings.Join(recorded, " "), strings.Join(current, " "))
