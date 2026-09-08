@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -719,4 +721,46 @@ func TestLocatorNames_DoesNotFoldVisualConfusablesThatAreNotCompatibilityEquival
 	assert.NotContains(t, names[ascii], "#",
 		"NFKC maps U+2011 to U+2010, not to U+002D, so this pair is not detected as a collision")
 	assert.NotContains(t, names[nbHyphen], "#")
+}
+
+// The disambiguating suffix is sha256 of the raw name truncated to a hex prefix, and
+// the threat model this file's own comments assume is an attacker who can write to the
+// store directory. That attacker controls BOTH planted filenames and can pad either
+// with arbitrary Cf runes, which sanitize away — so they are not guessing a hash of a
+// name they do not control (the residual case the header dismisses), they are running
+// an offline birthday search over a space they choose.
+//
+// At 6 hex characters that space is 24 bits, and a collision turns up in roughly 2^12
+// trials. The pair below was found that way in well under a second; both names reduce
+// to "2026-08.jsonl" and their sha256 digests share the prefix "2a0450". A 6-character
+// suffix renders them as ONE identical locator — breaking the exact invariant the
+// listing exists to uphold, on the surface an operator approves an in-place rewrite
+// from.
+func TestLocatorNames_SuffixSurvivesAForcedShortPrefixCollision(t *testing.T) {
+	const (
+		// Written as escapes: a raw U+FEFF in Go source is an illegal byte order mark.
+		a = "2026-08\u200c\u200c\u00ad\u200c\ufeff.jsonl"
+		b = "2026-08\ufeff\u2060\u00ad\u2060\ufeff.jsonl"
+	)
+	require.Equal(t, sha256Hex(a)[:6], sha256Hex(b)[:6],
+		"fixture premise: these two names share a 6-hex sha256 prefix")
+	require.NotEqual(t, a, b, "and they are genuinely different files")
+
+	changes := []localdebt.JustificationChange{
+		{ID: "aaaa1111", Shard: a, Line: 1},
+		{ID: "bbbb2222", Shard: b, Line: 1},
+	}
+	names := locatorNames([]string{a, b}, changes)
+
+	assert.NotEqual(t, names[a], names[b],
+		"two distinct shard files must never render as one identical locator, "+
+			"even when an attacker forces a short-prefix hash collision")
+	assert.Regexp(t, `^2026-08\.jsonl#[0-9a-f]{12}$`, names[a],
+		"the suffix must carry at least 48 bits, which puts a forced collision out of offline reach")
+	assert.Regexp(t, `^2026-08\.jsonl#[0-9a-f]{12}$`, names[b])
+}
+
+func sha256Hex(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
 }
