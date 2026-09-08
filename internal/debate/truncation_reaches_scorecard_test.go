@@ -1104,3 +1104,34 @@ func TestSyncVerificationTruncation_ARepairedRecordIsNotRewrittenAgain(t *testin
 	assert.Nil(t, data,
 		"the record already carries the settled verdict and its judge — republishing it burns the one snapshot generation for no change")
 }
+
+// TestSyncVerificationTruncation_ClearsAStaleWithheldReasonOnTheRuledRecord keeps
+// verification.json's two "why is model empty" markers disjoint.
+//
+// internal/verify stamps modelWithheldReason=verdict_shifted when a re-verify
+// finds a prior whose verdict no longer matches — which is exactly what this file
+// looks like while a ruling's correction is still owed. Once debate writes the
+// settled verdict and names the judge, that reason is answered and superseded:
+// debateJudge is the marker for a DELIBERATE withholding, and the contract on
+// VerificationResult says the two never co-occur. Leaving both makes the record
+// claim its attribution was rejected for a verdict mismatch it no longer has.
+func TestSyncVerificationTruncation_ClearsAStaleWithheldReasonOnTheRuledRecord(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeVerificationFixture(t, reviewDir, `{"findings":[
+		{"file":"a.go","line":1,"problem":"p1","verdict":"confirmed","skeptic":"otto",
+		 "model":"","reasoning":"otto read token.go:42","durationMs":0,
+		 "trippedBudgets":["tool_budget_bytes"],"modelWithheldReason":"verdict_shifted"}
+	]}`)
+
+	findings := ruledFindings()
+	cleared := applyRulings(findings, judgeRulingOnA())
+
+	_, data, err := syncVerificationTruncation(reviewDir, findings, cleared, nil)
+	require.NoError(t, err)
+	require.NotNil(t, data)
+
+	rec := parseRecord(t, data, "a.go")
+	require.Equal(t, "greta", rec["debateJudge"], "precondition: the ruling now owns this record")
+	assert.Nil(t, rec["modelWithheldReason"],
+		"debateJudge is the marker for a deliberate withholding — a verdict-mismatch reason beside it describes a mismatch the write just removed")
+}

@@ -506,12 +506,11 @@ func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFindi
 				// on every later `atcr debate`, with nothing to show for it.
 				if sameRecordedString(rec, "verdict", p.verdict) &&
 					sameRecordedString(rec, "debateJudge", p.judge) &&
-					sameRecordedString(rec, "debateReasoning", p.reasoning) {
+					sameRecordedString(rec, "debateReasoning", p.reasoning) &&
+					rec["modelWithheldReason"] == nil {
 					continue
 				}
-				rec["verdict"] = p.verdict
-				rec["debateJudge"] = p.judge
-				rec["debateReasoning"] = p.reasoning
+				stampJudge(rec, p)
 				changed = true
 				continue
 			default:
@@ -547,7 +546,6 @@ func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFindi
 			// Scoped deliberately to records whose caveat this call dropped. Writing
 			// the verdict anywhere else would be the verification.json recompute
 			// debate.go's atomic-group scope note rules out.
-			rec["verdict"] = settled.verdict
 			// The verdict does not travel alone. rec["skeptic"], rec["model"],
 			// rec["reasoning"] and rec["durationMs"] were written by the verify stage
 			// and describe the run this ruling REPLACED — emit_verification.go's
@@ -563,8 +561,7 @@ func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFindi
 			// overwritten: they are the audit trail of the superseded run, and the
 			// radar reads Skeptic (reconcile.isVerificationTie) to detect
 			// verification ties.
-			rec["debateJudge"] = settled.judge
-			rec["debateReasoning"] = settled.reasoning
+			stampJudge(rec, settled)
 		}
 	}
 	if !changed {
@@ -660,4 +657,21 @@ func priorDebateRulings(reviewDir string) map[FindingKey]ruleApply {
 func sameRecordedString(rec map[string]any, key, want string) bool {
 	got, _ := rec[key].(string)
 	return got == want
+}
+
+// stampJudge writes the settled verdict and its attribution onto a
+// verification.json record.
+//
+// It also drops modelWithheldReason. internal/verify sets that marker when a
+// re-verify rejects a prior whose verdict no longer matches the standing one —
+// which is precisely how this file reads while a ruling's correction is still
+// owed. The write below removes that mismatch and installs debateJudge, the marker
+// for a DELIBERATE withholding, and VerificationResult's contract states the two
+// never co-occur. Leaving the reason standing would have the record claim its
+// attribution was rejected over a disagreement it no longer has.
+func stampJudge(rec map[string]any, settled ruledVerdict) {
+	rec["verdict"] = settled.verdict
+	rec["debateJudge"] = settled.judge
+	rec["debateReasoning"] = settled.reasoning
+	delete(rec, "modelWithheldReason")
 }
