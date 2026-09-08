@@ -1197,3 +1197,43 @@ func TestSyncVerificationTruncation_IgnoresAPriorItemThatSettledNothing(t *testi
 		})
 	}
 }
+
+// TestSyncVerificationTruncation_LeavesAStandingCaveatAlone pins the skip that
+// keeps the pending pass off findings whose caveat is still set.
+//
+// The pending pass exists to correct records a ruling settled. A finding whose
+// Verification.Truncated is still true was settled by nothing: applyRulings is the
+// only thing that clears that flag, so its presence proves no ruling applied here
+// and none is owed. Without the skip such a finding becomes a pending candidate,
+// and a record a PRIOR debate owns is then re-stamped with a verdict this run
+// never settled — the file-wide recompute debate.go's atomic-group scope note
+// rules out.
+func TestSyncVerificationTruncation_LeavesAStandingCaveatAlone(t *testing.T) {
+	reviewDir := t.TempDir()
+	// A record a prior debate already owns, carrying a verdict findings.json now
+	// disagrees with — the exact shape the recordedDebateJudge arm rewrites.
+	writeVerificationFixture(t, reviewDir, `{"findings":[
+		{"file":"a.go","line":1,"problem":"p1","verdict":"confirmed","skeptic":"otto",
+		 "model":"m-x","reasoning":"otto read token.go:42","durationMs":1840,
+		 "trippedBudgets":[],"debateJudge":"greta","debateReasoning":"greta upheld the skeptic"}
+	]}`)
+
+	findings := []reconcile.JSONFinding{{
+		File: "a.go", Line: 1, Problem: "p1", Reviewers: []string{"otto"},
+		Verification: &reclib.Verification{
+			Verdict: reclib.VerdictRefuted, Skeptic: "otto", Truncated: true,
+		},
+	}}
+	rulings := map[FindingKey]ruleApply{
+		{File: "a.go", Line: 1, Problem: "p1"}: {
+			verdict: reclib.VerdictRefuted, judge: "hank", reasoning: "hank reversed greta",
+		},
+	}
+
+	// No caveat cleared: this call is handed an empty cleared set precisely because
+	// the flag on the finding is still standing.
+	_, data, err := syncVerificationTruncation(reviewDir, findings, nil, rulings)
+	require.NoError(t, err)
+	assert.Nil(t, data,
+		"Truncated is still set, so no ruling applied to this finding — correcting a record on the strength of the ruling alone is the recompute the scope note forbids")
+}
