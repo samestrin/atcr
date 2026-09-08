@@ -419,6 +419,11 @@ func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFindi
 		return "", nil, nil
 	}
 
+	// Unreachable in practice, and deliberately left in rather than dropped: doc
+	// came out of json.Unmarshal, so it holds only map/slice/string/float64/bool/nil
+	// and re-marshals by construction. MarshalIndent fails on channels, funcs and
+	// NaN — none of which json.Unmarshal can produce. Reaching it needs fault
+	// injection, so it is covered by inspection, not by a test.
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return "", nil, err

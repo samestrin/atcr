@@ -428,3 +428,97 @@ func TestRunDebate_LeavesTheVerificationSnapshotAloneWithNoRuling(t *testing.T) 
 	assert.Equal(t, body, string(onDisk),
 		"nothing was ruled, so the verify snapshot must not be rewritten at all — not even reformatted")
 }
+
+// TestSyncVerificationTruncation_BestEffortFallbacks covers the four exits the
+// function's doc calls load-bearing and nothing exercised.
+//
+// The contract is stated as a guarantee — "an absent or unparseable snapshot
+// yields no rewrite rather than an error, so a debate over a review that was
+// never verified still completes" — and a corrupt verification.json is exactly
+// the state a debate run has to survive. All four exits returned ("", nil, nil)
+// on paper only.
+func TestSyncVerificationTruncation_BestEffortFallbacks(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"unparseable snapshot", `{"findings": [`},
+		{"not JSON at all", "this is not json"},
+		{"top level is not an object", `["a","b"]`},
+		{"findings key absent", `{"verifiedAt":"2026-06-01T00:00:00Z"}`},
+		{"findings is not an array", `{"findings":{"a.go":1}}`},
+		{"findings holds a non-object", `{"findings":["a.go",42,null]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reviewDir := t.TempDir()
+			writeVerificationFixture(t, reviewDir, tc.body)
+
+			findings := ruledFindings()
+			applyRulings(findings, judgeRulingOnA())
+
+			path, data, err := syncVerificationTruncation(reviewDir, findings, judgeRulingOnA())
+			assert.NoError(t, err, "a debate over an unusable snapshot must still complete")
+			assert.Nil(t, data, "nothing legible to correct means no rewrite is proposed")
+			assert.Empty(t, path)
+		})
+	}
+}
+
+// TestSyncVerificationTruncation_NonObjectItemsAreSkippedNotFatal pins that a
+// malformed entry does not cost the correction owed to its well-formed
+// neighbours. The skip is a `continue`, not a bail-out, and only a snapshot
+// mixing both shapes can tell the two apart.
+func TestSyncVerificationTruncation_NonObjectItemsAreSkippedNotFatal(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeVerificationFixture(t, reviewDir, `{"findings":[
+		"a stray string",
+		{"file":"a.go","line":1,"problem":"p1","verdict":"confirmed","skeptic":"bruce","trippedBudgets":["tool_budget_bytes"]}
+	]}`)
+
+	findings := ruledFindings()
+	applyRulings(findings, judgeRulingOnA())
+
+	_, data, err := syncVerificationTruncation(reviewDir, findings, judgeRulingOnA())
+	require.NoError(t, err)
+	require.NotNil(t, data, "the well-formed neighbour is still owed its correction")
+
+	// parseVerification is deliberately strict and cannot read this output: the
+	// stray string is PRESERVED in the rewrite (the function only skips it, it
+	// never drops unrecognised entries), which is itself part of the contract.
+	var doc struct {
+		Findings []any `json:"findings"`
+	}
+	require.NoError(t, json.Unmarshal(data, &doc))
+	require.Len(t, doc.Findings, 2, "the malformed entry is skipped for correction, not deleted from the snapshot")
+	assert.Equal(t, "a stray string", doc.Findings[0], "an entry this stage cannot read is left exactly as found")
+
+	rec, ok := doc.Findings[1].(map[string]any)
+	require.True(t, ok)
+	assert.Empty(t, rec["trippedBudgets"], "the well-formed neighbour still got its correction")
+}
+
+// TestSyncVerificationTruncation_RuledButCaveatStillStandsRewritesNothing covers
+// the exit between "no rulings" and "a correction is owed".
+//
+// applyRulings SKIPS a ruling whose verdict is not in the enum — persisting a
+// malformed verification block is a contract violation downstream consumers choke
+// on — so the finding keeps Truncated=true. The rulings map is non-empty, the
+// early exit above does not fire, and nothing was in fact cleared. Rewriting the
+// snapshot here would strip a caveat that still stands.
+func TestSyncVerificationTruncation_RuledButCaveatStillStandsRewritesNothing(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeVerificationFixture(t, reviewDir, staleVerification)
+
+	badRuling := map[FindingKey]ruleApply{
+		{File: "a.go", Line: 1, Problem: "p1"}: {verdict: "not-a-verdict", judge: "greta"},
+	}
+	findings := ruledFindings()
+	applyRulings(findings, badRuling)
+	require.True(t, findings[0].Verification.Truncated,
+		"precondition: applyRulings rejected the out-of-enum verdict, so the caveat still describes the standing verdict")
+
+	path, data, err := syncVerificationTruncation(reviewDir, findings, badRuling)
+	require.NoError(t, err)
+	assert.Nil(t, data, "the caveat still describes the recorded verdict — there is nothing to correct")
+	assert.Empty(t, path)
+}
