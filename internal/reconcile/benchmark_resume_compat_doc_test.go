@@ -84,6 +84,18 @@ func TestBenchmarkDoc_ResumeCompatExceptionMatchesTheCode(t *testing.T) {
 			because: "the upgrade is what stops the exception being a standing hole",
 		},
 		{
+			// AC5 added this branch and the doc sentence naming it in the same epic,
+			// so the drift guard must cover both halves: deleting the code branch or
+			// deleting the doc sentence has to fail this test. `len(recorded) == 0`
+			// occurs exactly once in cli/benchmark_checkpoint.go — the branch itself
+			// — so the needle dies with the branch rather than surviving on a
+			// comment or on the sentinel it shares with every other arm.
+			name:    "a checkpoint that records an empty roster is rejected",
+			inDoc:   "records an empty roster is rejected",
+			inCode:  "len(recorded) == 0",
+			because: "an empty roster proves nothing about the panel, so it must never be excused",
+		},
+		{
 			// The upgrade is applied to the in-memory struct, and saveCheckpoint runs
 			// only after a case actually EXECUTES. A resume that replays every
 			// completed case, or aborts before the first one, therefore leaves the
