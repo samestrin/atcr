@@ -207,7 +207,15 @@ func splitClaims(msgs []string) []string {
 	var out []string
 	seen := map[string]struct{}{}
 	add := func(c string) {
-		c = strings.TrimSpace(c)
+		// Sanitize BEFORE the dedup lookup, and store the sanitized form. The
+		// render is what a reviewer reads, so it is the only form in which
+		// "the same claim twice" is a meaningful statement: two raw claims
+		// differing only in a CR versus a space, a 4-dash run versus a 7-dash
+		// one, or an invalid UTF-8 byte render identically. Keying on the raw
+		// text let exactly those through as two identical numbered claims — and
+		// a squashed or cherry-picked branch is where near-identical messages
+		// come from, which is the case the collapse exists for.
+		c = sanitizeClaim(c)
 		if !isClaimBearing(c) {
 			return
 		}
@@ -486,6 +494,10 @@ func claimLedgerSection(claims []string, truncated bool) string {
 	}
 	b.WriteString(claimsBeginMarker + "\n")
 	for i, c := range claims {
+		// splitClaims already sanitized these, and sanitizeClaim is idempotent.
+		// The call stays because this function is also reachable directly, and a
+		// renderer that trusted its input to be pre-sanitized would put the
+		// framing defense one caller away from the prompt it protects.
 		fmt.Fprintf(&b, "%d. %s\n", i+1, sanitizeClaim(c))
 	}
 	b.WriteString(claimsEndMarker + "\n\n")
