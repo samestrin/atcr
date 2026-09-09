@@ -280,3 +280,15 @@ func TestWithClaimLedger_LeavesAnEmptyEntrySetEmpty(t *testing.T) {
 	assert.Empty(t, rb.withClaimLedger(nil))
 	assert.Empty(t, rb.withClaimLedger([]FileEntry{}))
 }
+
+// The grounding gate discards a finding whose cited line is outside the patch's
+// changed lines — exactly where an UNSUPPORTED verdict points, because the
+// claimed change is missing from those lines. The contract must therefore tell
+// the reviewer how to cite one so it survives: against a changed file, with no
+// line number when no changed line settles it. Without this the epic's own
+// driving verdict is dropped before a human sees it.
+func TestClaimLedgerSection_TellsReviewersHowToCiteAnUnsupportedVerdict(t *testing.T) {
+	got := claimLedgerSection([]string{"begin() keeps the cursor"}, false)
+	assert.Contains(t, got, "file this diff DOES change")
+	assert.Contains(t, got, "NO line number")
+}

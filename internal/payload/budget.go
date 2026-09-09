@@ -115,9 +115,14 @@ func applyByteBudgetOrdered(entries []FileEntry, budget int64, tier func(FileEnt
 		// tight budgets where the ledger matters most, and three shed sites call
 		// ApplyByteBudget directly and never touch the wrapper at all.
 		//
-		// It is safe to keep unconditionally because the ledger is built with
-		// Size 0 (uncounted), so exempting it can never prevent the budget from
-		// being met: diff content sheds, the ledger does not.
+		// Keyed on PATH, never on Size. The ledger is BUILT with Size 0, so on
+		// every ordinary shed it is uncounted and the exemption costs nothing.
+		// But the fallback re-fit re-sizes every entry to len(Body) before
+		// shedding (refitFallbackPayload), and there the ledger is counted like
+		// any other entry — a size-keyed exemption would quietly stop protecting
+		// it on exactly the tight-budget path it exists for. When it is counted,
+		// the contract holds in the direction the epic requires: diff content
+		// sheds to fund the ledger, never the other way round.
 		if entries[i].Path == ClaimLedgerPath {
 			continue
 		}
