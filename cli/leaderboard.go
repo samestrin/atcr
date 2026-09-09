@@ -369,6 +369,21 @@ func selectPublishableRecordIdentities(cmd *cobra.Command, filtered []scorecard.
 	// Every scrub this guard performs is handed back to the caller, which passes it to
 	// ExportSelectedCached so the same identity is not scrubbed a second time there.
 	scrubs := scorecard.ScrubCache{}
+	// Every per-record outcome is BUFFERED and flushed only once the whole pass has
+	// returned without error.
+	//
+	// The printability arm below hard-fails the WHOLE export, and it can trip on any
+	// record — including the last. Printed where they are found, the notices for the
+	// earlier records survive an abort that produced no document, so the operator is
+	// told a record "is kept" or "is skipped" about an export that does not exist. Both
+	// messages end in an instruction to go edit the store; acting on them repairs
+	// records for a run whose real problem is elsewhere, and the export still fails.
+	//
+	// Buffering costs nothing in ordering: at most one notice is produced per record
+	// (the skip arm breaks the field loop and suppresses the held blank notice), so
+	// appending in record order preserves exactly the sequence the interleaved writes
+	// produced.
+	var notices []string
 	for _, rec := range filtered {
 		publishable := true
 		// The blank-identity notice is HELD rather than printed where it is found, for
@@ -479,11 +494,11 @@ func selectPublishableRecordIdentities(cmd *cobra.Command, filtered []scorecard.
 						rec.RunID, f.name, f.name, f.name)
 				}
 			} else if trimmed != "" && scrubs.Scrub(f.value) == "" {
-				_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+				notices = append(notices, fmt.Sprintf(
 					"skipping scorecard record %q: %s %q is empty once scrubbed for publication; "+
 						"publishing \"\" would be rejected at the leaderboard — "+
 						"edit or remove that record in the scorecard store to include it\n",
-					rec.RunID, f.name, f.value)
+					rec.RunID, f.name, f.value))
 				publishable = false
 				// One report per record, not one per field: the operator repairs the
 				// record, and a second line about its other identity is noise. A break
@@ -495,10 +510,15 @@ func selectPublishableRecordIdentities(cmd *cobra.Command, filtered []scorecard.
 		}
 		if publishable {
 			if blankNotice != "" {
-				_, _ = fmt.Fprint(cmd.ErrOrStderr(), blankNotice)
+				notices = append(notices, blankNotice)
 			}
 			kept = append(kept, rec)
 		}
+	}
+	// The pass completed: every buffered outcome now describes an export that is really
+	// going to be produced.
+	for _, n := range notices {
+		_, _ = fmt.Fprint(cmd.ErrOrStderr(), n)
 	}
 	return kept, scrubs, nil
 }
