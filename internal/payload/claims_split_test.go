@@ -218,3 +218,11 @@ func TestSplitClaims_KeepsShortRealClaimsAndNoiseWordsInRealSentences(t *testing
 		assert.Len(t, splitClaims([]string{real}), 1, "%q is a real assertion", real)
 	}
 }
+
+// "No" as the English interjection is far more common in commit prose than "No."
+// as an abbreviation for "number". Treating its period as part of an abbreviation
+// merges two assertions into one claim, and the panel then renders one verdict
+// where two were owed.
+func TestSplitSentences_NoIsAnInterjectionNotAnAbbreviation(t *testing.T) {
+	assert.Equal(t, []string{"No.", "The fix is wrong."}, splitSentences("No. The fix is wrong."))
+}
