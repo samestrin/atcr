@@ -343,6 +343,51 @@ func Export(records []Record, opts FilterOpts, exportedAt time.Time) ([]byte, er
 // the caller: this function enforces it, because it is exported and skips the
 // ApplyFilters pass that would otherwise be the rule's only home.
 func ExportSelected(filtered []Record, exportedAt time.Time) ([]byte, error) {
+	// A fresh cache, so even a caller with nothing to hand over gets the within-pass
+	// dedupe: a store has far fewer distinct identities than records.
+	return ExportSelectedCached(filtered, exportedAt, ScrubCache{})
+}
+
+// ScrubCache memoizes ScrubPublicString by RAW input value.
+//
+// It exists because the export path scrubs each identity twice: once in the caller's
+// publishability guard (cli/leaderboard.go) and again here when the group key is built.
+// scrubField is a fixed-point loop of up to 8 iterations, each running 7 compiled
+// regexes, so that is roughly 28 regex executions per field per record — over the whole
+// unrotated store, since the export path forces window 0.
+//
+// Keyed on the VALUE, deliberately, rather than threading an index-aligned parallel
+// slice of pre-scrubbed identities from the caller. ExportSelectedCached runs
+// unresolvedEraRuns, which filters and reorders `filtered` before the loop that
+// consumes the identities, so a positional slice built by the caller would be
+// misaligned by the time it is read — and the failure mode of that misalignment is
+// publishing a record under ANOTHER reviewer's identity, silently. A value key has no
+// alignment to break. It also dedupes WITHIN one pass, which a per-record slice cannot:
+// a 50k-record store with 30 reviewers does 30 scrubs, not 100k.
+//
+// Safe to share across calls: scrubField is pure and deterministic. Not safe to share
+// across goroutines — it is a plain map, and the export path is single-threaded.
+type ScrubCache map[string]string
+
+// Scrub returns ScrubPublicString(s), computing it at most once per distinct s.
+// A nil ScrubCache is valid and simply does not memoize.
+func (c ScrubCache) Scrub(s string) string {
+	if c == nil {
+		return scrubField(s)
+	}
+	if v, ok := c[s]; ok {
+		return v
+	}
+	v := scrubField(s)
+	c[s] = v
+	return v
+}
+
+// ExportSelectedCached is ExportSelected with a caller-supplied scrub memo, so an
+// identity the caller already scrubbed is not scrubbed again here. Pass nil (or
+// ScrubCache{}) for no sharing; behaviour is identical either way, since the cache only
+// ever returns what scrubField would have.
+func ExportSelectedCached(filtered []Record, exportedAt time.Time, cache ScrubCache) ([]byte, error) {
 	if len(filtered) == 0 {
 		return nil, ErrNoExportRecords
 	}
@@ -382,8 +427,8 @@ func ExportSelected(filtered []Record, exportedAt time.Time) ([]byte, error) {
 		// Scrub once, at ingestion: keying and storage use the scrubbed identity,
 		// so finalize() never re-scrubs and two records that scrub to the same
 		// identity merge into one group.
-		persona := scrubField(r.Reviewer)
-		model := scrubField(r.Model)
+		persona := cache.Scrub(r.Reviewer)
+		model := cache.Scrub(r.Model)
 		k := key{persona, model}
 		a, ok := groups[k]
 		if !ok {

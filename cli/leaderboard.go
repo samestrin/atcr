@@ -298,7 +298,7 @@ func runLeaderboardExportAt(cmd *cobra.Command, records []scorecard.Record, filt
 	if err != nil {
 		return err
 	}
-	selected, err = selectPublishableRecordIdentities(cmd, selected)
+	selected, scrubs, err := selectPublishableRecordIdentities(cmd, selected)
 	if err != nil {
 		return err
 	}
@@ -310,7 +310,11 @@ func runLeaderboardExportAt(cmd *cobra.Command, records []scorecard.Record, filt
 	// ErrNoCurrentEraRecords, which names the store rather than the filters.) Both
 	// carry their own actionable text and main() maps them to exit 1, so they are
 	// returned as-is rather than re-wrapped.
-	data, err := scorecard.ExportSelected(selected, now)
+	// The guard above already scrubbed every identity it inspected; handing the memo
+	// over means ExportSelected does not re-derive them. scrubField is a fixed-point
+	// loop over 7 compiled regexes, so the second pass was roughly 28 regex executions
+	// per field per record across the whole unrotated store.
+	data, err := scorecard.ExportSelectedCached(selected, now, scrubs)
 	if err != nil {
 		return err
 	}
@@ -360,8 +364,11 @@ func runLeaderboardExportAt(cmd *cobra.Command, records []scorecard.Record, filt
 // spanning the 35.16.6.5 FindingsRaised era boundary), which the earlier ApplyFilters
 // call here did reject. It also means the store is walked once on the one path that
 // deliberately reads all of it.
-func selectPublishableRecordIdentities(cmd *cobra.Command, filtered []scorecard.Record) ([]scorecard.Record, error) {
+func selectPublishableRecordIdentities(cmd *cobra.Command, filtered []scorecard.Record) ([]scorecard.Record, scorecard.ScrubCache, error) {
 	kept := make([]scorecard.Record, 0, len(filtered))
+	// Every scrub this guard performs is handed back to the caller, which passes it to
+	// ExportSelectedCached so the same identity is not scrubbed a second time there.
+	scrubs := scorecard.ScrubCache{}
 	for _, rec := range filtered {
 		publishable := true
 		// The blank-identity notice is HELD rather than printed where it is found, for
@@ -390,7 +397,7 @@ func selectPublishableRecordIdentities(cmd *cobra.Command, filtered []scorecard.
 				// read from the same world-writable store record, so it is untrusted
 				// input on a surface an operator reads in a terminal. Printing the
 				// locator raw would let the defect being reported reorder the report.
-				return nil, fmt.Errorf("scorecard record %q has %s %q, which contains a non-printing rune (U+%04X); "+
+				return nil, nil, fmt.Errorf("scorecard record %q has %s %q, which contains a non-printing rune (U+%04X); "+
 					"control and format runes are invisible or reorder text in the published document, "+
 					"so a leaderboard row can be misattributed to a model that was never measured — "+
 					"edit or remove that record in the scorecard store, then re-run the export",
@@ -471,7 +478,7 @@ func selectPublishableRecordIdentities(cmd *cobra.Command, filtered []scorecard.
 							"edit or remove that record in the scorecard store to give it a row of its own\n",
 						rec.RunID, f.name, f.name, f.name)
 				}
-			} else if trimmed != "" && scorecard.ScrubPublicString(f.value) == "" {
+			} else if trimmed != "" && scrubs.Scrub(f.value) == "" {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
 					"skipping scorecard record %q: %s %q is empty once scrubbed for publication; "+
 						"publishing \"\" would be rejected at the leaderboard — "+
@@ -493,7 +500,7 @@ func selectPublishableRecordIdentities(cmd *cobra.Command, filtered []scorecard.
 			kept = append(kept, rec)
 		}
 	}
-	return kept, nil
+	return kept, scrubs, nil
 }
 
 // writeExportFile atomically writes the export to path: it creates parent
