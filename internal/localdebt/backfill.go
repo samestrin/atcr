@@ -203,6 +203,17 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 				// A missing store directory is the legal "no backlog yet" state ReadAll
 				// already tolerates above; any other listing failure is as fatal here
 				// as it is in rewriteJustifications.
+				//
+				// This arm is a BACKSTOP and is currently unreachable through
+				// BackfillJustifications: ReadAll lists the same directory first and
+				// returns any non-ENOENT failure itself, so control cannot arrive here
+				// with a listing problem. Its 0-hit coverage — and its survival under
+				// mutation — is therefore structural, not a missing test. The ordering
+				// that makes it dead is pinned by
+				// TestBackfillJustifications_NoRewriteSnapshotListingArms, so a change
+				// that makes ReadAll tolerant fails there and says this guard has gone
+				// live. Keep it: the cost is one branch, and the alternative is a
+				// silent nil snapshot on a store that could not be read.
 				return fmt.Errorf("reading localdebt dir for backfill: %w", quotedPathErr(derr))
 			}
 			res.ShardNames = shardFileNames(entries)
