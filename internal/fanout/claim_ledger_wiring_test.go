@@ -3,7 +3,6 @@ package fanout
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -30,39 +29,6 @@ import (
 // CONSUMED (buildPayloads' shed, buildSlots' per-agent shed, prompt rendering),
 // and those seams are package-private to internal/fanout.
 
-func ledgerGit(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	cmd.Env = append(cmd.Environ(),
-		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
-		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
-		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
-	)
-	out, err := cmd.CombinedOutput()
-	require.NoErrorf(t, err, "git %s: %s", strings.Join(args, " "), out)
-	return strings.TrimSpace(string(out))
-}
-
-// claimingRepo builds a two-commit repository whose head commit asserts a claim,
-// and returns the repo dir plus the base and head SHAs.
-func claimingRepo(t *testing.T) (dir, base, head string) {
-	t.Helper()
-	dir = t.TempDir()
-	ledgerGit(t, dir, "init", "-q", "-b", "main")
-
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "cursor.go"), []byte("package p\n\nfunc Begin() int { return 0 }\n"), 0o644))
-	ledgerGit(t, dir, "add", "-A")
-	ledgerGit(t, dir, "commit", "-q", "-m", "seed the cursor file")
-	base = ledgerGit(t, dir, "rev-parse", "HEAD")
-
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "cursor.go"), []byte("package p\n\nfunc Begin() int { return 1 }\n"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "drain.go"), []byte("package p\n\nfunc Drain() int { return Begin() }\n"), 0o644))
-	ledgerGit(t, dir, "add", "-A")
-	ledgerGit(t, dir, "commit", "-q", "-m", "preserve the cursor across a cold drain\n\n- Begin() no longer returns a wiped offset\n- Drain() keeps the previous offset\n")
-	head = ledgerGit(t, dir, "rev-parse", "HEAD")
-	return dir, base, head
-}
-
 // extractLedger returns the CLAIMS TO VERIFY block from a rendered prompt.
 func extractLedger(t *testing.T, prompt string) string {
 	t.Helper()
@@ -79,7 +45,7 @@ func extractLedger(t *testing.T, prompt string) string {
 // shed between buildPayloads and a rendered prompt, and every agent in the
 // fan-out receives byte-identical claim text.
 func TestClaimLedger_ReachesEveryAgentsRenderedPrompt(t *testing.T) {
-	dir, base, head := claimingRepo(t)
+	dir, base, head := fanoutRepo(t)
 
 	cfg := sizingRosterConfig() // two agents, deliberately different context windows
 	payloads, _, err := buildPayloads(context.Background(), cfg, dir, base, head, false)
@@ -105,7 +71,7 @@ func TestClaimLedger_ReachesEveryAgentsRenderedPrompt(t *testing.T) {
 // budget is derived from the fixture's own entry sizes so the test pins the
 // SOME-but-not-all shed rather than accidentally landing on either extreme.
 func TestClaimLedger_SurvivesAByteBudgetThatShedsDiffContent(t *testing.T) {
-	dir, base, head := claimingRepo(t)
+	dir, base, head := fanoutRepo(t)
 
 	cfg := sizingRosterConfig()
 	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
@@ -157,7 +123,7 @@ func TestClaimLedger_SurvivesAByteBudgetThatShedsDiffContent(t *testing.T) {
 // does because Truncation.AllDropped counts reviewable files rather than kept
 // entries.
 func TestClaimLedger_DoesNotMaskAFullyShedPayload(t *testing.T) {
-	dir, base, head := claimingRepo(t)
+	dir, base, head := fanoutRepo(t)
 
 	cfg := sizingRosterConfig()
 	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
@@ -172,15 +138,15 @@ func TestClaimLedger_DoesNotMaskAFullyShedPayload(t *testing.T) {
 // engine never puts words in an author's mouth.
 func TestClaimLedger_AbsentWhenTheBranchAssertsNothing(t *testing.T) {
 	dir := t.TempDir()
-	ledgerGit(t, dir, "init", "-q", "-b", "main")
+	fanoutGit(t, dir, "init", "-q", "-b", "main")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.go"), []byte("package p\n"), 0o644))
-	ledgerGit(t, dir, "add", "-A")
-	ledgerGit(t, dir, "commit", "-q", "-m", "seed")
-	base := ledgerGit(t, dir, "rev-parse", "HEAD")
+	fanoutGit(t, dir, "add", "-A")
+	fanoutGit(t, dir, "commit", "-q", "-m", "seed")
+	base := fanoutGit(t, dir, "rev-parse", "HEAD")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.go"), []byte("package p\n\nvar X = 1\n"), 0o644))
-	ledgerGit(t, dir, "add", "-A")
-	ledgerGit(t, dir, "commit", "-q", "-m", "wip")
-	head := ledgerGit(t, dir, "rev-parse", "HEAD")
+	fanoutGit(t, dir, "add", "-A")
+	fanoutGit(t, dir, "commit", "-q", "-m", "wip")
+	head := fanoutGit(t, dir, "rev-parse", "HEAD")
 
 	cfg := sizingRosterConfig()
 	payloads, _, err := buildPayloads(context.Background(), cfg, dir, base, head, false)
