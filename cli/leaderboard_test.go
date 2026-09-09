@@ -1151,12 +1151,26 @@ func TestRunLeaderboardExport_BlankIdentityIsNamedOnStderrAndStillPublishes(t *t
 
 			var env struct {
 				Reviewers []struct {
-					Model string `json:"model"`
+					Persona string `json:"persona"`
+					Model   string `json:"model"`
 				} `json:"reviewers"`
 			}
 			require.NoError(t, json.Unmarshal(out.Bytes(), &env))
 			require.Len(t, env.Reviewers, 1,
 				"warning about the record must not drop it — that is the pre-existing, deliberate behavior")
+
+			// The entire premise of the notice is that the record publishes with that
+			// identity EMPTY. Declaring the field and never asserting it left exactly
+			// that unpinned: if the scrub stopped emptying a U+00A0 and the envelope
+			// published a raw no-break space, this test stayed green while the stderr
+			// line became a lie.
+			if tc.field == "model" {
+				assert.Equal(t, "", env.Reviewers[0].Model,
+					"the blank model must publish as the empty string, which is what the notice says it does")
+			} else {
+				assert.Equal(t, "", env.Reviewers[0].Persona,
+					"the blank reviewer publishes as an empty persona — the field Export scrubs it into")
+			}
 		})
 	}
 }
