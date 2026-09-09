@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -397,6 +398,39 @@ func TestSanitizeClaim_NeutralizesDashLookalikesAndSeparatorControls(t *testing.
 				"a rune a renderer may break lines on cannot reach the numbered block")
 		})
 	}
+}
+
+// sanitizeClaim reports 100% statement coverage, but the function is four
+// straight-line statements: every input touches all four, so the number says
+// nothing about whether any of them is asserted. Two of the four were not.
+//
+// commitMessages reads raw bytes out of a commit message, which can legally
+// carry any byte sequence, so a lone continuation byte reaches sanitizeClaim in
+// production. Without strings.ToValidUTF8 the rendered section is invalid UTF-8
+// — a hazard for every downstream consumer of the payload text.
+func TestSanitizeClaim_InvalidUTF8CannotReachTheRenderedSection(t *testing.T) {
+	hostile := "claim \xff\xfe text"
+	require.False(t, utf8.ValidString(hostile), "precondition: the input must be invalid UTF-8")
+
+	got := claimLedgerSection([]string{hostile}, claimsComplete, false)
+	assert.True(t, utf8.ValidString(got),
+		"a commit message's raw bytes must not be able to render an invalid-UTF-8 payload section")
+	assert.Contains(t, got, "1. claim  text", "the invalid bytes are dropped, the claim survives")
+}
+
+// The trailing TrimSpace is what makes the rendered line "N. <claim>" rather
+// than "N.    <claim>   ". It is load-bearing beyond cosmetics: flattening a
+// line-break rune substitutes a SPACE, so a claim ending in CR arrives here with
+// trailing whitespace that only this trim removes.
+func TestSanitizeClaim_SurroundingWhitespaceIsTrimmedFromTheRenderedLine(t *testing.T) {
+	got := claimLedgerSection([]string{"   the claim   "}, claimsComplete, false)
+	assert.Contains(t, got, "\n1. the claim\n",
+		"the numbered line must be exactly \"1. the claim\", with no padding on either side")
+
+	// A trailing CR flattens to a SPACE before the trim runs, so the trim is the
+	// only thing standing between it and the rendered line.
+	got = claimLedgerSection([]string{"the claim\r"}, claimsComplete, false)
+	assert.Contains(t, got, "\n1. the claim\n")
 }
 
 // The UNSUPPORTED bullet and the grounding-gate paragraph 30 lines below it must
