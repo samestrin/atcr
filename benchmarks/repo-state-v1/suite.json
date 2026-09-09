@@ -1,0 +1,7 @@
+{
+  "suite": "repo-state-v1",
+  "suite_version": "1.0.0",
+  "cases": [
+    { "id": "claim-absent-cursor-fix", "dir": "claim-absent-cursor-fix" }
+  ]
+}
