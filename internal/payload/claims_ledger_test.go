@@ -176,6 +176,15 @@ func TestRangeBuilder_PrependsTheClaimLedgerEntry(t *testing.T) {
 // AC3: every agent in a fan-out sees the same ledger. The fan-out builds one
 // payload per MODE from one RangeBuilder, so identical-across-modes is what
 // identical-across-agents reduces to.
+//
+// The SHARED-builder half below is the production shape, but on its own it is
+// close to self-guaranteeing: all three calls read b.claims through the memo, so
+// it compares one cached string to itself. Disabling the memo entirely (never
+// setting b.claimsDone) leaves it green, because recomputation is deterministic.
+// The SEPARATE-builder half is what carries the real weight — three independent
+// builders over the same range must render byte-identical ledgers, which pins
+// ledger identity as a pure function of the RANGE rather than of one cached
+// string, and fails on genuine per-mode divergence.
 func TestRangeBuilder_ClaimLedgerIsByteIdenticalAcrossModes(t *testing.T) {
 	dir := initRepo(t)
 	write(t, dir, "foo.go", goFileV1)
@@ -183,16 +192,34 @@ func TestRangeBuilder_ClaimLedgerIsByteIdenticalAcrossModes(t *testing.T) {
 	write(t, dir, "foo.go", goFileV2)
 	head := commitAll(t, dir, "make Foo return two\n\n- Foo() now returns 2 instead of 1\n")
 
-	rb := NewRangeBuilder(context.Background(), dir, base, head)
-	diffEntries, err := rb.BuildEntries(ModeDiff)
-	require.NoError(t, err)
-	blocksEntries, err := rb.BuildEntries(ModeBlocks)
-	require.NoError(t, err)
-	filesEntries, err := rb.BuildEntries(ModeFiles)
-	require.NoError(t, err)
+	modes := []PayloadMode{ModeDiff, ModeBlocks, ModeFiles}
 
-	assert.Equal(t, diffEntries[0].Body, blocksEntries[0].Body)
-	assert.Equal(t, diffEntries[0].Body, filesEntries[0].Body)
+	// Shared builder — the production shape.
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	shared := make([]FileEntry, 0, len(modes))
+	for _, m := range modes {
+		entries, err := rb.BuildEntries(m)
+		require.NoError(t, err)
+		require.NotEmpty(t, entries)
+		require.Equal(t, ClaimLedgerPath, entries[0].Path, "mode %v: the ledger must lead the payload", m)
+		shared = append(shared, entries[0])
+	}
+	assert.Equal(t, shared[0].Body, shared[1].Body)
+	assert.Equal(t, shared[0].Body, shared[2].Body)
+
+	// Separate builders — one per mode, over the SAME range. Nothing is cached
+	// between them, so agreement here is a property of the range and the renderer,
+	// not of a memo.
+	for i, m := range modes {
+		fresh := NewRangeBuilder(context.Background(), dir, base, head)
+		entries, err := fresh.BuildEntries(m)
+		require.NoError(t, err)
+		require.NotEmpty(t, entries)
+		require.Equal(t, ClaimLedgerPath, entries[0].Path, "mode %v: the ledger must lead the payload", m)
+		assert.Equal(t, shared[0].Body, entries[0].Body,
+			"mode %v built by its own RangeBuilder must render a byte-identical ledger", m)
+		assert.Equal(t, shared[i].Body, entries[0].Body)
+	}
 }
 
 // A message that asserts nothing must not manufacture a section.
