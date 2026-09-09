@@ -285,7 +285,10 @@ func BenchmarkSplitSentences_AbbreviationDense(b *testing.B) {
 // truncation-style disclosure. The trailer stripper must recognise only genuine
 // reference trailers.
 func TestSplitClaims_SeeAndLinkOpeningARealClaimAreNotStripped(t *testing.T) {
-	got := splitClaims([]string{"subject line here\n\nSee: begin() now preserves the offset\nLink: the offset is kept in drain.py"})
+	// Separate paragraphs, so each is its own claim. Two consecutive lines would
+	// be one hard-wrapped paragraph and hence one claim — that is the paragraph
+	// rule, not the defect. The defect was that both were DISCARDED.
+	got := splitClaims([]string{"subject line here\n\nSee: begin() now preserves the offset\n\nLink: the offset is kept in drain.py"})
 	assert.Equal(t, []string{
 		"subject line here",
 		"See: begin() now preserves the offset",

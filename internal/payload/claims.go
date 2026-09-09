@@ -193,7 +193,15 @@ var (
 	hyphenTrailerRe = regexp.MustCompile(`^[A-Za-z0-9]+(-[A-Za-z0-9]+)+:\s`)
 	// A single-word reference trailer. Enumerated rather than pattern-matched
 	// because the pattern that would catch them also catches prose.
-	wordTrailerRe = regexp.MustCompile(`(?i)^(refs?|fixes|closes?|resolves?|cc|bug|issue|see|link|pr):\s`)
+	//
+	// "see" and "link" are deliberately NOT in the set, though git tooling does
+	// emit them as trailers. They are ordinary English verbs first, so stripping
+	// every line that opens with one discards real assertions — "See: begin() now
+	// preserves the offset" is a claim, not a reference — and it does so silently,
+	// re-creating the invisible-absence failure the ledger exists to catch. The
+	// cost of the asymmetry is a bare "See: #123" carried as a weak claim, which
+	// the doc on isClaimBearing already weighs as the cheaper error.
+	wordTrailerRe = regexp.MustCompile(`(?i)^(refs?|fixes|closes?|resolves?|cc|bug|issue|pr):\s`)
 	// A line that is nothing but a URL.
 	bareURLRe = regexp.MustCompile(`^https?://\S+$`)
 	// Every rune that can act as a line break in some renderer or tokenizer:
