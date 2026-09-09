@@ -29,8 +29,8 @@ func TestCommitMessages_ReturnsEveryCommitOldestFirst(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, claimsComplete, truncated)
 	require.Len(t, msgs, 2, "base itself is not in base..head; only the two commits after it are")
-	assert.Equal(t, "second commit\n\nsecond body line.", msgs[0])
-	assert.Equal(t, "third commit", msgs[1])
+	assert.Equal(t, "second commit\n\nsecond body line.", msgs[0].Body)
+	assert.Equal(t, "third commit", msgs[1].Body)
 }
 
 // A merge commit's message is git's own boilerplate ("Merge branch 'x'"), not an
@@ -54,11 +54,11 @@ func TestCommitMessages_ExcludesMergeCommits(t *testing.T) {
 	g := newGitRunner(context.Background(), dir)
 	msgs, _, err := g.commitMessages(base, head, DefaultMaxClaimBytes, DefaultMaxClaimCommits)
 	require.NoError(t, err)
-	for _, m := range msgs {
+	for _, m := range bodies(msgs) {
 		assert.NotContains(t, m, "Merge branch")
 	}
-	assert.Contains(t, msgs, "side commit")
-	assert.Contains(t, msgs, "main commit")
+	assert.Contains(t, bodies(msgs), "side commit")
+	assert.Contains(t, bodies(msgs), "main commit")
 }
 
 // The boilerplate assertion above only proves git-shaped merge messages are
@@ -86,10 +86,10 @@ func TestCommitMessages_ExcludesAMergeWithASubstantiveMessage(t *testing.T) {
 	g := newGitRunner(context.Background(), dir)
 	msgs, _, err := g.commitMessages(base, head, DefaultMaxClaimBytes, DefaultMaxClaimCommits)
 	require.NoError(t, err)
-	assert.NotContains(t, msgs, merged,
+	assert.NotContains(t, bodies(msgs), merged,
 		"a merge is excluded by topology, not by how its message reads")
-	assert.Contains(t, msgs, "side commit")
-	assert.Contains(t, msgs, "main commit")
+	assert.Contains(t, bodies(msgs), "side commit")
+	assert.Contains(t, bodies(msgs), "main commit")
 }
 
 func TestCommitMessages_EmptyRangeYieldsNoMessages(t *testing.T) {
@@ -151,7 +151,7 @@ func TestCommitMessages_CapShedsOldestAndReportsTruncation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, claimsTruncatedOlder, truncated, "dropping a commit's claims must be recorded, never silent")
 	require.Len(t, msgs, 1)
-	assert.Equal(t, "newest claim", msgs[0])
+	assert.Equal(t, "newest claim", msgs[0].Body)
 }
 
 // The cap arithmetic is `used+len(m) <= maxBytes`, and every cap test used a
@@ -179,7 +179,7 @@ func TestCommitMessages_CapBoundaryKeepsTheExactFitOldestFirst(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, claimsTruncatedOlder, truncated)
 	require.Len(t, msgs, 2, "used+len(m) == maxBytes must FIT: the comparison is <=, not <")
-	assert.Equal(t, []string{older, newer}, msgs,
+	assert.Equal(t, []string{older, newer}, bodies(msgs),
 		"a multi-message cap must still return chronological order, oldest first")
 
 	// One byte under: the older of the two no longer fits.
@@ -187,7 +187,7 @@ func TestCommitMessages_CapBoundaryKeepsTheExactFitOldestFirst(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, claimsTruncatedOlder, truncated)
 	require.Len(t, msgs, 1, "one byte under the exact fit must shed the older message")
-	assert.Equal(t, newer, msgs[0], "the branch tip's claim is the one that survives")
+	assert.Equal(t, newer, msgs[0].Body, "the branch tip's claim is the one that survives")
 }
 
 // isAbbrevBefore scans BACKWARD to the preceding space and returns false when the
@@ -220,8 +220,8 @@ func TestCommitMessages_SingleOversizedMessageIsCappedNotDropped(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, claimsTruncatedNewest, truncated)
 	require.Len(t, msgs, 1)
-	assert.LessOrEqual(t, len(msgs[0]), 50)
-	assert.True(t, strings.HasPrefix(msgs[0], "huge claim "))
+	assert.LessOrEqual(t, len(msgs[0].Body), 50)
+	assert.True(t, strings.HasPrefix(msgs[0].Body, "huge claim "))
 }
 
 // The cap is a byte cap, so a multibyte rune must never be cut in half — an
@@ -239,7 +239,7 @@ func TestCommitMessages_CapNeverSplitsARune(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, claimsTruncatedNewest, truncated)
 	require.Len(t, msgs, 1)
-	assert.True(t, utf8.ValidString(msgs[0]), "capped message must remain valid UTF-8")
+	assert.True(t, utf8.ValidString(msgs[0].Body), "capped message must remain valid UTF-8")
 }
 
 func TestCommitMessages_ZeroMaxBytesMeansUnlimited(t *testing.T) {
@@ -272,7 +272,7 @@ func TestCommitMessages_MessageContentCannotForgeARecordBoundary(t *testing.T) {
 	msgs, _, err := g.commitMessages(base, head, DefaultMaxClaimBytes, DefaultMaxClaimCommits)
 	require.NoError(t, err)
 	require.Len(t, msgs, 1, "one commit must yield exactly one message regardless of its content")
-	assert.Contains(t, msgs[0], "forged second claim")
+	assert.Contains(t, msgs[0].Body, "forged second claim")
 }
 
 // AC2/AC3 promise byte-identical claims for the same range. i18n.logOutputEncoding
@@ -295,8 +295,8 @@ func TestCommitMessages_AreNotTranscodedByAmbientGitConfig(t *testing.T) {
 	msgs, _, err := g.commitMessages(base, head, DefaultMaxClaimBytes, DefaultMaxClaimCommits)
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
-	assert.True(t, utf8.ValidString(msgs[0]), "the read must pin its output encoding, not inherit it")
-	assert.Equal(t, msg, msgs[0], "the claim text is the bytes the author wrote")
+	assert.True(t, utf8.ValidString(msgs[0].Body), "the read must pin its output encoding, not inherit it")
+	assert.Equal(t, msg, msgs[0].Body, "the claim text is the bytes the author wrote")
 }
 
 // The byte cap bounds what is RETAINED, not what is read: gitRunner.output
@@ -319,8 +319,8 @@ func TestCommitMessages_BoundsTheReadByCommitCount(t *testing.T) {
 	msgs, truncated, err := g.commitMessages(base, head, DefaultMaxClaimBytes, 3)
 	require.NoError(t, err)
 	require.Len(t, msgs, 3, "the read is bounded at maxCommits")
-	assert.Equal(t, "commit number 3", msgs[0], "the OLDEST kept commit; older ones were never read")
-	assert.Equal(t, "commit number 5", msgs[2], "the branch tip's claims always survive")
+	assert.Equal(t, "commit number 3", msgs[0].Body, "the OLDEST kept commit; older ones were never read")
+	assert.Equal(t, "commit number 5", msgs[2].Body, "the branch tip's claims always survive")
 	assert.Equal(t, claimsTruncatedOlder, truncated, "claims were dropped, so the ledger must say so")
 }
 

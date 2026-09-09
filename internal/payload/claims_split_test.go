@@ -1,6 +1,7 @@
 package payload
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -12,15 +13,15 @@ import (
 
 // splitClaims returns (claims, fenceSuppressed); these keep the claim-count
 // assertions readable at the call sites that only care about the claims.
-func assertNoClaims(t *testing.T, msgs []string, msgAndArgs ...any) {
+func assertNoClaims(t *testing.T, ms []commitMessage, msgAndArgs ...any) {
 	t.Helper()
-	got, _ := splitClaims(msgs)
+	got, _ := splitClaims(ms)
 	assert.Empty(t, got, msgAndArgs...)
 }
 
-func assertClaimCount(t *testing.T, msgs []string, n int, msgAndArgs ...any) {
+func assertClaimCount(t *testing.T, ms []commitMessage, n int, msgAndArgs ...any) {
 	t.Helper()
-	got, _ := splitClaims(msgs)
+	got, _ := splitClaims(ms)
 	assert.Len(t, got, n, msgAndArgs...)
 }
 
@@ -30,9 +31,9 @@ func assertClaimCount(t *testing.T, msgs []string, n int, msgAndArgs ...any) {
 // described", which the diff then satisfies.
 
 func TestSplitClaims_SubjectIsAlwaysAClaim(t *testing.T) {
-	got, _ := splitClaims([]string{"fix cursor preservation in begin()"})
+	got, _ := splitClaims(msgs("fix cursor preservation in begin()"))
 	require.Len(t, got, 1)
-	assert.Equal(t, "fix cursor preservation in begin()", got[0])
+	assert.Equal(t, "fix cursor preservation in begin()", got[0].Text)
 }
 
 func TestSplitClaims_BulletsBecomeOneClaimEach(t *testing.T) {
@@ -41,14 +42,14 @@ func TestSplitClaims_BulletsBecomeOneClaimEach(t *testing.T) {
 		"* _drain_offset() returns None on an all-malformed batch\n" +
 		"+ the caller keeps its previous offset\n" +
 		"1. the regression test covers begin()\n"
-	got, _ := splitClaims([]string{msg})
+	got, _ := splitClaims(msgs(msg))
 	assert.Equal(t, []string{
 		"fix the drain path",
 		"begin() no longer wipes a live cursor",
 		"_drain_offset() returns None on an all-malformed batch",
 		"the caller keeps its previous offset",
 		"the regression test covers begin()",
-	}, got)
+	}, claimTexts(got))
 }
 
 // A commit body whose last sentence carries NO terminating period is the single
@@ -91,8 +92,8 @@ func TestSplitClaims_ProseBodySplitsPerSentence(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, _ := splitClaims([]string{tc.msg})
-			assert.Equal(t, tc.want, got)
+			got, _ := splitClaims(msgs(tc.msg))
+			assert.Equal(t, tc.want, claimTexts(got))
 		})
 	}
 }
@@ -104,17 +105,17 @@ func TestSplitClaims_ProseBodySplitsPerSentence(t *testing.T) {
 // as complete is the silent-loss failure the ledger exists to prevent.
 func TestSplitClaims_ARunawayParagraphIsCappedAndMarkedElided(t *testing.T) {
 	runaway := "the drain keeps going " + strings.Repeat("x", maxClaimRenderBytes)
-	got, _ := splitClaims([]string{"fix the drain\n\n" + runaway})
+	got, _ := splitClaims(msgs("fix the drain\n\n" + runaway))
 
 	require.Len(t, got, 2, "the subject and the capped paragraph")
-	assert.Equal(t, "fix the drain", got[0])
-	assert.LessOrEqual(t, len(got[1]), maxClaimRenderBytes,
+	assert.Equal(t, "fix the drain", got[0].Text)
+	assert.LessOrEqual(t, len(got[1].Text), maxClaimRenderBytes,
 		"the marker rides INSIDE the cap, so a capped claim never exceeds it")
-	assert.True(t, strings.HasSuffix(got[1], claimElidedMarker),
+	assert.True(t, strings.HasSuffix(got[1].Text, claimElidedMarker),
 		"a capped claim must disclose that it was cut, never read as complete")
-	assert.True(t, strings.HasPrefix(got[1], "the drain keeps going "),
+	assert.True(t, strings.HasPrefix(got[1].Text, "the drain keeps going "),
 		"the opening of the claim is what survives")
-	assert.True(t, utf8.ValidString(got[1]), "the cap must not split a rune")
+	assert.True(t, utf8.ValidString(got[1].Text), "the cap must not split a rune")
 }
 
 // The cap is applied at the renderer too, not only at the splitter: claimLedgerSection
@@ -128,18 +129,18 @@ func TestClaimLedgerSection_CapsAnUncappedClaimAndIsIdempotent(t *testing.T) {
 	require.True(t, strings.HasSuffix(capped, claimElidedMarker))
 
 	// Handed straight to the renderer, never through the splitter.
-	direct := claimLedgerSection([]string{runaway}, claimsComplete, false)
+	direct := claimLedgerSection(plainClaims(runaway), claimsComplete, false)
 	assert.Contains(t, direct, "\n1. "+capped+"\n",
 		"a claim handed straight to the renderer must still be capped")
 	assert.Equal(t, 1, strings.Count(direct, claimElidedMarker))
 
 	// Through the splitter (already capped once), then rendered: byte-identical to
 	// the direct path. A second cut would amputate 21 more bytes of real text.
-	split, _ := splitClaims([]string{"fix the drain\n\n" + runaway})
+	split, _ := splitClaims(msgs("fix the drain\n\n" + runaway))
 	require.Len(t, split, 2)
 	viaSplitter := claimLedgerSection(split, claimsComplete, false)
-	assert.Contains(t, viaSplitter, "\n2. "+capped+"\n",
-		"capping an already-capped claim must be a no-op")
+	assert.Contains(t, viaSplitter, "\n2. (c000001) "+capped+"\n",
+		"capping an already-capped claim must be a no-op, and the provenance tag rides in front of it")
 	assert.Equal(t, 1, strings.Count(viaSplitter, claimElidedMarker))
 
 	// Idempotence directly, across lengths that straddle the cap and across a
@@ -172,19 +173,19 @@ func TestClaimLedgerSection_CapsAnUncappedClaimAndIsIdempotent(t *testing.T) {
 // a guard against a pathological message, not a reformatter of ordinary ones.
 func TestSplitClaims_AnOrdinaryClaimIsNotCapped(t *testing.T) {
 	ordinary := "the cursor is preserved across a cold drain"
-	got, _ := splitClaims([]string{"fix the drain\n\n" + ordinary})
+	got, _ := splitClaims(msgs("fix the drain\n\n" + ordinary))
 	require.Len(t, got, 2)
-	assert.Equal(t, ordinary, got[1])
-	assert.NotContains(t, got[1], claimElidedMarker)
+	assert.Equal(t, ordinary, got[1].Text)
+	assert.NotContains(t, got[1].Text, claimElidedMarker)
 }
 
 // The cap runs on multibyte text too, and must still cut on a rune boundary.
 func TestSplitClaims_CapNeverSplitsARuneInARunawayParagraph(t *testing.T) {
 	// Two tokens minimum, or isClaimBearing drops it before the cap is reached.
-	got, _ := splitClaims([]string{"fix the drain\n\nle curseur " + strings.Repeat("é", maxClaimRenderBytes)})
+	got, _ := splitClaims(msgs("fix the drain\n\nle curseur " + strings.Repeat("é", maxClaimRenderBytes)))
 	require.Len(t, got, 2)
-	assert.True(t, utf8.ValidString(got[1]))
-	assert.True(t, strings.HasSuffix(got[1], claimElidedMarker))
+	assert.True(t, utf8.ValidString(got[1].Text))
+	assert.True(t, strings.HasSuffix(got[1].Text, claimElidedMarker))
 }
 
 // A version number or an abbreviation is not a sentence boundary.
@@ -192,12 +193,12 @@ func TestSplitClaims_SentenceSplitIgnoresDottedTokens(t *testing.T) {
 	// The subject is scaffolding here; it only has to be claim-bearing. A bare
 	// "bump deps" is filtered as a noise subject (see the noise-opener tests).
 	msg := "bump the pinned tool version\n\nUpgrade to v1.2.3 across the board. No behavior change is intended."
-	got, _ := splitClaims([]string{msg})
+	got, _ := splitClaims(msgs(msg))
 	assert.Equal(t, []string{
 		"bump the pinned tool version",
 		"Upgrade to v1.2.3 across the board.",
 		"No behavior change is intended.",
-	}, got)
+	}, claimTexts(got))
 }
 
 // A message carrying no assertion must yield zero claims, not one noise claim
@@ -208,23 +209,23 @@ func TestSplitClaims_TrailersAndNoiseYieldNoClaims(t *testing.T) {
 		"Co-authored-by: Someone Else <other@example.com>\n" +
 		"Refs: #123\n" +
 		"https://example.com/pull/9\n"
-	assertNoClaims(t, []string{msg})
+	assertNoClaims(t, msgs(msg))
 }
 
 func TestSplitClaims_FencedCodeIsNotAClaim(t *testing.T) {
 	msg := "add the guard\n\n```go\nif x == nil { return }\n```\nThe guard rejects a nil cursor."
-	got, _ := splitClaims([]string{msg})
+	got, _ := splitClaims(msgs(msg))
 	assert.Equal(t, []string{
 		"add the guard",
 		"The guard rejects a nil cursor.",
-	}, got)
+	}, claimTexts(got))
 }
 
 // A squashed or cherry-picked branch repeats the same subject across commits;
 // enumerating it twice pads the ledger without adding an assertion.
 func TestSplitClaims_ExactDuplicatesAreCollapsed(t *testing.T) {
-	got, _ := splitClaims([]string{"fix the drain path", "fix the drain path", "widen the test"})
-	assert.Equal(t, []string{"fix the drain path", "widen the test"}, got)
+	got, _ := splitClaims(msgs("fix the drain path", "fix the drain path", "widen the test"))
+	assert.Equal(t, []string{"fix the drain path", "widen the test"}, claimTexts(got))
 }
 
 // TWO runs, not twenty. splitClaims' only map is `seen`, used for membership
@@ -239,19 +240,19 @@ func TestSplitClaims_ExactDuplicatesAreCollapsed(t *testing.T) {
 // TestRangeBuilder_ClaimLedgerIsByteIdenticalAcrossModes, which builds through
 // independent RangeBuilders. It is deliberately not duplicated here.
 func TestSplitClaims_IsByteIdenticalAcrossRuns(t *testing.T) {
-	msgs := []string{
+	in := msgs(
 		"fix the drain path\n\n- begin() keeps the cursor\n- the helper returns None\n",
 		"widen the test\n\nThe test now asserts begin(). It no longer asserts the helper.",
-	}
-	first, firstSuppressed := splitClaims(msgs)
-	second, secondSuppressed := splitClaims(msgs)
+	)
+	first, firstSuppressed := splitClaims(in)
+	second, secondSuppressed := splitClaims(in)
 	assert.Equal(t, first, second)
 	assert.Equal(t, firstSuppressed, secondSuppressed)
 }
 
 func TestSplitClaims_EmptyInputYieldsNoClaims(t *testing.T) {
 	assertNoClaims(t, nil)
-	assertNoClaims(t, []string{"", "   ", "\n\n"})
+	assertNoClaims(t, msgs("", "   ", "\n\n"))
 }
 
 // A hard-wrapped bullet is one assertion, not two. Treating the wrap as its own
@@ -262,12 +263,12 @@ func TestSplitClaims_WrappedBulletContinuationStaysOneClaim(t *testing.T) {
 		"- the cursor fix preserves the offset\n" +
 		"  when the drain is cold\n" +
 		"- the helper returns None\n"
-	got, _ := splitClaims([]string{msg})
+	got, _ := splitClaims(msgs(msg))
 	assert.Equal(t, []string{
 		"fix the drain path",
 		"the cursor fix preserves the offset when the drain is cold",
 		"the helper returns None",
-	}, got)
+	}, claimTexts(got))
 }
 
 // Commit prose routinely opens a sentence with a lowercase identifier. Requiring
@@ -276,13 +277,13 @@ func TestSplitClaims_WrappedBulletContinuationStaysOneClaim(t *testing.T) {
 // motivated this epic.
 func TestSplitClaims_SplitsSentencesThatStartLowercase(t *testing.T) {
 	msg := "fix the drain\n\nbegin() still assigns zero. begin() is unchanged. the helper is added."
-	got, _ := splitClaims([]string{msg})
+	got, _ := splitClaims(msgs(msg))
 	assert.Equal(t, []string{
 		"fix the drain",
 		"begin() still assigns zero.",
 		"begin() is unchanged.",
 		"the helper is added.",
-	}, got)
+	}, claimTexts(got))
 }
 
 // Relaxing the capital rule must not start shredding abbreviations.
@@ -290,12 +291,12 @@ func TestSplitClaims_AbbreviationsAreNotSentenceBoundaries(t *testing.T) {
 	// The subject is scaffolding here; it only has to be claim-bearing. A bare
 	// "bump deps" is filtered as a noise subject (see the noise-opener tests).
 	msg := "bump the pinned tool version\n\nUpgrade to v1.2.3 e.g. the pinned tool. no behavior change is intended."
-	got, _ := splitClaims([]string{msg})
+	got, _ := splitClaims(msgs(msg))
 	assert.Equal(t, []string{
 		"bump the pinned tool version",
 		"Upgrade to v1.2.3 e.g. the pinned tool.",
 		"no behavior change is intended.",
-	}, got)
+	}, claimTexts(got))
 }
 
 // The duplicate-collapse keys `seen` on the RAW claim, but sanitizeClaim does not
@@ -306,10 +307,10 @@ func TestSplitClaims_AbbreviationsAreNotSentenceBoundaries(t *testing.T) {
 // and it defeats the stated purpose: enumerating a claim twice pads the ledger
 // without adding an assertion.
 func TestSplitClaims_CollapsesClaimsThatDifferOnlyInWhatSanitizingRemoves(t *testing.T) {
-	got, _ := splitClaims([]string{
+	got, _ := splitClaims(msgs(
 		"subject one ---- tail",
 		"subject one ------- tail",
-	})
+	))
 	rendered := claimLedgerSection(got, claimsComplete, false)
 	assert.Equal(t, 1, strings.Count(rendered, "subject one -- tail"),
 		"two raw claims that sanitize to the same text are one claim")
@@ -323,13 +324,13 @@ func TestSplitClaims_CollapsesClaimsThatDifferOnlyInWhatSanitizingRemoves(t *tes
 // above the test says "an INDENTED line directly under a bullet", so the fix is to
 // make the code check what the comment already says.
 func TestSplitClaims_CRLFBodyDoesNotSwallowParagraphsIntoTheBullet(t *testing.T) {
-	got, _ := splitClaims([]string{"subject line here\r\n\r\n- bullet claim one\r\nA separate paragraph sentence.\r\nAnother separate one.\r\n"})
+	got, _ := splitClaims(msgs("subject line here\r\n\r\n- bullet claim one\r\nA separate paragraph sentence.\r\nAnother separate one.\r\n"))
 	assert.Equal(t, []string{
 		"subject line here",
 		"bullet claim one",
 		"A separate paragraph sentence.",
 		"Another separate one.",
-	}, got)
+	}, claimTexts(got))
 }
 
 // The same defect fires on a plain LF message whose paragraph line happens to
@@ -338,16 +339,16 @@ func TestSplitClaims_CRLFBodyDoesNotSwallowParagraphsIntoTheBullet(t *testing.T)
 func TestSplitClaims_TrailingSpaceDoesNotSwallowAParagraphIntoTheBullet(t *testing.T) {
 	// The trailing space must not be on the LAST line: strings.TrimSpace over the
 	// whole message would remove it there and hide the defect.
-	got, _ := splitClaims([]string{"subject line here\n\n- bullet claim one\nA separate paragraph sentence. \nAnother separate one.\n"})
-	assert.Equal(t, []string{"subject line here", "bullet claim one", "A separate paragraph sentence.", "Another separate one."}, got)
+	got, _ := splitClaims(msgs("subject line here\n\n- bullet claim one\nA separate paragraph sentence. \nAnother separate one.\n"))
+	assert.Equal(t, []string{"subject line here", "bullet claim one", "A separate paragraph sentence.", "Another separate one."}, claimTexts(got))
 }
 
 // A genuinely INDENTED line under a bullet is still that bullet's continuation:
 // hard-wrapped bullets are ordinary, and filing the wrap as its own claim would
 // demand a verdict and a citation for a sentence fragment.
 func TestSplitClaims_IndentedLineStillContinuesTheBullet(t *testing.T) {
-	got, _ := splitClaims([]string{"subject line here\n\n- bullet claim one\n  wrapped onto a second line\n"})
-	assert.Equal(t, []string{"subject line here", "bullet claim one wrapped onto a second line"}, got)
+	got, _ := splitClaims(msgs("subject line here\n\n- bullet claim one\n  wrapped onto a second line\n"))
+	assert.Equal(t, []string{"subject line here", "bullet claim one wrapped onto a second line"}, claimTexts(got))
 }
 
 // A ledger padded with noise trains reviewers to answer VERIFIED reflexively,
@@ -355,7 +356,7 @@ func TestSplitClaims_IndentedLineStillContinuesTheBullet(t *testing.T) {
 // yet the contract demands a verdict and a file:line citation for each.
 func TestSplitClaims_DropsNoiseSubjectsThatAssertNothing(t *testing.T) {
 	for _, noise := range []string{"wip fixup", "bump deps", "WIP again", "tmp hack", "squash me", "fixup!  typo"} {
-		assertNoClaims(t, []string{noise}, "%q asserts nothing", noise)
+		assertNoClaims(t, msgs(noise), "%q asserts nothing", noise)
 	}
 }
 
@@ -368,7 +369,7 @@ func TestSplitClaims_KeepsShortRealClaimsAndNoiseWordsInRealSentences(t *testing
 		"Fixed pagination.",
 		"bump the retry ceiling to 5 so a flaky upstream recovers",
 	} {
-		assertClaimCount(t, []string{real}, 1, "%q is a real assertion", real)
+		assertClaimCount(t, msgs(real), 1, "%q is a real assertion", real)
 	}
 }
 
@@ -378,16 +379,16 @@ func TestSplitClaims_KeepsShortRealClaimsAndNoiseWordsInRealSentences(t *testing
 // nothing, and the contract would still demand a verdict and a file:line citation
 // for it.
 func TestSplitClaims_APunctuationRunAssertsNothing(t *testing.T) {
-	got, _ := splitClaims([]string{"fix the drain\n\n--- ***\n"})
-	assert.Equal(t, []string{"fix the drain"}, got,
+	got, _ := splitClaims(msgs("fix the drain\n\n--- ***\n"))
+	assert.Equal(t, []string{"fix the drain"}, claimTexts(got),
 		"a line with two tokens and not one letter carries no assertion")
 
 	// Two tokens, no letters, in several shapes — each must be dropped while the
 	// subject survives, so the drop is the letter check and not an accident of
 	// field counting.
 	for _, run := range []string{"--- ***", ">>> <<<", "... !!!", "=== +++"} {
-		got, _ := splitClaims([]string{"fix the drain\n\n" + run + "\n"})
-		assert.Equal(t, []string{"fix the drain"}, got, "%q asserts nothing", run)
+		got, _ := splitClaims(msgs("fix the drain\n\n" + run + "\n"))
+		assert.Equal(t, []string{"fix the drain"}, claimTexts(got), "%q asserts nothing", run)
 	}
 }
 
@@ -425,12 +426,12 @@ func TestSplitClaims_ClaimShapedOpenersAreRetainedOrKnowinglyDropped(t *testing.
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, _ := splitClaims([]string{"subject line here\n\n" + tc.line})
+			got, _ := splitClaims(msgs("subject line here\n\n" + tc.line))
 			if tc.kept {
-				assert.Equal(t, []string{"subject line here", tc.line}, got, tc.why)
+				assert.Equal(t, []string{"subject line here", tc.line}, claimTexts(got), tc.why)
 				return
 			}
-			assert.Equal(t, []string{"subject line here"}, got, tc.why)
+			assert.Equal(t, []string{"subject line here"}, claimTexts(got), tc.why)
 		})
 	}
 }
@@ -559,19 +560,19 @@ func TestSplitClaims_SeeAndLinkOpeningARealClaimAreNotStripped(t *testing.T) {
 	// Separate paragraphs, so each is its own claim. Two consecutive lines would
 	// be one hard-wrapped paragraph and hence one claim — that is the paragraph
 	// rule, not the defect. The defect was that both were DISCARDED.
-	got, _ := splitClaims([]string{"subject line here\n\nSee: begin() now preserves the offset\n\nLink: the offset is kept in drain.py"})
+	got, _ := splitClaims(msgs("subject line here\n\nSee: begin() now preserves the offset\n\nLink: the offset is kept in drain.py"))
 	assert.Equal(t, []string{
 		"subject line here",
 		"See: begin() now preserves the offset",
 		"Link: the offset is kept in drain.py",
-	}, got)
+	}, claimTexts(got))
 }
 
 // The genuine reference trailers still go: they name an issue, not a change.
 func TestSplitClaims_RealReferenceTrailersAreStillStripped(t *testing.T) {
 	for _, trailer := range []string{"Refs: #123", "Fixes: #456", "Closes: #789", "Resolves: #1", "CC: @someone", "Bug: 4242", "Issue: 17", "PR: #99"} {
-		got, _ := splitClaims([]string{"subject line here\n\n" + trailer})
-		assert.Equal(t, []string{"subject line here"}, got, "%q is a reference, not a claim", trailer)
+		got, _ := splitClaims(msgs("subject line here\n\n" + trailer))
+		assert.Equal(t, []string{"subject line here"}, claimTexts(got), "%q is a reference, not a claim", trailer)
 	}
 }
 
@@ -581,30 +582,138 @@ func TestSplitClaims_RealReferenceTrailersAreStillStripped(t *testing.T) {
 // of its body. AC5 and T2 both require claim loss to be RECORDED rather than
 // silent, and the section's NOTE fires only on the byte cap.
 func TestSplitClaims_ReportsClaimsSuppressedByAFence(t *testing.T) {
-	claims, suppressed := splitClaims([]string{"subject line here\n\n```\ncode here\n```\n\nA real claim after the fence."})
+	claims, suppressed := splitClaims(msgs("subject line here\n\n```\ncode here\n```\n\nA real claim after the fence."))
 	assert.False(t, suppressed, "a closed fence suppresses only the code inside it")
-	assert.Contains(t, claims, "A real claim after the fence.")
+	assert.Contains(t, claimTexts(claims), "A real claim after the fence.")
 
 	// A fence MENTIONED inline is not a defect: the toggle requires the marker at
 	// line start, so "wrap it in ```go" never opens a fence.
-	claims, suppressed = splitClaims([]string{"subject line here\n\nwrap it in ```go\n\nA claim that survives."})
+	claims, suppressed = splitClaims(msgs("subject line here\n\nwrap it in ```go\n\nA claim that survives."))
 	assert.False(t, suppressed)
-	assert.Contains(t, claims, "A claim that survives.")
+	assert.Contains(t, claimTexts(claims), "A claim that survives.")
 
 	// An UNTERMINATED fence does swallow the rest of the body, and that loss must
 	// be recorded rather than silent.
-	claims, suppressed = splitClaims([]string{"subject line here\n\n```go\ncode here\n\nA real claim that is now lost."})
+	claims, suppressed = splitClaims(msgs("subject line here\n\n```go\ncode here\n\nA real claim that is now lost."))
 	assert.True(t, suppressed, "an unterminated fence swallowed the rest of the body — that must be recorded")
-	assert.NotContains(t, claims, "A real claim that is now lost.")
+	assert.NotContains(t, claimTexts(claims), "A real claim that is now lost.")
 }
 
 // The ledger must tell the reviewer when a fence ate part of it, the same way it
 // discloses a byte-cap truncation.
 func TestClaimLedgerSection_DisclosesFenceSuppressedClaims(t *testing.T) {
-	quiet := claimLedgerSection([]string{"a claim"}, claimsComplete, false)
+	quiet := claimLedgerSection(plainClaims("a claim"), claimsComplete, false)
 	assert.NotContains(t, quiet, "code fence")
 
-	noisy := claimLedgerSection([]string{"a claim"}, claimsComplete, true)
+	noisy := claimLedgerSection(plainClaims("a claim"), claimsComplete, true)
 	assert.Contains(t, noisy, "code fence")
 	assert.Contains(t, noisy, "incomplete")
+}
+
+// --- claim/commitMessage test helpers ---------------------------------------
+//
+// The ledger carries provenance (Epic 35.16.7), so splitClaims and
+// claimLedgerSection speak in claim/commitMessage rather than plain strings.
+// Most tests here are about the TEXT and say nothing about which commit made it;
+// these keep those call sites reading the way they did.
+
+// plainClaims builds claims with no SHA — the shape the renderer sees when it is
+// called directly rather than through a git read.
+func plainClaims(texts ...string) []claim {
+	out := make([]claim, 0, len(texts))
+	for _, t := range texts {
+		out = append(out, claim{Text: t})
+	}
+	return out
+}
+
+// msgs builds commit messages with distinct placeholder SHAs, for tests whose
+// subject is the splitting rather than the provenance.
+func msgs(bodies ...string) []commitMessage {
+	out := make([]commitMessage, 0, len(bodies))
+	for i, b := range bodies {
+		out = append(out, commitMessage{SHA: fmt.Sprintf("c%06d", i+1), Body: b})
+	}
+	return out
+}
+
+// claimTexts drops the provenance so an assertion can compare against a plain
+// []string, as these tests did before the SHA was carried.
+func claimTexts(cs []claim) []string {
+	out := make([]string, 0, len(cs))
+	for _, c := range cs {
+		out = append(out, c.Text)
+	}
+	return out
+}
+
+// bodies is the commitMessages analogue of claimTexts.
+func bodies(ms []commitMessage) []string {
+	out := make([]string, 0, len(ms))
+	for _, m := range ms {
+		out = append(out, m.Body)
+	}
+	return out
+}
+
+// Provenance (Epic 35.16.7): a claim without its commit could not be adjudicated
+// against the commit that made it, and the cross-commit collapse made that worse
+// — a reviewer reading one line had no way to tell whether it belonged to an
+// earlier commit a later one superseded.
+//
+// The collapse itself is UNCHANGED and must stay so: dedup is keyed on the claim
+// TEXT, not on (text, SHA). Keying on the pair would defeat the whole point of
+// the collapse, because a squashed or cherry-picked branch repeats one subject
+// across commits and each copy would then survive under its own SHA.
+func TestSplitClaims_CarriesTheFirstCommitThatMadeEachClaim(t *testing.T) {
+	in := []commitMessage{
+		{SHA: "aaa1111", Body: "fix the drain path\n\n- begin() keeps the cursor"},
+		{SHA: "bbb2222", Body: "fix the drain path\n\n- the helper returns None"},
+	}
+	got, _ := splitClaims(in)
+
+	require.Equal(t, []string{
+		"fix the drain path",
+		"begin() keeps the cursor",
+		"the helper returns None",
+	}, claimTexts(got), "the repeated subject is still collapsed to ONE claim")
+
+	assert.Equal(t, "aaa1111", got[0].SHA,
+		"the collapsed subject is attributed to the FIRST commit that made it, not the last")
+	assert.Equal(t, "aaa1111", got[1].SHA)
+	assert.Equal(t, "bbb2222", got[2].SHA, "a claim only the second commit made carries its SHA")
+}
+
+// The rendered section is what a reviewer actually reads, so the tag has to reach
+// it — and the section has to say what the tag MEANS, or a reviewer sees a bare
+// hex token and guesses.
+func TestClaimLedgerSection_RendersProvenanceAndExplainsIt(t *testing.T) {
+	got := claimLedgerSection([]claim{
+		{Text: "begin() keeps the cursor", SHA: "aaa1111"},
+		{Text: "the helper returns None", SHA: "bbb2222"},
+	}, claimsComplete, false)
+
+	assert.Contains(t, got, "\n1. (aaa1111) begin() keeps the cursor\n")
+	assert.Contains(t, got, "\n2. (bbb2222) the helper returns None\n")
+	assert.Contains(t, got, "abbreviated SHA of the FIRST commit that made it",
+		"an untagged reviewer cannot tell what the hex token is")
+	assert.Contains(t, got, "listed once, under the commit that introduced it",
+		"the collapse rule must be stated, or a single SHA reads as 'only this commit said it'")
+}
+
+// A claim CAN contain a parenthesized hex-looking token. It must not be able to
+// displace or forge the engine's tag: sanitizeClaim keeps every claim on one
+// line, and the tag is written between the index and the text, so an imitation
+// can only ever appear AFTER the real one.
+func TestClaimLedgerSection_AClaimCannotForgeItsOwnProvenanceTag(t *testing.T) {
+	got := claimLedgerSection([]claim{
+		{Text: "(deadbee) a claim pretending to cite another commit", SHA: "aaa1111"},
+	}, claimsComplete, false)
+
+	assert.Contains(t, got, "\n1. (aaa1111) (deadbee) a claim pretending to cite another commit\n",
+		"the engine's tag leads; the imitation is inert text behind it")
+	for _, line := range strings.Split(got, "\n") {
+		assert.False(t, strings.HasPrefix(line, "(deadbee)"),
+			"a forged tag must never reach column 0: %q", line)
+	}
 }
