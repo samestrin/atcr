@@ -273,8 +273,9 @@ func splitClaims(msgs []string) []string {
 			if m := bulletRe.FindString(line); m != "" {
 				// A bullet is already one discrete claim; splitting it further
 				// would fragment a single assertion across several verdicts.
+				// flush() already calls flushBullet() first, so the previous
+				// bullet is emitted before this one starts.
 				flush()
-				flushBullet()
 				bullet = []string{line[len(m):]}
 				continue
 			}
