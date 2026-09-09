@@ -224,7 +224,11 @@ func TestVerificationDoc_DebateSyncClaimIsScopedToTheCaveat(t *testing.T) {
 		"stating the restoration is not enough — the residual case it does NOT reach has to be named, or the claim over-reads")
 	assert.Contains(t, para, "verdict it is counted under",
 		"the paragraph must say WHICH verdict the score uses in that residual case, or a reader assumes the judge's")
-	assert.Contains(t, para, "debateJudge",
+	// Joined to the act, for the reason spelled out on the sibling guard below: this
+	// paragraph names `debateJudge` TWICE — once in this claim, and again in "a record
+	// already carrying a `debateJudge` is re-stamped" — so a bare Contains passed on
+	// the second mention however the first was reworded.
+	assert.Contains(t, para, "stamps `debateJudge` and `debateReasoning` beside it",
 		"the same write stamps the judge; without it the record's skeptic/model read as the producer of the standing verdict")
 }
 
