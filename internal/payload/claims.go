@@ -23,6 +23,24 @@ import (
 // asserts, and small enough that even a 32k-token window absorbs it.
 const DefaultMaxClaimBytes int64 = 8 * 1024
 
+// DefaultMaxClaimCommits bounds how many commits the ledger read walks at all.
+//
+// DefaultMaxClaimBytes alone does not bound the READ, only what is retained from
+// it: gitRunner.output buffers the whole subprocess stdout before any cap is
+// consulted, and the split that follows makes a second full copy plus a slice
+// header per commit. A review whose base is stale, a fork point, or an imported
+// history — an ordinary invocation — would read and copy the entire log body to
+// retain 8 KiB of it. Measured on this repository, `git log --no-merges
+// --format=%B` over 287 commits is ~1.2 MB.
+//
+// The bound is applied by git itself (--max-count), so the bytes are never
+// produced, and it is sized generously against the byte cap rather than tuned:
+// 512 commit messages are far more than 8 KiB can hold, so this ceiling is
+// reached only by ranges the byte cap would have shed anyway. Hitting it is
+// still reported as truncation — a claim dropped for being too old is the same
+// loss whichever ceiling dropped it.
+const DefaultMaxClaimCommits = 512
+
 // commitRecordSep separates commit messages in the `git log -z` output. NUL is
 // git's own record separator and is the one byte a commit message cannot carry,
 // so message content cannot forge a boundary and split one commit's claims into
@@ -48,7 +66,7 @@ const commitRecordSep = "\x00"
 // Errors are returned rather than swallowed; the ledger seam
 // (RangeBuilder.claimLedger) is what degrades an unreadable range to an empty
 // ledger, so this function stays usable by a caller that wants the failure.
-func (g *gitRunner) commitMessages(base, head string, maxBytes int64) (msgs []string, truncated bool, err error) {
+func (g *gitRunner) commitMessages(base, head string, maxBytes int64, maxCommits int) (msgs []string, truncated bool, err error) {
 	// --end-of-options blocks option injection via a ref beginning with '-',
 	// matching verifyRef. %B is the raw subject+body, unwrapped and unreformatted,
 	// so the claim the author wrote is the claim the panel adjudicates.

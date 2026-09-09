@@ -179,7 +179,7 @@ func (b *RangeBuilder) claimLedger() string {
 		return b.claims
 	}
 	b.claimsDone = true
-	msgs, truncated, err := b.g.commitMessages(b.base, b.head, DefaultMaxClaimBytes)
+	msgs, truncated, err := b.g.commitMessages(b.base, b.head, DefaultMaxClaimBytes, DefaultMaxClaimCommits)
 	if err != nil {
 		b.g.log().Warn("payload: commit messages unreadable; review proceeds without a claim ledger",
 			"base", b.base, "head", b.head, "error", err)
