@@ -60,6 +60,37 @@ func TestCommitMessages_ExcludesMergeCommits(t *testing.T) {
 	assert.Contains(t, msgs, "main commit")
 }
 
+// The boilerplate assertion above only proves git-shaped merge messages are
+// absent, which a message-content filter would also satisfy. --no-merges excludes
+// by commit TOPOLOGY, so a merge carrying a substantive, author-written message
+// that reads exactly like a claim must be excluded too. That is the case worth
+// pinning: such a message is indistinguishable from a real assertion by its text,
+// and every claim manufactured from one is UNSUPPORTED by construction.
+func TestCommitMessages_ExcludesAMergeWithASubstantiveMessage(t *testing.T) {
+	const merged = "Merge feature: adds the cursor fix"
+	dir := initRepo(t)
+	write(t, dir, "a.txt", "1")
+	base := commitAll(t, dir, "base commit")
+
+	gitCmd(t, dir, "checkout", "-q", "-b", "side")
+	write(t, dir, "side.txt", "s")
+	commitAll(t, dir, "side commit")
+
+	gitCmd(t, dir, "checkout", "-q", "main")
+	write(t, dir, "main.txt", "m")
+	commitAll(t, dir, "main commit")
+	gitCmd(t, dir, "merge", "--no-ff", "-q", "-m", merged, "side")
+	head := gitCmd(t, dir, "rev-parse", "HEAD")
+
+	g := newGitRunner(context.Background(), dir)
+	msgs, _, err := g.commitMessages(base, head, DefaultMaxClaimBytes, DefaultMaxClaimCommits)
+	require.NoError(t, err)
+	assert.NotContains(t, msgs, merged,
+		"a merge is excluded by topology, not by how its message reads")
+	assert.Contains(t, msgs, "side commit")
+	assert.Contains(t, msgs, "main commit")
+}
+
 func TestCommitMessages_EmptyRangeYieldsNoMessages(t *testing.T) {
 	dir := initRepo(t)
 	write(t, dir, "a.txt", "1")
