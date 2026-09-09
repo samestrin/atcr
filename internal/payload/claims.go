@@ -228,9 +228,6 @@ func splitClaims(msgs []string) []string {
 
 	for _, msg := range msgs {
 		lines := strings.Split(strings.TrimSpace(msg), "\n")
-		if len(lines) == 0 {
-			continue
-		}
 		// The subject is one assertion by construction — it is the one-line
 		// summary the author chose — so it is never sentence-split.
 		add(lines[0])
