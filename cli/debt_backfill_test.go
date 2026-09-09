@@ -807,3 +807,35 @@ func TestDebtBackfillPartialWriteExplainsASuffixedLocator(t *testing.T) {
 	assert.Contains(t, stderr.String(), "#xxxxxxxxxxxx",
 		"and the legend must name the suffix's real form")
 }
+
+// The early return on an empty change set is what keeps a failure BEFORE the first
+// write silent: without it, a failed run prints "partial write: 0 lines already
+// rewritten in place" — telling the operator an append-only store was mutated when
+// it was not. This drives a real backfill failure that publishes nothing (the store
+// path is a regular file, so the pass fails before any shard is touched) and pins
+// the silence.
+func TestDebtBackfillFailureWithNoPublishedChangePrintsNoPartialWrite(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	require.NoError(t, os.WriteFile(store, []byte("not a directory\n"), 0o600))
+	reviewRoot := filepath.Join(root, "reviews")
+	require.NoError(t, os.MkdirAll(reviewRoot, 0o750))
+
+	code, out := execCmdCapture(t, "debt", "backfill-justifications",
+		"--store", store, "--review-root", reviewRoot)
+	require.NotEqual(t, 0, code, "a backfill over an unusable store must fail")
+	assert.NotContains(t, out, "partial write",
+		"a failure that published nothing must not claim the store was mutated")
+}
+
+// The same guard, pinned at unit level: an empty change set means nothing landed,
+// and the report must stay silent — stderr included.
+func TestDebtBackfillPartialReportStaysSilentOnAnEmptyChangeSet(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	reportPartialBackfill(cmd, localdebt.BackfillResult{ShardNames: []string{"2026-08.jsonl"}})
+	assert.Empty(t, stdout.String(), "no partial-write report on stdout")
+	assert.Empty(t, stderr.String(), "no partial-write report on stderr")
+}
