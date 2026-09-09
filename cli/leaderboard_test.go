@@ -1357,3 +1357,65 @@ func TestRunLeaderboardExport_BlankIdentityMergesIntoTheEmptyIdentityRow(t *test
 	assert.NotContains(t, report, "to have it counted",
 		"the old clause implied the record was uncounted; it is counted, in a row it does not own")
 }
+
+// Notices are HELD until the whole pass succeeds.
+//
+// The pass walks records in order and writes each outcome to stderr where it finds it,
+// but a later record carrying a non-printing rune HARD-FAILS the export. The operator
+// was then told "record X is kept" and "record Y is skipped" for a run that produced no
+// document at all — outcomes that describe an export that never happened, on the one
+// surface they act from. Nothing is announced for a run that still aborts.
+func TestSelectPublishableRecordIdentities_HoldsNoticesUntilThePassSucceeds(t *testing.T) {
+	blank := scorecard.Record{
+		SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-blank",
+		Reviewer: "greta", Model: " ", FindingsRaised: 3, FindingsCorroborated: 2,
+	}
+	// Scrubs to the empty string, so it is DROPPED and reported under the other message.
+	casualty := scorecard.Record{
+		SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-casualty",
+		Reviewer: "greta", Model: "~/models/foo", FindingsRaised: 3, FindingsCorroborated: 2,
+	}
+	// U+200B is a format rune: the printability arm hard-fails the whole export on it.
+	bad := scorecard.Record{
+		SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-bad",
+		Reviewer: "bruce", Model: "gpt-5​-mini", FindingsRaised: 3, FindingsCorroborated: 1,
+	}
+
+	// The function iterates the slice it is handed, so passing it directly is what makes
+	// the ORDER unambiguous: the reported record really is visited before the one that
+	// aborts. Going through runLeaderboardExport would leave that to the filter chain.
+	for _, tc := range []struct {
+		name   string
+		recs   []scorecard.Record
+		absent string
+	}{
+		{"a kept record's notice", []scorecard.Record{blank, bad}, "blank after trimming"},
+		{"a dropped record's notice", []scorecard.Record{casualty, bad}, "empty once scrubbed"},
+	} {
+		t.Run(tc.name+" is not announced when a later record aborts the pass", func(t *testing.T) {
+			cmd := exportTestCmd()
+			var errBuf bytes.Buffer
+			cmd.SetErr(&errBuf)
+
+			_, _, err := selectPublishableRecordIdentities(cmd, tc.recs)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "non-printing rune",
+				"the fixture must abort on the LATER record, or it proves nothing about holding")
+			assert.Empty(t, errBuf.String(),
+				"a per-record outcome describes an export that did not happen: %s", errBuf.String())
+		})
+	}
+
+	// The inverse, or the fix is indistinguishable from deleting the notices.
+	t.Run("a pass that completes still prints every notice", func(t *testing.T) {
+		cmd := exportTestCmd()
+		var errBuf bytes.Buffer
+		cmd.SetErr(&errBuf)
+
+		kept, _, err := selectPublishableRecordIdentities(cmd, []scorecard.Record{blank, casualty})
+		require.NoError(t, err)
+		require.Len(t, kept, 1, "the blank record is kept and the scrub casualty is dropped")
+		assert.Contains(t, errBuf.String(), "blank after trimming")
+		assert.Contains(t, errBuf.String(), "empty once scrubbed")
+	})
+}
