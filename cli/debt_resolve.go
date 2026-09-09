@@ -386,7 +386,7 @@ func collectDebtIDRecords(dir string, ids []string, opts localdebt.ReadOpts) ([]
 	}
 	var retained []localdebt.Record
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+		if !localdebt.IsShardEntry(e) {
 			continue
 		}
 		recs, err := localdebt.ReadRecords(filepath.Join(dir, e.Name()), opts)

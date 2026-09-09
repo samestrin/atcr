@@ -348,7 +348,7 @@ func ReadAll(dir string, opts ReadOpts) ([]Record, error) {
 	}
 	var all []Record
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+		if !IsShardEntry(e) {
 			continue
 		}
 		recs, err := ReadRecords(filepath.Join(dir, e.Name()), opts)
@@ -530,7 +530,7 @@ func readAllPreserving(dir string, opts ReadOpts) (shardRead, error) {
 	}
 
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+		if !IsShardEntry(e) {
 			continue
 		}
 		name := e.Name()
@@ -1158,7 +1158,7 @@ func hasShardFiles(dir string) bool {
 		return false
 	}
 	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".jsonl") {
+		if IsShardEntry(e) {
 			return true
 		}
 	}
@@ -1410,7 +1410,7 @@ func Compact(dir string, opts ReadOpts) (CompactResult, error) {
 		}
 		existingMonths := map[string]bool{}
 		for _, e := range entries {
-			if !e.IsDir() && strings.HasSuffix(e.Name(), ".jsonl") {
+			if IsShardEntry(e) {
 				month := strings.TrimSuffix(e.Name(), ".jsonl")
 				// A frozen shard is never a removal candidate: it is excluded here
 				// rather than deleted from the set later, so no path can reach os.Remove
@@ -1564,7 +1564,7 @@ func shardPaths(dir string) ([]string, int64, error) {
 	var paths []string
 	var size int64
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+		if !IsShardEntry(e) {
 			continue
 		}
 		info, err := e.Info()

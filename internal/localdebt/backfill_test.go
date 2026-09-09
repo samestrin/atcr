@@ -474,7 +474,7 @@ func TestRewriteJustifications_RewritesOnlyLinesCarryingTheStaleText(t *testing.
 		line("aaaa1111", "an operator's typed --reason from a resolution trail"),
 	)
 
-	changes, err := rewriteJustifications(store, map[string]replacement{
+	changes, _, err := rewriteJustifications(store, map[string]replacement{
 		"aaaa1111": {from: stale, to: fresh},
 	}, false)
 	require.NoError(t, err)
@@ -520,7 +520,7 @@ func TestRewriteJustifications_WrapsItsIOErrors(t *testing.T) {
 		require.NoError(t, os.Mkdir(dir, 0o000))
 		t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
-		_, err := rewriteJustifications(dir, want, false)
+		_, _, err := rewriteJustifications(dir, want, false)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "reading localdebt dir for backfill",
 			"the wrap names the operation; a bare os error reads as if it came from elsewhere in the debt namespace")
@@ -538,7 +538,7 @@ func TestRewriteJustifications_WrapsItsIOErrors(t *testing.T) {
 		require.NoError(t, os.Chmod(dir, 0o500))
 		t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
-		_, err := rewriteJustifications(dir, want, false)
+		_, _, err := rewriteJustifications(dir, want, false)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "creating temp file for backfill")
 	})
@@ -555,7 +555,7 @@ func TestRewriteJustifications_WrapsItsIOErrors(t *testing.T) {
 		require.NoError(t, os.Chmod(dir, 0o500))
 		t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
-		changes, err := rewriteJustifications(dir, want, true)
+		changes, _, err := rewriteJustifications(dir, want, true)
 		require.NoError(t, err)
 		require.Len(t, changes, 1)
 		assert.Equal(t, stale, changes[0].Before)
@@ -582,7 +582,7 @@ func TestRewriteJustifications_ErrorPathsDoNotLeakRawUntrustedNames(t *testing.T
 		require.NoError(t, os.Chmod(path, 0o000))
 		t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
 
-		_, err := rewriteJustifications(dir, map[string]replacement{"x": {from: "a", to: "b"}}, false)
+		_, _, err := rewriteJustifications(dir, map[string]replacement{"x": {from: "a", to: "b"}}, false)
 		require.Error(t, err)
 		require.NotContains(t, err.Error(), "\u202E",
 			"a raw bidi override in an error reorders the report the operator reads")
@@ -709,7 +709,7 @@ func TestRewriteJustifications_LeavesNoTempDebrisOnASuccessfulRewrite(t *testing
 			`"category":"correctness","est_minutes":10,"evidence":"e","reviewers":["dax"],`+
 			`"confidence":"HIGH","justification":`+strconv.Quote(stale)+`}`)
 
-	changes, err := rewriteJustifications(dir, map[string]replacement{
+	changes, _, err := rewriteJustifications(dir, map[string]replacement{
 		"aaaa1111": {from: stale, to: "the replayed excerpt"},
 	}, false)
 	require.NoError(t, err)
@@ -722,4 +722,164 @@ func TestRewriteJustifications_LeavesNoTempDebrisOnASuccessfulRewrite(t *testing
 			"the publish step renames its temp file into place; a leftover .tmp-* is debris in the store: %s", e.Name())
 	}
 	require.Len(t, entries, 1, "the store must hold exactly the one shard it started with")
+}
+
+// The dry-run listing in cli/ resolves locator collisions, and it must describe the
+// SAME directory snapshot the rewrite was computed against. Before this, `cli` ran its
+// own os.ReadDir after BackfillJustifications had already returned — outside the
+// withLock region rewriteJustifications' walk ran inside — so a concurrent writer that
+// removed a colliding shard in that window suppressed the "#hash" suffix the listing
+// exists to add, and the operator approved a bare token for a name that WAS ambiguous
+// when the rewrite was computed. atcr's own CLAUDE.md notes concurrent sessions share
+// this tree, so that writer is not hypothetical.
+//
+// ShardNames closes the window by carrying the locked walk's own observation out to the
+// caller, so there is exactly one listing and one filter rather than two that must be
+// kept in step.
+func TestBackfillJustifications_ReturnsTheShardNamesObservedUnderTheLock(t *testing.T) {
+	dir := t.TempDir()
+	reviewRoot := t.TempDir()
+	rd := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+	require.NoError(t, os.MkdirAll(rd, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"),
+		[]byte("## Findings\n\n- **internal/thing.go:42** the real narrative explaining the defect.\n"), 0o600))
+
+	rec := `{"schema_version":3,"id":"aaaa1111","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
+		`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
+		`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+		`"justification":"stale text that the replay will replace",` +
+		`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":3}}`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "2026-08.jsonl"), []byte(rec+"\n"), 0o600))
+	// An unchanged shard: it produces no JustificationChange, so the change set alone
+	// cannot see it — only the directory snapshot can. That is the whole reason the
+	// snapshot has to travel out rather than being reconstructed from Changes.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "2026-07.jsonl"), []byte(""), 0o600))
+	// Non-shard entries, one for each half of the walk's filter. Neither may appear in
+	// the snapshot, or the caller's collision map gains names that are not shards.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("not a shard\n"), 0o600))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "2026-06.jsonl"), 0o750))
+
+	res, err := BackfillJustifications(dir, reviewRoot, true)
+	require.NoError(t, err)
+	require.NotEmpty(t, res.Changes, "the fixture must produce a change, or the snapshot proves nothing")
+
+	assert.ElementsMatch(t, []string{"2026-07.jsonl", "2026-08.jsonl"}, res.ShardNames,
+		"the snapshot must carry every shard the locked walk saw — including one with "+
+			"nothing to repair — and nothing that is not a shard")
+}
+
+// ShardNames' doc historically said it "is nil when no rewrite was needed", which
+// made "the store holds no shards" and "the store holds shards, none needing repair"
+// the same value — and made the field's meaning silently coupled to Changes being
+// non-empty. cli/debt_backfill.go's locator rendering leans on the field describing
+// the locked walk's observation, and an unchanged colliding shard is exactly the
+// collision the change set cannot see. A pass with nothing to rewrite still walked
+// nothing, so the observation was never recorded; this pins that the early return
+// records it too.
+func TestBackfillJustifications_ReportsShardNamesEvenWhenNothingNeedsRewrite(t *testing.T) {
+	dir := t.TempDir()
+	reviewRoot := t.TempDir()
+
+	// An empty shard: holds no records, so it can never produce a change.
+	writeShard(t, dir, "2026-07")
+	// A shard whose only record is SETTLED: skipped in the fold before any replay,
+	// so `want` stays empty and the pass takes the no-rewrite early return.
+	rec := `{"schema_version":3,"id":"bbbb2222","run_id":"r","ts":"2026-08-01T00:00:00Z",` +
+		`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f",` +
+		`"category":"correctness","est_minutes":10,"evidence":"e","reviewers":["dax"],` +
+		`"confidence":"HIGH","status":"resolved","justification":"already settled",` +
+		`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":3}}`
+	writeShard(t, dir, "2026-08", rec)
+	// Both halves of the shard filter: a non-.jsonl file and a directory whose name
+	// ends in .jsonl. Neither may reach the snapshot.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("not a shard\n"), 0o600))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "2026-06.jsonl"), 0o750))
+
+	res, err := BackfillJustifications(dir, reviewRoot, true)
+	require.NoError(t, err)
+	require.Empty(t, res.Changes, "the fixture must produce no change, or this is not the no-rewrite path")
+
+	assert.ElementsMatch(t, []string{"2026-07.jsonl", "2026-08.jsonl"}, res.ShardNames,
+		"a pass with nothing to rewrite must still report every shard the locked walk "+
+			"saw — nil here conflates 'no shards' with 'shards, none needing repair'")
+}
+
+// Cumulative-review correction: the no-rewrite snapshot's tolerance for a MISSING
+// store directory (the legal "no backlog yet" state ReadAll already tolerates) is
+// documented on the field but was pinned by no test — a future edit could start
+// surfacing ENOENT as a hard error on an empty backlog and no test would notice.
+// (The store directory itself existing after the call is withLock's own
+// ensureStoreDir precondition — lock.go — not this pass's behavior, so it is not
+// asserted here.)
+func TestBackfillJustifications_MissingStoreDirIsTheNoBacklogState(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "does-not-exist")
+	res, err := BackfillJustifications(dir, t.TempDir(), true)
+	require.NoError(t, err, "a missing store directory is the no-backlog state, not a failure")
+	assert.Nil(t, res.ShardNames, "no shards were observed, so the snapshot must be nil")
+}
+
+// A non-dry run renames each shard into place AS IT WALKS, so a failure on a later
+// shard leaves the earlier ones already rewritten in an append-only store. Returning
+// nil there reported "nothing happened" over a store that had in fact been mutated,
+// and the operator had no way to learn which shards to reconcile.
+func TestRewriteJustifications_ReturnsWhatItAlreadyWroteWhenALaterShardFails(t *testing.T) {
+	const stale = "the stale excerpt"
+	dir := t.TempDir()
+	writeShard(t, dir, "2026-08",
+		`{"schema_version":3,"id":"aaaa1111","run_id":"r","ts":"2026-08-01T00:00:00Z",`+
+			`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f",`+
+			`"category":"correctness","est_minutes":10,"evidence":"e","reviewers":["dax"],`+
+			`"confidence":"HIGH","justification":`+strconv.Quote(stale)+`}`)
+	// A DANGLING symlink named like a shard. os.ReadDir lists it and IsShardEntry
+	// accepts it (not a directory, .jsonl suffix), so the walk reaches it only AFTER
+	// 2026-08 has been renamed into place — and os.ReadFile fails there. This is the
+	// mid-pass failure the row is about, reached without a fake filesystem.
+	require.NoError(t, os.Symlink(filepath.Join(dir, "gone.jsonl"), filepath.Join(dir, "2026-09.jsonl")))
+
+	changes, shards, err := rewriteJustifications(dir, map[string]replacement{
+		"aaaa1111": {from: stale, to: "the replayed excerpt"},
+	}, false)
+	require.Error(t, err)
+	require.Len(t, changes, 1,
+		"the shard already renamed into place must travel out with the error, not be discarded")
+	assert.Equal(t, "2026-08.jsonl", changes[0].Shard)
+	assert.Equal(t, stale, changes[0].Before)
+	assert.Contains(t, shards, "2026-08.jsonl",
+		"the snapshot is taken before the walk, so it survives a mid-pass failure too")
+
+	b, rerr := os.ReadFile(filepath.Join(dir, "2026-08.jsonl"))
+	require.NoError(t, rerr)
+	assert.Contains(t, string(b), "the replayed excerpt",
+		"the reported write must really be on disk: reporting one that is not is the inverse error")
+}
+
+// The partial write has to survive BackfillJustifications too. It discarded the
+// closure's result wholesale with `return BackfillResult{}, err`, so even once
+// rewriteJustifications reports what it wrote, the operator saw zero counters.
+func TestBackfillJustifications_ReportsThePartialWriteWhenALaterShardFails(t *testing.T) {
+	dir := t.TempDir()
+	reviewRoot := t.TempDir()
+	rd := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+	require.NoError(t, os.MkdirAll(rd, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"),
+		[]byte("## Findings\n\n- **internal/thing.go:42** the real narrative explaining the defect.\n"), 0o600))
+
+	rec := `{"schema_version":3,"id":"aaaa1111","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
+		`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
+		`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+		`"justification":"stale text that the replay will replace",` +
+		`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":3}}`
+	writeShard(t, dir, "2026-08", rec)
+	// ReadAll skips an ENOENT shard (a dangling link reads as missing), so the scan
+	// phase succeeds and the failure lands where the row says it does: in the rewrite
+	// walk, after the first shard was published.
+	require.NoError(t, os.Symlink(filepath.Join(dir, "gone.jsonl"), filepath.Join(dir, "2026-09.jsonl")))
+
+	res, err := BackfillJustifications(dir, reviewRoot, false)
+	require.Error(t, err)
+	require.Len(t, res.Changes, 1,
+		"a zero result over a store that was already mutated is the defect: the written shard must be named")
+	assert.Equal(t, "2026-08.jsonl", res.Changes[0].Shard)
+	assert.Equal(t, 1, res.RewrittenLines)
+	assert.Contains(t, res.ShardNames, "2026-08.jsonl")
 }

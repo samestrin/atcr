@@ -53,6 +53,29 @@ type BackfillResult struct {
 	// --dry-run is documented as the safety step to run first, so it has to be able
 	// to show what it would touch; a bare counter cannot.
 	Changes []JustificationChange
+
+	// ShardNames is every shard file name the rewrite pass's own walk observed,
+	// taken INSIDE the withLock region. The names are a SET, not a sequence:
+	// the only consumer (locatorNames' collision disambiguation) keys on
+	// membership, so the walk's arrival order is not part of the contract.
+	//
+	// It exists so a caller rendering Changes describes the same directory snapshot
+	// the rewrite was computed against. `atcr debt backfill-justifications --dry-run`
+	// disambiguates colliding shard locators, which is a property of the SET of names
+	// on disk and so cannot be derived from Changes alone — an unchanged file can
+	// collide with a changed one. Resolving that set with a SECOND os.ReadDir after
+	// this function returns reads the directory outside the lock, so a concurrent
+	// writer removing a colliding shard in that window suppresses the disambiguating
+	// suffix and the operator approves a bare locator for a name that was ambiguous
+	// when the rewrite was computed.
+	//
+	// It is populated on every pass that completed its locked listing — including a
+	// pass with nothing to rewrite — and is nil only when the store directory does
+	// not exist (the "no backlog yet" state ReadAll already tolerates) or the pass
+	// failed before it could list. "Shards present but none needing repair" and "no
+	// shards" are therefore distinguishable, and the field's meaning does not
+	// depend on Changes being non-empty.
+	ShardNames []string
 }
 
 // JustificationChange is one shard line the backfill rewrote or would rewrite.
@@ -168,18 +191,49 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 			}
 		}
 		if len(want) == 0 {
+			// Nothing needs a rewrite, but ShardNames still owes the caller the locked
+			// walk's observation: leaving it nil here would make "the store holds no
+			// shards" indistinguishable from "the store holds shards, none needing
+			// repair", and would leave the field's meaning silently coupled to Changes
+			// being non-empty. An unchanged colliding shard is exactly the collision
+			// the change set cannot see, so the snapshot must not depend on there
+			// being changes at all.
+			entries, derr := os.ReadDir(dir)
+			if derr != nil && !os.IsNotExist(derr) {
+				// A missing store directory is the legal "no backlog yet" state ReadAll
+				// already tolerates above; any other listing failure is as fatal here
+				// as it is in rewriteJustifications.
+				return fmt.Errorf("reading localdebt dir for backfill: %w", quotedPathErr(derr))
+			}
+			res.ShardNames = shardFileNames(entries)
 			return nil
 		}
-		changes, rerr := rewriteJustifications(dir, want, dryRun)
+		changes, shards, rerr := rewriteJustifications(dir, want, dryRun)
+		// Assigned BEFORE the error check: on a non-dry run each shard is renamed into
+		// place as the walk reaches it, so a failure on a later shard leaves the earlier
+		// ones already rewritten. changes carries exactly the ones that were published.
+		res.Changes = changes
+		res.ShardNames = shards
+		res.RewrittenLines = len(changes)
 		if rerr != nil {
 			return rerr
 		}
-		res.Changes = changes
-		res.RewrittenLines = len(changes)
 		return nil
 	})
 	if err != nil {
-		return BackfillResult{}, err
+		// Not BackfillResult{}: the store may already have been mutated, and a zero
+		// result reads as "nothing happened" — the one reading an operator must not
+		// take away from a half-completed rewrite of an append-only store.
+		//
+		// Only the fields describing WORK DONE survive. The scan counters (Scanned,
+		// Rewritten, Unresolved, Ambiguous, Unchanged, SkippedSettled) describe a pass
+		// that completed, and this one did not, so carrying them would report a
+		// partition of a scan whose writes were never finished.
+		return BackfillResult{
+			Changes:        res.Changes,
+			RewrittenLines: len(res.Changes),
+			ShardNames:     res.ShardNames,
+		}, err
 	}
 	return res, nil
 }
@@ -287,14 +341,44 @@ func pathHasSuffix(p, rel string) bool {
 // and each is a single fmt.Errorf over an os error whose worst outcome is a less
 // precise message, never a wrong write. Said here rather than pinned with a fake, the
 // same stance repoRoot's error arm takes in cli/debt_backfill.go.
-func rewriteJustifications(dir string, want map[string]replacement, dryRun bool) ([]JustificationChange, error) {
+// shardFileNames is the shard filter both walks apply — the rewrite pass and the
+// no-rewrite snapshot — extracted so the two copies cannot drift apart: a filter
+// change on one walk and not the other would make the snapshot describe a different
+// directory than the rewrite was computed against.
+func shardFileNames(entries []os.DirEntry) []string {
+	var names []string
+	for _, e := range entries {
+		if IsShardEntry(e) {
+			names = append(names, e.Name())
+		}
+	}
+	return names
+}
+
+func rewriteJustifications(dir string, want map[string]replacement, dryRun bool) ([]JustificationChange, []string, error) {
 	var changes []JustificationChange
+	// published is how much of changes is already ON DISK. A rename that completed is
+	// not undone by a later shard failing, so every error return below hands back
+	// changes[:published] — the prefix that was actually written.
+	//
+	// The truncation matters in BOTH directions. Returning nil claims a store that was
+	// mutated is untouched; returning the whole of changes claims lines the failed
+	// shard never received. Only the published prefix is true, and this is an
+	// append-only store where the operator acts on that answer.
+	//
+	// It stays 0 on a dry run, which is correct: nothing is written, so a dry run that
+	// fails part-way wrote nothing.
+	published := 0
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, fmt.Errorf("reading localdebt dir for backfill: %w", quotedPathErr(err))
+		return nil, nil, fmt.Errorf("reading localdebt dir for backfill: %w", quotedPathErr(err))
 	}
+	// Recorded for EVERY shard, before the want-lookup below can skip the file:
+	// the caller disambiguates locators against the set of names on disk, and an
+	// unchanged shard is exactly the collision its change set cannot see.
+	shards := shardFileNames(entries)
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+		if !IsShardEntry(e) {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
@@ -302,7 +386,7 @@ func rewriteJustifications(dir string, want map[string]replacement, dryRun bool)
 		// directory this pass already holds the lock on — not caller input.
 		b, rerr := os.ReadFile(path)
 		if rerr != nil {
-			return nil, fmt.Errorf("reading shard for backfill: %w", quotedPathErr(rerr))
+			return changes[:published], shards, fmt.Errorf("reading shard for backfill: %w", quotedPathErr(rerr))
 		}
 		lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
 		changed := false
@@ -339,7 +423,7 @@ func rewriteJustifications(dir string, want map[string]replacement, dryRun bool)
 			m["justification"] = rep.to
 			enc, merr := json.Marshal(m)
 			if merr != nil {
-				return nil, reencodeErr(id, merr)
+				return changes[:published], shards, reencodeErr(id, merr)
 			}
 			lines[i] = string(enc)
 			changed = true
@@ -352,7 +436,7 @@ func rewriteJustifications(dir string, want map[string]replacement, dryRun bool)
 		}
 		tmp, terr := os.CreateTemp(dir, "."+e.Name()+".tmp-*")
 		if terr != nil {
-			return nil, fmt.Errorf("creating temp file for backfill: %w", quotedPathErr(terr))
+			return changes[:published], shards, fmt.Errorf("creating temp file for backfill: %w", quotedPathErr(terr))
 		}
 		_, werr := tmp.WriteString(strings.Join(lines, "\n") + "\n")
 		if cerr := tmp.Close(); werr == nil {
@@ -360,14 +444,16 @@ func rewriteJustifications(dir string, want map[string]replacement, dryRun bool)
 		}
 		if werr != nil {
 			_ = os.Remove(tmp.Name())
-			return nil, fmt.Errorf("writing backfilled shard: %w", quotedPathErr(werr))
+			return changes[:published], shards, fmt.Errorf("writing backfilled shard: %w", quotedPathErr(werr))
 		}
 		if rnerr := os.Rename(tmp.Name(), path); rnerr != nil {
 			_ = os.Remove(tmp.Name())
-			return nil, fmt.Errorf("publishing backfilled shard: %w", quotedPathErr(rnerr))
+			return changes[:published], shards, fmt.Errorf("publishing backfilled shard: %w", quotedPathErr(rnerr))
 		}
+		// The shard is on disk. Everything computed up to here is now published.
+		published = len(changes)
 	}
-	return changes, nil
+	return changes, shards, nil
 }
 
 // reencodeErr wraps a json.Marshal failure with the record id ESCAPED. The id is read

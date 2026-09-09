@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -333,6 +335,11 @@ func TestDebtBackfillJustifications_DryRunStripsBidiFromTheShardLocator(t *testi
 	// about the locator rather than about a line that was never printed.
 	require.Contains(t, out, "aaaa1111", "the dry run must have listed the record")
 
+	// The legend is a collision remedy, like the suffix it explains: no collision, no
+	// suffix, no note. Printing it unconditionally would train the operator to skip it.
+	assert.NotContains(t, out, "shard names collide",
+		"a listing with no suffixed locator must not carry the suffix legend")
+
 	assert.NotContains(t, out, "\u202E", "a bidi override in a shard filename must never reach the terminal raw")
 	// Stripped, not quoted: `<shard>:<line>` has to stay ONE copy-pasteable token, so
 	// the line number cannot be pushed outside a quoted name.
@@ -452,9 +459,19 @@ func TestDebtBackfillJustifications_DryRunDisambiguatesAgainstAnUnchangedShardOn
 
 	locators := regexp.MustCompile(`(?m)^  (\S+):1 `).FindAllStringSubmatch(out, -1)
 	require.Len(t, locators, 1, "exactly one record changes")
-	assert.Regexp(t, `^2026-08\.jsonl#[0-9a-f]{6}$`, locators[0][1],
+	assert.Regexp(t, `^2026-08\.jsonl#[0-9a-f]{12}$`, locators[0][1],
 		"a shard whose sanitized name collides with a real file on disk must be disambiguated, "+
 			"even when that file produced no rewrite")
+
+	// The suffix is only as useful as the operator's ability to read it. Unannotated it
+	// looks like part of the filename — which is also the documented residual case — and
+	// it cannot be mapped back to a file by eye, since it is a hash of raw bytes that are
+	// not shown. The security value of the whole mechanism rests on the operator knowing
+	// that a suffix means "this is not the plain name you think it is".
+	assert.Contains(t, out, "shard names collide once unprintable runes are stripped",
+		"a suffixed listing must say why the names are suffixed")
+	assert.Contains(t, out, "#xxxxxx",
+		"and name the suffix's form, so the operator can tell it from a real filename")
 }
 
 // The disambiguator stays a collision remedy when the store holds other shards: a name
@@ -487,42 +504,261 @@ func TestDebtBackfillJustifications_DryRunLeavesAUniqueLocatorBareAlongsideOther
 		"an unambiguous locator must print bare even when the store holds other shards")
 }
 
-// The listing is the disambiguator's PRIMARY source, but it is allowed to fail: the
-// rewrite the operator is about to approve has already been computed, so a store
-// directory that became unreadable between the rewrite pass and this one must degrade
-// to the change set rather than abort. That fallback loop is unconditional on purpose —
-// a changed shard must be in the collision map even when os.ReadDir supplied nothing —
-// and every other test in this file hands locatorNames a readable directory, so the
-// listing always covers the change set and the fallback never carries the result.
+// The listing filter — non-directory entries ending in ".jsonl" — was covered by no
+// test: deleting it left the whole ./cli/ suite green. The one existing case that puts
+// a non-shard file in the store names it "notes.txt", which cannot collide with the
+// shard under test, so it is insensitive to the filter.
 //
-// Without it, a dry run against an unreadable store prints a changed shard's locator
-// bare with NO collision considered at all, reintroducing exactly the misattribution
-// the disambiguator exists to prevent, on the one surface an operator approves an
-// in-place rewrite from.
-func TestLocatorNames_FallsBackToTheChangeSetWhenTheListingFails(t *testing.T) {
-	// A directory that does not exist: os.ReadDir returns an error and the listing
-	// contributes nothing. An unreadable-but-present directory (chmod 0500) would
-	// behave identically here; the nonexistent path is preferred because it produces
-	// the same os.ReadDir error deterministically on every platform and under every
-	// user, and needs no permission setup or cleanup.
-	gone := filepath.Join(t.TempDir(), "no-such-store")
+// This case covers the SUFFIX half. Its decoy is a non-".jsonl" entry whose name is the
+// genuine shard's plus a TRAILING zero-width space: the ZWSP is what makes the name fail
+// HasSuffix(".jsonl"), while sanitizeLocator strips Cf and so reduces it back to
+// "2026-08.jsonl" — a genuine collision that only the suffix half keeps out of the map.
+// The trailing position is load-bearing; an extension like ".tmp" would sanitize to a
+// different token and collide with nothing, so it would prove nothing.
+//
+// The IsDir half is covered separately, by
+// TestDebtBackfillJustifications_DryRunIgnoresADirectoryNamedLikeTheChangedShard. They
+// are split so a mutation removing only one half is still attributable: with both decoys
+// in one assertion, either half alone keeps the test red and the other half's coverage is
+// unproven. The two halves fail DIFFERENTLY, though — see that test's header; only this
+// one is discriminated by the locator assertions below.
+//
+// The assertion is that the genuine locator prints BARE. The filter's absence is
+// fail-SAFE — more names enter the map, so the output gains spurious suffixes rather
+// than losing needed ones — which is why the row was non-blocking; it is pinned anyway
+// because a future NARROWING of the filter would otherwise be silent, and this is the
+// surface an operator approves an in-place rewrite from.
+func TestDebtBackfillJustifications_DryRunIgnoresNonShardEntriesWhenDisambiguating(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	reviewRoot := filepath.Join(root, "reviews")
+	rd := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+	require.NoError(t, os.MkdirAll(rd, 0o750))
+	require.NoError(t, os.MkdirAll(store, 0o750))
+	body := "## Findings\n\nSome preamble.\n\n```\n- internal/thing.go:42 quoted example row\n\n" +
+		"- **internal/thing.go:42** the real narrative explaining the defect.\n"
+	require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"), []byte(body), 0o600))
 
-	// Two DIFFERENT shard files whose names reduce to the same token once Cf is
-	// stripped — the collision the disambiguator exists to resolve. Both are in the
-	// change set, so the fallback is the only thing that can see either of them.
+	// The decoy: not a ".jsonl" by HasSuffix, but the genuine shard's token once Cf is
+	// stripped. See the header for why the ZWSP has to be trailing.
+	require.NoError(t, os.WriteFile(filepath.Join(store, "2026-08.jsonl\u200B"), []byte("staged\n"), 0o600))
+
+	rec := `{"schema_version":3,"id":"aaaa1111","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
+		`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
+		`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+		`"justification":"- **internal/thing.go:42** the real narrative explaining the defect.",` +
+		`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":8}}`
+	require.NoError(t, os.WriteFile(filepath.Join(store, "2026-08.jsonl"), []byte(rec+"\n"), 0o600))
+
+	code, out := execCmdCapture(t, "debt", "backfill-justifications",
+		"--store", store, "--review-root", reviewRoot, "--dry-run")
+	require.Equal(t, 0, code, out)
+	assert.Contains(t, out, "2026-08.jsonl:1 ",
+		"an entry that is not a .jsonl is not a shard, so the genuine locator must print bare")
+	assert.NotRegexp(t, `2026-08\.jsonl#[0-9a-f]{6}`, out,
+		"no non-shard entry may push a genuine locator into its disambiguated form")
+}
+
+// The IsDir half in isolation: a DIRECTORY whose name reduces to the changed shard's
+// token once Cf is stripped. Split from the suffix case above for the reason given in
+// that test's header.
+//
+// It is pinned by the WALK ABORTING, not by the locator assertions — and the difference
+// is worth stating, because the obvious reading of this test is wrong. Dropping only
+// e.IsDir() does not turn the decoy into a printed collision: os.ReadFile on a directory
+// returns "is a directory", so rewriteJustifications fails and the whole backfill exits
+// non-zero. Verified by mutation, which fails on require.Equal(t, 0, code, out) with
+// `reading shard for backfill: read "2026-08\u200b.jsonl": is a directory`. The locator
+// assertions below never get to run in that world.
+//
+// So the mutation IS detected, and this test is the thing that detects it — but as an
+// exit-code regression, not as a disambiguation one. Left as an exit-code assertion on
+// purpose: it is the real consequence of dropping the half, and stating it here is
+// cheaper than manufacturing a readable decoy that would only re-prove the suffix half.
+func TestDebtBackfillJustifications_DryRunIgnoresADirectoryNamedLikeTheChangedShard(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	reviewRoot := filepath.Join(root, "reviews")
+	rd := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+	require.NoError(t, os.MkdirAll(rd, 0o750))
+	require.NoError(t, os.MkdirAll(store, 0o750))
+	body := "## Findings\n\nSome preamble.\n\n```\n- internal/thing.go:42 quoted example row\n\n" +
+		"- **internal/thing.go:42** the real narrative explaining the defect.\n"
+	require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"), []byte(body), 0o600))
+
+	// The decoy directory's name reduces to the changed shard's token once Cf is
+	// stripped, so without the IsDir half it is a genuine collision — not merely an
+	// extra name that happens to differ.
+	require.NoError(t, os.MkdirAll(filepath.Join(store, "2026-08\u200B.jsonl"), 0o750))
+
+	rec := `{"schema_version":3,"id":"aaaa1111","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
+		`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
+		`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+		`"justification":"- **internal/thing.go:42** the real narrative explaining the defect.",` +
+		`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":8}}`
+	require.NoError(t, os.WriteFile(filepath.Join(store, "2026-08.jsonl"), []byte(rec+"\n"), 0o600))
+
+	code, out := execCmdCapture(t, "debt", "backfill-justifications",
+		"--store", store, "--review-root", reviewRoot, "--dry-run")
+	require.Equal(t, 0, code, out)
+	assert.Contains(t, out, "2026-08.jsonl:1 ",
+		"a directory is not a shard, so the genuine locator must print bare")
+	assert.NotRegexp(t, `2026-08\.jsonl#[0-9a-f]{6}`, out,
+		"a directory entry must not push a genuine locator into its disambiguated form")
+}
+
+// The whole justification for stripping rather than quoting the shard is that
+// `<shard>:<line>` stays ONE unambiguously parseable, copy-pasteable token. A colon
+// or a space surviving inside the shard name breaks exactly that: "2026:08.jsonl:1"
+// has two candidate splits and "2026 08.jsonl:1" is two tokens on a terminal. Both
+// are ordinary POSIX filenames in a world-appendable store directory, so the property
+// the comment at cli/debt_backfill.go:112-114 defends has to actually hold.
+func TestDebtBackfillJustifications_DryRunLocatorStaysOneParseableToken(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		shard string
+		want  string
+	}{
+		{name: "colon", shard: "2026:08.jsonl", want: "2026%3A08.jsonl:1"},
+		{name: "space", shard: "2026 08.jsonl", want: "2026%2008.jsonl:1"},
+		{name: "percent is escaped first so the encoding is reversible", shard: "2026%3A08.jsonl", want: "2026%253A08.jsonl:1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			store := filepath.Join(root, "debt")
+			reviewRoot := filepath.Join(root, "reviews")
+			rd := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+			require.NoError(t, os.MkdirAll(rd, 0o750))
+			require.NoError(t, os.MkdirAll(store, 0o750))
+			body := "## Findings\n\nSome preamble.\n\n```\n- internal/thing.go:42 quoted example row\n\n" +
+				"- **internal/thing.go:42** the real narrative explaining the defect.\n"
+			require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"), []byte(body), 0o600))
+
+			rec := `{"schema_version":3,"id":"aaaa1111","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
+				`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
+				`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+				`"justification":"- **internal/thing.go:42** the real narrative explaining the defect.",` +
+				`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":8}}`
+			require.NoError(t, os.WriteFile(filepath.Join(store, tc.shard), []byte(rec+"\n"), 0o600))
+
+			code, out := execCmdCapture(t, "debt", "backfill-justifications",
+				"--store", store, "--review-root", reviewRoot, "--dry-run")
+			require.Equal(t, 0, code, out)
+			require.Contains(t, out, "aaaa1111", "the dry run must have listed the record")
+			assert.Contains(t, out, tc.want,
+				"the locator must split on exactly one colon, into one shard name and one line number")
+		})
+	}
+}
+
+// locatorNames keys collisions on the sanitized token's BYTES, so it only detects the
+// ambiguity its own lossy Cf strip introduces. Two shard names that RENDER identically
+// but differ in bytes get distinct keys and no suffix at all — leaving the operator
+// reading two rows that look like the same filename, which is exactly the
+// which-file-would-be-rewritten ambiguity this function exists to remove.
+//
+// NFKC folding closes the compatibility-equivalent half of that: NFC e-acute beside
+// NFD e+U+0301, and U+00A0 beside a space. It does NOT close visual confusables that
+// are not compatibility-equivalent — see the residual case pinned below.
+func TestLocatorNames_FoldsCompatibilityEquivalentShardNames(t *testing.T) {
+	for _, tc := range []struct{ name, a, b string }{
+		{name: "NFC vs NFD e-acute", a: "café.jsonl", b: "café.jsonl"},
+		{name: "no-break space vs space", a: "a b.jsonl", b: "a b.jsonl"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			changes := []localdebt.JustificationChange{
+				{Shard: tc.a, Line: 1, ID: "aaaa1111"},
+				{Shard: tc.b, Line: 1, ID: "bbbb2222"},
+			}
+			names := locatorNames([]string{tc.a, tc.b}, changes)
+			assert.NotEqual(t, names[tc.a], names[tc.b],
+				"two shard names that render alike must never render as one identical locator")
+			assert.Contains(t, names[tc.a], "#", "the collision must be marked, not merely survived")
+			assert.Contains(t, names[tc.b], "#", "on both rows, or the operator cannot tell which is which")
+		})
+	}
+}
+
+// The residual class, pinned so it is a known limit rather than a surprise: a visual
+// confusable that is NOT compatibility-equivalent — here U+2011 NON-BREAKING HYPHEN
+// beside an ASCII hyphen-minus — folds to U+2010 under NFKC, not to U+002D, so the two
+// names keep distinct keys and print bare. Closing it needs a confusables table, not a
+// normalizer. This test documents the boundary; if a future change closes the gap it
+// will fail here and should be updated deliberately.
+func TestLocatorNames_DoesNotFoldVisualConfusablesThatAreNotCompatibilityEquivalent(t *testing.T) {
+	const ascii, nbHyphen = "2026-08.jsonl", "2026‑08.jsonl"
 	changes := []localdebt.JustificationChange{
-		{ID: "aaaa1110", Shard: "2026-08\u202e-a.jsonl", Line: 1},
-		{ID: "aaaa1111", Shard: "2026-08\u200b-a.jsonl", Line: 1},
+		{Shard: ascii, Line: 1, ID: "aaaa1111"},
+		{Shard: nbHyphen, Line: 1, ID: "bbbb2222"},
 	}
+	names := locatorNames([]string{ascii, nbHyphen}, changes)
+	assert.NotContains(t, names[ascii], "#",
+		"NFKC maps U+2011 to U+2010, not to U+002D, so this pair is not detected as a collision")
+	assert.NotContains(t, names[nbHyphen], "#")
+}
 
-	names := locatorNames(gone, changes)
+// The disambiguating suffix is sha256 of the raw name truncated to a hex prefix, and
+// the threat model this file's own comments assume is an attacker who can write to the
+// store directory. That attacker controls BOTH planted filenames and can pad either
+// with arbitrary Cf runes, which sanitize away — so they are not guessing a hash of a
+// name they do not control (the residual case the header dismisses), they are running
+// an offline birthday search over a space they choose.
+//
+// At 6 hex characters that space is 24 bits, and a collision turns up in roughly 2^12
+// trials. The pair below was found that way in well under a second; both names reduce
+// to "2026-08.jsonl" and their sha256 digests share the prefix "2a0450". A 6-character
+// suffix renders them as ONE identical locator — breaking the exact invariant the
+// listing exists to uphold, on the surface an operator approves an in-place rewrite
+// from.
+func TestLocatorNames_SuffixSurvivesAForcedShortPrefixCollision(t *testing.T) {
+	const (
+		// Written as escapes: a raw U+FEFF in Go source is an illegal byte order mark.
+		a = "2026-08\u200c\u200c\u00ad\u200c\ufeff.jsonl"
+		b = "2026-08\ufeff\u2060\u00ad\u2060\ufeff.jsonl"
+	)
+	require.Equal(t, sha256Hex(a)[:6], sha256Hex(b)[:6],
+		"fixture premise: these two names share a 6-hex sha256 prefix")
+	require.NotEqual(t, a, b, "and they are genuinely different files")
 
-	require.Len(t, names, 2, "every changed shard must get a printable locator")
-	for _, c := range changes {
-		assert.Regexp(t, `^2026-08-a\.jsonl#[0-9a-f]{6}$`, names[c.Shard],
-			"with the listing gone the change set alone must still expose the collision, "+
-				"so the locator carries its disambiguating suffix")
+	changes := []localdebt.JustificationChange{
+		{ID: "aaaa1111", Shard: a, Line: 1},
+		{ID: "bbbb2222", Shard: b, Line: 1},
 	}
-	assert.NotEqual(t, names[changes[0].Shard], names[changes[1].Shard],
-		"two distinct shard files must never render as one identical locator")
+	names := locatorNames([]string{a, b}, changes)
+
+	assert.NotEqual(t, names[a], names[b],
+		"two distinct shard files must never render as one identical locator, "+
+			"even when an attacker forces a short-prefix hash collision")
+	assert.Regexp(t, `^2026-08\.jsonl#[0-9a-f]{12}$`, names[a],
+		"the suffix must carry at least 48 bits, which puts a forced collision out of offline reach")
+	assert.Regexp(t, `^2026-08\.jsonl#[0-9a-f]{12}$`, names[b])
+}
+
+func sha256Hex(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
+// A non-dry run renames each shard into place as it walks, so a pass that fails on a
+// later shard leaves the earlier ones already rewritten in an append-only store. The
+// bare error said nothing about that, so the operator was told the command failed and
+// had no way to learn the store had been mutated — or which shard to reconcile.
+func TestDebtBackfillJustifications_NamesTheShardsAlreadyRewrittenWhenThePassFails(t *testing.T) {
+	store, reviewRoot := backfillFixture(t)
+	// A DANGLING symlink named like a shard. ReadAll skips it (it reads as missing),
+	// so the scan succeeds; the rewrite walk reaches it after 2026-08.jsonl has been
+	// published and fails there. This is the mid-pass failure, reached end-to-end.
+	require.NoError(t, os.Symlink(filepath.Join(store, "gone.jsonl"), filepath.Join(store, "2026-09.jsonl")))
+
+	code, out := execCmdCapture(t, "debt", "backfill-justifications",
+		"--store", store, "--review-root", reviewRoot)
+	require.NotEqual(t, 0, code, "the pass failed, so the command must not report success: %s", out)
+	assert.Contains(t, out, "backfill-justifications:", "the error is still wrapped with the subcommand name")
+	assert.Contains(t, out, "2026-08.jsonl:1",
+		"the shard already rewritten must be named before the failure is surfaced")
+
+	b, err := os.ReadFile(filepath.Join(store, "2026-08.jsonl"))
+	require.NoError(t, err)
+	assert.Contains(t, string(b), "```",
+		"the fixture must really have written the first shard, or this test proves nothing")
 }

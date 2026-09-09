@@ -1,3 +1,19 @@
+## [35.17.0] - 2026-09-08
+
+*Epic 35.16.6.9 — post residue feature epic 35.16.6.6 post residue feature epic 35.16.6.2 submission envelope coverage schema.*
+
+### Fixed
+- `docs/benchmark.md`'s Resume bullet promised an unconditional fail-closed on any roster change, which the binary does not perform: an unstamped (pre-`roster_format`) checkpoint whose recorded roster matches the parallel-lane-only projection resumes across an added serial reviewer. The bullet now names that exception, states that the union upgrade is written back only if the resumed run scores a further case, and a drift test in `internal/reconcile/` fails if either half drifts from the code again.
+- `atcr leaderboard --export` no longer publishes a whitespace-only `model` or `reviewer` in silence. The record is still kept — that scoping is deliberate — but it is now named on stderr as "blank after trimming", so the operator learns about it locally instead of from the board's rejection. A record already empty in the store is unchanged and still unreported. `docs/scorecard.md` records the new warning.
+- `atcr benchmark run --checkpoint` now explains why it rejects a checkpoint recording an empty reviewer roster. The rejection itself is unchanged and correct; the previous message reported a generic "recorded [], configured [...]" panel drift, blaming a change that never happened. The new message names the shape a pre-serial-lane binary wrote for a project with no parallel lane, hedges that a truncated or hand-edited file reads the same, and still carries the current panel.
+- `atcr debt backfill-justifications --dry-run` now resolves its shard locators against the directory snapshot the rewrite was computed from, taken under the store lock, rather than re-listing the directory afterwards. A concurrent writer removing a colliding shard in that window could previously suppress the disambiguating `#hash` suffix, so the dry run printed a bare locator for a name that was ambiguous when the rewrite was computed.
+
+### Changed
+- The shard-listing filter used by the backfill dry run now exists in exactly one place instead of two copies kept in step by hand, and is pinned by tests covering each half independently.
+- The pre-serial-lane compatibility arm in the checkpoint roster guard carries one emptiness term instead of two logically redundant ones.
+
+*Shipped via /execute-epic (epic 35.16.6.9)*
+
 ## [Technical Debt] - 2026-09-08
 
 ### Fixed

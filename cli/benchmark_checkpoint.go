@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/benchmark"
@@ -183,6 +184,15 @@ func loadCheckpoint(path string) (*runCheckpoint, error) {
 // would otherwise become an arbitrary key in the published outcomes tally, and the
 // tally label "unknown" would pose as genuine absence.
 func validateCheckpointIntegrity(cp *runCheckpoint) error {
+	// RosterFormat gets the same allowlist treatment as Outcome, and for the same
+	// reason: the resume path reads it twice (the pre-serial-lane compat arm and the
+	// empty-recorded-roster message both gate on it being ""), so a value from
+	// outside the vocabulary — hand-edited, or written by a newer binary an operator
+	// downgraded from — silently disables both and hands back the generic drift text
+	// those arms exist to replace.
+	if cp.RosterFormat != "" && cp.RosterFormat != rosterFormatUnion {
+		return fmt.Errorf("%w: unknown roster_format %q", errCheckpointCorrupt, cp.RosterFormat)
+	}
 	seen := make(map[int]struct{}, len(cp.Cases))
 	for i, c := range cp.Cases {
 		if c.Index < 0 {
@@ -288,13 +298,66 @@ func validateCheckpointRoster(cp *runCheckpoint, roster, legacyRoster []string) 
 	// a resume that replays every already-completed case, or aborts before the first
 	// one, returns without saving: the legacy form stays on disk and this arm
 	// re-fires on each such resume.
-	if cp.RosterFormat == "" && len(legacyRoster) > 0 && len(recorded) > 0 && equalStrings(recorded, sortedCopy(legacyRoster)) {
+	// `len(recorded) > 0` must stay: dropping it lets a checkpoint recording `"roster": []`
+	// compare equal to a serial-only project's empty parallel projection and resume
+	// against ANY serial panel.
+	if cp.RosterFormat == "" && len(recorded) > 0 && equalStrings(recorded, sortedCopy(legacyRoster)) {
 		cp.Roster = current
 		cp.RosterFormat = rosterFormatUnion
 		return nil
 	}
+	// The empty-recorded-roster case, named rather than left to the generic drift text
+	// below. It is reachable from a SHIPPED binary, not only by hand-editing: at
+	// merge-base rosterSignature built from cfg.Project.Agents alone, serial_agents
+	// predates the Roster field, and internal/registry/project.go rejects only BOTH
+	// lanes empty — so a serial-only project wrote `"roster": []`, and the Roster tag
+	// carries no omitempty, so it round-trips as a non-nil empty slice that clears the
+	// cp.Roster == nil guard above.
+	//
+	// The rejection is CORRECT and stays: the alternative is resuming against any serial
+	// panel, which the arm above exists to refuse. What was wrong is the diagnosis. The
+	// generic text reports "recorded [], configured [...]", blaming a panel change that
+	// never happened and sending the operator to discard a checkpoint holding every
+	// already-paid completed case.
+	//
+	// Scoped to an UNSTAMPED checkpoint. A union-stamped empty roster cannot have come
+	// from the pre-serial-lane binary — this binary writes both lanes, and a project
+	// with neither is rejected at config load — so naming that cause for it would be a
+	// guess; it falls through to the generic text instead.
+	if cp.RosterFormat == "" && len(recorded) == 0 {
+		// The cause is HEDGED, not asserted. A hand-edited or truncated checkpoint
+		// reaches this same branch, and a confident wrong diagnosis is worse than the
+		// generic text it replaces. The configured panel is carried too, under
+		// "current panel" rather than the generic message's "configured", so the
+		// operator loses no data relative to that message.
+		return fmt.Errorf("%w: checkpoint records an empty reviewer roster, so it proves "+
+			"nothing about the panel and cannot be migrated; this is the shape a "+
+			"pre-serial-lane binary wrote for a project with no parallel lane, but a "+
+			"truncated or hand-edited file reads the same — current panel [%s]; remove the "+
+			"checkpoint to start fresh", errCheckpointRosterMismatch, strings.Join(current, " "))
+	}
+	// The recorded half is quoted per entry; the configured half is not. The
+	// asymmetry is the point: `recorded` is sortedCopy(cp.Roster), read verbatim out
+	// of an operator-supplied, hand-editable checkpoint, while `current` is built
+	// from config this binary already parsed. A U+202E inside a roster entry would
+	// otherwise reorder the very message the operator reads when deciding whether to
+	// delete a checkpoint holding every already-paid case — the same untrusted-on-a-
+	// terminal class sanitizeLocator and reencodeErr harden against elsewhere. The
+	// `recorded [` and `configured [` framing is unchanged, so the message keeps the
+	// shape its tests and the operator's eye already know.
 	return fmt.Errorf("%w: recorded [%s], configured [%s]; remove the checkpoint to start fresh",
-		errCheckpointRosterMismatch, strings.Join(recorded, " "), strings.Join(current, " "))
+		errCheckpointRosterMismatch, quotedJoin(recorded), strings.Join(current, " "))
+}
+
+// quotedJoin renders each entry with %q and joins them with a space, so a control
+// or format rune carried in untrusted input reaches the terminal as its escape
+// rather than as a live rune.
+func quotedJoin(s []string) string {
+	out := make([]string, len(s))
+	for i, v := range s {
+		out[i] = strconv.Quote(v)
+	}
+	return strings.Join(out, " ")
 }
 
 // sortedCopy returns a sorted copy of s without mutating the input.

@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // Summary is the minimal projection of a Record that the two hot read paths need:
@@ -293,7 +292,7 @@ func StreamSummaries(dir string, opts ReadOpts, fn func(Summary) error) error {
 	// cases pay nothing.
 	var br *bufio.Reader
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+		if !IsShardEntry(e) {
 			continue
 		}
 		if br == nil {
