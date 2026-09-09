@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -94,6 +95,45 @@ func TestSplitClaims_ProseBodySplitsPerSentence(t *testing.T) {
 			assert.Equal(t, tc.want, got)
 		})
 	}
+}
+
+// splitClaims had no per-claim cap, so one runaway unpunctuated paragraph became
+// a single claim of up to the WHOLE DefaultMaxClaimBytes budget — crowding every
+// other assertion out of a ledger whose bytes are already uncounted by the byte
+// budget. A capped claim must say it was capped: an elided claim a reviewer reads
+// as complete is the silent-loss failure the ledger exists to prevent.
+func TestSplitClaims_ARunawayParagraphIsCappedAndMarkedElided(t *testing.T) {
+	runaway := "the drain keeps going " + strings.Repeat("x", maxClaimRenderBytes)
+	got, _ := splitClaims([]string{"fix the drain\n\n" + runaway})
+
+	require.Len(t, got, 2, "the subject and the capped paragraph")
+	assert.Equal(t, "fix the drain", got[0])
+	assert.LessOrEqual(t, len(got[1]), maxClaimRenderBytes+len(claimElidedMarker),
+		"one paragraph must not be able to occupy the whole ledger budget")
+	assert.True(t, strings.HasSuffix(got[1], claimElidedMarker),
+		"a capped claim must disclose that it was cut, never read as complete")
+	assert.True(t, strings.HasPrefix(got[1], "the drain keeps going "),
+		"the opening of the claim is what survives")
+	assert.True(t, utf8.ValidString(got[1]), "the cap must not split a rune")
+}
+
+// A claim at or under the cap is untouched — no marker, no truncation. The cap is
+// a guard against a pathological message, not a reformatter of ordinary ones.
+func TestSplitClaims_AnOrdinaryClaimIsNotCapped(t *testing.T) {
+	ordinary := "the cursor is preserved across a cold drain"
+	got, _ := splitClaims([]string{"fix the drain\n\n" + ordinary})
+	require.Len(t, got, 2)
+	assert.Equal(t, ordinary, got[1])
+	assert.NotContains(t, got[1], claimElidedMarker)
+}
+
+// The cap runs on multibyte text too, and must still cut on a rune boundary.
+func TestSplitClaims_CapNeverSplitsARuneInARunawayParagraph(t *testing.T) {
+	// Two tokens minimum, or isClaimBearing drops it before the cap is reached.
+	got, _ := splitClaims([]string{"fix the drain\n\nle curseur " + strings.Repeat("é", maxClaimRenderBytes)})
+	require.Len(t, got, 2)
+	assert.True(t, utf8.ValidString(got[1]))
+	assert.True(t, strings.HasSuffix(got[1], claimElidedMarker))
 }
 
 // A version number or an abbreviation is not a sentence boundary.

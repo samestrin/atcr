@@ -352,6 +352,23 @@ func splitClaims(msgs []string) (claims []string, fenceSuppressed bool) {
 	return out, fenceSuppressed
 }
 
+// maxClaimRenderBytes bounds ONE rendered claim. Without it a single
+// unpunctuated paragraph — which splitSentences cannot break, having no
+// terminator to break on — becomes one claim of up to the whole
+// DefaultMaxClaimBytes budget, crowding every other assertion out of a ledger
+// whose bytes the byte budget cannot see.
+//
+// 1 KiB is far above any real commit sentence and still leaves room for several
+// claims inside the 8 KiB read cap, so the guard fires only on the pathological
+// message it exists for.
+const maxClaimRenderBytes = 1024
+
+// claimElidedMarker is appended to a claim the cap cut. It is deliberately
+// visible: a reviewer asked to adjudicate a silently-truncated claim is being
+// shown a different assertion from the one the author made. Spelled without a
+// dash run and without any line-break rune so sanitizeClaim cannot rewrite it.
+const claimElidedMarker = " […claim truncated]"
+
 // isClaimBearing rejects candidates that assert nothing: a bare token ("wip",
 // "fixup"), a punctuation run, or an empty string. The bar is deliberately low
 // — two words — because the cost of dropping a real claim (the panel never
