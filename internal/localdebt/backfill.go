@@ -69,8 +69,12 @@ type BackfillResult struct {
 	// suffix and the operator approves a bare locator for a name that was ambiguous
 	// when the rewrite was computed.
 	//
-	// It is nil when no rewrite was needed: with nothing to write there is nothing to
-	// describe, and the pass returns before it walks the directory at all.
+	// It is populated on every pass that completed its locked listing — including a
+	// pass with nothing to rewrite — and is nil only when the store directory does
+	// not exist (the "no backlog yet" state ReadAll already tolerates) or the pass
+	// failed before it could list. "Shards present but none needing repair" and "no
+	// shards" are therefore distinguishable, and the field's meaning does not
+	// depend on Changes being non-empty.
 	ShardNames []string
 }
 
@@ -187,6 +191,25 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 			}
 		}
 		if len(want) == 0 {
+			// Nothing needs a rewrite, but ShardNames still owes the caller the locked
+			// walk's observation: leaving it nil here would make "the store holds no
+			// shards" indistinguishable from "the store holds shards, none needing
+			// repair", and would leave the field's meaning silently coupled to Changes
+			// being non-empty. An unchanged colliding shard is exactly the collision
+			// the change set cannot see, so the snapshot must not depend on there
+			// being changes at all.
+			entries, derr := os.ReadDir(dir)
+			if derr != nil && !os.IsNotExist(derr) {
+				// A missing store directory is the legal "no backlog yet" state ReadAll
+				// already tolerates above; any other listing failure is as fatal here
+				// as it is in rewriteJustifications.
+				return fmt.Errorf("reading localdebt dir for backfill: %w", quotedPathErr(derr))
+			}
+			for _, e := range entries {
+				if !e.IsDir() && strings.HasSuffix(e.Name(), ".jsonl") {
+					res.ShardNames = append(res.ShardNames, e.Name())
+				}
+			}
 			return nil
 		}
 		changes, shards, rerr := rewriteJustifications(dir, want, dryRun)
