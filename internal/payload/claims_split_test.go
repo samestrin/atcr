@@ -278,3 +278,25 @@ func BenchmarkSplitSentences_AbbreviationDense(b *testing.B) {
 		_ = splitSentences(input)
 	}
 }
+
+// "see" and "link" are ordinary English verbs before they are git trailers, so
+// stripping any line that opens with them discards real assertions — re-creating
+// the invisible-absence failure this epic exists to catch, and doing it with no
+// truncation-style disclosure. The trailer stripper must recognise only genuine
+// reference trailers.
+func TestSplitClaims_SeeAndLinkOpeningARealClaimAreNotStripped(t *testing.T) {
+	got := splitClaims([]string{"subject line here\n\nSee: begin() now preserves the offset\nLink: the offset is kept in drain.py"})
+	assert.Equal(t, []string{
+		"subject line here",
+		"See: begin() now preserves the offset",
+		"Link: the offset is kept in drain.py",
+	}, got)
+}
+
+// The genuine reference trailers still go: they name an issue, not a change.
+func TestSplitClaims_RealReferenceTrailersAreStillStripped(t *testing.T) {
+	for _, trailer := range []string{"Refs: #123", "Fixes: #456", "Closes: #789", "Resolves: #1", "CC: @someone", "Bug: 4242", "Issue: 17", "PR: #99"} {
+		got := splitClaims([]string{"subject line here\n\n" + trailer})
+		assert.Equal(t, []string{"subject line here"}, got, "%q is a reference, not a claim", trailer)
+	}
+}
