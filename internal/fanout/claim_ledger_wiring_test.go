@@ -22,8 +22,13 @@ import (
 // is produced and never at the point it is consumed: the "passes a unit test,
 // fails in production" shape /refine-epic flagged for this epic.
 //
-// This file adds no production code and changes no behavior, so AC6's freeze on
-// internal/fanout holds.
+// This file is test-only: it adds no production code and changes no behavior.
+// AC6's freeze on internal/fanout is being read as "no production-code change":
+// the package tree does gain this file — strictly a change to the component —
+// so the freeze holds by that reading, not by an untouched tree. The file lives
+// here anyway because the assertions must observe the ledger where it is
+// CONSUMED (buildPayloads' shed, buildSlots' per-agent shed, prompt rendering),
+// and those seams are package-private to internal/fanout.
 
 func ledgerGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
