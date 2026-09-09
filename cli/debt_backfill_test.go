@@ -559,7 +559,8 @@ func TestLocatorNames_IsTotalOverItsChangeSetWithoutASnapshot(t *testing.T) {
 // TestDebtBackfillJustifications_DryRunIgnoresADirectoryNamedLikeTheChangedShard. They
 // are split so a mutation removing only one half is still attributable: with both decoys
 // in one assertion, either half alone keeps the test red and the other half's coverage is
-// unproven.
+// unproven. The two halves fail DIFFERENTLY, though — see that test's header; only this
+// one is discriminated by the locator assertions below.
 //
 // The assertion is that the genuine locator prints BARE. The filter's absence is
 // fail-SAFE — more names enter the map, so the output gains spurious suffixes rather
@@ -598,9 +599,21 @@ func TestDebtBackfillJustifications_DryRunIgnoresNonShardEntriesWhenDisambiguati
 }
 
 // The IsDir half in isolation: a DIRECTORY whose name reduces to the changed shard's
-// token once Cf is stripped, so without the IsDir half it is a genuine collision rather
-// than merely an extra name. Split from the suffix case above for the reason given in
+// token once Cf is stripped. Split from the suffix case above for the reason given in
 // that test's header.
+//
+// It is pinned by the WALK ABORTING, not by the locator assertions — and the difference
+// is worth stating, because the obvious reading of this test is wrong. Dropping only
+// e.IsDir() does not turn the decoy into a printed collision: os.ReadFile on a directory
+// returns "is a directory", so rewriteJustifications fails and the whole backfill exits
+// non-zero. Verified by mutation, which fails on require.Equal(t, 0, code, out) with
+// `reading shard for backfill: read "2026-08\u200b.jsonl": is a directory`. The locator
+// assertions below never get to run in that world.
+//
+// So the mutation IS detected, and this test is the thing that detects it — but as an
+// exit-code regression, not as a disambiguation one. Left as an exit-code assertion on
+// purpose: it is the real consequence of dropping the half, and stating it here is
+// cheaper than manufacturing a readable decoy that would only re-prove the suffix half.
 func TestDebtBackfillJustifications_DryRunIgnoresADirectoryNamedLikeTheChangedShard(t *testing.T) {
 	root := t.TempDir()
 	store := filepath.Join(root, "debt")
