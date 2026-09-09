@@ -45,7 +45,7 @@ func newDebtBackfillCmd() *cobra.Command {
 			"touch. Each line is named by a `<shard>:<line>` locator whose shard name has\n" +
 			"had terminal-driving runes stripped and token-breaking ones percent-encoded,\n" +
 			"so it may not be the literal filename on disk. Where two names reduce to the\n" +
-			"same token, each gets a `#xxxxxx` suffix — the first 6 hex of sha256 over the\n" +
+			"same token, each gets a `#xxxxxxxxxxxx` suffix — the first 12 hex of sha256 over the\n" +
 			"raw filename — so the listing never leaves it ambiguous which file would be\n" +
 			"rewritten. The suffix is appended only where a collision exists.",
 		Args: usageArgs(cobra.NoArgs),
@@ -146,7 +146,7 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 			if locators[c.Shard] != sanitizeLocator(c.Shard) {
 				_, _ = fmt.Fprint(cmd.OutOrStdout(),
 					"  note: some shard names collide once unprintable runes are stripped; "+
-						"#xxxxxx is the first 6 hex of sha256 over the RAW filename, appended only "+
+						"#xxxxxxxxxxxx is the first 12 hex of sha256 over the RAW filename, appended only "+
 						"to tell colliding names apart — it is not part of the file's name\n")
 				break
 			}
