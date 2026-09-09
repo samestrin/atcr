@@ -119,6 +119,20 @@ type Settings struct {
 	// file's SCOPE CONSTRAINT injection (plan 19.10 F9); see
 	// internal/payload.ReadSprintPlan / ScopeConstraint. Always > 0.
 	MaxSprintPlanBytes int64
+	// MaxClaimBytes is the resolved byte ceiling on the commit-message text read
+	// into the claim ledger (Epic 35.16.7); see payload.WithMaxClaimBytes.
+	//
+	// A POINTER, unlike every sibling budget here, because 0 is a MEANINGFUL
+	// setting — it DISABLES the ledger — and it is also Go's zero value. A plain
+	// int64 would mean any hand-built Settings{} (an embedder's, a test's) silently
+	// ships with the ledger off, which is the failure direction: the feature
+	// vanishes and nothing says so. nil = "not resolved, use the embedded default";
+	// a non-nil 0 = "the operator turned it off". Read it through
+	// ResolvedMaxClaimBytes, never directly.
+	//
+	// This is the same reasoning ChunkByteBudget documents for its resolution flag,
+	// applied one layer out to the resolved struct.
+	MaxClaimBytes *int64
 	// MaxRetries is the resolved retry budget passed to the llmclient per call
 	// (Epic 4.6); 0 means a single attempt with no retry.
 	MaxRetries int
@@ -151,6 +165,7 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		MaxParallel:        DefaultMaxParallel,
 		CacheMaxBytes:      DefaultCacheMaxBytes,
 		MaxSprintPlanBytes: DefaultMaxSprintPlanBytes,
+		MaxClaimBytes:      claimBytesPtr(DefaultMaxClaimBytes),
 		MaxRetries:         DefaultMaxRetries,
 		InitialBackoffMs:   DefaultInitialBackoffMs,
 	}
@@ -178,6 +193,12 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		// CacheMaxBytes — overlaid explicitly, not through applyTier's fixed signature.
 		if reg.MaxSprintPlanBytes != nil {
 			s.MaxSprintPlanBytes = *reg.MaxSprintPlanBytes
+		}
+		// MaxClaimBytes (Epic 35.16.7) sits at the registry and project tiers only,
+		// exactly like MaxSprintPlanBytes. A pointer means an explicit 0 (disabled)
+		// survives rather than being read as "unset".
+		if reg.MaxClaimBytes != nil {
+			s.MaxClaimBytes = claimBytesPtr(*reg.MaxClaimBytes)
 		}
 		// Retry tunables live only at the registry (global) tier and the agent
 		// tier (Epic 4.6) — the project tier intentionally does not carry them,
@@ -211,6 +232,9 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		}
 		if proj.MaxSprintPlanBytes != nil {
 			s.MaxSprintPlanBytes = *proj.MaxSprintPlanBytes
+		}
+		if proj.MaxClaimBytes != nil {
+			s.MaxClaimBytes = claimBytesPtr(*proj.MaxClaimBytes)
 		}
 		if v := strings.TrimSpace(proj.ReviewStrategy); v != "" {
 			s.ReviewStrategy = v
@@ -300,6 +324,13 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 	if s.MaxSprintPlanBytes <= 0 {
 		return Settings{}, fmt.Errorf("max_sprint_plan_bytes must be > 0, got %d", s.MaxSprintPlanBytes)
 	}
+	// MaxClaimBytes: 0 = the ledger is disabled (valid, and the whole point of the
+	// key — an operator refusing to send commit text to a third-party provider).
+	// Only a negative value is invalid. Catches a directly-constructed proj/reg
+	// that bypassed the file loaders.
+	if s.MaxClaimBytes != nil && *s.MaxClaimBytes < 0 {
+		return Settings{}, fmt.Errorf("max_claim_bytes must be >= 0 (0 = disabled), got %d", *s.MaxClaimBytes)
+	}
 	// ReviewStrategy (Epic 14.3): the file tiers are checked at load, but the
 	// project tier and a directly-constructed proj/reg bypass that — re-check the
 	// resolved value so the engine never receives an unknown strategy.
@@ -361,4 +392,26 @@ func deref(p *string) string {
 		return ""
 	}
 	return strings.TrimSpace(*p)
+}
+
+// claimBytesPtr returns a pointer to v. Settings.MaxClaimBytes is a pointer so an
+// explicit 0 (ledger disabled) stays distinguishable from an unresolved field.
+func claimBytesPtr(v int64) *int64 { return &v }
+
+// ResolvedMaxClaimBytes returns the effective claim-ledger byte ceiling: the
+// embedded default when nothing resolved the field, otherwise the resolved
+// value (0 = the ledger is disabled).
+//
+// Always read the setting through this method. Reading s.MaxClaimBytes directly
+// makes a hand-built Settings{} — an embedder's, or a test roster's — resolve to
+// a nil pointer, and a caller that deref'd or defaulted it to 0 would silently
+// ship with the ledger switched off.
+func (s Settings) ResolvedMaxClaimBytes() int64 {
+	if s.MaxClaimBytes == nil {
+		return DefaultMaxClaimBytes
+	}
+	if *s.MaxClaimBytes < 0 {
+		return 0 // fail safe: a mis-resolved negative disables rather than unbounds
+	}
+	return *s.MaxClaimBytes
 }

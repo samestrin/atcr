@@ -706,6 +706,11 @@ type Registry struct {
 	// carries at the project tier. A pointer so unset falls through to the project
 	// tier or the embedded DefaultMaxSprintPlanBytes; <= 0 is rejected.
 	MaxSprintPlanBytes *int64 `yaml:"max_sprint_plan_bytes,omitempty"`
+	// MaxClaimBytes is the user-level (global) tier of the claim-ledger byte
+	// ceiling (Epic 35.16.7), the same limit ProjectConfig.MaxClaimBytes carries at
+	// the project tier. A pointer so unset falls through to the project tier or the
+	// embedded DefaultMaxClaimBytes; 0 means DISABLED, negative is rejected.
+	MaxClaimBytes *int64 `yaml:"max_claim_bytes,omitempty"`
 
 	// Retry/backoff tunables (Epic 4.6) — the user-level (global) tier of the
 	// precedence chain, mirroring TimeoutSecs. Pointers so an explicit 0
@@ -802,6 +807,9 @@ func (r *Registry) validate() error {
 	}
 	if r.CacheMaxBytes != nil && *r.CacheMaxBytes < 0 {
 		errs = append(errs, fmt.Errorf("cache_max_bytes must be >= 0 (0 = unbounded), got %d", *r.CacheMaxBytes))
+	}
+	if r.MaxClaimBytes != nil && *r.MaxClaimBytes < 0 {
+		errs = append(errs, fmt.Errorf("max_claim_bytes must be >= 0 (0 = disabled), got %d", *r.MaxClaimBytes))
 	}
 	if r.MaxSprintPlanBytes != nil && *r.MaxSprintPlanBytes <= 0 {
 		errs = append(errs, fmt.Errorf("max_sprint_plan_bytes must be > 0, got %d", *r.MaxSprintPlanBytes))

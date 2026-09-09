@@ -1220,6 +1220,11 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 	// TestEscalationOverrides_CopiesEveryFieldToItsOwnTarget.
 	opts = append(opts, payload.WithEscalation(
 		payload.ResolveEscalationConfig(escalationOverrides(cfg.Registry.PayloadEscalation))))
+	// Claim-ledger byte ceiling (Epic 35.16.7, max_claim_bytes). Threaded here
+	// because the ledger's bytes are exempt from every byte budget — including
+	// on_overflow=fail — so this setting is the only operator control over them,
+	// and 0 is the escape hatch that stops commit text reaching a provider at all.
+	opts = append(opts, payload.WithMaxClaimBytes(cfg.Settings.ResolvedMaxClaimBytes()))
 	rb := payload.NewRangeBuilder(ctx, repo, base, head, opts...)
 	out := map[string]modePayload{}
 	for _, mode := range neededModes(cfg) {

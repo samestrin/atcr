@@ -57,6 +57,21 @@ func WithEscalation(c EscalationConfig) RangeOption {
 	return func(g *gitRunner) { g.escalation = c }
 }
 
+// WithMaxClaimBytes sets the ceiling on the commit-message text the claim ledger
+// reads for this builder (Epic 35.16.7). Callers pass the registry-resolved
+// max_claim_bytes; omitting the option leaves DefaultMaxClaimBytes in place.
+//
+// **0 DISABLES the ledger entirely** — no `git log` runs, no commit text reaches
+// a provider, and no ledger entry is prepended. That is the operator escape
+// hatch the setting exists for, and it is why 0 is not the "unlimited" sentinel
+// it is on payload_byte_budget and cache_max_bytes: the ledger entry carries
+// Size 0 and is exempt from every byte budget, so an unbounded ledger would be
+// unbounded prompt text nothing could see or shed. A negative value is treated
+// as disabled too, so a mis-resolved setting fails safe rather than unbounded.
+func WithMaxClaimBytes(n int64) RangeOption {
+	return func(g *gitRunner) { g.maxClaimBytes = n }
+}
+
 // NewRangeBuilder returns a RangeBuilder for repo's base..head range, sharing one
 // gitRunner (seeded with the context logger) across all its builds. Options
 // customize the runner (e.g. WithoutIgnoreFilter).
@@ -187,7 +202,16 @@ func (b *RangeBuilder) claimLedger() string {
 		return b.claims
 	}
 	b.claimsDone = true
-	msgs, truncated, err := b.g.commitMessages(b.base, b.head, DefaultMaxClaimBytes, DefaultMaxClaimCommits)
+	// 0 (or a negative, mis-resolved value) means the operator disabled the
+	// feature: return before the git process runs, so no commit text is read at
+	// all — not merely trimmed to nothing. This is the ONE place the setting's
+	// "0 = disabled" meaning is translated into commitMessages' own "<= 0 =
+	// unlimited" parameter convention; passing the setting straight through would
+	// invert it into an UNBOUNDED read, the exact opposite of what was asked for.
+	if b.g.maxClaimBytes <= 0 {
+		return b.claims
+	}
+	msgs, truncated, err := b.g.commitMessages(b.base, b.head, b.g.maxClaimBytes, DefaultMaxClaimCommits)
 	if err != nil {
 		b.g.log().Warn("payload: commit messages unreadable; review proceeds without a claim ledger",
 			"base", b.base, "head", b.head, "error", err)

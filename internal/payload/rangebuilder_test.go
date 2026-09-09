@@ -2,6 +2,7 @@ package payload
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -349,4 +350,65 @@ func TestRangeBuilder_ConcurrentUsePanics(t *testing.T) {
 	require.NoError(t, err)
 	_, err = rb.BuildChangedLines()
 	require.NoError(t, err)
+}
+
+// max_claim_bytes (Epic 35.16.7) reaches the ledger through WithMaxClaimBytes.
+// The setting is the ONLY operator control over the ledger's bytes: the entry
+// carries Size 0 and is exempt from every byte budget, so payload_byte_budget,
+// each agent's appliedBudget, and the on_overflow=fail gate are all blind to it.
+func TestRangeBuilder_WithMaxClaimBytesCapsTheLedgerRead(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "foo.go", goFileV1)
+	base := commitAll(t, dir, "seed the file")
+	write(t, dir, "foo.go", goFileV2)
+	head := commitAll(t, dir, "make Foo return two\n\n- Foo() now returns 2 instead of 1\n"+
+		strings.Repeat("- a padding claim that is quite long indeed\n", 200))
+
+	full := NewRangeBuilder(context.Background(), dir, base, head).claimLedger()
+	require.NotEmpty(t, full)
+
+	tight := NewRangeBuilder(context.Background(), dir, base, head, WithMaxClaimBytes(256)).claimLedger()
+	require.NotEmpty(t, tight, "a tight ceiling still renders a ledger, just a shorter one")
+	assert.Less(t, len(tight), len(full), "a lower ceiling must read fewer commit bytes")
+	assert.Contains(t, tight, "TRUNCATED", "a ceiling that sheds claims must say so")
+}
+
+// 0 is the operator escape hatch and it must stop the git read ENTIRELY, not
+// merely trim it to nothing: the point of the setting is that no commit-message
+// text is sent to a third-party provider at all.
+func TestRangeBuilder_ZeroMaxClaimBytesDisablesTheLedgerWithoutReadingGit(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "foo.go", goFileV1)
+	base := commitAll(t, dir, "seed the file")
+	write(t, dir, "foo.go", goFileV2)
+	head := commitAll(t, dir, "make Foo return two\n\n- Foo() now returns 2 instead of 1\n")
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head, WithMaxClaimBytes(0))
+	before := rb.g.execCount
+	assert.Empty(t, rb.claimLedger(), "0 disables the ledger")
+	assert.Equal(t, before, rb.g.execCount,
+		"no git process may run: disabled means the commit text is never READ, not read-then-discarded")
+
+	entries, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+	require.NotEmpty(t, entries)
+	assert.NotEqual(t, ClaimLedgerPath, entries[0].Path, "no ledger entry is prepended when disabled")
+	for _, e := range entries {
+		assert.NotEqual(t, ClaimLedgerPath, e.Path)
+	}
+}
+
+// A negative ceiling is a mis-resolved setting. It must fail SAFE (disabled),
+// never inherit commitMessages' own "<= 0 means unlimited" convention — that
+// inversion would turn a configuration mistake into unbounded, unbudgeted prompt
+// text, the exact opposite of what the operator asked for.
+func TestRangeBuilder_NegativeMaxClaimBytesDisablesRatherThanUnbounds(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "foo.go", goFileV1)
+	base := commitAll(t, dir, "seed the file")
+	write(t, dir, "foo.go", goFileV2)
+	head := commitAll(t, dir, "make Foo return two\n\n- Foo() now returns 2 instead of 1\n")
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head, WithMaxClaimBytes(-1))
+	assert.Empty(t, rb.claimLedger(), "a negative ceiling disables; it must not read the whole history")
 }
