@@ -170,10 +170,18 @@ func (b *RangeBuilder) withClaimLedger(entries []FileEntry) []FileEntry {
 // useful: an empty ledger is otherwise indistinguishable in production from an
 // absent one. The payload build runs BEFORE the review id is minted
 // (cli/review.go builds the review, then correlates the context logger), so a
-// line emitted from this stage cannot carry review_id — and AC9 requires every
-// log line during a review to carry it. Correlating the payload stage is
-// tracked as technical debt; until then the observability gap is the honest
-// cost of not breaking AC9 on every debug run.
+// line emitted from this stage cannot carry review_id — and the correlation
+// requirement (sprint 4.0_structured_logging, AC9; user-facing contract in
+// docs/logging.md, "Request correlation") is that EVERY log line emitted during
+// a review carries it. Correlating the payload stage, or surfacing the ledger's
+// presence some other way, is tracked as technical debt against
+// rangebuilder.go:183 (the manifest-field option); until then the observability
+// gap is the honest cost of not breaking that correlation rule on every debug
+// run.
+//
+// "AC9" here is sprint 4.0's, NOT epic 35.16.7's — that epic defines AC1–AC7
+// only, so an unqualified "AC9" in this file reads as a reference to something
+// that does not exist.
 func (b *RangeBuilder) claimLedger() string {
 	if b.claimsDone {
 		return b.claims
