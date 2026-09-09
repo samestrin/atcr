@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/samestrin/atcr/internal/localdebt"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -778,4 +780,30 @@ func TestDebtBackfillJustifications_NamesTheShardsAlreadyRewrittenWhenThePassFai
 	require.NoError(t, err)
 	assert.Contains(t, string(b), "```",
 		"the fixture must really have written the first shard, or this test proves nothing")
+}
+
+// A partial-write listing can carry a suffixed locator (its shard set is the store's
+// whole walk, collisions and all), and it prints under WORSE conditions than the dry
+// run: the store is already half-mutated and the operator must identify the physical
+// file to reconcile or restore. Its own header promises "the same treatment" as the
+// dry-run listing, so the collision legend must appear here too — an unexplained
+// "#a1b2c3d4e5f6" on a half-mutated store reads as part of the filename.
+func TestDebtBackfillPartialWriteExplainsASuffixedLocator(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	res := localdebt.BackfillResult{
+		ShardNames: []string{"2026-08.jsonl", "2026-08\u200b.jsonl"},
+		Changes: []localdebt.JustificationChange{
+			{Shard: "2026-08\u200b.jsonl", Line: 1, ID: "aaaa1111", Before: "b", After: "a"},
+		},
+	}
+	reportPartialBackfill(cmd, res)
+	assert.Contains(t, stderr.String(), "2026-08.jsonl#",
+		"the planted twin's locator must actually be suffixed, or this test proves nothing")
+	assert.Contains(t, stderr.String(), "collide once unprintable runes are stripped",
+		"a suffixed partial-write locator owes the operator the same legend the dry run prints")
+	assert.Contains(t, stderr.String(), "#xxxxxxxxxxxx",
+		"and the legend must name the suffix's real form")
 }
