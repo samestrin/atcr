@@ -142,6 +142,11 @@ func (g *gitRunner) commitMessages(base, head string, maxBytes int64, maxCommits
 				if capBytes > math.MaxInt {
 					capBytes = math.MaxInt
 				}
+				// capUTF8's second return reports whether it cut anything. It is
+				// discarded rather than checked because this arm is reached only
+				// when the message already overran maxBytes, and the block below
+				// sets truncated unconditionally on the way out — so the bool
+				// could only ever confirm what the caller has already decided.
 				capped, _ := capUTF8(m, int(capBytes))
 				kept = append(kept, capped)
 			}
