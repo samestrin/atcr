@@ -205,11 +205,7 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 				// as it is in rewriteJustifications.
 				return fmt.Errorf("reading localdebt dir for backfill: %w", quotedPathErr(derr))
 			}
-			for _, e := range entries {
-				if !e.IsDir() && strings.HasSuffix(e.Name(), ".jsonl") {
-					res.ShardNames = append(res.ShardNames, e.Name())
-				}
-			}
+			res.ShardNames = shardFileNames(entries)
 			return nil
 		}
 		changes, shards, rerr := rewriteJustifications(dir, want, dryRun)
@@ -330,21 +326,34 @@ func pathHasSuffix(p, rel string) bool {
 // and each is a single fmt.Errorf over an os error whose worst outcome is a less
 // precise message, never a wrong write. Said here rather than pinned with a fake, the
 // same stance repoRoot's error arm takes in cli/debt_backfill.go.
+// shardFileNames is the shard filter both walks apply — the rewrite pass and the
+// no-rewrite snapshot — extracted so the two copies cannot drift apart: a filter
+// change on one walk and not the other would make the snapshot describe a different
+// directory than the rewrite was computed against.
+func shardFileNames(entries []os.DirEntry) []string {
+	var names []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".jsonl") {
+			names = append(names, e.Name())
+		}
+	}
+	return names
+}
+
 func rewriteJustifications(dir string, want map[string]replacement, dryRun bool) ([]JustificationChange, []string, error) {
 	var changes []JustificationChange
-	var shards []string
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("reading localdebt dir for backfill: %w", quotedPathErr(err))
 	}
+	// Recorded for EVERY shard, before the want-lookup below can skip the file:
+	// the caller disambiguates locators against the set of names on disk, and an
+	// unchanged shard is exactly the collision its change set cannot see.
+	shards := shardFileNames(entries)
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
 		}
-		// Recorded for EVERY shard, before the want-lookup below can skip the file:
-		// the caller disambiguates locators against the set of names on disk, and an
-		// unchanged shard is exactly the collision its change set cannot see.
-		shards = append(shards, e.Name())
 		path := filepath.Join(dir, e.Name())
 		// path is dir + an entry name os.ReadDir just returned, inside the store
 		// directory this pass already holds the lock on — not caller input.
