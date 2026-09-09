@@ -22,9 +22,9 @@ The defect is an **absence**, and an absent change leaves no trace in a diff.
 
 Every added line in this diff is correct. The new helper is well written, documented, and does exactly what its docstring says. The new test passes. A reviewer reading only added and removed lines has nothing to react to — there is no wrong line to point at, because the wrong thing is a line that was never written.
 
-The one line that settles it, `self._offset = self._drain_offset()`, is **not part of the change**. It appears in the diff only as context, and in a narrower payload mode it would not appear at all. Reaching it requires either the surrounding repository state or the claim itself.
+The one line that settles it, `self._offset = self._drain_offset()`, is **not part of the change**. It appears in the diff only as context. Reaching it requires either the surrounding repository state or the claim itself.
 
-That is what makes this a `repo-state-v1` case rather than a `standard-v1` one. `standard-v1` cases are diffs, and this defect is invisible in a diff. It becomes detectable only when the reviewer is handed the author's claim and asked to adjudicate it against what the code does.
+That is what makes this a `repo-state-v1` case rather than a `standard-v1` one. `standard-v1` cases are diffs, and this defect is invisible to a reviewer reading only added and removed lines. It becomes detectable only when the reviewer is handed the author's claim and asked to adjudicate it against what the code does.
 
 ## Expected findings
 
