@@ -434,6 +434,15 @@ func rewriteJustifications(dir string, want map[string]replacement, dryRun bool)
 			m["justification"] = rep.to
 			enc, merr := json.Marshal(m)
 			if merr != nil {
+				// BACKSTOP, unreachable by construction: m was produced by
+				// json.Unmarshal, so every value in it is a marshalable JSON type
+				// (string, float64, bool, nil, []any, map[string]any) and the one key
+				// this loop writes is a string. json.Marshal has nothing here it can
+				// fail on — JSON has no NaN or Inf literal for Unmarshal to have
+				// produced. Its 0-hit coverage is therefore structural, not a missing
+				// test. Kept because "cannot fail" is a property of today's decode
+				// path, and a future change that hands this loop a hand-built map
+				// would make it live.
 				return changes[:published], shards, reencodeErr(id, merr)
 			}
 			lines[i] = string(enc)
@@ -449,6 +458,20 @@ func rewriteJustifications(dir string, want map[string]replacement, dryRun bool)
 		if terr != nil {
 			return changes[:published], shards, fmt.Errorf("creating temp file for backfill: %w", quotedPathErr(terr))
 		}
+		// The write and rename arms below are BACKSTOPS with 0-hit coverage, and that
+		// is a testability limit rather than a test gap: POSIX grants "create a file
+		// here" and "rename a file here" on the SAME directory write+execute bit, so
+		// no permission trick can deny one while allowing the other. os.CreateTemp
+		// runs first and would fail instead, which is the arm already covered
+		// (TestRewriteJustifications_WrapsItsIOErrors). Reaching either one needs
+		// fault injection — a package-level var wrapping os.Rename — and this package
+		// deliberately uses real permission tricks rather than injection seams, so
+		// introducing one for these two branches was judged the worse trade.
+		//
+		// Both uphold the same published-prefix contract the covered arms prove
+		// (changes[:published], shards), and that contract IS exercised through the
+		// read and CreateTemp arms — so the shape is pinned once even though these
+		// two paths are unexecuted.
 		_, werr := tmp.WriteString(strings.Join(lines, "\n") + "\n")
 		if cerr := tmp.Close(); werr == nil {
 			werr = cerr
