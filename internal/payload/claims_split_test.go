@@ -226,3 +226,14 @@ func TestSplitClaims_KeepsShortRealClaimsAndNoiseWordsInRealSentences(t *testing
 func TestSplitSentences_NoIsAnInterjectionNotAnAbbreviation(t *testing.T) {
 	assert.Equal(t, []string{"No.", "The fix is wrong."}, splitSentences("No. The fix is wrong."))
 }
+
+// splitSentences treats '!' and '?' as terminators in the same branch as '.',
+// but nothing exercised either character: the branch could lose them and the
+// suite would stay green while two assertions collapsed into one verdict.
+func TestSplitSentences_ExclamationAndQuestionAlsoEndSentences(t *testing.T) {
+	assert.Equal(t, []string{"The helper is added!", "The test now passes."},
+		splitSentences("The helper is added! The test now passes."))
+	assert.Equal(t, []string{"Is the cursor preserved?", "It is now."},
+		splitSentences("Is the cursor preserved? It is now."))
+	assert.Equal(t, []string{"Really?!", "Yes."}, splitSentences("Really?! Yes."))
+}
