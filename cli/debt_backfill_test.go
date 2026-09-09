@@ -470,8 +470,25 @@ func TestDebtBackfillJustifications_DryRunDisambiguatesAgainstAnUnchangedShardOn
 	// that a suffix means "this is not the plain name you think it is".
 	assert.Contains(t, out, "shard names collide once unprintable runes are stripped",
 		"a suffixed listing must say why the names are suffixed")
-	assert.Contains(t, out, "#xxxxxx",
-		"and name the suffix's form, so the operator can tell it from a real filename")
+	assert.Contains(t, out, "#xxxxxxxxxxxx",
+		"and name the suffix's real form — 12 hex, matching locatorSuffixHexLen — "+
+			"so the operator can tell it from a real filename")
+	assert.Contains(t, out, "first 12 hex",
+		"the derivation note must state the actual digest length, not a stale 6")
+}
+
+// The Long help repeats the legend's instruction to operators running with no
+// collision in front of them. It must state the same digest length the code
+// actually appends: an operator following a stale "6 hex" note computes a digest
+// that matches no printed token and concludes the suffix is part of the filename.
+func TestDebtBackfillJustifications_LongHelpStatesTheRealSuffixLength(t *testing.T) {
+	long := newDebtBackfillCmd().Long
+	assert.Contains(t, long, "#xxxxxxxxxxxx",
+		"help must show the 12-hex form the locator actually carries")
+	assert.Contains(t, long, "first 12 hex",
+		"help must state the actual digest length, not a stale 6")
+	assert.NotContains(t, long, "#xxxxxx ",
+		"no stale 6-hex placeholder may survive in the help text")
 }
 
 // The disambiguator stays a collision remedy when the store holds other shards: a name
