@@ -71,6 +71,7 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 
 	res, err := localdebt.BackfillJustifications(dir, reviewRoot, dryRun)
 	if err != nil {
+		reportPartialBackfill(cmd, res)
 		return fmt.Errorf("backfill-justifications: %w", err)
 	}
 
@@ -241,6 +242,40 @@ func sanitizeLocator(s string) string {
 		b.WriteRune(r)
 	}
 	return b.String()
+}
+
+// reportPartialBackfill names the shard lines a FAILED pass already wrote, before the
+// error is surfaced.
+//
+// A non-dry run renames each shard into place as the rewrite walks, so a failure on a
+// later shard leaves the earlier ones rewritten in an append-only store. The bare error
+// says only that the command failed, which an operator reads as "nothing happened" —
+// and the store they then re-run against, or restore from backup, has already been
+// half-repaired. Naming the lines is what lets them reconcile it.
+//
+// res carries only the PUBLISHED prefix on an error return (see
+// internal/localdebt/backfill.go), so this cannot claim a write that did not land; when
+// the pass failed before writing anything, Changes is empty and this prints nothing.
+//
+// It goes to stderr beside the error rather than to stdout: it is not the pass's
+// report — there is no report, the pass did not complete — and a caller piping stdout
+// must not receive a counter line for a run that failed.
+//
+// The shard and id are untrusted for the same reasons the dry-run listing states, and
+// this surface is read under the same conditions, so they get the same treatment:
+// sanitizeLocator through locatorNames for the shard (one copy-pasteable token, minus
+// the runes that drive a terminal) and %q for the id.
+func reportPartialBackfill(cmd *cobra.Command, res localdebt.BackfillResult) {
+	if len(res.Changes) == 0 {
+		return
+	}
+	w := cmd.ErrOrStderr()
+	_, _ = fmt.Fprintf(w, "partial write: %d %s already rewritten in place before the failure:\n",
+		len(res.Changes), pluralLines(len(res.Changes)))
+	locators := locatorNames(res.ShardNames, res.Changes)
+	for _, c := range res.Changes {
+		_, _ = fmt.Fprintf(w, "  %s:%d %q\n", locators[c.Shard], c.Line, c.ID)
+	}
 }
 
 func pluralLines(n int) string {
