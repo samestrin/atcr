@@ -1378,7 +1378,7 @@ func TestSelectPublishableRecordIdentities_HoldsNoticesUntilThePassSucceeds(t *t
 	// U+200B is a format rune: the printability arm hard-fails the whole export on it.
 	bad := scorecard.Record{
 		SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-bad",
-		Reviewer: "bruce", Model: "gpt-5​-mini", FindingsRaised: 3, FindingsCorroborated: 1,
+		Reviewer: "bruce", Model: "gpt-5\u200b-mini", FindingsRaised: 3, FindingsCorroborated: 1,
 	}
 
 	// The function iterates the slice it is handed, so passing it directly is what makes

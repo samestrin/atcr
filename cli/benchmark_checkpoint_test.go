@@ -301,10 +301,10 @@ func TestLoadCheckpoint_RosterFormatAllowlist(t *testing.T) {
 // the checkpoint-sourced half is quoted per entry the way reencodeErr quotes a
 // store id. The configured half comes from config, not from the file.
 func TestValidateCheckpointRoster_QuotesTheCheckpointSourcedRoster(t *testing.T) {
-	cp := &runCheckpoint{Roster: []string{"claude=sonnet‮x", "otto=gpt"}}
+	cp := &runCheckpoint{Roster: []string{"claude=sonnet\u202ex", "otto=gpt"}}
 	err := validateCheckpointRoster(cp, []string{"brad=qwen"}, nil)
 	require.ErrorIs(t, err, errCheckpointRosterMismatch)
 	assert.Contains(t, err.Error(), "recorded [", "the generic message keeps its shape")
-	assert.NotContains(t, err.Error(), "‮", "a raw bidi control must never reach the terminal")
+	assert.NotContains(t, err.Error(), "\u202e", "a raw bidi control must never reach the terminal")
 	assert.Contains(t, err.Error(), `"claude=sonnet\u202ex"`, "each recorded entry is quoted, so the control rune renders as its escape")
 }
