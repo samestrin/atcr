@@ -227,6 +227,10 @@ func splitClaims(msgs []string) []string {
 	}
 
 	for _, msg := range msgs {
+		// Normalize CRLF once, before splitting. Splitting on "\n" alone leaves the
+		// "\r" on every line of a Windows-authored message, and the continuation
+		// test below reads that as trailing whitespace.
+		msg = strings.ReplaceAll(msg, "\r\n", "\n")
 		lines := strings.Split(strings.TrimSpace(msg), "\n")
 		// The subject is one assertion by construction — it is the one-line
 		// summary the author chose — so it is never sentence-split.
@@ -284,7 +288,14 @@ func splitClaims(msgs []string) []string {
 			// ordinary in commit messages, and treating the wrap as its own
 			// claim files a sentence fragment the contract then demands a
 			// verdict and a citation for.
-			if len(bullet) > 0 && line != trimmed {
+			//
+			// Test INDENTATION explicitly. The old test — `line != trimmed` —
+			// was true for any line carrying TRAILING whitespace too, so a
+			// paragraph sentence after a bullet was swallowed into it on every
+			// CRLF message and on any line with one stray trailing space. That
+			// is a ledger that is present but substantively wrong, which the
+			// determinism contract cannot catch because it is stably wrong.
+			if len(bullet) > 0 && (strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t")) {
 				bullet = append(bullet, trimmed)
 				continue
 			}
