@@ -272,6 +272,69 @@ func TestSplitClaims_KeepsShortRealClaimsAndNoiseWordsInRealSentences(t *testing
 	}
 }
 
+// isClaimBearing's doc says it rejects "a punctuation run", but no test supplied
+// one: replacing the letter check with `return true` left the whole suite green,
+// so the reported 100% on that function was vacuous. A run of punctuation asserts
+// nothing, and the contract would still demand a verdict and a file:line citation
+// for it.
+func TestSplitClaims_APunctuationRunAssertsNothing(t *testing.T) {
+	got, _ := splitClaims([]string{"fix the drain\n\n--- ***\n"})
+	assert.Equal(t, []string{"fix the drain"}, got,
+		"a line with two tokens and not one letter carries no assertion")
+
+	// Two tokens, no letters, in several shapes — each must be dropped while the
+	// subject survives, so the drop is the letter check and not an accident of
+	// field counting.
+	for _, run := range []string{"--- ***", ">>> <<<", "... !!!", "=== +++"} {
+		got, _ := splitClaims([]string{"fix the drain\n\n" + run + "\n"})
+		assert.Equal(t, []string{"fix the drain"}, got, "%q asserts nothing", run)
+	}
+}
+
+// The trailer strippers are the other half of isClaimBearing's cost/benefit: the
+// code weighs dropping a REAL claim as far more expensive than carrying a weak
+// one, yet nothing proved the strippers do not eat one. This pins which
+// claim-shaped openers survive and which are knowingly sacrificed, so a future
+// widening of either regex has to change a named expectation rather than
+// silently discarding assertions.
+func TestSplitClaims_ClaimShapedOpenersAreRetainedOrKnowinglyDropped(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		line string
+		kept bool
+		why  string
+	}{
+		{
+			name: "See: opening a real claim",
+			line: "See: begin() now preserves the offset",
+			kept: true,
+			why:  "'see' is an ordinary English verb first; stripping it discards real assertions",
+		},
+		{
+			name: "Note: opening a real claim",
+			line: "Note: the helper returns None on an empty batch",
+			kept: true,
+			why:  "hyphenTrailerRe requires a hyphenated token, which keeps colonized prose a claim",
+		},
+		{
+			name: "hyphenated non-trailer",
+			line: "Fixes-the-cursor: begin() keeps it",
+			kept: false,
+			why: "KNOWN COST: it is shaped exactly like a git trailer (Signed-off-by, Co-authored-by), " +
+				"and no rule separates it from one without also readmitting every real trailer",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _ := splitClaims([]string{"subject line here\n\n" + tc.line})
+			if tc.kept {
+				assert.Equal(t, []string{"subject line here", tc.line}, got, tc.why)
+				return
+			}
+			assert.Equal(t, []string{"subject line here"}, got, tc.why)
+		})
+	}
+}
+
 // "No" as the English interjection is far more common in commit prose than "No."
 // as an abbreviation for "number". Treating its period as part of an abbreviation
 // merges two assertions into one claim, and the panel then renders one verdict
