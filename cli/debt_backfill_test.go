@@ -504,45 +504,6 @@ func TestDebtBackfillJustifications_DryRunLeavesAUniqueLocatorBareAlongsideOther
 		"an unambiguous locator must print bare even when the store holds other shards")
 }
 
-// locatorNames is TOTAL over its change set: every change gets a locator, and any
-// collision among the changes themselves is resolved, whatever the snapshot contains.
-//
-// This is a unit-level invariant, deliberately, and the comment says so rather than
-// dressing it as a live fallback. The one production caller passes the locked walk's own
-// listing, which is a superset of the change set by construction, so the change-set loop
-// in locatorNames cannot fire for it. This test is the ONLY thing that exercises that
-// loop, and it exists so a future caller passing a partial snapshot fails loudly here
-// instead of silently printing a bare locator for an ambiguous name — the exact
-// misattribution the disambiguator exists to prevent, on the surface an operator
-// approves an in-place rewrite from.
-//
-// The premise CHANGED when the listing moved under the lock. This test used to pass a
-// nonexistent directory and rely on os.ReadDir failing inside locatorNames. That path no
-// longer exists: the single walk now runs inside rewriteJustifications, and a walk that
-// fails there aborts the whole backfill, so `cli` never reaches the listing with a broken
-// directory at all.
-func TestLocatorNames_IsTotalOverItsChangeSetWithoutASnapshot(t *testing.T) {
-	// Two DIFFERENT shard files whose names reduce to the same token once Cf is
-	// stripped — the collision the disambiguator exists to resolve. Both are in the
-	// change set and neither is in the snapshot, so the change-set loop is the only
-	// thing that can see either of them.
-	changes := []localdebt.JustificationChange{
-		{ID: "aaaa1110", Shard: "2026-08\u202e-a.jsonl", Line: 1},
-		{ID: "aaaa1111", Shard: "2026-08\u200b-a.jsonl", Line: 1},
-	}
-
-	names := locatorNames(nil, changes)
-
-	require.Len(t, names, 2, "every changed shard must get a printable locator")
-	for _, c := range changes {
-		assert.Regexp(t, `^2026-08-a\.jsonl#[0-9a-f]{12}$`, names[c.Shard],
-			"with no snapshot the change set alone must still expose the collision, "+
-				"so the locator carries its disambiguating suffix")
-	}
-	assert.NotEqual(t, names[changes[0].Shard], names[changes[1].Shard],
-		"two distinct shard files must never render as one identical locator")
-}
-
 // The listing filter — non-directory entries ending in ".jsonl" — was covered by no
 // test: deleting it left the whole ./cli/ suite green. The one existing case that puts
 // a non-shard file in the store names it "notes.txt", which cannot collide with the

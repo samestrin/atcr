@@ -277,6 +277,17 @@ func pluralLines(n int) string {
 // bare, and the operator approves believing their August shard is the one being
 // repaired.
 //
+// Collision detection therefore depends WHOLLY on `shards` being complete: a change
+// whose shard is absent from the snapshot is still given a printable token (this
+// function stays total over `changes`), but it is compared against nothing, so a
+// collision it is part of goes unmarked. That is safe here because the caller derives
+// both from one locked walk — internal/localdebt/backfill.go assigns res.Changes and
+// res.ShardNames together inside the same `len(want) > 0` arm, so the snapshot is a
+// superset of the change set by construction, pinned by
+// TestBackfillJustifications_ReturnsTheShardNamesObservedUnderTheLock. A second caller
+// passing a partial snapshot would silently lose collisions and must not be added
+// without revisiting this.
+//
 // `shards` is that directory listing, and it arrives from the caller rather than being
 // read here. This function used to run its own os.ReadDir, which executed AFTER
 // localdebt.BackfillJustifications had returned — outside the withLock region
@@ -314,26 +325,13 @@ func locatorNames(shards []string, changes []localdebt.JustificationChange) map[
 	for _, shard := range shards {
 		add(shard)
 	}
-	// A TOTALITY invariant, not a live fallback — and the distinction is stated because
-	// this function used to read the directory itself, when the loop genuinely rescued a
-	// change whose shard the failed listing had missed. It cannot fire for the one caller
-	// that exists today: every JustificationChange.Shard is an os.ReadDir entry name from
-	// the same locked walk that produced `shards`, so the snapshot is a superset of the
-	// change set by construction. It is kept so locatorNames stays TOTAL over `changes`
-	// for any caller — a change must never print without its own name considered, and a
-	// caller passing a partial snapshot would otherwise silently lose collisions rather
-	// than fail. Do not read it as a guard against a state this caller can reach.
-	for _, c := range changes {
-		add(c.Shard)
-	}
-
 	// Sized by SHARD cardinality, which is what this map is keyed by — not by
 	// len(changes), which counts changed LINES. A repair touching tens of thousands of
 	// lines across a dozen month shards would otherwise pre-allocate two to four orders
 	// of magnitude more buckets than the map can ever hold. rawByToken is fully
-	// populated by this point (both add loops are above), and its length is a tight
-	// upper bound: one entry per distinct sanitized token over the snapshot and the
-	// change set together. A size hint cannot affect correctness, only allocation.
+	// populated by this point (the add loop is above), and its length is a tight upper
+	// bound: one entry per distinct sanitized token in the snapshot. A size hint cannot
+	// affect correctness, only allocation.
 	out := make(map[string]string, len(rawByToken))
 	for _, c := range changes {
 		// Keyed on the folded form, PRINTED as the plain sanitized token: the operator
