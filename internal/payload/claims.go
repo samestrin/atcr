@@ -312,10 +312,40 @@ func splitClaims(msgs []string) []string {
 // — two words — because the cost of dropping a real claim (the panel never
 // adjudicates it) is far higher than the cost of carrying a weak one.
 func isClaimBearing(s string) bool {
-	if len(strings.Fields(s)) < 2 {
+	fields := strings.Fields(s)
+	if len(fields) < 2 {
 		return false
 	}
-	return strings.IndexFunc(s, unicode.IsLetter) >= 0
+	if strings.IndexFunc(s, unicode.IsLetter) < 0 {
+		return false
+	}
+	// A short subject OPENING with a housekeeping token asserts nothing about the
+	// diff: "wip fixup", "bump deps", "tmp hack". The contract still demands a
+	// verdict and a file:line citation for each, and a ledger padded with them
+	// trains a reviewer to answer VERIFIED reflexively — which is how the real
+	// UNSUPPORTED gets missed.
+	//
+	// Deliberately narrow: it fires only on a two-word claim whose FIRST token is
+	// the noise word. "bump the retry ceiling to 5 so a flaky upstream recovers"
+	// is a real assertion that happens to start with one, and "Fixed pagination."
+	// is a real two-word claim. The doc above weights a dropped real claim as the
+	// worse error, so the filter has to be narrower than the noise, not wider.
+	if len(fields) == 2 && claimNoiseOpeners[normalizeNoiseToken(fields[0])] {
+		return false
+	}
+	return true
+}
+
+// claimNoiseOpeners are housekeeping tokens that open a subject asserting nothing.
+var claimNoiseOpeners = map[string]bool{
+	"wip": true, "fixup": true, "squash": true, "tmp": true,
+	"temp": true, "update": true, "bump": true, "merge": true,
+}
+
+// normalizeNoiseToken lowercases a token and strips the punctuation git tooling
+// hangs off these words, so "fixup!" and "WIP:" match their bare forms.
+func normalizeNoiseToken(tok string) string {
+	return strings.ToLower(strings.Trim(tok, "!:,.;()[]\"'"))
 }
 
 // abbreviations that end in a period and never end a sentence. Enumerated

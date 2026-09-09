@@ -47,10 +47,12 @@ func TestSplitClaims_ProseBodySplitsPerSentence(t *testing.T) {
 
 // A version number or an abbreviation is not a sentence boundary.
 func TestSplitClaims_SentenceSplitIgnoresDottedTokens(t *testing.T) {
-	msg := "bump deps\n\nUpgrade to v1.2.3 across the board. No behavior change is intended."
+	// The subject is scaffolding here; it only has to be claim-bearing. A bare
+	// "bump deps" is filtered as a noise subject (see the noise-opener tests).
+	msg := "bump the pinned tool version\n\nUpgrade to v1.2.3 across the board. No behavior change is intended."
 	got := splitClaims([]string{msg})
 	assert.Equal(t, []string{
-		"bump deps",
+		"bump the pinned tool version",
 		"Upgrade to v1.2.3 across the board.",
 		"No behavior change is intended.",
 	}, got)
@@ -132,10 +134,12 @@ func TestSplitClaims_SplitsSentencesThatStartLowercase(t *testing.T) {
 
 // Relaxing the capital rule must not start shredding abbreviations.
 func TestSplitClaims_AbbreviationsAreNotSentenceBoundaries(t *testing.T) {
-	msg := "bump deps\n\nUpgrade to v1.2.3 e.g. the pinned tool. no behavior change is intended."
+	// The subject is scaffolding here; it only has to be claim-bearing. A bare
+	// "bump deps" is filtered as a noise subject (see the noise-opener tests).
+	msg := "bump the pinned tool version\n\nUpgrade to v1.2.3 e.g. the pinned tool. no behavior change is intended."
 	got := splitClaims([]string{msg})
 	assert.Equal(t, []string{
-		"bump deps",
+		"bump the pinned tool version",
 		"Upgrade to v1.2.3 e.g. the pinned tool.",
 		"no behavior change is intended.",
 	}, got)
