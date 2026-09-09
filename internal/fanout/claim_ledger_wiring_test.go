@@ -190,3 +190,108 @@ func TestClaimLedger_SurvivesAFallbackRefit(t *testing.T) {
 			"the re-fit fallback must carry a byte-identical claim ledger")
 	}
 }
+
+// Accepted consequence #3 (claims.go, recorded where the ledger entry is born):
+// an agent whose declared window drives its effective budget to 0 takes the
+// keepSmallestEntry arm, which picks by len(Body) with no ledger awareness and
+// may ship the ledger as the SOLE entry — a reviewer holding claims and no
+// code. That outcome is accepted, mitigated by the section's own NOT-IN-PAYLOAD
+// instruction; what was never tested is the mitigation itself. This test
+// realizes the risk shape — the padded fixture makes the ledger the smallest
+// non-empty entry, so the zero-budget arm keeps it alone — and pins the
+// contract: the prompt that reviewer actually holds must tell it to answer
+// NOT-IN-PAYLOAD rather than manufacture a sheet of false UNSUPPORTED findings.
+//
+// RED note: the behavior HOLDS in the current code (the test is green on
+// arrival; the row's issue is the untested mitigation). The row's verify step —
+// mutating the NOT-IN-PAYLOAD sentence out of claimLedgerSection and confirming
+// this test fails — requires a transient write to internal/payload/claims.go,
+// owned by another live resolve-td session's group scope, so the mutation check
+// is deferred to the ungrouped follow-up run.
+func TestClaimLedger_ZeroBudgetRefitShipsTheNotInPayloadContract(t *testing.T) {
+	dir, base, head := paddedClaimingRepo(t)
+
+	cfg := sizingRosterConfig()
+	greta := cfg.Registry.Agents["greta"]
+	mt := 29000 // 32768 floor window − 29000 − 4096 overhead ≤ 0 → effective budget 0
+	greta.MaxTokens = &mt
+	cfg.Registry.Agents["greta"] = greta
+	kai := cfg.Registry.Agents["kai"]
+	kai.Fallback = "greta"
+	cfg.Registry.Agents["kai"] = kai
+	cfg.Project.Agents = []string{"kai"}
+	cfg.Settings.OnOverflow = OverflowTruncate
+
+	payloads, _, err := buildPayloads(context.Background(), cfg, dir, base, head, false)
+	require.NoError(t, err)
+
+	var slots []Slot
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: base, Head: head}, "", "", false)
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, slots, "precondition: the roster must produce a slot")
+	s := slots[0]
+	require.Len(t, s.Fallbacks, 1, "precondition: kai must resolve exactly one fallback (greta)")
+	fb := s.Fallbacks[0]
+
+	// The zero-budget arm kept the ledger as the SOLE entry: both padded code
+	// files are gone and no code body reaches the reviewer.
+	assert.ElementsMatch(t, []string{"cursor.go", "drain.go"}, fb.Truncation.FilesDropped,
+		"the zero-budget re-fit must shed both padded code files, keeping the ledger alone")
+	assert.NotContains(t, fb.Prompt, "func Begin",
+		"the reviewer holds claims and no code — the exact consequence #3 accepts")
+
+	// The mitigation: the ledger the reviewer holds must carry the
+	// NOT-IN-PAYLOAD contract, byte-identical to the primary's.
+	primary := extractLedger(t, s.Primary.Prompt)
+	fbLedger := extractLedger(t, fb.Prompt)
+	assert.Equal(t, primary, fbLedger, "the sole kept entry must be the ledger, byte-identical to the primary's")
+	assert.Contains(t, fbLedger,
+		"If the payload contains no code at all, answer NOT-IN-PAYLOAD for every claim and report nothing.",
+		"the reviewer holding claims and no code must be told to answer NOT-IN-PAYLOAD and report nothing")
+}
+
+// The exempt ledger must NOT quietly convert a fully-shed payload into a
+// dispatchable one. A reviewer holding claims and no code returns a false-clean
+// "no findings" review, so the run has to fail loudly instead — which it only
+// does because Truncation.AllDropped counts reviewable files rather than kept
+// entries.
+func TestClaimLedger_DoesNotMaskAFullyShedPayload(t *testing.T) {
+	dir, base, head := fanoutRepo(t)
+
+	cfg := sizingRosterConfig()
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.PayloadByteBudget = 1 // funds nothing at all
+
+	_, _, err := buildPayloads(context.Background(), cfg, dir, base, head, false)
+	require.ErrorIs(t, err, ErrPayloadFullyDropped,
+		"a payload carrying only the ledger must still be reported as fully dropped")
+}
+
+// A branch whose commits assert nothing must render no section at all, so the
+// engine never puts words in an author's mouth.
+func TestClaimLedger_AbsentWhenTheBranchAssertsNothing(t *testing.T) {
+	dir := t.TempDir()
+	fanoutGit(t, dir, "init", "-q", "-b", "main")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.go"), []byte("package p\n"), 0o644))
+	fanoutGit(t, dir, "add", "-A")
+	fanoutGit(t, dir, "commit", "-q", "-m", "seed")
+	base := fanoutGit(t, dir, "rev-parse", "HEAD")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.go"), []byte("package p\n\nvar X = 1\n"), 0o644))
+	fanoutGit(t, dir, "add", "-A")
+	fanoutGit(t, dir, "commit", "-q", "-m", "wip")
+	head := fanoutGit(t, dir, "rev-parse", "HEAD")
+
+	cfg := sizingRosterConfig()
+	payloads, _, err := buildPayloads(context.Background(), cfg, dir, base, head, false)
+	require.NoError(t, err)
+
+	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: base, Head: head}, "", "", false)
+	require.NoError(t, err)
+	require.NotEmpty(t, slots)
+	for _, s := range slots {
+		assert.NotContains(t, s.Primary.Prompt, "CLAIMS TO VERIFY")
+		assert.NotContains(t, s.Primary.Prompt, payload.ClaimLedgerPath)
+	}
+}
