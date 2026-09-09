@@ -265,7 +265,7 @@ func TestEscalationIntegration_DisabledProducesUnchangedPayload(t *testing.T) {
 	require.Len(t, raw, 2)
 	require.Equal(t, ClaimLedgerPath, raw[0].Path)
 
-	entries := reviewableEntries(raw)
+	entries := reviewableEntries(t, raw)
 	require.Len(t, entries, 1)
 
 	require.Equal(t, ModeDiff, entries[0].Mode)
@@ -305,7 +305,7 @@ func TestEscalationIntegration_ManyFilesTripTheCap(t *testing.T) {
 	cfg := DefaultEscalationConfig()
 	cfg.MaxFiles = 1
 	rb := NewRangeBuilder(context.Background(), dir, base, head, WithEscalation(cfg))
-	entries, err := reviewableBuildEntries(rb, ModeDiff)
+	entries, err := reviewableBuildEntries(t, rb, ModeDiff)
 	require.NoError(t, err)
 
 	require.True(t, rb.EscalationDegraded(), "two changed files exceed a cap of 1")
@@ -405,7 +405,7 @@ func TestEscalationIntegration_OversizedFileSkipsAnalysis(t *testing.T) {
 	head := commitAll(t, dir, "v2 (oversized)")
 
 	rb := NewRangeBuilder(context.Background(), dir, base, head, WithEscalation(DefaultEscalationConfig()))
-	entries, err := reviewableBuildEntries(rb, ModeDiff)
+	entries, err := reviewableBuildEntries(t, rb, ModeDiff)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 
@@ -422,7 +422,7 @@ func TestEscalationIntegration_FilesModeSkipsAnalysisEntirely(t *testing.T) {
 	dir, base, head := thrashingRepo(t)
 
 	rb := NewRangeBuilder(context.Background(), dir, base, head)
-	entries, err := reviewableBuildEntries(rb, ModeFiles)
+	entries, err := reviewableBuildEntries(t, rb, ModeFiles)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 
@@ -671,7 +671,7 @@ func TestEscalationIntegration_RecordedModeMatchesRenderedBody(t *testing.T) {
 	write(t, dir, "big.go", strings.Join(v2, "\n"))
 	head := commitAll(t, dir, "v2: eight scattered edits")
 
-	entries, err := reviewableBuildEntries(NewRangeBuilder(context.Background(), dir, base, head,
+	entries, err := reviewableBuildEntries(t, NewRangeBuilder(context.Background(), dir, base, head,
 		WithEscalation(EscalationConfig{MinHunks: 4, MaxFiles: DefaultEscalationMaxFiles})), ModeDiff)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
@@ -683,7 +683,7 @@ func TestEscalationIntegration_RecordedModeMatchesRenderedBody(t *testing.T) {
 
 	// Guard the fixture itself: the plain -U10 render must NOT contain the
 	// marker, or the fixture cannot distinguish the two modes at all.
-	plain, err := reviewableBuildEntries(NewRangeBuilder(context.Background(), dir, base, head, WithEscalation(EscalationConfig{})), ModeDiff)
+	plain, err := reviewableBuildEntries(t, NewRangeBuilder(context.Background(), dir, base, head, WithEscalation(EscalationConfig{})), ModeDiff)
 	require.NoError(t, err)
 	require.Len(t, plain, 1)
 	require.NotContains(t, plain[0].Body, "MIDPOINT-UNCHANGED-MARKER",

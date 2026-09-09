@@ -272,24 +272,63 @@ func TestBuildEntries_PackageLevelBuilderCarriesNoLedger(t *testing.T) {
 // narrows the slice under test rather than relaxing any assertion: the length
 // and per-entry checks that follow it are the same checks, applied to the same
 // files, as before the ledger existed.
-func reviewableEntries(entries []FileEntry) []FileEntry {
+// It takes *testing.T so it can ENFORCE the at-most-one-ledger invariant before
+// it filters. Filtering blind was a hole: a doubled ledger — which ships to every
+// reviewer and doubles the uncounted bytes — was invisible to every escalation
+// test this helper was retrofitted into. Making the prepend contract a
+// precondition of the helper means every call site now checks it for free.
+func reviewableEntries(t *testing.T, entries []FileEntry) []FileEntry {
+	t.Helper()
 	out := make([]FileEntry, 0, len(entries))
+	ledgers := 0
 	for _, e := range entries {
-		if e.Path != ClaimLedgerPath {
-			out = append(out, e)
+		if e.Path == ClaimLedgerPath {
+			ledgers++
+			continue
 		}
+		out = append(out, e)
 	}
+	require.LessOrEqual(t, ledgers, 1,
+		"a payload must carry at most ONE claim-ledger entry; %d were prepended", ledgers)
 	return out
 }
 
 // reviewableBuildEntries is BuildEntries with the claim-ledger entry filtered
 // out, for tests whose subject is the changed-file rendering.
-func reviewableBuildEntries(rb *RangeBuilder, mode PayloadMode) ([]FileEntry, error) {
+func reviewableBuildEntries(t *testing.T, rb *RangeBuilder, mode PayloadMode) ([]FileEntry, error) {
+	t.Helper()
 	entries, err := rb.BuildEntries(mode)
 	if err != nil {
 		return nil, err
 	}
-	return reviewableEntries(entries), nil
+	return reviewableEntries(t, entries), nil
+}
+
+// The ledger is prepended, not appended, and nothing else in the package pinned
+// how MANY are prepended. A doubled ledger ships to every reviewer and doubles
+// the uncounted bytes that ride outside payload_byte_budget — the one cost the
+// Size-0 exemption is only defensible because it is bounded.
+func TestRangeBuilder_EmitsExactlyOneLedgerEntry(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "foo.go", goFileV1)
+	base := commitAll(t, dir, "seed the file")
+	write(t, dir, "foo.go", goFileV2)
+	head := commitAll(t, dir, "make Foo return two\n\n- Foo() now returns 2 instead of 1\n")
+
+	for _, mode := range []PayloadMode{ModeDiff, ModeBlocks, ModeFiles} {
+		rb := NewRangeBuilder(context.Background(), dir, base, head)
+		entries, err := rb.BuildEntries(mode)
+		require.NoError(t, err)
+
+		ledgers := 0
+		for _, e := range entries {
+			if e.Path == ClaimLedgerPath {
+				ledgers++
+			}
+		}
+		assert.Equal(t, 1, ledgers, "mode %v must carry exactly one claim-ledger entry", mode)
+		assert.Equal(t, ClaimLedgerPath, entries[0].Path, "mode %v: the single ledger must LEAD the payload", mode)
+	}
 }
 
 // The claim ledger is an ADDITIONAL input to a review. When git cannot produce
