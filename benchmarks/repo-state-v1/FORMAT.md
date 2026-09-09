@@ -29,7 +29,7 @@ benchmarks/repo-state-v1/
         └── ...                    ordinary files, any depth
 ```
 
-Every path inside a case manifest is relative to the case directory, uses POSIX `/` separators, and must not escape it (no leading `/`, no `..` segment).
+The manifest's file-reference fields — `base_tree`, `commit_message`, and `diff` — are relative to the case directory, use POSIX `/` separators, and must not escape it (no leading `/`, no `..` segment). `expected_findings[].file` is the deliberate exception: it is a repository-relative path in the **head state** — the tree after the diff applies — and resolves against the materialized head tree, not the case directory.
 
 ## The base tree
 
