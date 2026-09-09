@@ -24,26 +24,22 @@ import (
 // This file is test-only: it adds no production code and changes no behavior.
 // AC6's freeze on internal/fanout is being read as "no production-code change":
 // the package tree does gain this file — strictly a change to the component —
-// so the freeze holds by that reading, not by an untouched tree. The file lives
-// here anyway because the assertions must observe the ledger where it is
-// CONSUMED (buildPayloads' shed, buildSlots' per-agent shed, prompt rendering),
-// and those seams are package-private to internal/fanout.
+// so the freeze holds by that reading, not by an untouched tree. The ledger
+// contract's end-to-end assertions run behind internal/payload's exported wiring
+// seam (VerifyClaimLedgerWiring / ClaimLedgerPromptSection), so the payload
+// contract is proved by payload's own API; what remains here is the fanout-side
+// plumbing those assertions need — roster and slot construction, the shed
+// fixtures, and the fallback/refit levers — which is package-private to
+// internal/fanout by construction.
 
-// extractLedger returns the CLAIMS TO VERIFY block from a rendered prompt.
-func extractLedger(t *testing.T, prompt string) string {
-	t.Helper()
-	const head = "## CLAIMS TO VERIFY\n"
-	const end = "----- END CLAIMS -----\n"
-	i := strings.Index(prompt, head)
-	require.GreaterOrEqual(t, i, 0, "prompt carries no claim ledger")
-	j := strings.Index(prompt[i:], end)
-	require.GreaterOrEqual(t, j, 0, "claim ledger is not closed")
-	return prompt[i : i+j+len(end)]
-}
+// extractLedger moved behind internal/payload's exported wiring seam
+// (ClaimLedgerPromptSection): the block's framing belongs to the package that
+// renders it.
 
 // AC1 + AC3 end to end: the ledger built in internal/payload survives every
 // shed between buildPayloads and a rendered prompt, and every agent in the
-// fan-out receives byte-identical claim text.
+// fan-out receives byte-identical claim text. The contract assertions run
+// behind payload's wiring seam.
 func TestClaimLedger_ReachesEveryAgentsRenderedPrompt(t *testing.T) {
 	dir, base, head := fanoutRepo(t)
 
@@ -56,15 +52,18 @@ func TestClaimLedger_ReachesEveryAgentsRenderedPrompt(t *testing.T) {
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(slots), 2, "precondition: the roster must fan out to more than one agent")
 
-	first := extractLedger(t, slots[0].Primary.Prompt)
+	first, ok := payload.ClaimLedgerPromptSection(slots[0].Primary.Prompt)
+	require.True(t, ok, "prompt carries no claim ledger")
 	assert.Contains(t, first, "Begin() no longer returns a wiped offset")
 	assert.Contains(t, first, "Drain() keeps the previous offset")
 	assert.Contains(t, first, "UNSUPPORTED")
 
+	prompts := make(map[string]string, len(slots))
 	for _, s := range slots {
-		assert.Equal(t, first, extractLedger(t, s.Primary.Prompt),
-			"agent %q must receive a byte-identical claim ledger", s.Primary.Name)
+		prompts[s.Primary.Name] = s.Primary.Prompt
 	}
+	require.NoError(t, payload.VerifyClaimLedgerWiring(prompts),
+		"the ledger must reach every agent's rendered prompt, byte-identical across the fan-out")
 }
 
 // The ledger's whole purpose is to survive a shed that drops diff content. The
@@ -113,7 +112,9 @@ func TestClaimLedger_SurvivesAByteBudgetThatShedsDiffContent(t *testing.T) {
 	require.NotEmpty(t, slots)
 
 	for _, s := range slots {
-		assert.Contains(t, extractLedger(t, s.Primary.Prompt), "Begin() no longer returns a wiped offset")
+		section, ok := payload.ClaimLedgerPromptSection(s.Primary.Prompt)
+		require.True(t, ok, "prompt carries no claim ledger")
+		assert.Contains(t, section, "Begin() no longer returns a wiped offset")
 	}
 }
 
@@ -178,7 +179,6 @@ func TestClaimLedger_SurvivesAFallbackRefit(t *testing.T) {
 	s := slots[0]
 	require.NotEmpty(t, s.Fallbacks, "precondition: kai must resolve its greta fallback")
 
-	primary := extractLedger(t, s.Primary.Prompt)
 	for _, fb := range s.Fallbacks {
 		require.NotEqual(t, s.Primary.Prompt, fb.Prompt,
 			"precondition: the fallback must have re-fit (re-rendered) rather than inheriting the primary's prompt")
@@ -186,8 +186,10 @@ func TestClaimLedger_SurvivesAFallbackRefit(t *testing.T) {
 			"precondition: the re-fit must actually shed a file, or this test proves nothing about the re-fit path")
 		assert.NotContains(t, fb.Truncation.FilesDropped, payload.ClaimLedgerPath,
 			"the ledger fits the fallback's budget: the exemption must keep it out of the re-fit's shed record")
-		assert.Equal(t, primary, extractLedger(t, fb.Prompt),
-			"the re-fit fallback must carry a byte-identical claim ledger")
+		require.NoError(t, payload.VerifyClaimLedgerWiring(map[string]string{
+			"primary":  s.Primary.Prompt,
+			"fallback": fb.Prompt,
+		}), "the re-fit fallback must carry a byte-identical claim ledger")
 	}
 }
 
@@ -244,8 +246,10 @@ func TestClaimLedger_ZeroBudgetRefitShipsTheNotInPayloadContract(t *testing.T) {
 
 	// The mitigation: the ledger the reviewer holds must carry the
 	// NOT-IN-PAYLOAD contract, byte-identical to the primary's.
-	primary := extractLedger(t, s.Primary.Prompt)
-	fbLedger := extractLedger(t, fb.Prompt)
+	primary, ok := payload.ClaimLedgerPromptSection(s.Primary.Prompt)
+	require.True(t, ok, "precondition: the primary prompt carries no claim ledger")
+	fbLedger, ok := payload.ClaimLedgerPromptSection(fb.Prompt)
+	require.True(t, ok, "the sole kept entry must be the ledger")
 	assert.Equal(t, primary, fbLedger, "the sole kept entry must be the ledger, byte-identical to the primary's")
 	assert.Contains(t, fbLedger,
 		"If the payload contains no code at all, answer NOT-IN-PAYLOAD for every claim and report nothing.",
@@ -291,7 +295,8 @@ func TestClaimLedger_AbsentWhenTheBranchAssertsNothing(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, slots)
 	for _, s := range slots {
-		assert.NotContains(t, s.Primary.Prompt, "CLAIMS TO VERIFY")
+		_, ok := payload.ClaimLedgerPromptSection(s.Primary.Prompt)
+		assert.False(t, ok, "a branch that asserts nothing must render no claim ledger")
 		assert.NotContains(t, s.Primary.Prompt, payload.ClaimLedgerPath)
 	}
 }
