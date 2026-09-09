@@ -297,8 +297,13 @@ func pluralLines(n int) string {
 // computed, on the surface an operator approves an in-place rewrite from. atcr's own
 // CLAUDE.md notes concurrent sessions share this tree, so that writer is not
 // hypothetical. Taking the locked pass's own observation instead means the printed
-// locators and the computed rewrite describe ONE snapshot, and it leaves exactly one
-// shard filter in the tree (localdebt's) rather than two copies to keep in step.
+// locators and the computed rewrite describe ONE snapshot, and it removes this file's
+// copy of the shard filter. Every walk over the DEBT store now calls one predicate,
+// localdebt.IsShardEntry — nine inline copies before, in two spellings — so ReadAll and
+// the backfill rewrite walk cannot drift apart on what counts as a shard. (Scoped to
+// the debt store on purpose: internal/history and internal/scorecard shard their own
+// unrelated directories and keep their own predicates. An earlier version of this
+// comment claimed "exactly one shard filter in the tree", which was never true.)
 //
 // Residual case, accepted rather than overlooked: a store file literally named like an
 // already-disambiguated token ("2026-08.jsonl#a1b2c3d4e5f6") would print the same as the

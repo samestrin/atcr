@@ -333,7 +333,7 @@ func pathHasSuffix(p, rel string) bool {
 func shardFileNames(entries []os.DirEntry) []string {
 	var names []string
 	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".jsonl") {
+		if IsShardEntry(e) {
 			names = append(names, e.Name())
 		}
 	}
@@ -351,7 +351,7 @@ func rewriteJustifications(dir string, want map[string]replacement, dryRun bool)
 	// unchanged shard is exactly the collision its change set cannot see.
 	shards := shardFileNames(entries)
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+		if !IsShardEntry(e) {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
