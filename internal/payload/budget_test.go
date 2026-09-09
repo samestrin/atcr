@@ -328,3 +328,34 @@ func TestBudget_RepositoryFileNamedLikeTheLedgerIsNotExempt(t *testing.T) {
 	assert.Equal(t, []string{ClaimLedgerPath}, tr.FilesDropped)
 	assert.False(t, tr.AllDropped, "it is a reviewable file, so it counts in the AllDropped accounting")
 }
+
+// Truncated must describe the shed that actually happened, not the arithmetic
+// that predicted one. The record is published as status.json's truncated and
+// read by internal/benchmark/outcome.go, which maps it to OutcomeIncomplete
+// ("saw only a FRACTION of the diff"), and by refitFallbackPayload, which takes
+// its re-fit arm on it. A "truncated" record naming nothing dropped reports a
+// complete review as incomplete and re-renders a payload it never changed.
+//
+// Every entry here is shed-exempt, so the total overruns the budget and yet
+// nothing can be dropped — the one shape that separates "the sum was too big"
+// from "something was actually shed".
+func TestBudget_TruncatedReflectsTheShedThatHappened(t *testing.T) {
+	a := newClaimLedgerEntry("CLAIMS A")
+	a.Size = 40
+	b := newClaimLedgerEntry("CLAIMS B")
+	b.Size = 40
+	kept, tr := ApplyByteBudget([]FileEntry{a, b}, 50)
+	assert.Len(t, kept, 2, "nothing is shedable, so everything survives")
+	assert.Empty(t, tr.FilesDropped)
+	assert.False(t, tr.Truncated, "nothing was dropped, so nothing was truncated")
+	assert.False(t, tr.AllDropped, "there was no reviewable file to lose")
+}
+
+// The complement: an ordinary shed still reports Truncated, so the fix above
+// cannot have been bought by making the flag never fire.
+func TestBudget_OrdinaryShedStillReportsTruncated(t *testing.T) {
+	kept, tr := ApplyByteBudget(entries("big.go", 100, "small.go", 10), 20)
+	assert.Equal(t, []string{"small.go"}, keptPaths(kept))
+	assert.Equal(t, []string{"big.go"}, tr.FilesDropped)
+	assert.True(t, tr.Truncated)
+}
