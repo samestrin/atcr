@@ -192,3 +192,25 @@ func TestSplitClaims_IndentedLineStillContinuesTheBullet(t *testing.T) {
 	got := splitClaims([]string{"subject line here\n\n- bullet claim one\n  wrapped onto a second line\n"})
 	assert.Equal(t, []string{"subject line here", "bullet claim one wrapped onto a second line"}, got)
 }
+
+// A ledger padded with noise trains reviewers to answer VERIFIED reflexively,
+// which is how the real UNSUPPORTED gets missed. These subjects assert nothing,
+// yet the contract demands a verdict and a file:line citation for each.
+func TestSplitClaims_DropsNoiseSubjectsThatAssertNothing(t *testing.T) {
+	for _, noise := range []string{"wip fixup", "bump deps", "WIP again", "tmp hack", "squash me", "fixup!  typo"} {
+		assert.Empty(t, splitClaims([]string{noise}), "%q asserts nothing", noise)
+	}
+}
+
+// The bar stays deliberately low otherwise: dropping a real claim costs a verdict
+// the panel never renders, which is worse than carrying a weak one. A noise WORD
+// inside a real assertion must not disqualify it.
+func TestSplitClaims_KeepsShortRealClaimsAndNoiseWordsInRealSentences(t *testing.T) {
+	for _, real := range []string{
+		"update the parser so it preserves the offset",
+		"Fixed pagination.",
+		"bump the retry ceiling to 5 so a flaky upstream recovers",
+	} {
+		assert.Len(t, splitClaims([]string{real}), 1, "%q is a real assertion", real)
+	}
+}
