@@ -49,8 +49,14 @@ const DefaultMaxClaimCommits = 512
 const commitRecordSep = "\x00"
 
 // commitMessages returns the commit messages of base..head, oldest first, with
-// merge commits excluded. truncated reports whether the byte cap shed anything;
-// maxBytes <= 0 means unlimited.
+// merge commits excluded. truncated reports whether either cap shed anything;
+// maxBytes <= 0 and maxCommits <= 0 each mean unlimited on that axis.
+//
+// The two caps bound different things and both are needed. maxBytes bounds what
+// is RETAINED; maxCommits bounds what is READ. gitRunner.output buffers the whole
+// subprocess stdout before any byte cap can be consulted, so without a commit
+// bound a review against a stale base reads the entire log body — and copies it
+// again in the split below — to keep 8 KiB of it. See DefaultMaxClaimCommits.
 //
 // Merges are excluded because a merge commit's message is git's own boilerplate
 // ("Merge branch 'x'"), not an assertion its author made about the diff. Every
@@ -85,8 +91,18 @@ func (g *gitRunner) commitMessages(base, head string, maxBytes int64, maxCommits
 	//     the default for the linear ranges reviews normally see, so it changes no
 	//     current output; what it buys is that a future git default cannot silently
 	//     renumber a ledger.
-	out, err := g.output("-c", "i18n.logOutputEncoding=UTF-8",
-		"log", "--date-order", "-z", "--no-merges", "--format=%B", "--end-of-options", base+".."+head)
+	args := []string{"-c", "i18n.logOutputEncoding=UTF-8",
+		"log", "--date-order", "-z", "--no-merges", "--format=%B"}
+	// --max-count is asked of GIT, one more than the bound. Asking for the extra
+	// record is what makes overrun detectable: at exactly maxCommits the read is
+	// indistinguishable from a range that happened to have that many commits, and
+	// reporting truncation there would be a false claim of loss. The cost is one
+	// surplus message, not the rest of the history.
+	if maxCommits > 0 {
+		args = append(args, fmt.Sprintf("--max-count=%d", maxCommits+1))
+	}
+	args = append(args, "--end-of-options", base+".."+head)
+	out, err := g.output(args...)
 	if err != nil {
 		return nil, false, fmt.Errorf("reading commit messages for %s..%s: %w", base, head, err)
 	}
@@ -98,6 +114,12 @@ func (g *gitRunner) commitMessages(base, head string, maxBytes int64, maxCommits
 		if m := strings.TrimSpace(rec); m != "" {
 			newestFirst = append(newestFirst, m)
 		}
+	}
+	// Drop the probe record and report the loss. Oldest-first shedding matches the
+	// byte cap: the branch tip's assertion is the one a reviewer most needs.
+	if maxCommits > 0 && len(newestFirst) > maxCommits {
+		newestFirst = newestFirst[:maxCommits]
+		truncated = true
 	}
 
 	kept := newestFirst
