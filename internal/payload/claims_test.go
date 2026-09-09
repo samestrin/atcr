@@ -154,6 +154,57 @@ func TestCommitMessages_CapShedsOldestAndReportsTruncation(t *testing.T) {
 	assert.Equal(t, "newest claim", msgs[0])
 }
 
+// The cap arithmetic is `used+len(m) <= maxBytes`, and every cap test used a
+// budget comfortably over or comfortably under. Nothing landed EXACTLY on the
+// boundary, so an off-by-one there — `<` instead of `<=` — shed a whole commit's
+// claims with the suite green. Nothing kept two or more messages under an active
+// cap either, so the chronological reversal was never asserted while shedding.
+func TestCommitMessages_CapBoundaryKeepsTheExactFitOldestFirst(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.txt", "0")
+	base := commitAll(t, dir, "base commit")
+	write(t, dir, "a.txt", "1")
+	commitAll(t, dir, "dropped oldest claim")
+	write(t, dir, "a.txt", "2")
+	const older, newer = "the middle claim here", "the newest claim here"
+	commitAll(t, dir, older)
+	write(t, dir, "a.txt", "3")
+	head := commitAll(t, dir, newer)
+
+	exact := int64(len(older) + len(newer))
+	g := newGitRunner(context.Background(), dir)
+
+	// EXACTLY on the boundary: both messages fit, the third is shed.
+	msgs, truncated, err := g.commitMessages(base, head, exact, DefaultMaxClaimCommits)
+	require.NoError(t, err)
+	assert.Equal(t, claimsTruncatedOlder, truncated)
+	require.Len(t, msgs, 2, "used+len(m) == maxBytes must FIT: the comparison is <=, not <")
+	assert.Equal(t, []string{older, newer}, msgs,
+		"a multi-message cap must still return chronological order, oldest first")
+
+	// One byte under: the older of the two no longer fits.
+	msgs, truncated, err = g.commitMessages(base, head, exact-1, DefaultMaxClaimCommits)
+	require.NoError(t, err)
+	assert.Equal(t, claimsTruncatedOlder, truncated)
+	require.Len(t, msgs, 1, "one byte under the exact fit must shed the older message")
+	assert.Equal(t, newer, msgs[0], "the branch tip's claim is the one that survives")
+}
+
+// isAbbrevBefore scans BACKWARD to the preceding space and returns false when the
+// token is empty — the case reached by a body opening with a bare terminator
+// (". foo"), where there is no token before the period at all. That guard was
+// 0-hit: nothing supplied a leading terminator.
+//
+// Measured honestly: this case COVERS the guard but does not mutation-kill it.
+// Deleting the guard leaves the suite green, because the fall-through computes an
+// empty token and sentenceAbbrevs[""] is false either way. The guard is an
+// early-out for clarity, not a behavior branch — recorded here so a later audit
+// does not re-litigate it as a missing assertion.
+func TestSplitSentences_LeadingTerminatorHasNoTokenBeforeIt(t *testing.T) {
+	assert.Equal(t, []string{".", "the cursor is preserved"},
+		splitSentences(". the cursor is preserved"))
+}
+
 // A single message larger than the whole cap must still yield its opening bytes
 // rather than nothing: an empty ledger on an over-long message would look
 // identical to a branch that made no claims at all.
