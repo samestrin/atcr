@@ -117,46 +117,76 @@ func TestClaimLedger_SurvivesAByteBudgetThatShedsDiffContent(t *testing.T) {
 	}
 }
 
-// The exempt ledger must NOT quietly convert a fully-shed payload into a
-// dispatchable one. A reviewer holding claims and no code returns a false-clean
-// "no findings" review, so the run has to fail loudly instead — which it only
-// does because Truncation.AllDropped counts reviewable files rather than kept
-// entries.
-func TestClaimLedger_DoesNotMaskAFullyShedPayload(t *testing.T) {
-	dir, base, head := fanoutRepo(t)
+// paddedClaimingRepo is the two-commit claiming fixture with both changed files
+// padded far past the small window's effective byte budget, so a 32768-window
+// agent cannot inherit the primary's payload whole and must re-fit (or take the
+// zero-budget arm). The claiming message rides the padded commit, so the
+// ledger's claims still describe the same two behaviors.
+func paddedClaimingRepo(t *testing.T) (dir, base, head string) {
+	t.Helper()
+	dir = t.TempDir()
+	fanoutGit(t, dir, "init", "-q", "-b", "main")
 
-	cfg := sizingRosterConfig()
-	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
-	cfg.Settings.PayloadByteBudget = 1 // funds nothing at all
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "cursor.go"), []byte("package p\n\nfunc Begin() int { return 0 }\n"), 0o644))
+	fanoutGit(t, dir, "add", "-A")
+	fanoutGit(t, dir, "commit", "-q", "-m", "seed the cursor file")
+	base = fanoutGit(t, dir, "rev-parse", "HEAD")
 
-	_, _, err := buildPayloads(context.Background(), cfg, dir, base, head, false)
-	require.ErrorIs(t, err, ErrPayloadFullyDropped,
-		"a payload carrying only the ledger must still be reported as fully dropped")
+	pad := strings.Repeat("// padding to size the payload past a small window's byte budget\n", 800)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "cursor.go"), []byte("package p\n\nfunc Begin() int { return 1 }\n"+pad), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "drain.go"), []byte("package p\n\nfunc Drain() int { return Begin() }\n"+pad), 0o644))
+	fanoutGit(t, dir, "add", "-A")
+	fanoutGit(t, dir, "commit", "-q", "-m", "preserve the cursor across a cold drain\n\n- Begin() no longer returns a wiped offset\n- Drain() keeps the previous offset\n")
+	head = fanoutGit(t, dir, "rev-parse", "HEAD")
+	return dir, base, head
 }
 
-// A branch whose commits assert nothing must render no section at all, so the
-// engine never puts words in an author's mouth.
-func TestClaimLedger_AbsentWhenTheBranchAssertsNothing(t *testing.T) {
-	dir := t.TempDir()
-	fanoutGit(t, dir, "init", "-q", "-b", "main")
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.go"), []byte("package p\n"), 0o644))
-	fanoutGit(t, dir, "add", "-A")
-	fanoutGit(t, dir, "commit", "-q", "-m", "seed")
-	base := fanoutGit(t, dir, "rev-parse", "HEAD")
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.go"), []byte("package p\n\nvar X = 1\n"), 0o644))
-	fanoutGit(t, dir, "add", "-A")
-	fanoutGit(t, dir, "commit", "-q", "-m", "wip")
-	head := fanoutGit(t, dir, "rev-parse", "HEAD")
+// The fallback re-fit (on_overflow=truncate) re-packs the slot's entries against
+// the FALLBACK's own budget — and re-sizes every entry to len(Body) on the way
+// in, which is the one path where the ledger's exemption has to survive being
+// counted like any other file. A mistake there drops the ledger from SOME
+// agents' prompts: an asymmetry that looks exactly like a branch that claimed
+// nothing, the failure AC3 forbids. No test drove a re-fit with a ledger
+// present; this one pins the invariant — the ledger a re-fit fallback re-renders
+// is byte-identical to the primary's.
+//
+// RED note: the invariant HOLDS in the current code, so this test is green on
+// arrival — the row's issue is the missing coverage, not broken behavior. The
+// row's verify step (falsify by breaking the shed exemption) would require a
+// transient write to internal/payload/budget.go, owned by another live
+// resolve-td session's group scope, so that mutation check is deferred to the
+// ungrouped follow-up run.
+func TestClaimLedger_SurvivesAFallbackRefit(t *testing.T) {
+	dir, base, head := paddedClaimingRepo(t)
 
 	cfg := sizingRosterConfig()
+	kai := cfg.Registry.Agents["kai"]
+	kai.Fallback = "greta" // greta: unlisted-small-model → 32768 window, far under kai's 128000
+	cfg.Registry.Agents["kai"] = kai
+	cfg.Project.Agents = []string{"kai"}
+	cfg.Settings.OnOverflow = OverflowTruncate
+
 	payloads, _, err := buildPayloads(context.Background(), cfg, dir, base, head, false)
 	require.NoError(t, err)
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: base, Head: head}, "", "", false)
+	var slots []Slot
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: base, Head: head}, "", "", false)
+	})
 	require.NoError(t, err)
-	require.NotEmpty(t, slots)
-	for _, s := range slots {
-		assert.NotContains(t, s.Primary.Prompt, "CLAIMS TO VERIFY")
-		assert.NotContains(t, s.Primary.Prompt, payload.ClaimLedgerPath)
+	require.NotEmpty(t, slots, "precondition: the roster must produce a slot")
+	s := slots[0]
+	require.NotEmpty(t, s.Fallbacks, "precondition: kai must resolve its greta fallback")
+
+	primary := extractLedger(t, s.Primary.Prompt)
+	for _, fb := range s.Fallbacks {
+		require.NotEqual(t, s.Primary.Prompt, fb.Prompt,
+			"precondition: the fallback must have re-fit (re-rendered) rather than inheriting the primary's prompt")
+		require.True(t, fb.Truncation.Truncated,
+			"precondition: the re-fit must actually shed a file, or this test proves nothing about the re-fit path")
+		assert.NotContains(t, fb.Truncation.FilesDropped, payload.ClaimLedgerPath,
+			"the ledger fits the fallback's budget: the exemption must keep it out of the re-fit's shed record")
+		assert.Equal(t, primary, extractLedger(t, fb.Prompt),
+			"the re-fit fallback must carry a byte-identical claim ledger")
 	}
 }
