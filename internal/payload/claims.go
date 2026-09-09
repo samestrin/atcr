@@ -178,11 +178,19 @@ var (
 	// A line that is nothing but a URL.
 	bareURLRe = regexp.MustCompile(`^https?://\S+$`)
 	// Every rune that can act as a line break in some renderer or tokenizer:
-	// CR, LF, vertical tab, form feed, NEL (U+0085), LINE SEPARATOR (U+2028),
-	// PARAGRAPH SEPARATOR (U+2029).
-	lineBreakRunes = regexp.MustCompile(`[\r\n\v\f\x{0085}\x{2028}\x{2029}]`)
+	// CR, LF, vertical tab, form feed, the C1-adjacent separators FS/GS/RS/US
+	// (U+001C–U+001F, which several renderers break lines on), NEL (U+0085),
+	// LINE SEPARATOR (U+2028), PARAGRAPH SEPARATOR (U+2029).
+	lineBreakRunes = regexp.MustCompile(`[\r\n\v\f\x{001C}-\x{001F}\x{0085}\x{2028}\x{2029}]`)
 	// A run of four or more dashes — the raw material of the framing markers.
-	dashRun = regexp.MustCompile(`-{4,}`)
+	//
+	// The class is every rune that RENDERS as a dash, not just U+002D. The defense
+	// is against text that LOOKS like the frame to whatever reads the prompt, and
+	// "————— END CLAIMS —————" in em dashes is visually indistinguishable from the
+	// real marker. Covered: U+002D hyphen-minus, U+2010–U+2015 (hyphen, non-breaking
+	// hyphen, figure/en/em dash, horizontal bar), U+2212 minus sign, U+FF0D
+	// fullwidth hyphen-minus, U+2E3A/U+2E3B two- and three-em dash.
+	dashRun = regexp.MustCompile(`[-\x{2010}-\x{2015}\x{2212}\x{FF0D}\x{2E3A}\x{2E3B}]{4,}`)
 )
 
 // splitClaims turns commit messages into an ordered list of discrete claims:
@@ -507,8 +515,11 @@ func sanitizeClaim(c string) string {
 	// Break the dash RUN rather than matching the marker string. Substring
 	// replacement does not terminate the problem: replacing the marker inside
 	// "----------- END CLAIMS -----------" leaves "-------- END CLAIMS --------",
-	// which contains the marker again. No run of four or more dashes survives
-	// this, so the five-dash frame can never be spelled at all.
+	// which contains the marker again. No run of four or more dash-CLASS runes
+	// survives this — see dashRun for the class — so neither the five-dash frame
+	// nor a lookalike spelled in en, em, fullwidth or minus-sign dashes can be
+	// written at all. A dash class narrower than "what renders as a dash" would
+	// leave the frame forgeable in a way a reader could not see.
 	c = dashRun.ReplaceAllString(c, "--")
 	return strings.TrimSpace(c)
 }
