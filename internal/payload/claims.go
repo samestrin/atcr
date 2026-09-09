@@ -428,7 +428,8 @@ func splitSentences(s string) []string {
 	start := 0
 	runes := []rune(s)
 	for i := 0; i < len(runes); i++ {
-		if runes[i] != '.' && runes[i] != '!' && runes[i] != '?' {
+		wide := isWideTerminator(runes[i])
+		if !wide && runes[i] != '.' && runes[i] != '!' && runes[i] != '?' {
 			continue
 		}
 		j := i + 1
@@ -437,11 +438,15 @@ func splitSentences(s string) []string {
 		}
 		atEnd := j >= len(runes)
 		// The gap is required: "v1.2" has no whitespace after the dot and is
-		// mid-token, not a boundary.
-		if !atEnd && j == i+1 {
+		// mid-token, not a boundary. It is NOT required after a fullwidth
+		// terminator — CJK prose writes "游标已保留。助手返回空值。" with no space at
+		// all, so demanding one collapses the whole body into a single claim.
+		if !atEnd && j == i+1 && !wide {
 			continue
 		}
-		if !atEnd && isAbbrevBefore(runes, start, i) {
+		// sentenceAbbrevs holds ASCII abbreviations only, and none of them ends in
+		// a fullwidth terminator, so the check cannot apply to one.
+		if !atEnd && !wide && isAbbrevBefore(runes, start, i) {
 			continue
 		}
 		out = append(out, strings.TrimSpace(string(runes[start:i+1])))
@@ -452,6 +457,27 @@ func splitSentences(s string) []string {
 		out = append(out, strings.TrimSpace(string(runes[start:])))
 	}
 	return out
+}
+
+// isWideTerminator reports whether r is a fullwidth sentence terminator. These
+// are the boundary markers of scripts that write no space after them, so the
+// ASCII-only terminator set left an entire commit body in Chinese, Japanese or
+// Korean as ONE claim — the panel then rendered one verdict where several were
+// owed, and the ledger's per-sentence contract silently did not apply.
+//
+// U+FF0E FULLWIDTH FULL STOP is deliberately EXCLUDED: it is the decimal point
+// in fullwidth numerics ("１．２．３"), so treating it as a boundary would shred a
+// version number exactly the way a naive split on '.' shreds "v1.2.3".
+//
+// A script with no sentence terminator at all (Thai separates sentences with a
+// space) has no boundary to find. One claim is the correct result there, not a
+// gap this function can close.
+func isWideTerminator(r rune) bool {
+	switch r {
+	case '。', '！', '？':
+		return true
+	}
+	return false
 }
 
 // isAbbrevBefore reports whether the token ending at end (exclusive) in runes is
