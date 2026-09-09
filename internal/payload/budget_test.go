@@ -308,3 +308,19 @@ func TestBudget_ClaimLedgerExactlyAtBudgetIsKept(t *testing.T) {
 	assert.Equal(t, []string{"a.go"}, tr.FilesDropped)
 	assert.True(t, tr.AllDropped, "no reviewable file survived")
 }
+
+// The shed exemption must key on a sentinel this package sets, never on a path
+// string a repository can contain. Angle brackets are illegal in a path only on
+// Windows: `<claims>` is a perfectly legal filename on Linux and macOS, so a PR
+// that adds or modifies one would otherwise get an unshedable diff entry that is
+// also invisible to the reviewable accounting behind AllDropped.
+func TestBudget_RepositoryFileNamedLikeTheLedgerIsNotExempt(t *testing.T) {
+	in := []FileEntry{
+		{Path: ClaimLedgerPath, Size: 5000, Body: "attacker-supplied file content"},
+		{Path: "a.go", Size: 10, Body: "a"},
+	}
+	kept, tr := ApplyByteBudget(in, 5000)
+	assert.Equal(t, []string{"a.go"}, keptPaths(kept), "a repository file named <claims> sheds like any other entry")
+	assert.Equal(t, []string{ClaimLedgerPath}, tr.FilesDropped)
+	assert.False(t, tr.AllDropped, "it is a reviewable file, so it counts in the AllDropped accounting")
+}
