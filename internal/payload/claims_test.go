@@ -26,7 +26,7 @@ func TestCommitMessages_ReturnsEveryCommitOldestFirst(t *testing.T) {
 	g := newGitRunner(context.Background(), dir)
 	msgs, truncated, err := g.commitMessages(base, head, DefaultMaxClaimBytes, DefaultMaxClaimCommits)
 	require.NoError(t, err)
-	assert.False(t, truncated)
+	assert.Equal(t, claimsComplete, truncated)
 	require.Len(t, msgs, 2, "base itself is not in base..head; only the two commits after it are")
 	assert.Equal(t, "second commit\n\nsecond body line.", msgs[0])
 	assert.Equal(t, "third commit", msgs[1])
@@ -69,7 +69,7 @@ func TestCommitMessages_EmptyRangeYieldsNoMessages(t *testing.T) {
 	msgs, truncated, err := g.commitMessages(head, head, DefaultMaxClaimBytes, DefaultMaxClaimCommits)
 	require.NoError(t, err)
 	assert.Empty(t, msgs)
-	assert.False(t, truncated)
+	assert.Equal(t, claimsComplete, truncated)
 }
 
 func TestCommitMessages_UnresolvableRangeReturnsError(t *testing.T) {
@@ -99,7 +99,7 @@ func TestCommitMessages_CapShedsOldestAndReportsTruncation(t *testing.T) {
 	// Room for the newest message and nothing else.
 	msgs, truncated, err := g.commitMessages(base, head, 60, DefaultMaxClaimCommits)
 	require.NoError(t, err)
-	assert.True(t, truncated, "dropping a commit's claims must be recorded, never silent")
+	assert.Equal(t, claimsTruncatedOlder, truncated, "dropping a commit's claims must be recorded, never silent")
 	require.Len(t, msgs, 1)
 	assert.Equal(t, "newest claim", msgs[0])
 }
@@ -117,7 +117,7 @@ func TestCommitMessages_SingleOversizedMessageIsCappedNotDropped(t *testing.T) {
 	g := newGitRunner(context.Background(), dir)
 	msgs, truncated, err := g.commitMessages(base, head, 50, DefaultMaxClaimCommits)
 	require.NoError(t, err)
-	assert.True(t, truncated)
+	assert.Equal(t, claimsTruncatedNewest, truncated)
 	require.Len(t, msgs, 1)
 	assert.LessOrEqual(t, len(msgs[0]), 50)
 	assert.True(t, strings.HasPrefix(msgs[0], "huge claim "))
@@ -136,7 +136,7 @@ func TestCommitMessages_CapNeverSplitsARune(t *testing.T) {
 	g := newGitRunner(context.Background(), dir)
 	msgs, truncated, err := g.commitMessages(base, head, 51, DefaultMaxClaimCommits) // odd cap, 2-byte runes
 	require.NoError(t, err)
-	assert.True(t, truncated)
+	assert.Equal(t, claimsTruncatedNewest, truncated)
 	require.Len(t, msgs, 1)
 	assert.True(t, utf8.ValidString(msgs[0]), "capped message must remain valid UTF-8")
 }
@@ -153,7 +153,7 @@ func TestCommitMessages_ZeroMaxBytesMeansUnlimited(t *testing.T) {
 	g := newGitRunner(context.Background(), dir)
 	msgs, truncated, err := g.commitMessages(base, head, 0, DefaultMaxClaimCommits)
 	require.NoError(t, err)
-	assert.False(t, truncated)
+	assert.Equal(t, claimsComplete, truncated)
 	assert.Len(t, msgs, 2)
 }
 
@@ -220,7 +220,7 @@ func TestCommitMessages_BoundsTheReadByCommitCount(t *testing.T) {
 	require.Len(t, msgs, 3, "the read is bounded at maxCommits")
 	assert.Equal(t, "commit number 3", msgs[0], "the OLDEST kept commit; older ones were never read")
 	assert.Equal(t, "commit number 5", msgs[2], "the branch tip's claims always survive")
-	assert.True(t, truncated, "claims were dropped, so the ledger must say so")
+	assert.Equal(t, claimsTruncatedOlder, truncated, "claims were dropped, so the ledger must say so")
 }
 
 // The bound must not report truncation on a range that fits inside it.
@@ -235,5 +235,5 @@ func TestCommitMessages_CommitBoundDoesNotFalselyReportTruncation(t *testing.T) 
 	msgs, truncated, err := g.commitMessages(base, head, DefaultMaxClaimBytes, DefaultMaxClaimCommits)
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
-	assert.False(t, truncated)
+	assert.Equal(t, claimsComplete, truncated)
 }

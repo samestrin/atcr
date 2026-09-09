@@ -41,6 +41,22 @@ const DefaultMaxClaimBytes int64 = 8 * 1024
 // loss whichever ceiling dropped it.
 const DefaultMaxClaimCommits = 512
 
+// claimsTruncation records WHICH end of the commit-message read was cut, because
+// the two are not interchangeable in a reviewer's hands. Both caps normally shed
+// the OLDEST commits, so the note tells the reviewer the older claims are
+// missing and the ones listed are whole. But when the single NEWEST message
+// alone overruns the byte cap it is cut on a rune boundary instead — and there
+// the amputated claims belong to the newest commit, so the same note directs the
+// reviewer to trust exactly the text that was truncated. A section that exists to
+// stop false assertions reaching a reviewer must not make one itself.
+type claimsTruncation int
+
+const (
+	claimsComplete        claimsTruncation = iota // nothing was shed
+	claimsTruncatedOlder                          // older commits were dropped whole
+	claimsTruncatedNewest                         // the newest commit's message was cut short
+)
+
 // commitRecordSep separates commit messages in the `git log -z` output. NUL is
 // git's own record separator and is the one byte a commit message cannot carry,
 // so message content cannot forge a boundary and split one commit's claims into
@@ -72,7 +88,7 @@ const commitRecordSep = "\x00"
 // Errors are returned rather than swallowed; the ledger seam
 // (RangeBuilder.claimLedger) is what degrades an unreadable range to an empty
 // ledger, so this function stays usable by a caller that wants the failure.
-func (g *gitRunner) commitMessages(base, head string, maxBytes int64, maxCommits int) (msgs []string, truncated bool, err error) {
+func (g *gitRunner) commitMessages(base, head string, maxBytes int64, maxCommits int) (msgs []string, truncated claimsTruncation, err error) {
 	// --end-of-options blocks option injection via a ref beginning with '-',
 	// matching verifyRef. %B is the raw subject+body, unwrapped and unreformatted,
 	// so the claim the author wrote is the claim the panel adjudicates.
@@ -104,7 +120,7 @@ func (g *gitRunner) commitMessages(base, head string, maxBytes int64, maxCommits
 	args = append(args, "--end-of-options", base+".."+head)
 	out, err := g.output(args...)
 	if err != nil {
-		return nil, false, fmt.Errorf("reading commit messages for %s..%s: %w", base, head, err)
+		return nil, claimsComplete, fmt.Errorf("reading commit messages for %s..%s: %w", base, head, err)
 	}
 
 	// git log is newest-first; records are collected in that order so the cap
@@ -119,7 +135,7 @@ func (g *gitRunner) commitMessages(base, head string, maxBytes int64, maxCommits
 	// byte cap: the branch tip's assertion is the one a reviewer most needs.
 	if maxCommits > 0 && len(newestFirst) > maxCommits {
 		newestFirst = newestFirst[:maxCommits]
-		truncated = true
+		truncated = claimsTruncatedOlder
 	}
 
 	kept := newestFirst
@@ -149,8 +165,11 @@ func (g *gitRunner) commitMessages(base, head string, maxBytes int64, maxCommits
 				// could only ever confirm what the caller has already decided.
 				capped, _ := capUTF8(m, int(capBytes))
 				kept = append(kept, capped)
+				// The newest message itself was cut, not an older commit dropped.
+				truncated = claimsTruncatedNewest
+			} else {
+				truncated = claimsTruncatedOlder
 			}
-			truncated = true
 			break
 		}
 	}
@@ -509,7 +528,7 @@ const (
 // Zero claims render nothing at all. A bare header would assert that the author
 // claimed nothing, which is itself a claim and not one the engine is entitled
 // to make.
-func claimLedgerSection(claims []string, truncated bool) string {
+func claimLedgerSection(claims []string, truncated claimsTruncation) string {
 	if len(claims) == 0 {
 		return ""
 	}
@@ -562,8 +581,11 @@ func claimLedgerSection(claims []string, truncated bool) string {
 	b.WriteString("The claims describe this branch's own commits, while the diff compares the range's two endpoints. ")
 	b.WriteString("If the base advanced after the branch started, the diff also carries changes the branch never made, ")
 	b.WriteString("so not every change below is covered by a claim. An uncovered change is not itself a finding.\n\n")
-	if truncated {
-		b.WriteString("NOTE: the commit-message read was TRUNCATED at its byte cap. The oldest commits' claims are NOT listed below, so this ledger is incomplete.\n\n")
+	switch truncated {
+	case claimsTruncatedOlder:
+		b.WriteString("NOTE: the commit-message read was TRUNCATED at its cap. The oldest commits' claims are NOT listed below, so this ledger is incomplete.\n\n")
+	case claimsTruncatedNewest:
+		b.WriteString("NOTE: the commit-message read was TRUNCATED at its byte cap. The NEWEST commit's message alone exceeded the cap and was cut short, so the claims below are incomplete and the last one may be cut mid-sentence.\n\n")
 	}
 	b.WriteString(claimsBeginMarker + "\n")
 	for i, c := range claims {
