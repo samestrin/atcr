@@ -298,7 +298,7 @@ func runLeaderboardExportAt(cmd *cobra.Command, records []scorecard.Record, filt
 	if err != nil {
 		return err
 	}
-	selected, err = selectPublishableRecordIdentities(cmd, selected)
+	selected, scrubs, err := selectPublishableRecordIdentities(cmd, selected)
 	if err != nil {
 		return err
 	}
@@ -310,7 +310,11 @@ func runLeaderboardExportAt(cmd *cobra.Command, records []scorecard.Record, filt
 	// ErrNoCurrentEraRecords, which names the store rather than the filters.) Both
 	// carry their own actionable text and main() maps them to exit 1, so they are
 	// returned as-is rather than re-wrapped.
-	data, err := scorecard.ExportSelected(selected, now)
+	// The guard above already scrubbed every identity it inspected; handing the memo
+	// over means ExportSelected does not re-derive them. scrubField is a fixed-point
+	// loop over 7 compiled regexes, so the second pass was roughly 28 regex executions
+	// per field per record across the whole unrotated store.
+	data, err := scorecard.ExportSelectedCached(selected, now, scrubs)
 	if err != nil {
 		return err
 	}
@@ -360,10 +364,43 @@ func runLeaderboardExportAt(cmd *cobra.Command, records []scorecard.Record, filt
 // spanning the 35.16.6.5 FindingsRaised era boundary), which the earlier ApplyFilters
 // call here did reject. It also means the store is walked once on the one path that
 // deliberately reads all of it.
-func selectPublishableRecordIdentities(cmd *cobra.Command, filtered []scorecard.Record) ([]scorecard.Record, error) {
+func selectPublishableRecordIdentities(cmd *cobra.Command, filtered []scorecard.Record) ([]scorecard.Record, scorecard.ScrubCache, error) {
 	kept := make([]scorecard.Record, 0, len(filtered))
+	// Every scrub this guard performs is handed back to the caller, which passes it to
+	// ExportSelectedCached so the same identity is not scrubbed a second time there.
+	scrubs := scorecard.ScrubCache{}
+	// Every per-record outcome is BUFFERED and flushed only once the whole pass has
+	// returned without error.
+	//
+	// The printability arm below hard-fails the WHOLE export, and it can trip on any
+	// record — including the last. Printed where they are found, the notices for the
+	// earlier records survive an abort that produced no document, so the operator is
+	// told a record "is kept" or "is skipped" about an export that does not exist. Both
+	// messages end in an instruction to go edit the store; acting on them repairs
+	// records for a run whose real problem is elsewhere, and the export still fails.
+	//
+	// Buffering costs nothing in ordering: at most one notice is produced per record
+	// (the skip arm breaks the field loop and suppresses the held blank notice), so
+	// appending in record order preserves exactly the sequence the interleaved writes
+	// produced.
+	var notices []string
 	for _, rec := range filtered {
 		publishable := true
+		// The blank-identity notice is HELD rather than printed where it is found, for
+		// two reasons.
+		//
+		// It is one line per RECORD, not per field: the operator repairs the record, and
+		// a second line about its other blank identity is noise — the same trade the
+		// scrub-casualty report below makes with its `break`. Holding it also means the
+		// field loop keeps RUNNING, which a `break` would not: breaking out on a blank
+		// model would skip the reviewer field entirely, so a non-printing rune there — a
+		// misattribution vector that must HARD-fail — would publish.
+		//
+		// And it is only printed if the record actually survives. The notice says the
+		// record still publishes; a record whose OTHER identity is a scrub casualty is
+		// dropped, and printing both lines for it would contradict itself on the one
+		// surface the operator acts from.
+		blankNotice := ""
 		// Reviewer is the field Export scrubs into the envelope's `persona`; the pair
 		// is (persona, model) there, not (reviewer, model).
 		for _, f := range []struct{ name, value string }{
@@ -375,55 +412,115 @@ func selectPublishableRecordIdentities(cmd *cobra.Command, filtered []scorecard.
 				// read from the same world-writable store record, so it is untrusted
 				// input on a surface an operator reads in a terminal. Printing the
 				// locator raw would let the defect being reported reorder the report.
-				return nil, fmt.Errorf("scorecard record %q has %s %q, which contains a non-printing rune (U+%04X); "+
+				return nil, nil, fmt.Errorf("scorecard record %q has %s %q, which contains a non-printing rune (U+%04X); "+
 					"control and format runes are invisible or reorder text in the published document, "+
 					"so a leaderboard row can be misattributed to a model that was never measured — "+
 					"edit or remove that record in the scorecard store, then re-run the export",
 					rec.RunID, f.name, f.value, r)
 			}
-			// Empty ONCE SCRUBBED — this closes the empty-once-scrubbed arm of the
-			// predicate `benchmark export` already applies to its producer side. Without
-			// it the two sibling producers into the SAME envelope disagreed on that arm:
-			// benchmark hard-rejected an identity the scrub deletes outright (an email- or
-			// path-shaped id), while leaderboard published it as model:"".
+			// THREE mutually exclusive shapes an identity can have here, and what each
+			// gets: one ALREADY empty in the store falls through both arms untouched and
+			// silent; one blank only after trimming is reported and KEPT; one the scrub
+			// empties is reported and DROPPED. The arms are mutually exclusive by their
+			// own predicates, so the else-if is readability, not control flow.
 			//
-			// The scrub-REWRITES arm deliberately stays asymmetric. checkPublishable
-			// rejects a value the scrub would change, because the envelope must name the
-			// same suite the manifest does; the leaderboard has no manifest to match —
-			// the scrub IS its anonymization, so a record whose identity scrubs to a
-			// different string is published under the scrubbed form by design. Aligning
-			// that arm would end the anonymization, not close a divergence.
+			// Already-empty is left silent deliberately. It is a record written without a
+			// model — pre-existing and documented — so acting on it is a data decision
+			// about existing history, not an identity-printability one, and reporting it
+			// would fire on every model-less record in an unrotated store. `f.value != ""`
+			// is the term that keeps this scoped to the whitespace shape.
 			//
-			// Scoped to a value that is NON-EMPTY before the scrub. An identity already
-			// empty in the store is a different defect — a record written without a
-			// model — and dropping it here would silently shrink every export against a
-			// store that already holds such records. Widening this arm to cover them is a
-			// data decision about existing history, not an identity-printability one.
+			// "Blank after trimming" is narrower than "whitespace-only", and the gap is a
+			// CARVE-OUT rather than an oversight: tab, newline, CR, VT, FF and U+0085 are
+			// whitespace AND unicode.IsControl, so firstNonPrintingRune above has already
+			// hard-failed the whole export before this chain runs. They reach neither arm.
+			// That is correct — a control rune in an identity is the misattribution vector
+			// the printability check exists to stop, and being whitespace too does not
+			// make it safe — but it is not self-evident from the word "whitespace", and a
+			// tab is the likeliest whitespace artifact of a hand-edited store. What
+			// actually reaches this arm is Zs-class blankness: a plain space, or a U+00A0
+			// the printability arm lets through. Pinned by
+			// TestRunLeaderboardExport_ControlClassWhitespaceHardFailsByDesign and stated
+			// for operators in docs/scorecard.md.
 			//
-			// TrimSpace, not a raw `!= ""`: scrubOnce ends in
-			// strings.Join(strings.Fields(s), " "), so a whitespace-only identity (" ",
-			// or a U+00A0 the printability arm lets through) scrubs to "" and slipped
-			// past the exclusion this arm is scoped by. It is already empty to every
-			// reader of the store, and reporting it as a scrub casualty printed
-			// `model " ", which is empty once scrubbed` — a message an operator cannot
-			// act on.
-			if strings.TrimSpace(f.value) != "" && scorecard.ScrubPublicString(f.value) == "" {
-				_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+			// The empty-once-scrubbed arm exists to close a divergence: `benchmark export`
+			// applies the same predicate on its producer side, so without it the two
+			// sibling producers into the SAME envelope disagreed — benchmark hard-rejected
+			// an identity the scrub deletes outright (an email- or path-shaped id) while
+			// leaderboard published it as model:"".
+			//
+			// The scrub-REWRITES arm stays asymmetric on purpose. checkPublishable rejects
+			// a value the scrub would change, because the envelope must name the same
+			// suite the manifest does; the leaderboard has no manifest to match — the
+			// scrub IS its anonymization — so an identity that scrubs to a different
+			// string is published under the scrubbed form by design. Aligning that arm
+			// would end the anonymization, not close a divergence.
+			if trimmed := strings.TrimSpace(f.value); f.value != "" && trimmed == "" {
+				// Blank, and therefore KEPT. Scoping the scrub-casualty arm off an
+				// already-empty identity is deliberate (see above), but doing it
+				// silently was a strict loss: before that scoping such a record
+				// hard-failed locally with actionable text, and after it the operator
+				// got a clean local export carrying model:"" — precisely the document
+				// the sibling message calls one that "would be rejected at the
+				// leaderboard" — and learned about it from the board instead.
+				//
+				// The blank value is NOT printed. `model " "` is what made the old
+				// message unactionable, and a U+00A0 renders as nothing at all. The
+				// wording is deliberately distinct from the skip report's "empty once
+				// scrubbed" so an operator scanning stderr can tell a KEPT record from
+				// a DROPPED one without reading to the end of the line.
+				if blankNotice == "" {
+					// "would be rejected at the leaderboard" is the SAME clause the skip
+					// message below uses for the same published shape (an empty
+					// identity). Two different consequences printed to one stderr for
+					// one shape would leave the operator guessing which is true; the
+					// repo states the consequence in exactly one place, so both
+					// messages quote it.
+					// The remedy clause names what the record's counts are ACTUALLY
+					// doing, not what an operator would assume. "to have it counted"
+					// was misleading: the record is already counted — just not in a row
+					// of its own. ExportSelected keys on
+					// key{scrubField(Reviewer), scrubField(Model)}, and a blank identity
+					// and a genuinely-empty one both scrub to "", so the two merge into
+					// one board row for that persona. Only the blank one is reported
+					// here (the already-empty case is silent by design), so an operator
+					// told the record is uncounted repairs half the problem and leaves
+					// the merged row standing.
+					blankNotice = fmt.Sprintf(
+						"scorecard record %q: %s is blank after trimming — the record has no %s; "+
+							"it is kept, but publishing \"\" would be rejected at the leaderboard, and "+
+							"its counts are blended into the empty-%s row for that persona — "+
+							"edit or remove that record in the scorecard store to give it a row of its own\n",
+						rec.RunID, f.name, f.name, f.name)
+				}
+			} else if trimmed != "" && scrubs.Scrub(f.value) == "" {
+				notices = append(notices, fmt.Sprintf(
 					"skipping scorecard record %q: %s %q is empty once scrubbed for publication; "+
 						"publishing \"\" would be rejected at the leaderboard — "+
 						"edit or remove that record in the scorecard store to include it\n",
-					rec.RunID, f.name, f.value)
+					rec.RunID, f.name, f.value))
 				publishable = false
 				// One report per record, not one per field: the operator repairs the
-				// record, and a second line about its other identity is noise.
+				// record, and a second line about its other identity is noise. A break
+				// is safe HERE and not in the blank arm above, because the record is
+				// already dropped — nothing it carries can reach the envelope, so a
+				// check skipped on its other field cannot let anything through.
 				break
 			}
 		}
 		if publishable {
+			if blankNotice != "" {
+				notices = append(notices, blankNotice)
+			}
 			kept = append(kept, rec)
 		}
 	}
-	return kept, nil
+	// The pass completed: every buffered outcome now describes an export that is really
+	// going to be produced.
+	for _, n := range notices {
+		_, _ = fmt.Fprint(cmd.ErrOrStderr(), n)
+	}
+	return kept, scrubs, nil
 }
 
 // writeExportFile atomically writes the export to path: it creates parent

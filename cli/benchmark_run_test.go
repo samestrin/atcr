@@ -1599,14 +1599,19 @@ func TestRosterSignatureOf_DoesNotMutateItsInput(t *testing.T) {
 
 // A serial-only project (agents: [], serial_agents: [...]) is a supported config —
 // internal/registry/project.go rejects only BOTH lanes empty. For such a project the
-// parallel-lane-only projection is an EMPTY slice, and rosterSignatureOf returns
-// make([]string, 0), which is non-nil. The compat arm's `legacyRoster != nil` test is
-// therefore always true, and sortedCopy of an empty slice is nil, so the arm's
-// equalStrings(nil, nil) comparison is vacuous: a checkpoint recording `"roster": []`
-// (which decodes to a non-nil zero-length slice and so clears the fail-closed
-// cp.Roster == nil guard) resumes against ANY serial panel — any reviewers, any
-// models, any personas. That is precisely the AC4 panel-mixing the guard exists to
-// refuse.
+// parallel-lane-only projection is an EMPTY slice, and sortedCopy of it is nil, so the
+// compat arm's equalStrings comparison would be vacuous — nil against nil — for a
+// checkpoint recording `"roster": []`. That value decodes to a non-nil zero-length slice
+// and so clears the fail-closed cp.Roster == nil guard, and without an emptiness test in
+// the arm it would resume against ANY serial panel: any reviewers, any models, any
+// personas. That is precisely the AC4 panel-mixing the guard exists to refuse.
+//
+// `len(recorded) > 0` in
+// `cp.RosterFormat == "" && len(recorded) > 0 && equalStrings(recorded, sortedCopy(legacyRoster))`
+// is the term under test here. It is the only emptiness term the arm carries: its former
+// sibling `len(legacyRoster) > 0` was removed as unfalsifiable, because equalStrings
+// compares lengths first, so when exactly one slice is empty the arm cannot fire anyway
+// and only the both-empty case needs blocking — which either term alone blocks.
 func TestValidateCheckpointRoster_EmptyRecordedRosterIsNeverExcused(t *testing.T) {
 	serialOnly := func(serialModel string) *fanout.ReviewConfig {
 		c := benchCfg([3]string{"dax", serialModel, "dax"}, [3]string{"greta", "m-greta", "greta"})
@@ -1627,4 +1632,120 @@ func TestValidateCheckpointRoster_EmptyRecordedRosterIsNeverExcused(t *testing.T
 	err := validateCheckpointRoster(cp, rosterSignature(current), legacy)
 	require.Error(t, err, "an empty recorded roster proves nothing about the panel; excusing it resumes across any serial reviewer set")
 	assert.ErrorIs(t, err, errCheckpointRosterMismatch)
+}
+
+// The rejection above is CORRECT and stays — the alternative is resuming against any
+// serial panel. What was wrong is the message. The generic drift text reads "recorded
+// [], configured [dax=m-dax=dax greta=m-greta=greta]; remove the checkpoint to start
+// fresh", which blames a panel change that did not happen and sends the operator to
+// discard a checkpoint holding every already-paid completed case of a suite that
+// routinely exceeds ten minutes of LLM wall-clock. The cause is undiagnosable from that
+// line: the checkpoint was written before the serial lane joined the signature, by a
+// project with no parallel lane, so its roster records nothing and cannot be migrated.
+//
+// That case is reachable by a SHIPPED binary, not only by hand-editing. serial_agents
+// predates the checkpoint Roster field, at merge-base rosterSignature built from
+// cfg.Project.Agents alone, and the Roster tag carries no omitempty — so a serial-only
+// project round-trips `"roster": []` as a non-nil empty slice that clears the
+// cp.Roster == nil guard and falls through to the generic error.
+func TestValidateCheckpointRoster_EmptyRecordedRosterNamesItsOwnCause(t *testing.T) {
+	serialOnly := func() *fanout.ReviewConfig {
+		c := benchCfg([3]string{"dax", "m-dax", "dax"}, [3]string{"greta", "m-greta", "greta"})
+		c.Project.Agents = nil
+		c.Project.SerialAgents = []string{"dax", "greta"}
+		return c
+	}
+	current := serialOnly()
+	legacy := rosterSignatureOf(current, current.Project.Agents)
+
+	err := validateCheckpointRoster(&runCheckpoint{Roster: []string{}}, rosterSignature(current), legacy)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errCheckpointRosterMismatch,
+		"the round-3 blocker stays closed: this is still a rejection, only a better-explained one")
+
+	msg := err.Error()
+	assert.Contains(t, msg, "records an empty reviewer roster",
+		"the message must name what is actually wrong with the checkpoint")
+	assert.Contains(t, msg, "pre-serial-lane binary wrote for a project with no parallel lane",
+		"and how a shipped binary produced it, or the operator reads it as corruption")
+	assert.Contains(t, msg, "truncated or hand-edited",
+		"the cause is offered, not asserted: the same branch is reachable by a corrupt file, "+
+			"and a confident wrong diagnosis is worse than the generic text it replaces")
+	assert.Contains(t, msg, "current panel [",
+		"the configured panel is still carried, so this message loses the operator no data")
+	assert.NotContains(t, msg, "configured [",
+		"the generic drift text blames a panel change that did not happen")
+}
+
+// The distinct message is scoped to an UNSTAMPED checkpoint. A union-stamped one
+// recording an empty roster cannot have come from the pre-serial-lane binary — this
+// binary writes both lanes, and a project with neither is rejected by
+// internal/registry/project.go — so blaming that cause would be a guess. It falls
+// through to the generic drift text instead.
+func TestValidateCheckpointRoster_StampedEmptyRosterKeepsTheGenericMessage(t *testing.T) {
+	c := benchCfg([3]string{"greta", "m-greta", "greta"}, [3]string{"dax", "m-dax", "dax"})
+	c.Project.Agents = []string{"greta"}
+	c.Project.SerialAgents = []string{"dax"}
+
+	cp := &runCheckpoint{Roster: []string{}, RosterFormat: rosterFormatUnion}
+	err := validateCheckpointRoster(cp, rosterSignature(c), rosterSignatureOf(c, c.Project.Agents))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errCheckpointRosterMismatch)
+	assert.NotContains(t, err.Error(), "pre-serial-lane binary",
+		"a stamped roster was not written by the pre-serial-lane binary; offering that cause would be a guess")
+
+	// The test is named for the message it KEEPS, so it must pin that message and not
+	// only the one it avoids. Without these two the whole generic return could be
+	// replaced by a bare `return errCheckpointRosterMismatch` — losing the recorded and
+	// configured diagnostics the operator repairs the checkpoint from — and this test
+	// would stay green. Mutation-verified: stubbing that return to the bare sentinel
+	// fails here.
+	assert.Contains(t, err.Error(), "recorded [",
+		"the generic drift text is what this case falls through to; it carries what the checkpoint recorded")
+	assert.Contains(t, err.Error(), "configured [",
+		"and the panel configured now, which is the pair the operator compares")
+}
+
+// The load-bearing premise of the whole AC5 branch is that `"roster": []` on disk
+// decodes to a NON-NIL zero-length slice, and therefore clears the fail-closed
+// `cp.Roster == nil` guard rather than tripping it. Every other AC5 test asserts
+// that premise only in prose, constructing `&runCheckpoint{Roster: []string{}}` by
+// hand — so the one thing that would falsify it, the Roster tag gaining `omitempty`
+// (a plausible tidy-up, since RosterFormat beside it has one), leaves them all green
+// while the branch becomes unreachable for newly-written files.
+//
+// The round trip goes through saveCheckpoint, not hand-written JSON, because that is
+// the half `omitempty` governs: it drops the key on the WRITE, and a missing key then
+// decodes to nil on the read. A test that hand-writes `"roster":[]` and only unmarshals
+// cannot detect the mutation at all — decoding an explicit empty array yields a non-nil
+// slice with or without the tag. Mutation-verified in a detached worktree: adding
+// `omitempty` to the Roster tag fails this test on `cp.Roster != nil`.
+func TestCheckpoint_EmptyRosterRoundTripsNonNil(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ckpt.json")
+	require.NoError(t, saveCheckpoint(path, &runCheckpoint{
+		ReproHash:    "h",
+		Suite:        "s",
+		SuiteVersion: "1.0.0",
+		Roster:       []string{},
+	}))
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"roster":[]`,
+		"the empty lane must survive the write as an explicit key; omitempty here would erase it")
+
+	cp, err := loadCheckpoint(path)
+	require.NoError(t, err)
+	require.NotNil(t, cp)
+	require.NotNil(t, cp.Roster,
+		"an empty roster must round-trip to a non-nil slice; were it nil the AC5 branch would be "+
+			"unreachable and the cp.Roster == nil guard would swallow the case")
+	assert.Empty(t, cp.Roster, "and it must stay zero-length, which is what the AC5 branch keys on")
+
+	// The premise proven above is exactly what the branch consumes: a non-nil empty
+	// roster clears the nil guard and reaches the named empty-roster rejection.
+	err = validateCheckpointRoster(cp, []string{"dax=m-dax=dax"}, nil)
+	require.ErrorIs(t, err, errCheckpointRosterMismatch)
+	assert.Contains(t, err.Error(), "records an empty reviewer roster",
+		"the round-tripped value takes the named branch, not the nil guard")
 }

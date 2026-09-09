@@ -254,3 +254,57 @@ func TestSaveCheckpoint_PreservesPriorOnWriteFailure(t *testing.T) {
 	assert.Len(t, cp.Cases, 1, "prior valid checkpoint must survive a failed overwrite")
 	assert.Equal(t, "case-01", cp.Cases[0].CaseID)
 }
+
+// RosterFormat is read twice on the resume path (the compat arm and the
+// empty-recorded-roster message both gate on it being ""), so an
+// out-of-vocabulary value silently disables both and hands the operator the
+// generic drift text those arms exist to replace. Reject it at load, the same
+// way the Outcome allowlist is enforced one level down.
+func TestLoadCheckpoint_RosterFormatAllowlist(t *testing.T) {
+	cases := []struct {
+		name    string
+		format  string
+		wantErr bool
+	}{
+		{name: "absent is the legacy shape", format: "", wantErr: false},
+		{name: "union is what this binary writes", format: rosterFormatUnion, wantErr: false},
+		{name: "out-of-vocabulary value is corrupt", format: "v2", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "ckpt.json")
+			data, err := json.Marshal(&runCheckpoint{
+				ReproHash:    "hash",
+				Suite:        "suite",
+				SuiteVersion: "1.0.0",
+				Roster:       []string{"a=m"},
+				RosterFormat: tc.format,
+			})
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(path, data, 0o600))
+			_, err = loadCheckpoint(path)
+			if !tc.wantErr {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.ErrorIs(t, err, errCheckpointCorrupt)
+			assert.Contains(t, err.Error(), `"v2"`, "the offending value must be quoted so the operator can find it in the file")
+		})
+	}
+}
+
+// The generic drift message prints the roster read verbatim out of an
+// operator-supplied, hand-editable checkpoint file. A bidi control inside a
+// roster entry would reorder the rejection text the operator reads when
+// deciding whether to delete a checkpoint holding every already-paid case, so
+// the checkpoint-sourced half is quoted per entry the way reencodeErr quotes a
+// store id. The configured half comes from config, not from the file.
+func TestValidateCheckpointRoster_QuotesTheCheckpointSourcedRoster(t *testing.T) {
+	cp := &runCheckpoint{Roster: []string{"claude=sonnet\u202ex", "otto=gpt"}}
+	err := validateCheckpointRoster(cp, []string{"brad=qwen"}, nil)
+	require.ErrorIs(t, err, errCheckpointRosterMismatch)
+	assert.Contains(t, err.Error(), "recorded [", "the generic message keeps its shape")
+	assert.NotContains(t, err.Error(), "\u202e", "a raw bidi control must never reach the terminal")
+	assert.Contains(t, err.Error(), `"claude=sonnet\u202ex"`, "each recorded entry is quoted, so the control rune renders as its escape")
+}

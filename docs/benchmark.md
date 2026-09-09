@@ -236,6 +236,25 @@ already-paid-for work of cases `1..N-1` would otherwise be lost.
   **fails closed** with a clear message (remove the checkpoint to start fresh) rather
   than silently mixing inconsistent work into a new run. The roster check is separate
   because the reproducibility hash covers only suite content, not the panel.
+- **One exception, for checkpoints written before the serial lane existed.** The
+  recorded roster covers both reviewer lanes and is stamped `roster_format` to say so.
+  A checkpoint written before that stamp existed recorded the parallel lane alone, so
+  comparing it against today's two-lane signature would report a panel change that
+  never happened and send you to discard every already-paid completed case. So an
+  **unstamped** checkpoint whose recorded roster equals the **parallel-lane-only**
+  projection of your current config resumes across an **added serial reviewer** rather
+  than failing closed, and its roster is **upgraded to the union form**.
+  That upgrade is **written back only if the resumed run scores at least one further
+  case** — the checkpoint is saved after a case executes, so a resume that replays
+  every completed case, or aborts before the first one, leaves the legacy form on disk
+  and takes this exception again next time. The exception is narrow by construction: a
+  parallel reviewer whose model or persona drifted still mismatches, a stamped
+  checkpoint never qualifies, and a checkpoint that records an empty roster is rejected
+  outright because an empty roster proves nothing about the panel. The resulting
+  run-result is not apples-to-apples for the reviewer that was added: the replayed
+  cases were reviewed by the parallel lane alone, so the newly-added serial reviewer's
+  coverage spans only the cases executed after the resume, and the run-result's
+  per-reviewer coverage array names the cases each reviewer actually scored.
 
 Checkpointing is **opt-in**: without `--checkpoint`, behavior is unchanged — a
 total-roster case failure still aborts the run (a transient infrastructure failure

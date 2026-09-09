@@ -1147,3 +1147,49 @@ func TestReviewerAcc_FinalizeSurvivesAnEraMissFromByEra(t *testing.T) {
 		assert.Equal(t, "bruce", pr.Persona)
 	})
 }
+
+// The scrub memo must be a pure optimization: a cache pre-populated by the caller's
+// guard has to produce byte-identical output to a cold run, or it is a correctness bug
+// wearing a performance costume.
+func TestExportSelectedCached_MatchesUncachedByteForByte(t *testing.T) {
+	recs := []Record{
+		{SchemaVersion: 1, RecordType: RecordTypeReviewer, RunID: "r1",
+			Reviewer: "greta", Model: "claude-sonnet", FindingsRaised: 3, FindingsCorroborated: 2},
+		{SchemaVersion: 1, RecordType: RecordTypeReviewer, RunID: "r2",
+			Reviewer: "dax", Model: "claude-sonnet", FindingsRaised: 5, FindingsCorroborated: 4},
+	}
+
+	cold, err := ExportSelected(recs, fixedExportNow)
+	require.NoError(t, err)
+
+	// Warm the cache exactly as the CLI guard does — by scrubbing each identity first.
+	warm := ScrubCache{}
+	for _, r := range recs {
+		warm.Scrub(r.Reviewer)
+		warm.Scrub(r.Model)
+	}
+	cached, err := ExportSelectedCached(recs, fixedExportNow, warm)
+	require.NoError(t, err)
+
+	assert.Equal(t, string(cold), string(cached),
+		"a pre-warmed scrub cache must not change a single byte of the published document")
+}
+
+// The memo has to actually memoize, or threading it through buys nothing. Counting
+// distinct keys is the observable proxy: two records sharing a model must leave ONE
+// entry for it, which is also the within-pass dedupe a per-record parallel slice could
+// not provide.
+func TestScrubCache_ComputesOncePerDistinctValue(t *testing.T) {
+	c := ScrubCache{}
+	for i := 0; i < 50; i++ {
+		c.Scrub("claude-sonnet")
+		c.Scrub("greta")
+	}
+	assert.Len(t, c, 2, "50 iterations over 2 distinct identities must leave 2 entries")
+	assert.Equal(t, ScrubPublicString("claude-sonnet"), c.Scrub("claude-sonnet"),
+		"and the memoized value must equal what the uncached scrub returns")
+
+	// A nil cache is a valid no-op cache, so callers never need a branch.
+	var nilCache ScrubCache
+	assert.Equal(t, ScrubPublicString("greta"), nilCache.Scrub("greta"))
+}

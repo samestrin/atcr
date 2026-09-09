@@ -1528,3 +1528,173 @@ func TestRunVerify_ExtraPreservationIsScopedToTheSkipPath(t *testing.T) {
 	assert.NotContains(t, string(data), "escalationTier",
 		"a re-verified record is built from this run's vote — widening this needs the eager prior load the lazy-load guard rules out")
 }
+
+// TestRunVerify_TheCarryArmSelfHealsADroppedTruncationCaveat closes the other half
+// of the re-derivation above.
+//
+// The caveat was re-derived on the reject arms only, which makes it FORWARD-only: it
+// repairs the record the next time a prior is rejected, and never repairs a record
+// already on disk. Once a record carries an empty budget list beside a findings.json
+// block saying Truncated:true, the two verdicts agree by construction on every later
+// run, so the skip path takes the CARRY arm, `rec.TrippedBudgets = prior.TrippedBudgets`
+// copies the empty list forward, and the record can never heal.
+//
+// internal/scorecard then reads truncatedRead([]) as false and credits a partial-read
+// confirm to the reviewer's durable survived_skeptic_rate, permanently. Every artifact
+// written by a binary that predates the re-derivation holds exactly that shape, as does
+// one from a partly-completed publish, so the healing arm is what the fix is worth.
+func TestRunVerify_TheCarryArmSelfHealsADroppedTruncationCaveat(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+		Reviewers: []string{"rev"},
+		Verification: &reclib.Verification{
+			Verdict: "confirmed", Skeptic: "otto", Truncated: true,
+		},
+	}})
+	recon := filepath.Join(dir, reconciledSubdir)
+	// A prior whose verdict MATCHES the block — so the guard accepts it and this is
+	// the carry arm — but whose budget list is empty beside a truncated block. This is
+	// the stuck shape: nothing on the carry path ever put the entry back.
+	require.NoError(t, os.WriteFile(filepath.Join(recon, "verification.json"), []byte(`{"findings":[
+		{"file":"a.go","line":1,"problem":"boom","verdict":"confirmed","skeptic":"otto",
+		 "model":"m-prior","reasoning":"otto read token.go:42","durationMs":1840,
+		 "trippedBudgets":[]}
+	]}`), 0o644))
+
+	_, runErr := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	})
+	require.NoError(t, runErr)
+
+	got := readVerificationRecords(t, recon)[0]
+	require.Equal(t, "m-prior", got.Model,
+		"precondition: the prior was ACCEPTED, so this is the carry arm and not a reject arm")
+	assert.Contains(t, got.TrippedBudgets, budgetToolBytes,
+		"the block says the verdict was answered from a shortened read; a carry arm that cannot restore the entry copies the empty list forward forever")
+}
+
+// The healing must ADD to the carried list, not replace it. max_turns and timeout trips
+// are recorded nowhere else — the findings.json flag covers only the byte budget — so a
+// re-derivation that overwrote the list would silently drop them on every re-verify.
+func TestRunVerify_TheCarryArmAddsTheTruncationCaveatWithoutDroppingOtherTrips(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+		Reviewers: []string{"rev"},
+		Verification: &reclib.Verification{
+			Verdict: "confirmed", Skeptic: "otto", Truncated: true,
+		},
+	}})
+	recon := filepath.Join(dir, reconciledSubdir)
+	require.NoError(t, os.WriteFile(filepath.Join(recon, "verification.json"), []byte(`{"findings":[
+		{"file":"a.go","line":1,"problem":"boom","verdict":"confirmed","skeptic":"otto",
+		 "model":"m-prior","reasoning":"otto read token.go:42","durationMs":1840,
+		 "trippedBudgets":["max_turns"]}
+	]}`), 0o644))
+
+	_, runErr := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	})
+	require.NoError(t, runErr)
+
+	got := readVerificationRecords(t, recon)[0]
+	assert.ElementsMatch(t, []string{"max_turns", budgetToolBytes}, got.TrippedBudgets,
+		"the carried trips survive the heal: nothing else on disk records a max_turns trip")
+}
+
+// The scope guard for the carry-arm heal, matching the one on the reject arms: an
+// untruncated block is the evidence that the read was complete, and inventing an entry
+// there would exclude a sound verdict from the reviewer's ratio.
+func TestRunVerify_TheCarryArmAddsNoCaveatToAnUntruncatedVerdict(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+		Reviewers:    []string{"rev"},
+		Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "otto"},
+	}})
+	recon := filepath.Join(dir, reconciledSubdir)
+	require.NoError(t, os.WriteFile(filepath.Join(recon, "verification.json"), []byte(`{"findings":[
+		{"file":"a.go","line":1,"problem":"boom","verdict":"confirmed","skeptic":"otto",
+		 "model":"m-prior","reasoning":"otto read token.go:42","durationMs":1840,
+		 "trippedBudgets":[]}
+	]}`), 0o644))
+
+	_, runErr := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	})
+	require.NoError(t, runErr)
+
+	assert.Empty(t, readVerificationRecords(t, recon)[0].TrippedBudgets,
+		"an untruncated block describes a complete read; a caveat invented here excludes a sound verdict from the ratio")
+}
+
+// TestRunVerify_TheCarryArmDoesNotPropagateAContradictoryWithheldReason enforces the
+// invariant the carry actually relies on instead of assuming it.
+//
+// The carry's own comment states the precondition — "prior.Model is empty on exactly
+// the records that carry a reason" — and then copies the reason without checking it.
+// In-tree that holds: only the two reject arms originate a reason and both leave Model
+// empty. A hand-edited or foreign verification.json carrying BOTH is outside that
+// guarantee, and the copy propagates the contradiction forward on every re-verify —
+// where the pre-change behaviour was to drop it, because the record was rebuilt from
+// the findings.json block and the reason was simply never re-derived.
+//
+// A record naming a model AND claiming its attribution was withheld tells a reader two
+// incompatible things about the same field, on the artifact the audit trail is read
+// from. Self-healing is the safe direction: the model is real evidence, the reason
+// contradicts it.
+func TestRunVerify_TheCarryArmDoesNotPropagateAContradictoryWithheldReason(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+		Reviewers:    []string{"rev"},
+		Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "otto"},
+	}})
+	recon := filepath.Join(dir, reconciledSubdir)
+	// Verdict matches, so the guard accepts the prior and this is the carry arm — but
+	// the record carries a model AND a withheld reason, which no in-tree arm produces.
+	require.NoError(t, os.WriteFile(filepath.Join(recon, "verification.json"), []byte(`{"findings":[
+		{"file":"a.go","line":1,"problem":"boom","verdict":"confirmed","skeptic":"otto",
+		 "model":"m-prior","reasoning":"otto read token.go:42","durationMs":1840,
+		 "modelWithheldReason":"verdict_shifted","trippedBudgets":[]}
+	]}`), 0o644))
+
+	_, runErr := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	})
+	require.NoError(t, runErr)
+
+	got := readVerificationRecords(t, recon)[0]
+	require.Equal(t, "m-prior", got.Model,
+		"precondition: this is the carry arm, and the attribution itself still travels")
+	assert.Empty(t, got.ModelWithheldReason,
+		"a reason beside a named model is a contradiction the record must shed, not carry forward forever")
+}
+
+// The scope guard: the carry that the fix above narrows is load-bearing on the shape it
+// was written for. A prior with NO model and a reason must still hand the reason on, or
+// the marker lasts one generation and the record decays to bytes indistinguishable from
+// "no skeptic ran".
+func TestRunVerify_TheCarryArmStillCarriesAWithheldReasonBesideABlankModel(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+		Reviewers:    []string{"rev"},
+		Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "otto"},
+	}})
+	recon := filepath.Join(dir, reconciledSubdir)
+	require.NoError(t, os.WriteFile(filepath.Join(recon, "verification.json"), []byte(`{"findings":[
+		{"file":"a.go","line":1,"problem":"boom","verdict":"confirmed","skeptic":"otto",
+		 "model":"","reasoning":"otto read token.go:42","durationMs":1840,
+		 "modelWithheldReason":"verdict_shifted","trippedBudgets":[]}
+	]}`), 0o644))
+
+	_, runErr := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	})
+	require.NoError(t, runErr)
+
+	assert.Equal(t, "verdict_shifted", readVerificationRecords(t, recon)[0].ModelWithheldReason,
+		"the marker explains the blank it sits beside; dropping it here is the decay the carry exists to prevent")
+}
