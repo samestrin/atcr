@@ -412,3 +412,83 @@ func TestRangeBuilder_NegativeMaxClaimBytesDisablesRatherThanUnbounds(t *testing
 	rb := NewRangeBuilder(context.Background(), dir, base, head, WithMaxClaimBytes(-1))
 	assert.Empty(t, rb.claimLedger(), "a negative ceiling disables; it must not read the whole history")
 }
+
+// The ledger's failure case and its empty case used to be byte-for-byte
+// indistinguishable in every persisted artifact: an unreadable `git log` degrades
+// to an EMPTY ledger with only a Warn line, so a run that LOST its ledger to a
+// transient git failure looked exactly like a branch whose commits asserted
+// nothing. ClaimLedgerStatus is what separates them.
+func TestRangeBuilder_ClaimLedgerStatusSeparatesFailureFromAClaimFreeBranch(t *testing.T) {
+	newRepo := func(t *testing.T, subject string) (dir, base, head string) {
+		t.Helper()
+		dir = initRepo(t)
+		write(t, dir, "foo.go", goFileV1)
+		base = commitAll(t, dir, "seed the file")
+		write(t, dir, "foo.go", goFileV2)
+		head = commitAll(t, dir, subject)
+		return dir, base, head
+	}
+
+	t.Run("a real ledger is present and counted", func(t *testing.T) {
+		dir, base, head := newRepo(t, "make Foo return two\n\n- Foo() now returns 2 instead of 1\n")
+		rb := NewRangeBuilder(context.Background(), dir, base, head)
+		_, err := rb.BuildEntries(ModeDiff)
+		require.NoError(t, err)
+
+		st := rb.ClaimLedgerStatus()
+		assert.True(t, st.Present)
+		assert.Equal(t, 2, st.Claims, "the subject and the bullet")
+		assert.False(t, st.Failed)
+		assert.False(t, st.Disabled)
+		assert.False(t, st.Truncated)
+	})
+
+	t.Run("a claim-free branch is absent but NOT failed", func(t *testing.T) {
+		// "wip" is filtered as a noise subject, so the range yields zero claims and
+		// claimLedgerSection renders nothing at all.
+		dir, base, head := newRepo(t, "wip")
+		rb := NewRangeBuilder(context.Background(), dir, base, head)
+		_, err := rb.BuildEntries(ModeDiff)
+		require.NoError(t, err)
+
+		st := rb.ClaimLedgerStatus()
+		assert.False(t, st.Present, "a zero-claim ledger renders nothing, so nothing is present")
+		assert.Zero(t, st.Claims)
+		assert.False(t, st.Failed, "the read SUCCEEDED and found no assertion — that is not a failure")
+	})
+
+	t.Run("an unreadable range is failed, not merely absent", func(t *testing.T) {
+		dir, _, head := newRepo(t, "make Foo return two\n\n- Foo() now returns 2 instead of 1\n")
+		rb := NewRangeBuilder(context.Background(), dir, "no-such-ref", head)
+		assert.Empty(t, rb.claimLedger())
+
+		st := rb.ClaimLedgerStatus()
+		assert.True(t, st.Failed, "a git error must be recorded, or it is indistinguishable from a claim-free branch")
+		assert.False(t, st.Present)
+		assert.False(t, st.Disabled, "the operator did not turn it off; the read broke")
+	})
+
+	t.Run("a disabled ledger is disabled, not failed", func(t *testing.T) {
+		dir, base, head := newRepo(t, "make Foo return two\n\n- Foo() now returns 2 instead of 1\n")
+		rb := NewRangeBuilder(context.Background(), dir, base, head, WithMaxClaimBytes(0))
+		_, err := rb.BuildEntries(ModeDiff)
+		require.NoError(t, err)
+
+		st := rb.ClaimLedgerStatus()
+		assert.True(t, st.Disabled, "max_claim_bytes: 0 is an operator choice, not a fault")
+		assert.False(t, st.Failed, "'you told us not to' must never read as 'we could not'")
+		assert.False(t, st.Present)
+	})
+
+	t.Run("a truncated read is present but flagged incomplete", func(t *testing.T) {
+		dir, base, head := newRepo(t, "make Foo return two\n\n"+
+			strings.Repeat("- a padding claim that is quite long indeed\n", 200))
+		rb := NewRangeBuilder(context.Background(), dir, base, head, WithMaxClaimBytes(256))
+		_, err := rb.BuildEntries(ModeDiff)
+		require.NoError(t, err)
+
+		st := rb.ClaimLedgerStatus()
+		assert.True(t, st.Present)
+		assert.True(t, st.Truncated, "claims were shed at the cap, so the ledger is incomplete and must say so")
+	})
+}

@@ -559,9 +559,14 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 		// produces a manifest byte-identical to earlier versions'.
 		PerFilePayload:     perFileModes(payloads),
 		EscalationDegraded: rb != nil && rb.EscalationDegraded(),
-		Roster:             rosterNames(cfg.Project),
-		StartedAt:          req.StartedAt,
-		Partial:            false, // finalized by ExecuteReview once outcomes are known
+		// Claim-ledger outcome (Epic 35.16.7). nil when there was no RangeBuilder to
+		// read from — the baseline and --diff-file paths — which keeps those
+		// manifests byte-identical to earlier versions' and keeps "no range" distinct
+		// from "range read, ledger absent".
+		ClaimLedger: claimLedgerStatus(rb),
+		Roster:      rosterNames(cfg.Project),
+		StartedAt:   req.StartedAt,
+		Partial:     false, // finalized by ExecuteReview once outcomes are known
 		// Persist --no-ignore so a resume recovers the filtering mode from disk
 		// rather than the resume request (the completed agents' context is locked).
 		NoIgnore: req.NoIgnore,
@@ -3738,4 +3743,17 @@ func resolveMaxTokens(ac registry.AgentConfig, override int) int {
 // the definition of code that documents a contract it cannot enforce.
 func maxTokensFor(cfg *ReviewConfig, ac registry.AgentConfig) int {
 	return resolveMaxTokens(ac, cfg.Settings.MaxTokens)
+}
+
+// claimLedgerStatus lifts a RangeBuilder's claim-ledger outcome into the
+// manifest's optional field. A nil builder yields nil, not a zero struct: the
+// baseline (--all/--dir) and --diff-file paths have no range to read commit
+// messages from, and recording Present=false there would assert that a branch
+// claimed nothing when in fact nothing was ever asked.
+func claimLedgerStatus(rb *payload.RangeBuilder) *payload.ClaimLedgerStatus {
+	if rb == nil {
+		return nil
+	}
+	s := rb.ClaimLedgerStatus()
+	return &s
 }

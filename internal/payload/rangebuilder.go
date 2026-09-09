@@ -35,6 +35,46 @@ type RangeBuilder struct {
 	// what identical-across-agents reduces to.
 	claims     string
 	claimsDone bool
+	// claimStatus records what the ledger read actually produced, so a run that
+	// LOST its ledger stays distinguishable from a branch that asserted nothing.
+	// Populated by claimLedger alongside claims, under the same memo.
+	claimStatus ClaimLedgerStatus
+}
+
+// ClaimLedgerStatus reports what the claim-ledger read produced for a range.
+//
+// It exists because the failure and the empty case were byte-for-byte
+// indistinguishable in every persisted artifact: claimLedger degrades an
+// unreadable `git log` to an EMPTY ledger with only a Warn line, and memoizes
+// that failure for the whole run. Nothing downstream recorded that a ledger was
+// expected and did not arrive, so a run that lost its ledger to a transient git
+// failure looked exactly like a branch whose commits asserted nothing — and the
+// Warn line cannot carry review_id (see claimLedger), so it is not even
+// correlatable after the fact.
+//
+// Each field answers a question the artifacts previously could not:
+//   - Present: did a ledger reach the payload at all?
+//   - Claims: how many assertions were enumerated?
+//   - Truncated: were claims shed at a cap, so the ledger is incomplete?
+//   - Failed: did the read ERROR (as opposed to finding nothing)?
+//   - Disabled: did the operator turn the feature off via max_claim_bytes: 0?
+//
+// Failed and Disabled are separate on purpose: "we could not read it" and "you
+// told us not to" are opposite operational signals, and collapsing them into
+// "absent" is the ambiguity this type exists to remove.
+type ClaimLedgerStatus struct {
+	Present   bool `json:"present"`
+	Claims    int  `json:"claims"`
+	Truncated bool `json:"truncated,omitempty"`
+	Failed    bool `json:"failed,omitempty"`
+	Disabled  bool `json:"disabled,omitempty"`
+}
+
+// ClaimLedgerStatus returns the range's claim-ledger outcome. Call it after a
+// BuildEntries; before any build it reports the zero value (which reads as
+// "absent", the honest answer when nothing has been attempted).
+func (b *RangeBuilder) ClaimLedgerStatus() ClaimLedgerStatus {
+	return b.claimStatus
 }
 
 // RangeOption customizes the gitRunner a RangeBuilder wraps. It exists so review
@@ -209,16 +249,30 @@ func (b *RangeBuilder) claimLedger() string {
 	// unlimited" parameter convention; passing the setting straight through would
 	// invert it into an UNBOUNDED read, the exact opposite of what was asked for.
 	if b.g.maxClaimBytes <= 0 {
+		b.claimStatus = ClaimLedgerStatus{Disabled: true}
 		return b.claims
 	}
 	msgs, truncated, err := b.g.commitMessages(b.base, b.head, b.g.maxClaimBytes, DefaultMaxClaimCommits)
 	if err != nil {
 		b.g.log().Warn("payload: commit messages unreadable; review proceeds without a claim ledger",
 			"base", b.base, "head", b.head, "error", err)
+		b.claimStatus = ClaimLedgerStatus{Failed: true}
 		return b.claims
 	}
 	claims, fenceSuppressed := splitClaims(msgs)
 	b.claims = claimLedgerSection(claims, truncated, fenceSuppressed)
+	b.claimStatus = ClaimLedgerStatus{
+		// Present tracks the RENDERED section, not the claim count: a zero-claim
+		// ledger renders nothing at all (claimLedgerSection returns ""), so there is
+		// no entry to report and "present" would be a false claim.
+		Present: b.claims != "",
+		Claims:  len(claims),
+		// A fence that swallowed body text is claim loss exactly like a byte-cap
+		// shed, and the section discloses both the same way — so the status records
+		// both under one flag rather than inventing a distinction the payload text
+		// does not make.
+		Truncated: truncated != claimsComplete || fenceSuppressed,
+	}
 	return b.claims
 }
 

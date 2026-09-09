@@ -2,6 +2,7 @@ package fanout
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -80,4 +81,74 @@ func TestClaimLedger_LinelessUnsupportedFindingSurvivesGroundingAndReachesTheRep
 		"the verdict must reach the artifact a human actually reads")
 	assert.NotContains(t, string(report), "never/touched.go",
 		"the ungrounded control verdict must not reach report.md")
+}
+
+// The manifest is the artifact an operator reads AFTER the fact, and it is where
+// the claim ledger's outcome has to be recoverable: a run that lost its ledger to
+// a transient git failure was previously byte-for-byte indistinguishable there
+// from a branch whose commits asserted nothing. This drives a real review and
+// reads the persisted manifest, so the whole wire — RangeBuilder → buildPayloads
+// → manifest → disk — is under test, not just the accessor.
+func TestManifest_ClaimLedgerStatusDistinguishesFailureFromAClaimFreeBranch(t *testing.T) {
+	readManifest := func(t *testing.T, dir string) map[string]any {
+		t.Helper()
+		b, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+		require.NoError(t, err)
+		var m map[string]any
+		require.NoError(t, json.Unmarshal(b, &m))
+		return m
+	}
+
+	t.Run("a claiming branch records present with a claim count", func(t *testing.T) {
+		// fanoutRepo's head commit carries a subject and two bullets.
+		repo, base, head := fanoutRepo(t)
+		req := reviewReq(repo, repo, base, head)
+		req.OutputDir = filepath.Join(t.TempDir(), "review")
+		prep, err := PrepareReview(context.Background(), twoAgentConfig("http://unused"), req)
+		require.NoError(t, err)
+
+		cl, ok := readManifest(t, prep.Dir)["claim_ledger"].(map[string]any)
+		require.True(t, ok, "a git-range review must record claim_ledger in its manifest")
+		assert.Equal(t, true, cl["present"])
+		assert.Greater(t, cl["claims"], float64(0), "the fixture's commits assert something")
+		assert.Nil(t, cl["failed"], "a successful read must not be recorded as a failure")
+		assert.Nil(t, cl["disabled"])
+	})
+
+	// The distinction the field exists for, at the artifact layer: a branch that
+	// asserted nothing is recorded as absent WITHOUT failed, so a reader can tell it
+	// apart from a run whose ledger read broke. initRepo's head commit subject is a
+	// single word, which isClaimBearing drops, so the range genuinely yields none.
+	t.Run("a claim-free branch is absent but not failed", func(t *testing.T) {
+		repo, base, head := initRepo(t)
+		req := reviewReq(repo, repo, base, head)
+		req.OutputDir = filepath.Join(t.TempDir(), "review")
+		prep, err := PrepareReview(context.Background(), twoAgentConfig("http://unused"), req)
+		require.NoError(t, err)
+
+		cl, ok := readManifest(t, prep.Dir)["claim_ledger"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, false, cl["present"])
+		assert.Nil(t, cl["failed"],
+			"the read succeeded and found no assertion — recording that as a failure would be the same conflation, inverted")
+	})
+
+	// max_claim_bytes: 0 is an operator choice and must be legible as one in the
+	// artifact, never as an absent or failed ledger.
+	t.Run("a disabled ledger is recorded as disabled", func(t *testing.T) {
+		repo, base, head := fanoutRepo(t)
+		cfg := twoAgentConfig("http://unused")
+		zero := int64(0)
+		cfg.Settings.MaxClaimBytes = &zero
+		req := reviewReq(repo, repo, base, head)
+		req.OutputDir = filepath.Join(t.TempDir(), "review")
+		prep, err := PrepareReview(context.Background(), cfg, req)
+		require.NoError(t, err)
+
+		cl, ok := readManifest(t, prep.Dir)["claim_ledger"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, true, cl["disabled"])
+		assert.Equal(t, false, cl["present"])
+		assert.Nil(t, cl["failed"], "'you told us not to' must never read as 'we could not'")
+	})
 }
