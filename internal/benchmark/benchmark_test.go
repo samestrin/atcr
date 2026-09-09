@@ -175,6 +175,34 @@ func TestLoad_MissingSuiteJSON(t *testing.T) {
 	require.Error(t, err, "a directory without suite.json must fail to load")
 }
 
+// A suite.json declaring a DIFFERENT suite tier is not a broken standard-v1
+// manifest, and reporting it as one ("diff path is required") sends the reader
+// hunting for a field that format never had. The discriminator is guaranteed
+// present (benchmarks/repo-state-v1/FORMAT.md), so the loader can consult it
+// before field validation and name the tier instead.
+func TestLoad_RejectsAKnownOtherSuiteFormatByItsDiscriminator(t *testing.T) {
+	dir := t.TempDir()
+	writeManifest(t, dir, `{"suite":"repo-state-v1","suite_version":"1.0.0","cases":[{"id":"c1","dir":"c1"}]}`)
+	_, err := Load(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported suite format")
+	assert.Contains(t, err.Error(), "repo-state-v1")
+	assert.Contains(t, err.Error(), "FORMAT.md", "the error must name the document that defines the tier")
+	assert.NotContains(t, err.Error(), "diff path is required",
+		"this is a different tier, not a standard-v1 manifest missing a field")
+}
+
+// A suite name this loader does not recognise is still an ordinary standard-v1
+// suite: users bundle their own. Only a KNOWN other tier is rejected, so the
+// discriminator check cannot become a whitelist on suite names.
+func TestLoad_AcceptsAnUnrecognisedSuiteNameAsStandardV1(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "c1.diff"), []byte("diff --git a/x b/x\n"), 0o600))
+	writeManifest(t, dir, `{"suite":"my-private-suite","suite_version":"1.0.0","cases":[{"id":"c1","diff":"c1.diff","expected_categories":["x"]}]}`)
+	_, err := Load(dir)
+	require.NoError(t, err, "an unknown suite name is not a different tier")
+}
+
 func TestLoad_RejectsMissingDiffFile(t *testing.T) {
 	dir := t.TempDir()
 	writeManifest(t, dir, `{"suite":"s","suite_version":"1.0.0","cases":[{"id":"c1","diff":"nope.diff","expected_categories":["x"]}]}`)
