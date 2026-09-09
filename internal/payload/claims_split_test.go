@@ -108,13 +108,64 @@ func TestSplitClaims_ARunawayParagraphIsCappedAndMarkedElided(t *testing.T) {
 
 	require.Len(t, got, 2, "the subject and the capped paragraph")
 	assert.Equal(t, "fix the drain", got[0])
-	assert.LessOrEqual(t, len(got[1]), maxClaimRenderBytes+len(claimElidedMarker),
-		"one paragraph must not be able to occupy the whole ledger budget")
+	assert.LessOrEqual(t, len(got[1]), maxClaimRenderBytes,
+		"the marker rides INSIDE the cap, so a capped claim never exceeds it")
 	assert.True(t, strings.HasSuffix(got[1], claimElidedMarker),
 		"a capped claim must disclose that it was cut, never read as complete")
 	assert.True(t, strings.HasPrefix(got[1], "the drain keeps going "),
 		"the opening of the claim is what survives")
 	assert.True(t, utf8.ValidString(got[1]), "the cap must not split a rune")
+}
+
+// The cap is applied at the renderer too, not only at the splitter: claimLedgerSection
+// is reachable directly, and a caller that hands it an uncapped claim must not be
+// able to put an unbounded line into a reviewer's prompt. Capping twice must be a
+// no-op — a nested or amputated marker would be worse than no cap at all.
+func TestClaimLedgerSection_CapsAnUncappedClaimAndIsIdempotent(t *testing.T) {
+	runaway := "the drain keeps going " + strings.Repeat("x", maxClaimRenderBytes)
+	capped := capClaim(sanitizeClaim(runaway))
+	require.Equal(t, maxClaimRenderBytes, len(capped), "the marker rides inside the cap")
+	require.True(t, strings.HasSuffix(capped, claimElidedMarker))
+
+	// Handed straight to the renderer, never through the splitter.
+	direct := claimLedgerSection([]string{runaway}, claimsComplete, false)
+	assert.Contains(t, direct, "\n1. "+capped+"\n",
+		"a claim handed straight to the renderer must still be capped")
+	assert.Equal(t, 1, strings.Count(direct, claimElidedMarker))
+
+	// Through the splitter (already capped once), then rendered: byte-identical to
+	// the direct path. A second cut would amputate 21 more bytes of real text.
+	split, _ := splitClaims([]string{"fix the drain\n\n" + runaway})
+	require.Len(t, split, 2)
+	viaSplitter := claimLedgerSection(split, claimsComplete, false)
+	assert.Contains(t, viaSplitter, "\n2. "+capped+"\n",
+		"capping an already-capped claim must be a no-op")
+	assert.Equal(t, 1, strings.Count(viaSplitter, claimElidedMarker))
+
+	// Idempotence directly, across lengths that straddle the cap and across a
+	// multibyte body where the cut has to back up to a rune boundary. A cap whose
+	// DECISION threshold is the cut point rather than the cap itself re-cuts an
+	// already-capped claim, and on these inputs that leaves a stray fragment of the
+	// previous marker embedded in the text.
+	// The ASCII prefix length is swept so that at least one case puts the cut point
+	// mid-rune and forces capUTF8 to back up — that is the case where a re-cut
+	// slices INTO the previous marker instead of removing it whole.
+	for _, n := range []int{maxClaimRenderBytes - 2, maxClaimRenderBytes - 1, maxClaimRenderBytes,
+		maxClaimRenderBytes + 1, maxClaimRenderBytes * 2} {
+		for pad := 0; pad < 4; pad++ {
+			prefix := "le curseur" + strings.Repeat("s", pad) + " "
+			for _, body := range []string{prefix + strings.Repeat("x", n), prefix + strings.Repeat("é", n)} {
+				once := capClaim(body)
+				assert.Equal(t, once, capClaim(once),
+					"capClaim must be idempotent (n=%d pad=%d, %d bytes in)", n, pad, len(body))
+				assert.LessOrEqual(t, len(once), maxClaimRenderBytes,
+					"a capped claim must never exceed the cap (n=%d pad=%d)", n, pad)
+				assert.True(t, utf8.ValidString(once))
+				assert.LessOrEqual(t, strings.Count(once, claimElidedMarker), 1,
+					"a claim must never carry a nested elision marker (n=%d pad=%d)", n, pad)
+			}
+		}
+	}
 }
 
 // A claim at or under the cap is untouched — no marker, no truncation. The cap is

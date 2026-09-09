@@ -260,9 +260,7 @@ func splitClaims(msgs []string) (claims []string, fenceSuppressed bool) {
 		// anything to a reviewer, and two claims that render identically are
 		// indistinguishable on the page. A claim long enough to collide past a
 		// 1 KiB prefix does not exist in real commit prose.
-		if capped, cut := capUTF8(c, maxClaimRenderBytes); cut {
-			c = capped + claimElidedMarker
-		}
+		c = capClaim(c)
 		if !isClaimBearing(c) {
 			return
 		}
@@ -376,6 +374,29 @@ const maxClaimRenderBytes = 1024
 // shown a different assertion from the one the author made. Spelled without a
 // dash run and without any line-break rune so sanitizeClaim cannot rewrite it.
 const claimElidedMarker = " […claim truncated]"
+
+// capClaim bounds one rendered claim at maxClaimRenderBytes, marking it elided
+// when it cuts.
+//
+// The cut is taken at maxClaimRenderBytes MINUS the marker, so the marker is
+// inside the budget rather than pushing the result past it. That is what makes
+// capClaim idempotent: a capped claim is already at or under the cap, so a
+// second pass finds nothing to cut and cannot nest a second marker or amputate
+// the first — which matters because it is applied at BOTH the splitter and the
+// renderer, exactly like sanitizeClaim and for the same reason. claimLedgerSection
+// is reachable directly, and a renderer that trusted its input to be pre-capped
+// would put the budget guard one caller away from the prompt it protects.
+func capClaim(c string) string {
+	// The DECISION threshold is the cap itself; the CUT point leaves room for the
+	// marker. Testing against the cut point instead would re-cut an already-capped
+	// claim — it is exactly maxClaimRenderBytes long — amputating real text on
+	// every extra pass.
+	if len(c) <= maxClaimRenderBytes {
+		return c
+	}
+	capped, _ := capUTF8(c, maxClaimRenderBytes-len(claimElidedMarker))
+	return capped + claimElidedMarker
+}
 
 // isClaimBearing rejects candidates that assert nothing: a bare token ("wip",
 // "fixup"), a punctuation run, or an empty string. The bar is deliberately low
@@ -681,7 +702,7 @@ func claimLedgerSection(claims []string, truncated claimsTruncation, fenceSuppre
 		// The call stays because this function is also reachable directly, and a
 		// renderer that trusted its input to be pre-sanitized would put the
 		// framing defense one caller away from the prompt it protects.
-		fmt.Fprintf(&b, "%d. %s\n", i+1, sanitizeClaim(c))
+		fmt.Fprintf(&b, "%d. %s\n", i+1, capClaim(sanitizeClaim(c)))
 	}
 	b.WriteString(claimsEndMarker + "\n\n")
 	return b.String()
