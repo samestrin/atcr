@@ -2,6 +2,7 @@ package payload
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -111,6 +112,24 @@ func TestCommitMessages_UnresolvableRangeReturnsError(t *testing.T) {
 	g := newGitRunner(context.Background(), dir)
 	_, _, err := g.commitMessages("no-such-ref", head, DefaultMaxClaimBytes, DefaultMaxClaimCommits)
 	require.Error(t, err, "the low-level read reports the failure; the ledger seam is what swallows it")
+}
+
+// claims.go states that --end-of-options "blocks option injection via a ref
+// beginning with '-', matching verifyRef". Nothing asserted it: the only
+// ref-failure case used a benign "no-such-ref", so removing the flag from the
+// argv left the whole suite green. A ref beginning with '-' is attacker-shaped
+// input reaching an exec argv — git would read "--output=/tmp/pwned" as its own
+// option and WRITE that file — so the property has to be pinned, not documented.
+func TestCommitMessages_RefBeginningWithDashIsNotAnOption(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.txt", "1")
+	head := commitAll(t, dir, "only commit")
+
+	victim := filepath.Join(t.TempDir(), "pwned")
+	g := newGitRunner(context.Background(), dir)
+	_, _, err := g.commitMessages("--output="+victim, head, DefaultMaxClaimBytes, DefaultMaxClaimCommits)
+	require.Error(t, err, "a ref beginning with '-' must fail as a ref, never be consumed as an option")
+	assert.NoFileExists(t, victim, "git executed the injected option and wrote a file")
 }
 
 // The cap must shed the OLDEST commits, never the newest: the claim a reviewer
