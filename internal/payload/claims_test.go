@@ -1,0 +1,158 @@
+package payload
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"unicode/utf8"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// commitMessages is the claim source: the ledger can only ask a reviewer to
+// adjudicate an assertion the author actually made, so the read has to reach
+// every non-merge commit in the range and preserve the message text verbatim.
+
+func TestCommitMessages_ReturnsEveryCommitOldestFirst(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.txt", "1")
+	base := commitAll(t, dir, "first commit\n\nfirst body line.")
+	write(t, dir, "a.txt", "2")
+	commitAll(t, dir, "second commit\n\nsecond body line.")
+	write(t, dir, "a.txt", "3")
+	head := commitAll(t, dir, "third commit")
+
+	g := newGitRunner(context.Background(), dir)
+	msgs, truncated, err := g.commitMessages(base, head, DefaultMaxClaimBytes)
+	require.NoError(t, err)
+	assert.False(t, truncated)
+	require.Len(t, msgs, 2, "base itself is not in base..head; only the two commits after it are")
+	assert.Equal(t, "second commit\n\nsecond body line.", msgs[0])
+	assert.Equal(t, "third commit", msgs[1])
+}
+
+// A merge commit's message is git's own boilerplate ("Merge branch 'x'"), not an
+// author's claim about the diff. Feeding it to the panel would manufacture a
+// claim nobody made, and every such claim is UNSUPPORTED by construction.
+func TestCommitMessages_ExcludesMergeCommits(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.txt", "1")
+	base := commitAll(t, dir, "base commit")
+
+	gitCmd(t, dir, "checkout", "-q", "-b", "side")
+	write(t, dir, "side.txt", "s")
+	commitAll(t, dir, "side commit")
+
+	gitCmd(t, dir, "checkout", "-q", "main")
+	write(t, dir, "main.txt", "m")
+	commitAll(t, dir, "main commit")
+	gitCmd(t, dir, "merge", "--no-ff", "-q", "-m", "Merge branch 'side'", "side")
+	head := gitCmd(t, dir, "rev-parse", "HEAD")
+
+	g := newGitRunner(context.Background(), dir)
+	msgs, _, err := g.commitMessages(base, head, DefaultMaxClaimBytes)
+	require.NoError(t, err)
+	for _, m := range msgs {
+		assert.NotContains(t, m, "Merge branch")
+	}
+	assert.Contains(t, msgs, "side commit")
+	assert.Contains(t, msgs, "main commit")
+}
+
+func TestCommitMessages_EmptyRangeYieldsNoMessages(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.txt", "1")
+	head := commitAll(t, dir, "only commit")
+
+	g := newGitRunner(context.Background(), dir)
+	msgs, truncated, err := g.commitMessages(head, head, DefaultMaxClaimBytes)
+	require.NoError(t, err)
+	assert.Empty(t, msgs)
+	assert.False(t, truncated)
+}
+
+func TestCommitMessages_UnresolvableRangeReturnsError(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.txt", "1")
+	head := commitAll(t, dir, "only commit")
+
+	g := newGitRunner(context.Background(), dir)
+	_, _, err := g.commitMessages("no-such-ref", head, DefaultMaxClaimBytes)
+	require.Error(t, err, "the low-level read reports the failure; the ledger seam is what swallows it")
+}
+
+// The cap must shed the OLDEST commits, never the newest: the claim a reviewer
+// most needs to adjudicate is the one the branch tip just made.
+func TestCommitMessages_CapShedsOldestAndReportsTruncation(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.txt", "0")
+	base := commitAll(t, dir, "base commit")
+	write(t, dir, "a.txt", "1")
+	commitAll(t, dir, "oldest claim "+strings.Repeat("x", 200))
+	write(t, dir, "a.txt", "2")
+	commitAll(t, dir, "middle claim "+strings.Repeat("y", 200))
+	write(t, dir, "a.txt", "3")
+	head := commitAll(t, dir, "newest claim")
+
+	g := newGitRunner(context.Background(), dir)
+	// Room for the newest message and nothing else.
+	msgs, truncated, err := g.commitMessages(base, head, 60)
+	require.NoError(t, err)
+	assert.True(t, truncated, "dropping a commit's claims must be recorded, never silent")
+	require.Len(t, msgs, 1)
+	assert.Equal(t, "newest claim", msgs[0])
+}
+
+// A single message larger than the whole cap must still yield its opening bytes
+// rather than nothing: an empty ledger on an over-long message would look
+// identical to a branch that made no claims at all.
+func TestCommitMessages_SingleOversizedMessageIsCappedNotDropped(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.txt", "0")
+	base := commitAll(t, dir, "base commit")
+	write(t, dir, "a.txt", "1")
+	head := commitAll(t, dir, "huge claim "+strings.Repeat("z", 500))
+
+	g := newGitRunner(context.Background(), dir)
+	msgs, truncated, err := g.commitMessages(base, head, 50)
+	require.NoError(t, err)
+	assert.True(t, truncated)
+	require.Len(t, msgs, 1)
+	assert.LessOrEqual(t, len(msgs[0]), 50)
+	assert.True(t, strings.HasPrefix(msgs[0], "huge claim "))
+}
+
+// The cap is a byte cap, so a multibyte rune must never be cut in half — an
+// invalid-UTF-8 payload section is a rendering hazard for every downstream
+// consumer.
+func TestCommitMessages_CapNeverSplitsARune(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.txt", "0")
+	base := commitAll(t, dir, "base commit")
+	write(t, dir, "a.txt", "1")
+	head := commitAll(t, dir, strings.Repeat("é", 100))
+
+	g := newGitRunner(context.Background(), dir)
+	msgs, truncated, err := g.commitMessages(base, head, 51) // odd cap, 2-byte runes
+	require.NoError(t, err)
+	assert.True(t, truncated)
+	require.Len(t, msgs, 1)
+	assert.True(t, utf8.ValidString(msgs[0]), "capped message must remain valid UTF-8")
+}
+
+func TestCommitMessages_ZeroMaxBytesMeansUnlimited(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.txt", "0")
+	base := commitAll(t, dir, "base commit")
+	write(t, dir, "a.txt", "1")
+	commitAll(t, dir, "claim one "+strings.Repeat("x", 500))
+	write(t, dir, "a.txt", "2")
+	head := commitAll(t, dir, "claim two "+strings.Repeat("y", 500))
+
+	g := newGitRunner(context.Background(), dir)
+	msgs, truncated, err := g.commitMessages(base, head, 0)
+	require.NoError(t, err)
+	assert.False(t, truncated)
+	assert.Len(t, msgs, 2)
+}
