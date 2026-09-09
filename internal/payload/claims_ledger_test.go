@@ -249,3 +249,34 @@ func reviewableBuildEntries(rb *RangeBuilder, mode PayloadMode) ([]FileEntry, er
 	}
 	return reviewableEntries(entries), nil
 }
+
+// The claim ledger is an ADDITIONAL input to a review. When git cannot produce
+// a log the review must still run, unadorned — failing the whole review because
+// the ledger could not be built would trade a complete review for none at all.
+func TestRangeBuilder_UnreadableRangeYieldsAnEmptyLedgerNotAnError(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "foo.go", goFileV1)
+	head := commitAll(t, dir, "seed the file with a real claim in it")
+
+	rb := NewRangeBuilder(context.Background(), dir, "no-such-ref", head)
+	assert.Empty(t, rb.claimLedger(), "an unreadable range degrades to no ledger")
+
+	// The degraded result is memoized like any other, so a failed read costs one
+	// git process for the whole builder rather than one per payload mode.
+	before := rb.g.execCount
+	assert.Empty(t, rb.claimLedger())
+	assert.Equal(t, before, rb.g.execCount)
+}
+
+// withClaimLedger must leave a payload that already has no reviewable content
+// exactly as it found it: an empty entry set is how the review layer detects
+// "nothing to review", and a lone ledger entry would answer that question wrong.
+func TestWithClaimLedger_LeavesAnEmptyEntrySetEmpty(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "foo.go", goFileV1)
+	head := commitAll(t, dir, "seed the file with a real claim in it")
+
+	rb := NewRangeBuilder(context.Background(), dir, head, head)
+	assert.Empty(t, rb.withClaimLedger(nil))
+	assert.Empty(t, rb.withClaimLedger([]FileEntry{}))
+}

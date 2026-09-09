@@ -283,8 +283,16 @@ func claimLedgerSection(claims []string, truncated bool) string {
 }
 
 // sanitizeClaim makes one claim safe to embed in the numbered block: valid
-// UTF-8, single-line (so it cannot forge another claim's index), and carrying
-// no framing marker that could close the block early.
+// UTF-8, single-line, and carrying no framing marker that could close the block
+// early.
+//
+// Collapsing newlines is what does most of the work. Every claim is rendered
+// behind its own "N. " index, so a single-line claim can never put text at
+// column 0 — and column 0 is where every marker the payload pipeline recognizes
+// has to sit to be recognized (the `=== FILE:` header ScopeRuleForPayload
+// detects, the `diff --git` marker the chunker splits on, and this block's own
+// frame). A claim that cannot reach column 0 cannot forge any of them, nor
+// fabricate an extra numbered claim.
 func sanitizeClaim(c string) string {
 	c = strings.ToValidUTF8(c, "")
 	c = strings.ReplaceAll(c, claimsBeginMarker, "-- BEGIN CLAIMS --")
