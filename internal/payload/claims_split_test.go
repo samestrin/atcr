@@ -227,17 +227,26 @@ func TestSplitClaims_ExactDuplicatesAreCollapsed(t *testing.T) {
 	assert.Equal(t, []string{"fix the drain path", "widen the test"}, got)
 }
 
+// TWO runs, not twenty. splitClaims' only map is `seen`, used for membership
+// lookup and never iterated, so there is no nondeterminism source for repetition
+// to smoke out — iterations 3..20 were pure runtime with zero added signal, and
+// the count read as a determinism guarantee the loop does not actually provide.
+// A second run is enough to catch the shapes that CAN vary: package-level state
+// mutated by a previous call, or a first-call-only path.
+//
+// The stronger AC3 property — that the ledger is a pure function of the RANGE,
+// not of one cached string — is pinned separately by
+// TestRangeBuilder_ClaimLedgerIsByteIdenticalAcrossModes, which builds through
+// independent RangeBuilders. It is deliberately not duplicated here.
 func TestSplitClaims_IsByteIdenticalAcrossRuns(t *testing.T) {
 	msgs := []string{
 		"fix the drain path\n\n- begin() keeps the cursor\n- the helper returns None\n",
 		"widen the test\n\nThe test now asserts begin(). It no longer asserts the helper.",
 	}
 	first, firstSuppressed := splitClaims(msgs)
-	for i := 0; i < 20; i++ {
-		got, suppressed := splitClaims(msgs)
-		assert.Equal(t, first, got)
-		assert.Equal(t, firstSuppressed, suppressed)
-	}
+	second, secondSuppressed := splitClaims(msgs)
+	assert.Equal(t, first, second)
+	assert.Equal(t, firstSuppressed, secondSuppressed)
 }
 
 func TestSplitClaims_EmptyInputYieldsNoClaims(t *testing.T) {
