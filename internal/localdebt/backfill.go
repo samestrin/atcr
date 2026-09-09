@@ -54,8 +54,10 @@ type BackfillResult struct {
 	// to show what it would touch; a bare counter cannot.
 	Changes []JustificationChange
 
-	// ShardNames is every shard file name the rewrite pass's own walk observed, in
-	// os.ReadDir order, taken INSIDE the withLock region.
+	// ShardNames is every shard file name the rewrite pass's own walk observed,
+	// taken INSIDE the withLock region. The names are a SET, not a sequence:
+	// the only consumer (locatorNames' collision disambiguation) keys on
+	// membership, so the walk's arrival order is not part of the contract.
 	//
 	// It exists so a caller rendering Changes describes the same directory snapshot
 	// the rewrite was computed against. `atcr debt backfill-justifications --dry-run`
