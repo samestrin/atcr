@@ -9,13 +9,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// splitClaims returns (claims, fenceSuppressed); these keep the claim-count
+// assertions readable at the call sites that only care about the claims.
+func assertNoClaims(t *testing.T, msgs []string, msgAndArgs ...any) {
+	t.Helper()
+	got, _ := splitClaims(msgs)
+	assert.Empty(t, got, msgAndArgs...)
+}
+
+func assertClaimCount(t *testing.T, msgs []string, n int, msgAndArgs ...any) {
+	t.Helper()
+	got, _ := splitClaims(msgs)
+	assert.Len(t, got, n, msgAndArgs...)
+}
+
 // splitClaims is deterministic by construction — no model is in this path. A
 // paraphrase layer between the author's assertion and the panel's adjudication
 // is exactly where "the fix is described but absent" softens into "the fix is
 // described", which the diff then satisfies.
 
 func TestSplitClaims_SubjectIsAlwaysAClaim(t *testing.T) {
-	got := splitClaims([]string{"fix cursor preservation in begin()"})
+	got, _ := splitClaims([]string{"fix cursor preservation in begin()"})
 	require.Len(t, got, 1)
 	assert.Equal(t, "fix cursor preservation in begin()", got[0])
 }
@@ -26,7 +40,7 @@ func TestSplitClaims_BulletsBecomeOneClaimEach(t *testing.T) {
 		"* _drain_offset() returns None on an all-malformed batch\n" +
 		"+ the caller keeps its previous offset\n" +
 		"1. the regression test covers begin()\n"
-	got := splitClaims([]string{msg})
+	got, _ := splitClaims([]string{msg})
 	assert.Equal(t, []string{
 		"fix the drain path",
 		"begin() no longer wipes a live cursor",
@@ -38,7 +52,7 @@ func TestSplitClaims_BulletsBecomeOneClaimEach(t *testing.T) {
 
 func TestSplitClaims_ProseBodySplitsPerSentence(t *testing.T) {
 	msg := "fix the drain path\n\nThe cursor is now preserved. The helper returns None instead of zero."
-	got := splitClaims([]string{msg})
+	got, _ := splitClaims([]string{msg})
 	assert.Equal(t, []string{
 		"fix the drain path",
 		"The cursor is now preserved.",
@@ -51,7 +65,7 @@ func TestSplitClaims_SentenceSplitIgnoresDottedTokens(t *testing.T) {
 	// The subject is scaffolding here; it only has to be claim-bearing. A bare
 	// "bump deps" is filtered as a noise subject (see the noise-opener tests).
 	msg := "bump the pinned tool version\n\nUpgrade to v1.2.3 across the board. No behavior change is intended."
-	got := splitClaims([]string{msg})
+	got, _ := splitClaims([]string{msg})
 	assert.Equal(t, []string{
 		"bump the pinned tool version",
 		"Upgrade to v1.2.3 across the board.",
@@ -67,12 +81,12 @@ func TestSplitClaims_TrailersAndNoiseYieldNoClaims(t *testing.T) {
 		"Co-authored-by: Someone Else <other@example.com>\n" +
 		"Refs: #123\n" +
 		"https://example.com/pull/9\n"
-	assert.Empty(t, splitClaims([]string{msg}))
+	assertNoClaims(t, []string{msg})
 }
 
 func TestSplitClaims_FencedCodeIsNotAClaim(t *testing.T) {
 	msg := "add the guard\n\n```go\nif x == nil { return }\n```\nThe guard rejects a nil cursor."
-	got := splitClaims([]string{msg})
+	got, _ := splitClaims([]string{msg})
 	assert.Equal(t, []string{
 		"add the guard",
 		"The guard rejects a nil cursor.",
@@ -82,7 +96,7 @@ func TestSplitClaims_FencedCodeIsNotAClaim(t *testing.T) {
 // A squashed or cherry-picked branch repeats the same subject across commits;
 // enumerating it twice pads the ledger without adding an assertion.
 func TestSplitClaims_ExactDuplicatesAreCollapsed(t *testing.T) {
-	got := splitClaims([]string{"fix the drain path", "fix the drain path", "widen the test"})
+	got, _ := splitClaims([]string{"fix the drain path", "fix the drain path", "widen the test"})
 	assert.Equal(t, []string{"fix the drain path", "widen the test"}, got)
 }
 
@@ -91,15 +105,17 @@ func TestSplitClaims_IsByteIdenticalAcrossRuns(t *testing.T) {
 		"fix the drain path\n\n- begin() keeps the cursor\n- the helper returns None\n",
 		"widen the test\n\nThe test now asserts begin(). It no longer asserts the helper.",
 	}
-	first := splitClaims(msgs)
+	first, firstSuppressed := splitClaims(msgs)
 	for i := 0; i < 20; i++ {
-		assert.Equal(t, first, splitClaims(msgs))
+		got, suppressed := splitClaims(msgs)
+		assert.Equal(t, first, got)
+		assert.Equal(t, firstSuppressed, suppressed)
 	}
 }
 
 func TestSplitClaims_EmptyInputYieldsNoClaims(t *testing.T) {
-	assert.Empty(t, splitClaims(nil))
-	assert.Empty(t, splitClaims([]string{"", "   ", "\n\n"}))
+	assertNoClaims(t, nil)
+	assertNoClaims(t, []string{"", "   ", "\n\n"})
 }
 
 // A hard-wrapped bullet is one assertion, not two. Treating the wrap as its own
@@ -110,7 +126,7 @@ func TestSplitClaims_WrappedBulletContinuationStaysOneClaim(t *testing.T) {
 		"- the cursor fix preserves the offset\n" +
 		"  when the drain is cold\n" +
 		"- the helper returns None\n"
-	got := splitClaims([]string{msg})
+	got, _ := splitClaims([]string{msg})
 	assert.Equal(t, []string{
 		"fix the drain path",
 		"the cursor fix preserves the offset when the drain is cold",
@@ -124,7 +140,7 @@ func TestSplitClaims_WrappedBulletContinuationStaysOneClaim(t *testing.T) {
 // motivated this epic.
 func TestSplitClaims_SplitsSentencesThatStartLowercase(t *testing.T) {
 	msg := "fix the drain\n\nbegin() still assigns zero. begin() is unchanged. the helper is added."
-	got := splitClaims([]string{msg})
+	got, _ := splitClaims([]string{msg})
 	assert.Equal(t, []string{
 		"fix the drain",
 		"begin() still assigns zero.",
@@ -138,7 +154,7 @@ func TestSplitClaims_AbbreviationsAreNotSentenceBoundaries(t *testing.T) {
 	// The subject is scaffolding here; it only has to be claim-bearing. A bare
 	// "bump deps" is filtered as a noise subject (see the noise-opener tests).
 	msg := "bump the pinned tool version\n\nUpgrade to v1.2.3 e.g. the pinned tool. no behavior change is intended."
-	got := splitClaims([]string{msg})
+	got, _ := splitClaims([]string{msg})
 	assert.Equal(t, []string{
 		"bump the pinned tool version",
 		"Upgrade to v1.2.3 e.g. the pinned tool.",
@@ -154,11 +170,11 @@ func TestSplitClaims_AbbreviationsAreNotSentenceBoundaries(t *testing.T) {
 // and it defeats the stated purpose: enumerating a claim twice pads the ledger
 // without adding an assertion.
 func TestSplitClaims_CollapsesClaimsThatDifferOnlyInWhatSanitizingRemoves(t *testing.T) {
-	got := splitClaims([]string{
+	got, _ := splitClaims([]string{
 		"subject one ---- tail",
 		"subject one ------- tail",
 	})
-	rendered := claimLedgerSection(got, claimsComplete)
+	rendered := claimLedgerSection(got, claimsComplete, false)
 	assert.Equal(t, 1, strings.Count(rendered, "subject one -- tail"),
 		"two raw claims that sanitize to the same text are one claim")
 }
@@ -171,7 +187,7 @@ func TestSplitClaims_CollapsesClaimsThatDifferOnlyInWhatSanitizingRemoves(t *tes
 // above the test says "an INDENTED line directly under a bullet", so the fix is to
 // make the code check what the comment already says.
 func TestSplitClaims_CRLFBodyDoesNotSwallowParagraphsIntoTheBullet(t *testing.T) {
-	got := splitClaims([]string{"subject line here\r\n\r\n- bullet claim one\r\nA separate paragraph sentence.\r\nAnother separate one.\r\n"})
+	got, _ := splitClaims([]string{"subject line here\r\n\r\n- bullet claim one\r\nA separate paragraph sentence.\r\nAnother separate one.\r\n"})
 	assert.Equal(t, []string{
 		"subject line here",
 		"bullet claim one",
@@ -186,7 +202,7 @@ func TestSplitClaims_CRLFBodyDoesNotSwallowParagraphsIntoTheBullet(t *testing.T)
 func TestSplitClaims_TrailingSpaceDoesNotSwallowAParagraphIntoTheBullet(t *testing.T) {
 	// The trailing space must not be on the LAST line: strings.TrimSpace over the
 	// whole message would remove it there and hide the defect.
-	got := splitClaims([]string{"subject line here\n\n- bullet claim one\nA separate paragraph sentence. \nAnother separate one.\n"})
+	got, _ := splitClaims([]string{"subject line here\n\n- bullet claim one\nA separate paragraph sentence. \nAnother separate one.\n"})
 	assert.Equal(t, []string{"subject line here", "bullet claim one", "A separate paragraph sentence.", "Another separate one."}, got)
 }
 
@@ -194,7 +210,7 @@ func TestSplitClaims_TrailingSpaceDoesNotSwallowAParagraphIntoTheBullet(t *testi
 // hard-wrapped bullets are ordinary, and filing the wrap as its own claim would
 // demand a verdict and a citation for a sentence fragment.
 func TestSplitClaims_IndentedLineStillContinuesTheBullet(t *testing.T) {
-	got := splitClaims([]string{"subject line here\n\n- bullet claim one\n  wrapped onto a second line\n"})
+	got, _ := splitClaims([]string{"subject line here\n\n- bullet claim one\n  wrapped onto a second line\n"})
 	assert.Equal(t, []string{"subject line here", "bullet claim one wrapped onto a second line"}, got)
 }
 
@@ -203,7 +219,7 @@ func TestSplitClaims_IndentedLineStillContinuesTheBullet(t *testing.T) {
 // yet the contract demands a verdict and a file:line citation for each.
 func TestSplitClaims_DropsNoiseSubjectsThatAssertNothing(t *testing.T) {
 	for _, noise := range []string{"wip fixup", "bump deps", "WIP again", "tmp hack", "squash me", "fixup!  typo"} {
-		assert.Empty(t, splitClaims([]string{noise}), "%q asserts nothing", noise)
+		assertNoClaims(t, []string{noise}, "%q asserts nothing", noise)
 	}
 }
 
@@ -216,7 +232,7 @@ func TestSplitClaims_KeepsShortRealClaimsAndNoiseWordsInRealSentences(t *testing
 		"Fixed pagination.",
 		"bump the retry ceiling to 5 so a flaky upstream recovers",
 	} {
-		assert.Len(t, splitClaims([]string{real}), 1, "%q is a real assertion", real)
+		assertClaimCount(t, []string{real}, 1, "%q is a real assertion", real)
 	}
 }
 
@@ -288,7 +304,7 @@ func TestSplitClaims_SeeAndLinkOpeningARealClaimAreNotStripped(t *testing.T) {
 	// Separate paragraphs, so each is its own claim. Two consecutive lines would
 	// be one hard-wrapped paragraph and hence one claim — that is the paragraph
 	// rule, not the defect. The defect was that both were DISCARDED.
-	got := splitClaims([]string{"subject line here\n\nSee: begin() now preserves the offset\n\nLink: the offset is kept in drain.py"})
+	got, _ := splitClaims([]string{"subject line here\n\nSee: begin() now preserves the offset\n\nLink: the offset is kept in drain.py"})
 	assert.Equal(t, []string{
 		"subject line here",
 		"See: begin() now preserves the offset",
@@ -299,7 +315,41 @@ func TestSplitClaims_SeeAndLinkOpeningARealClaimAreNotStripped(t *testing.T) {
 // The genuine reference trailers still go: they name an issue, not a change.
 func TestSplitClaims_RealReferenceTrailersAreStillStripped(t *testing.T) {
 	for _, trailer := range []string{"Refs: #123", "Fixes: #456", "Closes: #789", "Resolves: #1", "CC: @someone", "Bug: 4242", "Issue: 17", "PR: #99"} {
-		got := splitClaims([]string{"subject line here\n\n" + trailer})
+		got, _ := splitClaims([]string{"subject line here\n\n" + trailer})
 		assert.Equal(t, []string{"subject line here"}, got, "%q is a reference, not a claim", trailer)
 	}
+}
+
+// An unterminated or incidental code fence discards every claim after it: inFence
+// toggles on any line opening with ``` or ~~~ and all later lines are skipped. A
+// message that merely mentions a fence inline ("wrap it in ```go") loses the rest
+// of its body. AC5 and T2 both require claim loss to be RECORDED rather than
+// silent, and the section's NOTE fires only on the byte cap.
+func TestSplitClaims_ReportsClaimsSuppressedByAFence(t *testing.T) {
+	claims, suppressed := splitClaims([]string{"subject line here\n\n```\ncode here\n```\n\nA real claim after the fence."})
+	assert.False(t, suppressed, "a closed fence suppresses only the code inside it")
+	assert.Contains(t, claims, "A real claim after the fence.")
+
+	// A fence MENTIONED inline is not a defect: the toggle requires the marker at
+	// line start, so "wrap it in ```go" never opens a fence.
+	claims, suppressed = splitClaims([]string{"subject line here\n\nwrap it in ```go\n\nA claim that survives."})
+	assert.False(t, suppressed)
+	assert.Contains(t, claims, "A claim that survives.")
+
+	// An UNTERMINATED fence does swallow the rest of the body, and that loss must
+	// be recorded rather than silent.
+	claims, suppressed = splitClaims([]string{"subject line here\n\n```go\ncode here\n\nA real claim that is now lost."})
+	assert.True(t, suppressed, "an unterminated fence swallowed the rest of the body — that must be recorded")
+	assert.NotContains(t, claims, "A real claim that is now lost.")
+}
+
+// The ledger must tell the reviewer when a fence ate part of it, the same way it
+// discloses a byte-cap truncation.
+func TestClaimLedgerSection_DisclosesFenceSuppressedClaims(t *testing.T) {
+	quiet := claimLedgerSection([]string{"a claim"}, claimsComplete, false)
+	assert.NotContains(t, quiet, "code fence")
+
+	noisy := claimLedgerSection([]string{"a claim"}, claimsComplete, true)
+	assert.Contains(t, noisy, "code fence")
+	assert.Contains(t, noisy, "incomplete")
 }

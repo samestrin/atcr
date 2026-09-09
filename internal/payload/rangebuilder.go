@@ -185,7 +185,8 @@ func (b *RangeBuilder) claimLedger() string {
 			"base", b.base, "head", b.head, "error", err)
 		return b.claims
 	}
-	b.claims = claimLedgerSection(splitClaims(msgs), truncated)
+	claims, fenceSuppressed := splitClaims(msgs)
+	b.claims = claimLedgerSection(claims, truncated, fenceSuppressed)
 	return b.claims
 }
 

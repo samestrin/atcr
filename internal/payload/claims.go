@@ -230,7 +230,12 @@ var (
 // Exact duplicates are collapsed to their first occurrence: a squashed or
 // cherry-picked branch repeats the same subject across commits, and enumerating
 // it twice pads the ledger without adding an assertion.
-func splitClaims(msgs []string) []string {
+// The second return reports that a code fence swallowed body text. An
+// unterminated fence — or an inline mention like "wrap it in ```go" — puts the
+// splitter in fence mode for the rest of the message, and every claim after it is
+// dropped. Losing claims is acceptable; losing them SILENTLY is not, so the caller
+// discloses it the same way it discloses a byte-cap truncation.
+func splitClaims(msgs []string) (claims []string, fenceSuppressed bool) {
 	var out []string
 	seen := map[string]struct{}{}
 	add := func(c string) {
@@ -330,8 +335,14 @@ func splitClaims(msgs []string) []string {
 			para = append(para, trimmed)
 		}
 		flush()
+		// A fence still open at the end of the message swallowed everything after
+		// it. A CLOSED fence suppresses only the code between the markers, which is
+		// what it is for, so it is not reported.
+		if inFence {
+			fenceSuppressed = true
+		}
 	}
-	return out
+	return out, fenceSuppressed
 }
 
 // isClaimBearing rejects candidates that assert nothing: a bare token ("wip",
@@ -536,7 +547,7 @@ const (
 // Zero claims render nothing at all. A bare header would assert that the author
 // claimed nothing, which is itself a claim and not one the engine is entitled
 // to make.
-func claimLedgerSection(claims []string, truncated claimsTruncation) string {
+func claimLedgerSection(claims []string, truncated claimsTruncation, fenceSuppressed bool) string {
 	if len(claims) == 0 {
 		return ""
 	}
@@ -589,6 +600,9 @@ func claimLedgerSection(claims []string, truncated claimsTruncation) string {
 	b.WriteString("The claims describe this branch's own commits, while the diff compares the range's two endpoints. ")
 	b.WriteString("If the base advanced after the branch started, the diff also carries changes the branch never made, ")
 	b.WriteString("so not every change below is covered by a claim. An uncovered change is not itself a finding.\n\n")
+	if fenceSuppressed {
+		b.WriteString("NOTE: an unterminated code fence in a commit message swallowed the text after it, so some of the author's claims are NOT listed below and this ledger is incomplete.\n\n")
+	}
 	switch truncated {
 	case claimsTruncatedOlder:
 		b.WriteString("NOTE: the commit-message read was TRUNCATED at its cap. The oldest commits' claims are NOT listed below, so this ledger is incomplete.\n\n")

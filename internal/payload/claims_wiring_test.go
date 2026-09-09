@@ -10,7 +10,7 @@ import (
 // violated clause when one is missing or diverges. The fanout wiring test
 // drives the real end-to-end path; this test pins the seam itself.
 func TestVerifyClaimLedgerWiring(t *testing.T) {
-	section := claimLedgerSection([]string{"Begin() no longer returns a wiped offset"}, claimsComplete)
+	section := claimLedgerSection([]string{"Begin() no longer returns a wiped offset"}, claimsComplete, false)
 	if section == "" {
 		t.Fatal("precondition: the fixture claim must render a ledger section")
 	}
