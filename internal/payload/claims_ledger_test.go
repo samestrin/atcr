@@ -340,3 +340,17 @@ func TestClaimLedgerSection_OffersAVerdictForClaimsAboutAbsentFiles(t *testing.T
 	assert.Contains(t, got, "Do NOT report it as UNSUPPORTED")
 	assert.Contains(t, got, "no code at all", "the code-free payload case must be answerable too")
 }
+
+// The ledger is built from `git log base..head` — commits reachable from head
+// but not from base — while the payload diffs `git diff -M base..head`, an
+// endpoint comparison (diff.go changedFiles / chunks). On a branch whose base
+// has advanced, the diff additionally carries the REVERSE of the base-only
+// commits, and no claim in the ledger covers those hunks. A reviewer told "the
+// commit messages assert the claims listed below" while holding a strict
+// superset of what those commits did has no way to tell which hunks nobody
+// claimed, and reads the gap as the author's omission.
+func TestClaimLedgerSection_DisclosesThatSomeHunksMayCarryNoClaim(t *testing.T) {
+	got := claimLedgerSection([]string{"begin() keeps the cursor"}, false)
+	assert.Contains(t, got, "not every change below is covered by a claim",
+		"the ledger's range and the diff's range differ; the reviewer must be told")
+}
