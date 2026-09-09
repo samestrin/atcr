@@ -353,8 +353,14 @@ func normalizeNoiseToken(tok string) string {
 // ("short token before the dot") also catch real one-word sentence endings.
 var sentenceAbbrevs = map[string]bool{
 	"e.g": true, "i.e": true, "etc": true, "cf": true, "vs": true, "al": true,
-	"approx": true, "resp": true, "fig": true, "no": true, "vol": true,
+	"approx": true, "resp": true, "fig": true, "vol": true,
 }
+
+// "no" is deliberately NOT in the set. It is an abbreviation for "number" only
+// before a digit ("No. 5"), and the English interjection ("No. The fix is
+// wrong.") is far more common in commit prose — where treating the period as
+// part of an abbreviation merges two assertions into one claim and the panel
+// renders one verdict where two were owed.
 
 // splitSentences splits prose on '.', '!', or '?' that genuinely ends a
 // sentence.
