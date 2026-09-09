@@ -4,10 +4,12 @@
 
 ## What the case plants
 
-The commit message asserts three things. The diff delivers one of them.
+The commit message yields six claims under the ledger's splitter — one per bullet, else one per sentence, with the subject always its own claim (`docs/payload-modes.md`). Three are the bullet assertions tabulated below, two are background narration of the pre-change behavior rather than assertions, and the subject is the headline assertion — which the diff does not deliver.
 
 | Claim in the commit message | What the diff actually does |
 |---|---|
+| Subject: "preserve a live cursor across an all-malformed drain" | **Absent.** The headline claim, and the same defect as the `begin()` row below: nothing in the change preserves the cursor. |
+| Background: "An all-malformed batch wiped the cursor." / "_drain_offset() returns 0 … so a live offset was replaced by zero." | Narration of the pre-change bug, true of `base/` — background, not an assertion the diff must deliver. |
 | `_safe_drain_offset()` returns `None` instead of `0` when the batch holds no well-formed record | **Delivered.** The helper is added, and it does return `None`. |
 | `begin()` now keeps its previous offset when the drain yields nothing | **Absent.** `begin()` is untouched. It still calls `_drain_offset()` — the old helper — and still assigns its `0` into `self._offset`. |
 | `test_begin_preserves_offset_on_all_malformed_batch` covers the fix | **Delivered in name only.** The test never calls `begin()`. It asserts `_safe_drain_offset()` directly, so it passes while the bug it is named for is still live. |
