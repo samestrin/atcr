@@ -154,6 +154,13 @@ func (g *gitRunner) commitMessages(base, head string, maxBytes int64, maxCommits
 				// Clamp before narrowing: on a 32-bit build a maxBytes above
 				// MaxInt becomes negative, and capUTF8 would then slice with a
 				// negative bound and panic mid-review.
+				//
+				// This branch is deliberately UNREACHABLE on a 64-bit platform —
+				// math.MaxInt is math.MaxInt64 there, so no int64 exceeds it — and
+				// therefore shows 0 hits in every coverage profile this project
+				// produces. That is correct, not a gap: it is a portability guard
+				// for a build target CI does not run. Recorded here so a coverage
+				// audit does not keep re-filing it.
 				capBytes := maxBytes
 				if capBytes > math.MaxInt {
 					capBytes = math.MaxInt

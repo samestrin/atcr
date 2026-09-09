@@ -96,6 +96,34 @@ func TestRangeBuilder_InvalidRefError(t *testing.T) {
 	require.Error(t, err)
 }
 
+// Range() exists so a caller grounding against a request's range can assert the
+// builder was built from that same range (computeGroundingData does exactly
+// this). It was 0% covered inside this package: the only exercise lives in
+// internal/fanout, which never contributes to internal/payload's own profile —
+// so the accessor the mismatch guard depends on was unasserted where it is
+// defined. A Range() that returned the wrong pair, or the pair swapped, would
+// silently turn that guard into a no-op.
+func TestRangeBuilder_RangeRoundTripsItsConstructorArguments(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", goFileV1)
+	base := commitAll(t, dir, "v1")
+	write(t, dir, "a.go", goFileV2)
+	head := commitAll(t, dir, "v2")
+	require.NotEqual(t, base, head, "fixture invariant: a swapped pair must be detectable")
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	gotBase, gotHead := rb.Range()
+	assert.Equal(t, base, gotBase)
+	assert.Equal(t, head, gotHead)
+
+	// Building does not disturb it: the guard reads Range() after a build.
+	_, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+	gotBase, gotHead = rb.Range()
+	assert.Equal(t, base, gotBase)
+	assert.Equal(t, head, gotHead)
+}
+
 // An empty range (identical base and head) yields empty grounding data via the
 // RangeBuilder, matching the standalone path's empty-map result.
 func TestRangeBuilder_EmptyRangeYieldsEmptyGrounding(t *testing.T) {
