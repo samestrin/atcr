@@ -803,3 +803,17 @@ func TestBackfillJustifications_ReportsShardNamesEvenWhenNothingNeedsRewrite(t *
 		"a pass with nothing to rewrite must still report every shard the locked walk "+
 			"saw — nil here conflates 'no shards' with 'shards, none needing repair'")
 }
+
+// Cumulative-review correction: the no-rewrite snapshot's tolerance for a MISSING
+// store directory (the legal "no backlog yet" state ReadAll already tolerates) is
+// documented on the field but was pinned by no test — a future edit could start
+// surfacing ENOENT as a hard error on an empty backlog and no test would notice.
+// (The store directory itself existing after the call is withLock's own
+// ensureStoreDir precondition — lock.go — not this pass's behavior, so it is not
+// asserted here.)
+func TestBackfillJustifications_MissingStoreDirIsTheNoBacklogState(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "does-not-exist")
+	res, err := BackfillJustifications(dir, t.TempDir(), true)
+	require.NoError(t, err, "a missing store directory is the no-backlog state, not a failure")
+	assert.Nil(t, res.ShardNames, "no shards were observed, so the snapshot must be nil")
+}
