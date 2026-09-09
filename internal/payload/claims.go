@@ -83,3 +83,10 @@ func (g *gitRunner) commitMessages(base, head string, maxBytes int64) (msgs []st
 	}
 	return kept, truncated, nil
 }
+
+// splitClaims turns commit messages into an ordered list of discrete claims.
+//
+// STUB — replaced in GREEN.
+func splitClaims(msgs []string) []string {
+	return nil
+}
