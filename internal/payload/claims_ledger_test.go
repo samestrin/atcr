@@ -391,3 +391,16 @@ func TestSanitizeClaim_NeutralizesDashLookalikesAndSeparatorControls(t *testing.
 		})
 	}
 }
+
+// The UNSUPPORTED bullet and the grounding-gate paragraph 30 lines below it must
+// not tell the reviewer two different things. "Cite the file:line where the
+// change would have had to appear" followed literally produces a citation on an
+// UNCHANGED line, and the grounding gate discards exactly that — so the epic's
+// driving verdict is lost by a reviewer who obeyed the first instruction.
+func TestClaimLedgerSection_UnsupportedCitationRuleDoesNotContradictItself(t *testing.T) {
+	got := claimLedgerSection([]string{"begin() keeps the cursor"}, false)
+	assert.NotContains(t, got, "Cite the `file:line` where the claimed change would have had to appear",
+		"this instruction sends the reviewer to a line the diff never touched")
+	assert.Contains(t, got, "only if that line is inside the diff's changed regions",
+		"the bullet must carry the same rule the grounding paragraph states")
+}
