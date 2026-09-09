@@ -1628,3 +1628,73 @@ func TestRunVerify_TheCarryArmAddsNoCaveatToAnUntruncatedVerdict(t *testing.T) {
 	assert.Empty(t, readVerificationRecords(t, recon)[0].TrippedBudgets,
 		"an untruncated block describes a complete read; a caveat invented here excludes a sound verdict from the ratio")
 }
+
+// TestRunVerify_TheCarryArmDoesNotPropagateAContradictoryWithheldReason enforces the
+// invariant the carry actually relies on instead of assuming it.
+//
+// The carry's own comment states the precondition — "prior.Model is empty on exactly
+// the records that carry a reason" — and then copies the reason without checking it.
+// In-tree that holds: only the two reject arms originate a reason and both leave Model
+// empty. A hand-edited or foreign verification.json carrying BOTH is outside that
+// guarantee, and the copy propagates the contradiction forward on every re-verify —
+// where the pre-change behaviour was to drop it, because the record was rebuilt from
+// the findings.json block and the reason was simply never re-derived.
+//
+// A record naming a model AND claiming its attribution was withheld tells a reader two
+// incompatible things about the same field, on the artifact the audit trail is read
+// from. Self-healing is the safe direction: the model is real evidence, the reason
+// contradicts it.
+func TestRunVerify_TheCarryArmDoesNotPropagateAContradictoryWithheldReason(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+		Reviewers:    []string{"rev"},
+		Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "otto"},
+	}})
+	recon := filepath.Join(dir, reconciledSubdir)
+	// Verdict matches, so the guard accepts the prior and this is the carry arm — but
+	// the record carries a model AND a withheld reason, which no in-tree arm produces.
+	require.NoError(t, os.WriteFile(filepath.Join(recon, "verification.json"), []byte(`{"findings":[
+		{"file":"a.go","line":1,"problem":"boom","verdict":"confirmed","skeptic":"otto",
+		 "model":"m-prior","reasoning":"otto read token.go:42","durationMs":1840,
+		 "modelWithheldReason":"verdict_shifted","trippedBudgets":[]}
+	]}`), 0o644))
+
+	_, runErr := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	})
+	require.NoError(t, runErr)
+
+	got := readVerificationRecords(t, recon)[0]
+	require.Equal(t, "m-prior", got.Model,
+		"precondition: this is the carry arm, and the attribution itself still travels")
+	assert.Empty(t, got.ModelWithheldReason,
+		"a reason beside a named model is a contradiction the record must shed, not carry forward forever")
+}
+
+// The scope guard: the carry that the fix above narrows is load-bearing on the shape it
+// was written for. A prior with NO model and a reason must still hand the reason on, or
+// the marker lasts one generation and the record decays to bytes indistinguishable from
+// "no skeptic ran".
+func TestRunVerify_TheCarryArmStillCarriesAWithheldReasonBesideABlankModel(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+		Reviewers:    []string{"rev"},
+		Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "otto"},
+	}})
+	recon := filepath.Join(dir, reconciledSubdir)
+	require.NoError(t, os.WriteFile(filepath.Join(recon, "verification.json"), []byte(`{"findings":[
+		{"file":"a.go","line":1,"problem":"boom","verdict":"confirmed","skeptic":"otto",
+		 "model":"","reasoning":"otto read token.go:42","durationMs":1840,
+		 "modelWithheldReason":"verdict_shifted","trippedBudgets":[]}
+	]}`), 0o644))
+
+	_, runErr := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	})
+	require.NoError(t, runErr)
+
+	assert.Equal(t, "verdict_shifted", readVerificationRecords(t, recon)[0].ModelWithheldReason,
+		"the marker explains the blank it sits beside; dropping it here is the decay the carry exists to prevent")
+}
