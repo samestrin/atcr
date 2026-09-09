@@ -323,6 +323,15 @@ func pluralLines(n int) string {
 // passing a partial snapshot would silently lose collisions and must not be added
 // without revisiting this.
 //
+// There IS now a second caller — reportPartialBackfill, on the failed-pass path — and
+// it was checked against exactly that rule. Its snapshot is the SAME locked listing
+// (rewriteJustifications takes `shards` before its walk, so it survives a mid-pass
+// failure), while its change set is the published PREFIX of the one the success path
+// would carry. Shrinking the changes cannot lose a collision: the snapshot is compared
+// against, not derived from, the change set, so a smaller change set only asks fewer
+// questions of the same complete listing. A caller that shrank the SNAPSHOT instead
+// would still be the unsafe shape this paragraph forbids.
+//
 // `shards` is that directory listing, and it arrives from the caller rather than being
 // read here. This function used to run its own os.ReadDir, which executed AFTER
 // localdebt.BackfillJustifications had returned — outside the withLock region
