@@ -300,11 +300,15 @@ func isAbbrevBefore(prefix []rune) bool {
 }
 
 // ClaimLedgerPath is the sentinel Path carried by the claim-ledger FileEntry.
-// It is not a repository path — the angle brackets are illegal in a git path on
-// Windows and never produced by `git diff --name-status` — so it cannot collide
-// with a real changed file. The byte-budget shed keys its exemption on this
-// value, which is why it is exported: the exemption and the entry that needs it
-// are the same fact and must not be spelled two different ways.
+// The angle brackets are never produced by `git diff --name-status`, so it does
+// not collide with a real changed file in practice. It is exported so callers
+// can RECOGNIZE the entry (skip it in a file listing, assert on it in a test).
+//
+// It is deliberately NOT what the byte-budget shed keys its exemption on. The
+// brackets are illegal in a path only on Windows, so a repository under review
+// can legitimately contain a file named "<claims>"; keying the exemption on the
+// path would let that file claim it. The exemption keys on FileEntry.shedExempt,
+// which only newClaimLedgerEntry sets.
 //
 // FOUR consequences follow from carrying the ledger as a FileEntry, all
 // accepted deliberately with AC6 (epic 35.16.7 forbids editing internal/fanout,

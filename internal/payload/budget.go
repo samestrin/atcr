@@ -37,8 +37,10 @@ type FileEntry struct {
 // was shed — callers should surface this as a distinct error rather than
 // forwarding a payload that silently produces zero findings.
 //
-// "Reviewable" excludes the claim-ledger entry (ClaimLedgerPath), which is
-// exempt from shedding. So kept may be NON-EMPTY while AllDropped is true: it
+// "Reviewable" excludes the shed-exempt claim-ledger entry (identified by the
+// unexported shedExempt sentinel, never by its path — a repository can contain a
+// file named ClaimLedgerPath, and that file IS reviewable). So kept may be
+// NON-EMPTY while AllDropped is true: it
 // then holds the ledger and no code. Reading AllDropped as "the kept slice is
 // empty" would miss exactly that case, and it is the one that matters — a
 // reviewer handed claims with no diff returns a false-clean review. AllDropped
