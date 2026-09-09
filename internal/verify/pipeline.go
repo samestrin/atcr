@@ -460,10 +460,22 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 				// one run is read back by the NEXT one against a prior whose verdict now
 				// matches by construction — this branch — so without carrying it the
 				// marker lasts exactly one generation and the record decays to bytes
-				// indistinguishable from "no skeptic ran". prior.Model is empty on
-				// exactly the records that carry a reason, so this copies a reason only
-				// alongside the blank it accounts for.
-				rec.ModelWithheldReason = prior.ModelWithheldReason
+				// indistinguishable from "no skeptic ran".
+				//
+				// The `prior.Model == ""` guard ENFORCES the precondition rather than
+				// assuming it: in-tree only the two reject arms originate a reason and
+				// both leave Model empty, but a hand-edited or foreign verification.json
+				// can carry both. Copying there propagates a record that names a model
+				// AND claims its attribution was withheld — two incompatible statements
+				// about one field, on the artifact the audit trail is read from — and
+				// re-propagates it on every later run, because the verdicts now match by
+				// construction and this branch is the one that fires. Dropping it is what
+				// the pre-carry code did implicitly (the record was rebuilt from the
+				// findings.json block and the reason was never re-derived), and it is the
+				// safe direction: the model is evidence, the reason contradicts it.
+				if prior.Model == "" {
+					rec.ModelWithheldReason = prior.ModelWithheldReason
+				}
 			}
 			// TrippedBudgets is exempt from that split: it records what the run cost,
 			// not who produced the verdict, and debate's rewrite already corrected the
