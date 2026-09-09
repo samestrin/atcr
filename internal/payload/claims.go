@@ -224,3 +224,15 @@ func splitSentences(s string) []string {
 	}
 	return out
 }
+
+// ClaimLedgerPath is the sentinel Path of the claim-ledger FileEntry.
+//
+// STUB — replaced in GREEN.
+const ClaimLedgerPath = "<claims>"
+
+// claimLedgerSection renders the claim ledger payload section.
+//
+// STUB — replaced in GREEN.
+func claimLedgerSection(claims []string, truncated bool) string {
+	return ""
+}
