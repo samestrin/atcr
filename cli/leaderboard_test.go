@@ -1178,6 +1178,16 @@ func TestRunLeaderboardExport_BothIdentitiesBlankReportsTheRecordOnce(t *testing
 	assert.Equal(t, 1, strings.Count(errBuf.String(), "blank after trimming"),
 		"a record with two blank identities is still one record to repair")
 
+	// WHICH field the single line names is the guard's only real effect, and it was
+	// unpinned: the once-per-record property above holds either way, because blankNotice
+	// is one string printed once. Mutating `if blankNotice == ""` to `if true` left the
+	// whole ./cli/ package green. The fields are iterated model-then-reviewer, so
+	// first-blank-field-wins means model. Assert it, or the guard is decoration.
+	require.Contains(t, errBuf.String(), "the record has no model",
+		"the first blank field wins; without that ordering the guard has no observable effect")
+	require.NotContains(t, errBuf.String(), "the record has no reviewer",
+		"and the later blank field must not be the one reported")
+
 	var env struct {
 		Reviewers []struct{} `json:"reviewers"`
 	}
