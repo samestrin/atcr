@@ -3,6 +3,7 @@ package payload
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -236,4 +237,44 @@ func TestSplitSentences_ExclamationAndQuestionAlsoEndSentences(t *testing.T) {
 	assert.Equal(t, []string{"Is the cursor preserved?", "It is now."},
 		splitSentences("Is the cursor preserved? It is now."))
 	assert.Equal(t, []string{"Really?!", "Yes."}, splitSentences("Really?! Yes."))
+}
+
+// splitSentences was quadratic on abbreviation-dense prose: when isAbbrevBefore
+// returned true the loop continued WITHOUT advancing start, so the next
+// abbreviation re-scanned the whole prefix — and the check itself allocated a
+// full strings.Fields slice of that prefix each time. The only thing bounding it
+// was DefaultMaxClaimBytes, and commitMessages documents maxBytes <= 0 as
+// unlimited, so nothing bounded it on that path at all.
+func TestSplitSentences_AbbreviationDenseProseIsNotQuadratic(t *testing.T) {
+	// A complexity-class assertion, not a wall-clock budget: doubling the input
+	// costs ~2x for a linear scan and ~4x for a quadratic one, and that ratio is
+	// the same on a fast laptop and a loaded CI runner. The absolute escape hatch
+	// below keeps it from comparing two sub-millisecond measurements, where timer
+	// noise dominates and the ratio means nothing.
+	measure := func(reps int) time.Duration {
+		input := strings.Repeat("etc. ", reps)
+		best := time.Duration(1<<63 - 1)
+		for i := 0; i < 3; i++ {
+			start := time.Now()
+			_ = splitSentences(input)
+			if d := time.Since(start); d < best {
+				best = d
+			}
+		}
+		return best
+	}
+	small := measure(1600) // ~8 KiB, exactly DefaultMaxClaimBytes
+	big := measure(3200)   // twice that
+	if big < 5*time.Millisecond {
+		return // already linear-fast at 16 KiB; the ratio would be timer noise
+	}
+	assert.Less(t, float64(big)/float64(small), 3.0,
+		"doubling the input more than tripled the cost: the abbreviation check is re-scanning the whole prefix per terminator (small=%s big=%s)", small, big)
+}
+
+func BenchmarkSplitSentences_AbbreviationDense(b *testing.B) {
+	input := strings.Repeat("etc. ", 1600)
+	for i := 0; i < b.N; i++ {
+		_ = splitSentences(input)
+	}
 }
