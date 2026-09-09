@@ -106,22 +106,53 @@ func applyByteBudgetOrdered(entries []FileEntry, budget int64, tier func(FileEnt
 		if used <= budget {
 			break
 		}
+		// The claim ledger is exempt from every shed. It is the one payload
+		// section whose value depends on reaching EVERY reviewer identically: a
+		// ledger some agents got and others did not is a ledger whose absence
+		// looks exactly like a branch that claimed nothing. The exemption lives
+		// here, in the shared ordered pass, rather than in either public wrapper —
+		// ApplyByteBudgetPreferEscalated falls back into ApplyByteBudget on the
+		// tight budgets where the ledger matters most, and three shed sites call
+		// ApplyByteBudget directly and never touch the wrapper at all.
+		//
+		// It is safe to keep unconditionally because the ledger is built with
+		// Size 0 (uncounted), so exempting it can never prevent the budget from
+		// being met: diff content sheds, the ledger does not.
+		if entries[i].Path == ClaimLedgerPath {
+			continue
+		}
 		dropped[i] = true
 		used -= clampSize(entries[i].Size)
 	}
 
 	kept = make([]FileEntry, 0, len(entries))
 	droppedPaths := make([]string, 0)
+	reviewableIn, reviewableKept := 0, 0
 	for i, e := range entries {
+		if e.Path != ClaimLedgerPath {
+			reviewableIn++
+		}
 		if dropped[i] {
 			droppedPaths = append(droppedPaths, e.Path)
 			continue
+		}
+		if e.Path != ClaimLedgerPath {
+			reviewableKept++
 		}
 		kept = append(kept, e)
 	}
 	sort.Strings(droppedPaths)
 
-	return kept, Truncation{Truncated: true, FilesDropped: droppedPaths, AllDropped: len(kept) == 0}
+	// AllDropped means "no reviewable file survived", not "the slice is empty".
+	// The exempt ledger keeps the slice non-empty, and a definition keyed on
+	// emptiness would silently retire the caller's ErrPayloadFullyDropped guard
+	// — trading a loud pre-dispatch failure for a reviewer holding claims and no
+	// code, which returns a false-clean "no findings" review.
+	return kept, Truncation{
+		Truncated:    true,
+		FilesDropped: droppedPaths,
+		AllDropped:   reviewableIn > 0 && reviewableKept == 0,
+	}
 }
 
 // ApplyByteBudgetPreferEscalated is ApplyByteBudget with an escalation-aware

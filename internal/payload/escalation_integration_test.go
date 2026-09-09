@@ -256,7 +256,7 @@ func TestEscalationIntegration_DisabledProducesUnchangedPayload(t *testing.T) {
 	dir, base, head := thrashingRepo(t)
 
 	rb := NewRangeBuilder(context.Background(), dir, base, head, WithEscalation(EscalationConfig{}))
-	entries, err := rb.BuildEntries(ModeDiff)
+	entries, err := reviewableBuildEntries(rb, ModeDiff)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 
@@ -297,7 +297,7 @@ func TestEscalationIntegration_ManyFilesTripTheCap(t *testing.T) {
 	cfg := DefaultEscalationConfig()
 	cfg.MaxFiles = 1
 	rb := NewRangeBuilder(context.Background(), dir, base, head, WithEscalation(cfg))
-	entries, err := rb.BuildEntries(ModeDiff)
+	entries, err := reviewableBuildEntries(rb, ModeDiff)
 	require.NoError(t, err)
 
 	require.True(t, rb.EscalationDegraded(), "two changed files exceed a cap of 1")
@@ -397,7 +397,7 @@ func TestEscalationIntegration_OversizedFileSkipsAnalysis(t *testing.T) {
 	head := commitAll(t, dir, "v2 (oversized)")
 
 	rb := NewRangeBuilder(context.Background(), dir, base, head, WithEscalation(DefaultEscalationConfig()))
-	entries, err := rb.BuildEntries(ModeDiff)
+	entries, err := reviewableBuildEntries(rb, ModeDiff)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 
@@ -414,7 +414,7 @@ func TestEscalationIntegration_FilesModeSkipsAnalysisEntirely(t *testing.T) {
 	dir, base, head := thrashingRepo(t)
 
 	rb := NewRangeBuilder(context.Background(), dir, base, head)
-	entries, err := rb.BuildEntries(ModeFiles)
+	entries, err := reviewableBuildEntries(rb, ModeFiles)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 
@@ -483,13 +483,15 @@ func TestEscalationIntegration_EscalatedFileReadsHeadBlobOnce(t *testing.T) {
 	afterFirst := rb.g.execCount
 
 	// Pin the absolute cost of the first build, not just the delta between the
-	// two builds: 7 = name-status + numstat + the whole-range diff variants this
+	// two builds: 8 = name-status + numstat + the whole-range diff variants this
 	// build populates + exactly ONE `git show` of the HEAD blob (shared by the
-	// analysis pass and any later render via the memo). An unmemoized second
-	// read inside this build would cost 8. If a legitimate pipeline change
-	// alters the count, update the number deliberately.
-	require.Equal(t, 7, afterFirst-before,
-		"the first build must read the HEAD blob exactly once alongside the cached whole-range diffs")
+	// analysis pass and any later render via the memo) + exactly ONE `git log`
+	// for the claim ledger (Epic 35.16.7), memoized per builder like the blob.
+	// An unmemoized second read of either inside this build would cost 9. If a
+	// legitimate pipeline change alters the count, update the number
+	// deliberately.
+	require.Equal(t, 8, afterFirst-before,
+		"the first build must read the HEAD blob and the commit log exactly once each, alongside the cached whole-range diffs")
 
 	// Re-render the same range in files mode on the same runner: the HEAD blob is
 	// already memoized, so rendering must not re-spawn `git show` for it.
@@ -497,7 +499,7 @@ func TestEscalationIntegration_EscalatedFileReadsHeadBlobOnce(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, afterFirst, rb.g.execCount,
-		"the files-mode render must reuse the memoized HEAD blob rather than re-reading it")
+		"the files-mode render must reuse the memoized HEAD blob and claim ledger rather than re-reading them")
 }
 
 // A binary file must never have its blob pulled in to measure churn: it renders
@@ -661,9 +663,8 @@ func TestEscalationIntegration_RecordedModeMatchesRenderedBody(t *testing.T) {
 	write(t, dir, "big.go", strings.Join(v2, "\n"))
 	head := commitAll(t, dir, "v2: eight scattered edits")
 
-	entries, err := NewRangeBuilder(context.Background(), dir, base, head,
-		WithEscalation(EscalationConfig{MinHunks: 4, MaxFiles: DefaultEscalationMaxFiles})).
-		BuildEntries(ModeDiff)
+	entries, err := reviewableBuildEntries(NewRangeBuilder(context.Background(), dir, base, head,
+		WithEscalation(EscalationConfig{MinHunks: 4, MaxFiles: DefaultEscalationMaxFiles})), ModeDiff)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 
@@ -674,7 +675,7 @@ func TestEscalationIntegration_RecordedModeMatchesRenderedBody(t *testing.T) {
 
 	// Guard the fixture itself: the plain -U10 render must NOT contain the
 	// marker, or the fixture cannot distinguish the two modes at all.
-	plain, err := NewRangeBuilder(context.Background(), dir, base, head, WithEscalation(EscalationConfig{})).BuildEntries(ModeDiff)
+	plain, err := reviewableBuildEntries(NewRangeBuilder(context.Background(), dir, base, head, WithEscalation(EscalationConfig{})), ModeDiff)
 	require.NoError(t, err)
 	require.Len(t, plain, 1)
 	require.NotContains(t, plain[0].Body, "MIDPOINT-UNCHANGED-MARKER",

@@ -28,6 +28,13 @@ type RangeBuilder struct {
 	// use fail loudly (panic) instead of corrupting the single-writer rangeState
 	// cache. Uncontended sequential use pays one CompareAndSwap per build.
 	inUse atomic.Int32
+	// Memoized claim-ledger section for the range (Epic 35.16.7). Computed once
+	// and reused across every mode this builder renders, which is what makes the
+	// ledger byte-identical for every agent in a fan-out: buildPayloads builds
+	// one payload per MODE from ONE RangeBuilder, so identical-across-modes is
+	// what identical-across-agents reduces to.
+	claims     string
+	claimsDone bool
 }
 
 // RangeOption customizes the gitRunner a RangeBuilder wraps. It exists so review
@@ -113,7 +120,58 @@ func (b *RangeBuilder) BuildEntries(mode PayloadMode) ([]FileEntry, error) {
 	if err := b.validate(); err != nil {
 		return nil, err
 	}
-	return b.g.buildEntriesValidated(mode, b.base, b.head)
+	entries, err := b.g.buildEntriesValidated(mode, b.base, b.head)
+	if err != nil {
+		return nil, err
+	}
+	return b.withClaimLedger(entries), nil
+}
+
+// withClaimLedger prepends the range's claim-ledger entry to entries, so the
+// author's assertions lead the payload and every reviewer adjudicates them
+// against the diff that follows.
+//
+// A range with NO changed files gets no ledger. An empty entry set is how the
+// review layer detects "nothing to review"; injecting a ledger there would
+// convert that condition into a one-entry payload carrying claims and no code.
+//
+// The entry is deliberately shaped to be inert everywhere it is not wanted:
+// Size 0 keeps it out of byte-budget accounting (so it never displaces diff
+// content), and an empty Mode keeps it out of the escalated-file bookkeeping
+// that reads FileEntry.Mode.
+func (b *RangeBuilder) withClaimLedger(entries []FileEntry) []FileEntry {
+	if len(entries) == 0 {
+		return entries
+	}
+	section := b.claimLedger()
+	if section == "" {
+		return entries
+	}
+	out := make([]FileEntry, 0, len(entries)+1)
+	out = append(out, FileEntry{Path: ClaimLedgerPath, Size: 0, Body: section})
+	return append(out, entries...)
+}
+
+// claimLedger returns the memoized claim-ledger section for this range, reading
+// the commit messages at most once per builder.
+//
+// An unreadable range yields an empty ledger, never an error: the claim ledger
+// is an additional input to a review, and failing a whole review because git
+// could not produce a log would trade a complete review for none at all. The
+// failure is logged so it is diagnosable rather than silent.
+func (b *RangeBuilder) claimLedger() string {
+	if b.claimsDone {
+		return b.claims
+	}
+	b.claimsDone = true
+	msgs, truncated, err := b.g.commitMessages(b.base, b.head, DefaultMaxClaimBytes)
+	if err != nil {
+		b.g.log().Warn("payload: commit messages unreadable; review proceeds without a claim ledger",
+			"base", b.base, "head", b.head, "error", err)
+		return b.claims
+	}
+	b.claims = claimLedgerSection(splitClaims(msgs), truncated)
+	return b.claims
 }
 
 // BuildChangedLines returns the grounding changed-lines map for the range,

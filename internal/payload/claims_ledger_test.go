@@ -224,3 +224,28 @@ func TestBuildEntries_PackageLevelBuilderCarriesNoLedger(t *testing.T) {
 	require.NotEmpty(t, entries)
 	assert.NotEqual(t, ClaimLedgerPath, entries[0].Path)
 }
+
+// reviewableEntries drops the claim-ledger entry a RangeBuilder prepends, so a
+// test that is about the CHANGED-FILE entries asserts on exactly those. It
+// narrows the slice under test rather than relaxing any assertion: the length
+// and per-entry checks that follow it are the same checks, applied to the same
+// files, as before the ledger existed.
+func reviewableEntries(entries []FileEntry) []FileEntry {
+	out := make([]FileEntry, 0, len(entries))
+	for _, e := range entries {
+		if e.Path != ClaimLedgerPath {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// reviewableBuildEntries is BuildEntries with the claim-ledger entry filtered
+// out, for tests whose subject is the changed-file rendering.
+func reviewableBuildEntries(rb *RangeBuilder, mode PayloadMode) ([]FileEntry, error) {
+	entries, err := rb.BuildEntries(mode)
+	if err != nil {
+		return nil, err
+	}
+	return reviewableEntries(entries), nil
+}
