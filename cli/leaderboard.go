@@ -427,6 +427,20 @@ func selectPublishableRecordIdentities(cmd *cobra.Command, filtered []scorecard.
 			// one that is blank only after trimming is reported and kept, and one the
 			// scrub empties is reported and dropped.
 			//
+			// "Blank only after trimming" is narrower than "whitespace-only", and the gap
+			// is a CARVE-OUT rather than an oversight. Tab, newline, CR, VT, FF and
+			// U+0085 are whitespace AND unicode.IsControl, so firstNonPrintingRune above
+			// has already returned a hard error and aborted the whole export before this
+			// chain runs. They never reach either arm. That is correct — a control rune
+			// in an identity is the misattribution vector the printability check exists
+			// to stop, and being whitespace as well does not make it safe — but it is not
+			// self-evident from the word "whitespace", and a tab is the likeliest
+			// whitespace artifact of a hand-edited store. What actually reaches this arm
+			// is Zs-class blankness: a plain space, or a U+00A0 the printability arm lets
+			// through. Pinned by
+			// TestRunLeaderboardExport_ControlClassWhitespaceHardFailsByDesign and stated
+			// for operators in docs/scorecard.md.
+			//
 			// The already-empty case is deliberately left silent. It is a record written
 			// without a model — pre-existing, documented, and a data question about
 			// existing history rather than an identity-printability one — so `f.value !=

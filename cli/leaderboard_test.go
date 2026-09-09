@@ -1234,3 +1234,49 @@ func TestRunLeaderboardExport_BlankNoticeIsSuppressedWhenTheRecordIsDropped(t *t
 	require.Len(t, env.Reviewers, 1, "only the clean record may publish")
 	require.Equal(t, "claude-sonnet", env.Reviewers[0].Model)
 }
+
+// The blank-and-kept arm is documented as covering "whitespace-only" identities, but it
+// is UNREACHABLE for whitespace that is also a control rune. Tab, newline, CR, VT, FF
+// and U+0085 are all unicode.IsControl, so firstNonPrintingRune (cli/benchmark_coverage.go)
+// returns a hard error and the ENTIRE export aborts before the chain runs.
+//
+// That is a deliberate carve-out, not an oversight - a control rune in an identity is
+// the misattribution vector the printability check exists to stop, and it is not made
+// safe by also being whitespace. But it was previously undocumented and untested, so
+// nothing pinned it and nothing told an operator why a tab-only model takes down an
+// export that succeeded yesterday. A tab is the single most likely whitespace artifact
+// of the hand-edited JSONL store this feature exists to service.
+func TestRunLeaderboardExport_ControlClassWhitespaceHardFailsByDesign(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value string
+	}{
+		{name: "tab", value: "\t"},
+		{name: "newline", value: "\n"},
+		{name: "carriage return", value: "\r"},
+		{name: "vertical tab", value: "\v"},
+		{name: "form feed", value: "\f"},
+		{name: "next line U+0085", value: "\u0085"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := scorecard.Record{
+				SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer,
+				RunID: "2026-08-29T00:00:00Z-ctrl", Reviewer: "greta", Model: tc.value,
+				FindingsRaised: 3, FindingsCorroborated: 2,
+			}
+			cmd := exportTestCmd()
+			var out, errBuf bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&errBuf)
+
+			err := runLeaderboardExport(cmd, []scorecard.Record{rec}, scorecard.FilterOpts{}, "")
+			require.Error(t, err,
+				"control-class whitespace is rejected by the printability arm, not routed into the blank arm")
+			assert.Contains(t, err.Error(), "non-printing rune",
+				"and it fails as a printability defect, which is what it is")
+			assert.NotContains(t, errBuf.String(), "blank after trimming",
+				"the blank arm never runs for these, so it must not be reported as a kept blank")
+			_ = out
+		})
+	}
+}
