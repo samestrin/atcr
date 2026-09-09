@@ -50,6 +50,16 @@ type Case struct {
 	ExpectedCategories []string `json:"expected_categories"`
 }
 
+// knownOtherSuiteFormats maps a `suite` discriminator this package does NOT
+// implement to the document that defines it. It is deliberately an enumeration
+// of KNOWN other tiers rather than a whitelist of accepted names: a user may
+// bundle a private standard-v1 suite under any name, so rejecting everything
+// but "standard-v1" would break them. Only a tier this repo actually ships a
+// format document for is recognised and refused.
+var knownOtherSuiteFormats = map[string]string{
+	"repo-state-v1": "benchmarks/repo-state-v1/FORMAT.md",
+}
+
 // Load reads <suitePath>/suite.json, validates the manifest structurally, and
 // confirms every case's diff file exists on disk. It returns a clear error
 // (rather than a half-built manifest) on any failure, so a caller never runs a
@@ -63,6 +73,14 @@ func Load(suitePath string) (*Manifest, error) {
 	var m Manifest
 	if err := json.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("parsing suite manifest %s: %w", manifestPath, err)
+	}
+	// Consult the discriminator BEFORE field validation. A repo-state-v1 manifest
+	// carries no `diff` field at all, so structural validation reports "diff path
+	// is required" — a message that sends the reader looking for a field the
+	// format never had, rather than telling them this is a different suite tier.
+	if doc, ok := knownOtherSuiteFormats[strings.TrimSpace(m.Suite)]; ok {
+		return nil, fmt.Errorf("unsupported suite format %q in %s: this loader implements standard-v1 only; see %s",
+			strings.TrimSpace(m.Suite), manifestPath, doc)
 	}
 	if err := m.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid suite manifest %s: %w", manifestPath, err)
