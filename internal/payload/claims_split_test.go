@@ -385,6 +385,11 @@ func TestSplitSentences_FullwidthTerminatorsEndSentences(t *testing.T) {
 			in:   "begin() keeps the cursor. 游标已保留。",
 			want: []string{"begin() keeps the cursor.", "游标已保留。"},
 		},
+		{
+			name: "halfwidth ideographic full stop",
+			in:   "ｶｰｿﾙは保持されます｡ﾍﾙﾊﾟｰは空を返します｡",
+			want: []string{"ｶｰｿﾙは保持されます｡", "ﾍﾙﾊﾟｰは空を返します｡"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.want, splitSentences(tc.in))

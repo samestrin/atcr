@@ -407,8 +407,8 @@ var sentenceAbbrevs = map[string]bool{
 // part of an abbreviation merges two assertions into one claim and the panel
 // renders one verdict where two were owed.
 
-// splitSentences splits prose on '.', '!', or '?' that genuinely ends a
-// sentence.
+// splitSentences splits prose on '.', '!', '?', or a fullwidth terminator
+// (see isWideTerminator) that genuinely ends a sentence.
 //
 // The punctuation must be followed by end-of-text, or by whitespace and then a
 // new sentence. "Followed by whitespace" is doing the load-bearing work: it is
@@ -472,9 +472,17 @@ func splitSentences(s string) []string {
 // A script with no sentence terminator at all (Thai separates sentences with a
 // space) has no boundary to find. One claim is the correct result there, not a
 // gap this function can close.
+//
+// Known over-admission, accepted: a terminator inside a quoted fragment splits
+// there — `fix the "结束。" marker` becomes two claims. That is the same behavior
+// ASCII '.' already has inside a quote, so it introduces no new class.
 func isWideTerminator(r rune) bool {
 	switch r {
-	case '。', '！', '？':
+	// U+3002 IDEOGRAPHIC FULL STOP, U+FF01 FULLWIDTH EXCLAMATION MARK,
+	// U+FF1F FULLWIDTH QUESTION MARK, U+FF61 HALFWIDTH IDEOGRAPHIC FULL STOP
+	// (the halfwidth-katakana spelling of the first — unambiguous, never a
+	// decimal point, so excluding it would drop a real boundary).
+	case '。', '！', '？', '｡':
 		return true
 	}
 	return false
