@@ -767,3 +767,39 @@ func TestBackfillJustifications_ReturnsTheShardNamesObservedUnderTheLock(t *test
 		"the snapshot must carry every shard the locked walk saw — including one with "+
 			"nothing to repair — and nothing that is not a shard")
 }
+
+// ShardNames' doc historically said it "is nil when no rewrite was needed", which
+// made "the store holds no shards" and "the store holds shards, none needing repair"
+// the same value — and made the field's meaning silently coupled to Changes being
+// non-empty. cli/debt_backfill.go's locator rendering leans on the field describing
+// the locked walk's observation, and an unchanged colliding shard is exactly the
+// collision the change set cannot see. A pass with nothing to rewrite still walked
+// nothing, so the observation was never recorded; this pins that the early return
+// records it too.
+func TestBackfillJustifications_ReportsShardNamesEvenWhenNothingNeedsRewrite(t *testing.T) {
+	dir := t.TempDir()
+	reviewRoot := t.TempDir()
+
+	// An empty shard: holds no records, so it can never produce a change.
+	writeShard(t, dir, "2026-07")
+	// A shard whose only record is SETTLED: skipped in the fold before any replay,
+	// so `want` stays empty and the pass takes the no-rewrite early return.
+	rec := `{"schema_version":3,"id":"bbbb2222","run_id":"r","ts":"2026-08-01T00:00:00Z",` +
+		`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f",` +
+		`"category":"correctness","est_minutes":10,"evidence":"e","reviewers":["dax"],` +
+		`"confidence":"HIGH","status":"resolved","justification":"already settled",` +
+		`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":3}}`
+	writeShard(t, dir, "2026-08", rec)
+	// Both halves of the shard filter: a non-.jsonl file and a directory whose name
+	// ends in .jsonl. Neither may reach the snapshot.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("not a shard\n"), 0o600))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "2026-06.jsonl"), 0o750))
+
+	res, err := BackfillJustifications(dir, reviewRoot, true)
+	require.NoError(t, err)
+	require.Empty(t, res.Changes, "the fixture must produce no change, or this is not the no-rewrite path")
+
+	assert.ElementsMatch(t, []string{"2026-07.jsonl", "2026-08.jsonl"}, res.ShardNames,
+		"a pass with nothing to rewrite must still report every shard the locked walk "+
+			"saw — nil here conflates 'no shards' with 'shards, none needing repair'")
+}
