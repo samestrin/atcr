@@ -131,7 +131,14 @@ func applyByteBudgetOrdered(entries []FileEntry, budget int64, tier func(FileEnt
 		// it on exactly the tight-budget path it exists for. When it is counted,
 		// the contract holds in the direction the epic requires: diff content
 		// sheds to fund the ledger, never the other way round.
-		if entries[i].Path == ClaimLedgerPath {
+		//
+		// The exemption is BOUNDED by the budget. "Diff content sheds to fund the
+		// ledger" is only coherent while the budget can actually hold the ledger;
+		// past that, shedding funds nothing. An unbounded exemption drops every
+		// reviewable file, still overruns, and sets AllDropped — trading a review
+		// that would have fit for ErrPayloadFullyDropped. A ledger that cannot fit
+		// therefore sheds like any other entry.
+		if entries[i].Path == ClaimLedgerPath && clampSize(entries[i].Size) <= budget {
 			continue
 		}
 		dropped[i] = true

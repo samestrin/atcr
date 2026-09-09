@@ -64,6 +64,11 @@ func ledgerEntry(body string) FileEntry {
 // The exemption is keyed on the ledger's PATH, not on the fact that production
 // builds it with Size 0. A size-keyed exemption would be an accident of the
 // current construction, and would evaporate the day the ledger is counted.
+//
+// The ledger is the largest entry AND is counted here, so only a path-keyed
+// exemption keeps it. The budget is set so the ledger fits it: the exemption is
+// bounded by the budget, and a ledger the budget cannot hold sheds like any
+// other entry (TestBudget_ClaimLedgerLargerThanBudgetShedsLikeAnyEntry).
 func TestApplyByteBudget_NeverDropsTheClaimLedger(t *testing.T) {
 	ledger := ledgerEntry("CLAIMS BLOCK")
 	ledger.Size = 5000 // largest entry: first in plain drop order
@@ -71,7 +76,7 @@ func TestApplyByteBudget_NeverDropsTheClaimLedger(t *testing.T) {
 		ledger,
 		{Path: "small.go", Size: 10, Body: "small"},
 	}
-	kept, trunc := ApplyByteBudget(entries, 20)
+	kept, trunc := ApplyByteBudget(entries, 5000)
 	require.True(t, trunc.Truncated)
 	assert.NotContains(t, trunc.FilesDropped, ClaimLedgerPath)
 	assert.Contains(t, keptPaths(kept), ClaimLedgerPath)
