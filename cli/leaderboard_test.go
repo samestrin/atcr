@@ -1290,3 +1290,56 @@ func TestRunLeaderboardExport_ControlClassWhitespaceHardFailsByDesign(t *testing
 		})
 	}
 }
+
+// A kept blank-after-trim record does not merely publish as model:"" — it MERGES with a
+// genuinely-empty-model record for the same persona. ExportSelected keys on
+// key{scrubField(Reviewer), scrubField(Model)} and both scrub to "", so two different
+// measurements become one board row. Only the blank one is named on stderr (the
+// already-empty case is silent by design), so an operator who acts on the notice repairs
+// half the problem and the merged row persists.
+//
+// The notice must therefore not tell them the record is uncounted. It IS counted —
+// inside a row it does not own.
+func TestRunLeaderboardExport_BlankIdentityMergesIntoTheEmptyIdentityRow(t *testing.T) {
+	const persona = "greta"
+	recs := []scorecard.Record{
+		{
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer,
+			RunID: "2026-08-29T00:00:00Z-empty", Reviewer: persona, Model: "",
+			FindingsRaised: 3, FindingsCorroborated: 2,
+		},
+		{
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer,
+			RunID: "2026-08-29T00:00:00Z-blank", Reviewer: persona, Model: " ",
+			FindingsRaised: 5, FindingsCorroborated: 4,
+		},
+	}
+	cmd := exportTestCmd()
+	var out, errBuf bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errBuf)
+
+	require.NoError(t, runLeaderboardExport(cmd, recs, scorecard.FilterOpts{}, ""))
+
+	var env struct {
+		Reviewers []struct {
+			Persona string `json:"persona"`
+			Model   string `json:"model"`
+		} `json:"reviewers"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &env))
+	require.Len(t, env.Reviewers, 1,
+		"the blank-model record and the empty-model record share a published identity, so they are ONE row")
+	assert.Equal(t, "", env.Reviewers[0].Model)
+	assert.Equal(t, persona, env.Reviewers[0].Persona)
+
+	report := errBuf.String()
+	assert.Equal(t, 1, strings.Count(report, "blank after trimming"),
+		"only the blank record is named; the already-empty one is silent by design")
+
+	// The remedy clause has to describe the state the operator is actually in.
+	assert.Contains(t, report, "blended into",
+		"the notice must say the counts are blended into the empty-identity row for that persona")
+	assert.NotContains(t, report, "to have it counted",
+		"the old clause implied the record was uncounted; it is counted, in a row it does not own")
+}

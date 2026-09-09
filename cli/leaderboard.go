@@ -454,11 +454,22 @@ func selectPublishableRecordIdentities(cmd *cobra.Command, filtered []scorecard.
 					// one shape would leave the operator guessing which is true; the
 					// repo states the consequence in exactly one place, so both
 					// messages quote it.
+					// The remedy clause names what the record's counts are ACTUALLY
+					// doing, not what an operator would assume. "to have it counted"
+					// was misleading: the record is already counted — just not in a row
+					// of its own. ExportSelected keys on
+					// key{scrubField(Reviewer), scrubField(Model)}, and a blank identity
+					// and a genuinely-empty one both scrub to "", so the two merge into
+					// one board row for that persona. Only the blank one is reported
+					// here (the already-empty case is silent by design), so an operator
+					// told the record is uncounted repairs half the problem and leaves
+					// the merged row standing.
 					blankNotice = fmt.Sprintf(
 						"scorecard record %q: %s is blank after trimming — the record has no %s; "+
-							"it is kept, but publishing \"\" would be rejected at the leaderboard — "+
-							"edit or remove that record in the scorecard store to have it counted\n",
-						rec.RunID, f.name, f.name)
+							"it is kept, but publishing \"\" would be rejected at the leaderboard, and "+
+							"its counts are blended into the empty-%s row for that persona — "+
+							"edit or remove that record in the scorecard store to give it a row of its own\n",
+						rec.RunID, f.name, f.name, f.name)
 				}
 			} else if trimmed != "" && scorecard.ScrubPublicString(f.value) == "" {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
