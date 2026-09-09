@@ -354,6 +354,57 @@ func TestSplitSentences_ExclamationAndQuestionAlsoEndSentences(t *testing.T) {
 	assert.Equal(t, []string{"Really?!", "Yes."}, splitSentences("Really?! Yes."))
 }
 
+// The terminator set was ASCII-only, so prose written in a script that ends its
+// sentences with a fullwidth terminator never split at all: a whole commit body
+// became ONE claim, and the panel rendered one verdict where several were owed.
+// A fullwidth terminator is also not followed by a space, so the "punctuation
+// then whitespace" boundary rule cannot apply to it.
+func TestSplitSentences_FullwidthTerminatorsEndSentences(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		want []string
+	}{
+		{
+			name: "ideographic full stop",
+			in:   "游标已保留。助手返回空值。测试已更新。",
+			want: []string{"游标已保留。", "助手返回空值。", "测试已更新。"},
+		},
+		{
+			name: "fullwidth exclamation and question",
+			in:   "助手已添加！游标已保留吗？已保留。",
+			want: []string{"助手已添加！", "游标已保留吗？", "已保留。"},
+		},
+		{
+			name: "unterminated fullwidth tail still becomes a claim",
+			in:   "游标已保留。助手返回空值",
+			want: []string{"游标已保留。", "助手返回空值"},
+		},
+		{
+			name: "mixed script splits on both terminator classes",
+			in:   "begin() keeps the cursor. 游标已保留。",
+			want: []string{"begin() keeps the cursor.", "游标已保留。"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, splitSentences(tc.in))
+		})
+	}
+}
+
+// A fullwidth terminator must not become a boundary where the script does not
+// use it as one, and a script with NO sentence terminator (Thai separates
+// sentences with a space) has no boundary to find — one claim is the correct
+// outcome there, not a defect.
+func TestSplitSentences_FullwidthSplitDoesNotOverreach(t *testing.T) {
+	// U+FF0E FULLWIDTH FULL STOP is a decimal point in fullwidth numerics, so it
+	// is deliberately NOT a terminator.
+	assert.Equal(t, []string{"版本 １．２．３ 已固定"}, splitSentences("版本 １．２．３ 已固定"))
+
+	assert.Equal(t, []string{"เคอร์เซอร์ถูกเก็บไว้ ตัวช่วยส่งคืนค่าว่าง"},
+		splitSentences("เคอร์เซอร์ถูกเก็บไว้ ตัวช่วยส่งคืนค่าว่าง"))
+}
+
 // splitSentences was quadratic on abbreviation-dense prose: when isAbbrevBefore
 // returned true the loop continued WITHOUT advancing start, so the next
 // abbreviation re-scanned the whole prefix — and the check itself allocated a
