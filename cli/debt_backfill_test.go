@@ -459,7 +459,7 @@ func TestDebtBackfillJustifications_DryRunDisambiguatesAgainstAnUnchangedShardOn
 
 	locators := regexp.MustCompile(`(?m)^  (\S+):1 `).FindAllStringSubmatch(out, -1)
 	require.Len(t, locators, 1, "exactly one record changes")
-	assert.Regexp(t, `^2026-08\.jsonl#[0-9a-f]{6}$`, locators[0][1],
+	assert.Regexp(t, `^2026-08\.jsonl#[0-9a-f]{12}$`, locators[0][1],
 		"a shard whose sanitized name collides with a real file on disk must be disambiguated, "+
 			"even when that file produced no rewrite")
 
@@ -535,7 +535,7 @@ func TestLocatorNames_IsTotalOverItsChangeSetWithoutASnapshot(t *testing.T) {
 
 	require.Len(t, names, 2, "every changed shard must get a printable locator")
 	for _, c := range changes {
-		assert.Regexp(t, `^2026-08-a\.jsonl#[0-9a-f]{6}$`, names[c.Shard],
+		assert.Regexp(t, `^2026-08-a\.jsonl#[0-9a-f]{12}$`, names[c.Shard],
 			"with no snapshot the change set alone must still expose the collision, "+
 				"so the locator carries its disambiguating suffix")
 	}

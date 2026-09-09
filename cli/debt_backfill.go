@@ -290,10 +290,17 @@ func pluralLines(n int) string {
 // shard filter in the tree (localdebt's) rather than two copies to keep in step.
 //
 // Residual case, accepted rather than overlooked: a store file literally named like an
-// already-disambiguated token ("2026-08.jsonl#a1b2c3") would print the same as the
+// already-disambiguated token ("2026-08.jsonl#a1b2c3d4e5f6") would print the same as the
 // disambiguated form of some other file. Reaching it needs an attacker to guess a
 // SHA-256 prefix of a filename they do not control, and the outcome is the same
 // ambiguity that exists today rather than a worse one.
+//
+// That dismissal covers ONLY the guess-a-hash-you-do-not-control shape. It does not
+// cover the attacker who plants BOTH names — the one the threat model here already
+// assumes, since they can write to the store directory. They pick both preimages and
+// pad either with Cf runes that sanitize away, so finding two names that share a
+// truncated digest is an offline birthday search over a space of their choosing, not a
+// guess. That is what locatorSuffixHexLen is sized against.
 func locatorNames(shards []string, changes []localdebt.JustificationChange) map[string]string {
 	rawByToken := map[string]map[string]bool{}
 	add := func(shard string) {
@@ -335,7 +342,7 @@ func locatorNames(shards []string, changes []localdebt.JustificationChange) map[
 		t := sanitizeLocator(c.Shard)
 		if len(rawByToken[collisionKey(c.Shard)]) > 1 {
 			sum := sha256.Sum256([]byte(c.Shard))
-			t += "#" + hex.EncodeToString(sum[:])[:6]
+			t += "#" + hex.EncodeToString(sum[:])[:locatorSuffixHexLen]
 		}
 		out[c.Shard] = t
 	}
@@ -373,3 +380,23 @@ func locatorNames(shards []string, changes []localdebt.JustificationChange) map[
 func collisionKey(shard string) string {
 	return norm.NFKC.String(stripTerminalDrivers(shard))
 }
+
+// locatorSuffixHexLen is how many hex characters of the raw name's SHA-256 the
+// disambiguating suffix carries: 12, for 48 bits.
+//
+// It is sized against the attacker the surrounding comments already assume — one who
+// can write to the store directory, and therefore controls BOTH planted filenames and
+// can pad either with Cf runes that sanitize away. That is not the guess-a-hash-of-a-
+// name-you-do-not-control case the residual paragraph dismisses; it is an offline
+// birthday search over a space the attacker chooses, which needs about 2^(bits/2)
+// trials. At the previous 6 characters that was 24 bits, so roughly 4096 trials — under
+// a second of scripting, demonstrated by the fixture in
+// TestLocatorNames_SuffixSurvivesAForcedShortPrefixCollision, whose two names really do
+// share the prefix "2a0450". Both rows then printed one identical locator, which is the
+// exact invariant the listing exists to uphold.
+//
+// 48 bits puts that search at roughly 2^24 hashes for a pair, and the token stays short
+// enough to read. A per-run ordinal would also work and is shorter still, but it would
+// give up the property the header calls out: the suffix is derived from the raw name,
+// so the DERIVATION is stable across runs and independent of directory order.
+const locatorSuffixHexLen = 12
