@@ -173,3 +173,27 @@ func TestCommitMessages_MessageContentCannotForgeARecordBoundary(t *testing.T) {
 	require.Len(t, msgs, 1, "one commit must yield exactly one message regardless of its content")
 	assert.Contains(t, msgs[0], "forged second claim")
 }
+
+// AC2/AC3 promise byte-identical claims for the same range. i18n.logOutputEncoding
+// is a repository-or-developer git config that transcodes the message bytes git
+// prints, and production does not neutralize ambient config the way the test
+// helper does. Two machines reviewing the same SHA range would otherwise get
+// different claim TEXT — and, where a transcode mangles a sentence terminator,
+// different claim INDICES, which is exactly the per-agent divergence the ledger
+// exists to prevent.
+func TestCommitMessages_AreNotTranscodedByAmbientGitConfig(t *testing.T) {
+	const msg = "réduire le curseur\n\n- le curseur reste à zéro"
+	dir := initRepo(t)
+	write(t, dir, "a.txt", "1")
+	base := commitAll(t, dir, "seed the file")
+	write(t, dir, "a.txt", "2")
+	head := commitAll(t, dir, msg)
+	gitCmd(t, dir, "config", "i18n.logOutputEncoding", "ISO-8859-1")
+
+	g := newGitRunner(context.Background(), dir)
+	msgs, _, err := g.commitMessages(base, head, DefaultMaxClaimBytes)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	assert.True(t, utf8.ValidString(msgs[0]), "the read must pin its output encoding, not inherit it")
+	assert.Equal(t, msg, msgs[0], "the claim text is the bytes the author wrote")
+}
