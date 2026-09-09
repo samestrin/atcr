@@ -738,3 +738,27 @@ func sha256Hex(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
 }
+
+// A non-dry run renames each shard into place as it walks, so a pass that fails on a
+// later shard leaves the earlier ones already rewritten in an append-only store. The
+// bare error said nothing about that, so the operator was told the command failed and
+// had no way to learn the store had been mutated — or which shard to reconcile.
+func TestDebtBackfillJustifications_NamesTheShardsAlreadyRewrittenWhenThePassFails(t *testing.T) {
+	store, reviewRoot := backfillFixture(t)
+	// A DANGLING symlink named like a shard. ReadAll skips it (it reads as missing),
+	// so the scan succeeds; the rewrite walk reaches it after 2026-08.jsonl has been
+	// published and fails there. This is the mid-pass failure, reached end-to-end.
+	require.NoError(t, os.Symlink(filepath.Join(store, "gone.jsonl"), filepath.Join(store, "2026-09.jsonl")))
+
+	code, out := execCmdCapture(t, "debt", "backfill-justifications",
+		"--store", store, "--review-root", reviewRoot)
+	require.NotEqual(t, 0, code, "the pass failed, so the command must not report success: %s", out)
+	assert.Contains(t, out, "backfill-justifications:", "the error is still wrapped with the subcommand name")
+	assert.Contains(t, out, "2026-08.jsonl:1",
+		"the shard already rewritten must be named before the failure is surfaced")
+
+	b, err := os.ReadFile(filepath.Join(store, "2026-08.jsonl"))
+	require.NoError(t, err)
+	assert.Contains(t, string(b), "```",
+		"the fixture must really have written the first shard, or this test proves nothing")
+}

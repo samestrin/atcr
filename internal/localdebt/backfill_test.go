@@ -817,3 +817,69 @@ func TestBackfillJustifications_MissingStoreDirIsTheNoBacklogState(t *testing.T)
 	require.NoError(t, err, "a missing store directory is the no-backlog state, not a failure")
 	assert.Nil(t, res.ShardNames, "no shards were observed, so the snapshot must be nil")
 }
+
+// A non-dry run renames each shard into place AS IT WALKS, so a failure on a later
+// shard leaves the earlier ones already rewritten in an append-only store. Returning
+// nil there reported "nothing happened" over a store that had in fact been mutated,
+// and the operator had no way to learn which shards to reconcile.
+func TestRewriteJustifications_ReturnsWhatItAlreadyWroteWhenALaterShardFails(t *testing.T) {
+	const stale = "the stale excerpt"
+	dir := t.TempDir()
+	writeShard(t, dir, "2026-08",
+		`{"schema_version":3,"id":"aaaa1111","run_id":"r","ts":"2026-08-01T00:00:00Z",`+
+			`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f",`+
+			`"category":"correctness","est_minutes":10,"evidence":"e","reviewers":["dax"],`+
+			`"confidence":"HIGH","justification":`+strconv.Quote(stale)+`}`)
+	// A DANGLING symlink named like a shard. os.ReadDir lists it and IsShardEntry
+	// accepts it (not a directory, .jsonl suffix), so the walk reaches it only AFTER
+	// 2026-08 has been renamed into place — and os.ReadFile fails there. This is the
+	// mid-pass failure the row is about, reached without a fake filesystem.
+	require.NoError(t, os.Symlink(filepath.Join(dir, "gone.jsonl"), filepath.Join(dir, "2026-09.jsonl")))
+
+	changes, shards, err := rewriteJustifications(dir, map[string]replacement{
+		"aaaa1111": {from: stale, to: "the replayed excerpt"},
+	}, false)
+	require.Error(t, err)
+	require.Len(t, changes, 1,
+		"the shard already renamed into place must travel out with the error, not be discarded")
+	assert.Equal(t, "2026-08.jsonl", changes[0].Shard)
+	assert.Equal(t, stale, changes[0].Before)
+	assert.Contains(t, shards, "2026-08.jsonl",
+		"the snapshot is taken before the walk, so it survives a mid-pass failure too")
+
+	b, rerr := os.ReadFile(filepath.Join(dir, "2026-08.jsonl"))
+	require.NoError(t, rerr)
+	assert.Contains(t, string(b), "the replayed excerpt",
+		"the reported write must really be on disk: reporting one that is not is the inverse error")
+}
+
+// The partial write has to survive BackfillJustifications too. It discarded the
+// closure's result wholesale with `return BackfillResult{}, err`, so even once
+// rewriteJustifications reports what it wrote, the operator saw zero counters.
+func TestBackfillJustifications_ReportsThePartialWriteWhenALaterShardFails(t *testing.T) {
+	dir := t.TempDir()
+	reviewRoot := t.TempDir()
+	rd := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+	require.NoError(t, os.MkdirAll(rd, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"),
+		[]byte("## Findings\n\n- **internal/thing.go:42** the real narrative explaining the defect.\n"), 0o600))
+
+	rec := `{"schema_version":3,"id":"aaaa1111","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
+		`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
+		`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+		`"justification":"stale text that the replay will replace",` +
+		`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":3}}`
+	writeShard(t, dir, "2026-08", rec)
+	// ReadAll skips an ENOENT shard (a dangling link reads as missing), so the scan
+	// phase succeeds and the failure lands where the row says it does: in the rewrite
+	// walk, after the first shard was published.
+	require.NoError(t, os.Symlink(filepath.Join(dir, "gone.jsonl"), filepath.Join(dir, "2026-09.jsonl")))
+
+	res, err := BackfillJustifications(dir, reviewRoot, false)
+	require.Error(t, err)
+	require.Len(t, res.Changes, 1,
+		"a zero result over a store that was already mutated is the defect: the written shard must be named")
+	assert.Equal(t, "2026-08.jsonl", res.Changes[0].Shard)
+	assert.Equal(t, 1, res.RewrittenLines)
+	assert.Contains(t, res.ShardNames, "2026-08.jsonl")
+}
