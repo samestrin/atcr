@@ -443,7 +443,7 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 // path would let that file claim it. The exemption keys on FileEntry.shedExempt,
 // which only newClaimLedgerEntry sets.
 //
-// FOUR consequences follow from carrying the ledger as a FileEntry, all
+// FIVE consequences follow from carrying the ledger as a FileEntry, all
 // accepted deliberately with AC6 (epic 35.16.7 forbids editing internal/fanout,
 // which is the only place any of them could be fixed). They are recorded here
 // rather than only in planning notes, because here is where they are created:
@@ -468,6 +468,17 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 //     but the kept one, so "<claims>" can appear in Truncation.FilesDropped and
 //     from there in status.json's files_dropped, alongside real repository
 //     paths.
+//  5. The ledger is absent from the model-invocation audit record.
+//     EntriesFromRenderedPayload (the Epic 35.0 audit seam) reconstructs what a
+//     reviewer actually saw from the flat prompt text, and markedEntryStarts
+//     deliberately discards everything before the first column-0 marker
+//     (internal/payload/rendered.go:85-87). The ledger sits entirely above that
+//     marker, so up to ~10.6 KiB of verdict-shaping instruction text is missing
+//     from every audit record: an auditor reconstructing why a reviewer returned
+//     a finding sees the code and not the instructions that shaped it. Closing it
+//     means having EntriesFromRenderedPayload surface the pre-marker prefix as an
+//     unattributed entry, which is a change to the audit seam rather than to this
+//     file.
 const ClaimLedgerPath = "<claims>"
 
 // newClaimLedgerEntry builds the ledger's FileEntry. It is the ONLY place
@@ -508,8 +519,14 @@ func claimLedgerSection(claims []string, truncated bool) string {
 	b.WriteString("For EACH numbered claim, state exactly one verdict and cite the `file:line` that settles it:\n\n")
 	b.WriteString("- VERIFIED — the diff contains the claimed change. Cite the `file:line` that implements it.\n")
 	b.WriteString("- CONTRADICTED — the diff does something that conflicts with the claim. Cite the `file:line` that conflicts.\n")
+	// The citation rule here must match the grounding-gate paragraph below it.
+	// "Cite the file:line where the change would have had to appear" read
+	// literally produces a citation on an UNCHANGED line, and that is precisely
+	// what the gate discards — so a reviewer who obeyed this bullet would lose the
+	// one verdict this section exists to produce.
 	b.WriteString("- UNSUPPORTED — the diff neither implements nor conflicts with the claim, because it does not touch the named behavior. ")
-	b.WriteString("Cite the `file:line` where the claimed change would have had to appear.\n\n")
+	b.WriteString("Cite the `file` this diff changes, and a `file:line` only if that line is inside the diff's changed regions; ")
+	b.WriteString("otherwise name the missing change in the description.\n\n")
 	b.WriteString("UNSUPPORTED and CONTRADICTED are findings — report each one. ")
 	b.WriteString("UNSUPPORTED is not a weaker CONTRADICTED: it is the verdict for a change that is ABSENT, ")
 	b.WriteString("and an absent change leaves no trace in a diff, so nothing but this check will surface it.\n\n")
