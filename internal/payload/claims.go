@@ -12,11 +12,12 @@ import (
 // holds every realistic branch's messages; a maxBytes <= 0 means unlimited.
 const DefaultMaxClaimBytes int64 = 64 * 1024
 
-// commitRecordSep separates commit messages in the `git log` output. ASCII RS
-// (0x1e) cannot appear in a commit message written by any normal tool, and
-// unlike a textual sentinel it cannot be forged by message content to split one
-// commit's claims into two.
-const commitRecordSep = "\x1e"
+// commitRecordSep separates commit messages in the `git log -z` output. NUL is
+// git's own record separator and is the one byte a commit message cannot carry,
+// so message content cannot forge a boundary and split one commit's claims into
+// two — which any printable sentinel, including ASCII RS, would allow an
+// attacker-influenced message to do.
+const commitRecordSep = "\x00"
 
 // commitMessages returns the commit messages of base..head, oldest first, with
 // merge commits excluded. truncated reports whether the byte cap shed anything;
@@ -40,7 +41,7 @@ func (g *gitRunner) commitMessages(base, head string, maxBytes int64) (msgs []st
 	// --end-of-options blocks option injection via a ref beginning with '-',
 	// matching verifyRef. %B is the raw subject+body, unwrapped and unreformatted,
 	// so the claim the author wrote is the claim the panel adjudicates.
-	out, err := g.output("log", "--no-merges", "--format=%B"+commitRecordSep, "--end-of-options", base+".."+head)
+	out, err := g.output("log", "-z", "--no-merges", "--format=%B", "--end-of-options", base+".."+head)
 	if err != nil {
 		return nil, false, fmt.Errorf("reading commit messages for %s..%s: %w", base, head, err)
 	}

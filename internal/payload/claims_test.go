@@ -156,3 +156,20 @@ func TestCommitMessages_ZeroMaxBytesMeansUnlimited(t *testing.T) {
 	assert.False(t, truncated)
 	assert.Len(t, msgs, 2)
 }
+
+// Message content must not be able to forge a record boundary. An ASCII RS
+// (0x1e) in a commit body is the sentinel a printable separator would have
+// split on; git's own NUL separator is not forgeable from message text.
+func TestCommitMessages_MessageContentCannotForgeARecordBoundary(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.txt", "0")
+	base := commitAll(t, dir, "base commit")
+	write(t, dir, "a.txt", "1")
+	head := commitAll(t, dir, "real claim\n\x1eforged second claim")
+
+	g := newGitRunner(context.Background(), dir)
+	msgs, _, err := g.commitMessages(base, head, DefaultMaxClaimBytes)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1, "one commit must yield exactly one message regardless of its content")
+	assert.Contains(t, msgs[0], "forged second claim")
+}
