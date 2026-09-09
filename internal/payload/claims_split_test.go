@@ -158,7 +158,7 @@ func TestSplitClaims_CollapsesClaimsThatDifferOnlyInWhatSanitizingRemoves(t *tes
 		"subject one ---- tail",
 		"subject one ------- tail",
 	})
-	rendered := claimLedgerSection(got, false)
+	rendered := claimLedgerSection(got, claimsComplete)
 	assert.Equal(t, 1, strings.Count(rendered, "subject one -- tail"),
 		"two raw claims that sanitize to the same text are one claim")
 }
