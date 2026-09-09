@@ -183,8 +183,15 @@ func applyByteBudgetOrdered(entries []FileEntry, budget int64, tier func(FileEnt
 	// emptiness would silently retire the caller's ErrPayloadFullyDropped guard
 	// — trading a loud pre-dispatch failure for a reviewer holding claims and no
 	// code, which returns a false-clean "no findings" review.
+	//
+	// Truncated is derived from the shed that HAPPENED, not from total > budget.
+	// The exempt ledger can leave the total over budget with nothing shedable, and
+	// asserting truncation there names nothing as dropped: internal/benchmark
+	// reads truncated as OutcomeIncomplete ("saw only a FRACTION of the diff") and
+	// refitFallbackPayload takes its re-fit arm on it, so a complete review would
+	// be recorded as incomplete and re-rendered unchanged.
 	return kept, Truncation{
-		Truncated:    true,
+		Truncated:    len(droppedPaths) > 0,
 		FilesDropped: droppedPaths,
 		AllDropped:   reviewableIn > 0 && reviewableKept == 0,
 	}
