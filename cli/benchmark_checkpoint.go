@@ -298,15 +298,9 @@ func validateCheckpointRoster(cp *runCheckpoint, roster, legacyRoster []string) 
 	// a resume that replays every already-completed case, or aborts before the first
 	// one, returns without saving: the legacy form stays on disk and this arm
 	// re-fires on each such resume.
-	// ONE emptiness term, not two. `len(legacyRoster) > 0` sat here beside it and was
-	// unfalsifiable: equalStrings compares lengths first, so when exactly one slice is
-	// empty the arm cannot fire regardless, and only the BOTH-empty case needs blocking
-	// — which either term alone blocks. A redundant conjunct reads as a live guard while
-	// protecting nothing, which is how a future edit loses a protection it appears to
-	// have. `len(recorded) > 0` is the one kept because it states the arm's actual
-	// precondition: an empty recorded roster proves nothing about the panel, so it must
-	// never be excused. Dropping it lets `"roster": []` compare equal to a serial-only
-	// project's empty parallel projection and resume against ANY serial panel.
+	// `len(recorded) > 0` must stay: dropping it lets a checkpoint recording `"roster": []`
+	// compare equal to a serial-only project's empty parallel projection and resume
+	// against ANY serial panel.
 	if cp.RosterFormat == "" && len(recorded) > 0 && equalStrings(recorded, sortedCopy(legacyRoster)) {
 		cp.Roster = current
 		cp.RosterFormat = rosterFormatUnion
