@@ -50,14 +50,50 @@ func TestSplitClaims_BulletsBecomeOneClaimEach(t *testing.T) {
 	}, got)
 }
 
+// A commit body whose last sentence carries NO terminating period is the single
+// most common commit-message shape there is, and splitSentences reaches it only
+// through its trailing-fragment branch. Every prose case here used to end its
+// final sentence with a period, so that branch had zero coverage and deleting it
+// left the package green — meaning the last claim of an ordinary commit body
+// could be dropped from the ledger with nothing detecting it.
 func TestSplitClaims_ProseBodySplitsPerSentence(t *testing.T) {
-	msg := "fix the drain path\n\nThe cursor is now preserved. The helper returns None instead of zero."
-	got, _ := splitClaims([]string{msg})
-	assert.Equal(t, []string{
-		"fix the drain path",
-		"The cursor is now preserved.",
-		"The helper returns None instead of zero.",
-	}, got)
+	for _, tc := range []struct {
+		name string
+		msg  string
+		want []string
+	}{
+		{
+			name: "every sentence terminated",
+			msg:  "fix the drain path\n\nThe cursor is now preserved. The helper returns None instead of zero.",
+			want: []string{
+				"fix the drain path",
+				"The cursor is now preserved.",
+				"The helper returns None instead of zero.",
+			},
+		},
+		{
+			name: "unterminated final sentence still becomes a claim",
+			msg:  "fix the drain\n\nThe cursor is preserved. The helper returns None",
+			want: []string{
+				"fix the drain",
+				"The cursor is preserved.",
+				"The helper returns None",
+			},
+		},
+		{
+			name: "body with no terminator at all is one claim",
+			msg:  "fix the drain\n\nThe cursor is preserved",
+			want: []string{
+				"fix the drain",
+				"The cursor is preserved",
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _ := splitClaims([]string{tc.msg})
+			assert.Equal(t, tc.want, got)
+		})
+	}
 }
 
 // A version number or an abbreviation is not a sentence boundary.
