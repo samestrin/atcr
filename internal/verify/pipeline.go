@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -439,12 +440,10 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		default:
 			carried = true
 		}
-		// Every arm that does NOT carry the prior's budgets re-derives the truncation
-		// caveat from the block's own flag, which describes THIS verdict. Without it
-		// the score reads a partial-read verdict as a clean one (see the note above).
-		if !carried && f.Verification.Truncated {
-			rec.TrippedBudgets = []string{budgetToolBytes}
-		}
+		// The re-derivation itself runs AFTER the carry block below, on every arm — see
+		// the comment there. Scoping it to `!carried` made it forward-only: it repaired
+		// the record the next time a prior was rejected and could never repair one
+		// already on disk.
 		if carried {
 			// Verdict equality alone is no longer sufficient evidence that the prior
 			// describes the SAME run. internal/debate writes a judge's verdict into
@@ -482,6 +481,31 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 			// it exists to disclaim.
 			rec.DebateJudge = prior.DebateJudge
 			rec.DebateReasoning = prior.DebateReasoning
+		}
+		// Re-derive the truncation caveat from the block's own flag on EVERY arm,
+		// including the carry arm, so the record SELF-HEALS.
+		//
+		// The flag describes THIS verdict and always survives; the carried list does not
+		// have to. A record holding an empty list beside a truncated block is a stable
+		// state, not a transient one: the two verdicts then agree by construction on
+		// every later run, so the skip path takes the carry arm, copies the empty list
+		// forward, and the record can never recover. internal/scorecard reads
+		// truncatedRead([]) as false and credits a partial-read confirm to the
+		// reviewer's durable survived_skeptic_rate, permanently. Every artifact written
+		// before the caveat existed — and one from a partly-completed publish, where
+		// findings.json is renamed first — holds exactly that shape.
+		//
+		// It APPENDS rather than replaces: max_turns and timeout trips are recorded
+		// nowhere else (the flag covers only the byte budget), so overwriting the
+		// carried list would drop them on every re-verify. The membership check keeps it
+		// idempotent across repeated re-verifies of the same record.
+		//
+		// It is one-directional on purpose. An untruncated block does NOT strip a
+		// carried tool_budget_bytes entry: the flag is evidence that this verdict was
+		// answered from a shortened read, not evidence that it was not, and a prior's
+		// entry may record a trip the block never modelled.
+		if f.Verification.Truncated && !slices.Contains(rec.TrippedBudgets, budgetToolBytes) {
+			rec.TrippedBudgets = append(rec.TrippedBudgets, budgetToolBytes)
 		}
 		// Coerce nil TrippedBudgets to empty slice to avoid null in JSON output.
 		if rec.TrippedBudgets == nil {
