@@ -255,6 +255,14 @@ func splitClaims(msgs []string) (claims []string, fenceSuppressed bool) {
 		// a squashed or cherry-picked branch is where near-identical messages
 		// come from, which is the case the collapse exists for.
 		c = sanitizeClaim(c)
+		// Cap BEFORE the dedup lookup, for the same reason sanitizing runs first:
+		// the rendered form is the only form in which "the same claim twice" means
+		// anything to a reviewer, and two claims that render identically are
+		// indistinguishable on the page. A claim long enough to collide past a
+		// 1 KiB prefix does not exist in real commit prose.
+		if capped, cut := capUTF8(c, maxClaimRenderBytes); cut {
+			c = capped + claimElidedMarker
+		}
 		if !isClaimBearing(c) {
 			return
 		}
