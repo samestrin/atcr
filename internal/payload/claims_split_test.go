@@ -1,6 +1,7 @@
 package payload
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -138,4 +139,21 @@ func TestSplitClaims_AbbreviationsAreNotSentenceBoundaries(t *testing.T) {
 		"Upgrade to v1.2.3 e.g. the pinned tool.",
 		"no behavior change is intended.",
 	}, got)
+}
+
+// The duplicate-collapse keys `seen` on the RAW claim, but sanitizeClaim does not
+// run until render time. Two raw claims that differ only in what sanitizing strips
+// or rewrites — a CR versus a space, a 4-dash run versus a 7-dash run, an invalid
+// UTF-8 byte — therefore survive dedup and are enumerated as two IDENTICAL
+// numbered claims. That is exactly where a squashed or cherry-picked branch lands,
+// and it defeats the stated purpose: enumerating a claim twice pads the ledger
+// without adding an assertion.
+func TestSplitClaims_CollapsesClaimsThatDifferOnlyInWhatSanitizingRemoves(t *testing.T) {
+	got := splitClaims([]string{
+		"subject one ---- tail",
+		"subject one ------- tail",
+	})
+	rendered := claimLedgerSection(got, false)
+	assert.Equal(t, 1, strings.Count(rendered, "subject one -- tail"),
+		"two raw claims that sanitize to the same text are one claim")
 }
