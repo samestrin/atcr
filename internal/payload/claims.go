@@ -52,7 +52,23 @@ func (g *gitRunner) commitMessages(base, head string, maxBytes int64) (msgs []st
 	// --end-of-options blocks option injection via a ref beginning with '-',
 	// matching verifyRef. %B is the raw subject+body, unwrapped and unreformatted,
 	// so the claim the author wrote is the claim the panel adjudicates.
-	out, err := g.output("log", "-z", "--no-merges", "--format=%B", "--end-of-options", base+".."+head)
+	//
+	// Two properties are pinned in the argv rather than inherited, because AC2/AC3
+	// promise byte-identical claims for the same SHA range and this read is the
+	// only place either could drift. Unlike the test helper, production does not
+	// neutralize ambient git config:
+	//
+	//   - i18n.logOutputEncoding transcodes the bytes git prints. A developer or
+	//     repository carrying it would hand two machines different claim TEXT for
+	//     one range — and different claim INDICES wherever a mangled terminator
+	//     moves a sentence boundary. -c pins it to UTF-8 at the invocation.
+	//   - --date-order states the traversal explicitly, so the claim order is a
+	//     property of this argv rather than of git's ambient default. It matches
+	//     the default for the linear ranges reviews normally see, so it changes no
+	//     current output; what it buys is that a future git default cannot silently
+	//     renumber a ledger.
+	out, err := g.output("-c", "i18n.logOutputEncoding=UTF-8",
+		"log", "--date-order", "-z", "--no-merges", "--format=%B", "--end-of-options", base+".."+head)
 	if err != nil {
 		return nil, false, fmt.Errorf("reading commit messages for %s..%s: %w", base, head, err)
 	}
