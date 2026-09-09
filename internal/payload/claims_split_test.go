@@ -157,3 +157,38 @@ func TestSplitClaims_CollapsesClaimsThatDifferOnlyInWhatSanitizingRemoves(t *tes
 	assert.Equal(t, 1, strings.Count(rendered, "subject one -- tail"),
 		"two raw claims that sanitize to the same text are one claim")
 }
+
+// The continuation test is `line != trimmed`, which is true for any line carrying
+// TRAILING whitespace — including every line of a CRLF message, because splitting
+// on "\n" leaves the "\r". A Windows-authored branch therefore gets a ledger that
+// is present but substantively wrong: paragraph sentences after the first bullet
+// are swallowed into that bullet instead of becoming their own claims. The comment
+// above the test says "an INDENTED line directly under a bullet", so the fix is to
+// make the code check what the comment already says.
+func TestSplitClaims_CRLFBodyDoesNotSwallowParagraphsIntoTheBullet(t *testing.T) {
+	got := splitClaims([]string{"subject line here\r\n\r\n- bullet claim one\r\nA separate paragraph sentence.\r\nAnother separate one.\r\n"})
+	assert.Equal(t, []string{
+		"subject line here",
+		"bullet claim one",
+		"A separate paragraph sentence.",
+		"Another separate one.",
+	}, got)
+}
+
+// The same defect fires on a plain LF message whose paragraph line happens to
+// carry one trailing space — invisible in every editor, and it silently merges
+// two assertions into one verdict.
+func TestSplitClaims_TrailingSpaceDoesNotSwallowAParagraphIntoTheBullet(t *testing.T) {
+	// The trailing space must not be on the LAST line: strings.TrimSpace over the
+	// whole message would remove it there and hide the defect.
+	got := splitClaims([]string{"subject line here\n\n- bullet claim one\nA separate paragraph sentence. \nAnother separate one.\n"})
+	assert.Equal(t, []string{"subject line here", "bullet claim one", "A separate paragraph sentence.", "Another separate one."}, got)
+}
+
+// A genuinely INDENTED line under a bullet is still that bullet's continuation:
+// hard-wrapped bullets are ordinary, and filing the wrap as its own claim would
+// demand a verdict and a citation for a sentence fragment.
+func TestSplitClaims_IndentedLineStillContinuesTheBullet(t *testing.T) {
+	got := splitClaims([]string{"subject line here\n\n- bullet claim one\n  wrapped onto a second line\n"})
+	assert.Equal(t, []string{"subject line here", "bullet claim one wrapped onto a second line"}, got)
+}
