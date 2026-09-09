@@ -23,9 +23,17 @@ type FileEntry struct {
 // Truncation records what a byte-budget pass dropped. It is ALWAYS returned by
 // ApplyByteBudget (never silent): Truncated=false with an empty FilesDropped
 // means nothing was dropped. FilesDropped is sorted by path for stable output.
-// AllDropped is true when the input was non-empty but every file was shed —
-// callers should surface this as a distinct error rather than forwarding an
-// empty payload that silently produces zero findings.
+// AllDropped is true when the input held reviewable files but every one of them
+// was shed — callers should surface this as a distinct error rather than
+// forwarding a payload that silently produces zero findings.
+//
+// "Reviewable" excludes the claim-ledger entry (ClaimLedgerPath), which is
+// exempt from shedding. So kept may be NON-EMPTY while AllDropped is true: it
+// then holds the ledger and no code. Reading AllDropped as "the kept slice is
+// empty" would miss exactly that case, and it is the one that matters — a
+// reviewer handed claims with no diff returns a false-clean review. AllDropped
+// is published as all_dropped in status.json, so this definition is part of the
+// artifact contract, not just an internal one.
 type Truncation struct {
 	Truncated    bool     `json:"truncated"`
 	FilesDropped []string `json:"files_dropped"`

@@ -256,8 +256,16 @@ func TestEscalationIntegration_DisabledProducesUnchangedPayload(t *testing.T) {
 	dir, base, head := thrashingRepo(t)
 
 	rb := NewRangeBuilder(context.Background(), dir, base, head, WithEscalation(EscalationConfig{}))
-	entries, err := reviewableBuildEntries(rb, ModeDiff)
+	// RAW BuildEntries here, deliberately — every other integration assertion in
+	// this file goes through reviewableBuildEntries, and if they all did, nothing
+	// would assert what a production caller actually receives. This one pins the
+	// prepend contract itself: the ledger leads, the changed file follows.
+	raw, err := rb.BuildEntries(ModeDiff)
 	require.NoError(t, err)
+	require.Len(t, raw, 2)
+	require.Equal(t, ClaimLedgerPath, raw[0].Path)
+
+	entries := reviewableEntries(raw)
 	require.Len(t, entries, 1)
 
 	require.Equal(t, ModeDiff, entries[0].Mode)

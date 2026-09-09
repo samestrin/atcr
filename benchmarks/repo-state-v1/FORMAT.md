@@ -55,23 +55,25 @@ The diff is the only thing that changes the tree. A case that needs a file added
 
 ## `case.json`
 
+The example below is deliberately fictional — its ids and line numbers name no real case. For a conforming case you can read end to end, see [`claim-absent-cursor-fix/case.json`](claim-absent-cursor-fix/case.json).
+
 ```json
 {
-  "id": "claim-absent-cursor-fix",
+  "id": "example-case",
   "format": "repo-state-v1",
   "base_tree": "base",
   "commit_message": "commit-message.txt",
   "diff": "change.diff",
   "expected_findings": [
     {
-      "id": "cursor-wipe-unfixed",
-      "file": "streamer/cursor.py",
+      "id": "example-finding",
+      "file": "pkg/example.py",
       "line_start": 40,
       "line_end": 40,
       "line_tolerance": 3,
       "outside_diff": true,
       "category": "correctness",
-      "summary": "begin() still assigns the drain helper's 0 into self._offset, so the claimed cursor-preservation fix is absent."
+      "summary": "One sentence stating the planted defect concretely enough that a third party can confirm it is really present."
     }
   ]
 }
@@ -129,7 +131,7 @@ A finding with `outside_diff: true` is settled by a line the diff does **not** t
   "suite": "repo-state-v1",
   "suite_version": "1.0.0",
   "cases": [
-    { "id": "claim-absent-cursor-fix", "dir": "claim-absent-cursor-fix" }
+    { "id": "example-case", "dir": "example-case" }
   ]
 }
 ```

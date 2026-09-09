@@ -97,3 +97,45 @@ func TestSplitClaims_EmptyInputYieldsNoClaims(t *testing.T) {
 	assert.Empty(t, splitClaims(nil))
 	assert.Empty(t, splitClaims([]string{"", "   ", "\n\n"}))
 }
+
+// A hard-wrapped bullet is one assertion, not two. Treating the wrap as its own
+// claim files a sentence fragment the contract then demands a verdict and a
+// file/line citation for.
+func TestSplitClaims_WrappedBulletContinuationStaysOneClaim(t *testing.T) {
+	msg := "fix the drain path\n\n" +
+		"- the cursor fix preserves the offset\n" +
+		"  when the drain is cold\n" +
+		"- the helper returns None\n"
+	got := splitClaims([]string{msg})
+	assert.Equal(t, []string{
+		"fix the drain path",
+		"the cursor fix preserves the offset when the drain is cold",
+		"the helper returns None",
+	}, got)
+}
+
+// Commit prose routinely opens a sentence with a lowercase identifier. Requiring
+// an uppercase letter after the terminator collapsed a whole body into one
+// claim — on prose written in exactly the style of the defect report that
+// motivated this epic.
+func TestSplitClaims_SplitsSentencesThatStartLowercase(t *testing.T) {
+	msg := "fix the drain\n\nbegin() still assigns zero. begin() is unchanged. the helper is added."
+	got := splitClaims([]string{msg})
+	assert.Equal(t, []string{
+		"fix the drain",
+		"begin() still assigns zero.",
+		"begin() is unchanged.",
+		"the helper is added.",
+	}, got)
+}
+
+// Relaxing the capital rule must not start shredding abbreviations.
+func TestSplitClaims_AbbreviationsAreNotSentenceBoundaries(t *testing.T) {
+	msg := "bump deps\n\nUpgrade to v1.2.3 e.g. the pinned tool. no behavior change is intended."
+	got := splitClaims([]string{msg})
+	assert.Equal(t, []string{
+		"bump deps",
+		"Upgrade to v1.2.3 e.g. the pinned tool.",
+		"no behavior change is intended.",
+	}, got)
+}

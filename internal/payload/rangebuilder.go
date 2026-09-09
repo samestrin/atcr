@@ -159,6 +159,21 @@ func (b *RangeBuilder) withClaimLedger(entries []FileEntry) []FileEntry {
 // is an additional input to a review, and failing a whole review because git
 // could not produce a log would trade a complete review for none at all. The
 // failure is logged so it is diagnosable rather than silent.
+//
+// A failed read is memoized like a successful one — deliberately. Every mode
+// this builder renders must carry the SAME ledger (AC3), and a per-mode retry
+// could succeed on the second mode and hand two agents different payloads. The
+// cost is that one transient git failure disables the ledger for the whole run
+// rather than just one mode; the Warn line is what makes that visible.
+//
+// There is deliberately NO happy-path log line here, though one would be
+// useful: an empty ledger is otherwise indistinguishable in production from an
+// absent one. The payload build runs BEFORE the review id is minted
+// (cli/review.go builds the review, then correlates the context logger), so a
+// line emitted from this stage cannot carry review_id — and AC9 requires every
+// log line during a review to carry it. Correlating the payload stage is
+// tracked as technical debt; until then the observability gap is the honest
+// cost of not breaking AC9 on every debug run.
 func (b *RangeBuilder) claimLedger() string {
 	if b.claimsDone {
 		return b.claims
