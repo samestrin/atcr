@@ -289,8 +289,19 @@ func TestVerificationDoc_NamesTheDebateSideRepairAndMarkerDeletion(t *testing.T)
 		"the residue is identified by that entry surviving beside a verdict findings.json already settled")
 
 	deletion := docParagraph(t, doc, "drops `modelWithheldReason`")
-	assert.Contains(t, deletion, "debateJudge",
-		"the deletion is the debate-side half of the never-co-occur claim: the judge marker replaces the withheld-reason one")
+	// The two markers must be asserted TOGETHER, as one phrase. A bare
+	// Contains(deletion, "debateJudge") was vacuous: this paragraph already names
+	// `debateJudge` a sentence earlier, in "the arm a `debateJudge` record skips", so
+	// the assertion passed on that mention no matter what the claim said. Proven by
+	// mutation — rewriting "as it writes `debateJudge`" to "as it writes the judge
+	// marker" left ./internal/reconcile green.
+	//
+	// Asserting the joined literal is what makes it the CLAIM being pinned rather than
+	// the vocabulary: the deletion and the stamp it happens during are one fact, and a
+	// doc that keeps both words but stops saying they are the same act is exactly the
+	// drift this guard exists to catch.
+	assert.Contains(t, deletion, "**drops `modelWithheldReason`** as it writes `debateJudge`",
+		"the deletion is the debate-side half of the never-co-occur claim: the judge marker replaces the withheld-reason one, in one act")
 }
 
 // flattenWhitespace collapses runs of spaces and single newlines inside each
