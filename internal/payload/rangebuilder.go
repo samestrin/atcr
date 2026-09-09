@@ -148,7 +148,7 @@ func (b *RangeBuilder) withClaimLedger(entries []FileEntry) []FileEntry {
 		return entries
 	}
 	out := make([]FileEntry, 0, len(entries)+1)
-	out = append(out, FileEntry{Path: ClaimLedgerPath, Size: 0, Body: section})
+	out = append(out, newClaimLedgerEntry(section))
 	return append(out, entries...)
 }
 

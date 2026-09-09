@@ -58,17 +58,19 @@ func TestClaimLedgerSection_NeutralizesItsOwnFramingMarkers(t *testing.T) {
 // --- budget exemption ------------------------------------------------------
 
 func ledgerEntry(body string) FileEntry {
-	return FileEntry{Path: ClaimLedgerPath, Size: 0, Body: body}
+	return newClaimLedgerEntry(body)
 }
 
-// The exemption is keyed on the ledger's PATH, not on the fact that production
-// builds it with Size 0. A size-keyed exemption would be an accident of the
-// current construction, and would evaporate the day the ledger is counted.
+// The exemption is keyed on the entry's shedExempt sentinel, not on the fact
+// that production builds it with Size 0. A size-keyed exemption would be an
+// accident of the current construction, and would evaporate the day the ledger
+// is counted.
 //
-// The ledger is the largest entry AND is counted here, so only a path-keyed
-// exemption keeps it. The budget is set so the ledger fits it: the exemption is
-// bounded by the budget, and a ledger the budget cannot hold sheds like any
-// other entry (TestBudget_ClaimLedgerLargerThanBudgetShedsLikeAnyEntry).
+// The ledger is the largest entry AND is counted here, so only the sentinel
+// keeps it. The budget is set so the ledger fits it: the exemption is bounded by
+// the budget, and a ledger the budget cannot hold sheds like any other entry
+// (TestBudget_ClaimLedgerLargerThanBudgetShedsLikeAnyEntry). The sentinel is not
+// the path either — see TestBudget_RepositoryFileNamedLikeTheLedgerIsNotExempt.
 func TestApplyByteBudget_NeverDropsTheClaimLedger(t *testing.T) {
 	ledger := ledgerEntry("CLAIMS BLOCK")
 	ledger.Size = 5000 // largest entry: first in plain drop order

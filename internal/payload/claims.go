@@ -333,6 +333,16 @@ func isAbbrevBefore(prefix []rune) bool {
 //     paths.
 const ClaimLedgerPath = "<claims>"
 
+// newClaimLedgerEntry builds the ledger's FileEntry. It is the ONLY place
+// shedExempt is set, which is what makes the byte budget's exemption
+// unforgeable: ClaimLedgerPath is a legal filename everywhere but Windows, so a
+// path-keyed exemption could be claimed by a real file in a reviewed repository.
+// Size 0 keeps the entry out of byte-budget accounting on the ordinary path; the
+// fallback re-fit re-sizes it, and the sentinel is what keeps it exempt there.
+func newClaimLedgerEntry(section string) FileEntry {
+	return FileEntry{Path: ClaimLedgerPath, Size: 0, Body: section, shedExempt: true}
+}
+
 // Framing markers for the claim block. They are neutralized inside claim text
 // before embedding, so message content cannot close the block early and start
 // issuing instructions to the reviewer — the same defense ScopeConstraint

@@ -18,6 +18,16 @@ type FileEntry struct {
 	// read what a reviewer saw per file, not just per agent. Empty on entries
 	// built outside the changed-file path (baseline/full-repo scans).
 	Mode PayloadMode
+	// shedExempt marks the claim-ledger entry, the one contribution the byte
+	// budget passes over rather than shedding. It is UNEXPORTED on purpose: only
+	// this package can set it (newClaimLedgerEntry), so the exemption cannot be
+	// forged from outside — including by a repository. Keying on Path would have
+	// been forgeable: angle brackets are illegal in a path only on Windows, so a
+	// PR that adds a file literally named "<claims>" would otherwise get an
+	// unshedable entry that is also excluded from the reviewable accounting
+	// behind AllDropped. Struct assignment copies unexported fields, so the flag
+	// survives the fallback re-fit's re-sizing copy in internal/fanout.
+	shedExempt bool
 }
 
 // Truncation records what a byte-budget pass dropped. It is ALWAYS returned by
@@ -123,14 +133,17 @@ func applyByteBudgetOrdered(entries []FileEntry, budget int64, tier func(FileEnt
 		// tight budgets where the ledger matters most, and three shed sites call
 		// ApplyByteBudget directly and never touch the wrapper at all.
 		//
-		// Keyed on PATH, never on Size. The ledger is BUILT with Size 0, so on
-		// every ordinary shed it is uncounted and the exemption costs nothing.
-		// But the fallback re-fit re-sizes every entry to len(Body) before
-		// shedding (refitFallbackPayload), and there the ledger is counted like
-		// any other entry — a size-keyed exemption would quietly stop protecting
-		// it on exactly the tight-budget path it exists for. When it is counted,
-		// the contract holds in the direction the epic requires: diff content
-		// sheds to fund the ledger, never the other way round.
+		// Keyed on the unexported shedExempt sentinel, never on Size and never on
+		// Path. The ledger is BUILT with Size 0, so on every ordinary shed it is
+		// uncounted and the exemption costs nothing. But the fallback re-fit
+		// re-sizes every entry to len(Body) before shedding
+		// (refitFallbackPayload), and there the ledger is counted like any other
+		// entry — a size-keyed exemption would quietly stop protecting it on
+		// exactly the tight-budget path it exists for. When it is counted, the
+		// contract holds in the direction the epic requires: diff content sheds
+		// to fund the ledger, never the other way round. Path is not the key
+		// either: ClaimLedgerPath is a legal filename off Windows, so a
+		// repository could otherwise forge the exemption for a real diff entry.
 		//
 		// The exemption is BOUNDED by the budget. "Diff content sheds to fund the
 		// ledger" is only coherent while the budget can actually hold the ledger;
@@ -138,7 +151,7 @@ func applyByteBudgetOrdered(entries []FileEntry, budget int64, tier func(FileEnt
 		// reviewable file, still overruns, and sets AllDropped — trading a review
 		// that would have fit for ErrPayloadFullyDropped. A ledger that cannot fit
 		// therefore sheds like any other entry.
-		if entries[i].Path == ClaimLedgerPath && clampSize(entries[i].Size) <= budget {
+		if entries[i].shedExempt && clampSize(entries[i].Size) <= budget {
 			continue
 		}
 		dropped[i] = true
@@ -149,14 +162,14 @@ func applyByteBudgetOrdered(entries []FileEntry, budget int64, tier func(FileEnt
 	droppedPaths := make([]string, 0)
 	reviewableIn, reviewableKept := 0, 0
 	for i, e := range entries {
-		if e.Path != ClaimLedgerPath {
+		if !e.shedExempt {
 			reviewableIn++
 		}
 		if dropped[i] {
 			droppedPaths = append(droppedPaths, e.Path)
 			continue
 		}
-		if e.Path != ClaimLedgerPath {
+		if !e.shedExempt {
 			reviewableKept++
 		}
 		kept = append(kept, e)

@@ -292,7 +292,9 @@ func TestBudget_KeepsMostFiles_DropsLargestFirst(t *testing.T) {
 // The documented contract — "diff content sheds to fund the ledger" — only holds
 // while the ledger is something the budget can actually hold.
 func TestBudget_ClaimLedgerLargerThanBudgetShedsLikeAnyEntry(t *testing.T) {
-	in := []FileEntry{{Path: ClaimLedgerPath, Size: 5000}, {Path: "a.go", Size: 500}}
+	ledger := newClaimLedgerEntry("CLAIMS BLOCK")
+	ledger.Size = 5000 // the fallback re-fit counts the ledger like any other entry
+	in := []FileEntry{ledger, {Path: "a.go", Size: 500}}
 	kept, tr := ApplyByteBudget(in, 2000)
 	assert.Equal(t, []string{"a.go"}, keptPaths(kept), "a file that fits must not be shed to fund a ledger that never fits")
 	assert.Equal(t, []string{ClaimLedgerPath}, tr.FilesDropped)
@@ -302,7 +304,9 @@ func TestBudget_ClaimLedgerLargerThanBudgetShedsLikeAnyEntry(t *testing.T) {
 // At exactly the budget the ledger still fits, so the exemption applies and the
 // diff content sheds to fund it — the contract in the direction it was written.
 func TestBudget_ClaimLedgerExactlyAtBudgetIsKept(t *testing.T) {
-	in := []FileEntry{{Path: ClaimLedgerPath, Size: 2000}, {Path: "a.go", Size: 500}}
+	ledger := newClaimLedgerEntry("CLAIMS BLOCK")
+	ledger.Size = 2000
+	in := []FileEntry{ledger, {Path: "a.go", Size: 500}}
 	kept, tr := ApplyByteBudget(in, 2000)
 	assert.Equal(t, []string{ClaimLedgerPath}, keptPaths(kept))
 	assert.Equal(t, []string{"a.go"}, tr.FilesDropped)
