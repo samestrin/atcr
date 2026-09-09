@@ -396,57 +396,43 @@ func selectPublishableRecordIdentities(cmd *cobra.Command, filtered []scorecard.
 					"edit or remove that record in the scorecard store, then re-run the export",
 					rec.RunID, f.name, f.value, r)
 			}
-			// Empty ONCE SCRUBBED — this closes the empty-once-scrubbed arm of the
-			// predicate `benchmark export` already applies to its producer side. Without
-			// it the two sibling producers into the SAME envelope disagreed on that arm:
-			// benchmark hard-rejected an identity the scrub deletes outright (an email- or
-			// path-shaped id), while leaderboard published it as model:"".
+			// THREE mutually exclusive shapes an identity can have here, and what each
+			// gets: one ALREADY empty in the store falls through both arms untouched and
+			// silent; one blank only after trimming is reported and KEPT; one the scrub
+			// empties is reported and DROPPED. The arms are mutually exclusive by their
+			// own predicates, so the else-if is readability, not control flow.
 			//
-			// The scrub-REWRITES arm deliberately stays asymmetric. checkPublishable
-			// rejects a value the scrub would change, because the envelope must name the
-			// same suite the manifest does; the leaderboard has no manifest to match —
-			// the scrub IS its anonymization, so a record whose identity scrubs to a
-			// different string is published under the scrubbed form by design. Aligning
-			// that arm would end the anonymization, not close a divergence.
+			// Already-empty is left silent deliberately. It is a record written without a
+			// model — pre-existing and documented — so acting on it is a data decision
+			// about existing history, not an identity-printability one, and reporting it
+			// would fire on every model-less record in an unrotated store. `f.value != ""`
+			// is the term that keeps this scoped to the whitespace shape.
 			//
-			// Scoped to a value that is NON-EMPTY before the scrub. An identity already
-			// empty in the store is a different defect — a record written without a
-			// model — and dropping it here would silently shrink every export against a
-			// store that already holds such records. Widening this arm to cover them is a
-			// data decision about existing history, not an identity-printability one.
-			//
-			// TrimSpace, not a raw `!= ""`: scrubOnce ends in
-			// strings.Join(strings.Fields(s), " "), so a whitespace-only identity (" ",
-			// or a U+00A0 the printability arm lets through) scrubs to "" and slipped
-			// past the exclusion this arm is scoped by. It is already empty to every
-			// reader of the store, and reporting it as a scrub casualty printed
-			// `model " ", which is empty once scrubbed` — a message an operator cannot
-			// act on.
-			// Three mutually exclusive shapes, chained so each term stays falsifiable:
-			// an identity ALREADY empty in the store falls through both arms untouched,
-			// one that is blank only after trimming is reported and kept, and one the
-			// scrub empties is reported and dropped.
-			//
-			// "Blank only after trimming" is narrower than "whitespace-only", and the gap
-			// is a CARVE-OUT rather than an oversight. Tab, newline, CR, VT, FF and
-			// U+0085 are whitespace AND unicode.IsControl, so firstNonPrintingRune above
-			// has already returned a hard error and aborted the whole export before this
-			// chain runs. They never reach either arm. That is correct — a control rune
-			// in an identity is the misattribution vector the printability check exists
-			// to stop, and being whitespace as well does not make it safe — but it is not
-			// self-evident from the word "whitespace", and a tab is the likeliest
-			// whitespace artifact of a hand-edited store. What actually reaches this arm
-			// is Zs-class blankness: a plain space, or a U+00A0 the printability arm lets
-			// through. Pinned by
+			// "Blank after trimming" is narrower than "whitespace-only", and the gap is a
+			// CARVE-OUT rather than an oversight: tab, newline, CR, VT, FF and U+0085 are
+			// whitespace AND unicode.IsControl, so firstNonPrintingRune above has already
+			// hard-failed the whole export before this chain runs. They reach neither arm.
+			// That is correct — a control rune in an identity is the misattribution vector
+			// the printability check exists to stop, and being whitespace too does not
+			// make it safe — but it is not self-evident from the word "whitespace", and a
+			// tab is the likeliest whitespace artifact of a hand-edited store. What
+			// actually reaches this arm is Zs-class blankness: a plain space, or a U+00A0
+			// the printability arm lets through. Pinned by
 			// TestRunLeaderboardExport_ControlClassWhitespaceHardFailsByDesign and stated
 			// for operators in docs/scorecard.md.
 			//
-			// The already-empty case is deliberately left silent. It is a record written
-			// without a model — pre-existing, documented, and a data question about
-			// existing history rather than an identity-printability one — so `f.value !=
-			// ""` below is the term that keeps this change scoped to the whitespace
-			// shape. Deleting it starts reporting every model-less record in an
-			// unrotated store.
+			// The empty-once-scrubbed arm exists to close a divergence: `benchmark export`
+			// applies the same predicate on its producer side, so without it the two
+			// sibling producers into the SAME envelope disagreed — benchmark hard-rejected
+			// an identity the scrub deletes outright (an email- or path-shaped id) while
+			// leaderboard published it as model:"".
+			//
+			// The scrub-REWRITES arm stays asymmetric on purpose. checkPublishable rejects
+			// a value the scrub would change, because the envelope must name the same
+			// suite the manifest does; the leaderboard has no manifest to match — the
+			// scrub IS its anonymization — so an identity that scrubs to a different
+			// string is published under the scrubbed form by design. Aligning that arm
+			// would end the anonymization, not close a divergence.
 			if trimmed := strings.TrimSpace(f.value); f.value != "" && trimmed == "" {
 				// Blank, and therefore KEPT. Scoping the scrub-casualty arm off an
 				// already-empty identity is deliberate (see above), but doing it
