@@ -23,6 +23,8 @@ scores.
 > in [`benchmarks/standard-v1/`](../benchmarks/standard-v1/) in this repo, ingested
 > from [`alibaba/aacr-bench`](https://github.com/alibaba/aacr-bench) (Apache-2.0 —
 > see [`benchmarks/standard-v1/NOTICE.md`](../benchmarks/standard-v1/NOTICE.md)).
+> The tooling here operates against any suite directory that satisfies the contract
+> below — including the in-repo `internal/benchmark/testdata/suite-valid` fixture.
 
 > **Not every directory under `benchmarks/` is runnable.** `benchmarks/repo-state-v1/`
 > holds a second, future suite tier whose cases are small repositories rather than
@@ -30,8 +32,6 @@ scores.
 > Its format and first case are authored, but no loader reads them yet, so
 > `atcr benchmark` neither validates nor runs it. Everything below describes
 > `standard-v1`-shaped suites only.
-> The tooling here operates against any suite directory that satisfies the contract
-> below — including the in-repo `internal/benchmark/testdata/suite-valid` fixture.
 
 ---
 
