@@ -638,7 +638,7 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 // rather than only in planning notes, because here is where they are created:
 //
 //  1. Changed-file count is inflated by one. The review layer derives it as
-//     len(kept) (internal/fanout/review.go:1260), so both the manifest and the
+//     len(kept) (internal/fanout/review.go:867, :920), so both the manifest and the
 //     persona-visible {{.FileCount}} report one more file than the range
 //     changed.
 //  2. A review_strategy=chunked run delivers the ledger to the FIRST chunk
@@ -648,12 +648,12 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 //     files-mode payload where it previously stayed silent.)
 //  3. An agent whose declared window drives its effective budget to 0 takes an
 //     arm that ships exactly one entry, chosen by keepSmallestEntry
-//     (internal/fanout/review.go:3329) on len(Body) — which may be the ledger,
+//     (internal/fanout/review.go:3389) on len(Body) — which may be the ledger,
 //     leaving that reviewer claims and no code. The section's NOT-IN-PAYLOAD
 //     verdict exists so that reviewer reports nothing rather than a full sheet
 //     of false UNSUPPORTED findings.
 //  4. The sentinel can reach a published artifact. droppedPathsExcept
-//     (internal/fanout/review.go:3348) builds its dropped list from every entry
+//     (internal/fanout/review.go:2869) builds its dropped list from every entry
 //     but the kept one, so "<claims>" can appear in Truncation.FilesDropped and
 //     from there in status.json's files_dropped, alongside real repository
 //     paths.
