@@ -1748,7 +1748,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		//     baseline (persona × chunk) Result values flow through the SAME
 		//     unconditional `results = mergeChunkResults(results, serialAgents)` call
 		//     (review.go:656) that diff-mode already runs — no new call site.
-		//     mergeChunkResults / mergeResultGroup (chunker.go:154 / :196) and
+		//     mergeChunkResults / mergeResultGroup (chunker.go:219 / :284) and
 		//     writePool (artifacts.go:106) need NO changes for baseline provenance:
 		//     same-name results collapse to exactly personaCount source dirs (not
 		//     C × P), findings union across chunks, any-chunk-succeeded => Status OK,
