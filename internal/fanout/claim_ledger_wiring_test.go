@@ -498,25 +498,12 @@ func commitClaimHeavyHead(t *testing.T, dir string, aBody, bBody []byte) string 
 // a fallback's budget — the padded fixture's 55 KiB files can never do it.
 func claimHeavyRepo(t *testing.T) (dir, base, head string) {
 	t.Helper()
-	dir = t.TempDir()
-	fanoutGit(t, dir, "init", "-q", "-b", "main")
-
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.go"), []byte("package p\n\nfunc A() int { return 0 }\n"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "b.go"), []byte("package p\n\nfunc B() int { return 0 }\n"), 0o644))
-	fanoutGit(t, dir, "add", "-A")
-	fanoutGit(t, dir, "commit", "-q", "-m", "seed the two files")
-	base = fanoutGit(t, dir, "rev-parse", "HEAD")
-
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.go"), []byte("package p\n\nfunc A() int { return 1 }\n"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "b.go"), []byte("package p\n\nfunc B() int { return 2 }\n"), 0o644))
-	fanoutGit(t, dir, "add", "-A")
-	var msg strings.Builder
-	msg.WriteString("a branch that asserts a great deal\n\n")
-	for i := 0; i < 40; i++ {
-		msg.WriteString("- claim " + itoa(i) + ": " + strings.Repeat("w", 120) + "\n")
-	}
-	fanoutGit(t, dir, "commit", "-q", "-m", msg.String())
-	head = fanoutGit(t, dir, "rev-parse", "HEAD")
+	dir, base = seedClaimHeavyRepo(t,
+		[]byte("package p\n\nfunc A() int { return 0 }\n"),
+		[]byte("package p\n\nfunc B() int { return 0 }\n"))
+	head = commitClaimHeavyHead(t, dir,
+		[]byte("package p\n\nfunc A() int { return 1 }\n"),
+		[]byte("package p\n\nfunc B() int { return 2 }\n"))
 	return dir, base, head
 }
 
