@@ -163,7 +163,7 @@ func TestParseGrepHits_AttributesHitsAndExcludesChangedFiles(t *testing.T) {
 	}, "\n")
 
 	got := parseGrepHits(out, []string{"ReadStore", "WriteStore"},
-		map[string]bool{"internal/store/store.go": true}, 10)
+		map[string]bool{"internal/store/store.go": true}, nil, 10)
 
 	require.Len(t, got, 2, "the changed file's own hit must be dropped")
 	require.Equal(t, "internal/store/consumer.go", got[0].Path)
@@ -182,7 +182,7 @@ func TestParseGrepHits_CapsSitesPerSymbol(t *testing.T) {
 		lines = append(lines, "pkg/f.go:"+strconv.Itoa(i)+":\tClose()")
 	}
 
-	got := parseGrepHits(strings.Join(lines, "\n"), []string{"Close"}, nil, 3)
+	got := parseGrepHits(strings.Join(lines, "\n"), []string{"Close"}, nil, nil, 3)
 
 	require.Len(t, got, 3, "one symbol may not contribute more than its cap")
 }
@@ -195,7 +195,7 @@ func TestParseGrepHits_SkipsMalformedLines(t *testing.T) {
 		"pkg/f.go:9:\tReadStore()",
 	}, "\n")
 
-	got := parseGrepHits(out, []string{"ReadStore"}, nil, 10)
+	got := parseGrepHits(out, []string{"ReadStore"}, nil, nil, 10)
 
 	require.Len(t, got, 1, "only the well-formed hit survives")
 	require.Equal(t, 9, got[0].Line)
@@ -689,4 +689,80 @@ func TestRangeBuilder_ChangedLinesLeavesGenuinelyChangedFilesAlone(t *testing.T)
 
 	require.Equal(t, plain["store.go"], withPrefetch["store.go"],
 		"the changed file's grounding data must be untouched by pre-fetching")
+}
+
+func TestParseGrepHits_SkipPredicateDropsCandidatesBeforeTheCap(t *testing.T) {
+	// The skip predicate carries the ignore filter. It must apply BEFORE the
+	// per-symbol cap, or vendored hits would consume the cap and starve a real
+	// consumer further down the match list.
+	out := strings.Join([]string{
+		"vendor/a.go:1:\tReadStore()",
+		"vendor/b.go:2:\tReadStore()",
+		"vendor/c.go:3:\tReadStore()",
+		"real.go:4:\tReadStore()",
+	}, "\n")
+	skipVendor := func(p string) bool { return strings.HasPrefix(p, "vendor/") }
+
+	got := parseGrepHits(out, []string{"ReadStore"}, nil, skipVendor, 3)
+
+	require.Len(t, got, 1, "the three vendored hits must not consume the cap")
+	require.Equal(t, "real.go", got[0].Path)
+}
+
+func TestRangeBuilder_IgnoredFileNeverBecomesPrefetchedContext(t *testing.T) {
+	// An ignored file is kept out of the payload deliberately. Retrieving it as
+	// "context" because it happens to reference a changed symbol would ship the
+	// very content the filter exists to withhold.
+	dir := initRepo(t)
+	writeIgnore(t, dir, ".atcrignore", "vendor/\n")
+	write(t, dir, "store.go", prefetchStoreV1)
+	write(t, dir, "vendor/lib.go", prefetchConsumer)
+	base := commitAll(t, dir, "v1")
+	write(t, dir, "store.go", prefetchStoreV2)
+	head := commitAll(t, dir, "v2: change ReadStore return shape")
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	entries, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+
+	entry, at := prefetchEntryOf(entries)
+	if at != -1 {
+		require.NotContains(t, entry.Body, "vendor/lib.go",
+			"an ignored file must never be retrieved as pre-fetched context")
+	}
+	cl, err := rb.BuildChangedLines()
+	require.NoError(t, err)
+	_, grounded := cl["vendor/lib.go"]
+	require.False(t, grounded, "an ignored file must not be made groundable by pre-fetching")
+}
+
+func TestRangeBuilder_PrefetchIsMemoizedAcrossBuilds(t *testing.T) {
+	// The pre-fetch pass costs one `git grep` plus its candidate blob reads. It
+	// must be paid ONCE per builder: re-spending it per mode would multiply the
+	// AC4 latency budget by the roster's mode count.
+	//
+	// Measured as the cost of the SECOND build with pre-fetching on versus off,
+	// rather than as an absolute count. A second mode legitimately spawns its own
+	// diff variant (blocks needs chunks diff mode never populated), so a raw
+	// "execCount did not move" assertion conflates that unavoidable mode cost with
+	// a re-spent grep and fails even when the memo is working. Differencing
+	// against a prefetch-disabled builder over the same range cancels the mode
+	// cost and isolates exactly the claim being made.
+	dir, base, head := prefetchRepo(t)
+
+	secondBuildCost := func(opts ...RangeOption) int {
+		rb := NewRangeBuilder(context.Background(), dir, base, head, opts...)
+		_, err := rb.BuildEntries(ModeDiff)
+		require.NoError(t, err)
+		afterFirst := rb.g.execCount
+		_, err = rb.BuildEntries(ModeBlocks)
+		require.NoError(t, err)
+		return rb.g.execCount - afterFirst
+	}
+
+	enabled := secondBuildCost()
+	disabled := secondBuildCost(WithMaxPrefetchBytes(0))
+
+	require.Equal(t, disabled, enabled,
+		"the second mode must cost the same with pre-fetching on as off: the grep and its candidate reads are paid once, on the first build")
 }

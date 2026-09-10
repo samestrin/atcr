@@ -210,7 +210,14 @@ func TestRangeBuilder_BlocksModeGroundingSpawnsOneDiffWithoutEscalation(t *testi
 	write(t, dir, "b.go", goFileV2)
 	head := commitAll(t, dir, "v2")
 
-	rb := NewRangeBuilder(context.Background(), dir, base, head, WithEscalation(EscalationConfig{}))
+	// Pre-fetching is disabled alongside escalation, and both are required for the
+	// claim this test makes. "The pre-Epic-35.1 process profile" means every
+	// later consumer of the zero-context cache is off: context-aware pre-fetching
+	// (Epic 35.16.8) reads rangeChunks during the payload build, which warms that
+	// same cache and would leave grounding with nothing to spawn — so the count
+	// would drop to +0 for a reason that has nothing to do with escalation.
+	rb := NewRangeBuilder(context.Background(), dir, base, head,
+		WithEscalation(EscalationConfig{}), WithMaxPrefetchBytes(0))
 	_, err := rb.BuildEntries(ModeBlocks)
 	require.NoError(t, err)
 	afterPayload := rb.g.execCount

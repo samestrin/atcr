@@ -271,7 +271,11 @@ type refHit struct {
 // verbatim, so retrieving a snippet of them spends the byte cap re-showing text
 // the reviewer already has. maxPerSymbol bounds how many sites one symbol may
 // contribute, so a single very common name cannot crowd out every other symbol.
-func parseGrepHits(out string, symbols []string, exclude map[string]bool, maxPerSymbol int) []refHit {
+// skip, when non-nil, drops a candidate path outright. It carries the ignore
+// filter, and it is applied BEFORE the per-symbol cap on purpose: filtering
+// afterwards would let three vendored hits consume a symbol's whole cap and
+// leave a real consumer unretrieved.
+func parseGrepHits(out string, symbols []string, exclude map[string]bool, skip func(string) bool, maxPerSymbol int) []refHit {
 	if out == "" || len(symbols) == 0 || maxPerSymbol <= 0 {
 		return nil
 	}
@@ -279,7 +283,7 @@ func parseGrepHits(out string, symbols []string, exclude map[string]bool, maxPer
 	var hits []refHit
 	for _, line := range strings.Split(out, "\n") {
 		p, num, text, ok := splitGrepLine(line)
-		if !ok || exclude[p] {
+		if !ok || exclude[p] || (skip != nil && skip(p)) {
 			continue
 		}
 		// A hit in a file no embedded parser can read cannot be expanded into a
@@ -440,7 +444,17 @@ func (g *gitRunner) referenceHits(symbols []changedSymbol, exclude map[string]bo
 			"symbols", len(names), "error", err)
 		return nil
 	}
-	return parseGrepHits(string(out), names, exclude, maxPrefetchSitesPerSymbol)
+	// The ignore filter must govern RETRIEVED context exactly as it governs the
+	// diff. exclude is built from the already-filtered changed-file list, so an
+	// ignored file is simply absent from it — and without this check a vendored,
+	// generated or otherwise excluded file that merely REFERENCES a changed symbol
+	// would be read and shipped to every reviewer, defeating the filter that kept
+	// it out of the payload in the first place.
+	var skip func(string) bool
+	if m := g.matcher(); m.active() {
+		skip = m.match
+	}
+	return parseGrepHits(string(out), names, exclude, skip, maxPrefetchSitesPerSymbol)
 }
 
 const (
@@ -911,9 +925,106 @@ func looksLikeTestFile(rel string) bool {
 // grounding threading), and a status. It never returns an error: pre-fetching is
 // an additional review input, so every failure degrades to empty context.
 func (g *gitRunner) buildPrefetch(base, head string) (section string, spans map[string][]LineRange, status PrefetchStatus) {
-	// Stub: T4b is not implemented yet. A deliberate wrong answer so the RED
-	// tests fail on behavior while the package still compiles.
-	return "", nil, PrefetchStatus{}
+	files, err := g.changedFilesMemo(base, head)
+	if err != nil {
+		g.log().Debug("payload: pre-fetch skipped, changed files unreadable", "error", err)
+		return "", nil, PrefetchStatus{Failed: true}
+	}
+	if len(files) == 0 {
+		return "", nil, PrefetchStatus{}
+	}
+	// The memoized whole-range zero-context split, which grounding and files-mode
+	// sizing already consume — so the changed-line ranges cost NO additional git
+	// process here.
+	ranges, err := g.rangeChunks(base, head)
+	if err != nil {
+		g.log().Debug("payload: pre-fetch skipped, changed ranges unreadable", "error", err)
+		return "", nil, PrefetchStatus{Failed: true}
+	}
+
+	// Both sides of a rename are excluded: the payload already carries the file,
+	// and a snippet of it would re-show text the reviewer has.
+	changedPaths := make(map[string]bool, len(files))
+	for _, f := range files {
+		changedPaths[f.path] = true
+		if f.oldPath != "" {
+			changedPaths[f.oldPath] = true
+		}
+	}
+
+	var symbols []changedSymbol
+	seen := make(map[string]bool)
+	for _, f := range files {
+		if f.kind == kindDeleted {
+			continue // nothing at HEAD to extract a symbol from
+		}
+		hunks := ranges[f.path]
+		if len(hunks) == 0 {
+			continue // binary or pure-deletion: no head lines to resolve
+		}
+		// ReuseMemo, never Memo: memoizing here would RETAIN the blob of a file the
+		// escalation pass deliberately refused to read, defeating the
+		// maxAnalyzeFileBytes ceiling that exists to stop a change set of
+		// multi-megabyte generated files being held in memory for the life of the
+		// range. When escalation already cached the blob this is free; otherwise it
+		// reads without retaining.
+		src, err := g.headContentReuseMemo(base, head, f.path)
+		if err != nil || len(src) > maxAnalyzeFileBytes {
+			continue
+		}
+		spanList := make([]LineRange, 0, len(hunks))
+		for _, h := range hunks {
+			spanList = append(spanList, LineRange{Start: h.start, End: h.end})
+		}
+		for _, s := range extractChangedSymbols(src, spanList, parsePrefetchTree(f.path, src), looksLikeTestFile(f.path)) {
+			if seen[s.Name] {
+				continue
+			}
+			seen[s.Name] = true
+			symbols = append(symbols, s)
+			if len(symbols) >= maxChangedSymbols {
+				break
+			}
+		}
+		if len(symbols) >= maxChangedSymbols {
+			break
+		}
+	}
+	// Laziness (AC4): a diff citing no resolvable symbol returns here, before any
+	// `git grep` runs and before a single file outside the diff is read.
+	if len(symbols) == 0 {
+		return "", nil, PrefetchStatus{}
+	}
+
+	hits := g.referenceHits(symbols, changedPaths)
+	if len(hits) == 0 {
+		return "", nil, PrefetchStatus{}
+	}
+	snips := g.retrieveSnippets(base, head, hits)
+	// Tier is stamped HERE rather than inside retrieveSnippets: retrieval is
+	// tier-agnostic, and 35.16.12 adds a second producer feeding the same ledger.
+	for i := range snips {
+		snips[i].Tier = PrefetchTierReference
+	}
+
+	kept, dropped := capPrefetchSnippets(snips, g.maxPrefetchBytes)
+	section = renderPrefetchSection(kept, dropped)
+	if section == "" {
+		return "", nil, PrefetchStatus{}
+	}
+
+	// Only KEPT snippets become groundable. A shed snippet was never shown, so
+	// marking its lines groundable would let a finding cite code no reviewer saw.
+	spans = make(map[string][]LineRange, len(kept))
+	for _, s := range kept {
+		spans[s.Path] = append(spans[s.Path], LineRange{Start: s.Start, End: s.End})
+	}
+	return section, spans, PrefetchStatus{
+		Present:   true,
+		Snippets:  len(kept),
+		Dropped:   len(dropped),
+		Truncated: len(dropped) > 0,
+	}
 }
 
 // identifierTokens splits line into identifier-shaped runs, in source order.
