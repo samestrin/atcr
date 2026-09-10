@@ -1,3 +1,19 @@
+## [35.19.0] - 2026-09-10
+
+*Epic 35.16.7.1 — post residue feature epic 35.16.7 claim ledger verify commit claims.*
+
+### Fixed
+
+- `docs/payload-modes.md` and the 35.18.0 note below both stated the claim ledger's third exception with the wrong condition — that a fallback re-fits without the ledger when its own budget is "smaller than the ledger". Measured end to end, the ledger is lost when the fallback's budget cannot fund both the ledger **and** a reviewable file, by either of two routes: the exemption's own `clampSize(Size) <= budget` bound, or the `AllDropped` reroute to `keepSmallestEntry`. That reroute keeps the smallest *entry*, so it drops the ledger only while some reviewable file is smaller than it — when every file is larger, the ledger survives and the fallback receives claims and no code. A budget larger than the ledger therefore does not by itself keep it.
+- `docs/registry.md`'s `max_context_lines` row promised a warning only for a file larger than the cap. The gate measures a chunk's **delivered** line count, so the warning also fires for a file comfortably inside the cap when engine-rendered preamble lines push the chunk over it — and the lever for those lines is `max_claim_bytes`, not this field. A drift test in `internal/reconcile/` now fails if that statement drifts from the single-file warning arm it describes.
+- Citations in `internal/payload/claims.go` and `internal/fanout/review.go` that pointed at the wrong construct: the changed-file-count consequence cited two build paths that never prepend a claim ledger, and the coalesce-cap citations pointed at `started = true` inside `splitDiffFiles` rather than at the chunk ceiling. Each now names its identifier alongside the line number, so the next insertion above a target cannot silently re-aim it.
+
+### Changed
+
+- `diffPrefixLines`' contract doc described the preamble subtraction as the oversize gate's rule. It is the warning message's file attribution only: the gate deliberately runs on the unsubtracted delivered total, which is why the warning fires by design for a file whose own diff sits inside the cap.
+
+*Shipped via /execute-epic (epic 35.16.7.1)*
+
 ## [35.18.0] - 2026-09-09
 
 *Epic 35.16.7 — claim ledger verify commit claims.*
