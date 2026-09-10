@@ -367,3 +367,91 @@ func ledgerAndOneFileEntry(t *testing.T) (ledger, file payload.FileEntry) {
 	t.Fatal("precondition: no built payload carried both a claim ledger and a file entry")
 	return
 }
+
+// claimHeavyRepo inverts paddedClaimingRepo's proportions: two tiny files behind
+// a commit message long enough to render a ~8 KiB ledger. That is the shape in
+// which the ledger is the LARGEST entry, which is what it takes to drive it past
+// a fallback's budget — the padded fixture's 55 KiB files can never do it.
+func claimHeavyRepo(t *testing.T) (dir, base, head string) {
+	t.Helper()
+	dir = t.TempDir()
+	fanoutGit(t, dir, "init", "-q", "-b", "main")
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.go"), []byte("package p\n\nfunc A() int { return 0 }\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "b.go"), []byte("package p\n\nfunc B() int { return 0 }\n"), 0o644))
+	fanoutGit(t, dir, "add", "-A")
+	fanoutGit(t, dir, "commit", "-q", "-m", "seed the two files")
+	base = fanoutGit(t, dir, "rev-parse", "HEAD")
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.go"), []byte("package p\n\nfunc A() int { return 1 }\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "b.go"), []byte("package p\n\nfunc B() int { return 2 }\n"), 0o644))
+	fanoutGit(t, dir, "add", "-A")
+	var msg strings.Builder
+	msg.WriteString("a branch that asserts a great deal\n\n")
+	for i := 0; i < 40; i++ {
+		msg.WriteString("- claim " + itoa(i) + ": " + strings.Repeat("w", 120) + "\n")
+	}
+	fanoutGit(t, dir, "commit", "-q", "-m", msg.String())
+	head = fanoutGit(t, dir, "rev-parse", "HEAD")
+	return dir, base, head
+}
+
+// The THIRD exception to the ledger's per-agent identity, and the one the
+// shipping docs did not name. On the ordinary path the ledger carries Size 0, so
+// `shedExempt && clampSize(Size) <= budget` (internal/payload/budget.go) holds
+// for every budget and the ledger is unconditionally kept. The fallback re-fit
+// re-sizes every entry to len(Body) before shedding, and at that point the
+// bounded exemption becomes a real comparison: a ledger larger than the
+// fallback's budget sheds like any other entry.
+//
+// The result is the asymmetry AC3 otherwise forbids — the primary adjudicates
+// the claims and its backup, reviewing the same persona over the same range,
+// receives none. It is accepted (the bound is what stops the ledger from
+// dropping every reviewable file to fund itself), but accepted is not the same
+// as undocumented, and "Two exceptions are deliberate" was wrong in both
+// docs/payload-modes.md and CHANGELOG.md while this was reachable.
+func TestClaimLedger_RefitBelowTheLedgersBytesDropsIt(t *testing.T) {
+	dir, base, head := claimHeavyRepo(t)
+
+	cfg := sizingRosterConfig()
+	// greta declares a window whose byte budget (6664) sits above the two files
+	// (222 bytes each) and below the ledger (~8.1 KiB) — the one band in which
+	// the re-fit sheds the ledger and keeps real code.
+	small := 6000
+	g := cfg.Registry.Agents["greta"]
+	g.ContextWindowTokens = &small
+	cfg.Registry.Agents["greta"] = g
+	kai := cfg.Registry.Agents["kai"]
+	kai.Fallback = "greta"
+	cfg.Registry.Agents["kai"] = kai
+	cfg.Project.Agents = []string{"kai"}
+	cfg.Settings.OnOverflow = OverflowTruncate
+
+	payloads, _, err := buildPayloads(context.Background(), cfg, dir, base, head, false)
+	require.NoError(t, err)
+
+	var slots []Slot
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: base, Head: head}, "", "", false)
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, slots, "precondition: the roster must produce a slot")
+	s := slots[0]
+	require.NotEmpty(t, s.Fallbacks, "precondition: kai must resolve its greta fallback")
+
+	_, primaryHasLedger := payload.ClaimLedgerPromptSection(s.Primary.Prompt)
+	require.True(t, primaryHasLedger,
+		"precondition: the primary's budget holds the ledger, so the asymmetry is the fallback's alone")
+
+	for _, fb := range s.Fallbacks {
+		require.True(t, fb.Truncation.Truncated,
+			"precondition: the fallback must actually have re-fit, or this proves nothing")
+		assert.Contains(t, fb.Truncation.FilesDropped, payload.ClaimLedgerPath,
+			"a ledger larger than the fallback's budget sheds like any other entry")
+		_, ok := payload.ClaimLedgerPromptSection(fb.Prompt)
+		assert.False(t, ok,
+			"the re-fit fallback reviews the same range with no claims to adjudicate — the third exception")
+		assert.NotEmpty(t, fb.Truncation.FilesDropped,
+			"the shed record must name what the reviewer did not receive")
+	}
+}

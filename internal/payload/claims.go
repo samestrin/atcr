@@ -632,7 +632,7 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 // path would let that file claim it. The exemption keys on FileEntry.shedExempt,
 // which only newClaimLedgerEntry sets.
 //
-// FIVE consequences follow from carrying the ledger as a FileEntry, all
+// SIX consequences follow from carrying the ledger as a FileEntry, all
 // accepted deliberately with AC6 (epic 35.16.7 forbids editing internal/fanout,
 // which is the only place any of them could be fixed). They are recorded here
 // rather than only in planning notes, because here is where they are created:
@@ -668,14 +668,27 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 //     means having EntriesFromRenderedPayload surface the pre-marker prefix as an
 //     unattributed entry, which is a change to the audit seam rather than to this
 //     file.
+//  6. An on_overflow=truncate FALLBACK whose own budget is smaller than the
+//     ledger re-fits WITHOUT it. The re-fit re-sizes every entry to len(Body)
+//     (internal/fanout/review.go:3533-3537) before shedding, which turns the
+//     bounded exemption in ApplyByteBudget — shedExempt AND clampSize(Size) <=
+//     budget — into a real comparison for the one entry that carries Size 0 on
+//     every other path. That backup reviews the same persona over the same range
+//     as its primary and adjudicates no claims, so unlike #2 and #3 the reviewer
+//     gets no NOT-IN-PAYLOAD contract either: the section is simply absent. The
+//     bound is what stops the ledger from dropping every reviewable file to fund
+//     itself, so the asymmetry is the accepted side of that trade, not a defect.
 const ClaimLedgerPath = "<claims>"
 
 // newClaimLedgerEntry builds the ledger's FileEntry. It is the ONLY place
 // shedExempt is set, which is what makes the byte budget's exemption
 // unforgeable: ClaimLedgerPath is a legal filename everywhere but Windows, so a
 // path-keyed exemption could be claimed by a real file in a reviewed repository.
-// Size 0 keeps the entry out of byte-budget accounting on the ordinary path; the
-// fallback re-fit re-sizes it, and the sentinel is what keeps it exempt there.
+// Size 0 keeps the entry out of byte-budget accounting on the ordinary path,
+// where the exemption's `clampSize(Size) <= budget` bound is satisfied by every
+// budget. The fallback re-fit re-sizes the entry to len(Body), so there the
+// sentinel keeps it exempt only WHILE IT FITS the budget: a ledger larger than
+// that budget sheds like any other entry (accepted consequence #6 above).
 func newClaimLedgerEntry(section string) FileEntry {
 	return FileEntry{Path: ClaimLedgerPath, Size: 0, Body: section, shedExempt: true}
 }
