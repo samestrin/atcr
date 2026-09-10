@@ -133,6 +133,16 @@ type Settings struct {
 	// This is the same reasoning ChunkByteBudget documents for its resolution flag,
 	// applied one layer out to the resolved struct.
 	MaxClaimBytes *int64
+	// MaxPrefetchBytes is the resolved byte ceiling on the Context Definitions
+	// section built by context-aware pre-fetching (Epic 35.16.8); see
+	// payload.WithMaxPrefetchBytes.
+	//
+	// A POINTER for the reason MaxClaimBytes is one: 0 is a MEANINGFUL setting (it
+	// DISABLES pre-fetching) and is also Go's zero value, so a plain int64 would
+	// mean any hand-built Settings{} silently ships with the feature off — the
+	// failure direction where capability vanishes and nothing says so. Read it
+	// through ResolvedMaxPrefetchBytes, never directly.
+	MaxPrefetchBytes *int64
 	// MaxRetries is the resolved retry budget passed to the llmclient per call
 	// (Epic 4.6); 0 means a single attempt with no retry.
 	MaxRetries int
@@ -166,6 +176,7 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		CacheMaxBytes:      DefaultCacheMaxBytes,
 		MaxSprintPlanBytes: DefaultMaxSprintPlanBytes,
 		MaxClaimBytes:      claimBytesPtr(DefaultMaxClaimBytes),
+		MaxPrefetchBytes:   claimBytesPtr(DefaultMaxPrefetchBytes),
 		MaxRetries:         DefaultMaxRetries,
 		InitialBackoffMs:   DefaultInitialBackoffMs,
 	}
@@ -199,6 +210,12 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		// survives rather than being read as "unset".
 		if reg.MaxClaimBytes != nil {
 			s.MaxClaimBytes = claimBytesPtr(*reg.MaxClaimBytes)
+		}
+		// MaxPrefetchBytes (Epic 35.16.8) sits at the registry and project tiers
+		// only, exactly like MaxClaimBytes. A pointer means an explicit 0 (disabled)
+		// survives rather than being read as "unset".
+		if reg.MaxPrefetchBytes != nil {
+			s.MaxPrefetchBytes = claimBytesPtr(*reg.MaxPrefetchBytes)
 		}
 		// Retry tunables live only at the registry (global) tier and the agent
 		// tier (Epic 4.6) — the project tier intentionally does not carry them,
@@ -235,6 +252,9 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		}
 		if proj.MaxClaimBytes != nil {
 			s.MaxClaimBytes = claimBytesPtr(*proj.MaxClaimBytes)
+		}
+		if proj.MaxPrefetchBytes != nil {
+			s.MaxPrefetchBytes = claimBytesPtr(*proj.MaxPrefetchBytes)
 		}
 		if v := strings.TrimSpace(proj.ReviewStrategy); v != "" {
 			s.ReviewStrategy = v
@@ -331,6 +351,12 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 	if s.MaxClaimBytes != nil && *s.MaxClaimBytes < 0 {
 		return Settings{}, fmt.Errorf("max_claim_bytes must be >= 0 (0 = disabled), got %d", *s.MaxClaimBytes)
 	}
+	// MaxPrefetchBytes: 0 = pre-fetching is disabled (valid, and the point of the
+	// key — an operator refusing to send source outside the diff to a provider).
+	// Only a negative value is invalid.
+	if s.MaxPrefetchBytes != nil && *s.MaxPrefetchBytes < 0 {
+		return Settings{}, fmt.Errorf("max_prefetch_bytes must be >= 0 (0 = disabled), got %d", *s.MaxPrefetchBytes)
+	}
 	// ReviewStrategy (Epic 14.3): the file tiers are checked at load, but the
 	// project tier and a directly-constructed proj/reg bypass that — re-check the
 	// resolved value so the engine never receives an unknown strategy.
@@ -414,4 +440,22 @@ func (s Settings) ResolvedMaxClaimBytes() int64 {
 		return 0 // fail safe: a mis-resolved negative disables rather than unbounds
 	}
 	return *s.MaxClaimBytes
+}
+
+// ResolvedMaxPrefetchBytes returns the effective context pre-fetch byte ceiling:
+// the embedded default when nothing resolved the field, otherwise the resolved
+// value (0 = pre-fetching is disabled).
+//
+// Always read the setting through this method. Reading s.MaxPrefetchBytes
+// directly makes a hand-built Settings{} — an embedder's, or a test roster's —
+// resolve to a nil pointer, and a caller that deref'd or defaulted it to 0 would
+// silently ship with pre-fetching switched off.
+func (s Settings) ResolvedMaxPrefetchBytes() int64 {
+	if s.MaxPrefetchBytes == nil {
+		return DefaultMaxPrefetchBytes
+	}
+	if *s.MaxPrefetchBytes < 0 {
+		return 0 // fail safe: a mis-resolved negative disables rather than unbounds
+	}
+	return *s.MaxPrefetchBytes
 }
