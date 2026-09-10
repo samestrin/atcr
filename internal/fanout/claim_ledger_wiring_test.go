@@ -387,16 +387,27 @@ func refitEntryBytes(t *testing.T, payloads map[string]modePayload) (ledger, sma
 		"refitEntryBytes assumes a single-mode roster: with two modes the bytes it returns depend on map iteration order")
 	for _, mp := range payloads {
 		var l, smallest int64
+		var foundFile bool
 		for _, e := range mp.Entries {
 			if e.Path == payload.ClaimLedgerPath {
 				l = int64(len(e.Body))
 				continue
 			}
-			if b := int64(len(e.Body)); smallest == 0 || b < smallest {
+			// An empty body is skipped DELIBERATELY, not by sentinel accident.
+			// keepSmallestEntry keeps the smallest NON-EMPTY entry, so a 0-byte
+			// reviewable file is never the entry a band precondition should be
+			// derived from. These are not hypothetical: refitFallbackPayload's
+			// keptBodyBytes == 0 guard exists precisely because they occur.
+			b := int64(len(e.Body))
+			if b == 0 {
+				continue
+			}
+			if !foundFile || b < smallest {
 				smallest = b
+				foundFile = true
 			}
 		}
-		if l > 0 && smallest > 0 {
+		if l > 0 && foundFile {
 			return l, smallest
 		}
 	}
