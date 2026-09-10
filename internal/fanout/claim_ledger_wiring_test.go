@@ -534,7 +534,7 @@ func claimHeavyRepo(t *testing.T) (dir, base, head string) {
 // dropping every reviewable file to fund itself), but accepted is not the same
 // as undocumented, and "Two exceptions are deliberate" was wrong in both
 // docs/payload-modes.md and CHANGELOG.md while this was reachable.
-func TestClaimLedger_RefitBelowTheLedgersBytesDropsIt(t *testing.T) {
+func TestClaimLedger_RefitBelowTheFilesCombinedBytesDropsIt(t *testing.T) {
 	dir, base, head := claimHeavyRepo(t)
 
 	cfg := sizingRosterConfig()
