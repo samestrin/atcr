@@ -2110,6 +2110,19 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 						// with distinct "ceiling" wording so the broken "each chunk fits the
 						// window" invariant is not silent; if the oversized call then fails it
 						// is additionally counted in UnreviewedChunks post-dispatch.
+						//
+						// On THIS arm prefixLines is provably 0, so deliveredLines ==
+						// fileLines and the two are interchangeable here. Only chunk 1 can
+						// carry a preamble (splitDiffFiles glues it onto the first segment),
+						// and chunkDiff seals chunk 1 on the UNSUBTRACTED countLines before
+						// it overflows — so a chunk holding two or more markers necessarily
+						// has countLines <= ml. A multi-file chunk can exceed ml only as the
+						// coalesced final chunk, which carries no preamble. Reverting just
+						// this arm to `fileLines > ml` is therefore an EQUIVALENT mutant
+						// rather than an untested one: no test in ./internal/fanout can
+						// distinguish it, which is why the mutation survives. deliveredLines
+						// is kept for symmetry with the single-file arm above, where the
+						// distinction is real and pinned by test.
 						fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: a %d-file chunk (%d lines)%s exceeds max_context_lines (%d); the %d-chunk ceiling was reached, so remaining files were coalesced into one oversized chunk (may overflow the model)\n", name, fileCount, fileLines, preambleNote, ml, maxChunksPerAgent)
 					}
 				}
