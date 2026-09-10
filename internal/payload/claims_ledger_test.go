@@ -363,6 +363,31 @@ func TestWithClaimLedger_LeavesAnEmptyEntrySetEmpty(t *testing.T) {
 	assert.Empty(t, rb.withClaimLedger([]FileEntry{}))
 }
 
+// The case above uses a head..head range, whose ledger is empty anyway — so the
+// empty-entries guard is not what makes it pass, and removing that guard leaves
+// it green. A range whose commits DO assert something but change no file is the
+// case the guard exists for: injecting the ledger there turns "nothing to
+// review" into a one-entry payload carrying claims and no code, PrepareReview's
+// FileCount > 0 check then passes, and the ErrNoReviewableContent guard behind
+// it never fires.
+func TestBuildEntries_CommitsThatChangeNoFilesGetNoLedger(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "foo.go", goFileV1)
+	base := commitAll(t, dir, "seed the file")
+	gitCmd(t, dir, "commit", "-q", "--allow-empty", "-m",
+		"assert something without touching a file\n\n- Foo() now returns 2 instead of 1\n")
+	head := gitCmd(t, dir, "rev-parse", "HEAD")
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	require.NotEmpty(t, rb.claimLedger(),
+		"precondition: this range must render a ledger, or the guard is not what this test exercises")
+
+	entries, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+	assert.Empty(t, entries,
+		"a range that changes no file stays 'nothing to review'; a lone ledger entry answers that question wrong")
+}
+
 // The grounding gate discards a finding whose cited line is outside the patch's
 // changed lines — exactly where an UNSUPPORTED verdict points, because the
 // claimed change is missing from those lines. The contract must therefore tell
