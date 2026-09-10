@@ -382,7 +382,7 @@ func TestMergeResultGroup_AggregatesResponseTruncated(t *testing.T) {
 }
 
 // TestMergeResultGroup_InvalidatesMemoOnRebuild reproduces the memo-drift bug at
-// chunker.go:189: mergeResultGroup byte-copies the memoized parsedFindingCount/
+// chunker.go:284: mergeResultGroup byte-copies the memoized parsedFindingCount/
 // parsedFindingCountSet from chunk[0] (out := g[0]) but rebuilds out.Content from
 // ALL chunks. When a chunked persona's FIRST chunk truncated to zero findings —
 // the epic failover gate having cached its count as 0/set — that stale zero memo
