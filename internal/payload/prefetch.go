@@ -238,7 +238,7 @@ func plausibleMockTarget(tok string) bool {
 		}
 	}
 	// A token that is all digits (or starts with one) is a literal, not a symbol.
-	return !(tok[0] >= '0' && tok[0] <= '9')
+	return tok[0] < '0' || tok[0] > '9'
 }
 
 const (
@@ -404,7 +404,7 @@ func validGrepSymbol(name string) bool {
 			return false
 		}
 	}
-	return !(name[0] >= '0' && name[0] <= '9')
+	return name[0] < '0' || name[0] > '9'
 }
 
 // referenceHits resolves every changed symbol to the sites that consume it, in
