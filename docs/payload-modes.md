@@ -115,7 +115,7 @@ Every payload has a byte budget — `payload_byte_budget`, default **524288 byte
 - Whole files are dropped, **largest-first** by size rank (ties broken by path), keeping as many files as fit within the budget — huge generated files and lockfiles are shed before small source files.
 - A budget of **`0` means unlimited** (nothing dropped); a negative budget is rejected at validation.
 - Every drop is **recorded in the agent's `status.json`** — what was dropped and why is never silent.
-- **One entry is exempt:** the [claim ledger](#claims-to-verify) is never shed. If the budget cannot fund both, diff content is dropped and the ledger is kept.
+- **One entry is exempt, up to a point:** the shed passes over the [claim ledger](#claims-to-verify) **while the ledger fits the budget**. If the budget cannot fund both, diff content is dropped and the ledger is kept. The exemption stops there: a ledger larger than the whole budget sheds like any other entry, because shedding every file to fund it would fund nothing and leave the reviewer holding claims and no code.
 
 ## Claims to verify
 
@@ -141,7 +141,7 @@ How the claims are built:
 
 A branch whose commits assert nothing renders **no section at all** rather than an empty header, and a range with no changed files gets no ledger.
 
-**Two costs of the exemption, worth knowing:** the ledger's bytes are not counted against `payload_byte_budget` or against any per-agent window (hence the deliberately small 8 KiB cap), and it occupies one entry in the payload, so a range review's reported changed-file count is one higher than the number of files the range changed.
+**Two costs of the exemption, worth knowing:** on the ordinary shed the ledger's bytes are not counted against `payload_byte_budget` or against any per-agent window (hence the deliberately small 8 KiB cap) — the one exception is the fallback re-fit, which re-sizes every entry to the bytes it will actually dispatch and so counts the ledger like any other entry. And it occupies one entry in the payload, so a range review's reported changed-file count is one higher than the number of files the range changed.
 
 ## Changed-region markers (`files` mode)
 
