@@ -203,6 +203,17 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 				// A missing store directory is the legal "no backlog yet" state ReadAll
 				// already tolerates above; any other listing failure is as fatal here
 				// as it is in rewriteJustifications.
+				//
+				// This arm is a BACKSTOP and is currently unreachable through
+				// BackfillJustifications: ReadAll lists the same directory first and
+				// returns any non-ENOENT failure itself, so control cannot arrive here
+				// with a listing problem. Its 0-hit coverage — and its survival under
+				// mutation — is therefore structural, not a missing test. The ordering
+				// that makes it dead is pinned by
+				// TestBackfillJustifications_NoRewriteSnapshotListingArms, so a change
+				// that makes ReadAll tolerant fails there and says this guard has gone
+				// live. Keep it: the cost is one branch, and the alternative is a
+				// silent nil snapshot on a store that could not be read.
 				return fmt.Errorf("reading localdebt dir for backfill: %w", quotedPathErr(derr))
 			}
 			res.ShardNames = shardFileNames(entries)
@@ -423,6 +434,15 @@ func rewriteJustifications(dir string, want map[string]replacement, dryRun bool)
 			m["justification"] = rep.to
 			enc, merr := json.Marshal(m)
 			if merr != nil {
+				// BACKSTOP, unreachable by construction: m was produced by
+				// json.Unmarshal, so every value in it is a marshalable JSON type
+				// (string, float64, bool, nil, []any, map[string]any) and the one key
+				// this loop writes is a string. json.Marshal has nothing here it can
+				// fail on — JSON has no NaN or Inf literal for Unmarshal to have
+				// produced. Its 0-hit coverage is therefore structural, not a missing
+				// test. Kept because "cannot fail" is a property of today's decode
+				// path, and a future change that hands this loop a hand-built map
+				// would make it live.
 				return changes[:published], shards, reencodeErr(id, merr)
 			}
 			lines[i] = string(enc)
@@ -438,6 +458,20 @@ func rewriteJustifications(dir string, want map[string]replacement, dryRun bool)
 		if terr != nil {
 			return changes[:published], shards, fmt.Errorf("creating temp file for backfill: %w", quotedPathErr(terr))
 		}
+		// The write and rename arms below are BACKSTOPS with 0-hit coverage, and that
+		// is a testability limit rather than a test gap: POSIX grants "create a file
+		// here" and "rename a file here" on the SAME directory write+execute bit, so
+		// no permission trick can deny one while allowing the other. os.CreateTemp
+		// runs first and would fail instead, which is the arm already covered
+		// (TestRewriteJustifications_WrapsItsIOErrors). Reaching either one needs
+		// fault injection — a package-level var wrapping os.Rename — and this package
+		// deliberately uses real permission tricks rather than injection seams, so
+		// introducing one for these two branches was judged the worse trade.
+		//
+		// Both uphold the same published-prefix contract the covered arms prove
+		// (changes[:published], shards), and that contract IS exercised through the
+		// read and CreateTemp arms — so the shape is pinned once even though these
+		// two paths are unexecuted.
 		_, werr := tmp.WriteString(strings.Join(lines, "\n") + "\n")
 		if cerr := tmp.Close(); werr == nil {
 			werr = cerr

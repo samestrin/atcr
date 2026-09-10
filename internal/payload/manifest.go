@@ -108,6 +108,21 @@ type Manifest struct {
 	// false/absent value as "escalation ran and found nothing to promote".
 	EscalationDegraded bool `json:"escalation_degraded,omitempty"`
 
+	// ClaimLedger records what the claim-ledger read produced for this range
+	// (Epic 35.16.7). A POINTER with omitempty, so a manifest written by a build
+	// that never had a RangeBuilder — the --all/--dir baseline and --diff-file
+	// paths — omits the key entirely and stays byte-identical to what earlier
+	// versions produced.
+	//
+	// Its absence and its zero value therefore mean different things, which is the
+	// whole point: absent = "this run had no range to read claims from", present
+	// with Failed = "the read errored and the review ran without a ledger",
+	// present with Present=false and Claims=0 = "the branch's commits asserted
+	// nothing". Those three were previously indistinguishable in every persisted
+	// artifact, so a transient git failure silently looked like a claim-free
+	// branch.
+	ClaimLedger *ClaimLedgerStatus `json:"claim_ledger,omitempty"`
+
 	// Review is the enriched record of the review stage's tool-using agents
 	// (Epic 2.0, AC 05-04). It is a sibling of Stages (which stays the ordered
 	// stage-name list, unchanged from 1.x) rather than nested inside it, because

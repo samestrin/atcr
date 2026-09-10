@@ -1,0 +1,39 @@
+diff --git a/streamer/cursor.py b/streamer/cursor.py
+index f8d76b8..87ce3a0 100644
+--- a/streamer/cursor.py
++++ b/streamer/cursor.py
+@@ -27,6 +27,20 @@ class Cursor:
+             last = record["offset"]
+         return last
+ 
++    def _safe_drain_offset(self):
++        """Return the last well-formed offset, or None when there is none.
++
++        Unlike _drain_offset this distinguishes "no well-formed record" from a
++        genuine offset of 0, so a caller can keep a live cursor instead of
++        wiping it.
++        """
++        last = None
++        for record in self._batch:
++            if record.get("offset") is None:
++                continue
++            last = record["offset"]
++        return last
++
+     def begin(self):
+         """Start a drain, moving the cursor to the batch's last good offset."""
+         self._offset = self._drain_offset()
+diff --git a/tests/test_cursor.py b/tests/test_cursor.py
+new file mode 100644
+index 0000000..85e497d
+--- /dev/null
++++ b/tests/test_cursor.py
+@@ -0,0 +1,8 @@
++from streamer.cursor import Cursor
++
++
++def test_begin_preserves_offset_on_all_malformed_batch():
++    cursor = Cursor(offset=42)
++    cursor.load([{"offset": None}, {"offset": None}])
++
++    assert cursor._safe_drain_offset() is None

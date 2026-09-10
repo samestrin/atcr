@@ -73,6 +73,26 @@ func countLines(s string) int {
 	return n
 }
 
+// diffPrefixLines returns the line count of the preamble before the first
+// column-0 diff-file marker, or 0 when there is no marker at all.
+//
+// splitDiffFiles glues that preamble onto the FIRST segment so no bytes are
+// lost, which means chunk 1 of a range payload carries the claim ledger's lines
+// while countDiffFiles still reports only the real files. Counting them against
+// max_context_lines attributes them to a file's diff: the oversize warning then
+// fires on a single small file whose own diff is comfortably inside the limit,
+// and names a line count that file did not produce. The ledger is uncounted in
+// the byte budget by the same reasoning (payload.newClaimLedgerEntry sets
+// Size 0) — it is engine-rendered framing, not reviewable diff content.
+func diffPrefixLines(chunk string) int {
+	for i, ln := range strings.SplitAfter(chunk, "\n") {
+		if isDiffFileMarker(ln) {
+			return i
+		}
+	}
+	return 0
+}
+
 // countDiffFiles reports how many per-file segments a diff contains, i.e. the
 // number of column-0 diff-file markers. Used to stamp a chunk's FileCount in
 // the rendered prompt.

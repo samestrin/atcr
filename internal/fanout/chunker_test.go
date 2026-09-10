@@ -192,6 +192,55 @@ func TestCountLinesTrailingPartialLine(t *testing.T) {
 	assert.Equal(t, 1, countLines("a"), "single line without newline is one line")
 }
 
+// diffPrefixLines is the subtraction the oversize warning applies, so both of its
+// arms need pinning in both directions: the exact preamble count (not one more,
+// not one less) and the no-marker default (which must stay 0, not any other
+// number). Asserting only that a subtraction HAPPENS leaves the arithmetic free
+// to be wrong.
+func TestDiffPrefixLines(t *testing.T) {
+	tests := []struct {
+		name  string
+		chunk string
+		want  int
+	}{
+		{
+			name:  "preamble of known length before the first marker",
+			chunk: strings.Repeat("ledger line\n", 7) + fileSeg("a.go", 2),
+			want:  7,
+		},
+		{
+			name:  "single preamble line",
+			chunk: "ledger line\n" + fileSeg("a.go", 1),
+			want:  1,
+		},
+		{
+			name:  "chunk starting at a marker has no preamble",
+			chunk: fileSeg("a.go", 3),
+			want:  0,
+		},
+		{
+			name:  "escalated marker also ends the preamble",
+			chunk: strings.Repeat("ledger line\n", 4) + "=== FILE: a.go ===\nbody\n",
+			want:  4,
+		},
+		{
+			name:  "no marker anywhere yields the zero default",
+			chunk: "ledger line\nledger line\nledger line\n",
+			want:  0,
+		},
+		{
+			name:  "empty chunk",
+			chunk: "",
+			want:  0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, diffPrefixLines(tt.chunk))
+		})
+	}
+}
+
 // noPrefixSeg builds a minimal diff segment produced by `git diff --no-prefix`
 // (or diff.noprefix=true), where the header omits the a/ and b/ prefixes.
 func noPrefixSeg(path string, body int) string {

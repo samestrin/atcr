@@ -653,3 +653,50 @@ func TestResume_InterruptThenResumeCompletesAllAgents(t *testing.T) {
 	require.Equal(t, RunCompleted, stAfter.Status, "AC6/AC9: final status is completed, not interrupted")
 	require.False(t, stAfter.Partial)
 }
+
+// A resumed range review re-runs buildPayloads (resume.go:374), which re-resolves
+// max_claim_bytes from a freshly loaded config and re-executes git log through a
+// new RangeBuilder — deliberately, matching the escalation/MaxParallel "re-read
+// live" precedent. The finalized manifest must therefore report the ledger the
+// RESUMED run actually built. Copying the manifest verbatim (`m := *p.manifest`)
+// re-creates, in the opposite direction, the artifact ambiguity claim_ledger was
+// added to remove: the record keeps asserting present:true, claims:N while the
+// pending agents received no ledger at all.
+func TestExecuteResume_ClaimLedgerReflectsTheResumedRun(t *testing.T) {
+	repo, base, head := fanoutRepo(t)
+
+	cfg := fourAgentConfig("http://unused")
+	prep, err := PrepareReview(context.Background(), cfg, reviewReq(repo, repo, base, head))
+	require.NoError(t, err)
+
+	m, err := ReadManifest(prep.Dir)
+	require.NoError(t, err)
+	require.NotNil(t, m.ClaimLedger, "precondition: a range review records the ledger outcome")
+	require.True(t, m.ClaimLedger.Present, "precondition: the fixture's head commit claims something")
+
+	poolDir := filepath.Join(prep.Dir, "sources", "pool")
+	require.NoError(t, writeResumedAgents(poolDir, []Result{
+		{Agent: "greta", Status: StatusOK, Content: "CRITICAL|cursor.go:3|x|y|security|15|ev"},
+		{Agent: "kai", Status: StatusOK, Content: ""},
+	}, nil))
+
+	// The operator disables the ledger between the interrupted run and its resume.
+	srv := mockProvider(t)
+	cfg2 := fourAgentConfig(srv.URL)
+	off := int64(0)
+	cfg2.Settings.MaxClaimBytes = &off
+
+	rprep, _, err := PrepareResume(context.Background(), cfg2, prep.Dir, reviewReq(repo, repo, base, head))
+	require.NoError(t, err)
+
+	_, err = ExecuteResume(context.Background(), llmclient.New(), rprep)
+	require.NoError(t, err)
+
+	after, err := ReadManifest(prep.Dir)
+	require.NoError(t, err)
+	require.NotNil(t, after.ClaimLedger, "a range resume still has a range to report on")
+	assert.True(t, after.ClaimLedger.Disabled,
+		"the finalized manifest must report the ledger the RESUMED run built, not the interrupted run's")
+	assert.False(t, after.ClaimLedger.Present,
+		"the pending agents received no ledger; present:true here is the ambiguity the field exists to remove")
+}

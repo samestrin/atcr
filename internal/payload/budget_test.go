@@ -284,3 +284,78 @@ func TestBudget_KeepsMostFiles_DropsLargestFirst(t *testing.T) {
 	assert.Equal(t, []string{"e"}, tr.FilesDropped)
 	assert.ElementsMatch(t, []string{"a", "b", "c", "d"}, keptPaths(kept))
 }
+
+// The ledger exemption is bounded by the budget. An entry that can never fit
+// cannot be funded by shedding entries that do: dropping a 500-byte source file
+// to keep a 5000-byte ledger under a 2000-byte budget destroys the review and
+// still overruns, and the resulting AllDropped trips ErrPayloadFullyDropped.
+// The documented contract — "diff content sheds to fund the ledger" — only holds
+// while the ledger is something the budget can actually hold.
+func TestBudget_ClaimLedgerLargerThanBudgetShedsLikeAnyEntry(t *testing.T) {
+	ledger := newClaimLedgerEntry("CLAIMS BLOCK")
+	ledger.Size = 5000 // the fallback re-fit counts the ledger like any other entry
+	in := []FileEntry{ledger, {Path: "a.go", Size: 500}}
+	kept, tr := ApplyByteBudget(in, 2000)
+	assert.Equal(t, []string{"a.go"}, keptPaths(kept), "a file that fits must not be shed to fund a ledger that never fits")
+	assert.Equal(t, []string{ClaimLedgerPath}, tr.FilesDropped)
+	assert.False(t, tr.AllDropped, "the reviewable file survived, so the payload is not fully dropped")
+}
+
+// At exactly the budget the ledger still fits, so the exemption applies and the
+// diff content sheds to fund it — the contract in the direction it was written.
+func TestBudget_ClaimLedgerExactlyAtBudgetIsKept(t *testing.T) {
+	ledger := newClaimLedgerEntry("CLAIMS BLOCK")
+	ledger.Size = 2000
+	in := []FileEntry{ledger, {Path: "a.go", Size: 500}}
+	kept, tr := ApplyByteBudget(in, 2000)
+	assert.Equal(t, []string{ClaimLedgerPath}, keptPaths(kept))
+	assert.Equal(t, []string{"a.go"}, tr.FilesDropped)
+	assert.True(t, tr.AllDropped, "no reviewable file survived")
+}
+
+// The shed exemption must key on a sentinel this package sets, never on a path
+// string a repository can contain. Angle brackets are illegal in a path only on
+// Windows: `<claims>` is a perfectly legal filename on Linux and macOS, so a PR
+// that adds or modifies one would otherwise get an unshedable diff entry that is
+// also invisible to the reviewable accounting behind AllDropped.
+func TestBudget_RepositoryFileNamedLikeTheLedgerIsNotExempt(t *testing.T) {
+	in := []FileEntry{
+		{Path: ClaimLedgerPath, Size: 5000, Body: "attacker-supplied file content"},
+		{Path: "a.go", Size: 10, Body: "a"},
+	}
+	kept, tr := ApplyByteBudget(in, 5000)
+	assert.Equal(t, []string{"a.go"}, keptPaths(kept), "a repository file named <claims> sheds like any other entry")
+	assert.Equal(t, []string{ClaimLedgerPath}, tr.FilesDropped)
+	assert.False(t, tr.AllDropped, "it is a reviewable file, so it counts in the AllDropped accounting")
+}
+
+// Truncated must describe the shed that actually happened, not the arithmetic
+// that predicted one. The record is published as status.json's truncated and
+// read by internal/benchmark/outcome.go, which maps it to OutcomeIncomplete
+// ("saw only a FRACTION of the diff"), and by refitFallbackPayload, which takes
+// its re-fit arm on it. A "truncated" record naming nothing dropped reports a
+// complete review as incomplete and re-renders a payload it never changed.
+//
+// Every entry here is shed-exempt, so the total overruns the budget and yet
+// nothing can be dropped — the one shape that separates "the sum was too big"
+// from "something was actually shed".
+func TestBudget_TruncatedReflectsTheShedThatHappened(t *testing.T) {
+	a := newClaimLedgerEntry("CLAIMS A")
+	a.Size = 40
+	b := newClaimLedgerEntry("CLAIMS B")
+	b.Size = 40
+	kept, tr := ApplyByteBudget([]FileEntry{a, b}, 50)
+	assert.Len(t, kept, 2, "nothing is shedable, so everything survives")
+	assert.Empty(t, tr.FilesDropped)
+	assert.False(t, tr.Truncated, "nothing was dropped, so nothing was truncated")
+	assert.False(t, tr.AllDropped, "there was no reviewable file to lose")
+}
+
+// The complement: an ordinary shed still reports Truncated, so the fix above
+// cannot have been bought by making the flag never fire.
+func TestBudget_OrdinaryShedStillReportsTruncated(t *testing.T) {
+	kept, tr := ApplyByteBudget(entries("big.go", 100, "small.go", 10), 20)
+	assert.Equal(t, []string{"small.go"}, keptPaths(kept))
+	assert.Equal(t, []string{"big.go"}, tr.FilesDropped)
+	assert.True(t, tr.Truncated)
+}

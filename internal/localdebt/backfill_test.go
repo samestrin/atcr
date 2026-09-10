@@ -818,6 +818,49 @@ func TestBackfillJustifications_MissingStoreDirIsTheNoBacklogState(t *testing.T)
 	assert.Nil(t, res.ShardNames, "no shards were observed, so the snapshot must be nil")
 }
 
+// The no-rewrite snapshot's os.ReadDir carries a two-armed guard: ENOENT is the
+// legal "no backlog yet" state, any other listing failure is fatal. The fatal arm
+// showed 0 coverage and survived mutation (adding `false &&` left the package
+// green), which reads as a missing test — it is not. It is UNREACHABLE through
+// this entry point, and that is worth pinning rather than papering over: ReadAll
+// lists the same directory first and returns any non-ENOENT failure itself, so
+// control never arrives at the snapshot with a listable-directory problem.
+//
+// This table pins BOTH arms and the ordering that makes the second one dead. If a
+// later change makes ReadAll tolerant of a listing failure, the second case starts
+// failing here and says so — which is the signal that the backfill guard has
+// become live and now owes its own coverage.
+func TestBackfillJustifications_NoRewriteSnapshotListingArms(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: directory permissions do not deny access")
+	}
+
+	t.Run("a missing store directory is the no-backlog state", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "does-not-exist")
+		res, err := BackfillJustifications(dir, t.TempDir(), true)
+		require.NoError(t, err, "ENOENT is the legal empty-backlog state, not a failure")
+		assert.Nil(t, res.ShardNames, "no shards were observed, so the snapshot must be nil")
+		assert.Empty(t, res.Changes)
+	})
+
+	t.Run("an unlistable store fails in ReadAll, before the snapshot guard", func(t *testing.T) {
+		// Write + execute, NOT read: withLock can still create its lock file by
+		// name, while listing the directory is denied. That is the only shape in
+		// which a listing failure can reach this pass at all.
+		dir := t.TempDir()
+		require.NoError(t, os.Chmod(dir, 0o300))
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+		_, err := BackfillJustifications(dir, t.TempDir(), true)
+		require.Error(t, err, "a non-ENOENT listing failure must be fatal somewhere")
+		assert.Contains(t, err.Error(), "reading localdebt dir:",
+			"ReadAll owns this failure")
+		assert.NotContains(t, err.Error(), "reading localdebt dir for backfill:",
+			"the snapshot guard is unreachable while ReadAll lists first and fails; "+
+				"if this assertion breaks, that guard is now live and needs its own test")
+	})
+}
+
 // A non-dry run renames each shard into place AS IT WALKS, so a failure on a later
 // shard leaves the earlier ones already rewritten in an append-only store. Returning
 // nil there reported "nothing happened" over a store that had in fact been mutated,

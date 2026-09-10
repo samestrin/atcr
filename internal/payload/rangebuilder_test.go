@@ -2,6 +2,7 @@ package payload
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -94,6 +95,34 @@ func TestRangeBuilder_InvalidRefError(t *testing.T) {
 
 	_, err = rb.BuildChangedLines()
 	require.Error(t, err)
+}
+
+// Range() exists so a caller grounding against a request's range can assert the
+// builder was built from that same range (computeGroundingData does exactly
+// this). It was 0% covered inside this package: the only exercise lives in
+// internal/fanout, which never contributes to internal/payload's own profile —
+// so the accessor the mismatch guard depends on was unasserted where it is
+// defined. A Range() that returned the wrong pair, or the pair swapped, would
+// silently turn that guard into a no-op.
+func TestRangeBuilder_RangeRoundTripsItsConstructorArguments(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", goFileV1)
+	base := commitAll(t, dir, "v1")
+	write(t, dir, "a.go", goFileV2)
+	head := commitAll(t, dir, "v2")
+	require.NotEqual(t, base, head, "fixture invariant: a swapped pair must be detectable")
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	gotBase, gotHead := rb.Range()
+	assert.Equal(t, base, gotBase)
+	assert.Equal(t, head, gotHead)
+
+	// Building does not disturb it: the guard reads Range() after a build.
+	_, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+	gotBase, gotHead = rb.Range()
+	assert.Equal(t, base, gotBase)
+	assert.Equal(t, head, gotHead)
 }
 
 // An empty range (identical base and head) yields empty grounding data via the
@@ -321,4 +350,145 @@ func TestRangeBuilder_ConcurrentUsePanics(t *testing.T) {
 	require.NoError(t, err)
 	_, err = rb.BuildChangedLines()
 	require.NoError(t, err)
+}
+
+// max_claim_bytes (Epic 35.16.7) reaches the ledger through WithMaxClaimBytes.
+// The setting is the ONLY operator control over the ledger's bytes: the entry
+// carries Size 0 and is exempt from every byte budget, so payload_byte_budget,
+// each agent's appliedBudget, and the on_overflow=fail gate are all blind to it.
+func TestRangeBuilder_WithMaxClaimBytesCapsTheLedgerRead(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "foo.go", goFileV1)
+	base := commitAll(t, dir, "seed the file")
+	write(t, dir, "foo.go", goFileV2)
+	head := commitAll(t, dir, "make Foo return two\n\n- Foo() now returns 2 instead of 1\n"+
+		strings.Repeat("- a padding claim that is quite long indeed\n", 200))
+
+	full := NewRangeBuilder(context.Background(), dir, base, head).claimLedger()
+	require.NotEmpty(t, full)
+
+	tight := NewRangeBuilder(context.Background(), dir, base, head, WithMaxClaimBytes(256)).claimLedger()
+	require.NotEmpty(t, tight, "a tight ceiling still renders a ledger, just a shorter one")
+	assert.Less(t, len(tight), len(full), "a lower ceiling must read fewer commit bytes")
+	assert.Contains(t, tight, "TRUNCATED", "a ceiling that sheds claims must say so")
+}
+
+// 0 is the operator escape hatch and it must stop the git read ENTIRELY, not
+// merely trim it to nothing: the point of the setting is that no commit-message
+// text is sent to a third-party provider at all.
+func TestRangeBuilder_ZeroMaxClaimBytesDisablesTheLedgerWithoutReadingGit(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "foo.go", goFileV1)
+	base := commitAll(t, dir, "seed the file")
+	write(t, dir, "foo.go", goFileV2)
+	head := commitAll(t, dir, "make Foo return two\n\n- Foo() now returns 2 instead of 1\n")
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head, WithMaxClaimBytes(0))
+	before := rb.g.execCount
+	assert.Empty(t, rb.claimLedger(), "0 disables the ledger")
+	assert.Equal(t, before, rb.g.execCount,
+		"no git process may run: disabled means the commit text is never READ, not read-then-discarded")
+
+	entries, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+	require.NotEmpty(t, entries)
+	assert.NotEqual(t, ClaimLedgerPath, entries[0].Path, "no ledger entry is prepended when disabled")
+	for _, e := range entries {
+		assert.NotEqual(t, ClaimLedgerPath, e.Path)
+	}
+}
+
+// A negative ceiling is a mis-resolved setting. It must fail SAFE (disabled),
+// never inherit commitMessages' own "<= 0 means unlimited" convention — that
+// inversion would turn a configuration mistake into unbounded, unbudgeted prompt
+// text, the exact opposite of what the operator asked for.
+func TestRangeBuilder_NegativeMaxClaimBytesDisablesRatherThanUnbounds(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "foo.go", goFileV1)
+	base := commitAll(t, dir, "seed the file")
+	write(t, dir, "foo.go", goFileV2)
+	head := commitAll(t, dir, "make Foo return two\n\n- Foo() now returns 2 instead of 1\n")
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head, WithMaxClaimBytes(-1))
+	assert.Empty(t, rb.claimLedger(), "a negative ceiling disables; it must not read the whole history")
+}
+
+// The ledger's failure case and its empty case used to be byte-for-byte
+// indistinguishable in every persisted artifact: an unreadable `git log` degrades
+// to an EMPTY ledger with only a Warn line, so a run that LOST its ledger to a
+// transient git failure looked exactly like a branch whose commits asserted
+// nothing. ClaimLedgerStatus is what separates them.
+func TestRangeBuilder_ClaimLedgerStatusSeparatesFailureFromAClaimFreeBranch(t *testing.T) {
+	newRepo := func(t *testing.T, subject string) (dir, base, head string) {
+		t.Helper()
+		dir = initRepo(t)
+		write(t, dir, "foo.go", goFileV1)
+		base = commitAll(t, dir, "seed the file")
+		write(t, dir, "foo.go", goFileV2)
+		head = commitAll(t, dir, subject)
+		return dir, base, head
+	}
+
+	t.Run("a real ledger is present and counted", func(t *testing.T) {
+		dir, base, head := newRepo(t, "make Foo return two\n\n- Foo() now returns 2 instead of 1\n")
+		rb := NewRangeBuilder(context.Background(), dir, base, head)
+		_, err := rb.BuildEntries(ModeDiff)
+		require.NoError(t, err)
+
+		st := rb.ClaimLedgerStatus()
+		assert.True(t, st.Present)
+		assert.Equal(t, 2, st.Claims, "the subject and the bullet")
+		assert.False(t, st.Failed)
+		assert.False(t, st.Disabled)
+		assert.False(t, st.Truncated)
+	})
+
+	t.Run("a claim-free branch is absent but NOT failed", func(t *testing.T) {
+		// "wip" is filtered as a noise subject, so the range yields zero claims and
+		// claimLedgerSection renders nothing at all.
+		dir, base, head := newRepo(t, "wip")
+		rb := NewRangeBuilder(context.Background(), dir, base, head)
+		_, err := rb.BuildEntries(ModeDiff)
+		require.NoError(t, err)
+
+		st := rb.ClaimLedgerStatus()
+		assert.False(t, st.Present, "a zero-claim ledger renders nothing, so nothing is present")
+		assert.Zero(t, st.Claims)
+		assert.False(t, st.Failed, "the read SUCCEEDED and found no assertion — that is not a failure")
+	})
+
+	t.Run("an unreadable range is failed, not merely absent", func(t *testing.T) {
+		dir, _, head := newRepo(t, "make Foo return two\n\n- Foo() now returns 2 instead of 1\n")
+		rb := NewRangeBuilder(context.Background(), dir, "no-such-ref", head)
+		assert.Empty(t, rb.claimLedger())
+
+		st := rb.ClaimLedgerStatus()
+		assert.True(t, st.Failed, "a git error must be recorded, or it is indistinguishable from a claim-free branch")
+		assert.False(t, st.Present)
+		assert.False(t, st.Disabled, "the operator did not turn it off; the read broke")
+	})
+
+	t.Run("a disabled ledger is disabled, not failed", func(t *testing.T) {
+		dir, base, head := newRepo(t, "make Foo return two\n\n- Foo() now returns 2 instead of 1\n")
+		rb := NewRangeBuilder(context.Background(), dir, base, head, WithMaxClaimBytes(0))
+		_, err := rb.BuildEntries(ModeDiff)
+		require.NoError(t, err)
+
+		st := rb.ClaimLedgerStatus()
+		assert.True(t, st.Disabled, "max_claim_bytes: 0 is an operator choice, not a fault")
+		assert.False(t, st.Failed, "'you told us not to' must never read as 'we could not'")
+		assert.False(t, st.Present)
+	})
+
+	t.Run("a truncated read is present but flagged incomplete", func(t *testing.T) {
+		dir, base, head := newRepo(t, "make Foo return two\n\n"+
+			strings.Repeat("- a padding claim that is quite long indeed\n", 200))
+		rb := NewRangeBuilder(context.Background(), dir, base, head, WithMaxClaimBytes(256))
+		_, err := rb.BuildEntries(ModeDiff)
+		require.NoError(t, err)
+
+		st := rb.ClaimLedgerStatus()
+		assert.True(t, st.Present)
+		assert.True(t, st.Truncated, "claims were shed at the cap, so the ledger is incomplete and must say so")
+	})
 }

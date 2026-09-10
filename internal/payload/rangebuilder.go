@@ -28,6 +28,53 @@ type RangeBuilder struct {
 	// use fail loudly (panic) instead of corrupting the single-writer rangeState
 	// cache. Uncontended sequential use pays one CompareAndSwap per build.
 	inUse atomic.Int32
+	// Memoized claim-ledger section for the range (Epic 35.16.7). Computed once
+	// and reused across every mode this builder renders, which is what makes the
+	// ledger byte-identical for every agent in a fan-out: buildPayloads builds
+	// one payload per MODE from ONE RangeBuilder, so identical-across-modes is
+	// what identical-across-agents reduces to.
+	claims     string
+	claimsDone bool
+	// claimStatus records what the ledger read actually produced, so a run that
+	// LOST its ledger stays distinguishable from a branch that asserted nothing.
+	// Populated by claimLedger alongside claims, under the same memo.
+	claimStatus ClaimLedgerStatus
+}
+
+// ClaimLedgerStatus reports what the claim-ledger read produced for a range.
+//
+// It exists because the failure and the empty case were byte-for-byte
+// indistinguishable in every persisted artifact: claimLedger degrades an
+// unreadable `git log` to an EMPTY ledger with only a Warn line, and memoizes
+// that failure for the whole run. Nothing downstream recorded that a ledger was
+// expected and did not arrive, so a run that lost its ledger to a transient git
+// failure looked exactly like a branch whose commits asserted nothing — and the
+// Warn line cannot carry review_id (see claimLedger), so it is not even
+// correlatable after the fact.
+//
+// Each field answers a question the artifacts previously could not:
+//   - Present: did a ledger reach the payload at all?
+//   - Claims: how many assertions were enumerated?
+//   - Truncated: were claims shed at a cap, so the ledger is incomplete?
+//   - Failed: did the read ERROR (as opposed to finding nothing)?
+//   - Disabled: did the operator turn the feature off via max_claim_bytes: 0?
+//
+// Failed and Disabled are separate on purpose: "we could not read it" and "you
+// told us not to" are opposite operational signals, and collapsing them into
+// "absent" is the ambiguity this type exists to remove.
+type ClaimLedgerStatus struct {
+	Present   bool `json:"present"`
+	Claims    int  `json:"claims"`
+	Truncated bool `json:"truncated,omitempty"`
+	Failed    bool `json:"failed,omitempty"`
+	Disabled  bool `json:"disabled,omitempty"`
+}
+
+// ClaimLedgerStatus returns the range's claim-ledger outcome. Call it after a
+// BuildEntries; before any build it reports the zero value (which reads as
+// "absent", the honest answer when nothing has been attempted).
+func (b *RangeBuilder) ClaimLedgerStatus() ClaimLedgerStatus {
+	return b.claimStatus
 }
 
 // RangeOption customizes the gitRunner a RangeBuilder wraps. It exists so review
@@ -48,6 +95,21 @@ func WithoutIgnoreFilter() RangeOption {
 // per-file escalation and skeleton injection off entirely.
 func WithEscalation(c EscalationConfig) RangeOption {
 	return func(g *gitRunner) { g.escalation = c }
+}
+
+// WithMaxClaimBytes sets the ceiling on the commit-message text the claim ledger
+// reads for this builder (Epic 35.16.7). Callers pass the registry-resolved
+// max_claim_bytes; omitting the option leaves DefaultMaxClaimBytes in place.
+//
+// **0 DISABLES the ledger entirely** — no `git log` runs, no commit text reaches
+// a provider, and no ledger entry is prepended. That is the operator escape
+// hatch the setting exists for, and it is why 0 is not the "unlimited" sentinel
+// it is on payload_byte_budget and cache_max_bytes: the ledger entry carries
+// Size 0 and is exempt from every byte budget, so an unbounded ledger would be
+// unbounded prompt text nothing could see or shed. A negative value is treated
+// as disabled too, so a mis-resolved setting fails safe rather than unbounded.
+func WithMaxClaimBytes(n int64) RangeOption {
+	return func(g *gitRunner) { g.maxClaimBytes = n }
 }
 
 // NewRangeBuilder returns a RangeBuilder for repo's base..head range, sharing one
@@ -113,7 +175,105 @@ func (b *RangeBuilder) BuildEntries(mode PayloadMode) ([]FileEntry, error) {
 	if err := b.validate(); err != nil {
 		return nil, err
 	}
-	return b.g.buildEntriesValidated(mode, b.base, b.head)
+	entries, err := b.g.buildEntriesValidated(mode, b.base, b.head)
+	if err != nil {
+		return nil, err
+	}
+	return b.withClaimLedger(entries), nil
+}
+
+// withClaimLedger prepends the range's claim-ledger entry to entries, so the
+// author's assertions lead the payload and every reviewer adjudicates them
+// against the diff that follows.
+//
+// A range with NO changed files gets no ledger. An empty entry set is how the
+// review layer detects "nothing to review"; injecting a ledger there would
+// convert that condition into a one-entry payload carrying claims and no code.
+//
+// The entry is deliberately shaped to be inert everywhere it is not wanted:
+// Size 0 keeps it out of byte-budget accounting (so it never displaces diff
+// content), and an empty Mode keeps it out of the escalated-file bookkeeping
+// that reads FileEntry.Mode.
+func (b *RangeBuilder) withClaimLedger(entries []FileEntry) []FileEntry {
+	if len(entries) == 0 {
+		return entries
+	}
+	section := b.claimLedger()
+	if section == "" {
+		return entries
+	}
+	out := make([]FileEntry, 0, len(entries)+1)
+	out = append(out, newClaimLedgerEntry(section))
+	return append(out, entries...)
+}
+
+// claimLedger returns the memoized claim-ledger section for this range, reading
+// the commit messages at most once per builder.
+//
+// An unreadable range yields an empty ledger, never an error: the claim ledger
+// is an additional input to a review, and failing a whole review because git
+// could not produce a log would trade a complete review for none at all. The
+// failure is logged so it is diagnosable rather than silent.
+//
+// A failed read is memoized like a successful one — deliberately. Every mode
+// this builder renders must carry the SAME ledger (AC3), and a per-mode retry
+// could succeed on the second mode and hand two agents different payloads. The
+// cost is that one transient git failure disables the ledger for the whole run
+// rather than just one mode; the Warn line is what makes that visible.
+//
+// There is deliberately NO happy-path log line here, though one would be
+// useful: an empty ledger is otherwise indistinguishable in production from an
+// absent one. The payload build runs BEFORE the review id is minted
+// (cli/review.go builds the review, then correlates the context logger), so a
+// line emitted from this stage cannot carry review_id — and the correlation
+// requirement (sprint 4.0_structured_logging, AC9; user-facing contract in
+// docs/logging.md, "Request correlation") is that EVERY log line emitted during
+// a review carries it. Correlating the payload stage, or surfacing the ledger's
+// presence some other way, is tracked as technical debt against
+// rangebuilder.go:183 (the manifest-field option); until then the observability
+// gap is the honest cost of not breaking that correlation rule on every debug
+// run.
+//
+// "AC9" here is sprint 4.0's, NOT epic 35.16.7's — that epic defines AC1–AC7
+// only, so an unqualified "AC9" in this file reads as a reference to something
+// that does not exist.
+func (b *RangeBuilder) claimLedger() string {
+	if b.claimsDone {
+		return b.claims
+	}
+	b.claimsDone = true
+	// 0 (or a negative, mis-resolved value) means the operator disabled the
+	// feature: return before the git process runs, so no commit text is read at
+	// all — not merely trimmed to nothing. This is the ONE place the setting's
+	// "0 = disabled" meaning is translated into commitMessages' own "<= 0 =
+	// unlimited" parameter convention; passing the setting straight through would
+	// invert it into an UNBOUNDED read, the exact opposite of what was asked for.
+	if b.g.maxClaimBytes <= 0 {
+		b.claimStatus = ClaimLedgerStatus{Disabled: true}
+		return b.claims
+	}
+	msgs, truncated, err := b.g.commitMessages(b.base, b.head, b.g.maxClaimBytes, DefaultMaxClaimCommits)
+	if err != nil {
+		b.g.log().Warn("payload: commit messages unreadable; review proceeds without a claim ledger",
+			"base", b.base, "head", b.head, "error", err)
+		b.claimStatus = ClaimLedgerStatus{Failed: true}
+		return b.claims
+	}
+	claims, fenceSuppressed := splitClaims(msgs)
+	b.claims = claimLedgerSection(claims, truncated, fenceSuppressed)
+	b.claimStatus = ClaimLedgerStatus{
+		// Present tracks the RENDERED section, not the claim count: a zero-claim
+		// ledger renders nothing at all (claimLedgerSection returns ""), so there is
+		// no entry to report and "present" would be a false claim.
+		Present: b.claims != "",
+		Claims:  len(claims),
+		// A fence that swallowed body text is claim loss exactly like a byte-cap
+		// shed, and the section discloses both the same way — so the status records
+		// both under one flag rather than inventing a distinction the payload text
+		// does not make.
+		Truncated: truncated != claimsComplete || fenceSuppressed,
+	}
+	return b.claims
 }
 
 // BuildChangedLines returns the grounding changed-lines map for the range,

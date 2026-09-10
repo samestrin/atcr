@@ -81,3 +81,11 @@ CLAUDE.md
 .planning/**/code-review/multi-agent/
 .planning/**/code-review/reconciled/
 .kimi-code/
+
+# Python bytecode. This repo is Go, but benchmarks/repo-state-v1/ carries Python
+# FIXTURE trees (a case's base/ state), and importing one writes __pycache__/
+# beside the source. FORMAT.md requires a case's base/ to hold no file outside
+# that case's stated purpose, so a bytecode directory must never be catchable by
+# `git add -A`.
+__pycache__/
+*.pyc

@@ -64,6 +64,17 @@ const (
 	// cache_max_bytes, 0 is NOT an "unbounded" sentinel here — there is no
 	// unbounded plan-injection use case, so <= 0 is rejected at load.
 	DefaultMaxSprintPlanBytes int64 = 65536
+	// DefaultMaxClaimBytes is the embedded byte ceiling on the commit-message text
+	// read into the claim ledger (Epic 35.16.7). It mirrors
+	// payload.DefaultMaxClaimBytes; the two must agree, and
+	// internal/reconcile/claim_ledger_default_test.go pins that.
+	//
+	// Unlike max_sprint_plan_bytes, 0 IS meaningful here and means DISABLED, not
+	// unbounded: the ledger sends commit-message text to third-party providers, and
+	// an operator has a legitimate reason to refuse that outright. There is no
+	// unbounded setting — the ledger's bytes are exempt from every byte budget, so
+	// the only thing bounding them is this ceiling. Negative is rejected.
+	DefaultMaxClaimBytes int64 = 8 * 1024
 )
 
 // ProjectConfig is the project-level configuration from .atcr/config.yaml:
@@ -108,6 +119,11 @@ type ProjectConfig struct {
 	// pointer so an explicit value survives default application; unset inherits
 	// the registry tier or the embedded DefaultMaxSprintPlanBytes.
 	MaxSprintPlanBytes *int64 `yaml:"max_sprint_plan_bytes,omitempty"`
+	// MaxClaimBytes overrides the claim-ledger byte ceiling (Epic 35.16.7). A
+	// pointer so an explicit 0 (feature disabled — send NO commit text to a
+	// provider) survives default application; unset inherits the registry tier or
+	// the embedded DefaultMaxClaimBytes.
+	MaxClaimBytes *int64 `yaml:"max_claim_bytes,omitempty"`
 	// Sandbox is the optional execution-reproduction backend block (Epic 11.0).
 	// nil means execution is unconfigured and `--exec` is refused.
 	Sandbox *SandboxConfig `yaml:"sandbox,omitempty"`
@@ -285,6 +301,10 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 	}
 	if cfg.MaxSprintPlanBytes != nil && *cfg.MaxSprintPlanBytes <= 0 {
 		return nil, fmt.Errorf("%s: max_sprint_plan_bytes must be > 0, got %d", base, *cfg.MaxSprintPlanBytes)
+	}
+	// 0 is DISABLED here, not unbounded, so only a negative value is invalid.
+	if cfg.MaxClaimBytes != nil && *cfg.MaxClaimBytes < 0 {
+		return nil, fmt.Errorf("%s: max_claim_bytes must be >= 0 (0 = disabled), got %d", base, *cfg.MaxClaimBytes)
 	}
 	if !payloadModeValid(cfg.PayloadMode) {
 		return nil, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", strings.TrimSpace(cfg.PayloadMode))

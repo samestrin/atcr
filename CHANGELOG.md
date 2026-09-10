@@ -1,3 +1,18 @@
+## [35.18.0] - 2026-09-09
+
+*Epic 35.16.7 — claim ledger verify commit claims.*
+
+### Added
+
+- Review payloads over a git range now carry a **claim ledger**: the branch's commit-message assertions, enumerated, with a contract asking every reviewer to rule `VERIFIED` / `CONTRADICTED` / `UNSUPPORTED` / `NOT-IN-PAYLOAD` on each one against what the diff actually does. `UNSUPPORTED` is the finding-worthy verdict — it catches a fix that a commit message describes but the diff never makes, which leaves no trace a reviewer reading only added and removed lines could react to.
+- Claims are extracted deterministically from `git log --no-merges` with no model in the path, so the same range always produces byte-identical claims, and the ledger is identical for every agent in a fan-out on the normal path. Three exceptions are deliberate and documented in `internal/payload/claims.go`: a `review_strategy: chunked` run puts the ledger in the first chunk only, an agent whose effective budget is 0 may receive the ledger as its sole entry, and under `on_overflow: truncate` a fallback whose own budget is smaller than the ledger re-fits without it.
+- The claim ledger is exempt from byte-budget shedding while it fits the budget: when the budget cannot fund both, diff content is dropped and the ledger is kept. The exemption is bounded — a ledger larger than the whole budget sheds like any other entry, rather than dropping every file to fund itself.
+- `benchmarks/repo-state-v1/`: a case format (`FORMAT.md`) for benchmark cases that are small repositories rather than diffs, plus its first case, `claim-absent-cursor-fix`. The cases are authored and hand-verifiable but not yet machine-runnable — the loader is future work.
+
+### Changed
+
+- `Truncation.AllDropped` (published as `all_dropped` in `status.json`) now means "no reviewable file survived the shed" rather than "the kept slice is empty", so an exempt claim ledger cannot mask a payload that has lost all of its code.
+
 ## [35.17.0] - 2026-09-08
 
 *Epic 35.16.6.9 — post residue feature epic 35.16.6.6 post residue feature epic 35.16.6.2 submission envelope coverage schema.*

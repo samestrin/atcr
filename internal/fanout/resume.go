@@ -456,6 +456,10 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 		// "fresh results are always written" contract — rather than being re-called.
 		cache:       cache.NewStore(filepath.Join(req.Root, ".atcr", "cache"), cfg.Settings.CacheMaxBytes),
 		cacheNoRead: req.NoCache,
+		// The ledger this resume actually built, for ExecuteResume to stamp onto
+		// the finalized manifest. rb is nil on the baseline path, which yields nil
+		// and leaves the manifest's field alone.
+		claimLedger: claimLedgerStatus(rb),
 	}
 	if m.Baseline {
 		// TD-011: a resumed BASELINE run captures the same write-back state the
@@ -545,6 +549,17 @@ func ExecuteResume(ctx context.Context, completer Completer, p *PreparedReview) 
 	m.CompletedAt = time.Now().UTC()
 	m.Interrupted = interrupted
 	m.Review = reviewStage
+	// Recompute the claim-ledger record from the RESUMED run, not the interrupted
+	// one. buildPayloads re-resolves max_claim_bytes from a freshly loaded config
+	// and re-reads git log, so the ledger the pending agents received can differ
+	// from the record the original manifest carries — an operator setting
+	// max_claim_bytes: 0 between the runs, or a transient git log failure taking
+	// claimLedger's fail-soft arm. Leaving the old record in place asserts a
+	// ledger those agents never saw. nil means this preparation had no range to
+	// read (baseline / --diff-file), where the manifest's own value stands.
+	if p.claimLedger != nil {
+		m.ClaimLedger = p.claimLedger
+	}
 	if err := WriteManifest(p.Dir, &m); err != nil {
 		// Best-effort: stamp Interrupted on the existing manifest so the run is
 		// not stuck in_progress when a resume is itself interrupted (AC7). Mirrors

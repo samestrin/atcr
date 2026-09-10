@@ -1,0 +1,11 @@
+fix(streamer): preserve a live cursor across an all-malformed drain
+
+An all-malformed batch wiped the cursor. _drain_offset() returns 0 when it
+finds no well-formed record, and begin() assigned that 0 straight into
+self._offset, so a live offset was replaced by zero.
+
+- _safe_drain_offset() returns None instead of 0 when the batch holds no well-formed record
+- begin() now keeps its previous offset when the drain yields nothing
+- test_begin_preserves_offset_on_all_malformed_batch covers the fix
+
+Signed-off-by: A Dev <dev@example.com>
