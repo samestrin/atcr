@@ -134,10 +134,15 @@ func extractChangedSymbols(src string, ranges []LineRange, root astgroup.Node, i
 	// walks up past anonymous control-flow blocks, so an edit inside an `if` arm
 	// resolves to the function that contains it rather than to the `if`.
 	scanned := 0
+	// Labeled break, NOT return: exhausting the declaration pass's line budget
+	// must not skip the AC6 cue pass below. Returning here made the mock half of
+	// the feature vanish on exactly the large changed test files it was written
+	// for — the budget is spent walking declarations, and the cue scan never ran.
+declPass:
 	for _, r := range ranges {
 		for line := r.Start; line <= r.End; line++ {
 			if scanned >= maxScannedChangedLines || len(out) >= maxChangedSymbols {
-				return out
+				break declPass
 			}
 			scanned++
 			name, ok := astgroup.EnclosingSymbolName(root, line)
@@ -155,8 +160,18 @@ func extractChangedSymbols(src string, ranges []LineRange, root astgroup.Node, i
 
 	// Pass 2 — AC6. Only the CHANGED lines of a changed test file are scanned, so
 	// an untouched mock elsewhere in the same file contributes nothing.
+	//
+	// It carries its OWN line budget rather than sharing pass 1's, so a large
+	// declaration walk cannot starve it (and so this pass is itself bounded — it
+	// previously had no line ceiling at all).
+	cueScanned := 0
+cuePass:
 	for _, r := range ranges {
 		for line := r.Start; line <= r.End; line++ {
+			if cueScanned >= maxScannedChangedLines {
+				break cuePass
+			}
+			cueScanned++
 			if line < 1 || line > len(lines) {
 				continue
 			}
@@ -416,7 +431,7 @@ func validGrepSymbol(name string) bool {
 // `git grep` also exits non-zero when it simply matched nothing, which
 // gitRunner.output cannot distinguish from a real failure, so treating any error
 // as "no context" is the only correct reading available here.
-func (g *gitRunner) referenceHits(symbols []changedSymbol, exclude map[string]bool) []refHit {
+func (g *gitRunner) referenceHits(head string, symbols []changedSymbol, exclude map[string]bool) []refHit {
 	names := grepPatterns(symbols)
 	if len(names) == 0 {
 		// The laziness contract: a diff citing no resolvable symbol spawns no
@@ -428,11 +443,21 @@ func (g *gitRunner) referenceHits(symbols []changedSymbol, exclude map[string]bo
 	// a regex), `-w` bounds it to whole words so `Store` does not match
 	// `ReadStore`, and `-I` skips binaries. Each name is introduced by `-e`, so a
 	// value can never be read as a flag.
-	args := make([]string, 0, 6+2*len(names))
+	args := make([]string, 0, 7+2*len(names))
 	args = append(args, "grep", "-n", "-I", "-F", "-w", "--no-color")
 	for _, n := range names {
 		args = append(args, "-e", n)
 	}
+	// Search the REVIEWED REVISION, not the working tree.
+	//
+	// Without a tree-ish, `git grep` searches the checked-out files while
+	// retrieveSnippets slices the same paths out of the `head` blob. On a dirty
+	// worktree, or a range that is not checked out at all (`atcr review --base X
+	// --head Y`), the hit line numbers then index DIFFERENT content than the
+	// snippet is cut from — so the region shipped to providers, and the grounding
+	// span derived from it, are both silently wrong. Passing head makes the search
+	// and the slice read the same bytes.
+	args = append(args, head)
 	out, err := g.output(args...)
 	if err != nil {
 		// `git grep` exits non-zero on NO MATCH as well as on failure, and
@@ -454,7 +479,26 @@ func (g *gitRunner) referenceHits(symbols []changedSymbol, exclude map[string]bo
 	if m := g.matcher(); m.active() {
 		skip = m.match
 	}
-	return parseGrepHits(string(out), names, exclude, skip, maxPrefetchSitesPerSymbol)
+	return parseGrepHits(stripGrepRev(string(out), head), names, exclude, skip, maxPrefetchSitesPerSymbol)
+}
+
+// stripGrepRev removes the leading "<rev>:" field that `git grep <rev>` prefixes
+// to every record, restoring the plain "path:line:text" shape splitGrepLine
+// parses.
+//
+// The prefix is git echoing back the tree-ish argument verbatim, so trimming
+// that exact string is exact rather than heuristic — unlike splitting on the
+// third colon, which a path containing a colon would defeat.
+func stripGrepRev(out, rev string) string {
+	if rev == "" {
+		return out
+	}
+	prefix := rev + ":"
+	lines := strings.Split(out, "\n")
+	for i, ln := range lines {
+		lines[i] = strings.TrimPrefix(ln, prefix)
+	}
+	return strings.Join(lines, "\n")
 }
 
 const (
@@ -999,7 +1043,7 @@ func (g *gitRunner) buildPrefetch(base, head string) (section string, spans map[
 		return "", nil, PrefetchStatus{}
 	}
 
-	hits := g.referenceHits(symbols, changedPaths)
+	hits := g.referenceHits(head, symbols, changedPaths)
 	if len(hits) == 0 {
 		return "", nil, PrefetchStatus{}
 	}

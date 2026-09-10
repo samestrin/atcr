@@ -36,6 +36,7 @@ func TestMaxContextLines_DocumentsTheDeliveredLineGate(t *testing.T) {
 	for _, must := range []struct{ token, why string }{
 		{"measured against a chunk's **delivered** line count", "the cap is measured against a chunk's DELIVERED line count, preamble included — not against the named file's own diff. The whole phrase, not the bare word: \"delivered\" alone survives a negation of this very clause"},
 		{"the lever that shrinks them is `max_claim_bytes`", "when the warning reports engine-rendered preamble lines the lever is max_claim_bytes; this field is the wrong knob and the row must say so. The whole phrase, so a row that merely mentions the key in some other clause does not satisfy it"},
+		{"whose lever is `max_prefetch_bytes`", "context-aware pre-fetching (Epic 35.16.8) adds a SECOND preamble section, with a larger default (16384) than the claim ledger's. An operator who reads only the max_claim_bytes sentence tunes the smaller of the two knobs, the warning does not go away, and nothing tells them the other section exists"},
 	} {
 		if !strings.Contains(strings.ToLower(row), strings.ToLower(must.token)) {
 			t.Errorf("docs/registry.md's max_context_lines row must state %q: %s\nrow was: %s", must.token, must.why, row)

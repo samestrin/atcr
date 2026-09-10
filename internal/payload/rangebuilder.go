@@ -421,7 +421,11 @@ func (b *RangeBuilder) withPrefetchedSpans(cl ChangedLines) ChangedLines {
 		if _, changed := cl[p]; changed {
 			continue
 		}
-		fc := FileChange{}
+		// PrefetchOnly is what keeps the widening as narrow as it is described:
+		// without it the gate's file-level arm (Line <= 0) would keep ANY finding
+		// against a merely-referenced file, which is broader than "only the exact
+		// retrieved spans" and would let fabricated file-level findings through.
+		fc := FileChange{PrefetchOnly: true}
 		fc.Ranges = append(fc.Ranges, spans...)
 		cl[p] = fc
 	}

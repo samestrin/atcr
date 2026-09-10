@@ -249,10 +249,10 @@ func TestReferenceHits_RetrievesConsumerInAnUntouchedFile(t *testing.T) {
 	// AC5: when a changed symbol's return shape changes, its consumers are
 	// reached by REFERENCE. consumer.go is absent from the diff entirely, so no
 	// payload mode would ever show it — only the reference lookup can.
-	dir, _, _ := prefetchRepo(t)
+	dir, _, head := prefetchRepo(t)
 	g := newGitRunner(context.Background(), dir)
 
-	hits := g.referenceHits([]changedSymbol{{Name: "ReadStore"}}, map[string]bool{"store.go": true})
+	hits := g.referenceHits(head, []changedSymbol{{Name: "ReadStore"}}, map[string]bool{"store.go": true})
 
 	var paths []string
 	for _, h := range hits {
@@ -265,14 +265,14 @@ func TestReferenceHits_RetrievesConsumerInAnUntouchedFile(t *testing.T) {
 }
 
 func TestReferenceHits_IsLazyAndSpendsOneProcessForEverySymbol(t *testing.T) {
-	dir, _, _ := prefetchRepo(t)
+	dir, _, head := prefetchRepo(t)
 	g := newGitRunner(context.Background(), dir)
 
-	require.Empty(t, g.referenceHits(nil, nil))
+	require.Empty(t, g.referenceHits(head, nil, nil))
 	require.Zero(t, g.execCount,
 		"a run whose diff cites no resolvable symbol must never read a source file")
 
-	g.referenceHits([]changedSymbol{{Name: "ReadStore"}, {Name: "Reconcile"}}, nil)
+	g.referenceHits(head, []changedSymbol{{Name: "ReadStore"}, {Name: "Reconcile"}}, nil)
 	require.Equal(t, 1, g.execCount,
 		"every symbol must resolve in ONE git grep, not one process per symbol (AC4)")
 }
@@ -281,10 +281,36 @@ func TestReferenceHits_UnresolvableSymbolFailsOpenToEmpty(t *testing.T) {
 	// `git grep` exits non-zero when it matched nothing, which gitRunner.output
 	// reports identically to a real git failure. Pre-fetching is an ADDITIONAL
 	// review input, so both must degrade to empty context rather than fail.
-	dir, _, _ := prefetchRepo(t)
+	dir, _, head := prefetchRepo(t)
 	g := newGitRunner(context.Background(), dir)
 
-	require.Empty(t, g.referenceHits([]changedSymbol{{Name: "NoSuchSymbolAnywhere"}}, nil))
+	require.Empty(t, g.referenceHits(head, []changedSymbol{{Name: "NoSuchSymbolAnywhere"}}, nil))
+}
+
+func TestRetrieveSnippets_SearchesHeadNotTheDirtyWorktree(t *testing.T) {
+	// `git grep` without a tree-ish searches the WORKING TREE, while
+	// retrieveSnippets slices the same path out of the head blob. When the two
+	// disagree the hit line indexes different content than the snippet is cut
+	// from, so the region shipped to providers — and the grounding span derived
+	// from it — are silently wrong.
+	//
+	// Padding consumer.go on disk WITHOUT committing reproduces exactly that
+	// divergence: the call site moves down six lines in the worktree while head
+	// still has it near the top.
+	dir, base, head := prefetchRepo(t)
+	write(t, dir, "consumer.go", "package store\n\n// pad\n// pad\n// pad\n// pad\n// pad\n\n"+
+		"func Reconcile(path string) error {\n\tdata, err := ReadStore(path)\n\tif err != nil {\n\t\treturn err\n\t}\n\t_ = data\n\treturn nil\n}\n")
+
+	g := newGitRunner(context.Background(), dir)
+	hits := g.referenceHits(head, []changedSymbol{{Name: "ReadStore"}}, map[string]bool{"store.go": true})
+	require.NotEmpty(t, hits, "the consumer must still be found at head")
+
+	snips := g.retrieveSnippets(base, head, hits)
+	require.NotEmpty(t, snips, "a dirty worktree must not lose the snippet")
+	require.Contains(t, snips[0].Body, "func Reconcile",
+		"the snippet must be cut at head's line numbering, not the worktree's")
+	require.Contains(t, snips[0].Body, "ReadStore",
+		"the retrieved region must actually contain the call site the hit pointed at")
 }
 
 func TestSnippetSpan_ExpandsHitToItsCoveringBlock(t *testing.T) {
