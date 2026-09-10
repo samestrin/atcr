@@ -2,9 +2,11 @@ package payload
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/samestrin/atcr/internal/astgroup"
 	"github.com/stretchr/testify/require"
@@ -765,4 +767,95 @@ func TestRangeBuilder_PrefetchIsMemoizedAcrossBuilds(t *testing.T) {
 
 	require.Equal(t, disabled, enabled,
 		"the second mode must cost the same with pre-fetching on as off: the grep and its candidate reads are paid once, on the first build")
+}
+
+func TestRangeBuilder_MockedSymbolPullsInTheRealImplementation(t *testing.T) {
+	// AC6 end to end: when a changed TEST file stubs a symbol, the real
+	// implementation must be placed beside the test that replaces it. A mock that
+	// does not model what the real function actually does is only legible to a
+	// reviewer when both are on the page — the unit-level cue scan proves the
+	// symbol is extracted, but only this proves it survives retrieval and
+	// injection.
+	dir := initRepo(t)
+	write(t, dir, "store.go", prefetchStoreV1) // the real implementation, never changed
+	write(t, dir, "store_test.go", "package store\n\nfunc TestRead(t *testing.T) {\n}\n")
+	base := commitAll(t, dir, "seed the store and its test")
+	write(t, dir, "store_test.go",
+		"package store\n\nfunc TestRead(t *testing.T) {\n\tstubbed := ReadStore\n\t_ = stubbed\n}\n")
+	head := commitAll(t, dir, "stub the store in the test")
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	entries, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+
+	entry, at := prefetchEntryOf(entries)
+	require.NotEqual(t, -1, at, "a stubbed symbol must pull in its real implementation")
+	require.Contains(t, entry.Body, "store.go")
+	require.Contains(t, entry.Body, "func ReadStore",
+		"the real implementation must sit beside the test that replaces it")
+}
+
+// prefetchWideRepo builds a range over a repo of n tracked files, only one of
+// which the diff touches, with a single untouched consumer of the changed
+// symbol. It exists so the AC4 latency assertion measures the cost of searching
+// a REPOSITORY rather than the cost of searching two files.
+func prefetchWideRepo(t *testing.T, n int) (dir, base, head string) {
+	t.Helper()
+	dir = initRepo(t)
+	write(t, dir, "store.go", prefetchStoreV1)
+	write(t, dir, "consumer.go", prefetchConsumer)
+	for i := 0; i < n; i++ {
+		write(t, dir, fmt.Sprintf("pkg%d/filler.go", i),
+			fmt.Sprintf("package pkg%d\n\nfunc Filler%d() int {\n\treturn %d\n}\n", i, i, i))
+	}
+	base = commitAll(t, dir, "seed a wide repository")
+	write(t, dir, "store.go", prefetchStoreV2)
+	head = commitAll(t, dir, "change ReadStore return shape")
+	return dir, base, head
+}
+
+func TestPrefetch_OverheadStaysWithinTheAC4Budget(t *testing.T) {
+	// AC4: pre-fetch overhead must stay under 2 seconds per review.
+	//
+	// Measured as the DIFFERENCE between building the same range with the feature
+	// on and with it off, so the number is the feature's own cost rather than the
+	// payload build's. Measured over a ~150-file repository, because the design
+	// question AC4 actually turns on is how the cost scales with REPOSITORY size:
+	// the rejected alternative (a repo-wide parse, mirroring
+	// internal/reconcile/symbolindex.go) grows with the tracked-file count, while
+	// grepping first and parsing only the matches does not. A two-file fixture
+	// would satisfy the bound while proving nothing about that.
+	dir, base, head := prefetchWideRepo(t, 150)
+
+	build := func(opts ...RangeOption) time.Duration {
+		rb := NewRangeBuilder(context.Background(), dir, base, head, opts...)
+		start := time.Now()
+		_, err := rb.BuildEntries(ModeDiff)
+		require.NoError(t, err)
+		return time.Since(start)
+	}
+
+	build(WithMaxPrefetchBytes(0)) // warm the wasm host and git's object cache
+	off := build(WithMaxPrefetchBytes(0))
+	on := build()
+
+	overhead := on - off
+	t.Logf("pre-fetch overhead over 150 files: %v (off=%v on=%v)", overhead, off, on)
+	require.Less(t, overhead, 2*time.Second,
+		"AC4: pre-fetch overhead must stay under 2s per review")
+}
+
+func TestPrefetch_WideRepoStillRetrievesTheConsumer(t *testing.T) {
+	// The latency assertion above is only meaningful if the feature actually did
+	// its work on that fixture. Without this, a regression that silently disabled
+	// retrieval would make the timing test PASS faster.
+	dir, base, head := prefetchWideRepo(t, 150)
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	entries, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+
+	entry, at := prefetchEntryOf(entries)
+	require.NotEqual(t, -1, at, "the wide-repo fixture must still retrieve its consumer")
+	require.Contains(t, entry.Body, "consumer.go")
 }
