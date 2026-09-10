@@ -150,6 +150,26 @@ max_claim_bytes: -1
 	assert.Contains(t, err.Error(), "max_claim_bytes")
 }
 
+// A directly-constructed proj/reg bypasses both file loaders, so the resolver
+// carries its own post-resolution guard. TestSettings_NegativeMaxClaimBytes...
+// exercises ResolvedMaxClaimBytes(), not this check — these cases are what pin it.
+func TestResolveSettings_MaxClaimBytesDirectlyConstructedNegativeRejected(t *testing.T) {
+	t.Run("project tier", func(t *testing.T) {
+		bad := int64(-1)
+		proj := &ProjectConfig{Agents: []string{"bruce"}, MaxClaimBytes: &bad}
+		_, err := ResolveSettings(CLIOverrides{}, proj, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "max_claim_bytes")
+	})
+	t.Run("registry tier", func(t *testing.T) {
+		bad := int64(-1)
+		reg := &Registry{MaxClaimBytes: &bad}
+		_, err := ResolveSettings(CLIOverrides{}, nil, reg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "max_claim_bytes")
+	})
+}
+
 // A hand-built Settings{} — an embedder's, or a test roster's — must NOT silently
 // ship with the ledger switched off. That is the failure the pointer exists to
 // prevent: 0 is both Go's zero value and a meaningful setting, so an unresolved
