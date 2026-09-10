@@ -641,7 +641,11 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 //     len(kept) in buildPayloads — the RANGE path, the only one that prepends
 //     the ledger (internal/fanout/review.go:1279) — and carries it as
 //     mp.FileCount into the manifest and the persona-visible {{.FileCount}},
-//     so both report one more file than the range changed. The other len(kept)
+//     so both report one more file than the range changed. That count is
+//     re-derived on buildSlots' smallest-entry and re-pack arms
+//     (internal/fanout/review.go:2390, :2451), where the inflation instead
+//     becomes "1 file reported, possibly zero delivered" — consequence #3's
+//     shape. The other len(kept)
 //     sites (buildRepoPayloads, PrepareReviewFromDiff) never call
 //     withClaimLedger and are not on this path.
 //  2. A review_strategy=chunked run delivers the ledger to the FIRST chunk
