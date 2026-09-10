@@ -461,18 +461,20 @@ const (
 	snippetFallbackRadius = 8
 )
 
-// ContextSnippet is one retrieved region of a file the diff did not change.
+// PrefetchSnippet is one retrieved region of a file the diff did not change.
 //
 // Start and End are 1-based inclusive HEAD line numbers. They are carried, not
 // just the text, because the grounding gate is threaded with exactly this span:
 // a finding inside it is groundable, and a finding elsewhere in the same file is
 // still dropped as ungrounded.
-type ContextSnippet struct {
+type PrefetchSnippet struct {
 	Path   string
 	Symbol string
 	Start  int
 	End    int
 	Body   string
+	// Tier ranks this snippet for shedding when the byte cap bites (AC7).
+	Tier PrefetchTier
 }
 
 // snippetSpan expands a call-site line to the span worth showing around it.
@@ -574,7 +576,7 @@ func overlapsEmitted(emitted [][2]int, start, end int) bool {
 
 // retrieveSnippets reads each candidate file's HEAD blob once and slices the
 // region around every hit in it.
-func (g *gitRunner) retrieveSnippets(base, head string, hits []refHit) []ContextSnippet {
+func (g *gitRunner) retrieveSnippets(base, head string, hits []refHit) []PrefetchSnippet {
 	if len(hits) == 0 {
 		return nil
 	}
@@ -593,7 +595,7 @@ func (g *gitRunner) retrieveSnippets(base, head string, hits []refHit) []Context
 		byPath[h.Path] = append(byPath[h.Path], h)
 	}
 
-	var out []ContextSnippet
+	var out []PrefetchSnippet
 	for _, rel := range order {
 		// ReuseMemo, not Memo: these are files the diff did NOT change, read once
 		// each, so populating the per-range blob cache would retain every
@@ -618,10 +620,68 @@ func (g *gitRunner) retrieveSnippets(base, head string, hits []refHit) []Context
 				continue
 			}
 			emitted = append(emitted, [2]int{s, e})
-			out = append(out, ContextSnippet{Path: rel, Symbol: h.Symbol, Start: s, End: e, Body: body})
+			out = append(out, PrefetchSnippet{Path: rel, Symbol: h.Symbol, Start: s, End: e, Body: body})
 		}
 	}
 	return out
+}
+
+// DefaultMaxPrefetchBytes is the default ceiling on the rendered Context
+// Definitions section.
+//
+// It mirrors max_claim_bytes exactly (Epic 35.16.7, shipped immediately before
+// this one): the feature is ON by default, and 0 DISABLES it outright rather
+// than meaning "unlimited". The section's bytes are exempt from
+// payload_byte_budget for the same reason the claim ledger's are — its value
+// depends on reaching every reviewer identically — so this ceiling is the only
+// thing bounding them, and an "unlimited" reading would be unbounded prompt text
+// nothing downstream could shed.
+//
+// It is deliberately NOT named DefaultMaxContextBytes: in this package "context"
+// already means the MODEL CONTEXT WINDOW (ResolveContextWindow,
+// DefaultMaxContextLines), an unrelated quantity one letter away.
+const DefaultMaxPrefetchBytes int64 = 16 * 1024
+
+// PrefetchTier ranks a snippet's retrieval provenance for shedding. A LOWER tier
+// is shed FIRST (AC7).
+type PrefetchTier int
+
+const (
+	// PrefetchTierSimilarity is reserved for epic 35.16.12's embedding-similarity
+	// retrieval, and is the lowest tier so similarity snippets shed before
+	// reference ones. THIS EPIC EMITS NONE. It exists so 35.16.12 plugs into this
+	// ledger rather than adding a second injection site — the contract AC7
+	// describes when it says a lower-priority tier is always shed first.
+	PrefetchTierSimilarity PrefetchTier = iota
+	// PrefetchTierReference is a snippet reached by REFERENCE: a call site that
+	// consumes a changed symbol, or the real implementation behind a mocked one.
+	PrefetchTierReference
+)
+
+// PrefetchDrop records one snippet the byte cap shed.
+//
+// Every shed snippet produces one of these. AC7's requirement is that a drop is
+// RECORDED rather than silent: a reviewer told nothing was retrieved cannot tell
+// that apart from a reviewer whose context was silently discarded, and only the
+// first is honest.
+type PrefetchDrop struct {
+	Path   string
+	Symbol string
+	Tier   PrefetchTier
+	Bytes  int
+}
+
+// capPrefetchSnippets keeps as many snippets as fit within maxBytes, shedding
+// the LOWEST tier first and the largest snippet first within a tier, and returns
+// a ledger naming every snippet it shed.
+//
+// maxBytes <= 0 keeps nothing — the operator disabled the feature — and still
+// records every drop, so "turned off" and "retrieved nothing" stay
+// distinguishable in the artifacts.
+func capPrefetchSnippets(snips []PrefetchSnippet, maxBytes int64) (kept []PrefetchSnippet, dropped []PrefetchDrop) {
+	// Stub: T3 is not implemented yet. A deliberate wrong answer so the RED tests
+	// fail on behavior while the package still compiles.
+	return nil, nil
 }
 
 // identifierTokens splits line into identifier-shaped runs, in source order.

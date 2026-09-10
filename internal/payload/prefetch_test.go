@@ -377,3 +377,105 @@ func TestRetrieveSnippets_MissingCandidateIsSkippedNotFatal(t *testing.T) {
 	require.Len(t, got, 1, "the unreadable candidate is skipped and the good one survives")
 	require.Equal(t, "consumer.go", got[0].Path)
 }
+
+// prefetchSnippet builds a snippet whose body is exactly n bytes, so the cap
+// arithmetic in these tests is readable rather than incidental.
+func prefetchSnippet(pathName, symbol string, tier PrefetchTier, n int) PrefetchSnippet {
+	return PrefetchSnippet{
+		Path:   pathName,
+		Symbol: symbol,
+		Start:  1,
+		End:    2,
+		Body:   strings.Repeat("x", n),
+		Tier:   tier,
+	}
+}
+
+func TestCapPrefetchSnippets_UnderTheCapKeepsEverythingAndDropsNothing(t *testing.T) {
+	snips := []PrefetchSnippet{
+		prefetchSnippet("a.go", "Alpha", PrefetchTierReference, 60),
+		prefetchSnippet("b.go", "Beta", PrefetchTierSimilarity, 30),
+	}
+
+	kept, dropped := capPrefetchSnippets(snips, 1000)
+
+	require.Len(t, kept, 2)
+	require.Empty(t, dropped, "nothing was shed, so the ledger must be empty")
+}
+
+func TestCapPrefetchSnippets_ShedsTheLowerTierFirstEvenWhenSmaller(t *testing.T) {
+	// AC7's core: the ledger ranks by TIER, not by size. The similarity snippet
+	// is half the size of the reference one, and is still the one that goes —
+	// plain largest-first would have shed the reference snippet instead.
+	snips := []PrefetchSnippet{
+		prefetchSnippet("consumer.go", "ReadStore", PrefetchTierReference, 60),
+		prefetchSnippet("similar.go", "ReadStore", PrefetchTierSimilarity, 30),
+	}
+
+	kept, dropped := capPrefetchSnippets(snips, 70)
+
+	require.Len(t, kept, 1)
+	require.Equal(t, "consumer.go", kept[0].Path, "the reference tier must survive")
+	require.Len(t, dropped, 1)
+	require.Equal(t, "similar.go", dropped[0].Path, "the lower tier is shed first")
+}
+
+func TestCapPrefetchSnippets_RecordsEveryDropWithItsTierAndBytes(t *testing.T) {
+	// "Recorded rather than silent" is the whole requirement: a drop must name
+	// the snippet, its tier and its size, or a reader cannot tell a shed context
+	// from an empty one.
+	snips := []PrefetchSnippet{
+		prefetchSnippet("consumer.go", "ReadStore", PrefetchTierReference, 60),
+		prefetchSnippet("similar.go", "WriteStore", PrefetchTierSimilarity, 30),
+	}
+
+	_, dropped := capPrefetchSnippets(snips, 70)
+
+	require.Len(t, dropped, 1)
+	require.Equal(t, "similar.go", dropped[0].Path)
+	require.Equal(t, "WriteStore", dropped[0].Symbol)
+	require.Equal(t, PrefetchTierSimilarity, dropped[0].Tier)
+	require.Equal(t, 30, dropped[0].Bytes)
+}
+
+func TestCapPrefetchSnippets_ZeroCapKeepsNothingAndStillRecordsDrops(t *testing.T) {
+	// 0 is the operator's off switch (mirroring max_claim_bytes), not "unlimited".
+	// Turning the feature off must still be legible in the artifacts.
+	snips := []PrefetchSnippet{
+		prefetchSnippet("a.go", "Alpha", PrefetchTierReference, 10),
+		prefetchSnippet("b.go", "Beta", PrefetchTierReference, 10),
+	}
+
+	kept, dropped := capPrefetchSnippets(snips, 0)
+
+	require.Empty(t, kept)
+	require.Len(t, dropped, 2, "a disabled cap must not silently discard the snippets")
+}
+
+func TestCapPrefetchSnippets_OversizedSingleSnippetIsDroppedWhole(t *testing.T) {
+	// A snippet larger than the entire cap must be dropped, never truncated into
+	// a half-function the reviewer would read as complete.
+	snips := []PrefetchSnippet{prefetchSnippet("big.go", "Huge", PrefetchTierReference, 50)}
+
+	kept, dropped := capPrefetchSnippets(snips, 10)
+
+	require.Empty(t, kept)
+	require.Len(t, dropped, 1)
+	require.Equal(t, 50, dropped[0].Bytes)
+}
+
+func TestCapPrefetchSnippets_IsDeterministic(t *testing.T) {
+	// AC3: every agent in one fan-out gets a byte-identical section, so the shed
+	// order may not depend on map iteration.
+	snips := []PrefetchSnippet{
+		prefetchSnippet("a.go", "Alpha", PrefetchTierReference, 40),
+		prefetchSnippet("b.go", "Beta", PrefetchTierReference, 40),
+		prefetchSnippet("c.go", "Gamma", PrefetchTierSimilarity, 40),
+	}
+
+	keptA, droppedA := capPrefetchSnippets(snips, 50)
+	keptB, droppedB := capPrefetchSnippets(snips, 50)
+
+	require.Equal(t, keptA, keptB)
+	require.Equal(t, droppedA, droppedB)
+}
