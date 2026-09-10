@@ -2130,12 +2130,12 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 						// re-tuning that constant means re-checking this argument.
 						//
 						// A multi-file chunk can exceed ml only as the coalesced final
-						// chunk, which carries no preamble. Reverting just
-						// this arm to `fileLines > ml` is therefore an EQUIVALENT mutant
-						// rather than an untested one: no test in ./internal/fanout can
-						// distinguish it, which is why the mutation survives. deliveredLines
-						// is kept for symmetry with the single-file arm above, where the
-						// distinction is real and pinned by test.
+						// chunk, which carries no preamble. Reverting just this arm to
+						// `fileLines > ml` is therefore behaviour-preserving: the two
+						// expressions are equal whenever prefixLines is 0, which is the
+						// condition established above. deliveredLines is kept for symmetry
+						// with the single-file arm above, where the distinction is real and
+						// pinned by test.
 						fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: a %d-file chunk (%d lines)%s exceeds max_context_lines (%d); the %d-chunk ceiling was reached, so remaining files were coalesced into one oversized chunk (may overflow the model)\n", name, fileCount, fileLines, preambleNote, ml, maxChunksPerAgent)
 					}
 				}
