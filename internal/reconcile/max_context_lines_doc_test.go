@@ -34,11 +34,20 @@ func TestMaxContextLines_DocumentsTheDeliveredLineGate(t *testing.T) {
 		}
 	}
 
-	// The code half of the drift guard. If the gate ever goes back to comparing
-	// the named file's own line count, the row above becomes wrong again in the
-	// opposite direction, and this is the test that says so.
-	if !strings.Contains(readRepoFile(t, "../fanout/review.go"), "deliveredLines > ml") {
-		t.Error("internal/fanout no longer gates the oversize warning on deliveredLines; " +
-			"docs/registry.md's max_context_lines row describes a delivered-line cap the code no longer implements")
+	// The code half of the drift guard, keyed to the SINGLE-file arm — the one
+	// the documented sentence is actually about.
+	//
+	// The bare substring "deliveredLines > ml" is NOT enough: it occurs on the
+	// multi-file arm as well, so reverting only the single-file arm to
+	// `fileLines > ml` leaves this guard green while the row above is wrong again
+	// in exactly the direction this test exists to catch. Verified by mutation.
+	//
+	// This keys on a local variable name in another package, so a pure rename is
+	// a legitimate reason for it to fail. The message says so, because a rename
+	// misreported as doc drift sends the reader to the wrong file entirely.
+	if !strings.Contains(readRepoFile(t, "../fanout/review.go"), "fileCount == 1 && deliveredLines > ml") {
+		t.Error("internal/fanout's single-file oversize warning no longer reads `fileCount == 1 && deliveredLines > ml`. " +
+			"If the GATE changed, docs/registry.md's max_context_lines row now describes a delivered-line cap the code does not implement. " +
+			"If only the local variable was renamed, the behaviour is unchanged and this guard needs updating to match.")
 	}
 }

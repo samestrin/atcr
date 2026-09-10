@@ -675,7 +675,8 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 //     unattributed entry, which is a change to the audit seam rather than to this
 //     file.
 //  6. An on_overflow=truncate FALLBACK whose budget cannot fund BOTH the ledger
-//     and a reviewable file re-fits WITHOUT the ledger. The re-fit re-sizes
+//     and a reviewable file re-fits WITHOUT the ledger — whenever some
+//     reviewable file is smaller than the ledger. The re-fit re-sizes
 //     every entry to len(Body)
 //     (internal/fanout/review.go:3546-3550) before shedding, which turns the
 //     bounded exemption in ApplyByteBudget — shedExempt AND clampSize(Size) <=

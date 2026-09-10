@@ -527,7 +527,12 @@ func TestClaimLedger_RefitBelowTheLedgersBytesDropsIt(t *testing.T) {
 	ledgerBytes, smallestFile := refitEntryBytes(t, payloads)
 
 	for _, fb := range s.Fallbacks {
-		require.True(t, fb.Truncation.Truncated,
+		// fb.rePacked, NOT fb.Truncation.Truncated: fbTrunc is initialized from the
+		// PRIMARY's truncation (internal/fanout/review.go:3121), so Truncated is
+		// already true whenever the primary shed a file and no re-fit ran at all.
+		// Only rePacked is set by the re-fit arm itself, so only rePacked can carry
+		// the precondition this message states.
+		require.True(t, fb.rePacked,
 			"precondition: the fallback must actually have re-fit, or this proves nothing")
 		// Pin the BAND, not just the symptom. THREE mechanisms can strip the
 		// ledger on this path and they are not interchangeable, so a test that
