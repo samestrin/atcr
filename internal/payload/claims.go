@@ -677,12 +677,19 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 //     file.
 //  6. An on_overflow=truncate FALLBACK whose budget cannot fund BOTH the ledger
 //     and a reviewable file re-fits WITHOUT the ledger — whenever some
-//     reviewable file is smaller than the ledger. The re-fit re-sizes
+//     reviewable file with a NON-EMPTY body is smaller than the ledger. The
+//     re-fit re-sizes
 //     every entry to len(Body)
 //     (internal/fanout/review.go:3546-3550) before shedding, which turns the
 //     bounded exemption in ApplyByteBudget — shedExempt AND clampSize(Size) <=
 //     budget — into a real comparison for the one entry that carries Size 0 on
-//     every other path. TWO routes drop it, so a budget >= the ledger is NOT
+//     every other path. A zero-byte reviewable entry changes neither side of
+//     that: it sorts LAST under the largest-first order (budget.go:117-121)
+//     and the shed loop breaks once used <= budget, so it is never shed and
+//     never trips AllDropped, and keepSmallestEntry skips empty bodies
+//     (internal/fanout/review.go:3409-3411) so it cannot win the reroute — a
+//     0-byte py.typed beside a 10 KB file leaves the ledger in place with no
+//     code funded. TWO routes drop it, so a budget >= the ledger is NOT
 //     enough to keep it: the bound itself sheds a ledger larger than the
 //     budget, and a budget that clears the bound but cannot also fund a file
 //     sheds every reviewable file to fund the ledger — which trips AllDropped
