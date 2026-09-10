@@ -1531,7 +1531,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 	// once.
 	warnedFallbackOverflow := map[string]bool{}
 
-	// Personas are resolved ONCE per agent per run (review.go:2912 TD):
+	// Personas are resolved ONCE per agent per run (the personaFor memo below):
 	// registry.ResolvePersona is a filesystem walk plus read, and renderAgent runs
 	// per chunk per persona — plus once more per fallback re-fit — so an
 	// un-memoized call costs up to 2 x maxChunksPerAgent resolutions per persona
