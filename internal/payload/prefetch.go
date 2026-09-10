@@ -2,6 +2,7 @@ package payload
 
 import (
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -679,9 +680,88 @@ type PrefetchDrop struct {
 // records every drop, so "turned off" and "retrieved nothing" stay
 // distinguishable in the artifacts.
 func capPrefetchSnippets(snips []PrefetchSnippet, maxBytes int64) (kept []PrefetchSnippet, dropped []PrefetchDrop) {
-	// Stub: T3 is not implemented yet. A deliberate wrong answer so the RED tests
-	// fail on behavior while the package still compiles.
-	return nil, nil
+	if len(snips) == 0 {
+		return nil, nil
+	}
+	if maxBytes <= 0 {
+		// Disabled by the operator. Keep nothing, but still record every snippet:
+		// "you turned it off" and "retrieval found nothing" are opposite
+		// operational signals, and an empty section reports them identically.
+		return splitPrefetchLedger(snips, allTrue(len(snips)))
+	}
+
+	var total int64
+	for _, s := range snips {
+		total += int64(len(s.Body))
+	}
+	if total <= maxBytes {
+		return append([]PrefetchSnippet(nil), snips...), nil
+	}
+
+	// Drop order: LOWEST tier first (AC7), then largest-first within a tier — the
+	// same largest-first rule the payload byte budget uses, so shedding frees the
+	// most room for the fewest lost snippets — then path and symbol as a stable
+	// tie-break. Indices are sorted rather than the snippets themselves so two
+	// snippets sharing a path are accounted for independently.
+	idx := make([]int, len(snips))
+	for i := range idx {
+		idx[i] = i
+	}
+	sort.SliceStable(idx, func(a, b int) bool {
+		si, sj := snips[idx[a]], snips[idx[b]]
+		if si.Tier != sj.Tier {
+			return si.Tier < sj.Tier
+		}
+		if len(si.Body) != len(sj.Body) {
+			return len(si.Body) > len(sj.Body)
+		}
+		if si.Path != sj.Path {
+			return si.Path < sj.Path
+		}
+		return si.Symbol < sj.Symbol
+	})
+
+	drop := make([]bool, len(snips))
+	used := total
+	for _, i := range idx {
+		if used <= maxBytes {
+			break
+		}
+		// Whole snippets only. A truncated snippet reads as a complete function to
+		// the reviewer, which is worse than its absence: it invites a finding about
+		// logic that was simply cut off.
+		drop[i] = true
+		used -= int64(len(snips[i].Body))
+	}
+	return splitPrefetchLedger(snips, drop)
+}
+
+// splitPrefetchLedger partitions snips by the drop mask, preserving the original
+// order in BOTH results so the rendered section and its ledger are deterministic
+// (AC3).
+func splitPrefetchLedger(snips []PrefetchSnippet, drop []bool) (kept []PrefetchSnippet, dropped []PrefetchDrop) {
+	for i, s := range snips {
+		if drop[i] {
+			dropped = append(dropped, PrefetchDrop{
+				Path:   s.Path,
+				Symbol: s.Symbol,
+				Tier:   s.Tier,
+				Bytes:  len(s.Body),
+			})
+			continue
+		}
+		kept = append(kept, s)
+	}
+	return kept, dropped
+}
+
+// allTrue returns an n-length mask with every position set.
+func allTrue(n int) []bool {
+	mask := make([]bool, n)
+	for i := range mask {
+		mask[i] = true
+	}
+	return mask
 }
 
 // identifierTokens splits line into identifier-shaped runs, in source order.
