@@ -715,15 +715,16 @@ const ClaimLedgerPath = "<claims>"
 // Size 0 keeps the entry out of byte-budget accounting on the ordinary path,
 // where the exemption's `clampSize(Size) <= budget` bound is satisfied by every
 // budget. The fallback re-fit re-sizes the entry to len(Body), so there the
-// sentinel keeps it exempt only while the budget can fund the ledger AND at
-// least one reviewable file. Fitting the budget is necessary but not
-// sufficient: a ledger larger than the budget sheds on the bound itself, and a
-// ledger that clears the bound but leaves nothing over for a file sheds through
-// the AllDropped reroute to keepSmallestEntry
-// (internal/fanout/review.go:3565-3571) — but only while some reviewable file
-// is smaller than the ledger, since that reroute keeps the smallest ENTRY and
-// will keep the ledger itself when every file is larger (accepted consequence
-// #6 above).
+// bound becomes real: this package's contract is exactly budget >= the
+// ledger's dispatched size — shedExempt AND clampSize(Size) <= budget,
+// evaluated on the ledger alone (budget.go:129-158, the only place the
+// exemption is checked). Funding a reviewable file is NOT part of that
+// contract — it is downstream: internal/fanout's AllDropped reroute to
+// keepSmallestEntry (internal/fanout/review.go:3565-3571) can displace the
+// ledger afterwards, but only while some reviewable file with a non-empty
+// body is smaller than the ledger, since that reroute keeps the smallest
+// ENTRY and will keep the ledger itself when every file is larger (accepted
+// consequence #6 above).
 func newClaimLedgerEntry(section string) FileEntry {
 	return FileEntry{Path: ClaimLedgerPath, Size: 0, Body: section, shedExempt: true}
 }
