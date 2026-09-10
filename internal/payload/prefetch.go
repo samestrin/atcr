@@ -48,6 +48,25 @@ const (
 // direction — it silently drops the AC6 case entirely.
 var mockCues = []string{"mock", "patch", "stub", "fake", "spy", "double"}
 
+// doubleNamePrefixes are the naming forms a test DOUBLE carries itself. A token
+// starting with one of them names the substitute, not the thing substituted, so
+// retrieving its definition would put the fake next to the fake.
+//
+// Matched as a PREFIX, and drawn from a narrower list than mockCues. Rejecting
+// every token that merely CONTAINS a cue also rejects ordinary domain symbols —
+// `ApplyPatchSet`, `DoubleBuffer`, `Inspector` — and losing one of those loses
+// the AC6 snippet outright. Admitting a stray token costs one wasted `git grep`
+// pattern, which is the cheaper direction, so the rejection is deliberately
+// conservative. `spy` and `double` are absent for exactly this reason: both
+// collide with common English inside longer identifiers.
+var doubleNamePrefixes = []string{"mock", "fake", "stub"}
+
+// doubleNameExact are whole tokens that name a double. They are matched exactly
+// rather than by prefix because `patch` is a legitimate domain word — a prefix
+// rule would swallow `PatchSet`, `PatchApplier` and every symbol in a package
+// that is actually about patches.
+var doubleNameExact = map[string]bool{"patch": true, "patched": true, "patches": true}
+
 // mockTokenNoise are tokens that are never a mocked symbol: language keywords,
 // builtins, and the types that appear on almost every Go test line. They are
 // excluded so the `git grep` argv is spent on plausible symbols.
@@ -58,7 +77,7 @@ var mockTokenNoise = map[string]bool{
 	"map": true, "chan": true, "range": true, "defer": true, "package": true,
 	"import": true, "true": true, "false": true, "len": true, "cap": true,
 	"make": true, "new": true, "append": true, "testing": true, "test": true,
-	"nil_": true, "for": true, "not": true, "the": true, "out": true,
+	"for": true, "not": true, "the": true, "out": true,
 }
 
 // changedSymbol is one symbol the diff touched, with the shape a consumer would
@@ -193,20 +212,25 @@ func hasMockCue(line string) bool {
 // plausibleMockTarget reports whether tok could name the REAL symbol a cue line
 // replaces.
 //
-// A token that itself contains a cue is rejected: `mockReadStore`, `patched` and
-// `fakeClock` name the DOUBLE, and retrieving the double's own definition puts
-// the substitute next to the substitute. The symbol worth showing beside a mock
-// is the thing being mocked.
+// A token naming the DOUBLE is rejected — `mockReadStore`, `fakeClock`,
+// `patched` — because retrieving the substitute's own definition puts the
+// substitute next to the substitute. The symbol worth showing beside a mock is
+// the thing being mocked.
+//
+// The rejection matches a prefix (doubleNamePrefixes) or a whole token
+// (doubleNameExact), never a bare substring: a substring rule also rejects
+// `ApplyPatchSet` and `DoubleBuffer`, and a missed real symbol costs the AC6
+// snippet while a stray one costs a single `git grep` pattern.
 func plausibleMockTarget(tok string) bool {
 	if len(tok) < minMockTokenLen {
 		return false
 	}
 	lower := strings.ToLower(tok)
-	if mockTokenNoise[lower] {
+	if mockTokenNoise[lower] || doubleNameExact[lower] {
 		return false
 	}
-	for _, cue := range mockCues {
-		if strings.Contains(lower, cue) {
+	for _, p := range doubleNamePrefixes {
+		if strings.HasPrefix(lower, p) {
 			return false
 		}
 	}

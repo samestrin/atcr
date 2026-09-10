@@ -115,3 +115,39 @@ func TestExtractChangedSymbols_NoChangedRangesYieldsNothing(t *testing.T) {
 	// read ever happens downstream.
 	require.Empty(t, extractChangedSymbols(prefetchStoreSrc, nil, prefetchStoreTree(), false))
 }
+
+// prefetchDomainSrc is a changed test file whose mocked symbol is an ordinary
+// domain name that happens to contain a cue word ("patch"). Line map: 1 package,
+// 2 blank, 3 func header, 4 stubbed := ApplyPatchSet, 5 assignment, 6 close.
+const prefetchDomainSrc = `package store
+
+func TestApply(t *testing.T) {
+	stubbed := ApplyPatchSet
+	ApplyPatchSet = nil
+}
+`
+
+func prefetchDomainTree() astgroup.Node {
+	return astgroup.Node{Kind: "file", StartLine: 1, EndLine: 6, Children: []astgroup.Node{
+		{Kind: "func", Name: "TestApply", StartLine: 3, EndLine: 6},
+	}}
+}
+
+func TestExtractChangedSymbols_DomainSymbolContainingACueIsStillRetrievable(t *testing.T) {
+	// Rejecting every token that CONTAINS a cue word also rejects real symbols —
+	// ApplyPatchSet, DoubleBuffer, Inspector — and losing one loses the AC6
+	// snippet entirely. The rejection must key on the double's own naming form
+	// (a prefix, or a whole token), not on a bare substring.
+	got := extractChangedSymbols(prefetchDomainSrc, []LineRange{{Start: 4, End: 4}}, prefetchDomainTree(), true)
+
+	var mocked []string
+	for _, s := range got {
+		if s.Mocked {
+			mocked = append(mocked, s.Name)
+		}
+	}
+	require.Contains(t, mocked, "ApplyPatchSet",
+		"a domain symbol must not be discarded for containing a cue word")
+	require.NotContains(t, mocked, "stubbed",
+		"the narrowing must still reject a token that names the double itself")
+}
