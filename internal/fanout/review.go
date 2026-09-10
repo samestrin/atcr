@@ -2825,12 +2825,20 @@ func derefInt64(p *int64) int64 {
 // accounts for each occurrence independently (internal/payload/budget.go), and a
 // concatenated diff through PrepareReviewFromDiff produces exactly that — so
 // filtering on `e.Path != keep` dropped BOTH occurrences from the record and
-// returned nil while one of them really was shed. Callers pair this with
-// `Truncated: len(entries) > 1`, so the result was a shed record claiming files
-// were dropped and naming none: the one shape status.go promises cannot occur,
-// and the shape that makes promoteRePackedDegradation skip its Truncation
-// promotion (it gates on len(dropped) > 0). By index, the count and the list
-// cannot disagree.
+// returned nil while callers were asserting a drop, so the result was a shed
+// record claiming files were dropped and naming none: the one shape status.go
+// promises cannot occur, and the shape that makes promoteRePackedDegradation
+// skip its Truncation promotion (it gates on len(dropped) > 0). By index, the
+// list names one path per dropped occurrence.
+//
+// The list is NOT filtered to reviewable entries, and keepSmallestEntry's
+// Truncated flag IS (payload.ReviewableCount). That asymmetry is deliberate, not
+// drift: the two answer different questions. A dropped claim ledger belongs in
+// the list of what this shed dropped — accepted effect #4 in
+// internal/payload/claims.go — while "was reviewable content lost", the question
+// internal/benchmark and the re-fit arm actually ask of Truncated, must not be
+// answered yes by an exempt entry alone. So the two CAN disagree on a
+// ledger-only drop, and only there.
 //
 // Indexing also matches payload.ApplyByteBudget, which tracks its own shed with a
 // per-INDEX dropped[] and appends one path per dropped occurrence (budget.go). So
