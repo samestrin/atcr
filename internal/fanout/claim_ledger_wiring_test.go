@@ -300,3 +300,70 @@ func TestClaimLedger_AbsentWhenTheBranchAssertsNothing(t *testing.T) {
 		assert.NotContains(t, s.Primary.Prompt, payload.ClaimLedgerPath)
 	}
 }
+
+// keepSmallestEntry's Truncation.Truncated answers "was REVIEWABLE content
+// dropped", not "did the slice shrink". On the range path a single-changed-file
+// slot now carries two entries (the shed-exempt ledger + the file), so a count
+// over ALL entries voids the invariant refitFallbackPayload documents: a slot
+// with nothing left to shed must report Truncated=false, which is what makes the
+// !trunc.Truncated arm decline the re-fit and keep the honest overflow record.
+//
+// FilesDropped is deliberately NOT filtered. A ledger that really was dropped
+// still names itself there — accepted effect #4 (internal/payload/claims.go:655-659,
+// "the sentinel can reach a published artifact"). The two fields answer different
+// questions, and only Truncated was wrong.
+func TestKeepSmallestEntry_TheLedgerIsNotCountedAsReviewableContent(t *testing.T) {
+	ledger, file := ledgerAndOneFileEntry(t)
+
+	t.Run("dropping only the ledger is not a truncation", func(t *testing.T) {
+		small := file
+		small.Body = "small\n" // smaller than the ledger, so the FILE is what survives
+		kept, trunc, ok := keepSmallestEntry([]payload.FileEntry{ledger, small})
+		require.True(t, ok)
+		require.Equal(t, small.Path, kept[0].Path, "precondition: the file is the kept entry")
+
+		assert.False(t, trunc.Truncated,
+			"no reviewable file was dropped; Truncated=true here makes refitFallbackPayload re-fit a slot it documents it will decline")
+		assert.Equal(t, []string{payload.ClaimLedgerPath}, trunc.FilesDropped,
+			"the shed record still names the ledger it dropped — accepted effect #4, unchanged by this fix")
+	})
+
+	t.Run("dropping a real file still is a truncation", func(t *testing.T) {
+		big := file
+		big.Body = strings.Repeat("x\n", 10000) // larger than the ledger, so the LEDGER survives
+		kept, trunc, ok := keepSmallestEntry([]payload.FileEntry{ledger, big})
+		require.True(t, ok)
+		require.Equal(t, payload.ClaimLedgerPath, kept[0].Path, "precondition: the ledger is the kept entry")
+
+		assert.True(t, trunc.Truncated,
+			"a reviewable file WAS dropped; reading this as 'nothing smaller to send' would strand the honest record")
+		assert.Equal(t, []string{big.Path}, trunc.FilesDropped)
+	})
+}
+
+// ledgerAndOneFileEntry returns a REAL claim-ledger entry plus one ordinary file
+// entry from the same built payload. The ledger has to come from a real build:
+// internal/payload's shedExempt sentinel is unexported precisely so nothing
+// outside that package — including this test — can forge one.
+func ledgerAndOneFileEntry(t *testing.T) (ledger, file payload.FileEntry) {
+	t.Helper()
+	dir, base, head := fanoutRepo(t)
+	payloads, _, err := buildPayloads(context.Background(), sizingRosterConfig(), dir, base, head, false)
+	require.NoError(t, err)
+
+	for _, mp := range payloads {
+		var l, f payload.FileEntry
+		for _, e := range mp.Entries {
+			if e.Path == payload.ClaimLedgerPath {
+				l = e
+			} else if f.Path == "" {
+				f = e
+			}
+		}
+		if l.Path != "" && f.Path != "" {
+			return l, f
+		}
+	}
+	t.Fatal("precondition: no built payload carried both a claim ledger and a file entry")
+	return
+}
