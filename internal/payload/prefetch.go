@@ -882,10 +882,13 @@ const PrefetchContextPath = "<context>"
 // payload_byte_budget.
 //
 // The accepted consequences of carrying a synthetic section as a FileEntry are
-// enumerated on ClaimLedgerPath and apply here too — with one deliberately
-// mitigated: buildPayloads derives its reported file count from
-// ReviewableCount rather than len(kept), so a second synthetic entry does not
-// inflate the count a reviewer and the manifest see.
+// enumerated on ClaimLedgerPath and apply here too — with one PARTIALLY
+// mitigated: buildPayloads derives its reported file count from ReviewableCount
+// rather than len(kept), so a second synthetic entry does not inflate the count
+// the manifest and the persona-visible {{.FileCount}} report for the range. The
+// PER-AGENT re-derivations in internal/fanout's buildSlots still count synthetic
+// entries and remain inflated; that half is tracked as technical debt rather
+// than fixed here.
 func newPrefetchEntry(section string) FileEntry {
 	return FileEntry{Path: PrefetchContextPath, Size: 0, Body: section, shedExempt: true}
 }

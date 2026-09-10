@@ -1239,6 +1239,14 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 	// on_overflow=fail — so this setting is the only operator control over them,
 	// and 0 is the escape hatch that stops commit text reaching a provider at all.
 	opts = append(opts, payload.WithMaxClaimBytes(cfg.Settings.ResolvedMaxClaimBytes()))
+	// Context pre-fetch byte ceiling (Epic 35.16.8, max_prefetch_bytes). Threaded
+	// for the same reason as the claim ledger: the Context Definitions section is
+	// exempt from every byte budget, so this setting is the only operator control
+	// over its size — and 0 is the escape hatch that stops repository source from
+	// OUTSIDE the diff reaching a provider at all. This is the single
+	// option-construction chokepoint, so the resume path (resume.go) inherits it
+	// without its own threading.
+	opts = append(opts, payload.WithMaxPrefetchBytes(cfg.Settings.ResolvedMaxPrefetchBytes()))
 	rb := payload.NewRangeBuilder(ctx, repo, base, head, opts...)
 	out := map[string]modePayload{}
 	for _, mode := range neededModes(cfg) {
@@ -1276,7 +1284,16 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 		// it describes the audit artifact, not any one agent's delivered payload.
 		// Entries keeps the raw pre-budget files so buildSlots re-sheds them per
 		// agent against each model's window (Epic 19.10 F2).
-		out[mode] = modePayload{Entries: entries, Kept: kept, Text: b.String(), FileCount: len(kept), Truncation: trunc}
+		//
+		// ReviewableCount, not len(kept): the engine prepends up to TWO synthetic
+		// sections here — the claim ledger and the Context Definitions block — and
+		// counting them reports more files than the range changed, in the manifest
+		// and in the persona-visible {{.FileCount}}. Epic 35.16.7 recorded that
+		// inflation as an accepted consequence only because it was forbidden from
+		// editing this package; pre-fetching would have doubled it, so it is
+		// corrected here instead. The per-agent re-derivations in buildSlots still
+		// use len(kept) and remain inflated — tracked as technical debt.
+		out[mode] = modePayload{Entries: entries, Kept: kept, Text: b.String(), FileCount: payload.ReviewableCount(kept), Truncation: trunc}
 	}
 	// Every payload mode's entries are now materialized into out, so the
 	// per-mode diff chunk caches (fc/plain/raw) and the line-range cache on the
