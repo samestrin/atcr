@@ -190,3 +190,31 @@ func TestStatusFor_SurfacesUnreviewedChunks(t *testing.T) {
 	st := statusFor(Result{Agent: "greta", Status: StatusOK, UnreviewedChunks: 2}, findingsResult{})
 	require.Equal(t, 2, st.UnreviewedChunks, "partial-coverage count must surface in AgentStatus")
 }
+
+// A range payload's claim ledger is rendered BEFORE the first `diff --git`
+// marker, and splitDiffFiles glues that preamble onto the FIRST segment — so its
+// lines land in chunk 1 while countDiffFiles still reports one file. Charging
+// them to the file makes the oversize warning fire on a single small file whose
+// own diff is comfortably inside max_context_lines, and report a line count that
+// file did not produce.
+func TestBuildSlots_ChunkedPreambleIsNotChargedToTheFile(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.ReviewStrategy = "chunked"
+	mcl := 20
+	g := cfg.Registry.Agents["greta"]
+	g.MaxContextLines = &mcl
+	cfg.Registry.Agents["greta"] = g
+
+	// One small file (8 lines, well under mcl) behind a ledger-sized preamble that
+	// pushes the RAW line count over it.
+	diff := strings.Repeat("ledger line\n", 30) + fileSeg("small.go", 4)
+	payloads := map[string]modePayload{"blocks": {Text: diff, FileCount: 1}}
+
+	out := captureStderr(t, func() {
+		_, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		require.NoError(t, err)
+	})
+	require.NotContains(t, out, "exceeds max_context_lines",
+		"the pre-marker preamble is not the file's diff; charging it to the file warns about a file that fits")
+}
