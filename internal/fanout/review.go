@@ -2121,8 +2121,16 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 						// carry a preamble (splitDiffFiles glues it onto the first segment),
 						// and chunkDiff seals chunk 1 on the UNSUBTRACTED countLines before
 						// it overflows — so a chunk holding two or more markers necessarily
-						// has countLines <= ml. A multi-file chunk can exceed ml only as the
-						// coalesced final chunk, which carries no preamble. Reverting just
+						// has countLines <= ml. That step assumes maxChunksPerAgent >= 2:
+						// the seal conjunct is `len(chunks) < maxChunksPerAgent-1`, so at a
+						// ceiling of 1 it never holds, chunk 1 becomes the coalescing chunk,
+						// carries the preamble, and can be both multi-file and over ml — at
+						// which point prefixLines > 0 and this conclusion collapses. The
+						// premise is satisfied at the declared 64, but it is load-bearing:
+						// re-tuning that constant means re-checking this argument.
+						//
+						// A multi-file chunk can exceed ml only as the coalesced final
+						// chunk, which carries no preamble. Reverting just
 						// this arm to `fileLines > ml` is therefore an EQUIVALENT mutant
 						// rather than an untested one: no test in ./internal/fanout can
 						// distinguish it, which is why the mutation survives. deliveredLines
