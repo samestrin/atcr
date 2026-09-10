@@ -627,11 +627,16 @@ func TestClaimLedger_RefitBelowTheLedgersBytesDropsIt(t *testing.T) {
 		require.GreaterOrEqual(t, fb.EffectiveBudget, smallestFile,
 			"precondition: a reviewable file must still fit, or AllDropped trips and keepSmallestEntry does the work instead")
 
-		// Exactly the ledger plus the one file that did not fit, which with three
-		// entries means exactly one reviewable file survived. A longer list means
-		// every file shed and the reroute is doing the work.
+		// Entry ARITHMETIC, not route evidence: three entries in (the ledger plus
+		// two files) and exactly one reviewable file fits, so two shed. "Exactly one
+		// fits" follows from the band asserted above — the budget is below the two
+		// files' combined bytes — so this count carries no hidden extra constraint.
+		//
+		// It also cannot tell the two routes apart: keepSmallestEntry on a
+		// three-entry payload drops exactly 2 as well. So the mechanism is
+		// deliberately NOT claimed here; a count this coarse cannot carry it.
 		require.Len(t, fb.Truncation.FilesDropped, 2,
-			"the ledger and the one file that did not fit; a longer list means the fixture left the band")
+			"three entries in and one reviewable file kept, so the ledger and the file that did not fit both shed")
 		assert.Contains(t, fb.Truncation.FilesDropped, payload.ClaimLedgerPath,
 			"a ledger larger than the fallback's budget sheds like any other entry")
 		_, ok := payload.ClaimLedgerPromptSection(fb.Prompt)
