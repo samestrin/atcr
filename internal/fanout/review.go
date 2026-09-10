@@ -1737,7 +1737,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		//     cfg.Registry.Agents aborts the whole review before any chunk dispatch
 		//     with `agent "<name>" not found in registry`, matching diff-mode.
 		//
-		//   maxChunksPerAgent cap (AC 06-01 ES2): the chunker.go:99 cap (64) carries
+		//   maxChunksPerAgent cap (AC 06-01 ES2): the chunker.go:164 cap (64) carries
 		//     over unmodified — PartitionByBudget's chunk count is deterministically
 		//     bounded (task 1.1 note), and the (persona × chunk) slot count per
 		//     persona is capped consistently rather than spawning unbounded slots.
@@ -1777,7 +1777,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				if err != nil {
 					return err
 				}
-				// Bound the slot count at maxChunksPerAgent (chunker.go:99) the same way
+				// Bound the slot count at maxChunksPerAgent (chunker.go:164) the same way
 				// chunkDiff does: coalesce the tail into the final chunk so the fan-out never
 				// spawns an unbounded slot/goroutine/provider-call count while every file is
 				// still delivered whole (AC 06-01 ES2 — capped, never dropped).
