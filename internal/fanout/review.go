@@ -2076,7 +2076,11 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			if warnOversized {
 				for _, ct := range chunks {
 					fileCount := countDiffFiles(ct)
-					lineCount := countLines(ct)
+					// Exclude the pre-first-marker preamble — on a range payload that is
+					// the claim ledger, which splitDiffFiles glues onto the first segment.
+					// countDiffFiles never counts it as a file, so counting its lines here
+					// would charge them to a file's diff.
+					lineCount := countLines(ct) - diffPrefixLines(ct)
 					// == 1 (not <= 1): a chunk with zero diff-file markers is a non-diff
 					// payload, not a single oversized file — labeling it "a single file's
 					// diff" would mislabel a whole multi-file files/blocks payload as one
