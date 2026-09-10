@@ -668,12 +668,19 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 //     means having EntriesFromRenderedPayload surface the pre-marker prefix as an
 //     unattributed entry, which is a change to the audit seam rather than to this
 //     file.
-//  6. An on_overflow=truncate FALLBACK whose own budget is smaller than the
-//     ledger re-fits WITHOUT it. The re-fit re-sizes every entry to len(Body)
+//  6. An on_overflow=truncate FALLBACK whose budget cannot fund BOTH the ledger
+//     and a reviewable file re-fits WITHOUT the ledger. The re-fit re-sizes
+//     every entry to len(Body)
 //     (internal/fanout/review.go:3533-3537) before shedding, which turns the
 //     bounded exemption in ApplyByteBudget — shedExempt AND clampSize(Size) <=
 //     budget — into a real comparison for the one entry that carries Size 0 on
-//     every other path. That backup reviews the same persona over the same range
+//     every other path. TWO routes drop it, so a budget >= the ledger is NOT
+//     enough to keep it: the bound itself sheds a ledger larger than the
+//     budget, and a budget that clears the bound but cannot also fund a file
+//     sheds every reviewable file to fund the ledger — which trips AllDropped
+//     and reroutes to keepSmallestEntry (internal/fanout/review.go:3552-3558),
+//     keeping one small file and dropping the ledger instead. That backup
+//     reviews the same persona over the same range
 //     as its primary and adjudicates no claims, so unlike #2 and #3 the reviewer
 //     gets no NOT-IN-PAYLOAD contract either: the section is simply absent. The
 //     bound is what stops the ledger from dropping every reviewable file to fund
@@ -687,8 +694,13 @@ const ClaimLedgerPath = "<claims>"
 // Size 0 keeps the entry out of byte-budget accounting on the ordinary path,
 // where the exemption's `clampSize(Size) <= budget` bound is satisfied by every
 // budget. The fallback re-fit re-sizes the entry to len(Body), so there the
-// sentinel keeps it exempt only WHILE IT FITS the budget: a ledger larger than
-// that budget sheds like any other entry (accepted consequence #6 above).
+// sentinel keeps it exempt only while the budget can fund the ledger AND at
+// least one reviewable file. Fitting the budget is necessary but not
+// sufficient: a ledger larger than the budget sheds on the bound itself, and a
+// ledger that clears the bound but leaves nothing over for a file sheds through
+// the AllDropped reroute to keepSmallestEntry
+// (internal/fanout/review.go:3552-3558), which keeps one small file instead
+// (accepted consequence #6 above).
 func newClaimLedgerEntry(section string) FileEntry {
 	return FileEntry{Path: ClaimLedgerPath, Size: 0, Body: section, shedExempt: true}
 }
