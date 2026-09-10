@@ -693,3 +693,24 @@ The claims describe this branch's own commits, while the diff compares the range
 ----- END CLAIMS -----
 
 `
+
+// ReviewableCount is the exported form of the reviewableIn/reviewableKept
+// accounting behind AllDropped, for shed sites outside this package. It must key
+// on the shedExempt sentinel — the same key AllDropped uses — and NOT on the
+// path, because a repository can legitimately contain a file named ClaimLedgerPath
+// and that file is reviewable.
+func TestReviewableCount_ExcludesTheLedgerAndOnlyTheLedger(t *testing.T) {
+	ledger := ledgerEntry("CLAIMS BLOCK")
+	require.Equal(t, ClaimLedgerPath, ledger.Path, "precondition: the fixture is the real ledger entry")
+
+	assert.Zero(t, ReviewableCount(nil), "no entries, nothing reviewable")
+	assert.Zero(t, ReviewableCount([]FileEntry{ledger}), "the ledger alone is not reviewable content")
+	assert.Equal(t, 2, ReviewableCount([]FileEntry{ledger, {Path: "a.go", Body: "a"}, {Path: "b.go", Body: "b"}}))
+
+	// A repository file that merely SHARES the sentinel path is reviewable. Keying
+	// on the path instead of the sentinel would silently exclude it from every
+	// caller's reviewable accounting.
+	impostor := FileEntry{Path: ClaimLedgerPath, Size: 12, Body: "package p\n"}
+	assert.Equal(t, 1, ReviewableCount([]FileEntry{impostor}),
+		"a repo file at the sentinel path is reviewable; the exemption keys on shedExempt, never on Path")
+}

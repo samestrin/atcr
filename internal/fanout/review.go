@@ -3335,9 +3335,23 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 
 // keepSmallestEntry reduces a payload to its single smallest NON-EMPTY entry with
 // the matching shed record — the "no file fits, but an empty payload is not an
-// option" answer. Truncated is false for a one-entry input because nothing was
-// actually dropped, which is what tells the re-fit caller there is no smaller
-// payload to send and the honest overflow record must stand.
+// option" answer. Truncated is false when no REVIEWABLE entry was dropped, which
+// is what tells the re-fit caller there is no smaller payload to send and the
+// honest overflow record must stand.
+//
+// "Reviewable" excludes the shed-exempt claim ledger, via payload.ReviewableCount
+// — the same accounting Truncation.AllDropped uses, and for the same reason. A
+// count over ALL entries answers "did the slice shrink", which is a different
+// question: on the range path a single-changed-file slot carries two entries
+// (ledger + file), and counting the ledger made this report Truncated=true for a
+// slot with nothing left to shed, sending refitFallbackPayload down a re-fit arm
+// it documents it will decline.
+//
+// FilesDropped is deliberately NOT filtered the same way. It answers "what did
+// this shed drop", and a ledger that really was dropped belongs in that list —
+// accepted effect #4 in internal/payload/claims.go ("the sentinel can reach a
+// published artifact"). The two fields answer different questions; only the
+// Truncated side was ever wrong.
 //
 // Zero-byte entries are skipped rather than preferred, and that is the whole
 // point of not reusing smallestEntry here. Empty tracked files are ordinary
@@ -3366,8 +3380,13 @@ func keepSmallestEntry(entries []payload.FileEntry) ([]payload.FileEntry, payloa
 	if smallestIdx < 0 {
 		return nil, payload.Truncation{}, false
 	}
+	// The same two quantities ApplyByteBudget derives AllDropped from. Exactly one
+	// entry is kept, so reviewableKept is 0 or 1 and the difference is the count of
+	// reviewable entries this shed dropped.
+	reviewableIn := payload.ReviewableCount(entries)
+	reviewableKept := payload.ReviewableCount([]payload.FileEntry{smallest})
 	return []payload.FileEntry{smallest}, payload.Truncation{
-		Truncated:    len(entries) > 1,
+		Truncated:    reviewableIn-reviewableKept > 0,
 		FilesDropped: droppedPathsExcept(entries, smallestIdx),
 	}, true
 }
@@ -3431,15 +3450,23 @@ func refitFallbackPayload(cfg *ReviewConfig, refit fallbackRefit, fbBudget int64
 	// capScopeConstraintForBudget. fbBudget is derived from the fallback's own
 	// resolved max_tokens, so a max_tokens declaration alone reaches that state.
 	//
-	// The fbBudget == 0 drop covers slots this function actually RE-FITS. A
-	// single-entry slot is not one of them: keepSmallestEntry reports
-	// Truncated=false for it, the !trunc.Truncated arm below returns ok=false, and
-	// buildFallbackAgent keeps the INHERITED primary prompt — primary-capped plan
-	// block included. That is by design: the slot carries the honest
-	// degradationOverflow record either way (the payload measurably does not fit,
-	// plan or no plan), and stripping the block would mean re-rendering a prompt
-	// whose one file still cannot fit the window — a different wrong answer, not a
-	// right one.
+	// The fbBudget == 0 drop covers slots this function actually RE-FITS. A slot
+	// with no more than ONE REVIEWABLE entry is not one of them: keepSmallestEntry
+	// reports Truncated=false for it, the !trunc.Truncated arm below returns
+	// ok=false, and buildFallbackAgent keeps the INHERITED primary prompt —
+	// primary-capped plan block included. That is by design: the slot carries the
+	// honest degradationOverflow record either way (the payload measurably does not
+	// fit, plan or no plan), and stripping the block would mean re-rendering a
+	// prompt whose one file still cannot fit the window — a different wrong answer,
+	// not a right one.
+	//
+	// Read "one reviewable entry", not "one entry". On the range path such a slot
+	// holds TWO entries — the shed-exempt claim ledger plus the file — and a
+	// count over all of them would take the re-fit arm here, re-pack, and (when
+	// the file body is smaller than the ledger) ship kept=[the file] with the
+	// ledger dropped: that fallback reviewer adjudicating no claims while every
+	// other agent got them, which is AC3's byte-identical property broken
+	// silently. payload.ReviewableCount is what keeps the two readings apart.
 	//
 	// The max_sprint_plan_bytes term the helper applies cannot bind as things stand,
 	// and that is not an oversight: buildSlots applies the identical min() before

@@ -197,6 +197,34 @@ func applyByteBudgetOrdered(entries []FileEntry, budget int64, tier func(FileEnt
 	}
 }
 
+// ReviewableCount reports how many of entries are REVIEWABLE — every entry
+// except the shed-exempt claim ledger. It is the exported form of the
+// reviewableIn/reviewableKept accounting behind Truncation.AllDropped above, so
+// a shed site OUTSIDE this package derives "reviewable" from the same rule
+// instead of re-deriving it.
+//
+// The rule cannot be re-derived correctly from outside: shedExempt is
+// unexported (only newClaimLedgerEntry sets it, which is what makes the
+// exemption unforgeable), and keying on ClaimLedgerPath is wrong for the reason
+// recorded there — a repository can legitimately contain a file with that name,
+// and that file IS reviewable.
+//
+// internal/fanout's keepSmallestEntry is the caller this exists for. Its
+// Truncation.Truncated answers "was reviewable content dropped", which is a
+// different question from "did the slice shrink": a slot holding one file plus
+// the ledger must answer no, because the re-fit caller reads Truncated=false as
+// "there is no smaller payload to send" and declines — the behavior
+// refitFallbackPayload documents for a slot with nothing left to shed.
+func ReviewableCount(entries []FileEntry) int {
+	n := 0
+	for _, e := range entries {
+		if !e.shedExempt {
+			n++
+		}
+	}
+	return n
+}
+
 // ApplyByteBudgetPreferEscalated is ApplyByteBudget with an escalation-aware
 // drop order: files the escalation heuristic promoted above the run's configured
 // mode are shed LAST, after every un-escalated file (Epic 35.1).
