@@ -539,8 +539,17 @@ func TestClaimLedger_RefitBelowTheLedgersBytesDropsIt(t *testing.T) {
 
 	cfg := sizingRosterConfig()
 	// greta declares a window whose byte budget (392) sits above one 222-byte
-	// file and below the 8111-byte ledger — the band in which the exemption's own
-	// clampSize(Size) <= budget bound sheds the ledger while real code survives.
+	// file and below the two files' COMBINED bytes (444). 444 is the OPERATIVE
+	// ceiling: the re-fit gate is !inheritedPayloadFits(primary, budget), and
+	// that sums the primary's reviewable entries. Inside that window the
+	// exemption's own clampSize(Size) <= budget bound sheds the ledger while real
+	// code survives.
+	//
+	// The 8111-byte ledger sits far ABOVE that ceiling, so "below the ledger" is
+	// IMPLIED by the gate rather than being what selects this band. The reachable
+	// budget range is 222 <= b < 444, a ~60-token window in the declared value —
+	// which is why the binding constraint is asserted below instead of being left
+	// to a magic window number.
 	//
 	// The window is 12288 tokens above the budget's token cost because
 	// EffectiveByteBudget reserves BOTH the 8192-token output cap and the
@@ -577,6 +586,15 @@ func TestClaimLedger_RefitBelowTheLedgersBytesDropsIt(t *testing.T) {
 
 	ledgerBytes, smallestFile := refitEntryBytes(t, payloads)
 
+	// The bound the re-fit gate actually enforces: inheritedPayloadFits sums the
+	// primary's CodeContext bodies, so any budget that reaches rePacked is below
+	// THIS number. Measured, not hardcoded, and computed once — it does not vary
+	// per fallback.
+	var primaryCodeBytes int64
+	for _, ref := range s.Primary.CodeContext {
+		primaryCodeBytes += int64(len(ref.Body))
+	}
+
 	for _, fb := range s.Fallbacks {
 		// fb.rePacked, NOT fb.Truncation.Truncated: fbTrunc is initialized from the
 		// PRIMARY's truncation (internal/fanout/review.go:3121), so Truncated is
@@ -592,8 +610,10 @@ func TestClaimLedger_RefitBelowTheLedgersBytesDropsIt(t *testing.T) {
 		// hold the ledger, big enough that a reviewable file still fits.
 		require.Positive(t, fb.EffectiveBudget,
 			"precondition: a 0 budget sheds every entry and reroutes through keepSmallestEntry — a different mechanism")
+		require.Less(t, fb.EffectiveBudget, primaryCodeBytes,
+			"precondition: THE bound that binds — the re-fit gate requires !inheritedPayloadFits(primary, budget), which sums the primary's reviewable bytes, so this is what selects the band")
 		require.Less(t, fb.EffectiveBudget, ledgerBytes,
-			"precondition: this band is a budget BELOW the ledger, where clampSize(Size) <= budget fails and the bound sheds it")
+			"IMPLIED by the gate above, not the discriminator: the ledger is far larger than the primary's combined reviewable bytes, so any budget that re-fits at all is necessarily below it")
 		require.GreaterOrEqual(t, fb.EffectiveBudget, smallestFile,
 			"precondition: a reviewable file must still fit, or AllDropped trips and keepSmallestEntry does the work instead")
 
