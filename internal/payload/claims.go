@@ -638,9 +638,15 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 // rather than only in planning notes, because here is where they are created:
 //
 //  1. Changed-file count is inflated by one. The review layer derives it as
-//     len(kept) (internal/fanout/review.go:867, :920), so both the manifest and the
-//     persona-visible {{.FileCount}} report one more file than the range
-//     changed.
+//     len(kept) in buildPayloads — the RANGE path, the only one that prepends
+//     the ledger (internal/fanout/review.go:1279) — and carries it as
+//     mp.FileCount into the manifest and the persona-visible {{.FileCount}},
+//     so both report one more file than the range changed. The
+//     identically-shaped len(kept) sites in buildRepoPayloads (the --all/--dir
+//     repo scan) and PrepareReviewFromDiff (external diff ingestion) are NOT
+//     on this path: neither calls withClaimLedger, so a reader who follows
+//     them finds a kept slice with no ledger in it and concludes this
+//     consequence is false.
 //  2. A review_strategy=chunked run delivers the ledger to the FIRST chunk
 //     only. chunkDiff splits payload TEXT on column-0 diff markers, and the
 //     ledger sits above the first of them. (This is also why the strategy's
