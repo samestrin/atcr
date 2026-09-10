@@ -2,6 +2,7 @@ package payload
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -178,7 +179,7 @@ func TestParseGrepHits_CapsSitesPerSymbol(t *testing.T) {
 	// symbol out of the byte cap before the ledger ever ranks anything.
 	var lines []string
 	for i := 1; i <= 20; i++ {
-		lines = append(lines, "pkg/f.go:"+strings.Repeat("1", 1)+strings.Repeat("0", i%3)+":\tClose()")
+		lines = append(lines, "pkg/f.go:"+strconv.Itoa(i)+":\tClose()")
 	}
 
 	got := parseGrepHits(strings.Join(lines, "\n"), []string{"Close"}, nil, 3)
