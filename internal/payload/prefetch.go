@@ -1,6 +1,8 @@
 package payload
 
 import (
+	"path"
+	"strconv"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/astgroup"
@@ -238,6 +240,21 @@ func plausibleMockTarget(tok string) bool {
 	return !(tok[0] >= '0' && tok[0] <= '9')
 }
 
+const (
+	// maxPrefetchSitesPerSymbol bounds how many consumer sites ONE symbol may
+	// contribute. Without it a very common name (Close, Run, New) fills the whole
+	// candidate set before any other changed symbol is represented, and the byte
+	// cap then sheds the symbols that actually needed context.
+	maxPrefetchSitesPerSymbol = 3
+
+	// maxPrefetchHits is the absolute ceiling on candidate sites from one lookup,
+	// independent of how many symbols contributed them. Each surviving hit costs a
+	// HEAD blob read and a parse downstream, which is where the AC4 latency budget
+	// is actually spent, so this is the bound that keeps a very wide diff from
+	// turning a ~20ms lookup into a repo-wide sweep by another name.
+	maxPrefetchHits = 60
+)
+
 // refHit is one `git grep` match: a candidate site that REFERENCES a changed
 // symbol. Symbol records which changed symbol the match was attributed to, so a
 // retrieved snippet can say what it was retrieved for.
@@ -254,9 +271,135 @@ type refHit struct {
 // the reviewer already has. maxPerSymbol bounds how many sites one symbol may
 // contribute, so a single very common name cannot crowd out every other symbol.
 func parseGrepHits(out string, symbols []string, exclude map[string]bool, maxPerSymbol int) []refHit {
-	// Stub: T2 is not implemented yet. A deliberate wrong answer so the RED test
-	// fails on behavior while the package still compiles.
-	return nil
+	if out == "" || len(symbols) == 0 || maxPerSymbol <= 0 {
+		return nil
+	}
+	perSymbol := make(map[string]int, len(symbols))
+	var hits []refHit
+	for _, line := range strings.Split(out, "\n") {
+		p, num, text, ok := splitGrepLine(line)
+		if !ok || exclude[p] {
+			continue
+		}
+		// A hit in a file no embedded parser can read cannot be expanded into a
+		// snippet later, so admitting it here would spend a per-symbol cap slot on
+		// a site that can never be rendered. `git grep -I` already skips binaries;
+		// this additionally skips prose (README, CHANGELOG, docs/) — where an
+		// identifier-shaped word is a mention, not a call site.
+		if astgroup.LanguageForExt(strings.ToLower(path.Ext(p))) == "" {
+			continue
+		}
+		sym, ok := attributeSymbol(text, symbols)
+		if !ok {
+			continue
+		}
+		if perSymbol[sym] >= maxPerSymbol {
+			continue
+		}
+		perSymbol[sym]++
+		hits = append(hits, refHit{Path: p, Line: num, Symbol: sym})
+		if len(hits) >= maxPrefetchHits {
+			break
+		}
+	}
+	return hits
+}
+
+// splitGrepLine splits one `git grep -n` record into path, line number and text.
+//
+// It splits on the FIRST two colons. A path containing a colon (legal on unix,
+// vanishingly rare in a tracked tree) makes the second field unparseable as an
+// integer and the record is skipped — under-collecting one candidate rather than
+// attributing a snippet to the wrong file.
+func splitGrepLine(line string) (p string, num int, text string, ok bool) {
+	parts := strings.SplitN(line, ":", 3)
+	if len(parts) < 3 || parts[0] == "" {
+		return "", 0, "", false
+	}
+	n, err := strconv.Atoi(parts[1])
+	if err != nil || n <= 0 {
+		return "", 0, "", false
+	}
+	return parts[0], n, parts[2], true
+}
+
+// attributeSymbol reports which changed symbol a matched line cites.
+//
+// The match is word-bounded, not a bare substring: `Store` is a substring of
+// `ReadStore`, and attributing a ReadStore call site to Store would label the
+// snippet with a symbol the reviewer never changed. Symbols are consulted in
+// order, so attribution is deterministic (AC3).
+func attributeSymbol(text string, symbols []string) (string, bool) {
+	for _, s := range symbols {
+		if s != "" && containsWord(text, s) {
+			return s, true
+		}
+	}
+	return "", false
+}
+
+// containsWord reports whether word occurs in text bounded by non-identifier
+// characters on both sides.
+func containsWord(text, word string) bool {
+	for from := 0; ; {
+		i := strings.Index(text[from:], word)
+		if i < 0 {
+			return false
+		}
+		i += from
+		beforeOK := i == 0 || !isIdentByte(text[i-1])
+		end := i + len(word)
+		afterOK := end == len(text) || !isIdentByte(text[end])
+		if beforeOK && afterOK {
+			return true
+		}
+		from = i + 1
+		if from >= len(text) {
+			return false
+		}
+	}
+}
+
+func isIdentByte(c byte) bool {
+	return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+}
+
+// grepPatterns reduces the changed symbols to the deduped, argv-safe names the
+// reference lookup will search for.
+//
+// validGrepSymbol is a SECURITY boundary as well as a noise filter: these names
+// come from parsed source and flow into a subprocess argv, so a name beginning
+// with `-` would be read as a flag and one containing a glob or a space would
+// change what git searches. Restricting to identifier shape makes both
+// impossible, and `-e` then guarantees the value is treated as a pattern.
+func grepPatterns(symbols []changedSymbol) []string {
+	seen := make(map[string]bool, len(symbols))
+	var out []string
+	for _, s := range symbols {
+		if !validGrepSymbol(s.Name) || seen[s.Name] {
+			continue
+		}
+		seen[s.Name] = true
+		out = append(out, s.Name)
+		if len(out) >= maxChangedSymbols {
+			break
+		}
+	}
+	return out
+}
+
+// validGrepSymbol reports whether name is a plain identifier safe to pass as a
+// fixed-string search pattern.
+func validGrepSymbol(name string) bool {
+	if len(name) < 2 {
+		return false // a one-character name matches too much to be worth a slot
+	}
+	for i := 0; i < len(name); i++ {
+		if !isIdentByte(name[i]) {
+			return false
+		}
+	}
+	return !(name[0] >= '0' && name[0] <= '9')
 }
 
 // referenceHits resolves every changed symbol to the sites that consume it, in
@@ -269,8 +412,34 @@ func parseGrepHits(out string, symbols []string, exclude map[string]bool, maxPer
 // gitRunner.output cannot distinguish from a real failure, so treating any error
 // as "no context" is the only correct reading available here.
 func (g *gitRunner) referenceHits(symbols []changedSymbol, exclude map[string]bool) []refHit {
-	// Stub: T2 is not implemented yet.
-	return nil
+	names := grepPatterns(symbols)
+	if len(names) == 0 {
+		// The laziness contract: a diff citing no resolvable symbol spawns no
+		// process and reads no source file. Returning BEFORE g.output is what makes
+		// that observable through execCount.
+		return nil
+	}
+	// ONE process for every symbol. `-F` makes each pattern a fixed string (never
+	// a regex), `-w` bounds it to whole words so `Store` does not match
+	// `ReadStore`, and `-I` skips binaries. Each name is introduced by `-e`, so a
+	// value can never be read as a flag.
+	args := make([]string, 0, 6+2*len(names))
+	args = append(args, "grep", "-n", "-I", "-F", "-w", "--no-color")
+	for _, n := range names {
+		args = append(args, "-e", n)
+	}
+	out, err := g.output(args...)
+	if err != nil {
+		// `git grep` exits non-zero on NO MATCH as well as on failure, and
+		// gitRunner.output collapses both into one error, so the two are not
+		// separable here. Both degrade to empty context: pre-fetching is an
+		// additional review input, and failing a review because a lookup found
+		// nothing would trade a complete review for none at all.
+		g.log().Debug("payload: reference lookup matched nothing or failed; review proceeds without pre-fetched context",
+			"symbols", len(names), "error", err)
+		return nil
+	}
+	return parseGrepHits(string(out), names, exclude, maxPrefetchSitesPerSymbol)
 }
 
 // identifierTokens splits line into identifier-shaped runs, in source order.
