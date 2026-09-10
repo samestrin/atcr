@@ -1,3 +1,19 @@
+## [35.19.0] - 2026-09-10
+
+*Epic 35.16.7.1 — post residue feature epic 35.16.7 claim ledger verify commit claims.*
+
+### Fixed
+
+- `docs/payload-modes.md` and the 35.18.0 note below both stated the claim ledger's third exception with the wrong condition — that a fallback re-fits without the ledger when its own budget is "smaller than the ledger". Measured end to end, the ledger is lost when the fallback's budget cannot fund both the ledger **and** a reviewable file, by either of two routes: the exemption's own `clampSize(Size) <= budget` bound, or the `AllDropped` reroute to `keepSmallestEntry`. That reroute keeps the smallest *entry*, so it drops the ledger only while some reviewable file is smaller than it — when every file is larger, the ledger survives and the fallback receives claims and no code. A budget larger than the ledger therefore does not by itself keep it.
+- `docs/registry.md`'s `max_context_lines` row promised a warning only for a file larger than the cap. The gate measures a chunk's **delivered** line count, so the warning also fires for a file comfortably inside the cap when engine-rendered preamble lines push the chunk over it — and the lever for those lines is `max_claim_bytes`, not this field. A drift test in `internal/reconcile/` now fails if that statement drifts from the single-file warning arm it describes.
+- Citations in `internal/payload/claims.go` and `internal/fanout/review.go` that pointed at the wrong construct: the changed-file-count consequence cited two build paths that never prepend a claim ledger, and the coalesce-cap citations pointed at `started = true` inside `splitDiffFiles` rather than at the chunk ceiling. Each now names its identifier alongside the line number, so the next insertion above a target cannot silently re-aim it.
+
+### Changed
+
+- `diffPrefixLines`' contract doc described the preamble subtraction as the oversize gate's rule. It is the warning message's file attribution only: the gate deliberately runs on the unsubtracted delivered total, which is why the warning fires by design for a file whose own diff sits inside the cap.
+
+*Shipped via /execute-epic (epic 35.16.7.1)*
+
 ## [35.18.0] - 2026-09-09
 
 *Epic 35.16.7 — claim ledger verify commit claims.*
@@ -5,7 +21,7 @@
 ### Added
 
 - Review payloads over a git range now carry a **claim ledger**: the branch's commit-message assertions, enumerated, with a contract asking every reviewer to rule `VERIFIED` / `CONTRADICTED` / `UNSUPPORTED` / `NOT-IN-PAYLOAD` on each one against what the diff actually does. `UNSUPPORTED` is the finding-worthy verdict — it catches a fix that a commit message describes but the diff never makes, which leaves no trace a reviewer reading only added and removed lines could react to.
-- Claims are extracted deterministically from `git log --no-merges` with no model in the path, so the same range always produces byte-identical claims, and the ledger is identical for every agent in a fan-out on the normal path. Three exceptions are deliberate and documented in `internal/payload/claims.go`: a `review_strategy: chunked` run puts the ledger in the first chunk only, an agent whose effective budget is 0 may receive the ledger as its sole entry, and under `on_overflow: truncate` a fallback whose own budget is smaller than the ledger re-fits without it.
+- Claims are extracted deterministically from `git log --no-merges` with no model in the path, so the same range always produces byte-identical claims, and the ledger is identical for every agent in a fan-out on the normal path. Three exceptions are deliberate and documented in `internal/payload/claims.go`: a `review_strategy: chunked` run puts the ledger in the first chunk only, an agent whose effective budget is 0 may receive the ledger as its sole entry, and under `on_overflow: truncate` a fallback whose budget cannot fund both the ledger and a reviewable file re-fits without it — either the exemption's budget bound sheds it, or funding it would shed every reviewable file and the `AllDropped` reroute to `keepSmallestEntry` keeps the smallest entry instead — which is a reviewable file, and so drops the ledger, whenever some file is smaller than the ledger. A budget larger than the ledger therefore does not by itself keep it.
 - The claim ledger is exempt from byte-budget shedding while it fits the budget: when the budget cannot fund both, diff content is dropped and the ledger is kept. The exemption is bounded — a ledger larger than the whole budget sheds like any other entry, rather than dropping every file to fund itself.
 - `benchmarks/repo-state-v1/`: a case format (`FORMAT.md`) for benchmark cases that are small repositories rather than diffs, plus its first case, `claim-absent-cursor-fix`. The cases are authored and hand-verifiable but not yet machine-runnable — the loader is future work.
 

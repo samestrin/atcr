@@ -638,9 +638,16 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 // rather than only in planning notes, because here is where they are created:
 //
 //  1. Changed-file count is inflated by one. The review layer derives it as
-//     len(kept) (internal/fanout/review.go:867, :920), so both the manifest and the
-//     persona-visible {{.FileCount}} report one more file than the range
-//     changed.
+//     len(kept) in buildPayloads — the RANGE path, the only one that prepends
+//     the ledger (internal/fanout/review.go:1279) — and carries it as
+//     mp.FileCount into the manifest and the persona-visible {{.FileCount}},
+//     so both report one more file than the range changed. That count is
+//     re-derived on buildSlots' smallest-entry and re-pack arms
+//     (internal/fanout/review.go:2390, :2451), where the inflation instead
+//     becomes "1 file reported, possibly zero delivered" — consequence #3's
+//     shape. The other len(kept)
+//     sites (buildRepoPayloads, PrepareReviewFromDiff) never call
+//     withClaimLedger and are not on this path.
 //  2. A review_strategy=chunked run delivers the ledger to the FIRST chunk
 //     only. chunkDiff splits payload TEXT on column-0 diff markers, and the
 //     ledger sits above the first of them. (This is also why the strategy's
@@ -648,12 +655,12 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 //     files-mode payload where it previously stayed silent.)
 //  3. An agent whose declared window drives its effective budget to 0 takes an
 //     arm that ships exactly one entry, chosen by keepSmallestEntry
-//     (internal/fanout/review.go:3389) on len(Body) — which may be the ledger,
+//     (internal/fanout/review.go:3402) on len(Body) — which may be the ledger,
 //     leaving that reviewer claims and no code. The section's NOT-IN-PAYLOAD
 //     verdict exists so that reviewer reports nothing rather than a full sheet
 //     of false UNSUPPORTED findings.
 //  4. The sentinel can reach a published artifact. droppedPathsExcept
-//     (internal/fanout/review.go:2869) builds its dropped list from every entry
+//     (internal/fanout/review.go:2882) builds its dropped list from every entry
 //     but the kept one, so "<claims>" can appear in Truncation.FilesDropped and
 //     from there in status.json's files_dropped, alongside real repository
 //     paths.
@@ -668,12 +675,33 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 //     means having EntriesFromRenderedPayload surface the pre-marker prefix as an
 //     unattributed entry, which is a change to the audit seam rather than to this
 //     file.
-//  6. An on_overflow=truncate FALLBACK whose own budget is smaller than the
-//     ledger re-fits WITHOUT it. The re-fit re-sizes every entry to len(Body)
-//     (internal/fanout/review.go:3533-3537) before shedding, which turns the
+//  6. An on_overflow=truncate FALLBACK whose budget cannot fund BOTH the ledger
+//     and a reviewable file re-fits WITHOUT the ledger — whenever some
+//     reviewable file with a NON-EMPTY body is smaller than the ledger. The
+//     re-fit re-sizes
+//     every entry to len(Body)
+//     (internal/fanout/review.go:3546-3550) before shedding, which turns the
 //     bounded exemption in ApplyByteBudget — shedExempt AND clampSize(Size) <=
 //     budget — into a real comparison for the one entry that carries Size 0 on
-//     every other path. That backup reviews the same persona over the same range
+//     every other path. A zero-byte reviewable entry changes neither side of
+//     that: it sorts LAST under the largest-first order (budget.go:117-121)
+//     and the shed loop breaks once used <= budget, so it is never shed and
+//     never trips AllDropped, and keepSmallestEntry skips empty bodies
+//     (internal/fanout/review.go:3409-3411) so it cannot win the reroute — a
+//     0-byte py.typed beside a 10 KB file leaves the ledger in place with no
+//     code funded. The bound and the reroute are two stages of one pass, not
+//     two independent drop routes, and the ledger's absence has one terminal
+//     predicate: it is absent from the re-fit payload iff some reviewable
+//     entry has 0 < len(Body) < len(ledger.Body) AND the budget cannot fund
+//     ledger plus that entry. A ledger larger than the budget sheds on the
+//     bound, but that alone never leaves it absent — the emptied payload
+//     trips AllDropped and the reroute brings the ledger BACK when no smaller
+//     non-empty file exists (budget 50, ledger 100, one 200-byte file: both
+//     shed, then keepSmallestEntry (internal/fanout/review.go:3565-3571)
+//     returns the ledger itself). When every reviewable file is LARGER, the
+//     same branch keeps the ledger and sheds all the
+//     code — consequence #3's shape reached by a different route. That backup
+//     reviews the same persona over the same range
 //     as its primary and adjudicates no claims, so unlike #2 and #3 the reviewer
 //     gets no NOT-IN-PAYLOAD contract either: the section is simply absent. The
 //     bound is what stops the ledger from dropping every reviewable file to fund
@@ -687,8 +715,16 @@ const ClaimLedgerPath = "<claims>"
 // Size 0 keeps the entry out of byte-budget accounting on the ordinary path,
 // where the exemption's `clampSize(Size) <= budget` bound is satisfied by every
 // budget. The fallback re-fit re-sizes the entry to len(Body), so there the
-// sentinel keeps it exempt only WHILE IT FITS the budget: a ledger larger than
-// that budget sheds like any other entry (accepted consequence #6 above).
+// bound becomes real: this package's contract is exactly budget >= the
+// ledger's dispatched size — shedExempt AND clampSize(Size) <= budget,
+// evaluated on the ledger alone (budget.go:129-158, the only place the
+// exemption is checked). Funding a reviewable file is NOT part of that
+// contract — it is downstream: internal/fanout's AllDropped reroute to
+// keepSmallestEntry (internal/fanout/review.go:3565-3571) can displace the
+// ledger afterwards, but only while some reviewable file with a non-empty
+// body is smaller than the ledger, since that reroute keeps the smallest
+// ENTRY and will keep the ledger itself when every file is larger (accepted
+// consequence #6 above).
 func newClaimLedgerEntry(section string) FileEntry {
 	return FileEntry{Path: ClaimLedgerPath, Size: 0, Body: section, shedExempt: true}
 }

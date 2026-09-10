@@ -38,7 +38,7 @@ func TestBuildSlots_ChunkedWarnsOnLoneOversizedFile(t *testing.T) {
 	require.Contains(t, out, "greta")
 }
 
-// TD 19.10 (chunker.go:130): once the maxChunksPerAgent ceiling is reached the
+// TD 19.10 (chunker.go:195): once the maxChunksPerAgent ceiling is reached the
 // final chunk absorbs EVERY remaining file and can far exceed max_context_lines —
 // a MULTI-file oversized chunk. The pre-dispatch warning loop only flagged a LONE
 // oversized file (fileCount == 1), so the ceiling-induced oversized chunk shipped
