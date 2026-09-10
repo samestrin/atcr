@@ -19,9 +19,10 @@ import (
 // field. An operator who reads the old sentence tunes max_context_lines, the
 // warning does not go away, and nothing tells them which knob was theirs.
 //
-// Asserted on load-bearing PHRASES rather than on bare nouns, following
-// TestClaimLedgerDefault_DocumentedInRegistryDoc's idiom in this package, so an
-// ordinary rewording passes while a factual regression fails.
+// Built on this package's doc-row idiom — docRow, shared with
+// TestClaimLedgerDefault_DocumentedInRegistryDoc — but asserted on load-bearing
+// PHRASES rather than on the bare tokens that sibling anchors on, so an ordinary
+// rewording passes while a factual regression fails.
 //
 // A bare noun was not enough, and it failed in the one direction this test
 // exists to catch. strings.Contains(row, "delivered") passes on a row that says
