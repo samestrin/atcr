@@ -603,6 +603,16 @@ func TestClaimLedger_RefitBelowTheLedgersBytesDropsIt(t *testing.T) {
 		// the precondition this message states.
 		require.True(t, fb.rePacked,
 			"precondition: the fallback must actually have re-fit, or this proves nothing")
+		// The operator-visible RECORD, pinned alongside the mechanism. status.json's
+		// DiffTruncation and degradation_action are the only signal a human gets
+		// that this reviewer adjudicated no claims, and neither band test asserted
+		// either — so the third exception was proven to HAPPEN and not proven to be
+		// REPORTED. rp.fits holds in both bands, so the action is truncate rather
+		// than overflow (review.go:3228-3231).
+		assert.True(t, fb.Truncation.Truncated,
+			"a re-fit that shed reviewable content must say so in the published shed record")
+		assert.Equal(t, degradationTruncate, fb.DegradationAction,
+			"a re-fit whose re-packed payload fits records truncate, not overflow")
 		// Pin the BAND, not just the symptom. THREE mechanisms can strip the
 		// ledger on this path and they are not interchangeable, so a test that
 		// only asserts "the ledger is gone" can silently start proving a
