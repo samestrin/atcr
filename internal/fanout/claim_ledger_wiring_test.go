@@ -551,6 +551,11 @@ func TestClaimLedger_RefitBelowTheLedgersBytesDropsIt(t *testing.T) {
 	// which is why the binding constraint is asserted below instead of being left
 	// to a magic window number.
 	//
+	// Every byte figure named here is ILLUSTRATIVE of the build it was written
+	// against, not a pinned value: the assertions derive theirs from
+	// refitEntryBytes at runtime and print the measured numbers on failure. Read
+	// the failure output, not this comment, when a fixture shifts.
+	//
 	// The window is 12288 tokens above the budget's token cost because
 	// EffectiveByteBudget reserves BOTH the 8192-token output cap and the
 	// 4096-token prompt overhead before converting at 7/2 bytes per token:
@@ -619,13 +624,13 @@ func TestClaimLedger_RefitBelowTheLedgersBytesDropsIt(t *testing.T) {
 		// different one. This case is the exemption's own bound: too small to
 		// hold the ledger, big enough that a reviewable file still fits.
 		require.Positive(t, fb.EffectiveBudget,
-			"precondition: a 0 budget sheds every entry and reroutes through keepSmallestEntry — a different mechanism")
+			"precondition: a 0 budget sheds every entry and reroutes through keepSmallestEntry — a different mechanism (budget=%d)", fb.EffectiveBudget)
 		require.Less(t, fb.EffectiveBudget, primaryCodeBytes,
-			"precondition: THE bound that binds — the re-fit gate requires !inheritedPayloadFits(primary, budget), which sums the primary's reviewable bytes, so this is what selects the band")
+			"precondition: THE bound that binds — the re-fit gate requires !inheritedPayloadFits(primary, budget), which sums the primary's reviewable bytes, so this is what selects the band (budget=%d, primary reviewable=%d)", fb.EffectiveBudget, primaryCodeBytes)
 		require.Less(t, fb.EffectiveBudget, ledgerBytes,
-			"IMPLIED by the gate above, not the discriminator: the ledger is far larger than the primary's combined reviewable bytes, so any budget that re-fits at all is necessarily below it")
+			"IMPLIED by the gate above, not the discriminator: the ledger is far larger than the primary's combined reviewable bytes, so any budget that re-fits at all is necessarily below it (budget=%d, ledger=%d)", fb.EffectiveBudget, ledgerBytes)
 		require.GreaterOrEqual(t, fb.EffectiveBudget, smallestFile,
-			"precondition: a reviewable file must still fit, or AllDropped trips and keepSmallestEntry does the work instead")
+			"precondition: a reviewable file must still fit, or AllDropped trips and keepSmallestEntry does the work instead (budget=%d, smallest file=%d)", fb.EffectiveBudget, smallestFile)
 
 		// Entry ARITHMETIC, not route evidence: three entries in (the ledger plus
 		// two files) and exactly one reviewable file fits, so two shed. "Exactly one
@@ -664,6 +669,11 @@ func TestClaimLedger_RefitAboveTheLedgersBytesStillDropsIt(t *testing.T) {
 	// (15000 - 8192 output - 4096 overhead) * 7 / 2 = 9492: above the 8111-byte
 	// ledger, below ledger + one 5169-byte file, and below the two files'
 	// combined bytes so inheritedPayloadFits fails and the re-fit gate opens.
+	//
+	// Those figures are ILLUSTRATIVE of the build they were written against. The
+	// assertions below derive theirs from refitEntryBytes at runtime and print the
+	// measured numbers on failure, so a fixture shift is diagnosed from the output
+	// rather than from this arithmetic.
 	small := 15000
 	g := cfg.Registry.Agents["greta"]
 	g.ContextWindowTokens = &small
@@ -697,15 +707,15 @@ func TestClaimLedger_RefitAboveTheLedgersBytesStillDropsIt(t *testing.T) {
 	// below varies. Inside the loop it read as a property of the CODE, which it is
 	// not — what the code DOES with it is asserted in the loop.
 	require.Less(t, smallestFile, ledgerBytes,
-		"precondition: a reviewable file must be smaller than the ledger, or keepSmallestEntry keeps the LEDGER and sheds the code instead")
+		"precondition: a reviewable file must be smaller than the ledger, or keepSmallestEntry keeps the LEDGER and sheds the code instead (smallest file=%d, ledger=%d)", smallestFile, ledgerBytes)
 
 	for _, fb := range s.Fallbacks {
 		require.True(t, fb.rePacked,
 			"precondition: the fallback must actually have re-fit, or this proves nothing")
 		require.GreaterOrEqual(t, fb.EffectiveBudget, ledgerBytes,
-			"the whole point of this case: the budget EXCEEDS the ledger, so the exemption's clampSize(Size) <= budget bound PASSES and cannot be what sheds it")
+			"the whole point of this case: the budget EXCEEDS the ledger, so the exemption's clampSize(Size) <= budget bound PASSES and cannot be what sheds it (budget=%d, ledger=%d)", fb.EffectiveBudget, ledgerBytes)
 		require.Less(t, fb.EffectiveBudget, ledgerBytes+smallestFile,
-			"precondition: the budget must not fund the ledger AND a file, or nothing sheds at all")
+			"precondition: the budget must not fund the ledger AND a file, or nothing sheds at all (budget=%d, ledger=%d, smallest file=%d)", fb.EffectiveBudget, ledgerBytes, smallestFile)
 		// The BEHAVIOURAL consequence that fixture invariant sets up, which is what
 		// the comment above this test actually claims: keepSmallestEntry kept a
 		// reviewable FILE, not the ledger. Asserted on the kept body's SIZE rather
