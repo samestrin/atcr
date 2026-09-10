@@ -684,8 +684,11 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 //     enough to keep it: the bound itself sheds a ledger larger than the
 //     budget, and a budget that clears the bound but cannot also fund a file
 //     sheds every reviewable file to fund the ledger — which trips AllDropped
-//     and reroutes to keepSmallestEntry (internal/fanout/review.go:3552-3558),
-//     keeping one small file and dropping the ledger instead. That backup
+//     and reroutes to keepSmallestEntry (internal/fanout/review.go:3552-3558).
+//     That reroute keeps the SMALLEST ENTRY by len(Body), so it drops the
+//     ledger only while some reviewable file is smaller than the ledger. When
+//     every file is LARGER, the same branch keeps the ledger and sheds all the
+//     code — consequence #3's shape reached by a different route. That backup
 //     reviews the same persona over the same range
 //     as its primary and adjudicates no claims, so unlike #2 and #3 the reviewer
 //     gets no NOT-IN-PAYLOAD contract either: the section is simply absent. The
@@ -705,8 +708,10 @@ const ClaimLedgerPath = "<claims>"
 // sufficient: a ledger larger than the budget sheds on the bound itself, and a
 // ledger that clears the bound but leaves nothing over for a file sheds through
 // the AllDropped reroute to keepSmallestEntry
-// (internal/fanout/review.go:3552-3558), which keeps one small file instead
-// (accepted consequence #6 above).
+// (internal/fanout/review.go:3552-3558) — but only while some reviewable file
+// is smaller than the ledger, since that reroute keeps the smallest ENTRY and
+// will keep the ledger itself when every file is larger (accepted consequence
+// #6 above).
 func newClaimLedgerEntry(section string) FileEntry {
 	return FileEntry{Path: ClaimLedgerPath, Size: 0, Body: section, shedExempt: true}
 }
