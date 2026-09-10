@@ -96,7 +96,8 @@ func countLines(s string) int {
 // (internal/payload's unexported newClaimLedgerEntry, claims.go:716, sets
 // Size 0) — it is engine-rendered framing, not reviewable diff content. The
 // fallback re-fit is the exception: it re-sizes every entry to len(Body)
-// (review.go:3546-3550) and the ledger sheds there like any other entry.
+// (review.go:3546-3550), and a ledger LARGER THAN that budget then sheds like
+// any other entry; at or below it the shedExempt bound still protects it.
 func diffPrefixLines(chunk string) int {
 	for i, ln := range strings.SplitAfter(chunk, "\n") {
 		if isDiffFileMarker(ln) {
