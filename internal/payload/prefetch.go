@@ -635,7 +635,10 @@ func overlapsEmitted(emitted [][2]int, start, end int) bool {
 
 // retrieveSnippets reads each candidate file's HEAD blob once and slices the
 // region around every hit in it.
-func (g *gitRunner) retrieveSnippets(base, head string, hits []refHit) []PrefetchSnippet {
+// declOnly names the symbols that entered the set ONLY through the mock-cue
+// scan. Those are held to a stricter rule than an ordinary changed symbol: see
+// the check in the per-hit loop below.
+func (g *gitRunner) retrieveSnippets(base, head string, hits []refHit, declOnly map[string]bool) []PrefetchSnippet {
 	if len(hits) == 0 {
 		return nil
 	}
@@ -673,6 +676,22 @@ func (g *gitRunner) retrieveSnippets(base, head string, hits []refHit) []Prefetc
 		root := parsePrefetchTree(rel, src)
 		emitted := make([][2]int, 0, len(byPath[rel]))
 		for _, h := range byPath[rel] {
+			// A cue-derived symbol must resolve to a DECLARATION of itself, not a
+			// mere mention.
+			//
+			// The AC6 scan admits any identifier sitting on a changed test line that
+			// mentions mock/patch/stub/fake — deliberately loose, because the symbol
+			// being replaced is not syntactically marked. That looseness is fine while
+			// it only costs a `git grep` pattern, but a matching token elsewhere in the
+			// tree otherwise causes a 40-line region of an unrelated file to be read
+			// and shipped to a third-party provider. Ordinary changed symbols keep
+			// call-site retrieval (that is AC5, the whole point); only the guessed
+			// ones must earn their snippet by being declared.
+			if declOnly[h.Symbol] {
+				if name, ok := astgroup.EnclosingSymbolName(root, h.Line); !ok || name != h.Symbol {
+					continue
+				}
+			}
 			start, end := snippetSpan(root, h.Line)
 			body, s, e, ok := sliceLines(src, start, end)
 			if !ok || overlapsEmitted(emitted, s, e) {
@@ -1092,7 +1111,15 @@ func (g *gitRunner) buildPrefetch(base, head string) (section string, spans map[
 	if len(hits) == 0 {
 		return "", nil, PrefetchStatus{}
 	}
-	snips := g.retrieveSnippets(base, head, hits)
+	// Symbols the cue scan guessed are retrieved only from their declaration
+	// sites; symbols the diff genuinely changed keep full call-site retrieval.
+	declOnly := make(map[string]bool, len(symbols))
+	for _, s := range symbols {
+		if s.Mocked {
+			declOnly[s.Name] = true
+		}
+	}
+	snips := g.retrieveSnippets(base, head, hits, declOnly)
 	// Tier is stamped HERE rather than inside retrieveSnippets: retrieval is
 	// tier-agnostic, and 35.16.12 adds a second producer feeding the same ledger.
 	for i := range snips {
