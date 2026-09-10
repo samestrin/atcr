@@ -406,6 +406,12 @@ func TestRetrieveSnippets_MissingCandidateIsSkippedNotFatal(t *testing.T) {
 	require.Equal(t, "consumer.go", got[0].Path)
 }
 
+// renderedBytes is the size the cap actually adjudicates on: the snippet as it
+// will appear in the payload, header and per-line "L<n>: " anchors included.
+// Budgets below are derived from it rather than hardcoded, so the tests cannot
+// silently drift from the renderer the way a body-only estimate did.
+func renderedBytes(s PrefetchSnippet) int { return len(renderSnippetBlock(s)) }
+
 // prefetchSnippet builds a snippet whose body is exactly n bytes, so the cap
 // arithmetic in these tests is readable rather than incidental.
 func prefetchSnippet(pathName, symbol string, tier PrefetchTier, n int) PrefetchSnippet {
@@ -425,7 +431,7 @@ func TestCapPrefetchSnippets_UnderTheCapKeepsEverythingAndDropsNothing(t *testin
 		prefetchSnippet("b.go", "Beta", PrefetchTierSimilarity, 30),
 	}
 
-	kept, dropped := capPrefetchSnippets(snips, 1000)
+	kept, dropped := capPrefetchSnippets(snips, int64(renderedBytes(snips[0])+renderedBytes(snips[1])))
 
 	require.Len(t, kept, 2)
 	require.Empty(t, dropped, "nothing was shed, so the ledger must be empty")
@@ -440,7 +446,9 @@ func TestCapPrefetchSnippets_ShedsTheLowerTierFirstEvenWhenSmaller(t *testing.T)
 		prefetchSnippet("similar.go", "ReadStore", PrefetchTierSimilarity, 30),
 	}
 
-	kept, dropped := capPrefetchSnippets(snips, 70)
+	// Room for the reference snippet alone. Plain largest-first would shed it (it
+	// is the bigger of the two); tier ranking must shed the similarity one instead.
+	kept, dropped := capPrefetchSnippets(snips, int64(renderedBytes(snips[0])))
 
 	require.Len(t, kept, 1)
 	require.Equal(t, "consumer.go", kept[0].Path, "the reference tier must survive")
@@ -457,13 +465,14 @@ func TestCapPrefetchSnippets_RecordsEveryDropWithItsTierAndBytes(t *testing.T) {
 		prefetchSnippet("similar.go", "WriteStore", PrefetchTierSimilarity, 30),
 	}
 
-	_, dropped := capPrefetchSnippets(snips, 70)
+	_, dropped := capPrefetchSnippets(snips, int64(renderedBytes(snips[0])))
 
 	require.Len(t, dropped, 1)
 	require.Equal(t, "similar.go", dropped[0].Path)
 	require.Equal(t, "WriteStore", dropped[0].Symbol)
 	require.Equal(t, PrefetchTierSimilarity, dropped[0].Tier)
-	require.Equal(t, 30, dropped[0].Bytes)
+	require.Equal(t, renderedBytes(snips[1]), dropped[0].Bytes,
+		"the ledger must report the bytes the drop actually freed, which is what the cap adjudicated on")
 }
 
 func TestCapPrefetchSnippets_ZeroCapKeepsNothingAndStillRecordsDrops(t *testing.T) {
@@ -489,7 +498,7 @@ func TestCapPrefetchSnippets_OversizedSingleSnippetIsDroppedWhole(t *testing.T) 
 
 	require.Empty(t, kept)
 	require.Len(t, dropped, 1)
-	require.Equal(t, 50, dropped[0].Bytes)
+	require.Equal(t, renderedBytes(snips[0]), dropped[0].Bytes)
 }
 
 func TestCapPrefetchSnippets_IsDeterministic(t *testing.T) {
@@ -501,11 +510,96 @@ func TestCapPrefetchSnippets_IsDeterministic(t *testing.T) {
 		prefetchSnippet("c.go", "Gamma", PrefetchTierSimilarity, 40),
 	}
 
-	keptA, droppedA := capPrefetchSnippets(snips, 50)
-	keptB, droppedB := capPrefetchSnippets(snips, 50)
+	budget := int64(renderedBytes(snips[0]))
+	keptA, droppedA := capPrefetchSnippets(snips, budget)
+	keptB, droppedB := capPrefetchSnippets(snips, budget)
 
 	require.Equal(t, keptA, keptB)
 	require.Equal(t, droppedA, droppedB)
+}
+
+func TestApplyByteBudget_TwoExemptSectionsCannotJointlyOverrunTheBudget(t *testing.T) {
+	// On the ordinary path both synthetic sections carry Size 0 and cost nothing.
+	// The fallback re-fit re-sizes every entry to len(Body), and there the
+	// per-entry exemption bound let EACH section pass its own check while the two
+	// together exceeded the budget: both were kept, every reviewable file was shed
+	// to fund them, and AllDropped fired even though the ledger alone would have
+	// fitted alongside real code.
+	ledger := newClaimLedgerEntry(strings.Repeat("c", 60))
+	ledger.Size = 60
+	ctxSection := newPrefetchEntry(strings.Repeat("x", 60))
+	ctxSection.Size = 60
+	code := FileEntry{Path: "a.go", Size: 30, Body: strings.Repeat("a", 30)}
+
+	// Room for the ledger plus the code, but not for a second 60-byte section.
+	kept, tr := ApplyByteBudget([]FileEntry{ledger, ctxSection, code}, 100)
+
+	paths := keptPaths(kept)
+	require.Contains(t, paths, ClaimLedgerPath, "the higher-ranked section must survive")
+	require.NotContains(t, paths, PrefetchContextPath,
+		"the lower-ranked synthetic section is shed first when both cannot be funded")
+	require.Contains(t, paths, "a.go",
+		"reviewable code must not be shed to fund a section the budget cannot hold")
+	require.False(t, tr.AllDropped, "the budget could fund the ledger and the code together")
+}
+
+func TestApplyByteBudget_SingleExemptSectionKeepsThePerEntryBehavior(t *testing.T) {
+	// The cumulative rule must reduce EXACTLY to the old bound when only one
+	// exempt section is present, or this fix would change claim-ledger behavior on
+	// every range review that predates pre-fetching.
+	ledger := newClaimLedgerEntry(strings.Repeat("c", 60))
+	ledger.Size = 60
+	code := FileEntry{Path: "a.go", Size: 80, Body: strings.Repeat("a", 80)}
+
+	kept, _ := ApplyByteBudget([]FileEntry{ledger, code}, 100)
+
+	require.Contains(t, keptPaths(kept), ClaimLedgerPath,
+		"a lone ledger that fits the budget is still exempt; diff content sheds to fund it")
+}
+
+func TestCapPrefetchSnippets_RenderedSectionHonoursTheByteCap(t *testing.T) {
+	// The contract max_prefetch_bytes advertises is about the SECTION that gets
+	// prepended, not about the raw bodies. Budgeting on len(Body) let the header
+	// and the per-line "L<n>: " anchors push the emitted block well past the cap.
+	var snips []PrefetchSnippet
+	for i := 0; i < 12; i++ {
+		s := prefetchSnippet(fmt.Sprintf("consumer%d.go", i), "ReadStore", PrefetchTierReference, 200)
+		s.Body = strings.Repeat("call ReadStore(path)\n", 10) // multi-line: maximum prefix overhead
+		s.End = s.Start + 9
+		snips = append(snips, s)
+	}
+	cap := int64(1024)
+
+	kept, dropped := capPrefetchSnippets(snips, cap)
+	section := renderPrefetchSection(kept, dropped)
+
+	var keptBytes int
+	for _, s := range kept {
+		keptBytes += renderedBytes(s)
+	}
+	require.LessOrEqual(t, int64(keptBytes), cap,
+		"the kept snippets must fit the cap as RENDERED, not as raw bodies")
+	require.NotEmpty(t, section)
+	require.Contains(t, section, prefetchSectionStart)
+}
+
+func TestRenderPrefetchSection_BoundsTheDropLedger(t *testing.T) {
+	// A tiny cap sheds many snippets. Emitting one ledger line each turned the
+	// section into mostly-ledger, and those lines sat outside the byte accounting
+	// entirely. The remainder is disclosed as a count, so it is bounded but never
+	// silent.
+	var dropped []PrefetchDrop
+	for i := 0; i < 40; i++ {
+		dropped = append(dropped, PrefetchDrop{
+			Path: fmt.Sprintf("f%d.go", i), Symbol: "ReadStore", Tier: PrefetchTierReference, Bytes: 100,
+		})
+	}
+
+	section := renderPrefetchSection(nil, dropped)
+
+	lines := strings.Count(section, prefetchNotePrefix)
+	require.LessOrEqual(t, lines, maxPrefetchDropLines+1, "the ledger must be bounded")
+	require.Contains(t, section, "more snippet(s) dropped", "the remainder must still be disclosed")
 }
 
 func TestRenderPrefetchSection_EmptyYieldsNothing(t *testing.T) {

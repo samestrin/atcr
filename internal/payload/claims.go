@@ -726,7 +726,9 @@ const ClaimLedgerPath = "<claims>"
 // ENTRY and will keep the ledger itself when every file is larger (accepted
 // consequence #6 above).
 func newClaimLedgerEntry(section string) FileEntry {
-	return FileEntry{Path: ClaimLedgerPath, Size: 0, Body: section, shedExempt: true}
+	// exemptRank 1 outranks the Context Definitions block (rank 0), so a budget
+	// that cannot fund both sheds retrieved context before the author's claims.
+	return FileEntry{Path: ClaimLedgerPath, Size: 0, Body: section, shedExempt: true, exemptRank: 1}
 }
 
 // Framing markers for the claim block. They are neutralized inside claim text

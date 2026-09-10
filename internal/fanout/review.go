@@ -404,7 +404,13 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	// registry" diagnostic from buildSlots below.
 	empty := len(payloads) > 0
 	for _, mp := range payloads {
-		if mp.FileCount > 0 {
+		// ReviewableCount over the PRE-budget entries, not FileCount. FileCount is
+		// the post-shed survivor count, and a range whose reviewable files were all
+		// shed is already rejected with ErrPayloadFullyDropped inside buildPayloads.
+		// Reading FileCount here started conflating "the range changed nothing"
+		// with "the budget dropped everything" the moment FileCount stopped
+		// counting the synthetic engine-rendered sections.
+		if payload.ReviewableCount(mp.Entries) > 0 {
 			empty = false
 			break
 		}

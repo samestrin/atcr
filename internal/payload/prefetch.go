@@ -745,12 +745,17 @@ func capPrefetchSnippets(snips []PrefetchSnippet, maxBytes int64) (kept []Prefet
 		// Disabled by the operator. Keep nothing, but still record every snippet:
 		// "you turned it off" and "retrieval found nothing" are opposite
 		// operational signals, and an empty section reports them identically.
-		return splitPrefetchLedger(snips, allTrue(len(snips)))
+		return splitPrefetchLedger(snips, allTrue(len(snips)), nil)
 	}
 
+	// Measure the RENDERED size, not len(Body): the emitted block carries a
+	// per-snippet header and an "L<n>: " prefix on every line, so a body-only
+	// budget lets the section overshoot max_prefetch_bytes by 15-40%.
+	size := make([]int64, len(snips))
 	var total int64
-	for _, s := range snips {
-		total += int64(len(s.Body))
+	for i, s := range snips {
+		size[i] = int64(len(renderSnippetBlock(s)))
+		total += size[i]
 	}
 	if total <= maxBytes {
 		return append([]PrefetchSnippet(nil), snips...), nil
@@ -770,8 +775,8 @@ func capPrefetchSnippets(snips []PrefetchSnippet, maxBytes int64) (kept []Prefet
 		if si.Tier != sj.Tier {
 			return si.Tier < sj.Tier
 		}
-		if len(si.Body) != len(sj.Body) {
-			return len(si.Body) > len(sj.Body)
+		if size[idx[a]] != size[idx[b]] {
+			return size[idx[a]] > size[idx[b]]
 		}
 		if si.Path != sj.Path {
 			return si.Path < sj.Path
@@ -789,22 +794,30 @@ func capPrefetchSnippets(snips []PrefetchSnippet, maxBytes int64) (kept []Prefet
 		// the reviewer, which is worse than its absence: it invites a finding about
 		// logic that was simply cut off.
 		drop[i] = true
-		used -= int64(len(snips[i].Body))
+		used -= size[i]
 	}
-	return splitPrefetchLedger(snips, drop)
+	return splitPrefetchLedger(snips, drop, size)
 }
 
 // splitPrefetchLedger partitions snips by the drop mask, preserving the original
 // order in BOTH results so the rendered section and its ledger are deterministic
 // (AC3).
-func splitPrefetchLedger(snips []PrefetchSnippet, drop []bool) (kept []PrefetchSnippet, dropped []PrefetchDrop) {
+// size carries each snippet's RENDERED byte count so the ledger reports the
+// bytes a drop actually freed, which is the number the cap adjudicated on. A
+// nil size falls back to the body length (the disabled-cap path, where nothing
+// was measured).
+func splitPrefetchLedger(snips []PrefetchSnippet, drop []bool, size []int64) (kept []PrefetchSnippet, dropped []PrefetchDrop) {
 	for i, s := range snips {
 		if drop[i] {
+			n := len(s.Body)
+			if size != nil {
+				n = int(size[i])
+			}
 			dropped = append(dropped, PrefetchDrop{
 				Path:   s.Path,
 				Symbol: s.Symbol,
 				Tier:   s.Tier,
-				Bytes:  len(s.Body),
+				Bytes:  n,
 			})
 			continue
 		}
@@ -831,7 +844,50 @@ const (
 	prefetchSectionEnd   = ">>> END CONTEXT DEFINITIONS <<<"
 	// prefetchNotePrefix leads every non-source line inside the block.
 	prefetchNotePrefix = "[context] "
+
+	// maxPrefetchDropLines bounds the rendered drop ledger. Without it a tiny cap
+	// produced a section that was almost entirely ledger: every shed snippet
+	// contributed a line, and those lines were themselves outside the byte
+	// accounting. The remainder is disclosed as a count, so a bounded ledger is
+	// still never a silent one.
+	maxPrefetchDropLines = 10
 )
+
+// renderSnippetBlock renders ONE snippet exactly as it appears in the payload.
+//
+// The cap and the renderer share this function deliberately. Budgeting on
+// len(Body) while emitting a header plus an "L<n>: " prefix on every line
+// under-measured the block by 15-40%, so a section sized to fit
+// max_prefetch_bytes routinely exceeded it. An estimator that can drift from the
+// emitter is the defect; one function cannot drift from itself.
+func renderSnippetBlock(s PrefetchSnippet) string {
+	var b strings.Builder
+	b.WriteString(prefetchNotePrefix)
+	b.WriteString(s.Path)
+	b.WriteByte(':')
+	b.WriteString(strconv.Itoa(s.Start))
+	b.WriteByte('-')
+	b.WriteString(strconv.Itoa(s.End))
+	b.WriteString(" (")
+	b.WriteString(s.Tier.String())
+	b.WriteString(" to ")
+	b.WriteString(s.Symbol)
+	b.WriteString(")\n")
+	// Anchor every source line with its real HEAD line number. This is the safety
+	// property as much as a convenience: because each content line begins with
+	// "L<digits>: ", a retrieved body carrying a section marker cannot open a
+	// spoofed file section.
+	line := s.Start
+	for _, src := range strings.Split(s.Body, "\n") {
+		b.WriteByte('L')
+		b.WriteString(strconv.Itoa(line))
+		b.WriteString(": ")
+		b.WriteString(src)
+		b.WriteByte('\n')
+		line++
+	}
+	return b.String()
+}
 
 // String names a tier for the rendered drop ledger.
 func (t PrefetchTier) String() string {
@@ -866,33 +922,17 @@ func renderPrefetchSection(kept []PrefetchSnippet, dropped []PrefetchDrop) strin
 	b.WriteByte('\n')
 
 	for _, s := range kept {
-		b.WriteString(prefetchNotePrefix)
-		b.WriteString(s.Path)
-		b.WriteByte(':')
-		b.WriteString(strconv.Itoa(s.Start))
-		b.WriteByte('-')
-		b.WriteString(strconv.Itoa(s.End))
-		b.WriteString(" (")
-		b.WriteString(s.Tier.String())
-		b.WriteString(" to ")
-		b.WriteString(s.Symbol)
-		b.WriteString(")\n")
-		// Anchor every source line with its real HEAD line number. This is the
-		// safety property as much as a convenience: because each content line
-		// begins with "L<digits>: ", a retrieved body carrying a section marker
-		// cannot open a spoofed file section.
-		line := s.Start
-		for _, src := range strings.Split(s.Body, "\n") {
-			b.WriteByte('L')
-			b.WriteString(strconv.Itoa(line))
-			b.WriteString(": ")
-			b.WriteString(src)
-			b.WriteByte('\n')
-			line++
-		}
+		b.WriteString(renderSnippetBlock(s))
 	}
 
-	for _, d := range dropped {
+	for i, d := range dropped {
+		if i >= maxPrefetchDropLines {
+			b.WriteString(prefetchNotePrefix)
+			b.WriteString("... and ")
+			b.WriteString(strconv.Itoa(len(dropped) - i))
+			b.WriteString(" more snippet(s) dropped over the pre-fetch byte cap\n")
+			break
+		}
 		b.WriteString(prefetchNotePrefix)
 		b.WriteString("dropped ")
 		b.WriteString(d.Path)
@@ -934,7 +974,12 @@ const PrefetchContextPath = "<context>"
 // entries and remain inflated; that half is tracked as technical debt rather
 // than fixed here.
 func newPrefetchEntry(section string) FileEntry {
-	return FileEntry{Path: PrefetchContextPath, Size: 0, Body: section, shedExempt: true}
+	// exemptRank 0 is BELOW the claim ledger's 1, stated explicitly rather than
+	// left to the zero value: when a budget cannot fund both synthetic sections,
+	// retrieved context is the one that goes. Context is supporting material for
+	// judging the diff; the ledger is the set of assertions being judged, and a
+	// ledger some agents received and others did not is worse than absent.
+	return FileEntry{Path: PrefetchContextPath, Size: 0, Body: section, shedExempt: true, exemptRank: 0}
 }
 
 // PrefetchStatus reports what the pre-fetch pass produced for a range.

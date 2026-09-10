@@ -32,6 +32,15 @@ type FileEntry struct {
 	// behind AllDropped. Struct assignment copies unexported fields, so the flag
 	// survives the fallback re-fit's re-sizing copy in internal/fanout.
 	shedExempt bool
+	// exemptRank orders the shed-exempt sections against EACH OTHER when the
+	// budget cannot fund them all: a HIGHER rank is funded first. The claim ledger
+	// outranks the Context Definitions block, so a tight budget sheds retrieved
+	// context before it sheds the author's own assertions.
+	//
+	// Unexported and set only by the two constructors, for the same reason
+	// shedExempt is: keying the ordering on Path would let a reviewed repository
+	// containing a file named "<claims>" promote itself above real content.
+	exemptRank int
 }
 
 // Truncation records what a byte-budget pass dropped. It is ALWAYS returned by
@@ -124,6 +133,38 @@ func applyByteBudgetOrdered(entries []FileEntry, budget int64, tier func(FileEnt
 		return ei.Path < ej.Path
 	})
 
+	// Decide which shed-exempt sections the budget can actually fund, CUMULATIVELY.
+	//
+	// The bound used to be evaluated per entry (`shedExempt && clampSize(Size) <=
+	// budget`), an invariant written when exactly one synthetic section existed.
+	// With two — the claim ledger and the Context Definitions block — each can
+	// satisfy its own check while jointly overrunning a small budget. On the
+	// fallback re-fit, which re-sizes every entry to len(Body), that shed every
+	// reviewable file to fund sections that then left no room for code, tripping
+	// AllDropped where the ledger alone would have fitted.
+	//
+	// Funded in DESCENDING exemptRank so the lower-priority section loses its
+	// exemption first, and stably by index within a rank so the choice is
+	// deterministic. With a single exempt entry this reduces exactly to the old
+	// per-entry bound.
+	funded := make([]bool, len(entries))
+	exemptIdx := make([]int, 0, 2)
+	for i := range entries {
+		if entries[i].shedExempt {
+			exemptIdx = append(exemptIdx, i)
+		}
+	}
+	sort.SliceStable(exemptIdx, func(a, b int) bool {
+		return entries[exemptIdx[a]].exemptRank > entries[exemptIdx[b]].exemptRank
+	})
+	exemptUsed := int64(0)
+	for _, i := range exemptIdx {
+		if sz := clampSize(entries[i].Size); exemptUsed+sz <= budget {
+			exemptUsed += sz
+			funded[i] = true
+		}
+	}
+
 	dropped := make([]bool, len(entries))
 	used := total
 	for _, i := range idx {
@@ -157,7 +198,7 @@ func applyByteBudgetOrdered(entries []FileEntry, budget int64, tier func(FileEnt
 		// reviewable file, still overruns, and sets AllDropped — trading a review
 		// that would have fit for ErrPayloadFullyDropped. A ledger that cannot fit
 		// therefore sheds like any other entry.
-		if entries[i].shedExempt && clampSize(entries[i].Size) <= budget {
+		if funded[i] {
 			continue
 		}
 		dropped[i] = true

@@ -340,15 +340,45 @@ func TestBudget_RepositoryFileNamedLikeTheLedgerIsNotExempt(t *testing.T) {
 // nothing can be dropped — the one shape that separates "the sum was too big"
 // from "something was actually shed".
 func TestBudget_TruncatedReflectsTheShedThatHappened(t *testing.T) {
+	// The fixture changed, the invariant did not. This was built from TWO
+	// shed-exempt ledger entries that each fitted the budget while their sum did
+	// not, giving "the total overruns and yet nothing is shedable".
+	//
+	// That shape is now UNREACHABLE BY CONSTRUCTION. Epic 35.16.8 added a second
+	// synthetic section, so two exempt entries could jointly overrun a small
+	// budget and shed every reviewable file to fund sections that left no room for
+	// code; the exemption is therefore funded CUMULATIVELY, and the funded set
+	// always sums to <= budget. If every entry is exempt and all are funded, the
+	// total is within budget and the pass returns before shedding anything. (Two
+	// ledgers never occur in production either — TestRangeBuilder_EmitsExactlyOneLedgerEntry
+	// pins exactly one; the pair was only ever a device for building this shape.)
+	//
+	// What must still hold, and is asserted in BOTH directions below: Truncated
+	// describes the shed that ACTUALLY happened, never the arithmetic that
+	// predicted one. status.json publishes it, internal/benchmark maps it to
+	// OutcomeIncomplete, and refitFallbackPayload takes its re-fit arm on it — so
+	// a flag set without a corresponding drop reports a complete review as partial
+	// and re-renders a payload nothing changed.
+
+	// Direction 1 — nothing shed: the funded section and the code both fit.
 	a := newClaimLedgerEntry("CLAIMS A")
 	a.Size = 40
-	b := newClaimLedgerEntry("CLAIMS B")
-	b.Size = 40
-	kept, tr := ApplyByteBudget([]FileEntry{a, b}, 50)
-	assert.Len(t, kept, 2, "nothing is shedable, so everything survives")
+	kept, tr := ApplyByteBudget([]FileEntry{a, {Path: "a.go", Size: 5, Body: "a"}}, 50)
+	assert.Len(t, kept, 2, "everything fits, so everything survives")
 	assert.Empty(t, tr.FilesDropped)
 	assert.False(t, tr.Truncated, "nothing was dropped, so nothing was truncated")
-	assert.False(t, tr.AllDropped, "there was no reviewable file to lose")
+	assert.False(t, tr.AllDropped, "the reviewable file survived")
+
+	// Direction 2 — something WAS shed: the record must name it, not just flag it.
+	b := newClaimLedgerEntry("CLAIMS B")
+	b.Size = 80
+	kept2, tr2 := ApplyByteBudget([]FileEntry{b, {Path: "a.go", Size: 10, Body: "a"}}, 50)
+	assert.True(t, tr2.Truncated, "an exempt section the budget cannot fund is a real shed")
+	assert.Equal(t, []string{ClaimLedgerPath}, tr2.FilesDropped,
+		"a truncated record must name what it dropped")
+	assert.Equal(t, []string{"a.go"}, keptPaths(kept2),
+		"the reviewable file survives; the unfundable section does not displace it")
+	assert.False(t, tr2.AllDropped, "reviewable content survived, so this is not an all-dropped payload")
 }
 
 // The complement: an ordinary shed still reports Truncated, so the fix above
