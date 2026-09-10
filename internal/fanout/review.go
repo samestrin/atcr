@@ -238,6 +238,15 @@ type PreparedReview struct {
 	// --all/--dir run (Sprint 35.0 Story 4/5), captured at prepare time. nil for
 	// diff-range reviews, which never touch the index. See CommitBaselineIndex.
 	baseline *baselineWriteback
+	// claimLedger is the claim-ledger outcome of the RangeBuilder this preparation
+	// actually built (Epic 35.16.7), captured so ExecuteResume can stamp it onto
+	// the finalized manifest. A resume re-runs buildPayloads against a freshly
+	// loaded config, so the ledger it produces can differ from the interrupted
+	// run's; copying the manifest verbatim would keep asserting the old outcome.
+	// nil on every path with no range to read — the baseline (--all/--dir) and
+	// --diff-file preparations — which leaves the manifest's field untouched, the
+	// same "no range was ever asked" meaning claimLedgerStatus records.
+	claimLedger *payload.ClaimLedgerStatus
 }
 
 // baselineWriteback is the write-back state captured while a baseline payload is
