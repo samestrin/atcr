@@ -134,6 +134,22 @@ func TestProjectConfig_MaxClaimBytesNegativeRejected(t *testing.T) {
 	assert.Contains(t, err.Error(), "max_claim_bytes")
 }
 
+// The registry tier carries its own copy of the guard (Registry.validate), so
+// the project-tier case above proves nothing about it — a registry.yaml with a
+// negative value has to be rejected at load by its own check.
+func TestRegistry_MaxClaimBytesNegativeRejected(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, `
+providers:
+  p:
+    api_key_env: KEY
+agents:
+  bruce: {provider: p, model: m}
+max_claim_bytes: -1
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "max_claim_bytes")
+}
+
 // A hand-built Settings{} — an embedder's, or a test roster's — must NOT silently
 // ship with the ledger switched off. That is the failure the pointer exists to
 // prevent: 0 is both Go's zero value and a meaningful setting, so an unresolved
