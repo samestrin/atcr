@@ -800,9 +800,56 @@ func (t PrefetchTier) String() string {
 // a drop be recorded rather than silent, and a reviewer shown no section cannot
 // tell "nothing was retrieved" from "everything retrieved was shed".
 func renderPrefetchSection(kept []PrefetchSnippet, dropped []PrefetchDrop) string {
-	// Stub: T4a is not implemented yet. A deliberate wrong answer so the RED
-	// tests fail on behavior while the package still compiles.
-	return ""
+	if len(kept) == 0 && len(dropped) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(prefetchSectionStart)
+	b.WriteByte('\n')
+
+	for _, s := range kept {
+		b.WriteString(prefetchNotePrefix)
+		b.WriteString(s.Path)
+		b.WriteByte(':')
+		b.WriteString(strconv.Itoa(s.Start))
+		b.WriteByte('-')
+		b.WriteString(strconv.Itoa(s.End))
+		b.WriteString(" (")
+		b.WriteString(s.Tier.String())
+		b.WriteString(" to ")
+		b.WriteString(s.Symbol)
+		b.WriteString(")\n")
+		// Anchor every source line with its real HEAD line number. This is the
+		// safety property as much as a convenience: because each content line
+		// begins with "L<digits>: ", a retrieved body carrying a section marker
+		// cannot open a spoofed file section.
+		line := s.Start
+		for _, src := range strings.Split(s.Body, "\n") {
+			b.WriteByte('L')
+			b.WriteString(strconv.Itoa(line))
+			b.WriteString(": ")
+			b.WriteString(src)
+			b.WriteByte('\n')
+			line++
+		}
+	}
+
+	for _, d := range dropped {
+		b.WriteString(prefetchNotePrefix)
+		b.WriteString("dropped ")
+		b.WriteString(d.Path)
+		b.WriteString(" (")
+		b.WriteString(d.Symbol)
+		b.WriteString(", tier ")
+		b.WriteString(d.Tier.String())
+		b.WriteString(", ")
+		b.WriteString(strconv.Itoa(d.Bytes))
+		b.WriteString(" bytes) - over the pre-fetch byte cap\n")
+	}
+
+	b.WriteString(prefetchSectionEnd)
+	b.WriteByte('\n')
+	return b.String()
 }
 
 // identifierTokens splits line into identifier-shaped runs, in source order.
