@@ -654,12 +654,12 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 //     files-mode payload where it previously stayed silent.)
 //  3. An agent whose declared window drives its effective budget to 0 takes an
 //     arm that ships exactly one entry, chosen by keepSmallestEntry
-//     (internal/fanout/review.go:3389) on len(Body) — which may be the ledger,
+//     (internal/fanout/review.go:3402) on len(Body) — which may be the ledger,
 //     leaving that reviewer claims and no code. The section's NOT-IN-PAYLOAD
 //     verdict exists so that reviewer reports nothing rather than a full sheet
 //     of false UNSUPPORTED findings.
 //  4. The sentinel can reach a published artifact. droppedPathsExcept
-//     (internal/fanout/review.go:2869) builds its dropped list from every entry
+//     (internal/fanout/review.go:2882) builds its dropped list from every entry
 //     but the kept one, so "<claims>" can appear in Truncation.FilesDropped and
 //     from there in status.json's files_dropped, alongside real repository
 //     paths.
@@ -677,14 +677,14 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 //  6. An on_overflow=truncate FALLBACK whose budget cannot fund BOTH the ledger
 //     and a reviewable file re-fits WITHOUT the ledger. The re-fit re-sizes
 //     every entry to len(Body)
-//     (internal/fanout/review.go:3533-3537) before shedding, which turns the
+//     (internal/fanout/review.go:3546-3550) before shedding, which turns the
 //     bounded exemption in ApplyByteBudget — shedExempt AND clampSize(Size) <=
 //     budget — into a real comparison for the one entry that carries Size 0 on
 //     every other path. TWO routes drop it, so a budget >= the ledger is NOT
 //     enough to keep it: the bound itself sheds a ledger larger than the
 //     budget, and a budget that clears the bound but cannot also fund a file
 //     sheds every reviewable file to fund the ledger — which trips AllDropped
-//     and reroutes to keepSmallestEntry (internal/fanout/review.go:3552-3558).
+//     and reroutes to keepSmallestEntry (internal/fanout/review.go:3565-3571).
 //     That reroute keeps the SMALLEST ENTRY by len(Body), so it drops the
 //     ledger only while some reviewable file is smaller than the ledger. When
 //     every file is LARGER, the same branch keeps the ledger and sheds all the
@@ -708,7 +708,7 @@ const ClaimLedgerPath = "<claims>"
 // sufficient: a ledger larger than the budget sheds on the bound itself, and a
 // ledger that clears the bound but leaves nothing over for a file sheds through
 // the AllDropped reroute to keepSmallestEntry
-// (internal/fanout/review.go:3552-3558) — but only while some reviewable file
+// (internal/fanout/review.go:3565-3571) — but only while some reviewable file
 // is smaller than the ledger, since that reroute keeps the smallest ENTRY and
 // will keep the ledger itself when every file is larger (accepted consequence
 // #6 above).
