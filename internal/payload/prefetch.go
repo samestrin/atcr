@@ -852,6 +852,70 @@ func renderPrefetchSection(kept []PrefetchSnippet, dropped []PrefetchDrop) strin
 	return b.String()
 }
 
+// PrefetchContextPath is the sentinel Path carried by the Context Definitions
+// FileEntry, mirroring ClaimLedgerPath. Like that one it is exported so callers
+// can RECOGNIZE the entry, and like that one it is deliberately NOT what the
+// byte-budget exemption keys on — a reviewed repository can legitimately contain
+// a file named "<context>", and that file IS reviewable.
+const PrefetchContextPath = "<context>"
+
+// newPrefetchEntry builds the Context Definitions FileEntry.
+//
+// Size 0 and shedExempt mirror the claim ledger exactly, and for the same
+// reason: the section's value depends on every reviewer in a fan-out seeing the
+// SAME context, so a section some agents received and others did not would be
+// worse than none. Its bytes are bounded by max_prefetch_bytes instead of by
+// payload_byte_budget.
+//
+// The accepted consequences of carrying a synthetic section as a FileEntry are
+// enumerated on ClaimLedgerPath and apply here too — with one deliberately
+// mitigated: buildPayloads derives its reported file count from
+// ReviewableCount rather than len(kept), so a second synthetic entry does not
+// inflate the count a reviewer and the manifest see.
+func newPrefetchEntry(section string) FileEntry {
+	return FileEntry{Path: PrefetchContextPath, Size: 0, Body: section, shedExempt: true}
+}
+
+// PrefetchStatus reports what the pre-fetch pass produced for a range.
+//
+// It exists for the reason ClaimLedgerStatus does: an absent section, a disabled
+// feature and a failed lookup are byte-for-byte identical in every artifact
+// otherwise, and they are opposite operational signals.
+type PrefetchStatus struct {
+	Present   bool `json:"present"`
+	Snippets  int  `json:"snippets"`
+	Dropped   int  `json:"dropped,omitempty"`
+	Truncated bool `json:"truncated,omitempty"`
+	Disabled  bool `json:"disabled,omitempty"`
+	Failed    bool `json:"failed,omitempty"`
+}
+
+// looksLikeTestFile reports whether rel is a test file, enabling the AC6
+// mock-cue scan for it. The forms cover the conventions of the languages
+// astgroup embeds parsers for, not Go alone.
+func looksLikeTestFile(rel string) bool {
+	base := strings.ToLower(path.Base(rel))
+	return strings.HasSuffix(base, "_test.go") ||
+		strings.HasPrefix(base, "test_") ||
+		strings.HasSuffix(base, "_test.py") ||
+		strings.Contains(base, ".test.") ||
+		strings.Contains(base, ".spec.") ||
+		strings.Contains(base, "_spec.")
+}
+
+// buildPrefetch runs the whole pre-fetch pass for a range: extract the changed
+// symbols, resolve them to consuming call sites, retrieve snippets, cap them,
+// and render the section.
+//
+// It returns the rendered section, the retrieved spans keyed by path (for the
+// grounding threading), and a status. It never returns an error: pre-fetching is
+// an additional review input, so every failure degrades to empty context.
+func (g *gitRunner) buildPrefetch(base, head string) (section string, spans map[string][]LineRange, status PrefetchStatus) {
+	// Stub: T4b is not implemented yet. A deliberate wrong answer so the RED
+	// tests fail on behavior while the package still compiles.
+	return "", nil, PrefetchStatus{}
+}
+
 // identifierTokens splits line into identifier-shaped runs, in source order.
 //
 // It is a lexer-free scan for the same reason internal/reconcile's own token

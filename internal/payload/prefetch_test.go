@@ -565,3 +565,128 @@ func TestRenderPrefetchSection_SanitizesBodyMarkerInjection(t *testing.T) {
 		require.NotEqual(t, "evil.go", e.Path, "no section may be attributed to the injected path")
 	}
 }
+
+// prefetchEntryOf returns the Context Definitions entry and its index, or -1.
+func prefetchEntryOf(entries []FileEntry) (FileEntry, int) {
+	for i, e := range entries {
+		if e.Path == PrefetchContextPath {
+			return e, i
+		}
+	}
+	return FileEntry{}, -1
+}
+
+func TestRangeBuilder_InjectsContextForAnUntouchedConsumer(t *testing.T) {
+	// The end-to-end AC5 shape at the payload seam: the diff changes ReadStore's
+	// return type in store.go, and consumer.go — absent from the diff — arrives in
+	// the payload anyway.
+	dir, base, head := prefetchRepo(t)
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	entries, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+
+	entry, at := prefetchEntryOf(entries)
+	require.NotEqual(t, -1, at, "a resolvable consumer must produce a Context Definitions entry")
+	require.Contains(t, entry.Body, "consumer.go")
+	require.Contains(t, entry.Body, "Reconcile", "the consuming function must be shown")
+}
+
+func TestRangeBuilder_PrefetchEntryFollowsTheClaimLedger(t *testing.T) {
+	// "The ledger leads the payload" is asserted in three other tests. The context
+	// entry must slot in after it, never displace it.
+	dir, base, head := prefetchRepo(t)
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	entries, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+
+	_, at := prefetchEntryOf(entries)
+	require.NotEqual(t, -1, at)
+	for i, e := range entries {
+		if e.Path == ClaimLedgerPath {
+			require.Less(t, i, at, "the claim ledger must still precede the context section")
+		}
+	}
+}
+
+func TestRangeBuilder_PrefetchEntryIsUncountedAndModeless(t *testing.T) {
+	// Size 0 keeps the section out of byte-budget accounting so it never displaces
+	// diff content; an empty Mode keeps it out of the escalated-file bookkeeping.
+	dir, base, head := prefetchRepo(t)
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	entries, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+
+	entry, at := prefetchEntryOf(entries)
+	require.NotEqual(t, -1, at)
+	require.Zero(t, entry.Size, "the section must never displace diff content")
+	require.Empty(t, entry.Mode, "a modeless entry is never mistaken for an escalated file")
+}
+
+func TestRangeBuilder_PrefetchSectionIsByteIdenticalAcrossModes(t *testing.T) {
+	// AC3: every agent in one fan-out receives the same section. Separate builders
+	// over the same range pin this as a property of the RANGE, not of one memo.
+	dir, base, head := prefetchRepo(t)
+	modes := []PayloadMode{ModeDiff, ModeBlocks, ModeFiles}
+
+	var bodies []string
+	for _, m := range modes {
+		fresh := NewRangeBuilder(context.Background(), dir, base, head)
+		entries, err := fresh.BuildEntries(m)
+		require.NoError(t, err)
+		entry, at := prefetchEntryOf(entries)
+		require.NotEqualf(t, -1, at, "mode %v must carry a context section", m)
+		bodies = append(bodies, entry.Body)
+	}
+	require.Equal(t, bodies[0], bodies[1], "diff and blocks must render identical context")
+	require.Equal(t, bodies[0], bodies[2], "files must render identical context")
+}
+
+func TestRangeBuilder_ZeroMaxPrefetchBytesDisablesEntirely(t *testing.T) {
+	// 0 is the operator's off switch: no context entry, and the status says so
+	// rather than looking like a run that simply found nothing.
+	dir, base, head := prefetchRepo(t)
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head, WithMaxPrefetchBytes(0))
+	entries, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+
+	_, at := prefetchEntryOf(entries)
+	require.Equal(t, -1, at, "a disabled run must inject no context entry")
+	require.True(t, rb.PrefetchStatus().Disabled)
+}
+
+func TestRangeBuilder_ChangedLinesIncludesRetrievedSpans(t *testing.T) {
+	// The Q2 decision, and the epic's whole point: isGrounded drops any finding on
+	// a file the patch did not touch, so a retrieved consumer must become
+	// groundable over exactly the span that was shown.
+	dir, base, head := prefetchRepo(t)
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	_, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+	cl, err := rb.BuildChangedLines()
+	require.NoError(t, err)
+
+	fc, ok := cl["consumer.go"]
+	require.True(t, ok, "a retrieved consumer must be groundable")
+	require.NotEmpty(t, fc.Ranges, "the groundable region must be the span that was shown")
+}
+
+func TestRangeBuilder_ChangedLinesLeavesGenuinelyChangedFilesAlone(t *testing.T) {
+	// A file the diff DID change keeps its own ranges: overwriting them with a
+	// snippet span would shrink the groundable region of real changed code.
+	dir, base, head := prefetchRepo(t)
+
+	plain, err := BuildChangedLines(context.Background(), dir, base, head)
+	require.NoError(t, err)
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	withPrefetch, err := rb.BuildChangedLines()
+	require.NoError(t, err)
+
+	require.Equal(t, plain["store.go"], withPrefetch["store.go"],
+		"the changed file's grounding data must be untouched by pre-fetching")
+}

@@ -194,6 +194,16 @@ type gitRunner struct {
 	// between the two meanings and is the only place that may.
 	maxClaimBytes int64
 
+	// maxPrefetchBytes is the ceiling on the rendered Context Definitions section
+	// (Epic 35.16.8), resolved from max_prefetch_bytes and applied via
+	// WithMaxPrefetchBytes. 0 means pre-fetching is DISABLED — no `git grep` runs
+	// and no retrieved source reaches a provider.
+	//
+	// It shares maxClaimBytes's convention, not the "<= 0 means unlimited" one
+	// used by payload_byte_budget: the section is shed-exempt, so this ceiling is
+	// the only thing bounding it.
+	maxPrefetchBytes int64
+
 	// state holds the whole-range caches for the current base..head pair.
 	// Access only via forRange, which resets state when the range changes.
 	state rangeState
@@ -221,6 +231,9 @@ func newGitRunner(ctx context.Context, repo string) *gitRunner {
 		// Matches registry.DefaultMaxClaimBytes; a caller that resolves the setting
 		// overrides it through WithMaxClaimBytes.
 		maxClaimBytes: DefaultMaxClaimBytes,
+		// Matches registry.DefaultMaxPrefetchBytes; a caller that resolves the
+		// setting overrides it through WithMaxPrefetchBytes.
+		maxPrefetchBytes: DefaultMaxPrefetchBytes,
 	}
 }
 
