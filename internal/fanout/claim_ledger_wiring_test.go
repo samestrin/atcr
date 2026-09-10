@@ -374,8 +374,17 @@ func ledgerAndOneFileEntry(t *testing.T) (ledger, file payload.FileEntry) {
 // so the re-fit tests derive their band from them instead of hardcoding it: a
 // change to a fixture then moves the band with it rather than silently leaving
 // a test asserting one mechanism while exercising another.
+//
+// It assumes a SINGLE-mode roster, and asserts that rather than trusting it.
+// The counts are read off one built payload and Go randomizes map iteration
+// order, so a mixed-mode roster would return diff-mode or blocks-mode bytes at
+// random and every band precondition derived from them would go flaky. Both
+// callers narrow cfg.Project.Agents to one agent, so neededModes yields one
+// mode; the check below turns that accident into an enforced precondition.
 func refitEntryBytes(t *testing.T, payloads map[string]modePayload) (ledger, smallestFile int64) {
 	t.Helper()
+	require.Len(t, payloads, 1,
+		"refitEntryBytes assumes a single-mode roster: with two modes the bytes it returns depend on map iteration order")
 	for _, mp := range payloads {
 		var l, smallest int64
 		for _, e := range mp.Entries {
