@@ -689,14 +689,17 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 //     never trips AllDropped, and keepSmallestEntry skips empty bodies
 //     (internal/fanout/review.go:3409-3411) so it cannot win the reroute — a
 //     0-byte py.typed beside a 10 KB file leaves the ledger in place with no
-//     code funded. TWO routes drop it, so a budget >= the ledger is NOT
-//     enough to keep it: the bound itself sheds a ledger larger than the
-//     budget, and a budget that clears the bound but cannot also fund a file
-//     sheds every reviewable file to fund the ledger — which trips AllDropped
-//     and reroutes to keepSmallestEntry (internal/fanout/review.go:3565-3571).
-//     That reroute keeps the SMALLEST ENTRY by len(Body), so it drops the
-//     ledger only while some reviewable file is smaller than the ledger. When
-//     every file is LARGER, the same branch keeps the ledger and sheds all the
+//     code funded. The bound and the reroute are two stages of one pass, not
+//     two independent drop routes, and the ledger's absence has one terminal
+//     predicate: it is absent from the re-fit payload iff some reviewable
+//     entry has 0 < len(Body) < len(ledger.Body) AND the budget cannot fund
+//     ledger plus that entry. A ledger larger than the budget sheds on the
+//     bound, but that alone never leaves it absent — the emptied payload
+//     trips AllDropped and the reroute brings the ledger BACK when no smaller
+//     non-empty file exists (budget 50, ledger 100, one 200-byte file: both
+//     shed, then keepSmallestEntry (internal/fanout/review.go:3565-3571)
+//     returns the ledger itself). When every reviewable file is LARGER, the
+//     same branch keeps the ledger and sheds all the
 //     code — consequence #3's shape reached by a different route. That backup
 //     reviews the same persona over the same range
 //     as its primary and adjudicates no claims, so unlike #2 and #3 the reviewer
