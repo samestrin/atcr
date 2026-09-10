@@ -430,14 +430,7 @@ func refitEntryBytes(t *testing.T, payloads map[string]modePayload) (ledger, sma
 // and still cannot fund it plus one file.
 func claimHeavyRepoFiles(t *testing.T, lines int) (dir, base, head string) {
 	t.Helper()
-	dir = t.TempDir()
-	fanoutGit(t, dir, "init", "-q", "-b", "main")
-
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.go"), []byte("package p\n"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "b.go"), []byte("package p\n"), 0o644))
-	fanoutGit(t, dir, "add", "-A")
-	fanoutGit(t, dir, "commit", "-q", "-m", "seed the two files")
-	base = fanoutGit(t, dir, "rev-parse", "HEAD")
+	dir, base = seedClaimHeavyRepo(t, []byte("package p\n"), []byte("package p\n"))
 
 	big := func(fn string) []byte {
 		var b strings.Builder
@@ -448,17 +441,55 @@ func claimHeavyRepoFiles(t *testing.T, lines int) (dir, base, head string) {
 		b.WriteString("}\n")
 		return []byte(b.String())
 	}
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.go"), big("A"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "b.go"), big("B"), 0o644))
-	fanoutGit(t, dir, "add", "-A")
+	head = commitClaimHeavyHead(t, dir, big("A"), big("B"))
+	return dir, base, head
+}
+
+// claimLedgerCommitMessage is the commit message both claim-heavy fixtures use
+// to drive a ~8 KiB ledger: 40 claims of 120 w's.
+//
+// It has exactly ONE definition deliberately. The ledger's rendered size is the
+// axis every re-fit band is measured against, so a second copy would let the two
+// fixtures drift into different bands while both still looked correct — the
+// drift the plan's own risk table named ("AC2's new test duplicates the existing
+// one and both drift together" → "Share claimHeavyRepo").
+func claimLedgerCommitMessage() string {
 	var msg strings.Builder
 	msg.WriteString("a branch that asserts a great deal\n\n")
 	for i := 0; i < 40; i++ {
 		msg.WriteString("- claim " + itoa(i) + ": " + strings.Repeat("w", 120) + "\n")
 	}
-	fanoutGit(t, dir, "commit", "-q", "-m", msg.String())
-	head = fanoutGit(t, dir, "rev-parse", "HEAD")
-	return dir, base, head
+	return msg.String()
+}
+
+// seedClaimHeavyRepo inits a repo, writes the two seed bodies, commits them and
+// returns the dir plus the base sha.
+//
+// The seed and head BODIES stay per-fixture rather than being folded in here:
+// the two claim-heavy fixtures differ in file size on purpose, and that
+// difference is which re-fit band each one reaches. Only the scaffolding and the
+// ledger-producing message are shared.
+func seedClaimHeavyRepo(t *testing.T, aSeed, bSeed []byte) (dir, base string) {
+	t.Helper()
+	dir = t.TempDir()
+	fanoutGit(t, dir, "init", "-q", "-b", "main")
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.go"), aSeed, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "b.go"), bSeed, 0o644))
+	fanoutGit(t, dir, "add", "-A")
+	fanoutGit(t, dir, "commit", "-q", "-m", "seed the two files")
+	return dir, fanoutGit(t, dir, "rev-parse", "HEAD")
+}
+
+// commitClaimHeavyHead writes the head bodies, commits them under the shared
+// claim-heavy message and returns the head sha.
+func commitClaimHeavyHead(t *testing.T, dir string, aBody, bBody []byte) string {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.go"), aBody, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "b.go"), bBody, 0o644))
+	fanoutGit(t, dir, "add", "-A")
+	fanoutGit(t, dir, "commit", "-q", "-m", claimLedgerCommitMessage())
+	return fanoutGit(t, dir, "rev-parse", "HEAD")
 }
 
 // claimHeavyRepo inverts paddedClaimingRepo's proportions: two tiny files behind
