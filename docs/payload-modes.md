@@ -115,11 +115,11 @@ Every payload has a byte budget — `payload_byte_budget`, default **524288 byte
 - Whole files are dropped, **largest-first** by size rank (ties broken by path), keeping as many files as fit within the budget — huge generated files and lockfiles are shed before small source files.
 - A budget of **`0` means unlimited** (nothing dropped); a negative budget is rejected at validation.
 - Every drop is **recorded in the agent's `status.json`** — what was dropped and why is never silent.
-- **One entry is exempt, up to a point:** the shed passes over the [claim ledger](#claims-to-verify) **while the ledger fits the budget**. If the budget cannot fund both, diff content is dropped and the ledger is kept. The exemption stops there: a ledger larger than the whole budget sheds like any other entry, because shedding every file to fund it would fund nothing and leave the reviewer holding claims and no code.
+- **Two engine-rendered sections are exempt, up to a point:** the shed passes over the [claim ledger](#claims-to-verify) and the pre-fetched **Context Definitions** block **while each fits the budget**. If the budget cannot fund both a section and the diff, diff content is dropped and the section is kept. The exemption stops there: a section larger than the whole budget sheds like any other entry, because shedding every file to fund it would fund nothing and leave the reviewer holding claims and no code. Each section is bounded by its own ceiling rather than by `payload_byte_budget` — `max_claim_bytes` and `max_prefetch_bytes` respectively, both documented in [registry.md](registry.md).
 
 ## Claims to verify
 
-Every review over a git range carries one extra payload section, ahead of the diff: the **claim ledger**. It lists what the branch's commit messages assert, and asks each reviewer to rule on every claim against what the diff actually does.
+Every review over a git range carries the **claim ledger** ahead of the diff — one of up to two engine-rendered sections prepended to a payload, alongside the pre-fetched **Context Definitions** block described under [`max_prefetch_bytes`](registry.md). It lists what the branch's commit messages assert, and asks each reviewer to rule on every claim against what the diff actually does.
 
 The problem it solves is a defect no amount of reviewer diversity catches. A commit message says a fix was made; the diff does not contain it. Every added line is correct, the tests pass, and the change that was promised is simply absent — and an absent change leaves no trace in a diff, so a reviewer reading only added and removed lines has nothing to react to. Only the claim makes the absence detectable.
 
