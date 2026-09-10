@@ -764,6 +764,47 @@ func allTrue(n int) []bool {
 	return mask
 }
 
+// Rendered Context Definitions markers. Like the skeleton markers, they avoid
+// every prefix the rendered-payload splitter treats as the start of a new file
+// section (isRenderedEntryStart) and every prefix the diff scanner reads, so the
+// block folds into the payload instead of opening a spoofed section.
+const (
+	prefetchSectionStart = ">>> CONTEXT DEFINITIONS <<<"
+	prefetchSectionEnd   = ">>> END CONTEXT DEFINITIONS <<<"
+	// prefetchNotePrefix leads every non-source line inside the block.
+	prefetchNotePrefix = "[context] "
+)
+
+// String names a tier for the rendered drop ledger.
+func (t PrefetchTier) String() string {
+	switch t {
+	case PrefetchTierSimilarity:
+		return "similarity"
+	case PrefetchTierReference:
+		return "reference"
+	default:
+		return "unknown"
+	}
+}
+
+// renderPrefetchSection formats the retrieved snippets as a payload block, or
+// returns "" when there is nothing to say at all.
+//
+// Every source line is emitted with an "L<n>: " anchor. The anchor is the safety
+// property, exactly as in renderSkeleton: because each content line begins with
+// "L<digits>: ", no rendered line can start with a payload section marker even
+// if the retrieved source did — so a repository cannot inject a spoofed file
+// section through a snippet body.
+//
+// A non-empty drop ledger is rendered even when NOTHING was kept. AC7 asks that
+// a drop be recorded rather than silent, and a reviewer shown no section cannot
+// tell "nothing was retrieved" from "everything retrieved was shed".
+func renderPrefetchSection(kept []PrefetchSnippet, dropped []PrefetchDrop) string {
+	// Stub: T4a is not implemented yet. A deliberate wrong answer so the RED
+	// tests fail on behavior while the package still compiles.
+	return ""
+}
+
 // identifierTokens splits line into identifier-shaped runs, in source order.
 //
 // It is a lexer-free scan for the same reason internal/reconcile's own token
