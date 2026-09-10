@@ -146,6 +146,7 @@ findings[N|]{severity|"file:line"|problem|fix|category|est_minutes|evidence|revi
 - **`N`:** the array header carries the true total finding count.
 - **Escaping is faithful, not lossy:** unlike the per-source stream's `|`→`/` neutralization, the axi encoder quotes any field containing the delimiter, a colon, a reserved token (`true`/`false`/`null`), a number-like value, or a control character, using only TOON's five escapes (`\\ \" \n \r \t`). Control/ANSI bytes have no TOON escape and are stripped, so the payload is structurally free of escape sequences.
 - **Additive signals:** a finding's optional severity `disagreement` annotation and its `verification` / `evidence_exec` JSON blocks (below) surface as additive `disagreement` / `verification.*` / `evidence_exec.*` columns when any finding in the payload carries them, so the axi payload is a superset — never a lossy subset — of the JSON form.
+- **Column names are lower-case here and upper-case in the pipe stream — normalise before keying on them.** The TOON header declares `severity`, `file:line`, `est_minutes`; the `atcr-findings/v1` grammar above declares `SEVERITY`, `FILE:LINE`, `EST_MINUTES`. The two name the same nine fields in the same order and only the casing differs, so a consumer that reads both of atcr's own output formats must case-normalise its key lookup. One that does not gets rows which decode perfectly and then key to nothing, with no parse error to point at.
 
 ## Parsing rules
 

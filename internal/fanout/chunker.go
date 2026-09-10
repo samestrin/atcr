@@ -78,12 +78,26 @@ func countLines(s string) int {
 //
 // splitDiffFiles glues that preamble onto the FIRST segment so no bytes are
 // lost, which means chunk 1 of a range payload carries the claim ledger's lines
-// while countDiffFiles still reports only the real files. Counting them against
-// max_context_lines attributes them to a file's diff: the oversize warning then
-// fires on a single small file whose own diff is comfortably inside the limit,
-// and names a line count that file did not produce. The ledger is uncounted in
-// the byte budget by the same reasoning (payload.newClaimLedgerEntry sets
-// Size 0) — it is engine-rendered framing, not reviewable diff content.
+// while countDiffFiles still reports only the real files. Subtracting them is
+// the WARNING MESSAGE's file attribution and nothing else: reporting them as
+// the named file's diff would state a line count that file did not produce, so
+// the message names them separately instead.
+//
+// The GATE deliberately runs on the UNSUBTRACTED delivered total. Every line of
+// the chunk is dispatched, so a chunk over max_context_lines overflows the
+// window whichever part of it is a file's diff, and the warning therefore fires
+// by design for a file whose own diff sits comfortably inside the cap. Do not
+// move this subtraction back into that comparison: it would silence the
+// reachable band ml < deliveredLines <= ml + prefixLines. See the
+// oversize-warning block in review.go (the fileLines/preambleNote split) for
+// the full argument.
+//
+// The ledger is uncounted in the byte budget on the ORDINARY shed
+// (internal/payload's unexported newClaimLedgerEntry, claims.go:716, sets
+// Size 0) — it is engine-rendered framing, not reviewable diff content. The
+// fallback re-fit is the exception: it re-sizes every entry to len(Body)
+// (review.go:3558-3562), and a ledger LARGER THAN that budget then sheds like
+// any other entry; at or below it the shedExempt bound still protects it.
 func diffPrefixLines(chunk string) int {
 	for i, ln := range strings.SplitAfter(chunk, "\n") {
 		if isDiffFileMarker(ln) {

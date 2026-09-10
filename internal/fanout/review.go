@@ -1464,11 +1464,12 @@ func capScopeConstraintForBudget(block string, budget int64, maxSprintPlanBytes 
 
 // capChunks bounds a baseline chunk set to at most max chunks by coalescing the
 // tail (chunks[max-1:]) into a single final chunk — the same ceiling behavior
-// chunkDiff applies to diff chunking (chunker.go:130). It never drops a file: the
-// coalesced final chunk may exceed a single model window, but the alternative — an
-// unbounded slot/goroutine/provider-call count for a huge repository — is the exact
-// cost/DoS vector maxChunksPerAgent exists to prevent (AC 06-01 ES2). A set already
-// within the cap is returned unchanged.
+// chunkDiff applies to diff chunking (the maxChunksPerAgent seal conjunct,
+// chunker.go:195). It never drops a file: the coalesced final chunk
+// may exceed a single model window, but the alternative — an unbounded
+// slot/goroutine/provider-call count for a huge repository — is the exact
+// cost/DoS vector maxChunksPerAgent exists to prevent (AC 06-01 ES2). A set
+// already within the cap is returned unchanged.
 func capChunks(chunks [][]payload.FileEntry, max int) [][]payload.FileEntry {
 	if max <= 0 || len(chunks) <= max {
 		return chunks
@@ -1530,7 +1531,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 	// once.
 	warnedFallbackOverflow := map[string]bool{}
 
-	// Personas are resolved ONCE per agent per run (review.go:2912 TD):
+	// Personas are resolved ONCE per agent per run (the personaFor memo below):
 	// registry.ResolvePersona is a filesystem walk plus read, and renderAgent runs
 	// per chunk per persona — plus once more per fallback re-fit — so an
 	// un-memoized call costs up to 2 x maxChunksPerAgent resolutions per persona
@@ -1737,7 +1738,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		//     cfg.Registry.Agents aborts the whole review before any chunk dispatch
 		//     with `agent "<name>" not found in registry`, matching diff-mode.
 		//
-		//   maxChunksPerAgent cap (AC 06-01 ES2): the chunker.go:99 cap (64) carries
+		//   maxChunksPerAgent cap (AC 06-01 ES2): the chunker.go:164 cap (64) carries
 		//     over unmodified — PartitionByBudget's chunk count is deterministically
 		//     bounded (task 1.1 note), and the (persona × chunk) slot count per
 		//     persona is capped consistently rather than spawning unbounded slots.
@@ -1748,7 +1749,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		//     baseline (persona × chunk) Result values flow through the SAME
 		//     unconditional `results = mergeChunkResults(results, serialAgents)` call
 		//     (review.go:656) that diff-mode already runs — no new call site.
-		//     mergeChunkResults / mergeResultGroup (chunker.go:154 / :196) and
+		//     mergeChunkResults / mergeResultGroup (chunker.go:219 / :284) and
 		//     writePool (artifacts.go:106) need NO changes for baseline provenance:
 		//     same-name results collapse to exactly personaCount source dirs (not
 		//     C × P), findings union across chunks, any-chunk-succeeded => Status OK,
@@ -1777,7 +1778,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				if err != nil {
 					return err
 				}
-				// Bound the slot count at maxChunksPerAgent (chunker.go:99) the same way
+				// Bound the slot count at maxChunksPerAgent (chunker.go:164) the same way
 				// chunkDiff does: coalesce the tail into the final chunk so the fan-out never
 				// spawns an unbounded slot/goroutine/provider-call count while every file is
 				// still delivered whole (AC 06-01 ES2 — capped, never dropped).
@@ -2082,7 +2083,9 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					// Subtracting the preamble here instead would silence the reachable
 					// band ml < deliveredLines <= ml + prefixLines, where chunkDiff still
 					// bin-packs on the unsubtracted countLines and an empty chunk admits
-					// an oversized first segment by construction (chunker.go:180-183).
+					// an oversized first segment by construction — the `cur.Len() > 0`
+					// conjunct at chunker.go:195, whose rationale is stated at
+					// chunker.go:189-191.
 					deliveredLines := countLines(ct)
 					// The MESSAGE is file-attributed: the pre-first-marker preamble is —
 					// on a range payload — the claim ledger, which splitDiffFiles glues
@@ -2106,10 +2109,32 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 						// A MULTI-file chunk can only exceed ml at the maxChunksPerAgent
 						// ceiling: normal packing seals a chunk before it overflows, so the
 						// sole way many files land in one over-budget chunk is chunkDiff's
-						// coalesce-into-final-chunk cap (chunker.go:130). Flag it pre-dispatch
-						// with distinct "ceiling" wording so the broken "each chunk fits the
-						// window" invariant is not silent; if the oversized call then fails it
-						// is additionally counted in UnreviewedChunks post-dispatch.
+						// coalesce-into-final-chunk cap (the maxChunksPerAgent seal conjunct,
+						// chunker.go:195). Flag it pre-dispatch with distinct "ceiling"
+						// wording so the broken "each chunk fits the window" invariant is not
+						// silent; if the oversized call then fails it is additionally counted
+						// in UnreviewedChunks post-dispatch.
+						//
+						// On THIS arm prefixLines is provably 0, so deliveredLines ==
+						// fileLines and the two are interchangeable here. Only chunk 1 can
+						// carry a preamble (splitDiffFiles glues it onto the first segment),
+						// and chunkDiff seals chunk 1 on the UNSUBTRACTED countLines before
+						// it overflows — so a chunk holding two or more markers necessarily
+						// has countLines <= ml. That step assumes maxChunksPerAgent >= 2:
+						// the seal conjunct is `len(chunks) < maxChunksPerAgent-1`, so at a
+						// ceiling of 1 it never holds, chunk 1 becomes the coalescing chunk,
+						// carries the preamble, and can be both multi-file and over ml — at
+						// which point prefixLines > 0 and this conclusion collapses. The
+						// premise is satisfied at the declared 64, but it is load-bearing:
+						// re-tuning that constant means re-checking this argument.
+						//
+						// A multi-file chunk can exceed ml only as the coalesced final
+						// chunk, which carries no preamble. Reverting just this arm to
+						// `fileLines > ml` is therefore behaviour-preserving: the two
+						// expressions are equal whenever prefixLines is 0, which is the
+						// condition established above. deliveredLines is kept for symmetry
+						// with the single-file arm above, where the distinction is real and
+						// pinned by test.
 						fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: a %d-file chunk (%d lines)%s exceeds max_context_lines (%d); the %d-chunk ceiling was reached, so remaining files were coalesced into one oversized chunk (may overflow the model)\n", name, fileCount, fileLines, preambleNote, ml, maxChunksPerAgent)
 					}
 				}

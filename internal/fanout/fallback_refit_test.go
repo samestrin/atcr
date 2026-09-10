@@ -818,7 +818,10 @@ func TestBuildFallbackAgent_TruncateWithoutEntriesStillWarnsAndShips(t *testing.
 	}
 }
 
-// Benchmark for the review.go:2912 TD row: in the multi-chunk baseline
+// Benchmark for the persona-resolution TD row, whose subject is `personaFor` /
+// `resolvedPersonas` in review.go — named by identifier rather than by line
+// number, because a line number is re-aimed at an unrelated construct by any
+// insertion above it. In the multi-chunk baseline
 // configuration every chunk's primary render — and every fallback re-fit —
 // resolved the persona from disk again. 48 files x 100 KB partitions into 24
 // chunks for greta's declared window, and each chunk overflows kai's undeclared
@@ -862,7 +865,8 @@ func BenchmarkBuildSlots_MultiChunkBaselineWithRefits(b *testing.B) {
 	}
 }
 
-// TD (review.go:2795): the re-fit's budget pass sums FileEntry.Size (the
+// TD (`refitFallbackPayload`'s budget pass in review.go — named by identifier
+// for the same reason as the benchmark above): that pass sums FileEntry.Size (the
 // pre-render source size) while the bytes dispatched are len(Body). Entries
 // whose sizes fit kai's budget but whose BODIES do not must still be re-fit —
 // sizing the shed on the source bytes means the keep-decision is made against a
