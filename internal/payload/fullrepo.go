@@ -432,7 +432,7 @@ func ensureWithinRoot(root, abs, rel string) error {
 //	Oversized-single-file rule (AC 01-03 Happy Path Scenario 3):
 //	  A single entry whose clampSize(Size) alone exceeds chunkBudget becomes its
 //	  OWN whole chunk — never split, never dropped — mirroring chunkDiff's
-//	  single-file-never-split convention (chunker.go:106-108) and deliberately
+//	  single-file-never-split convention (chunker.go:172-174) and deliberately
 //	  diverging from ApplyByteBudget's drop-to-fit behavior, so the "zero files
 //	  silently omitted" contract holds even for over-budget singletons.
 //
