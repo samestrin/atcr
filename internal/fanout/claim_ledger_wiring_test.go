@@ -368,6 +368,79 @@ func ledgerAndOneFileEntry(t *testing.T) (ledger, file payload.FileEntry) {
 	return
 }
 
+// refitEntryBytes reports the ledger's rendered byte count and the smallest
+// reviewable file's, read off the payload actually built. Those two numbers
+// decide which side of the exemption's bound a given fallback budget falls on,
+// so the re-fit tests derive their band from them instead of hardcoding it: a
+// change to a fixture then moves the band with it rather than silently leaving
+// a test asserting one mechanism while exercising another.
+func refitEntryBytes(t *testing.T, payloads map[string]modePayload) (ledger, smallestFile int64) {
+	t.Helper()
+	for _, mp := range payloads {
+		var l, smallest int64
+		for _, e := range mp.Entries {
+			if e.Path == payload.ClaimLedgerPath {
+				l = int64(len(e.Body))
+				continue
+			}
+			if b := int64(len(e.Body)); smallest == 0 || b < smallest {
+				smallest = b
+			}
+		}
+		if l > 0 && smallest > 0 {
+			return l, smallest
+		}
+	}
+	t.Fatal("precondition: no built payload carried both a claim ledger and a reviewable file")
+	return
+}
+
+// claimHeavyRepoFiles is claimHeavyRepo with the two files sized by the caller:
+// each one's rendered entry grows with lines.
+//
+// The size is a parameter because the fallback re-fit's behaviour turns on how
+// the files compare to the ledger, and claimHeavyRepo's 222-byte files can only
+// reach one of the two bands. The re-fit is gated on inheritedPayloadFits, which
+// sums the primary's CodeContext — and the ledger is ABSENT from CodeContext
+// (accepted consequence #5 in internal/payload/claims.go: the audit seam
+// discards everything above the first diff marker). So the gate opens only below
+// the reviewable files' combined bytes, and with 222-byte files no budget large
+// enough to hold an 8 KiB ledger ever re-fits at all. Larger files raise the
+// gate above the ledger and open the band where the budget exceeds the ledger
+// and still cannot fund it plus one file.
+func claimHeavyRepoFiles(t *testing.T, lines int) (dir, base, head string) {
+	t.Helper()
+	dir = t.TempDir()
+	fanoutGit(t, dir, "init", "-q", "-b", "main")
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.go"), []byte("package p\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "b.go"), []byte("package p\n"), 0o644))
+	fanoutGit(t, dir, "add", "-A")
+	fanoutGit(t, dir, "commit", "-q", "-m", "seed the two files")
+	base = fanoutGit(t, dir, "rev-parse", "HEAD")
+
+	big := func(fn string) []byte {
+		var b strings.Builder
+		b.WriteString("package p\n\nfunc " + fn + "() {\n")
+		for i := 0; i < lines; i++ {
+			b.WriteString("\t_ = " + itoa(i) + " // " + strings.Repeat("z", 20) + "\n")
+		}
+		b.WriteString("}\n")
+		return []byte(b.String())
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.go"), big("A"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "b.go"), big("B"), 0o644))
+	fanoutGit(t, dir, "add", "-A")
+	var msg strings.Builder
+	msg.WriteString("a branch that asserts a great deal\n\n")
+	for i := 0; i < 40; i++ {
+		msg.WriteString("- claim " + itoa(i) + ": " + strings.Repeat("w", 120) + "\n")
+	}
+	fanoutGit(t, dir, "commit", "-q", "-m", msg.String())
+	head = fanoutGit(t, dir, "rev-parse", "HEAD")
+	return dir, base, head
+}
+
 // claimHeavyRepo inverts paddedClaimingRepo's proportions: two tiny files behind
 // a commit message long enough to render a ~8 KiB ledger. That is the shape in
 // which the ledger is the LARGEST entry, which is what it takes to drive it past
@@ -414,10 +487,18 @@ func TestClaimLedger_RefitBelowTheLedgersBytesDropsIt(t *testing.T) {
 	dir, base, head := claimHeavyRepo(t)
 
 	cfg := sizingRosterConfig()
-	// greta declares a window whose byte budget (6664) sits above the two files
-	// (222 bytes each) and below the ledger (~8.1 KiB) — the one band in which
-	// the re-fit sheds the ledger and keeps real code.
-	small := 6000
+	// greta declares a window whose byte budget (392) sits above one 222-byte
+	// file and below the 8111-byte ledger — the band in which the exemption's own
+	// clampSize(Size) <= budget bound sheds the ledger while real code survives.
+	//
+	// The window is 12288 tokens above the budget's token cost because
+	// EffectiveByteBudget reserves BOTH the 8192-token output cap and the
+	// 4096-token prompt overhead before converting at 7/2 bytes per token:
+	// (12400 - 8192 - 4096) * 7 / 2 = 392. The 6000 that stood here omitted that
+	// reservation, so the real budget was 0, every entry shed, and the ledger was
+	// lost through the AllDropped reroute instead — a different mechanism, which
+	// the assertions below now separate rather than assume.
+	small := 12400
 	g := cfg.Registry.Agents["greta"]
 	g.ContextWindowTokens = &small
 	cfg.Registry.Agents["greta"] = g
@@ -443,15 +524,99 @@ func TestClaimLedger_RefitBelowTheLedgersBytesDropsIt(t *testing.T) {
 	require.True(t, primaryHasLedger,
 		"precondition: the primary's budget holds the ledger, so the asymmetry is the fallback's alone")
 
+	ledgerBytes, smallestFile := refitEntryBytes(t, payloads)
+
 	for _, fb := range s.Fallbacks {
 		require.True(t, fb.Truncation.Truncated,
 			"precondition: the fallback must actually have re-fit, or this proves nothing")
+		// Pin the BAND, not just the symptom. THREE mechanisms can strip the
+		// ledger on this path and they are not interchangeable, so a test that
+		// only asserts "the ledger is gone" can silently start proving a
+		// different one. This case is the exemption's own bound: too small to
+		// hold the ledger, big enough that a reviewable file still fits.
+		require.Positive(t, fb.EffectiveBudget,
+			"precondition: a 0 budget sheds every entry and reroutes through keepSmallestEntry — a different mechanism")
+		require.Less(t, fb.EffectiveBudget, ledgerBytes,
+			"precondition: this band is a budget BELOW the ledger, where clampSize(Size) <= budget fails and the bound sheds it")
+		require.GreaterOrEqual(t, fb.EffectiveBudget, smallestFile,
+			"precondition: a reviewable file must still fit, or AllDropped trips and keepSmallestEntry does the work instead")
+
+		// Exactly the ledger plus the one file that did not fit, which with three
+		// entries means exactly one reviewable file survived. A longer list means
+		// every file shed and the reroute is doing the work.
+		require.Len(t, fb.Truncation.FilesDropped, 2,
+			"the ledger and the one file that did not fit; a longer list means the fixture left the band")
 		assert.Contains(t, fb.Truncation.FilesDropped, payload.ClaimLedgerPath,
 			"a ledger larger than the fallback's budget sheds like any other entry")
 		_, ok := payload.ClaimLedgerPromptSection(fb.Prompt)
 		assert.False(t, ok,
 			"the re-fit fallback reviews the same range with no claims to adjudicate — the third exception")
-		assert.NotEmpty(t, fb.Truncation.FilesDropped,
-			"the shed record must name what the reviewer did not receive")
+	}
+}
+
+// The half the shipping docs had backwards: a fallback whose budget EXCEEDS the
+// ledger's bytes still loses it. The exemption's bound PASSES here (8111 <=
+// 9492), so the ledger is kept and every reviewable file sheds to fund it —
+// which is precisely what AllDropped means, and refitFallbackPayload reroutes to
+// keepSmallestEntry. That keeps the smallest ENTRY, a ~5 KB file here, so the
+// ledger is the entry that goes.
+//
+// Fitting the budget is therefore necessary but not sufficient. The fixture's
+// files are deliberately SMALLER than the ledger: when every file is larger,
+// the same branch keeps the LEDGER and sheds all the code instead. Both
+// preconditions are asserted below rather than assumed, because the two
+// outcomes come out of one branch and look alike from the outside.
+func TestClaimLedger_RefitAboveTheLedgersBytesStillDropsIt(t *testing.T) {
+	dir, base, head := claimHeavyRepoFiles(t, 150)
+
+	cfg := sizingRosterConfig()
+	// (15000 - 8192 output - 4096 overhead) * 7 / 2 = 9492: above the 8111-byte
+	// ledger, below ledger + one 5169-byte file, and below the two files'
+	// combined bytes so inheritedPayloadFits fails and the re-fit gate opens.
+	small := 15000
+	g := cfg.Registry.Agents["greta"]
+	g.ContextWindowTokens = &small
+	cfg.Registry.Agents["greta"] = g
+	kai := cfg.Registry.Agents["kai"]
+	kai.Fallback = "greta"
+	cfg.Registry.Agents["kai"] = kai
+	cfg.Project.Agents = []string{"kai"}
+	cfg.Settings.OnOverflow = OverflowTruncate
+
+	payloads, _, err := buildPayloads(context.Background(), cfg, dir, base, head, false)
+	require.NoError(t, err)
+
+	var slots []Slot
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: base, Head: head}, "", "", false)
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, slots, "precondition: the roster must produce a slot")
+	s := slots[0]
+	require.NotEmpty(t, s.Fallbacks, "precondition: kai must resolve its greta fallback")
+
+	_, primaryHasLedger := payload.ClaimLedgerPromptSection(s.Primary.Prompt)
+	require.True(t, primaryHasLedger,
+		"precondition: the primary's budget holds the ledger, so the asymmetry is the fallback's alone")
+
+	ledgerBytes, smallestFile := refitEntryBytes(t, payloads)
+
+	for _, fb := range s.Fallbacks {
+		require.True(t, fb.rePacked,
+			"precondition: the fallback must actually have re-fit, or this proves nothing")
+		require.GreaterOrEqual(t, fb.EffectiveBudget, ledgerBytes,
+			"the whole point of this case: the budget EXCEEDS the ledger, so the exemption's clampSize(Size) <= budget bound PASSES and cannot be what sheds it")
+		require.Less(t, fb.EffectiveBudget, ledgerBytes+smallestFile,
+			"precondition: the budget must not fund the ledger AND a file, or nothing sheds at all")
+		require.Less(t, smallestFile, ledgerBytes,
+			"precondition: a reviewable file must be smaller than the ledger, or keepSmallestEntry keeps the LEDGER and sheds the code instead")
+
+		_, ok := payload.ClaimLedgerPromptSection(fb.Prompt)
+		assert.False(t, ok,
+			"a budget larger than the ledger is not enough to keep it: every file shed to fund it, AllDropped tripped, and keepSmallestEntry kept a file instead")
+		assert.Contains(t, fb.Truncation.FilesDropped, payload.ClaimLedgerPath,
+			"the shed record must name the ledger the reviewer did not receive")
+		require.Len(t, fb.Truncation.FilesDropped, 2,
+			"the ledger plus the file keepSmallestEntry did not keep — one reviewable file must survive, or this is the empty-payload case instead")
 	}
 }
