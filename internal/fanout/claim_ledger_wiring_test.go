@@ -677,6 +677,13 @@ func TestClaimLedger_RefitAboveTheLedgersBytesStillDropsIt(t *testing.T) {
 
 	ledgerBytes, smallestFile := refitEntryBytes(t, payloads)
 
+	// A FIXTURE invariant, asserted once where the two numbers are read rather
+	// than re-checked per fallback: it references neither fb nor anything the loop
+	// below varies. Inside the loop it read as a property of the CODE, which it is
+	// not — what the code DOES with it is asserted in the loop.
+	require.Less(t, smallestFile, ledgerBytes,
+		"precondition: a reviewable file must be smaller than the ledger, or keepSmallestEntry keeps the LEDGER and sheds the code instead")
+
 	for _, fb := range s.Fallbacks {
 		require.True(t, fb.rePacked,
 			"precondition: the fallback must actually have re-fit, or this proves nothing")
@@ -684,8 +691,15 @@ func TestClaimLedger_RefitAboveTheLedgersBytesStillDropsIt(t *testing.T) {
 			"the whole point of this case: the budget EXCEEDS the ledger, so the exemption's clampSize(Size) <= budget bound PASSES and cannot be what sheds it")
 		require.Less(t, fb.EffectiveBudget, ledgerBytes+smallestFile,
 			"precondition: the budget must not fund the ledger AND a file, or nothing sheds at all")
-		require.Less(t, smallestFile, ledgerBytes,
-			"precondition: a reviewable file must be smaller than the ledger, or keepSmallestEntry keeps the LEDGER and sheds the code instead")
+		// The BEHAVIOURAL consequence that fixture invariant sets up, which is what
+		// the comment above this test actually claims: keepSmallestEntry kept a
+		// reviewable FILE, not the ledger. Asserted on the kept body's SIZE rather
+		// than its path, so it does not depend on how two equal-sized fixture files
+		// tie-break.
+		require.Len(t, fb.CodeContext, 1,
+			"the reroute keeps exactly one entry")
+		require.EqualValues(t, smallestFile, len(fb.CodeContext[0].Body),
+			"the kept entry is a smallest-sized reviewable file — this is how we know keepSmallestEntry kept code and not the ledger")
 
 		_, ok := payload.ClaimLedgerPromptSection(fb.Prompt)
 		assert.False(t, ok,
