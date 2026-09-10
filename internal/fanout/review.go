@@ -2076,18 +2076,33 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			if warnOversized {
 				for _, ct := range chunks {
 					fileCount := countDiffFiles(ct)
-					// Exclude the pre-first-marker preamble — on a range payload that is
-					// the claim ledger, which splitDiffFiles glues onto the first segment.
-					// countDiffFiles never counts it as a file, so counting its lines here
-					// would charge them to a file's diff.
-					lineCount := countLines(ct) - diffPrefixLines(ct)
+					// The GATE runs on the delivered total: every line of the chunk,
+					// preamble included, is dispatched to the model, so a chunk over ml
+					// overflows regardless of which part of it is a file's diff.
+					// Subtracting the preamble here instead would silence the reachable
+					// band ml < deliveredLines <= ml + prefixLines, where chunkDiff still
+					// bin-packs on the unsubtracted countLines and an empty chunk admits
+					// an oversized first segment by construction (chunker.go:180-183).
+					deliveredLines := countLines(ct)
+					// The MESSAGE is file-attributed: the pre-first-marker preamble is —
+					// on a range payload — the claim ledger, which splitDiffFiles glues
+					// onto the first segment. countDiffFiles never counts it as a file, so
+					// reporting its lines as the file's diff would name a line count that
+					// file did not produce. Name them separately instead, so the operator
+					// can still reconstruct the delivered total.
+					prefixLines := diffPrefixLines(ct)
+					fileLines := deliveredLines - prefixLines
+					preambleNote := ""
+					if prefixLines > 0 {
+						preambleNote = fmt.Sprintf(" plus %d engine-rendered preamble line(s)", prefixLines)
+					}
 					// == 1 (not <= 1): a chunk with zero diff-file markers is a non-diff
 					// payload, not a single oversized file — labeling it "a single file's
 					// diff" would mislabel a whole multi-file files/blocks payload as one
 					// file. Only a genuine single-file diff (exactly one marker) qualifies.
-					if fileCount == 1 && lineCount > ml {
-						fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: a single file's diff (%d lines) exceeds max_context_lines (%d); sent as its own oversized chunk\n", name, lineCount, ml)
-					} else if fileCount > 1 && lineCount > ml {
+					if fileCount == 1 && deliveredLines > ml {
+						fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: a single file's diff (%d lines)%s exceeds max_context_lines (%d); sent as its own oversized chunk\n", name, fileLines, preambleNote, ml)
+					} else if fileCount > 1 && deliveredLines > ml {
 						// A MULTI-file chunk can only exceed ml at the maxChunksPerAgent
 						// ceiling: normal packing seals a chunk before it overflows, so the
 						// sole way many files land in one over-budget chunk is chunkDiff's
@@ -2095,7 +2110,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 						// with distinct "ceiling" wording so the broken "each chunk fits the
 						// window" invariant is not silent; if the oversized call then fails it
 						// is additionally counted in UnreviewedChunks post-dispatch.
-						fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: a %d-file chunk (%d lines) exceeds max_context_lines (%d); the %d-chunk ceiling was reached, so remaining files were coalesced into one oversized chunk (may overflow the model)\n", name, fileCount, lineCount, ml, maxChunksPerAgent)
+						fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: a %d-file chunk (%d lines)%s exceeds max_context_lines (%d); the %d-chunk ceiling was reached, so remaining files were coalesced into one oversized chunk (may overflow the model)\n", name, fileCount, fileLines, preambleNote, ml, maxChunksPerAgent)
 					}
 				}
 			}

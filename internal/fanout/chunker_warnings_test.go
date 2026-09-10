@@ -196,7 +196,9 @@ func TestStatusFor_SurfacesUnreviewedChunks(t *testing.T) {
 // lines land in chunk 1 while countDiffFiles still reports one file. Charging
 // them to the file makes the oversize warning fire on a single small file whose
 // own diff is comfortably inside max_context_lines, and report a line count that
-// file did not produce.
+// file did not produce. The chunk still overflows — 38 delivered lines against a
+// 20-line cap — so the warning must fire; what the preamble must not do is show
+// up as the FILE's line count.
 func TestBuildSlots_ChunkedPreambleIsNotChargedToTheFile(t *testing.T) {
 	cfg := twoAgentConfig("http://unused")
 	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
@@ -215,8 +217,14 @@ func TestBuildSlots_ChunkedPreambleIsNotChargedToTheFile(t *testing.T) {
 		_, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 		require.NoError(t, err)
 	})
-	require.NotContains(t, out, "exceeds max_context_lines",
-		"the pre-marker preamble is not the file's diff; charging it to the file warns about a file that fits")
+	require.Contains(t, out, "exceeds max_context_lines",
+		"38 delivered lines against a 20-line cap overflows; the gate runs on what is dispatched")
+	require.Contains(t, out, "(8 lines)",
+		"the pre-marker preamble is not the file's diff; the reported count is the file's own")
+	require.NotContains(t, out, "(38 lines)",
+		"reporting the raw total names a line count the file did not produce")
+	require.Contains(t, out, "30 engine-rendered preamble line(s)",
+		"the preamble is named separately so the delivered total stays reconstructable")
 }
 
 // The preamble lines ARE dispatched to the model, so the overflow GATE must run
