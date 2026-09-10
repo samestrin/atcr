@@ -115,6 +115,33 @@ Every payload has a byte budget — `payload_byte_budget`, default **524288 byte
 - Whole files are dropped, **largest-first** by size rank (ties broken by path), keeping as many files as fit within the budget — huge generated files and lockfiles are shed before small source files.
 - A budget of **`0` means unlimited** (nothing dropped); a negative budget is rejected at validation.
 - Every drop is **recorded in the agent's `status.json`** — what was dropped and why is never silent.
+- **One entry is exempt, up to a point:** the shed passes over the [claim ledger](#claims-to-verify) **while the ledger fits the budget**. If the budget cannot fund both, diff content is dropped and the ledger is kept. The exemption stops there: a ledger larger than the whole budget sheds like any other entry, because shedding every file to fund it would fund nothing and leave the reviewer holding claims and no code.
+
+## Claims to verify
+
+Every review over a git range carries one extra payload section, ahead of the diff: the **claim ledger**. It lists what the branch's commit messages assert, and asks each reviewer to rule on every claim against what the diff actually does.
+
+The problem it solves is a defect no amount of reviewer diversity catches. A commit message says a fix was made; the diff does not contain it. Every added line is correct, the tests pass, and the change that was promised is simply absent — and an absent change leaves no trace in a diff, so a reviewer reading only added and removed lines has nothing to react to. Only the claim makes the absence detectable.
+
+Each claim gets one of four verdicts, each citing the `file:line` that settles it:
+
+| Verdict | Meaning |
+|---------|---------|
+| `VERIFIED` | The diff contains the claimed change. |
+| `CONTRADICTED` | The diff does something that conflicts with the claim. |
+| `UNSUPPORTED` | The diff neither implements nor conflicts with the claim, because it does not touch the named behavior. **This is the finding-worthy one** — it is the verdict for a change that is absent. |
+| `NOT-IN-PAYLOAD` | The claim names a file this particular payload does not contain. Not a finding: a per-agent shed can hand one reviewer a subset of the branch, and absent from one payload is not absent from the branch. |
+
+How the claims are built:
+
+- **From `git log --no-merges` over `base..head`.** A merge commit's message is git's own boilerplate, not an assertion its author made, so merges are excluded.
+- **Deterministically, with no model in the path.** One claim per bullet, else one per sentence, with each commit's subject line always its own claim. A summarizing pass between the author's assertion and the panel's adjudication is precisely where "the fix is described but absent" would be softened into "the fix is described", which the diff then satisfies. The same range therefore always produces byte-identical claims.
+- **Identically for every agent in a fan-out, on the normal path.** The ledger is built once per review range and the byte-budget shed passes over it, so no reviewer receives a different set of claims from any other. Three exceptions are known and deliberate, recorded in the code that creates them (`internal/payload/claims.go`): under `review_strategy: chunked` the ledger rides the **first chunk only**, because chunking splits the payload text on diff-file markers and the ledger sits above the first of them; an agent whose declared window drives its effective budget to **0** ships exactly one entry, which may be the ledger **alone**; and under `on_overflow: truncate` a fallback whose own budget is **smaller than the ledger** re-fits without it, because the re-fit sizes every entry by the bytes it will actually dispatch and the exemption is bounded by the budget (see below). The `NOT-IN-PAYLOAD` verdict above is what keeps the second case from producing a sheet of false `UNSUPPORTED` findings; in the third the reviewer simply receives no claims section at all.
+- **Under a byte cap.** The read is capped at 8 KiB (`DefaultMaxClaimBytes`), shedding the oldest commits first so the branch tip's claims always survive. When the cap truncates, the section says so — a truncated ledger that looked complete would leave a reviewer adjudicating what is present and never learning a claim was withheld.
+
+A branch whose commits assert nothing renders **no section at all** rather than an empty header, and a range with no changed files gets no ledger.
+
+**Two costs of the exemption, worth knowing:** on the ordinary shed the ledger's bytes are not counted against `payload_byte_budget` or against any per-agent window (hence the deliberately small 8 KiB cap) — the one exception is the fallback re-fit, which re-sizes every entry to the bytes it will actually dispatch and so counts the ledger like any other entry — and can therefore shed it, since the exemption only holds while the ledger fits the budget. And it occupies one entry in the payload, so a range review's reported changed-file count is one higher than the number of files the range changed.
 
 ## Changed-region markers (`files` mode)
 

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"strings"
 	"unicode"
 
@@ -45,7 +46,7 @@ func newDebtBackfillCmd() *cobra.Command {
 			"touch. Each line is named by a `<shard>:<line>` locator whose shard name has\n" +
 			"had terminal-driving runes stripped and token-breaking ones percent-encoded,\n" +
 			"so it may not be the literal filename on disk. Where two names reduce to the\n" +
-			"same token, each gets a `#xxxxxx` suffix — the first 6 hex of sha256 over the\n" +
+			"same token, each gets a `#xxxxxxxxxxxx` suffix — the first 12 hex of sha256 over the\n" +
 			"raw filename — so the listing never leaves it ambiguous which file would be\n" +
 			"rewritten. The suffix is appended only where a collision exists.",
 		Args: usageArgs(cobra.NoArgs),
@@ -134,23 +135,7 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 		// security value is the operator understanding that a suffix means "this is not
 		// the plain name you think it is", and nothing else on this surface says so.
 		//
-		// A locator counts as suffixed when it differs from the bare sanitized name,
-		// rather than by searching for a "#" — a shard genuinely named with a "#" would
-		// otherwise summon a legend explaining a suffix that was never appended.
-		//
-		// Emitted only when at least one locator carries a suffix, matching the suffix's
-		// own conditional appearance: an unconditional legend on every ordinary run is a
-		// line the operator learns to skip, and it is most needed on the runs that are
-		// not ordinary.
-		for _, c := range res.Changes {
-			if locators[c.Shard] != sanitizeLocator(c.Shard) {
-				_, _ = fmt.Fprint(cmd.OutOrStdout(),
-					"  note: some shard names collide once unprintable runes are stripped; "+
-						"#xxxxxx is the first 6 hex of sha256 over the RAW filename, appended only "+
-						"to tell colliding names apart — it is not part of the file's name\n")
-				break
-			}
-		}
+		writeLocatorLegend(cmd.OutOrStdout(), locators, res.Changes)
 
 		for _, c := range res.Changes {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %s:%d %q\n    before: %q\n    after:  %q\n",
@@ -273,8 +258,35 @@ func reportPartialBackfill(cmd *cobra.Command, res localdebt.BackfillResult) {
 	_, _ = fmt.Fprintf(w, "partial write: %d %s already rewritten in place before the failure:\n",
 		len(res.Changes), pluralLines(len(res.Changes)))
 	locators := locatorNames(res.ShardNames, res.Changes)
+	writeLocatorLegend(w, locators, res.Changes)
 	for _, c := range res.Changes {
 		_, _ = fmt.Fprintf(w, "  %s:%d %q\n", locators[c.Shard], c.Line, c.ID)
+	}
+}
+
+// writeLocatorLegend emits the collision legend when any rendered locator carries a
+// suffix. Both surfaces that render locators — the dry-run listing and the
+// partial-write report — promise the operator the same treatment, so both route
+// through here: on a half-mutated store the operator must map "2026-08.jsonl#<12 hex>"
+// back to a physical file, and an unexplained suffix reads as part of the filename.
+//
+// A locator counts as suffixed when it differs from the bare sanitized name,
+// rather than by searching for a "#" — a shard genuinely named with a "#" would
+// otherwise summon a legend explaining a suffix that was never appended.
+//
+// Emitted only when at least one locator carries a suffix, matching the suffix's
+// own conditional appearance: an unconditional legend on every ordinary run is a
+// line the operator learns to skip, and it is most needed on the runs that are
+// not ordinary.
+func writeLocatorLegend(w io.Writer, locators map[string]string, changes []localdebt.JustificationChange) {
+	for _, c := range changes {
+		if locators[c.Shard] != sanitizeLocator(c.Shard) {
+			_, _ = fmt.Fprint(w,
+				"  note: some shard names collide once unprintable runes are stripped; "+
+					"#xxxxxxxxxxxx is the first 12 hex of sha256 over the RAW filename, appended only "+
+					"to tell colliding names apart — it is not part of the file's name\n")
+			break
+		}
 	}
 }
 

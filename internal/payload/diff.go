@@ -182,6 +182,18 @@ type gitRunner struct {
 	// newGitRunner behaves exactly as it did before escalation existed.
 	escalation EscalationConfig
 
+	// maxClaimBytes is the ceiling on the commit-message text the claim ledger
+	// reads (Epic 35.16.7), resolved from the max_claim_bytes setting and applied
+	// via WithMaxClaimBytes. 0 means the ledger is DISABLED — no commit text is
+	// read or sent to a provider at all.
+	//
+	// It deliberately does NOT share the "<= 0 means unlimited" convention
+	// commitMessages uses for its own maxBytes parameter: there is no unbounded
+	// setting here, because the ledger's bytes are exempt from every byte budget
+	// and this ceiling is the only thing bounding them. claimLedger translates
+	// between the two meanings and is the only place that may.
+	maxClaimBytes int64
+
 	// state holds the whole-range caches for the current base..head pair.
 	// Access only via forRange, which resets state when the range changes.
 	state rangeState
@@ -206,6 +218,9 @@ func newGitRunner(ctx context.Context, repo string) *gitRunner {
 		dir:        repo,
 		logger:     log.FromContext(ctx),
 		escalation: DefaultEscalationConfig(),
+		// Matches registry.DefaultMaxClaimBytes; a caller that resolves the setting
+		// overrides it through WithMaxClaimBytes.
+		maxClaimBytes: DefaultMaxClaimBytes,
 	}
 }
 

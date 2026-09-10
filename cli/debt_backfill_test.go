@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/samestrin/atcr/internal/localdebt"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -470,8 +472,25 @@ func TestDebtBackfillJustifications_DryRunDisambiguatesAgainstAnUnchangedShardOn
 	// that a suffix means "this is not the plain name you think it is".
 	assert.Contains(t, out, "shard names collide once unprintable runes are stripped",
 		"a suffixed listing must say why the names are suffixed")
-	assert.Contains(t, out, "#xxxxxx",
-		"and name the suffix's form, so the operator can tell it from a real filename")
+	assert.Contains(t, out, "#xxxxxxxxxxxx",
+		"and name the suffix's real form — 12 hex, matching locatorSuffixHexLen — "+
+			"so the operator can tell it from a real filename")
+	assert.Contains(t, out, "first 12 hex",
+		"the derivation note must state the actual digest length, not a stale 6")
+}
+
+// The Long help repeats the legend's instruction to operators running with no
+// collision in front of them. It must state the same digest length the code
+// actually appends: an operator following a stale "6 hex" note computes a digest
+// that matches no printed token and concludes the suffix is part of the filename.
+func TestDebtBackfillJustifications_LongHelpStatesTheRealSuffixLength(t *testing.T) {
+	long := newDebtBackfillCmd().Long
+	assert.Contains(t, long, "#xxxxxxxxxxxx",
+		"help must show the 12-hex form the locator actually carries")
+	assert.Contains(t, long, "first 12 hex",
+		"help must state the actual digest length, not a stale 6")
+	assert.NotContains(t, long, "#xxxxxx ",
+		"no stale 6-hex placeholder may survive in the help text")
 }
 
 // The disambiguator stays a collision remedy when the store holds other shards: a name
@@ -761,4 +780,62 @@ func TestDebtBackfillJustifications_NamesTheShardsAlreadyRewrittenWhenThePassFai
 	require.NoError(t, err)
 	assert.Contains(t, string(b), "```",
 		"the fixture must really have written the first shard, or this test proves nothing")
+}
+
+// A partial-write listing can carry a suffixed locator (its shard set is the store's
+// whole walk, collisions and all), and it prints under WORSE conditions than the dry
+// run: the store is already half-mutated and the operator must identify the physical
+// file to reconcile or restore. Its own header promises "the same treatment" as the
+// dry-run listing, so the collision legend must appear here too — an unexplained
+// "#a1b2c3d4e5f6" on a half-mutated store reads as part of the filename.
+func TestDebtBackfillPartialWriteExplainsASuffixedLocator(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	res := localdebt.BackfillResult{
+		ShardNames: []string{"2026-08.jsonl", "2026-08\u200b.jsonl"},
+		Changes: []localdebt.JustificationChange{
+			{Shard: "2026-08\u200b.jsonl", Line: 1, ID: "aaaa1111", Before: "b", After: "a"},
+		},
+	}
+	reportPartialBackfill(cmd, res)
+	assert.Contains(t, stderr.String(), "2026-08.jsonl#",
+		"the planted twin's locator must actually be suffixed, or this test proves nothing")
+	assert.Contains(t, stderr.String(), "collide once unprintable runes are stripped",
+		"a suffixed partial-write locator owes the operator the same legend the dry run prints")
+	assert.Contains(t, stderr.String(), "#xxxxxxxxxxxx",
+		"and the legend must name the suffix's real form")
+}
+
+// The early return on an empty change set is what keeps a failure BEFORE the first
+// write silent: without it, a failed run prints "partial write: 0 lines already
+// rewritten in place" — telling the operator an append-only store was mutated when
+// it was not. This drives a real backfill failure that publishes nothing (the store
+// path is a regular file, so the pass fails before any shard is touched) and pins
+// the silence.
+func TestDebtBackfillFailureWithNoPublishedChangePrintsNoPartialWrite(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	require.NoError(t, os.WriteFile(store, []byte("not a directory\n"), 0o600))
+	reviewRoot := filepath.Join(root, "reviews")
+	require.NoError(t, os.MkdirAll(reviewRoot, 0o750))
+
+	code, out := execCmdCapture(t, "debt", "backfill-justifications",
+		"--store", store, "--review-root", reviewRoot)
+	require.NotEqual(t, 0, code, "a backfill over an unusable store must fail")
+	assert.NotContains(t, out, "partial write",
+		"a failure that published nothing must not claim the store was mutated")
+}
+
+// The same guard, pinned at unit level: an empty change set means nothing landed,
+// and the report must stay silent — stderr included.
+func TestDebtBackfillPartialReportStaysSilentOnAnEmptyChangeSet(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	reportPartialBackfill(cmd, localdebt.BackfillResult{ShardNames: []string{"2026-08.jsonl"}})
+	assert.Empty(t, stdout.String(), "no partial-write report on stdout")
+	assert.Empty(t, stderr.String(), "no partial-write report on stderr")
 }

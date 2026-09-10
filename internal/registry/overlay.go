@@ -43,6 +43,7 @@ var sharedSettingsKeys = []string{
 	"max_parallel",
 	"cache_max_bytes",
 	"max_sprint_plan_bytes",
+	"max_claim_bytes",
 	"fail_on",
 	"consensus",
 }

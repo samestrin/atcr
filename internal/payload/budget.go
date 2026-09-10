@@ -18,14 +18,34 @@ type FileEntry struct {
 	// read what a reviewer saw per file, not just per agent. Empty on entries
 	// built outside the changed-file path (baseline/full-repo scans).
 	Mode PayloadMode
+	// shedExempt marks the claim-ledger entry, the one contribution the byte
+	// budget passes over rather than shedding. It is UNEXPORTED on purpose: only
+	// this package can set it (newClaimLedgerEntry), so the exemption cannot be
+	// forged from outside — including by a repository. Keying on Path would have
+	// been forgeable: angle brackets are illegal in a path only on Windows, so a
+	// PR that adds a file literally named "<claims>" would otherwise get an
+	// unshedable entry that is also excluded from the reviewable accounting
+	// behind AllDropped. Struct assignment copies unexported fields, so the flag
+	// survives the fallback re-fit's re-sizing copy in internal/fanout.
+	shedExempt bool
 }
 
 // Truncation records what a byte-budget pass dropped. It is ALWAYS returned by
 // ApplyByteBudget (never silent): Truncated=false with an empty FilesDropped
 // means nothing was dropped. FilesDropped is sorted by path for stable output.
-// AllDropped is true when the input was non-empty but every file was shed —
-// callers should surface this as a distinct error rather than forwarding an
-// empty payload that silently produces zero findings.
+// AllDropped is true when the input held reviewable files but every one of them
+// was shed — callers should surface this as a distinct error rather than
+// forwarding a payload that silently produces zero findings.
+//
+// "Reviewable" excludes the shed-exempt claim-ledger entry (identified by the
+// unexported shedExempt sentinel, never by its path — a repository can contain a
+// file named ClaimLedgerPath, and that file IS reviewable). So kept may be
+// NON-EMPTY while AllDropped is true: it
+// then holds the ledger and no code. Reading AllDropped as "the kept slice is
+// empty" would miss exactly that case, and it is the one that matters — a
+// reviewer handed claims with no diff returns a false-clean review. AllDropped
+// is published as all_dropped in status.json, so this definition is part of the
+// artifact contract, not just an internal one.
 type Truncation struct {
 	Truncated    bool     `json:"truncated"`
 	FilesDropped []string `json:"files_dropped"`
@@ -106,22 +126,103 @@ func applyByteBudgetOrdered(entries []FileEntry, budget int64, tier func(FileEnt
 		if used <= budget {
 			break
 		}
+		// The claim ledger is exempt from every shed. It is the one payload
+		// section whose value depends on reaching EVERY reviewer identically: a
+		// ledger some agents got and others did not is a ledger whose absence
+		// looks exactly like a branch that claimed nothing. The exemption lives
+		// here, in the shared ordered pass, rather than in either public wrapper —
+		// ApplyByteBudgetPreferEscalated falls back into ApplyByteBudget on the
+		// tight budgets where the ledger matters most, and three shed sites call
+		// ApplyByteBudget directly and never touch the wrapper at all.
+		//
+		// Keyed on the unexported shedExempt sentinel, never on Size and never on
+		// Path. The ledger is BUILT with Size 0, so on every ordinary shed it is
+		// uncounted and the exemption costs nothing. But the fallback re-fit
+		// re-sizes every entry to len(Body) before shedding
+		// (refitFallbackPayload), and there the ledger is counted like any other
+		// entry — a size-keyed exemption would quietly stop protecting it on
+		// exactly the tight-budget path it exists for. When it is counted, the
+		// contract holds in the direction the epic requires: diff content sheds
+		// to fund the ledger, never the other way round. Path is not the key
+		// either: ClaimLedgerPath is a legal filename off Windows, so a
+		// repository could otherwise forge the exemption for a real diff entry.
+		//
+		// The exemption is BOUNDED by the budget. "Diff content sheds to fund the
+		// ledger" is only coherent while the budget can actually hold the ledger;
+		// past that, shedding funds nothing. An unbounded exemption drops every
+		// reviewable file, still overruns, and sets AllDropped — trading a review
+		// that would have fit for ErrPayloadFullyDropped. A ledger that cannot fit
+		// therefore sheds like any other entry.
+		if entries[i].shedExempt && clampSize(entries[i].Size) <= budget {
+			continue
+		}
 		dropped[i] = true
 		used -= clampSize(entries[i].Size)
 	}
 
 	kept = make([]FileEntry, 0, len(entries))
 	droppedPaths := make([]string, 0)
+	reviewableIn, reviewableKept := 0, 0
 	for i, e := range entries {
+		if !e.shedExempt {
+			reviewableIn++
+		}
 		if dropped[i] {
 			droppedPaths = append(droppedPaths, e.Path)
 			continue
+		}
+		if !e.shedExempt {
+			reviewableKept++
 		}
 		kept = append(kept, e)
 	}
 	sort.Strings(droppedPaths)
 
-	return kept, Truncation{Truncated: true, FilesDropped: droppedPaths, AllDropped: len(kept) == 0}
+	// AllDropped means "no reviewable file survived", not "the slice is empty".
+	// The exempt ledger keeps the slice non-empty, and a definition keyed on
+	// emptiness would silently retire the caller's ErrPayloadFullyDropped guard
+	// — trading a loud pre-dispatch failure for a reviewer holding claims and no
+	// code, which returns a false-clean "no findings" review.
+	//
+	// Truncated is derived from the shed that HAPPENED, not from total > budget.
+	// The exempt ledger can leave the total over budget with nothing shedable, and
+	// asserting truncation there names nothing as dropped: internal/benchmark
+	// reads truncated as OutcomeIncomplete ("saw only a FRACTION of the diff") and
+	// refitFallbackPayload takes its re-fit arm on it, so a complete review would
+	// be recorded as incomplete and re-rendered unchanged.
+	return kept, Truncation{
+		Truncated:    len(droppedPaths) > 0,
+		FilesDropped: droppedPaths,
+		AllDropped:   reviewableIn > 0 && reviewableKept == 0,
+	}
+}
+
+// ReviewableCount reports how many of entries are REVIEWABLE — every entry
+// except the shed-exempt claim ledger. It is the exported form of the
+// reviewableIn/reviewableKept accounting behind Truncation.AllDropped above, so
+// a shed site OUTSIDE this package derives "reviewable" from the same rule
+// instead of re-deriving it.
+//
+// The rule cannot be re-derived correctly from outside: shedExempt is
+// unexported (only newClaimLedgerEntry sets it, which is what makes the
+// exemption unforgeable), and keying on ClaimLedgerPath is wrong for the reason
+// recorded there — a repository can legitimately contain a file with that name,
+// and that file IS reviewable.
+//
+// internal/fanout's keepSmallestEntry is the caller this exists for. Its
+// Truncation.Truncated answers "was reviewable content dropped", which is a
+// different question from "did the slice shrink": a slot holding one file plus
+// the ledger must answer no, because the re-fit caller reads Truncated=false as
+// "there is no smaller payload to send" and declines — the behavior
+// refitFallbackPayload documents for a slot with nothing left to shed.
+func ReviewableCount(entries []FileEntry) int {
+	n := 0
+	for _, e := range entries {
+		if !e.shedExempt {
+			n++
+		}
+	}
+	return n
 }
 
 // ApplyByteBudgetPreferEscalated is ApplyByteBudget with an escalation-aware

@@ -238,6 +238,15 @@ type PreparedReview struct {
 	// --all/--dir run (Sprint 35.0 Story 4/5), captured at prepare time. nil for
 	// diff-range reviews, which never touch the index. See CommitBaselineIndex.
 	baseline *baselineWriteback
+	// claimLedger is the claim-ledger outcome of the RangeBuilder this preparation
+	// actually built (Epic 35.16.7), captured so ExecuteResume can stamp it onto
+	// the finalized manifest. A resume re-runs buildPayloads against a freshly
+	// loaded config, so the ledger it produces can differ from the interrupted
+	// run's; copying the manifest verbatim would keep asserting the old outcome.
+	// nil on every path with no range to read — the baseline (--all/--dir) and
+	// --diff-file preparations — which leaves the manifest's field untouched, the
+	// same "no range was ever asked" meaning claimLedgerStatus records.
+	claimLedger *payload.ClaimLedgerStatus
 }
 
 // baselineWriteback is the write-back state captured while a baseline payload is
@@ -559,9 +568,14 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 		// produces a manifest byte-identical to earlier versions'.
 		PerFilePayload:     perFileModes(payloads),
 		EscalationDegraded: rb != nil && rb.EscalationDegraded(),
-		Roster:             rosterNames(cfg.Project),
-		StartedAt:          req.StartedAt,
-		Partial:            false, // finalized by ExecuteReview once outcomes are known
+		// Claim-ledger outcome (Epic 35.16.7). nil when there was no RangeBuilder to
+		// read from — the baseline and --diff-file paths — which keeps those
+		// manifests byte-identical to earlier versions' and keeps "no range" distinct
+		// from "range read, ledger absent".
+		ClaimLedger: claimLedgerStatus(rb),
+		Roster:      rosterNames(cfg.Project),
+		StartedAt:   req.StartedAt,
+		Partial:     false, // finalized by ExecuteReview once outcomes are known
 		// Persist --no-ignore so a resume recovers the filtering mode from disk
 		// rather than the resume request (the completed agents' context is locked).
 		NoIgnore: req.NoIgnore,
@@ -1220,6 +1234,11 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 	// TestEscalationOverrides_CopiesEveryFieldToItsOwnTarget.
 	opts = append(opts, payload.WithEscalation(
 		payload.ResolveEscalationConfig(escalationOverrides(cfg.Registry.PayloadEscalation))))
+	// Claim-ledger byte ceiling (Epic 35.16.7, max_claim_bytes). Threaded here
+	// because the ledger's bytes are exempt from every byte budget — including
+	// on_overflow=fail — so this setting is the only operator control over them,
+	// and 0 is the escape hatch that stops commit text reaching a provider at all.
+	opts = append(opts, payload.WithMaxClaimBytes(cfg.Settings.ResolvedMaxClaimBytes()))
 	rb := payload.NewRangeBuilder(ctx, repo, base, head, opts...)
 	out := map[string]modePayload{}
 	for _, mode := range neededModes(cfg) {
@@ -2057,14 +2076,33 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			if warnOversized {
 				for _, ct := range chunks {
 					fileCount := countDiffFiles(ct)
-					lineCount := countLines(ct)
+					// The GATE runs on the delivered total: every line of the chunk,
+					// preamble included, is dispatched to the model, so a chunk over ml
+					// overflows regardless of which part of it is a file's diff.
+					// Subtracting the preamble here instead would silence the reachable
+					// band ml < deliveredLines <= ml + prefixLines, where chunkDiff still
+					// bin-packs on the unsubtracted countLines and an empty chunk admits
+					// an oversized first segment by construction (chunker.go:180-183).
+					deliveredLines := countLines(ct)
+					// The MESSAGE is file-attributed: the pre-first-marker preamble is —
+					// on a range payload — the claim ledger, which splitDiffFiles glues
+					// onto the first segment. countDiffFiles never counts it as a file, so
+					// reporting its lines as the file's diff would name a line count that
+					// file did not produce. Name them separately instead, so the operator
+					// can still reconstruct the delivered total.
+					prefixLines := diffPrefixLines(ct)
+					fileLines := deliveredLines - prefixLines
+					preambleNote := ""
+					if prefixLines > 0 {
+						preambleNote = fmt.Sprintf(" plus %d engine-rendered preamble line(s)", prefixLines)
+					}
 					// == 1 (not <= 1): a chunk with zero diff-file markers is a non-diff
 					// payload, not a single oversized file — labeling it "a single file's
 					// diff" would mislabel a whole multi-file files/blocks payload as one
 					// file. Only a genuine single-file diff (exactly one marker) qualifies.
-					if fileCount == 1 && lineCount > ml {
-						fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: a single file's diff (%d lines) exceeds max_context_lines (%d); sent as its own oversized chunk\n", name, lineCount, ml)
-					} else if fileCount > 1 && lineCount > ml {
+					if fileCount == 1 && deliveredLines > ml {
+						fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: a single file's diff (%d lines)%s exceeds max_context_lines (%d); sent as its own oversized chunk\n", name, fileLines, preambleNote, ml)
+					} else if fileCount > 1 && deliveredLines > ml {
 						// A MULTI-file chunk can only exceed ml at the maxChunksPerAgent
 						// ceiling: normal packing seals a chunk before it overflows, so the
 						// sole way many files land in one over-budget chunk is chunkDiff's
@@ -2072,7 +2110,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 						// with distinct "ceiling" wording so the broken "each chunk fits the
 						// window" invariant is not silent; if the oversized call then fails it
 						// is additionally counted in UnreviewedChunks post-dispatch.
-						fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: a %d-file chunk (%d lines) exceeds max_context_lines (%d); the %d-chunk ceiling was reached, so remaining files were coalesced into one oversized chunk (may overflow the model)\n", name, fileCount, lineCount, ml, maxChunksPerAgent)
+						fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: a %d-file chunk (%d lines)%s exceeds max_context_lines (%d); the %d-chunk ceiling was reached, so remaining files were coalesced into one oversized chunk (may overflow the model)\n", name, fileCount, fileLines, preambleNote, ml, maxChunksPerAgent)
 					}
 				}
 			}
@@ -2802,12 +2840,20 @@ func derefInt64(p *int64) int64 {
 // accounts for each occurrence independently (internal/payload/budget.go), and a
 // concatenated diff through PrepareReviewFromDiff produces exactly that — so
 // filtering on `e.Path != keep` dropped BOTH occurrences from the record and
-// returned nil while one of them really was shed. Callers pair this with
-// `Truncated: len(entries) > 1`, so the result was a shed record claiming files
-// were dropped and naming none: the one shape status.go promises cannot occur,
-// and the shape that makes promoteRePackedDegradation skip its Truncation
-// promotion (it gates on len(dropped) > 0). By index, the count and the list
-// cannot disagree.
+// returned nil while callers were asserting a drop, so the result was a shed
+// record claiming files were dropped and naming none: the one shape status.go
+// promises cannot occur, and the shape that makes promoteRePackedDegradation
+// skip its Truncation promotion (it gates on len(dropped) > 0). By index, the
+// list names one path per dropped occurrence.
+//
+// The list is NOT filtered to reviewable entries, and keepSmallestEntry's
+// Truncated flag IS (payload.ReviewableCount). That asymmetry is deliberate, not
+// drift: the two answer different questions. A dropped claim ledger belongs in
+// the list of what this shed dropped — accepted effect #4 in
+// internal/payload/claims.go — while "was reviewable content lost", the question
+// internal/benchmark and the re-fit arm actually ask of Truncated, must not be
+// answered yes by an exempt entry alone. So the two CAN disagree on a
+// ledger-only drop, and only there.
 //
 // Indexing also matches payload.ApplyByteBudget, which tracks its own shed with a
 // per-INDEX dropped[] and appends one path per dropped occurrence (budget.go). So
@@ -3312,9 +3358,23 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 
 // keepSmallestEntry reduces a payload to its single smallest NON-EMPTY entry with
 // the matching shed record — the "no file fits, but an empty payload is not an
-// option" answer. Truncated is false for a one-entry input because nothing was
-// actually dropped, which is what tells the re-fit caller there is no smaller
-// payload to send and the honest overflow record must stand.
+// option" answer. Truncated is false when no REVIEWABLE entry was dropped, which
+// is what tells the re-fit caller there is no smaller payload to send and the
+// honest overflow record must stand.
+//
+// "Reviewable" excludes the shed-exempt claim ledger, via payload.ReviewableCount
+// — the same accounting Truncation.AllDropped uses, and for the same reason. A
+// count over ALL entries answers "did the slice shrink", which is a different
+// question: on the range path a single-changed-file slot carries two entries
+// (ledger + file), and counting the ledger made this report Truncated=true for a
+// slot with nothing left to shed, sending refitFallbackPayload down a re-fit arm
+// it documents it will decline.
+//
+// FilesDropped is deliberately NOT filtered the same way. It answers "what did
+// this shed drop", and a ledger that really was dropped belongs in that list —
+// accepted effect #4 in internal/payload/claims.go ("the sentinel can reach a
+// published artifact"). The two fields answer different questions; only the
+// Truncated side was ever wrong.
 //
 // Zero-byte entries are skipped rather than preferred, and that is the whole
 // point of not reusing smallestEntry here. Empty tracked files are ordinary
@@ -3343,8 +3403,13 @@ func keepSmallestEntry(entries []payload.FileEntry) ([]payload.FileEntry, payloa
 	if smallestIdx < 0 {
 		return nil, payload.Truncation{}, false
 	}
+	// The same two quantities ApplyByteBudget derives AllDropped from. Exactly one
+	// entry is kept, so reviewableKept is 0 or 1 and the difference is the count of
+	// reviewable entries this shed dropped.
+	reviewableIn := payload.ReviewableCount(entries)
+	reviewableKept := payload.ReviewableCount([]payload.FileEntry{smallest})
 	return []payload.FileEntry{smallest}, payload.Truncation{
-		Truncated:    len(entries) > 1,
+		Truncated:    reviewableIn-reviewableKept > 0,
 		FilesDropped: droppedPathsExcept(entries, smallestIdx),
 	}, true
 }
@@ -3408,15 +3473,23 @@ func refitFallbackPayload(cfg *ReviewConfig, refit fallbackRefit, fbBudget int64
 	// capScopeConstraintForBudget. fbBudget is derived from the fallback's own
 	// resolved max_tokens, so a max_tokens declaration alone reaches that state.
 	//
-	// The fbBudget == 0 drop covers slots this function actually RE-FITS. A
-	// single-entry slot is not one of them: keepSmallestEntry reports
-	// Truncated=false for it, the !trunc.Truncated arm below returns ok=false, and
-	// buildFallbackAgent keeps the INHERITED primary prompt — primary-capped plan
-	// block included. That is by design: the slot carries the honest
-	// degradationOverflow record either way (the payload measurably does not fit,
-	// plan or no plan), and stripping the block would mean re-rendering a prompt
-	// whose one file still cannot fit the window — a different wrong answer, not a
-	// right one.
+	// The fbBudget == 0 drop covers slots this function actually RE-FITS. A slot
+	// with no more than ONE REVIEWABLE entry is not one of them: keepSmallestEntry
+	// reports Truncated=false for it, the !trunc.Truncated arm below returns
+	// ok=false, and buildFallbackAgent keeps the INHERITED primary prompt —
+	// primary-capped plan block included. That is by design: the slot carries the
+	// honest degradationOverflow record either way (the payload measurably does not
+	// fit, plan or no plan), and stripping the block would mean re-rendering a
+	// prompt whose one file still cannot fit the window — a different wrong answer,
+	// not a right one.
+	//
+	// Read "one reviewable entry", not "one entry". On the range path such a slot
+	// holds TWO entries — the shed-exempt claim ledger plus the file — and a
+	// count over all of them would take the re-fit arm here, re-pack, and (when
+	// the file body is smaller than the ledger) ship kept=[the file] with the
+	// ledger dropped: that fallback reviewer adjudicating no claims while every
+	// other agent got them, which is AC3's byte-identical property broken
+	// silently. payload.ReviewableCount is what keeps the two readings apart.
 	//
 	// The max_sprint_plan_bytes term the helper applies cannot bind as things stand,
 	// and that is not an oversight: buildSlots applies the identical min() before
@@ -3733,4 +3806,17 @@ func resolveMaxTokens(ac registry.AgentConfig, override int) int {
 // the definition of code that documents a contract it cannot enforce.
 func maxTokensFor(cfg *ReviewConfig, ac registry.AgentConfig) int {
 	return resolveMaxTokens(ac, cfg.Settings.MaxTokens)
+}
+
+// claimLedgerStatus lifts a RangeBuilder's claim-ledger outcome into the
+// manifest's optional field. A nil builder yields nil, not a zero struct: the
+// baseline (--all/--dir) and --diff-file paths have no range to read commit
+// messages from, and recording Present=false there would assert that a branch
+// claimed nothing when in fact nothing was ever asked.
+func claimLedgerStatus(rb *payload.RangeBuilder) *payload.ClaimLedgerStatus {
+	if rb == nil {
+		return nil
+	}
+	s := rb.ClaimLedgerStatus()
+	return &s
 }

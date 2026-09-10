@@ -1175,6 +1175,53 @@ func TestExportSelectedCached_MatchesUncachedByteForByte(t *testing.T) {
 		"a pre-warmed scrub cache must not change a single byte of the published document")
 }
 
+// ScrubCache.Scrub's nil-receiver arm is documented as "behaviour is identical
+// either way", and nothing pinned it: replacing `return scrubField(s)` with
+// `return s` left ./internal/scorecard and ./cli green, because every identity the
+// existing cases feed it ("greta", "claude-sonnet") is already scrub-clean, so an
+// unscrubbed passthrough is indistinguishable from a scrubbed one.
+//
+// That is not a cosmetic gap. No in-tree caller passes nil today (ExportSelected
+// passes ScrubCache{}, cli/leaderboard.go passes a live map), so an embedder is the
+// first one that would — and a regression there publishes raw reviewer and model
+// identities (paths, emails, keys) into the PUBLIC leaderboard envelope unscrubbed.
+func TestExportSelectedCached_NilCacheStillScrubsIdentities(t *testing.T) {
+	// Identities the scrub genuinely REWRITES: an embedded-path model id, a
+	// home-path reviewer name, and an email-shaped prefix. A clean identity would
+	// make this test pass against an unscrubbed passthrough.
+	recs := []Record{
+		{SchemaVersion: 1, RecordType: RecordTypeReviewer, RunID: "r1",
+			Reviewer: "greta /Users/sam/work", Model: "bedrock@us-east-1/claude",
+			FindingsRaised: 3, FindingsCorroborated: 2},
+		{SchemaVersion: 1, RecordType: RecordTypeReviewer, RunID: "r2",
+			Reviewer: "dax ~/keys", Model: "claude-sonnet sk-abcdefghijklmnopqrstuvwxyz",
+			FindingsRaised: 5, FindingsCorroborated: 4},
+	}
+	for _, r := range recs {
+		require.NotEqual(t, r.Reviewer, ScrubPublicString(r.Reviewer),
+			"fixture invariant: the reviewer identity must be one the scrub rewrites")
+		require.NotEqual(t, r.Model, ScrubPublicString(r.Model),
+			"fixture invariant: the model identity must be one the scrub rewrites")
+	}
+
+	var nilCache ScrubCache
+	viaNil, err := ExportSelectedCached(recs, fixedExportNow, nilCache)
+	require.NoError(t, err)
+
+	viaEmpty, err := ExportSelectedCached(recs, fixedExportNow, ScrubCache{})
+	require.NoError(t, err)
+
+	assert.Equal(t, string(viaEmpty), string(viaNil),
+		"a nil cache must scrub exactly as an empty one does — the documented contract")
+
+	// And say WHAT must not be there, so the test fails loudly rather than by a
+	// byte diff if both arms ever regress together.
+	for _, leak := range []string{"/Users/sam", "~/keys", "bedrock@us-east-1", "sk-abcdefghijklmnopqrstuvwxyz"} {
+		assert.NotContains(t, string(viaNil), leak,
+			"a raw identity fragment reached the PUBLIC envelope through the nil-cache arm")
+	}
+}
+
 // The memo has to actually memoize, or threading it through buys nothing. Counting
 // distinct keys is the observable proxy: two records sharing a model must leave ONE
 // entry for it, which is also the within-pass dedupe a per-record parallel slice could
@@ -1189,7 +1236,11 @@ func TestScrubCache_ComputesOncePerDistinctValue(t *testing.T) {
 	assert.Equal(t, ScrubPublicString("claude-sonnet"), c.Scrub("claude-sonnet"),
 		"and the memoized value must equal what the uncached scrub returns")
 
-	// A nil cache is a valid no-op cache, so callers never need a branch.
+	// A nil cache is a valid no-op cache, so callers never need a branch. The value
+	// must be one the scrub REWRITES: a clean identity ("greta") passes this
+	// assertion even against a nil arm that returns its input unscrubbed.
 	var nilCache ScrubCache
-	assert.Equal(t, ScrubPublicString("greta"), nilCache.Scrub("greta"))
+	const dirty = "greta /Users/sam/work"
+	require.NotEqual(t, dirty, ScrubPublicString(dirty), "fixture invariant: the scrub must rewrite this")
+	assert.Equal(t, ScrubPublicString(dirty), nilCache.Scrub(dirty))
 }

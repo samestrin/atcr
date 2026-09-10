@@ -1,0 +1,29 @@
+{
+  "id": "claim-absent-cursor-fix",
+  "format": "repo-state-v1",
+  "base_tree": "base",
+  "commit_message": "commit-message.txt",
+  "diff": "change.diff",
+  "expected_findings": [
+    {
+      "id": "begin-still-wipes-the-cursor",
+      "file": "streamer/cursor.py",
+      "line_start": 46,
+      "line_end": 46,
+      "line_tolerance": 3,
+      "outside_diff": true,
+      "category": "correctness",
+      "summary": "The commit message claims begin() now keeps its previous offset, but begin() is unchanged: it still assigns _drain_offset()'s 0 into self._offset, so an all-malformed drain still wipes a live cursor."
+    },
+    {
+      "id": "test-named-for-the-fix-asserts-the-helper",
+      "file": "tests/test_cursor.py",
+      "line_start": 8,
+      "line_end": 8,
+      "line_tolerance": 3,
+      "outside_diff": false,
+      "category": "correctness",
+      "summary": "test_begin_preserves_offset_on_all_malformed_batch never calls begin(); it asserts _safe_drain_offset() directly, so the test named for the fix does not exercise the function that carries the bug."
+    }
+  ]
+}

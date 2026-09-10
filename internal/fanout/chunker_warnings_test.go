@@ -190,3 +190,71 @@ func TestStatusFor_SurfacesUnreviewedChunks(t *testing.T) {
 	st := statusFor(Result{Agent: "greta", Status: StatusOK, UnreviewedChunks: 2}, findingsResult{})
 	require.Equal(t, 2, st.UnreviewedChunks, "partial-coverage count must surface in AgentStatus")
 }
+
+// A range payload's claim ledger is rendered BEFORE the first `diff --git`
+// marker, and splitDiffFiles glues that preamble onto the FIRST segment — so its
+// lines land in chunk 1 while countDiffFiles still reports one file. Charging
+// them to the file makes the oversize warning fire on a single small file whose
+// own diff is comfortably inside max_context_lines, and report a line count that
+// file did not produce. The chunk still overflows — 38 delivered lines against a
+// 20-line cap — so the warning must fire; what the preamble must not do is show
+// up as the FILE's line count.
+func TestBuildSlots_ChunkedPreambleIsNotChargedToTheFile(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.ReviewStrategy = "chunked"
+	mcl := 20
+	g := cfg.Registry.Agents["greta"]
+	g.MaxContextLines = &mcl
+	cfg.Registry.Agents["greta"] = g
+
+	// One small file (8 lines, well under mcl) behind a ledger-sized preamble that
+	// pushes the RAW line count over it.
+	diff := strings.Repeat("ledger line\n", 30) + fileSeg("small.go", 4)
+	payloads := map[string]modePayload{"blocks": {Text: diff, FileCount: 1}}
+
+	out := captureStderr(t, func() {
+		_, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		require.NoError(t, err)
+	})
+	require.Contains(t, out, "exceeds max_context_lines",
+		"38 delivered lines against a 20-line cap overflows; the gate runs on what is dispatched")
+	require.Contains(t, out, "(8 lines)",
+		"the pre-marker preamble is not the file's diff; the reported count is the file's own")
+	require.NotContains(t, out, "(38 lines)",
+		"reporting the raw total names a line count the file did not produce")
+	require.Contains(t, out, "30 engine-rendered preamble line(s)",
+		"the preamble is named separately so the delivered total stays reconstructable")
+}
+
+// The preamble lines ARE dispatched to the model, so the overflow GATE must run
+// on the delivered total. Subtracting the preamble before the comparison opens a
+// silent band — ml < countLines(chunk) <= ml + preamble — where a chunk genuinely
+// exceeds max_context_lines and nothing is said. Only the reported line count is
+// the file's own; the decision to warn is not.
+func TestBuildSlots_ChunkedWarnsWhenPreamblePushesDeliveredTotalOverBudget(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.ReviewStrategy = "chunked"
+	mcl := 20
+	g := cfg.Registry.Agents["greta"]
+	g.MaxContextLines = &mcl
+	cfg.Registry.Agents["greta"] = g
+
+	// 5 preamble lines + a 16-line file = 21 delivered lines, landing inside the
+	// band 20 < 21 <= 20+5 that the subtracted gate silences.
+	diff := strings.Repeat("ledger line\n", 5) + fileSeg("small.go", 12)
+	require.Equal(t, 21, countLines(diff), "test fixture must sit inside the band")
+	payloads := map[string]modePayload{"blocks": {Text: diff, FileCount: 1}}
+
+	out := captureStderr(t, func() {
+		_, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		require.NoError(t, err)
+	})
+	require.Contains(t, out, "exceeds max_context_lines",
+		"21 delivered lines against a 20-line cap must warn; the preamble is dispatched too")
+	require.Contains(t, out, "(16 lines)",
+		"the reported count stays file-attributed — the preamble is not the file's diff")
+	require.Contains(t, out, "5 engine-rendered preamble line(s)",
+		"the preamble lines must be named separately so the total is reconstructable")
+}
