@@ -284,3 +284,96 @@ func TestReferenceHits_UnresolvableSymbolFailsOpenToEmpty(t *testing.T) {
 
 	require.Empty(t, g.referenceHits([]changedSymbol{{Name: "NoSuchSymbolAnywhere"}}, nil))
 }
+
+func TestSnippetSpan_ExpandsHitToItsCoveringBlock(t *testing.T) {
+	// A bare call-site line tells a reviewer nothing about the contract it
+	// depends on. The snippet must be the enclosing unit.
+	root := astgroup.Node{Kind: "file", StartLine: 1, EndLine: 20, Children: []astgroup.Node{
+		{Kind: "func", Name: "Reconcile", StartLine: 5, EndLine: 14},
+	}}
+
+	start, end := snippetSpan(root, 8)
+
+	require.Equal(t, 5, start, "the snippet must start at the enclosing declaration")
+	require.Equal(t, 14, end, "the snippet must end at the enclosing declaration")
+}
+
+func TestSnippetSpan_BoundsAnOversizedBlockAroundTheHit(t *testing.T) {
+	// A 500-line function must not spend the whole byte cap. The bounded window
+	// must still CONTAIN the call site, or the snippet shows the wrong region.
+	root := astgroup.Node{Kind: "file", StartLine: 1, EndLine: 600, Children: []astgroup.Node{
+		{Kind: "func", Name: "Huge", StartLine: 10, EndLine: 510},
+	}}
+
+	start, end := snippetSpan(root, 300)
+
+	require.LessOrEqual(t, end-start+1, maxSnippetLines, "an oversized block must be bounded")
+	require.LessOrEqual(t, start, 300)
+	require.GreaterOrEqual(t, end, 300, "the bounded window must still contain the call site")
+}
+
+func TestSnippetSpan_UnparseableFileFallsBackToAWindow(t *testing.T) {
+	// A candidate whose parse failed must degrade to a neighbourhood of the call
+	// site, never to nothing — the reference is still real.
+	start, end := snippetSpan(astgroup.Node{}, 100)
+
+	require.Less(t, start, 100)
+	require.Greater(t, end, 100)
+	require.LessOrEqual(t, end-start+1, maxSnippetLines)
+}
+
+func TestSnippetSpan_ClampsBelowLineOne(t *testing.T) {
+	// A hit near the top of a file must not produce a zero or negative start —
+	// the span is sliced against a 1-based line array.
+	start, _ := snippetSpan(astgroup.Node{}, 2)
+
+	require.GreaterOrEqual(t, start, 1)
+}
+
+func TestRetrieveSnippets_ReturnsTheConsumerBodyWithItsSpan(t *testing.T) {
+	// The end-to-end AC5 shape: a call site in an untouched file becomes a
+	// readable snippet carrying the span the grounding gate will be threaded with.
+	dir, base, head := prefetchRepo(t)
+	g := newGitRunner(context.Background(), dir)
+
+	got := g.retrieveSnippets(base, head, []refHit{{Path: "consumer.go", Line: 4, Symbol: "ReadStore"}})
+
+	require.Len(t, got, 1)
+	require.Equal(t, "consumer.go", got[0].Path)
+	require.Equal(t, "ReadStore", got[0].Symbol)
+	require.Contains(t, got[0].Body, "func Reconcile", "the enclosing declaration must be shown")
+	require.Contains(t, got[0].Body, "ReadStore", "the call site itself must be shown")
+	require.LessOrEqual(t, got[0].Start, 4)
+	require.GreaterOrEqual(t, got[0].End, 4)
+}
+
+func TestRetrieveSnippets_IsDeterministicAcrossRuns(t *testing.T) {
+	// AC3: every agent in one fan-out receives byte-identical context, so the
+	// retrieval must not depend on map iteration order.
+	dir, base, head := prefetchRepo(t)
+	hits := []refHit{
+		{Path: "consumer.go", Line: 4, Symbol: "ReadStore"},
+		{Path: "store.go", Line: 3, Symbol: "ReadStore"},
+	}
+
+	first := newGitRunner(context.Background(), dir).retrieveSnippets(base, head, hits)
+	second := newGitRunner(context.Background(), dir).retrieveSnippets(base, head, hits)
+
+	require.Equal(t, first, second, "retrieval must be byte-identical across runs")
+	require.NotEmpty(t, first)
+}
+
+func TestRetrieveSnippets_MissingCandidateIsSkippedNotFatal(t *testing.T) {
+	// A path that vanished between the grep and the read (a concurrent checkout)
+	// must cost that one snippet, never the whole context.
+	dir, base, head := prefetchRepo(t)
+	g := newGitRunner(context.Background(), dir)
+
+	got := g.retrieveSnippets(base, head, []refHit{
+		{Path: "does-not-exist.go", Line: 3, Symbol: "ReadStore"},
+		{Path: "consumer.go", Line: 4, Symbol: "ReadStore"},
+	})
+
+	require.Len(t, got, 1, "the unreadable candidate is skipped and the good one survives")
+	require.Equal(t, "consumer.go", got[0].Path)
+}

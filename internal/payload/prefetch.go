@@ -442,6 +442,59 @@ func (g *gitRunner) referenceHits(symbols []changedSymbol, exclude map[string]bo
 	return parseGrepHits(string(out), names, exclude, maxPrefetchSitesPerSymbol)
 }
 
+const (
+	// maxSnippetLines bounds one retrieved snippet. A consumer whose enclosing
+	// function is enormous contributes the region AROUND the call site rather than
+	// the whole function: the reviewer needs to see how the symbol is used, and
+	// spending the byte cap on hundreds of unrelated lines starves every other
+	// snippet.
+	maxSnippetLines = 40
+
+	// maxPrefetchFiles bounds how many DISTINCT candidate files are read and
+	// parsed. This is the constant that actually holds AC4: every file past it
+	// costs a `git show` plus a wasm parse, which is where the latency lives.
+	maxPrefetchFiles = 25
+
+	// snippetFallbackRadius is the half-window used when a file cannot be parsed,
+	// so an unparseable candidate degrades to a plain neighbourhood of the call
+	// site instead of contributing nothing.
+	snippetFallbackRadius = 8
+)
+
+// ContextSnippet is one retrieved region of a file the diff did not change.
+//
+// Start and End are 1-based inclusive HEAD line numbers. They are carried, not
+// just the text, because the grounding gate is threaded with exactly this span:
+// a finding inside it is groundable, and a finding elsewhere in the same file is
+// still dropped as ungrounded.
+type ContextSnippet struct {
+	Path   string
+	Symbol string
+	Start  int
+	End    int
+	Body   string
+}
+
+// snippetSpan expands a call-site line to the span worth showing around it.
+//
+// The span is the deepest AST block covering the line — the enclosing function
+// or clause, so the reviewer sees a complete unit rather than a floating line —
+// bounded by maxSnippetLines and re-centred on the hit when the block is larger
+// than that. A zero root (no parser, or a parse that failed) degrades to a fixed
+// window rather than returning nothing.
+func snippetSpan(root astgroup.Node, line int) (start, end int) {
+	// Stub: T2b is not implemented yet. A deliberate wrong answer so the RED
+	// tests fail on behavior while the package still compiles.
+	return 0, 0
+}
+
+// retrieveSnippets reads each candidate file's HEAD blob once and slices the
+// region around every hit in it.
+func (g *gitRunner) retrieveSnippets(base, head string, hits []refHit) []ContextSnippet {
+	// Stub: T2b is not implemented yet.
+	return nil
+}
+
 // identifierTokens splits line into identifier-shaped runs, in source order.
 //
 // It is a lexer-free scan for the same reason internal/reconcile's own token
