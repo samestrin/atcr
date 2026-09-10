@@ -309,9 +309,9 @@ func TestClaimLedger_AbsentWhenTheBranchAssertsNothing(t *testing.T) {
 // !trunc.Truncated arm decline the re-fit and keep the honest overflow record.
 //
 // FilesDropped is deliberately NOT filtered. A ledger that really was dropped
-// still names itself there — accepted effect #4 (internal/payload/claims.go:655-659,
-// "the sentinel can reach a published artifact"). The two fields answer different
-// questions, and only Truncated was wrong.
+// still names itself there — accepted consequence #4 in
+// internal/payload/claims.go ("the sentinel can reach a published artifact").
+// The two fields answer different questions, and only Truncated was wrong.
 func TestKeepSmallestEntry_TheLedgerIsNotCountedAsReviewableContent(t *testing.T) {
 	ledger, file := ledgerAndOneFileEntry(t)
 
