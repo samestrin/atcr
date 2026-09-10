@@ -483,16 +483,145 @@ type ContextSnippet struct {
 // than that. A zero root (no parser, or a parse that failed) degrades to a fixed
 // window rather than returning nothing.
 func snippetSpan(root astgroup.Node, line int) (start, end int) {
-	// Stub: T2b is not implemented yet. A deliberate wrong answer so the RED
-	// tests fail on behavior while the package still compiles.
-	return 0, 0
+	if line < 1 {
+		line = 1
+	}
+	lo, hi := line-snippetFallbackRadius, line+snippetFallbackRadius
+	if block, _, ok := astgroup.CoveringBlock(root, line); ok && block.StartLine > 0 && block.EndLine >= block.StartLine {
+		lo, hi = block.StartLine, block.EndLine
+	}
+	if lo < 1 {
+		lo = 1
+	}
+	if hi-lo+1 > maxSnippetLines {
+		// Re-CENTRE on the call site rather than truncating the block from its
+		// top. Truncating would show the declaration header and none of the use
+		// that motivated retrieving the file, which is the one thing the reviewer
+		// needs to judge whether the call still agrees with the changed shape.
+		lo = line - (maxSnippetLines-1)/2
+		if lo < 1 {
+			lo = 1
+		}
+		hi = lo + maxSnippetLines - 1
+	}
+	return lo, hi
+}
+
+// sliceLines returns src's [start,end] 1-based inclusive line span, clamped to
+// the text that actually exists.
+//
+// It returns the CLAMPED bounds alongside the body, and the caller records those
+// rather than the requested ones: the span is what the grounding gate is
+// threaded with, so a span claiming lines past the end of the file would mark
+// non-existent lines groundable.
+func sliceLines(src string, start, end int) (body string, s, e int, ok bool) {
+	if src == "" {
+		return "", 0, 0, false
+	}
+	lines := strings.Split(src, "\n")
+	// A trailing newline yields a final empty element that is not a real line.
+	if n := len(lines); n > 0 && lines[n-1] == "" {
+		lines = lines[:n-1]
+	}
+	if len(lines) == 0 {
+		return "", 0, 0, false
+	}
+	if start < 1 {
+		start = 1
+	}
+	if end > len(lines) {
+		end = len(lines)
+	}
+	if start > len(lines) || end < start {
+		return "", 0, 0, false
+	}
+	return strings.Join(lines[start-1:end], "\n"), start, end, true
+}
+
+// parsePrefetchTree parses a candidate file with the parser its extension maps
+// to, returning a ZERO node when no parser applies or the parse fails.
+//
+// A zero node is a working answer, not an error: snippetSpan degrades to a fixed
+// window around the call site, so an unparseable candidate still contributes the
+// neighbourhood of its reference.
+func parsePrefetchTree(rel, src string) astgroup.Node {
+	lang := astgroup.LanguageForExt(strings.ToLower(path.Ext(rel)))
+	if lang == "" {
+		return astgroup.Node{}
+	}
+	parser, err := astgroup.SharedHost().Parser(lang)
+	if err != nil || parser == nil {
+		return astgroup.Node{}
+	}
+	root, err := parser.Parse([]byte(src))
+	if err != nil {
+		return astgroup.Node{}
+	}
+	return root
+}
+
+// overlapsEmitted reports whether [start,end] intersects a span already emitted
+// for the same file. Two call sites inside one function otherwise render the
+// same body twice, paying the byte cap twice for one region.
+func overlapsEmitted(emitted [][2]int, start, end int) bool {
+	for _, sp := range emitted {
+		if start <= sp[1] && sp[0] <= end {
+			return true
+		}
+	}
+	return false
 }
 
 // retrieveSnippets reads each candidate file's HEAD blob once and slices the
 // region around every hit in it.
 func (g *gitRunner) retrieveSnippets(base, head string, hits []refHit) []ContextSnippet {
-	// Stub: T2b is not implemented yet.
-	return nil
+	if len(hits) == 0 {
+		return nil
+	}
+	// Group by path in FIRST-APPEARANCE order, never by iterating a map: the
+	// retrieved context must be byte-identical for every agent in one fan-out
+	// (AC3), and map order would make it differ run to run.
+	order := make([]string, 0, len(hits))
+	byPath := make(map[string][]refHit, len(hits))
+	for _, h := range hits {
+		if _, seen := byPath[h.Path]; !seen {
+			if len(order) >= maxPrefetchFiles {
+				continue // over the file cap: drop this candidate entirely
+			}
+			order = append(order, h.Path)
+		}
+		byPath[h.Path] = append(byPath[h.Path], h)
+	}
+
+	var out []ContextSnippet
+	for _, rel := range order {
+		// ReuseMemo, not Memo: these are files the diff did NOT change, read once
+		// each, so populating the per-range blob cache would retain every
+		// candidate's full text for the life of the range at a 0% hit rate — the
+		// same reasoning the files-mode render documents.
+		src, err := g.headContentReuseMemo(base, head, rel)
+		if err != nil {
+			// A candidate that vanished between the grep and the read (a concurrent
+			// checkout, a submodule path) costs that one snippet, never the context.
+			g.log().Debug("payload: pre-fetch candidate unreadable, skipped", "path", rel, "error", err)
+			continue
+		}
+		if len(src) > maxAnalyzeFileBytes {
+			continue // generated/oversized: not worth a parse, same ceiling as escalation
+		}
+		root := parsePrefetchTree(rel, src)
+		emitted := make([][2]int, 0, len(byPath[rel]))
+		for _, h := range byPath[rel] {
+			start, end := snippetSpan(root, h.Line)
+			body, s, e, ok := sliceLines(src, start, end)
+			if !ok || overlapsEmitted(emitted, s, e) {
+				continue
+			}
+			emitted = append(emitted, [2]int{s, e})
+			out = append(out, ContextSnippet{Path: rel, Symbol: h.Symbol, Start: s, End: e, Body: body})
+		}
+	}
+	return out
 }
 
 // identifierTokens splits line into identifier-shaped runs, in source order.
