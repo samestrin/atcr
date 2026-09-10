@@ -1,6 +1,8 @@
 package payload
 
 import (
+	"context"
+	"strings"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/astgroup"
@@ -150,4 +152,134 @@ func TestExtractChangedSymbols_DomainSymbolContainingACueIsStillRetrievable(t *t
 		"a domain symbol must not be discarded for containing a cue word")
 	require.NotContains(t, mocked, "stubbed",
 		"the narrowing must still reject a token that names the double itself")
+}
+
+func TestParseGrepHits_AttributesHitsAndExcludesChangedFiles(t *testing.T) {
+	out := strings.Join([]string{
+		"internal/store/consumer.go:42:\tif _, err := ReadStore(p); err != nil {",
+		"internal/store/store.go:10:func ReadStore(path string) ([]byte, error) {",
+		"internal/other/x.go:7:\tWriteStore(p)",
+	}, "\n")
+
+	got := parseGrepHits(out, []string{"ReadStore", "WriteStore"},
+		map[string]bool{"internal/store/store.go": true}, 10)
+
+	require.Len(t, got, 2, "the changed file's own hit must be dropped")
+	require.Equal(t, "internal/store/consumer.go", got[0].Path)
+	require.Equal(t, 42, got[0].Line)
+	require.Equal(t, "ReadStore", got[0].Symbol,
+		"a hit must record which changed symbol it was retrieved for")
+	require.Equal(t, "internal/other/x.go", got[1].Path)
+	require.Equal(t, "WriteStore", got[1].Symbol)
+}
+
+func TestParseGrepHits_CapsSitesPerSymbol(t *testing.T) {
+	// A very common name (Close, Run, New) would otherwise crowd every other
+	// symbol out of the byte cap before the ledger ever ranks anything.
+	var lines []string
+	for i := 1; i <= 20; i++ {
+		lines = append(lines, "pkg/f.go:"+strings.Repeat("1", 1)+strings.Repeat("0", i%3)+":\tClose()")
+	}
+
+	got := parseGrepHits(strings.Join(lines, "\n"), []string{"Close"}, nil, 3)
+
+	require.Len(t, got, 3, "one symbol may not contribute more than its cap")
+}
+
+func TestParseGrepHits_SkipsMalformedLines(t *testing.T) {
+	out := strings.Join([]string{
+		"",
+		"no-colons-at-all",
+		"pkg/f.go:notanumber:\tReadStore()",
+		"pkg/f.go:9:\tReadStore()",
+	}, "\n")
+
+	got := parseGrepHits(out, []string{"ReadStore"}, nil, 10)
+
+	require.Len(t, got, 1, "only the well-formed hit survives")
+	require.Equal(t, 9, got[0].Line)
+}
+
+const prefetchStoreV1 = `package store
+
+func ReadStore(path string) ([]byte, error) {
+	return nil, nil
+}
+`
+
+const prefetchStoreV2 = `package store
+
+func ReadStore(path string) (string, error) {
+	return "", nil
+}
+`
+
+// prefetchConsumer is NEVER changed by the fixture's diff, and bears no textual
+// resemblance to the store — it is related only by CALLING ReadStore. That is
+// what makes it the AC5 case: similarity retrieval cannot reach it.
+const prefetchConsumer = `package store
+
+func Reconcile(path string) error {
+	data, err := ReadStore(path)
+	if err != nil {
+		return err
+	}
+	_ = data
+	return nil
+}
+`
+
+// prefetchRepo builds a two-commit repo whose diff changes ReadStore's RETURN
+// SHAPE in store.go and leaves its consumer untouched.
+func prefetchRepo(t *testing.T) (dir, base, head string) {
+	t.Helper()
+	dir = initRepo(t)
+	write(t, dir, "store.go", prefetchStoreV1)
+	write(t, dir, "consumer.go", prefetchConsumer)
+	base = commitAll(t, dir, "v1: store and its consumer")
+	write(t, dir, "store.go", prefetchStoreV2)
+	head = commitAll(t, dir, "v2: change ReadStore return shape")
+	return dir, base, head
+}
+
+func TestReferenceHits_RetrievesConsumerInAnUntouchedFile(t *testing.T) {
+	// AC5: when a changed symbol's return shape changes, its consumers are
+	// reached by REFERENCE. consumer.go is absent from the diff entirely, so no
+	// payload mode would ever show it — only the reference lookup can.
+	dir, _, _ := prefetchRepo(t)
+	g := newGitRunner(context.Background(), dir)
+
+	hits := g.referenceHits([]changedSymbol{{Name: "ReadStore"}}, map[string]bool{"store.go": true})
+
+	var paths []string
+	for _, h := range hits {
+		paths = append(paths, h.Path)
+	}
+	require.Contains(t, paths, "consumer.go",
+		"a consumer in a file the diff never touched must be retrieved")
+	require.NotContains(t, paths, "store.go",
+		"the changed file is already in the payload verbatim")
+}
+
+func TestReferenceHits_IsLazyAndSpendsOneProcessForEverySymbol(t *testing.T) {
+	dir, _, _ := prefetchRepo(t)
+	g := newGitRunner(context.Background(), dir)
+
+	require.Empty(t, g.referenceHits(nil, nil))
+	require.Zero(t, g.execCount,
+		"a run whose diff cites no resolvable symbol must never read a source file")
+
+	g.referenceHits([]changedSymbol{{Name: "ReadStore"}, {Name: "Reconcile"}}, nil)
+	require.Equal(t, 1, g.execCount,
+		"every symbol must resolve in ONE git grep, not one process per symbol (AC4)")
+}
+
+func TestReferenceHits_UnresolvableSymbolFailsOpenToEmpty(t *testing.T) {
+	// `git grep` exits non-zero when it matched nothing, which gitRunner.output
+	// reports identically to a real git failure. Pre-fetching is an ADDITIONAL
+	// review input, so both must degrade to empty context rather than fail.
+	dir, _, _ := prefetchRepo(t)
+	g := newGitRunner(context.Background(), dir)
+
+	require.Empty(t, g.referenceHits([]changedSymbol{{Name: "NoSuchSymbolAnywhere"}}, nil))
 }

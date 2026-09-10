@@ -238,6 +238,41 @@ func plausibleMockTarget(tok string) bool {
 	return !(tok[0] >= '0' && tok[0] <= '9')
 }
 
+// refHit is one `git grep` match: a candidate site that REFERENCES a changed
+// symbol. Symbol records which changed symbol the match was attributed to, so a
+// retrieved snippet can say what it was retrieved for.
+type refHit struct {
+	Path   string
+	Line   int
+	Symbol string
+}
+
+// parseGrepHits turns `git grep -n` output into candidate consumer sites.
+//
+// exclude drops files the diff already changed: those are in the payload
+// verbatim, so retrieving a snippet of them spends the byte cap re-showing text
+// the reviewer already has. maxPerSymbol bounds how many sites one symbol may
+// contribute, so a single very common name cannot crowd out every other symbol.
+func parseGrepHits(out string, symbols []string, exclude map[string]bool, maxPerSymbol int) []refHit {
+	// Stub: T2 is not implemented yet. A deliberate wrong answer so the RED test
+	// fails on behavior while the package still compiles.
+	return nil
+}
+
+// referenceHits resolves every changed symbol to the sites that consume it, in
+// ONE `git grep` process regardless of symbol count.
+//
+// It never returns an error. Pre-fetching is an ADDITIONAL input to a review, so
+// a failed lookup degrades to empty context rather than failing the review — the
+// same fail-open contract the claim ledger applies to an unreadable `git log`.
+// `git grep` also exits non-zero when it simply matched nothing, which
+// gitRunner.output cannot distinguish from a real failure, so treating any error
+// as "no context" is the only correct reading available here.
+func (g *gitRunner) referenceHits(symbols []changedSymbol, exclude map[string]bool) []refHit {
+	// Stub: T2 is not implemented yet.
+	return nil
+}
+
 // identifierTokens splits line into identifier-shaped runs, in source order.
 //
 // It is a lexer-free scan for the same reason internal/reconcile's own token
