@@ -901,6 +901,12 @@ func overlapsEmitted(emitted [][2]int, start, end int) bool {
 // declOnly names the symbols that entered the set ONLY through the mock-cue
 // scan. Those are held to a stricter rule than an ordinary changed symbol: see
 // the check in the per-hit loop below.
+//
+// The second result is the ledger of candidates this pass DISCARDED, one record
+// per rejection, each naming its reason. It is not an error channel: every one
+// of these is a normal outcome. It exists because AC7 asks that a drop be
+// recorded rather than silent, and a candidate dropped here is exactly as
+// invisible to the reviewer as one shed by the byte cap.
 func (g *gitRunner) retrieveSnippets(base, head string, hits []refHit, declOnly map[string]bool) ([]PrefetchSnippet, []PrefetchDrop) {
 	if len(hits) == 0 {
 		return nil, nil
@@ -910,10 +916,24 @@ func (g *gitRunner) retrieveSnippets(base, head string, hits []refHit, declOnly 
 	// (AC3), and map order would make it differ run to run.
 	order := make([]string, 0, len(hits))
 	byPath := make(map[string][]refHit, len(hits))
+	// Every path below that discards a candidate appends here. AC7's requirement
+	// is that a drop be RECORDED rather than silent, and a candidate discarded
+	// during RETRIEVAL is as invisible to the reviewer as one shed by the byte
+	// cap — the cap's drops simply had a ledger and these did not.
+	var dropped []PrefetchDrop
+	overCap := make(map[string]bool)
 	for _, h := range hits {
 		if _, seen := byPath[h.Path]; !seen {
 			if len(order) >= maxPrefetchFiles {
-				continue // over the file cap: drop this candidate entirely
+				// Over the file cap: drop this candidate entirely. Recorded once per
+				// PATH — a second hit in the same rejected file is the same discarded
+				// candidate, not a second one, and listing it twice would overstate
+				// how much context was lost.
+				if !overCap[h.Path] {
+					overCap[h.Path] = true
+					dropped = append(dropped, PrefetchDrop{Path: h.Path, Symbol: h.Symbol, Reason: dropReasonFileCap})
+				}
+				continue
 			}
 			order = append(order, h.Path)
 		}
@@ -934,10 +954,13 @@ func (g *gitRunner) retrieveSnippets(base, head string, hits []refHit, declOnly 
 			// A candidate that vanished between the grep and the read (a concurrent
 			// checkout, a submodule path) costs that one snippet, never the context.
 			g.log().Debug("payload: pre-fetch candidate unreadable, skipped", "path", rel, "error", err)
+			dropped = append(dropped, PrefetchDrop{Path: rel, Symbol: byPath[rel][0].Symbol, Reason: dropReasonUnreadable})
 			continue
 		}
 		if len(src) > maxAnalyzeFileBytes {
-			continue // generated/oversized: not worth a parse, same ceiling as escalation
+			// generated/oversized: not worth a parse, same ceiling as escalation
+			dropped = append(dropped, PrefetchDrop{Path: rel, Symbol: byPath[rel][0].Symbol, Reason: dropReasonOversized})
+			continue
 		}
 		root := parsePrefetchTree(rel, src)
 		lines := splitSnippetLines(src)
@@ -961,12 +984,18 @@ func (g *gitRunner) retrieveSnippets(base, head string, hits []refHit, declOnly 
 			// ones must earn their snippet by being declared.
 			if declOnly[h.Symbol] {
 				if name, ok := astgroup.EnclosingSymbolName(root, h.Line); !ok || name != h.Symbol {
+					dropped = append(dropped, PrefetchDrop{Path: rel, Symbol: h.Symbol, Reason: dropReasonNotDeclared})
 					continue
 				}
 			}
 			start, end := snippetSpan(root, h.Line)
 			body, s, e, ok := sliceLines(lines, start, end)
-			if !ok || overlapsEmitted(emitted, s, e) {
+			if !ok {
+				dropped = append(dropped, PrefetchDrop{Path: rel, Symbol: h.Symbol, Reason: dropReasonOutOfRange})
+				continue
+			}
+			if overlapsEmitted(emitted, s, e) {
+				dropped = append(dropped, PrefetchDrop{Path: rel, Symbol: h.Symbol, Reason: dropReasonOverlap})
 				continue
 			}
 			emitted = append(emitted, [2]int{s, e})
@@ -974,7 +1003,7 @@ func (g *gitRunner) retrieveSnippets(base, head string, hits []refHit, declOnly 
 			out = append(out, PrefetchSnippet{Path: rel, Symbol: h.Symbol, Start: s, End: e, Body: body})
 		}
 	}
-	return out, nil
+	return out, dropped
 }
 
 // DefaultMaxPrefetchBytes is the default ceiling on the rendered Context
@@ -1020,6 +1049,53 @@ type PrefetchDrop struct {
 	Symbol string
 	Tier   PrefetchTier
 	Bytes  int
+	// Reason names WHY the candidate was discarded. It is empty on a byte-cap
+	// drop and rendered as dropReasonByteCap, so the ledger line a cap drop
+	// produces is byte-for-byte what it was before retrieval-stage drops joined
+	// it — the accounting in capPrefetchSnippets measures that same text.
+	Reason string
+}
+
+// Ledger reasons. Every path that discards a retrieved candidate names itself
+// here, so a reviewer reading the section can tell "this file was too big to
+// parse" from "this file lost a coin toss against the byte cap" — two facts
+// with opposite implications for whether the missing context mattered.
+const (
+	dropReasonByteCap     = "over the pre-fetch byte cap"
+	dropReasonFileCap     = "over the candidate-file cap"
+	dropReasonUnreadable  = "candidate unreadable at head"
+	dropReasonOversized   = "candidate over the analyze-size ceiling"
+	dropReasonNotDeclared = "cue-derived symbol is not declared here"
+	dropReasonOverlap     = "region already shown by an earlier snippet"
+	dropReasonOutOfRange  = "span out of range in the retrieved file"
+)
+
+// dropReason names why a candidate was discarded, defaulting to the byte-cap
+// wording. The default is what keeps every PrefetchDrop built before this field
+// existed rendering exactly as it did.
+func dropReason(d PrefetchDrop) string {
+	if d.Reason == "" {
+		return dropReasonByteCap
+	}
+	return d.Reason
+}
+
+// mergeDrops concatenates the retrieval-stage ledger with the byte-cap one into
+// a FRESH slice.
+//
+// Never append(pre, capped...): pre belongs to the caller, and appending into it
+// would both alias its backing array and — since the shed loop re-measures the
+// merge on every iteration — accumulate across iterations.
+func mergeDrops(pre, capped []PrefetchDrop) []PrefetchDrop {
+	switch {
+	case len(pre) == 0:
+		return capped
+	case len(capped) == 0:
+		return pre
+	}
+	out := make([]PrefetchDrop, 0, len(pre)+len(capped))
+	out = append(out, pre...)
+	return append(out, capped...)
 }
 
 // capPrefetchSnippets keeps as many snippets as fit within maxBytes, shedding
@@ -1263,7 +1339,11 @@ func renderPrefetchDropLedger(dropped []PrefetchDrop) string {
 			b.WriteString(prefetchNotePrefix)
 			b.WriteString("... and ")
 			b.WriteString(strconv.Itoa(len(dropped) - i))
-			b.WriteString(" more snippet(s) dropped over the pre-fetch byte cap\n")
+			// No cause is named. The line once ended "over the pre-fetch byte cap",
+			// which became a confident wrong answer the moment the ledger began
+			// carrying the six retrieval-stage reasons too: the remainder it
+			// summarises can hold any mixture of them.
+			b.WriteString(" more snippet(s) dropped\n")
 			break
 		}
 		b.WriteString(prefetchNotePrefix)
@@ -1275,7 +1355,9 @@ func renderPrefetchDropLedger(dropped []PrefetchDrop) string {
 		b.WriteString(d.Tier.String())
 		b.WriteString(", ")
 		b.WriteString(strconv.Itoa(d.Bytes))
-		b.WriteString(" bytes) - over the pre-fetch byte cap\n")
+		b.WriteString(" bytes) - ")
+		b.WriteString(dropReason(d))
+		b.WriteByte('\n')
 	}
 	return b.String()
 }
@@ -1478,7 +1560,7 @@ func (g *gitRunner) buildPrefetch(base, head string) (section string, spans map[
 			declOnly[s.Name] = true
 		}
 	}
-	snips, _ := g.retrieveSnippets(base, head, hits, declOnly)
+	snips, preDrops := g.retrieveSnippets(base, head, hits, declOnly)
 	// Tier is stamped HERE rather than inside retrieveSnippets: retrieval is
 	// tier-agnostic, and 35.16.12 adds a second producer feeding the same ledger.
 	//
@@ -1495,8 +1577,22 @@ func (g *gitRunner) buildPrefetch(base, head string) (section string, spans map[
 		snips[i].Tier = PrefetchTierReference
 		snips[i].Signature = sigByName[snips[i].Symbol]
 	}
+	// The retrieval-stage drops are stamped in the SAME pass and by the same
+	// producer, so the ledger names a real tier instead of the zero value.
+	for i := range preDrops {
+		preDrops[i].Tier = PrefetchTierReference
+	}
 
-	kept, dropped := capPrefetchSnippets(snips, g.maxPrefetchBytes)
+	// Reserve the retrieval-stage ledger's bytes BEFORE capping. Those lines are
+	// emitted inside the section, so a cap that did not know about them would
+	// size the section to max_prefetch_bytes and then emit more than that — the
+	// exact over-cap defect the ledger reservation inside capPrefetchSnippets
+	// already closes for its own lines. Reserving here rather than threading the
+	// slice through keeps one budget owner; it can only OVER-reserve (when the
+	// merged ledger collapses into the maxPrefetchDropLines remainder line),
+	// which is the safe direction.
+	kept, capDrops := capPrefetchSnippets(snips, g.maxPrefetchBytes-int64(len(renderPrefetchDropLedger(preDrops))))
+	dropped := mergeDrops(preDrops, capDrops)
 	section = renderPrefetchSection(kept, dropped)
 	if section == "" {
 		return "", nil, PrefetchStatus{}
@@ -1509,10 +1605,16 @@ func (g *gitRunner) buildPrefetch(base, head string) (section string, spans map[
 		spans[s.Path] = append(spans[s.Path], LineRange{Start: s.Start, End: s.End})
 	}
 	return section, spans, PrefetchStatus{
-		Present:   true,
-		Snippets:  len(kept),
-		Dropped:   len(dropped),
-		Truncated: len(dropped) > 0,
+		Present:  true,
+		Snippets: len(kept),
+		// Every disclosed drop, retrieval-stage and byte-cap alike — the count
+		// matches the ledger the reviewer is shown.
+		Dropped: len(dropped),
+		// Truncated means the BYTE CAP cut the section, which is a different fact
+		// from "a candidate was discarded": a retrieval drop happens at any budget,
+		// so reading it as truncation would tell an operator to raise a cap that
+		// was never the constraint.
+		Truncated: len(capDrops) > 0,
 	}
 }
 
