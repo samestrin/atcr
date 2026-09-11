@@ -570,6 +570,35 @@ func TestSnippetSpan_BoundsAnOversizedBlockAroundTheHit(t *testing.T) {
 	require.GreaterOrEqual(t, end, 300, "the bounded window must still contain the call site")
 }
 
+func TestSnippetSpan_ReCentredWindowStaysInsideItsBlock(t *testing.T) {
+	// When the covering block is larger than maxSnippetLines the window is
+	// re-centred on the hit. Unclamped, a hit near either EDGE of a large block
+	// produces a window that runs past the declaration into its neighbour — so
+	// the snippet shows lines of an unrelated function, and those lines are
+	// threaded into prefetchSpans, which makes them groundable for a finding.
+	root := astgroup.Node{Kind: "file", StartLine: 1, EndLine: 200, Children: []astgroup.Node{
+		{Kind: "func", Name: "Before", StartLine: 1, EndLine: 9},
+		{Kind: "func", Name: "Huge", StartLine: 10, EndLine: 109},
+		{Kind: "func", Name: "After", StartLine: 110, EndLine: 200},
+	}}
+
+	t.Run("a hit near the top must not reach the preceding declaration", func(t *testing.T) {
+		start, end := snippetSpan(root, 11)
+
+		require.GreaterOrEqual(t, start, 10, "the span must not start above the enclosing declaration")
+		require.LessOrEqual(t, end, 109)
+		require.LessOrEqual(t, end-start+1, maxSnippetLines)
+	})
+
+	t.Run("a hit near the bottom must not reach the following declaration", func(t *testing.T) {
+		start, end := snippetSpan(root, 108)
+
+		require.LessOrEqual(t, end, 109, "the span must not end below the enclosing declaration")
+		require.GreaterOrEqual(t, start, 10)
+		require.LessOrEqual(t, end-start+1, maxSnippetLines)
+	})
+}
+
 func TestSnippetSpan_UnparseableFileFallsBackToAWindow(t *testing.T) {
 	// A candidate whose parse failed must degrade to a neighbourhood of the call
 	// site, never to nothing — the reference is still real.
