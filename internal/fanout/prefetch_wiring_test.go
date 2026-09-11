@@ -101,14 +101,30 @@ func TestPrefetch_FileCountExcludesSyntheticEntries(t *testing.T) {
 	require.NoError(t, err)
 
 	for mode, mp := range payloads {
-		real := 0
+		// Precondition, mirroring the disabled-end-to-end test above: the fixture
+		// must actually produce exactly one of EACH synthetic section per mode.
+		// Without this, a build that stopped emitting the ledger or the context
+		// block would still pass the count comparison below while covering one
+		// section or none — the exact vacuity the recomputed filter hides.
+		ledger, contexts := 0, 0
 		for _, e := range mp.Kept {
-			if e.Path == payload.ClaimLedgerPath || e.Path == payload.PrefetchContextPath {
-				continue
+			switch e.Path {
+			case payload.ClaimLedgerPath:
+				ledger++
+			case payload.PrefetchContextPath:
+				contexts++
 			}
-			real++
 		}
-		require.Equalf(t, real, mp.FileCount,
-			"mode %s: FileCount must count changed files, not synthetic engine-rendered sections", mode)
+		require.Equalf(t, 1, ledger,
+			"mode %s: PRECONDITION — fixture must produce exactly one claim ledger entry, or the FileCount comparison proves nothing about synthetic exclusion", mode)
+		require.Equalf(t, 1, contexts,
+			"mode %s: PRECONDITION — fixture must produce exactly one Context Definitions entry, or the FileCount comparison proves nothing about synthetic exclusion", mode)
+		// The ABSOLUTE changed-file count of the fixture (prefetchFanoutRepo
+		// changes exactly one file: store.go), asserted outright instead of
+		// recomputed with the same path filter the production code uses — a
+		// recomputation is tautological: it matches even if FileCount drifted to
+		// count a section the filter happens to miss.
+		require.Equalf(t, 1, mp.FileCount,
+			"mode %s: FileCount must equal the fixture's one changed file, not a count inflated by synthetic engine-rendered sections", mode)
 	}
 }
