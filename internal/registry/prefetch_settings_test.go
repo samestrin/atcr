@@ -154,6 +154,18 @@ func TestDefaultProjectConfigYAML_DocumentsMaxPrefetchBytes(t *testing.T) {
 	require.Contains(t, out, "outside the diff", "the comment must disclose that the feature transmits source from outside the diff")
 }
 
+func TestProjectConfig_MaxPrefetchBytesNegativeRejected(t *testing.T) {
+	// Every sibling budget is validated inline in LoadProjectConfig; the
+	// registry tier got its copy of this guard, the project tier did not — so
+	// .atcr/config.yaml carrying -1 loaded clean, and atcr doctor (which never
+	// resolves settings) green-lit a config the review path later rejected.
+	_, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\nmax_prefetch_bytes: -1\n"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "max_prefetch_bytes")
+	require.Contains(t, err.Error(), "config.yaml",
+		"every sibling attributes the load-time error to the offending file; the resolver fallback does not")
+}
+
 func TestRegistry_MaxPrefetchBytesNegativeRejected(t *testing.T) {
 	_, err := LoadRegistry(writeRegistry(t, `
 providers:
