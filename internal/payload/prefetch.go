@@ -1380,7 +1380,13 @@ func (g *gitRunner) buildPrefetch(base, head string) (section string, spans map[
 	}
 
 	var symbols []changedSymbol
-	seen := make(map[string]bool)
+	// seenIdx records each name's slot in symbols, not mere presence: a name
+	// first collected from a changed TEST file (Mocked) must NOT eclipse the
+	// same symbol the diff genuinely changed in production code — that record
+	// REPLACES the mock-cue one in place, or AC5 call-site retrieval silently
+	// narrows to declaration sites depending on which file the iteration
+	// visited first.
+	seenIdx := make(map[string]int)
 	readFiles := 0
 	for _, f := range files {
 		if f.kind == kindDeleted {
@@ -1425,10 +1431,14 @@ func (g *gitRunner) buildPrefetch(base, head string) (section string, spans map[
 			spanList = append(spanList, LineRange{Start: h.start, End: h.end})
 		}
 		for _, s := range extractChangedSymbols(src, spanList, parsePrefetchTree(f.path, src), looksLikeTestFile(f.path), lang) {
-			if seen[s.Name] {
+			if idx, dup := seenIdx[s.Name]; dup {
+				if s.Mocked || !symbols[idx].Mocked {
+					continue
+				}
+				symbols[idx] = s // the diff-changed record wins over the mock-cue guess
 				continue
 			}
-			seen[s.Name] = true
+			seenIdx[s.Name] = len(symbols)
 			symbols = append(symbols, s)
 			if len(symbols) >= maxChangedSymbols {
 				break
