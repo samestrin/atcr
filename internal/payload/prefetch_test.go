@@ -157,6 +157,39 @@ func TestExtractChangedSymbols_DomainSymbolContainingACueIsStillRetrievable(t *t
 		"the narrowing must still reject a token that names the double itself")
 }
 
+func TestExtractChangedSymbols_CueNoiseIsFilteredForEveryEmbeddedLanguage(t *testing.T) {
+	// looksLikeTestFile enables the cue scan for Python, TypeScript, PHP and Rust,
+	// but the noise set held Go keywords alone. A Python cue line therefore
+	// contributed `def` and `self`, and a JavaScript one `const`, `await`,
+	// `describe` and `this` — each burning a slot out of the 40-symbol cap and
+	// then forcing `git grep` to match essentially every file in the repository.
+	//
+	// A zero root isolates the cue pass: no declaration resolves, so every symbol
+	// below arrived through the AC6 scan.
+	cases := []struct {
+		name string
+		line string
+		want string
+	}{
+		{"python", "\tdef f(self): patched = ChargeClient", "ChargeClient"},
+		{"typescript", "\tconst patched = jest.spyOn(PaymentGateway)", "PaymentGateway"},
+		{"typescript async", "\tdescribe(\"q\", async () => { await ReplayQueue }) // fake", "ReplayQueue"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := extractChangedSymbols(tc.line+"\n", []LineRange{{Start: 1, End: 1}}, astgroup.Node{}, true)
+
+			var names []string
+			for _, s := range got {
+				names = append(names, s.Name)
+			}
+			require.Equal(t, []string{tc.want}, names,
+				"a cue line must contribute its domain symbol and no language keyword")
+		})
+	}
+}
+
 func TestParseGrepHits_AttributesHitsAndExcludesChangedFiles(t *testing.T) {
 	out := strings.Join([]string{
 		"internal/store/consumer.go:42:\tif _, err := ReadStore(p); err != nil {",
