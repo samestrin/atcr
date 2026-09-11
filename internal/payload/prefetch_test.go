@@ -944,6 +944,58 @@ func TestIdentifierScanning_AcceptsNonASCIIIdentifiers(t *testing.T) {
 	})
 }
 
+func TestExtractChangedSymbols_ResolvesASingleGendeclByItsHeader(t *testing.T) {
+	// A change confined to a Go gendecl (const/var/type) yielded NO changed symbol
+	// at all: the parser emits gendecl nodes with an empty Name and no named
+	// children, so EnclosingSymbolName finds nothing and the line is skipped. The
+	// whole pre-fetch feature is therefore dark for const/var/type-only changes —
+	// exactly the changes whose consumers are most worth showing, since a constant
+	// is used far from where it is declared.
+	src := "package store\n\nconst MaxRetries = 3\n\nfunc Unrelated() {}\n"
+	root := astgroup.Node{Kind: "file", StartLine: 1, EndLine: 5, Children: []astgroup.Node{
+		// No Name: that is the real shape. skeleton_test.go pins it — the Go
+		// parser emits names only for FuncDecl.
+		{Kind: "gendecl", StartLine: 3, EndLine: 3},
+		{Kind: "func", Name: "Unrelated", StartLine: 5, EndLine: 5},
+	}}
+
+	got := extractChangedSymbols(src, []LineRange{{Start: 3, End: 3}}, root, false, "go")
+
+	require.Len(t, got, 1, "a const-only change must contribute its declared name")
+	require.Equal(t, "MaxRetries", got[0].Name,
+		"the symbol comes from the gendecl HEADER, the only place the name exists")
+}
+
+func TestBuildPrefetch_AConstOnlyChangeStillRetrievesItsConsumers(t *testing.T) {
+	// The end-to-end half: a const change must actually fire the retrieval, not
+	// merely resolve a symbol. Driven through buildPrefetch with the real parser
+	// and a real `git grep`, because the defect was only visible end to end — a
+	// const MaxRetries change produced zero symbols and therefore zero context.
+	dir := initRepo(t)
+	write(t, dir, "store.go",
+		"package store\n\nconst MaxRetries = 3\n\nfunc ReadStore(p string) error {\n\treturn nil\n}\n")
+	write(t, dir, "consumer.go",
+		"package store\n\nfunc Reconcile() int {\n\ttotal := 0\n\tfor i := 0; i < MaxRetries; i++ {\n\t\ttotal++\n\t}\n\treturn total\n}\n")
+	base := commitAll(t, dir, "seed a constant and its consumer")
+
+	// ONLY the const line changes. Touching the func too would let the existing
+	// func path resolve a symbol and the assertion would prove nothing.
+	write(t, dir, "store.go",
+		"package store\n\nconst MaxRetries = 5\n\nfunc ReadStore(p string) error {\n\treturn nil\n}\n")
+	head := commitAll(t, dir, "raise the retry ceiling")
+
+	g := newGitRunner(context.Background(), dir)
+	g.maxPrefetchBytes = DefaultMaxPrefetchBytes
+
+	section, _, st := g.buildPrefetch(base, head)
+
+	require.True(t, st.Present, "a const-only change must still produce a context section")
+	require.Contains(t, section, "consumer.go",
+		"the consumer of the changed constant must be retrieved")
+	require.Contains(t, section, "MaxRetries",
+		"the retrieved region must contain the use of the changed constant")
+}
+
 func TestSnippetSpan_ExpandsHitToItsCoveringBlock(t *testing.T) {
 	// A bare call-site line tells a reviewer nothing about the contract it
 	// depends on. The snippet must be the enclosing unit.
