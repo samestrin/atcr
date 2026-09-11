@@ -866,6 +866,42 @@ func TestParseGrepHits_StopsAtTheAbsoluteHitCap(t *testing.T) {
 		"120 individually admissible sites across 40 symbols must clamp to the absolute hit ceiling")
 }
 
+func TestParseGrepHits_GlobalCapIsSharedRoundRobinAcrossSymbols(t *testing.T) {
+	// The global cap truncated in `git grep`'s path-alphabetical order, so a
+	// symbol whose only consumers sort LATE could receive no candidate at all
+	// while an early-sorting path spent the entire budget. The symbol that gets
+	// nothing is precisely the one the reviewer then has no context for.
+	//
+	// Alpha's consumers all sort before Omega's, and the cap admits three hits
+	// across both symbols.
+	var lines []string
+	for i := 0; i < 6; i++ {
+		lines = append(lines, fmt.Sprintf("aaa%d.go:%d:\tAlpha(p)", i, i+1))
+	}
+	for i := 0; i < 6; i++ {
+		lines = append(lines, fmt.Sprintf("zzz%d.go:%d:\tOmega(p)", i, i+1))
+	}
+	out := strings.Join(lines, "\n")
+
+	got := parseGrepHits(out, "", []string{"Alpha", "Omega"}, nil, nil, 6, 3)
+
+	require.Len(t, got, 3, "the global cap must still bind")
+
+	perSymbol := map[string]int{}
+	for _, h := range got {
+		perSymbol[h.Symbol]++
+	}
+	require.GreaterOrEqual(t, perSymbol["Omega"], 1,
+		"every symbol must get a candidate before any symbol gets a second, however its consumers sort")
+	require.GreaterOrEqual(t, perSymbol["Alpha"], 1,
+		"fairness must not invert the problem and starve the early-sorting symbol instead")
+
+	// AC3: every agent in one fan-out receives byte-identical context, so the
+	// sharing must not depend on map iteration order.
+	require.Equal(t, got, parseGrepHits(out, "", []string{"Alpha", "Omega"}, nil, nil, 6, 3),
+		"candidate selection must be deterministic across runs")
+}
+
 func TestIdentifierScanning_AcceptsNonASCIIIdentifiers(t *testing.T) {
 	// Go, Python, Java and Kotlin all permit non-ASCII identifiers. Scanning ASCII
 	// byte ranges means such a name never becomes a grep pattern and contributes
