@@ -565,16 +565,68 @@ func TestRetrieveSnippets_CueDerivedSymbolStillRetrievesItsDeclaration(t *testin
 	require.Contains(t, got[0].Body, "func ReadStore")
 }
 
+func TestRetrieveSnippets_CapsSnippetsPerSymbolOnEmissionNotAdmission(t *testing.T) {
+	// The per-symbol ceiling used to bind at ADMISSION, but three later filters
+	// can still reject an admitted hit — the declOnly declaration check, the
+	// maxAnalyzeFileBytes ceiling and overlapsEmitted. A cue-derived symbol whose
+	// hits are all bare mentions therefore spent its entire allowance, paid a
+	// `git show` and a parse for each, and yielded NOTHING, while a real
+	// consumer further down the match list was refused admission.
+	//
+	// Fairness between symbols is a property of RESULTS, so the ceiling belongs
+	// where the snippet is emitted. The cue hits are ordered FIRST here precisely
+	// because that is the arrangement that used to starve the real symbol.
+	dir := initRepo(t)
+	write(t, dir, "store.go", prefetchStoreV1)
+	for i := 0; i < 4; i++ {
+		write(t, dir, fmt.Sprintf("consumer%d.go", i),
+			fmt.Sprintf("package store\n\nfunc Use%d(p string) {\n\t_, _ = ReadStore(p)\n}\n", i))
+	}
+	for i := 0; i < 3; i++ {
+		write(t, dir, fmt.Sprintf("mention%d.go", i),
+			fmt.Sprintf("package store\n\nfunc Mentions%d() string {\n\treturn \"MockThing\"\n}\n", i))
+	}
+	base := commitAll(t, dir, "seed four consumers and three bare mentions")
+	write(t, dir, "store.go", prefetchStoreV2)
+	head := commitAll(t, dir, "change ReadStore return shape")
+
+	var hits []refHit
+	for i := 0; i < 3; i++ {
+		hits = append(hits, refHit{Path: fmt.Sprintf("mention%d.go", i), Line: 4, Symbol: "MockThing"})
+	}
+	for i := 0; i < 4; i++ {
+		hits = append(hits, refHit{Path: fmt.Sprintf("consumer%d.go", i), Line: 4, Symbol: "ReadStore"})
+	}
+
+	got := newGitRunner(context.Background(), dir).
+		retrieveSnippets(base, head, hits, map[string]bool{"MockThing": true})
+
+	perSymbol := map[string]int{}
+	for _, s := range got {
+		perSymbol[s.Symbol]++
+	}
+
+	require.Zero(t, perSymbol["MockThing"],
+		"a cue-derived symbol whose hits are bare mentions must earn no snippet")
+	require.Equal(t, maxEmittedSitesPerSymbol, perSymbol["ReadStore"],
+		"the real symbol must still emit its full per-symbol share despite the rejected cue hits ahead of it")
+}
+
 func TestRetrieveSnippets_StopsAtTheCandidateFileCap(t *testing.T) {
 	// maxPrefetchFiles is "the constant that actually holds AC4": every candidate
 	// file past it costs a `git show` plus a wasm parse, which is where the
 	// latency lives. No test referenced the symbol, so a regression that raised
 	// or removed the cap would have shipped with a green suite.
+	// Each file consumes a DISTINCT symbol. One symbol repeated across all thirty
+	// would be capped at maxEmittedSitesPerSymbol long before the file ceiling
+	// could bind, so the assertion below would silently stop testing the file cap
+	// — and that shape is unreachable in production anyway, since parseGrepHits
+	// admits at most maxPrefetchSitesPerSymbol hits for any one symbol.
 	dir := initRepo(t)
 	write(t, dir, "store.go", prefetchStoreV1)
 	for i := 0; i < 30; i++ {
 		write(t, dir, fmt.Sprintf("c%d.go", i),
-			fmt.Sprintf("package store\n\nfunc Consumer%d(p string) {\n\t_, _ = ReadStore(p)\n}\n", i))
+			fmt.Sprintf("package store\n\nfunc Consumer%d(p string) {\n\t_, _ = Sym%d(p)\n}\n", i, i))
 	}
 	base := commitAll(t, dir, "seed 30 consuming files")
 	write(t, dir, "store.go", prefetchStoreV2)
@@ -582,7 +634,11 @@ func TestRetrieveSnippets_StopsAtTheCandidateFileCap(t *testing.T) {
 
 	var hits []refHit
 	for i := 0; i < 30; i++ {
-		hits = append(hits, refHit{Path: fmt.Sprintf("c%d.go", i), Line: 4, Symbol: "ReadStore"})
+		hits = append(hits, refHit{
+			Path:   fmt.Sprintf("c%d.go", i),
+			Line:   4,
+			Symbol: fmt.Sprintf("Sym%d", i),
+		})
 	}
 
 	got := newGitRunner(context.Background(), dir).retrieveSnippets(base, head, hits, nil)

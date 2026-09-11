@@ -410,11 +410,26 @@ func plausibleMockTarget(tok, lang string) bool {
 }
 
 const (
-	// maxPrefetchSitesPerSymbol bounds how many consumer sites ONE symbol may
-	// contribute. Without it a very common name (Close, Run, New) fills the whole
-	// candidate set before any other changed symbol is represented, and the byte
-	// cap then sheds the symbols that actually needed context.
-	maxPrefetchSitesPerSymbol = 3
+	// maxPrefetchSitesPerSymbol bounds how many candidate sites ONE symbol may
+	// contribute to ADMISSION. Without it a very common name (Close, Run, New)
+	// fills the whole candidate set before any other changed symbol is
+	// represented, and the byte cap then sheds the symbols that actually needed
+	// context.
+	//
+	// It is a bounded MULTIPLE of the emitted ceiling below rather than equal to
+	// it, because admission is not emission: three later filters — the declOnly
+	// declaration check, the maxAnalyzeFileBytes ceiling and overlapsEmitted — can
+	// still reject an admitted hit. At parity a cue-derived symbol whose bare
+	// mentions were all rejected spent its entire allowance and yielded nothing,
+	// while a real consumer further down the match list was refused admission.
+	maxPrefetchSitesPerSymbol = 6
+
+	// maxEmittedSitesPerSymbol bounds how many snippets ONE symbol may actually
+	// contribute. Fairness between symbols is a property of RESULTS, so it is
+	// enforced where the snippet is emitted; latency is a property of CANDIDATES,
+	// and maxPrefetchHits plus maxPrefetchFiles still bound that. One cap could
+	// not be both without giving up one of the two.
+	maxEmittedSitesPerSymbol = 3
 
 	// maxPrefetchHits is the absolute ceiling on candidate sites from one lookup,
 	// independent of how many symbols contributed them. Each surviving hit costs a
@@ -876,6 +891,9 @@ func (g *gitRunner) retrieveSnippets(base, head string, hits []refHit, declOnly 
 	}
 
 	var out []PrefetchSnippet
+	// Counted across the WHOLE call, not per file: a symbol consumed from three
+	// different files must still respect its emitted ceiling.
+	perSymbolEmitted := make(map[string]int, len(hits))
 	for _, rel := range order {
 		// ReuseMemo, not Memo: these are files the diff did NOT change, read once
 		// each, so populating the per-range blob cache would retain every
@@ -894,6 +912,11 @@ func (g *gitRunner) retrieveSnippets(base, head string, hits []refHit, declOnly 
 		root := parsePrefetchTree(rel, src)
 		emitted := make([][2]int, 0, len(byPath[rel]))
 		for _, h := range byPath[rel] {
+			// The per-symbol ceiling on EMITTED snippets. Checked before the span and
+			// slice work below, which a hit over the ceiling would only discard.
+			if perSymbolEmitted[h.Symbol] >= maxEmittedSitesPerSymbol {
+				continue
+			}
 			// A cue-derived symbol must resolve to a DECLARATION of itself, not a
 			// mere mention.
 			//
@@ -916,6 +939,7 @@ func (g *gitRunner) retrieveSnippets(base, head string, hits []refHit, declOnly 
 				continue
 			}
 			emitted = append(emitted, [2]int{s, e})
+			perSymbolEmitted[h.Symbol]++
 			out = append(out, PrefetchSnippet{Path: rel, Symbol: h.Symbol, Start: s, End: e, Body: body})
 		}
 	}
