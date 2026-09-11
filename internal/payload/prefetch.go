@@ -808,10 +808,12 @@ func snippetSpan(root astgroup.Node, line int) (start, end int) {
 // rather than the requested ones: the span is what the grounding gate is
 // threaded with, so a span claiming lines past the end of the file would mark
 // non-existent lines groundable.
-func sliceLines(src string, start, end int) (body string, s, e int, ok bool) {
-	if src == "" {
-		return "", 0, 0, false
-	}
+// splitSnippetLines splits src into its 1-based-indexable lines, once per
+// file. retrieveSnippets slices EVERY hit out of the same immutable text, so
+// splitting per hit — as sliceLines used to — allocated a full line slice of
+// the file for each hit it contained (a candidate near the maxAnalyzeFileBytes
+// ceiling with 10 hits paid ~10x the file size to extract at most 400 lines).
+func splitSnippetLines(src string) []string {
 	lines := strings.Split(src, "\n")
 	// A trailing newline yields a final empty element that is not a real line.
 	if n := len(lines); n > 0 && lines[n-1] == "" {
@@ -825,6 +827,10 @@ func sliceLines(src string, start, end int) (body string, s, e int, ok bool) {
 		// with — would differ by line ending alone.
 		lines[i] = strings.TrimSuffix(lines[i], "\r")
 	}
+	return lines
+}
+
+func sliceLines(lines []string, start, end int) (body string, s, e int, ok bool) {
 	if len(lines) == 0 {
 		return "", 0, 0, false
 	}
@@ -918,6 +924,7 @@ func (g *gitRunner) retrieveSnippets(base, head string, hits []refHit, declOnly 
 			continue // generated/oversized: not worth a parse, same ceiling as escalation
 		}
 		root := parsePrefetchTree(rel, src)
+		lines := splitSnippetLines(src)
 		emitted := make([][2]int, 0, len(byPath[rel]))
 		for _, h := range byPath[rel] {
 			// The per-symbol ceiling on EMITTED snippets. Checked before the span and
@@ -942,7 +949,7 @@ func (g *gitRunner) retrieveSnippets(base, head string, hits []refHit, declOnly 
 				}
 			}
 			start, end := snippetSpan(root, h.Line)
-			body, s, e, ok := sliceLines(src, start, end)
+			body, s, e, ok := sliceLines(lines, start, end)
 			if !ok || overlapsEmitted(emitted, s, e) {
 				continue
 			}

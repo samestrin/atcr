@@ -3,6 +3,7 @@ package payload
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -504,6 +505,37 @@ func TestReferenceHits_BrokenLookupIsDistinguishableFromNoMatch(t *testing.T) {
 	broken, failed := g.referenceHits("no-such-ref-xyz", []changedSymbol{{Name: "ReadStore"}}, nil)
 	require.Empty(t, broken)
 	require.True(t, failed, "a lookup that could not run at all must be reported as failed")
+}
+
+func TestSliceLines_AllocationIsFlatAcrossHitsWhenTheFileIsSplitOnce(t *testing.T) {
+	// retrieveSnippets slices EVERY hit out of the same immutable file text, so
+	// the split is per-FILE work: a candidate anywhere near the
+	// maxAnalyzeFileBytes scale otherwise pays its full line slice per hit (a
+	// 1 MiB file with 10 hits allocated ~10x the file size to extract at most
+	// 400 lines). sliceLines takes the pre-split lines; the strings.Split lives
+	// in splitSnippetLines, called once per file by retrieveSnippets.
+	var b strings.Builder
+	for i := 0; i < 20000; i++ {
+		fmt.Fprintf(&b, "// filler %d\n", i)
+	}
+	lines := splitSnippetLines(b.String())
+	require.Len(t, lines, 20000)
+
+	heapBytes := func(f func()) uint64 {
+		runtime.GC()
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		f()
+		runtime.ReadMemStats(&after)
+		return after.TotalAlloc - before.TotalAlloc
+	}
+	one := heapBytes(func() { _, _, _, _ = sliceLines(lines, 100, 140) })
+	// A per-call strings.Split of a 20000-line file allocates ~500KB; the split
+	// once per file leaves only the ~40-line join per slice. 16 KiB of headroom
+	// keeps garbage-collector and allocator jitter out of the assertion while
+	// being ~30x below the regression it exists to catch.
+	require.Less(t, one, uint64(16<<10),
+		"one slice of a 20000-line pre-split file must allocate only the join — a per-hit strings.Split would allocate ~500KB")
 }
 
 func TestRetrieveSnippets_CRLFSourceCarriesNoCarriageReturnsAndMatchesTheLFSpan(t *testing.T) {
