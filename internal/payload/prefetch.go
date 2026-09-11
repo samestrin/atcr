@@ -721,6 +721,15 @@ const (
 	// costs a `git show` plus a wasm parse, which is where the latency lives.
 	maxPrefetchFiles = 25
 
+	// maxPrefetchChangedFiles bounds how many CHANGED files the symbol-extraction
+	// loop reads HEAD blobs for, alongside maxPrefetchFiles bounding the CANDIDATE
+	// files retrieval reads. It exists because maxChangedSymbols cannot bound the
+	// loop by itself: a file whose change yields no symbol (prose-only edits, a
+	// comment-only change, or every symbol already seen) never moves the symbol
+	// count, so an all-parseable pathological diff would read every changed blob.
+	// 250 comfortably spans the 40-symbol budget without starving real diffs.
+	maxPrefetchChangedFiles = 250
+
 	// snippetFallbackRadius is the half-window used when a file cannot be parsed,
 	// so an unparseable candidate degrades to a plain neighbourhood of the call
 	// site instead of contributing nothing.
@@ -1372,6 +1381,7 @@ func (g *gitRunner) buildPrefetch(base, head string) (section string, spans map[
 
 	var symbols []changedSymbol
 	seen := make(map[string]bool)
+	readFiles := 0
 	for _, f := range files {
 		if f.kind == kindDeleted {
 			continue // nothing at HEAD to extract a symbol from
@@ -1380,6 +1390,26 @@ func (g *gitRunner) buildPrefetch(base, head string) (section string, spans map[
 		if len(hunks) == 0 {
 			continue // binary or pure-deletion: no head lines to resolve
 		}
+		// The cheap guards run ABOVE the blob read: a file with no parser and no
+		// test-file shape can contribute neither a declaration signature nor a
+		// mock cue, so there is nothing to extract from it. Left below the read,
+		// a 3000-file JSON/YAML/Markdown diff paid one `git show` per file — on a
+		// cold escalation cache, 3000 real subprocesses — to learn nothing, and
+		// the maxChangedSymbols ceiling never fires for files that yield no
+		// symbols.
+		lang := astgroup.LanguageForExt(strings.ToLower(path.Ext(f.path)))
+		if lang == "" && !looksLikeTestFile(f.path) {
+			continue
+		}
+		if readFiles >= maxPrefetchChangedFiles {
+			// Same shape as the maxFetcherHits ceiling: a pathological all-parseable
+			// diff whose files yield few or duplicate symbols would otherwise read
+			// every changed blob. 250 files comfortably span the 40-symbol budget.
+			g.log().Debug("payload: pre-fetch symbol extraction stopped at the changed-file ceiling",
+				"ceiling", maxPrefetchChangedFiles, "symbols", len(symbols))
+			break
+		}
+		readFiles++
 		// ReuseMemo, never Memo: memoizing here would RETAIN the blob of a file the
 		// escalation pass deliberately refused to read, defeating the
 		// maxAnalyzeFileBytes ceiling that exists to stop a change set of
@@ -1394,7 +1424,6 @@ func (g *gitRunner) buildPrefetch(base, head string) (section string, spans map[
 		for _, h := range hunks {
 			spanList = append(spanList, LineRange{Start: h.start, End: h.end})
 		}
-		lang := astgroup.LanguageForExt(strings.ToLower(path.Ext(f.path)))
 		for _, s := range extractChangedSymbols(src, spanList, parsePrefetchTree(f.path, src), looksLikeTestFile(f.path), lang) {
 			if seen[s.Name] {
 				continue
