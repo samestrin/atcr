@@ -2,11 +2,13 @@ package fanout
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/payload"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -87,6 +89,73 @@ func TestPrefetch_MaxPrefetchBytesZeroDisablesEndToEnd(t *testing.T) {
 		require.Zerof(t, prefetchEntryCount(mp),
 			"mode %s: max_prefetch_bytes: 0 must disable pre-fetching end to end", mode)
 	}
+}
+
+// PrefetchStatus exists so an absent section, a disabled feature and a failed
+// lookup stay distinguishable in the persisted artifacts. The claim ledger's
+// status reaches the manifest; this one must too — otherwise a run with
+// max_prefetch_bytes: 0, one whose `git grep` broke, and one that simply
+// matched nothing are byte-identical in status.json, which is exactly the
+// condition the type's own doc comment says it exists to prevent.
+func TestManifest_PrefetchStatusDistinguishesDisabledFromNoMatch(t *testing.T) {
+	readManifest := func(t *testing.T, dir string) map[string]any {
+		t.Helper()
+		b, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+		require.NoError(t, err)
+		var m map[string]any
+		require.NoError(t, json.Unmarshal(b, &m))
+		return m
+	}
+
+	t.Run("a matched run records present with a snippet count", func(t *testing.T) {
+		repo, base, head := prefetchFanoutRepo(t)
+		req := reviewReq(repo, repo, base, head)
+		req.OutputDir = filepath.Join(t.TempDir(), "review")
+		prep, err := PrepareReview(context.Background(), twoAgentConfig("http://unused"), req)
+		require.NoError(t, err)
+
+		pf, ok := readManifest(t, prep.Dir)["prefetch"].(map[string]any)
+		require.True(t, ok, "a git-range review must record prefetch in its manifest")
+		assert.Equal(t, true, pf["present"])
+		assert.Greater(t, pf["snippets"], float64(0), "this fixture retrieves a consumer")
+		assert.Nil(t, pf["disabled"])
+		assert.Nil(t, pf["failed"])
+	})
+
+	t.Run("a disabled run is recorded as disabled, not absent or failed", func(t *testing.T) {
+		repo, base, head := prefetchFanoutRepo(t)
+		cfg := twoAgentConfig("http://unused")
+		zero := int64(0)
+		cfg.Settings.MaxPrefetchBytes = &zero
+		req := reviewReq(repo, repo, base, head)
+		req.OutputDir = filepath.Join(t.TempDir(), "review")
+		prep, err := PrepareReview(context.Background(), cfg, req)
+		require.NoError(t, err)
+
+		pf, ok := readManifest(t, prep.Dir)["prefetch"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, true, pf["disabled"])
+		assert.Equal(t, false, pf["present"])
+		assert.Nil(t, pf["failed"], "'you told us not to' must never read as 'we could not'")
+	})
+
+	t.Run("a no-match run is absent but not disabled or failed", func(t *testing.T) {
+		// initRepo's change touches only one-letter symbol names, which
+		// validGrepSymbol rejects as not worth a slot — the lookup never runs and
+		// nothing is retrieved.
+		repo, base, head := initRepo(t)
+		req := reviewReq(repo, repo, base, head)
+		req.OutputDir = filepath.Join(t.TempDir(), "review")
+		prep, err := PrepareReview(context.Background(), twoAgentConfig("http://unused"), req)
+		require.NoError(t, err)
+
+		pf, ok := readManifest(t, prep.Dir)["prefetch"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, false, pf["present"])
+		assert.Nil(t, pf["disabled"])
+		assert.Nil(t, pf["failed"],
+			"a clean no-match must not read as a broken lookup")
+	})
 }
 
 func TestPrefetch_FileCountExcludesSyntheticEntries(t *testing.T) {
