@@ -162,9 +162,16 @@ func applyByteBudgetOrdered(entries []FileEntry, budget int64, tier func(FileEnt
 			exemptIdx = append(exemptIdx, i)
 		}
 	}
-	sort.SliceStable(exemptIdx, func(a, b int) bool {
-		return entries[exemptIdx[a]].exemptRank > entries[exemptIdx[b]].exemptRank
-	})
+	// Only two constructors ever set shedExempt, so the ordering matters solely
+	// when BOTH synthetic sections are present. Below two entries the sort is
+	// provably the identity, and this pass runs once per mode globally plus once
+	// per agent per mode plus once per re-fit — often over a payload with no
+	// exempt entry at all.
+	if len(exemptIdx) > 1 {
+		sort.SliceStable(exemptIdx, func(a, b int) bool {
+			return entries[exemptIdx[a]].exemptRank > entries[exemptIdx[b]].exemptRank
+		})
+	}
 	exemptUsed := int64(0)
 	for _, i := range exemptIdx {
 		if sz := clampSize(entries[i].Size); exemptUsed+sz <= budget {
