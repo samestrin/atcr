@@ -919,7 +919,20 @@ func TestRefit_CumulativeFundingKeepsTheLedgerAndShedsRetrievedContext(t *testin
 			"the shed record must name the Context Definitions block the reviewer did not receive")
 		assert.NotContains(t, fb.Truncation.FilesDropped, payload.ClaimLedgerPath,
 			"the ledger was funded, so it must not appear in the shed record")
-		require.Len(t, fb.CodeContext, 1,
-			"reviewable code must survive: shedding every file to fund the sections is the AllDropped case this band rules out (kept=%d)", len(fb.CodeContext))
+		// Counted over ATTRIBUTED refs only. CodeContext also carries the
+		// pre-marker prefix — the funded claim ledger — as an unattributed entry.
+		// That is the audit record working as intended, not a surviving file, and
+		// len(CodeContext) stopped being a proxy for "files kept" the moment the
+		// prefix stopped being discarded.
+		reviewable := 0
+		for _, ref := range fb.CodeContext {
+			if ref.Path != "" {
+				reviewable++
+			}
+		}
+		require.Equal(t, 1, reviewable,
+			"reviewable code must survive: shedding every file to fund the sections is the AllDropped case this band rules out (kept=%d)", reviewable)
+		require.Greater(t, len(fb.CodeContext), reviewable,
+			"the funded claim ledger must be legible in the AUDIT record too, not only in the prompt")
 	}
 }

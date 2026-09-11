@@ -3022,8 +3022,23 @@ func inheritedPayloadFits(primary Agent, budget int64) bool {
 		return false
 	}
 	var total int64
+	measured := 0
 	for _, ref := range primary.CodeContext {
+		// Skip the UNATTRIBUTED entry. That is the engine's synthetic prefix — the
+		// claim ledger and Context Definitions block — which is shed-EXEMPT and so
+		// is not governed by the effective byte budget compared against here.
+		// Counting it would make a payload that genuinely fits read as
+		// overflowing, and trigger a re-fit that has nothing to shed.
+		if ref.Path == "" {
+			continue
+		}
+		measured++
 		total += int64(len(ref.Body))
+	}
+	if measured == 0 {
+		// Nothing measurable: "may not fit", never "fits" — the same bias the
+		// empty-CodeContext arm above takes, and for the same reason.
+		return false
 	}
 	return total <= budget
 }
@@ -3038,6 +3053,12 @@ func inheritedPayloadFits(primary Agent, budget int64) bool {
 // 35.16.5.4, but it re-packs the slot's CARRIED entries (fallbackRefit), never
 // this reconstruction — this function's only consumer remains the fail/fallback
 // policy call.
+//
+// It reconstructs the unattributed prefix entry too, as a FileEntry with an
+// empty Path. Harmless while the only consumer is the fail/fallback policy call,
+// which ignores the entries — but it cannot restore shedExempt, so a future arm
+// that actually re-packs this reconstruction would treat the engine's synthetic
+// sections as ordinary reviewable content.
 func entriesFromPrimary(primary Agent) []payload.FileEntry {
 	entries := make([]payload.FileEntry, 0, len(primary.CodeContext))
 	for _, ref := range primary.CodeContext {

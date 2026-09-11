@@ -39,6 +39,9 @@ func markerPrefix(format string) string {
 // Attribution is best-effort by design: a section whose path cannot be
 // determined (a combined/merge diff, say) is still returned, with an empty
 // Path. An unattributed record is worth more to an auditor than a missing one.
+// The same rule covers everything above the FIRST marker — the claim ledger and
+// Context Definitions block the engine prepends — which comes back as a leading
+// entry with an empty Path.
 func EntriesFromRenderedPayload(mode PayloadMode, text string) []FileEntry {
 	if strings.TrimSpace(text) == "" {
 		return nil
@@ -66,7 +69,21 @@ func splitMarkedEntries(text string) []FileEntry {
 	if len(starts) == 0 {
 		return nil
 	}
-	entries := make([]FileEntry, 0, len(starts))
+	entries := make([]FileEntry, 0, len(starts)+1)
+	// Content ABOVE the first marker belongs to no file, but it is not nothing:
+	// the engine prepends the claim ledger and the Context Definitions block
+	// there. Dropping it hid up to DefaultMaxPrefetchBytes of retrieved repository
+	// source from every model-invocation audit record — the very content the
+	// grounding widening trusts. It is surfaced with an empty Path, exactly as a
+	// section whose path cannot be determined already is.
+	//
+	// Guarded on starts[0] > 0 so the ordinary shape — a payload beginning at a
+	// marker — is byte-for-byte unchanged, and so this can never emit an entry
+	// with an empty body.
+	if starts[0] > 0 {
+		prefix := text[:starts[0]]
+		entries = append(entries, FileEntry{Size: int64(len(prefix)), Body: prefix})
+	}
 	for i, s := range starts {
 		end := len(text)
 		if i+1 < len(starts) {
@@ -83,8 +100,9 @@ func splitMarkedEntries(text string) []FileEntry {
 }
 
 // markedEntryStarts returns the byte offsets of every line that begins a
-// per-file body. Content before the first marker is not part of any file's
-// contribution and is deliberately excluded.
+// per-file body. Content before the first offset is part of no file's
+// contribution; splitMarkedEntries surfaces it as an unattributed entry rather
+// than dropping it, because that is where the engine's synthetic sections live.
 func markedEntryStarts(text string) []int {
 	var starts []int
 	for off := 0; off < len(text); {
