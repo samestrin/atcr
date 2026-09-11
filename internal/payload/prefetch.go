@@ -901,9 +901,9 @@ func overlapsEmitted(emitted [][2]int, start, end int) bool {
 // declOnly names the symbols that entered the set ONLY through the mock-cue
 // scan. Those are held to a stricter rule than an ordinary changed symbol: see
 // the check in the per-hit loop below.
-func (g *gitRunner) retrieveSnippets(base, head string, hits []refHit, declOnly map[string]bool) []PrefetchSnippet {
+func (g *gitRunner) retrieveSnippets(base, head string, hits []refHit, declOnly map[string]bool) ([]PrefetchSnippet, []PrefetchDrop) {
 	if len(hits) == 0 {
-		return nil
+		return nil, nil
 	}
 	// Group by path in FIRST-APPEARANCE order, never by iterating a map: the
 	// retrieved context must be byte-identical for every agent in one fan-out
@@ -974,7 +974,7 @@ func (g *gitRunner) retrieveSnippets(base, head string, hits []refHit, declOnly 
 			out = append(out, PrefetchSnippet{Path: rel, Symbol: h.Symbol, Start: s, End: e, Body: body})
 		}
 	}
-	return out
+	return out, nil
 }
 
 // DefaultMaxPrefetchBytes is the default ceiling on the rendered Context
@@ -1478,7 +1478,7 @@ func (g *gitRunner) buildPrefetch(base, head string) (section string, spans map[
 			declOnly[s.Name] = true
 		}
 	}
-	snips := g.retrieveSnippets(base, head, hits, declOnly)
+	snips, _ := g.retrieveSnippets(base, head, hits, declOnly)
 	// Tier is stamped HERE rather than inside retrieveSnippets: retrieval is
 	// tier-agnostic, and 35.16.12 adds a second producer feeding the same ledger.
 	//

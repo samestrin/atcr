@@ -559,7 +559,8 @@ func TestRetrieveSnippets_CRLFSourceCarriesNoCarriageReturnsAndMatchesTheLFSpan(
 
 		g := newGitRunner(context.Background(), dir)
 		hits, _ := g.referenceHits(head, []changedSymbol{{Name: "ReadStore"}}, map[string]bool{"store.go": true})
-		return g.retrieveSnippets(base, head, hits, nil)
+		snips, _ := g.retrieveSnippets(base, head, hits, nil)
+		return snips
 	}
 
 	lf := retrieve(t, prefetchConsumer)
@@ -593,7 +594,7 @@ func TestRetrieveSnippets_SearchesHeadNotTheDirtyWorktree(t *testing.T) {
 	hits, _ := g.referenceHits(head, []changedSymbol{{Name: "ReadStore"}}, map[string]bool{"store.go": true})
 	require.NotEmpty(t, hits, "the consumer must still be found at head")
 
-	snips := g.retrieveSnippets(base, head, hits, nil)
+	snips, _ := g.retrieveSnippets(base, head, hits, nil)
 	require.NotEmpty(t, snips, "a dirty worktree must not lose the snippet")
 	require.Contains(t, snips[0].Body, "func Reconcile",
 		"the snippet must be cut at head's line numbering, not the worktree's")
@@ -651,9 +652,11 @@ func TestRetrieveSnippets_CueDerivedSymbolNeedsADeclarationSite(t *testing.T) {
 	g := newGitRunner(context.Background(), dir)
 	callSite := []refHit{{Path: "consumer.go", Line: 4, Symbol: "ReadStore"}}
 
-	require.NotEmpty(t, g.retrieveSnippets(base, head, callSite, nil),
+	changed, _ := g.retrieveSnippets(base, head, callSite, nil)
+	require.NotEmpty(t, changed,
 		"a genuinely changed symbol still retrieves its call sites - that is AC5")
-	require.Empty(t, g.retrieveSnippets(base, head, callSite, map[string]bool{"ReadStore": true}),
+	guessed, _ := g.retrieveSnippets(base, head, callSite, map[string]bool{"ReadStore": true})
+	require.Empty(t, guessed,
 		"a cue-derived symbol must not retrieve a file that merely mentions it")
 }
 
@@ -666,7 +669,7 @@ func TestRetrieveSnippets_CueDerivedSymbolStillRetrievesItsDeclaration(t *testin
 	// store.go declares ReadStore on line 3.
 	decl := []refHit{{Path: "store.go", Line: 3, Symbol: "ReadStore"}}
 
-	got := g.retrieveSnippets(base, head, decl, map[string]bool{"ReadStore": true})
+	got, _ := g.retrieveSnippets(base, head, decl, map[string]bool{"ReadStore": true})
 
 	require.Len(t, got, 1, "the declaration of a mocked symbol must still be retrieved")
 	require.Contains(t, got[0].Body, "func ReadStore")
@@ -705,7 +708,7 @@ func TestRetrieveSnippets_CapsSnippetsPerSymbolOnEmissionNotAdmission(t *testing
 		hits = append(hits, refHit{Path: fmt.Sprintf("consumer%d.go", i), Line: 4, Symbol: "ReadStore"})
 	}
 
-	got := newGitRunner(context.Background(), dir).
+	got, _ := newGitRunner(context.Background(), dir).
 		retrieveSnippets(base, head, hits, map[string]bool{"MockThing": true})
 
 	perSymbol := map[string]int{}
@@ -748,10 +751,55 @@ func TestRetrieveSnippets_StopsAtTheCandidateFileCap(t *testing.T) {
 		})
 	}
 
-	got := newGitRunner(context.Background(), dir).retrieveSnippets(base, head, hits, nil)
+	got, _ := newGitRunner(context.Background(), dir).retrieveSnippets(base, head, hits, nil)
 
 	require.Len(t, got, maxPrefetchFiles,
 		"30 distinct candidate files must clamp to the cap that bounds the read-and-parse work")
+}
+
+func TestRetrieveSnippets_DiscardedCandidatesReachTheLedger(t *testing.T) {
+	// AC7 asks that a drop be RECORDED rather than silent, and only the BYTE-CAP
+	// drops ever were. retrieveSnippets discards a candidate on six other paths —
+	// the maxPrefetchFiles overflow, an unreadable blob, an oversized file, the
+	// declOnly declaration filter, overlapsEmitted, and an out-of-range span — and
+	// every one of them vanished without a ledger line. A reviewer shown 25
+	// snippets cannot tell that apart from 25 candidates having existed.
+	//
+	// The file cap is the arm driven here because it is the one a reviewer
+	// measured empirically: 30 candidate files yield 25 snippets and five files
+	// disappear.
+	dir := initRepo(t)
+	write(t, dir, "store.go", prefetchStoreV1)
+	for i := 0; i < 30; i++ {
+		write(t, dir, fmt.Sprintf("c%d.go", i),
+			fmt.Sprintf("package store\n\nfunc Consumer%d(p string) {\n\t_, _ = Sym%d(p)\n}\n", i, i))
+	}
+	base := commitAll(t, dir, "seed 30 consuming files")
+	write(t, dir, "store.go", prefetchStoreV2)
+	head := commitAll(t, dir, "change ReadStore return shape")
+
+	var hits []refHit
+	for i := 0; i < 30; i++ {
+		hits = append(hits, refHit{
+			Path:   fmt.Sprintf("c%d.go", i),
+			Line:   4,
+			Symbol: fmt.Sprintf("Sym%d", i),
+		})
+	}
+
+	kept, dropped := newGitRunner(context.Background(), dir).retrieveSnippets(base, head, hits, nil)
+
+	require.Len(t, kept, maxPrefetchFiles)
+	require.Len(t, dropped, 30-maxPrefetchFiles,
+		"every candidate past the file cap must produce a ledger record, not vanish")
+
+	// The record is only worth having if it reaches the reviewer, so assert on the
+	// RENDERED section rather than the slice alone.
+	section := renderPrefetchSection(kept, dropped)
+	for i := maxPrefetchFiles; i < 30; i++ {
+		require.Contains(t, section, fmt.Sprintf("c%d.go", i),
+			"the rendered section must NAME each file the candidate cap discarded")
+	}
 }
 
 func TestParseGrepHits_StopsAtTheAbsoluteHitCap(t *testing.T) {
@@ -854,7 +902,7 @@ func TestRetrieveSnippets_ReturnsTheConsumerBodyWithItsSpan(t *testing.T) {
 	dir, base, head := prefetchRepo(t)
 	g := newGitRunner(context.Background(), dir)
 
-	got := g.retrieveSnippets(base, head, []refHit{{Path: "consumer.go", Line: 4, Symbol: "ReadStore"}}, nil)
+	got, _ := g.retrieveSnippets(base, head, []refHit{{Path: "consumer.go", Line: 4, Symbol: "ReadStore"}}, nil)
 
 	require.Len(t, got, 1)
 	require.Equal(t, "consumer.go", got[0].Path)
@@ -874,8 +922,8 @@ func TestRetrieveSnippets_IsDeterministicAcrossRuns(t *testing.T) {
 		{Path: "store.go", Line: 3, Symbol: "ReadStore"},
 	}
 
-	first := newGitRunner(context.Background(), dir).retrieveSnippets(base, head, hits, nil)
-	second := newGitRunner(context.Background(), dir).retrieveSnippets(base, head, hits, nil)
+	first, _ := newGitRunner(context.Background(), dir).retrieveSnippets(base, head, hits, nil)
+	second, _ := newGitRunner(context.Background(), dir).retrieveSnippets(base, head, hits, nil)
 
 	require.Equal(t, first, second, "retrieval must be byte-identical across runs")
 	require.NotEmpty(t, first)
@@ -887,13 +935,18 @@ func TestRetrieveSnippets_MissingCandidateIsSkippedNotFatal(t *testing.T) {
 	dir, base, head := prefetchRepo(t)
 	g := newGitRunner(context.Background(), dir)
 
-	got := g.retrieveSnippets(base, head, []refHit{
+	got, drops := g.retrieveSnippets(base, head, []refHit{
 		{Path: "does-not-exist.go", Line: 3, Symbol: "ReadStore"},
 		{Path: "consumer.go", Line: 4, Symbol: "ReadStore"},
 	}, nil)
 
 	require.Len(t, got, 1, "the unreadable candidate is skipped and the good one survives")
 	require.Equal(t, "consumer.go", got[0].Path)
+	// Skipped is not SILENT. AC7 requires every discarded candidate to reach the
+	// ledger; an unreadable blob is a discard like any other, and a reviewer told
+	// nothing was retrieved from it cannot tell that apart from nothing existing.
+	require.Len(t, drops, 1, "the unreadable candidate must be RECORDED, not silently dropped")
+	require.Equal(t, "does-not-exist.go", drops[0].Path)
 }
 
 // renderedBytes is the size the cap actually adjudicates on: the snippet as it
