@@ -1089,6 +1089,13 @@ const (
 	// discarded, reported in the ledger under a tier its producer never chose.
 	// It still sheds first, which is right for unknown provenance; what changed
 	// is that the ledger now names it.
+	//
+	// The sibling iota enums in this package — claimsTruncation, renderPhase,
+	// changeKind — keep meaningful zero values and are deliberately left alone.
+	// Each is unexported with a single producer, so an unstamped value is not
+	// reachable there the way it is here. This type is exported and epic
+	// 35.16.12 adds a second, independent producer feeding the same ledger, and
+	// that reachability is what makes the zero value worth a name.
 	PrefetchTierUnset PrefetchTier = iota
 	// PrefetchTierSimilarity is reserved for epic 35.16.12's embedding-similarity
 	// retrieval, and is the lowest REAL tier so similarity snippets shed before
