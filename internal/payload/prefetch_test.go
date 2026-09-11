@@ -157,6 +157,30 @@ func TestExtractChangedSymbols_DomainSymbolContainingACueIsStillRetrievable(t *t
 		"the narrowing must still reject a token that names the double itself")
 }
 
+func TestExtractChangedSymbols_BudgetSkipsPastAResolvedDeclaration(t *testing.T) {
+	// Pass 1 called EnclosingSymbolName once per changed LINE, each call doing a
+	// fresh covering-chain descent. A single huge changed function therefore
+	// yielded ONE symbol while consuming thousands of walks and thousands of the
+	// maxScannedChangedLines budget — and once the budget ran out the labeled
+	// break fired and every later declaration in the file was silently lost.
+	//
+	// The budget has to be spent per DECLARATION, not per line.
+	root := astgroup.Node{Kind: "file", StartLine: 1, EndLine: 6000, Children: []astgroup.Node{
+		{Kind: "func", Name: "Huge", StartLine: 1, EndLine: 5500},
+		{Kind: "func", Name: "Small", StartLine: 5600, EndLine: 5610},
+	}}
+	src := strings.Repeat("x\n", 6000)
+
+	got := extractChangedSymbols(src, []LineRange{{Start: 1, End: 6000}}, root, false, "go")
+
+	var names []string
+	for _, s := range got {
+		names = append(names, s.Name)
+	}
+	require.Equal(t, []string{"Huge", "Small"}, names,
+		"a huge changed declaration must not exhaust the budget before the next declaration is reached")
+}
+
 func TestExtractChangedSymbols_CueNoiseIsFilteredForEveryEmbeddedLanguage(t *testing.T) {
 	// looksLikeTestFile enables the cue scan for Python, TypeScript, PHP and Rust,
 	// but the noise set held Go keywords alone. A Python cue line therefore
