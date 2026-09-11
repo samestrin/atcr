@@ -414,7 +414,11 @@ func (b *RangeBuilder) BuildChangedLines() (ChangedLines, error) {
 // ranges govern, and overwriting them with a snippet span would shrink the
 // groundable region of a genuinely changed file.
 func (b *RangeBuilder) withPrefetchedSpans(cl ChangedLines) ChangedLines {
-	b.prefetch() // populate the memo; a no-op once BuildEntries has run
+	// Consume the memo READ-ONLY: grounding widens the gate, so it may only
+	// cover a section a build actually rendered. Invoking prefetch() here made
+	// GROUNDING a trigger for the whole `git grep` + blob-read pass — on a path
+	// that never shipped the section — and, past ReleaseModeCaches, re-spawned
+	// one `git show` per changed file while making unshown lines groundable.
 	if len(b.prefetchSpans) == 0 {
 		return cl
 	}
