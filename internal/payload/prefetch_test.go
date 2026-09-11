@@ -401,7 +401,7 @@ func TestReferenceHits_RetrievesConsumerInAnUntouchedFile(t *testing.T) {
 	dir, _, head := prefetchRepo(t)
 	g := newGitRunner(context.Background(), dir)
 
-	hits := g.referenceHits(head, []changedSymbol{{Name: "ReadStore"}}, map[string]bool{"store.go": true})
+	hits, _ := g.referenceHits(head, []changedSymbol{{Name: "ReadStore"}}, map[string]bool{"store.go": true})
 
 	var paths []string
 	for _, h := range hits {
@@ -428,7 +428,7 @@ func TestReferenceHits_TreeIshIsUnambiguousAgainstALikeNamedPath(t *testing.T) {
 
 	g := newGitRunner(context.Background(), dir)
 
-	hits := g.referenceHits("release", []changedSymbol{{Name: "ReadStore"}}, map[string]bool{"store.go": true})
+	hits, _ := g.referenceHits("release", []changedSymbol{{Name: "ReadStore"}}, map[string]bool{"store.go": true})
 
 	var paths []string
 	for _, h := range hits {
@@ -442,7 +442,8 @@ func TestReferenceHits_IsLazyAndSpendsOneProcessForEverySymbol(t *testing.T) {
 	dir, _, head := prefetchRepo(t)
 	g := newGitRunner(context.Background(), dir)
 
-	require.Empty(t, g.referenceHits(head, nil, nil))
+	lazy, _ := g.referenceHits(head, nil, nil)
+	require.Empty(t, lazy)
 	require.Zero(t, g.execCount,
 		"a run whose diff cites no resolvable symbol must never read a source file")
 
@@ -458,7 +459,29 @@ func TestReferenceHits_UnresolvableSymbolFailsOpenToEmpty(t *testing.T) {
 	dir, _, head := prefetchRepo(t)
 	g := newGitRunner(context.Background(), dir)
 
-	require.Empty(t, g.referenceHits(head, []changedSymbol{{Name: "NoSuchSymbolAnywhere"}}, nil))
+	got, _ := g.referenceHits(head, []changedSymbol{{Name: "NoSuchSymbolAnywhere"}}, nil)
+	require.Empty(t, got)
+}
+
+func TestReferenceHits_BrokenLookupIsDistinguishableFromNoMatch(t *testing.T) {
+	// `git grep` exits 1 when it simply matched nothing and >1 when the lookup
+	// genuinely broke, and gitRunner.output wraps the ExitError with %w — so
+	// errors.As recovers the code and the two ARE separable, contrary to the
+	// comment that claimed otherwise.
+	//
+	// Conflating them means PrefetchStatus.Failed is never set for the one
+	// failure mode the type exists to report: a permanently broken lookup reads
+	// as a clean no-match, forever and silently.
+	dir, _, head := prefetchRepo(t)
+	g := newGitRunner(context.Background(), dir)
+
+	noMatch, failed := g.referenceHits(head, []changedSymbol{{Name: "NoSuchSymbolAnywhere"}}, nil)
+	require.Empty(t, noMatch)
+	require.False(t, failed, "matching nothing ran correctly and is not a failure")
+
+	broken, failed := g.referenceHits("no-such-ref-xyz", []changedSymbol{{Name: "ReadStore"}}, nil)
+	require.Empty(t, broken)
+	require.True(t, failed, "a lookup that could not run at all must be reported as failed")
 }
 
 func TestRetrieveSnippets_SearchesHeadNotTheDirtyWorktree(t *testing.T) {
@@ -476,7 +499,7 @@ func TestRetrieveSnippets_SearchesHeadNotTheDirtyWorktree(t *testing.T) {
 		"func Reconcile(path string) error {\n\tdata, err := ReadStore(path)\n\tif err != nil {\n\t\treturn err\n\t}\n\t_ = data\n\treturn nil\n}\n")
 
 	g := newGitRunner(context.Background(), dir)
-	hits := g.referenceHits(head, []changedSymbol{{Name: "ReadStore"}}, map[string]bool{"store.go": true})
+	hits, _ := g.referenceHits(head, []changedSymbol{{Name: "ReadStore"}}, map[string]bool{"store.go": true})
 	require.NotEmpty(t, hits, "the consumer must still be found at head")
 
 	snips := g.retrieveSnippets(base, head, hits, nil)

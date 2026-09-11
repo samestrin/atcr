@@ -579,16 +579,16 @@ func validGrepSymbol(name string) bool {
 // It never returns an error. Pre-fetching is an ADDITIONAL input to a review, so
 // a failed lookup degrades to empty context rather than failing the review — the
 // same fail-open contract the claim ledger applies to an unreadable `git log`.
-// `git grep` also exits non-zero when it simply matched nothing, which
-// gitRunner.output cannot distinguish from a real failure, so treating any error
-// as "no context" is the only correct reading available here.
-func (g *gitRunner) referenceHits(head string, symbols []changedSymbol, exclude map[string]bool) []refHit {
+// failed reports that the lookup genuinely BROKE, as opposed to running fine and
+// matching nothing. Both yield empty context, but they are opposite operational
+// signals and only the first should set PrefetchStatus.Failed.
+func (g *gitRunner) referenceHits(head string, symbols []changedSymbol, exclude map[string]bool) (hits []refHit, failed bool) {
 	names := grepPatterns(symbols)
 	if len(names) == 0 {
 		// The laziness contract: a diff citing no resolvable symbol spawns no
 		// process and reads no source file. Returning BEFORE g.output is what makes
 		// that observable through execCount.
-		return nil
+		return nil, false
 	}
 	// ONE process for every symbol. `-F` makes each pattern a fixed string (never
 	// a regex), `-w` bounds it to whole words so `Store` does not match
@@ -625,7 +625,7 @@ func (g *gitRunner) referenceHits(head string, symbols []changedSymbol, exclude 
 		// nothing would trade a complete review for none at all.
 		g.log().Debug("payload: reference lookup matched nothing or failed; review proceeds without pre-fetched context",
 			"symbols", len(names), "error", err)
-		return nil
+		return nil, false
 	}
 	// The ignore filter must govern RETRIEVED context exactly as it governs the
 	// diff. exclude is built from the already-filtered changed-file list, so an
@@ -637,7 +637,7 @@ func (g *gitRunner) referenceHits(head string, symbols []changedSymbol, exclude 
 	if m := g.matcher(); m.active() {
 		skip = m.match
 	}
-	return parseGrepHits(stripGrepRev(string(out), head), names, exclude, skip, maxPrefetchSitesPerSymbol)
+	return parseGrepHits(stripGrepRev(string(out), head), names, exclude, skip, maxPrefetchSitesPerSymbol), false
 }
 
 // stripGrepRev removes the leading "<rev>:" field that `git grep <rev>` prefixes
@@ -1294,7 +1294,12 @@ func (g *gitRunner) buildPrefetch(base, head string) (section string, spans map[
 		return "", nil, PrefetchStatus{}
 	}
 
-	hits := g.referenceHits(head, symbols, changedPaths)
+	hits, lookupFailed := g.referenceHits(head, symbols, changedPaths)
+	if lookupFailed {
+		// A lookup that BROKE, not one that matched nothing. Both ship empty
+		// context, but only this one is a malfunction worth reporting.
+		return "", nil, PrefetchStatus{Failed: true}
+	}
 	if len(hits) == 0 {
 		return "", nil, PrefetchStatus{}
 	}
