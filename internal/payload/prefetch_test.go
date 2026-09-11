@@ -1527,6 +1527,33 @@ func TestRangeBuilder_ChangedLinesIncludesRetrievedSpans(t *testing.T) {
 	require.NotEmpty(t, fc.Ranges, "the groundable region must be the span that was shown")
 }
 
+func TestRangeBuilder_ChangedLinesAloneNeverTriggersRetrieval(t *testing.T) {
+	// Grounding must widen ONLY for a section a build actually rendered. A
+	// caller that uses BuildChangedLines alone — no BuildEntries — never
+	// shipped the Context Definitions entry, so retrieving here would spend the
+	// whole `git grep` + blob-read pass to make lines NO reviewer ever saw
+	// groundable, and would re-spawn one `git show` per changed file on a
+	// post-release builder whose headSrc is gone.
+	dir, base, head := prefetchRepo(t)
+
+	off := NewRangeBuilder(context.Background(), dir, base, head, WithMaxPrefetchBytes(0))
+	baseline, err := off.BuildChangedLines()
+	require.NoError(t, err)
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	cl, err := rb.BuildChangedLines()
+	require.NoError(t, err)
+
+	for p, fc := range cl {
+		require.False(t, fc.PrefetchOnly,
+			"%s: no prefetch run may fire from grounding alone — only a section a build rendered widens the gate", p)
+	}
+	require.Equal(t, baseline, cl,
+		"grounding without a payload build must match the prefetch-disabled result exactly")
+	require.Equal(t, off.g.execCount, rb.g.execCount,
+		"grounding without a payload build must not run the reference lookup or read any candidate blob")
+}
+
 func TestRangeBuilder_ChangedLinesLeavesGenuinelyChangedFilesAlone(t *testing.T) {
 	// A file the diff DID change keeps its own ranges: overwriting them with a
 	// snippet span would shrink the groundable region of real changed code.
