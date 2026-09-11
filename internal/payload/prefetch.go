@@ -1030,7 +1030,16 @@ func capPrefetchSnippets(snips []PrefetchSnippet, maxBytes int64) (kept []Prefet
 		size[i] = int64(len(renderSnippetBlock(s)))
 		total += size[i]
 	}
-	if total <= maxBytes {
+
+	// The section overhead is billed INSIDE the budget: the start/end markers
+	// and every drop-ledger line are emitted AFTER the snippet accounting, and
+	// leaving them out let a 1024-byte cap emit a 1892-byte section. The ledger
+	// bytes depend on WHICH snippets are shed, so the shed loop below
+	// re-measures them at every step — and renders them through the same
+	// function the section uses, because an accountant that can drift from the
+	// emitter is the defect this reservation exists to close.
+	markers := int64(len(prefetchSectionStart) + 1 + len(prefetchSectionEnd) + 1)
+	if total+markers <= maxBytes {
 		return append([]PrefetchSnippet(nil), snips...), nil
 	}
 
@@ -1058,18 +1067,33 @@ func capPrefetchSnippets(snips []PrefetchSnippet, maxBytes int64) (kept []Prefet
 	})
 
 	drop := make([]bool, len(snips))
-	used := total
+	used := total + markers
 	for _, i := range idx {
-		if used <= maxBytes {
-			break
-		}
 		// Whole snippets only. A truncated snippet reads as a complete function to
 		// the reviewer, which is worse than its absence: it invites a finding about
 		// logic that was simply cut off.
 		drop[i] = true
 		used -= size[i]
+		if used+int64(len(renderPrefetchDropLedger(dropsFor(snips, drop, size)))) <= maxBytes {
+			break
+		}
 	}
 	return splitPrefetchLedger(snips, drop, size)
+}
+
+// dropsFor returns the dropped subset of snips in ORIGINAL order, mirroring
+// splitPrefetchLedger — the ledger lists drops in snippet order even though
+// the shed order is tier-then-size. Bytes is the RENDERED size: the ledger
+// line prints it, so the accounting must measure the same number it would
+// emit, digit-for-digit.
+func dropsFor(snips []PrefetchSnippet, drop []bool, size []int64) []PrefetchDrop {
+	var out []PrefetchDrop
+	for i, s := range snips {
+		if drop[i] {
+			out = append(out, PrefetchDrop{Path: s.Path, Symbol: s.Symbol, Tier: s.Tier, Bytes: int(size[i])})
+		}
+	}
+	return out
 }
 
 // splitPrefetchLedger partitions snips by the drop mask, preserving the original
@@ -1204,6 +1228,20 @@ func renderPrefetchSection(kept []PrefetchSnippet, dropped []PrefetchDrop) strin
 		b.WriteString(renderSnippetBlock(s))
 	}
 
+	b.WriteString(renderPrefetchDropLedger(dropped))
+
+	b.WriteString(prefetchSectionEnd)
+	b.WriteByte('\n')
+	return b.String()
+}
+
+// renderPrefetchDropLedger renders the bounded drop ledger (no section
+// markers). capPrefetchSnippets measures its output INSIDE the byte budget, so
+// this is the single emitter for both the render and the accounting — a
+// ledger estimator that could drift from the emitted text would reopen the
+// over-cap section defect the reservation closed.
+func renderPrefetchDropLedger(dropped []PrefetchDrop) string {
+	var b strings.Builder
 	for i, d := range dropped {
 		if i >= maxPrefetchDropLines {
 			b.WriteString(prefetchNotePrefix)
@@ -1223,9 +1261,6 @@ func renderPrefetchSection(kept []PrefetchSnippet, dropped []PrefetchDrop) strin
 		b.WriteString(strconv.Itoa(d.Bytes))
 		b.WriteString(" bytes) - over the pre-fetch byte cap\n")
 	}
-
-	b.WriteString(prefetchSectionEnd)
-	b.WriteByte('\n')
 	return b.String()
 }
 
