@@ -181,6 +181,36 @@ func TestExtractChangedSymbols_BudgetSkipsPastAResolvedDeclaration(t *testing.T)
 		"a huge changed declaration must not exhaust the budget before the next declaration is reached")
 }
 
+func TestExtractChangedSymbols_CuePassStillRunsAfterTheDeclarationBudget(t *testing.T) {
+	// The declaration walk ends in a labeled BREAK, not a return, so exhausting
+	// its budget must not skip the AC6 cue pass. Returning there made the mock
+	// half of the feature vanish on exactly the large changed test files it was
+	// written for, and nothing pinned the behavior afterwards.
+	//
+	// A zero root resolves no declaration, so each of the first 5000 changed
+	// lines costs a walk and pass 1 breaks on its budget. The cue sits EARLY in
+	// the range on purpose: pass 2 carries its own maxScannedChangedLines budget
+	// counted from the first range, so a cue beyond line 5000 is unreachable by
+	// construction and would be testing that budget rather than the break.
+	var b strings.Builder
+	b.WriteString("package store\n")
+	b.WriteString("\tstubbed := ChargeClient // patch it\n")
+	for i := 3; i <= 5010; i++ {
+		b.WriteString("\tx := 1\n")
+	}
+
+	got := extractChangedSymbols(b.String(), []LineRange{{Start: 1, End: 5010}}, astgroup.Node{}, true, "go")
+
+	var mocked []string
+	for _, s := range got {
+		if s.Mocked {
+			mocked = append(mocked, s.Name)
+		}
+	}
+	require.Contains(t, mocked, "ChargeClient",
+		"the cue pass must still run after the declaration walk exhausts its line budget")
+}
+
 func TestExtractChangedSymbols_CueNoiseIsFilteredForEveryEmbeddedLanguage(t *testing.T) {
 	// looksLikeTestFile enables the cue scan for Python, TypeScript, PHP and Rust,
 	// but the noise set held Go keywords alone. A Python cue line therefore
