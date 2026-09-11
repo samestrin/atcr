@@ -1,6 +1,8 @@
 package payload
 
 import (
+	"errors"
+	"os/exec"
 	"path"
 	"sort"
 	"strconv"
@@ -618,14 +620,31 @@ func (g *gitRunner) referenceHits(head string, symbols []changedSymbol, exclude 
 	args = append(args, head, "--")
 	out, err := g.output(args...)
 	if err != nil {
-		// `git grep` exits non-zero on NO MATCH as well as on failure, and
-		// gitRunner.output collapses both into one error, so the two are not
-		// separable here. Both degrade to empty context: pre-fetching is an
-		// additional review input, and failing a review because a lookup found
-		// nothing would trade a complete review for none at all.
-		g.log().Debug("payload: reference lookup matched nothing or failed; review proceeds without pre-fetched context",
-			"symbols", len(names), "error", err)
-		return nil, false
+		// `git grep` exits 1 for NO MATCH and greater than 1 for a real failure.
+		// gitRunner.output wraps the ExitError with %w (internal/payload/diff.go),
+		// so errors.As recovers the code and the two ARE separable. An earlier
+		// comment here asserted they were not, and that false premise is why
+		// PrefetchStatus.Failed was never set for the single failure mode the type
+		// exists to report — a permanently broken lookup was indistinguishable
+		// from a clean no-match, forever.
+		//
+		// BOTH still degrade to empty context: pre-fetching is an ADDITIONAL
+		// review input, so a broken lookup must never fail the review. Only what
+		// is REPORTED differs.
+		//
+		// A non-ExitError (a cancelled context, a git binary that could not be
+		// spawned) is a failure too, so anything that is not exactly exit 1
+		// counts as broken.
+		var exitErr *exec.ExitError
+		broke := !errors.As(err, &exitErr) || exitErr.ExitCode() != 1
+		if broke {
+			g.log().Debug("payload: reference lookup FAILED; review proceeds without pre-fetched context",
+				"symbols", len(names), "error", err)
+		} else {
+			g.log().Debug("payload: reference lookup matched nothing; review proceeds without pre-fetched context",
+				"symbols", len(names))
+		}
+		return nil, broke
 	}
 	// The ignore filter must govern RETRIEVED context exactly as it governs the
 	// diff. exclude is built from the already-filtered changed-file list, so an
