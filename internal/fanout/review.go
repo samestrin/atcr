@@ -620,12 +620,17 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 	// unreachable today; if a future caller breaks it, disable the gate audibly
 	// — the same treatment as computeGroundingData's range-mismatch guard —
 	// rather than ground incompletely.
+	var (
+		changed                 payload.ChangedLines
+		groundingDisabledReason string
+	)
 	if rb == nil && payloadsCarryPrefetchContext(payloads) {
 		log.FromContext(ctx).Warn("grounding disabled: payloads carry Context Definitions but no RangeBuilder was provided; the standalone grounding fallback cannot see prefetched spans",
 			"range", req.Range.Base+".."+req.Range.Head)
-		return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, Changed: nil, GroundingDisabledReason: "payloads carry Context Definitions but no RangeBuilder was provided; standalone grounding cannot see prefetched spans", manifest: m, cache: revCache, cacheNoRead: req.NoCache}, nil
+		groundingDisabledReason = "payloads carry Context Definitions but no RangeBuilder was provided; standalone grounding cannot see prefetched spans"
+	} else {
+		changed, groundingDisabledReason = computeGroundingData(ctx, req, rb)
 	}
-	changed, groundingDisabledReason := computeGroundingData(ctx, req, rb)
 	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, Changed: changed, GroundingDisabledReason: groundingDisabledReason, manifest: m, cache: revCache, cacheNoRead: req.NoCache}, nil
 }
 
