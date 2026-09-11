@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/payload"
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -234,4 +236,56 @@ func TestBuildSlots_PerAgentFileCountExcludesSyntheticEntries(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, slot.Prompt, "Reviewing 1 changed file(s)",
 		"the per-agent prompt must report ReviewableCount(kept) — the same rule as the global build — not len(kept) over the synthetic-section-retaining survivor set")
+}
+
+func TestBuildSlots_ZeroBudgetArmFileCountExcludesSyntheticEntries(t *testing.T) {
+	// The zero-budget bulk arm reports a HARDCODED count of 1 for whichever single
+	// entry it keeps, and keepSmallestEntry picks by len(Body) with no shedExempt
+	// awareness. So the entry it keeps can be a synthetic section, and the agent is
+	// then told it is reviewing one changed file while having received no
+	// reviewable content at all.
+	//
+	// Its two sibling arms — the re-pack below it and the fallback re-fit — both
+	// already route through payload.ReviewableCount. This one did not.
+	repo, base, head := prefetchFanoutRepo(t)
+
+	payloads, _, err := buildPayloads(context.Background(), sizingRosterConfig(), repo, base, head, false)
+	require.NoError(t, err)
+
+	mp, ok := payloads["blocks"]
+	require.True(t, ok, "PRECONDITION: fixture must resolve the blocks mode")
+
+	// Inflate every REVIEWABLE entry so the smallest non-empty entry is certainly
+	// a synthetic section. Mutated IN PLACE: shedExempt is unexported, so a
+	// rebuilt FileEntry would silently lose the flag ReviewableCount keys on and
+	// the assertion below would prove nothing.
+	pad := strings.Repeat("x", 100000)
+	for i := range mp.Entries {
+		switch mp.Entries[i].Path {
+		case payload.ClaimLedgerPath, payload.PrefetchContextPath:
+			// leave the synthetic sections small
+		default:
+			mp.Entries[i].Body += pad
+			mp.Entries[i].Size = int64(len(mp.Entries[i].Body))
+		}
+	}
+	payloads["blocks"] = mp
+
+	cfg := declaredWindowRoster(t, 1)
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+
+	var slots []Slot
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: base, Head: head}, "blocks", "", true, true)
+	})
+	require.NoError(t, err)
+	require.Len(t, slots, 1)
+
+	p := slots[0].Primary
+	require.Len(t, p.chunkFiles, 1, "PRECONDITION: the zero-budget arm keeps exactly one entry")
+	require.Containsf(t, []string{payload.ClaimLedgerPath, payload.PrefetchContextPath}, p.chunkFiles[0],
+		"PRECONDITION: the kept entry must be a synthetic section or the count proves nothing (kept %q)", p.chunkFiles[0])
+
+	require.Contains(t, p.Prompt, "Reviewing 0 changed file(s)",
+		"an agent handed only a synthetic section reviewed NO changed file; reporting 1 sends it hunting for content it never received")
 }
