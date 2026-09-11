@@ -601,6 +601,44 @@ func TestRetrieveSnippets_SearchesHeadNotTheDirtyWorktree(t *testing.T) {
 		"the retrieved region must actually contain the call site the hit pointed at")
 }
 
+func TestLooksLikeTestFile(t *testing.T) {
+	// looksLikeTestFile is the sole gate enabling the AC6 mock-cue scan: a
+	// pattern regression silently disables the scan for every non-Go language.
+	// The negatives matter as much as the positives — the scan admits ANY
+	// identifier on a changed line mentioning mock/patch/stub/fake, so every
+	// false positive widens what gets retrieved into provider prompts.
+	cases := []struct {
+		name string
+		want bool
+	}{
+		{"store_test.go", true},
+		{"test_store.py", true},
+		{"store_test.py", true},
+		{"store_test.rb", true},
+		{"widget.test.ts", true},
+		{"widget.spec.tsx", true},
+		{"foo_spec.rb", true},
+		// Case-significant CamelCase conventions: PHPUnit and JUnit.
+		{"UserTest.php", true},
+		{"FooTest.java", true},
+		{"FooTests.java", true},
+		// Negatives. A lowercase suffix match on the CamelCase forms would admit
+		// "latest.php" and "attest.java" — ordinary files that merely END in the
+		// letters t-e-s-t.
+		{"patch_notes.go", false},
+		{"store.go", false},
+		{"test.go", false},
+		{"latest.php", false},
+		{"attest.java", false},
+		{"README.md", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, looksLikeTestFile(tc.name))
+		})
+	}
+}
+
 func TestRetrieveSnippets_CueDerivedSymbolNeedsADeclarationSite(t *testing.T) {
 	// The AC6 cue scan admits ANY identifier on a changed test line mentioning
 	// mock/patch/stub/fake. Left unchecked, an ordinary token on such a line —
