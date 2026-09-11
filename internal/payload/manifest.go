@@ -123,6 +123,20 @@ type Manifest struct {
 	// branch.
 	ClaimLedger *ClaimLedgerStatus `json:"claim_ledger,omitempty"`
 
+	// Prefetch records what the context-aware pre-fetch pass produced for this
+	// range (Epic 35.16.8). A POINTER with omitempty for the same reason as
+	// ClaimLedger: a manifest written by a build that never had a RangeBuilder
+	// -- the --all/--dir baseline and --diff-file paths -- omits the key
+	// entirely and stays byte-identical to earlier versions.
+	//
+	// Its absence and its zero value therefore mean different things: absent =
+	// "this run had no range", present with Disabled = "the operator turned
+	// pre-fetching off", present with Failed = "the reference lookup broke",
+	// present with Present=false = "the lookup ran and matched nothing". Those
+	// were previously byte-identical in status.json, so a transient grep failure
+	// silently looked like a repo with no consumers.
+	Prefetch *PrefetchStatus `json:"prefetch,omitempty"`
+
 	// Review is the enriched record of the review stage's tool-using agents
 	// (Epic 2.0, AC 05-04). It is a sibling of Stages (which stays the ordered
 	// stage-name list, unchanged from 1.x) rather than nested inside it, because

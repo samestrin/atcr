@@ -579,9 +579,14 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 		// manifests byte-identical to earlier versions' and keeps "no range" distinct
 		// from "range read, ledger absent".
 		ClaimLedger: claimLedgerStatus(rb),
-		Roster:      rosterNames(cfg.Project),
-		StartedAt:   req.StartedAt,
-		Partial:     false, // finalized by ExecuteReview once outcomes are known
+		// Pre-fetch outcome (Epic 35.16.8). Same nil-when-no-builder contract as
+		// the claim ledger: baseline and --diff-file manifests stay byte-identical
+		// to earlier versions', and "no range" stays distinct from "range read,
+		// nothing retrieved".
+		Prefetch:  prefetchStatus(rb),
+		Roster:    rosterNames(cfg.Project),
+		StartedAt: req.StartedAt,
+		Partial:   false, // finalized by ExecuteReview once outcomes are known
 		// Persist --no-ignore so a resume recovers the filtering mode from disk
 		// rather than the resume request (the completed agents' context is locked).
 		NoIgnore: req.NoIgnore,
@@ -3906,5 +3911,18 @@ func claimLedgerStatus(rb *payload.RangeBuilder) *payload.ClaimLedgerStatus {
 		return nil
 	}
 	s := rb.ClaimLedgerStatus()
+	return &s
+}
+
+// prefetchStatus lifts a RangeBuilder's pre-fetch outcome into the manifest's
+// optional field. A nil builder yields nil, not a zero struct, for the same
+// reason claimLedgerStatus does: the baseline and --diff-file paths have no
+// range to prefetch from, and recording Present=false there would assert that
+// a lookup matched nothing when in fact no lookup was ever asked.
+func prefetchStatus(rb *payload.RangeBuilder) *payload.PrefetchStatus {
+	if rb == nil {
+		return nil
+	}
+	s := rb.PrefetchStatus()
 	return &s
 }
