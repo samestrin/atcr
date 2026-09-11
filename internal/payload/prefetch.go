@@ -817,6 +817,14 @@ func sliceLines(src string, start, end int) (body string, s, e int, ok bool) {
 	if n := len(lines); n > 0 && lines[n-1] == "" {
 		lines = lines[:n-1]
 	}
+	for i := range lines {
+		// A CRLF checkout leaves a carriage return at the end of every split
+		// element. Strip it per line, or the \r rides the rendered section into
+		// provider prompts (inflating the byte count the cap adjudicates on) and
+		// the same file's snippet body — and the span its grounding is threaded
+		// with — would differ by line ending alone.
+		lines[i] = strings.TrimSuffix(lines[i], "\r")
+	}
 	if len(lines) == 0 {
 		return "", 0, 0, false
 	}
