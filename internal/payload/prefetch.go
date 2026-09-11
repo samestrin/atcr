@@ -460,8 +460,15 @@ type refHit struct {
 // to strip the prefix followed by another Split to iterate materialized it three
 // more times — roughly 4x peak of an already large blob — to select at most
 // maxPrefetchHits records from it.
-func parseGrepHits(out, rev string, symbols []string, exclude map[string]bool, skip func(string) bool, maxPerSymbol int) []refHit {
-	if out == "" || len(symbols) == 0 || maxPerSymbol <= 0 {
+//
+// maxHits is the absolute ceiling on returned hits. It is INJECTED rather than
+// read from package scope so the function can be exercised at a different
+// ceiling without editing a const — previously it took maxPerSymbol as a
+// parameter but closed over maxPrefetchHits, which made it only half testable.
+// It is guarded exactly like maxPerSymbol: a non-positive ceiling admits
+// nothing, so "disabled" can never silently read as "unlimited".
+func parseGrepHits(out, rev string, symbols []string, exclude map[string]bool, skip func(string) bool, maxPerSymbol, maxHits int) []refHit {
+	if out == "" || len(symbols) == 0 || maxPerSymbol <= 0 || maxHits <= 0 {
 		return nil
 	}
 	revPrefix := ""
@@ -497,7 +504,7 @@ func parseGrepHits(out, rev string, symbols []string, exclude map[string]bool, s
 		}
 		perSymbol[sym]++
 		hits = append(hits, refHit{Path: p, Line: num, Symbol: sym})
-		if len(hits) >= maxPrefetchHits {
+		if len(hits) >= maxHits {
 			break
 		}
 	}
@@ -683,7 +690,7 @@ func (g *gitRunner) referenceHits(head string, symbols []changedSymbol, exclude 
 	if m := g.matcher(); m.active() {
 		skip = m.match
 	}
-	return parseGrepHits(string(out), head, names, exclude, skip, maxPrefetchSitesPerSymbol), false
+	return parseGrepHits(string(out), head, names, exclude, skip, maxPrefetchSitesPerSymbol, maxPrefetchHits), false
 }
 
 const (

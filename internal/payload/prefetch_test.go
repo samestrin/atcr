@@ -257,7 +257,7 @@ func TestParseGrepHits_AttributesHitsAndExcludesChangedFiles(t *testing.T) {
 	}, "\n")
 
 	got := parseGrepHits(out, "", []string{"ReadStore", "WriteStore"},
-		map[string]bool{"internal/store/store.go": true}, nil, 10)
+		map[string]bool{"internal/store/store.go": true}, nil, 10, maxPrefetchHits)
 
 	require.Len(t, got, 2, "the changed file's own hit must be dropped")
 	require.Equal(t, "internal/store/consumer.go", got[0].Path)
@@ -276,7 +276,7 @@ func TestParseGrepHits_CapsSitesPerSymbol(t *testing.T) {
 		lines = append(lines, "pkg/f.go:"+strconv.Itoa(i)+":\tClose()")
 	}
 
-	got := parseGrepHits(strings.Join(lines, "\n"), "", []string{"Close"}, nil, nil, 3)
+	got := parseGrepHits(strings.Join(lines, "\n"), "", []string{"Close"}, nil, nil, 3, maxPrefetchHits)
 
 	require.Len(t, got, 3, "one symbol may not contribute more than its cap")
 }
@@ -294,7 +294,7 @@ func TestParseGrepHits_TrimsTheRevPrefixInline(t *testing.T) {
 		"deadbeef:other.go:7:\tReadStore(p)",
 	}, "\n")
 
-	got := parseGrepHits(out, "deadbeef", []string{"ReadStore"}, nil, nil, 10)
+	got := parseGrepHits(out, "deadbeef", []string{"ReadStore"}, nil, nil, 10, maxPrefetchHits)
 
 	require.Len(t, got, 2, "every record carries the rev prefix and must still parse")
 	require.Equal(t, "internal/store/consumer.go", got[0].Path,
@@ -311,7 +311,7 @@ func TestParseGrepHits_SkipsMalformedLines(t *testing.T) {
 		"pkg/f.go:9:\tReadStore()",
 	}, "\n")
 
-	got := parseGrepHits(out, "", []string{"ReadStore"}, nil, nil, 10)
+	got := parseGrepHits(out, "", []string{"ReadStore"}, nil, nil, 10, maxPrefetchHits)
 
 	require.Len(t, got, 1, "only the well-formed hit survives")
 	require.Equal(t, 9, got[0].Line)
@@ -605,7 +605,7 @@ func TestParseGrepHits_StopsAtTheAbsoluteHitCap(t *testing.T) {
 		}
 	}
 
-	got := parseGrepHits(strings.Join(lines, "\n"), "", symbols, nil, nil, maxPrefetchSitesPerSymbol)
+	got := parseGrepHits(strings.Join(lines, "\n"), "", symbols, nil, nil, maxPrefetchSitesPerSymbol, maxPrefetchHits)
 
 	require.Len(t, got, maxPrefetchHits,
 		"120 individually admissible sites across 40 symbols must clamp to the absolute hit ceiling")
@@ -1196,7 +1196,7 @@ func TestParseGrepHits_SkipPredicateDropsCandidatesBeforeTheCap(t *testing.T) {
 	}, "\n")
 	skipVendor := func(p string) bool { return strings.HasPrefix(p, "vendor/") }
 
-	got := parseGrepHits(out, "", []string{"ReadStore"}, nil, skipVendor, 3)
+	got := parseGrepHits(out, "", []string{"ReadStore"}, nil, skipVendor, 3, maxPrefetchHits)
 
 	require.Len(t, got, 1, "the three vendored hits must not consume the cap")
 	require.Equal(t, "real.go", got[0].Path)
