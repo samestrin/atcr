@@ -1324,6 +1324,54 @@ func TestRangeBuilder_ZeroMaxPrefetchBytesDisablesEntirely(t *testing.T) {
 		"a disabled run must spend FEWER git processes than an enabled one over the same range — the reference lookup and its candidate reads must never run")
 }
 
+func TestRangeBuilder_PrefetchStatusDistinguishesTheOutcomes(t *testing.T) {
+	// PrefetchStatus exists because an absent section, a shed-heavy run and a
+	// broken lookup are otherwise byte-for-byte identical in every artifact.
+	// ClaimLedgerStatus has full coverage of exactly these distinctions at
+	// internal/payload/rangebuilder_test.go; this mirrors it. Only the Disabled
+	// arm is pinned elsewhere (TestRangeBuilder_ZeroMaxPrefetchBytesDisablesEntirely).
+
+	t.Run("a happy build records present with counts", func(t *testing.T) {
+		dir, base, head := prefetchRepo(t)
+
+		rb := NewRangeBuilder(context.Background(), dir, base, head)
+		_, err := rb.BuildEntries(ModeDiff)
+		require.NoError(t, err)
+
+		st := rb.PrefetchStatus()
+		require.True(t, st.Present)
+		require.Equal(t, 1, st.Snippets, "this fixture retrieves exactly the consumer")
+		require.Zero(t, st.Dropped)
+		require.False(t, st.Truncated, "nothing was shed at the default cap")
+		require.False(t, st.Disabled)
+		require.False(t, st.Failed)
+	})
+
+	t.Run("a small cap records the shed it made", func(t *testing.T) {
+		dir, base, head := prefetchRepo(t)
+
+		rb := NewRangeBuilder(context.Background(), dir, base, head, WithMaxPrefetchBytes(300))
+		_, err := rb.BuildEntries(ModeDiff)
+		require.NoError(t, err)
+
+		st := rb.PrefetchStatus()
+		require.True(t, st.Present, "the section still exists — it discloses the shed")
+		require.Equal(t, 1, st.Dropped, "the consumer snippet does not fit a 300-byte cap")
+		require.True(t, st.Truncated, "a shed must be legible as truncation")
+		require.False(t, st.Disabled)
+		require.False(t, st.Failed, "shedding at a small cap is a SUCCESS, not a broken lookup")
+	})
+
+	t.Run("a broken lookup is recorded as failed, not absent", func(t *testing.T) {
+		dir, base, _ := prefetchRepo(t)
+
+		g := newGitRunner(context.Background(), dir)
+		_, _, st := g.buildPrefetch(base, "no-such-rev-xyz")
+		require.True(t, st.Failed, "an unreadable change set must be reported as a failure")
+		require.False(t, st.Present)
+	})
+}
+
 func TestRangeBuilder_ChangedLinesIncludesRetrievedSpans(t *testing.T) {
 	// The Q2 decision, and the epic's whole point: isGrounded drops any finding on
 	// a file the patch did not touch, so a retrieved consumer must become
