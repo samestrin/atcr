@@ -1029,7 +1029,7 @@ func TestCapPrefetchSnippets_PinnedRenderedByteCount(t *testing.T) {
 	require.Equal(t, snippetBlockBytes, len(renderSnippetBlock(s)),
 		"the renderer must not drift from the pinned byte count")
 
-	markers := int64(len(prefetchSectionStart) + 1 + len(prefetchSectionEnd) + 1)
+	markers := int64(len(prefetchSectionStart) + 1 + len(prefetchUntrustedNotice) + len(prefetchSectionEnd) + 1)
 	kept, dropped := capPrefetchSnippets([]PrefetchSnippet{s}, int64(snippetBlockBytes)+markers)
 	require.Len(t, kept, 1, "a snippet whose block plus the markers fits the cap exactly must be kept")
 	require.Empty(t, dropped)
@@ -1045,10 +1045,10 @@ func TestCapPrefetchSnippets_UnderTheCapKeepsEverythingAndDropsNothing(t *testin
 		prefetchSnippet("b.go", "Beta", PrefetchTierSimilarity, 30),
 	}
 
-	// The budget bills the section's fixed overhead (start/end markers) on top
-	// of the snippet blocks; exactly-fitting the blocks alone is now OVER the
-	// cap and would shed.
-	markers := int64(len(prefetchSectionStart) + 1 + len(prefetchSectionEnd) + 1)
+	// The budget bills the section's fixed overhead (start/end markers plus the
+	// untrusted-content notice) on top of the snippet blocks; exactly-fitting the
+	// blocks alone is now OVER the cap and would shed.
+	markers := int64(len(prefetchSectionStart) + 1 + len(prefetchUntrustedNotice) + len(prefetchSectionEnd) + 1)
 	kept, dropped := capPrefetchSnippets(snips, int64(renderedBytes(snips[0])+renderedBytes(snips[1]))+markers)
 
 	require.Len(t, kept, 2)
@@ -1070,7 +1070,7 @@ func TestCapPrefetchSnippets_ShedsTheLowerTierFirstEvenWhenSmaller(t *testing.T)
 	// Both blocks plus the markers minus a sliver: "keep both" no longer fits,
 	// and tier ranking must shed the SIMILARITY snippet (the smaller of the
 	// two — plain largest-first would have shed the reference one).
-	markers := int64(len(prefetchSectionStart) + 1 + len(prefetchSectionEnd) + 1)
+	markers := int64(len(prefetchSectionStart) + 1 + len(prefetchUntrustedNotice) + len(prefetchSectionEnd) + 1)
 	budget := int64(renderedBytes(snips[0])+renderedBytes(snips[1])) + markers - 10
 	kept, dropped := capPrefetchSnippets(snips, budget)
 
@@ -1089,7 +1089,7 @@ func TestCapPrefetchSnippets_RecordsEveryDropWithItsTierAndBytes(t *testing.T) {
 		prefetchSnippet("similar.go", "WriteStore", PrefetchTierSimilarity, 400),
 	}
 
-	markers := int64(len(prefetchSectionStart) + 1 + len(prefetchSectionEnd) + 1)
+	markers := int64(len(prefetchSectionStart) + 1 + len(prefetchUntrustedNotice) + len(prefetchSectionEnd) + 1)
 	budget := int64(renderedBytes(snips[0])+renderedBytes(snips[1])) + markers - 10
 	_, dropped := capPrefetchSnippets(snips, budget)
 
@@ -1223,9 +1223,9 @@ func TestCapPrefetchSnippets_RenderedSectionHonoursTheByteCap(t *testing.T) {
 		section := renderPrefetchSection(kept, dropped)
 		require.Contains(t, section, "more snippet(s) dropped")
 		require.Equal(t,
-			int64(len(prefetchSectionStart)+1+len(prefetchSectionEnd)+1+len(renderPrefetchDropLedger(dropped))),
+			int64(len(prefetchSectionStart)+1+len(prefetchUntrustedNotice)+len(prefetchSectionEnd)+1+len(renderPrefetchDropLedger(dropped))),
 			int64(len(section)),
-			"the floor is EXACTLY the markers plus the bounded ledger — no snippet bytes, nothing unaccounted")
+			"the floor is EXACTLY the markers, the untrusted-content notice and the bounded ledger — no snippet bytes, nothing unaccounted")
 	})
 }
 
@@ -1243,8 +1243,12 @@ func TestRenderPrefetchSection_BoundsTheDropLedger(t *testing.T) {
 
 	section := renderPrefetchSection(nil, dropped)
 
+	// Counted over the whole section, so the budget is maxPrefetchDropLines
+	// ledger lines, +1 for the bounded remainder line, +1 for the
+	// untrusted-content notice — which leads the section and shares the
+	// "[context] " prefix without being a ledger line.
 	lines := strings.Count(section, prefetchNotePrefix)
-	require.LessOrEqual(t, lines, maxPrefetchDropLines+1, "the ledger must be bounded")
+	require.LessOrEqual(t, lines, maxPrefetchDropLines+2, "the ledger must be bounded")
 	require.Contains(t, section, "more snippet(s) dropped", "the remainder must still be disclosed")
 }
 
