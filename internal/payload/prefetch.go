@@ -1010,18 +1010,15 @@ type PrefetchDrop struct {
 // the LOWEST tier first and the largest snippet first within a tier, and returns
 // a ledger naming every snippet it shed.
 //
-// maxBytes <= 0 keeps nothing — the operator disabled the feature — and still
-// records every drop, so "turned off" and "retrieved nothing" stay
-// distinguishable in the artifacts.
+// PRECONDITION: maxBytes must be positive. The operator's off switch lives one
+// level up, in RangeBuilder.prefetch — it returns before any retrieval runs
+// when maxPrefetchBytes <= 0 and reports PrefetchStatus.Disabled, so "turned
+// off" and "retrieved nothing" stay distinguishable there. A not-positive
+// argument here sheds everything through the general path, which is correct
+// but is never the disabled signal.
 func capPrefetchSnippets(snips []PrefetchSnippet, maxBytes int64) (kept []PrefetchSnippet, dropped []PrefetchDrop) {
 	if len(snips) == 0 {
 		return nil, nil
-	}
-	if maxBytes <= 0 {
-		// Disabled by the operator. Keep nothing, but still record every snippet:
-		// "you turned it off" and "retrieval found nothing" are opposite
-		// operational signals, and an empty section reports them identically.
-		return splitPrefetchLedger(snips, allTrue(len(snips)), nil)
 	}
 
 	// Measure the RENDERED size, not len(Body): the emitted block carries a
@@ -1079,36 +1076,21 @@ func capPrefetchSnippets(snips []PrefetchSnippet, maxBytes int64) (kept []Prefet
 // order in BOTH results so the rendered section and its ledger are deterministic
 // (AC3).
 // size carries each snippet's RENDERED byte count so the ledger reports the
-// bytes a drop actually freed, which is the number the cap adjudicated on. A
-// nil size falls back to the body length (the disabled-cap path, where nothing
-// was measured).
+// bytes a drop actually freed, which is the number the cap adjudicated on.
 func splitPrefetchLedger(snips []PrefetchSnippet, drop []bool, size []int64) (kept []PrefetchSnippet, dropped []PrefetchDrop) {
 	for i, s := range snips {
 		if drop[i] {
-			n := len(s.Body)
-			if size != nil {
-				n = int(size[i])
-			}
 			dropped = append(dropped, PrefetchDrop{
 				Path:   s.Path,
 				Symbol: s.Symbol,
 				Tier:   s.Tier,
-				Bytes:  n,
+				Bytes:  int(size[i]),
 			})
 			continue
 		}
 		kept = append(kept, s)
 	}
 	return kept, dropped
-}
-
-// allTrue returns an n-length mask with every position set.
-func allTrue(n int) []bool {
-	mask := make([]bool, n)
-	for i := range mask {
-		mask[i] = true
-	}
-	return mask
 }
 
 // Rendered Context Definitions markers. Like the skeleton markers, they avoid

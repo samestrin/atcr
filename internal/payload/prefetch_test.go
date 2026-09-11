@@ -928,8 +928,11 @@ func TestCapPrefetchSnippets_RecordsEveryDropWithItsTierAndBytes(t *testing.T) {
 }
 
 func TestCapPrefetchSnippets_ZeroCapKeepsNothingAndStillRecordsDrops(t *testing.T) {
-	// 0 is the operator's off switch (mirroring max_claim_bytes), not "unlimited".
-	// Turning the feature off must still be legible in the artifacts.
+	// A not-positive cap is degenerate input — production never routes the
+	// operator's off switch through here (RangeBuilder.prefetch returns early
+	// and reports PrefetchStatus.Disabled; TestRangeBuilder_ZeroMaxPrefetchBytesDisablesEntirely
+	// pins THAT), but the general path must still shed everything legibly rather
+	// than read 0 as "unlimited".
 	snips := []PrefetchSnippet{
 		prefetchSnippet("a.go", "Alpha", PrefetchTierReference, 10),
 		prefetchSnippet("b.go", "Beta", PrefetchTierReference, 10),
