@@ -915,6 +915,33 @@ func prefetchSnippet(pathName, symbol string, tier PrefetchTier, n int) Prefetch
 	}
 }
 
+func TestCapPrefetchSnippets_PinnedRenderedByteCount(t *testing.T) {
+	// renderedBytes derives every other budget in this family from the same
+	// expression production uses, so "the kept set fits the cap" is true by
+	// construction there and cannot catch renderer drift: if renderSnippetBlock
+	// grew a line, code and expectations would move together and every test
+	// would still pass. This case pins ONE block's bytes as a literal number,
+	// with the snippet spelled out inline — a renderer change breaks it.
+	s := PrefetchSnippet{Path: "consumer.go", Symbol: "ReadStore", Tier: PrefetchTierReference, Start: 5, End: 6}
+	s.Body = "data, err := ReadStore(path)\nreturn err"
+	// The block this renders to, written out in full:
+	//   [context] consumer.go:5-6 (reference to ReadStore)\n
+	//   L5: data, err := ReadStore(path)\n
+	//   L6: return err\n
+	const snippetBlockBytes = 99
+	require.Equal(t, snippetBlockBytes, len(renderSnippetBlock(s)),
+		"the renderer must not drift from the pinned byte count")
+
+	markers := int64(len(prefetchSectionStart) + 1 + len(prefetchSectionEnd) + 1)
+	kept, dropped := capPrefetchSnippets([]PrefetchSnippet{s}, int64(snippetBlockBytes)+markers)
+	require.Len(t, kept, 1, "a snippet whose block plus the markers fits the cap exactly must be kept")
+	require.Empty(t, dropped)
+
+	kept, dropped = capPrefetchSnippets([]PrefetchSnippet{s}, int64(snippetBlockBytes)+markers-1)
+	require.Empty(t, kept, "one byte under the exact fit must shed the snippet")
+	require.Len(t, dropped, 1)
+}
+
 func TestCapPrefetchSnippets_UnderTheCapKeepsEverythingAndDropsNothing(t *testing.T) {
 	snips := []PrefetchSnippet{
 		prefetchSnippet("a.go", "Alpha", PrefetchTierReference, 60),
