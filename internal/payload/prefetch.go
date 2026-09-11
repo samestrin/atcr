@@ -347,10 +347,17 @@ func declEnd(root astgroup.Node, line int) int {
 // signatureFor returns the declaration header for name, preferring an exact name
 // match and falling back to the nearest declaration starting at or above line.
 //
-// The fallback exists because not every skeleton entry carries a name: the Go
-// parser emits gendecl nodes (type, const, var) with an empty Name, so a change
-// inside one is resolvable only by position. Matching by name first keeps two
-// same-named declarations in one file from swapping headers by line proximity.
+// The fallback exists because not every enclosing SYMBOL is a skeleton entry:
+// FileSkeleton walks only top-level children (internal/astgroup/skeleton.go),
+// so a METHOD nested inside a non-Go class resolves by position, not by name.
+// Matching by name first keeps two same-named declarations in one file from
+// swapping headers by line proximity.
+//
+// Note the case this does NOT cover: a gendecl (Go const/var/type) never
+// reaches signatureFor at all — its parser node carries no name and no named
+// children, so extractChangedSymbols finds no symbol for a gendecl-only change
+// and such a change pre-fetches nothing. That limitation is tracked as its
+// own technical-debt row.
 func signatureFor(entries []astgroup.SkeletonEntry, name string, line int) string {
 	for _, e := range entries {
 		if e.Name != "" && e.Name == name {

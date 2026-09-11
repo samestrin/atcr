@@ -412,7 +412,11 @@ func (b *RangeBuilder) BuildChangedLines() (ChangedLines, error) {
 // groundable, so a finding elsewhere in the same retrieved file is still dropped
 // exactly as today. A path the diff DID change is left alone: its own changed
 // ranges govern, and overwriting them with a snippet span would shrink the
-// groundable region of a genuinely changed file.
+// groundable region of a genuinely changed file. (That case is unreachable by
+// construction today — parseGrepHits drops every excluded path at
+// internal/payload/prefetch.go's candidate filter, and referenceHits is only
+// ever called with changedPaths — so this guard is deliberate defense-in-depth
+// against a future producer that feeds spans without that exclusion.)
 func (b *RangeBuilder) withPrefetchedSpans(cl ChangedLines) ChangedLines {
 	// Consume the memo READ-ONLY: grounding widens the gate, so it may only
 	// cover a section a build actually rendered. Invoking prefetch() here made
