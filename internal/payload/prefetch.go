@@ -422,6 +422,17 @@ const (
 	// is actually spent, so this is the bound that keeps a very wide diff from
 	// turning a ~20ms lookup into a repo-wide sweep by another name.
 	maxPrefetchHits = 60
+
+	// maxGrepMatchesPerFile bounds how many lines ONE file may contribute to the
+	// `git grep` OUTPUT, via -m. Without it a common name (Run, New, Close) in a
+	// large repository produces tens of megabytes that gitRunner.output buffers
+	// whole, purely to select at most maxPrefetchHits records from it.
+	//
+	// It is deliberately larger than maxPrefetchSitesPerSymbol: -m is a per-FILE
+	// ceiling across ALL patterns, so a file that legitimately consumes several
+	// different changed symbols would otherwise lose the later ones before
+	// parseGrepHits ever applied its own per-symbol cap.
+	maxGrepMatchesPerFile = 10
 )
 
 // refHit is one `git grep` match: a candidate site that REFERENCES a changed
@@ -443,13 +454,28 @@ type refHit struct {
 // filter, and it is applied BEFORE the per-symbol cap on purpose: filtering
 // afterwards would let three vendored hits consume a symbol's whole cap and
 // leave a real consumer unretrieved.
-func parseGrepHits(out string, symbols []string, exclude map[string]bool, skip func(string) bool, maxPerSymbol int) []refHit {
+// rev is the tree-ish `git grep` echoes back as a "<rev>:" prefix on every
+// record. It is trimmed INLINE here, one line at a time, rather than by a
+// separate pass: the output is unbounded in principle, and a Split plus a Join
+// to strip the prefix followed by another Split to iterate materialized it three
+// more times — roughly 4x peak of an already large blob — to select at most
+// maxPrefetchHits records from it.
+func parseGrepHits(out, rev string, symbols []string, exclude map[string]bool, skip func(string) bool, maxPerSymbol int) []refHit {
 	if out == "" || len(symbols) == 0 || maxPerSymbol <= 0 {
 		return nil
 	}
+	revPrefix := ""
+	if rev != "" {
+		revPrefix = rev + ":"
+	}
 	perSymbol := make(map[string]int, len(symbols))
 	var hits []refHit
-	for _, line := range strings.Split(out, "\n") {
+	for rest := out; rest != ""; {
+		var line string
+		line, rest, _ = strings.Cut(rest, "\n")
+		// TrimPrefix with an empty prefix is a no-op, so an untagged output (no
+		// rev, as in a direct unit call) flows through unchanged.
+		line = strings.TrimPrefix(line, revPrefix)
 		p, num, text, ok := splitGrepLine(line)
 		if !ok || exclude[p] || (skip != nil && skip(p)) {
 			continue
@@ -597,7 +623,8 @@ func (g *gitRunner) referenceHits(head string, symbols []changedSymbol, exclude 
 	// `ReadStore`, and `-I` skips binaries. Each name is introduced by `-e`, so a
 	// value can never be read as a flag.
 	args := make([]string, 0, 7+2*len(names))
-	args = append(args, "grep", "-n", "-I", "-F", "-w", "--no-color")
+	args = append(args, "grep", "-n", "-I", "-F", "-w", "--no-color",
+		"-m", strconv.Itoa(maxGrepMatchesPerFile))
 	for _, n := range names {
 		args = append(args, "-e", n)
 	}
@@ -656,26 +683,7 @@ func (g *gitRunner) referenceHits(head string, symbols []changedSymbol, exclude 
 	if m := g.matcher(); m.active() {
 		skip = m.match
 	}
-	return parseGrepHits(stripGrepRev(string(out), head), names, exclude, skip, maxPrefetchSitesPerSymbol), false
-}
-
-// stripGrepRev removes the leading "<rev>:" field that `git grep <rev>` prefixes
-// to every record, restoring the plain "path:line:text" shape splitGrepLine
-// parses.
-//
-// The prefix is git echoing back the tree-ish argument verbatim, so trimming
-// that exact string is exact rather than heuristic — unlike splitting on the
-// third colon, which a path containing a colon would defeat.
-func stripGrepRev(out, rev string) string {
-	if rev == "" {
-		return out
-	}
-	prefix := rev + ":"
-	lines := strings.Split(out, "\n")
-	for i, ln := range lines {
-		lines[i] = strings.TrimPrefix(ln, prefix)
-	}
-	return strings.Join(lines, "\n")
+	return parseGrepHits(string(out), head, names, exclude, skip, maxPrefetchSitesPerSymbol), false
 }
 
 const (
