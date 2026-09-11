@@ -138,10 +138,18 @@ func applyByteBudgetOrdered(entries []FileEntry, budget int64, tier func(FileEnt
 	// The bound used to be evaluated per entry (`shedExempt && clampSize(Size) <=
 	// budget`), an invariant written when exactly one synthetic section existed.
 	// With two — the claim ledger and the Context Definitions block — each can
-	// satisfy its own check while jointly overrunning a small budget. On the
-	// fallback re-fit, which re-sizes every entry to len(Body), that shed every
-	// reviewable file to fund sections that then left no room for code, tripping
-	// AllDropped where the ledger alone would have fitted.
+	// satisfy its own check while JOINTLY overrunning a small budget. On the
+	// fallback re-fit, which re-sizes every entry to len(Body), that funded both
+	// sections and shed every reviewable file to pay for them.
+	//
+	// The guarantee is exactly that and no more: two sections can no longer
+	// jointly overrun the budget. It is NOT "a funded section can never starve
+	// the diff". The bound below compares against budget alone and reserves
+	// nothing for reviewable content, so ONE section that fits on its own can
+	// still leave too little room for any file — every file sheds and AllDropped
+	// fires. Reserving room for the smallest reviewable entry would close that,
+	// at the cost of shedding the ledger on exactly the tight budgets it exists
+	// for, so it is left open rather than decided here.
 	//
 	// Funded in DESCENDING exemptRank so the lower-priority section loses its
 	// exemption first, and stably by index within a rank so the choice is
