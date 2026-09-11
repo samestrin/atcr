@@ -1477,7 +1477,7 @@ func TestRangeBuilder_PrefetchStatusDistinguishesTheOutcomes(t *testing.T) {
 		dir, base, head := prefetchRepo(t)
 
 		rb := NewRangeBuilder(context.Background(), dir, base, head, WithMaxPrefetchBytes(300))
-		_, err := rb.BuildEntries(ModeDiff)
+		entries, err := rb.BuildEntries(ModeDiff)
 		require.NoError(t, err)
 
 		st := rb.PrefetchStatus()
@@ -1486,6 +1486,16 @@ func TestRangeBuilder_PrefetchStatusDistinguishesTheOutcomes(t *testing.T) {
 		require.True(t, st.Truncated, "a shed must be legible as truncation")
 		require.False(t, st.Disabled)
 		require.False(t, st.Failed, "shedding at a small cap is a SUCCESS, not a broken lookup")
+
+		// AC7 end to end at the RangeBuilder seam: a real shed against a nonzero
+		// cap must NAME the dropped reference snippet in the rendered ledger,
+		// never vanish silently. (The only other tier-ordering test in this
+		// package hand-builds a similarity-tier snippet no current producer can
+		// emit; this one is driven entirely through production retrieval.)
+		entry, at := prefetchEntryOf(entries)
+		require.NotEqual(t, -1, at, "a section carrying only the drop ledger must still be injected")
+		require.Contains(t, entry.Body, "dropped consumer.go (ReadStore",
+			"the ledger must name the snippet the small cap shed")
 	})
 
 	t.Run("a broken lookup is recorded as failed, not absent", func(t *testing.T) {
