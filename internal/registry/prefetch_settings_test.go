@@ -88,6 +88,58 @@ func TestResolveSettings_MaxPrefetchBytesNegativeRejected(t *testing.T) {
 // the project-tier and resolver cases above prove nothing about it — a
 // registry.yaml with a negative value has to be rejected at load by its own
 // check.
+// The YAML half of the contract: the precedence tests above build Registry and
+// ProjectConfig structs by hand, so nothing else exercised the yaml tags on
+// either tier — a typo in a tag would ship green with the setting silently
+// ignored at every tier.
+func TestPrecedence_MaxPrefetchBytesChainFromYAML(t *testing.T) {
+	reg := loadRegistryWith(t, "max_prefetch_bytes: 4096\n")
+	proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\nmax_prefetch_bytes: 2048\n"))
+	require.NoError(t, err)
+
+	s := resolve(t, CLIOverrides{}, proj, reg)
+	require.Equal(t, int64(2048), s.ResolvedMaxPrefetchBytes(), "project config wins over registry")
+
+	proj, err = LoadProjectConfig(writeProject(t, "agents: [bruce]\n"))
+	require.NoError(t, err)
+	s = resolve(t, CLIOverrides{}, proj, reg)
+	require.Equal(t, int64(4096), s.ResolvedMaxPrefetchBytes(), "registry wins over the embedded default")
+}
+
+// 0 is the operator escape hatch at BOTH tiers, and it must survive a real YAML
+// parse rather than being read as "unset" — that is the whole reason the
+// config fields are pointers.
+func TestPrecedence_MaxPrefetchBytesZeroDisablesAtEitherTierFromYAML(t *testing.T) {
+	t.Run("project tier", func(t *testing.T) {
+		reg := loadRegistryWith(t, "max_prefetch_bytes: 4096\n")
+		proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\nmax_prefetch_bytes: 0\n"))
+		require.NoError(t, err)
+
+		s := resolve(t, CLIOverrides{}, proj, reg)
+		require.Zero(t, s.ResolvedMaxPrefetchBytes(), "an explicit 0 disables pre-fetching; it is not 'unset'")
+	})
+	t.Run("registry tier", func(t *testing.T) {
+		reg := loadRegistryWith(t, "max_prefetch_bytes: 0\n")
+		proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\n"))
+		require.NoError(t, err)
+
+		s := resolve(t, CLIOverrides{}, proj, reg)
+		require.Zero(t, s.ResolvedMaxPrefetchBytes())
+	})
+}
+
+// max_prefetch_bytes in the DEFINITIONS overlay (.atcr/registry.yaml) is a
+// misplaced key — it is a shared setting, and the strict decoder must reject
+// it with the targeted hint the sharedSettingsKeys list powers.
+func TestLoadProjectRegistry_MaxPrefetchBytesKeyHint(t *testing.T) {
+	root := t.TempDir()
+	writeProjectRegistry(t, root, "providers: {}\nagents: {}\nmax_prefetch_bytes: 2048\n")
+	_, err := LoadProjectRegistry(DefaultProjectRegistryPath(root))
+	require.Error(t, err, "strict decoder must reject shared-settings keys in the overlay")
+	require.Contains(t, err.Error(), "max_prefetch_bytes", "the error must name the offending key")
+	require.Contains(t, err.Error(), "config.yaml", "the error must point at the file the key belongs in")
+}
+
 func TestRegistry_MaxPrefetchBytesNegativeRejected(t *testing.T) {
 	_, err := LoadRegistry(writeRegistry(t, `
 providers:
