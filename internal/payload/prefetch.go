@@ -608,7 +608,14 @@ func (g *gitRunner) referenceHits(head string, symbols []changedSymbol, exclude 
 	// snippet is cut from — so the region shipped to providers, and the grounding
 	// span derived from it, are both silently wrong. Passing head makes the search
 	// and the slice read the same bytes.
-	args = append(args, head)
+	//
+	// The trailing `--` is what makes the tree-ish UNAMBIGUOUS. `git grep` accepts
+	// `<rev>... [--] [<pathspec>...]`, so without the separator a repository
+	// containing a tracked file whose name equals the ref leaves git unable to
+	// tell which was meant, and it fails with "ambiguous argument". The error arm
+	// below reads any failure as "matched nothing", so that repository would lose
+	// pre-fetching silently and permanently rather than loudly and once.
+	args = append(args, head, "--")
 	out, err := g.output(args...)
 	if err != nil {
 		// `git grep` exits non-zero on NO MATCH as well as on failure, and
