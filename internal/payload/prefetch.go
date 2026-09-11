@@ -74,11 +74,9 @@ var doubleNameExact = map[string]bool{"patch": true, "patched": true, "patches":
 // builtins, and the test-framework verbs that appear on almost every test line.
 // They are excluded so the `git grep` argv is spent on plausible symbols.
 //
-// It covers EVERY language looksLikeTestFile enables the cue scan for, not Go
-// alone. A Go-only set left `def` and `self` surviving on a Python cue line and
-// `const`, `await`, `describe` and `this` on a JavaScript one — each burning a
-// slot out of the maxChangedSymbols cap and then forcing `git grep` to match
-// essentially every file in the repository.
+// It holds what is noise in EVERY language: Go's own keywords and builtins
+// (this binary's tests are Go, and an unparseable file falls back to this set
+// alone) plus the test-framework verbs every ecosystem shares.
 //
 // Entries are KEYWORDS and framework verbs only. Generic type names — set,
 // list, dict, object, array, number, value, result — are deliberately absent
@@ -95,42 +93,92 @@ var mockTokenNoise = map[string]bool{
 	"import": true, "true": true, "false": true, "len": true, "cap": true,
 	"make": true, "new": true, "append": true, "testing": true, "test": true,
 	"for": true, "not": true, "the": true, "out": true,
-	// Python
-	"def": true, "self": true, "cls": true, "elif": true, "pass": true,
-	"raise": true, "except": true, "finally": true, "lambda": true,
-	"yield": true, "assert": true, "none": true, "global": true,
-	"nonlocal": true, "print": true, "super": true, "with": true, "from": true,
-	"class": true, "try": true, "del": true, "while": true,
-	// JavaScript / TypeScript
-	"let": true, "function": true, "this": true, "async": true, "await": true,
-	"export": true, "default": true, "undefined": true, "null": true,
-	"typeof": true, "instanceof": true, "extends": true, "readonly": true,
-	"void": true, "enum": true, "namespace": true, "static": true,
-	"throw": true, "catch": true, "switch": true, "case": true, "break": true,
-	"continue": true, "delete": true,
 	// Test frameworks, every language
 	"expect": true, "describe": true, "jest": true, "spyon": true,
 	"pytest": true, "unittest": true, "monkeypatch": true,
-	"beforeeach": true, "aftereach": true, "should": true,
-	// Rust
-	"impl": true, "mut": true, "pub": true, "crate": true, "trait": true,
-	"dyn": true, "some": true, "unwrap": true, "use": true, "mod": true,
-	"where": true, "loop": true,
-	// PHP
-	"echo": true, "foreach": true, "endforeach": true, "elseif": true,
-	"require": true, "include": true, "public": true, "private": true,
-	"protected": true, "abstract": true, "implements": true,
-	// Java / Kotlin
-	"final": true, "override": true, "suspend": true, "val": true, "fun": true,
-	"throws": true, "synchronized": true, "lateinit": true, "companion": true,
-	// C / C++ / C#
-	"define": true, "typedef": true, "unsigned": true, "signed": true,
-	"template": true, "typename": true, "nullptr": true, "sizeof": true,
-	"auto": true, "using": true, "virtual": true, "inline": true,
-	"extern": true, "goto": true, "union": true,
-	// Bash
-	"local": true, "then": true, "done": true, "esac": true, "shift": true,
-	"unset": true, "source": true,
+	"beforeeach": true, "aftereach": true,
+}
+
+// languageTokenNoise adds ONE language's keywords, keyed by the id
+// astgroup.LanguageForExt returns for the file the cue line came from.
+//
+// Keyed per language rather than merged into mockTokenNoise because a great
+// many of these words are ordinary exported identifiers in a DIFFERENT
+// language: bash's `source`, `local` and `shift`, Rust's `use` and `some`,
+// PHP's `echo`, Kotlin's `val`. Merged into one set, a Go symbol named Source
+// would be silently dropped from the lookup — the failure direction this scan
+// explicitly refuses, since a stray token costs one `git grep` pattern while a
+// dropped real symbol costs the AC6 snippet outright.
+//
+// A language with no entry here (or a file with no parser, which resolves to
+// "") contributes nothing, so the shared set above governs alone. Go is absent
+// for that reason: mockTokenNoise already IS its keyword set.
+var languageTokenNoise = map[string]map[string]bool{
+	"python": {
+		"def": true, "self": true, "cls": true, "elif": true, "pass": true,
+		"raise": true, "except": true, "finally": true, "lambda": true,
+		"yield": true, "assert": true, "none": true, "global": true,
+		"nonlocal": true, "print": true, "super": true, "with": true,
+		"from": true, "class": true, "try": true, "del": true, "while": true,
+		"async": true, "await": true, "and": true, "import": true,
+	},
+	"ts": {
+		"let": true, "function": true, "this": true, "async": true,
+		"await": true, "export": true, "default": true, "undefined": true,
+		"null": true, "typeof": true, "instanceof": true, "extends": true,
+		"readonly": true, "void": true, "enum": true, "namespace": true,
+		"static": true, "throw": true, "catch": true, "switch": true,
+		"case": true, "break": true, "continue": true, "delete": true,
+		"class": true, "implements": true, "public": true, "private": true,
+		"protected": true, "abstract": true, "super": true, "yield": true,
+	},
+	"rust": {
+		"impl": true, "mut": true, "pub": true, "crate": true, "trait": true,
+		"dyn": true, "some": true, "unwrap": true, "use": true, "mod": true,
+		"where": true, "loop": true, "match": true, "let": true, "enum": true,
+		"async": true, "await": true, "self": true, "super": true,
+	},
+	"php": {
+		"echo": true, "foreach": true, "endforeach": true, "elseif": true,
+		"require": true, "include": true, "public": true, "private": true,
+		"protected": true, "abstract": true, "implements": true,
+		"namespace": true, "use": true, "this": true, "static": true,
+		"function": true, "class": true, "extends": true, "null": true,
+	},
+	"java": {
+		"final": true, "static": true, "void": true, "class": true,
+		"public": true, "private": true, "protected": true, "extends": true,
+		"implements": true, "throws": true, "synchronized": true,
+		"this": true, "null": true, "abstract": true, "instanceof": true,
+		"throw": true, "catch": true, "switch": true, "case": true,
+	},
+	"kotlin": {
+		"val": true, "fun": true, "override": true, "suspend": true,
+		"lateinit": true, "companion": true, "this": true, "class": true,
+		"object": true, "null": true, "when": true, "internal": true,
+		"private": true, "public": true, "protected": true, "abstract": true,
+	},
+	"cpp": {
+		"define": true, "typedef": true, "unsigned": true, "signed": true,
+		"template": true, "typename": true, "nullptr": true, "sizeof": true,
+		"auto": true, "using": true, "virtual": true, "inline": true,
+		"extern": true, "goto": true, "union": true, "include": true,
+		"namespace": true, "class": true, "public": true, "private": true,
+		"protected": true, "static": true, "void": true, "this": true,
+		"delete": true, "throw": true, "catch": true, "switch": true,
+	},
+	"csharp": {
+		"using": true, "namespace": true, "public": true, "private": true,
+		"protected": true, "static": true, "void": true, "class": true,
+		"override": true, "virtual": true, "async": true, "await": true,
+		"this": true, "null": true, "sealed": true, "readonly": true,
+		"throw": true, "catch": true, "switch": true, "case": true,
+	},
+	"bash": {
+		"local": true, "then": true, "done": true, "esac": true,
+		"shift": true, "unset": true, "source": true, "echo": true,
+		"readonly": true, "export": true, "elif": true, "declare": true,
+	},
 }
 
 // changedSymbol is one symbol the diff touched, with the shape a consumer would
@@ -163,7 +211,7 @@ type changedSymbol struct {
 // Order is deterministic — declaration order first, then cue order — because the
 // retrieved context must be byte-identical for every agent in one fan-out (AC3),
 // and the symbol order decides which snippets survive the cap.
-func extractChangedSymbols(src string, ranges []LineRange, root astgroup.Node, isTest bool) []changedSymbol {
+func extractChangedSymbols(src string, ranges []LineRange, root astgroup.Node, isTest bool, lang string) []changedSymbol {
 	if len(ranges) == 0 {
 		return nil
 	}
@@ -233,7 +281,7 @@ cuePass:
 				if len(out) >= maxChangedSymbols {
 					return out
 				}
-				if !plausibleMockTarget(tok) || seen[tok] || declared[tok] {
+				if !plausibleMockTarget(tok, lang) || seen[tok] || declared[tok] {
 					continue
 				}
 				seen[tok] = true
@@ -289,12 +337,15 @@ func hasMockCue(line string) bool {
 // (doubleNameExact), never a bare substring: a substring rule also rejects
 // `ApplyPatchSet` and `DoubleBuffer`, and a missed real symbol costs the AC6
 // snippet while a stray one costs a single `git grep` pattern.
-func plausibleMockTarget(tok string) bool {
+// lang is the file's resolved language id (astgroup.LanguageForExt), which
+// selects the keyword set applied on top of the shared one. An empty lang — a
+// file no parser reads — is answered by the shared set alone.
+func plausibleMockTarget(tok, lang string) bool {
 	if len(tok) < minMockTokenLen {
 		return false
 	}
 	lower := strings.ToLower(tok)
-	if mockTokenNoise[lower] || doubleNameExact[lower] {
+	if mockTokenNoise[lower] || languageTokenNoise[lang][lower] || doubleNameExact[lower] {
 		return false
 	}
 	for _, p := range doubleNamePrefixes {
@@ -1137,7 +1188,8 @@ func (g *gitRunner) buildPrefetch(base, head string) (section string, spans map[
 		for _, h := range hunks {
 			spanList = append(spanList, LineRange{Start: h.start, End: h.end})
 		}
-		for _, s := range extractChangedSymbols(src, spanList, parsePrefetchTree(f.path, src), looksLikeTestFile(f.path)) {
+		lang := astgroup.LanguageForExt(strings.ToLower(path.Ext(f.path)))
+		for _, s := range extractChangedSymbols(src, spanList, parsePrefetchTree(f.path, src), looksLikeTestFile(f.path), lang) {
 			if seen[s.Name] {
 				continue
 			}

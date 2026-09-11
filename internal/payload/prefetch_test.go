@@ -49,7 +49,7 @@ func TestExtractChangedSymbols_NamesTheTouchedFunctionWithItsSignature(t *testin
 	// enclosing FUNCTION, not the anonymous if, and must carry the declaration
 	// header — AC5 is about a changed signature or return shape, and a consumer
 	// cannot be judged against a bare name.
-	got := extractChangedSymbols(prefetchStoreSrc, []LineRange{{Start: 5, End: 5}}, prefetchStoreTree(), false)
+	got := extractChangedSymbols(prefetchStoreSrc, []LineRange{{Start: 5, End: 5}}, prefetchStoreTree(), false, "go")
 
 	require.Len(t, got, 1, "one changed range inside one function yields one symbol")
 	require.Equal(t, "ReadStore", got[0].Name)
@@ -62,7 +62,7 @@ func TestExtractChangedSymbols_IgnoresFunctionsTheDiffDidNotTouch(t *testing.T) 
 	// Scoping to the touched declarations is what keeps the later `git grep`
 	// argv — and so the AC4 latency budget — proportional to the diff rather
 	// than to the file.
-	got := extractChangedSymbols(prefetchStoreSrc, []LineRange{{Start: 5, End: 5}}, prefetchStoreTree(), false)
+	got := extractChangedSymbols(prefetchStoreSrc, []LineRange{{Start: 5, End: 5}}, prefetchStoreTree(), false, "go")
 
 	for _, s := range got {
 		require.NotEqual(t, "Unrelated", s.Name, "an untouched sibling declaration must not enter the set")
@@ -92,7 +92,7 @@ func TestExtractChangedSymbols_CollectsMockTargetsFromChangedTestLines(t *testin
 	// the REAL implementation can be placed beside the test that replaces it. A
 	// mock that does not model what the real function does is only legible when
 	// both are on the page.
-	got := extractChangedSymbols(prefetchTestSrc, []LineRange{{Start: 4, End: 5}}, prefetchTestTree(), true)
+	got := extractChangedSymbols(prefetchTestSrc, []LineRange{{Start: 4, End: 5}}, prefetchTestTree(), true, "go")
 
 	var mocked []string
 	for _, s := range got {
@@ -107,7 +107,7 @@ func TestExtractChangedSymbols_MockCueScanIsTestFileOnly(t *testing.T) {
 	// The cue scan over-collects by design (the reference lookup filters out
 	// whatever is declared nowhere), so it must not run on production files —
 	// there a line mentioning "patch" is ordinary prose or a real identifier.
-	got := extractChangedSymbols(prefetchTestSrc, []LineRange{{Start: 4, End: 5}}, prefetchTestTree(), false)
+	got := extractChangedSymbols(prefetchTestSrc, []LineRange{{Start: 4, End: 5}}, prefetchTestTree(), false, "go")
 
 	for _, s := range got {
 		require.False(t, s.Mocked, "a non-test file must contribute no mock targets")
@@ -118,7 +118,7 @@ func TestExtractChangedSymbols_NoChangedRangesYieldsNothing(t *testing.T) {
 	// The laziness contract starts here: a diff that touches no parseable
 	// declaration must produce no symbol, so no `git grep` and no candidate file
 	// read ever happens downstream.
-	require.Empty(t, extractChangedSymbols(prefetchStoreSrc, nil, prefetchStoreTree(), false))
+	require.Empty(t, extractChangedSymbols(prefetchStoreSrc, nil, prefetchStoreTree(), false, "go"))
 }
 
 // prefetchDomainSrc is a changed test file whose mocked symbol is an ordinary
@@ -143,7 +143,7 @@ func TestExtractChangedSymbols_DomainSymbolContainingACueIsStillRetrievable(t *t
 	// ApplyPatchSet, DoubleBuffer, Inspector — and losing one loses the AC6
 	// snippet entirely. The rejection must key on the double's own naming form
 	// (a prefix, or a whole token), not on a bare substring.
-	got := extractChangedSymbols(prefetchDomainSrc, []LineRange{{Start: 4, End: 4}}, prefetchDomainTree(), true)
+	got := extractChangedSymbols(prefetchDomainSrc, []LineRange{{Start: 4, End: 4}}, prefetchDomainTree(), true, "go")
 
 	var mocked []string
 	for _, s := range got {
@@ -168,17 +168,22 @@ func TestExtractChangedSymbols_CueNoiseIsFilteredForEveryEmbeddedLanguage(t *tes
 	// below arrived through the AC6 scan.
 	cases := []struct {
 		name string
+		lang string
 		line string
 		want string
 	}{
-		{"python", "\tdef f(self): patched = ChargeClient", "ChargeClient"},
-		{"typescript", "\tconst patched = jest.spyOn(PaymentGateway)", "PaymentGateway"},
-		{"typescript async", "\tdescribe(\"q\", async () => { await ReplayQueue }) // fake", "ReplayQueue"},
+		{"python", "python", "\tdef f(self): patched = ChargeClient", "ChargeClient"},
+		{"typescript", "ts", "\tconst patched = jest.spyOn(PaymentGateway)", "PaymentGateway"},
+		{"typescript async", "ts", "\tdescribe(\"q\", async () => { await ReplayQueue }) // fake", "ReplayQueue"},
+		// A bash keyword must NOT be filtered out of a Go file: `source` is an
+		// ordinary exported identifier in most languages, and dropping it would
+		// lose the AC6 snippet the scan exists to produce.
+		{"foreign keyword stays a symbol", "go", "\tstubbed := Source", "Source"},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := extractChangedSymbols(tc.line+"\n", []LineRange{{Start: 1, End: 1}}, astgroup.Node{}, true)
+			got := extractChangedSymbols(tc.line+"\n", []LineRange{{Start: 1, End: 1}}, astgroup.Node{}, true, tc.lang)
 
 			var names []string
 			for _, s := range got {
