@@ -221,7 +221,6 @@ func extractChangedSymbols(src string, ranges []LineRange, root astgroup.Node, i
 	if len(ranges) == 0 {
 		return nil
 	}
-	lines := strings.Split(src, "\n")
 	skeleton := astgroup.FileSkeleton(root, src)
 
 	declared := make(map[string]bool, len(skeleton))
@@ -261,6 +260,12 @@ declPass:
 	if !isTest {
 		return out
 	}
+
+	// Split HERE rather than at the top of the function: the lines slice is read
+	// ONLY by the cue scan below, which this guard makes unreachable for a
+	// non-test file — the majority of any diff. Splitting above allocated a slice
+	// over the whole source of every changed production file for nothing.
+	lines := strings.Split(src, "\n")
 
 	// Pass 2 — AC6. Only the CHANGED lines of a changed test file are scanned, so
 	// an untouched mock elsewhere in the same file contributes nothing.
