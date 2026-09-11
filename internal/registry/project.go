@@ -332,6 +332,9 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 	if cfg.MaxClaimBytes != nil && *cfg.MaxClaimBytes < 0 {
 		return nil, fmt.Errorf("%s: max_claim_bytes must be >= 0 (0 = disabled), got %d", base, *cfg.MaxClaimBytes)
 	}
+	if cfg.MaxPrefetchBytes != nil && *cfg.MaxPrefetchBytes < 0 {
+		return nil, fmt.Errorf("%s: max_prefetch_bytes must be >= 0 (0 = disabled), got %d", base, *cfg.MaxPrefetchBytes)
+	}
 	if !payloadModeValid(cfg.PayloadMode) {
 		return nil, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", strings.TrimSpace(cfg.PayloadMode))
 	}
