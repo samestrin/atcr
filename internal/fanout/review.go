@@ -2467,7 +2467,14 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			smallest := kept[0]
 			bulkEntries = kept
 			bulkShed = keptTrunc.Truncated
-			bulkText, bulkFileCount = smallest.Body, 1
+			// ReviewableCount, never a literal 1: keepSmallestEntry picks by
+			// len(Body) with no shedExempt awareness, so the single entry it kept
+			// may be a SYNTHETIC section — the claim ledger or Context Definitions.
+			// Reporting 1 there tells the agent to review a changed file it was
+			// never sent, and sends it hunting for content that is not in its
+			// prompt. The re-pack arm below and the fallback re-fit already apply
+			// this rule; this arm was the last derivation that did not.
+			bulkText, bulkFileCount = smallest.Body, payload.ReviewableCount(kept)
 			bulkTrunc = keptTrunc
 			bulkDegradation = degradationOverflow
 			if warnOversized {
