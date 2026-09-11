@@ -499,6 +499,12 @@ type refHit struct {
 // parameter but closed over maxPrefetchHits, which made it only half testable.
 // It is guarded exactly like maxPerSymbol: a non-positive ceiling admits
 // nothing, so "disabled" can never silently read as "unlimited".
+//
+// maxHits is shared ROUND-ROBIN across symbols: every symbol gets its first
+// candidate before any symbol gets a second. Spending it in the order git grep
+// happened to emit let a symbol whose consumers sort late receive nothing at
+// all — and the symbol with no candidate is precisely the one the reviewer ends
+// up with no context for.
 func parseGrepHits(out, rev string, symbols []string, exclude map[string]bool, skip func(string) bool, maxPerSymbol, maxHits int) []refHit {
 	if out == "" || len(symbols) == 0 || maxPerSymbol <= 0 || maxHits <= 0 {
 		return nil
@@ -507,8 +513,16 @@ func parseGrepHits(out, rev string, symbols []string, exclude map[string]bool, s
 	if rev != "" {
 		revPrefix = rev + ":"
 	}
+	// Bucket the candidates per symbol in input order, then share the global
+	// ceiling between the buckets below.
+	//
+	// Bucketing first is what makes sharing possible at all: which symbols have
+	// ANY candidate is not known until the last line is read, so the early break
+	// at maxHits could not be kept. It costs no extra materialization of the grep
+	// output — this is still one inline pass over `out` — and the buckets are
+	// bounded by maxPerSymbol * len(symbols), never by the size of that output.
 	perSymbol := make(map[string]int, len(symbols))
-	var hits []refHit
+	bySymbol := make(map[string][]refHit, len(symbols))
 	for rest := out; rest != ""; {
 		var line string
 		line, rest, _ = strings.Cut(rest, "\n")
@@ -535,9 +549,42 @@ func parseGrepHits(out, rev string, symbols []string, exclude map[string]bool, s
 			continue
 		}
 		perSymbol[sym]++
-		hits = append(hits, refHit{Path: p, Line: num, Symbol: sym})
-		if len(hits) >= maxHits {
-			break
+		bySymbol[sym] = append(bySymbol[sym], refHit{Path: p, Line: num, Symbol: sym})
+	}
+
+	// Emission order comes from the `symbols` SLICE, never from bySymbol: map
+	// order would make the retrieved context differ run to run, and AC3 requires
+	// every agent in one fan-out to receive byte-identical context. Each name is
+	// taken once, so a repeated symbol cannot emit its bucket twice, and empty
+	// buckets are dropped here so the round loop below only walks real work.
+	order := make([]string, 0, len(symbols))
+	queued := make(map[string]bool, len(symbols))
+	for _, s := range symbols {
+		if queued[s] || len(bySymbol[s]) == 0 {
+			continue
+		}
+		queued[s] = true
+		order = append(order, s)
+	}
+
+	// Round-robin: round 0 takes each symbol's first candidate, round 1 its
+	// second, and so on until the global ceiling binds.
+	var hits []refHit
+	for round := 0; len(hits) < maxHits; round++ {
+		progressed := false
+		for _, s := range order {
+			b := bySymbol[s]
+			if round >= len(b) {
+				continue // this symbol had fewer candidates than the round number
+			}
+			progressed = true
+			hits = append(hits, b[round])
+			if len(hits) >= maxHits {
+				break
+			}
+		}
+		if !progressed {
+			break // every bucket exhausted before the ceiling was reached
 		}
 	}
 	return hits
