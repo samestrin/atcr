@@ -543,6 +543,52 @@ func TestRetrieveSnippets_CueDerivedSymbolStillRetrievesItsDeclaration(t *testin
 	require.Contains(t, got[0].Body, "func ReadStore")
 }
 
+func TestRetrieveSnippets_StopsAtTheCandidateFileCap(t *testing.T) {
+	// maxPrefetchFiles is "the constant that actually holds AC4": every candidate
+	// file past it costs a `git show` plus a wasm parse, which is where the
+	// latency lives. No test referenced the symbol, so a regression that raised
+	// or removed the cap would have shipped with a green suite.
+	dir := initRepo(t)
+	write(t, dir, "store.go", prefetchStoreV1)
+	for i := 0; i < 30; i++ {
+		write(t, dir, fmt.Sprintf("c%d.go", i),
+			fmt.Sprintf("package store\n\nfunc Consumer%d(p string) {\n\t_, _ = ReadStore(p)\n}\n", i))
+	}
+	base := commitAll(t, dir, "seed 30 consuming files")
+	write(t, dir, "store.go", prefetchStoreV2)
+	head := commitAll(t, dir, "change ReadStore return shape")
+
+	var hits []refHit
+	for i := 0; i < 30; i++ {
+		hits = append(hits, refHit{Path: fmt.Sprintf("c%d.go", i), Line: 4, Symbol: "ReadStore"})
+	}
+
+	got := newGitRunner(context.Background(), dir).retrieveSnippets(base, head, hits, nil)
+
+	require.Len(t, got, maxPrefetchFiles,
+		"30 distinct candidate files must clamp to the cap that bounds the read-and-parse work")
+}
+
+func TestParseGrepHits_StopsAtTheAbsoluteHitCap(t *testing.T) {
+	// maxPrefetchHits is the ceiling independent of how many symbols contributed
+	// the hits — "the bound that keeps a very wide diff from turning a 20ms
+	// lookup into a repo-wide sweep by another name". It had no test either.
+	var symbols []string
+	var lines []string
+	for s := 0; s < 40; s++ {
+		name := fmt.Sprintf("Symbol%d", s)
+		symbols = append(symbols, name)
+		for site := 0; site < maxPrefetchSitesPerSymbol; site++ {
+			lines = append(lines, fmt.Sprintf("pkg%d/f%d.go:%d:\t%s()", s, site, site+1, name))
+		}
+	}
+
+	got := parseGrepHits(strings.Join(lines, "\n"), symbols, nil, nil, maxPrefetchSitesPerSymbol)
+
+	require.Len(t, got, maxPrefetchHits,
+		"120 individually admissible sites across 40 symbols must clamp to the absolute hit ceiling")
+}
+
 func TestSnippetSpan_ExpandsHitToItsCoveringBlock(t *testing.T) {
 	// A bare call-site line tells a reviewer nothing about the contract it
 	// depends on. The snippet must be the enclosing unit.
