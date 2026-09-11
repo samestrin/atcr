@@ -419,6 +419,12 @@ func gendeclSymbolAt(root astgroup.Node, entries []astgroup.SkeletonEntry, line 
 // It gates the result through validGrepSymbol rather than accepting whatever
 // follows the keyword: this name flows into a `git grep` argv, and that function
 // is the security boundary standing in front of it.
+//
+// Known under-admission: a single-line declaration of SEVERAL names, such as
+// `var a, b int`, contributes only the first. The remainder retrieve nothing,
+// which is the same shape as the grouped-declaration gap and wants the same
+// answer — how to attribute one change across several declared names — so it is
+// left to that decision rather than half-solved here.
 func gendeclHeaderName(header string) (string, bool) {
 	fields := strings.Fields(header)
 	if len(fields) < 2 {
@@ -1153,6 +1159,15 @@ func (g *gitRunner) retrieveSnippets(base, head string, hits []refHit, declOnly 
 			// and shipped to a third-party provider. Ordinary changed symbols keep
 			// call-site retrieval (that is AC5, the whole point); only the guessed
 			// ones must earn their snippet by being declared.
+			//
+			// This resolver is deliberately NOT taught gendecl the way
+			// extractChangedSymbols was. The two call sites ask opposite questions:
+			// there it decides whether a change contributes a symbol at all, and
+			// widening it can only add context; here it NARROWS what a guessed
+			// token may retrieve. Teaching it to resolve const/var/type would widen
+			// a gate whose entire purpose is to be narrow, which deserves its own
+			// decision rather than riding along with a retrieval fix. Mock cues name
+			// the functions and types being doubled, not constants.
 			if declOnly[h.Symbol] {
 				if name, ok := astgroup.EnclosingSymbolName(root, h.Line); !ok || name != h.Symbol {
 					dropped = append(dropped, PrefetchDrop{Path: rel, Symbol: h.Symbol, Reason: dropReasonNotDeclared})
