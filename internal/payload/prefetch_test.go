@@ -1394,6 +1394,31 @@ func TestBuildPrefetch_SkipsBlobReadsForUnparseableChangedFiles(t *testing.T) {
 		"unparseable changed files must cost NO git processes: the skip runs above the blob read, so execCount is flat in changed-prose-file count")
 }
 
+func TestBuildPrefetch_SymbolChangedInBothTestAndProductionKeepsCallSiteRetrieval(t *testing.T) {
+	// AC5: a symbol the diff genuinely changed gets full call-site retrieval.
+	// The dedup keyed on name alone used to keep whichever record appeared
+	// FIRST in file-iteration order — so when a changed test file sorts ahead
+	// of the production file (mock_test.go < store.go), the symbol was
+	// recorded Mocked=true, restricted to declaration sites, and a REAL
+	// consumer went unretrieved: retrieval depended on where the path sorted,
+	// not on what the diff changed.
+	dir := initRepo(t)
+	write(t, dir, "store.go", prefetchStoreV1)
+	write(t, dir, "consumer.go", prefetchConsumer)
+	write(t, dir, "mock_test.go", "package store\n\nfunc TestStub(t *testing.T) {\n}\n")
+	base := commitAll(t, dir, "seed the store, consumer and test")
+	write(t, dir, "store.go", prefetchStoreV2)
+	write(t, dir, "mock_test.go", "package store\n\nfunc TestStub(t *testing.T) {\n\tpatched := ReadStore\n\tReadStore = func(string) ([]byte, error) { return nil, nil }\n\t_ = patched\n}\n")
+	head := commitAll(t, dir, "change ReadStore AND stub it in the test")
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	_, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+
+	require.NotEmpty(t, rb.PrefetchSpans()["consumer.go"],
+		"a symbol genuinely changed by the diff keeps call-site retrieval even when a changed test file also stubs it")
+}
+
 func TestRangeBuilder_PrefetchStatusDistinguishesTheOutcomes(t *testing.T) {
 	// PrefetchStatus exists because an absent section, a shed-heavy run and a
 	// broken lookup are otherwise byte-for-byte identical in every artifact.
