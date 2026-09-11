@@ -968,6 +968,14 @@ func (g *gitRunner) retrieveSnippets(base, head string, hits []refHit, declOnly 
 		for _, h := range byPath[rel] {
 			// The per-symbol ceiling on EMITTED snippets. Checked before the span and
 			// slice work below, which a hit over the ceiling would only discard.
+			//
+			// Deliberately NOT ledgered, unlike the six discards below and above.
+			// Every one of those means the reviewer got NO context for that
+			// candidate, which is the loss AC7 asks to be disclosed. This one fires
+			// only once the symbol has ALREADY contributed its full share of
+			// snippets, so the reviewer holds context for it either way — recording
+			// it would fill the bounded ledger with lines about context that was not
+			// actually missing, crowding out the ones that were.
 			if perSymbolEmitted[h.Symbol] >= maxEmittedSitesPerSymbol {
 				continue
 			}
@@ -1400,9 +1408,17 @@ func newPrefetchEntry(section string) FileEntry {
 // feature and a failed lookup are byte-for-byte identical in every artifact
 // otherwise, and they are opposite operational signals.
 type PrefetchStatus struct {
-	Present   bool `json:"present"`
-	Snippets  int  `json:"snippets"`
-	Dropped   int  `json:"dropped,omitempty"`
+	Present  bool `json:"present"`
+	Snippets int  `json:"snippets"`
+	// Dropped counts every candidate the rendered ledger discloses — the ones
+	// shed by the byte cap AND the ones retrieval discarded before they ever
+	// became a snippet. It is the ledger's length, so an auditor reading the
+	// manifest and an agent reading the section are counting the same thing.
+	Dropped int `json:"dropped,omitempty"`
+	// Truncated reports that the BYTE CAP cut the section, and nothing else.
+	// A retrieval-stage drop happens at any budget, so folding it in here would
+	// tell an operator to raise a cap that was never the constraint. Dropped
+	// answers "was context lost"; this answers "was the budget the reason".
 	Truncated bool `json:"truncated,omitempty"`
 	Disabled  bool `json:"disabled,omitempty"`
 	Failed    bool `json:"failed,omitempty"`
