@@ -1242,6 +1242,12 @@ const (
 	// The wording mirrors the rule docs/skill-usage.md already states for
 	// enrichment text: untrusted data describing the subject, never instructions
 	// to act on.
+	//
+	// The sibling synthetic section, the claim ledger, carries no such notice and
+	// that asymmetry is deliberate: its text is written by the PR author ABOUT
+	// the change under review, while these bodies are arbitrary tracked files
+	// pulled in by symbol reference, with no involvement from the author whose
+	// change is being reviewed.
 	// Deliberately terse. These bytes are charged to max_prefetch_bytes like
 	// every other line in the section, so the notice sets the section's
 	// irreducible FLOOR: a verbose one pushes a small configured cap into
@@ -1304,10 +1310,14 @@ func renderSnippetBlock(s PrefetchSnippet) string {
 // flattenSignature collapses a declaration header to ONE line.
 //
 // The header is repository-controlled text sliced straight out of source, and
-// every safety property of the rendered block rests on each emitted line
-// beginning with "[context] " or "L<digits>: ". A header carrying a newline
-// would emit a bare repository-controlled line that could open a spoofed file
-// section — the exact injection renderPrefetchSection's anchors exist to block.
+// the block's STRUCTURAL safety rests on each emitted line beginning with
+// "[context] " or "L<digits>: ". A header carrying a newline would emit a bare
+// repository-controlled line that could open a spoofed file section — the exact
+// injection renderPrefetchSection's anchors exist to block.
+//
+// Not EVERY safety property of the block rests on that invariant, and it used to
+// claim so: prose injection is addressed by prefetchUntrustedNotice, which no
+// amount of line prefixing would have touched.
 func flattenSignature(sig string) string {
 	if !strings.ContainsAny(sig, "\r\n") {
 		return strings.TrimSpace(sig)

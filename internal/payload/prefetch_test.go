@@ -1321,10 +1321,12 @@ func TestRenderPrefetchSection_NoLineCanStartAPayloadSection(t *testing.T) {
 
 func TestRenderSnippetBlock_FlattensAMultiLineSignature(t *testing.T) {
 	// The signature is repository-controlled text sliced straight out of source.
-	// Every safety property of the block rests on each emitted line beginning
-	// with "[context] " or "L<n>: ", so a header carrying a newline must be
-	// flattened rather than emitted as a bare line that could open a spoofed
-	// file section.
+	// The block's STRUCTURAL safety rests on each emitted line beginning with
+	// "[context] " or "L<n>: ", so a header carrying a newline must be flattened
+	// rather than emitted as a bare line that could open a spoofed file section.
+	//
+	// Structural safety only. Prose injection inside a retrieved body is what
+	// prefetchUntrustedNotice addresses; no line prefix speaks to it.
 	got := renderSnippetBlock(PrefetchSnippet{
 		Path:      "consumer.go",
 		Symbol:    "ReadStore",
