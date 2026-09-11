@@ -46,9 +46,14 @@ func TestPrefetchDefault_DocumentedInRegistryDoc(t *testing.T) {
 		t.Errorf("docs/registry.md must state the embedded default (%d) for max_prefetch_bytes; row was: %s",
 			registry.DefaultMaxPrefetchBytes, row)
 	}
-	for _, must := range []string{"0", "disable"} {
-		if !strings.Contains(strings.ToLower(row), must) {
-			t.Errorf("docs/registry.md's max_prefetch_bytes row must state that %q disables the feature; row was: %s", must, row)
-		}
+	// The zero-disables contract is pinned as a PHRASE, not as independent
+	// tokens: the row mentions 0 ("the injected section carries Size 0") and
+	// "disabled" ("fails safe to disabled") in sentences unrelated to that
+	// contract, so a token search stays green even with the load-bearing clause
+	// deleted. Markdown emphasis is formatting, not contract — strip it before
+	// matching, case-folded.
+	plain := strings.ToLower(strings.NewReplacer("`", "", "*", "").Replace(row))
+	if !strings.Contains(plain, "0 disables") {
+		t.Errorf("docs/registry.md's max_prefetch_bytes row must state as a phrase that 0 disables the feature; row was: %s", row)
 	}
 }
