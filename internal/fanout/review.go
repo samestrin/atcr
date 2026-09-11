@@ -1336,8 +1336,9 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 		// and in the persona-visible {{.FileCount}}. Epic 35.16.7 recorded that
 		// inflation as an accepted consequence only because it was forbidden from
 		// editing this package; pre-fetching would have doubled it, so it is
-		// corrected here instead. The per-agent re-derivations in buildSlots still
-		// use len(kept) and remain inflated — tracked as technical debt.
+		// corrected here instead. The per-agent re-derivations in buildSlots
+		// apply the same ReviewableCount rule, so every reader of FileCount —
+		// manifest, persona template, and per-agent prompt — agrees.
 		out[mode] = modePayload{Entries: entries, Kept: kept, Text: b.String(), FileCount: payload.ReviewableCount(kept), Truncation: trunc}
 	}
 	// Every payload mode's entries are now materialized into out, so the
@@ -2522,7 +2523,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				for _, e := range kept {
 					pb.WriteString(e.Body)
 				}
-				bulkText, bulkFileCount, bulkTrunc = pb.String(), len(kept), trunc
+				bulkText, bulkFileCount, bulkTrunc = pb.String(), payload.ReviewableCount(kept), trunc
 				// Shed only when a file was actually dropped: a no-op budget pass returns
 				// the same entry set, and that persona can still share the whole-payload tag.
 				bulkEntries, bulkShed = kept, len(kept) != len(mp.Entries)
