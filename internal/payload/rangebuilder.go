@@ -217,12 +217,6 @@ func (b *RangeBuilder) PrefetchStatus() PrefetchStatus {
 	return b.prefetchStatus
 }
 
-// PrefetchSpans returns the head-line spans that were shown for each retrieved
-// path. It is the grounding contract: exactly these lines become groundable.
-func (b *RangeBuilder) PrefetchSpans() map[string][]LineRange {
-	return b.prefetchSpans
-}
-
 // withPrefetchSection inserts the Context Definitions entry AFTER the claim
 // ledger, never before it.
 //

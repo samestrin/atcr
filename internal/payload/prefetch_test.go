@@ -1415,7 +1415,11 @@ func TestBuildPrefetch_SymbolChangedInBothTestAndProductionKeepsCallSiteRetrieva
 	_, err := rb.BuildEntries(ModeDiff)
 	require.NoError(t, err)
 
-	require.NotEmpty(t, rb.PrefetchSpans()["consumer.go"],
+	cl, err := rb.BuildChangedLines()
+	require.NoError(t, err)
+	fc, ok := cl["consumer.go"]
+	require.True(t, ok, "the retrieved consumer must reach the grounding map")
+	require.True(t, fc.PrefetchOnly,
 		"a symbol genuinely changed by the diff keeps call-site retrieval even when a changed test file also stubs it")
 }
 
