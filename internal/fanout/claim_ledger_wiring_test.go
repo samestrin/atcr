@@ -777,3 +777,149 @@ func TestClaimLedger_RefitAboveTheLedgersBytesStillDropsIt(t *testing.T) {
 			"the ledger plus the file keepSmallestEntry did not keep — one reviewable file must survive, or this is the empty-payload case instead")
 	}
 }
+
+// prefetchBandFile renders a declaration padded to a predictable size, so the
+// band arithmetic below is set by the fixture rather than discovered.
+func prefetchBandFile(fn, ret string, lines int) []byte {
+	var b strings.Builder
+	b.WriteString("package p\n\nfunc " + fn + "() " + ret + " {\n")
+	for i := 0; i < lines; i++ {
+		b.WriteString("\t_ = " + itoa(i) + " // " + strings.Repeat("z", 40) + "\n")
+	}
+	if ret == "string" {
+		b.WriteString("\treturn \"x\"\n}\n")
+	} else {
+		b.WriteString("\treturn 0\n}\n")
+	}
+	return []byte(b.String())
+}
+
+// The cumulative funding rule is what stops the claim ledger and the Context
+// Definitions block from being funded TOGETHER when the budget can hold only one
+// of them. internal/payload's unit test reaches that rule by hand-assigning a
+// Size to each synthetic entry — but production builds BOTH with Size 0, and the
+// non-zero sizes arise only on the fallback re-fit, which re-sizes every entry to
+// len(Body). The rule was therefore verified against poked struct fields and
+// never through the path that motivated it.
+//
+// This drives the REAL re-fit. Both sections come from their own constructors —
+// shedExempt and exemptRank are unexported, so nothing outside internal/payload
+// can forge either one, which is also why this test cannot live there.
+//
+// Byte figures are ILLUSTRATIVE of the build this was written against; every
+// assertion derives its own at runtime and prints the measured numbers on
+// failure. Read the failure output, not this comment, when a fixture shifts:
+//
+//	ledger 8111, context block 1811, files 361 + 4280 + 4280 (combined 8921)
+//	greta window 14774 -> (14774 - 8192 output - 4096 overhead) * 7 / 2 = 8701
+//
+// Why THAT band and no other — three bounds, each ruling out a different
+// mechanism that would also leave the context block missing:
+//
+//   - below the files' combined bytes, or inheritedPayloadFits holds, the re-fit
+//     gate never opens, and rePacked stays false.
+//   - at or above ledger + the smallest file, or every reviewable file sheds,
+//     AllDropped trips and keepSmallestEntry reroutes — that path drops the
+//     LEDGER, the opposite outcome.
+//   - below ledger + context, which is the rule under test: the cumulative bound
+//     refuses to fund the second exempt section.
+//
+// Under the OLD per-entry bound both sections pass their own check (8111 <= 8701
+// and 1811 <= 8701), both are funded, every file sheds to pay for them and the
+// AllDropped reroute fires instead — so reverting that bound changes the outcome
+// asserted here.
+func TestRefit_CumulativeFundingKeepsTheLedgerAndShedsRetrievedContext(t *testing.T) {
+	// consumer.go is seeded at BASE and never touched again, so it is absent from
+	// the diff and can reach a reviewer only by reference retrieval. Its callees
+	// are multi-character on purpose: validGrepSymbol rejects a one-character name,
+	// so single-letter helpers would produce no grep pattern, no context block, and
+	// a test that passes while proving nothing.
+	var consumer strings.Builder
+	consumer.WriteString("package p\n\nfunc Reconcile() string {\n")
+	for i := 0; i < 34; i++ {
+		consumer.WriteString("\t_ = " + itoa(i) + " // " + strings.Repeat("z", 30) + "\n")
+	}
+	consumer.WriteString("\treturn ReadStore() + WriteStore() + CloseStore()\n}\n")
+
+	dir, base := seedClaimHeavyRepo(t,
+		fixtureFile{"a.go", prefetchBandFile("ReadStore", "int", 2)},
+		fixtureFile{"b.go", prefetchBandFile("WriteStore", "int", 76)},
+		fixtureFile{"c.go", prefetchBandFile("CloseStore", "int", 76)},
+		fixtureFile{"consumer.go", []byte(consumer.String())},
+	)
+	head := commitClaimHeavyHead(t, dir,
+		fixtureFile{"a.go", prefetchBandFile("ReadStore", "string", 2)},
+		fixtureFile{"b.go", prefetchBandFile("WriteStore", "string", 76)},
+		fixtureFile{"c.go", prefetchBandFile("CloseStore", "string", 76)},
+	)
+
+	cfg := sizingRosterConfig()
+	win := 14774
+	g := cfg.Registry.Agents["greta"]
+	g.ContextWindowTokens = &win
+	cfg.Registry.Agents["greta"] = g
+	kai := cfg.Registry.Agents["kai"]
+	kai.Fallback = "greta"
+	cfg.Registry.Agents["kai"] = kai
+	cfg.Project.Agents = []string{"kai"}
+	cfg.Settings.OnOverflow = OverflowTruncate
+
+	payloads, _, err := buildPayloads(context.Background(), cfg, dir, base, head, false)
+	require.NoError(t, err)
+
+	// Measure the band's three inputs from the built payload, and assert the
+	// fixture actually produced BOTH synthetic sections. Without that precondition
+	// every assertion below could pass on a build that retrieved no context at all.
+	var ledgerBytes, contextBytes, smallestFile, combinedFiles int64
+	for _, mp := range payloads {
+		for _, e := range mp.Entries {
+			n := int64(len(e.Body))
+			switch e.Path {
+			case payload.ClaimLedgerPath:
+				ledgerBytes = n
+			case payload.PrefetchContextPath:
+				contextBytes = n
+			default:
+				combinedFiles += n
+				if n > 0 && (smallestFile == 0 || n < smallestFile) {
+					smallestFile = n
+				}
+			}
+		}
+	}
+	require.Positive(t, ledgerBytes, "PRECONDITION: the fixture must produce a claim ledger")
+	require.Positive(t, contextBytes, "PRECONDITION: the fixture must produce a Context Definitions block, or this proves nothing")
+
+	var slots []Slot
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: base, Head: head}, "", "", false)
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, slots, "precondition: the roster must produce a slot")
+	require.NotEmpty(t, slots[0].Fallbacks, "precondition: kai must resolve its greta fallback")
+
+	for _, fb := range slots[0].Fallbacks {
+		require.True(t, fb.rePacked,
+			"precondition: the fallback must actually have re-fit, or the synthetic entries still carry Size 0 and the cumulative rule is never consulted")
+
+		require.Less(t, fb.EffectiveBudget, combinedFiles,
+			"precondition: THE gate — below the files' combined bytes, or inheritedPayloadFits holds and no re-fit runs (budget=%d, combined=%d)", fb.EffectiveBudget, combinedFiles)
+		require.GreaterOrEqual(t, fb.EffectiveBudget, ledgerBytes+smallestFile,
+			"precondition: at or above ledger + smallest file, or every file sheds and the AllDropped reroute drops the LEDGER instead (budget=%d, ledger=%d, smallest=%d)", fb.EffectiveBudget, ledgerBytes, smallestFile)
+		require.Less(t, fb.EffectiveBudget, ledgerBytes+contextBytes,
+			"THE RULE UNDER TEST: the budget must not fund both exempt sections, or the cumulative bound is not what decides (budget=%d, ledger=%d, context=%d)", fb.EffectiveBudget, ledgerBytes, contextBytes)
+
+		// The outcome the cumulative rule exists to produce: the higher-ranked
+		// section is funded, the lower-ranked one sheds, and reviewable code
+		// survives alongside the ledger rather than being shed to fund both.
+		_, hasLedger := payload.ClaimLedgerPromptSection(fb.Prompt)
+		assert.True(t, hasLedger,
+			"the claim ledger outranks retrieved context and must survive a budget that cannot hold both")
+		assert.Contains(t, fb.Truncation.FilesDropped, payload.PrefetchContextPath,
+			"the shed record must name the Context Definitions block the reviewer did not receive")
+		assert.NotContains(t, fb.Truncation.FilesDropped, payload.ClaimLedgerPath,
+			"the ledger was funded, so it must not appear in the shed record")
+		require.Len(t, fb.CodeContext, 1,
+			"reviewable code must survive: shedding every file to fund the sections is the AllDropped case this band rules out (kept=%d)", len(fb.CodeContext))
+	}
+}
