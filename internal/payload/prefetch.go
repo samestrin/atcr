@@ -569,6 +569,12 @@ func parseGrepHits(out, rev string, symbols []string, exclude map[string]bool, s
 
 	// Round-robin: round 0 takes each symbol's first candidate, round 1 its
 	// second, and so on until the global ceiling binds.
+	//
+	// A ceiling BELOW the symbol count still leaves the tail of round 0 with
+	// nothing — unavoidable when there are more symbols than slots. What changes
+	// is that the share is taken in symbol order rather than in whichever order
+	// git grep happened to emit paths, and it was that arbitrariness, not the
+	// scarcity, that decided which symbol went uncovered.
 	var hits []refHit
 	for round := 0; len(hits) < maxHits; round++ {
 		progressed := false
@@ -814,6 +820,15 @@ const (
 	// maxPrefetchFiles bounds how many DISTINCT candidate files are read and
 	// parsed. This is the constant that actually holds AC4: every file past it
 	// costs a `git show` plus a wasm parse, which is where the latency lives.
+	//
+	// It is spent in first-appearance order, which is the same shape of
+	// unfairness maxPrefetchHits had before its round-robin share. It is left
+	// that way deliberately: the hit cap now interleaves symbols BEFORE this cap
+	// sees them, so the paths arriving here are already mixed across symbols
+	// rather than grouped alphabetically, which is what made the bias bite.
+	// Making this one symbol-aware too would need retrieveSnippets to group by
+	// symbol instead of by path, trading away the one-read-per-file property
+	// that is the whole point of the constant.
 	maxPrefetchFiles = 25
 
 	// maxPrefetchChangedFiles bounds how many CHANGED files the symbol-extraction
