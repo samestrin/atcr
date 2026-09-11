@@ -1,8 +1,11 @@
 package reconcile
 
 import (
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/samestrin/atcr/internal/registry"
 )
 
 // docs/registry.md's max_context_lines row is the ONLY documentation of the
@@ -41,6 +44,17 @@ func TestMaxContextLines_DocumentsTheDeliveredLineGate(t *testing.T) {
 		if !strings.Contains(strings.ToLower(row), strings.ToLower(must.token)) {
 			t.Errorf("docs/registry.md's max_context_lines row must state %q: %s\nrow was: %s", must.token, must.why, row)
 		}
+	}
+
+	// The phrase above pins the KEY name; the same sentence also restates its
+	// default as a bare number — a second doc site for
+	// registry.DefaultMaxPrefetchBytes alongside the max_prefetch_bytes row. Pin
+	// the number to the constant, not to a literal: a default change must turn
+	// this row red, or both doc sites go stale with a green suite.
+	wantDefault := "`" + strconv.FormatInt(registry.DefaultMaxPrefetchBytes, 10) + "` by default"
+	if !strings.Contains(row, wantDefault) {
+		t.Errorf("docs/registry.md's max_context_lines row must restate the prefetch default as %s "+
+			"(code-derived from registry.DefaultMaxPrefetchBytes, not a hardcoded literal)\nrow was: %s", wantDefault, row)
 	}
 
 	// The code half of the drift guard asserts the LINK to the behavioural owner,
