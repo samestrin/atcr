@@ -506,6 +506,43 @@ func TestReferenceHits_BrokenLookupIsDistinguishableFromNoMatch(t *testing.T) {
 	require.True(t, failed, "a lookup that could not run at all must be reported as failed")
 }
 
+func TestRetrieveSnippets_CRLFSourceCarriesNoCarriageReturnsAndMatchesTheLFSpan(t *testing.T) {
+	// sliceLines splits a CRLF file on the bare newline too, leaving a carriage
+	// return at the end of every retrieved line. Left in, the \r rides the
+	// rendered section into provider prompts (inflating the byte cap it is
+	// measured against), and the same content checked out with LF versus CRLF
+	// produces different grounding spans — so which findings survive the
+	// anti-hallucination gate would depend on how the file was checked out.
+	//
+	// Pin the line-ending-neutral contract: the same source committed once with
+	// LF and once with CRLF must yield byte-identical snippet bodies AND
+	// identical spans.
+	retrieve := func(t *testing.T, consumer string) []PrefetchSnippet {
+		dir := initRepo(t)
+		write(t, dir, "store.go", prefetchStoreV1)
+		write(t, dir, "consumer.go", consumer)
+		base := commitAll(t, dir, "seed the store and its consumer")
+		write(t, dir, "store.go", prefetchStoreV2)
+		head := commitAll(t, dir, "change ReadStore return shape")
+
+		g := newGitRunner(context.Background(), dir)
+		hits, _ := g.referenceHits(head, []changedSymbol{{Name: "ReadStore"}}, map[string]bool{"store.go": true})
+		return g.retrieveSnippets(base, head, hits, nil)
+	}
+
+	lf := retrieve(t, prefetchConsumer)
+	crlf := retrieve(t, strings.ReplaceAll(prefetchConsumer, "\n", "\r\n"))
+
+	require.Len(t, crlf, 1, "the CRLF consumer must still be retrieved")
+	require.NotContains(t, crlf[0].Body, "\r",
+		"a CRLF source must not leak carriage returns into the shipped snippet")
+	require.Len(t, lf, 1)
+	require.Equal(t, lf[0].Body, crlf[0].Body,
+		"LF and CRLF checkouts of the same file must render identical bodies")
+	require.Equal(t, [2]int{lf[0].Start, lf[0].End}, [2]int{crlf[0].Start, crlf[0].End},
+		"LF and CRLF checkouts of the same file must ground the SAME span")
+}
+
 func TestRetrieveSnippets_SearchesHeadNotTheDirtyWorktree(t *testing.T) {
 	// `git grep` without a tree-ish searches the WORKING TREE, while
 	// retrieveSnippets slices the same path out of the head blob. When the two
