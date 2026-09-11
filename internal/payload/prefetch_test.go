@@ -866,6 +866,37 @@ func TestParseGrepHits_StopsAtTheAbsoluteHitCap(t *testing.T) {
 		"120 individually admissible sites across 40 symbols must clamp to the absolute hit ceiling")
 }
 
+func TestIdentifierScanning_AcceptsNonASCIIIdentifiers(t *testing.T) {
+	// Go, Python, Java and Kotlin all permit non-ASCII identifiers. Scanning ASCII
+	// byte ranges means such a name never becomes a grep pattern and contributes
+	// no context at all, so a non-English codebase silently loses the whole
+	// feature. internal/reconcile's collectSourceIdentifiers already harvests
+	// these; this is the same rule on this side.
+	t.Run("tokens are harvested from a cue line", func(t *testing.T) {
+		require.Contains(t, identifierTokens("mock(Müller)"), "Müller")
+		require.Contains(t, identifierTokens("stub(日本語)"), "日本語")
+		// A mixed token is ONE token, not split at the ASCII boundary.
+		require.Contains(t, identifierTokens("fake(readStöre)"), "readStöre")
+	})
+
+	t.Run("a non-ASCII name is a valid search pattern", func(t *testing.T) {
+		require.True(t, validGrepSymbol("Müller"))
+		require.True(t, validGrepSymbol("日本語"))
+		require.Equal(t, []string{"Müller"}, grepPatterns([]changedSymbol{{Name: "Müller"}}))
+	})
+
+	t.Run("the argv security boundary still holds", func(t *testing.T) {
+		// validGrepSymbol is a SECURITY boundary, not only a noise filter: these
+		// names flow into a subprocess argv. Widening it to letters must not admit
+		// a leading dash, a glob, or whitespace.
+		for _, bad := range []string{"-flag", "--flag", "a b", "a*b", "a?b", "a;b", "a\tb", "a|b", "a$b", "a'b", `a"b`} {
+			require.Falsef(t, validGrepSymbol(bad), "%q must not be accepted as a grep pattern", bad)
+		}
+		require.False(t, validGrepSymbol("9lives"), "a leading digit is still a literal, not a symbol")
+		require.False(t, validGrepSymbol("é"), "a one-character name still matches too much to be worth a slot")
+	})
+}
+
 func TestSnippetSpan_ExpandsHitToItsCoveringBlock(t *testing.T) {
 	// A bare call-site line tells a reviewer nothing about the contract it
 	// depends on. The snippet must be the enclosing unit.
