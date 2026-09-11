@@ -608,8 +608,42 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 	// range so WritePool can drop findings not anchored in the patch (see
 	// computeGroundingData for the fail-open contract). The reason string records
 	// WHY the gate is off (git failure vs. diff ingestion) in summary.json.
+	//
+	// Guard the builder pairing before grounding (Epic 35.16.8): the standalone
+	// fallback inside computeGroundingData never merges prefetch spans — only
+	// rb.BuildChangedLines does, via withPrefetchedSpans. Payloads that carry
+	// Context Definitions can ground findings on spans no diff ever touched, so
+	// grounding such payloads through the fallback would silently drop every
+	// finding on shown spans as "file not in the patch". Every git-range caller
+	// passes the same builder that built the payloads (the baseline and diff
+	// paths pass nil but cannot produce prefetch spans), so this pairing is
+	// unreachable today; if a future caller breaks it, disable the gate audibly
+	// — the same treatment as computeGroundingData's range-mismatch guard —
+	// rather than ground incompletely.
+	if rb == nil && payloadsCarryPrefetchContext(payloads) {
+		log.FromContext(ctx).Warn("grounding disabled: payloads carry Context Definitions but no RangeBuilder was provided; the standalone grounding fallback cannot see prefetched spans",
+			"range", req.Range.Base+".."+req.Range.Head)
+		return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, Changed: nil, GroundingDisabledReason: "payloads carry Context Definitions but no RangeBuilder was provided; standalone grounding cannot see prefetched spans", manifest: m, cache: revCache, cacheNoRead: req.NoCache}, nil
+	}
 	changed, groundingDisabledReason := computeGroundingData(ctx, req, rb)
 	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, Changed: changed, GroundingDisabledReason: groundingDisabledReason, manifest: m, cache: revCache, cacheNoRead: req.NoCache}, nil
+}
+
+// payloadsCarryPrefetchContext reports whether any mode payload's pre-budget
+// entries include the Context Definitions section — i.e. the payload can ground
+// findings on retrieved spans no diff ever touched. Only the builder path
+// (withPrefetchedEntries) emits that section, so a false here is the ordinary
+// baseline/diff-ingestion shape, where the standalone grounding fallback is
+// correct.
+func payloadsCarryPrefetchContext(payloads map[string]modePayload) bool {
+	for _, mp := range payloads {
+		for _, e := range mp.Entries {
+			if e.Path == payload.PrefetchContextPath {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // computeGroundingData builds the per-file patch grounding data for the request's
