@@ -140,6 +140,20 @@ func TestLoadProjectRegistry_MaxPrefetchBytesKeyHint(t *testing.T) {
 	require.Contains(t, err.Error(), "config.yaml", "the error must point at the file the key belongs in")
 }
 
+// DefaultProjectConfigYAML — the config `atcr init` installs — emits and
+// documents every other byte budget. max_prefetch_bytes must appear too:
+// pre-fetching is ON by default and ships source from files the diff never
+// touched to third-party providers, so an operator auditing the generated
+// config for what leaves their repo must see the feature and its 0 escape
+// hatch there.
+func TestDefaultProjectConfigYAML_DocumentsMaxPrefetchBytes(t *testing.T) {
+	out := DefaultProjectConfigYAML([]string{"bruce"})
+	require.Contains(t, out, "max_prefetch_bytes:", "the knob must appear in the generated config")
+	require.Contains(t, out, "# max_prefetch_bytes:", "it must carry a help comment like its siblings")
+	require.Contains(t, out, "0 disables", "the comment must state the operator escape hatch")
+	require.Contains(t, out, "outside the diff", "the comment must disclose that the feature transmits source from outside the diff")
+}
+
 func TestRegistry_MaxPrefetchBytesNegativeRejected(t *testing.T) {
 	_, err := LoadRegistry(writeRegistry(t, `
 providers:
