@@ -413,6 +413,31 @@ func TestReferenceHits_RetrievesConsumerInAnUntouchedFile(t *testing.T) {
 		"the changed file is already in the payload verbatim")
 }
 
+func TestReferenceHits_TreeIshIsUnambiguousAgainstALikeNamedPath(t *testing.T) {
+	// The tree-ish is appended to the `git grep` argv. With no `--` separator
+	// after it, a repository containing a TRACKED FILE whose name equals the head
+	// ref makes git fail with "ambiguous argument" — and referenceHits reads any
+	// error as "matched nothing", so pre-fetching would be silently and
+	// permanently disabled for that repository rather than failing loudly.
+	dir := initRepo(t)
+	write(t, dir, "store.go", prefetchStoreV1)
+	write(t, dir, "consumer.go", prefetchConsumer)
+	write(t, dir, "release", "a tracked path that collides with the ref name\n")
+	commitAll(t, dir, "seed a repo whose tracked path shadows a ref name")
+	gitCmd(t, dir, "branch", "release")
+
+	g := newGitRunner(context.Background(), dir)
+
+	hits := g.referenceHits("release", []changedSymbol{{Name: "ReadStore"}}, map[string]bool{"store.go": true})
+
+	var paths []string
+	for _, h := range hits {
+		paths = append(paths, h.Path)
+	}
+	require.Contains(t, paths, "consumer.go",
+		"a ref shadowed by a tracked path of the same name must still resolve as a revision")
+}
+
 func TestReferenceHits_IsLazyAndSpendsOneProcessForEverySymbol(t *testing.T) {
 	dir, _, head := prefetchRepo(t)
 	g := newGitRunner(context.Background(), dir)
