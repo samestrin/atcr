@@ -70,7 +70,33 @@ func TestSettings_NegativeMaxPrefetchBytesResolvesToDisabledNotUnbounded(t *test
 func TestResolveSettings_MaxPrefetchBytesNegativeRejected(t *testing.T) {
 	neg := int64(-1)
 
-	_, err := ResolveSettings(CLIOverrides{}, &ProjectConfig{MaxPrefetchBytes: &neg}, nil)
-	require.Error(t, err, "a negative ceiling is a configuration error, not a silent default")
+	t.Run("project tier", func(t *testing.T) {
+		_, err := ResolveSettings(CLIOverrides{}, &ProjectConfig{MaxPrefetchBytes: &neg}, nil)
+		require.Error(t, err, "a negative ceiling is a configuration error, not a silent default")
+		require.Contains(t, err.Error(), "max_prefetch_bytes")
+	})
+	t.Run("registry tier", func(t *testing.T) {
+		// A directly-constructed Registry bypasses LoadRegistry's validate, so
+		// the resolver's own post-resolution guard has to reject it too.
+		_, err := ResolveSettings(CLIOverrides{}, nil, &Registry{MaxPrefetchBytes: &neg})
+		require.Error(t, err, "a negative ceiling from the registry tier is rejected as well")
+		require.Contains(t, err.Error(), "max_prefetch_bytes")
+	})
+}
+
+// The registry tier carries its own copy of the guard (Registry.validate), so
+// the project-tier and resolver cases above prove nothing about it — a
+// registry.yaml with a negative value has to be rejected at load by its own
+// check.
+func TestRegistry_MaxPrefetchBytesNegativeRejected(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, `
+providers:
+  p:
+    api_key_env: KEY
+agents:
+  bruce: {provider: p, model: m}
+max_prefetch_bytes: -1
+`))
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "max_prefetch_bytes")
 }
