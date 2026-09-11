@@ -71,9 +71,23 @@ var doubleNamePrefixes = []string{"mock", "fake", "stub"}
 var doubleNameExact = map[string]bool{"patch": true, "patched": true, "patches": true}
 
 // mockTokenNoise are tokens that are never a mocked symbol: language keywords,
-// builtins, and the types that appear on almost every Go test line. They are
-// excluded so the `git grep` argv is spent on plausible symbols.
+// builtins, and the test-framework verbs that appear on almost every test line.
+// They are excluded so the `git grep` argv is spent on plausible symbols.
+//
+// It covers EVERY language looksLikeTestFile enables the cue scan for, not Go
+// alone. A Go-only set left `def` and `self` surviving on a Python cue line and
+// `const`, `await`, `describe` and `this` on a JavaScript one — each burning a
+// slot out of the maxChangedSymbols cap and then forcing `git grep` to match
+// essentially every file in the repository.
+//
+// Entries are KEYWORDS and framework verbs only. Generic type names — set,
+// list, dict, object, array, number, value, result — are deliberately absent
+// even though every language has them: they are also ordinary symbol names, and
+// the scan's stated bias is that admitting a stray token costs one grep pattern
+// while dropping a real one loses the AC6 snippet outright. Matching is on the
+// LOWERCASED token, so an entry here also rejects its capitalized form.
 var mockTokenNoise = map[string]bool{
+	// Go
 	"func": true, "return": true, "nil": true, "err": true, "error": true,
 	"byte": true, "string": true, "int": true, "int64": true, "bool": true,
 	"var": true, "const": true, "type": true, "struct": true, "interface": true,
@@ -81,6 +95,42 @@ var mockTokenNoise = map[string]bool{
 	"import": true, "true": true, "false": true, "len": true, "cap": true,
 	"make": true, "new": true, "append": true, "testing": true, "test": true,
 	"for": true, "not": true, "the": true, "out": true,
+	// Python
+	"def": true, "self": true, "cls": true, "elif": true, "pass": true,
+	"raise": true, "except": true, "finally": true, "lambda": true,
+	"yield": true, "assert": true, "none": true, "global": true,
+	"nonlocal": true, "print": true, "super": true, "with": true, "from": true,
+	"class": true, "try": true, "del": true, "while": true,
+	// JavaScript / TypeScript
+	"let": true, "function": true, "this": true, "async": true, "await": true,
+	"export": true, "default": true, "undefined": true, "null": true,
+	"typeof": true, "instanceof": true, "extends": true, "readonly": true,
+	"void": true, "enum": true, "namespace": true, "static": true,
+	"throw": true, "catch": true, "switch": true, "case": true, "break": true,
+	"continue": true, "delete": true,
+	// Test frameworks, every language
+	"expect": true, "describe": true, "jest": true, "spyon": true,
+	"pytest": true, "unittest": true, "monkeypatch": true,
+	"beforeeach": true, "aftereach": true, "should": true,
+	// Rust
+	"impl": true, "mut": true, "pub": true, "crate": true, "trait": true,
+	"dyn": true, "some": true, "unwrap": true, "use": true, "mod": true,
+	"where": true, "loop": true,
+	// PHP
+	"echo": true, "foreach": true, "endforeach": true, "elseif": true,
+	"require": true, "include": true, "public": true, "private": true,
+	"protected": true, "abstract": true, "implements": true,
+	// Java / Kotlin
+	"final": true, "override": true, "suspend": true, "val": true, "fun": true,
+	"throws": true, "synchronized": true, "lateinit": true, "companion": true,
+	// C / C++ / C#
+	"define": true, "typedef": true, "unsigned": true, "signed": true,
+	"template": true, "typename": true, "nullptr": true, "sizeof": true,
+	"auto": true, "using": true, "virtual": true, "inline": true,
+	"extern": true, "goto": true, "union": true,
+	// Bash
+	"local": true, "then": true, "done": true, "esac": true, "shift": true,
+	"unset": true, "source": true,
 }
 
 // changedSymbol is one symbol the diff touched, with the shape a consumer would
