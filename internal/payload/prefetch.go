@@ -190,6 +190,12 @@ var languageTokenNoise = map[string]map[string]bool{
 // it. It is empty when the file has no parser or the declaration could not be
 // sliced — a graceful degradation, never an error.
 //
+// It is carried through to PrefetchSnippet.Signature and rendered by
+// renderSnippetBlock. That is what makes the paragraph above a description of
+// the shipped behavior rather than an argument for it: computed-but-unrendered,
+// the value reached no provider and no reviewer, and the reasoning here was
+// simply untrue of the payload.
+//
 // Mocked marks a symbol discovered in a changed TEST file on a line that mocks,
 // patches, stubs or fakes something (AC6). Those symbols are retrieved so the
 // REAL implementation sits next to the test that replaces it, which is what
@@ -633,6 +639,13 @@ type PrefetchSnippet struct {
 	Start  int
 	End    int
 	Body   string
+	// Signature is the declaration header of the CHANGED symbol this snippet was
+	// retrieved FOR — not of the code shown below it. It is rendered beside the
+	// symbol name because AC5 is about a changed signature or return shape: a
+	// reviewer handed only a name cannot judge whether the call site still agrees
+	// with it. Empty when the changed symbol's own file had no parser or its
+	// declaration could not be sliced, which renders exactly as it did before.
+	Signature string
 	// Tier ranks this snippet for shedding when the byte cap bites (AC7).
 	Tier PrefetchTier
 }
@@ -992,6 +1005,10 @@ func renderSnippetBlock(s PrefetchSnippet) string {
 	b.WriteString(s.Tier.String())
 	b.WriteString(" to ")
 	b.WriteString(s.Symbol)
+	if sig := flattenSignature(s.Signature); sig != "" {
+		b.WriteString(": ")
+		b.WriteString(sig)
+	}
 	b.WriteString(")\n")
 	// Anchor every source line with its real HEAD line number. This is the safety
 	// property as much as a convenience: because each content line begins with
@@ -1007,6 +1024,23 @@ func renderSnippetBlock(s PrefetchSnippet) string {
 		line++
 	}
 	return b.String()
+}
+
+// flattenSignature collapses a declaration header to ONE line.
+//
+// The header is repository-controlled text sliced straight out of source, and
+// every safety property of the rendered block rests on each emitted line
+// beginning with "[context] " or "L<digits>: ". A header carrying a newline
+// would emit a bare repository-controlled line that could open a spoofed file
+// section — the exact injection renderPrefetchSection's anchors exist to block.
+func flattenSignature(sig string) string {
+	if !strings.ContainsAny(sig, "\r\n") {
+		return strings.TrimSpace(sig)
+	}
+	flat := strings.ReplaceAll(sig, "\r\n", " ")
+	flat = strings.ReplaceAll(flat, "\n", " ")
+	flat = strings.ReplaceAll(flat, "\r", " ")
+	return strings.TrimSpace(flat)
 }
 
 // String names a tier for the rendered drop ledger.
@@ -1224,8 +1258,19 @@ func (g *gitRunner) buildPrefetch(base, head string) (section string, spans map[
 	snips := g.retrieveSnippets(base, head, hits, declOnly)
 	// Tier is stamped HERE rather than inside retrieveSnippets: retrieval is
 	// tier-agnostic, and 35.16.12 adds a second producer feeding the same ledger.
+	//
+	// The signature is stamped in the same pass and for the same reason:
+	// retrieval resolves a hit to a REGION, while the header belongs to the
+	// changed symbol the region was retrieved for, which only this scope holds.
+	sigByName := make(map[string]string, len(symbols))
+	for _, s := range symbols {
+		if s.Signature != "" {
+			sigByName[s.Name] = s.Signature
+		}
+	}
 	for i := range snips {
 		snips[i].Tier = PrefetchTierReference
+		snips[i].Signature = sigByName[snips[i].Symbol]
 	}
 
 	kept, dropped := capPrefetchSnippets(snips, g.maxPrefetchBytes)
