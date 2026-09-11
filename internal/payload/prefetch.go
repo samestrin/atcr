@@ -1311,16 +1311,28 @@ type PrefetchStatus struct {
 }
 
 // looksLikeTestFile reports whether rel is a test file, enabling the AC6
-// mock-cue scan for it. The forms cover the conventions of the languages
-// astgroup embeds parsers for, not Go alone.
+// mock-cue scan for it. The forms cover the FILENAME conventions of the
+// languages astgroup embeds parsers for, not Go alone. Rust's inline #[cfg(test)]
+// modules are out of scope: they live inside the production source file, so no
+// filename form can identify them.
 func looksLikeTestFile(rel string) bool {
-	base := strings.ToLower(path.Base(rel))
-	return strings.HasSuffix(base, "_test.go") ||
-		strings.HasPrefix(base, "test_") ||
-		strings.HasSuffix(base, "_test.py") ||
-		strings.Contains(base, ".test.") ||
-		strings.Contains(base, ".spec.") ||
-		strings.Contains(base, "_spec.")
+	base := path.Base(rel)
+	// The CamelCase conventions (PHPUnit UserTest.php, JUnit FooTest.java /
+	// FooTests.java) are matched against the ORIGINAL name, case-significantly:
+	// a case-folded suffix check would also admit ordinary files ending in the
+	// letters t-e-s-t, like latest.php or attest.java.
+	stem, _, _ := strings.Cut(base, ".")
+	if strings.HasSuffix(stem, "Test") || strings.HasSuffix(stem, "Tests") {
+		return true
+	}
+	lower := strings.ToLower(base)
+	return strings.HasSuffix(lower, "_test.go") ||
+		strings.HasPrefix(lower, "test_") ||
+		strings.HasSuffix(lower, "_test.py") ||
+		strings.HasSuffix(lower, "_test.rb") ||
+		strings.Contains(lower, ".test.") ||
+		strings.Contains(lower, ".spec.") ||
+		strings.Contains(lower, "_spec.")
 }
 
 // buildPrefetch runs the whole pre-fetch pass for a range: extract the changed
