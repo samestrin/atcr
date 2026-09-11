@@ -128,3 +128,41 @@ func TestPrefetch_FileCountExcludesSyntheticEntries(t *testing.T) {
 			"mode %s: FileCount must equal the fixture's one changed file, not a count inflated by synthetic engine-rendered sections", mode)
 	}
 }
+
+func TestBuildSlots_PerAgentFileCountExcludesSyntheticEntries(t *testing.T) {
+	// The per-agent re-shed in buildSlots re-derives the prompt's file count from
+	// len(kept) — but kept retains the shed-exempt synthetic sections (claim
+	// ledger + Context Definitions), so an agent whose payload carries them is
+	// told "Reviewing 3 changed file(s)" for a range that changed ONE file, while
+	// the manifest and the global build report the corrected count. The per-agent
+	// re-derivation must apply the same ReviewableCount rule as the global build.
+	repo, base, head := prefetchFanoutRepo(t)
+	cfg := sizingRosterConfig()
+
+	payloads, _, err := buildPayloads(context.Background(), cfg, repo, base, head, false)
+	require.NoError(t, err)
+
+	// Precondition, mirroring TestPrefetch_FileCountExcludesSyntheticEntries: the
+	// fixture must carry exactly one of EACH synthetic section and report the
+	// ABSOLUTE one-changed-file count globally — otherwise the per-agent
+	// assertion below proves nothing about the re-shed divergence.
+	mp, ok := payloads["blocks"]
+	require.True(t, ok, "PRECONDITION: fixture must resolve the blocks mode")
+	ledger, contexts := 0, 0
+	for _, e := range mp.Entries {
+		switch e.Path {
+		case payload.ClaimLedgerPath:
+			ledger++
+		case payload.PrefetchContextPath:
+			contexts++
+		}
+	}
+	require.Equal(t, 1, ledger, "PRECONDITION: fixture must produce exactly one claim ledger entry")
+	require.Equal(t, 1, contexts, "PRECONDITION: fixture must produce exactly one Context Definitions entry")
+	require.Equal(t, 1, mp.FileCount, "PRECONDITION: the global build must report the fixture's one changed file")
+
+	slot, _, err := buildOneAgent(cfg, "kai", payloads, ReviewRange{Base: base, Head: head}, "", "")
+	require.NoError(t, err)
+	require.Contains(t, slot.Prompt, "Reviewing 1 changed file(s)",
+		"the per-agent prompt must report ReviewableCount(kept) — the same rule as the global build — not len(kept) over the synthetic-section-retaining survivor set")
+}
