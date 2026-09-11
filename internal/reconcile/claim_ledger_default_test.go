@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -40,7 +41,9 @@ func TestClaimLedgerDefault_DocumentedInRegistryDoc(t *testing.T) {
 		t.Fatal("docs/registry.md must document max_claim_bytes")
 	}
 	row := docRow(t, doc, "`max_claim_bytes`")
-	if !strings.Contains(row, "8192") {
+	// Track the CONSTANT, not a copy of it — a hardcoded literal stays green in
+	// exactly the drift direction this guard exists to catch.
+	if !strings.Contains(row, strconv.FormatInt(registry.DefaultMaxClaimBytes, 10)) {
 		t.Errorf("docs/registry.md must state the embedded default (%d) for max_claim_bytes; row was: %s",
 			registry.DefaultMaxClaimBytes, row)
 	}

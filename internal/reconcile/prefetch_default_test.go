@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -42,7 +43,10 @@ func TestPrefetchDefault_DocumentedInRegistryDoc(t *testing.T) {
 		t.Fatal("docs/registry.md must document max_prefetch_bytes")
 	}
 	row := docRow(t, doc, "`max_prefetch_bytes`")
-	if !strings.Contains(row, "16384") {
+	// The comparison must track the CONSTANT, not a copy of it: hardcoding the
+	// value here made the drift guard undetectable in exactly the direction it
+	// exists to catch — bump the constant, leave the doc, and it stayed green.
+	if !strings.Contains(row, strconv.FormatInt(registry.DefaultMaxPrefetchBytes, 10)) {
 		t.Errorf("docs/registry.md must state the embedded default (%d) for max_prefetch_bytes; row was: %s",
 			registry.DefaultMaxPrefetchBytes, row)
 	}
