@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/samestrin/atcr/internal/astgroup"
 )
@@ -401,7 +402,11 @@ func hasMockCue(line string) bool {
 // selects the keyword set applied on top of the shared one. An empty lang — a
 // file no parser reads — is answered by the shared set alone.
 func plausibleMockTarget(tok, lang string) bool {
-	if len(tok) < minMockTokenLen {
+	// Counted in RUNES. minMockTokenLen is a floor on how much of a name a token
+	// is, and a byte count let a 2-character CJK token measure 6 and sail past a
+	// floor of 3. Only reachable since identifierTokens began yielding whole
+	// non-ASCII tokens instead of ASCII fragments.
+	if utf8.RuneCountInString(tok) < minMockTokenLen {
 		return false
 	}
 	lower := strings.ToLower(tok)
@@ -414,7 +419,11 @@ func plausibleMockTarget(tok, lang string) bool {
 		}
 	}
 	// A token that is all digits (or starts with one) is a literal, not a symbol.
-	return tok[0] < '0' || tok[0] > '9'
+	// Decoded as a rune: the byte test this replaced inspected the first BYTE of
+	// a multi-byte character, which exceeds '9' and so answered correctly by
+	// accident rather than by rule.
+	first, _ := utf8.DecodeRuneInString(tok)
+	return !unicode.IsDigit(first)
 }
 
 const (

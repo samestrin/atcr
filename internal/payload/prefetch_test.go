@@ -895,6 +895,17 @@ func TestIdentifierScanning_AcceptsNonASCIIIdentifiers(t *testing.T) {
 		require.False(t, validGrepSymbol("9lives"), "a leading digit is still a literal, not a symbol")
 		require.False(t, validGrepSymbol("é"), "a one-character name still matches too much to be worth a slot")
 	})
+
+	t.Run("the mock-cue noise floor counts characters, not bytes", func(t *testing.T) {
+		// minMockTokenLen rejects tokens too short to name a real symbol. Counting
+		// BYTES let a 2-character CJK token measure 6 and clear a floor of 3 — a
+		// path reachable only now that the scan yields whole non-ASCII tokens
+		// rather than ASCII fragments.
+		require.False(t, plausibleMockTarget("日本", "go"),
+			"a 2-character token is under the noise floor however many bytes it encodes to")
+		require.True(t, plausibleMockTarget("日本語", "go"),
+			"a 3-character token clears the floor")
+	})
 }
 
 func TestSnippetSpan_ExpandsHitToItsCoveringBlock(t *testing.T) {
