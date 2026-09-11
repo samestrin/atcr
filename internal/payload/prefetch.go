@@ -1073,22 +1073,33 @@ const DefaultMaxPrefetchBytes int64 = 16 * 1024
 
 // PrefetchTier ranks a snippet's retrieval provenance for shedding. A LOWER tier
 // is shed FIRST (AC7).
+//
+// The zero value is PrefetchTierUnset, deliberately: a producer that forgets to
+// stamp a Tier must be legible as such in the drop ledger rather than inheriting
+// a real tier's name.
 type PrefetchTier int
 
 const (
+	// PrefetchTierUnset is the ZERO VALUE, and it is a named member rather than a
+	// gap precisely so that a snippet nobody stamped SAYS so.
+	//
+	// The zero value used to be PrefetchTierSimilarity, which made a forgotten
+	// stamp indistinguishable from a deliberate similarity snippet — and because
+	// the lowest tier sheds first, the forgotten one was also the first
+	// discarded, reported in the ledger under a tier its producer never chose.
+	// It still sheds first, which is right for unknown provenance; what changed
+	// is that the ledger now names it.
+	PrefetchTierUnset PrefetchTier = iota
 	// PrefetchTierSimilarity is reserved for epic 35.16.12's embedding-similarity
-	// retrieval, and is the lowest tier so similarity snippets shed before
+	// retrieval, and is the lowest REAL tier so similarity snippets shed before
 	// reference ones. THIS EPIC EMITS NONE. It exists so 35.16.12 plugs into this
 	// ledger rather than adding a second injection site — the contract AC7
 	// describes when it says a lower-priority tier is always shed first.
-	PrefetchTierSimilarity PrefetchTier = iota
+	PrefetchTierSimilarity
 	// PrefetchTierReference is a snippet reached by REFERENCE: a call site that
 	// consumes a changed symbol, or the real implementation behind a mocked one.
 	PrefetchTierReference
 )
-
-// PrefetchTierUnset names a snippet whose producer never stamped a Tier.
-const PrefetchTierUnset PrefetchTier = -1
 
 // PrefetchDrop records one snippet the byte cap shed.
 //
@@ -1375,11 +1386,17 @@ func flattenSignature(sig string) string {
 // String names a tier for the rendered drop ledger.
 func (t PrefetchTier) String() string {
 	switch t {
+	case PrefetchTierUnset:
+		// Named, not folded into "unknown": this is the value a producer that
+		// forgot to stamp actually carries, and the ledger line is where that
+		// omission becomes visible.
+		return "unset"
 	case PrefetchTierSimilarity:
 		return "similarity"
 	case PrefetchTierReference:
 		return "reference"
 	default:
+		// A value outside the enum entirely — genuinely unknown, unlike unset.
 		return "unknown"
 	}
 }
