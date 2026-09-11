@@ -1087,6 +1087,9 @@ const (
 	PrefetchTierReference
 )
 
+// PrefetchTierUnset names a snippet whose producer never stamped a Tier.
+const PrefetchTierUnset PrefetchTier = -1
+
 // PrefetchDrop records one snippet the byte cap shed.
 //
 // Every shed snippet produces one of these. AC7's requirement is that a drop is

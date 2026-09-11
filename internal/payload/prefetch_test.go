@@ -1081,6 +1081,39 @@ func TestCapPrefetchSnippets_PinnedRenderedByteCount(t *testing.T) {
 	require.Len(t, dropped, 1)
 }
 
+func TestPrefetchTier_ZeroValueIsUnsetNotARealTier(t *testing.T) {
+	// The zero value WAS PrefetchTierSimilarity, the shed-first tier. A producer
+	// that forgot to stamp Tier therefore had its snippets ranked lowest and
+	// dropped first, and the ledger called them "similarity" — so a forgotten
+	// stamp was indistinguishable from a deliberate similarity snippet.
+	// buildPrefetch's stamping loop was the only thing standing between that and
+	// epic 35.16.12's second producer.
+	require.Equal(t, PrefetchTierUnset, PrefetchTier(0),
+		"the zero value must name itself rather than impersonate a real tier")
+	require.NotEqual(t, PrefetchTierSimilarity, PrefetchTier(0),
+		"a real tier must not be what an unstamped snippet silently becomes")
+	require.Equal(t, "unset", PrefetchTierUnset.String())
+
+	// Unset still sheds FIRST — unknown provenance is the least worth keeping —
+	// but the ledger has to SAY unset rather than name a tier nobody chose.
+	unstamped := prefetchSnippet("ghost.go", "Ghost", PrefetchTierUnset, 400)
+	stamped := prefetchSnippet("real.go", "Real", PrefetchTierReference, 400)
+
+	markers := int64(len(prefetchSectionStart) + 1 + len(prefetchUntrustedNotice) + len(prefetchSectionEnd) + 1)
+	oneDrop := []PrefetchDrop{{
+		Path: "ghost.go", Symbol: "Ghost", Tier: PrefetchTierUnset, Bytes: renderedBytes(unstamped),
+	}}
+	budget := int64(renderedBytes(stamped)) + markers + int64(len(renderPrefetchDropLedger(oneDrop)))
+
+	kept, dropped := capPrefetchSnippets([]PrefetchSnippet{unstamped, stamped}, budget)
+
+	require.Len(t, kept, 1)
+	require.Equal(t, "real.go", kept[0].Path, "the unstamped snippet must shed before the stamped one")
+	require.Len(t, dropped, 1)
+	require.Contains(t, renderPrefetchDropLedger(dropped), "tier unset",
+		"the ledger must name the forgotten stamp, not call it similarity")
+}
+
 func TestCapPrefetchSnippets_UnderTheCapKeepsEverythingAndDropsNothing(t *testing.T) {
 	snips := []PrefetchSnippet{
 		prefetchSnippet("a.go", "Alpha", PrefetchTierReference, 60),
