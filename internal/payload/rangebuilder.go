@@ -228,6 +228,16 @@ func (b *RangeBuilder) PrefetchStatus() PrefetchStatus {
 // A range with no entries gets no section, for the reason withClaimLedger gives:
 // an empty entry set is how the review layer detects "nothing to review", and
 // injecting here would convert that into a payload carrying context and no code.
+//
+// Accepted consequence, inherited from the claim ledger's list (claims.go,
+// consequence 5): the entry sits ABOVE the first column-0 diff marker, and
+// EntriesFromRenderedPayload deliberately discards everything before that
+// marker, so up to DefaultMaxPrefetchBytes of retrieved repository source —
+// the content the grounding widening now trusts — is ABSENT from every
+// model-invocation audit record. An auditor sees the code and not the context
+// that shaped the verdict. Closing it means touching the audit seam itself
+// (surface the pre-marker prefix as an unattributed entry), which is tracked
+// as its own technical-debt row, not fixed here.
 func (b *RangeBuilder) withPrefetchSection(entries []FileEntry) []FileEntry {
 	if len(entries) == 0 {
 		return entries
