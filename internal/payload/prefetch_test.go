@@ -1496,6 +1496,8 @@ func TestRangeBuilder_PrefetchStatusDistinguishesTheOutcomes(t *testing.T) {
 		require.NotEqual(t, -1, at, "a section carrying only the drop ledger must still be injected")
 		require.Contains(t, entry.Body, "dropped consumer.go (ReadStore",
 			"the ledger must name the snippet the small cap shed")
+		require.LessOrEqual(t, int64(len(entry.Body)), int64(300),
+			"the injected body must honour the RESOLVED cap, not DefaultMaxPrefetchBytes — a regression that ignored the setting would ship the full snippet")
 	})
 
 	t.Run("a broken lookup is recorded as failed, not absent", func(t *testing.T) {
