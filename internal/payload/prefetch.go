@@ -26,12 +26,21 @@ const (
 	// spent per candidate file, so bounding the symbol set is what bounds the run.
 	maxChangedSymbols = 40
 
-	// maxScannedChangedLines bounds the per-file line walk. A whole-file addition
-	// presents one range spanning every line, and the symbol resolution below is
-	// per line; without this a single large generated file would walk hundreds of
-	// thousands of lines to yield the handful of declarations the cap above
-	// already allows. Hitting it can only UNDER-collect, which degrades to less
-	// context rather than to a wrong answer.
+	// maxScannedChangedLines bounds the per-file RESOLUTION WALKS. A whole-file
+	// addition presents one range spanning every line, and without this a single
+	// large generated file would walk hundreds of thousands of lines to yield the
+	// handful of declarations the cap above already allows.
+	//
+	// Pass 1 spends roughly one walk per DECLARATION, not one per changed line:
+	// once a line resolves to a declaration the cursor jumps to that
+	// declaration's end, because every remaining line inside it resolves to the
+	// same name and is deduped away. Spending the budget per line instead let one
+	// huge changed function consume all 5000 walks to yield a single symbol, and
+	// the labeled break below then dropped every later declaration in the file.
+	// Pass 2 is still per line — it reads the line's text, so it has no choice.
+	//
+	// Hitting the budget can only UNDER-collect, which degrades to less context
+	// rather than to a wrong answer.
 	maxScannedChangedLines = 5000
 
 	// minMockTokenLen is the shortest token the mock-cue scan will accept. It
@@ -249,11 +258,23 @@ declPass:
 			}
 			scanned++
 			name, ok := astgroup.EnclosingSymbolName(root, line)
-			if !ok || name == "" || seen[name] {
+			if !ok || name == "" {
 				continue
 			}
-			seen[name] = true
-			out = append(out, changedSymbol{Name: name, Signature: signatureFor(skeleton, name, line)})
+			if !seen[name] {
+				seen[name] = true
+				// Resolved on the ORIGINAL line, before the cursor moves below:
+				// signatureFor's positional fallback is line-sensitive, and handing
+				// it the declaration's end line could select a different entry.
+				out = append(out, changedSymbol{Name: name, Signature: signatureFor(skeleton, name, line)})
+			}
+			// Skip to the end of the declaration this line resolved to. Every
+			// remaining changed line inside it resolves to the SAME name and is
+			// deduped away by seen, so walking them yields nothing while spending
+			// the budget the later declarations in this file need.
+			if end := declEnd(root, line); end > line {
+				line = end
+			}
 		}
 	}
 
@@ -301,6 +322,24 @@ cuePass:
 		}
 	}
 	return out
+}
+
+// declEnd returns the end line of the TOP-LEVEL declaration covering line, or 0
+// when no child of root covers it.
+//
+// It reads root.Children directly rather than calling astgroup.CoveringBlock,
+// which returns the DEEPEST covering block — the `if` arm inside a function, not
+// the function — and would therefore advance the cursor only to the end of the
+// innermost clause, leaving the rest of a huge declaration to be walked line by
+// line. A zero root (no parser) has no children and yields 0, so the caller
+// falls back to stepping one line at a time exactly as before.
+func declEnd(root astgroup.Node, line int) int {
+	for _, ch := range root.Children {
+		if ch.StartLine <= line && line <= ch.EndLine {
+			return ch.EndLine
+		}
+	}
+	return 0
 }
 
 // signatureFor returns the declaration header for name, preferring an exact name
