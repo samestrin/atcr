@@ -909,7 +909,7 @@ func buildRepoPayloads(ctx context.Context, cfg *ReviewConfig, repo string, noIg
 	// Entries keeps the raw pre-budget files so buildSlots re-sheds them per agent
 	// against each model's window (Epic 19.10 F2), identical to buildPayloads.
 	return map[string]modePayload{
-		string(payload.ModeFiles): {Entries: entries, Kept: kept, Text: b.String(), FileCount: len(kept), Truncation: trunc},
+		string(payload.ModeFiles): {Entries: entries, Kept: kept, Text: b.String(), FileCount: payload.ReviewableCount(kept), Truncation: trunc},
 	}, nil
 }
 
@@ -962,7 +962,7 @@ func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	payloads := map[string]modePayload{
 		// Entries keeps the raw pre-budget diff files so buildSlots re-sheds them
 		// per agent against each model's window (Epic 19.10 F2).
-		diffMode: {Entries: entries, Kept: kept, Text: b.String(), FileCount: len(kept), Truncation: trunc},
+		diffMode: {Entries: entries, Kept: kept, Text: b.String(), FileCount: payload.ReviewableCount(kept), Truncation: trunc},
 	}
 	// Sprint-plan scope (Epic 12.2): the ingestion path honors --sprint-plan too,
 	// prepending the SCOPE CONSTRAINT to every reviewer's payload. An unreadable or
@@ -3686,7 +3686,7 @@ func refitFallbackPayload(cfg *ReviewConfig, refit fallbackRefit, fbBudget int64
 		chunkTotal: 1,
 		action:     action,
 	}
-	a, err := renderAgent(cfg, refit.primaryName, refit.primaryConfig, refit.persona, refit.mode, pb.String(), len(kept), trunc, refit.rng, scopeConstraint, sz)
+	a, err := renderAgent(cfg, refit.primaryName, refit.primaryConfig, refit.persona, refit.mode, pb.String(), payload.ReviewableCount(kept), trunc, refit.rng, scopeConstraint, sz)
 	if err != nil {
 		return refitPayload{}, false, err
 	}
