@@ -1569,6 +1569,12 @@ func TestRangeBuilder_IgnoredFileNeverBecomesPrefetchedContext(t *testing.T) {
 	writeIgnore(t, dir, ".atcrignore", "vendor/\n")
 	write(t, dir, "store.go", prefetchStoreV1)
 	write(t, dir, "vendor/lib.go", prefetchConsumer)
+	// A NON-ignored consumer must sit beside the ignored one: without it,
+	// referenceHits finds nothing at all, no context entry is ever produced,
+	// and the NotContains assertion below passes vacuously — green whether the
+	// ignore filter works or pre-fetching is broken outright, which made an
+	// untested SECURITY boundary look tested.
+	write(t, dir, "real_consumer.go", prefetchConsumer)
 	base := commitAll(t, dir, "v1")
 	write(t, dir, "store.go", prefetchStoreV2)
 	head := commitAll(t, dir, "v2: change ReadStore return shape")
@@ -1578,14 +1584,18 @@ func TestRangeBuilder_IgnoredFileNeverBecomesPrefetchedContext(t *testing.T) {
 	require.NoError(t, err)
 
 	entry, at := prefetchEntryOf(entries)
-	if at != -1 {
-		require.NotContains(t, entry.Body, "vendor/lib.go",
-			"an ignored file must never be retrieved as pre-fetched context")
-	}
+	require.NotEqual(t, -1, at,
+		"the non-ignored consumer MUST be retrieved, or this test proves nothing about the ignore filter")
+	require.Contains(t, entry.Body, "real_consumer.go",
+		"the retrieved non-ignored consumer must appear in the context section")
+	require.NotContains(t, entry.Body, "vendor/lib.go",
+		"an ignored file must never be retrieved as pre-fetched context")
 	cl, err := rb.BuildChangedLines()
 	require.NoError(t, err)
 	_, grounded := cl["vendor/lib.go"]
 	require.False(t, grounded, "an ignored file must not be made groundable by pre-fetching")
+	require.Contains(t, cl, "real_consumer.go",
+		"the non-ignored consumer must be groundable — its absence would mean retrieval silently failed")
 }
 
 func TestRangeBuilder_PrefetchIsMemoizedAcrossBuilds(t *testing.T) {
