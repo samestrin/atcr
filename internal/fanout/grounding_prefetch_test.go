@@ -56,6 +56,33 @@ func TestGroundFindings_PrefetchedFileDropsFileLevelFinding(t *testing.T) {
 	}
 }
 
+func TestGroundFindings_PrefetchedSpanBoundaryIsExact(t *testing.T) {
+	// A prefetched snippet is rendered with its literal HEAD line numbers
+	// (renderSnippetBlock), so there is no diff drift to absorb: the
+	// groundingTolerance expansion used for changed files must NOT apply to the
+	// PrefetchOnly arm. Lines just outside the shown span (Start-1, End+1) are
+	// lines the reviewer never saw and must not ground a finding.
+	cases := []struct {
+		line int
+		want bool // want = the finding should be kept (grounded)
+	}{
+		{2, false},  // one line above the shown span
+		{3, true},   // span Start
+		{10, true},  // span End
+		{11, false}, // one line below the shown span
+	}
+	for _, tc := range cases {
+		in := []stream.Finding{{File: "consumer.go", Line: tc.line, Category: "correctness"}}
+		out, dropped := groundFindings(in, prefetchGroundingFixture())
+		if tc.want && (len(out) != 1 || dropped != 0) {
+			t.Fatalf("prefetched span boundary: line %d should be grounded (span Start/End): kept=%d dropped=%d", tc.line, len(out), dropped)
+		}
+		if !tc.want && (len(out) != 0 || dropped != 1) {
+			t.Fatalf("prefetched span boundary: line %d should NOT be grounded (just outside span): kept=%d dropped=%d", tc.line, len(out), dropped)
+		}
+	}
+}
+
 func TestGroundFindings_PrefetchedFileDropsFindingOutsideTheShownSpan(t *testing.T) {
 	// Only what was SHOWN is groundable. The rest of a retrieved file is exactly
 	// as unseen as any other untouched code.
