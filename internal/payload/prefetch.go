@@ -732,8 +732,13 @@ func snippetSpan(root astgroup.Node, line int) (start, end int) {
 		line = 1
 	}
 	lo, hi := line-snippetFallbackRadius, line+snippetFallbackRadius
+	// Block bounds, retained so the re-centre below can be clamped to them. They
+	// stay 0 when no block covered the line, which is what distinguishes the
+	// parser-backed path from the fixed-window fallback.
+	var blockStart, blockEnd int
 	if block, _, ok := astgroup.CoveringBlock(root, line); ok && block.StartLine > 0 && block.EndLine >= block.StartLine {
 		lo, hi = block.StartLine, block.EndLine
+		blockStart, blockEnd = block.StartLine, block.EndLine
 	}
 	if lo < 1 {
 		lo = 1
@@ -744,10 +749,24 @@ func snippetSpan(root astgroup.Node, line int) (start, end int) {
 		// that motivated retrieving the file, which is the one thing the reviewer
 		// needs to judge whether the call still agrees with the changed shape.
 		lo = line - (maxSnippetLines-1)/2
+		// Clamp the re-centred window to the BLOCK, not just to the file. A hit
+		// within half a window of either edge of a large block otherwise produces
+		// a span running into the neighbouring declaration — the snippet then
+		// shows an unrelated function, and those lines are threaded into
+		// prefetchSpans, which makes them groundable for a finding.
+		//
+		// Only when a block was actually found: the no-parser fallback window has
+		// no declaration to stay inside and must remain unclamped.
+		if blockStart > 0 && lo < blockStart {
+			lo = blockStart
+		}
 		if lo < 1 {
 			lo = 1
 		}
 		hi = lo + maxSnippetLines - 1
+		if blockEnd > 0 && hi > blockEnd {
+			hi = blockEnd
+		}
 	}
 	return lo, hi
 }
