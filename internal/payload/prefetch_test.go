@@ -785,6 +785,25 @@ func TestRangeBuilder_InjectsContextForAnUntouchedConsumer(t *testing.T) {
 	require.Contains(t, entry.Body, "Reconcile", "the consuming function must be shown")
 }
 
+func TestRangeBuilder_ContextEntryCarriesTheChangedSignature(t *testing.T) {
+	// AC5 is about a changed signature or RETURN SHAPE. changedSymbol.Signature is
+	// computed for every symbol, but it reached no provider and no reviewer: a
+	// repo-wide grep found its only reference in a test assertion. A reviewer
+	// handed the bare name "ReadStore" beside a call site cannot tell whether the
+	// call still agrees with it — which is the judgement the retrieval exists to
+	// enable — so the header the snippet is retrieved FOR must be rendered.
+	dir, base, head := prefetchRepo(t)
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	entries, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+
+	entry, at := prefetchEntryOf(entries)
+	require.NotEqual(t, -1, at)
+	require.Contains(t, entry.Body, "func ReadStore(path string) (string, error)",
+		"the changed symbol's signature must be shown beside the call site that has to agree with it")
+}
+
 func TestRangeBuilder_PrefetchEntryFollowsTheClaimLedger(t *testing.T) {
 	// "The ledger leads the payload" is asserted in three other tests. The context
 	// entry must slot in after it, never displace it.
