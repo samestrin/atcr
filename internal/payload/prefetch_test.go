@@ -1026,14 +1026,12 @@ func TestCapPrefetchSnippets_RenderedSectionHonoursTheByteCap(t *testing.T) {
 	cap := int64(1024)
 
 	kept, dropped := capPrefetchSnippets(snips, cap)
+	require.NotEmpty(t, dropped,
+		"a 1024-byte cap against twelve multi-line snippets must force a shed, or the section assertion below proves nothing about the ledger overhead")
 	section := renderPrefetchSection(kept, dropped)
 
-	var keptBytes int
-	for _, s := range kept {
-		keptBytes += renderedBytes(s)
-	}
-	require.LessOrEqual(t, int64(keptBytes), cap,
-		"the kept snippets must fit the cap as RENDERED, not as raw bodies")
+	require.LessOrEqual(t, int64(len(section)), cap,
+		"the SECTION must honour the cap — the start/end markers and the drop ledger are billed inside it, not appended after the accounting")
 	require.NotEmpty(t, section)
 	require.Contains(t, section, prefetchSectionStart)
 }
