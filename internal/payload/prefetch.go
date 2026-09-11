@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/samestrin/atcr/internal/astgroup"
 )
@@ -588,6 +589,27 @@ func containsWord(text, word string) bool {
 	}
 }
 
+// isIdentRune reports whether r can appear inside an identifier in ANY language
+// this binary reads, not only the ASCII ones. It mirrors internal/reconcile's
+// collectSourceIdentifiers, which already harvests non-ASCII tokens.
+//
+// Invalid UTF-8 decodes to utf8.RuneError, which is neither letter, digit, nor
+// underscore, so malformed bytes are rejected rather than admitted. That is
+// load-bearing: validGrepSymbol guards a subprocess argv with this test.
+func isIdentRune(r rune) bool {
+	return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)
+}
+
+// isIdentByte is the BYTE-level test, deliberately still ASCII-only.
+//
+// Its only caller is containsWord, which inspects the characters either side of
+// a match to reject `Store` inside `ReadStore`. That is an attribution question
+// about an already-matched line, not the "does this name become a pattern at
+// all" question isIdentRune answers, and the two failures differ by an order of
+// magnitude: a boundary misread next to a non-ASCII character attributes one
+// snippet to a neighbouring symbol, while an ASCII-only token scan drops the
+// symbol from the search entirely. Widening this is a separate change owed its
+// own test, not a silent rider on that one.
 func isIdentByte(c byte) bool {
 	return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 }
@@ -618,16 +640,26 @@ func grepPatterns(symbols []changedSymbol) []string {
 
 // validGrepSymbol reports whether name is a plain identifier safe to pass as a
 // fixed-string search pattern.
+//
+// The length floor counts RUNES, not bytes: "é" is two bytes but one character,
+// and the floor is about how much a pattern matches, not how it is encoded.
 func validGrepSymbol(name string) bool {
-	if len(name) < 2 {
-		return false // a one-character name matches too much to be worth a slot
-	}
-	for i := 0; i < len(name); i++ {
-		if !isIdentByte(name[i]) {
+	runes, first := 0, rune(0)
+	for i, r := range name {
+		if !isIdentRune(r) {
 			return false
 		}
+		if i == 0 {
+			first = r
+		}
+		runes++
 	}
-	return name[0] < '0' || name[0] > '9'
+	if runes < 2 {
+		return false // a one-character name matches too much to be worth a slot
+	}
+	// A leading digit is a literal, not a symbol. unicode.IsDigit also covers the
+	// non-ASCII digits the widened scan now admits.
+	return !unicode.IsDigit(first)
 }
 
 // referenceHits resolves every changed symbol to the sites that consume it, in
@@ -1691,21 +1723,30 @@ func (g *gitRunner) buildPrefetch(base, head string) (section string, spans map[
 // harvest is: it must work for every language whose parser this binary embeds,
 // and for the ones it does not. Duplicates are left in; the caller dedupes
 // against the symbols it has already collected.
+//
+// The scan is over RUNES. An ASCII byte scan did not merely skip a non-ASCII
+// identifier, it SPLIT one: "Müller" came back as "M" and "ller", so the symbol
+// was never searched for and two noise tokens were.
 func identifierTokens(line string) []string {
 	var out []string
 	start := -1
-	for i := 0; i <= len(line); i++ {
-		word := i < len(line) && (line[i] == '_' ||
-			(line[i] >= 'a' && line[i] <= 'z') ||
-			(line[i] >= 'A' && line[i] <= 'Z') ||
-			(line[i] >= '0' && line[i] <= '9'))
-		switch {
-		case word && start < 0:
-			start = i
-		case !word && start >= 0:
+	for i, r := range line {
+		if isIdentRune(r) {
+			if start < 0 {
+				start = i
+			}
+			continue
+		}
+		if start >= 0 {
 			out = append(out, line[start:i])
 			start = -1
 		}
+	}
+	// A token running to end-of-line has no terminating rune to close it, so it
+	// closes here. The byte-indexed loop this replaced used an i <= len(line)
+	// sentinel for the same reason.
+	if start >= 0 {
+		out = append(out, line[start:])
 	}
 	return out
 }
