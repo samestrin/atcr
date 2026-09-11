@@ -1205,6 +1205,22 @@ func TestRangeBuilder_ZeroMaxPrefetchBytesDisablesEntirely(t *testing.T) {
 	_, at := prefetchEntryOf(entries)
 	require.Equal(t, -1, at, "a disabled run must inject no context entry")
 	require.True(t, rb.PrefetchStatus().Disabled)
+
+	// The payload-shape assertions above cannot see the stronger property
+	// docs/registry.md publishes for max_prefetch_bytes: 0 — no reference-lookup
+	// processes run at all, so no repository source outside the diff is ever
+	// read. A refactor that runs the `git grep` and its candidate reads and THEN
+	// discards the section (guarding in capPrefetchSnippets rather than in
+	// prefetch) passes everything above while shipping exactly what the operator
+	// paid the setting to prevent. Measure the process count instead: a build
+	// with the feature on pays the lookup over this same fixture, a disabled
+	// build must not. Guarding INSIDE capPrefetchSnippets collapses the delta to
+	// zero and this goes red.
+	enabled := NewRangeBuilder(context.Background(), dir, base, head)
+	_, err = enabled.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+	require.Less(t, rb.g.execCount, enabled.g.execCount,
+		"a disabled run must spend FEWER git processes than an enabled one over the same range — the reference lookup and its candidate reads must never run")
 }
 
 func TestRangeBuilder_ChangedLinesIncludesRetrievedSpans(t *testing.T) {
