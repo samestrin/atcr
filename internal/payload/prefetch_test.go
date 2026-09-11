@@ -362,6 +362,38 @@ func TestGrepPatterns_RejectsNamesTooShortToBeWorthASlot(t *testing.T) {
 	}
 }
 
+func TestGrepPatterns_RejectsArgvUnsafeNamesDedupesAndTruncates(t *testing.T) {
+	// validGrepSymbol's own comment calls it "a SECURITY boundary as well as a
+	// noise filter": the names come from parsed repository source and flow into a
+	// subprocess argv, where a leading dash is read as a flag and a glob or a
+	// space changes what git searches. Neither validGrepSymbol nor grepPatterns
+	// was referenced by any test, so none of the argv-safety rule, the
+	// leading-digit rule, the dedup, or the maxChangedSymbols truncation was
+	// pinned against a regression.
+	for _, name := range []string{"-oProxyCommand", "Read Store", "Read*", "9lives", "a-b", "x/y"} {
+		t.Run("rejects "+name, func(t *testing.T) {
+			var want []string
+			require.Equal(t, want, grepPatterns([]changedSymbol{{Name: name}}),
+				"a name that is not a plain identifier must never reach the git grep argv")
+		})
+	}
+
+	t.Run("a duplicate collapses to one pattern", func(t *testing.T) {
+		require.Equal(t, []string{"ReadStore"},
+			grepPatterns([]changedSymbol{{Name: "ReadStore"}, {Name: "ReadStore"}}),
+			"a repeated symbol must not spend a second slot of the argv budget")
+	})
+
+	t.Run("truncates at maxChangedSymbols", func(t *testing.T) {
+		var syms []changedSymbol
+		for i := 0; i < 50; i++ {
+			syms = append(syms, changedSymbol{Name: fmt.Sprintf("Symbol%d", i)})
+		}
+		require.Len(t, grepPatterns(syms), maxChangedSymbols,
+			"the argv bounds the candidate file set every later stage parses, so the cap is the latency bound")
+	})
+}
+
 func TestReferenceHits_RetrievesConsumerInAnUntouchedFile(t *testing.T) {
 	// AC5: when a changed symbol's return shape changes, its consumers are
 	// reached by REFERENCE. consumer.go is absent from the diff entirely, so no
