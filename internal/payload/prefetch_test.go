@@ -337,6 +337,31 @@ func prefetchRepo(t *testing.T) (dir, base, head string) {
 	return dir, base, head
 }
 
+func TestGrepPatterns_RejectsNamesTooShortToBeWorthASlot(t *testing.T) {
+	// grepPatterns is the argv boundary: these names are parsed out of repository
+	// source and handed to a subprocess, so validGrepSymbol is a security filter
+	// as much as a noise one — yet neither function was referenced by any test.
+	//
+	// The empty name is the case worth stating outright: it is rejected by the
+	// same length rule that rejects a one-character name, not by a check of its
+	// own, so nothing else in the file records that it is handled at all.
+	cases := []struct {
+		name string
+		in   string
+	}{
+		{"empty name", ""},
+		{"one character", "x"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var want []string
+			require.Equal(t, want, grepPatterns([]changedSymbol{{Name: tc.in}}),
+				"a name too short to be worth a grep slot must never reach the argv")
+		})
+	}
+}
+
 func TestReferenceHits_RetrievesConsumerInAnUntouchedFile(t *testing.T) {
 	// AC5: when a changed symbol's return shape changes, its consumers are
 	// reached by REFERENCE. consumer.go is absent from the diff entirely, so no
