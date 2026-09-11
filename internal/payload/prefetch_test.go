@@ -1362,6 +1362,38 @@ func TestRangeBuilder_ZeroMaxPrefetchBytesDisablesEntirely(t *testing.T) {
 		"a disabled run must spend FEWER git processes than an enabled one over the same range — the reference lookup and its candidate reads must never run")
 }
 
+func TestBuildPrefetch_SkipsBlobReadsForUnparseableChangedFiles(t *testing.T) {
+	// A JSON/YAML/Markdown-heavy diff yields no symbols, yet the symbol-extraction
+	// loop used to read EVERY changed file's HEAD blob before discovering that —
+	// one `git show` per file, so a 3000-file prose diff paid 3000 subprocesses
+	// (on a cold escalation cache, each one real) to learn nothing. The cheap
+	// guards must run ABOVE the blob read: a file with no parser and no test-file
+	// shape can contribute neither a declaration signature nor a mock cue.
+	costForMarkdownFiles := func(t *testing.T, n int) int {
+		t.Helper()
+		dir := initRepo(t)
+		write(t, dir, "store.go", prefetchStoreV1)
+		for i := 0; i < n; i++ {
+			write(t, dir, fmt.Sprintf("doc%d.md", i), "# Notes\n")
+		}
+		base := commitAll(t, dir, "seed a store and its docs")
+		write(t, dir, "store.go", prefetchStoreV2)
+		for i := 0; i < n; i++ {
+			write(t, dir, fmt.Sprintf("doc%d.md", i), fmt.Sprintf("# Notes rev %d\n", i))
+		}
+		head := commitAll(t, dir, "change the store and every doc")
+
+		g := newGitRunner(context.Background(), dir)
+		g.buildPrefetch(base, head)
+		return g.execCount
+	}
+
+	few := costForMarkdownFiles(t, 2)
+	many := costForMarkdownFiles(t, 12)
+	require.Equal(t, few, many,
+		"unparseable changed files must cost NO git processes: the skip runs above the blob read, so execCount is flat in changed-prose-file count")
+}
+
 func TestRangeBuilder_PrefetchStatusDistinguishesTheOutcomes(t *testing.T) {
 	// PrefetchStatus exists because an absent section, a shed-heavy run and a
 	// broken lookup are otherwise byte-for-byte identical in every artifact.
