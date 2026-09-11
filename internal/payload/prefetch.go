@@ -263,7 +263,15 @@ declPass:
 			scanned++
 			name, ok := astgroup.EnclosingSymbolName(root, line)
 			if !ok || name == "" {
-				continue
+				// A gendecl (const/var/type) carries no Name and no named
+				// children, so the covering-chain walk above resolves nothing and
+				// the line would simply be skipped — which left const/var/type-only
+				// changes with no retrieval at all. The declared name exists only
+				// in the header text, which the skeleton already holds.
+				name, ok = gendeclSymbolAt(root, skeleton, line)
+				if !ok {
+					continue
+				}
 			}
 			if !seen[name] {
 				seen[name] = true
@@ -355,11 +363,15 @@ func declEnd(root astgroup.Node, line int) int {
 // Matching by name first keeps two same-named declarations in one file from
 // swapping headers by line proximity.
 //
-// Note the case this does NOT cover: a gendecl (Go const/var/type) never
-// reaches signatureFor at all — its parser node carries no name and no named
-// children, so extractChangedSymbols finds no symbol for a gendecl-only change
-// and such a change pre-fetches nothing. That limitation is tracked as its
-// own technical-debt row.
+// A gendecl (Go const/var/type) has no name on its parser node, so it arrives
+// here only through the positional fallback — which is the right answer for it,
+// since the nearest declaration at or above the line IS the gendecl's own
+// header. extractChangedSymbols resolves the NAME for such a change through
+// gendeclSymbolAt.
+//
+// A GROUPED declaration still contributes nothing: FileSkeleton filters bare
+// grouped openers, and a block declaring several names has no single one to
+// attribute the change to.
 func signatureFor(entries []astgroup.SkeletonEntry, name string, line int) string {
 	for _, e := range entries {
 		if e.Name != "" && e.Name == name {
@@ -373,6 +385,54 @@ func signatureFor(entries []astgroup.SkeletonEntry, name string, line int) strin
 		}
 	}
 	return best
+}
+
+// gendeclSymbolAt resolves a line inside a SINGLE-declaration gendecl to the
+// name that declaration introduces.
+//
+// The Go parser gives gendecl nodes no Name, so the declared identifier survives
+// only in the header text FileSkeleton already sliced. The match is by StartLine
+// against the covering block rather than by position in the entry list, so an
+// entry the skeleton filtered out cannot be mistaken for the covering one.
+//
+// A GROUPED declaration resolves to nothing here, by construction rather than by
+// a check: FileSkeleton drops bare `const (` / `var (` / `type (` openers, so no
+// entry matches and this returns false. That is the intended scope — a grouped
+// block declares several names and there is no single one to attribute the
+// change to, which is a design question rather than a lookup.
+func gendeclSymbolAt(root astgroup.Node, entries []astgroup.SkeletonEntry, line int) (string, bool) {
+	block := astgroup.SmallestCovering(root, line)
+	if block == nil || block.Kind != "gendecl" {
+		return "", false
+	}
+	for _, e := range entries {
+		if e.Kind == "gendecl" && e.StartLine == block.StartLine {
+			return gendeclHeaderName(e.Header)
+		}
+	}
+	return "", false
+}
+
+// gendeclHeaderName extracts the declared identifier from a gendecl header such
+// as "const MaxRetries = 3", "var Timeout = 5" or "type Config struct".
+//
+// It gates the result through validGrepSymbol rather than accepting whatever
+// follows the keyword: this name flows into a `git grep` argv, and that function
+// is the security boundary standing in front of it.
+func gendeclHeaderName(header string) (string, bool) {
+	fields := strings.Fields(header)
+	if len(fields) < 2 {
+		return "", false
+	}
+	switch fields[0] {
+	case "const", "var", "type":
+	default:
+		return "", false
+	}
+	if !validGrepSymbol(fields[1]) {
+		return "", false
+	}
+	return fields[1], true
 }
 
 // hasMockCue reports whether a line replaces real behavior with a test double.
