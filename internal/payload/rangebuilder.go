@@ -39,6 +39,21 @@ type RangeBuilder struct {
 	// LOST its ledger stays distinguishable from a branch that asserted nothing.
 	// Populated by claimLedger alongside claims, under the same memo.
 	claimStatus ClaimLedgerStatus
+	// Memoized pre-fetched context for the range (Epic 35.16.8), computed once and
+	// reused across every mode. This is what makes the Context Definitions section
+	// byte-identical for every agent in a fan-out (AC3), by the same argument the
+	// claim ledger's memo carries: buildPayloads builds one payload per MODE from
+	// ONE RangeBuilder, so identical-across-modes is what identical-across-agents
+	// reduces to. It also bounds the cost — the `git grep` and the candidate
+	// parses are paid once per range, not once per mode.
+	prefetchSection string
+	prefetchDone    bool
+	// prefetchSpans maps a retrieved path to the head-line spans that were shown.
+	// BuildChangedLines threads these into the grounding map so a finding on a
+	// retrieved consumer survives the gate — scoped to these exact spans, so a
+	// finding elsewhere in the same file is still dropped as ungrounded.
+	prefetchSpans  map[string][]LineRange
+	prefetchStatus PrefetchStatus
 }
 
 // ClaimLedgerStatus reports what the claim-ledger read produced for a range.
@@ -112,6 +127,20 @@ func WithMaxClaimBytes(n int64) RangeOption {
 	return func(g *gitRunner) { g.maxClaimBytes = n }
 }
 
+// WithMaxPrefetchBytes sets the ceiling on the Context Definitions section this
+// builder renders (Epic 35.16.8). Callers pass the registry-resolved
+// max_prefetch_bytes; omitting the option leaves DefaultMaxPrefetchBytes.
+//
+// **0 DISABLES pre-fetching entirely** — no `git grep` runs, no repository
+// source outside the diff reaches a provider, and no context entry is injected.
+// It is not the "unlimited" sentinel it is on payload_byte_budget, for the same
+// reason WithMaxClaimBytes is not: the section is exempt from every byte budget,
+// so an unbounded setting would be unbounded prompt text nothing could shed. A
+// negative value is treated as disabled, so a mis-resolved setting fails safe.
+func WithMaxPrefetchBytes(n int64) RangeOption {
+	return func(g *gitRunner) { g.maxPrefetchBytes = n }
+}
+
 // NewRangeBuilder returns a RangeBuilder for repo's base..head range, sharing one
 // gitRunner (seeded with the context logger) across all its builds. Options
 // customize the runner (e.g. WithoutIgnoreFilter).
@@ -179,7 +208,74 @@ func (b *RangeBuilder) BuildEntries(mode PayloadMode) ([]FileEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	return b.withClaimLedger(entries), nil
+	return b.withPrefetchSection(b.withClaimLedger(entries)), nil
+}
+
+// PrefetchStatus returns the range's pre-fetch outcome. Call it after a
+// BuildEntries; before any build it reports the zero value.
+func (b *RangeBuilder) PrefetchStatus() PrefetchStatus {
+	return b.prefetchStatus
+}
+
+// withPrefetchSection inserts the Context Definitions entry AFTER the claim
+// ledger, never before it.
+//
+// The position is load-bearing, not cosmetic: "the ledger leads the payload" is
+// asserted in three places (claims_ledger_test.go) and the ledger's own
+// consequence list is written against it sitting above the first column-0 diff
+// marker. Prepending here would silently move the ledger and break that contract.
+//
+// A range with no entries gets no section, for the reason withClaimLedger gives:
+// an empty entry set is how the review layer detects "nothing to review", and
+// injecting here would convert that into a payload carrying context and no code.
+//
+// Accepted consequence, inherited from the claim ledger's list (claims.go,
+// consequence 5): the entry sits ABOVE the first column-0 diff marker, and
+// EntriesFromRenderedPayload deliberately discards everything before that
+// marker, so up to DefaultMaxPrefetchBytes of retrieved repository source —
+// the content the grounding widening now trusts — is ABSENT from every
+// model-invocation audit record. An auditor sees the code and not the context
+// that shaped the verdict. Closing it means touching the audit seam itself
+// (surface the pre-marker prefix as an unattributed entry), which is tracked
+// as its own technical-debt row, not fixed here.
+func (b *RangeBuilder) withPrefetchSection(entries []FileEntry) []FileEntry {
+	if len(entries) == 0 {
+		return entries
+	}
+	section := b.prefetch()
+	if section == "" {
+		return entries
+	}
+	at := 0
+	if entries[0].shedExempt && entries[0].Path == ClaimLedgerPath {
+		at = 1
+	}
+	out := make([]FileEntry, 0, len(entries)+1)
+	out = append(out, entries[:at]...)
+	out = append(out, newPrefetchEntry(section))
+	return append(out, entries[at:]...)
+}
+
+// prefetch returns the memoized Context Definitions section for this range,
+// running the lookup at most once per builder.
+//
+// A failed pass yields an empty section, never an error, and the failure is
+// memoized like a success: every mode must carry the SAME section (AC3), and a
+// per-mode retry could succeed on the second mode and hand two agents different
+// context.
+func (b *RangeBuilder) prefetch() string {
+	if b.prefetchDone {
+		return b.prefetchSection
+	}
+	b.prefetchDone = true
+	if b.g.maxPrefetchBytes <= 0 {
+		// The operator disabled the feature: return before any `git grep` runs, so
+		// no repository source outside the diff is read at all.
+		b.prefetchStatus = PrefetchStatus{Disabled: true}
+		return ""
+	}
+	b.prefetchSection, b.prefetchSpans, b.prefetchStatus = b.g.buildPrefetch(b.base, b.head)
+	return b.prefetchSection
 }
 
 // withClaimLedger prepends the range's claim-ledger entry to entries, so the
@@ -297,7 +393,55 @@ func (b *RangeBuilder) BuildChangedLines() (ChangedLines, error) {
 	if err := b.validate(); err != nil {
 		return nil, err
 	}
-	return b.g.changedLines(b.base, b.head)
+	cl, err := b.g.changedLines(b.base, b.head)
+	if err != nil {
+		return nil, err
+	}
+	return b.withPrefetchedSpans(cl), nil
+}
+
+// withPrefetchedSpans adds each retrieved snippet's span to the grounding map.
+//
+// This is what makes the epic's motivating defect reportable: a bug whose
+// mechanism lives in a file the diff never touched is dropped by isGrounded
+// ("file not in the patch: ungrounded") no matter how good the reviewer is, so
+// retrieving the file without threading it here would show the consumer and then
+// discard every finding about it.
+//
+// The widening is deliberately NARROW. Only the spans actually rendered become
+// groundable, so a finding elsewhere in the same retrieved file is still dropped
+// exactly as today. A path the diff DID change is left alone: its own changed
+// ranges govern, and overwriting them with a snippet span would shrink the
+// groundable region of a genuinely changed file. (That case is unreachable by
+// construction today — parseGrepHits drops every excluded path at
+// internal/payload/prefetch.go's candidate filter, and referenceHits is only
+// ever called with changedPaths — so this guard is deliberate defense-in-depth
+// against a future producer that feeds spans without that exclusion.)
+func (b *RangeBuilder) withPrefetchedSpans(cl ChangedLines) ChangedLines {
+	// Consume the memo READ-ONLY: grounding widens the gate, so it may only
+	// cover a section a build actually rendered. Invoking prefetch() here made
+	// GROUNDING a trigger for the whole `git grep` + blob-read pass — on a path
+	// that never shipped the section — and, past ReleaseModeCaches, re-spawned
+	// one `git show` per changed file while making unshown lines groundable.
+	if len(b.prefetchSpans) == 0 {
+		return cl
+	}
+	if cl == nil {
+		cl = ChangedLines{}
+	}
+	for p, spans := range b.prefetchSpans {
+		if _, changed := cl[p]; changed {
+			continue
+		}
+		// PrefetchOnly is what keeps the widening as narrow as it is described:
+		// without it the gate's file-level arm (Line <= 0) would keep ANY finding
+		// against a merely-referenced file, which is broader than "only the exact
+		// retrieved spans" and would let fabricated file-level findings through.
+		fc := FileChange{PrefetchOnly: true}
+		fc.Ranges = append(fc.Ranges, spans...)
+		cl[p] = fc
+	}
+	return cl
 }
 
 // ReleaseModeCaches drops the per-mode diff chunk caches (function-context,

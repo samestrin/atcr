@@ -1,8 +1,11 @@
 package reconcile
 
 import (
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/samestrin/atcr/internal/registry"
 )
 
 // docs/registry.md's max_context_lines row is the ONLY documentation of the
@@ -36,10 +39,22 @@ func TestMaxContextLines_DocumentsTheDeliveredLineGate(t *testing.T) {
 	for _, must := range []struct{ token, why string }{
 		{"measured against a chunk's **delivered** line count", "the cap is measured against a chunk's DELIVERED line count, preamble included — not against the named file's own diff. The whole phrase, not the bare word: \"delivered\" alone survives a negation of this very clause"},
 		{"the lever that shrinks them is `max_claim_bytes`", "when the warning reports engine-rendered preamble lines the lever is max_claim_bytes; this field is the wrong knob and the row must say so. The whole phrase, so a row that merely mentions the key in some other clause does not satisfy it"},
+		{"whose lever is `max_prefetch_bytes`", "context-aware pre-fetching (Epic 35.16.8) adds a SECOND preamble section, with a larger default (16384) than the claim ledger's. An operator who reads only the max_claim_bytes sentence tunes the smaller of the two knobs, the warning does not go away, and nothing tells them the other section exists"},
 	} {
 		if !strings.Contains(strings.ToLower(row), strings.ToLower(must.token)) {
 			t.Errorf("docs/registry.md's max_context_lines row must state %q: %s\nrow was: %s", must.token, must.why, row)
 		}
+	}
+
+	// The phrase above pins the KEY name; the same sentence also restates its
+	// default as a bare number — a second doc site for
+	// registry.DefaultMaxPrefetchBytes alongside the max_prefetch_bytes row. Pin
+	// the number to the constant, not to a literal: a default change must turn
+	// this row red, or both doc sites go stale with a green suite.
+	wantDefault := "`" + strconv.FormatInt(registry.DefaultMaxPrefetchBytes, 10) + "` by default"
+	if !strings.Contains(row, wantDefault) {
+		t.Errorf("docs/registry.md's max_context_lines row must restate the prefetch default as %s "+
+			"(code-derived from registry.DefaultMaxPrefetchBytes, not a hardcoded literal)\nrow was: %s", wantDefault, row)
 	}
 
 	// The code half of the drift guard asserts the LINK to the behavioural owner,

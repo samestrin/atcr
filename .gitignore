@@ -31,6 +31,11 @@ qdrant_fts.db
 qdrant_fts.db-shm
 qdrant_fts.db-wal
 
+# Local semantic/FTS search indexes built by editor tooling. Tens of MB of binary
+# .db files, rebuilt on demand from the tree itself — ignored here (not just in
+# .git/info/exclude) so a `git add .` in any clone cannot sweep them into a commit.
+.index/
+
 # Environment and Local Settings
 # Broad glob so every .env variant (.env, .env.local, .env.production,
 # .env.*.local, .envrc, …) is ignored — narrow rules let a stray secrets file

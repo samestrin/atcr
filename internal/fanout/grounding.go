@@ -71,6 +71,19 @@ func isGrounded(f stream.Finding, changed payload.ChangedLines) bool {
 	if !ok {
 		return false // file not in the patch: ungrounded
 	}
+	// A file present ONLY because context-aware pre-fetching retrieved a snippet
+	// of it (Epic 35.16.8) is held to a strictly narrower rule than a changed
+	// file: the finding must cite a line inside a span that was actually shown.
+	//
+	// Both of the permissive arms below are deliberately bypassed. The
+	// file-level arm ("the file itself is in scope") and the empty-ranges
+	// fail-open arm are justified by the patch having demonstrably touched the
+	// file; for a merely-referenced file neither holds, and either would let a
+	// fabricated file-level finding against an untouched file clear the Epic 14.1
+	// gate — a strictly wider hole than the one pre-fetching set out to open.
+	if fc.PrefetchOnly {
+		return f.Line > 0 && lineInExactRanges(f.Line, fc.Ranges)
+	}
 	if len(fc.Ranges) == 0 && len(fc.ChangedText) == 0 {
 		return true // binary/mode-only change: no lines to check, fail open
 	}
@@ -117,6 +130,24 @@ func lineInRanges(line int, ranges []payload.LineRange) bool {
 	}
 	for _, r := range ranges {
 		if line >= r.Start-groundingTolerance && line <= r.End+groundingTolerance {
+			return true
+		}
+	}
+	return false
+}
+
+// lineInExactRanges reports whether a 1-based line falls strictly within any
+// range, with NO groundingTolerance expansion. A prefetched snippet is rendered
+// with its literal HEAD line numbers (renderSnippetBlock), so there is no diff
+// drift to absorb: a merely-referenced file is grounded only on lines the
+// reviewer was actually shown. The tolerance-expanding lineInRanges stays for
+// the changed-file arms, where diff-introduced drift is real.
+func lineInExactRanges(line int, ranges []payload.LineRange) bool {
+	if line <= 0 {
+		return false
+	}
+	for _, r := range ranges {
+		if line >= r.Start && line <= r.End {
 			return true
 		}
 	}

@@ -52,6 +52,33 @@ func TestPrepareReviewFromDiff_GroundingDisabledRangeLess(t *testing.T) {
 		"diff ingestion must record a range-less grounding-disable reason so the skip is auditable")
 }
 
+// TestFinalizePreparedReview_PrefetchPayloadsWithoutBuilderDisablesGrounding
+// pins the last leg of the same threading: the standalone grounding fallback
+// (payload.BuildChangedLines inside computeGroundingData) never merges prefetch
+// spans — only rb.BuildChangedLines does, via withPrefetchedSpans. Payloads that
+// carry Context Definitions can ground findings on spans no diff ever touched;
+// grounding such payloads through the fallback would silently drop every finding
+// on shown spans as "file not in the patch". Every git-range caller passes the
+// same builder that built the payloads, so this pairing is unreachable today;
+// the guard at the finalizePreparedReview call site must keep it that way
+// audibly rather than let a future caller ground incompletely.
+func TestFinalizePreparedReview_PrefetchPayloadsWithoutBuilderDisablesGrounding(t *testing.T) {
+	repo, base, head := initRepo(t)
+	cfg := twoAgentConfig("http://unused")
+	payloads := map[string]modePayload{
+		"blocks": {Entries: []payload.FileEntry{{Path: payload.PrefetchContextPath, Body: "context"}}},
+	}
+	prep, err := finalizePreparedReview(context.Background(), cfg,
+		reviewReq(repo, repo, base, head), payloads, map[string]string{}, nil, "blocks", nil, false)
+	require.NoError(t, err)
+	require.NotNil(t, prep)
+
+	assert.Nil(t, prep.Changed,
+		"prefetch-carrying payloads grounded without a RangeBuilder must disable grounding rather than silently drop every shown-span finding")
+	assert.Contains(t, prep.GroundingDisabledReason, "prefetch",
+		"the disable reason must name the prefetch-span loss so the broken builder pairing is auditable")
+}
+
 // TestComputeGroundingData_RangeBuilderRangeMismatch pins the invariant that a
 // RangeBuilder passed to computeGroundingData must have been constructed from
 // the same req.Range it is grounding. computeGroundingData gates on req.Range
