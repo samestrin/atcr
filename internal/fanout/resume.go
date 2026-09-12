@@ -442,7 +442,7 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 	// would leave the resume leg re-opening the hole for precisely the agents a
 	// resumed run re-invokes.
 	pending := filterPendingSlots(slots, done)
-	changed = scopePrefetchGrounding(changed, pending)
+	changed, _ = scopePrefetchGrounding(changed, pending)
 	p := &PreparedReview{
 		ID:          filepath.Base(reviewDir),
 		Dir:         reviewDir,

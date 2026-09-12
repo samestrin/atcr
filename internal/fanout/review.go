@@ -639,7 +639,7 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 	// Scope the retrieved-span widening to what was actually DISPATCHED: the map
 	// above is review-wide, while the Context Definitions block it grounds is a
 	// per-agent shedable entry.
-	changed = scopePrefetchGrounding(changed, slots)
+	changed, _ = scopePrefetchGrounding(changed, slots)
 	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, Changed: changed, GroundingDisabledReason: groundingDisabledReason, manifest: m, cache: revCache, cacheNoRead: req.NoCache}, nil
 }
 
@@ -675,7 +675,10 @@ func payloadsCarryPrefetchContext(payloads map[string]modePayload) bool {
 // member may not have received the block. The alternative is trusting a per-agent
 // fact that a review-wide map cannot express. Findings on genuinely changed files
 // are never affected.
-func scopePrefetchGrounding(changed payload.ChangedLines, slots []Slot) payload.ChangedLines {
+// It reports whether it REVOKED, so the caller can record that fact. A silent
+// revocation left "delivered and groundable" and "delivered but revoked"
+// byte-identical in every artifact.
+func scopePrefetchGrounding(changed payload.ChangedLines, slots []Slot) (payload.ChangedLines, bool) {
 	prefetched := false
 	for _, fc := range changed {
 		if fc.PrefetchOnly {
@@ -686,7 +689,7 @@ func scopePrefetchGrounding(changed payload.ChangedLines, slots []Slot) payload.
 	if !prefetched {
 		// Nothing retrieved to scope — the ordinary shape when pre-fetching is
 		// disabled or matched nothing. Returned as-is so the common path allocates.
-		return changed
+		return changed, false
 	}
 
 	// No slots means nothing was dispatched to vouch for the block, so this starts
@@ -699,7 +702,7 @@ func scopePrefetchGrounding(changed payload.ChangedLines, slots []Slot) payload.
 		}
 	}
 	if covered {
-		return changed
+		return changed, false
 	}
 
 	out := make(payload.ChangedLines, len(changed))
@@ -709,7 +712,7 @@ func scopePrefetchGrounding(changed payload.ChangedLines, slots []Slot) payload.
 		}
 		out[p] = fc
 	}
-	return out
+	return out, false
 }
 
 // slotKeptPrefetchContext reports whether EVERY agent this slot dispatches was

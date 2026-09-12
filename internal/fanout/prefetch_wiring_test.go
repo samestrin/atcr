@@ -313,7 +313,7 @@ func TestScopePrefetchGrounding_StripsWhenAFallbackShedTheContextBlock(t *testin
 		"consumer.go": {Ranges: []payload.LineRange{{Start: 3, End: 9}}, PrefetchOnly: true},
 	}
 
-	got := scopePrefetchGrounding(changed, slots)
+	got, _ := scopePrefetchGrounding(changed, slots)
 
 	require.Contains(t, got, "a.go",
 		"a genuinely changed file stays groundable — the guard governs retrieved spans only")
