@@ -507,35 +507,84 @@ func TestReferenceHits_BrokenLookupIsDistinguishableFromNoMatch(t *testing.T) {
 	require.True(t, failed, "a lookup that could not run at all must be reported as failed")
 }
 
-func TestSliceLines_AllocationIsFlatAcrossHitsWhenTheFileIsSplitOnce(t *testing.T) {
-	// retrieveSnippets slices EVERY hit out of the same immutable file text, so
-	// the split is per-FILE work: a candidate anywhere near the
-	// maxAnalyzeFileBytes scale otherwise pays its full line slice per hit (a
-	// 1 MiB file with 10 hits allocated ~10x the file size to extract at most
-	// 400 lines). sliceLines takes the pre-split lines; the strings.Split lives
-	// in splitSnippetLines, called once per file by retrieveSnippets.
+func TestRetrieveSnippets_AllocationIsFlatInHitCount(t *testing.T) {
+	// retrieveSnippets splits each candidate ONCE, above its per-hit loop, so
+	// extracting ten regions from one file must not cost ten line slices of it.
+	//
+	// This replaces a test that could not fail. Its predecessor called sliceLines
+	// directly and asserted one call stayed under 16 KiB — but sliceLines takes
+	// ALREADY-SPLIT lines, and its entire body is a bounds clamp plus a join of
+	// ~40 lines, roughly 600 bytes. The ceiling sat ~27x above the largest
+	// allocation that function can physically make, and the regression it named
+	// lives in retrieveSnippets, which it never called. The signature change is
+	// what removed that defect, not anything the assertion measured.
+	//
+	// Measured here instead, against the call position that can actually regress:
+	// `lines := splitSnippetLines(src)` sitting above `for _, h := range
+	// byPath[rel]`. A ~4800-line file's split allocates ~80KB of string headers,
+	// so moving it inside the loop turns ten hits into ~800KB while the hoisted
+	// form pays it once.
+	// The candidate is a .txt deliberately. parsePrefetchTree has no parser for
+	// it and returns a zero node, which keeps the wasm parse — megabytes of
+	// allocation with real run-to-run variance — out of the measurement window
+	// entirely. With a .go candidate that variance swamped the ~675KB signal and
+	// the mutated code measured GREEN, i.e. the assertion could not fail. The
+	// property under test is parser-independent: splitSnippetLines is called on
+	// the raw source either way, and a zero node simply sends snippetSpan down
+	// its fixed-window fallback.
 	var b strings.Builder
-	for i := 0; i < 20000; i++ {
-		fmt.Fprintf(&b, "// filler %d\n", i)
+	b.WriteString("candidate text\n\n")
+	lineNo := 3
+	var funcLines []int
+	for i := 0; i < 12; i++ {
+		funcLines = append(funcLines, lineNo)
+		fmt.Fprintf(&b, "marker Big%d\n", i)
+		lineNo++
+		// Wide spacing so each hit resolves to its own region: adjacent hits would
+		// be discarded by overlapsEmitted and the per-hit cost would vanish.
+		for j := 0; j < 400; j++ {
+			b.WriteString("// filler\n")
+			lineNo++
+		}
 	}
-	lines := splitSnippetLines(b.String())
-	require.Len(t, lines, 20000)
 
-	heapBytes := func(f func()) uint64 {
+	dir := initRepo(t)
+	write(t, dir, "store.go", prefetchStoreV1)
+	write(t, dir, "big.txt", b.String())
+	base := commitAll(t, dir, "seed a wide candidate")
+	write(t, dir, "store.go", prefetchStoreV2)
+	head := commitAll(t, dir, "change ReadStore return shape")
+
+	hits := make([]refHit, 0, len(funcLines))
+	for i, ln := range funcLines {
+		// A DISTINCT symbol per hit: ten hits on one symbol would be clamped by
+		// maxEmittedSitesPerSymbol after three, so the per-hit work being measured
+		// would stop happening and the assertion would pass for the wrong reason.
+		hits = append(hits, refHit{Path: "big.txt", Line: ln, Symbol: fmt.Sprintf("Big%d", i)})
+	}
+
+	allocFor := func(h []refHit) int64 {
+		g := newGitRunner(context.Background(), dir)
 		runtime.GC()
 		var before, after runtime.MemStats
 		runtime.ReadMemStats(&before)
-		f()
+		kept, _ := g.retrieveSnippets(base, head, h, nil)
 		runtime.ReadMemStats(&after)
-		return after.TotalAlloc - before.TotalAlloc
+		require.Len(t, kept, len(h),
+			"every hit must yield its own snippet, or the allocation being compared is not the per-hit work")
+		return int64(after.TotalAlloc - before.TotalAlloc)
 	}
-	one := heapBytes(func() { _, _, _, _ = sliceLines(lines, 100, 140) })
-	// A per-call strings.Split of a 20000-line file allocates ~500KB; the split
-	// once per file leaves only the ~40-line join per slice. 16 KiB of headroom
-	// keeps garbage-collector and allocator jitter out of the assertion while
-	// being ~30x below the regression it exists to catch.
-	require.Less(t, one, uint64(16<<10),
-		"one slice of a 20000-line pre-split file must allocate only the join — a per-hit strings.Split would allocate ~500KB")
+
+	one := allocFor(hits[:1])
+	ten := allocFor(hits[:10])
+	t.Logf("retrieveSnippets allocation: 1 hit = %d B, 10 hits = %d B, delta = %d B", one, ten, ten-one)
+
+	// Both runs read the blob once and parse it once, so the DIFFERENCE isolates
+	// the per-hit cost. Hoisted, nine extra hits add nine ~400-byte joins; moved
+	// back inside the loop they add nine ~80KB splits. 64 KiB sits an order of
+	// magnitude below the regression and well above join and allocator jitter.
+	require.Less(t, ten-one, int64(64<<10),
+		"nine extra hits in ONE file added %d bytes: the file must be split once per candidate, not once per hit", ten-one)
 }
 
 func TestRetrieveSnippets_CRLFSourceCarriesNoCarriageReturnsAndMatchesTheLFSpan(t *testing.T) {
