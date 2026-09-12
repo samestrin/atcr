@@ -247,6 +247,17 @@ type PreparedReview struct {
 	// --diff-file preparations — which leaves the manifest's field untouched, the
 	// same "no range was ever asked" meaning claimLedgerStatus records.
 	claimLedger *payload.ClaimLedgerStatus
+	// prefetch is the pre-fetch outcome of the RangeBuilder this preparation
+	// actually built (Epic 35.16.8), captured for the same reason and under the
+	// same contract as claimLedger above: a resume re-runs buildPayloads against a
+	// freshly loaded config, so it re-resolves max_prefetch_bytes and re-executes
+	// git grep, and the outcome can differ from the interrupted run's. Copying the
+	// manifest verbatim would keep asserting the old record — present:true with a
+	// snippet count for agents that received no Context Definitions block.
+	//
+	// nil on every path with no range to read (baseline, --diff-file), leaving the
+	// manifest's own value standing.
+	prefetch *payload.PrefetchStatus
 }
 
 // baselineWriteback is the write-back state captured while a baseline payload is
