@@ -172,4 +172,36 @@ func TestScopePrefetchGrounding_ReportsWhetherItRevoked(t *testing.T) {
 		assert.False(t, revoked, "there was nothing to revoke — this must not read as a revocation")
 		assert.Equal(t, onlyChanged, got)
 	})
+
+	// The fail-closed seed itself: `covered := len(slots) > 0`.
+	//
+	// With zero slots the range-over-slots loop beneath it never executes, so a
+	// `covered := true` seed would sail past every check and leave the widening
+	// in place for a review that dispatched NOBODY to vouch for the block. Every
+	// other case here enters that loop, which reassigns covered on its own — so
+	// none of them can observe the seed, and the guard survived deletion with the
+	// whole package green.
+	//
+	// This is reachable in production, not defensive: resume.go computes
+	// `pending := filterPendingSlots(slots, done)`, which is EMPTY when every
+	// slot is already done, and passes it straight into this function.
+	t.Run("an empty slot list revokes rather than vacuously passing", func(t *testing.T) {
+		for _, tc := range []struct {
+			name  string
+			slots []Slot
+		}{
+			{"nil slice", nil},
+			{"empty slice", []Slot{}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				got, revoked := scopePrefetchGrounding(changed, tc.slots)
+				assert.True(t, revoked,
+					"no dispatched slot vouched for the block, so the widening must be withdrawn, not granted by default")
+				assert.NotContains(t, got, "consumer.go",
+					"a retrieved span must not stay groundable when nothing was dispatched to receive it")
+				assert.Contains(t, got, "a.go",
+					"a genuinely changed file is never affected by the scoping")
+			})
+		}
+	})
 }
