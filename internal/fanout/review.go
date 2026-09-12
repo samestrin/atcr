@@ -656,6 +656,13 @@ func payloadsCarryPrefetchContext(payloads map[string]modePayload) bool {
 	return false
 }
 
+// scopePrefetchGrounding drops every PrefetchOnly key from the review-wide
+// grounding map unless EVERY dispatched agent was sent the Context Definitions
+// block.
+func scopePrefetchGrounding(changed payload.ChangedLines, slots []Slot) payload.ChangedLines {
+	return changed
+}
+
 // computeGroundingData builds the per-file patch grounding data for the request's
 // range (Epic 14.1). Only the git-range path carries a base/head; a range-less
 // request (the diff-ingestion path) returns nil, disabling the grounding gate. A

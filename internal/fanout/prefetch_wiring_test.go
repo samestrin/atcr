@@ -238,6 +238,89 @@ func TestBuildSlots_PerAgentFileCountExcludesSyntheticEntries(t *testing.T) {
 		"the per-agent prompt must report ReviewableCount(kept) — the same rule as the global build — not len(kept) over the synthetic-section-retaining survivor set")
 }
 
+func TestScopePrefetchGrounding_StripsWhenAFallbackShedTheContextBlock(t *testing.T) {
+	// Grounding is computed ONCE for the whole review and shared by every agent,
+	// but the Context Definitions block is a per-agent SHEDABLE entry. An agent
+	// dispatched without it must not have findings on merely-referenced files
+	// accepted by the Epic 14.1 gate — that is the fabricated-file class the gate
+	// exists to stop, re-opened for every file the pre-fetch pass merely named.
+	//
+	// This fixture is specifically the one a primary-only check cannot catch: the
+	// PRIMARY keeps the block while its FALLBACK sheds it to fund the ledger.
+	var consumer strings.Builder
+	consumer.WriteString("package p\n\nfunc Reconcile() string {\n")
+	for i := 0; i < 34; i++ {
+		consumer.WriteString("\t_ = " + itoa(i) + " // " + strings.Repeat("z", 30) + "\n")
+	}
+	consumer.WriteString("\treturn ReadStore() + WriteStore() + CloseStore()\n}\n")
+
+	dir, base := seedClaimHeavyRepo(t,
+		fixtureFile{"a.go", prefetchBandFile("ReadStore", "int", 2)},
+		fixtureFile{"b.go", prefetchBandFile("WriteStore", "int", 76)},
+		fixtureFile{"c.go", prefetchBandFile("CloseStore", "int", 76)},
+		fixtureFile{"consumer.go", []byte(consumer.String())},
+	)
+	head := commitClaimHeavyHead(t, dir,
+		fixtureFile{"a.go", prefetchBandFile("ReadStore", "string", 2)},
+		fixtureFile{"b.go", prefetchBandFile("WriteStore", "string", 76)},
+		fixtureFile{"c.go", prefetchBandFile("CloseStore", "string", 76)},
+	)
+
+	cfg := sizingRosterConfig()
+	win := 14774
+	g := cfg.Registry.Agents["greta"]
+	g.ContextWindowTokens = &win
+	cfg.Registry.Agents["greta"] = g
+	kai := cfg.Registry.Agents["kai"]
+	kai.Fallback = "greta"
+	cfg.Registry.Agents["kai"] = kai
+	cfg.Project.Agents = []string{"kai"}
+	cfg.Settings.OnOverflow = OverflowTruncate
+
+	payloads, _, err := buildPayloads(context.Background(), cfg, dir, base, head, false)
+	require.NoError(t, err)
+
+	var slots []Slot
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: base, Head: head}, "", "", false)
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, slots)
+	require.NotEmpty(t, slots[0].Fallbacks, "PRECONDITION: kai must resolve its greta fallback")
+
+	primaryKept := false
+	for _, e := range slots[0].entries {
+		if e.Path == payload.PrefetchContextPath {
+			primaryKept = true
+		}
+	}
+	require.True(t, primaryKept,
+		"PRECONDITION: the PRIMARY must keep the block, or this fixture does not distinguish a primary-only check from a chain-wide one")
+
+	fallbackShed := false
+	for _, fb := range slots[0].Fallbacks {
+		for _, p := range fb.Truncation.FilesDropped {
+			if p == payload.PrefetchContextPath {
+				fallbackShed = true
+			}
+		}
+	}
+	require.True(t, fallbackShed,
+		"PRECONDITION: a fallback must have shed the block, or there is nothing for the guard to catch")
+
+	changed := payload.ChangedLines{
+		"a.go":        {Ranges: []payload.LineRange{{Start: 1, End: 2}}},
+		"consumer.go": {Ranges: []payload.LineRange{{Start: 3, End: 9}}, PrefetchOnly: true},
+	}
+
+	got := scopePrefetchGrounding(changed, slots)
+
+	require.Contains(t, got, "a.go",
+		"a genuinely changed file stays groundable — the guard governs retrieved spans only")
+	require.NotContains(t, got, "consumer.go",
+		"an agent in this chain was dispatched WITHOUT the Context Definitions block, so retrieved spans must not be groundable for this review")
+}
+
 func TestBuildSlots_ZeroBudgetArmFileCountExcludesSyntheticEntries(t *testing.T) {
 	// The zero-budget bulk arm reports a HARDCODED count of 1 for whichever single
 	// entry it keeps, and keepSmallestEntry picks by len(Body) with no shedExempt
