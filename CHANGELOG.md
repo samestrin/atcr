@@ -1,3 +1,20 @@
+## [35.20.0] - 2026-09-10
+
+*Epic 35.16.8 — context aware prefetching.*
+
+### Added
+
+- **Context-aware pre-fetching.** A range review now resolves the symbols its diff changed to the call sites that *consume* them, and prepends those snippets to every reviewer's payload as a **Context Definitions** block. This targets a defect class no amount of reviewer diversity catches: when a change's blast radius lands in a file the diff never touched, that file was absent from the payload, so no reviewer could cite it and the grounding gate discarded any finding about it. Retrieval is structural rather than semantic — a single `git grep` for the changed symbol names, parsing only the files that match — so it needs no index, no external service and no pre-built artifact. Measured overhead on a 150-file repository is ~34ms against a 2-second budget.
+- **`max_prefetch_bytes`** (default `16384`) bounds the injected block. **Setting it to `0` disables the feature outright** — no `git grep` runs and no repository source from outside the diff is sent to a provider. ⚠️ **Operators upgrading should note the feature is ON by default and does transmit source from untouched files.** Negative values are rejected at load and fail safe to disabled. Files excluded by `.gitignore`/`.atcrignore` are never retrieved, so the payload filter governs pre-fetched context exactly as it governs the diff, and snippets shed at the cap are named in the section rather than dropped silently.
+
+### Changed
+
+- A finding on a pre-fetched file is groundable **only** on the exact line spans that were shown. `payload.FileChange` carries a `PrefetchOnly` marker, and the grounding gate bypasses both of its permissive arms for such files — the file-level (`Line <= 0`) arm and the empty-ranges fail-open arm — so retrieving a consumer cannot become a route for file-level fabricated findings against untouched code.
+- The reported changed-file count now excludes the engine-rendered sections prepended to a payload. It previously counted the claim ledger, over-reporting by one in the manifest and in the persona-visible `{{.FileCount}}`; a second synthetic section would have doubled that.
+- The byte-budget shed now funds shed-exempt sections **cumulatively** rather than one at a time. With two such sections each could satisfy its own bound while jointly overrunning a small budget, shedding every reviewable file to fund sections that then left no room for code. Retrieved context is shed before the claim ledger.
+
+*Shipped via /execute-epic (epic 35.16.8)*
+
 ## [35.19.0] - 2026-09-10
 
 *Epic 35.16.7.1 — post residue feature epic 35.16.7 claim ledger verify commit claims.*
@@ -5,7 +22,7 @@
 ### Fixed
 
 - `docs/payload-modes.md` and the 35.18.0 note below both stated the claim ledger's third exception with the wrong condition — that a fallback re-fits without the ledger when its own budget is "smaller than the ledger". Measured end to end, the ledger is lost when the fallback's budget cannot fund both the ledger **and** a reviewable file, by either of two routes: the exemption's own `clampSize(Size) <= budget` bound, or the `AllDropped` reroute to `keepSmallestEntry`. That reroute keeps the smallest *entry*, so it drops the ledger only while some reviewable file is smaller than it — when every file is larger, the ledger survives and the fallback receives claims and no code. A budget larger than the ledger therefore does not by itself keep it.
-- `docs/registry.md`'s `max_context_lines` row promised a warning only for a file larger than the cap. The gate measures a chunk's **delivered** line count, so the warning also fires for a file comfortably inside the cap when engine-rendered preamble lines push the chunk over it — and the lever for those lines is `max_claim_bytes`, not this field. A drift test in `internal/reconcile/` now fails if that statement drifts from the single-file warning arm it describes.
+- `docs/registry.md`'s `max_context_lines` row promised a warning only for a file larger than the cap. The gate measures a chunk's **delivered** line count, so the warning also fires for a file comfortably inside the cap when engine-rendered preamble lines push the chunk over it — and the lever for those lines is `max_claim_bytes`, not this field. A drift test in `internal/reconcile/` pins that row's load-bearing phrases, so reverting or negating the statement turns it red, and asserts the behavioural owner test in `internal/fanout` still exists by name; the gate itself stays pinned behaviourally there.
 - Citations in `internal/payload/claims.go` and `internal/fanout/review.go` that pointed at the wrong construct: the changed-file-count consequence cited two build paths that never prepend a claim ledger, and the coalesce-cap citations pointed at `started = true` inside `splitDiffFiles` rather than at the chunk ceiling. Each now names its identifier alongside the line number, so the next insertion above a target cannot silently re-aim it.
 
 ### Changed

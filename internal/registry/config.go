@@ -711,6 +711,12 @@ type Registry struct {
 	// the project tier. A pointer so unset falls through to the project tier or the
 	// embedded DefaultMaxClaimBytes; 0 means DISABLED, negative is rejected.
 	MaxClaimBytes *int64 `yaml:"max_claim_bytes,omitempty"`
+	// MaxPrefetchBytes is the user-level (global) tier of the context pre-fetch
+	// byte ceiling (Epic 35.16.8), the same limit ProjectConfig.MaxPrefetchBytes
+	// carries at the project tier. A pointer so unset falls through to the project
+	// tier or the embedded DefaultMaxPrefetchBytes; 0 means DISABLED, negative is
+	// rejected.
+	MaxPrefetchBytes *int64 `yaml:"max_prefetch_bytes,omitempty"`
 
 	// Retry/backoff tunables (Epic 4.6) — the user-level (global) tier of the
 	// precedence chain, mirroring TimeoutSecs. Pointers so an explicit 0
@@ -810,6 +816,9 @@ func (r *Registry) validate() error {
 	}
 	if r.MaxClaimBytes != nil && *r.MaxClaimBytes < 0 {
 		errs = append(errs, fmt.Errorf("max_claim_bytes must be >= 0 (0 = disabled), got %d", *r.MaxClaimBytes))
+	}
+	if r.MaxPrefetchBytes != nil && *r.MaxPrefetchBytes < 0 {
+		errs = append(errs, fmt.Errorf("max_prefetch_bytes must be >= 0 (0 = disabled), got %d", *r.MaxPrefetchBytes))
 	}
 	if r.MaxSprintPlanBytes != nil && *r.MaxSprintPlanBytes <= 0 {
 		errs = append(errs, fmt.Errorf("max_sprint_plan_bytes must be > 0, got %d", *r.MaxSprintPlanBytes))

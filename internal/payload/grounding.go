@@ -18,6 +18,17 @@ type LineRange struct {
 type FileChange struct {
 	Ranges      []LineRange
 	ChangedText []string
+	// PrefetchOnly marks an entry the PATCH DID NOT TOUCH, added purely because
+	// context-aware pre-fetching retrieved a snippet of it (Epic 35.16.8).
+	//
+	// The grounding gate must treat it far more strictly than a changed file. For
+	// a real changed file, a finding with no line is kept ("the file itself is in
+	// scope") and a file with no line data fails open — both correct when the
+	// patch demonstrably touched the file. Neither is correct here: the patch
+	// touched nothing, so those arms would let a file-level fabricated finding
+	// against a merely-referenced file clear the Epic 14.1 anti-hallucination
+	// check. Only a finding citing a line INSIDE a retrieved span is grounded.
+	PrefetchOnly bool
 }
 
 // ChangedLines maps each changed head-side path to its FileChange grounding data.

@@ -75,6 +75,18 @@ const (
 	// unbounded setting — the ledger's bytes are exempt from every byte budget, so
 	// the only thing bounding them is this ceiling. Negative is rejected.
 	DefaultMaxClaimBytes int64 = 8 * 1024
+	// DefaultMaxPrefetchBytes is the embedded byte ceiling on the Context
+	// Definitions section built by context-aware pre-fetching (Epic 35.16.8). It
+	// mirrors payload.DefaultMaxPrefetchBytes; the two must agree, and
+	// internal/reconcile/prefetch_default_test.go pins that.
+	//
+	// Like max_claim_bytes and unlike max_sprint_plan_bytes, 0 IS meaningful and
+	// means DISABLED, not unbounded: pre-fetching sends repository source from
+	// OUTSIDE the diff to third-party providers, and an operator has a legitimate
+	// reason to refuse that outright. There is no unbounded setting — the section
+	// is exempt from every byte budget, so this ceiling is the only thing bounding
+	// it. Negative is rejected.
+	DefaultMaxPrefetchBytes int64 = 16 * 1024
 )
 
 // ProjectConfig is the project-level configuration from .atcr/config.yaml:
@@ -124,6 +136,11 @@ type ProjectConfig struct {
 	// provider) survives default application; unset inherits the registry tier or
 	// the embedded DefaultMaxClaimBytes.
 	MaxClaimBytes *int64 `yaml:"max_claim_bytes,omitempty"`
+	// MaxPrefetchBytes overrides the context pre-fetch byte ceiling (Epic
+	// 35.16.8). A pointer so an explicit 0 (feature disabled — read NO source
+	// outside the diff) survives default application; unset inherits the registry
+	// tier or the embedded DefaultMaxPrefetchBytes.
+	MaxPrefetchBytes *int64 `yaml:"max_prefetch_bytes,omitempty"`
 	// Sandbox is the optional execution-reproduction backend block (Epic 11.0).
 	// nil means execution is unconfigured and `--exec` is refused.
 	Sandbox *SandboxConfig `yaml:"sandbox,omitempty"`
@@ -209,6 +226,15 @@ func DefaultProjectConfigYAML(roster []string) string {
 	b.WriteString("#   CONSTRAINT injection into every reviewer's payload. Default 64 KiB; raise it\n")
 	b.WriteString("#   to give larger-context models more sprint/epic plan detail. Must be > 0.\n")
 	fmt.Fprintf(&b, "max_sprint_plan_bytes: %d\n", DefaultMaxSprintPlanBytes)
+	b.WriteString("# max_prefetch_bytes: byte ceiling on the Context Definitions section\n")
+	b.WriteString("#   built by context-aware pre-fetching. Pre-fetching is ON by default: it\n")
+	b.WriteString("#   finds files the diff never touched that reference a changed symbol and\n")
+	b.WriteString("#   injects excerpts of them into every reviewer's prompt — i.e. this feature\n")
+	b.WriteString("#   transmits repository source from OUTSIDE THE DIFF to your providers.\n")
+	b.WriteString("#   0 disables pre-fetching outright: no lookup runs and nothing from\n")
+	b.WriteString("#   outside the diff leaves the repo. Default 16 KiB; a negative value is\n")
+	b.WriteString("#   rejected at load.\n")
+	fmt.Fprintf(&b, "max_prefetch_bytes: %d\n", DefaultMaxPrefetchBytes)
 	b.WriteString("# on_overflow: degradation policy (plan 19.10 F4) when a per-agent payload\n")
 	b.WriteString("#   exceeds its per-model budget. One of: chunk (default — deliver that\n")
 	b.WriteString("#   agent's payload across window-sized chunks, dropping nothing at THIS\n")
@@ -305,6 +331,9 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 	// 0 is DISABLED here, not unbounded, so only a negative value is invalid.
 	if cfg.MaxClaimBytes != nil && *cfg.MaxClaimBytes < 0 {
 		return nil, fmt.Errorf("%s: max_claim_bytes must be >= 0 (0 = disabled), got %d", base, *cfg.MaxClaimBytes)
+	}
+	if cfg.MaxPrefetchBytes != nil && *cfg.MaxPrefetchBytes < 0 {
+		return nil, fmt.Errorf("%s: max_prefetch_bytes must be >= 0 (0 = disabled), got %d", base, *cfg.MaxPrefetchBytes)
 	}
 	if !payloadModeValid(cfg.PayloadMode) {
 		return nil, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", strings.TrimSpace(cfg.PayloadMode))

@@ -247,6 +247,17 @@ type PreparedReview struct {
 	// --diff-file preparations — which leaves the manifest's field untouched, the
 	// same "no range was ever asked" meaning claimLedgerStatus records.
 	claimLedger *payload.ClaimLedgerStatus
+	// prefetch is the pre-fetch outcome of the RangeBuilder this preparation
+	// actually built (Epic 35.16.8), captured for the same reason and under the
+	// same contract as claimLedger above: a resume re-runs buildPayloads against a
+	// freshly loaded config, so it re-resolves max_prefetch_bytes and re-executes
+	// git grep, and the outcome can differ from the interrupted run's. Copying the
+	// manifest verbatim would keep asserting the old record — present:true with a
+	// snippet count for agents that received no Context Definitions block.
+	//
+	// nil on every path with no range to read (baseline, --diff-file), leaving the
+	// manifest's own value standing.
+	prefetch *payload.PrefetchStatus
 }
 
 // baselineWriteback is the write-back state captured while a baseline payload is
@@ -404,7 +415,13 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	// registry" diagnostic from buildSlots below.
 	empty := len(payloads) > 0
 	for _, mp := range payloads {
-		if mp.FileCount > 0 {
+		// ReviewableCount over the PRE-budget entries, not FileCount. FileCount is
+		// the post-shed survivor count, and a range whose reviewable files were all
+		// shed is already rejected with ErrPayloadFullyDropped inside buildPayloads.
+		// Reading FileCount here started conflating "the range changed nothing"
+		// with "the budget dropped everything" the moment FileCount stopped
+		// counting the synthetic engine-rendered sections.
+		if payload.ReviewableCount(mp.Entries) > 0 {
 			empty = false
 			break
 		}
@@ -542,6 +559,57 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 		}
 	}
 
+	// Epic 14.1 grounding data: compute the per-file changed line ranges for the
+	// range so WritePool can drop findings not anchored in the patch (see
+	// computeGroundingData for the fail-open contract). The reason string records
+	// WHY the gate is off (git failure vs. diff ingestion) in summary.json.
+	//
+	// Guard the builder pairing before grounding (Epic 35.16.8): the standalone
+	// fallback inside computeGroundingData never merges prefetch spans — only
+	// rb.BuildChangedLines does, via withPrefetchedSpans. Payloads that carry
+	// Context Definitions can ground findings on spans no diff ever touched, so
+	// grounding such payloads through the fallback would silently drop every
+	// finding on shown spans as "file not in the patch". Every git-range caller
+	// passes the same builder that built the payloads (the baseline and diff
+	// paths pass nil but cannot produce prefetch spans), so this pairing is
+	// unreachable today; if a future caller breaks it, disable the gate audibly
+	// — the same treatment as computeGroundingData's range-mismatch guard —
+	// rather than ground incompletely.
+	//
+	// This runs BEFORE the manifest is built, not after it is written, because
+	// the scoping below is a fact the manifest has to carry. It depends only on
+	// this function's parameters, so the placement is free.
+	var (
+		changed                 payload.ChangedLines
+		groundingDisabledReason string
+	)
+	if rb == nil && payloadsCarryPrefetchContext(payloads) {
+		log.FromContext(ctx).Warn("grounding disabled: payloads carry Context Definitions but no RangeBuilder was provided; the standalone grounding fallback cannot see prefetched spans",
+			"range", req.Range.Base+".."+req.Range.Head)
+		groundingDisabledReason = "payloads carry Context Definitions but no RangeBuilder was provided; standalone grounding cannot see prefetched spans"
+	} else {
+		changed, groundingDisabledReason = computeGroundingData(ctx, req, rb)
+	}
+	// Scope the retrieved-span widening to what was actually DISPATCHED: the map
+	// above is review-wide, while the Context Definitions block it grounds is a
+	// per-agent shedable entry.
+	changed, prefetchGroundingRevoked := scopePrefetchGrounding(changed, slots)
+	// Record the revocation in BOTH channels an operator reads. Without this the
+	// run is indistinguishable from one where the widening applied: the section
+	// was still delivered (and still billed to every provider), and the only
+	// trace is the generic per-agent "dropped N ungrounded finding(s)" line,
+	// which reads as ordinary hallucination filtering.
+	pfStatus := prefetchStatus(rb)
+	if prefetchGroundingRevoked {
+		if pfStatus != nil {
+			pfStatus.GroundingRevoked = true
+		}
+		log.FromContext(ctx).Warn("prefetch grounding revoked: not every dispatched agent kept the Context Definitions block, so findings on merely-referenced files will be dropped",
+			"range", req.Range.Base+".."+req.Range.Head,
+			"slots", len(slots),
+			"uncovered", uncoveredPrefetchSlots(slots))
+	}
+
 	m := &payload.Manifest{
 		Base:          req.Range.Base,
 		Head:          req.Range.Head,
@@ -573,9 +641,14 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 		// manifests byte-identical to earlier versions' and keeps "no range" distinct
 		// from "range read, ledger absent".
 		ClaimLedger: claimLedgerStatus(rb),
-		Roster:      rosterNames(cfg.Project),
-		StartedAt:   req.StartedAt,
-		Partial:     false, // finalized by ExecuteReview once outcomes are known
+		// Pre-fetch outcome (Epic 35.16.8). Same nil-when-no-builder contract as
+		// the claim ledger: baseline and --diff-file manifests stay byte-identical
+		// to earlier versions', and "no range" stays distinct from "range read,
+		// nothing retrieved".
+		Prefetch:  pfStatus,
+		Roster:    rosterNames(cfg.Project),
+		StartedAt: req.StartedAt,
+		Partial:   false, // finalized by ExecuteReview once outcomes are known
 		// Persist --no-ignore so a resume recovers the filtering mode from disk
 		// rather than the resume request (the completed agents' context is locked).
 		NoIgnore: req.NoIgnore,
@@ -598,12 +671,136 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 	// and capped at the resolved cache_max_bytes. The store is shared across the
 	// run's agents; ExecuteReview hands it to the engine.
 	revCache := cache.NewStore(filepath.Join(req.Root, ".atcr", "cache"), cfg.Settings.CacheMaxBytes)
-	// Epic 14.1 grounding data: compute the per-file changed line ranges for the
-	// range so WritePool can drop findings not anchored in the patch (see
-	// computeGroundingData for the fail-open contract). The reason string records
-	// WHY the gate is off (git failure vs. diff ingestion) in summary.json.
-	changed, groundingDisabledReason := computeGroundingData(ctx, req, rb)
 	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, Changed: changed, GroundingDisabledReason: groundingDisabledReason, manifest: m, cache: revCache, cacheNoRead: req.NoCache}, nil
+}
+
+// payloadsCarryPrefetchContext reports whether any mode payload's pre-budget
+// entries include the Context Definitions section — i.e. the payload can ground
+// findings on retrieved spans no diff ever touched. Only the builder path
+// (withPrefetchedEntries) emits that section, so a false here is the ordinary
+// baseline/diff-ingestion shape, where the standalone grounding fallback is
+// correct.
+func payloadsCarryPrefetchContext(payloads map[string]modePayload) bool {
+	for _, mp := range payloads {
+		for _, e := range mp.Entries {
+			if e.Path == payload.PrefetchContextPath {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// uncoveredPrefetchSlots names the dispatched slots that cannot be shown to have
+// received the Context Definitions block — the reason scopePrefetchGrounding
+// revoked. Naming them is what makes the warning actionable: "an agent lost it"
+// sends the reader through every slot by hand, while the name points at the
+// chain whose budget shed it.
+//
+// An empty slot list yields an explicit marker rather than an empty slice.
+// "nothing was dispatched" and "every dispatched slot kept the block" are
+// different causes that would otherwise both log as no names at all, and the
+// first is the one that means the review never had a voucher in the first place.
+func uncoveredPrefetchSlots(slots []Slot) []string {
+	if len(slots) == 0 {
+		return []string{"<none dispatched>"}
+	}
+	var out []string
+	for _, s := range slots {
+		if !slotKeptPrefetchContext(s) {
+			out = append(out, s.Primary.Name)
+		}
+	}
+	return out
+}
+
+// scopePrefetchGrounding drops every PrefetchOnly key from the review-wide
+// grounding map unless EVERY dispatched agent was sent the Context Definitions
+// block.
+//
+// Grounding is computed ONCE per review and shared by every agent, while that
+// block is a per-agent shedable FileEntry carrying the LOWEST exempt rank — the
+// first exempt section to lose funding on a tight per-agent window. Without this,
+// an agent dispatched without the block still had its findings on merely
+// referenced files accepted by the Epic 14.1 gate: the fabricated-file class that
+// gate exists to stop, re-opened for every file the pre-fetch pass merely named.
+//
+// It fails CLOSED — the whole review loses prefetch grounding when any dispatched
+// member may not have received the block. The alternative is trusting a per-agent
+// fact that a review-wide map cannot express. Findings on genuinely changed files
+// are never affected.
+// It reports whether it REVOKED, so the caller can record that fact. A silent
+// revocation left "delivered and groundable" and "delivered but revoked"
+// byte-identical in every artifact.
+func scopePrefetchGrounding(changed payload.ChangedLines, slots []Slot) (payload.ChangedLines, bool) {
+	prefetched := false
+	for _, fc := range changed {
+		if fc.PrefetchOnly {
+			prefetched = true
+			break
+		}
+	}
+	if !prefetched {
+		// Nothing retrieved to scope — the ordinary shape when pre-fetching is
+		// disabled or matched nothing. Returned as-is so the common path allocates.
+		return changed, false
+	}
+
+	// No slots means nothing was dispatched to vouch for the block, so this starts
+	// false rather than vacuously true.
+	covered := len(slots) > 0
+	for _, s := range slots {
+		if !slotKeptPrefetchContext(s) {
+			covered = false
+			break
+		}
+	}
+	if covered {
+		return changed, false
+	}
+
+	out := make(payload.ChangedLines, len(changed))
+	for p, fc := range changed {
+		if fc.PrefetchOnly {
+			continue
+		}
+		out[p] = fc
+	}
+	return out, true
+}
+
+// slotKeptPrefetchContext reports whether EVERY agent this slot dispatches was
+// sent the Context Definitions block.
+//
+// The primary is judged by Slot.entries, the FileEntry list it actually shipped.
+// An EMPTY list means the payload was never entry-decomposed — the chunked-diff
+// path splits rendered text on diff markers and carries no FileEntry list at all
+// — which is not evidence the block was delivered, so it counts as NOT kept.
+//
+// Each fallback is judged separately, by its own shed record. A fallback
+// re-packs against its own budget and can drop the block while the primary keeps
+// it, which TestRefit_CumulativeFundingKeepsTheLedgerAndShedsRetrievedContext
+// pins. Reading Slot.entries alone would report such a chain as fully covered,
+// and that gap is the reason this guard is chain-wide rather than primary-only.
+func slotKeptPrefetchContext(s Slot) bool {
+	primaryKept := false
+	for _, e := range s.entries {
+		if e.Path == payload.PrefetchContextPath {
+			primaryKept = true
+			break
+		}
+	}
+	if !primaryKept {
+		return false
+	}
+	for _, fb := range s.Fallbacks {
+		for _, dropped := range fb.Truncation.FilesDropped {
+			if dropped == payload.PrefetchContextPath {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // computeGroundingData builds the per-file patch grounding data for the request's
@@ -864,7 +1061,7 @@ func buildRepoPayloads(ctx context.Context, cfg *ReviewConfig, repo string, noIg
 	// Entries keeps the raw pre-budget files so buildSlots re-sheds them per agent
 	// against each model's window (Epic 19.10 F2), identical to buildPayloads.
 	return map[string]modePayload{
-		string(payload.ModeFiles): {Entries: entries, Kept: kept, Text: b.String(), FileCount: len(kept), Truncation: trunc},
+		string(payload.ModeFiles): {Entries: entries, Kept: kept, Text: b.String(), FileCount: payload.ReviewableCount(kept), Truncation: trunc},
 	}, nil
 }
 
@@ -917,7 +1114,7 @@ func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	payloads := map[string]modePayload{
 		// Entries keeps the raw pre-budget diff files so buildSlots re-sheds them
 		// per agent against each model's window (Epic 19.10 F2).
-		diffMode: {Entries: entries, Kept: kept, Text: b.String(), FileCount: len(kept), Truncation: trunc},
+		diffMode: {Entries: entries, Kept: kept, Text: b.String(), FileCount: payload.ReviewableCount(kept), Truncation: trunc},
 	}
 	// Sprint-plan scope (Epic 12.2): the ingestion path honors --sprint-plan too,
 	// prepending the SCOPE CONSTRAINT to every reviewer's payload. An unreadable or
@@ -1239,6 +1436,14 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 	// on_overflow=fail — so this setting is the only operator control over them,
 	// and 0 is the escape hatch that stops commit text reaching a provider at all.
 	opts = append(opts, payload.WithMaxClaimBytes(cfg.Settings.ResolvedMaxClaimBytes()))
+	// Context pre-fetch byte ceiling (Epic 35.16.8, max_prefetch_bytes). Threaded
+	// for the same reason as the claim ledger: the Context Definitions section is
+	// exempt from every byte budget, so this setting is the only operator control
+	// over its size — and 0 is the escape hatch that stops repository source from
+	// OUTSIDE the diff reaching a provider at all. This is the single
+	// option-construction chokepoint, so the resume path (resume.go) inherits it
+	// without its own threading.
+	opts = append(opts, payload.WithMaxPrefetchBytes(cfg.Settings.ResolvedMaxPrefetchBytes()))
 	rb := payload.NewRangeBuilder(ctx, repo, base, head, opts...)
 	out := map[string]modePayload{}
 	for _, mode := range neededModes(cfg) {
@@ -1276,7 +1481,17 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 		// it describes the audit artifact, not any one agent's delivered payload.
 		// Entries keeps the raw pre-budget files so buildSlots re-sheds them per
 		// agent against each model's window (Epic 19.10 F2).
-		out[mode] = modePayload{Entries: entries, Kept: kept, Text: b.String(), FileCount: len(kept), Truncation: trunc}
+		//
+		// ReviewableCount, not len(kept): the engine prepends up to TWO synthetic
+		// sections here — the claim ledger and the Context Definitions block — and
+		// counting them reports more files than the range changed, in the manifest
+		// and in the persona-visible {{.FileCount}}. Epic 35.16.7 recorded that
+		// inflation as an accepted consequence only because it was forbidden from
+		// editing this package; pre-fetching would have doubled it, so it is
+		// corrected here instead. The per-agent re-derivations in buildSlots
+		// apply the same ReviewableCount rule, so every reader of FileCount —
+		// manifest, persona template, and per-agent prompt — agrees.
+		out[mode] = modePayload{Entries: entries, Kept: kept, Text: b.String(), FileCount: payload.ReviewableCount(kept), Truncation: trunc}
 	}
 	// Every payload mode's entries are now materialized into out, so the
 	// per-mode diff chunk caches (fc/plain/raw) and the line-range cache on the
@@ -2399,7 +2614,14 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			smallest := kept[0]
 			bulkEntries = kept
 			bulkShed = keptTrunc.Truncated
-			bulkText, bulkFileCount = smallest.Body, 1
+			// ReviewableCount, never a literal 1: keepSmallestEntry picks by
+			// len(Body) with no shedExempt awareness, so the single entry it kept
+			// may be a SYNTHETIC section — the claim ledger or Context Definitions.
+			// Reporting 1 there tells the agent to review a changed file it was
+			// never sent, and sends it hunting for content that is not in its
+			// prompt. The re-pack arm below and the fallback re-fit already apply
+			// this rule; this arm was the last derivation that did not.
+			bulkText, bulkFileCount = smallest.Body, payload.ReviewableCount(kept)
 			bulkTrunc = keptTrunc
 			bulkDegradation = degradationOverflow
 			if warnOversized {
@@ -2460,7 +2682,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				for _, e := range kept {
 					pb.WriteString(e.Body)
 				}
-				bulkText, bulkFileCount, bulkTrunc = pb.String(), len(kept), trunc
+				bulkText, bulkFileCount, bulkTrunc = pb.String(), payload.ReviewableCount(kept), trunc
 				// Shed only when a file was actually dropped: a no-op budget pass returns
 				// the same entry set, and that persona can still share the whole-payload tag.
 				bulkEntries, bulkShed = kept, len(kept) != len(mp.Entries)
@@ -2947,8 +3169,23 @@ func inheritedPayloadFits(primary Agent, budget int64) bool {
 		return false
 	}
 	var total int64
+	measured := 0
 	for _, ref := range primary.CodeContext {
+		// Skip the UNATTRIBUTED entry. That is the engine's synthetic prefix — the
+		// claim ledger and Context Definitions block — which is shed-EXEMPT and so
+		// is not governed by the effective byte budget compared against here.
+		// Counting it would make a payload that genuinely fits read as
+		// overflowing, and trigger a re-fit that has nothing to shed.
+		if ref.Path == "" {
+			continue
+		}
+		measured++
 		total += int64(len(ref.Body))
+	}
+	if measured == 0 {
+		// Nothing measurable: "may not fit", never "fits" — the same bias the
+		// empty-CodeContext arm above takes, and for the same reason.
+		return false
 	}
 	return total <= budget
 }
@@ -2963,6 +3200,12 @@ func inheritedPayloadFits(primary Agent, budget int64) bool {
 // 35.16.5.4, but it re-packs the slot's CARRIED entries (fallbackRefit), never
 // this reconstruction — this function's only consumer remains the fail/fallback
 // policy call.
+//
+// It reconstructs the unattributed prefix entry too, as a FileEntry with an
+// empty Path. Harmless while the only consumer is the fail/fallback policy call,
+// which ignores the entries — but it cannot restore shedExempt, so a future arm
+// that actually re-packs this reconstruction would treat the engine's synthetic
+// sections as ordinary reviewable content.
 func entriesFromPrimary(primary Agent) []payload.FileEntry {
 	entries := make([]payload.FileEntry, 0, len(primary.CodeContext))
 	for _, ref := range primary.CodeContext {
@@ -3623,7 +3866,7 @@ func refitFallbackPayload(cfg *ReviewConfig, refit fallbackRefit, fbBudget int64
 		chunkTotal: 1,
 		action:     action,
 	}
-	a, err := renderAgent(cfg, refit.primaryName, refit.primaryConfig, refit.persona, refit.mode, pb.String(), len(kept), trunc, refit.rng, scopeConstraint, sz)
+	a, err := renderAgent(cfg, refit.primaryName, refit.primaryConfig, refit.persona, refit.mode, pb.String(), payload.ReviewableCount(kept), trunc, refit.rng, scopeConstraint, sz)
 	if err != nil {
 		return refitPayload{}, false, err
 	}
@@ -3843,5 +4086,18 @@ func claimLedgerStatus(rb *payload.RangeBuilder) *payload.ClaimLedgerStatus {
 		return nil
 	}
 	s := rb.ClaimLedgerStatus()
+	return &s
+}
+
+// prefetchStatus lifts a RangeBuilder's pre-fetch outcome into the manifest's
+// optional field. A nil builder yields nil, not a zero struct, for the same
+// reason claimLedgerStatus does: the baseline and --diff-file paths have no
+// range to prefetch from, and recording Present=false there would assert that
+// a lookup matched nothing when in fact no lookup was ever asked.
+func prefetchStatus(rb *payload.RangeBuilder) *payload.PrefetchStatus {
+	if rb == nil {
+		return nil
+	}
+	s := rb.PrefetchStatus()
 	return &s
 }

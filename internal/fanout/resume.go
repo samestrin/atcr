@@ -437,10 +437,35 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 	}
 
 	changed, groundingDisabledReason := computeGroundingData(ctx, req, rb)
+	// Scoped against the PENDING slots — the set this resume actually dispatches.
+	// Sharing the helper with the fresh path is deliberate: scoping only there
+	// would leave the resume leg re-opening the hole for precisely the agents a
+	// resumed run re-invokes.
+	pending := filterPendingSlots(slots, done)
+	changed, prefetchGroundingRevoked := scopePrefetchGrounding(changed, pending)
+	// Logged on the resume leg too, for the reason the scoping itself is applied
+	// here: a resumed run re-invokes precisely the agents that were pending, and
+	// recording the revocation only on the fresh path would leave the leg most
+	// likely to be re-run the one with no trace of it.
+	if prefetchGroundingRevoked {
+		log.FromContext(ctx).Warn("prefetch grounding revoked: not every resumed agent kept the Context Definitions block, so findings on merely-referenced files will be dropped",
+			"range", req.Range.Base+".."+req.Range.Head,
+			"slots", len(pending),
+			"uncovered", uncoveredPrefetchSlots(pending))
+	}
+	// The pre-fetch record this resume actually built, carried so ExecuteResume
+	// can stamp it. The revocation is folded in HERE rather than left to the
+	// builder: rb reports what retrieval produced and cannot see slots, so a
+	// status taken straight from it would report grounding_revoked:false even on
+	// the resume that just revoked.
+	resumedPrefetch := prefetchStatus(rb)
+	if prefetchGroundingRevoked && resumedPrefetch != nil {
+		resumedPrefetch.GroundingRevoked = true
+	}
 	p := &PreparedReview{
 		ID:          filepath.Base(reviewDir),
 		Dir:         reviewDir,
-		Slots:       filterPendingSlots(slots, done),
+		Slots:       pending,
 		TimeoutSec:  cfg.Settings.TimeoutSecs,
 		MaxParallel: cfg.Settings.MaxParallel,
 		Repo:        req.Repo,
@@ -460,6 +485,9 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 		// the finalized manifest. rb is nil on the baseline path, which yields nil
 		// and leaves the manifest's field alone.
 		claimLedger: claimLedgerStatus(rb),
+		// The pre-fetch outcome of this resume, by the same contract as the ledger
+		// above: nil on a baseline path leaves the manifest's field alone.
+		prefetch: resumedPrefetch,
 	}
 	if m.Baseline {
 		// TD-011: a resumed BASELINE run captures the same write-back state the
@@ -559,6 +587,17 @@ func ExecuteResume(ctx context.Context, completer Completer, p *PreparedReview) 
 	// read (baseline / --diff-file), where the manifest's own value stands.
 	if p.claimLedger != nil {
 		m.ClaimLedger = p.claimLedger
+	}
+	// Recompute the pre-fetch record from the RESUMED run for exactly the reason
+	// stated above for the ledger. buildPayloads re-resolves max_prefetch_bytes
+	// and re-runs git grep, so an operator setting max_prefetch_bytes: 0 between
+	// the runs, or a transient grep failure, produces a different outcome than the
+	// interrupted run recorded. Leaving the old record in place asserts a
+	// Context Definitions block those agents never saw. nil means this preparation
+	// had no range to read (baseline / --diff-file), where the manifest's own
+	// value stands.
+	if p.prefetch != nil {
+		m.Prefetch = p.prefetch
 	}
 	if err := WriteManifest(p.Dir, &m); err != nil {
 		// Best-effort: stamp Interrupted on the existing manifest so the run is

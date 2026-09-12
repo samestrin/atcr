@@ -491,15 +491,20 @@ func TestEscalationIntegration_EscalatedFileReadsHeadBlobOnce(t *testing.T) {
 	afterFirst := rb.g.execCount
 
 	// Pin the absolute cost of the first build, not just the delta between the
-	// two builds: 8 = name-status + numstat + the whole-range diff variants this
+	// two builds: 9 = name-status + numstat + the whole-range diff variants this
 	// build populates + exactly ONE `git show` of the HEAD blob (shared by the
 	// analysis pass and any later render via the memo) + exactly ONE `git log`
-	// for the claim ledger (Epic 35.16.7), memoized per builder like the blob.
-	// An unmemoized second read of either inside this build would cost 9. If a
-	// legitimate pipeline change alters the count, update the number
+	// for the claim ledger (Epic 35.16.7), memoized per builder like the blob,
+	// + exactly ONE `git grep` for context-aware pre-fetching (Epic 35.16.8),
+	// which resolves EVERY changed symbol in a single process and is memoized per
+	// builder like the other two. An unmemoized second read of any of the three
+	// inside this build would cost 10. This count was deliberately raised from 8
+	// when pre-fetching landed, per the note below.
+	//
+	// If a legitimate pipeline change alters the count, update the number
 	// deliberately.
-	require.Equal(t, 8, afterFirst-before,
-		"the first build must read the HEAD blob and the commit log exactly once each, alongside the cached whole-range diffs")
+	require.Equal(t, 9, afterFirst-before,
+		"the first build must read the HEAD blob, the commit log, and the pre-fetch grep exactly once each, alongside the cached whole-range diffs")
 
 	// Re-render the same range in files mode on the same runner: the HEAD blob is
 	// already memoized, so rendering must not re-spawn `git show` for it.
