@@ -1761,6 +1761,20 @@ func (g *gitRunner) buildPrefetch(base, head string) (section string, spans map[
 	// narrows to declaration sites depending on which file the iteration
 	// visited first.
 	seenIdx := make(map[string]int)
+	// Resolve the changed-file ceiling once, from the runner rather than the
+	// const, so the bound is reachable from a test without a 251-changed-file
+	// fixture (the same reason maxPrefetchHits became a parameter of
+	// parseGrepHits).
+	//
+	// A non-positive value means "use the package default", never "read nothing".
+	// A gitRunner built as a literal rather than through newGitRunner carries a
+	// zero here, and honouring that literally would disable symbol extraction for
+	// the entire range — a silent, total loss of the feature, which is a worse
+	// failure than the unbounded blob reads this ceiling exists to prevent.
+	changedFileCeiling := g.changedFileCeiling
+	if changedFileCeiling <= 0 {
+		changedFileCeiling = maxPrefetchChangedFiles
+	}
 	readFiles := 0
 	for _, f := range files {
 		if f.kind == kindDeleted {
@@ -1781,12 +1795,15 @@ func (g *gitRunner) buildPrefetch(base, head string) (section string, spans map[
 		if lang == "" && !looksLikeTestFile(f.path) {
 			continue
 		}
-		if readFiles >= maxPrefetchChangedFiles {
+		if readFiles >= changedFileCeiling {
 			// Same shape as the maxFetcherHits ceiling: a pathological all-parseable
 			// diff whose files yield few or duplicate symbols would otherwise read
 			// every changed blob. 250 files comfortably span the 40-symbol budget.
+			//
+			// The log reports the ceiling that ACTUALLY bound, not the const, so a
+			// run with an injected bound is not described by a number it never used.
 			g.log().Debug("payload: pre-fetch symbol extraction stopped at the changed-file ceiling",
-				"ceiling", maxPrefetchChangedFiles, "symbols", len(symbols))
+				"ceiling", changedFileCeiling, "symbols", len(symbols))
 			break
 		}
 		readFiles++
