@@ -1678,6 +1678,19 @@ type PrefetchStatus struct {
 	Truncated bool `json:"truncated,omitempty"`
 	Disabled  bool `json:"disabled,omitempty"`
 	Failed    bool `json:"failed,omitempty"`
+	// GroundingRevoked reports that the section WAS delivered but the review-wide
+	// retrieved-span widening was withdrawn, because not every dispatched agent
+	// could be shown to have kept the block (internal/fanout's
+	// scopePrefetchGrounding). Findings on merely-referenced files are then
+	// dropped by the Epic 14.1 gate exactly as if nothing had been retrieved.
+	//
+	// It is separate from Present for the same reason Disabled is separate from
+	// Failed: delivery and groundability are independent facts, and collapsing
+	// them leaves "the context was used" and "the context was paid for and then
+	// made unusable" byte-identical — which is the state this type exists to
+	// make impossible. The ordinary shape is false, so omitempty keeps an
+	// unrevoked manifest byte-identical to earlier versions'.
+	GroundingRevoked bool `json:"grounding_revoked,omitempty"`
 }
 
 // looksLikeTestFile reports whether rel is a test file, enabling the AC6

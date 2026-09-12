@@ -548,6 +548,57 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 		}
 	}
 
+	// Epic 14.1 grounding data: compute the per-file changed line ranges for the
+	// range so WritePool can drop findings not anchored in the patch (see
+	// computeGroundingData for the fail-open contract). The reason string records
+	// WHY the gate is off (git failure vs. diff ingestion) in summary.json.
+	//
+	// Guard the builder pairing before grounding (Epic 35.16.8): the standalone
+	// fallback inside computeGroundingData never merges prefetch spans — only
+	// rb.BuildChangedLines does, via withPrefetchedSpans. Payloads that carry
+	// Context Definitions can ground findings on spans no diff ever touched, so
+	// grounding such payloads through the fallback would silently drop every
+	// finding on shown spans as "file not in the patch". Every git-range caller
+	// passes the same builder that built the payloads (the baseline and diff
+	// paths pass nil but cannot produce prefetch spans), so this pairing is
+	// unreachable today; if a future caller breaks it, disable the gate audibly
+	// — the same treatment as computeGroundingData's range-mismatch guard —
+	// rather than ground incompletely.
+	//
+	// This runs BEFORE the manifest is built, not after it is written, because
+	// the scoping below is a fact the manifest has to carry. It depends only on
+	// this function's parameters, so the placement is free.
+	var (
+		changed                 payload.ChangedLines
+		groundingDisabledReason string
+	)
+	if rb == nil && payloadsCarryPrefetchContext(payloads) {
+		log.FromContext(ctx).Warn("grounding disabled: payloads carry Context Definitions but no RangeBuilder was provided; the standalone grounding fallback cannot see prefetched spans",
+			"range", req.Range.Base+".."+req.Range.Head)
+		groundingDisabledReason = "payloads carry Context Definitions but no RangeBuilder was provided; standalone grounding cannot see prefetched spans"
+	} else {
+		changed, groundingDisabledReason = computeGroundingData(ctx, req, rb)
+	}
+	// Scope the retrieved-span widening to what was actually DISPATCHED: the map
+	// above is review-wide, while the Context Definitions block it grounds is a
+	// per-agent shedable entry.
+	changed, prefetchGroundingRevoked := scopePrefetchGrounding(changed, slots)
+	// Record the revocation in BOTH channels an operator reads. Without this the
+	// run is indistinguishable from one where the widening applied: the section
+	// was still delivered (and still billed to every provider), and the only
+	// trace is the generic per-agent "dropped N ungrounded finding(s)" line,
+	// which reads as ordinary hallucination filtering.
+	pfStatus := prefetchStatus(rb)
+	if prefetchGroundingRevoked {
+		if pfStatus != nil {
+			pfStatus.GroundingRevoked = true
+		}
+		log.FromContext(ctx).Warn("prefetch grounding revoked: not every dispatched agent kept the Context Definitions block, so findings on merely-referenced files will be dropped",
+			"range", req.Range.Base+".."+req.Range.Head,
+			"slots", len(slots),
+			"uncovered", uncoveredPrefetchSlots(slots))
+	}
+
 	m := &payload.Manifest{
 		Base:          req.Range.Base,
 		Head:          req.Range.Head,
@@ -583,7 +634,7 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 		// the claim ledger: baseline and --diff-file manifests stay byte-identical
 		// to earlier versions', and "no range" stays distinct from "range read,
 		// nothing retrieved".
-		Prefetch:  prefetchStatus(rb),
+		Prefetch:  pfStatus,
 		Roster:    rosterNames(cfg.Project),
 		StartedAt: req.StartedAt,
 		Partial:   false, // finalized by ExecuteReview once outcomes are known
@@ -609,37 +660,6 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 	// and capped at the resolved cache_max_bytes. The store is shared across the
 	// run's agents; ExecuteReview hands it to the engine.
 	revCache := cache.NewStore(filepath.Join(req.Root, ".atcr", "cache"), cfg.Settings.CacheMaxBytes)
-	// Epic 14.1 grounding data: compute the per-file changed line ranges for the
-	// range so WritePool can drop findings not anchored in the patch (see
-	// computeGroundingData for the fail-open contract). The reason string records
-	// WHY the gate is off (git failure vs. diff ingestion) in summary.json.
-	//
-	// Guard the builder pairing before grounding (Epic 35.16.8): the standalone
-	// fallback inside computeGroundingData never merges prefetch spans — only
-	// rb.BuildChangedLines does, via withPrefetchedSpans. Payloads that carry
-	// Context Definitions can ground findings on spans no diff ever touched, so
-	// grounding such payloads through the fallback would silently drop every
-	// finding on shown spans as "file not in the patch". Every git-range caller
-	// passes the same builder that built the payloads (the baseline and diff
-	// paths pass nil but cannot produce prefetch spans), so this pairing is
-	// unreachable today; if a future caller breaks it, disable the gate audibly
-	// — the same treatment as computeGroundingData's range-mismatch guard —
-	// rather than ground incompletely.
-	var (
-		changed                 payload.ChangedLines
-		groundingDisabledReason string
-	)
-	if rb == nil && payloadsCarryPrefetchContext(payloads) {
-		log.FromContext(ctx).Warn("grounding disabled: payloads carry Context Definitions but no RangeBuilder was provided; the standalone grounding fallback cannot see prefetched spans",
-			"range", req.Range.Base+".."+req.Range.Head)
-		groundingDisabledReason = "payloads carry Context Definitions but no RangeBuilder was provided; standalone grounding cannot see prefetched spans"
-	} else {
-		changed, groundingDisabledReason = computeGroundingData(ctx, req, rb)
-	}
-	// Scope the retrieved-span widening to what was actually DISPATCHED: the map
-	// above is review-wide, while the Context Definitions block it grounds is a
-	// per-agent shedable entry.
-	changed, _ = scopePrefetchGrounding(changed, slots)
 	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, Changed: changed, GroundingDisabledReason: groundingDisabledReason, manifest: m, cache: revCache, cacheNoRead: req.NoCache}, nil
 }
 
@@ -658,6 +678,29 @@ func payloadsCarryPrefetchContext(payloads map[string]modePayload) bool {
 		}
 	}
 	return false
+}
+
+// uncoveredPrefetchSlots names the dispatched slots that cannot be shown to have
+// received the Context Definitions block — the reason scopePrefetchGrounding
+// revoked. Naming them is what makes the warning actionable: "an agent lost it"
+// sends the reader through every slot by hand, while the name points at the
+// chain whose budget shed it.
+//
+// An empty slot list yields an explicit marker rather than an empty slice.
+// "nothing was dispatched" and "every dispatched slot kept the block" are
+// different causes that would otherwise both log as no names at all, and the
+// first is the one that means the review never had a voucher in the first place.
+func uncoveredPrefetchSlots(slots []Slot) []string {
+	if len(slots) == 0 {
+		return []string{"<none dispatched>"}
+	}
+	var out []string
+	for _, s := range slots {
+		if !slotKeptPrefetchContext(s) {
+			out = append(out, s.Primary.Name)
+		}
+	}
+	return out
 }
 
 // scopePrefetchGrounding drops every PrefetchOnly key from the review-wide
@@ -712,7 +755,7 @@ func scopePrefetchGrounding(changed payload.ChangedLines, slots []Slot) (payload
 		}
 		out[p] = fc
 	}
-	return out, false
+	return out, true
 }
 
 // slotKeptPrefetchContext reports whether EVERY agent this slot dispatches was

@@ -442,7 +442,17 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 	// would leave the resume leg re-opening the hole for precisely the agents a
 	// resumed run re-invokes.
 	pending := filterPendingSlots(slots, done)
-	changed, _ = scopePrefetchGrounding(changed, pending)
+	changed, prefetchGroundingRevoked := scopePrefetchGrounding(changed, pending)
+	// Logged on the resume leg too, for the reason the scoping itself is applied
+	// here: a resumed run re-invokes precisely the agents that were pending, and
+	// recording the revocation only on the fresh path would leave the leg most
+	// likely to be re-run the one with no trace of it.
+	if prefetchGroundingRevoked {
+		log.FromContext(ctx).Warn("prefetch grounding revoked: not every resumed agent kept the Context Definitions block, so findings on merely-referenced files will be dropped",
+			"range", req.Range.Base+".."+req.Range.Head,
+			"slots", len(pending),
+			"uncovered", uncoveredPrefetchSlots(pending))
+	}
 	p := &PreparedReview{
 		ID:          filepath.Base(reviewDir),
 		Dir:         reviewDir,
