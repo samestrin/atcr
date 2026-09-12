@@ -700,3 +700,61 @@ func TestExecuteResume_ClaimLedgerReflectsTheResumedRun(t *testing.T) {
 	assert.False(t, after.ClaimLedger.Present,
 		"the pending agents received no ledger; present:true here is the ambiguity the field exists to remove")
 }
+
+// The same argument, for the pre-fetch record. ExecuteResume re-stamps ONLY
+// m.ClaimLedger and copies every other provenance field from the interrupted
+// run, so m.Prefetch keeps asserting present:true with a snippet count for a
+// resume whose pending agents received no Context Definitions block at all.
+//
+// The premise is identical to the ledger's and is stated in resume.go's own
+// comment: PrepareResume re-runs buildPayloads against a FRESHLY LOADED config,
+// so a resumed run re-resolves max_prefetch_bytes and re-executes git grep. An
+// operator who sets max_prefetch_bytes: 0 between the runs, or who hits a
+// transient grep failure, gets a genuinely different outcome — and nothing
+// carries it, because PreparedReview has no prefetch sibling to claimLedger.
+//
+// fanoutRepo is deliberately NOT reused here: it adds its consumer at head, so
+// the only caller of a changed symbol is itself a changed file and is excluded
+// as already-in-payload. Pre-fetching cannot fire on that shape, which would
+// make the precondition below pass vacuously.
+func TestExecuteResume_PrefetchReflectsTheResumedRun(t *testing.T) {
+	repo, base, head := prefetchFanoutRepo(t)
+
+	cfg := fourAgentConfig("http://unused")
+	prep, err := PrepareReview(context.Background(), cfg, reviewReq(repo, repo, base, head))
+	require.NoError(t, err)
+
+	m, err := ReadManifest(prep.Dir)
+	require.NoError(t, err)
+	require.NotNil(t, m.Prefetch, "precondition: a range review records the pre-fetch outcome")
+	require.True(t, m.Prefetch.Present,
+		"precondition: this fixture retrieves a consumer, or 'the record went stale' cannot be observed")
+
+	poolDir := filepath.Join(prep.Dir, "sources", "pool")
+	require.NoError(t, writeResumedAgents(poolDir, []Result{
+		{Agent: "greta", Status: StatusOK, Content: "CRITICAL|cursor.go:3|x|y|security|15|ev"},
+		{Agent: "kai", Status: StatusOK, Content: ""},
+	}, nil))
+
+	// The operator disables pre-fetching between the interrupted run and its
+	// resume — the same lever the ledger test uses, for the same reason: it is
+	// the one change an operator can make that is unambiguously observable.
+	srv := mockProvider(t)
+	cfg2 := fourAgentConfig(srv.URL)
+	off := int64(0)
+	cfg2.Settings.MaxPrefetchBytes = &off
+
+	rprep, _, err := PrepareResume(context.Background(), cfg2, prep.Dir, reviewReq(repo, repo, base, head))
+	require.NoError(t, err)
+
+	_, err = ExecuteResume(context.Background(), llmclient.New(), rprep)
+	require.NoError(t, err)
+
+	after, err := ReadManifest(prep.Dir)
+	require.NoError(t, err)
+	require.NotNil(t, after.Prefetch, "a range resume still has a range to report on")
+	assert.True(t, after.Prefetch.Disabled,
+		"the finalized manifest must report the pre-fetch outcome the RESUMED run built, not the interrupted run's")
+	assert.False(t, after.Prefetch.Present,
+		"the pending agents received no Context Definitions block; present:true here is the ambiguity the field exists to remove")
+}
