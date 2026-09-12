@@ -437,10 +437,16 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 	}
 
 	changed, groundingDisabledReason := computeGroundingData(ctx, req, rb)
+	// Scoped against the PENDING slots — the set this resume actually dispatches.
+	// Sharing the helper with the fresh path is deliberate: scoping only there
+	// would leave the resume leg re-opening the hole for precisely the agents a
+	// resumed run re-invokes.
+	pending := filterPendingSlots(slots, done)
+	changed = scopePrefetchGrounding(changed, pending)
 	p := &PreparedReview{
 		ID:          filepath.Base(reviewDir),
 		Dir:         reviewDir,
-		Slots:       filterPendingSlots(slots, done),
+		Slots:       pending,
 		TimeoutSec:  cfg.Settings.TimeoutSecs,
 		MaxParallel: cfg.Settings.MaxParallel,
 		Repo:        req.Repo,

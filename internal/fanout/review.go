@@ -636,6 +636,10 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 	} else {
 		changed, groundingDisabledReason = computeGroundingData(ctx, req, rb)
 	}
+	// Scope the retrieved-span widening to what was actually DISPATCHED: the map
+	// above is review-wide, while the Context Definitions block it grounds is a
+	// per-agent shedable entry.
+	changed = scopePrefetchGrounding(changed, slots)
 	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, Changed: changed, GroundingDisabledReason: groundingDisabledReason, manifest: m, cache: revCache, cacheNoRead: req.NoCache}, nil
 }
 
@@ -659,8 +663,87 @@ func payloadsCarryPrefetchContext(payloads map[string]modePayload) bool {
 // scopePrefetchGrounding drops every PrefetchOnly key from the review-wide
 // grounding map unless EVERY dispatched agent was sent the Context Definitions
 // block.
+//
+// Grounding is computed ONCE per review and shared by every agent, while that
+// block is a per-agent shedable FileEntry carrying the LOWEST exempt rank — the
+// first exempt section to lose funding on a tight per-agent window. Without this,
+// an agent dispatched without the block still had its findings on merely
+// referenced files accepted by the Epic 14.1 gate: the fabricated-file class that
+// gate exists to stop, re-opened for every file the pre-fetch pass merely named.
+//
+// It fails CLOSED — the whole review loses prefetch grounding when any dispatched
+// member may not have received the block. The alternative is trusting a per-agent
+// fact that a review-wide map cannot express. Findings on genuinely changed files
+// are never affected.
 func scopePrefetchGrounding(changed payload.ChangedLines, slots []Slot) payload.ChangedLines {
-	return changed
+	prefetched := false
+	for _, fc := range changed {
+		if fc.PrefetchOnly {
+			prefetched = true
+			break
+		}
+	}
+	if !prefetched {
+		// Nothing retrieved to scope — the ordinary shape when pre-fetching is
+		// disabled or matched nothing. Returned as-is so the common path allocates.
+		return changed
+	}
+
+	// No slots means nothing was dispatched to vouch for the block, so this starts
+	// false rather than vacuously true.
+	covered := len(slots) > 0
+	for _, s := range slots {
+		if !slotKeptPrefetchContext(s) {
+			covered = false
+			break
+		}
+	}
+	if covered {
+		return changed
+	}
+
+	out := make(payload.ChangedLines, len(changed))
+	for p, fc := range changed {
+		if fc.PrefetchOnly {
+			continue
+		}
+		out[p] = fc
+	}
+	return out
+}
+
+// slotKeptPrefetchContext reports whether EVERY agent this slot dispatches was
+// sent the Context Definitions block.
+//
+// The primary is judged by Slot.entries, the FileEntry list it actually shipped.
+// An EMPTY list means the payload was never entry-decomposed — the chunked-diff
+// path splits rendered text on diff markers and carries no FileEntry list at all
+// — which is not evidence the block was delivered, so it counts as NOT kept.
+//
+// Each fallback is judged separately, by its own shed record. A fallback
+// re-packs against its own budget and can drop the block while the primary keeps
+// it, which TestRefit_CumulativeFundingKeepsTheLedgerAndShedsRetrievedContext
+// pins. Reading Slot.entries alone would report such a chain as fully covered,
+// and that gap is the reason this guard is chain-wide rather than primary-only.
+func slotKeptPrefetchContext(s Slot) bool {
+	primaryKept := false
+	for _, e := range s.entries {
+		if e.Path == payload.PrefetchContextPath {
+			primaryKept = true
+			break
+		}
+	}
+	if !primaryKept {
+		return false
+	}
+	for _, fb := range s.Fallbacks {
+		for _, dropped := range fb.Truncation.FilesDropped {
+			if dropped == payload.PrefetchContextPath {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // computeGroundingData builds the per-file patch grounding data for the request's
