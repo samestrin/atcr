@@ -204,6 +204,27 @@ type gitRunner struct {
 	// the only thing bounding it.
 	maxPrefetchBytes int64
 
+	// maxPrefetchChangedFiles bounds how many CHANGED files buildPrefetch's
+	// symbol-extraction loop reads HEAD blobs for. It is INJECTED rather than
+	// read straight from the package const so the ceiling is reachable from a
+	// test without a 251-changed-file fixture — the same reason maxPrefetchHits
+	// was made a parameter of parseGrepHits rather than closed over.
+	//
+	// Its sibling maxPrefetchFiles stays a plain const deliberately: at 25 it is
+	// directly exercisable with 30 real files (see
+	// TestRetrieveSnippets_StopsAtTheCandidateFileCap), so injecting it would add
+	// a knob and buy nothing.
+	//
+	// A non-positive value means "use the package default", not "read nothing".
+	// A gitRunner built as a literal rather than through newGitRunner would
+	// otherwise inherit a zero ceiling and silently disable symbol extraction for
+	// the whole range, which is a worse failure than the one the ceiling prevents.
+	//
+	// Named distinctly from the maxPrefetchChangedFiles const it defaults to, so
+	// `g.changedFileCeiling` and the const never read as the same identifier —
+	// the same separation maxPrefetchBytes keeps from DefaultMaxPrefetchBytes.
+	changedFileCeiling int
+
 	// state holds the whole-range caches for the current base..head pair.
 	// Access only via forRange, which resets state when the range changes.
 	state rangeState
@@ -234,6 +255,10 @@ func newGitRunner(ctx context.Context, repo string) *gitRunner {
 		// Matches registry.DefaultMaxPrefetchBytes; a caller that resolves the
 		// setting overrides it through WithMaxPrefetchBytes.
 		maxPrefetchBytes: DefaultMaxPrefetchBytes,
+		// The production ceiling. No setting resolves this one — it is a latency
+		// bound, not an operator knob — so it is seeded here and overridden only
+		// by tests that need the ceiling to bind without a 251-file fixture.
+		changedFileCeiling: maxPrefetchChangedFiles,
 	}
 }
 
