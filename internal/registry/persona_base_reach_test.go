@@ -8,10 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// baseOnlySectionHeading names a section that exists in personas/_base.md and in
+// personaBaseOnlyHeading names a section that exists in personas/_base.md and in
 // no per-agent persona file. It is the lever this test pulls: text living only in
 // _base.md is, by construction, text no registered agent receives.
-const baseOnlySectionHeading = "## Grounding (mandatory)"
+const personaBaseOnlyHeading = "## Grounding (mandatory)"
 
 // sectionFromBase returns the body of heading in the embedded _base.md, up to the
 // next "## " heading. It fails loudly rather than returning empty, so a reworded
@@ -84,7 +84,7 @@ func opensSection(line string) bool {
 // fails by design. That is a behaviour change to decide on, not one to discover
 // later from a panel that quietly started reviewing differently.
 func TestPersonaResolution_BaseOnlyTextReachesNoRegisteredAgent(t *testing.T) {
-	baseOnly := sectionFromBase(t, baseOnlySectionHeading)
+	baseOnly := sectionFromBase(t, personaBaseOnlyHeading)
 
 	// Check the premise rather than trusting the comment on the const. If the
 	// extraction ever runs past the grounding section it picks up the
@@ -116,6 +116,6 @@ func TestPersonaResolution_BaseOnlyTextReachesNoRegisteredAgent(t *testing.T) {
 				"became a shared prefix (a deliberate change to make, not to inherit), or %q is "+
 				"no longer base-only. While it holds: a rule added to _base.md alone reaches no "+
 				"registered agent, so a panel-wide rule belongs in every persona file.",
-			name, baseOnlySectionHeading)
+			name, personaBaseOnlyHeading)
 	}
 }
