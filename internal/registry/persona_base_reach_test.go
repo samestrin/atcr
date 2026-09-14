@@ -165,11 +165,16 @@ func TestOpensSection(t *testing.T) {
 func TestPersonaResolution_BaseOnlyTextReachesNoRegisteredAgent(t *testing.T) {
 	baseOnly := personaSectionFromBase(t, personaBaseOnlyHeading)
 
-	// Check the premise rather than trusting the comment on the const. If the
+	// Check the premise rather than trusting the comment on the const: if the
 	// extraction ever runs past the grounding section it picks up the
 	// Tool-Assisted Review block, which every per-agent file carries verbatim —
 	// the assertions below would still pass, but on text that is not base-only.
-	require.NotContains(t, baseOnly, "## Tool-Assisted Review",
+	// Guard on the CONSEQUENCE (tool-block prose — the same canary
+	// internal/payload/tools_persona_test.go uses) rather than on the heading
+	// literal: the heading text is exactly what an overrun-causing edit reshapes,
+	// and the collection loop provably excludes the heading itself from the span
+	// either way, so a literal guard could never fire.
+	require.NotContains(t, baseOnly, "read_file, grep, and list_files",
 		"the extracted lever overran the grounding section into the tool block, which every "+
 			"per-agent persona carries verbatim — it is no longer base-only, so this test would "+
 			"be asserting something much weaker than it claims")
