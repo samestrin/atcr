@@ -2,6 +2,7 @@ package personas
 
 import (
 	"io/fs"
+	"os"
 	"strings"
 	"testing"
 
@@ -144,6 +145,24 @@ func TestEveryBuiltinPersona_PredicateRuleStaysInItsOwnVoice(t *testing.T) {
 		} else {
 			seen[remainder] = path
 		}
+	}
+}
+
+// TestAuthoringDoc_QuotesTheEnforcedAnchors pins docs/personas-authoring.md
+// against the two constants above. The doc quotes both phrases verbatim — in the
+// panel-wide rule paragraph and in the release checklist — as the contract
+// contributors must satisfy; a phrase edited in the constants leaves authoring
+// instructions that produce personas which fail the suite. The guard lives in
+// THIS package, beside the constants, so the doc cannot drift from the strings
+// it documents (doc-content precedent: internal/personas/personas_test.go).
+func TestAuthoringDoc_QuotesTheEnforcedAnchors(t *testing.T) {
+	body, err := os.ReadFile("../docs/personas-authoring.md")
+	require.NoError(t, err, "docs/personas-authoring.md must exist")
+	for _, anchor := range []string{predicateRuleAnchor, predicateFilingAnchor} {
+		require.Containsf(t, string(body), anchor,
+			"docs/personas-authoring.md no longer quotes the enforced anchor %q — the "+
+				"authoring instructions now describe a contract the suite does not check; "+
+				"update the doc and the constants together", anchor)
 	}
 }
 
