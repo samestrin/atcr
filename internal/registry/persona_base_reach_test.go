@@ -27,13 +27,36 @@ func sectionFromBase(t *testing.T, heading string) string {
 		"_base.md no longer contains %q — this test needs a section present ONLY in _base.md "+
 			"to demonstrate what base-only text reaches; point it at another one", heading)
 
-	rest := base[start+len(heading):]
-	if end := strings.Index(rest, "\n## "); end >= 0 {
-		rest = rest[:end]
+	// Stop at the next section heading. Slicing on a literal "\n## " is WRONG
+	// here: _base.md's following headings are prefixed by template actions
+	// ({{if .ToolsEnabled}}## Tool-Assisted Review, {{end}}## Severity Rubric), so
+	// a literal scan runs straight past them and swallows the whole tool block —
+	// which every per-agent file carries verbatim, making the returned text
+	// anything but base-only and the assertion far coarser than it reads.
+	var collected []string
+	for _, line := range strings.Split(base[start+len(heading):], "\n")[1:] {
+		if opensSection(line) {
+			break
+		}
+		collected = append(collected, line)
 	}
-	body := strings.TrimSpace(rest)
+
+	body := strings.TrimSpace(strings.Join(collected, "\n"))
 	require.NotEmptyf(t, body, "the %s section in _base.md is empty — nothing to assert against", heading)
 	return body
+}
+
+// opensSection reports whether line starts a new "## " section, ignoring any
+// leading template actions such as {{if .ToolsEnabled}} or {{end}}.
+func opensSection(line string) bool {
+	for strings.HasPrefix(line, "{{") {
+		stop := strings.Index(line, "}}")
+		if stop < 0 {
+			break
+		}
+		line = line[stop+2:]
+	}
+	return strings.HasPrefix(line, "## ")
 }
 
 // TestPersonaResolution_BaseOnlyTextReachesNoRegisteredAgent pins the trap that
@@ -62,6 +85,15 @@ func sectionFromBase(t *testing.T, heading string) string {
 // later from a panel that quietly started reviewing differently.
 func TestPersonaResolution_BaseOnlyTextReachesNoRegisteredAgent(t *testing.T) {
 	baseOnly := sectionFromBase(t, baseOnlySectionHeading)
+
+	// Check the premise rather than trusting the comment on the const. If the
+	// extraction ever runs past the grounding section it picks up the
+	// Tool-Assisted Review block, which every per-agent file carries verbatim —
+	// the assertions below would still pass, but on text that is not base-only.
+	require.NotContains(t, baseOnly, "## Tool-Assisted Review",
+		"the extracted lever overran the grounding section into the tool block, which every "+
+			"per-agent persona carries verbatim — it is no longer base-only, so this test would "+
+			"be asserting something much weaker than it claims")
 
 	// Empty dirs are the shipped layout: nothing installed on disk, so level 5
 	// decides — exactly the path a default `atcr review` takes.

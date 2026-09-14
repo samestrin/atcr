@@ -18,6 +18,21 @@ import (
 // the prose varies and this phrase does not.
 const predicateRuleAnchor = "enumerate every branch of that predicate and every field it is contracted to cover"
 
+// predicateFilingAnchor is the second phrase every built-in persona carries
+// verbatim: the rule's filing mechanic, without which the rule is unreportable.
+//
+// A predicate's sibling branch is normally UNCHANGED code, and the grounding
+// gate discards any finding whose FILE:LINE falls outside the changed lines (the
+// one escape, CATEGORY out-of-scope, is annotated and never promoted). So a
+// reviewer that correctly spots the asymmetry and cites the untouched sibling
+// has its finding deleted before it reaches the report — on exactly the defect
+// the rule was written for. Anchoring the finding on the edited branch and
+// quoting the sibling as EVIDENCE keeps it inside the gate and promotable.
+//
+// Unlike the lens above, this is a mechanical citation instruction rather than a
+// judgement, so sharing its wording across the panel costs no independence.
+const predicateFilingAnchor = "file it on the edited branch's changed line"
+
 // TestEveryBuiltinPersona_CarriesThePredicateExhaustivenessRule pins the class,
 // not the current roster.
 //
@@ -32,8 +47,11 @@ const predicateRuleAnchor = "enumerate every branch of that predicate and every 
 //
 // Enumeration walks the embedded built-in filesystem rather than Names() or a
 // literal list, so a built-in persona added later cannot silently omit the rule.
-// Community prompts (communityFiles) are deliberately NOT walked — they are out
-// of scope for the epic that added this rule.
+// personas.go's init() already panics unless the embedded .md set equals names
+// plus _base.md, so today the two enumerations are provably the same set; the
+// walk is preferred because it stays correct without depending on that invariant
+// continuing to hold. Community prompts (communityFiles) are deliberately NOT
+// walked — they are out of scope for the epic that added this rule.
 func TestEveryBuiltinPersona_CarriesThePredicateExhaustivenessRule(t *testing.T) {
 	var checked int
 
@@ -55,6 +73,11 @@ func TestEveryBuiltinPersona_CarriesThePredicateExhaustivenessRule(t *testing.T)
 			t.Errorf("built-in persona %s does not carry the predicate-exhaustiveness rule — "+
 				"it must contain the anchor phrase %q verbatim, in prose adapted to this "+
 				"persona's voice, as a numbered bullet under ## Focus", path, predicateRuleAnchor)
+		}
+		if !strings.Contains(string(body), predicateFilingAnchor) {
+			t.Errorf("built-in persona %s states the predicate-exhaustiveness rule but not how to "+
+				"file what it finds — it must also contain %q verbatim, or a correct finding about "+
+				"an unchanged sibling branch is discarded by the grounding gate", path, predicateFilingAnchor)
 		}
 		return nil
 	})
@@ -107,10 +130,12 @@ func TestPredicateExhaustivenessRule_RendersWithToolsEitherWay(t *testing.T) {
 		for _, tools := range []bool{true, false} {
 			out, err := payload.RenderPrompt(text, predicateRuleCtx(tools))
 			require.NoErrorf(t, err, "%s: render with ToolsEnabled=%v", file, tools)
-			require.Containsf(t, out, predicateRuleAnchor,
-				"%s: predicate-exhaustiveness rule absent from the RENDERED prompt with "+
-					"ToolsEnabled=%v — it must live under ## Focus, outside the "+
-					"{{if .ToolsEnabled}} block", file, tools)
+			for _, anchor := range []string{predicateRuleAnchor, predicateFilingAnchor} {
+				require.Containsf(t, out, anchor,
+					"%s: %q absent from the RENDERED prompt with ToolsEnabled=%v — the "+
+						"predicate-exhaustiveness rule must live under ## Focus, outside the "+
+						"{{if .ToolsEnabled}} block", file, anchor, tools)
+			}
 		}
 	}
 }
