@@ -190,10 +190,14 @@ func TestPersonaResolution_BaseOnlyTextReachesNoRegisteredAgent(t *testing.T) {
 		got, err := ResolvePersona(name, name, nil, dirs)
 		require.NoErrorf(t, err, "resolving registered agent %q", name)
 
-		require.Equalf(t, "embedded:"+name, got.Source,
-			"registered agent %q resolved from %q rather than its own embedded file — this "+
-				"test's premise (every registered agent in the embedded set ships its own .md) "+
-				"no longer holds",
+		// Premise only — resolution ORDER is already pinned by
+		// TestPersonaResolution_FallbackToEmbedded and _AllSixEmbeddedResolve
+		// (persona_test.go) and the epic's T3 forbids restating it, so this checks
+		// just enough for the absence assertion below to mean something: the
+		// embedded per-agent file won, whatever won it.
+		require.Truef(t, strings.HasPrefix(got.Source, "embedded:"),
+			"registered agent %q resolved from %q — its embedded per-agent file is not in "+
+				"play, so the base-only absence assertion below would assert nothing",
 			name, got.Source)
 
 		require.NotContainsf(t, got.Text, baseOnly,
