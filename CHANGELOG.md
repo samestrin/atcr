@@ -6,7 +6,7 @@
 
 - Predicate-exhaustiveness review rule in all ten built-in reviewer personas (`_base.md` plus the nine registered personas). When a diff edits one branch of a comparison, equality, or guard predicate, the reviewer now enumerates every branch of that predicate and every field it is contracted to cover, and reports any field covered in one branch but not another — filing the finding on the edited branch's changed line with the sibling quoted as evidence, so it survives the grounding gate instead of being discarded as out-of-range.
 - Class guard over the embedded built-in persona filesystem: a built-in persona that omits either anchor phrase fails the suite, and a companion check asserts the rule reaches the rendered prompt with tool support both enabled and disabled.
-- Regression pin that text present only in `_base.md` reaches no registered agent — every registered agent ships its own persona file and wins resolution first, so a panel-wide rule written into `_base.md` alone would change no reviewer's behaviour.
+- Regression pin that text present only in `_base.md` reaches no registered agent — every registered agent ships its own persona file and wins resolution first, so a panel-wide rule written into `_base.md` alone would change no reviewer's behavior.
 
 ### Changed
 
