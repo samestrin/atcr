@@ -132,36 +132,37 @@ func TestOpensSection(t *testing.T) {
 	}
 }
 
-// TestPersonaResolution_BaseOnlyTextReachesNoRegisteredAgent pins the trap that
-// makes "edit _base.md" a no-op for the review panel.
+// TestPersonaResolution_BaseOnlyTextReachesNoRegisteredAgent pins two sides of
+// the base-only premise, measured against the real shipped prompts rather than
+// fixtures:
 //
-// _base.md is a resolution FALLBACK, not an inherited prefix. Level 4 reads it
-// only when no per-agent file matched at levels 2-3, and level 5 prefers embedded
-// <agentName>.md over embedded _base.md. Every registered agent ships its own .md,
-// so every registered agent in the EMBEDDED set takes the earlier exit and never
-// reads _base.md. Scope note: this pins the embedded tier. At level 4 an ON-DISK
-// _base.md in the project or registry persona dir IS served to a registered agent
-// whenever that agent has no per-agent file on disk —
-// TestPersonaResolution_FallbackToBase pins that path — so "editing an installed
-// _base.md is always a no-op" would be false; the no-op claim holds for the
-// embedded defaults this test resolves against.
+//  1. the lever exists ONLY in _base.md — no per-agent file's own text contains
+//     it (asserted explicitly against personas.Get before the loop, so the
+//     premise is breakable independently of resolution);
+//  2. no registered agent's RESOLVED text contains it — resolution order sends
+//     every embedded-set agent to its own file first.
 //
-// The consequence, and the reason this is pinned: a panel-wide review rule written
-// into _base.md ALONE changes the behaviour of no registered reviewer. The edit
-// lands, the suite stays green, and every agent reviews exactly as before — the
-// change looks shipped and moves nothing. Such a rule has to be written into all
-// ten files; personas.TestEveryBuiltinPersona_CarriesThePredicateExhaustivenessRule
-// is what enforces that for the predicate-exhaustiveness rule.
+// Resolution ORDER itself is covered by TestPersonaResolution_FallbackToBase,
+// _FallbackToEmbedded, _UnknownAgentFallsToEmbeddedBase and
+// _EmptyFileFallsThrough, and is not restated here.
 //
-// Resolution ORDER is already covered by TestPersonaResolution_FallbackToBase,
-// _FallbackToEmbedded, _UnknownAgentFallsToEmbeddedBase and _EmptyFileFallsThrough.
-// This test deliberately asserts something none of them do: the reachability
-// consequence of that order, measured against the real shipped prompts rather
-// than fixtures.
+// What this test does NOT pin: the panel-wide consequence that a rule written
+// into _base.md ALONE changes no registered reviewer's behaviour. This test
+// detects base-only text leaking into a resolved prompt; it cannot detect a rule
+// that reaches nobody. That failure mode is prevented — not detected — by the
+// rule being written into every persona file, which
+// personas.TestEveryBuiltinPersona_CarriesThePredicateExhaustivenessRule
+// enforces for the predicate-exhaustiveness rule.
 //
-// If _base.md is ever made a shared prefix that every persona inherits, this test
-// fails by design. That is a behaviour change to decide on, not one to discover
-// later from a panel that quietly started reviewing differently.
+// If _base.md is ever made a shared prefix that every persona inherits, side 2
+// fails by design: that is a behaviour change to decide on, not one to inherit
+// silently.
+//
+// Scope: the embedded tier. At level 4 an ON-DISK _base.md in the project or
+// registry persona dir IS served to a registered agent whenever that agent has
+// no per-agent file on disk — TestPersonaResolution_FallbackToBase pins that
+// path — so "editing an installed _base.md is always a no-op" would be false;
+// the claims above hold for the embedded defaults this test resolves against.
 func TestPersonaResolution_BaseOnlyTextReachesNoRegisteredAgent(t *testing.T) {
 	baseOnly := personaSectionFromBase(t, personaBaseOnlyHeading)
 
@@ -185,6 +186,18 @@ func TestPersonaResolution_BaseOnlyTextReachesNoRegisteredAgent(t *testing.T) {
 
 	names := personas.Names()
 	require.NotEmpty(t, names, "no registered personas — the loop below would assert nothing")
+
+	// Side 1: the lever must be absent from every per-agent file's OWN text — an
+	// explicit premise assertion rather than a selection criterion, so the test
+	// has two independently breakable sides.
+	for _, name := range names {
+		own, err := personas.Get(name)
+		require.NoErrorf(t, err, "Get(%q)", name)
+		require.NotContainsf(t, own, baseOnly,
+			"per-agent persona %q itself contains the base-only lever — %q is no longer "+
+				"base-only; point the lever at a section only _base.md has",
+			name, personaBaseOnlyHeading)
+	}
 
 	for _, name := range names {
 		got, err := ResolvePersona(name, name, nil, dirs)
