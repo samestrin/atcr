@@ -92,6 +92,61 @@ func TestEveryBuiltinPersona_CarriesThePredicateExhaustivenessRule(t *testing.T)
 	}
 }
 
+// TestEveryBuiltinPersona_PredicateRuleStaysInItsOwnVoice pins the heterogeneity
+// constraint the authoring guide states (docs/personas-authoring.md): word the
+// prose around the two anchors in your persona's own voice, not another
+// persona's sentence. The two Contains checks above cannot see a pasted bullet
+// — an identical rule line satisfies them in every file — so distinctness needs
+// its own guard. Strip both anchors from each file's rule line and fail if any
+// two remainders are byte-identical: each pasted copy makes the next look like
+// house style, and correlated findings inflate the reconciler's CONFIDENCE =
+// HIGH (2+ distinct reviewers) without adding independent evidence.
+func TestEveryBuiltinPersona_PredicateRuleStaysInItsOwnVoice(t *testing.T) {
+	remainders := map[string]string{} // file -> rule line with both anchors stripped
+
+	err := fs.WalkDir(files, ".", func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".md") {
+			return nil
+		}
+		body, readErr := fs.ReadFile(files, path)
+		if readErr != nil {
+			t.Errorf("%s: %v", path, readErr)
+			return nil
+		}
+		var ruleLine string
+		for _, line := range strings.Split(string(body), "\n") {
+			if strings.Contains(line, predicateRuleAnchor) {
+				ruleLine = line
+				break
+			}
+		}
+		if ruleLine == "" {
+			t.Errorf("%s: no line carries the rule anchor — "+
+				"TestEveryBuiltinPersona_CarriesThePredicateExhaustivenessRule should have failed already", path)
+			return nil
+		}
+		remainders[path] = strings.TrimSpace(
+			strings.ReplaceAll(strings.ReplaceAll(ruleLine, predicateRuleAnchor, ""), predicateFilingAnchor, ""))
+		return nil
+	})
+	require.NoError(t, err, "walking built-in personas")
+
+	seen := map[string]string{} // remainder -> first file carrying it
+	for path, remainder := range remainders {
+		if first, dup := seen[remainder]; dup {
+			t.Errorf("built-in personas %s and %s carry a byte-identical predicate-exhaustiveness "+
+				"bullet outside the two anchors — the prose around the anchors must be each persona's "+
+				"own voice (docs/personas-authoring.md); pasted copies make reviewers converge and "+
+				"inflate reconcile CONFIDENCE without adding independent evidence", first, path)
+		} else {
+			seen[remainder] = path
+		}
+	}
+}
+
 // predicateRuleCtx is the render context for the rule-reachability check. It
 // differs from renderContext (personas_test.go) only in exposing ToolsEnabled,
 // which is the whole point of the assertion below.
