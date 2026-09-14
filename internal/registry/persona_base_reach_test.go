@@ -13,10 +13,10 @@ import (
 // _base.md is, by construction, text no registered agent receives.
 const personaBaseOnlyHeading = "## Grounding (mandatory)"
 
-// sectionFromBase returns the body of heading in the embedded _base.md, up to the
+// personaSectionFromBase returns the body of heading in the embedded _base.md, up to the
 // next "## " heading. It fails loudly rather than returning empty, so a reworded
 // _base.md turns this test into a clear instruction instead of a silent pass.
-func sectionFromBase(t *testing.T, heading string) string {
+func personaSectionFromBase(t *testing.T, heading string) string {
 	t.Helper()
 
 	base, err := personas.Base()
@@ -51,7 +51,7 @@ func sectionFromBase(t *testing.T, heading string) string {
 	// anything but base-only and the assertion far coarser than it reads.
 	var collected []string
 	for _, line := range lines[sectionStart+1:] {
-		if opensSection(line) {
+		if personaBaseSectionOpens(line) {
 			break
 		}
 		collected = append(collected, line)
@@ -90,7 +90,7 @@ func stripTemplateActions(line string) string {
 	return line
 }
 
-// opensSection reports whether line starts a new "## " section heading, ignoring
+// personaBaseSectionOpens reports whether line starts a new "## " section heading, ignoring
 // any leading template actions ({{if ...}}, {{else}}, {{end}}, {{range ...}}).
 // Leading whitespace is trimmed first, and a heading is matched on "##" WITHOUT
 // requiring the trailing space — a "##X" line is treated as a heading (truncate)
@@ -99,7 +99,7 @@ func stripTemplateActions(line string) string {
 // documented rather than solved: a bare "## X" line inside a fenced code block is
 // indistinguishable from a real heading at line level and truncates early.
 // _base.md carries no fenced blocks.
-func opensSection(line string) bool {
+func personaBaseSectionOpens(line string) bool {
 	stripped := stripTemplateActions(line)
 	return strings.HasPrefix(stripped, "##") && !strings.HasPrefix(stripped, "###")
 }
@@ -128,7 +128,7 @@ func TestOpensSection(t *testing.T) {
 		{"bare heading inside a fenced block (documented limit)", "## Inside a fence", true},
 	}
 	for _, tc := range cases {
-		require.Equalf(t, tc.want, opensSection(tc.line), "%s: %q", tc.name, tc.line)
+		require.Equalf(t, tc.want, personaBaseSectionOpens(tc.line), "%s: %q", tc.name, tc.line)
 	}
 }
 
@@ -157,7 +157,7 @@ func TestOpensSection(t *testing.T) {
 // fails by design. That is a behaviour change to decide on, not one to discover
 // later from a panel that quietly started reviewing differently.
 func TestPersonaResolution_BaseOnlyTextReachesNoRegisteredAgent(t *testing.T) {
-	baseOnly := sectionFromBase(t, personaBaseOnlyHeading)
+	baseOnly := personaSectionFromBase(t, personaBaseOnlyHeading)
 
 	// Check the premise rather than trusting the comment on the const. If the
 	// extraction ever runs past the grounding section it picks up the
