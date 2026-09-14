@@ -43,6 +43,20 @@ func sectionFromBase(t *testing.T, heading string) string {
 
 	body := strings.TrimSpace(strings.Join(collected, "\n"))
 	require.NotEmptyf(t, body, "the %s section in _base.md is empty — nothing to assert against", heading)
+
+	// Premise: the extraction must span the FULL grounding section. A structural
+	// edit that shortens or splits the section would silently NARROW the lever —
+	// weakening the reachability assertion below while this test stays green — so
+	// both ends of the section are pinned here. Rewording _base.md's grounding
+	// prose means updating these two phrases with it.
+	require.Contains(t, body, "Every finding MUST cite an exact FILE:LINE",
+		"the extracted lever no longer opens with the grounding section's first sentence — "+
+			"_base.md's grounding prose was reworded or the extraction is mis-anchored; "+
+			"update this premise check alongside the prose")
+	require.True(t, strings.HasSuffix(body, "exempt from the discard."),
+		"the extracted lever does not end with the grounding section's closing sentence — "+
+			"the extraction is truncating early (or the prose was reworded); it must span the "+
+			"full section for the reachability assertion to mean what it claims")
 	return body
 }
 
