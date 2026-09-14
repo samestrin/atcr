@@ -515,6 +515,8 @@ atcr doctor --timeout 30         # per-call timeout in seconds
 
 Flags: `--max-tokens` (default `8192`), `--timeout` (default `60`s), `--json`, `--agents <a,b,...>` (restrict to a subset of the directly-listed agents — each selected agent's fallback chain is still probed so its health verdict stays accurate). The token budget defaults high on purpose: reasoning/thinking models spend completion tokens on internal reasoning, so a small budget can exhaust before the marker is emitted. It is deliberately the **same** default the review fan-out applies, so an agent that declares no `max_tokens` is probed at the cap `atcr review` will actually use — a probe is only evidence about the invocation it reproduces. Setting `--max-tokens` explicitly also overrides every declaration, so agents sharing an endpoint then collapse to a single probe instead of one per declared cap.
 
+Doctor also reports panel-composition gaps: the built-in persona class guard walks embedded built-ins only, so an agent whose persona is a community (or hand-edited project) prompt can lack the panel-wide predicate-exhaustiveness rule with nothing failing anywhere. When any effective-roster agent resolves to such a prompt, doctor prints a stderr warning naming the agents, and `--json` carries them as `predicate_rule_gaps`. This is advisory — it does not change the exit code — but it is the signal that one panel member will not hunt the defect class the rest of the panel was tuned for.
+
 ### Status classes
 
 | Status | Meaning | Typical fix |
