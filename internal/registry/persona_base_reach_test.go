@@ -22,8 +22,24 @@ func sectionFromBase(t *testing.T, heading string) string {
 	base, err := personas.Base()
 	require.NoError(t, err)
 
-	start := strings.Index(base, heading)
-	require.GreaterOrEqualf(t, start, 0,
+	// Locate the heading LINE-WISE and require exactly one match. strings.Index
+	// takes the first occurrence and is not anchored to a line start, so a prose
+	// mention of the phrase earlier in the file silently redirects the extraction
+	// (verified: an injected "Note: the ## Grounding (mandatory) rule below..."
+	// line yields a 19-byte lever and a test that still passes — on text that is
+	// not the section). A second match fails loudly instead of picking one.
+	lines := strings.Split(base, "\n")
+	sectionStart := -1
+	for i, line := range lines {
+		if stripTemplateActions(line) == heading {
+			if sectionStart >= 0 {
+				t.Fatalf("_base.md contains %q more than once (lines %d and %d) — the "+
+					"extraction needs exactly one; disambiguate the heading or the prose", heading, sectionStart+1, i+1)
+			}
+			sectionStart = i
+		}
+	}
+	require.GreaterOrEqualf(t, sectionStart, 0,
 		"_base.md no longer contains %q — this test needs a section present ONLY in _base.md "+
 			"to demonstrate what base-only text reaches; point it at another one", heading)
 
@@ -34,7 +50,7 @@ func sectionFromBase(t *testing.T, heading string) string {
 	// which every per-agent file carries verbatim, making the returned text
 	// anything but base-only and the assertion far coarser than it reads.
 	var collected []string
-	for _, line := range strings.Split(base[start+len(heading):], "\n")[1:] {
+	for _, line := range lines[sectionStart+1:] {
 		if opensSection(line) {
 			break
 		}
@@ -60,17 +76,24 @@ func sectionFromBase(t *testing.T, heading string) string {
 	return body
 }
 
-// opensSection reports whether line starts a new "## " section, ignoring any
-// leading template actions such as {{if .ToolsEnabled}} or {{end}}.
-func opensSection(line string) bool {
+// stripTemplateActions removes any leading {{...}} template actions from line and
+// returns the remainder, whitespace-trimmed. An unterminated action yields "".
+func stripTemplateActions(line string) string {
+	line = strings.TrimSpace(line)
 	for strings.HasPrefix(line, "{{") {
 		stop := strings.Index(line, "}}")
 		if stop < 0 {
-			break
+			return ""
 		}
-		line = line[stop+2:]
+		line = strings.TrimSpace(line[stop+2:])
 	}
-	return strings.HasPrefix(line, "## ")
+	return line
+}
+
+// opensSection reports whether line starts a new "## " section, ignoring any
+// leading template actions such as {{if .ToolsEnabled}} or {{end}}.
+func opensSection(line string) bool {
+	return strings.HasPrefix(stripTemplateActions(line), "## ")
 }
 
 // TestPersonaResolution_BaseOnlyTextReachesNoRegisteredAgent pins the trap that
