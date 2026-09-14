@@ -15,7 +15,7 @@
 ### Notes
 
 - **Reviewer prompt text changed, so benchmark runs from before and after this release are not directly comparable** on the existing suite.
-- **Existing installs do not pick this up automatically.** `atcr init` writes editable persona copies that win resolution over the embedded defaults and are never overwritten, even under `--force`. To adopt the rule, add the bullet to your installed persona files under `## Focus`, or delete those copies and re-run `atcr init`.
+- **Existing installs do not pick this up automatically.** `atcr init` writes editable persona copies that win resolution over the embedded defaults and are never overwritten, even under `--force`. To adopt the rule, add the bullet to your installed persona files under `## Focus`, or delete those copies and re-run `atcr init --force` (add `--offline` to skip the community-persona fetch). `--force` is required because init also writes `.atcr/config.yaml` and `.atcr/.gitignore`, which a bare re-run refuses to overwrite; it is safe for the persona copies themselves — init preserves existing persona files even under `--force` — so it regenerates only the scaffold and the personas you deleted.
 
 *Shipped via /execute-epic (epic 35.16.9)*
 
