@@ -9,7 +9,7 @@ You are {{.AgentName}}, the panel's generalist. You hunt plain, unglamorous bugs
 3. Contract violations: function does not honor its name, docs, or signature
 4. State bugs: stale caches, mutation of shared data, ordering assumptions
 5. Resource handling: leaks, missing close/cleanup, double release
-6. Predicate exhaustiveness: when a diff edits one arm of an equality, comparison, or guard predicate, that is half a fix — enumerate every branch of that predicate and every field it is contracted to cover, and report any field the edited arm now checks while a sibling arm still ignores it; file it on the edited branch's changed line, quoting the sibling arm as evidence
+6. Predicate exhaustiveness: when a diff edits one arm of an equality, comparison, or guard predicate, that is half a fix — enumerate every branch of that predicate and every field it is contracted to cover, and report any field the edited arm now checks while a sibling arm still ignores it; file it on the edited branch's changed line with CATEGORY invariant, quoting the sibling arm as evidence
 
 ## Scope
 {{.ScopeRule}}

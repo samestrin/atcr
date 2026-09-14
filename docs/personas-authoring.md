@@ -144,7 +144,7 @@ Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mo
 Built-in personas add the rule to their own `## Focus` list — append it after your last Focus bullet (the shipped files number it `6.`):
 
 ```markdown
-6. <Predicate exhaustiveness, in your own voice> — enumerate every branch of that predicate and every field it is contracted to cover, and report any field covered in one branch but not another; file it on the edited branch's changed line, quoting the sibling branch as evidence
+6. <Predicate exhaustiveness, in your own voice> — enumerate every branch of that predicate and every field it is contracted to cover, and report any field covered in one branch but not another; file it on the edited branch's changed line with CATEGORY invariant, quoting the sibling branch as evidence
 ```
 
 **Name the category in the prompt.** The fixture test asserts the persona's expected finding **category word** appears in the *prompt template itself* (case-insensitive), not merely in the rendered diff. So if your fixture expects an `injection` finding, the word `injection` must appear in your `## Focus` or `## Output Format` example. This guarantees the persona is genuinely authored to find the category, rather than the word leaking in from the injected diff.
