@@ -83,7 +83,6 @@ imperative. No flattery, no summaries — findings only.>
 1. <Target class #1 — be specific>
 2. <Target class #2>
 3. <…>
-4. <Predicate exhaustiveness, in your own voice — BUILT-IN personas only> — enumerate every branch of that predicate and every field it is contracted to cover, and report any field covered in one branch but not another; file it on the edited branch's changed line, quoting the sibling branch as evidence
 
 ## Scope
 {{.ScopeRule}}
@@ -133,6 +132,12 @@ Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mo
 **Mandatory sections:** a `## Role` declaration and a `## Output Format` block with the exact 7-column pipe-delimited contract above. Keep the column format byte-for-byte — the reconciler parses it.
 
 **Built-in personas carry the panel-wide predicate-exhaustiveness rule.** Every `.md` file in `personas/` — the nine registered personas and `_base.md` — must contain two anchor phrases verbatim, inside one numbered bullet under `## Focus`: `enumerate every branch of that predicate and every field it is contracted to cover` (the lens) and `file it on the edited branch's changed line` (how to file what the lens finds). The second phrase is not bookkeeping. A predicate's sibling branch is normally *unchanged* code, and the grounding gate discards any finding whose `FILE:LINE` falls outside the changed lines — the one escape, `CATEGORY out-of-scope`, is annotated and never promoted. So a reviewer that correctly spots the asymmetry and cites the untouched sibling has its finding deleted before the report, on exactly the defect the rule exists for. Anchoring on the edited branch and quoting the sibling as `EVIDENCE` keeps it promotable. Word the prose around both phrases in your persona's own voice rather than pasting another persona's sentence: a byte-identical paragraph across the panel makes reviewers converge, and correlated findings inflate the reconciler's `CONFIDENCE = HIGH` (2+ distinct reviewers) without adding independent evidence. Two things about the placement are load-bearing. The bullet must sit under `## Focus`, which is *outside* the `{{if .ToolsEnabled}}` block, or the rule renders only for tool-using agents and every single-shot agent silently misses it. And it must be in *your* file, not only in `_base.md` — `_base.md` is a resolution fallback, not an inherited prefix, so a registered persona that ships its own `.md` never reads it (see the resolution chain in [registry.md](registry.md)). `TestEveryBuiltinPersona_CarriesThePredicateExhaustivenessRule` walks the embedded built-in filesystem and fails the suite for any built-in that omits the phrase. Community personas are deliberately not walked and are exempt.
+
+Built-in personas add the rule to their own `## Focus` list — append it after your last Focus bullet (the shipped files number it `6.`):
+
+```markdown
+6. <Predicate exhaustiveness, in your own voice> — enumerate every branch of that predicate and every field it is contracted to cover, and report any field covered in one branch but not another; file it on the edited branch's changed line, quoting the sibling branch as evidence
+```
 
 **Name the category in the prompt.** The fixture test asserts the persona's expected finding **category word** appears in the *prompt template itself* (case-insensitive), not merely in the rendered diff. So if your fixture expects an `injection` finding, the word `injection` must appear in your `## Focus` or `## Output Format` example. This guarantees the persona is genuinely authored to find the category, rather than the word leaking in from the injected diff.
 
