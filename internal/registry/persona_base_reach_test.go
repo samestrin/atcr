@@ -138,7 +138,13 @@ func TestOpensSection(t *testing.T) {
 // _base.md is a resolution FALLBACK, not an inherited prefix. Level 4 reads it
 // only when no per-agent file matched at levels 2-3, and level 5 prefers embedded
 // <agentName>.md over embedded _base.md. Every registered agent ships its own .md,
-// so every registered agent takes the earlier exit and never sees _base.md at all.
+// so every registered agent in the EMBEDDED set takes the earlier exit and never
+// reads _base.md. Scope note: this pins the embedded tier. At level 4 an ON-DISK
+// _base.md in the project or registry persona dir IS served to a registered agent
+// whenever that agent has no per-agent file on disk —
+// TestPersonaResolution_FallbackToBase pins that path — so "editing an installed
+// _base.md is always a no-op" would be false; the no-op claim holds for the
+// embedded defaults this test resolves against.
 //
 // The consequence, and the reason this is pinned: a panel-wide review rule written
 // into _base.md ALONE changes the behaviour of no registered reviewer. The edit
@@ -181,14 +187,16 @@ func TestPersonaResolution_BaseOnlyTextReachesNoRegisteredAgent(t *testing.T) {
 
 		require.Equalf(t, "embedded:"+name, got.Source,
 			"registered agent %q resolved from %q rather than its own embedded file — this "+
-				"test's premise (every registered agent ships its own .md) no longer holds",
+				"test's premise (every registered agent in the embedded set ships its own .md) "+
+				"no longer holds",
 			name, got.Source)
 
 		require.NotContainsf(t, got.Text, baseOnly,
-			"registered agent %q received text that exists only in _base.md. Either _base.md "+
-				"became a shared prefix (a deliberate change to make, not to inherit), or %q is "+
-				"no longer base-only. While it holds: a rule added to _base.md alone reaches no "+
-				"registered agent, so a panel-wide rule belongs in every persona file.",
+			"registered agent %q received embedded _base.md text that exists only there. Either "+
+				"_base.md became a shared prefix for the embedded set (a deliberate change to make, "+
+				"not to inherit), or %q is no longer base-only. While it holds: a rule added to "+
+				"embedded _base.md alone reaches no registered agent through the embedded path, so "+
+				"a panel-wide rule belongs in every persona file.",
 			name, personaBaseOnlyHeading)
 	}
 }
