@@ -90,10 +90,46 @@ func stripTemplateActions(line string) string {
 	return line
 }
 
-// opensSection reports whether line starts a new "## " section, ignoring any
-// leading template actions such as {{if .ToolsEnabled}} or {{end}}.
+// opensSection reports whether line starts a new "## " section heading, ignoring
+// any leading template actions ({{if ...}}, {{else}}, {{end}}, {{range ...}}).
+// Leading whitespace is trimmed first, and a heading is matched on "##" WITHOUT
+// requiring the trailing space — a "##X" line is treated as a heading (truncate)
+// because the failure mode of missing one is the lever silently swallowing the
+// tool block, while "###"-deeper lines are not section headings. Known limit,
+// documented rather than solved: a bare "## X" line inside a fenced code block is
+// indistinguishable from a real heading at line level and truncates early.
+// _base.md carries no fenced blocks.
 func opensSection(line string) bool {
-	return strings.HasPrefix(stripTemplateActions(line), "## ")
+	stripped := stripTemplateActions(line)
+	return strings.HasPrefix(stripped, "##") && !strings.HasPrefix(stripped, "###")
+}
+
+// TestOpensSection pins the helper's line-level contract, including the shapes a
+// reviewer verified the old version got wrong: "##X" (no space) and a leading
+// space before "{{" both silently extended the section (the lever grew to ~1685
+// bytes and swallowed the tool block), and "#### deeper" must stay non-heading.
+func TestOpensSection(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+		want bool
+	}{
+		{"plain heading", "## Scope", true},
+		{"heading after if-action", "{{if .ToolsEnabled}}## Tool-Assisted Review", true},
+		{"heading after end-action", "{{end}}## Severity Rubric", true},
+		{"heading after else-action", "{{else}}## Fallback", true},
+		{"heading after range-action", "{{range .Items}}## Loop", true},
+		{"heading without space", "##Tool-Assisted Review", true},
+		{"indented action and heading", "  {{end}}## Payload", true},
+		{"deeper heading is not a section", "#### deeper", false},
+		{"plain prose", "The payload below is the changed diff.", false},
+		{"unterminated action", "{{if .ToolsEnabled ## Never Closed", false},
+		{"fence line", "```markdown", false},
+		{"bare heading inside a fenced block (documented limit)", "## Inside a fence", true},
+	}
+	for _, tc := range cases {
+		require.Equalf(t, tc.want, opensSection(tc.line), "%s: %q", tc.name, tc.line)
+	}
 }
 
 // TestPersonaResolution_BaseOnlyTextReachesNoRegisteredAgent pins the trap that
