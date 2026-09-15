@@ -61,7 +61,7 @@ func TestSettings_ZeroValueDoesNotSilentlyDisablePreFetching(t *testing.T) {
 
 func TestSettings_NegativeMaxPrefetchBytesResolvesToDisabledNotUnbounded(t *testing.T) {
 	// Fail-safe direction: a mis-resolved negative must switch the feature OFF,
-	// never make it unbounded — the section is exempt from every byte budget, so
+	// never make it unbounded — the section is uncounted on the ordinary shed, so
 	// unbounded here means unbounded prompt text nothing downstream can shed.
 	neg := int64(-1)
 	require.Zero(t, Settings{MaxPrefetchBytes: &neg}.ResolvedMaxPrefetchBytes())

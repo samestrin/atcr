@@ -72,7 +72,7 @@ const (
 	// Unlike max_sprint_plan_bytes, 0 IS meaningful here and means DISABLED, not
 	// unbounded: the ledger sends commit-message text to third-party providers, and
 	// an operator has a legitimate reason to refuse that outright. There is no
-	// unbounded setting — the ledger's bytes are exempt from every byte budget, so
+	// unbounded setting — the ledger's bytes are uncounted on the ordinary shed, so
 	// the only thing bounding them is this ceiling. Negative is rejected.
 	DefaultMaxClaimBytes int64 = 8 * 1024
 	// DefaultMaxPrefetchBytes is the embedded byte ceiling on the Context
@@ -84,7 +84,7 @@ const (
 	// means DISABLED, not unbounded: pre-fetching sends repository source from
 	// OUTSIDE the diff to third-party providers, and an operator has a legitimate
 	// reason to refuse that outright. There is no unbounded setting — the section
-	// is exempt from every byte budget, so this ceiling is the only thing bounding
+	// is uncounted on the ordinary shed, so this ceiling is the only thing bounding
 	// it. Negative is rejected.
 	DefaultMaxPrefetchBytes int64 = 16 * 1024
 )

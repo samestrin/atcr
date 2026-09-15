@@ -120,8 +120,10 @@ func WithEscalation(c EscalationConfig) RangeOption {
 // a provider, and no ledger entry is prepended. That is the operator escape
 // hatch the setting exists for, and it is why 0 is not the "unlimited" sentinel
 // it is on payload_byte_budget and cache_max_bytes: the ledger entry carries
-// Size 0 and is exempt from every byte budget, so an unbounded ledger would be
-// unbounded prompt text nothing could see or shed. A negative value is treated
+// Size 0 and is uncounted on the ORDINARY shed, so an unbounded ledger would be
+// unbounded prompt text nothing could see or shed. (It is not exempt everywhere:
+// the fallback re-fit re-sizes every entry to len(Body) and funds the exempt
+// sections cumulatively, so there the ledger is sized like any other entry.) A negative value is treated
 // as disabled too, so a mis-resolved setting fails safe rather than unbounded.
 func WithMaxClaimBytes(n int64) RangeOption {
 	return func(g *gitRunner) { g.maxClaimBytes = n }
@@ -134,8 +136,10 @@ func WithMaxClaimBytes(n int64) RangeOption {
 // **0 DISABLES pre-fetching entirely** — no `git grep` runs, no repository
 // source outside the diff reaches a provider, and no context entry is injected.
 // It is not the "unlimited" sentinel it is on payload_byte_budget, for the same
-// reason WithMaxClaimBytes is not: the section is exempt from every byte budget,
-// so an unbounded setting would be unbounded prompt text nothing could shed. A
+// reason WithMaxClaimBytes is not: the section is uncounted on the ORDINARY shed,
+// so an unbounded setting would be unbounded prompt text nothing could shed. On
+// the fallback re-fit it IS sized, and at the lowest exempt rank — below the claim
+// ledger — so it is the first exempt section to lose its funding. A
 // negative value is treated as disabled, so a mis-resolved setting fails safe.
 func WithMaxPrefetchBytes(n int64) RangeOption {
 	return func(g *gitRunner) { g.maxPrefetchBytes = n }

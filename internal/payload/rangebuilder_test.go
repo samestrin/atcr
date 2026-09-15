@@ -361,8 +361,9 @@ func TestRangeBuilder_ConcurrentUsePanics(t *testing.T) {
 
 // max_claim_bytes (Epic 35.16.7) reaches the ledger through WithMaxClaimBytes.
 // The setting is the ONLY operator control over the ledger's bytes: the entry
-// carries Size 0 and is exempt from every byte budget, so payload_byte_budget,
-// each agent's appliedBudget, and the on_overflow=fail gate are all blind to it.
+// carries Size 0 and is uncounted on the ordinary shed, so payload_byte_budget,
+// each agent's appliedBudget, and the on_overflow=fail gate are all blind to it
+// there.
 func TestRangeBuilder_WithMaxClaimBytesCapsTheLedgerRead(t *testing.T) {
 	dir := initRepo(t)
 	write(t, dir, "foo.go", goFileV1)
