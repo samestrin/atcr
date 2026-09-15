@@ -138,9 +138,9 @@ func predicateRuleLineUnderFocus(text string) (string, error) {
 // TestEveryBuiltinPersona_PredicateRuleStaysInItsOwnVoice pins the heterogeneity
 // constraint the authoring guide states (docs/personas-authoring.md): word the
 // prose around the two anchors in your persona's own voice, not another
-// persona's sentence. The two Contains checks above cannot see a pasted bullet
-// — an identical rule line satisfies them in every file — so distinctness needs
-// its own guard. Strip both anchors from each file's rule line and fail if any
+// persona's sentence. The anchor checks above cannot see a pasted bullet — an
+// identical rule line satisfies them in every file — so distinctness needs its
+// own guard. Strip both anchors from each file's rule line and fail if any
 // two remainders are byte-identical: each pasted copy makes the next look like
 // house style, and correlated findings inflate the reconciler's CONFIDENCE =
 // HIGH (2+ distinct reviewers) without adding independent evidence.
@@ -208,16 +208,9 @@ func TestAuthoringDoc_QuotesTheEnforcedAnchors(t *testing.T) {
 // differs from renderContext (personas_test.go) only in exposing ToolsEnabled,
 // which is the whole point of the assertion below.
 func predicateRuleCtx(tools bool) payload.PayloadContext {
-	return payload.PayloadContext{
-		AgentName:    "tester",
-		BaseRef:      "main",
-		HeadRef:      "feature",
-		FileCount:    1,
-		PayloadMode:  string(payload.ModeBlocks),
-		Payload:      "<sample diff>",
-		ScopeRule:    payload.ScopeRule(payload.ModeBlocks),
-		ToolsEnabled: tools,
-	}
+	ctx := renderContext("<sample diff>")
+	ctx.ToolsEnabled = tools
+	return ctx
 }
 
 // TestPredicateExhaustivenessRule_RendersWithToolsEitherWay asserts the rule
