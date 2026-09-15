@@ -1,6 +1,7 @@
 package personas
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"strings"
@@ -52,15 +53,16 @@ func TestEveryBuiltinPersona_CarriesThePredicateExhaustivenessRule(t *testing.T)
 			return readErr
 		}
 
-		if !strings.Contains(string(body), predicateRuleAnchor) {
-			t.Errorf("built-in persona %s does not carry the predicate-exhaustiveness rule — "+
-				"it must contain the anchor phrase %q verbatim, in prose adapted to this "+
-				"persona's voice, as a numbered bullet under ## Focus", path, predicateRuleAnchor)
+		ruleLine, ruleErr := predicateRuleLineUnderFocus(string(body))
+		if ruleErr != nil {
+			t.Errorf("built-in persona %s does not carry the predicate-exhaustiveness rule — %v", path, ruleErr)
+			return nil
 		}
-		if !strings.Contains(string(body), predicateFilingAnchor) {
+		if !strings.Contains(ruleLine, predicateFilingAnchor) {
 			t.Errorf("built-in persona %s states the predicate-exhaustiveness rule but not how to "+
-				"file what it finds — it must also contain %q verbatim, or a correct finding about "+
-				"an unchanged sibling branch is discarded by the grounding gate", path, predicateFilingAnchor)
+				"file what it finds — %q must appear verbatim on the SAME ## Focus bullet as the "+
+				"lens anchor, or a correct finding about an unchanged sibling branch is discarded "+
+				"by the grounding gate", path, predicateFilingAnchor)
 		}
 		return nil
 	})
@@ -69,6 +71,68 @@ func TestEveryBuiltinPersona_CarriesThePredicateExhaustivenessRule(t *testing.T)
 	if checked == 0 {
 		t.Fatal("no embedded built-in persona files were checked — the walk found nothing to pin")
 	}
+}
+
+// stripTemplateActions removes any leading {{...}} template actions from line
+// and returns the remainder, whitespace-trimmed. An unterminated action yields
+// "". Mirrors internal/registry/persona_base_reach_test.go:81, and for the same
+// reason: persona headings are routinely prefixed by a template action
+// ({{if .ToolsEnabled}}## Tool-Assisted Review, {{end}}## Severity Rubric), so a
+// literal "## " scan runs straight past them and swallows the rest of the file.
+func stripTemplateActions(line string) string {
+	line = strings.TrimSpace(line)
+	for strings.HasPrefix(line, "{{") {
+		stop := strings.Index(line, "}}")
+		if stop < 0 {
+			return ""
+		}
+		line = strings.TrimSpace(line[stop+2:])
+	}
+	return line
+}
+
+// opensSection reports whether line starts a new "## " section heading,
+// ignoring any leading template actions. "###" and deeper are not sections.
+func opensSection(line string) bool {
+	stripped := stripTemplateActions(line)
+	return strings.HasPrefix(stripped, "##") && !strings.HasPrefix(stripped, "###")
+}
+
+// predicateRuleLineUnderFocus returns the single line inside text's "## Focus"
+// section that carries predicateRuleAnchor.
+//
+// Checking each anchor as a substring of the WHOLE file was the original guard
+// and it pinned nothing structural: a persona carrying the lens under ## Focus
+// and the filing anchor buried in a fenced ## Output Format example satisfied
+// both checks, splitting a rule whose whole point is that the lens is
+// unreportable without the filing mechanic attached to it. Resolving the rule
+// line within the ## Focus span and requiring both anchors ON IT enforces what
+// the failure messages have always promised ("as a numbered bullet under
+// ## Focus") and keeps the rule outside the {{if .ToolsEnabled}} block, which
+// opens two sections later — so single-shot agents still receive it.
+func predicateRuleLineUnderFocus(text string) (string, error) {
+	lines := strings.Split(text, "\n")
+	start := -1
+	for i, line := range lines {
+		if stripTemplateActions(line) == "## Focus" {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		return "", fmt.Errorf("no \"## Focus\" heading — the rule has nowhere to live")
+	}
+	for _, line := range lines[start+1:] {
+		if opensSection(line) {
+			break
+		}
+		if strings.Contains(line, predicateRuleAnchor) {
+			return line, nil
+		}
+	}
+	return "", fmt.Errorf("the lens anchor %q is absent from the ## Focus section — it must be a "+
+		"numbered bullet there, in prose adapted to this persona's voice, not in another "+
+		"section and not inside a fenced example", predicateRuleAnchor)
 }
 
 // TestEveryBuiltinPersona_PredicateRuleStaysInItsOwnVoice pins the heterogeneity
@@ -185,12 +249,14 @@ func TestPredicateExhaustivenessRule_RendersWithToolsEitherWay(t *testing.T) {
 		for _, tools := range []bool{true, false} {
 			out, err := payload.RenderPrompt(text, predicateRuleCtx(tools))
 			require.NoErrorf(t, err, "%s: render with ToolsEnabled=%v", file, tools)
-			for _, anchor := range []string{predicateRuleAnchor, predicateFilingAnchor} {
-				require.Containsf(t, out, anchor,
-					"%s: %q absent from the RENDERED prompt with ToolsEnabled=%v — the "+
-						"predicate-exhaustiveness rule must live under ## Focus, outside the "+
-						"{{if .ToolsEnabled}} block", file, anchor, tools)
-			}
+			ruleLine, ruleErr := predicateRuleLineUnderFocus(out)
+			require.NoErrorf(t, ruleErr,
+				"%s: RENDERED with ToolsEnabled=%v — the predicate-exhaustiveness rule must "+
+					"live under ## Focus, outside the {{if .ToolsEnabled}} block", file, tools)
+			require.Containsf(t, ruleLine, predicateFilingAnchor,
+				"%s: %q absent from the rendered ## Focus rule line with ToolsEnabled=%v — the "+
+					"filing mechanic must travel on the same bullet as the lens",
+				file, predicateFilingAnchor, tools)
 		}
 	}
 }
