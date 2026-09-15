@@ -32,11 +32,13 @@ const predicateRuleAnchor = "enumerate every branch of that predicate and every 
 const predicateFilingAnchor = "file it on the edited branch's changed line"
 
 // CarriesPredicateRule reports whether a resolved persona prompt carries the
-// panel-wide predicate-exhaustiveness rule — both anchor phrases verbatim. The
-// class guard (predicate_exhaustiveness_test.go) pins the EMBEDDED BUILT-INS to
-// these phrases; this predicate is the runtime consumer, so a caller checking
-// other persona tiers (community, project) never re-states the phrases and
-// cannot drift from what the suite enforces.
+// panel-wide predicate-exhaustiveness rule — both anchor phrases verbatim,
+// anywhere in the text. The class guard (predicate_exhaustiveness_test.go) holds
+// the EMBEDDED BUILT-INS to something strictly stronger: both phrases on ONE
+// numbered bullet under ## Focus. This predicate is deliberately the weaker of
+// the two, because its callers check other persona tiers (community, project)
+// whose section layout atcr does not own. What it buys is that no caller
+// re-states the phrases, so the strings cannot drift from the constants above.
 func CarriesPredicateRule(text string) bool {
 	return strings.Contains(text, predicateRuleAnchor) && strings.Contains(text, predicateFilingAnchor)
 }

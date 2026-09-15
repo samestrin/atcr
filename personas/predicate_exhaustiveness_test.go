@@ -158,16 +158,13 @@ func TestEveryBuiltinPersona_PredicateRuleStaysInItsOwnVoice(t *testing.T) {
 		if readErr != nil {
 			return readErr
 		}
-		var ruleLine string
-		for _, line := range strings.Split(string(body), "\n") {
-			if strings.Contains(line, predicateRuleAnchor) {
-				ruleLine = line
-				break
-			}
-		}
-		if ruleLine == "" {
-			t.Errorf("%s: no line carries the rule anchor — "+
-				"TestEveryBuiltinPersona_CarriesThePredicateExhaustivenessRule should have failed already", path)
+		// Same resolution as the class guard above — a rule line found anywhere
+		// in the file would let a stray copy outside ## Focus supply the
+		// remainder that gets compared for distinctness.
+		ruleLine, ruleErr := predicateRuleLineUnderFocus(string(body))
+		if ruleErr != nil {
+			t.Errorf("%s: %v — "+
+				"TestEveryBuiltinPersona_CarriesThePredicateExhaustivenessRule should have failed already", path, ruleErr)
 			return nil
 		}
 		remainders[path] = strings.TrimSpace(
