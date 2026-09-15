@@ -2,7 +2,8 @@ package personas
 
 import "strings"
 
-// predicateRuleAnchor is the one phrase every built-in persona carries VERBATIM.
+// predicateRuleAnchor is the LENS phrase — one of the TWO phrases every built-in
+// persona carries VERBATIM (the filing anchor is defined below).
 //
 // The rule around it is deliberately re-voiced per persona: nine agents handed a
 // byte-identical paragraph converge, and correlated findings inflate reconcile's
