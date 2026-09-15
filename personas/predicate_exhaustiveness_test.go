@@ -23,12 +23,15 @@ import (
 // at what changed) is exactly the behaviour that misses it.
 //
 // Enumeration walks the embedded built-in filesystem rather than Names() or a
-// literal list, so a built-in persona added later cannot silently omit the rule.
-// personas.go's init() already panics unless the embedded .md set equals names
-// plus _base.md, so today the two enumerations are provably the same set; the
-// walk is preferred because it stays correct without depending on that invariant
-// continuing to hold. Community prompts (communityFiles) are deliberately NOT
-// walked — they are out of scope for the epic that added this rule.
+// literal list, because AC2 requires enumerating from the embedded filesystem —
+// and the walk pays for itself twice over: it names the offending path in each
+// failure, and the checked == 0 fatal below gives the guard a floor no vacuous
+// pass can clear. It is NOT preferred for independence from personas.go's
+// init(), which panics unless the embedded .md set equals names plus _base.md
+// and runs before any test in this package: the only tree that would
+// distinguish the two enumerations panics before either test runs, so that
+// advantage is unreachable. Community prompts (communityFiles) are deliberately
+// NOT walked — they are out of scope for the epic that added this rule.
 func TestEveryBuiltinPersona_CarriesThePredicateExhaustivenessRule(t *testing.T) {
 	var checked int
 
