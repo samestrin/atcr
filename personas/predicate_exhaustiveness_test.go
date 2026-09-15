@@ -42,12 +42,15 @@ func TestEveryBuiltinPersona_CarriesThePredicateExhaustivenessRule(t *testing.T)
 		if d.IsDir() || !strings.HasSuffix(path, ".md") {
 			return nil
 		}
+		// checked++ BEFORE the read, and an unreadable file aborts the walk
+		// rather than being skipped: counting only files that read cleanly
+		// lets the checked == 0 floor below stay satisfied by the other nine
+		// while one built-in escapes both anchor assertions entirely.
+		checked++
 		body, readErr := fs.ReadFile(files, path)
 		if readErr != nil {
-			t.Errorf("%s: %v", path, readErr)
-			return nil
+			return readErr
 		}
-		checked++
 
 		if !strings.Contains(string(body), predicateRuleAnchor) {
 			t.Errorf("built-in persona %s does not carry the predicate-exhaustiveness rule — "+
@@ -89,8 +92,7 @@ func TestEveryBuiltinPersona_PredicateRuleStaysInItsOwnVoice(t *testing.T) {
 		}
 		body, readErr := fs.ReadFile(files, path)
 		if readErr != nil {
-			t.Errorf("%s: %v", path, readErr)
-			return nil
+			return readErr
 		}
 		var ruleLine string
 		for _, line := range strings.Split(string(body), "\n") {
