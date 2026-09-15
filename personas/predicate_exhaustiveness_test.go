@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/payload"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -235,15 +237,32 @@ func TestPredicateExhaustivenessRule_RendersWithToolsEitherWay(t *testing.T) {
 		prompts[name+".md"] = text
 	}
 
-	for file, text := range prompts {
+	// Walk a SORTED key list and assert (not require) on the anchors: prompts is
+	// a map, so Go randomises iteration order, and a t.FailNow inside the loop
+	// would abort on the first offender and leave the rest unrendered — a
+	// maintainer fixes one file, re-runs, and is handed a different name with no
+	// idea how many remain. require stays on the render error itself, which is a
+	// broken template rather than a missing rule. Neighbouring class guards make
+	// the same choice: internal/payload/tools_persona_test.go:41-48 and
+	// personas/clean_review_marker_test.go:46-59.
+	promptFiles := make([]string, 0, len(prompts))
+	for file := range prompts {
+		promptFiles = append(promptFiles, file)
+	}
+	sort.Strings(promptFiles)
+
+	for _, file := range promptFiles {
 		for _, tools := range []bool{true, false} {
-			out, err := payload.RenderPrompt(text, predicateRuleCtx(tools))
+			out, err := payload.RenderPrompt(prompts[file], predicateRuleCtx(tools))
 			require.NoErrorf(t, err, "%s: render with ToolsEnabled=%v", file, tools)
 			ruleLine, ruleErr := predicateRuleLineUnderFocus(out)
-			require.NoErrorf(t, ruleErr,
-				"%s: RENDERED with ToolsEnabled=%v — the predicate-exhaustiveness rule must "+
-					"live under ## Focus, outside the {{if .ToolsEnabled}} block", file, tools)
-			require.Containsf(t, ruleLine, predicateFilingAnchor,
+			if ruleErr != nil {
+				assert.Failf(t, "predicate rule absent from rendered prompt",
+					"%s: RENDERED with ToolsEnabled=%v — the predicate-exhaustiveness rule must "+
+						"live under ## Focus, outside the {{if .ToolsEnabled}} block: %v", file, tools, ruleErr)
+				continue
+			}
+			assert.Containsf(t, ruleLine, predicateFilingAnchor,
 				"%s: %q absent from the rendered ## Focus rule line with ToolsEnabled=%v — the "+
 					"filing mechanic must travel on the same bullet as the lens",
 				file, predicateFilingAnchor, tools)
