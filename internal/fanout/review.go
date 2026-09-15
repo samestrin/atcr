@@ -3183,6 +3183,15 @@ func inheritedPayloadFits(primary Agent, budget int64) bool {
 		total += int64(len(ref.Body))
 	}
 	if measured == 0 {
+		// UNREACHABLE, and left in deliberately. Reaching it would need EVERY
+		// section to be unattributable, but a combined (diff --cc) section still
+		// carries +++/--- lines that diffSectionPath resolves, and a header-only
+		// section resolves through headPathFromGitHeader
+		// (internal/payload/ingest.go:344-357) — so a non-empty CodeContext always
+		// has at least one measurable path. That is why this arm is uncovered: it
+		// cannot be reached, not because a test was skipped. Do NOT close the gap
+		// with a test that fakes reachability — the arm is defensive only.
+		//
 		// Nothing measurable: "may not fit", never "fits" — the same bias the
 		// empty-CodeContext arm above takes, and for the same reason.
 		return false
