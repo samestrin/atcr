@@ -72,11 +72,6 @@ func MaterializeCase(ctx context.Context, c RepoStateCase, dest string) (*Materi
 		return nil, fmt.Errorf("case %q base commit: %w", c.ID, err)
 	}
 
-	// --whitespace=nowarn: an authored case's diff may legitimately carry trailing
-	// whitespace (a vendored or hand-written tree is not required to be lint-clean),
-	// and git apply's default warning is noise on a path that is not reviewing
-	// whitespace. It does NOT relax what applies — a diff that does not apply still
-	// fails, which is the point of the check below.
 	// ABSOLUTE, because every git call here runs with `-C dest`. A relative case
 	// path is resolved against git's working directory, not the caller's, so a
 	// suite loaded from a relative --suite-path would send git looking for the patch
@@ -85,6 +80,11 @@ func MaterializeCase(ctx context.Context, c RepoStateCase, dest string) (*Materi
 	if err != nil {
 		return nil, fmt.Errorf("case %q: resolving %s: %w", c.ID, c.Diff, err)
 	}
+	// --whitespace=nowarn: an authored case's diff may legitimately carry trailing
+	// whitespace (a hand-written tree is not required to be lint-clean), and git
+	// apply's default warning is noise on a path that is not reviewing whitespace.
+	// It does NOT relax what applies — a diff that does not apply still fails, which
+	// is the point of the check below.
 	if err := runGit(ctx, dest, "apply", "--whitespace=nowarn", diffPath); err != nil {
 		// Fail LOUDLY. A diff that silently did not apply leaves the head tree equal
 		// to the base tree, so every reviewer scores zero and the case reads as
