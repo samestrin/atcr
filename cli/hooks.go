@@ -166,16 +166,31 @@ type ModelInvocation struct {
 	Err string
 }
 
-// CodeRef is one file's contribution to the payload an invocation was sent.
+// CodeRef is one file's contribution to the payload an invocation was sent —
+// or, with an empty Path, the engine-rendered prefix that belongs to no single
+// file (see Path).
 //
 // SENSITIVE DATA. Body is source code, verbatim — the same content
 // ModelInvocation.Prompt carries, split per file. Everything that type says
 // about redacting before persisting applies here identically.
 type CodeRef struct {
 	// Path is the file the content came from, relative to the repository root.
-	// It is empty when the payload section could not be attributed to a single
-	// file (a combined/merge diff, say); the Body is still reported, because an
-	// unattributed record is worth more to an auditor than a missing one.
+	//
+	// It is EMPTY on the ORDINARY range review, not only in rare unattributable
+	// cases. The engine prepends its synthetic sections — the claim ledger and
+	// the Context Definitions block — above the first per-file marker, and that
+	// prefix is reported as a record of its own with no path
+	// (internal/payload/rendered.go:83-86). A section that genuinely cannot be
+	// attributed to one file (a combined/merge diff, say) is reported the same
+	// way; the Body is still reported either way, because an unattributed record
+	// is worth more to an auditor than a missing one.
+	//
+	// That empty-Path record is also the one MOST likely to need redaction: its
+	// Body is not one file's source but retrieved snippets drawn from files the
+	// diff never touched, plus commit prose. A consumer that redacts or routes by
+	// Path must treat the empty path as "engine-rendered, out-of-diff content"
+	// rather than as an unknown rare case, or it silently under-redacts the
+	// largest sensitive record in the payload.
 	Path string
 	// Body is this file's slice of the payload, verbatim and untruncated.
 	Body string

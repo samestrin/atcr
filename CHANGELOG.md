@@ -1,3 +1,24 @@
+## [35.21.0] - 2026-09-14
+
+*Epic 35.16.9 — predicate exhaustiveness persona rule.*
+
+### Added
+
+- Predicate-exhaustiveness review rule in all ten built-in reviewer personas (`_base.md` plus the nine registered personas). When a diff edits one branch of a comparison, equality, or guard predicate, the reviewer now enumerates every branch of that predicate and every field it is contracted to cover, and reports any field covered in one branch but not another — filing the finding on the edited branch's changed line with the sibling quoted as evidence, so it survives the grounding gate instead of being discarded as out-of-range.
+- Class guard over the embedded built-in persona filesystem: a built-in persona that omits either anchor phrase fails the suite, and a companion check asserts the rule reaches the rendered prompt with tool support both enabled and disabled.
+- Regression pin that text present only in `_base.md` reaches no registered agent — every registered agent ships its own persona file and wins resolution first, so a panel-wide rule written into `_base.md` alone would change no reviewer's behavior.
+
+### Changed
+
+- `docs/personas-authoring.md` now documents the rule, both anchor phrases, and the two load-bearing placement constraints for anyone adding a built-in persona.
+
+### Notes
+
+- **Reviewer prompt text changed, so benchmark runs from before and after this release are not directly comparable** on the existing suite.
+- **Existing installs do not pick this up automatically.** `atcr init` writes editable persona copies that win resolution over the embedded defaults and are never overwritten, even under `--force`. To adopt the rule, add the bullet to your installed persona files under `## Focus`, or delete those copies and re-run `atcr init --force` (add `--offline` to skip the community-persona fetch). `--force` is required because init also writes `.atcr/config.yaml` and `.atcr/.gitignore`, which a bare re-run refuses to overwrite; it is safe for the persona copies themselves — init preserves existing persona files even under `--force` — so it regenerates only the scaffold and the personas you deleted.
+
+*Shipped via /execute-epic (epic 35.16.9)*
+
 ## [35.20.0] - 2026-09-10
 
 *Epic 35.16.8 — context aware prefetching.*

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -117,6 +118,25 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		Nonce:        nonce,
 	})
 
+	// Panel-composition warning: the built-in class guard walks embedded built-ins
+	// only (community personas are a deliberate Out-of-Scope exclusion), so an
+	// agent configured with a community persona can sit on a panel where every
+	// built-in carries the panel-wide predicate-exhaustiveness rule and its
+	// prompt does not — observable until now only as a quieter member in review
+	// output. Name the gap at pre-flight; exit code is unchanged (this is
+	// composition, not invocation health).
+	agentToPersona := make(map[string]string, len(res.Agents))
+	for _, at := range res.Agents {
+		if ac, ok := reg.Agents[at.Agent]; ok {
+			agentToPersona[at.Agent] = ac.Persona // loader defaults an empty persona to the agent name
+		}
+	}
+	personaDirs := registry.PersonaDirs{
+		Project:  filepath.Join(".atcr", "personas"),
+		Registry: filepath.Join(filepath.Dir(regPath), "personas"),
+	}
+	rep.PredicateRuleGaps = registry.PredicateRuleGaps(agentToPersona, personaDirs)
+
 	if asJSON {
 		if err := doctor.RenderJSON(cmd.OutOrStdout(), rep); err != nil {
 			return err
@@ -134,6 +154,13 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 			}
 		}
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "doctor: %d ok / %d failed\n", okCount, len(rep.Agents)-okCount)
+		if len(rep.PredicateRuleGaps) > 0 {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+				"doctor: WARNING — predicate-exhaustiveness rule gaps: these roster agents resolve "+
+					"to personas that do not carry the panel-wide rule (built-ins are test-enforced; "+
+					"community and project personas are not): %s\n",
+				strings.Join(rep.PredicateRuleGaps, ", "))
+		}
 	}
 
 	if rep.ExitCode != 0 {

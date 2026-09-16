@@ -11,9 +11,14 @@ import (
 // AgentResult struct tags; see docs/registry.md for the documented contract.
 func RenderJSON(w io.Writer, rep *Report) error {
 	// Marshal a wrapper so the top-level shape is a stable object, never null.
+	//
+	// Every Report field meant for --json must be restated here: the wrapper, not
+	// Report, is what gets marshalled, so a json tag added to Report alone emits
+	// nothing. PredicateRuleGaps shipped that way once, silently.
 	out := struct {
-		Agents []AgentResult `json:"agents"`
-	}{Agents: rep.Agents}
+		Agents            []AgentResult `json:"agents"`
+		PredicateRuleGaps []string      `json:"predicate_rule_gaps,omitempty"`
+	}{Agents: rep.Agents, PredicateRuleGaps: rep.PredicateRuleGaps}
 	if out.Agents == nil {
 		out.Agents = []AgentResult{}
 	}

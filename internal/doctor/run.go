@@ -141,6 +141,16 @@ const (
 type Report struct {
 	Agents   []AgentResult `json:"agents"`
 	ExitCode int           `json:"-"`
+	// PredicateRuleGaps names the effective-roster agents whose resolved persona
+	// prompt does NOT carry the panel-wide predicate-exhaustiveness rule. The
+	// built-in class guard walks embedded built-ins only (community personas are
+	// a deliberate exclusion), so this composition gap is invisible to the suite
+	// and would otherwise surface only as a quieter panel member in review
+	// output. Populated by cli/doctor.go AFTER Run — Run probes endpoints; this
+	// is roster-composition, not invocation health — and rendered as a stderr
+	// warning in table mode and as this field in --json. Empty (omitted) when
+	// every roster persona carries the rule or resolves.
+	PredicateRuleGaps []string `json:"predicate_rule_gaps,omitempty"`
 }
 
 // probeResult is the outcome of one distinct target.

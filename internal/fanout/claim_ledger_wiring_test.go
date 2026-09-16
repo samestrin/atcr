@@ -647,7 +647,7 @@ func TestClaimLedger_RefitBelowTheFilesCombinedBytesDropsIt(t *testing.T) {
 		// that this reviewer adjudicated no claims, and neither band test asserted
 		// either — so the third exception was proven to HAPPEN and not proven to be
 		// REPORTED. rp.fits holds in both bands, so the action is truncate rather
-		// than overflow (review.go:3240-3243).
+		// than overflow (review.go:3492-3494).
 		assert.True(t, fb.Truncation.Truncated,
 			"a re-fit that shed reviewable content must say so in the published shed record")
 		assert.Equal(t, degradationTruncate, fb.DegradationAction,

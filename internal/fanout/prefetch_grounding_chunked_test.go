@@ -15,7 +15,8 @@ import (
 //
 // chunkDiff splits payload TEXT on column-0 diff markers, and splitDiffFiles
 // glues everything before the first marker — the claim ledger and the Context
-// Definitions block — onto the FIRST segment only (chunker.go:127-131). So on a
+// Definitions block — onto the FIRST segment only (chunker.go:137-146, the
+// `started` flag and the `isDiffFileMarker(ln) && started` guard). So on a
 // multi-chunk run the agents reviewing chunks 2..N genuinely never receive the
 // block. scopePrefetchGrounding is review-wide and keeps the widening only when
 // EVERY dispatched slot can be shown to have kept it, so it revokes — which is

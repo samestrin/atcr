@@ -36,7 +36,7 @@ func TestPrefetchDefault_RegistryAndPayloadAgree(t *testing.T) {
 // says "disabled" while the code treats 0 as unlimited would invite an operator
 // to switch the feature off and get an unbounded read of repository source
 // instead — the failure direction that matters here, since the section's bytes
-// are exempt from every byte budget.
+// are uncounted on the ordinary shed.
 func TestPrefetchDefault_DocumentedInRegistryDoc(t *testing.T) {
 	doc := readRepoFile(t, "../../docs/registry.md")
 	if !strings.Contains(doc, "`max_prefetch_bytes`") {

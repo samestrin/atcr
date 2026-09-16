@@ -189,7 +189,7 @@ type gitRunner struct {
 	//
 	// It deliberately does NOT share the "<= 0 means unlimited" convention
 	// commitMessages uses for its own maxBytes parameter: there is no unbounded
-	// setting here, because the ledger's bytes are exempt from every byte budget
+	// setting here, because the ledger's bytes are uncounted on the ordinary shed
 	// and this ceiling is the only thing bounding them. claimLedger translates
 	// between the two meanings and is the only place that may.
 	maxClaimBytes int64

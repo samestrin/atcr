@@ -1432,14 +1432,14 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 	opts = append(opts, payload.WithEscalation(
 		payload.ResolveEscalationConfig(escalationOverrides(cfg.Registry.PayloadEscalation))))
 	// Claim-ledger byte ceiling (Epic 35.16.7, max_claim_bytes). Threaded here
-	// because the ledger's bytes are exempt from every byte budget — including
+	// because the ledger's bytes are uncounted on the ordinary shed — including by
 	// on_overflow=fail — so this setting is the only operator control over them,
 	// and 0 is the escape hatch that stops commit text reaching a provider at all.
 	opts = append(opts, payload.WithMaxClaimBytes(cfg.Settings.ResolvedMaxClaimBytes()))
 	// Context pre-fetch byte ceiling (Epic 35.16.8, max_prefetch_bytes). Threaded
 	// for the same reason as the claim ledger: the Context Definitions section is
-	// exempt from every byte budget, so this setting is the only operator control
-	// over its size — and 0 is the escape hatch that stops repository source from
+	// likewise uncounted on the ordinary shed, so this setting is the only operator
+	// control over its size — and 0 is the escape hatch that stops repository source from
 	// OUTSIDE the diff reaching a provider at all. This is the single
 	// option-construction chokepoint, so the resume path (resume.go) inherits it
 	// without its own threading.
@@ -3183,6 +3183,15 @@ func inheritedPayloadFits(primary Agent, budget int64) bool {
 		total += int64(len(ref.Body))
 	}
 	if measured == 0 {
+		// UNREACHABLE, and left in deliberately. Reaching it would need EVERY
+		// section to be unattributable, but a combined (diff --cc) section still
+		// carries +++/--- lines that diffSectionPath resolves, and a header-only
+		// section resolves through headPathFromGitHeader
+		// (internal/payload/ingest.go:344-357) — so a non-empty CodeContext always
+		// has at least one measurable path. That is why this arm is uncovered: it
+		// cannot be reached, not because a test was skipped. Do NOT close the gap
+		// with a test that fakes reachability — the arm is defensive only.
+		//
 		// Nothing measurable: "may not fit", never "fits" — the same bias the
 		// empty-CodeContext arm above takes, and for the same reason.
 		return false

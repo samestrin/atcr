@@ -182,7 +182,7 @@ func TestSettings_ZeroValueDoesNotSilentlyDisableTheClaimLedger(t *testing.T) {
 }
 
 // A mis-resolved negative fails SAFE (disabled), never unbounded: the ledger's
-// bytes are exempt from every byte budget, so "unbounded" would be prompt text
+// bytes are uncounted on the ordinary shed, so "unbounded" would be prompt text
 // nothing downstream could see or shed.
 func TestSettings_NegativeMaxClaimBytesResolvesToDisabledNotUnbounded(t *testing.T) {
 	neg := int64(-1)
