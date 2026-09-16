@@ -1345,18 +1345,42 @@ func TestCapPrefetchSnippets_OversizedSingleSnippetIsDroppedWhole(t *testing.T) 
 func TestCapPrefetchSnippets_IsDeterministic(t *testing.T) {
 	// AC3: every agent in one fan-out gets a byte-identical section, so the shed
 	// order may not depend on map iteration.
+	//
+	// The budget has to leave the shed loop a real choice, or this test cannot
+	// observe what it claims. A cap below the section's fixed marker overhead
+	// (~150 bytes) fails total+markers <= maxBytes immediately, sheds every
+	// snippet, and returns nil kept on both calls — so the comparison below would
+	// pass against two empty results, and would go on passing if the
+	// sort.SliceStable were replaced by an unstable or map-driven ordering. That
+	// degenerate arm is already pinned by
+	// TestCapPrefetchSnippets_ZeroCapKeepsNothingAndStillRecordsDrops.
+	//
+	// Two EQUAL-tier, EQUAL-size snippets under a partial-shed budget put the
+	// decision on the path tie-break instead, which is the ordering that must not
+	// vary between agents. They are listed here in reverse tie-break order so the
+	// sort has to move them.
 	snips := []PrefetchSnippet{
-		prefetchSnippet("a.go", "Alpha", PrefetchTierReference, 40),
-		prefetchSnippet("b.go", "Beta", PrefetchTierReference, 40),
-		prefetchSnippet("c.go", "Gamma", PrefetchTierSimilarity, 40),
+		prefetchSnippet("b.go", "Bravo", PrefetchTierReference, 400),
+		prefetchSnippet("a.go", "Alpha", PrefetchTierReference, 400),
 	}
+	require.Equal(t, renderedBytes(snips[0]), renderedBytes(snips[1]),
+		"the two snippets must render to the same size, or the SIZE tie-break decides and the path ordering is never exercised")
 
-	budget := int64(renderedBytes(snips[0]))
+	// Both blocks plus the markers minus a sliver: "keep both" no longer fits, so
+	// exactly one is shed (the pattern used by the tier-ranking tests above).
+	markers := int64(len(prefetchSectionStart) + 1 + len(prefetchUntrustedNotice) + len(prefetchSectionEnd) + 1)
+	budget := int64(renderedBytes(snips[0])+renderedBytes(snips[1])) + markers - 10
+
 	keptA, droppedA := capPrefetchSnippets(snips, budget)
 	keptB, droppedB := capPrefetchSnippets(snips, budget)
 
+	require.Len(t, keptA, 1, "the budget must shed exactly one snippet, or the tie-break never runs")
+	require.Len(t, droppedA, 1)
 	require.Equal(t, keptA, keptB)
 	require.Equal(t, droppedA, droppedB)
+	require.Equal(t, "a.go", droppedA[0].Path,
+		"with tier and size equal the path tie-break decides and sheds the lowest path first")
+	require.Equal(t, "b.go", keptA[0].Path)
 }
 
 func TestApplyByteBudget_TwoExemptSectionsCannotJointlyOverrunTheBudget(t *testing.T) {
