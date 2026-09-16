@@ -156,6 +156,41 @@ func TestMaterializeCase_RejectsADiffThatDoesNotApply(t *testing.T) {
 	assert.Contains(t, err.Error(), "apply")
 }
 
+// AC7 by the third route: the DIFF is author-controlled too, and a patch whose
+// paths climb out of the repository would write wherever it liked. The guard is
+// git apply's own refusal, so this test pins that we rely on it deliberately
+// rather than by luck — if a future git relaxed it, this fails rather than
+// silently granting a case write access to the host.
+func TestMaterializeCase_RejectsADiffThatEscapesTheTree(t *testing.T) {
+	c := materializableCase(t)
+	require.NoError(t, os.WriteFile(filepath.Join(c.Dir, "change.diff"), []byte(
+		"diff --git a/../escape.txt b/../escape.txt\n"+
+			"new file mode 100644\n"+
+			"--- /dev/null\n"+
+			"+++ b/../escape.txt\n"+
+			"@@ -0,0 +1 @@\n"+
+			"+owned\n"), 0o600))
+
+	dest := t.TempDir()
+	_, err := MaterializeCase(context.Background(), c, dest)
+	require.Error(t, err, "a diff writing outside the repository must be refused")
+	assert.NoFileExists(t, filepath.Join(filepath.Dir(dest), "escape.txt"))
+}
+
+// An empty base tree makes `git commit` fail with git's own "nothing to commit",
+// which tells an author nothing about their case. It is also always a broken case:
+// this tier exists to plant defects reachable through UNCHANGED code, and an empty
+// base tree has none.
+func TestMaterializeCase_RejectsAnEmptyBaseTree(t *testing.T) {
+	c := materializableCase(t)
+	require.NoError(t, os.RemoveAll(filepath.Join(c.Dir, "base")))
+	require.NoError(t, os.MkdirAll(filepath.Join(c.Dir, "base"), 0o755))
+
+	_, err := MaterializeCase(context.Background(), c, t.TempDir())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "empty")
+}
+
 // The SHIPPED case must materialize. A fixture-only suite would stay green while
 // benchmarks/repo-state-v1/ drifted out of applying.
 func TestMaterializeCase_ShippedCaseMaterializes(t *testing.T) {

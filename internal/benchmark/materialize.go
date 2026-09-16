@@ -53,8 +53,16 @@ const (
 // dest must be an existing empty directory; the caller owns its lifetime, exactly
 // as executeBenchmarkRun owns the per-run temp directory it already creates.
 func MaterializeCase(ctx context.Context, c RepoStateCase, dest string) (*MaterializedCase, error) {
-	if err := copyBaseTree(filepath.Join(c.Dir, c.BaseTree), dest); err != nil {
+	files, err := copyBaseTree(filepath.Join(c.Dir, c.BaseTree), dest)
+	if err != nil {
 		return nil, fmt.Errorf("case %q base tree: %w", c.ID, err)
+	}
+	// A base tree with no files is always a broken case, and git reports it as
+	// "nothing to commit", which names neither the case nor the reason. This tier
+	// exists to plant defects reachable through UNCHANGED code; an empty base tree
+	// has no unchanged code, so the case could not carry one.
+	if files == 0 {
+		return nil, fmt.Errorf("case %q base tree %q is empty; a repo-state case plants defects reachable through unchanged code, so it needs a tree to reach", c.ID, c.BaseTree)
 	}
 	if err := runGit(ctx, dest, "init", "-q"); err != nil {
 		return nil, fmt.Errorf("case %q: %w", c.ID, err)
@@ -113,8 +121,12 @@ func MaterializeCase(ctx context.Context, c RepoStateCase, dest string) (*Materi
 //     FORMAT.md's "the loader creates the repository" holds for subdirectories too;
 //   - any entry that is neither a regular file nor a directory (device, socket,
 //     fifo), which has no meaning in a source tree and cannot be reviewed.
-func copyBaseTree(src, dst string) error {
-	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+//
+// It returns the number of regular files copied, so the caller can reject an empty
+// tree with a diagnostic that names the case.
+func copyBaseTree(src, dst string) (int, error) {
+	files := 0
+	err := filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -141,11 +153,13 @@ func copyBaseTree(src, dst string) error {
 		case d.IsDir():
 			return os.MkdirAll(target, 0o755)
 		case d.Type().IsRegular():
+			files++
 			return copyRegularFile(p, target)
 		default:
 			return fmt.Errorf("base tree entry %q is neither a regular file nor a directory", rel)
 		}
 	})
+	return files, err
 }
 
 // copyRegularFile copies one file, preserving only whether it is executable.
