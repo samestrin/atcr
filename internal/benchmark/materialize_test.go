@@ -88,7 +88,12 @@ func TestMaterializeCase_CommitMessageIsVerbatim(t *testing.T) {
 
 	want, err := os.ReadFile(filepath.Join(c.Dir, c.CommitMessage))
 	require.NoError(t, err)
-	got := gitOut(t, mc.Root, "log", "-1", "--format=%B", mc.HeadSHA)
+	// %B is the raw body; --format adds one terminating newline per commit, so
+	// exactly one is stripped to recover the stored bytes. Stripping ALL trailing
+	// newlines would hide the defect this test exists for — git's default
+	// --cleanup drops trailing blank lines, and a case whose message ends in one
+	// would then compare equal to a message git had already rewritten.
+	got := strings.TrimSuffix(gitOut(t, mc.Root, "log", "-1", "--format=%B", mc.HeadSHA), "\n")
 	assert.Equal(t, string(want), got, "the head commit message must be the case file, byte for byte")
 }
 

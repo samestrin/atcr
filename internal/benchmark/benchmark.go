@@ -7,10 +7,19 @@
 // ships the CONTRACT (Load/Validate/ReproHash), the suite-tagged Submission
 // envelope and the RunResult contract `atcr benchmark export` consumes, and the
 // scorer (Score, which folds per-case findings into the public reviewer schema).
-// It stays stdlib + scorecard-type only, with no live-LLM dependency: the suite
-// EXECUTION loop that drives each case's diff through the review pipeline lives in
-// cmd/atcr (the composition root that may import internal/fanout). The curated
-// standard-v1 suite CONTENT is bundled at benchmarks/standard-v1/ in this repo.
+// It carries NO live-LLM dependency: the suite EXECUTION loop that drives each
+// case through the review pipeline lives in cmd/atcr (the composition root that
+// may import internal/fanout). The curated standard-v1 suite CONTENT is bundled at
+// benchmarks/standard-v1/ in this repo.
+//
+// It also hosts the repo-state-v1 tier (epic 35.16.10): a second suite whose cases
+// carry repo STATE rather than a bare diff, with expected findings located by file
+// and line range. That tier materializes each case into a real git repository, so
+// this package's dependency set is stdlib + scorecard + version + gitexec rather
+// than the stdlib-and-scorecard-only set it held through epic 10.0. gitexec is the
+// hardened git constructor, a leaf with no internal dependencies of its own, and
+// the edge is the same one internal/benchmarkimport already carries — the
+// no-live-LLM property that makes this package testable offline is unchanged.
 package benchmark
 
 import (
