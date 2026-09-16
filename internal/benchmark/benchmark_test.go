@@ -180,6 +180,11 @@ func TestLoad_MissingSuiteJSON(t *testing.T) {
 // hunting for a field that format never had. The discriminator is guaranteed
 // present (benchmarks/repo-state-v1/FORMAT.md), so the loader can consult it
 // before field validation and name the tier instead.
+//
+// Since epic 35.16.10 the tier is IMPLEMENTED, by LoadRepoState. Load still
+// declines it — Load returns *Manifest and cannot express a repo-state case — but
+// the message now names the function that handles the suite rather than a
+// document the reader would have to implement themselves.
 func TestLoad_RejectsAKnownOtherSuiteFormatByItsDiscriminator(t *testing.T) {
 	dir := t.TempDir()
 	writeManifest(t, dir, `{"suite":"repo-state-v1","suite_version":"1.0.0","cases":[{"id":"c1","dir":"c1"}]}`)
@@ -187,7 +192,7 @@ func TestLoad_RejectsAKnownOtherSuiteFormatByItsDiscriminator(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported suite format")
 	assert.Contains(t, err.Error(), "repo-state-v1")
-	assert.Contains(t, err.Error(), "FORMAT.md", "the error must name the document that defines the tier")
+	assert.Contains(t, err.Error(), "LoadRepoState", "the error must name the loader that handles the tier")
 	assert.NotContains(t, err.Error(), "diff path is required",
 		"this is a different tier, not a standard-v1 manifest missing a field")
 }

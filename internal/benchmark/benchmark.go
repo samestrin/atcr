@@ -50,14 +50,21 @@ type Case struct {
 	ExpectedCategories []string `json:"expected_categories"`
 }
 
-// knownOtherSuiteFormats maps a `suite` discriminator this package does NOT
-// implement to the document that defines it. It is deliberately an enumeration
-// of KNOWN other tiers rather than a whitelist of accepted names: a user may
-// bundle a private standard-v1 suite under any name, so rejecting everything
-// but "standard-v1" would break them. Only a tier this repo actually ships a
-// format document for is recognised and refused.
+// knownOtherSuiteFormats maps a `suite` discriminator this FUNCTION does not
+// implement to the way to load it. It is deliberately an enumeration of KNOWN
+// other tiers rather than a whitelist of accepted names: a user may bundle a
+// private standard-v1 suite under any name, so rejecting everything but
+// "standard-v1" would break them.
+//
+// The repo-state-v1 entry no longer points at a format document. As of epic
+// 35.16.10 the tier IS implemented here — by LoadRepoState, which returns a
+// RepoStateManifest. Load cannot return that type, so it still declines the
+// suite; what changed is that the suite is no longer refused by the TOOL, and the
+// message now names the function that handles it instead of a document the reader
+// would have to implement themselves. Callers that must accept either tier route
+// on DetectSuiteFormat.
 var knownOtherSuiteFormats = map[string]string{
-	"repo-state-v1": "benchmarks/repo-state-v1/FORMAT.md",
+	FormatRepoStateV1: "benchmark.LoadRepoState (or `atcr benchmark run`, which routes on the suite discriminator)",
 }
 
 // Load reads <suitePath>/suite.json, validates the manifest structurally, and
@@ -78,9 +85,9 @@ func Load(suitePath string) (*Manifest, error) {
 	// carries no `diff` field at all, so structural validation reports "diff path
 	// is required" — a message that sends the reader looking for a field the
 	// format never had, rather than telling them this is a different suite tier.
-	if doc, ok := knownOtherSuiteFormats[strings.TrimSpace(m.Suite)]; ok {
-		return nil, fmt.Errorf("unsupported suite format %q in %s: this loader implements standard-v1 only; see %s",
-			strings.TrimSpace(m.Suite), manifestPath, doc)
+	if loader, ok := knownOtherSuiteFormats[strings.TrimSpace(m.Suite)]; ok {
+		return nil, fmt.Errorf("unsupported suite format %q in %s: this loader implements standard-v1 only; load it with %s",
+			strings.TrimSpace(m.Suite), manifestPath, loader)
 	}
 	if err := m.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid suite manifest %s: %w", manifestPath, err)
