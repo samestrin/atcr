@@ -335,9 +335,18 @@ func validateExpectedFinding(i int, f ExpectedFinding, seen map[string]bool) err
 // resolved path an author has to go look at.
 func (c *RepoStateCase) checkFiles() error {
 	baseDir := filepath.Join(c.Dir, c.BaseTree)
-	fi, err := os.Stat(baseDir)
+	// Lstat, not Stat. The declared-path guard in Validate proves the STRING does
+	// not escape; it cannot see that "base" is a symlink to somewhere else. Stat
+	// follows the link and reports a perfectly ordinary directory, so the case would
+	// materialize a tree from outside its own directory and AC7 would hold only
+	// against authors who escape the obvious way. An author controls both the string
+	// and the filesystem, so both have to be checked.
+	fi, err := os.Lstat(baseDir)
 	if err != nil {
 		return fmt.Errorf("case %q base tree %q: %w", c.ID, c.BaseTree, err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("case %q base tree %q is a symlink; a case must not reference a path outside its own directory", c.ID, c.BaseTree)
 	}
 	if !fi.IsDir() {
 		return fmt.Errorf("case %q base tree %q is not a directory", c.ID, c.BaseTree)
@@ -361,32 +370,6 @@ func (c *RepoStateCase) checkFiles() error {
 		}
 		if !fi.Mode().IsRegular() {
 			return fmt.Errorf("case %q %s file %q is not a regular file", c.ID, f.field, f.rel)
-		}
-	}
-	return nil
-}
-
-// Validate re-runs the structural contract over an in-memory manifest, for a
-// caller that built one without going through LoadRepoState.
-func (m *RepoStateManifest) Validate() error {
-	if strings.TrimSpace(m.Suite) != FormatRepoStateV1 {
-		return fmt.Errorf("suite is %q, not %q", m.Suite, FormatRepoStateV1)
-	}
-	if strings.TrimSpace(m.SuiteVersion) == "" {
-		return fmt.Errorf("suite_version is required")
-	}
-	if len(m.Cases) == 0 {
-		return fmt.Errorf("suite must define at least one case")
-	}
-	seen := make(map[string]bool, len(m.Cases))
-	for i := range m.Cases {
-		c := &m.Cases[i]
-		if seen[c.ID] {
-			return fmt.Errorf("case %q: duplicate id", c.ID)
-		}
-		seen[c.ID] = true
-		if err := c.Validate(); err != nil {
-			return fmt.Errorf("case %q: %w", c.ID, err)
 		}
 	}
 	return nil

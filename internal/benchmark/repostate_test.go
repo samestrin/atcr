@@ -178,6 +178,25 @@ func TestLoadRepoState_RejectsGitDirInBaseTree(t *testing.T) {
 	assert.Contains(t, err.Error(), ".git")
 }
 
+// AC7 again, by the route the declared-path check cannot see. `base_tree` may say
+// "base" — perfectly safe as a string — while `base` is a SYMLINK to somewhere
+// else entirely. Stat follows it and reports a directory, so the case would
+// materialize a tree from outside its own directory. The declared-path guard and
+// the on-disk guard have to both hold, because an author controls both.
+func TestLoadRepoState_RejectsSymlinkedBaseTree(t *testing.T) {
+	dir := writeRepoStateSuite(t, validCaseJSON)
+	outside := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("x"), 0o600))
+
+	base := filepath.Join(dir, "good-case", "base")
+	require.NoError(t, os.RemoveAll(base))
+	require.NoError(t, os.Symlink(outside, base))
+
+	_, err := LoadRepoState(dir)
+	require.Error(t, err, "a symlinked base tree escapes the case directory and must be refused")
+	assert.Contains(t, err.Error(), "symlink")
+}
+
 func TestLoadRepoState_RejectsSuiteLevelDefects(t *testing.T) {
 	tests := []struct {
 		name     string
