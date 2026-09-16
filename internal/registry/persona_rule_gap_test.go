@@ -37,7 +37,14 @@ func TestPredicateRuleGaps_NamesOnlyTheRuleLess(t *testing.T) {
 		"sec-agent":  "owasp",  // rule-less community persona → named
 		"strict-bot": "strict", // carrier → silent
 		"bruce":      "bruce",  // embedded built-in carrier (empty dirs → level 5) → silent
-		"ghost":      "ghost",  // unresolvable → NOT a gap (resolution errors surface elsewhere)
+		// NOT an error case, despite the name. persona == agentName, so resolution
+		// never takes the explicit-ref failure at persona.go:102-105; it falls to
+		// level 5, personas.Get("ghost") fails, and personas.Base() hands back the
+		// embedded _base.md — which carries both anchors. So this row is silent as a
+		// CARRIER. Calling it "unresolvable" here is what left the err arm below
+		// untested: the suite stayed green with the guard deleted, because no case
+		// ever reached it. The real error case is its own test.
+		"ghost": "ghost",
 	}, dirs)
 
 	require.Equal(t, []string{"sec-agent"}, gaps,
@@ -48,4 +55,39 @@ func TestPredicateRuleGaps_NamesOnlyTheRuleLess(t *testing.T) {
 // gaps, no panic.
 func TestPredicateRuleGaps_EmptyRoster(t *testing.T) {
 	require.Empty(t, PredicateRuleGaps(map[string]string{}, PersonaDirs{}))
+}
+
+// A persona that genuinely FAILS to resolve is not reported as a gap — the
+// `if err != nil { continue }` arm — and until this test existed nothing reached
+// that arm. Deleting the guard left the suite green, because the only case that
+// claimed to cover it ("ghost", above) resolves successfully to embedded
+// _base.md and is silent for an entirely different reason.
+//
+// Without the guard the zero-value ResolvedPersona flows on, `p.Text` is "",
+// CarriesPredicateRule("") is false, and the agent is reported as a gap — a
+// rule-absence verdict on a prompt that was never read. That is the failure this
+// pins: the distinction between "resolved, and the rule is missing" and "never
+// resolved at all".
+//
+// An EXPLICIT persona ref is what makes resolution fail rather than fall
+// through: persona != agentName, so persona.go:102-105 returns
+// ErrPersonaNotFound instead of descending to _base.md or the embedded default.
+func TestPredicateRuleGaps_UnresolvablePersonaIsNotAGap(t *testing.T) {
+	project := t.TempDir()
+	dirs := PersonaDirs{Project: project}
+
+	// Precondition: this ref really does fail to resolve. Asserted rather than
+	// assumed — if a future resolution change made it fall through to a carrier,
+	// the test below would pass for the wrong reason and stop guarding the arm.
+	_, err := ResolvePersona("sec-agent", "never-installed", nil, dirs)
+	require.ErrorIs(t, err, ErrPersonaNotFound,
+		"precondition: an explicit ref with no file must fail, not fall through")
+
+	gaps := PredicateRuleGaps(map[string]string{
+		"sec-agent": "never-installed",
+	}, dirs)
+
+	require.Empty(t, gaps,
+		"an agent whose persona could not be resolved must not be reported as lacking "+
+			"the rule — nothing was read, so there is no verdict to give")
 }

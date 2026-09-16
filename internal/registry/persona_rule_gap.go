@@ -22,9 +22,20 @@ import (
 // no signal anywhere. `atcr doctor` calls this at pre-flight so the gap is named
 // before a real review run instead of being discoverable only in review output.
 //
-// A persona that fails to resolve is NOT a gap: resolution errors surface
-// through their normal paths with their own messages. This check reports rule
-// absence only.
+// A persona that fails to resolve is NOT a gap. This check reports rule absence
+// only, and a prompt that was never read supports no verdict either way —
+// naming it would assert the rule is missing from text nobody looked at.
+//
+// Be clear about what that costs, because an earlier version of this comment
+// was not: it claimed resolution errors "surface through their normal paths",
+// which is true of `atcr review` (internal/fanout resolves personas and fails
+// the run) and NOT true of `atcr doctor`. This is doctor's only persona
+// resolution, so a typo'd `persona:` ref, an oversized or template-bearing
+// community prompt rejected by validateCommunityPrompt, and an unreadable file
+// all leave doctor reporting a clean roster while `atcr review` would hard-fail
+// on the same config. Surfacing them needs a second return value and a channel
+// in the doctor report — deliberately not done here, since this function's
+// contract is rule absence, not resolution health.
 func PredicateRuleGaps(agentToPersona map[string]string, dirs PersonaDirs) []string {
 	var gaps []string
 	for agent, personaRef := range agentToPersona {
