@@ -374,8 +374,20 @@ func expectedCategories(c benchmark.RepoStateCase) []string {
 
 // loadCaseDiffLineMap reads and parses a case's own diff, which is what makes
 // outside_diff a measurement rather than a label (AC3b).
+//
+// The read is size-capped before it happens, mirroring MaxDiffBytes on the
+// standard tier (ReproHash rejects an oversized diff there): this is the same
+// class of untrusted third-party input, and a multi-gigabyte change.diff would
+// otherwise OOM the process at read/parse time.
 func loadCaseDiffLineMap(c benchmark.RepoStateCase) (benchmark.DiffLineMap, error) {
-	raw, err := os.ReadFile(filepath.Join(c.Dir, c.Diff))
+	path := filepath.Join(c.Dir, c.Diff)
+	if fi, err := os.Stat(path); err != nil {
+		return benchmark.DiffLineMap{}, fmt.Errorf("reading case %q diff: %w", c.ID, err)
+	} else if fi.Size() > benchmark.MaxDiffBytes {
+		return benchmark.DiffLineMap{}, fmt.Errorf("case %q diff is %d bytes, exceeding the %d-byte cap: a repo-state case's change.diff is bounded exactly like a standard-v1 one",
+			c.ID, fi.Size(), benchmark.MaxDiffBytes)
+	}
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return benchmark.DiffLineMap{}, fmt.Errorf("reading case %q diff: %w", c.ID, err)
 	}
