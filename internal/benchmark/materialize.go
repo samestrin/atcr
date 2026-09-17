@@ -3,6 +3,7 @@ package benchmark
 import (
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -66,7 +67,7 @@ func MaterializeCase(ctx context.Context, c RepoStateCase, dest string) (*Materi
 		return nil, fmt.Errorf("case %q: dest %s must be empty; found %d entr(y|ies): %s",
 			c.ID, dest, len(entries), strings.Join(names, ", "))
 	}
-	files, err := copyBaseTree(filepath.Join(c.Dir, c.BaseTree), dest)
+	files, err := copyBaseTree(ctx, filepath.Join(c.Dir, c.BaseTree), dest)
 	if err != nil {
 		return nil, fmt.Errorf("case %q base tree: %w", c.ID, err)
 	}
@@ -142,11 +143,26 @@ func MaterializeCase(ctx context.Context, c RepoStateCase, dest string) (*Materi
 //
 // It returns the number of regular files copied, so the caller can reject an empty
 // tree with a diagnostic that names the case.
-func copyBaseTree(src, dst string) (int, error) {
+//
+// The walk honors ctx: a cancelled run aborts at the next entry instead of
+// materializing a tree nobody is waiting for, and every regular file is bounded
+// (per file and per tree) so an adversarial or generated base tree cannot OOM
+// the process or fill the disk. The per-file cap mirrors MaxDiffBytes (the
+// standard-v1 diff cap) — same class of input, same bound.
+const (
+	maxBaseFileBytes = 10 * 1024 * 1024 // mirrors MaxDiffBytes
+	maxBaseTreeBytes = 10 * maxBaseFileBytes
+)
+
+func copyBaseTree(ctx context.Context, src, dst string) (int, error) {
 	files := 0
+	var totalBytes int64
 	err := filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
 		}
 		rel, rerr := filepath.Rel(src, p)
 		if rerr != nil {
@@ -188,8 +204,19 @@ func copyBaseTree(src, dst string) (int, error) {
 		case d.IsDir():
 			return os.MkdirAll(target, 0o755)
 		case d.Type().IsRegular():
+			info, ierr := d.Info()
+			if ierr != nil {
+				return ierr
+			}
+			if info.Size() > maxBaseFileBytes {
+				return fmt.Errorf("base tree entry %q is %d bytes; a single base file may not exceed %d", rel, info.Size(), maxBaseFileBytes)
+			}
+			totalBytes += info.Size()
+			if totalBytes > maxBaseTreeBytes {
+				return fmt.Errorf("base tree exceeds %d bytes in total; a case's base tree may not exceed %d", totalBytes, maxBaseTreeBytes)
+			}
 			files++
-			return copyRegularFile(p, target)
+			return copyRegularFile(d, p, target)
 		default:
 			return fmt.Errorf("base tree entry %q is neither a regular file nor a directory", rel)
 		}
@@ -201,15 +228,16 @@ func copyBaseTree(src, dst string) (int, error) {
 // Nothing else about the source mode is carried: a case's value is its content,
 // and reproducing an author's umask would make the materialized tree — and so the
 // commit SHA — depend on the machine that checked the suite out.
-func copyRegularFile(src, dst string) error {
+//
+// The mode comes from the walk's own DirEntry (one syscall, no second TOCTOU
+// window after the walk's lstat) and the content is STREAMED rather than slurped:
+// a base file's size is bounded by the caller, but the copy must not hold an
+// unbounded buffer in memory regardless.
+func copyRegularFile(d fs.DirEntry, src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-	fi, err := os.Stat(src)
+	fi, err := d.Info()
 	if err != nil {
 		return err
 	}
@@ -217,7 +245,20 @@ func copyRegularFile(src, dst string) error {
 	if fi.Mode()&0o111 != 0 {
 		mode = 0o755
 	}
-	return os.WriteFile(dst, data, mode)
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 // commitAll stages everything and commits it under the fixed benchmark identity
