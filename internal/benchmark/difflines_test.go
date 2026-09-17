@@ -316,6 +316,57 @@ func TestParseDiffLineMap_HandlesAVeryLongLine(t *testing.T) {
 	assert.Equal(t, []int{2}, m.addedLines("big.txt"), "the 200 KiB added line is head line 2")
 }
 
+// The shipped suite must key every finding's file under the EXACT spelling the
+// finding declares. Any key-space disagreement — a C-quoted path, an over-eager
+// a/ strip, a parser returning an empty map — silently voids condition 3 for
+// that file: every outside_diff:true expectation in it becomes unenforceable
+// while the negative-direction test above keeps passing. This is the positive
+// half, with a positive pin proving condition 3 is LIVE on shipped data.
+func TestParseDiffLineMap_ShippedCasesKeyFindingsUnderTheirExactSpelling(t *testing.T) {
+	m, err := LoadRepoState("../../benchmarks/repo-state-v1")
+	require.NoError(t, err)
+	// Some shipped findings name files their case's diff never touches (condition
+	// 3 is a structural no-op for them), so the count guard is SUITE-wide: across
+	// all cases at least one finding must have been checked, or the assertion
+	// above proved nothing.
+	suiteChecked := 0
+	for _, c := range m.Cases {
+		t.Run(c.ID, func(t *testing.T) {
+			raw, err := os.ReadFile(filepath.Join(c.Dir, c.Diff))
+			require.NoError(t, err)
+			lm, err := ParseDiffLineMap(raw)
+			require.NoError(t, err)
+
+			for _, f := range c.ExpectedFindings {
+				if !strings.Contains(string(raw), f.File) {
+					continue // the diff never touches this file: condition 3 cannot fire for it
+				}
+				suiteChecked++
+				assert.Contains(t, lm.files(), f.File,
+					"finding %q names %s, which appears in the case's diff, but the line map keys no file under that exact spelling",
+					f.ID, f.File)
+			}
+
+		})
+	}
+	require.Greater(t, suiteChecked, 0, "no shipped finding's file appears in its case's diff; the exact-spelling assertion checked nothing")
+
+	// Positive pin: head line 43 of streamer/cursor.py IS an added line of
+	// this case's diff (its added block spans head lines 30-43), so the
+	// IsAddedLine lookup condition 3 relies on has something real to reject.
+	for _, c := range m.Cases {
+		if c.ID != "claim-absent-cursor-fix" {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(c.Dir, c.Diff))
+		require.NoError(t, err)
+		lm, err := ParseDiffLineMap(raw)
+		require.NoError(t, err)
+		assert.True(t, lm.IsAddedLine("streamer/cursor.py", 43),
+			"condition 3 must be provably live on shipped data: streamer/cursor.py:43 is an added line")
+	}
+}
+
 func TestParseDiffLineMap_RejectsMalformedInput(t *testing.T) {
 	tests := []struct {
 		name, diff, wantErr string
