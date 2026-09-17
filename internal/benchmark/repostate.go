@@ -242,6 +242,22 @@ func loadRepoStateCase(caseDir string) (*RepoStateCase, error) {
 	if err := c.checkFiles(); err != nil {
 		return nil, err
 	}
+	// The loader's "every filesystem precondition is checked at load" contract
+	// includes the diff's PARSEABILITY: ParseDiffLineMap rejects a malformed diff
+	// (a body line outside any hunk, an unparseable header, a negative range), and
+	// the only alternative gate was the per-case parse in the run loop — after
+	// every earlier case's panel had been paid for. Parsing here makes a broken
+	// diff a load error, where the remedy is free. The parsed map is not cached on
+	// the case: its only consumer is the CLI runner's pre-flight pass, which
+	// already parses (and runs under the paid-run clock), and an exported field
+	// would widen the struct's public surface for a consumer that does not exist.
+	diffData, rerr := os.ReadFile(filepath.Join(caseDir, c.Diff))
+	if rerr != nil {
+		return nil, fmt.Errorf("case %q: reading diff %s: %w", c.ID, c.Diff, rerr)
+	}
+	if _, perr := ParseDiffLineMap(diffData); perr != nil {
+		return nil, fmt.Errorf("case %q: invalid diff %s: %w", c.ID, c.Diff, perr)
+	}
 	return &c, nil
 }
 
