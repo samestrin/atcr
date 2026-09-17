@@ -248,6 +248,26 @@ index aaa..bbb 100644
 	assert.True(t, m.IsAddedLine("pkg/e-acute.py", 2), "the added line must be findable under the real path")
 }
 
+// A diff emitted with --no-prefix/-p0 carries no a//b/ prefixes — and `a/pkg/a.py`
+// is a legal repository path. pathMatches (match.go) strips the prefix only
+// conditionally for exactly that reason; the line map must not key such a file
+// under the stripped spelling, or IsAddedLine misses every line and condition 3
+// fails open for the whole file.
+func TestParseDiffLineMap_NoPrefixDiffKeepsARealLeadingASegment(t *testing.T) {
+	const noPrefix = `diff --git a/pkg/a.py a/pkg/a.py
+--- a/pkg/a.py
++++ a/pkg/a.py
+@@ -1,1 +1,2 @@
+ ctx
++added
+`
+	m, err := ParseDiffLineMap([]byte(noPrefix))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a/pkg/a.py"}, m.files(), "identical header spellings mean a no-prefix diff: the path is the real repository path")
+	assert.True(t, m.IsAddedLine("a/pkg/a.py", 2), "the added line must be keyed under the real path")
+	assert.False(t, m.IsAddedLine("pkg/a.py", 2), "the stripped spelling must NOT be a key")
+}
+
 func TestParseDiffLineMap_RejectsMalformedInput(t *testing.T) {
 	tests := []struct {
 		name, diff, wantErr string
