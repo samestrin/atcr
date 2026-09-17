@@ -246,6 +246,41 @@ func TestLoadRepoState_RejectsSymlinkedCaseDirectory(t *testing.T) {
 	assert.Contains(t, err.Error(), "symlink")
 }
 
+// The escape both guards above miss: an INTERMEDIATE component. os.Lstat follows
+// every component but the last, so `base_tree: "nested/base"` where `nested` is a
+// symlink out of the case directory passes isSafeRelPath (the string has no ..)
+// AND passes the final-component Lstat (`base` really is a directory). The tree
+// that materializes is host content, and PrepareReview ships it to external LLM
+// providers — an exfiltration primitive, not a hygiene gap.
+func TestLoadRepoState_RejectsSymlinkedIntermediateComponentInBaseTree(t *testing.T) {
+	dir := writeRepoStateSuite(t, `{"id":"good-case","format":"repo-state-v1","base_tree":"nested/base","commit_message":"commit-message.txt","diff":"change.diff","expected_findings":[
+	  {"id":"a","file":"pkg/example.py","line_start":1,"line_end":1,"outside_diff":false,"category":"correctness","summary":"s"}]}`)
+	outside := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(outside, "base"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "base", "secret.txt"), []byte("x"), 0o600))
+
+	require.NoError(t, os.Symlink(outside, filepath.Join(dir, "good-case", "nested")))
+
+	_, err := LoadRepoState(dir)
+	require.Error(t, err, "a symlinked intermediate component escapes the case directory and must be refused")
+	assert.Contains(t, err.Error(), "symlink")
+}
+
+// The same intermediate-component escape one level up, on the suite's own `dir`.
+func TestLoadRepoState_RejectsSymlinkedIntermediateComponentInCaseDir(t *testing.T) {
+	dir := writeRepoStateSuite(t, validCaseJSON)
+	outside := t.TempDir()
+	writeRepoStateCase(t, outside, "good-case", validCaseJSON)
+
+	require.NoError(t, os.RemoveAll(filepath.Join(dir, "good-case")))
+	require.NoError(t, os.Symlink(outside, filepath.Join(dir, "away")))
+	writeManifest(t, dir, `{"suite":"repo-state-v1","suite_version":"1.0.0","cases":[{"id":"good-case","dir":"away/good-case"}]}`)
+
+	_, err := LoadRepoState(dir)
+	require.Error(t, err, "a symlinked intermediate component escapes the suite and must be refused")
+	assert.Contains(t, err.Error(), "symlink")
+}
+
 func TestLoadRepoState_RejectsSuiteLevelDefects(t *testing.T) {
 	tests := []struct {
 		name     string
