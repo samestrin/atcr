@@ -491,6 +491,30 @@ func (c capturingLocatedCompleter) Complete(_ context.Context, _ llmclient.Invoc
 	return c.content, nil
 }
 
+// A failed run must not destroy the paid artifacts: today the deferred
+// RemoveAll wipes the work dir (every completed case's review tree) on the way
+// out, and the error names no path — a transient failure on the last case
+// forfeits the whole panel with zero recoverable evidence.
+func TestExecuteRepoStateBenchmarkRun_RetainsTheWorkDirOnFailure(t *testing.T) {
+	suite := writeTwoCaseSuite(t)
+	require.NoError(t, os.WriteFile(filepath.Join(suite, "second-case", "change.diff"),
+		[]byte("diff --git a/app/calc.py b/app/calc.py\n--- a/app/calc.py\n+++ b/app/calc.py\n@@ -1 +x @@\n-old\n+new\n"), 0o600))
+
+	_, err := executeRepoStateBenchmarkRun(context.Background(),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC())
+	require.Error(t, err)
+
+	assert.Contains(t, err.Error(), "retained at", "the error names the retained work dir")
+	start := strings.Index(err.Error(), "retained at ") + len("retained at ")
+	path := err.Error()[start:]
+	if end := strings.Index(path, ")"); end >= 0 {
+		path = path[:end]
+	}
+	require.NotEmpty(t, path, "the error carries a usable path")
+	_, statErr := os.Stat(path)
+	assert.NoError(t, statErr, "the paid artifacts' work dir must survive a failed run")
+}
+
 func TestExecuteRepoStateBenchmarkRun_ReportsBothMetrics(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 	gen := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
