@@ -443,3 +443,41 @@ func TestLoadRepoState_RejectsEscapingFindingFile(t *testing.T) {
 		})
 	}
 }
+
+// validCaseToken accepted a bare dash, a triple dash and unbounded-length ids —
+// none usable as directory names — and Validate compared the TRIMMED id against
+// the directory while leaving c.ID untrimmed, so a case with a trailing space in
+// its id validated with a struct that disagreed with every downstream comparison.
+func TestLoadRepoState_RejectsUnusableCaseIds(t *testing.T) {
+	for _, tc := range []struct{ name, id, wantErr string }{
+		{"bare dash", "-", "lowercase letters"},
+		{"triple dash", "---", "lowercase letters"},
+		{"leading dash", "-good-case", "lowercase letters"},
+		{"trailing dash", "good-case-", "lowercase letters"},
+		{"over-long id", "g" + string(make([]byte, 0)) + strings.Repeat("a", 100), "lowercase letters"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := strings.Replace(validCaseJSON, `"id": "good-case"`, `"id": "`+tc.id+`"`, 1)
+			_, err := LoadRepoState(writeRepoStateSuite(t, body))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
+}
+
+// Validate must assign the TRIMMED id back to c.ID, so the struct and every
+// downstream comparison (including the exported Validate path, which LoadRepoState's
+// separate manifest comparison does not cover) use one spelling.
+func TestValidate_TrimsTheCaseIDIntoTheStruct(t *testing.T) {
+	dir := t.TempDir()
+	c := RepoStateCase{ID: "  good-case  ", Format: FormatRepoStateV1, BaseTree: "base",
+		CommitMessage: "commit-message.txt", Diff: "change.diff",
+		ExpectedFindings: []ExpectedFinding{{ID: "a", File: "pkg/example.py", LineStart: 1, LineEnd: 1,
+			OutsideDiff: boolPtr(false), Category: "correctness", Summary: "s"}}}
+	// Dir deliberately empty: the id-vs-directory arm does not fire, so the trim
+	// is what makes the exported Validate accept and normalize the id.
+	require.NoError(t, c.Validate())
+	assert.Equal(t, "good-case", c.ID,
+		"Validate must write the trimmed id back so struct and comparisons agree")
+	_ = dir
+}
