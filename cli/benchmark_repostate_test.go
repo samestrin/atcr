@@ -456,6 +456,41 @@ func TestReadCaseFindingsLocated_SkippedRowStaysInTheVocabularyDenominator(t *te
 	assert.InDelta(t, 0.5, *vocab[0].Rate, 1e-9)
 }
 
+// AC3b's integration seam: the runner must wire the case's parsed line map into
+// MatchFindings. The mini fixture's added head lines are 6-9 and its only
+// outside_diff:true expectation settles at 12-13 (window [9,16]) — a stub
+// citing app/calc.py:9 cites an ADDED line inside the window, which clause 3
+// must reject: out-of-diff recall 0.0 with ExpectedOutsideDiff 1. This test
+// FAILS if the line map is replaced with an empty one — the clause-3 lookup has
+// nothing to reject and the citation earns credit.
+func TestExecuteRepoStateBenchmarkRun_AddedLineDoesNotEarnOutsideDiffCredit(t *testing.T) {
+	cc := &capturingLocatedCompleter{content: "HIGH|app/calc.py:9|average() divides by len(items) with no empty guard|add a guard|correctness|15|return total(items) / len(items)\n" +
+		"MEDIUM|app/calc.py:8|safe_total is not None-safe as claimed|handle None explicitly|correctness|15|def safe_total(items):"}
+
+	rr, err := executeRepoStateBenchmarkRun(context.Background(),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), cc, repoStateMiniPath, time.Unix(0, 0).UTC())
+	require.NoError(t, err)
+
+	require.Len(t, rr.PositionalRecall, 1)
+	pr := rr.PositionalRecall[0]
+	assert.Equal(t, 1, pr.ExpectedOutsideDiff)
+	assert.Equal(t, 0, pr.MatchedOutsideDiff,
+		"citing an ADDED line inside the outside_diff window must earn no out-of-diff credit (clause 3)")
+	require.NotNil(t, pr.OutsideDiffRecall)
+	assert.InDelta(t, 0.0, *pr.OutsideDiffRecall, 1e-9)
+	// The in-diff half is unaffected: :8 is an added line and the expectation is
+	// outside_diff:false, so it still matches.
+	assert.Equal(t, 1, pr.MatchedWithinDiff)
+}
+
+// capturingLocatedCompleter emits caller-supplied content as the reviewer's
+// findings, so a test can cite an exact line.
+type capturingLocatedCompleter struct{ content string }
+
+func (c capturingLocatedCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
+	return c.content, nil
+}
+
 func TestExecuteRepoStateBenchmarkRun_ReportsBothMetrics(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 	gen := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
