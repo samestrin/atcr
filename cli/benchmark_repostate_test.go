@@ -409,7 +409,8 @@ func TestReadCaseFindingsLocated_CountsUnattributedSkippedRows(t *testing.T) {
 	require.NoError(t, os.MkdirAll(pool, 0o755))
 	// One well-formed row for greta, one over-column row whose recovered reviewer
 	// is "nobody" — not a key in the agent set.
-	content := "HIGH|app/calc.py:12|p|f|correctness|15|sol|greta\n" +
+	content := "# atcr-findings/v1\n" +
+		"HIGH|app/calc.py:12|p|f|correctness|15|sol|greta\n" +
 		"HIGH|app/calc.py:13|p|f|correctness|15|sol|extra|nobody\n"
 	require.NoError(t, os.WriteFile(filepath.Join(pool, "findings.txt"), []byte(content), 0o600))
 
