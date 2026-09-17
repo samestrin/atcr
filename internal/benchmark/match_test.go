@@ -308,6 +308,36 @@ func TestMatchFindings_NearestMidpointIsGreedyNotMaximumCardinality(t *testing.T
 			"tolerance of 0 the remaining report cannot reach")
 }
 
+// A pure-DELETION hunk against an outside_diff:true expectation. The deleted
+// lines are keyed BASE-side, the citation is HEAD-side, and the two numberings
+// coincide before the first hunk — so a report citing the base-side number of a
+// deleted line lands inside the window. This test pins the DECIDED behavior
+// explicitly: the matcher consults IsAddedLine only, so a removed-line citation
+// IS credited. The trade-off is deliberate rather than accidental — if the
+// removed-line clause-3 finding (match.go:105) changes the guard, this pin moves
+// with it, consciously.
+func TestMatchFindings_RemovedLineCitationAgainstAnOutsideDiffExpectation(t *testing.T) {
+	lm, err := ParseDiffLineMap([]byte(
+		"diff --git a/pkg/a.py b/pkg/a.py\n" +
+			"--- a/pkg/a.py\n" +
+			"+++ b/pkg/a.py\n" +
+			"@@ -17,5 +17,3 @@\n" +
+			" ctx17\n" +
+			" ctx18\n" +
+			"-removed19\n" +
+			"-removed20\n" +
+			" ctx21\n"))
+	require.NoError(t, err)
+	// Sanity: the parser recorded the deletion, and nothing was ADDED — base-side
+	// line 19 is a removed line, not an added one.
+	assert.False(t, lm.IsAddedLine("pkg/a.py", 19), "19 is a REMOVED base-side line; the added set is empty")
+
+	expected := []ExpectedFinding{exp("f", "pkg/a.py", 18, 18, 3, true)}
+	got := MatchFindings(expected, []ReportedFinding{{File: "pkg/a.py", Line: 19}}, lm)
+	assert.True(t, got[0].Matched,
+		"PINNED: a report citing the base-side number of a deleted line (19) satisfies an outside_diff:true expectation at head 18±3 — the removed half of clause 3 is not consulted")
+}
+
 func TestMatchFindings_NoExpectationsOrNoReports(t *testing.T) {
 	assert.Empty(t, MatchFindings(nil, []ReportedFinding{{File: "pkg/a.py", Line: 1}}, noDiff(t)))
 
