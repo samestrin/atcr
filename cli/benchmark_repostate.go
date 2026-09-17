@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/samestrin/atcr/internal/benchmark"
@@ -83,6 +84,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 	// re-reading the pool twice.
 	cats := map[reviewerKey]*benchmark.ReviewerScore{}
 	positional := map[reviewerKey]*benchmark.RepoStateReviewerScore{}
+	acc := map[reviewerKey]*repoStateAcc{}
 	var order []reviewerKey
 
 	caseIDs := make([]string, 0, len(m.Cases))
@@ -129,7 +131,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		if err != nil {
 			return nil, fmt.Errorf("reading pool summary for case %q: %w", c.ID, err)
 		}
-		located, err := readCaseFindingsLocated(res.Dir)
+		located, categorical, err := readCaseFindingsLocated(res.Dir)
 		if err != nil {
 			return nil, fmt.Errorf("reading findings for case %q: %w", c.ID, err)
 		}
@@ -141,38 +143,75 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			if _, ok := cats[key]; !ok {
 				cats[key] = &benchmark.ReviewerScore{Model: key.model, Persona: key.persona}
 				positional[key] = &benchmark.RepoStateReviewerScore{Model: key.model, Persona: key.persona}
+				acc[key] = &repoStateAcc{scored: map[string]string{}, outcomes: map[string]int{}}
 				order = append(order, key)
 			}
-			reported := located[a.Agent]
-
-			raised := make([]string, 0, len(reported))
-			for _, f := range reported {
-				raised = append(raised, f.Category)
+			// Two lanes can realize the SAME (model, persona) — a parallel and a
+			// serial slot pointing at one registry entry, or a fallback converging on
+			// another agent's model. Both then append a CaseScore for this case,
+			// silently doubling Runs and re-weighting CorroborationRate. The standard
+			// tier fails closed on exactly this, and so must this one: a merged
+			// identity is only meaningful when the two lanes PARTITION the suite.
+			if prior, dup := acc[key].scored[c.ID]; dup {
+				return nil, fmt.Errorf("case %q scored twice under realized identity %q/%q (agents %q and %q); "+
+					"two lanes sharing one identity must partition the suite, not both score it",
+					c.ID, key.model, key.persona, prior, a.Agent)
 			}
+			acc[key].scored[c.ID] = a.Agent
+
 			cats[key].Cases = append(cats[key].Cases, benchmark.CaseScore{
 				Expected: expectedCategories(c),
-				Raised:   raised,
+				// The CATEGORICAL projection, which folds unparseable rows back in
+				// with an empty category. Driving this off the positional projection
+				// instead would shrink the out-of-vocabulary denominator for a
+				// reviewer emitting malformed output — rewarding exactly the
+				// behaviour that metric exists to detect.
+				Raised: categorical[a.Agent],
 			})
 			positional[key].Cases = append(positional[key].Cases, benchmark.RepoStateCaseScore{
 				CaseID:  c.ID,
-				Matches: benchmark.MatchFindings(c.ExpectedFindings, reported, lm),
+				Matches: benchmark.MatchFindings(c.ExpectedFindings, located[a.Agent], lm),
 			})
+
+			acc[key].caseIDs = append(acc[key].caseIDs, c.ID)
+			acc[key].outcomes[benchmark.OutcomeTallyKey(reviewerOutcome(a, categorical[a.Agent]))]++
+			if a.FallbackUsed {
+				acc[key].fallbackCases++
+			}
 
 			// Cost and latency are usage-gated exactly as on the standard path: a
 			// stub completer reports no usage, so both stay 0 and the score is
 			// deterministic.
 			if a.TokensIn > 0 || a.TokensOut > 0 {
 				cats[key].CostUSD += llmclient.ComputeCostUSD(a.Model, a.TokensIn, a.TokensOut)
-				cats[key].LatencyP50MS = a.DurationMS
+				// COLLECTED, not overwritten. LatencyP50MS is a median on the frozen
+				// public row, and assigning each case in turn published the LAST
+				// case's wall clock under a column that means something else on every
+				// standard-v1 row.
+				acc[key].latencies = append(acc[key].latencies, a.DurationMS)
 			}
 		}
 	}
 
 	catScores := make([]benchmark.ReviewerScore, 0, len(order))
 	posScores := make([]benchmark.RepoStateReviewerScore, 0, len(order))
+	coverage := make([]benchmark.ReviewerCoverage, 0, len(order))
 	for _, k := range order {
+		cats[k].LatencyP50MS = medianInt64(acc[k].latencies)
 		catScores = append(catScores, *cats[k])
 		posScores = append(posScores, *positional[k])
+		// Coverage is not optional decoration: `benchmark export` hard-rejects a
+		// run-result that names a suite but records no reviewer coverage, calling the
+		// FILE malformed. Omitting it made every repo-state run unexportable by
+		// construction, and the operator would learn so only after paying for a full
+		// panel.
+		coverage = append(coverage, benchmark.ReviewerCoverage{
+			Model:         k.model,
+			Persona:       k.persona,
+			CaseIDs:       acc[k].caseIDs,
+			Outcomes:      acc[k].outcomes,
+			FallbackCases: acc[k].fallbackCases,
+		})
 	}
 
 	return &benchmark.RunResult{
@@ -182,8 +221,24 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		Reviewers:           benchmark.Score(catScores),
 		OutOfVocabularyRate: benchmark.OutOfVocabularyRate(catScores),
 		SuiteCaseIDs:        caseIDs,
+		Coverage:            coverage,
+		Vocabulary:          benchmark.PerReviewerVocabulary(catScores),
 		PositionalRecall:    benchmark.ScorePositional(posScores),
 	}, nil
+}
+
+// repoStateAcc is the per-identity bookkeeping the run-result needs beyond the two
+// score accumulators: which cases this identity actually scored (the coverage
+// denominator), how each one turned out, and the per-case latencies a median is
+// taken over. It mirrors reviewerAcc's role on the standard path.
+type repoStateAcc struct {
+	// scored maps a case id to the AGENT that scored it, so the duplicate-case
+	// diagnostic can name both colliding lanes rather than just reporting a count.
+	scored        map[string]string
+	caseIDs       []string
+	outcomes      map[string]int
+	fallbackCases int
+	latencies     []int64
 }
 
 // expectedCategories projects a case's located expectations onto the bare category
@@ -248,37 +303,60 @@ func validateRepoStatePublishableCaseIDs(m *benchmark.RepoStateManifest, suitePa
 	return nil
 }
 
-// readCaseFindingsLocated is readCaseFindings with the POSITION kept. The
-// standard-v1 reader discards file and line because category recall has no use for
-// them; positional matching is nothing but those two fields.
+// readCaseFindingsLocated reads one case's pool findings and returns BOTH
+// projections the two metrics need: `located` carries file+line+category for
+// positional matching, and `categorical` carries the bare category list the
+// category-recall scorer and the out-of-vocabulary rate are defined over.
 //
-// Unparseable ("skipped") rows are deliberately NOT folded in here, which is the
-// one place this reader differs from its category sibling beyond the projection.
-// That sibling folds them in with an empty category so the out-of-vocabulary
-// DENOMINATOR is not shrunk by malformed output. A skipped row has no recoverable
-// file or line, so it cannot match any expectation, and adding it as an
-// unmatchable entry would change no positional outcome while inviting a reader to
-// think it might.
-func readCaseFindingsLocated(reviewDir string) (map[string][]benchmark.ReportedFinding, error) {
+// Two projections rather than one, because they must treat unparseable ("skipped")
+// rows DIFFERENTLY:
+//
+//   - `categorical` folds each skipped row in with an EMPTY category, exactly as
+//     readCaseFindings does. Dropping them would shrink the out-of-vocabulary
+//     denominator, so the reviewer producing the worst-formed output would earn the
+//     best drift rate — the metric would reward the behaviour it exists to detect.
+//   - `located` omits them. A skipped row has no recoverable file or line, so it can
+//     match no expectation; carrying it as a permanently unmatchable entry would
+//     change no outcome while inviting a reader to think it might.
+//
+// Returning both from ONE read is what keeps that asymmetry deliberate. Deriving
+// the category list from the located slice — which is what this function used to
+// invite — silently gave the positional rule's drop to a metric that must not have
+// it.
+func readCaseFindingsLocated(reviewDir string) (located map[string][]benchmark.ReportedFinding, categorical map[string][]string, err error) {
+	located = map[string][]benchmark.ReportedFinding{}
+	categorical = map[string][]string{}
+
 	path := filepath.Join(reviewDir, "sources", "pool", "findings.txt")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return map[string][]benchmark.ReportedFinding{}, nil
+	data, rerr := os.ReadFile(path)
+	if rerr != nil {
+		if os.IsNotExist(rerr) {
+			return located, categorical, nil
 		}
-		return nil, err
+		return nil, nil, rerr
 	}
-	parsed, err := stream.ParseSource(data)
-	if err != nil {
-		return nil, err
+	parsed, perr := stream.ParseSource(data)
+	if perr != nil {
+		return nil, nil, perr
 	}
-	out := make(map[string][]benchmark.ReportedFinding, len(parsed.Findings))
 	for _, f := range parsed.Findings {
-		out[f.Reviewer] = append(out[f.Reviewer], benchmark.ReportedFinding{
+		located[f.Reviewer] = append(located[f.Reviewer], benchmark.ReportedFinding{
 			File:     f.File,
 			Line:     f.Line,
 			Category: f.Category,
 		})
+		categorical[f.Reviewer] = append(categorical[f.Reviewer], f.Category)
 	}
-	return out, nil
+	// REVIEWER is the engine's last-appended column, so the final field survives an
+	// overflow earlier in the row. parse() strips trailing empty fields before
+	// classifying a row as skipped, so mirror that strip to land on the same one.
+	for _, s := range parsed.Skipped {
+		fields := strings.Split(s.Content, "|")
+		for len(fields) > 1 && fields[len(fields)-1] == "" {
+			fields = fields[:len(fields)-1]
+		}
+		reviewer := fields[len(fields)-1]
+		categorical[reviewer] = append(categorical[reviewer], "")
+	}
+	return located, categorical, nil
 }

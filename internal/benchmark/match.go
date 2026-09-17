@@ -1,6 +1,9 @@
 package benchmark
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
 
 // ReportedFinding is one finding a reviewer raised, LOCATED. It is the projection
 // of stream.Finding this package needs — file, line, category — and nothing else:
@@ -84,7 +87,7 @@ func MatchFindings(expected []ExpectedFinding, reported []ReportedFinding, lm Di
 			continue
 		}
 		for ei, e := range expected {
-			if r.File != e.File {
+			if !pathMatches(r.File, e.File) {
 				continue
 			}
 			tol := e.Tolerance()
@@ -95,7 +98,11 @@ func MatchFindings(expected []ExpectedFinding, reported []ReportedFinding, lm Di
 			// blocked pairing never becomes a candidate at all — which is what keeps
 			// the report available to another expectation. Consuming it here would
 			// let one mis-aimed citation silently cost a second, correct finding.
-			if e.IsOutsideDiff() && lm.IsAddedLine(r.File, r.Line) {
+			//
+			// Looked up under the EXPECTATION's spelling, not the report's: the line
+			// map is keyed by head-side repository paths, which is the space e.File is
+			// validated to live in, while r.File is whatever the reviewer typed.
+			if e.IsOutsideDiff() && lm.IsAddedLine(e.File, r.Line) {
 				continue
 			}
 			candidates = append(candidates, candidate{
@@ -103,7 +110,7 @@ func MatchFindings(expected []ExpectedFinding, reported []ReportedFinding, lm Di
 				repIdx:      ri,
 				midDistance: abs(2*r.Line - (e.LineStart + e.LineEnd)),
 				expID:       e.ID,
-				repFile:     r.File,
+				repFile:     e.File,
 				repLine:     r.Line,
 			})
 		}
@@ -140,6 +147,42 @@ func MatchFindings(expected []ExpectedFinding, reported []ReportedFinding, lm Di
 		usedReport[c.repIdx] = true
 	}
 	return out
+}
+
+// pathMatches reports whether a reviewer's cited path names the expectation's
+// file, tolerating the diff-artifact prefixes a citation may carry: a leading `./`
+// or `/`, or an `a/`/`b/` copied out of the diff header.
+//
+// It exists because the grounding gate ALREADY accepts those spellings.
+// fanout.normalizeFindingPath strips them for its own changed-map lookup but never
+// rewrites the finding, so a citation of `b/pkg/a.py` clears the gate, reaches the
+// pool with its prefix intact, and would score zero here against an expected
+// `pkg/a.py`. That is the tier's headline metric turning on a cosmetic path habit
+// rather than on whether the reviewer found the defect.
+//
+// The `a/`/`b/` strip is CONDITIONAL, exactly as the grounding gate's is: it is
+// tried only after the unstripped path has failed. A real repository path may
+// legitimately begin `a/` — `a/b.py` is a valid file — and stripping it
+// unconditionally would make this function fail to match the very path it was
+// handed verbatim.
+//
+// Deliberately NOT filepath.Clean: these are POSIX repository paths on every host,
+// and a case's expected `file` is validated as one, so cleaning with the host
+// separator would make matching differ on Windows for identical bytes.
+func pathMatches(reported, expected string) bool {
+	p := strings.TrimSpace(reported)
+	if p == expected {
+		return true
+	}
+	p = strings.TrimPrefix(p, "./")
+	p = strings.TrimPrefix(p, "/")
+	if p == expected {
+		return true
+	}
+	if strings.HasPrefix(p, "a/") || strings.HasPrefix(p, "b/") {
+		return p[2:] == expected
+	}
+	return false
 }
 
 func abs(n int) int {

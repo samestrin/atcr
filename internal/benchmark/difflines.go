@@ -302,16 +302,16 @@ func (m DiffLineMap) IsAddedLine(file string, line int) bool {
 	return m.added[file][line]
 }
 
-// AddedLines returns the head-side line numbers the diff added to file, sorted.
-func (m DiffLineMap) AddedLines(file string) []int { return sortedLines(m.added[file]) }
+// addedLines returns the head-side line numbers the diff added to file, sorted.
+func (m DiffLineMap) addedLines(file string) []int { return sortedLines(m.added[file]) }
 
-// RemovedLines returns the BASE-side line numbers the diff removed from file,
+// removedLines returns the BASE-side line numbers the diff removed from file,
 // sorted. Base-side because that is the only space a removed line has a number in.
-func (m DiffLineMap) RemovedLines(file string) []int { return sortedLines(m.removed[file]) }
+func (m DiffLineMap) removedLines(file string) []int { return sortedLines(m.removed[file]) }
 
-// Files returns every path the diff touches, sorted, head-side where one exists.
+// files returns every path the diff touches, sorted, head-side where one exists.
 // Sorted so a caller iterating them is deterministic — Go map order is not.
-func (m DiffLineMap) Files() []string {
+func (m DiffLineMap) files() []string {
 	seen := map[string]bool{}
 	for f := range m.added {
 		seen[f] = true

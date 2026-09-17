@@ -98,6 +98,32 @@ func TestMatchFindings_FileMustMatchExactly(t *testing.T) {
 	}
 }
 
+// A reviewer often copies the path straight out of the diff header, prefix and
+// all. The grounding gate already accepts those spellings — it strips them for its
+// own lookup and never rewrites the finding — so a citation that CLEARED the gate
+// arrives here with its prefix intact. Rejecting it would make the tier's headline
+// metric turn on a cosmetic path habit.
+func TestMatchFindings_ToleratesDiffArtifactPathPrefixes(t *testing.T) {
+	expected := []ExpectedFinding{exp("f", "pkg/a.py", 50, 50, 3, false)}
+	for _, cited := range []string{"pkg/a.py", "b/pkg/a.py", "a/pkg/a.py", "./pkg/a.py", "/pkg/a.py", " pkg/a.py "} {
+		got := MatchFindings(expected, []ReportedFinding{{File: cited, Line: 50}}, noDiff(t))
+		assert.True(t, got[0].Matched, "a citation spelled %q must reach pkg/a.py", cited)
+	}
+}
+
+// The a//b/ strip is CONDITIONAL, not unconditional. `a/b.py` is a legal
+// repository path, and eating its first segment would make an exactly-correct
+// citation fail to match the file it names.
+func TestMatchFindings_DoesNotEatARealLeadingASegment(t *testing.T) {
+	expected := []ExpectedFinding{exp("f", "a/b.py", 50, 50, 3, false)}
+
+	got := MatchFindings(expected, []ReportedFinding{{File: "a/b.py", Line: 50}}, noDiff(t))
+	assert.True(t, got[0].Matched, "the verbatim path must match itself")
+
+	got = MatchFindings(expected, []ReportedFinding{{File: "b.py", Line: 50}}, noDiff(t))
+	assert.False(t, got[0].Matched, "a different file must not match by accident of the strip")
+}
+
 // N reports of one defect score as ONE hit. Without this a reviewer that repeated
 // itself would out-score one that reported cleanly.
 func TestMatchFindings_ManyReportsOfOneDefectScoreOnce(t *testing.T) {

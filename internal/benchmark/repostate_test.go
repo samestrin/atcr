@@ -228,6 +228,24 @@ func TestLoadRepoState_RejectsSymlinkedBaseTree(t *testing.T) {
 	assert.Contains(t, err.Error(), "symlink")
 }
 
+// The same escape as the symlinked base tree, one level up: `dir` may say
+// "good-case" — a perfectly safe string — while `good-case/` is a symlink out of
+// the suite. Closing the hole for base_tree and leaving it open here would let a
+// case escape by BEING a link rather than by containing one.
+func TestLoadRepoState_RejectsSymlinkedCaseDirectory(t *testing.T) {
+	dir := writeRepoStateSuite(t, validCaseJSON)
+	outside := t.TempDir()
+	writeRepoStateCase(t, outside, "good-case", validCaseJSON)
+
+	real := filepath.Join(dir, "good-case")
+	require.NoError(t, os.RemoveAll(real))
+	require.NoError(t, os.Symlink(filepath.Join(outside, "good-case"), real))
+
+	_, err := LoadRepoState(dir)
+	require.Error(t, err, "a symlinked case directory escapes the suite and must be refused")
+	assert.Contains(t, err.Error(), "symlink")
+}
+
 func TestLoadRepoState_RejectsSuiteLevelDefects(t *testing.T) {
 	tests := []struct {
 		name     string

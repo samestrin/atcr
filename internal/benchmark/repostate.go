@@ -192,7 +192,17 @@ func LoadRepoState(suitePath string) (*RepoStateManifest, error) {
 			return nil, fmt.Errorf("invalid suite manifest %s: case %q: dir %q must be relative and within the suite directory",
 				manifestPath, id, ref.Dir)
 		}
-		c, err := loadRepoStateCase(filepath.Join(suitePath, ref.Dir))
+		caseDir := filepath.Join(suitePath, ref.Dir)
+		// Lstat the case directory for the same reason checkFiles Lstats the base
+		// tree: the string check above proves `dir` does not SAY it escapes, and says
+		// nothing about whether the directory on disk is a symlink pointing out of
+		// the suite. Closing that hole one level down and leaving it open here would
+		// mean a case could escape by being a link rather than by containing one.
+		if fi, serr := os.Lstat(caseDir); serr == nil && fi.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("invalid suite manifest %s: case %q directory %q is a symlink; a case must not reference a path outside the suite directory",
+				manifestPath, id, ref.Dir)
+		}
+		c, err := loadRepoStateCase(caseDir)
 		if err != nil {
 			return nil, err
 		}

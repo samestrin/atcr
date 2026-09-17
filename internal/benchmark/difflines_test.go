@@ -46,8 +46,8 @@ func TestParseDiffLineMap_MapsAddedLinesPerHunk(t *testing.T) {
 
 	// Hunk 1 starts at head line 10. ctx10=10, ctx11=11, new12=12, extra13=13.
 	// Hunk 2 starts at head line 41. ctx41=41, added42=42.
-	assert.Equal(t, []int{12, 13, 42}, m.AddedLines("pkg/one.py"))
-	assert.Equal(t, []int{1, 2, 3}, m.AddedLines("pkg/two.py"))
+	assert.Equal(t, []int{12, 13, 42}, m.addedLines("pkg/one.py"))
+	assert.Equal(t, []int{1, 2, 3}, m.addedLines("pkg/two.py"))
 }
 
 func TestParseDiffLineMap_MapsRemovedLinesOnTheBaseSide(t *testing.T) {
@@ -55,8 +55,8 @@ func TestParseDiffLineMap_MapsRemovedLinesOnTheBaseSide(t *testing.T) {
 	require.NoError(t, err)
 
 	// Hunk 1 starts at BASE line 10. ctx10=10, ctx11=11, old12=12.
-	assert.Equal(t, []int{12}, m.RemovedLines("pkg/one.py"))
-	assert.Empty(t, m.RemovedLines("pkg/two.py"))
+	assert.Equal(t, []int{12}, m.removedLines("pkg/one.py"))
+	assert.Empty(t, m.removedLines("pkg/two.py"))
 }
 
 func TestParseDiffLineMap_IsAddedLine(t *testing.T) {
@@ -73,7 +73,7 @@ func TestParseDiffLineMap_IsAddedLine(t *testing.T) {
 func TestParseDiffLineMap_Files(t *testing.T) {
 	m, err := ParseDiffLineMap([]byte(multiHunkDiff))
 	require.NoError(t, err)
-	assert.Equal(t, []string{"pkg/one.py", "pkg/two.py"}, m.Files(), "sorted, so callers are deterministic")
+	assert.Equal(t, []string{"pkg/one.py", "pkg/two.py"}, m.files(), "sorted, so callers are deterministic")
 }
 
 // A deleted file has no head-side path. Its removed lines still belong to the
@@ -89,8 +89,8 @@ deleted file mode 100644
 `
 	m, err := ParseDiffLineMap([]byte(deletion))
 	require.NoError(t, err)
-	assert.Equal(t, []int{1, 2}, m.RemovedLines("pkg/gone.py"))
-	assert.Empty(t, m.AddedLines("pkg/gone.py"))
+	assert.Equal(t, []int{1, 2}, m.removedLines("pkg/gone.py"))
+	assert.Empty(t, m.addedLines("pkg/gone.py"))
 }
 
 // "\ No newline at end of file" is a marker, not content. Counting it as a line
@@ -108,8 +108,8 @@ func TestParseDiffLineMap_IgnoresNoNewlineMarker(t *testing.T) {
 `
 	m, err := ParseDiffLineMap([]byte(noEOL))
 	require.NoError(t, err)
-	assert.Equal(t, []int{2}, m.AddedLines("f.txt"))
-	assert.Equal(t, []int{2}, m.RemovedLines("f.txt"))
+	assert.Equal(t, []int{2}, m.addedLines("f.txt"))
+	assert.Equal(t, []int{2}, m.removedLines("f.txt"))
 }
 
 // A hunk header may omit the count, which means exactly one line.
@@ -123,8 +123,8 @@ func TestParseDiffLineMap_HandlesSingleLineHunkHeader(t *testing.T) {
 `
 	m, err := ParseDiffLineMap([]byte(single))
 	require.NoError(t, err)
-	assert.Equal(t, []int{7}, m.AddedLines("f.txt"))
-	assert.Equal(t, []int{7}, m.RemovedLines("f.txt"))
+	assert.Equal(t, []int{7}, m.addedLines("f.txt"))
+	assert.Equal(t, []int{7}, m.removedLines("f.txt"))
 }
 
 // A REMOVED line whose own content begins with "-- " renders in a unified diff as
@@ -150,9 +150,9 @@ func TestParseDiffLineMap_BodyLineThatLooksLikeAFileHeader(t *testing.T) {
 	m, err := ParseDiffLineMap([]byte(sqlComment))
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"q.sql"}, m.Files(), "the file state must survive a body line that looks like a header")
-	assert.Equal(t, []int{2}, m.AddedLines("q.sql"), `"+++ new comment" is an ADDED line whose content is "++ new comment"`)
-	assert.Equal(t, []int{2}, m.RemovedLines("q.sql"), `"--- old comment" is a REMOVED line whose content is "-- old comment"`)
+	assert.Equal(t, []string{"q.sql"}, m.files(), "the file state must survive a body line that looks like a header")
+	assert.Equal(t, []int{2}, m.addedLines("q.sql"), `"+++ new comment" is an ADDED line whose content is "++ new comment"`)
+	assert.Equal(t, []int{2}, m.removedLines("q.sql"), `"--- old comment" is a REMOVED line whose content is "-- old comment"`)
 	assert.True(t, m.IsAddedLine("q.sql", 2), "condition 3 must still be able to fire on this file")
 }
 
@@ -175,9 +175,9 @@ func TestParseDiffLineMap_ConsecutiveFilesWithNoGitSeparator(t *testing.T) {
 	m, err := ParseDiffLineMap([]byte(plain))
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"one.txt", "two.txt"}, m.Files())
-	assert.Equal(t, []int{2}, m.AddedLines("one.txt"))
-	assert.Equal(t, []int{6}, m.AddedLines("two.txt"))
+	assert.Equal(t, []string{"one.txt", "two.txt"}, m.files())
+	assert.Equal(t, []int{2}, m.addedLines("one.txt"))
+	assert.Equal(t, []int{6}, m.addedLines("two.txt"))
 }
 
 // Trailing content after the last hunk is not diff body. `git format-patch` ends
@@ -196,8 +196,8 @@ func TestParseDiffLineMap_IgnoresTrailingContentAfterTheLastHunk(t *testing.T) {
 `
 	m, err := ParseDiffLineMap([]byte(withSignature))
 	require.NoError(t, err)
-	assert.Equal(t, []int{2}, m.RemovedLines("f.txt"), "the format-patch signature must not become a removed line")
-	assert.Equal(t, []int{2}, m.AddedLines("f.txt"))
+	assert.Equal(t, []int{2}, m.removedLines("f.txt"), "the format-patch signature must not become a removed line")
+	assert.Equal(t, []int{2}, m.addedLines("f.txt"))
 }
 
 func TestParseDiffLineMap_RejectsMalformedInput(t *testing.T) {
@@ -227,7 +227,7 @@ func TestParseDiffLineMap_RejectsMalformedInput(t *testing.T) {
 func TestParseDiffLineMap_EmptyDiffIsEmptyNotAnError(t *testing.T) {
 	m, err := ParseDiffLineMap(nil)
 	require.NoError(t, err)
-	assert.Empty(t, m.Files())
+	assert.Empty(t, m.files())
 }
 
 // The SHIPPED case's outside_diff values must be TRUE of its own diff. This is the
@@ -245,11 +245,18 @@ func TestParseDiffLineMap_ShippedCasesOutsideDiffValuesAreTrue(t *testing.T) {
 			require.NoError(t, err)
 
 			for _, f := range c.ExpectedFindings {
-				added := lm.IsAddedLine(f.File, f.LineStart)
-				if f.IsOutsideDiff() {
-					assert.False(t, added,
+				if !f.IsOutsideDiff() {
+					continue
+				}
+				// Every line of the RANGE, not just line_start. Two of this suite's
+				// findings span a range, and the matcher's window admits any line in
+				// [start-tolerance, end+tolerance] — so an interior line that is an
+				// added line makes the declaration wrong in exactly the way that
+				// matters, while a line_start-only check passes.
+				for line := f.LineStart; line <= f.LineEnd; line++ {
+					assert.False(t, lm.IsAddedLine(f.File, line),
 						"finding %q declares outside_diff:true but %s:%d IS an added line of the case's own diff",
-						f.ID, f.File, f.LineStart)
+						f.ID, f.File, line)
 				}
 			}
 		})
