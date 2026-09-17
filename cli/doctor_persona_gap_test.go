@@ -76,6 +76,29 @@ func TestDoctor_SilentWhenEveryRosterPersonaCarriesTheRule(t *testing.T) {
 		"a roster with no gaps must emit no warning at all")
 }
 
+// The warning said "these roster agents", but filterRoster has already narrowed
+// proj when --agents is set, so the scan covers only the selected subset while the
+// wording claims the roster. docs/registry.md:518 says "effective roster". The
+// message has to name the scope it actually checked.
+func TestDoctor_RuleGapWarningNamesTheSelectedScope(t *testing.T) {
+	srv := echoProvider(t, 0)
+	setupDoctorEnv(t, srv.URL)
+	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
+
+	writeProjectPersona(t, "bruce", "# bruce\n\n## Focus\n1. Correctness\n")
+
+	filtered, err := execute(t, "doctor", "--agents", "bruce")
+	require.NoError(t, err)
+	assert.Contains(t, filtered, "predicate-exhaustiveness rule gaps")
+	assert.Contains(t, filtered, "selected agents",
+		"with --agents the scan covers the selected subset, and the warning must say so")
+
+	unfiltered, err := execute(t, "doctor")
+	require.NoError(t, err)
+	assert.Contains(t, unfiltered, "roster agents",
+		"without --agents the scan really does cover the roster, and the wording is unchanged")
+}
+
 // A persona carrying only ONE of the two anchors is still a gap: the lens phrase
 // without the filing phrase produces findings cited on the untouched sibling line,
 // which the grounding gate discards before the report. This is the case that makes
