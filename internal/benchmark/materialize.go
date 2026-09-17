@@ -225,7 +225,7 @@ func commitAll(ctx context.Context, root string, commitArgs []string) (string, e
 		"GIT_COMMITTER_DATE="+benchmarkCommitDate,
 	)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("git commit: %w: %s", err, strings.TrimSpace(string(out)))
+		return "", fmt.Errorf("git commit: %w: %s", err, truncateGitOutput(strings.TrimSpace(string(out))))
 	}
 	sha, err := gitCmd(ctx, root, "rev-parse", "HEAD").Output()
 	if err != nil {
@@ -241,16 +241,30 @@ func gitCmd(ctx context.Context, root string, args ...string) *exec.Cmd {
 	return gitexec.CommandContextFn(ctx, append([]string{"-C", root}, args...)...)
 }
 
+// maxGitErrorOutput bounds how much of git's combined output is folded into an
+// error. A near-miss apply can emit a long warning chain; the first lines carry
+// the diagnosis and the tail is noise that lands in every operator's stderr.
+const maxGitErrorOutput = 2 * 1024
+
+// truncateGitOutput bounds s to maxGitErrorOutput with a marker naming what was
+// cut, so a truncated error is visibly truncated rather than silently amputated.
+func truncateGitOutput(s string) string {
+	if len(s) <= maxGitErrorOutput {
+		return s
+	}
+	return s[:maxGitErrorOutput] + fmt.Sprintf("... [%d more bytes truncated]", len(s)-maxGitErrorOutput)
+}
+
 // runGit runs a git command for its effect, folding git's own stderr into the
 // error: "exit status 1" alone tells an author nothing about why their diff did
-// not apply.
+// not apply. The folded output is truncated — see maxGitErrorOutput.
 func runGit(ctx context.Context, root string, args ...string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("git: no subcommand given")
 	}
 	out, err := gitCmd(ctx, root, args...).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("git %s: %w: %s", args[0], err, truncateGitOutput(strings.TrimSpace(string(out))))
 	}
 	return nil
 }
