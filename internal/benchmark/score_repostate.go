@@ -36,6 +36,17 @@ type RepoStateReviewerScore struct {
 // the two halves would report that reviewer as mediocre-at-everything rather than
 // as blind to unchanged code.
 //
+// WHAT A ZERO OUT-OF-DIFF RATE MEANS — read it carefully. The number counts
+// out-of-diff findings that SURVIVED the Epic 14.1 grounding gate and matched: a
+// finding whose cited file the patch never touched is DROPPED before scoring
+// unless pre-fetching (epic 35.16.8) actually retrieved the cited span. So
+// outside_diff_recall 0.0 conflates two causes — the reviewer never consulted
+// unchanged code, OR it found something the gate discarded before scoring. The
+// rate alone cannot tell them apart; that is a known limit of the number, not a
+// property of the reviewer. (Recording a per-reviewer gate-drop count beside the
+// rate is the follow-up that would separate the causes; it changes what the
+// runner emits, not what this scorer computes.)
+//
 // Every rate is a POINTER and every rate has its counts beside it. The counts are
 // what make a rate auditable — 1/2 and 50/100 are the same rate and not the same
 // evidence — and the pointer keeps an unmeasured rate distinguishable from a
@@ -140,10 +151,16 @@ func positionalOne(r RepoStateReviewerScore) ReviewerPositionalRecall {
 // claim they missed findings that were never there — on the one metric whose whole
 // job is being believed. The counts beside the rate let a consumer tell which case
 // it is without guessing.
+//
+// No clamp01: positionalOne increments each Matched counter only inside the
+// branch that already incremented the matching Expected counter, so matched <=
+// expected holds by construction, and the expected <= 0 arm above rules out NaN
+// and Inf. (score.go's rate() KEEPS its clamp — there the quotient is summed
+// over untrusted per-case input; here the invariant is local and checked.)
 func rate(matched, expected int) *float64 {
 	if expected <= 0 {
 		return nil
 	}
-	v := clamp01(float64(matched) / float64(expected))
+	v := float64(matched) / float64(expected)
 	return &v
 }

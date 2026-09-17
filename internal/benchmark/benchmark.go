@@ -422,6 +422,13 @@ type RunResult struct {
 	// ones has demonstrated exactly the gap, and an average of the two reads as
 	// mediocre-at-everything instead.
 	//
+	// What a zero out-of-diff rate DOES and DOES NOT say: it counts out-of-diff
+	// findings that SURVIVED the Epic 14.1 grounding gate and matched. A finding
+	// whose cited file the patch never touched is dropped before scoring unless
+	// pre-fetching retrieved the span, so a 0.0 conflates "never consulted
+	// unchanged code" with "found it and the gate discarded it" — the rate names
+	// the surviving outcome, not the reviewer's attention.
+	//
 	// omitempty so a run-result written before this field existed unmarshals to nil
 	// and reports as unmeasured, exactly as a nil OutOfVocabularyRate does.
 	PositionalRecall []ReviewerPositionalRecall `json:"reviewer_positional_recall,omitempty"`
