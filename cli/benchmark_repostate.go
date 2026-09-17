@@ -403,14 +403,7 @@ func loadCaseDiffLineMap(c benchmark.RepoStateCase) (benchmark.DiffLineMap, erro
 // through the same checkPublishable helper, so the two tiers cannot drift on what
 // a publishable suite is; only the manifest type differs.
 func validateRepoStatePublishableCaseIDs(m *benchmark.RepoStateManifest, suitePath string) error {
-	for _, f := range []struct{ noun, published, value, consequence, remedy string }{
-		{"suite name", "the envelope's suite name", m.Suite,
-			"the published envelope must name the same suite the manifest does",
-			"rename the suite in the suite manifest"},
-		{"suite_version", "the envelope's suite_version", m.SuiteVersion,
-			"the published envelope must name the same suite_version the manifest does",
-			"change suite_version in the suite manifest"},
-	} {
+	for _, f := range publishableSuiteIdentityArms(m.Suite, m.SuiteVersion) {
 		if err := checkPublishable(suitePath, "declares "+f.noun, f.value, f.published, f.consequence, f.remedy); err != nil {
 			return err
 		}

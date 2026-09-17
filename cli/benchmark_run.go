@@ -48,6 +48,25 @@ import (
 // Errors name the PRE-scrub value and the SUITE MANIFEST: the scrubbed value is empty
 // or rewritten by construction, and suite_case_ids and the envelope identity are
 // verbatim copies of the manifest, so editing a run-result would be the wrong action.
+// publishableSuiteIdentityArms is the suite identity's arm table — the two
+// published-identity arms BOTH tier validators apply. One table rather than two
+// verbatim copies: the consequence and remedy strings here carry twenty lines
+// of rationale, and two copies of those strings drift independently — a wrong
+// remedy sends the operator to discard a paid checkpoint. Consumed by
+// validateSuitePublishableCaseIDs and validateRepoStatePublishableCaseIDs, so
+// the latter's "the two tiers cannot drift" claim is a property of the code
+// rather than of two edits staying in sync.
+func publishableSuiteIdentityArms(suite, suiteVersion string) []struct{ noun, published, value, consequence, remedy string } {
+	return []struct{ noun, published, value, consequence, remedy string }{
+		{"suite name", "the envelope's suite name", suite,
+			"the published envelope must name the same suite the manifest does",
+			"rename the suite in the suite manifest"},
+		{"suite_version", "the envelope's suite_version", suiteVersion,
+			"the published envelope must name the same suite_version the manifest does",
+			"change suite_version in the suite manifest"},
+	}
+}
+
 func validateSuitePublishableCaseIDs(m *benchmark.Manifest, suitePath string) error {
 	// The suite IDENTITY is published scrubbed by the same BuildSubmission pass that
 	// publishes the ids, and validateSuiteIdentityForPublication hard-rejects all three
@@ -76,14 +95,7 @@ func validateSuitePublishableCaseIDs(m *benchmark.Manifest, suitePath string) er
 	// publishes inside suite_case_ids rather than as "a case", and the identity
 	// publishes in the envelope. Like consequence and remedy it is written out per
 	// field rather than interpolated from noun.
-	for _, f := range []struct{ noun, published, value, consequence, remedy string }{
-		{"suite name", "the envelope's suite name", m.Suite,
-			"the published envelope must name the same suite the manifest does",
-			"rename the suite in the suite manifest"},
-		{"suite_version", "the envelope's suite_version", m.SuiteVersion,
-			"the published envelope must name the same suite_version the manifest does",
-			"change suite_version in the suite manifest"},
-	} {
+	for _, f := range publishableSuiteIdentityArms(m.Suite, m.SuiteVersion) {
 		if err := checkPublishable(suitePath, "declares "+f.noun, f.value, f.published, f.consequence, f.remedy); err != nil {
 			return err
 		}
