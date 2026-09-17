@@ -419,7 +419,9 @@ func TestParseDiffLineMap_ShippedCasesOutsideDiffValuesAreTrue(t *testing.T) {
 				checked++
 				// Every line of the DECLARED RANGE, not just line_start: the range is
 				// the defect's body, and outside_diff:true declares that body lives in
-				// UNCHANGED code — any added line inside it contaminates the claim.
+				// UNCHANGED code — any added line inside it contaminates the claim, and
+				// the REMOVED half is checked too (clause 3 is added OR removed): a
+				// cited range deleted by the case's own diff is unwinnable content.
 				// (Added lines merely INSIDE the tolerance window are a different,
 				// legitimate situation: the change brushing the defect is exactly what
 				// condition 3 blocks at match time, and the matcher's window test pins
@@ -427,6 +429,9 @@ func TestParseDiffLineMap_ShippedCasesOutsideDiffValuesAreTrue(t *testing.T) {
 				for line := f.LineStart; line <= f.LineEnd; line++ {
 					assert.False(t, lm.IsAddedLine(f.File, line),
 						"finding %q declares outside_diff:true but %s:%d IS an added line of the case's own diff",
+						f.ID, f.File, line)
+					assert.False(t, lm.IsRemovedLine(f.File, line),
+						"finding %q declares outside_diff:true but %s:%d IS a removed line of the case's own diff",
 						f.ID, f.File, line)
 				}
 			}
