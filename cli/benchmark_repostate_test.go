@@ -426,6 +426,36 @@ func TestReadCaseFindingsLocated_CountsUnattributedSkippedRows(t *testing.T) {
 	assert.Zero(t, unattributed)
 }
 
+// The skipped-row fold is what keeps a malformed row in the out-of-vocabulary
+// DENOMINATOR: dropping it would flatter the worst-formed reviewer with the best
+// drift rate. Driven at the unit level deliberately — ParseModelOutput folds
+// model-output overflow back into EVIDENCE before findings.txt is written, so a
+// skipped row reaches this reader only via a hand-assembled or legacy pool,
+// which is exactly the input this fold defends against. A regression that
+// dropped skipped rows publishes 1/0 — a flawless rate for garbage output —
+// and this test is what would catch it.
+func TestReadCaseFindingsLocated_SkippedRowStaysInTheVocabularyDenominator(t *testing.T) {
+	dir := t.TempDir()
+	pool := filepath.Join(dir, "sources", "pool")
+	require.NoError(t, os.MkdirAll(pool, 0o755))
+	content := "# atcr-findings/v1\n" +
+		"HIGH|app/calc.py:12|p|f|correctness|15|sol|greta\n" +
+		"HIGH|app/calc.py:13|p|f|correctness|15|sol|overflow|greta\n"
+	require.NoError(t, os.WriteFile(filepath.Join(pool, "findings.txt"), []byte(content), 0o600))
+
+	_, categorical, _, _, err := readCaseFindingsLocated(dir, map[string]bool{"greta": true})
+	require.NoError(t, err)
+
+	rs := benchmark.ReviewerScore{Model: "m-greta", Persona: "greta",
+		Cases: []benchmark.CaseScore{{Expected: []string{"correctness"}, Raised: categorical["greta"]}}}
+	vocab := benchmark.PerReviewerVocabulary([]benchmark.ReviewerScore{rs})
+	require.Len(t, vocab, 1)
+	require.NotNil(t, vocab[0].Rate)
+	assert.Equal(t, 2, vocab[0].Findings, "the skipped row counts in the out-of-vocabulary denominator")
+	assert.Equal(t, 1, vocab[0].Drifted, "the skipped row's folded-in empty category counts as drift")
+	assert.InDelta(t, 0.5, *vocab[0].Rate, 1e-9)
+}
+
 func TestExecuteRepoStateBenchmarkRun_ReportsBothMetrics(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 	gen := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
