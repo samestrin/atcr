@@ -63,10 +63,16 @@ func (f ExpectedFinding) Tolerance() int {
 }
 
 // IsOutsideDiff reports the finding's outside_diff value. Validate guarantees the
-// pointer is non-nil on any loaded case, so this never invents a default; the nil
-// arm exists only for a hand-constructed value in a test.
+// pointer is non-nil on any loaded case, so a nil here can only come from a
+// hand-constructed value that bypassed it — and returning the permissive false
+// would silently stop measuring the one thing this tier exists for. The nil arm
+// is therefore LOUD: it panics, naming the finding, rather than inventing a
+// default the case's author never wrote.
 func (f ExpectedFinding) IsOutsideDiff() bool {
-	return f.OutsideDiff != nil && *f.OutsideDiff
+	if f.OutsideDiff == nil {
+		panic(fmt.Sprintf("expected finding %q has a nil outside_diff; Validate rejects this on any loaded case, so the value was hand-constructed and unvalidated", f.ID))
+	}
+	return *f.OutsideDiff
 }
 
 // RepoStateCase is one loaded repo-state case: the contents of its case.json plus
