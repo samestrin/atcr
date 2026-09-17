@@ -127,6 +127,79 @@ func TestParseDiffLineMap_HandlesSingleLineHunkHeader(t *testing.T) {
 	assert.Equal(t, []int{7}, m.RemovedLines("f.txt"))
 }
 
+// A REMOVED line whose own content begins with "-- " renders in a unified diff as
+// "--- ...", which is byte-identical to the start of a file header. SQL, Lua and
+// Haskell comments all look like this, as does `git format-patch`'s signature
+// separator.
+//
+// Matching the header arm first does not merely misclassify that one line: it
+// resets the parser's file state mid-hunk, so the whole map comes back EMPTY with
+// no error. IsAddedLine is then false everywhere, condition 3 never fires, and an
+// outside_diff:true expectation can be satisfied by a report citing an added line.
+// That is AC3b defeated silently, on a case that parses and materializes cleanly.
+func TestParseDiffLineMap_BodyLineThatLooksLikeAFileHeader(t *testing.T) {
+	const sqlComment = `diff --git a/q.sql b/q.sql
+--- a/q.sql
++++ b/q.sql
+@@ -1,3 +1,3 @@
+ SELECT 1;
+--- old comment
++++ new comment
+ SELECT 2;
+`
+	m, err := ParseDiffLineMap([]byte(sqlComment))
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"q.sql"}, m.Files(), "the file state must survive a body line that looks like a header")
+	assert.Equal(t, []int{2}, m.AddedLines("q.sql"), `"+++ new comment" is an ADDED line whose content is "++ new comment"`)
+	assert.Equal(t, []int{2}, m.RemovedLines("q.sql"), `"--- old comment" is a REMOVED line whose content is "-- old comment"`)
+	assert.True(t, m.IsAddedLine("q.sql", 2), "condition 3 must still be able to fire on this file")
+}
+
+// A plain `diff -u` of two files has no "diff --git" separator, so consecutive
+// file sections are told apart only by the header pair. The hunk's declared line
+// counts are what say where one body ends and the next header begins.
+func TestParseDiffLineMap_ConsecutiveFilesWithNoGitSeparator(t *testing.T) {
+	const plain = `--- a/one.txt
++++ b/one.txt
+@@ -1,2 +1,2 @@
+ keep
+-old
++new
+--- a/two.txt
++++ b/two.txt
+@@ -5,1 +5,2 @@
+ ctx
++added
+`
+	m, err := ParseDiffLineMap([]byte(plain))
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"one.txt", "two.txt"}, m.Files())
+	assert.Equal(t, []int{2}, m.AddedLines("one.txt"))
+	assert.Equal(t, []int{6}, m.AddedLines("two.txt"))
+}
+
+// Trailing content after the last hunk is not diff body. `git format-patch` ends
+// with a "-- " signature separator, and counting it produces a phantom removed
+// line beyond the end of the file.
+func TestParseDiffLineMap_IgnoresTrailingContentAfterTheLastHunk(t *testing.T) {
+	const withSignature = `diff --git a/f.txt b/f.txt
+--- a/f.txt
++++ b/f.txt
+@@ -1,2 +1,2 @@
+ keep
+-old
++new
+--
+2.43.0
+`
+	m, err := ParseDiffLineMap([]byte(withSignature))
+	require.NoError(t, err)
+	assert.Equal(t, []int{2}, m.RemovedLines("f.txt"), "the format-patch signature must not become a removed line")
+	assert.Equal(t, []int{2}, m.AddedLines("f.txt"))
+}
+
 func TestParseDiffLineMap_RejectsMalformedInput(t *testing.T) {
 	tests := []struct {
 		name, diff, wantErr string
@@ -134,6 +207,11 @@ func TestParseDiffLineMap_RejectsMalformedInput(t *testing.T) {
 		{"hunk before any file header", "@@ -1,1 +1,1 @@\n-a\n+b\n", "no file"},
 		{"unparseable hunk header", "--- a/f\n+++ b/f\n@@ nonsense @@\n", "hunk header"},
 		{"body line before any hunk", "--- a/f\n+++ b/f\n+orphan\n", "hunk"},
+		// A negative start is not a diff a reader could act on, and accepting it
+		// yields negative line numbers that can never match a reported finding —
+		// a silent zero rather than a diagnostic.
+		{"negative hunk start", "--- a/f\n+++ b/f\n@@ --5,2 +-3,2 @@\n ctx\n+add\n", "hunk header"},
+		{"zero hunk start on a non-empty side", "--- a/f\n+++ b/f\n@@ -0,2 +0,2 @@\n ctx\n+add\n", "hunk header"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

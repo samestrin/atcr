@@ -1,6 +1,10 @@
 package benchmark
 
-import "sort"
+import (
+	"sort"
+
+	"github.com/samestrin/atcr/internal/scorecard"
+)
 
 // RepoStateCaseScore is one reviewer's outcome on a single repo-state case: the
 // per-expected-finding match results MatchFindings produced. It carries MATCHES
@@ -89,8 +93,20 @@ func ScorePositional(reviewers []RepoStateReviewerScore) []ReviewerPositionalRec
 }
 
 // positionalOne computes one reviewer's recall row.
+//
+// The identity is SCRUBBED here, through the same scorecard.ScrubPublicRecord pass
+// Score applies to every row it emits. Two reasons, and both bite:
+//
+//   - This array ships inside the run-result, so an unscrubbed identity publishes
+//     whatever the provider echoed back — a credential-shaped model id such as
+//     `bedrock@us-east-1/claude` reaches a file an operator hands to someone else.
+//   - The sort below runs on the SCRUBBED pair in Score and would run on the RAW
+//     pair here, so the two arrays would order differently exactly when the scrub
+//     changes a string. That breaks the positional join this type's doc comment
+//     promises, in the one case where a reader most needs it to hold.
 func positionalOne(r RepoStateReviewerScore) ReviewerPositionalRecall {
-	pr := ReviewerPositionalRecall{Model: r.Model, Persona: r.Persona}
+	id := scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: r.Model, Persona: r.Persona})
+	pr := ReviewerPositionalRecall{Model: id.Model, Persona: id.Persona}
 	for _, c := range r.Cases {
 		for _, m := range c.Matches {
 			outside := m.Expected.IsOutsideDiff()

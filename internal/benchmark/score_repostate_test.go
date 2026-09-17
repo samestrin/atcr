@@ -117,6 +117,39 @@ func TestScorePositional_SortsByModelPersonaLikeScore(t *testing.T) {
 	})
 }
 
+// The identity must be scrubbed by the SAME pass Score applies, or two things
+// break at once: the run-result publishes a credential-shaped model id verbatim,
+// and the two arrays sort differently — reviewers[] on the scrubbed pair, this one
+// on the raw pair — so the positional join this type promises fails in exactly the
+// case where it matters.
+func TestScorePositional_ScrubsIdentitiesLikeScore(t *testing.T) {
+	raw := []struct{ model, persona string }{
+		{"bedrock@us-east-1/claude", "dax"},
+		{"anthropic/claude-3", "greta"},
+	}
+	var cat []ReviewerScore
+	var pos []RepoStateReviewerScore
+	for _, r := range raw {
+		cat = append(cat, ReviewerScore{Model: r.model, Persona: r.persona,
+			Cases: []CaseScore{{Expected: []string{"correctness"}, Raised: []string{"correctness"}}}})
+		pos = append(pos, RepoStateReviewerScore{Model: r.model, Persona: r.persona,
+			Cases: []RepoStateCaseScore{{CaseID: "c1", Matches: []FindingMatch{match("f", false, true)}}}})
+	}
+
+	scored := Score(cat)
+	positional := ScorePositional(pos)
+	require.Len(t, positional, len(scored))
+
+	for i := range scored {
+		assert.Equal(t, scored[i].Model, positional[i].Model,
+			"row %d: the two arrays must carry the same scrubbed model, in the same order", i)
+		assert.Equal(t, scored[i].Persona, positional[i].Persona,
+			"row %d: and the same scrubbed persona", i)
+	}
+	assert.NotContains(t, positional[0].Model+positional[1].Model, "bedrock@us-east-1",
+		"the credential-shaped identity must not survive into the published array")
+}
+
 // ---- AC5: the frozen public record is untouched ----
 
 // Where the metric lives: on the run-result, and nowhere in the published
