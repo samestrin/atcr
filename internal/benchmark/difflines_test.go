@@ -227,6 +227,27 @@ func TestParseDiffLineMap_OverDeclaredHunkThatEatsTheNextFile(t *testing.T) {
 	assert.Contains(t, err.Error(), "one.txt", "the diagnostic should name the hunk's file")
 }
 
+// git's core.quotePath (on by default) C-quotes any path containing non-ASCII
+// bytes, so a diff of pkg/e-acute.py carries `--- "a/pkg/e-acute.py"` with the
+// quotes and octal escapes intact. The map must key that file under its REAL
+// path: files() must return pkg/e-acute.py, and IsAddedLine must be true for its
+// added line — otherwise condition 3 fails open for every finding in such a
+// file, with no error anywhere.
+func TestParseDiffLineMap_UnquotesGitQuotedPaths(t *testing.T) {
+	const quoted = `diff --git "a/pkg/e-acute.py" "b/pkg/e-acute.py"
+index aaa..bbb 100644
+--- "a/pkg/e-acute.py"
++++ "b/pkg/e-acute.py"
+@@ -1,1 +1,2 @@
+ keep
++ajouté
+`
+	m, err := ParseDiffLineMap([]byte(quoted))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"pkg/e-acute.py"}, m.files(), "the C-quoted path must be unquoted before keying")
+	assert.True(t, m.IsAddedLine("pkg/e-acute.py", 2), "the added line must be findable under the real path")
+}
+
 func TestParseDiffLineMap_RejectsMalformedInput(t *testing.T) {
 	tests := []struct {
 		name, diff, wantErr string
