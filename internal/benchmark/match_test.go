@@ -338,6 +338,20 @@ func TestMatchFindings_RemovedLineCitationAgainstAnOutsideDiffExpectation(t *tes
 		"PINNED: a report citing the base-side number of a deleted line (19) satisfies an outside_diff:true expectation at head 18±3 — the removed half of clause 3 is not consulted")
 }
 
+// An expectation whose outside_diff pointer was NEVER SET (hand-constructed,
+// bypassing Validate) must not quietly relax condition 3: IsOutsideDiff returning
+// false for nil is the PERMISSIVE answer, so the outside-diff check silently
+// stops measuring — the exact defect the pointer type was chosen to eliminate.
+// The nil arm must be loud.
+func TestMatchFindings_NilOutsideDiffDoesNotQuietlyRelaxCondition3(t *testing.T) {
+	unvalidated := ExpectedFinding{ID: "f", File: "pkg/a.py", LineStart: 50, LineEnd: 50}
+	assert.PanicsWithValue(t,
+		`expected finding "f" has a nil outside_diff; Validate rejects this on any loaded case, so the value was hand-constructed and unvalidated`,
+		func() {
+			MatchFindings([]ExpectedFinding{unvalidated}, []ReportedFinding{{File: "pkg/a.py", Line: 50}}, noDiff(t))
+		})
+}
+
 func TestMatchFindings_NoExpectationsOrNoReports(t *testing.T) {
 	assert.Empty(t, MatchFindings(nil, []ReportedFinding{{File: "pkg/a.py", Line: 1}}, noDiff(t)))
 
