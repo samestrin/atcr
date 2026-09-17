@@ -200,6 +200,33 @@ func TestParseDiffLineMap_IgnoresTrailingContentAfterTheLastHunk(t *testing.T) {
 	assert.Equal(t, []int{2}, m.addedLines("f.txt"))
 }
 
+// A hunk whose declared counts OVERSHOOT the body it actually carries must not
+// silently eat the next file: when the counts are still unconsumed and a line
+// arrives that can only be a file header (or a diff --git separator, or any
+// other non-body line), the header's leading -/+ would be consumed as removed
+// and added CONTENT, the next file would vanish from the map, and its lines
+// would be attributed to the previous file. git apply rejects such a diff; the
+// parser must reject it too, with a diagnostic — never a one-file map and a nil
+// error.
+func TestParseDiffLineMap_OverDeclaredHunkThatEatsTheNextFile(t *testing.T) {
+	const probe = `--- a/one.txt
++++ b/one.txt
+@@ -1,4 +1,4 @@
+ ctx1
+-old2
++new2
+ ctx3
+--- a/two.txt
++++ b/two.txt
+@@ -5,1 +5,2 @@
+ ctx5
++added6
+`
+	_, err := ParseDiffLineMap([]byte(probe))
+	require.Error(t, err, "an over-declared hunk followed by the next file's headers must error, not produce a one-file map")
+	assert.Contains(t, err.Error(), "one.txt", "the diagnostic should name the hunk's file")
+}
+
 func TestParseDiffLineMap_RejectsMalformedInput(t *testing.T) {
 	tests := []struct {
 		name, diff, wantErr string
