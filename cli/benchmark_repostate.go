@@ -111,6 +111,13 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 	var order []reviewerKey
 
 	caseIDs := make([]string, 0, len(m.Cases))
+	// expectedCategories was called inside the per-agent loop — the same case's
+	// projection rebuilt once per agent per case. One call per case, above the
+	// loop: the projection is a property of the CASE, not of who reviewed it.
+	caseExpected := make([][]string, len(m.Cases))
+	for i := range m.Cases {
+		caseExpected[i] = expectedCategories(m.Cases[i])
+	}
 	for i, c := range m.Cases {
 		caseIDs = append(caseIDs, c.ID)
 
@@ -204,7 +211,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			acc[key].scored[c.ID] = a.Agent
 
 			cats[key].Cases = append(cats[key].Cases, benchmark.CaseScore{
-				Expected: expectedCategories(c),
+				Expected: caseExpected[i],
 				// The CATEGORICAL projection, which folds unparseable rows back in
 				// with an empty category. Driving this off the positional projection
 				// instead would shrink the out-of-vocabulary denominator for a
@@ -338,6 +345,14 @@ type repoStateAcc struct {
 // expectedCategories projects a case's located expectations onto the bare category
 // list CorroborationRate is defined over.
 //
+// The dedupe NORMALIZES first, matching every other consumer of the same field
+// (Score's normalizeDistinct, validateCategoryEquivalence's normalize): a case
+// carrying 'Correctness' beside 'correctness' is ONE expected category. Score
+// re-normalizes downstream, so the raw-string dedupe this used to be was
+// harmless today — but it was a silent second dedupe rule, one fix away from
+// diverging, and normalize is two words. The raw spelling is kept in out so the
+// score sees the case's own words.
+//
 // The two metrics deliberately measure the SAME findings under different
 // denominators: category recall asks "did any finding carry the right word",
 // positional recall asks "did a finding land in the right place". Keeping
@@ -347,10 +362,11 @@ func expectedCategories(c benchmark.RepoStateCase) []string {
 	seen := map[string]bool{}
 	out := make([]string, 0, len(c.ExpectedFindings))
 	for _, f := range c.ExpectedFindings {
-		if seen[f.Category] {
+		n := strings.ToLower(strings.TrimSpace(f.Category))
+		if seen[n] {
 			continue
 		}
-		seen[f.Category] = true
+		seen[n] = true
 		out = append(out, f.Category)
 	}
 	return out
