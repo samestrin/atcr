@@ -62,7 +62,7 @@ func checkRepoStateFlags(suiteFormat, checkpointPath string) error {
 // The Completer is injected so the CLI passes the real llmclient and tests pass a
 // stub, and generatedAt is injected rather than read from the wall clock, for the
 // same reproducibility reason executeBenchmarkRun does both.
-func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, completer fanout.Completer, suitePath string, generatedAt time.Time) (*benchmark.RunResult, error) {
+func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, completer fanout.Completer, suitePath string, generatedAt time.Time) (rr *benchmark.RunResult, err error) {
 	m, err := benchmark.LoadRepoState(suitePath)
 	if err != nil {
 		return nil, err
@@ -99,7 +99,21 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 	if err != nil {
 		return nil, fmt.Errorf("creating benchmark work dir: %w", err)
 	}
-	defer func() { _ = os.RemoveAll(tmp) }()
+	defer func() {
+		// The work dir holds the paid review artifacts for every completed case. A
+		// FAILED run RETAINS it — and the returned error names the path — so the
+		// artifacts survive for inspection or manual rescoring instead of a
+		// transient failure destroying everything the panel produced; a clean run
+		// still cleans up. Cleanup failures are Warned, never swallowed silently.
+		if err != nil {
+			log.FromContext(ctx).Warn("benchmark work dir retained after a failed run", "path", tmp)
+			err = fmt.Errorf("%w (work dir retained at %s)", err, tmp)
+			return
+		}
+		if rmErr := os.RemoveAll(tmp); rmErr != nil {
+			log.FromContext(ctx).Warn("benchmark work dir cleanup failed", "path", tmp, "err", rmErr)
+		}
+	}()
 
 	// Two accumulators over one pass. Category recall (the standard-v1 quantity
 	// CorroborationRate carries on every suite) and positional recall are different
