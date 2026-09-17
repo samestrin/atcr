@@ -497,8 +497,12 @@ func (c capturingLocatedCompleter) Complete(_ context.Context, _ llmclient.Invoc
 // forfeits the whole panel with zero recoverable evidence.
 func TestExecuteRepoStateBenchmarkRun_RetainsTheWorkDirOnFailure(t *testing.T) {
 	suite := writeTwoCaseSuite(t)
+	// Well-formed to the loader (which parses every diff at load since the
+	// parse-at-load fix), but unappliable by git: pkg/absent.py does not exist in
+	// the base tree, so MaterializeCase fails MID-LOOP — after the work dir was
+	// created and case 1 was already paid for.
 	require.NoError(t, os.WriteFile(filepath.Join(suite, "second-case", "change.diff"),
-		[]byte("diff --git a/app/calc.py b/app/calc.py\n--- a/app/calc.py\n+++ b/app/calc.py\n@@ -1 +x @@\n-old\n+new\n"), 0o600))
+		[]byte("diff --git a/pkg/absent.py b/pkg/absent.py\n--- a/pkg/absent.py\n+++ b/pkg/absent.py\n@@ -1,1 +1,1 @@\n-gone\n+here\n"), 0o600))
 
 	_, err := executeRepoStateBenchmarkRun(context.Background(),
 		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC())
