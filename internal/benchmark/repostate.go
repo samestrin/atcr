@@ -308,7 +308,13 @@ func (c *RepoStateCase) Validate() error {
 		// AC7: no case may reference a path outside its own directory. Checked on
 		// every file-reference field, not only the one an author is likeliest to get
 		// wrong — a guard with a gap is a guard an author will find the gap in.
-		if !isSafeRelPath(f.value) {
+		//
+		// POSIX rule, not isSafeRelPath: FORMAT.md declares these three fields to be
+		// POSIX paths, and the filepath-based rule answers differently per host — on
+		// Windows, filepath.IsAbs("/etc/passwd") is false, so an absolute escape
+		// passed there on bytes this platform refuses. The same rule the finding
+		// file already uses applies here, splitting nothing.
+		if !isSafeRelPOSIXPath(f.value) {
 			return fmt.Errorf("%s path %q must be relative and within the case directory", f.field, f.value)
 		}
 	}
@@ -491,13 +497,24 @@ func validCaseToken(field, v string) error {
 	return nil
 }
 
-// isSafeRelPOSIXPath is isSafeRelPath for a path the FORMAT defines as POSIX
-// regardless of host: expected_findings[].file is a repository path compared
-// against a reviewer-cited path, both of which use '/' on every platform. Running
-// it through filepath.Clean would make the check pass or fail differently on
-// Windows for a suite whose bytes never changed.
+// isSafeRelPOSIXPath is the guard for a path the FORMAT declares POSIX regardless
+// of host: expected_findings[].file is a repository path compared against a
+// reviewer-cited path, and base_tree/commit_message/diff are declared POSIX at
+// FORMAT.md:32. Running the former through filepath.Clean would make the check
+// pass or fail differently on Windows for a suite whose bytes never changed.
+//
+// A backslash and a drive-letter prefix are refused outright: the FORMAT says
+// these paths use POSIX '/' separators, so a backslash is never a legal separator
+// (it is at best an opaque filename byte, and on Windows it is a separator that
+// '..\' escapes through) and a drive-letter spelling is never relative.
 func isSafeRelPOSIXPath(p string) bool {
 	if strings.HasPrefix(p, "/") {
+		return false
+	}
+	if strings.ContainsRune(p, '\\') {
+		return false
+	}
+	if len(p) >= 2 && p[1] == ':' && ((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z')) {
 		return false
 	}
 	clean := path.Clean(p)
