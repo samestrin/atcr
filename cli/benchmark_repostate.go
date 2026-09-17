@@ -124,6 +124,11 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			return nil, err
 		}
 
+		// Fixed Branch/Date/TimeSuffix and a zero StartedAt are carried verbatim from
+		// executeBenchmarkRun's request: the date and suffix only feed the review id,
+		// never the RunResult, so fixed values keep the run hermetic rather than
+		// tying it to the wall clock. Deliberate, not placeholder — see the matching
+		// comment at cli/benchmark_run.go's request construction.
 		req := fanout.ReviewRequest{
 			Repo:       mc.Root,
 			Root:       mc.Root,
