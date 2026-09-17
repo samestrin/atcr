@@ -99,6 +99,68 @@ func TestDoctor_RuleGapWarningNamesTheSelectedScope(t *testing.T) {
 		"without --agents the scan really does cover the roster, and the wording is unchanged")
 }
 
+// setupDoctorEnvWithFallback is setupDoctorEnv plus a fallback link: bruce falls
+// back to bruce-backup. doctor.Resolve registers EVERY node of the chain in
+// res.Agents, which is what let the gap scan reach an agent whose persona is never
+// rendered at review time.
+func setupDoctorEnvWithFallback(t *testing.T, baseURL string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	regDir := filepath.Join(home, ".config", "atcr")
+	require.NoError(t, os.MkdirAll(regDir, 0o755))
+	registryYAML := "" +
+		"providers:\n" +
+		"  mock:\n" +
+		"    api_key_env: ATCR_DOCTOR_TEST_KEY\n" +
+		"    base_url: " + baseURL + "/v1\n" +
+		"agents:\n" +
+		"  bruce:\n" +
+		"    provider: mock\n" +
+		"    model: test-model\n" +
+		"    fallback: bruce-backup\n" +
+		"  bruce-backup:\n" +
+		"    provider: mock\n" +
+		"    model: test-model\n"
+	require.NoError(t, os.WriteFile(filepath.Join(regDir, "registry.yaml"), []byte(registryYAML), 0o644))
+
+	work := t.TempDir()
+	t.Chdir(work)
+	atcrDir := filepath.Join(work, ".atcr")
+	require.NoError(t, os.MkdirAll(atcrDir, 0o755))
+	projYAML := "" +
+		"agents:\n" +
+		"  - bruce\n" +
+		"payload_mode: blocks\n" +
+		"timeout_secs: 600\n" +
+		"fail_on: HIGH\n"
+	require.NoError(t, os.WriteFile(filepath.Join(atcrDir, "config.yaml"), []byte(projYAML), 0o644))
+}
+
+// agentToPersona was built from res.Agents, which carries every node of every
+// fallback chain. A fallback's OWN persona is never rendered: internal/fanout's
+// review path resolves the persona by the PRIMARY's name. So doctor could name a
+// -backup agent as a rule gap and send the operator to edit a file that affects no
+// review. Over-report only, but the remedy it prescribes does nothing.
+func TestDoctor_RuleGapSkipsAFallbackOnlyAgent(t *testing.T) {
+	srv := echoProvider(t, 0)
+	setupDoctorEnvWithFallback(t, srv.URL)
+	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
+
+	// Only the FALLBACK's persona lacks the rule; the listed head keeps the
+	// embedded built-in, which carries it.
+	writeProjectPersona(t, "bruce-backup", "# bruce-backup\n\n## Focus\n1. Correctness\n")
+
+	out, err := execute(t, "doctor")
+	require.NoError(t, err)
+
+	// Asserted on the WARNING, not on the whole output: bruce-backup legitimately
+	// appears in the health table (it is a real endpoint doctor probes). What must
+	// not happen is it being named as a rule gap.
+	assert.NotContains(t, out, "predicate-exhaustiveness rule gaps",
+		"a fallback's own persona is never rendered, so naming it is a remedy that changes nothing")
+}
+
 // A persona carrying only ONE of the two anchors is still a gap: the lens phrase
 // without the filing phrase produces findings cited on the untouched sibling line,
 // which the grounding gate discards before the report. This is the case that makes
