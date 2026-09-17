@@ -46,7 +46,8 @@ type candidate struct {
 //   - the reported line falls in [line_start-tolerance, line_end+tolerance], with
 //     the tolerance taken PER FINDING from case.json rather than hardcoded;
 //   - an `outside_diff: true` expectation additionally requires that the reported
-//     line is not itself an added line of the case's own diff;
+//     line is not itself an added OR REMOVED line of the case's own diff (FORMAT.md,
+//     "The matching rule", condition 3);
 //   - a reported finding settles at most ONE expectation, and an expectation is
 //     settled at most once — so N reports of one defect score as one hit;
 //   - among several legal pairings the nearest range MIDPOINT wins, and an exact
@@ -96,8 +97,11 @@ func MatchFindings(expected []ExpectedFinding, reported []ReportedFinding, lm Di
 			//
 			// Looked up under the EXPECTATION's spelling, not the report's: the line
 			// map is keyed by head-side repository paths, which is the space e.File is
-			// validated to live in, while r.File is whatever the reviewer typed.
-			if e.IsOutsideDiff() && lm.IsAddedLine(e.File, r.Line) {
+			// validated to live in, while r.File is whatever the reviewer typed. The
+			// removed side is keyed base-side (the only space a removed line has a
+			// number in) and the two numberings coincide before the first hunk, which
+			// is why the removed check is load-bearing and not decoration.
+			if e.IsOutsideDiff() && (lm.IsAddedLine(e.File, r.Line) || lm.IsRemovedLine(e.File, r.Line)) {
 				continue
 			}
 			candidates = append(candidates, candidate{

@@ -388,13 +388,22 @@ func addLine(index map[string]map[int]bool, file string, line int) {
 }
 
 // IsAddedLine reports whether head-side line of file was ADDED by the diff. This
-// is the predicate condition 3 checks on the added side. It is not sufficient on
-// its own: removed lines are keyed base-side, a citation is head-side, and the
-// two spaces coincide before the first hunk, which is exactly why clause 3 needs
-// the removed check too. Exposing the removed map through this type's accessors
-// is what keeps that half of the rule expressible at all.
+// is the added half of the predicate condition 3 checks; the removed half is
+// IsRemovedLine, keyed base-side — a citation is head-side, and the two spaces
+// coincide before the first hunk, which is exactly why clause 3 needs both.
 func (m DiffLineMap) IsAddedLine(file string, line int) bool {
 	return m.added[file][line]
+}
+
+// IsRemovedLine reports whether BASE-side line of file was REMOVED by the diff.
+// Base-side because that is the only space a removed line has a number in — and
+// clause 3 consults this alongside IsAddedLine for exactly that reason: a
+// citation is head-side, the two numberings coincide before the first hunk, and
+// a reviewer citing the base number a @@ header prints has read nothing but the
+// diff's removals. The known cost (a head-side number that merely coincides with
+// a removed base-side number is rejected too) is pinned in match_test.go.
+func (m DiffLineMap) IsRemovedLine(file string, line int) bool {
+	return m.removed[file][line]
 }
 
 // addedLines returns the head-side line numbers the diff added to file, sorted.

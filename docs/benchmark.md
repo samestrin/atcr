@@ -274,7 +274,7 @@ Four things differ from a `standard-v1` run.
 
 **It reviews a real git range, not an ingested diff.** Each case is materialized into a git repository — the base tree as one commit, the change as a second commit carrying `commit-message.txt` verbatim — and reviewed over `base..head`. The diff ingestion path builds no `RangeBuilder`, and both the claim ledger and context-aware pre-fetching live there, so a tier meant to measure those features has to present a real range.
 
-**Expected findings are located, and matched positionally.** A case declares `expected_findings[]` with a `file`, a line range, a per-finding `line_tolerance`, and an `outside_diff` flag. A reported finding matches when the file is equal, the line falls inside the tolerance window, and — for an `outside_diff: true` expectation — the cited line is not itself an added line of the case's own diff. One report settles at most one expectation, so N reports of a single defect score as one hit.
+**Expected findings are located, and matched positionally.** A case declares `expected_findings[]` with a `file`, a line range, a per-finding `line_tolerance`, and an `outside_diff` flag. A reported finding matches when the file is equal, the line falls inside the tolerance window, and — for an `outside_diff: true` expectation — the cited line is not itself an added or removed line of the case's own diff. One report settles at most one expectation, so N reports of a single defect score as one hit.
 
 **Out-of-diff recall is reported separately**, in the run-result's `reviewer_positional_recall` array:
 
