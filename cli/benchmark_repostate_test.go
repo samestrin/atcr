@@ -294,3 +294,24 @@ func TestRunBenchmarkRun_CasedDiscriminatorRoutesToTheRepoStateArm(t *testing.T)
 	assert.NotContains(t, stderr, "diff path is required",
 		"the misleading standard-v1 message must stay unreachable through benchmark run")
 }
+
+// The repo-state runner was missing the REALIZED half of the printability rule
+// validatePublishableReviewerRoster applies at load: reviewerModel prefers the
+// provider-reported model over the registry, so a Cc/Cf control rune echoed back
+// in a usage payload never passes the roster gate. buildRunResult catches it at
+// the producer on the standard tier; this runner folded per raw key, so the rune
+// flowed into the run-result and validateRunResultForPublication refused the file
+// permanently — with no checkpoint on this tier, so nothing to repair-and-resume
+// from. The runner must fail closed at the producer instead.
+func TestExecuteRepoStateBenchmarkRun_RefusesANonPrintingRealizedIdentity(t *testing.T) {
+	// U+200D ZERO WIDTH JOINER is unicode.Cf: invisible, survives every upstream
+	// whitespace scrub, and reorders nothing — but validateRunResultForPublication
+	// hard-rejects it, so the runner is the only surface that can say so cheaply.
+	cfg := benchCfg([3]string{"greta", "m-greta\u200d", "greta"})
+	_, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{},
+		repoStateMiniPath, time.Unix(0, 0).UTC())
+	require.Error(t, err, "a realized identity carrying a Cf rune must fail the run at the producer")
+	assert.Contains(t, err.Error(), "non-printing rune")
+	assert.Contains(t, err.Error(), "m-greta\u200d",
+		"the error must name the offending identity so the operator can find the source")
+}
