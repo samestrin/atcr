@@ -3,6 +3,7 @@ package benchmark
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -266,6 +267,53 @@ func TestParseDiffLineMap_NoPrefixDiffKeepsARealLeadingASegment(t *testing.T) {
 	assert.Equal(t, []string{"a/pkg/a.py"}, m.files(), "identical header spellings mean a no-prefix diff: the path is the real repository path")
 	assert.True(t, m.IsAddedLine("a/pkg/a.py", 2), "the added line must be keyed under the real path")
 	assert.False(t, m.IsAddedLine("pkg/a.py", 2), "the stripped spelling must NOT be a key")
+}
+
+// A hunk that declares MORE lines than its body carries, followed by the next
+// file's git separator, must error — not silently re-read the separator as
+// header text. This exercises the git-style over-declaration arm (the plain
+// ---/+++ form is covered by TestParseDiffLineMap_OverDeclaredHunkThatEatsTheNextFile).
+//
+// NOTE: this test's original prescription asserted "both files appear with
+// correct line numbers" — the parser's old fail-open behavior. The
+// over-declared-count fix (difflines.go:88) made that input an error by design,
+// so the assertion pins the error instead; the coverage intent is unchanged.
+func TestParseDiffLineMap_HunkWithOverstatedCounts(t *testing.T) {
+	const overstated = `diff --git a/pkg/one.py b/pkg/one.py
+--- a/pkg/one.py
++++ b/pkg/one.py
+@@ -1,4 +1,4 @@
+ ctx1
+-old2
++new2
+ ctx3
+diff --git a/pkg/two.py b/pkg/two.py
+new file mode 100644
+--- /dev/null
++++ b/pkg/two.py
+@@ -0,0 +1,2 @@
++alpha
++beta
+`
+	_, err := ParseDiffLineMap([]byte(overstated))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "pkg/one.py", "the diagnostic names the file whose hunk over-declared")
+}
+
+// A case's diff may carry a long minified or generated line. The parser's token
+// buffer must absorb it: no error, and the line classified with the correct
+// head-side number.
+func TestParseDiffLineMap_HandlesAVeryLongLine(t *testing.T) {
+	long := strings.Repeat("x", 200*1024)
+	diff := "diff --git a/big.txt b/big.txt\n" +
+		"--- a/big.txt\n" +
+		"+++ b/big.txt\n" +
+		"@@ -1,1 +1,2 @@\n" +
+		" keep\n" +
+		"+" + long + "\n"
+	m, err := ParseDiffLineMap([]byte(diff))
+	require.NoError(t, err)
+	assert.Equal(t, []int{2}, m.addedLines("big.txt"), "the 200 KiB added line is head line 2")
 }
 
 func TestParseDiffLineMap_RejectsMalformedInput(t *testing.T) {
