@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/samestrin/atcr/internal/stream"
 )
 
@@ -233,6 +235,22 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			}
 		}
 	}
+
+	// All four emitted arrays share ONE order. The coverage array used to be
+	// emitted in `order` — first-sighting slot order — while Reviewers, Vocabulary
+	// and PositionalRecall each come back re-sorted on the scrubbed identity, so
+	// on any panel with more than one identity the documented positional join
+	// (coverage[i] describes reviewers[i]) was false for every repo-state
+	// run-result. Sorting `order` by the same scrubbed pair makes the alignment a
+	// property of the code; Score's own re-sort is then idempotent on it.
+	sort.SliceStable(order, func(i, j int) bool {
+		si := scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: order[i].model, Persona: order[i].persona})
+		sj := scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: order[j].model, Persona: order[j].persona})
+		if si.Model != sj.Model {
+			return si.Model < sj.Model
+		}
+		return si.Persona < sj.Persona
+	})
 
 	catScores := make([]benchmark.ReviewerScore, 0, len(order))
 	posScores := make([]benchmark.RepoStateReviewerScore, 0, len(order))
