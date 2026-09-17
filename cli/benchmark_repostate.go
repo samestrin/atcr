@@ -236,6 +236,27 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		}
 	}
 
+	// The post-scrub identity collision guard buildRunResult carries: scrubField
+	// is not injective (it deletes path-, home- and credential-shaped tokens), so
+	// two DISTINCT raw identities can fold into one public one. This runner folds
+	// per raw key, so both would emit their own Reviewers row under the same
+	// public identity — which checkCoverage then rejects as a hand-assembled file
+	// after the whole panel was paid for, with a diagnostic that cannot see the
+	// raw strings. The producer names both pre-scrub identities instead. Checked
+	// BEFORE the sort and the emit, so the four arrays below are built from the
+	// same public identities that just passed the collision gate.
+	public := make(map[reviewerKey]reviewerKey, len(order))
+	for _, k := range order {
+		s := scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: k.model, Persona: k.persona})
+		id := reviewerKey{model: s.Model, persona: s.Persona}
+		if prev, dup := public[id]; dup {
+			return nil, fmt.Errorf("distinct reviewer identities %q/%q and %q/%q scrub to the same public identity %q/%q: "+
+				"scorecard's path/credential scrub is not injective, so publishing would emit two reviewer rows under one identity",
+				prev.model, prev.persona, k.model, k.persona, id.model, id.persona)
+		}
+		public[id] = k
+	}
+
 	// All four emitted arrays share ONE order. The coverage array used to be
 	// emitted in `order` — first-sighting slot order — while Reviewers, Vocabulary
 	// and PositionalRecall each come back re-sorted on the scrubbed identity, so
@@ -244,12 +265,10 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 	// run-result. Sorting `order` by the same scrubbed pair makes the alignment a
 	// property of the code; Score's own re-sort is then idempotent on it.
 	sort.SliceStable(order, func(i, j int) bool {
-		si := scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: order[i].model, Persona: order[i].persona})
-		sj := scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: order[j].model, Persona: order[j].persona})
-		if si.Model != sj.Model {
-			return si.Model < sj.Model
+		if public[order[i]].model != public[order[j]].model {
+			return public[order[i]].model < public[order[j]].model
 		}
-		return si.Persona < sj.Persona
+		return public[order[i]].persona < public[order[j]].persona
 	})
 
 	catScores := make([]benchmark.ReviewerScore, 0, len(order))
