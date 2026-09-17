@@ -75,6 +75,23 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		return nil, err
 	}
 
+	// Every case's diff is parsed BEFORE the first paid completer call. The parse
+	// used to run inside the per-case loop, so case N's malformed hunk header
+	// surfaced only after cases 1..N-1 had driven the whole reviewer panel — the
+	// exact fail-late shape LoadRepoState's eager-load contract names one level up
+	// ("a defective case fails at load, where the remedy is free, instead of
+	// part-way through a paid panel run"). Folding it into LoadRepoState itself
+	// would also put it behind `benchmark verify`; that is internal/benchmark's
+	// file, so this pre-flight is the in-runner guarantee.
+	lineMaps := make([]benchmark.DiffLineMap, len(m.Cases))
+	for i := range m.Cases {
+		lm, err := loadCaseDiffLineMap(m.Cases[i])
+		if err != nil {
+			return nil, err
+		}
+		lineMaps[i] = lm
+	}
+
 	tmp, err := os.MkdirTemp("", "atcr-repo-state-")
 	if err != nil {
 		return nil, fmt.Errorf("creating benchmark work dir: %w", err)
@@ -94,10 +111,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 	for i, c := range m.Cases {
 		caseIDs = append(caseIDs, c.ID)
 
-		lm, err := loadCaseDiffLineMap(c)
-		if err != nil {
-			return nil, err
-		}
+		lm := lineMaps[i]
 		// Keyed by case INDEX rather than id so two ids sharing a path basename
 		// cannot overwrite each other's tree, the same reason executeBenchmarkRun
 		// keys its per-case output dir by index.
