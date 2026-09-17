@@ -175,15 +175,37 @@ func (m *Manifest) Validate() error {
 		// through a sibling's family. Costs valid suites nothing — the families are
 		// disjoint (TestEquivalence_FamiliesAreDisjoint), so only a hand-authored
 		// suite planting a fine word beside its coarse parent can trip this.
-		for i, a := range normCats {
-			for j, b := range normCats {
-				if i == j {
-					continue
-				}
-				for _, member := range familyOf(b) {
-					if member == a {
-						return fmt.Errorf("case %q: expected_category %q is already satisfied by %q's equivalence family; one raised finding would satisfy both and inflate recall", c.ID, a, b)
-					}
+		//
+		// The rule lives in ONE helper shared with the repo-state validator
+		// (rejectEquivalenceOverlap) — two copies of a subtle invariant had already
+		// drifted in wording, and the divergence changes a published recall
+		// denominator rather than crashing.
+		if err := rejectEquivalenceOverlap("expected_category", normCats); err != nil {
+			return fmt.Errorf("case %q: %w", c.ID, err)
+		}
+	}
+	return nil
+}
+
+// rejectEquivalenceOverlap rejects a deduplicated, normalized category set in
+// which one entry is already satisfied by another's equivalence family — the
+// shape where ONE raised finding satisfies TWO expectations and inflates recall.
+//
+// Both suite validators (Manifest.Validate for standard-v1 and
+// RepoStateCase.validateCategoryEquivalence) apply this identical rule through
+// this one helper, so the two tiers cannot drift on what an inflating pair is or
+// on how the diagnostic words it. The noun differs per caller ("expected_category"
+// on the flat standard-v1 list, "expected category" on the per-finding field).
+func rejectEquivalenceOverlap(noun string, normCats []string) error {
+	for i, a := range normCats {
+		for j, b := range normCats {
+			if i == j {
+				continue
+			}
+			for _, member := range familyOf(b) {
+				if member == a {
+					return fmt.Errorf("%s %q is already satisfied by %q's equivalence family; "+
+						"one raised finding would satisfy both and inflate recall", noun, a, b)
 				}
 			}
 		}

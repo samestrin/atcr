@@ -358,20 +358,10 @@ func (c *RepoStateCase) validateCategoryEquivalence() error {
 		seen[n] = true
 		norm = append(norm, n)
 	}
-	for i, a := range norm {
-		for j, b := range norm {
-			if i == j {
-				continue
-			}
-			for _, member := range familyOf(b) {
-				if member == a {
-					return fmt.Errorf("expected category %q is already satisfied by %q's equivalence family; "+
-						"one raised finding would satisfy both and inflate recall", a, b)
-				}
-			}
-		}
-	}
-	return nil
+	// ONE shared rule with Manifest.Validate (rejectEquivalenceOverlap): two
+	// copies of this scan had already drifted in wording, and the divergence
+	// changes a published recall denominator rather than crashing.
+	return rejectEquivalenceOverlap("expected category", norm)
 }
 
 // validateExpectedFinding enforces one expected finding's contract.
