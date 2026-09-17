@@ -398,6 +398,33 @@ func TestValidatePublishableCaseIDs_BothTiersShareTheIdentityArms(t *testing.T) 
 		"same bad suite name, same message: the arm table is shared, not copied")
 }
 
+// The skipped-row fold's unattributed tally: a skipped row whose recovered
+// trailing field is NOT a known agent name keys a categorical entry nobody reads
+// — effectively dropped from every denominator. The tally counts it so the drop
+// is measured, and the fold still happens (attribution, not deletion, is the
+// fix — there is no agent to attribute it to).
+func TestReadCaseFindingsLocated_CountsUnattributedSkippedRows(t *testing.T) {
+	dir := t.TempDir()
+	pool := filepath.Join(dir, "sources", "pool")
+	require.NoError(t, os.MkdirAll(pool, 0o755))
+	// One well-formed row for greta, one over-column row whose recovered reviewer
+	// is "nobody" — not a key in the agent set.
+	content := "HIGH|app/calc.py:12|p|f|correctness|15|sol|greta\n" +
+		"HIGH|app/calc.py:13|p|f|correctness|15|sol|extra|nobody\n"
+	require.NoError(t, os.WriteFile(filepath.Join(pool, "findings.txt"), []byte(content), 0o600))
+
+	located, categorical, unattributed, err := readCaseFindingsLocated(dir, map[string]bool{"greta": true})
+	require.NoError(t, err)
+	assert.Equal(t, 1, unattributed, "the skipped row naming an unknown reviewer is counted, not silently dropped")
+	assert.Len(t, located["greta"], 1)
+	assert.Len(t, categorical["greta"], 1)
+
+	// With nobody ON the panel the same row is attributed normally.
+	_, _, unattributed, err = readCaseFindingsLocated(dir, map[string]bool{"greta": true, "nobody": true})
+	require.NoError(t, err)
+	assert.Zero(t, unattributed)
+}
+
 func TestExecuteRepoStateBenchmarkRun_ReportsBothMetrics(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 	gen := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)

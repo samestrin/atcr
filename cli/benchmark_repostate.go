@@ -174,9 +174,20 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		if err != nil {
 			return nil, fmt.Errorf("reading pool summary for case %q: %w", c.ID, err)
 		}
-		located, categorical, err := readCaseFindingsLocated(res.Dir)
+		// The agent set bounds the unattributed tally: a skipped row whose recovered
+		// reviewer is nobody on this panel is counted (and warned) rather than
+		// silently keyed under a name no reader will ever look up.
+		agentSet := make(map[string]bool, len(summary.Agents))
+		for _, a := range summary.Agents {
+			agentSet[a.Agent] = true
+		}
+		located, categorical, unattributed, err := readCaseFindingsLocated(res.Dir, agentSet)
 		if err != nil {
 			return nil, fmt.Errorf("reading findings for case %q: %w", c.ID, err)
+		}
+		if unattributed > 0 {
+			log.FromContext(ctx).Warn("skipped finding rows name a reviewer not in the panel; counted as unattributed",
+				"case", c.ID, "unattributed", unattributed)
 		}
 		// The materialized repo has no consumer once the findings are read: scoring
 		// reads neither the tree nor the .git, and the review dir carries the
@@ -438,7 +449,16 @@ func validateRepoStatePublishableCaseIDs(m *benchmark.RepoStateManifest, suitePa
 // the category list from the located slice — which is what this function used to
 // invite — silently gave the positional rule's drop to a metric that must not have
 // it.
-func readCaseFindingsLocated(reviewDir string) (located map[string][]benchmark.ReportedFinding, categorical map[string][]string, err error) {
+//
+// The skipped-row fold carries the SAME caveat its standard-v1 original states
+// outright: an unrecognized reviewer name keys a map entry no agent reads, exactly
+// as an unrecognized REVIEWER on a well-formed row already does — so such a row is
+// effectively dropped from every denominator. This copy deleted that sentence and
+// kept the promise; the sentence is restored AND the drop is measured: every
+// skipped row whose recovered reviewer is not in the caller's agent set is
+// counted into the returned unattributed tally, which the runner surfaces as a
+// warning, instead of vanishing without a trace.
+func readCaseFindingsLocated(reviewDir string, agents map[string]bool) (located map[string][]benchmark.ReportedFinding, categorical map[string][]string, unattributed int, err error) {
 	located = map[string][]benchmark.ReportedFinding{}
 	categorical = map[string][]string{}
 
@@ -446,13 +466,13 @@ func readCaseFindingsLocated(reviewDir string) (located map[string][]benchmark.R
 	data, rerr := os.ReadFile(path)
 	if rerr != nil {
 		if os.IsNotExist(rerr) {
-			return located, categorical, nil
+			return located, categorical, 0, nil
 		}
-		return nil, nil, rerr
+		return nil, nil, 0, rerr
 	}
 	parsed, perr := stream.ParseSource(data)
 	if perr != nil {
-		return nil, nil, perr
+		return nil, nil, 0, perr
 	}
 	for _, f := range parsed.Findings {
 		located[f.Reviewer] = append(located[f.Reviewer], benchmark.ReportedFinding{
@@ -465,13 +485,18 @@ func readCaseFindingsLocated(reviewDir string) (located map[string][]benchmark.R
 	// REVIEWER is the engine's last-appended column, so the final field survives an
 	// overflow earlier in the row. parse() strips trailing empty fields before
 	// classifying a row as skipped, so mirror that strip to land on the same one.
+	// An unrecognized reviewer name keys a map entry no agent reads — counted into
+	// unattributed rather than left silent.
 	for _, s := range parsed.Skipped {
 		fields := strings.Split(s.Content, "|")
 		for len(fields) > 1 && fields[len(fields)-1] == "" {
 			fields = fields[:len(fields)-1]
 		}
 		reviewer := fields[len(fields)-1]
+		if !agents[reviewer] {
+			unattributed++
+		}
 		categorical[reviewer] = append(categorical[reviewer], "")
 	}
-	return located, categorical, nil
+	return located, categorical, unattributed, nil
 }
