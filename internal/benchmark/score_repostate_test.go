@@ -186,3 +186,27 @@ func TestRunResult_AbsentPositionalRecallUnmarshalsToNil(t *testing.T) {
 	assert.NotContains(t, string(out), "reviewer_positional_recall",
 		"an unmeasured run omits the key rather than publishing an empty array")
 }
+
+// The AC4 numerator's mirror: every existing match in this file with outside=true
+// also passed matched=false, so the MatchedOutsideDiff increment was uncovered —
+// a mutation that never credits an out-of-diff hit passed the whole file. This is
+// the opposite reviewer: one out-of-diff find, one in-diff miss.
+func TestScorePositional_CreditsAMatchedOutsideDiffFinding(t *testing.T) {
+	got := ScorePositional([]RepoStateReviewerScore{{
+		Model: "m", Persona: "p",
+		Cases: []RepoStateCaseScore{{CaseID: "c1", Matches: []FindingMatch{
+			match("in-1", false, false),
+			match("out-1", true, true),
+		}}},
+	}})
+	require.Len(t, got, 1)
+	r := got[0]
+
+	assert.Equal(t, 1, r.MatchedOutsideDiff, "a matched out-of-diff finding must credit the AC4 numerator")
+	require.NotNil(t, r.OutsideDiffRecall)
+	assert.InDelta(t, 1.0, *r.OutsideDiffRecall, 1e-9)
+	require.NotNil(t, r.WithinDiffRecall)
+	assert.InDelta(t, 0.0, *r.WithinDiffRecall, 1e-9)
+	require.NotNil(t, r.Recall)
+	assert.InDelta(t, 0.5, *r.Recall, 1e-9)
+}
