@@ -125,6 +125,35 @@ func TestBenchmarkRunRouting_DetectsTheSuiteFormat(t *testing.T) {
 	assert.NotEqual(t, benchmark.FormatRepoStateV1, got)
 }
 
+// runBenchmarkRun silently switches between the two tier runners on the suite
+// discriminator — an operator who passed --suite-path could not tell from stderr
+// which path actually ran. This drives the real command through both arms with
+// the config and completer seams swapped and asserts the routing line names the
+// discriminator and the chosen runner in each direction.
+func TestRunBenchmarkRun_LogsTheChosenTierRunner(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+	restoreCfg := benchmarkLoadConfig
+	restoreCompleter := benchmarkNewCompleter
+	t.Cleanup(func() {
+		benchmarkLoadConfig = restoreCfg
+		benchmarkNewCompleter = restoreCompleter
+	})
+	benchmarkLoadConfig = func(string) (*fanout.ReviewConfig, error) { return cfg, nil }
+	benchmarkNewCompleter = func(context.Context) fanout.Completer { return stubLocatedCompleter{} }
+
+	// repo-state arm routes to executeRepoStateBenchmarkRun.
+	_, _, stderr := execCmdSplit(t, "benchmark", "run", "--suite-path", repoStateMiniPath)
+	assert.Contains(t, stderr, benchmark.FormatRepoStateV1,
+		"stderr must name the suite discriminator the routing decision was made on")
+	assert.Contains(t, stderr, "executeRepoStateBenchmarkRun",
+		"stderr must name the chosen runner so the operator can tell which tier ran")
+
+	// standard-v1 arm routes to executeBenchmarkRun.
+	_, _, stderr = execCmdSplit(t, "benchmark", "run", "--suite-path", suiteValidPath)
+	assert.Contains(t, stderr, "executeBenchmarkRun",
+		"the standard-v1 arm must name its runner too — the silence is the defect")
+}
+
 // Moving discriminator reading ahead of Load (runBenchmarkRun, cli/benchmark.go)
 // changed the operator-visible error for a suite.json whose suite name is absent
 // or blank: it used to fail in Manifest.Validate with "suite name is required";
@@ -172,4 +201,54 @@ func TestRunBenchmarkRun_RejectsCheckpointForARepoStateSuite(t *testing.T) {
 		"no checkpoint requested is fine")
 	require.NoError(t, checkRepoStateFlags("standard-v1", "some/checkpoint.json"),
 		"standard-v1 checkpointing is untouched")
+}
+
+// Neither the new suite-format routing arm nor the --checkpoint rejection had a
+// command-level test: the suite tested DetectSuiteFormat and checkRepoStateFlags
+// directly, and the only test driving the real cobra RunE used the standard-v1
+// arm — so deleting the routing branch (and the checkpoint refusal) left
+// `go test ./cli/...` green while `benchmark run --suite-path <repo-state dir>`
+// silently fell back to the standard loader and died. These drive the actual
+// command through both arms, per the documented benchmarkLoadConfig /
+// benchmarkNewCompleter seams.
+func TestRunBenchmarkRun_RepoStateArmReachesStdout(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+	restoreCfg := benchmarkLoadConfig
+	restoreCompleter := benchmarkNewCompleter
+	t.Cleanup(func() {
+		benchmarkLoadConfig = restoreCfg
+		benchmarkNewCompleter = restoreCompleter
+	})
+	benchmarkLoadConfig = func(string) (*fanout.ReviewConfig, error) { return cfg, nil }
+	benchmarkNewCompleter = func(context.Context) fanout.Completer { return stubLocatedCompleter{} }
+
+	// Deleting the repo-state routing branch makes this fall through to
+	// executeBenchmarkRun, whose loader hard-rejects the discriminator — so a
+	// silent mis-route fails here instead of in front of an operator.
+	code, stdout, _ := execCmdSplit(t, "benchmark", "run", "--suite-path", repoStateMiniPath)
+	require.Equal(t, 0, code, stdout)
+	assert.Contains(t, stdout, "reviewer_positional_recall",
+		"the cobra wiring must actually reach the repo-state runner — its headline metric must reach stdout")
+	assert.NotContains(t, stdout, "outside the offered vocabulary",
+		"sanity: a clean-vocabulary stub run emits no drift diagnostic on the repo-state arm")
+}
+
+func TestRunBenchmarkRun_RejectsCheckpointForARepoStateSuiteThroughTheCommand(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+	restoreCfg := benchmarkLoadConfig
+	t.Cleanup(func() { benchmarkLoadConfig = restoreCfg })
+	benchmarkLoadConfig = func(string) (*fanout.ReviewConfig, error) { return cfg, nil }
+
+	// Drives the real cobra RunE (the helper-level test only calls
+	// checkRepoStateFlags): the refusal must fire at the command boundary,
+	// before any loader runs.
+	var outBuf, errBuf bytes.Buffer
+	root := NewRootCmd()
+	root.SetArgs([]string{"benchmark", "run", "--suite-path", repoStateMiniPath, "--checkpoint", "cp.json"})
+	root.SetOut(&outBuf)
+	root.SetErr(&errBuf)
+	runErr := root.ExecuteContext(context.Background())
+	require.Error(t, runErr, "the command must refuse --checkpoint on a repo-state suite")
+	combined := outBuf.String() + errBuf.String() + runErr.Error()
+	assert.Contains(t, combined, "--checkpoint is not supported for a repo-state-v1 suite")
 }
