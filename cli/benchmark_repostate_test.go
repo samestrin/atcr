@@ -12,6 +12,7 @@ import (
 	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -161,10 +162,24 @@ func TestExecuteRepoStateBenchmarkRun_ReviewsACaseWhoseTreeSelfIgnoresTheChange(
 // The runner must fail closed, and the diagnostic must name BOTH colliding lanes
 // so the operator can repartition the roster.
 func TestExecuteRepoStateBenchmarkRun_RefusesTwoLanesSharingOneIdentity(t *testing.T) {
-	cfg := benchCfg(
-		[3]string{"lane-a", "m-shared", "shared"},
-		[3]string{"lane-b", "m-shared", "shared"},
-	)
+	// Two DISTINCT agents whose configured persona AND model are identical realize
+	// one (model, persona) identity. An explicit persona ref distinct from the
+	// agent name must resolve to a file, so the fixture writes one shared persona
+	// and points both lanes at it.
+	personaDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(personaDir, "shared.md"), []byte("shared persona prompt\n"), 0o600))
+	cfg := &fanout.ReviewConfig{
+		Registry: &registry.Registry{
+			Providers: map[string]registry.Provider{"p": {APIKeyEnv: "ATCR_TEST_KEY", BaseURL: "http://unused"}},
+			Agents: map[string]registry.AgentConfig{
+				"lane-a": {Provider: "p", Model: "m-shared", Persona: "shared", Temperature: ptrF(0.7)},
+				"lane-b": {Provider: "p", Model: "m-shared", Persona: "shared", Temperature: ptrF(0.7)},
+			},
+		},
+		Project:     &registry.ProjectConfig{Agents: []string{"lane-a", "lane-b"}},
+		Settings:    registry.Settings{PayloadMode: "diff", TimeoutSecs: 600},
+		PersonaDirs: registry.PersonaDirs{Project: personaDir},
+	}
 
 	_, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{},
 		repoStateMiniPath, time.Unix(0, 0).UTC())
