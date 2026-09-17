@@ -204,7 +204,16 @@ func LoadRepoState(suitePath string) (*RepoStateManifest, error) {
 		// nothing about whether the directory on disk is a symlink pointing out of
 		// the suite. Closing that hole one level down and leaving it open here would
 		// mean a case could escape by being a link rather than by containing one.
-		if fi, serr := os.Lstat(caseDir); serr == nil && fi.Mode()&os.ModeSymlink != 0 {
+		// The error is RETURNED, not discarded: a Lstat that fails (locked parent,
+		// dangling mount) means the check could not run, and silently skipping it
+		// would fail the AC7 control open — the checkFiles arm at the bottom of this
+		// file returns its Lstat errors for the same reason.
+		fi, serr := os.Lstat(caseDir)
+		if serr != nil {
+			return nil, fmt.Errorf("invalid suite manifest %s: case %q: checking case directory %q for a symlink: %w",
+				manifestPath, id, ref.Dir, serr)
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
 			return nil, fmt.Errorf("invalid suite manifest %s: case %q directory %q is a symlink; a case must not reference a path outside the suite directory",
 				manifestPath, id, ref.Dir)
 		}
