@@ -215,6 +215,9 @@ func readOutsideHunk(line string, headPath, basePath *string, baseLine, headLine
 		if err != nil {
 			return err
 		}
+		// Both header paths are known by the time a hunk starts: resolve the pair
+		// into the keys the body lines will be filed under.
+		*basePath, *headPath = resolveDiffPathPair(*basePath, *headPath)
 		*baseLine, *headLine = h.baseStart, h.headStart
 		*baseLeft, *headLeft = h.baseCount, h.headCount
 
@@ -303,15 +306,14 @@ func parseHunkRange(spec string) (start, count int, err error) {
 	return start, count, nil
 }
 
-// stripDiffPathPrefix removes the `a/` or `b/` prefix git writes by default and
-// normalizes the /dev/null sentinel to the empty string. Trailing tab-separated
-// metadata (timestamps, which some diff producers append) is dropped too.
-//
-// A path git C-quoted (core.quotePath, on by default, for any path containing
-// non-ASCII bytes) is unquoted first: git writes `--- "a/pkg/e-acute.py"` with
-// the quotes and octal escapes intact, and a map keyed under that spelling would
-// never match the real path a reviewer cites. A quoted path that does not
-// unquote is an error rather than a silently mis-keyed map.
+// stripDiffPathPrefix normalizes one diff header path: trailing tab-separated
+// metadata (timestamps, which some diff producers append) is dropped, git's
+// C-quoting (core.quotePath, on by default, for any path containing non-ASCII
+// bytes) is undone, and the /dev/null sentinel becomes the empty string. It does
+// NOT strip the a//b/ prefixes: whether those are diff artifacts or a real path
+// segment can only be decided from the header PAIR — see resolveDiffPathPair.
+// A quoted path that does not unquote is an error rather than a silently
+// mis-keyed map.
 func stripDiffPathPrefix(p string) (string, error) {
 	if i := strings.IndexByte(p, '\t'); i >= 0 {
 		p = p[:i]
@@ -327,10 +329,37 @@ func stripDiffPathPrefix(p string) (string, error) {
 		}
 		p = unquoted
 	}
-	if strings.HasPrefix(p, "a/") || strings.HasPrefix(p, "b/") {
-		return p[2:], nil
-	}
 	return p, nil
+}
+
+// resolveDiffPathPair turns the raw `---`/`+++` spellings into the map keys.
+//
+// Git's default output is `--- a/X` / `+++ b/X`: the two spellings DIFFER in
+// their first component, and stripping both yields the repository path. A
+// --no-prefix/-p0 diff writes `--- X` / `+++ X` — identical spellings — and X
+// may legitimately begin `a/` or `b/` (a real repository path; pathMatches in
+// match.go preserves it for the same reason), so stripping there would key
+// every line under a name no reviewer can cite. The pair disambiguates:
+// identical spellings are kept verbatim; differing spellings have their a//b/
+// prefixes stripped.
+//
+// RESIDUAL AMBIGUITY: a hand-authored no-prefix diff whose real paths begin
+// `a/` and `b/` AND differ (a rename) is indistinguishable from a prefixed
+// diff. FORMAT.md's checklist requires change.diff to use prefixes, which
+// bounds this to a case that ignores the contract.
+func resolveDiffPathPair(base, head string) (string, string) {
+	if base != "" && base == head {
+		return base, head
+	}
+	return stripABPrefix(base), stripABPrefix(head)
+}
+
+// stripABPrefix removes a leading a/ or b/ if present.
+func stripABPrefix(p string) string {
+	if strings.HasPrefix(p, "a/") || strings.HasPrefix(p, "b/") {
+		return p[2:]
+	}
+	return p
 }
 
 // headFileKey / baseFileKey pick the name a line belongs under. A created file has
