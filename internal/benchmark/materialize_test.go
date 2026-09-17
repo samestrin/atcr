@@ -19,7 +19,11 @@ func materializableCase(t *testing.T) RepoStateCase {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "apply-case")
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "base", "pkg"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "base", "bin"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "base", "pkg", "example.py"), []byte("one\ntwo\nthree\n"), 0o600))
+	// An executable base file: the +x bit is part of the tree object, and the
+	// materialized commit must carry mode 100755 for it (see the mode test).
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "base", "bin", "run.sh"), []byte("#!/bin/sh\n"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "commit-message.txt"),
 		[]byte("feat: change two\n\nBody line.\n\nSigned-off-by: A Dev <dev@example.com>\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "change.diff"), []byte(
@@ -160,6 +164,19 @@ func TestMaterializeCase_ACanceledContextAbortsBeforeCopying(t *testing.T) {
 	entries, rdErr := os.ReadDir(dest)
 	require.NoError(t, rdErr)
 	assert.Empty(t, entries, "a cancelled context must abort the copy, not materialize the tree anyway")
+}
+
+// The executable bit is PART OF THE TREE OBJECT — a regression in the mode
+// copy changes the commit SHA the determinism test pins, in a way that test
+// cannot see (it compares two runs of the same broken code). The fixture ships
+// an executable file and the materialized repository must carry mode 100755.
+func TestMaterializeCase_PreservesTheExecutableBit(t *testing.T) {
+	c := materializableCase(t)
+	mc, err := MaterializeCase(context.Background(), c, t.TempDir())
+	require.NoError(t, err)
+
+	stage := gitOut(t, mc.Root, "ls-files", "--stage", "bin/run.sh")
+	assert.Contains(t, stage, "100755", "the executable bit must survive into the git tree: got %q", stage)
 }
 
 func TestMaterializeCase_ProducesAReviewableRange(t *testing.T) {
