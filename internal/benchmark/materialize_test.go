@@ -2,6 +2,7 @@ package benchmark
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,6 +75,31 @@ func TestMaterializeCase_RejectsAMissingDest(t *testing.T) {
 
 // runGit formats args[0] into its error, so a call with NO args panics with an
 // index-out-of-range instead of returning an error.
+// A failing git apply folds git's stderr into the returned error verbatim. A
+// diff failing across many files emits several KiB of per-file error lines, and
+// every byte lands in the operator's stderr on a near-miss. The captured output
+// must be bounded: the FIRST lines carry the diagnosis, the tail is noise.
+func TestRunGit_TruncatesCapturedOutputInErrors(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	var sb strings.Builder
+	for i := 0; i < 200; i++ {
+		fmt.Fprintf(&sb, "diff --git a/missing-%d.txt b/missing-%d.txt\n", i, i)
+		fmt.Fprintf(&sb, "--- a/missing-%d.txt\n", i)
+		fmt.Fprintf(&sb, "+++ b/missing-%d.txt\n", i)
+		fmt.Fprintf(&sb, "@@ -1,1 +1,1 @@\n")
+		fmt.Fprintf(&sb, "-gone%d\n", i)
+		fmt.Fprintf(&sb, "+here%d\n", i)
+	}
+	bigDiff := filepath.Join(dir, "bad.diff")
+	require.NoError(t, os.WriteFile(bigDiff, []byte(sb.String()), 0o600))
+
+	err := runGit(context.Background(), dir, "apply", "--whitespace=nowarn", "--", bigDiff)
+	require.Error(t, err)
+	assert.LessOrEqual(t, len(err.Error()), 2248,
+		"the folded git output must be bounded (2 KiB cap + slack), got %d bytes", len(err.Error()))
+}
+
 func TestRunGit_ReportsAnErrorInsteadOfPanickingOnNoArgs(t *testing.T) {
 	dir := t.TempDir()
 	require.NotPanics(t, func() {
