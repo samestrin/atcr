@@ -108,6 +108,22 @@ func TestRunGit_ReportsAnErrorInsteadOfPanickingOnNoArgs(t *testing.T) {
 	})
 }
 
+// A base tree carrying its own .gitignore makes `git add -A` silently DROP the
+// files it matches: they are copied into the working tree (what expected findings'
+// line numbers index) but never enter the commit, so the base..head range and
+// the working tree disagree. The materializer must refuse the metadata entries
+// git's add/commit machinery consumes, not silently honor them.
+func TestMaterializeCase_RejectsGitMetadataInBaseTree(t *testing.T) {
+	c := materializableCase(t)
+	require.NoError(t, os.WriteFile(filepath.Join(c.Dir, "base", ".gitignore"), []byte("*.log\n"), 0o600))
+	require.NoError(t, os.MkdirAll(filepath.Join(c.Dir, "base", "pkg"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(c.Dir, "base", "pkg", "debug.log"), []byte("x"), 0o600))
+
+	_, err := MaterializeCase(context.Background(), c, t.TempDir())
+	require.Error(t, err, "a base tree with a .gitignore must be refused, not committed with files silently dropped")
+	assert.Contains(t, err.Error(), ".gitignore")
+}
+
 func TestMaterializeCase_ProducesAReviewableRange(t *testing.T) {
 	c := materializableCase(t)
 	mc, err := MaterializeCase(context.Background(), c, t.TempDir())
