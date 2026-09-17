@@ -513,3 +513,33 @@ func TestLoadRepoState_RejectsWindowsSpellingsInDeclaredPaths(t *testing.T) {
 		})
 	}
 }
+
+// validateCategoryEquivalence was a near-verbatim copy of the nested loop inside
+// Manifest.Validate — same normalize-dedupe, same familyOf scan — and the two had
+// already drifted in wording (expected_category versus expected category). This
+// pins the SHARED sentence both validators must produce for the same bad pair, so
+// a wording fix to one cannot silently leave the other behind.
+func TestEquivalenceOverlap_BothValidatorsShareOneSentence(t *testing.T) {
+	// standard-v1 arm: one case expecting the coarse category and its family member.
+	stdDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(stdDir, "case-01.diff"),
+		[]byte("--- a/x.go\n+++ b/x.go\n@@ -1 +1 @@\n-old\n+new\n"), 0o600))
+	stdManifest := `{"suite":"mini","suite_version":"1.2.0","cases":[` +
+		`{"id":"case-01","diff":"case-01.diff","expected_categories":["maintainability","style"]}]}`
+	require.NoError(t, os.WriteFile(filepath.Join(stdDir, "suite.json"), []byte(stdManifest), 0o600))
+	_, stdErr := Load(stdDir)
+	require.Error(t, stdErr)
+
+	// repo-state arm: the same pair spread one per finding.
+	rsBody := `{"id":"good-case","format":"repo-state-v1","base_tree":"base","commit_message":"commit-message.txt","diff":"change.diff","expected_findings":[` +
+		`{"id":"f-one","file":"pkg/example.py","line_start":1,"line_end":1,"outside_diff":false,"category":"maintainability","summary":"s"},` +
+		`{"id":"f-two","file":"pkg/example.py","line_start":2,"line_end":2,"outside_diff":false,"category":"style","summary":"s"}]}`
+	_, rsErr := LoadRepoState(writeRepoStateSuite(t, rsBody))
+	require.Error(t, rsErr)
+
+	// The predicate sentence both must carry, character for character after the
+	// caller's own prefix.
+	shared := `is already satisfied by "maintainability"'s equivalence family; one raised finding would satisfy both and inflate recall`
+	assert.Contains(t, stdErr.Error(), shared, "Manifest.Validate must state the overlap rule in the shared wording")
+	assert.Contains(t, rsErr.Error(), shared, "validateCategoryEquivalence must state the overlap rule in the shared wording")
+}
