@@ -1,0 +1,16 @@
+diff --git a/app/calc.py b/app/calc.py
+index 1111111..2222222 100644
+--- a/app/calc.py
++++ b/app/calc.py
+@@ -3,7 +3,11 @@ def total(items):
+     for i in items:
+         s += i
+     return s
++
++
++def safe_total(items):
++    return total(items or [])
+
+
+ def average(items):
+     return total(items) / len(items)
