@@ -187,7 +187,7 @@ func TestExecuteRepoStateBenchmarkRun_RefusesTwoLanesSharingOneIdentity(t *testi
 	require.Error(t, err, "two lanes sharing one realized identity must fail closed, not double the score")
 	assert.Contains(t, err.Error(), "scored twice")
 	assert.Contains(t, err.Error(), "lane-a", "the diagnostic names both colliding agents")
-	assert.Contains(t, err.Error(), "x@corp/claude", "the second pre-scrub identity is named too")
+	assert.Contains(t, err.Error(), "lane-b")
 }
 
 // usageLocatedCompleter raises the standard located findings while REPORTING

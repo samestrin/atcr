@@ -245,7 +245,8 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 	// raw strings. The producer names both pre-scrub identities instead. Checked
 	// BEFORE the sort and the emit, so the four arrays below are built from the
 	// same public identities that just passed the collision gate.
-	public := make(map[reviewerKey]reviewerKey, len(order))
+	public := make(map[reviewerKey]reviewerKey, len(order))  // public identity -> pre-scrub key (collision naming)
+	scrubOf := make(map[reviewerKey]reviewerKey, len(order)) // pre-scrub key -> public identity (emit)
 	for _, k := range order {
 		s := scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: k.model, Persona: k.persona})
 		id := reviewerKey{model: s.Model, persona: s.Persona}
@@ -255,6 +256,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 				prev.model, prev.persona, k.model, k.persona, id.model, id.persona)
 		}
 		public[id] = k
+		scrubOf[k] = id
 	}
 
 	// All four emitted arrays share ONE order. The coverage array used to be
@@ -265,10 +267,10 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 	// run-result. Sorting `order` by the same scrubbed pair makes the alignment a
 	// property of the code; Score's own re-sort is then idempotent on it.
 	sort.SliceStable(order, func(i, j int) bool {
-		if public[order[i]].model != public[order[j]].model {
-			return public[order[i]].model < public[order[j]].model
+		if scrubOf[order[i]].model != scrubOf[order[j]].model {
+			return scrubOf[order[i]].model < scrubOf[order[j]].model
 		}
-		return public[order[i]].persona < public[order[j]].persona
+		return scrubOf[order[i]].persona < scrubOf[order[j]].persona
 	})
 
 	catScores := make([]benchmark.ReviewerScore, 0, len(order))
@@ -281,7 +283,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		// the exact identity leak the sibling arrays refuse; the export join only
 		// survived because coverageKey re-scrubbed on read. Both sides now carry
 		// the scrubbed value by construction.
-		pub := public[k]
+		pub := scrubOf[k]
 		cats[k].LatencyP50MS = medianInt64(acc[k].latencies)
 		catScores = append(catScores, *cats[k])
 		posScores = append(posScores, *positional[k])
