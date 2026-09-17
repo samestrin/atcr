@@ -14,6 +14,7 @@ import (
 	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/hookobs"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/spf13/cobra"
@@ -169,6 +170,14 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 	// shared with real review work.
 	benchCtx := hookobs.WithCall(cmd.Context(), hookobs.Call{Stage: "benchmark"})
 	var rr *benchmark.RunResult
+	runner := "executeBenchmarkRun"
+	if suiteFormat == benchmark.FormatRepoStateV1 {
+		runner = "executeRepoStateBenchmarkRun"
+	}
+	// Name the routing decision on stderr (via the context logger): an operator who
+	// passed --suite-path must be able to tell from the log which tier actually
+	// ran, without opening the run-result to check which metrics it carries.
+	log.FromContext(benchCtx).Info("benchmark run: executing suite", "suite_format", suiteFormat, "runner", runner)
 	if suiteFormat == benchmark.FormatRepoStateV1 {
 		rr, err = executeRepoStateBenchmarkRun(benchCtx, cfg, benchmarkNewCompleter(benchCtx), suitePath, time.Now().UTC())
 	} else {
