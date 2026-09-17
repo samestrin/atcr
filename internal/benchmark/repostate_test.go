@@ -481,3 +481,35 @@ func TestValidate_TrimsTheCaseIDIntoTheStruct(t *testing.T) {
 		"Validate must write the trimmed id back so struct and comparisons agree")
 	_ = dir
 }
+
+// FORMAT.md:32 declares base_tree, commit_message and diff to be POSIX paths, but
+// they were checked with the platform-dependent isSafeRelPath: on Windows,
+// filepath.IsAbs("/etc/passwd") is false, so the absolute-path escape below would
+// PASS there on bytes that are refused on this machine. The three declared-POSIX
+// fields now go through the same rule expected_findings[].file already uses — and
+// that rule refuses a backslash and a drive-letter prefix too, since neither is
+// ever a legal separator or a relative path in a declared POSIX path.
+func TestLoadRepoState_RejectsWindowsSpellingsInDeclaredPaths(t *testing.T) {
+	for _, tc := range []struct{ name, field, value string }{
+		{"backslash escape in commit message", "commit_message", "..\\\\etc\\\\passwd"},
+		{"drive letter in commit message", "commit_message", "C:/etc/passwd"},
+		{"backslash escape in base tree", "base_tree", "..\\\\etc"},
+		{"drive letter in diff", "diff", "C:/change.diff"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `{"id":"good-case","format":"repo-state-v1","base_tree":"base","commit_message":"commit-message.txt","diff":"change.diff","expected_findings":[{"id":"a","file":"pkg/example.py","line_start":1,"line_end":1,"outside_diff":false,"category":"correctness","summary":"s"}]}`
+			body = strings.Replace(body, `"base_tree":"base"`, `"base_tree":"base"`, 1)
+			switch tc.field {
+			case "base_tree":
+				body = strings.Replace(body, `"base_tree":"base"`, `"base_tree":"`+tc.value+`"`, 1)
+			case "commit_message":
+				body = strings.Replace(body, `"commit_message":"commit-message.txt"`, `"commit_message":"`+tc.value+`"`, 1)
+			case "diff":
+				body = strings.Replace(body, `"diff":"change.diff"`, `"diff":"`+tc.value+`"`, 1)
+			}
+			_, err := LoadRepoState(writeRepoStateSuite(t, body))
+			require.Error(t, err, "%s = %q must be refused on every platform", tc.field, tc.value)
+			assert.Contains(t, err.Error(), "must be relative and within the case directory")
+		})
+	}
+}
