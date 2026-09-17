@@ -251,6 +251,32 @@ func TestExecuteRepoStateBenchmarkRun_MedianLatencyAndAccumulatedCost(t *testing
 		"cost ACCUMULATES over every case's reported usage (denominator: 2 cases x 2 corroborated findings)")
 }
 
+// The coverage array was emitted in first-sighting slot order while Reviewers,
+// Vocabulary and PositionalRecall each come back re-sorted on the scrubbed
+// identity — so on any panel with more than one identity, the documented
+// positional join (coverage[i] describes reviewers[i]) was false for every
+// repo-state run-result. All four arrays must share one order.
+func TestExecuteRepoStateBenchmarkRun_CoverageJoinsReviewersByPosition(t *testing.T) {
+	// Roster order (zeta, alpha) is first-sighting order; the scrubbed sort the
+	// reviewer rows use puts alpha first. The join must hold despite that.
+	cfg := benchCfg(
+		[3]string{"zeta", "m-zeta", "zeta"},
+		[3]string{"alpha", "m-alpha", "alpha"},
+	)
+
+	rr, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{},
+		repoStateMiniPath, time.Unix(0, 0).UTC())
+	require.NoError(t, err)
+	require.Len(t, rr.Reviewers, 2)
+	require.Len(t, rr.Coverage, 2)
+
+	for i := range rr.Reviewers {
+		assert.Equal(t, rr.Reviewers[i].Model, rr.Coverage[i].Model,
+			"coverage[%d] must describe reviewers[%d]: the positional join is documented", i, i)
+		assert.Equal(t, rr.Reviewers[i].Persona, rr.Coverage[i].Persona)
+	}
+}
+
 func TestExecuteRepoStateBenchmarkRun_ReportsBothMetrics(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 	gen := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
