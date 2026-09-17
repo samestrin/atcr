@@ -249,13 +249,16 @@ func copyRegularFile(d fs.DirEntry, src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	// Best-effort: the copy has already finished (or failed) by the time this
+	// deferred close runs, and a read-only close error carries no information the
+	// caller could act on — silencing it explicitly rather than by omission.
+	defer func() { _ = in.Close() }()
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
 	if err != nil {
 		return err
 	}
 	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
+		_ = out.Close()
 		return err
 	}
 	return out.Close()
