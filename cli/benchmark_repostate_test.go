@@ -7,6 +7,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -94,8 +95,8 @@ func TestExecuteRepoStateBenchmarkRun_LeavesPublicRecordAlone(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, rr.Reviewers, 1)
-	assert.Equal(t, "benchmark-suite", rr.Reviewers[0].RaisedDenominator,
-		"a repo-state row still declares the benchmark denominator, not a production one")
+	assert.Equal(t, scorecard.RaisedDenominatorBenchmarkSuite, rr.Reviewers[0].RaisedDenominator,
+		"a repo-state row still declares the benchmark denominator, not a production era")
 	sub := benchmark.BuildSubmission(*rr, time.Unix(0, 0).UTC())
 	assert.Equal(t, benchmark.SourceBenchmarkSuite, sub.Source)
 }

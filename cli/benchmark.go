@@ -150,11 +150,30 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	// Route on the suite's own discriminator. The two tiers return the same
+	// RunResult but reach it by different review paths — standard-v1 by diff
+	// ingestion, repo-state-v1 by materializing a real repository and reviewing a
+	// base..head range — so the choice cannot be deferred into a single loader.
+	// Reading only the discriminator keeps a malformed repo-state suite producing a
+	// repo-state error rather than a standard-v1 one.
+	suiteFormat, err := benchmark.DetectSuiteFormat(suitePath)
+	if err != nil {
+		return err
+	}
+	if err := checkRepoStateFlags(suiteFormat, checkpoint); err != nil {
+		return err
+	}
+
 	// Audit identity (Epic 35.0): a benchmark drives many models over many
 	// cases, so without a stage those records are unattributable in a stream
 	// shared with real review work.
 	benchCtx := hookobs.WithCall(cmd.Context(), hookobs.Call{Stage: "benchmark"})
-	rr, err := executeBenchmarkRun(benchCtx, cfg, benchmarkNewCompleter(benchCtx), suitePath, time.Now().UTC(), checkpoint)
+	var rr *benchmark.RunResult
+	if suiteFormat == benchmark.FormatRepoStateV1 {
+		rr, err = executeRepoStateBenchmarkRun(benchCtx, cfg, benchmarkNewCompleter(benchCtx), suitePath, time.Now().UTC())
+	} else {
+		rr, err = executeBenchmarkRun(benchCtx, cfg, benchmarkNewCompleter(benchCtx), suitePath, time.Now().UTC(), checkpoint)
+	}
 	if err != nil {
 		return err
 	}
