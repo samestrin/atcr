@@ -275,6 +275,13 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 	posScores := make([]benchmark.RepoStateReviewerScore, 0, len(order))
 	coverage := make([]benchmark.ReviewerCoverage, 0, len(order))
 	for _, k := range order {
+		// The PUBLIC identity — the same scrubbed pair the collision gate above
+		// computed — goes into the coverage row. Writing the RAW key here shipped
+		// credential- and path-shaped model ids verbatim inside reviewer_coverage[],
+		// the exact identity leak the sibling arrays refuse; the export join only
+		// survived because coverageKey re-scrubbed on read. Both sides now carry
+		// the scrubbed value by construction.
+		pub := public[k]
 		cats[k].LatencyP50MS = medianInt64(acc[k].latencies)
 		catScores = append(catScores, *cats[k])
 		posScores = append(posScores, *positional[k])
@@ -284,8 +291,8 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		// construction, and the operator would learn so only after paying for a full
 		// panel.
 		coverage = append(coverage, benchmark.ReviewerCoverage{
-			Model:         k.model,
-			Persona:       k.persona,
+			Model:         pub.model,
+			Persona:       pub.persona,
 			CaseIDs:       acc[k].caseIDs,
 			Outcomes:      acc[k].outcomes,
 			FallbackCases: acc[k].fallbackCases,
