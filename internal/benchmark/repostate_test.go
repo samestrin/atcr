@@ -347,3 +347,26 @@ func TestLoadRepoState_RejectsAMalformedDiff(t *testing.T) {
 	require.Error(t, err, "a diff ParseDiffLineMap rejects must be a LOAD error, not a mid-run abort")
 	assert.Contains(t, err.Error(), "good-case", "the error must name the broken case")
 }
+
+// The case-directory symlink guard must not fail OPEN: a non-nil Lstat error used
+// to silently SKIP the AC7 check — the one place a discarded syscall error
+// disabled a security control rather than merely losing a diagnostic. A case dir
+// that cannot even be Lstat'd (locked parent, dangling mount) must fail the load
+// with the reason named, the way checkFiles returns its Lstat errors.
+func TestLoadRepoState_LstatFailureOnCaseDirIsNotSwallowed(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: permission bits do not constrain root, so the Lstat cannot be made to fail")
+	}
+	dir := writeRepoStateSuite(t, validCaseJSON)
+	locked := filepath.Join(dir, "locked")
+	require.NoError(t, os.MkdirAll(filepath.Join(locked, "good-case"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(locked, "good-case", "case.json"), []byte(validCaseJSON), 0o600))
+	require.NoError(t, os.Chmod(locked, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	writeManifest(t, dir, `{"suite":"repo-state-v1","suite_version":"1.0.0","cases":[{"id":"good-case","dir":"locked/good-case"}]}`)
+	_, err := LoadRepoState(dir)
+	require.Error(t, err, "a case dir whose Lstat fails must error, not silently skip the symlink check")
+	assert.Contains(t, err.Error(), "checking case directory",
+		"the error must come from the directory check itself, not from a downstream read whose failure would be mistaken for a missing case.json")
+}
