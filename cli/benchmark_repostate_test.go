@@ -382,6 +382,22 @@ func TestExecuteRepoStateBenchmarkRun_RejectsAnOversizedCaseDiff(t *testing.T) {
 	assert.Contains(t, err.Error(), "exceeding", "the error names the cap")
 }
 
+// The repo-state validator's doc claims the two tiers "cannot drift" on what a
+// publishable suite is. That holds only while the arm TABLE is one function:
+// both validators must produce byte-identical messages for the same bad name.
+func TestValidatePublishableCaseIDs_BothTiersShareTheIdentityArms(t *testing.T) {
+	std := &benchmark.Manifest{Suite: "atcr/suite", SuiteVersion: "1.0.0"}
+	repo := &benchmark.RepoStateManifest{Suite: "atcr/suite", SuiteVersion: "1.0.0"}
+
+	errStd := validateSuitePublishableCaseIDs(std, "/suite")
+	errRepo := validateRepoStatePublishableCaseIDs(repo, "/suite")
+
+	require.Error(t, errStd)
+	require.Error(t, errRepo)
+	assert.Equal(t, errStd.Error(), errRepo.Error(),
+		"same bad suite name, same message: the arm table is shared, not copied")
+}
+
 func TestExecuteRepoStateBenchmarkRun_ReportsBothMetrics(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 	gen := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
