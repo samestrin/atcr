@@ -1,6 +1,7 @@
 package benchmark
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -560,4 +561,25 @@ func TestLoadRepoState_RejectsACategoryOutsideTheClosedVocabulary(t *testing.T) 
 	// The canonical spelling itself must keep loading.
 	_, err = LoadRepoState(writeRepoStateSuite(t, strings.Replace(validCaseJSON, `"category": "correctness"`, `"category": "error-handling"`, 1)))
 	require.NoError(t, err)
+}
+
+// AC2's "standard-v1 scores byte-identically" rests on the PositionalRecall field
+// never reaching a standard-v1 run-result. The full guarantee needs a real
+// executeBenchmarkRun result (built in cli — outside this package), but the
+// struct-level half is pinnable here in both directions: absent on a standard
+// shape, present once the repo-state tier populates it, and the omitempty tag is
+// what makes the absent case byte-identical to a pre-field artifact.
+func TestRunResult_PositionalRecallIsOmittedUntilPopulated(t *testing.T) {
+	standard := RunResult{Suite: "standard-v1", SuiteVersion: "1.0.0"}
+	data, err := json.Marshal(standard)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "reviewer_positional_recall",
+		"a standard-v1 run-result must be byte-identical to a pre-field artifact — omitempty is the contract")
+
+	populated := standard
+	populated.PositionalRecall = []ReviewerPositionalRecall{{Model: "m", Persona: "p"}}
+	data, err = json.Marshal(populated)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "reviewer_positional_recall",
+		"the repo-state tier's headline metric must reach the artifact when populated")
 }
