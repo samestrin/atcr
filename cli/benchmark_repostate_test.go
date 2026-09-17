@@ -156,6 +156,25 @@ func TestExecuteRepoStateBenchmarkRun_ReviewsACaseWhoseTreeSelfIgnoresTheChange(
 	assert.Contains(t, rr.SuiteCaseIDs, "second-case")
 }
 
+// Two lanes resolving to ONE realized (model, persona) both append a CaseScore
+// for the same case, silently doubling Runs and re-weighting CorroborationRate.
+// The runner must fail closed, and the diagnostic must name BOTH colliding lanes
+// so the operator can repartition the roster.
+func TestExecuteRepoStateBenchmarkRun_RefusesTwoLanesSharingOneIdentity(t *testing.T) {
+	cfg := benchCfg(
+		[3]string{"lane-a", "m-shared", "shared"},
+		[3]string{"lane-b", "m-shared", "shared"},
+	)
+
+	_, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{},
+		repoStateMiniPath, time.Unix(0, 0).UTC())
+
+	require.Error(t, err, "two lanes sharing one realized identity must fail closed, not double the score")
+	assert.Contains(t, err.Error(), "scored twice")
+	assert.Contains(t, err.Error(), "lane-a", "the diagnostic names both colliding agents")
+	assert.Contains(t, err.Error(), "lane-b")
+}
+
 func TestExecuteRepoStateBenchmarkRun_ReportsBothMetrics(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 	gen := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
