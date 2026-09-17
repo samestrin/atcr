@@ -162,14 +162,22 @@ func TestMatchFindings_TieResolvesToNearestMidpoint(t *testing.T) {
 }
 
 // An EXACT midpoint tie breaks alphabetically by id, so the outcome is a property
-// of the data and not of map or slice order.
+// of the data and not of map or slice order. Pinned in BOTH declaration orders:
+// a single order would also pass if the rule were "the later element wins".
 func TestMatchFindings_ExactTieBreaksAlphabeticallyByID(t *testing.T) {
-	expected := []ExpectedFinding{
+	zuluFirst := []ExpectedFinding{
 		exp("zulu", "pkg/a.py", 50, 50, 5, false),
 		exp("alpha", "pkg/a.py", 50, 50, 5, false),
 	}
-	got := MatchFindings(expected, []ReportedFinding{{File: "pkg/a.py", Line: 50}}, noDiff(t))
-	assert.Equal(t, []string{"alpha"}, matchedIDs(got))
+	alphaFirst := []ExpectedFinding{
+		exp("alpha", "pkg/a.py", 50, 50, 5, false),
+		exp("zulu", "pkg/a.py", 50, 50, 5, false),
+	}
+	report := []ReportedFinding{{File: "pkg/a.py", Line: 50}}
+	assert.Equal(t, []string{"alpha"}, matchedIDs(MatchFindings(zuluFirst, report, noDiff(t))),
+		"alpha wins when declared second")
+	assert.Equal(t, []string{"alpha"}, matchedIDs(MatchFindings(alphaFirst, report, noDiff(t))),
+		"alpha wins when declared first")
 }
 
 // Matching must be ORDER-INDEPENDENT: the same reports in a different order
