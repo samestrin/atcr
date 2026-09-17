@@ -105,6 +105,29 @@ func TestBenchmarkDoc_RepoStateSectionMatchesTheCode(t *testing.T) {
 	assert.NotContains(t, cli, "fanout.PrepareReviewFromDiff(",
 		"routing repo-state cases through diff ingestion would drop the RangeBuilder, "+
 			"and with it the claim ledger and pre-fetching this tier measures")
+
+	// The SEVENTH claim, and the one this section previously got wrong in the other
+	// direction: the doc said `verify` and `export` "remain standard-v1-only" while
+	// export already accepted a repo-state run-result. Both subcommands now route the
+	// tier, and each half is pinned to the code arm that makes it true — an unpinned
+	// sentence about tier support is exactly the one that drifted before.
+	cmd := readRepoFile(t, "../../cli/benchmark.go")
+	coverage := readRepoFile(t, "../../cli/benchmark_coverage.go")
+
+	assert.Contains(t, doc, "`atcr benchmark verify` and `atcr benchmark export` route both tiers",
+		"the doc must state that verify and export are no longer standard-v1-only")
+	assert.Contains(t, cmd, "return verifyRepoStateSuite(cmd, suitePath)",
+		"runBenchmarkVerify must still route the repo-state arm the doc promises")
+	assert.Contains(t, coverage, "func loadSuiteAnchor(",
+		"the export denominator anchor must still have a tier-aware load, or --suite-path "+
+			"cannot anchor the repo-state run-result the doc says it can")
+
+	// verify prints NO reproducibility hash for this tier. A reader who expects one
+	// and does not get it must find that documented rather than read it as a bug.
+	assert.Contains(t, doc, "prints no reproducibility hash for it",
+		"the doc must record that verify emits no repro hash on the repo-state arm")
+	assert.Contains(t, cmd, "not defined for %s (standard-v1 only)",
+		"verifyRepoStateSuite must still name the omission instead of printing nothing")
 }
 
 // The stale claim this section replaced must not come back. It is asserted by

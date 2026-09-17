@@ -28,7 +28,7 @@ scores.
 
 > **There are two suite tiers, and `benchmark run` routes between them.** `benchmarks/repo-state-v1/` is a second tier whose cases are small repositories rather than diffs — see [`benchmarks/repo-state-v1/FORMAT.md`](../benchmarks/repo-state-v1/FORMAT.md). `atcr benchmark run` reads the `suite` field of `suite.json` and dispatches on it, so the same `--suite-path` invocation works for either tier. **Everything below describes `standard-v1`-shaped suites** unless it says otherwise; the differences are collected under [Running a `repo-state-v1` suite](#running-a-repo-state-v1-suite).
 >
-> `atcr benchmark verify` and `atcr benchmark export` remain `standard-v1`-only. `verify` reports a `repo-state-v1` suite with an error naming the loader that does handle it.
+> `atcr benchmark verify` and `atcr benchmark export` route both tiers too. `verify` validates a `repo-state-v1` suite through the same two gates `benchmark run` applies at load, and prints no reproducibility hash for it — that hash is defined over a `standard-v1` manifest's diff bytes and has no `repo-state-v1` equivalent. `export` accepts a `repo-state-v1` run-result and can anchor it with `--suite-path`.
 
 ---
 
