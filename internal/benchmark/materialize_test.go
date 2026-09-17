@@ -351,12 +351,34 @@ func TestMaterializeCase_ShippedCaseMaterializes(t *testing.T) {
 		t.Run(c.ID, func(t *testing.T) {
 			mc, err := MaterializeCase(context.Background(), c, t.TempDir())
 			require.NoError(t, err, "shipped case %q must materialize", c.ID)
-			// Every expected finding names a file that must exist in the HEAD state.
-			// A case citing a file the change deleted, or never created, is
-			// unwinnable — the exact silent failure the tier exists to detect.
 			for _, f := range c.ExpectedFindings {
-				_, err := os.Stat(filepath.Join(mc.Root, filepath.FromSlash(f.File)))
+				// Every expected finding names a file that must exist in the HEAD state.
+				// A case citing a file the change deleted, or never created, is
+				// unwinnable — the exact silent failure the tier exists to detect.
+				headPath := filepath.Join(mc.Root, filepath.FromSlash(f.File))
+				_, err := os.Stat(headPath)
 				assert.NoError(t, err, "expected finding %q cites %q, which must exist in the head state", f.ID, f.File)
+				// And the cited LINE RANGE must exist in that head file: expected
+				// findings' line numbers are head-state, so a range beyond the file's
+				// actual length (or a non-1-based start) makes the case unwinnable —
+				// every reviewer scores zero and it reads as merely hard. Findings'
+				// line numbers are head-state, so the count comes from the
+				// MATERIALIZED file, not the base tree.
+				head, rerr := os.ReadFile(headPath)
+				if rerr != nil {
+					continue // already reported by the Stat assertion above
+				}
+				lineCount := len(strings.Split(string(head), "\n"))
+				// A trailing newline yields a final empty split element; a file that
+				// ends in a newline has no line there, so drop it.
+				if lineCount > 0 && strings.HasSuffix(string(head), "\n") {
+					lineCount--
+				}
+				assert.GreaterOrEqual(t, f.LineStart, 1,
+					"case %q finding %q cites %s line_start %d; head-state lines are 1-based", c.ID, f.ID, f.File, f.LineStart)
+				assert.LessOrEqual(t, f.LineEnd, lineCount,
+					"case %q finding %q cites %s line_end %d but the materialized head file has only %d line(s); the case is unwinnable",
+					c.ID, f.ID, f.File, f.LineEnd, lineCount)
 			}
 		})
 	}
