@@ -179,6 +179,28 @@ func TestMaterializeCase_PreservesTheExecutableBit(t *testing.T) {
 	assert.Contains(t, stage, "100755", "the executable bit must survive into the git tree: got %q", stage)
 }
 
+// GIT_CONFIG_GLOBAL=/dev/null does NOT disable git's default excludes file,
+// which is read from $XDG_CONFIG_HOME/git/ignore independently of any config
+// (gitexec only appends the two env pins; the rest of the environment, XDG
+// included, flows through). A host with a personal ignore file would silently
+// drop matching base-tree files from the commit — making the tree, the range
+// and both SHAs HOST-DEPENDENT, falsifying the fixed-SHA contract.
+func TestMaterializeCase_IgnoresTheHostExcludeFile(t *testing.T) {
+	xdg := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(xdg, "git"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(xdg, "git", "ignore"), []byte("*.log\n"), 0o600))
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+
+	c := materializableCase(t)
+	require.NoError(t, os.WriteFile(filepath.Join(c.Dir, "base", "pkg", "debug.log"), []byte("noise"), 0o600))
+
+	mc, err := MaterializeCase(context.Background(), c, t.TempDir())
+	require.NoError(t, err)
+
+	tree := gitOut(t, mc.Root, "ls-tree", "-r", "--name-only", "HEAD")
+	assert.Contains(t, tree, "pkg/debug.log", "the committed tree must not depend on the host's ignore file")
+}
+
 func TestMaterializeCase_ProducesAReviewableRange(t *testing.T) {
 	c := materializableCase(t)
 	mc, err := MaterializeCase(context.Background(), c, t.TempDir())
