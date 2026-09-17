@@ -20,8 +20,8 @@ import (
 // The two sides are keyed in DIFFERENT coordinate spaces, and deliberately so:
 // added lines by their HEAD line number, removed lines by their BASE line number.
 // That is the only honest mapping, because a removed line has no head-side number
-// at all. It also means condition 3 reduces to the added-line check alone — see
-// IsAddedLine.
+// at all. The two numberings coincide before the first hunk of a file, so the
+// added-side check alone does not close condition 3 — see IsAddedLine.
 type DiffLineMap struct {
 	added   map[string]map[int]bool
 	removed map[string]map[int]bool
@@ -388,11 +388,11 @@ func addLine(index map[string]map[int]bool, file string, line int) {
 }
 
 // IsAddedLine reports whether head-side line of file was ADDED by the diff. This
-// is the predicate condition 3 needs, and the added side alone is sufficient:
-// a reported finding cites a head-state line, and a removed line has no head-state
-// line number, so no citation can ever land on one. Exposing RemovedLines
-// separately keeps that reasoning checkable rather than making it an unstated
-// assumption of a single combined predicate.
+// is the predicate condition 3 checks on the added side. It is not sufficient on
+// its own: removed lines are keyed base-side, a citation is head-side, and the
+// two spaces coincide before the first hunk, which is exactly why clause 3 needs
+// the removed check too. Exposing the removed map through this type's accessors
+// is what keeps that half of the rule expressible at all.
 func (m DiffLineMap) IsAddedLine(file string, line int) bool {
 	return m.added[file][line]
 }
