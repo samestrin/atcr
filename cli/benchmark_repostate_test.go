@@ -414,14 +414,14 @@ func TestReadCaseFindingsLocated_CountsUnattributedSkippedRows(t *testing.T) {
 		"HIGH|app/calc.py:13|p|f|correctness|15|sol|extra|nobody\n"
 	require.NoError(t, os.WriteFile(filepath.Join(pool, "findings.txt"), []byte(content), 0o600))
 
-	located, categorical, unattributed, err := readCaseFindingsLocated(dir, map[string]bool{"greta": true})
+	located, categorical, unattributed, _, err := readCaseFindingsLocated(dir, map[string]bool{"greta": true})
 	require.NoError(t, err)
 	assert.Equal(t, 1, unattributed, "the skipped row naming an unknown reviewer is counted, not silently dropped")
 	assert.Len(t, located["greta"], 1)
 	assert.Len(t, categorical["greta"], 1)
 
 	// With nobody ON the panel the same row is attributed normally.
-	_, _, unattributed, err = readCaseFindingsLocated(dir, map[string]bool{"greta": true, "nobody": true})
+	_, _, unattributed, _, err = readCaseFindingsLocated(dir, map[string]bool{"greta": true, "nobody": true})
 	require.NoError(t, err)
 	assert.Zero(t, unattributed)
 }
@@ -713,7 +713,7 @@ func TestSkippedRowReviewer_BothReadersAttributeIdentically(t *testing.T) {
 
 	categorical, err := readCaseFindings(dir)
 	require.NoError(t, err)
-	located, locatedCat, _, err := readCaseFindingsLocated(dir, map[string]bool{"greta": true})
+	located, locatedCat, _, _, err := readCaseFindingsLocated(dir, map[string]bool{"greta": true})
 	require.NoError(t, err)
 
 	// The well-formed row parses for both readers; the over-column row is skipped
@@ -724,4 +724,25 @@ func TestSkippedRowReviewer_BothReadersAttributeIdentically(t *testing.T) {
 	assert.Equal(t, categorical["greta"], locatedCat["greta"],
 		"both projections attribute the skipped row to the same reviewer: the recovery is one helper, not two copies")
 	assert.Len(t, located["greta"], 1, "the located projection carries only the well-formed row")
+}
+
+// A missing findings file is the one pool shape where "every reviewer wrote
+// nothing" and "the review produced nothing" are indistinguishable from the
+// returned maps alone. The flag surfaces the difference so the runner can warn.
+func TestReadCaseFindingsLocated_FlagsAMissingFindingsFile(t *testing.T) {
+	dir := t.TempDir()
+	located, categorical, unattributed, missing, err := readCaseFindingsLocated(dir, map[string]bool{"greta": true})
+	require.NoError(t, err)
+	assert.True(t, missing, "no findings file was written: the flag must say so")
+	assert.Empty(t, located)
+	assert.Empty(t, categorical)
+	assert.Zero(t, unattributed)
+
+	pool := filepath.Join(dir, "sources", "pool")
+	require.NoError(t, os.MkdirAll(pool, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pool, "findings.txt"),
+		[]byte("# atcr-findings/v1\nHIGH|app/calc.py:12|p|f|correctness|15|sol|greta\n"), 0o600))
+	_, _, _, missing, err = readCaseFindingsLocated(dir, map[string]bool{"greta": true})
+	require.NoError(t, err)
+	assert.False(t, missing, "a present findings file is not missing")
 }

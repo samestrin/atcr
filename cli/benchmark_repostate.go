@@ -181,9 +181,13 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		for _, a := range summary.Agents {
 			agentSet[a.Agent] = true
 		}
-		located, categorical, unattributed, err := readCaseFindingsLocated(res.Dir, agentSet)
+		located, categorical, unattributed, missingFindingsFile, err := readCaseFindingsLocated(res.Dir, agentSet)
 		if err != nil {
 			return nil, fmt.Errorf("reading findings for case %q: %w", c.ID, err)
+		}
+		if missingFindingsFile {
+			log.FromContext(ctx).Warn("case produced no findings file; every reviewer reads as raised-nothing",
+				"case", c.ID, "review_dir", res.Dir)
 		}
 		if unattributed > 0 {
 			log.FromContext(ctx).Warn("skipped finding rows name a reviewer not in the panel; counted as unattributed",
@@ -458,7 +462,7 @@ func validateRepoStatePublishableCaseIDs(m *benchmark.RepoStateManifest, suitePa
 // skipped row whose recovered reviewer is not in the caller's agent set is
 // counted into the returned unattributed tally, which the runner surfaces as a
 // warning, instead of vanishing without a trace.
-func readCaseFindingsLocated(reviewDir string, agents map[string]bool) (located map[string][]benchmark.ReportedFinding, categorical map[string][]string, unattributed int, err error) {
+func readCaseFindingsLocated(reviewDir string, agents map[string]bool) (located map[string][]benchmark.ReportedFinding, categorical map[string][]string, unattributed int, missingFindingsFile bool, err error) {
 	located = map[string][]benchmark.ReportedFinding{}
 	categorical = map[string][]string{}
 
@@ -466,13 +470,18 @@ func readCaseFindingsLocated(reviewDir string, agents map[string]bool) (located 
 	data, rerr := os.ReadFile(path)
 	if rerr != nil {
 		if os.IsNotExist(rerr) {
-			return located, categorical, 0, nil
+			// A missing findings file means the review produced NOTHING — but a
+			// caller reading only the returned maps cannot distinguish that from
+			// reviewers that wrote nothing. Surfaced as a flag so the runner can
+			// warn; a per-reviewer diagnostics FIELD would need a RunResult schema
+			// change (internal/benchmark), which this tier's file does not own.
+			return located, categorical, 0, true, nil
 		}
-		return nil, nil, 0, rerr
+		return nil, nil, 0, false, rerr
 	}
 	parsed, perr := stream.ParseSource(data)
 	if perr != nil {
-		return nil, nil, 0, perr
+		return nil, nil, 0, false, perr
 	}
 	for _, f := range parsed.Findings {
 		located[f.Reviewer] = append(located[f.Reviewer], benchmark.ReportedFinding{
@@ -493,5 +502,5 @@ func readCaseFindingsLocated(reviewDir string, agents map[string]bool) (located 
 		}
 		categorical[reviewer] = append(categorical[reviewer], "")
 	}
-	return located, categorical, unattributed, nil
+	return located, categorical, unattributed, false, nil
 }
