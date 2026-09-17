@@ -24,7 +24,10 @@ import (
 // had already been paid for. Refusing at parse time costs a re-run of a four-case
 // suite instead.
 func checkRepoStateFlags(suiteFormat, checkpointPath string) error {
-	if suiteFormat == benchmark.FormatRepoStateV1 && checkpointPath != "" {
+	// EqualFold for the same reason runBenchmarkRun routes with it: a differently-
+	// cased discriminator is the same tier, and the refusal must fire before a run
+	// the operator believes is resumable is paid for.
+	if strings.EqualFold(suiteFormat, benchmark.FormatRepoStateV1) && checkpointPath != "" {
 		return fmt.Errorf("--checkpoint is not supported for a %s suite: resumable runs are implemented for the standard-v1 diff path only; re-run without --checkpoint",
 			benchmark.FormatRepoStateV1)
 	}

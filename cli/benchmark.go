@@ -170,15 +170,21 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 	// shared with real review work.
 	benchCtx := hookobs.WithCall(cmd.Context(), hookobs.Call{Stage: "benchmark"})
 	var rr *benchmark.RunResult
+	// Case-insensitive on purpose: DetectSuiteFormat already TrimSpaces the
+	// discriminator, and an exact match here would send a manifest declaring
+	// "Repo-State-V1" to the standard-v1 arm — which misses the known-other-format
+	// guard and dies on "diff path is required", the exact misleading message the
+	// discriminator check exists to prevent.
+	isRepoState := strings.EqualFold(suiteFormat, benchmark.FormatRepoStateV1)
 	runner := "executeBenchmarkRun"
-	if suiteFormat == benchmark.FormatRepoStateV1 {
+	if isRepoState {
 		runner = "executeRepoStateBenchmarkRun"
 	}
 	// Name the routing decision on stderr (via the context logger): an operator who
 	// passed --suite-path must be able to tell from the log which tier actually
 	// ran, without opening the run-result to check which metrics it carries.
 	log.FromContext(benchCtx).Info("benchmark run: executing suite", "suite_format", suiteFormat, "runner", runner)
-	if suiteFormat == benchmark.FormatRepoStateV1 {
+	if isRepoState {
 		rr, err = executeRepoStateBenchmarkRun(benchCtx, cfg, benchmarkNewCompleter(benchCtx), suitePath, time.Now().UTC())
 	} else {
 		rr, err = executeBenchmarkRun(benchCtx, cfg, benchmarkNewCompleter(benchCtx), suitePath, time.Now().UTC(), checkpoint)

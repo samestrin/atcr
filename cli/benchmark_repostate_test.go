@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -251,4 +252,45 @@ func TestRunBenchmarkRun_RejectsCheckpointForARepoStateSuiteThroughTheCommand(t 
 	require.Error(t, runErr, "the command must refuse --checkpoint on a repo-state suite")
 	combined := outBuf.String() + errBuf.String() + runErr.Error()
 	assert.Contains(t, combined, "--checkpoint is not supported for a repo-state-v1 suite")
+}
+
+// The routing comparison was an exact case-sensitive string match, so a manifest
+// declaring "Repo-State-V1" fell through to the standard-v1 arm, missed the
+// known-other-format guard, and died on "diff path is required" — the exact
+// misleading message the discriminator check exists to prevent (the repo-state
+// manifest has no `diff` field at all). Case-insensitive ROUTING keeps that
+// message unreachable: the cased discriminator now reaches the repo-state arm,
+// where the loader's own exact tier check produces a precise, actionable error.
+// (Full case-insensitivity — accepting the cased name at load — needs a change
+// in internal/benchmark/repostate.go, outside this session's group scope, so the
+// TD row stays open and this test pins the routing half only.)
+func TestRunBenchmarkRun_CasedDiscriminatorRoutesToTheRepoStateArm(t *testing.T) {
+	dir := t.TempDir()
+	// os.CopyFS clones the whole case directory (base/, head files, case.json)
+	// into the temp suite so only the manifest's discriminator spelling differs.
+	require.NoError(t, os.CopyFS(dir, os.DirFS(repoStateMiniPath)))
+	manifest, err := os.ReadFile(filepath.Join(repoStateMiniPath, "suite.json"))
+	require.NoError(t, err)
+	cased := strings.Replace(string(manifest), `"repo-state-v1"`, `"Repo-State-V1"`, 1)
+	require.NotEqual(t, string(manifest), cased, "fixture rewrite must actually change the discriminator")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "suite.json"), []byte(cased), 0o600))
+
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+	restoreCfg := benchmarkLoadConfig
+	restoreCompleter := benchmarkNewCompleter
+	t.Cleanup(func() {
+		benchmarkLoadConfig = restoreCfg
+		benchmarkNewCompleter = restoreCompleter
+	})
+	benchmarkLoadConfig = func(string) (*fanout.ReviewConfig, error) { return cfg, nil }
+	benchmarkNewCompleter = func(context.Context) fanout.Completer { return stubLocatedCompleter{} }
+
+	// Drives the real cobra RunE: the routing arm must pick the repo-state runner
+	// for a cased discriminator (the stderr routing line names it), and the
+	// standard loader's misleading message must stay out of the error path.
+	_, _, stderr := execCmdSplit(t, "benchmark", "run", "--suite-path", dir)
+	assert.Contains(t, stderr, "executeRepoStateBenchmarkRun",
+		"a cased repo-state discriminator must route to the repo-state arm, not fall through to the standard loader")
+	assert.NotContains(t, stderr, "diff path is required",
+		"the misleading standard-v1 message must stay unreachable through benchmark run")
 }
