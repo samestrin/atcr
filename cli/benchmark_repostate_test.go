@@ -114,8 +114,12 @@ func TestExecuteRepoStateBenchmarkRun_ParsesEveryCaseDiffBeforeAnyCompleterCall(
 // findings are read, so each case's repo must be released when its case
 // completes, not at run end.
 func TestExecuteRepoStateBenchmarkRun_ReleasesEachCaseRepoAfterItsCase(t *testing.T) {
+	// Scoped to dirs created after the test began: failed runs now RETAIN their
+	// work dirs (see the retention test), and those linger in $TMPDIR — counting
+	// them would credit this run with repos it did not create.
+	testStart := time.Now()
 	suite := writeTwoCaseSuite(t)
-	cc := &repoCountingCompleter{}
+	cc := &repoCountingCompleter{since: testStart}
 
 	_, err := executeRepoStateBenchmarkRun(context.Background(),
 		benchCfg([3]string{"greta", "m-greta", "greta"}), cc, suite, time.Unix(0, 0).UTC())
@@ -130,12 +134,19 @@ func TestExecuteRepoStateBenchmarkRun_ReleasesEachCaseRepoAfterItsCase(t *testin
 // temp prefix at every completer call — the only observation point a test has
 // inside the paid loop.
 type repoCountingCompleter struct {
+	since            time.Time
 	reposSeenPerCall []int
 }
 
 func (c *repoCountingCompleter) Complete(ctx context.Context, inv llmclient.Invocation) (string, error) {
 	matches, _ := filepath.Glob(filepath.Join(os.TempDir(), "atcr-repo-state-*", "repo-*"))
-	c.reposSeenPerCall = append(c.reposSeenPerCall, len(matches))
+	n := 0
+	for _, m := range matches {
+		if fi, err := os.Stat(m); err == nil && fi.ModTime().After(c.since) {
+			n++
+		}
+	}
+	c.reposSeenPerCall = append(c.reposSeenPerCall, n)
 	return stubLocatedCompleter{}.Complete(ctx, inv)
 }
 
