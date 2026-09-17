@@ -129,11 +129,22 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		// never the RunResult, so fixed values keep the run hermetic rather than
 		// tying it to the wall clock. Deliberate, not placeholder — see the matching
 		// comment at cli/benchmark_run.go's request construction.
+		//
+		// NoIgnore, because a repo-state case's reviewable set is its DIFF — the
+		// planted change — not the ignore policy of the tree it ships. A base tree
+		// carrying an .atcrignore that excludes the changed paths would otherwise
+		// resolve the range to zero reviewable files and abort the run mid-panel,
+		// after earlier cases were paid for; nothing at load detects that shape, and
+		// the standard-v1 diff path cannot hit it at all (its reviewable set is the
+		// diff bytes). The materialized tree's .gitignore and the host excludes file
+		// are already closed off at materialization; this closes the last ignore
+		// source on the only tier where the reviewed range is author-planted.
 		req := fanout.ReviewRequest{
 			Repo:       mc.Root,
 			Root:       mc.Root,
 			Range:      fanout.ReviewRange{Base: mc.BaseSHA, Head: mc.HeadSHA},
 			OutputDir:  filepath.Join(tmp, fmt.Sprintf("review-%d", i)),
+			NoIgnore:   true,
 			Branch:     "benchmark",
 			Date:       "2026-01-01",
 			TimeSuffix: "000000",
