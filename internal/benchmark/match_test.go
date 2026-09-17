@@ -195,6 +195,24 @@ func TestMatchFindings_IsOrderIndependent(t *testing.T) {
 	assert.Equal(t, []string{"a-one", "b-two"}, matchedIDs(MatchFindings(expected, backward, noDiff(t))))
 }
 
+// The sibling above cannot catch an order dependence, because its two reports sit
+// at DIFFERENT lines: repLine decides the tie before repIdx is ever consulted. This
+// one puts both reports on the SAME line, in two spellings of one path that
+// pathMatches both accepts, so the only key left below expID is the report
+// identity itself — the exact shape that fell through to raw input order.
+func TestMatchFindings_OrderIndependentUnderPathSpellingTie(t *testing.T) {
+	expected := []ExpectedFinding{
+		exp("a-one", "pkg/a.py", 10, 10, 0, false),
+		exp("b-two", "b/pkg/a.py", 10, 10, 0, false),
+	}
+	forward := []ReportedFinding{{File: "pkg/a.py", Line: 10}, {File: "b/pkg/a.py", Line: 10}}
+	backward := []ReportedFinding{{File: "b/pkg/a.py", Line: 10}, {File: "pkg/a.py", Line: 10}}
+
+	assert.Equal(t, matchedIDs(MatchFindings(expected, forward, noDiff(t))),
+		matchedIDs(MatchFindings(expected, backward, noDiff(t))),
+		"the score must not flip on the order the pool happened to emit two same-line reports")
+}
+
 // Results come back one per expected finding, in the case's own order, so a caller
 // can report per-finding outcomes without re-joining on id.
 func TestMatchFindings_ReturnsOneRowPerExpectedInCaseOrder(t *testing.T) {
