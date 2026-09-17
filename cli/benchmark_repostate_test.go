@@ -311,6 +311,28 @@ func TestExecuteRepoStateBenchmarkRun_RefusesDistinctIdentitiesScrubbingToOne(t 
 	assert.Contains(t, err.Error(), "x@corp/claude", "the second pre-scrub identity is named too")
 }
 
+// The coverage rows are built from the RAW accumulator key, while Reviewers,
+// Vocabulary and PositionalRecall all emit the SCRUBBED identity. A credential-
+// or path-shaped model id therefore ships verbatim inside reviewer_coverage[] —
+// the exact identity leak the sibling array refuses — and the export join only
+// survives because coverageKey re-scrubs on read. Scrub once at the producer;
+// the arrays must carry the same identity by construction.
+func TestExecuteRepoStateBenchmarkRun_CoverageCarriesTheScrubbedIdentity(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "bedrock@us-east-1/claude", "greta"})
+
+	rr, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{},
+		repoStateMiniPath, time.Unix(0, 0).UTC())
+	require.NoError(t, err)
+	require.Len(t, rr.Reviewers, 1)
+	require.Len(t, rr.Coverage, 1)
+
+	assert.NotEqual(t, "bedrock@us-east-1/claude", rr.Coverage[0].Model,
+		"reviewer_coverage must not publish a credential-shaped model id verbatim")
+	assert.Equal(t, rr.Reviewers[0].Model, rr.Coverage[0].Model,
+		"the coverage row and the reviewer row carry the SAME scrubbed identity")
+	assert.Equal(t, rr.Reviewers[0].Persona, rr.Coverage[0].Persona)
+}
+
 func TestExecuteRepoStateBenchmarkRun_ReportsBothMetrics(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 	gen := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
