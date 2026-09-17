@@ -250,6 +250,32 @@ func TestMatchFindings_ACondition3BlockDoesNotConsumeTheReport(t *testing.T) {
 	assert.Equal(t, []string{"b-inside"}, matchedIDs(got))
 }
 
+// Nearest-midpoint-wins is a GREEDY rule, and greedy is not maximum-cardinality.
+// Here a pairing that scores BOTH expectations exists — give line 49 to `a-loose`
+// and line 50 to `b-strict` — but the rule hands line 50 to `a-loose`, because
+// that pairing is distance 0 and wins the id tie alphabetically. `b-strict` has a
+// tolerance of 0, so line 49 cannot settle it, and it goes unmatched.
+//
+// That is FORMAT.md's rule, not a bug in it: "when several are in range, the one
+// whose range midpoint is nearest wins" describes exactly this. A maximizing
+// matcher would contradict the stated tie-break and make a reviewer's score depend
+// on a global optimization nobody can reproduce by reading their own report.
+// Pinned so the tradeoff stays a decision rather than an accident.
+func TestMatchFindings_NearestMidpointIsGreedyNotMaximumCardinality(t *testing.T) {
+	expected := []ExpectedFinding{
+		exp("a-loose", "pkg/a.py", 50, 50, 1, false),  // window [49,51]
+		exp("b-strict", "pkg/a.py", 50, 50, 0, false), // window [50,50]
+	}
+	reported := []ReportedFinding{
+		{File: "pkg/a.py", Line: 50}, // settles either
+		{File: "pkg/a.py", Line: 49}, // settles a-loose only
+	}
+	got := MatchFindings(expected, reported, noDiff(t))
+	assert.Equal(t, []string{"a-loose"}, matchedIDs(got),
+		"greedy takes the distance-0 pairing for a-loose and leaves b-strict, whose "+
+			"tolerance of 0 the remaining report cannot reach")
+}
+
 func TestMatchFindings_NoExpectationsOrNoReports(t *testing.T) {
 	assert.Empty(t, MatchFindings(nil, []ReportedFinding{{File: "pkg/a.py", Line: 1}}, noDiff(t)))
 
