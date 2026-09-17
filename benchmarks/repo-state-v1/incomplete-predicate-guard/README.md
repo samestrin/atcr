@@ -22,9 +22,13 @@ The guard omits `webhook`. Every webhook event — a kind the router has always 
 
 ## Why it is hard
 
-It is the easier of this suite's cases, and deliberately so. The defect is entirely inside the diff: the added tuple and the declared `KINDS` are both visible, so a reviewer that compares the guard against the set it is guarding finds it without leaving the change.
+This case was authored on the expectation that it would be the *easier* of the suite's cases: the defect is entirely inside the diff, the added tuple and the declared `KINDS` are both visible, and a reviewer comparing the guard against the set it guards finds it without leaving the change.
 
-What makes it non-trivial is that nothing looks wrong locally. The guard is well-formed, the exception is well-named, and the omission is legible only by counting the enumeration against a definition the diff shows as context.
+**The first panel run falsified that.** Exactly one reviewer of eleven found it — the lowest within-diff score of any case in the suite, including cases whose findings sit in files the diff never touches. See [`../SPOT-CHECK.md`](../SPOT-CHECK.md) → "AC8 — the panel result".
+
+Being inside the diff turns out not to make a finding easy when the defect is an **omission**. Nothing looks wrong locally: the guard is well-formed, the exception is well-named, and every added line is individually correct. The defect is legible only by counting the guard's enumeration against a definition the diff shows as mere context — which is the same act of consulting unchanged state that the `outside_diff: true` cases demand, just performed without leaving the hunk.
+
+That makes the case more valuable than intended, not less. It is the suite's `outside_diff: false` anchor, so a run cannot score well on the tier merely by reading repository state; and it demonstrates that "inside the diff" and "reachable from the diff" are different properties.
 
 ## Expected findings
 

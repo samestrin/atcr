@@ -76,6 +76,30 @@ Both shapes are represented in the suite and in three of the four cases individu
 Epic 35.16.10's AC8 requires that **at least one case is currently failed by the panel**. A tier where everything already passes measures nothing. This is verified out-of-band by a real run, not by a unit test, and the result is recorded here.
 
 <!-- AC8-RESULT:begin -->
+
+**Run recorded 2026-09-16**, `suite_version` 1.1.0, against the registered 11-reviewer panel via the `litellm` proxy. Each case was run as its own single-case suite so the outcome is attributable per case. **Sibling epics landed at run time: 35.16.7 (claim ledger), 35.16.8 (context-aware pre-fetching) and 35.16.9 (predicate-exhaustiveness persona rule) — all three.** A run recorded before 35.16.9 is not directly comparable, because that epic changed every persona's prompt.
+
+**AC8 is satisfied, and not narrowly.** Three of the four cases were solved completely by **nobody**, and the out-of-diff half was missed by the entire panel on three of four.
+
+| Case | Expected (out / in) | Solved fully | Any out-of-diff hit | Any within-diff hit |
+|---|---|---|---|---|
+| `claim-absent-cursor-fix` | 2 (1 / 1) | **3 / 11** | 3 / 11 | 7 / 11 |
+| `quarantine-reconcile-silent-deletion` | 2 (1 / 1) | **0 / 11** | **0 / 11** | 6 / 11 |
+| `mock-outlives-the-contract` | 2 (2 / 0) | **0 / 11** | 1 / 11 | — |
+| `incomplete-predicate-guard` | 2 (1 / 1) | **0 / 11** | **0 / 11** | **1 / 11** |
+
+Across all four cases, out-of-diff recall was **4 hits out of 55 reviewer-findings** (11 reviewers × 5 out-of-diff findings). No reviewer scored more than one.
+
+### What the run says, beyond passing AC8
+
+**The tier measures what it was built to measure.** On `claim-absent-cursor-fix` the two halves separate cleanly: 7 of 11 reviewers found the in-diff finding and only 3 found the out-of-diff one. A blended single score would have reported those seven reviewers as middling; the separated number says precisely which capability they lack. That separation is the epic's whole argument, and it is visible in the first case.
+
+**`quarantine-reconcile-silent-deletion` is currently unwon.** Six of eleven reviewers found the shallow half — that `read_pending()` now reports corruption as emptiness — and **not one** followed it into `queue/evening.py` to see that the reconcile loop turns that emptiness into permanent deletion of confirmed escalations. This is the exact finding that motivated the tier, reproduced as a measurement: the panel can see the mechanism and still miss the consequence.
+
+**A prediction in this suite was wrong, and the run is how we know.** `incomplete-predicate-guard`'s README called it "the easier of this suite's cases" because its primary finding sits on an added line, fully inside the diff. Exactly **one** reviewer found it. Being inside the diff turns out not to make a finding easy when the defect is an omission — the guard lists three kinds, `KINDS` lists four, and nothing about the added lines looks wrong on its own. The case README has been corrected to record the measurement rather than the prediction.
+
+**Nothing here is safe to read as a model ranking.** Eleven reviewers over four cases is far too small a sample, several rows were served by a fallback model, and the personas differ by design. Read the columns, not the rows.
+
 <!-- AC8-RESULT:end -->
 
 ## Caveats recorded honestly
