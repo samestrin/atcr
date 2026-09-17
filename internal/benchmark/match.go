@@ -109,8 +109,14 @@ func MatchFindings(expected []ExpectedFinding, reported []ReportedFinding, lm Di
 				repIdx:      ri,
 				midDistance: abs(2*r.Line - (e.LineStart + e.LineEnd)),
 				expID:       e.ID,
-				repFile:     e.File,
-				repLine:     r.Line,
+				// The REPORT's own spelling, not e.File. Assigning the expectation's
+				// file made this key constant across every candidate for one
+				// expectation, so the sort fell through to repIdx — pure input order —
+				// and the DETERMINISM contract above was false whenever two reports
+				// tied on expID and line. pathMatches accepts several spellings of one
+				// path, so that tie is reachable, not theoretical.
+				repFile: r.File,
+				repLine: r.Line,
 			})
 		}
 	}
