@@ -1,8 +1,8 @@
 # `repo-state-v1` case format
 
-This document is the complete specification for authoring a `repo-state-v1` benchmark case. It is deliberately self-contained: everything needed to write a conforming case is here, and no part of it requires reading Go source. The loader, matcher, and scorer that consume this format are epic 35.16.10's work; they implement this document rather than redefining it.
+This document is the complete specification for authoring a `repo-state-v1` benchmark case. It is deliberately self-contained: everything needed to write a conforming case is here, and no part of it requires reading Go source. The loader, matcher, and scorer that consume this format implement this document rather than redefining it.
 
-**Status:** the format is fixed as of epic 35.16.7. Cases authored against it are hand-verifiable today and become machine-runnable when 35.16.10 lands the loader.
+**Status:** the format is fixed as of epic 35.16.7. Cases authored against it are hand-verifiable today, and the loader, matcher and scorer that make them machine-runnable shipped in epic 35.16.10.
 
 ## Why this is a new suite and not `standard-v2`
 
@@ -19,6 +19,8 @@ A suite is a directory. Each case is a subdirectory of it, named by the case id.
 ```
 benchmarks/repo-state-v1/
 ├── FORMAT.md                      this document
+├── SPOT-CHECK.md                  recorded hand-verification of every case
+├── NOTICE.md                      synthetic-tree provenance statement
 ├── suite.json                     suite manifest (see "Suite manifest")
 └── <case-id>/                     one directory per case
     ├── case.json                  case manifest (required)
@@ -157,5 +159,5 @@ A conforming case satisfies all of these. Each is checkable by reading the case 
 - [ ] `commit-message.txt` has a subject line and, where the case is about a claim, a body that states that claim.
 - [ ] Every `expected_findings[]` entry names a `file` that exists in the head state, with `line_start`/`line_end` valid in that state.
 - [ ] Every `expected_findings[]` entry's `outside_diff` value is correct — verified by checking whether the cited lines appear as added or removed lines in `change.diff`.
-- [ ] `README.md` states what the case plants, why it is hard, and — until 35.16.10 lands the loader — that the case is authored but not yet machine-runnable.
+- [ ] `README.md` states what the case plants and why it is hard.
 - [ ] A case with vendored content ships a `NOTICE.md` naming the upstream source and license.

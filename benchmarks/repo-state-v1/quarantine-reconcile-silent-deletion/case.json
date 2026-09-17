@@ -20,7 +20,7 @@
       "file": "store/pending.py",
       "line_start": 30,
       "line_end": 32,
-      "line_tolerance": 3,
+      "line_tolerance": 1,
       "outside_diff": false,
       "category": "correctness",
       "summary": "read_pending() swallows the decode failure and returns [], which is indistinguishable from a genuinely empty store, so every caller downstream loses the ability to tell 'no records' from 'records unreadable'."

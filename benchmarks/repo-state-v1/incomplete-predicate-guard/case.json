@@ -10,7 +10,7 @@
       "file": "router/dispatch.py",
       "line_start": 24,
       "line_end": 25,
-      "line_tolerance": 3,
+      "line_tolerance": 0,
       "outside_diff": false,
       "category": "correctness",
       "summary": "The added guard accepts only email, sms and push, but KINDS and HANDLERS both declare a fourth kind, webhook; every webhook event now raises UnknownKind, contradicting the commit message's claim that every kind in KINDS is accepted exactly as before."
@@ -23,7 +23,7 @@
       "line_tolerance": 3,
       "outside_diff": true,
       "category": "error_handling",
-      "summary": "handle() dispatches every event in one list comprehension with no per-event error handling, so the newly raised UnknownKind aborts the entire batch and discards the events that had already dispatched successfully."
+      "summary": "handle() dispatches every event in one list comprehension with no per-event error handling, so a webhook event - which the previous dispatch resolved via HANDLERS - now raises UnknownKind and aborts the entire batch mid-comprehension; the same missing-webhook omission as the first finding, seen from the caller."
     }
   ]
 }

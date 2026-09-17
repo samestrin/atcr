@@ -1,4 +1,6 @@
-# Spot-check — `repo-state-v1` 1.1.0
+# Spot-check — `repo-state-v1` 1.1.1
+
+> Revised 2026-09-17 at `suite_version` 1.1.1 (tolerance and summary corrections, recorded below). The original hand-check and the AC8 panel run were performed at 1.1.0; the recorded AC8 numbers predate those corrections and are not directly comparable with future runs.
 
 [`../standard-v1/SPOT-CHECK.md`](../standard-v1/SPOT-CHECK.md) records the invariant that makes that suite trustworthy: *each case's planted defect must be genuinely present in its committed diff.* This tier exists precisely because that invariant excludes the defect class it targets, so it needs its own, and a stricter one:
 
@@ -104,10 +106,17 @@ Across all four cases, out-of-diff recall was **4 hits out of 55 reviewer-findin
 
 ## Caveats recorded honestly
 
-- **The Epic 14.1 grounding gate is ON during a repo-state run, by design.** A finding whose cited file the patch never touched is dropped before scoring unless context-aware pre-fetching (epic 35.16.8) actually retrieved the cited span. Every `outside_diff: true` finding in this suite therefore sits inside a function that calls a symbol the diff changed, which is what pre-fetching retrieves. That is the measurement rather than a workaround: the tier's question is whether pre-fetching lets a genuine out-of-diff finding clear the shipped anti-hallucination gate. A case whose out-of-diff finding sat somewhere pre-fetching could never reach would be unwinnable, not hard.
+- **The Epic 14.1 grounding gate is ON during a repo-state run, by design.** A finding whose cited file the patch never touched is dropped before scoring unless context-aware pre-fetching (epic 35.16.8) actually retrieved the cited span. The real reachability rule is narrower than "calls a changed symbol": pre-fetch retrieves with `git grep -F -w` over the changed symbols (`internal/payload/prefetch.go`), so a finding is reachable when its function body contains a whole-word reference to a changed symbol — a function whose NAME merely contains the symbol, or that calls nothing at all, is not. One case leans on exactly that distinction: in `mock-outlives-the-contract`, `fake_lookup_rate` calls nothing (it is a stub returning a literal), and `git grep -w lookup_rate` does not match the name `fake_lookup_rate` (underscore is a word character); the only in-body hit inside the expected 4–6 window is the word `lookup_rate` in the stub's **docstring** on line 5. The case's survival of the gate rests on that docstring reference, not on a call. A case whose out-of-diff finding sat somewhere pre-fetching could never reach would be unwinnable, not hard.
 - **Persona changes break run-to-run comparability.** Epic 35.16.9 edited every persona file, so a result recorded before it is not directly comparable with one recorded after. Every stored result below names which sibling epics had landed.
-- **`--checkpoint` is not supported for this tier.** `atcr benchmark run` rejects the flag on a `repo-state-v1` suite rather than accepting and ignoring it. Resumable runs are implemented for the standard-v1 diff path only; this suite is four cases, so a re-run is cheap.
+- **`--checkpoint` is not supported for this tier.** `atcr benchmark run` rejects the flag on a `repo-state-v1` suite rather than accepting and ignoring it (`checkRepoStateFlags`, `cli/benchmark_repostate.go`). This supersedes the epic 35.16.10 plan's AC8 instruction to "run it in the background with `--checkpoint"" — that instruction is impossible as written for this tier, and a reader following it gets an error on the first invocation. **The recorded AC8 run below was driven in the foreground with no checkpoint and no resume**, in one uninterrupted pass.
 - **The trees are synthetic.** See [`NOTICE.md`](NOTICE.md). No case contains third-party code, and no case is derived from a real defect in a real repository — each is hand-built to plant one specific shape.
+
+## Known unplanted defects (recorded, not removed)
+
+Each case carries a few real, unplanted defects in its head tree, outside every expected window. They absorb reviewer attention and findings budget, so part of any low recall number is competition rather than blindness. Recorded here rather than removed, because editing the fixtures would invalidate the recorded AC8 run:
+
+- `quarantine-reconcile-silent-deletion`: `CorruptStore` (head `store/pending.py:9`) is now unraisable dead code — the diff removed its only raise. `_quarantine` (head line 15) does an unguarded `os.rename` that clobbers any prior `.corrupt` file and leaks `OSError` out of a function documented as making the job survive.
+- `mock-outlives-the-contract`: `base/billing/rates.py:6-9` places the new exception class with one blank line before `RATES`, diverging from the file's spacing convention.
 
 ## Reproducing
 
@@ -115,6 +124,7 @@ Across all four cases, out-of-diff recall was **4 hits out of 55 reviewer-findin
 # Checks 1-3, mechanical:
 go test ./internal/benchmark/ -run 'Shipped'
 
-# Check 4 and AC8, a real panel run (exceeds ten minutes; run it in the background):
+# Check 4 and AC8, a real panel run (exceeds ten minutes; foreground — this tier
+# cannot resume: --checkpoint is refused on a repo-state-v1 suite):
 atcr benchmark run --suite-path benchmarks/repo-state-v1 --output /tmp/repo-state-run.json
 ```

@@ -33,7 +33,7 @@ That makes the case more valuable than intended, not less. It is the suite's `ou
 ## Expected findings
 
 1. **`guard-omits-webhook`** — `router/dispatch.py:24-25`, `outside_diff: false`. Settled by an added line.
-2. **`intake-aborts-the-whole-batch`** — `router/intake.py:8`, `outside_diff: true`. The unchanged caller dispatches every event in one list comprehension, so the newly raised exception discards the events that already succeeded.
+2. **`intake-aborts-the-whole-batch`** — `router/intake.py:8`, `outside_diff: true`. The unchanged caller dispatches every event in one list comprehension, so a webhook event the previous dispatch resolved now raises and aborts the whole batch — the same omission seen from the caller.
 
 ## Files
 

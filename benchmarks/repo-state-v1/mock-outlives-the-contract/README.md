@@ -8,7 +8,7 @@ The change makes `lookup_rate()` raise `UnknownPlan` instead of falling back to 
 
 Two unchanged files make it a defect:
 
-- `tests/test_invoice.py` monkeypatches `lookup_rate` with `fake_lookup_rate`, which returns `2.5` for **every** plan. The test named `test_unknown_plan_still_bills` therefore goes on passing, because it never calls the function that changed. The commit message's claim that "the unknown-plan path stays covered by the existing invoice tests" is false, and the passing suite is the evidence that hides it.
+- `tests/test_invoice.py` monkeypatches `lookup_rate` with `fake_lookup_rate`, which returns `2.5` for **every** plan. That stub never matched the function it stands in for: the base `lookup_rate` billed `DEFAULT_RATE` (1.0) for an unknown plan, so a faithful stub would have failed the test's `10.0` assertion. `test_unknown_plan_still_bills` only ever passed against a stub that was already unfaithful — and the change (raising `UnknownPlan` instead) makes that stub actively misleading about the unknown-plan path. The commit message's claim that "the unknown-plan path stays covered by the existing invoice tests" is false, and the passing suite is the evidence that hides it.
 - `billing/invoice.py` calls `lookup_rate` with no unknown-plan branch, and its docstring still asserts that "every plan resolves to a rate". The newly raised exception escapes to its callers.
 
 | Claim in the commit message | What the diff actually does |
@@ -24,7 +24,7 @@ The mock is reachable only by following the changed symbol `lookup_rate` to the 
 
 ## Expected findings
 
-1. **`mock-still-returns-a-rate-for-any-plan`** — `tests/test_invoice.py:4-6`, `outside_diff: true`. The mock-fidelity finding.
+1. **`mock-still-returns-a-rate-for-any-plan`** — `tests/test_invoice.py:4-6`, `outside_diff: true`. A stub that never matched the contract, and that the change makes actively misleading.
 2. **`invoice-total-never-catches-unknown-plan`** — `billing/invoice.py:11`, `outside_diff: true`. The production consequence of the same change.
 
 Both are `outside_diff: true`, deliberately: this case has no shallow end. A reviewer reading only the diff has nothing to report, because every added line is correct.

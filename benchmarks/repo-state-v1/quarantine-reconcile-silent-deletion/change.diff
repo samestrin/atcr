@@ -17,7 +17,7 @@ index 75d4966..3d253c0 100644
 -    Raises CorruptStore when the file exists but does not decode, so a caller
 -    cannot mistake a damaged store for an empty one.
 +    A file that exists but does not decode is quarantined and reported as
-+    empty, so the morning job survives a damaged store.
++    empty, so the evening queue survives a damaged store.
      """
      if not os.path.exists(STORE_PATH):
          return []
