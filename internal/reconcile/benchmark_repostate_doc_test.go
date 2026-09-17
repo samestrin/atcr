@@ -1,7 +1,9 @@
 package reconcile
 
 import (
+	"encoding/json"
 	"os"
+	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -41,8 +43,12 @@ func TestBenchmarkDoc_RepoStateSectionMatchesTheCode(t *testing.T) {
 
 	// The three rates, each documented as a row of a table. A reader copies these
 	// names into a jq expression, so a drifted name is a silently empty result.
+	// Matched as a BACKTICKED table cell, not a bare substring: "recall" is a
+	// substring of the other two keys and appears in at least eight unrelated
+	// sentences in this doc, so a bare-word assertion verified nothing about the
+	// recall row — a renamed or deleted cell would have passed untouched.
 	for _, key := range []string{"recall", "outside_diff_recall", "within_diff_recall"} {
-		assert.Contains(t, doc, key, "the doc must name the %q field", key)
+		assert.Contains(t, doc, "`"+key+"`", "the doc must carry %q as a table cell", key)
 		assert.Contains(t, score, `json:"`+key+`,omitempty"`,
 			"ReviewerPositionalRecall must still emit %q, with omitempty — the doc promises an "+
 				"ABSENT key rather than a zero when nothing was expected", key)
@@ -51,9 +57,20 @@ func TestBenchmarkDoc_RepoStateSectionMatchesTheCode(t *testing.T) {
 	// The unmeasured-vs-zero rule. This is the claim a consumer acts on when deciding
 	// whether a 0 means "missed everything" or "nothing was planted", so the doc saying
 	// it and the code doing it must not come apart.
+	//
+	// Anchored on SEMANTIC substrings, not gofmt-level formatting: the previous pin
+	// matched "if expected <= 0 {\n\t\treturn nil\n\t}" — indentation and newlines
+	// included — so any reflow of rate() broke a test that has nothing to do with
+	// docs. "expected <= 0" and "return nil" are individually gofmt-stable and
+	// together still pin the nil-when-unmeasured arm. The behavior itself is not
+	// executable from this module (rate() is unexported in the parent module's
+	// internal tree), so the source-semantics anchor is the strongest pin available
+	// here; the executable half belongs to internal/benchmark's own test suite.
 	assert.Contains(t, doc, "an unmeasured rate must not read as a measured zero",
 		"the doc must state the unmeasured-vs-zero rule")
-	assert.Contains(t, score, "if expected <= 0 {\n\t\treturn nil\n\t}",
+	assert.Contains(t, score, "expected <= 0",
+		"rate() must still gate on the expected denominator")
+	assert.Contains(t, score, "return nil",
 		"rate() must still return nil rather than 0 when nothing was expected")
 
 	// --checkpoint is REFUSED, not ignored. A doc that said "ignored" while the code
@@ -61,7 +78,10 @@ func TestBenchmarkDoc_RepoStateSectionMatchesTheCode(t *testing.T) {
 	// ignores would cost an operator a whole panel run.
 	assert.Contains(t, doc, "`--checkpoint` is rejected, not ignored",
 		"the doc must state that the flag is refused")
-	assert.Contains(t, cli, "--checkpoint is not supported for a %s suite",
+	// Anchored on the message's stable prefix, not the %s verb: the refusal's
+	// suite-format interpolation is an implementation detail, and pinning the raw
+	// format string broke on any reword that kept the operator-visible sentence.
+	assert.Contains(t, cli, "--checkpoint is not supported for a",
 		"checkRepoStateFlags must still return an error for the flag")
 
 	// The grounding gate stays ON. This is the design decision the whole tier's
@@ -110,6 +130,14 @@ var _ = os.ReadFile
 // The shipped suite must actually contain the documents this epic's AC6 requires.
 // A SPOT-CHECK.md that was never written is the failure mode AC6 exists to prevent,
 // and it is invisible to every other test in the tree.
+//
+// AC6 is "every case hand-verified in SPOT-CHECK.md" — existence and non-emptiness
+// do not deliver it: a file holding a single byte passed the old check, a fifth
+// case added to the manifest with no spot-check section passed, and a suite_version
+// bump stranding the doc's quoted version passed. Each case id must therefore
+// appear as a RESULTS heading, and the doc's title must quote the manifest's
+// CURRENT suite_version (the historical run block legitimately still quotes the
+// version the run was recorded at, so the anchor is the title, not the whole file).
 func TestRepoStateSuite_ShipsItsVerificationDocuments(t *testing.T) {
 	for _, path := range []string{
 		"../../benchmarks/repo-state-v1/SPOT-CHECK.md",
@@ -119,4 +147,38 @@ func TestRepoStateSuite_ShipsItsVerificationDocuments(t *testing.T) {
 		require.NoError(t, err, "the suite must ship %s", path)
 		assert.NotEmpty(t, data)
 	}
+
+	manifestData, err := os.ReadFile("../../benchmarks/repo-state-v1/suite.json")
+	require.NoError(t, err)
+	var manifest struct {
+		Suite        string `json:"suite"`
+		SuiteVersion string `json:"suite_version"`
+		Cases        []struct {
+			ID  string `json:"id"`
+			Dir string `json:"dir"`
+		} `json:"cases"`
+	}
+	require.NoError(t, json.Unmarshal(manifestData, &manifest))
+	require.NotEmpty(t, manifest.Cases, "the manifest must declare its cases")
+
+	spot, err := os.ReadFile("../../benchmarks/repo-state-v1/SPOT-CHECK.md")
+	require.NoError(t, err)
+	doc := string(spot)
+
+	// Every manifest case must have its own hand-verification heading (AC6's core).
+	for _, c := range manifest.Cases {
+		assert.Contains(t, doc, "### `"+c.ID+"`",
+			"SPOT-CHECK.md must carry a results heading naming case %q — a case with no "+
+				"section was never hand-verified, which is exactly what AC6 forbids", c.ID)
+	}
+
+	// The title's quoted version must equal the manifest's, so a suite_version bump
+	// cannot strand the spot-check at a stale number unnoticed.
+	titleRe := regexp.MustCompile("# Spot-check — `repo-state-v1` ([0-9]+\\.[0-9]+\\.[0-9]+)")
+	m := titleRe.FindStringSubmatch(doc)
+	require.NotNil(t, m, "SPOT-CHECK.md title must quote the suite version it was checked at")
+	assert.Equal(t, manifest.SuiteVersion, m[1],
+		"SPOT-CHECK.md was checked at %s but the manifest is now %s — re-run the hand-check "+
+			"or bump the doc before shipping the suite at a version its verification does not cover",
+		m[1], manifest.SuiteVersion)
 }
