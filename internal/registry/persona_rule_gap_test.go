@@ -51,6 +51,36 @@ func TestPredicateRuleGaps_NamesOnlyTheRuleLess(t *testing.T) {
 		"exactly the rule-less roster agent should be named; carriers and unresolvable personas stay silent")
 }
 
+// The sort survived mutation: deleting sort.Strings left the whole suite green,
+// because every other case produces exactly ONE gap and a one-element slice is
+// sorted by construction. Go map iteration is randomised and the doc comment
+// promises "sorted agent names" — and the unordered output would reach the
+// strings.Join in doctor's warning, so a second run would name the same gaps in a
+// different order and read as a changed roster.
+//
+// Three gaps whose insertion-order names are deliberately NOT alphabetical, and
+// the exact slice asserted. With a single iteration this would still pass ~1/6 of
+// the time, so the map is driven repeatedly: randomisation means one run proves
+// nothing, and the point is that NO ordering escapes.
+func TestPredicateRuleGaps_NamesMultipleGapsInSortedOrder(t *testing.T) {
+	project := t.TempDir()
+	ruleLess := []byte("# p\n\n## Focus\n1. Injection findings\n")
+	for _, name := range []string{"zulu", "mike", "alpha"} {
+		require.NoError(t, os.WriteFile(filepath.Join(project, name+".md"), ruleLess, 0o644))
+	}
+	dirs := PersonaDirs{Project: project}
+
+	roster := map[string]string{
+		"zulu":  "zulu",
+		"mike":  "mike",
+		"alpha": "alpha",
+	}
+	for i := 0; i < 50; i++ {
+		require.Equal(t, []string{"alpha", "mike", "zulu"}, PredicateRuleGaps(roster, dirs),
+			"the doc promises sorted names; Go map iteration is randomised, so the sort is what makes the output stable")
+	}
+}
+
 // TestPredicateRuleGaps_EmptyRoster verifies the vacuous case: no roster, no
 // gaps, no panic.
 func TestPredicateRuleGaps_EmptyRoster(t *testing.T) {
