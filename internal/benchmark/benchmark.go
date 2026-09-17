@@ -8,8 +8,8 @@
 // envelope and the RunResult contract `atcr benchmark export` consumes, and the
 // scorer (Score, which folds per-case findings into the public reviewer schema).
 // It carries NO live-LLM dependency: the suite EXECUTION loop that drives each
-// case through the review pipeline lives in cmd/atcr (the composition root that
-// may import internal/fanout). The curated standard-v1 suite CONTENT is bundled at
+// case through the review pipeline lives in the top-level cli package (which
+// imports internal/fanout). The curated standard-v1 suite CONTENT is bundled at
 // benchmarks/standard-v1/ in this repo.
 //
 // It also hosts the repo-state-v1 tier (epic 35.16.10): a second suite whose cases
