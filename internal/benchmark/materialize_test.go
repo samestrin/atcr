@@ -72,6 +72,16 @@ func TestMaterializeCase_RejectsAMissingDest(t *testing.T) {
 	assert.Contains(t, err.Error(), c.ID)
 }
 
+// runGit formats args[0] into its error, so a call with NO args panics with an
+// index-out-of-range instead of returning an error.
+func TestRunGit_ReportsAnErrorInsteadOfPanickingOnNoArgs(t *testing.T) {
+	dir := t.TempDir()
+	require.NotPanics(t, func() {
+		err := runGit(context.Background(), dir)
+		require.Error(t, err, "a call with no subcommand must error, not index out of range")
+	})
+}
+
 func TestMaterializeCase_ProducesAReviewableRange(t *testing.T) {
 	c := materializableCase(t)
 	mc, err := MaterializeCase(context.Background(), c, t.TempDir())
