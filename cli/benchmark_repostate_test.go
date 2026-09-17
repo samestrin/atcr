@@ -138,6 +138,24 @@ func (c *repoCountingCompleter) Complete(ctx context.Context, inv llmclient.Invo
 	return stubLocatedCompleter{}.Complete(ctx, inv)
 }
 
+// A base tree carrying its own .atcrignore that excludes the changed paths
+// makes PrepareReview resolve the range to zero reviewable files and abort the
+// run mid-panel — after earlier cases were paid for. A repo-state case's
+// reviewable set is its DIFF (the planted change), not the ignore policy of the
+// tree it ships, so the runner opts the review out of ignore filtering.
+func TestExecuteRepoStateBenchmarkRun_ReviewsACaseWhoseTreeSelfIgnoresTheChange(t *testing.T) {
+	suite := writeTwoCaseSuite(t)
+	require.NoError(t, os.WriteFile(filepath.Join(suite, "second-case", "base", ".atcrignore"),
+		[]byte("app/\n"), 0o600))
+	cc := &countingLocatedCompleter{}
+
+	rr, err := executeRepoStateBenchmarkRun(context.Background(),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), cc, suite, time.Unix(0, 0).UTC())
+	require.NoError(t, err, "a case whose tree ignores its own changed path must still be reviewed: the diff defines the reviewable set")
+	assert.Equal(t, 2, cc.calls, "both cases' panels must have run")
+	assert.Contains(t, rr.SuiteCaseIDs, "second-case")
+}
+
 func TestExecuteRepoStateBenchmarkRun_ReportsBothMetrics(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 	gen := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
