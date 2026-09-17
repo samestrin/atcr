@@ -404,6 +404,7 @@ func TestParseDiffLineMap_EmptyDiffIsEmptyNotAnError(t *testing.T) {
 func TestParseDiffLineMap_ShippedCasesOutsideDiffValuesAreTrue(t *testing.T) {
 	m, err := LoadRepoState("../../benchmarks/repo-state-v1")
 	require.NoError(t, err)
+	checked := 0
 	for _, c := range m.Cases {
 		t.Run(c.ID, func(t *testing.T) {
 			raw, err := os.ReadFile(filepath.Join(c.Dir, c.Diff))
@@ -415,11 +416,14 @@ func TestParseDiffLineMap_ShippedCasesOutsideDiffValuesAreTrue(t *testing.T) {
 				if !f.IsOutsideDiff() {
 					continue
 				}
-				// Every line of the RANGE, not just line_start. Two of this suite's
-				// findings span a range, and the matcher's window admits any line in
-				// [start-tolerance, end+tolerance] — so an interior line that is an
-				// added line makes the declaration wrong in exactly the way that
-				// matters, while a line_start-only check passes.
+				checked++
+				// Every line of the DECLARED RANGE, not just line_start: the range is
+				// the defect's body, and outside_diff:true declares that body lives in
+				// UNCHANGED code — any added line inside it contaminates the claim.
+				// (Added lines merely INSIDE the tolerance window are a different,
+				// legitimate situation: the change brushing the defect is exactly what
+				// condition 3 blocks at match time, and the matcher's window test pins
+				// that. The authoring contract is about the defect's own lines.)
 				for line := f.LineStart; line <= f.LineEnd; line++ {
 					assert.False(t, lm.IsAddedLine(f.File, line),
 						"finding %q declares outside_diff:true but %s:%d IS an added line of the case's own diff",
@@ -428,4 +432,9 @@ func TestParseDiffLineMap_ShippedCasesOutsideDiffValuesAreTrue(t *testing.T) {
 			}
 		})
 	}
+	// The guard that keeps this test honest: if a future edit flips the suite's
+	// outside_diff values to false, the loop above silently checks nothing. The
+	// count must be positive or the invariant was never exercised.
+	require.Greater(t, checked, 0,
+		"no shipped finding declares outside_diff:true; the condition-3 authoring check verified nothing")
 }
