@@ -275,6 +275,50 @@ func (c *RepoStateCase) Validate() error {
 			return err
 		}
 	}
+	return c.validateCategoryEquivalence()
+}
+
+// validateCategoryEquivalence rejects a case whose expected categories let ONE
+// raised finding satisfy TWO of them.
+//
+// A repo-state case reaches CorroborationRate through the same category-recall
+// scorer standard-v1 uses, which resolves each expected category through the
+// equivalence families in equivalence.go. So a case expecting both a coarse
+// category and a member of that category's family — "maintainability" beside
+// "style" — has a recall denominator of 2 that a single finding can fill,
+// reporting 1.0 where exact matching gave 0.5.
+//
+// Manifest.Validate applies exactly this rule to standard-v1, where the
+// categories sit in one visible list per case. Here they are spread one per
+// finding, so an author is LESS likely to notice the pairing, not more — which is
+// why the check matters at least as much on this side.
+//
+// Two findings sharing one category stay legal: a case may plant two correctness
+// defects, and the deduped set is then a single category with a denominator of 1.
+func (c *RepoStateCase) validateCategoryEquivalence() error {
+	norm := make([]string, 0, len(c.ExpectedFindings))
+	seen := make(map[string]bool, len(c.ExpectedFindings))
+	for _, f := range c.ExpectedFindings {
+		n := normalize(f.Category)
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		norm = append(norm, n)
+	}
+	for i, a := range norm {
+		for j, b := range norm {
+			if i == j {
+				continue
+			}
+			for _, member := range familyOf(b) {
+				if member == a {
+					return fmt.Errorf("expected category %q is already satisfied by %q's equivalence family; "+
+						"one raised finding would satisfy both and inflate recall", a, b)
+				}
+			}
+		}
+	}
 	return nil
 }
 

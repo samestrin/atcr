@@ -178,6 +178,37 @@ func TestLoadRepoState_RejectsGitDirInBaseTree(t *testing.T) {
 	assert.Contains(t, err.Error(), ".git")
 }
 
+// A repo-state case reaches CorroborationRate through the SAME category-recall
+// scorer standard-v1 uses, so it needs the same guard standard-v1's Validate
+// applies: a case expecting both a coarse category and a member of that category's
+// equivalence family lets ONE raised finding satisfy BOTH and inflate recall.
+//
+// Without this, the guard held for standard-v1 and had a hole in the tier added
+// beside it — and a repo-state case naturally carries one category per finding,
+// so an author pairing "maintainability" with "style" across two findings would
+// trip it without ever seeing a list of categories to check.
+func TestLoadRepoState_RejectsRecallInflatingCategoryPairs(t *testing.T) {
+	body := `{"id":"good-case","format":"repo-state-v1","base_tree":"base","commit_message":"commit-message.txt","diff":"change.diff","expected_findings":[
+	  {"id":"a","file":"pkg/example.py","line_start":1,"line_end":1,"outside_diff":false,"category":"maintainability","summary":"s"},
+	  {"id":"b","file":"pkg/example.py","line_start":40,"line_end":40,"outside_diff":false,"category":"style","summary":"s"}]}`
+
+	_, err := LoadRepoState(writeRepoStateSuite(t, body))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "equivalence family")
+}
+
+// Two findings sharing ONE category is ordinary and must stay legal: a case may
+// plant two correctness defects. Only the coarse-plus-family-member pairing
+// inflates recall.
+func TestLoadRepoState_AllowsTwoFindingsInTheSameCategory(t *testing.T) {
+	body := `{"id":"good-case","format":"repo-state-v1","base_tree":"base","commit_message":"commit-message.txt","diff":"change.diff","expected_findings":[
+	  {"id":"a","file":"pkg/example.py","line_start":1,"line_end":1,"outside_diff":false,"category":"correctness","summary":"s"},
+	  {"id":"b","file":"pkg/example.py","line_start":40,"line_end":40,"outside_diff":true,"category":"correctness","summary":"s"}]}`
+
+	_, err := LoadRepoState(writeRepoStateSuite(t, body))
+	require.NoError(t, err)
+}
+
 // AC7 again, by the route the declared-path check cannot see. `base_tree` may say
 // "base" — perfectly safe as a string — while `base` is a SYMLINK to somewhere
 // else entirely. Stat follows it and reports a directory, so the case would
