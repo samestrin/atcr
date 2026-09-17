@@ -152,6 +152,14 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		if err != nil {
 			return nil, fmt.Errorf("reading findings for case %q: %w", c.ID, err)
 		}
+		// The materialized repo has no consumer once the findings are read: scoring
+		// reads neither the tree nor the .git, and the review dir carries the
+		// artifacts. Released HERE rather than at run end, so a large-base-tree
+		// suite hands its repos back as it goes instead of accumulating one per
+		// case under a $TMPDIR volume a long panel can exhaust mid-run.
+		if err := os.RemoveAll(repoDir); err != nil {
+			return nil, fmt.Errorf("case %q: removing work repo: %w", c.ID, err)
+		}
 
 		// Iterate the full roster, not just reviewers that raised something: a
 		// reviewer that missed the whole case is recall 0, not an absent row.
