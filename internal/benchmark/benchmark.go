@@ -376,6 +376,33 @@ type RunResult struct {
 	// unmarshal to nil (the key is absent, tag or no tag), reading as "no breakdown
 	// recorded" rather than as a run with no reviewers.
 	Vocabulary []ReviewerVocabulary `json:"reviewer_vocabulary,omitempty"`
+
+	// PositionalRecall is the repo-state-v1 tier's located-finding recall per
+	// reviewer, with out-of-diff recall reported SEPARATELY from overall recall
+	// (epic 35.16.10, AC4). Produced by ScorePositional; this field only carries it.
+	//
+	// It sits here and NOT on scorecard.PublicRecord for the same reason
+	// OutOfVocabularyRate and Coverage do: that type is the frozen public schema
+	// shared byte-for-byte with production `leaderboard --export`, and a
+	// benchmark-only column would appear on production rows that can never populate
+	// it. BuildSubmission accordingly does not carry this field forward.
+	//
+	// It is also why CorroborationRate's meaning is unchanged on a repo-state run.
+	// That field carries CATEGORY recall on every suite, which is a genuinely
+	// different quantity from located-finding recall — the same finding counted
+	// against a different denominator. Publishing located recall through it would
+	// fork a frozen shared key's meaning by suite, distinguishable only by the
+	// envelope's source tag, which score.go's cost-denominator comment already
+	// argues is worse than the hole it would close.
+	//
+	// A blended single number would hide the one measurement this tier exists to
+	// produce: a run that scores well on in-diff findings and zero on out-of-diff
+	// ones has demonstrated exactly the gap, and an average of the two reads as
+	// mediocre-at-everything instead.
+	//
+	// omitempty so a run-result written before this field existed unmarshals to nil
+	// and reports as unmeasured, exactly as a nil OutOfVocabularyRate does.
+	PositionalRecall []ReviewerPositionalRecall `json:"reviewer_positional_recall,omitempty"`
 }
 
 // ReviewerCoverage names the cases behind one reviewer row of the same run-result,
