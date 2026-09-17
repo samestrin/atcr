@@ -16,7 +16,7 @@ const multiHunkDiff = `diff --git a/pkg/one.py b/pkg/one.py
 index aaa..bbb 100644
 --- a/pkg/one.py
 +++ b/pkg/one.py
-@@ -10,6 +10,7 @@ class A:
+@@ -10,5 +10,6 @@ class A:
  ctx10
  ctx11
 -old12
@@ -24,7 +24,7 @@ index aaa..bbb 100644
 +extra13
  ctx14
  ctx15
-@@ -40,4 +41,5 @@ class B:
+@@ -40,3 +41,4 @@ class B:
  ctx41
 +added42
  ctx43

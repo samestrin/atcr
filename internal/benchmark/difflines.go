@@ -1,7 +1,6 @@
 package benchmark
 
 import (
-	"bufio"
 	"bytes"
 	"fmt"
 	"sort"
@@ -71,14 +70,13 @@ func ParseDiffLineMap(diff []byte) (DiffLineMap, error) {
 	var baseLeft, headLeft int
 	inHunk := func() bool { return baseLeft > 0 || headLeft > 0 }
 
-	sc := bufio.NewScanner(bytes.NewReader(diff))
-	// A case's diff may carry a long minified or generated line; the default 64 KiB
-	// token limit would fail the whole parse on one such line, which reads as a
-	// malformed diff rather than a long one.
-	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	// The diff is indexed rather than scanned so the body classifier can LOOK
+	// AHEAD one and two lines: the one in-body construct the declared counts
+	// cannot arbitrate is the next file's header triplet (see below).
+	lines := splitDiffLines(diff)
 
-	for sc.Scan() {
-		line := sc.Text()
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
 
 		// INSIDE A HUNK BODY, prefixes are classified as content FIRST. This
 		// ordering is the whole fix for the header collision described on
@@ -86,42 +84,65 @@ func ParseDiffLineMap(diff []byte) (DiffLineMap, error) {
 		// file header, and only the declared counts can tell us we are still in a
 		// body. Outside one, the same bytes are a header.
 		if inHunk() {
+			// A file-header TRIPLET inside a body is the one thing the declared
+			// counts cannot arbitrate. "--- old comment" is a removed line (see the
+			// SQL-comment case on hunkHeader) and must stay content — but git emits
+			// every file section as `--- path` / `+++ path` / `@@ range` CONSECUTIVELY,
+			// and no body line can start with a bare `@@` (an unprefixed body line is
+			// malformed no matter what the counts claim). So a `--- ` whose next two
+			// lines are `+++ ` and `@@` is the next file's header arriving early: the
+			// hunk over-declared, and honoring the counts would consume the header
+			// pair as removed and added CONTENT — vanishing the next file from the
+			// map and attributing its lines to this one. git apply rejects such a
+			// diff; so does the parser, naming the file whose hunk lied.
+			if strings.HasPrefix(line, "--- ") && i+2 < len(lines) &&
+				strings.HasPrefix(lines[i+1], "+++ ") && strings.HasPrefix(lines[i+2], "@@") {
+				return DiffLineMap{}, fmt.Errorf("hunk header collision in %q: over-declared counts leave %d base / %d head line(s) unconsumed where a file header arrives: %q",
+					headFileKey(headPath, basePath), baseLeft, headLeft, line)
+			}
 			switch {
 			case strings.HasPrefix(line, `\`):
 				// "\ No newline at end of file" is a MARKER, not content, and is not
 				// counted against either side's remaining lines.
+			case strings.HasPrefix(line, "diff --git "):
+				// A git separator inside a body: no body line lacks a +/-/space
+				// prefix, so this is the next file section arriving with this hunk's
+				// counts still unconsumed — the same over-declaration, git-style.
+				return DiffLineMap{}, fmt.Errorf("hunk header collision in %q: over-declared counts leave %d base / %d head line(s) unconsumed where a file header arrives: %q",
+					headFileKey(headPath, basePath), baseLeft, headLeft, line)
 			case line == "" || line[0] == ' ':
 				// A context line. Some tools strip the single leading space from a
 				// blank context line, so a bare empty line inside a body is context
-				// too — counting it keeps the counters aligned with the file.
+				// too — counting it keeps the counters aligned with the file. A body
+				// line beyond either side's declared count is an over-consumption,
+				// not something to clamp away silently.
+				if baseLeft == 0 || headLeft == 0 {
+					return DiffLineMap{}, overConsumedError(headFileKey(headPath, basePath), line)
+				}
 				baseLine++
 				headLine++
 				baseLeft--
 				headLeft--
 			case line[0] == '+':
+				if headLeft == 0 {
+					return DiffLineMap{}, overConsumedError(headFileKey(headPath, basePath), line)
+				}
 				addLine(m.added, headFileKey(headPath, basePath), headLine)
 				headLine++
 				headLeft--
 			case line[0] == '-':
+				if baseLeft == 0 {
+					return DiffLineMap{}, overConsumedError(headFileKey(headPath, basePath), line)
+				}
 				addLine(m.removed, baseFileKey(headPath, basePath), baseLine)
 				baseLine++
 				baseLeft--
 			default:
-				// A body that ends early: the declared counts are not exhausted but
-				// this line belongs to no side. Close the hunk and re-read the line
-				// as header text rather than guessing.
-				baseLeft, headLeft = 0, 0
-				if err := readOutsideHunk(line, &headPath, &basePath, &baseLine, &headLine, &baseLeft, &headLeft); err != nil {
-					return DiffLineMap{}, err
-				}
-			}
-			// A side whose declared count was wrong must not drive the other
-			// negative and re-open the body later.
-			if baseLeft < 0 {
-				baseLeft = 0
-			}
-			if headLeft < 0 {
-				headLeft = 0
+				// A body whose declared counts are not exhausted has no room for a
+				// line that belongs to no side. The old behavior closed the hunk and
+				// re-read the line as header text, which is exactly the fail-open this
+				// package refuses (see hunkHeader): the error names the file instead.
+				return DiffLineMap{}, overConsumedError(headFileKey(headPath, basePath), line)
 			}
 			continue
 		}
@@ -130,17 +151,38 @@ func ParseDiffLineMap(diff []byte) (DiffLineMap, error) {
 			return DiffLineMap{}, err
 		}
 	}
-	if err := sc.Err(); err != nil {
-		return DiffLineMap{}, fmt.Errorf("reading diff: %w", err)
-	}
 	return m, nil
+}
+
+// splitDiffLines splits a diff into lines the way bufio.ScanLines does — a
+// trailing \r is dropped (CRLF diffs), and a final line without its newline is
+// kept — so the parser's lookahead indexes stable lines. An empty diff yields
+// no lines; the empty-map-is-not-an-error contract is unaffected.
+func splitDiffLines(diff []byte) []string {
+	if len(diff) == 0 {
+		return nil
+	}
+	parts := bytes.Split(diff, []byte{'\n'})
+	if len(parts) > 0 && len(parts[len(parts)-1]) == 0 {
+		parts = parts[:len(parts)-1]
+	}
+	lines := make([]string, len(parts))
+	for i, p := range parts {
+		lines[i] = strings.TrimSuffix(string(p), "\r")
+	}
+	return lines
+}
+
+// overConsumedError reports a hunk whose body ran past its declared counts —
+// the fail-open the package refuses, with the hunk's file named.
+func overConsumedError(file, line string) error {
+	return fmt.Errorf("hunk body in %q exceeds its declared counts at: %q", file, line)
 }
 
 // readOutsideHunk handles a line that is NOT inside a hunk body: a file header, a
 // hunk header, or extended-header noise. It is a function rather than inline code
-// because a hunk whose declared counts run out early has to re-read its current
-// line this way, and two copies of the header rules would be two things to keep
-// in step.
+// because it is the single home of the header rules, so header classification
+// cannot drift between call sites.
 func readOutsideHunk(line string, headPath, basePath *string, baseLine, headLine, baseLeft, headLeft *int) error {
 	switch {
 	case strings.HasPrefix(line, "diff --git "):
