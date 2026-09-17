@@ -63,6 +63,21 @@ func runBenchmarkVerify(cmd *cobra.Command, _ []string) error {
 	// enforces presence before RunE executes. Project-wide convention (27 sites).
 	suitePath, _ := cmd.Flags().GetString("suite-path")
 
+	// Route on the suite's own discriminator, exactly as runBenchmarkRun does.
+	// verify is the author's only FREE validation path; leaving it standard-v1-only
+	// while run executed both tiers meant a repo-state author could reach
+	// LoadRepoState and validateRepoStatePublishableCaseIDs by no route except
+	// `benchmark run`, which proceeds into a paid panel.
+	suiteFormat, err := benchmark.DetectSuiteFormat(suitePath)
+	if err != nil {
+		return err
+	}
+	// EqualFold for the same reason run routes with it: a differently-cased
+	// discriminator names the same tier.
+	if strings.EqualFold(suiteFormat, benchmark.FormatRepoStateV1) {
+		return verifyRepoStateSuite(cmd, suitePath)
+	}
+
 	m, err := benchmark.Load(suitePath)
 	if err != nil {
 		return err
@@ -90,6 +105,37 @@ func runBenchmarkVerify(cmd *cobra.Command, _ []string) error {
 	_, werr := fmt.Fprintf(cmd.OutOrStdout(),
 		"suite %q version %q: %d %s, valid\nreproducibility hash: %s\n",
 		m.Suite, m.SuiteVersion, len(m.Cases), noun, hash)
+	return werr
+}
+
+// verifyRepoStateSuite is runBenchmarkVerify's repo-state arm: the SAME two gates
+// executeRepoStateBenchmarkRun applies at load, in the same order, so verify and
+// run cannot disagree about what a valid repo-state suite is.
+//
+// No reproducibility hash. ReproHashManifest is defined over a standard-v1
+// *Manifest — it hashes each case's diff bytes — and there is no repo-state
+// equivalent to call. Printing nothing where the standard tier prints a hash would
+// read as a missing line, so the omission is NAMED rather than silent; inventing a
+// second hashing contract here would put an unversioned one in the CLI, where the
+// public submission format cannot see it.
+func verifyRepoStateSuite(cmd *cobra.Command, suitePath string) error {
+	m, err := benchmark.LoadRepoState(suitePath)
+	if err != nil {
+		return err
+	}
+	if err := validateRepoStatePublishableCaseIDs(m, suitePath); err != nil {
+		return err
+	}
+	noun := "cases"
+	if len(m.Cases) == 1 {
+		noun = "case"
+	}
+	// %q on both identity fields, for the reason the standard arm's comment gives:
+	// they come from a third-party suite.json and an escape sequence would otherwise
+	// survive to the terminal.
+	_, werr := fmt.Fprintf(cmd.OutOrStdout(),
+		"suite %q version %q: %d %s, valid\nreproducibility hash: not defined for %s (standard-v1 only)\n",
+		m.Suite, m.SuiteVersion, len(m.Cases), noun, benchmark.FormatRepoStateV1)
 	return werr
 }
 
