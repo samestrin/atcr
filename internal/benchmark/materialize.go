@@ -152,6 +152,14 @@ func copyBaseTree(src, dst string) (int, error) {
 		if rerr != nil {
 			return rerr
 		}
+		// The symlink refusal comes FIRST, before the root's early return: a root
+		// that is itself a symlink is a path escape too, and WalkDir (which Lstats
+		// the root and never descends into it) would otherwise end the walk with
+		// zero files — surfacing as the misleading "empty" error instead of naming
+		// the escape.
+		if d.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("base tree entry %q is a symlink; a case must not reference a path outside its own directory", rel)
+		}
 		if rel == "." {
 			return nil
 		}
@@ -177,8 +185,6 @@ func copyBaseTree(src, dst string) (int, error) {
 		}
 		target := filepath.Join(dst, rel)
 		switch {
-		case d.Type()&os.ModeSymlink != 0:
-			return fmt.Errorf("base tree entry %q is a symlink; a case must not reference a path outside its own directory", rel)
 		case d.IsDir():
 			return os.MkdirAll(target, 0o755)
 		case d.Type().IsRegular():
