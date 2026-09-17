@@ -190,6 +190,67 @@ func TestExecuteRepoStateBenchmarkRun_RefusesTwoLanesSharingOneIdentity(t *testi
 	assert.Contains(t, err.Error(), "lane-b")
 }
 
+// usageLocatedCompleter raises the standard located findings while REPORTING
+// token usage and burning a real per-call delay — the only way to drive the
+// usage-gated cost and latency arms of the score fold, which every plain stub
+// (zero usage) leaves uncovered.
+type usageLocatedCompleter struct {
+	delay []time.Duration
+	calls int
+}
+
+func (c *usageLocatedCompleter) Complete(ctx context.Context, inv llmclient.Invocation) (string, error) {
+	content, _, _, err := c.CompleteWithUsage(ctx, inv)
+	return content, err
+}
+
+func (c *usageLocatedCompleter) CompleteWithUsage(_ context.Context, inv llmclient.Invocation) (string, llmclient.UsageData, []llmclient.CallRecord, error) {
+	i := c.calls
+	if i < len(c.delay) {
+		time.Sleep(c.delay[i])
+	}
+	c.calls++
+	content, err := stubLocatedCompleter{}.Complete(context.Background(), llmclient.Invocation{})
+	return content, llmclient.UsageData{PromptTokens: 100, CompletionTokens: 50}, nil, err
+}
+
+// The cost and latency fold is usage-gated, and the latency arm's claimed shape
+// is load-bearing: latencies are COLLECTED into a slice and MEDIANED
+// (LatencyP50MS is a median on the frozen public row), while cost ACCUMULATES.
+// No test ever reported non-zero usage, so a regression back to assignment —
+// publishing the LAST case's wall clock under a median column — shipped
+// silently. Two cases with differing real durations discriminate: assignment
+// publishes the second duration; a median lands between the two.
+func TestExecuteRepoStateBenchmarkRun_MedianLatencyAndAccumulatedCost(t *testing.T) {
+	// 30ms + 300ms: the median sits near 165ms even under generous CI jitter, and
+	// an assignment regression publishes the second duration (~300ms+) — the two
+	// stay separated by more than the jitter either way.
+	cc := &usageLocatedCompleter{delay: []time.Duration{30 * time.Millisecond, 300 * time.Millisecond}}
+
+	rr, err := executeRepoStateBenchmarkRun(context.Background(),
+		benchCfg([3]string{"greta", "gpt-4o", "greta"}), cc, writeTwoCaseSuite(t), time.Unix(0, 0).UTC())
+	require.NoError(t, err)
+
+	require.Len(t, rr.Reviewers, 1)
+	t.Logf("DEBUG cost_per=%v latency=%v model=%q", rr.Reviewers[0].CostPerCorroboratedFindingUSD, rr.Reviewers[0].LatencyP50MS, rr.Reviewers[0].Model)
+	p50 := rr.Reviewers[0].LatencyP50MS
+	assert.Greater(t, p50, int64(20), "the median must reflect both cases' durations, not zero")
+	assert.Less(t, p50, int64(250),
+		"LatencyP50MS is a MEDIAN over collected case durations; assignment would publish the last case's ~300ms+")
+
+	// rr.Reviewers carries the SCRUBBED public rows, so the accumulated cost
+	// surfaces as cost-per-corroborated (CostUSD / matched findings). Each case
+	// costs ComputeCostUSD("gpt-4o", 100, 50), the fold must ACCUMULATE both, and
+	// the stub's two findings corroborate both expected findings of both cases —
+	// a denominator of 4. The per-finding quotient is therefore discriminative:
+	// a fold that kept only the last case's usage would halve it.
+	wantCost := llmclient.ComputeCostUSD("gpt-4o", 100, 50) + llmclient.ComputeCostUSD("gpt-4o", 100, 50)
+	require.NotNil(t, rr.Reviewers[0].CostPerCorroboratedFindingUSD,
+		"the matched findings must carry the priced cost, not nil (unmeasured)")
+	assert.InDelta(t, wantCost/4, *rr.Reviewers[0].CostPerCorroboratedFindingUSD, 1e-9,
+		"cost ACCUMULATES over every case's reported usage (denominator: 2 cases x 2 corroborated findings)")
+}
+
 func TestExecuteRepoStateBenchmarkRun_ReportsBothMetrics(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 	gen := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
