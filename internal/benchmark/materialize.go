@@ -164,6 +164,17 @@ func copyBaseTree(src, dst string) (int, error) {
 		if d.Name() == ".git" {
 			return fmt.Errorf("base tree contains %q; the case supplies only the working tree and the loader creates the repository", rel)
 		}
+		// The git-CONSUMED metadata files are refused alongside .git: a vendored
+		// .gitignore makes `git add -A` silently drop the files it matches (the
+		// working tree and the commit then disagree), a .gitattributes with e.g.
+		// `* text=auto` renormalizes content on add (breaking the fixed-SHA
+		// determinism contract), and a .gitmodules names submodules the tree does
+		// not contain. Names git does NOT consume — .github/, .gitkeep — are
+		// ordinary content and stay legal.
+		switch d.Name() {
+		case ".gitignore", ".gitattributes", ".gitmodules":
+			return fmt.Errorf("base tree contains %q; git's add/commit machinery would consume it and make the materialized repository depend on case-authored ignore/attribute state", rel)
+		}
 		target := filepath.Join(dst, rel)
 		switch {
 		case d.Type()&os.ModeSymlink != 0:
