@@ -38,10 +38,13 @@ type DiffLineMap struct {
 // as `--- ...` and is byte-identical to the start of a `--- a/path` header.
 //
 // Getting that wrong is not a one-line misclassification. Treating it as a header
-// resets the file state mid-hunk, and the whole map comes back EMPTY with no
-// error: IsAddedLine is then false everywhere, condition 3 never fires, and an
-// `outside_diff: true` expectation is satisfied by a report citing an added line.
-// The tier's headline measurement fails open, on a case that parses cleanly.
+// resets the file state mid-hunk, and the whole map comes back EMPTY — or worse,
+// the next file's headers are consumed as CONTENT and its lines are attributed to
+// the previous file: IsAddedLine is then false everywhere, condition 3 never
+// fires, and an `outside_diff: true` expectation is satisfied by a report citing
+// an added line. The tier's headline measurement fails open, on a case that
+// parses cleanly. Both shapes are rejected outright — see the header-collision
+// and over-consumption errors in ParseDiffLineMap.
 //
 // The counts bound the body only. Line NUMBERS still come from walking the body's
 // own prefixes, so a miscounted header cannot silently shift them.
