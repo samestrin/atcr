@@ -410,6 +410,17 @@ func validateExpectedFinding(i int, f ExpectedFinding, seen map[string]bool) err
 	if strings.TrimSpace(f.Category) == "" {
 		return fmt.Errorf("expected_finding %q: category is required", fid)
 	}
+	// FORMAT.md:103 requires the category to come from atcr's closed vocabulary,
+	// and vocabularySet() lives in this package — checking only non-blank let a
+	// misspelling through that NO reviewer can ever raise (normalize folds no
+	// separators, so 'error_handling' matches no member), parking the expectation
+	// permanently in the recall denominator and capping CorroborationRate on the
+	// whole suite. Rejected at load, naming the nearest legal member so the fix
+	// needs no grep.
+	if n := normalize(f.Category); !vocabularySet()[n] {
+		return fmt.Errorf("expected_finding %q: category %q is not in the closed category vocabulary; the nearest legal member is %q",
+			fid, f.Category, nearestVocabularyMember(n))
+	}
 	if strings.TrimSpace(f.Summary) == "" {
 		return fmt.Errorf("expected_finding %q: summary is required; it is what lets a third party confirm the defect is really present", fid)
 	}
@@ -512,4 +523,53 @@ func isSafeRelPOSIXPath(p string) bool {
 		return false
 	}
 	return clean != ".." && !strings.HasPrefix(clean, "../")
+}
+
+// nearestVocabularyMember returns the vocabulary member closest to s by edit
+// distance, so a rejected category's error names the spelling the author almost
+// certainly meant ('error_handling' -> 'error-handling') instead of making them
+// grep reconcile.Categories(). The set is small (32 members), so the scan is
+// free at load time.
+func nearestVocabularyMember(s string) string {
+	best, bestDist := "", -1
+	for member := range vocabularySet() {
+		d := editDistance(s, member)
+		if bestDist < 0 || d < bestDist || (d == bestDist && member < best) {
+			best, bestDist = member, d
+		}
+	}
+	return best
+}
+
+// editDistance is the Levenshtein distance between a and b (iterative single-row
+// form). Ties above break alphabetically via the caller, so the suggestion is
+// deterministic.
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	curr := make([]int, len(b)+1)
+	for j := 0; j <= len(b); j++ {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		curr[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			curr[j] = min3(prev[j]+1, curr[j-1]+1, prev[j-1]+cost)
+		}
+		prev, curr = curr, prev
+	}
+	return prev[len(b)]
+}
+
+func min3(a, b, c int) int {
+	if b < a {
+		a = b
+	}
+	if c < a {
+		a = c
+	}
+	return a
 }

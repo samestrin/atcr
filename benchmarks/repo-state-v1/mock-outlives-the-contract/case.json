@@ -22,7 +22,7 @@
       "line_end": 11,
       "line_tolerance": 3,
       "outside_diff": true,
-      "category": "error_handling",
+      "category": "error-handling",
       "summary": "invoice_total calls lookup_rate with no unknown-plan branch and its docstring still asserts every plan resolves, so the newly raised UnknownPlan escapes to invoice_total's callers as an unhandled exception."
     }
   ]

@@ -543,3 +543,21 @@ func TestEquivalenceOverlap_BothValidatorsShareOneSentence(t *testing.T) {
 	assert.Contains(t, stdErr.Error(), shared, "Manifest.Validate must state the overlap rule in the shared wording")
 	assert.Contains(t, rsErr.Error(), shared, "validateCategoryEquivalence must state the overlap rule in the shared wording")
 }
+
+// validateExpectedFinding checked only that category was non-blank, while
+// FORMAT.md:103 requires it to come from atcr's closed category vocabulary — and
+// vocabularySet() lives in this package. Live consequence: two shipped cases
+// declared 'error_handling' while the canonical member is 'error-handling', and
+// normalize() folds no separators — so no reviewer could ever raise those
+// expectations and half the suite's recall denominator was unwinnable.
+func TestLoadRepoState_RejectsACategoryOutsideTheClosedVocabulary(t *testing.T) {
+	body := strings.Replace(validCaseJSON, `"category": "correctness"`, `"category": "error_handling"`, 1)
+	_, err := LoadRepoState(writeRepoStateSuite(t, body))
+	require.Error(t, err, "a category the vocabulary cannot contain must fail at load, not cap recall silently")
+	assert.Contains(t, err.Error(), "error_handling")
+	assert.Contains(t, err.Error(), "error-handling",
+		"the error must name the nearest legal member so the author can fix the spelling without grepping")
+	// The canonical spelling itself must keep loading.
+	_, err = LoadRepoState(writeRepoStateSuite(t, strings.Replace(validCaseJSON, `"category": "correctness"`, `"category": "error-handling"`, 1)))
+	require.NoError(t, err)
+}

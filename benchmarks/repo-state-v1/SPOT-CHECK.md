@@ -1,6 +1,6 @@
-# Spot-check — `repo-state-v1` 1.1.1
+# Spot-check — `repo-state-v1` 1.1.2
 
-> Revised 2026-09-17 at `suite_version` 1.1.1 (tolerance and summary corrections, recorded below). The original hand-check and the AC8 panel run were performed at 1.1.0; the recorded AC8 numbers predate those corrections and are not directly comparable with future runs.
+> Revised 2026-09-17 at `suite_version` 1.1.1 (tolerance and summary corrections, recorded below) and 1.1.2 (the two `error_handling` categories corrected to `error-handling` — the closed vocabulary's member is hyphenated and normalize() folds no separators, so no reviewer could ever have raised them; half the suite's category-recall denominator was unwinnable as spelled). The original hand-check and the AC8 panel run were performed at 1.1.0; **the recorded AC8 numbers predate all of these corrections — in particular the category-recall column is not comparable with a run against 1.1.2**, because the corrected expectations can now be satisfied at all.
 
 [`../standard-v1/SPOT-CHECK.md`](../standard-v1/SPOT-CHECK.md) records the invariant that makes that suite trustworthy: *each case's planted defect must be genuinely present in its committed diff.* This tier exists precisely because that invariant excludes the defect class it targets, so it needs its own, and a stricter one:
 

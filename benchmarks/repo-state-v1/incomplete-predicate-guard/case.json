@@ -22,7 +22,7 @@
       "line_end": 8,
       "line_tolerance": 3,
       "outside_diff": true,
-      "category": "error_handling",
+      "category": "error-handling",
       "summary": "handle() dispatches every event in one list comprehension with no per-event error handling, so a webhook event - which the previous dispatch resolved via HANDLERS - now raises UnknownKind and aborts the entire batch mid-comprehension; the same missing-webhook omission as the first finding, seen from the caller."
     }
   ]
