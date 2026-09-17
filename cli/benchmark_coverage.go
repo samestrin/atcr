@@ -335,6 +335,52 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		path, len(suite), strings.Join(short, "; "))
 }
 
+// suiteAnchor is the only part of a suite manifest the denominator anchor consults:
+// the identity pair and the case-id list. Both tiers have exactly these, which is
+// what lets one anchor serve both without either loader's type crossing into this
+// file.
+type suiteAnchor struct {
+	Suite        string
+	SuiteVersion string
+	CaseIDs      []string
+}
+
+// loadSuiteAnchor loads either tier's manifest, routing on the suite's own
+// discriminator the way `benchmark run` and `benchmark verify` do.
+//
+// Anchoring used to call benchmark.Load unconditionally, which hard-rejects a
+// repo-state suite — so `benchmark export --suite-path` could not anchor the tier
+// export otherwise accepts. The new tier could publish to the same public board as
+// standard-v1 while being permanently held to the weaker self-consistency gate, and
+// the operator's only way past the error was to drop the flag, which downgrades the
+// check silently. A denominator gate that one tier can never satisfy is not a gate.
+func loadSuiteAnchor(suitePath string) (suiteAnchor, error) {
+	format, err := benchmark.DetectSuiteFormat(suitePath)
+	if err != nil {
+		return suiteAnchor{}, err
+	}
+	if strings.EqualFold(format, benchmark.FormatRepoStateV1) {
+		m, lerr := benchmark.LoadRepoState(suitePath)
+		if lerr != nil {
+			return suiteAnchor{}, lerr
+		}
+		a := suiteAnchor{Suite: m.Suite, SuiteVersion: m.SuiteVersion}
+		for _, c := range m.Cases {
+			a.CaseIDs = append(a.CaseIDs, c.ID)
+		}
+		return a, nil
+	}
+	m, lerr := benchmark.Load(suitePath)
+	if lerr != nil {
+		return suiteAnchor{}, lerr
+	}
+	a := suiteAnchor{Suite: m.Suite, SuiteVersion: m.SuiteVersion}
+	for _, c := range m.Cases {
+		a.CaseIDs = append(a.CaseIDs, c.ID)
+	}
+	return a, nil
+}
+
 // anchorSuiteDenominator ties the run-result's declared denominator to the suite
 // manifest at suitePath, turning checkCoverage's internal-consistency check into the
 // suite-coverage guarantee its doc describes.
@@ -351,7 +397,7 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 // truncation this exists to catch, and an EXTRA id is a denominator inflated past what
 // the suite can support.
 func anchorSuiteDenominator(rr benchmark.RunResult, suitePath, path string) error {
-	m, err := benchmark.Load(suitePath)
+	m, err := loadSuiteAnchor(suitePath)
 	if err != nil {
 		return fmt.Errorf("loading suite %s to anchor %s: %w", suitePath, path, err)
 	}
@@ -392,12 +438,12 @@ func anchorSuiteDenominator(rr benchmark.RunResult, suitePath, path string) erro
 	for _, id := range rr.SuiteCaseIDs {
 		declared[id] = true
 	}
-	manifestIDs := make(map[string]bool, len(m.Cases))
+	manifestIDs := make(map[string]bool, len(m.CaseIDs))
 	var missing []string
-	for _, c := range m.Cases {
-		manifestIDs[c.ID] = true
-		if !declared[c.ID] {
-			missing = append(missing, c.ID)
+	for _, id := range m.CaseIDs {
+		manifestIDs[id] = true
+		if !declared[id] {
+			missing = append(missing, id)
 		}
 	}
 	var extra []string
@@ -413,11 +459,11 @@ func anchorSuiteDenominator(rr benchmark.RunResult, suitePath, path string) erro
 	case len(missing) > 0 && len(extra) > 0:
 		return fmt.Errorf("run-result %s declares a %d-case suite but the suite manifest at %s has %d: "+
 			"missing %s; not in the suite: %s",
-			path, len(declared), suitePath, len(m.Cases), summarizeMissing(missing), summarizeMissing(extra))
+			path, len(declared), suitePath, len(m.CaseIDs), summarizeMissing(missing), summarizeMissing(extra))
 	case len(missing) > 0:
 		return fmt.Errorf("run-result %s declares a %d-case suite but the suite manifest at %s has %d, "+
 			"missing %s; every reviewer row was therefore scored against a shrunken denominator",
-			path, len(declared), suitePath, len(m.Cases), summarizeMissing(missing))
+			path, len(declared), suitePath, len(m.CaseIDs), summarizeMissing(missing))
 	case len(extra) > 0:
 		return fmt.Errorf("run-result %s declares case(s) the suite manifest at %s does not contain: %s",
 			path, suitePath, summarizeMissing(extra))
