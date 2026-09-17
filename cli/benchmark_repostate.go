@@ -482,17 +482,12 @@ func readCaseFindingsLocated(reviewDir string, agents map[string]bool) (located 
 		})
 		categorical[f.Reviewer] = append(categorical[f.Reviewer], f.Category)
 	}
-	// REVIEWER is the engine's last-appended column, so the final field survives an
-	// overflow earlier in the row. parse() strips trailing empty fields before
-	// classifying a row as skipped, so mirror that strip to land on the same one.
-	// An unrecognized reviewer name keys a map entry no agent reads — counted into
-	// unattributed rather than left silent.
+	// See skippedRowReviewer: the recovery lives in ONE place, shared with
+	// readCaseFindings, so the two projections cannot attribute the same skipped
+	// row to different reviewers. An unrecognized reviewer name keys a map entry
+	// no agent reads — counted into unattributed rather than left silent.
 	for _, s := range parsed.Skipped {
-		fields := strings.Split(s.Content, "|")
-		for len(fields) > 1 && fields[len(fields)-1] == "" {
-			fields = fields[:len(fields)-1]
-		}
-		reviewer := fields[len(fields)-1]
+		reviewer := skippedRowReviewer(s.Content)
 		if !agents[reviewer] {
 			unattributed++
 		}

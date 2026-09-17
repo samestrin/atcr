@@ -697,3 +697,31 @@ func TestExecuteRepoStateBenchmarkRun_RefusesANonPrintingRealizedIdentity(t *tes
 	assert.Contains(t, err.Error(), "m-greta\u200d",
 		"the error must name the offending identity so the operator can find the source")
 }
+
+// The skipped-row reviewer recovery was two verbatim copies driving the SAME
+// out-of-vocabulary denominator on two tiers — a fix to one silently diverged
+// the other, and the divergence changes a published metric rather than crashing.
+// One helper now serves both projections; this pins that they still agree.
+func TestSkippedRowReviewer_BothReadersAttributeIdentically(t *testing.T) {
+	dir := t.TempDir()
+	pool := filepath.Join(dir, "sources", "pool")
+	require.NoError(t, os.MkdirAll(pool, 0o755))
+	content := "# atcr-findings/v1\n" +
+		"HIGH|app/calc.py:12|p|f|correctness|15|sol|greta\n" +
+		"HIGH|app/calc.py:13|p|f|correctness|15|sol|overflow|greta\n"
+	require.NoError(t, os.WriteFile(filepath.Join(pool, "findings.txt"), []byte(content), 0o600))
+
+	categorical, err := readCaseFindings(dir)
+	require.NoError(t, err)
+	located, locatedCat, _, err := readCaseFindingsLocated(dir, map[string]bool{"greta": true})
+	require.NoError(t, err)
+
+	// The well-formed row parses for both readers; the over-column row is skipped
+	// by the parser and folded back in with an empty category — under the SAME
+	// recovered reviewer in BOTH projections. The category sequences must be
+	// identical, or the two tiers' out-of-vocabulary denominators have diverged.
+	assert.Equal(t, []string{"correctness", ""}, categorical["greta"])
+	assert.Equal(t, categorical["greta"], locatedCat["greta"],
+		"both projections attribute the skipped row to the same reviewer: the recovery is one helper, not two copies")
+	assert.Len(t, located["greta"], 1, "the located projection carries only the well-formed row")
+}

@@ -920,21 +920,28 @@ func readCaseFindings(reviewDir string) (map[string][]string, error) {
 	// one in with an EMPTY category, which counts as drift by the same rule that
 	// already governs an empty CATEGORY column.
 	//
-	// REVIEWER is the engine's last-appended column, so the final field survives an
-	// overflow earlier in the row. parse() strips trailing empty fields BEFORE
-	// classifying a row as skipped, so that field is non-empty by construction;
-	// mirror the strip here to land on the same one. An unrecognized reviewer name
-	// keys a map entry no agent reads, exactly as an unrecognized REVIEWER on a
-	// well-formed row already does.
+	// See skippedRowReviewer: the recovery lives in ONE place, shared with
+	// readCaseFindingsLocated, so the two projections cannot attribute the same
+	// skipped row to different reviewers.
 	for _, s := range parsed.Skipped {
-		fields := strings.Split(s.Content, "|")
-		for len(fields) > 1 && fields[len(fields)-1] == "" {
-			fields = fields[:len(fields)-1]
-		}
-		reviewer := fields[len(fields)-1]
-		out[reviewer] = append(out[reviewer], "")
+		out[skippedRowReviewer(s.Content)] = append(out[skippedRowReviewer(s.Content)], "")
 	}
 	return out, nil
+}
+
+// skippedRowReviewer recovers the REVIEWER column from a skipped (unparseable)
+// findings row. REVIEWER is the engine's last-appended column, so the final
+// field survives an overflow earlier in the row; parse() strips trailing empty
+// fields BEFORE classifying a row as skipped, so mirror that strip to land on
+// the same one. ONE helper rather than the two verbatim copies this used to be:
+// both projections drive the SAME out-of-vocabulary denominator, and a fix to
+// one copy silently diverged the other — a published-metric change, not a crash.
+func skippedRowReviewer(content string) string {
+	fields := strings.Split(content, "|")
+	for len(fields) > 1 && fields[len(fields)-1] == "" {
+		fields = fields[:len(fields)-1]
+	}
+	return fields[len(fields)-1]
 }
 
 // reviewerModel resolves a reviewer's model id, preferring the usage-reported
