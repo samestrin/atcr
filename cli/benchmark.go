@@ -194,6 +194,7 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 	}
 
 	warnVocabularyDiagnostics(cmd.ErrOrStderr(), rr)
+	warnPositionalRecallSummary(cmd.ErrOrStderr(), rr)
 
 	data, err := json.MarshalIndent(rr, "", "  ")
 	if err != nil {
@@ -604,6 +605,44 @@ func warnIfVocabularyCeilingExceeded(w io.Writer, rate *float64) bool {
 			"which zeroes their recall independently of what they actually detected.\n",
 		*rate, benchmark.MaxOutOfVocabularyRate)
 	return true
+}
+
+// warnPositionalRecallSummary gives the repo-state tier's headline number an
+// operator surface. `benchmark run --output <path>` prints nothing to stdout (the
+// run-result goes to the file), so without this a whole-panel run shows a silent
+// terminal and the operator must open the JSON to learn the run measured
+// anything — the rationale warnVocabularyDiagnostics carries for the vocabulary
+// signals, applied to the one number this tier exists to produce. stderr, like
+// those warnings: stdout stays machine-readable. Non-fatal, deliberately not an
+// exit-code change, and wired at the same single call site so the pairing is
+// testable from a RunResult.
+//
+// A nil recall is UNMEASURED (the case set carries no findings of that half),
+// not zero — named as such rather than printed as 0.0, the same nil-vs-zero
+// distinction every recall pointer in this package carries.
+func warnPositionalRecallSummary(w io.Writer, rr *benchmark.RunResult) {
+	if rr == nil || len(rr.PositionalRecall) == 0 {
+		return // standard-v1 runs carry none: silent, like the in-range vocabulary rate
+	}
+	var msg strings.Builder
+	msg.WriteString("repo-state positional recall:\n")
+	for _, p := range rr.PositionalRecall {
+		model := stripTerminalControlRunes(p.Model)
+		persona := stripTerminalControlRunes(p.Persona)
+		if p.Recall == nil {
+			fmt.Fprintf(&msg, "  %s/%s: recall unmeasured (no expected findings)\n", model, persona)
+		} else {
+			fmt.Fprintf(&msg, "  %s/%s: recall %.2f (%d/%d matched)",
+				model, persona, *p.Recall, p.MatchedTotal, p.ExpectedTotal)
+			if p.OutsideDiffRecall == nil {
+				msg.WriteString("; outside_diff unmeasured (no outside_diff findings)\n")
+			} else {
+				fmt.Fprintf(&msg, "; outside_diff_recall %.2f (%d/%d matched)\n",
+					*p.OutsideDiffRecall, p.MatchedOutsideDiff, p.ExpectedOutsideDiff)
+			}
+		}
+	}
+	_, _ = io.WriteString(w, msg.String())
 }
 
 // validateReviewerVocabulary checks the reviewer_vocabulary diagnostic array on an
