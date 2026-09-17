@@ -50,6 +50,28 @@ func gitOut(t *testing.T, root string, args ...string) string {
 
 // T2's headline: a case becomes a working tree a review RANGE can be computed
 // against. Two commits, not one — a single squashed commit has no base..head.
+// The doc says dest must be an EXISTING EMPTY directory; the function must
+// enforce its own contract. A stray pre-existing file in dest is otherwise swept
+// into the BASE commit by git add -A — silently, with no error — so the base
+// tree, the base..head range and the working tree disagree.
+func TestMaterializeCase_RejectsANonEmptyDest(t *testing.T) {
+	c := materializableCase(t)
+	dest := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dest, "LEFTOVER.txt"), []byte("x"), 0o600))
+
+	_, err := MaterializeCase(context.Background(), c, dest)
+	require.Error(t, err, "a non-empty dest must be refused, not committed")
+	assert.Contains(t, err.Error(), c.ID, "the error names the case")
+	assert.Contains(t, err.Error(), "LEFTOVER.txt", "the error names what was in the way")
+}
+
+func TestMaterializeCase_RejectsAMissingDest(t *testing.T) {
+	c := materializableCase(t)
+	_, err := MaterializeCase(context.Background(), c, filepath.Join(t.TempDir(), "does-not-exist"))
+	require.Error(t, err, "dest must already exist; the caller owns its lifetime")
+	assert.Contains(t, err.Error(), c.ID)
+}
+
 func TestMaterializeCase_ProducesAReviewableRange(t *testing.T) {
 	c := materializableCase(t)
 	mc, err := MaterializeCase(context.Background(), c, t.TempDir())
