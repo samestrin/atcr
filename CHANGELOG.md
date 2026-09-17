@@ -1,3 +1,27 @@
+## [35.22.0] - 2026-09-16
+
+*Epic 35.16.10 — repo-state benchmark tier.*
+
+### Added
+
+- `repo-state-v1`, a second benchmark suite tier whose cases carry **repository state** rather than a bare diff: a pruned base tree, a commit message, and a change applied on top. It exists to host the defect class `standard-v1` cannot — a defect whose root cause sits in a file the diff never touches, which a diff-only case physically cannot contain and no model can win.
+- `atcr benchmark run --suite-path <dir>` now routes on the manifest's `suite` field, so the same invocation runs either tier. A repo-state case is materialized into a real git repository and reviewed over `base..head` through the **range** path — the diff-ingestion path builds no `RangeBuilder`, and both the claim ledger and context-aware pre-fetching live there, so a tier meant to measure those features cannot run without it.
+- **Positional expected-finding matching.** A case locates each planted defect by `file` plus a line range with a per-finding `line_tolerance`, so scoring can tell "found the silent deletion in the reconcile loop" from "raised any correctness nit anywhere in the diff". One report settles at most one expectation, ties resolve to the nearest range midpoint, and exact ties break alphabetically by id.
+- **Out-of-diff recall as a distinct metric**, in the run-result's `reviewer_positional_recall` array alongside overall and within-diff recall. A report citing an added or removed line cannot satisfy an `outside_diff: true` expectation even inside the tolerance window, which is what makes `outside_diff` a measurement rather than a label an author asserts.
+- Four hand-verified cases (`SPOT-CHECK.md`) covering both shapes: a quarantine/reconcile silent deletion, a mock that outlives the contract it stands in for, an incomplete predicate guard, and the existing claim-absent cursor fix. All trees are synthetic — see `benchmarks/repo-state-v1/NOTICE.md`.
+
+### Changed
+
+- `docs/benchmark.md` documents the second tier and no longer states that `benchmarks/repo-state-v1/` is unrunnable, with a bidirectional doc-vs-code drift test pinning the claims it makes.
+
+### Notes
+
+- **`scorecard.PublicRecord` is unchanged and `corroboration_rate` keeps its category-recall meaning on every suite.** The new metric rides the run-result, never the public submission envelope: forking a frozen shared key's meaning by suite would be worse than the gap it closed.
+- **The Epic 14.1 grounding gate stays ON during a repo-state run, deliberately.** An out-of-diff finding survives only when pre-fetching actually retrieved the cited span. That is the measurement — the tier's question is whether pre-fetching lets a genuine out-of-diff finding clear the shipped anti-hallucination gate.
+- **`--checkpoint` is refused on this tier**, not silently ignored. Resumable runs are implemented for the `standard-v1` diff path only.
+
+*Shipped via /execute-epic (epic 35.16.10)*
+
 ## [35.21.0] - 2026-09-14
 
 *Epic 35.16.9 — predicate exhaustiveness persona rule.*
