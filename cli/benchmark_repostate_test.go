@@ -333,6 +333,34 @@ func TestExecuteRepoStateBenchmarkRun_CoverageCarriesTheScrubbedIdentity(t *test
 	assert.Equal(t, rr.Reviewers[0].Persona, rr.Coverage[0].Persona)
 }
 
+// The Expected projection deduped on the RAW category string while every other
+// consumer of the same field normalizes first (Score's normalizeDistinct,
+// validateCategoryEquivalence's normalize) — a case carrying 'Correctness'
+// beside 'correctness' yielded two Expected entries here and one everywhere
+// else. The projection must dedupe by the same rule.
+func TestExecuteRepoStateBenchmarkRun_DedupesExpectedCategoriesCaseInsensitively(t *testing.T) {
+	suite := writeTwoCaseSuite(t)
+	raw, err := os.ReadFile(filepath.Join(suite, "first-case", "case.json"))
+	require.NoError(t, err)
+	patched := strings.Replace(string(raw),
+		`"category": "correctness",`+"\n"+`      "summary": "The commit message claims`,
+		`"category": "Correctness",`+"\n"+`      "summary": "The commit message claims`, 1)
+	require.NotEqual(t, string(raw), patched, "the fixture patch must have matched the second finding's category")
+	require.NoError(t, os.WriteFile(filepath.Join(suite, "first-case", "case.json"), []byte(patched), 0o600))
+
+	rr, err := executeRepoStateBenchmarkRun(context.Background(),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC())
+	require.NoError(t, err)
+	require.NotEmpty(t, rr.Reviewers)
+	// The raw Expected slice is internal; the observable is the recall math. The
+	// stub raises correctness twice per case, so case 1 recalls 1/1 with a
+	// normalized dedupe and 1/2 with a raw-string dedupe (the invented second
+	// entry matches nothing). Across two otherwise-perfect cases that is the
+	// difference between CorroborationRate 1.0 and 0.75.
+	assert.InDelta(t, 1.0, rr.Reviewers[0].CorroborationRate, 1e-9,
+		"two categories differing only by case are ONE expected category everywhere else; a raw-string dedupe invents a second entry that caps recall")
+}
+
 func TestExecuteRepoStateBenchmarkRun_ReportsBothMetrics(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 	gen := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
