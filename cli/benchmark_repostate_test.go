@@ -1,11 +1,15 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/samestrin/atcr/internal/benchmark"
+	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/stretchr/testify/assert"
@@ -119,6 +123,41 @@ func TestBenchmarkRunRouting_DetectsTheSuiteFormat(t *testing.T) {
 	got, err = benchmark.DetectSuiteFormat(suiteValidPath)
 	require.NoError(t, err)
 	assert.NotEqual(t, benchmark.FormatRepoStateV1, got)
+}
+
+// Moving discriminator reading ahead of Load (runBenchmarkRun, cli/benchmark.go)
+// changed the operator-visible error for a suite.json whose suite name is absent
+// or blank: it used to fail in Manifest.Validate with "suite name is required";
+// it now fails in DetectSuiteFormat with "suite manifest <path> declares no suite
+// name", and the old arm is unreachable through `benchmark run`. No test pinned
+// either message on this path, so the change was invisible to the suite. This
+// pins the new wording — and asserts the old one is gone — so the next reorder
+// of these calls surfaces here instead of in front of an operator.
+func TestRunBenchmarkRun_NoSuiteNameErrorIsPinned(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "suite.json"),
+		[]byte(`{"suite":"","suite_version":"1.0.0","cases":[]}`), 0o600))
+
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+	restoreCfg := benchmarkLoadConfig
+	t.Cleanup(func() { benchmarkLoadConfig = restoreCfg })
+	benchmarkLoadConfig = func(string) (*fanout.ReviewConfig, error) { return cfg, nil }
+
+	// Drives the real cobra RunE like execCmdSplit, but keeps the returned error:
+	// the root sets SilenceErrors, so the message reaches the operator through
+	// main()'s print of the returned error, not through the command's stderr.
+	var outBuf, errBuf bytes.Buffer
+	root := NewRootCmd()
+	root.SetArgs([]string{"benchmark", "run", "--suite-path", dir})
+	root.SetOut(&outBuf)
+	root.SetErr(&errBuf)
+	runErr := root.ExecuteContext(context.Background())
+	require.Error(t, runErr, "a suite manifest with no suite name must fail run")
+	combined := outBuf.String() + errBuf.String() + runErr.Error()
+	assert.Contains(t, combined, "declares no suite name",
+		"DetectSuiteFormat's message is the operator-visible one now that discriminator reading precedes Load")
+	assert.NotContains(t, combined, "suite name is required",
+		"the old Manifest.Validate wording is unreachable through benchmark run")
 }
 
 // --checkpoint is a standard-v1 feature. Silently ignoring it on a repo-state run
