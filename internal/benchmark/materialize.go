@@ -98,7 +98,12 @@ func MaterializeCase(ctx context.Context, c RepoStateCase, dest string) (*Materi
 	// apply's default warning is noise on a path that is not reviewing whitespace.
 	// It does NOT relax what applies — a diff that does not apply still fails, which
 	// is the point of the check below.
-	if err := runGit(ctx, dest, "apply", "--whitespace=nowarn", diffPath); err != nil {
+	// `--` before diffPath: the path comes from a case directory, and even though
+	// filepath.Abs currently guarantees a leading separator, `--` is the one
+	// argument that makes a dash-leading operand impossible to mistake for an
+	// option. Defense in depth on the one place a case-controlled string reaches
+	// a git argv position.
+	if err := runGit(ctx, dest, "apply", "--whitespace=nowarn", "--", diffPath); err != nil {
 		// Fail LOUDLY. A diff that silently did not apply leaves the head tree equal
 		// to the base tree, so every reviewer scores zero and the case reads as
 		// extremely hard rather than broken — the precise silent failure this tier
@@ -240,6 +245,9 @@ func gitCmd(ctx context.Context, root string, args ...string) *exec.Cmd {
 // error: "exit status 1" alone tells an author nothing about why their diff did
 // not apply.
 func runGit(ctx context.Context, root string, args ...string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("git: no subcommand given")
+	}
 	out, err := gitCmd(ctx, root, args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(string(out)))
