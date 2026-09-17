@@ -559,6 +559,13 @@ func TestExecuteRepoStateBenchmarkRun_RefusesAStandardV1Suite(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 	_, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, time.Unix(0, 0).UTC())
 	require.Error(t, err)
+	// A missing directory, a JSON syntax error, or a git failure would also
+	// produce SOME error; the assertion must discriminate the MIS-ROUTE backstop
+	// specifically — the repo-state loader rejecting a standard-v1 discriminator.
+	assert.Contains(t, err.Error(), "declares suite",
+		"the error must be the repo-state loader's discriminator rejection, not an unrelated failure")
+	assert.Contains(t, err.Error(), `"fixture-mini"`,
+		"the error names the discriminator the suite actually declares")
 }
 
 // The router is what makes `atcr benchmark run --suite-path <repo-state dir>` work
