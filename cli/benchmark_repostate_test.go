@@ -361,6 +361,27 @@ func TestExecuteRepoStateBenchmarkRun_DedupesExpectedCategoriesCaseInsensitively
 		"two categories differing only by case are ONE expected category everywhere else; a raw-string dedupe invents a second entry that caps recall")
 }
 
+// loadCaseDiffLineMap reads the case's diff with NO size cap: a third-party
+// --suite-path can carry a multi-gigabyte change.diff that OOMs the process at
+// read/parse time. The standard tier caps the same class of input at
+// MaxDiffBytes (ReproHash rejects an oversized diff); this read must be bounded
+// identically.
+func TestExecuteRepoStateBenchmarkRun_RejectsAnOversizedCaseDiff(t *testing.T) {
+	suite := writeTwoCaseSuite(t)
+	big := "diff --git a/big.txt b/big.txt\n" +
+		"--- a/big.txt\n" +
+		"+++ b/big.txt\n" +
+		"@@ -0,0 +1,2 @@\n" +
+		"+" + strings.Repeat("x", 10*1024*1024+1) + "\n"
+	require.NoError(t, os.WriteFile(filepath.Join(suite, "second-case", "change.diff"), []byte(big), 0o600))
+
+	_, err := executeRepoStateBenchmarkRun(context.Background(),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC())
+
+	require.Error(t, err, "a diff beyond the documented byte cap must be rejected before the read, not parsed")
+	assert.Contains(t, err.Error(), "exceeding", "the error names the cap")
+}
+
 func TestExecuteRepoStateBenchmarkRun_ReportsBothMetrics(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 	gen := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
