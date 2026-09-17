@@ -200,8 +200,6 @@ func TestMatchFindings_ReturnsOneRowPerExpectedInCaseOrder(t *testing.T) {
 	assert.False(t, got[0].Matched)
 	assert.Equal(t, "second", got[1].Expected.ID)
 	assert.True(t, got[1].Matched)
-	assert.Equal(t, 0, got[1].ReportedIndex, "the matching report is identified, not just counted")
-	assert.Equal(t, -1, got[0].ReportedIndex, "an unmatched expectation names no report")
 }
 
 // A non-positive reported line carries no position, so it cannot settle a

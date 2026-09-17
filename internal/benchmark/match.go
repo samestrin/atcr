@@ -21,11 +21,6 @@ type ReportedFinding struct {
 type FindingMatch struct {
 	Expected ExpectedFinding
 	Matched  bool
-	// ReportedIndex identifies WHICH report settled it, as an index into the
-	// reported slice, or -1 when nothing did. Naming the report rather than
-	// counting matches is what lets a spot-check confirm a hit was earned by the
-	// citation an author expected.
-	ReportedIndex int
 }
 
 // candidate is one legal (report, expectation) pairing, carrying the two sort keys
@@ -73,7 +68,7 @@ func MatchFindings(expected []ExpectedFinding, reported []ReportedFinding, lm Di
 	}
 	out := make([]FindingMatch, len(expected))
 	for i, e := range expected {
-		out[i] = FindingMatch{Expected: e, ReportedIndex: -1}
+		out[i] = FindingMatch{Expected: e}
 	}
 
 	// Enumerate every LEGAL pairing first, then assign. A greedy single pass over
@@ -143,7 +138,6 @@ func MatchFindings(expected []ExpectedFinding, reported []ReportedFinding, lm Di
 			continue
 		}
 		out[c.expIdx].Matched = true
-		out[c.expIdx].ReportedIndex = c.repIdx
 		usedReport[c.repIdx] = true
 	}
 	return out

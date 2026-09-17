@@ -13,14 +13,9 @@ import (
 // so these tests exercise the FOLD and not the matcher.
 func match(id string, outside, matched bool) FindingMatch {
 	o := outside
-	idx := -1
-	if matched {
-		idx = 0
-	}
 	return FindingMatch{
-		Expected:      ExpectedFinding{ID: id, OutsideDiff: &o, Category: "correctness"},
-		Matched:       matched,
-		ReportedIndex: idx,
+		Expected: ExpectedFinding{ID: id, OutsideDiff: &o, Category: "correctness"},
+		Matched:  matched,
 	}
 }
 
