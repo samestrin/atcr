@@ -194,10 +194,18 @@ func readOutsideHunk(line string, headPath, basePath *string, baseLine, headLine
 		*headPath, *basePath = "", ""
 
 	case strings.HasPrefix(line, "--- "):
-		*basePath = stripDiffPathPrefix(strings.TrimPrefix(line, "--- "))
+		path, perr := stripDiffPathPrefix(strings.TrimPrefix(line, "--- "))
+		if perr != nil {
+			return perr
+		}
+		*basePath = path
 
 	case strings.HasPrefix(line, "+++ "):
-		*headPath = stripDiffPathPrefix(strings.TrimPrefix(line, "+++ "))
+		path, perr := stripDiffPathPrefix(strings.TrimPrefix(line, "+++ "))
+		if perr != nil {
+			return perr
+		}
+		*headPath = path
 
 	case strings.HasPrefix(line, "@@"):
 		if *basePath == "" && *headPath == "" {
@@ -298,18 +306,31 @@ func parseHunkRange(spec string) (start, count int, err error) {
 // stripDiffPathPrefix removes the `a/` or `b/` prefix git writes by default and
 // normalizes the /dev/null sentinel to the empty string. Trailing tab-separated
 // metadata (timestamps, which some diff producers append) is dropped too.
-func stripDiffPathPrefix(p string) string {
+//
+// A path git C-quoted (core.quotePath, on by default, for any path containing
+// non-ASCII bytes) is unquoted first: git writes `--- "a/pkg/e-acute.py"` with
+// the quotes and octal escapes intact, and a map keyed under that spelling would
+// never match the real path a reviewer cites. A quoted path that does not
+// unquote is an error rather than a silently mis-keyed map.
+func stripDiffPathPrefix(p string) (string, error) {
 	if i := strings.IndexByte(p, '\t'); i >= 0 {
 		p = p[:i]
 	}
 	p = strings.TrimSpace(p)
 	if p == "/dev/null" {
-		return ""
+		return "", nil
+	}
+	if strings.HasPrefix(p, `"`) {
+		unquoted, err := strconv.Unquote(p)
+		if err != nil {
+			return "", fmt.Errorf("diff path %q is C-quoted but does not unquote: %w", p, err)
+		}
+		p = unquoted
 	}
 	if strings.HasPrefix(p, "a/") || strings.HasPrefix(p, "b/") {
-		return p[2:]
+		return p[2:], nil
 	}
-	return p
+	return p, nil
 }
 
 // headFileKey / baseFileKey pick the name a line belongs under. A created file has
