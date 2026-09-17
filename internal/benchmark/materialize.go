@@ -81,7 +81,7 @@ func MaterializeCase(ctx context.Context, c RepoStateCase, dest string) (*Materi
 	if err := runGit(ctx, dest, "init", "-q"); err != nil {
 		return nil, fmt.Errorf("case %q: %w", c.ID, err)
 	}
-	baseSHA, err := commitAll(ctx, dest, []string{"-m", "base"})
+	baseSHA, err := commitAll(ctx, dest, files, []string{"-m", "base"})
 	if err != nil {
 		return nil, fmt.Errorf("case %q base commit: %w", c.ID, err)
 	}
@@ -121,7 +121,7 @@ func MaterializeCase(ctx context.Context, c RepoStateCase, dest string) (*Materi
 	if err != nil {
 		return nil, fmt.Errorf("case %q: resolving %s: %w", c.ID, c.CommitMessage, err)
 	}
-	headSHA, err := commitAll(ctx, dest, []string{"-F", msgPath, "--cleanup=verbatim"})
+	headSHA, err := commitAll(ctx, dest, -1, []string{"-F", msgPath, "--cleanup=verbatim"})
 	if err != nil {
 		return nil, fmt.Errorf("case %q head commit: %w", c.ID, err)
 	}
@@ -268,9 +268,34 @@ func copyRegularFile(d fs.DirEntry, src, dst string) error {
 // written into .git/config: gitexec neutralizes system and global config, so there
 // is no ambient identity to inherit, and a per-repo config write would be one more
 // thing for a future materialization to forget.
-func commitAll(ctx context.Context, root string, commitArgs []string) (string, error) {
-	if err := runGit(ctx, root, "add", "-A"); err != nil {
+//
+// The add pins core.excludesFile and core.attributesFile to /dev/null: git's
+// default excludes file ($XDG_CONFIG_HOME/git/ignore) is read independently of
+// any config GIT_CONFIG_GLOBAL=/dev/null might neutralize, so without the pin a
+// host's personal ignore file silently drops matching base-tree files from the
+// commit — making the tree, the range and both SHAs host-dependent. With the pin
+// in place, expectedFiles (>= 0) asserts the staged set is exactly what
+// copyBaseTree placed: a mismatch means something ELSE filtered the add, and the
+// error names the case. A negative expectedFiles skips the assertion — the head
+// commit's staged set is the applied diff's business, which the apply and range
+// tests cover.
+func commitAll(ctx context.Context, root string, expectedFiles int, commitArgs []string) (string, error) {
+	if err := runGit(ctx, root, "-c", "core.excludesFile=/dev/null", "-c", "core.attributesFile=/dev/null", "add", "-A"); err != nil {
 		return "", err
+	}
+	if expectedFiles >= 0 {
+		staged, err := gitCmd(ctx, root, "diff", "--cached", "--name-only").Output()
+		if err != nil {
+			return "", fmt.Errorf("listing staged files: %w", err)
+		}
+		out := string(staged)
+		count := strings.Count(out, "\n")
+		if out != "" && !strings.HasSuffix(out, "\n") {
+			count++
+		}
+		if count != expectedFiles {
+			return "", fmt.Errorf("staged %d file(s) but the base tree copied %d; something filtered the add (host ignore/attribute state?)", count, expectedFiles)
+		}
 	}
 	args := append([]string{
 		"-c", "user.name=" + benchmarkCommitName,
