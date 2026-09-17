@@ -187,7 +187,7 @@ func TestExecuteRepoStateBenchmarkRun_RefusesTwoLanesSharingOneIdentity(t *testi
 	require.Error(t, err, "two lanes sharing one realized identity must fail closed, not double the score")
 	assert.Contains(t, err.Error(), "scored twice")
 	assert.Contains(t, err.Error(), "lane-a", "the diagnostic names both colliding agents")
-	assert.Contains(t, err.Error(), "lane-b")
+	assert.Contains(t, err.Error(), "x@corp/claude", "the second pre-scrub identity is named too")
 }
 
 // usageLocatedCompleter raises the standard located findings while REPORTING
@@ -275,6 +275,40 @@ func TestExecuteRepoStateBenchmarkRun_CoverageJoinsReviewersByPosition(t *testin
 			"coverage[%d] must describe reviewers[%d]: the positional join is documented", i, i)
 		assert.Equal(t, rr.Reviewers[i].Persona, rr.Coverage[i].Persona)
 	}
+}
+
+// scorecard's scrub is NOT injective: it deletes path-, home- and credential-
+// shaped tokens, so two DISTINCT raw identities can fold into one public one.
+// This runner folds per RAW key, so both identities emit their own Reviewers row
+// carrying the same public identity — which checkCoverage then rejects as a
+// hand-assembled file AFTER the whole panel was paid for, with a diagnostic that
+// cannot see the raw strings. The producer must name both pre-scrub identities.
+func TestExecuteRepoStateBenchmarkRun_RefusesDistinctIdentitiesScrubbingToOne(t *testing.T) {
+	// Both models are credential-shaped: the scrub deletes the whole token, so two
+	// DISTINCT raw models fold into the same (empty) public model beside the
+	// shared persona.
+	personaDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(personaDir, "shared.md"), []byte("shared persona prompt\n"), 0o600))
+	cfg := &fanout.ReviewConfig{
+		Registry: &registry.Registry{
+			Providers: map[string]registry.Provider{"p": {APIKeyEnv: "ATCR_TEST_KEY", BaseURL: "http://unused"}},
+			Agents: map[string]registry.AgentConfig{
+				"lane-a": {Provider: "p", Model: "bedrock@us-east-1/claude", Persona: "shared", Temperature: ptrF(0.7)},
+				"lane-b": {Provider: "p", Model: "x@corp/claude", Persona: "shared", Temperature: ptrF(0.7)},
+			},
+		},
+		Project:     &registry.ProjectConfig{Agents: []string{"lane-a", "lane-b"}},
+		Settings:    registry.Settings{PayloadMode: "diff", TimeoutSecs: 600},
+		PersonaDirs: registry.PersonaDirs{Project: personaDir},
+	}
+
+	_, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{},
+		repoStateMiniPath, time.Unix(0, 0).UTC())
+
+	require.Error(t, err, "two identities scrubbing to one public identity must fail at the producer, not at export after the panel was paid")
+	assert.Contains(t, err.Error(), "scrub to the same public identity")
+	assert.Contains(t, err.Error(), "bedrock@us-east-1/claude", "the error names BOTH pre-scrub identities; the post-scrub value identifies nothing the operator can edit")
+	assert.Contains(t, err.Error(), "x@corp/claude", "the second pre-scrub identity is named too")
 }
 
 func TestExecuteRepoStateBenchmarkRun_ReportsBothMetrics(t *testing.T) {
