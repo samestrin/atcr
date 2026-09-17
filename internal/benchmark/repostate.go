@@ -282,6 +282,11 @@ func (c *RepoStateCase) Validate() error {
 	if err := validCaseToken("id", id); err != nil {
 		return err
 	}
+	// The trimmed spelling is what every downstream comparison uses, so it is what
+	// the struct carries: leaving c.ID untrimmed let the exported Validate accept
+	// an id with surrounding whitespace for a directory without one, and only
+	// LoadRepoState's separate manifest comparison caught it.
+	c.ID = id
 	// FORMAT.md: the id must equal the case directory name. Enforced here rather
 	// than left to convention because the id is what a run-result files a score
 	// under, and a case whose directory says one thing and whose manifest says
@@ -464,7 +469,19 @@ func (c *RepoStateCase) checkFiles() error {
 // '-' only. Case ids reach a PUBLISHED document through suite_case_ids, where the
 // publication scrub rejects anything it would rewrite; restricting the charset at
 // authoring time is what keeps that rejection from arriving after a paid run.
+//
+// A leading or trailing dash and an over-long id are refused as well: the id names
+// the case directory, so "-case" and a 100-character id are formats no usable
+// directory name satisfies, and accepting them defers the failure to materialize.
+const maxCaseIDLen = 64
+
 func validCaseToken(field, v string) error {
+	if v == "" || v[0] == '-' || v[len(v)-1] == '-' {
+		return fmt.Errorf("%s %q must start and end with a lowercase letter or digit (ids use lowercase letters, digits and '-' only)", field, v)
+	}
+	if len(v) > maxCaseIDLen {
+		return fmt.Errorf("%s is %d characters; an id may be at most %d (ids use lowercase letters, digits and '-' only)", field, len(v), maxCaseIDLen)
+	}
 	for _, r := range v {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
 			continue
