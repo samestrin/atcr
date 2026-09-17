@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -293,10 +294,16 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		// construction, and the operator would learn so only after paying for a full
 		// panel.
 		coverage = append(coverage, benchmark.ReviewerCoverage{
-			Model:         pub.model,
-			Persona:       pub.persona,
-			CaseIDs:       acc[k].caseIDs,
-			Outcomes:      acc[k].outcomes,
+			Model:   pub.model,
+			Persona: pub.persona,
+			// COPIED, not aliased — buildRunResult carries an explicit comment for
+			// exactly this: the returned artifact must not change if a caller keeps
+			// folding into the accumulator afterwards. The acc here is
+			// function-local today, so the copy is defense against a future reader
+			// rather than a live bug; carrying it keeps the two runners' emit tails
+			// interchangeable without re-deriving that fact.
+			CaseIDs:       append([]string(nil), acc[k].caseIDs...),
+			Outcomes:      maps.Clone(acc[k].outcomes),
 			FallbackCases: acc[k].fallbackCases,
 		})
 	}
