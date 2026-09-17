@@ -386,8 +386,8 @@ func TestExecuteRepoStateBenchmarkRun_RejectsAnOversizedCaseDiff(t *testing.T) {
 // publishable suite is. That holds only while the arm TABLE is one function:
 // both validators must produce byte-identical messages for the same bad name.
 func TestValidatePublishableCaseIDs_BothTiersShareTheIdentityArms(t *testing.T) {
-	std := &benchmark.Manifest{Suite: "atcr/suite", SuiteVersion: "1.0.0"}
-	repo := &benchmark.RepoStateManifest{Suite: "atcr/suite", SuiteVersion: "1.0.0"}
+	std := &benchmark.Manifest{Suite: "bedrock@us-east-1/claude", SuiteVersion: "1.0.0"}
+	repo := &benchmark.RepoStateManifest{Suite: "bedrock@us-east-1/claude", SuiteVersion: "1.0.0"}
 
 	errStd := validateSuitePublishableCaseIDs(std, "/suite")
 	errRepo := validateRepoStatePublishableCaseIDs(repo, "/suite")
