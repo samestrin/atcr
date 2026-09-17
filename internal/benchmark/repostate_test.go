@@ -329,3 +329,21 @@ func mustDetect(t *testing.T, dir string) string {
 	require.NoError(t, err)
 	return got
 }
+
+// LoadRepoState's own doc promises "every filesystem precondition is checked at
+// load". A diff ParseDiffLineMap rejects — a body line outside any hunk, an
+// unparseable header, a negative range — used to escape that contract: the parse
+// happened per-case inside the run loop, AFTER every earlier case's panel had
+// been paid for, so one malformed diff aborted the run and discarded the
+// completed cases. The loader must reject it at load, where the remedy is free.
+func TestLoadRepoState_RejectsAMalformedDiff(t *testing.T) {
+	dir := writeRepoStateSuite(t, validCaseJSON)
+	malformed := "diff --git a/pkg/example.py b/pkg/example.py\n" +
+		"--- a/pkg/example.py\n+++ b/pkg/example.py\n" +
+		"@@ -1,2 +1,2 @@\n-x = 1\n+ctx\nbody line outside any hunk\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "good-case", "change.diff"), []byte(malformed), 0o600))
+
+	_, err := LoadRepoState(dir)
+	require.Error(t, err, "a diff ParseDiffLineMap rejects must be a LOAD error, not a mid-run abort")
+	assert.Contains(t, err.Error(), "good-case", "the error must name the broken case")
+}
