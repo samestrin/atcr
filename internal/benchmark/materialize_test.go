@@ -145,6 +145,23 @@ func TestMaterializeCase_RejectsASymlinkedBaseTreeRoot(t *testing.T) {
 	assert.NotContains(t, err.Error(), "empty")
 }
 
+// copyBaseTree ignores the context it is transitively given, so a cancelled run
+// still copies the ENTIRE base tree — bounded only by RAM and disk — before the
+// failure finally surfaces at git init. A cancelled context must abort the copy
+// itself, leaving dest untouched.
+func TestMaterializeCase_ACanceledContextAbortsBeforeCopying(t *testing.T) {
+	c := materializableCase(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	dest := t.TempDir()
+
+	_, err := MaterializeCase(ctx, c, dest)
+	require.Error(t, err)
+	entries, rdErr := os.ReadDir(dest)
+	require.NoError(t, rdErr)
+	assert.Empty(t, entries, "a cancelled context must abort the copy, not materialize the tree anyway")
+}
+
 func TestMaterializeCase_ProducesAReviewableRange(t *testing.T) {
 	c := materializableCase(t)
 	mc, err := MaterializeCase(context.Background(), c, t.TempDir())
