@@ -1,0 +1,24 @@
+diff --git a/router/dispatch.py b/router/dispatch.py
+index b718e97..a875ef2 100644
+--- a/router/dispatch.py
++++ b/router/dispatch.py
+@@ -10,11 +10,17 @@ HANDLERS = {
+ }
+ 
+ 
++class UnknownKind(Exception):
++    """Raised when an event names a kind the router does not serve."""
++
++
+ def dispatch(event):
+     """Route event to the handler for its kind.
+ 
+-    Every member of KINDS has an entry in HANDLERS, so a well-formed event
+-    always resolves.
++    An unrecognised kind is rejected up front, so a malformed event names
++    itself instead of surfacing as a bare KeyError.
+     """
+     kind = event["kind"]
++    if kind not in ("email", "sms", "push"):
++        raise UnknownKind(kind)
+     return HANDLERS[kind]

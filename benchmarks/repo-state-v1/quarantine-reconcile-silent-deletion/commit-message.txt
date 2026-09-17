@@ -1,0 +1,11 @@
+fix(store): quarantine a corrupt pending store instead of crashing
+
+The morning job died whenever pending_today.json was truncated by a bad
+shutdown. An operator then had to hand-repair the file before any escalation
+could be processed at all.
+
+- a corrupt store is renamed aside to pending_today.json.corrupt for inspection
+- read_pending() returns an empty list instead of raising CorruptStore
+- the morning job now survives a damaged store and processes what it can
+
+Signed-off-by: A Dev <dev@example.com>
