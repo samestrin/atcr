@@ -121,6 +121,12 @@ func TestLoadRepoState_RejectsBadCases(t *testing.T) {
 		{"empty summary",
 			`{"id":"good-case","format":"repo-state-v1","base_tree":"base","commit_message":"commit-message.txt","diff":"change.diff","expected_findings":[{"id":"a","file":"pkg/example.py","line_start":1,"line_end":1,"outside_diff":false,"category":"correctness","summary":"  "}]}`,
 			"summary"},
+		// The id charset ties the authoring-time contract to the publication scrub:
+		// an id the scrub would rewrite must be refused at load, not after a paid
+		// run (validCaseToken's rejection arm was uncovered).
+		{"id outside the case charset",
+			`{"id":"Good_Case","format":"repo-state-v1","base_tree":"base","commit_message":"commit-message.txt","diff":"change.diff","expected_findings":[{"id":"a","file":"pkg/example.py","line_start":1,"line_end":1,"outside_diff":false,"category":"correctness","summary":"s"}]}`,
+			"lowercase letters, digits"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -159,13 +165,6 @@ func TestLoadRepoState_RejectsPathEscape(t *testing.T) {
 
 // expected_findings[].file is the deliberate exception to the case-relative rule:
 // it is repository-relative in the HEAD state. It still must not escape.
-func TestLoadRepoState_RejectsEscapingFindingFile(t *testing.T) {
-	body := `{"id":"good-case","format":"repo-state-v1","base_tree":"base","commit_message":"commit-message.txt","diff":"change.diff","expected_findings":[{"id":"a","file":"../../../etc/passwd","line_start":1,"line_end":1,"outside_diff":false,"category":"correctness","summary":"s"}]}`
-	_, err := LoadRepoState(writeRepoStateSuite(t, body))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "file")
-}
-
 // FORMAT.md: base/ must not contain a .git directory — the loader creates the
 // repository, the case supplies only the working tree. A vendored .git would make
 // materialization depend on whatever history the author happened to copy in.
@@ -267,6 +266,19 @@ func TestLoadRepoState_RejectsSuiteLevelDefects(t *testing.T) {
 		{"escaping case dir",
 			`{"suite":"repo-state-v1","suite_version":"1.0.0","cases":[{"id":"good-case","dir":"../good-case"}]}`,
 			"within the suite directory"},
+		// The three guards below were written but never covered: a duplicate id
+		// makes a run-result carry two scores under one name, a blank id/dir fails
+		// the manifest before any case loads, and the id charset is what keeps the
+		// publication scrub from rejecting a finished run (see validCaseToken).
+		{"duplicate case id",
+			`{"suite":"repo-state-v1","suite_version":"1.0.0","cases":[{"id":"good-case","dir":"good-case"},{"id":"good-case","dir":"good-case"}]}`,
+			"duplicate id"},
+		{"blank case id",
+			`{"suite":"repo-state-v1","suite_version":"1.0.0","cases":[{"id":"  ","dir":"good-case"}]}`,
+			"id is required"},
+		{"blank case dir",
+			`{"suite":"repo-state-v1","suite_version":"1.0.0","cases":[{"id":"good-case","dir":"   "}]}`,
+			"dir is required"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -369,4 +381,65 @@ func TestLoadRepoState_LstatFailureOnCaseDirIsNotSwallowed(t *testing.T) {
 	require.Error(t, err, "a case dir whose Lstat fails must error, not silently skip the symlink check")
 	assert.Contains(t, err.Error(), "checking case directory",
 		"the error must come from the directory check itself, not from a downstream read whose failure would be mistaken for a missing case.json")
+}
+
+// checkFiles' non-base-tree arms were uncovered: only the missing base tree was
+// tested. A case shipped without its diff or commit message is at least as likely
+// an authoring mistake, and the error must name the case id and the field.
+func TestLoadRepoState_RejectsBrokenCaseFiles(t *testing.T) {
+	t.Run("missing diff", func(t *testing.T) {
+		dir := writeRepoStateSuite(t, validCaseJSON)
+		require.NoError(t, os.Remove(filepath.Join(dir, "good-case", "change.diff")))
+		_, err := LoadRepoState(dir)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "good-case")
+		assert.Contains(t, err.Error(), "diff")
+	})
+	t.Run("missing commit message", func(t *testing.T) {
+		dir := writeRepoStateSuite(t, validCaseJSON)
+		require.NoError(t, os.Remove(filepath.Join(dir, "good-case", "commit-message.txt")))
+		_, err := LoadRepoState(dir)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "good-case")
+		assert.Contains(t, err.Error(), "commit message")
+	})
+	t.Run("base tree is a regular file", func(t *testing.T) {
+		dir := writeRepoStateSuite(t, validCaseJSON)
+		require.NoError(t, os.RemoveAll(filepath.Join(dir, "good-case", "base")))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "good-case", "base"), []byte("not a directory"), 0o600))
+		_, err := LoadRepoState(dir)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "good-case")
+		assert.Contains(t, err.Error(), "not a directory")
+	})
+	t.Run("diff is a directory", func(t *testing.T) {
+		dir := writeRepoStateSuite(t, validCaseJSON)
+		require.NoError(t, os.Remove(filepath.Join(dir, "good-case", "change.diff")))
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "good-case", "change.diff"), 0o755))
+		_, err := LoadRepoState(dir)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not a regular file")
+	})
+}
+
+// expected_findings[].file is checked against the POSIX rule — the only guard on
+// that field, since the finding file is never Lstat'd. Every refusal shape needs
+// its own row: an escaping relative path, an absolute path, a bare dot and a
+// dot-slash form each reach a different arm of isSafeRelPOSIXPath, and the old
+// single-path test asserted only the substring "file", which an unrelated
+// "reading case manifest: no such file" failure would also satisfy.
+func TestLoadRepoState_RejectsEscapingFindingFile(t *testing.T) {
+	for _, tc := range []struct{ name, file string }{
+		{"relative escape", "../../../etc/passwd"},
+		{"absolute path", "/etc/passwd"},
+		{"bare dot", "."},
+		{"dot-slash", "./"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `{"id":"good-case","format":"repo-state-v1","base_tree":"base","commit_message":"commit-message.txt","diff":"change.diff","expected_findings":[{"id":"a","file":"` + tc.file + `","line_start":1,"line_end":1,"outside_diff":false,"category":"correctness","summary":"s"}]}`
+			_, err := LoadRepoState(writeRepoStateSuite(t, body))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "must be a relative repository path")
+		})
+	}
 }
