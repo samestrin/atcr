@@ -199,6 +199,11 @@ func LoadRepoState(suitePath string) (*RepoStateManifest, error) {
 				manifestPath, id, ref.Dir)
 		}
 		caseDir := filepath.Join(suitePath, ref.Dir)
+		// The parent chain first: a multi-segment `dir` escapes through an
+		// intermediate link without the final component ever being one.
+		if perr := checkNoSymlinkParents(suitePath, ref.Dir, "case directory"); perr != nil {
+			return nil, fmt.Errorf("invalid suite manifest %s: case %q: %w", manifestPath, id, perr)
+		}
 		// Lstat the case directory for the same reason checkFiles Lstats the base
 		// tree: the string check above proves `dir` does not SAY it escapes, and says
 		// nothing about whether the directory on disk is a symlink pointing out of
@@ -432,6 +437,9 @@ func validateExpectedFinding(i int, f ExpectedFinding, seen map[string]bool) err
 // resolved path an author has to go look at.
 func (c *RepoStateCase) checkFiles() error {
 	baseDir := filepath.Join(c.Dir, c.BaseTree)
+	if err := checkNoSymlinkParents(c.Dir, c.BaseTree, "base tree"); err != nil {
+		return fmt.Errorf("case %q: %w", c.ID, err)
+	}
 	// Lstat, not Stat. The declared-path guard in Validate proves the STRING does
 	// not escape; it cannot see that "base" is a symlink to somewhere else. Stat
 	// follows the link and reports a perfectly ordinary directory, so the case would
@@ -460,6 +468,9 @@ func (c *RepoStateCase) checkFiles() error {
 		{"commit message", c.CommitMessage},
 		{"diff", c.Diff},
 	} {
+		if err := checkNoSymlinkParents(c.Dir, f.rel, f.field+" file"); err != nil {
+			return fmt.Errorf("case %q: %w", c.ID, err)
+		}
 		p := filepath.Join(c.Dir, f.rel)
 		fi, err := os.Lstat(p)
 		if err != nil {
@@ -467,6 +478,42 @@ func (c *RepoStateCase) checkFiles() error {
 		}
 		if !fi.Mode().IsRegular() {
 			return fmt.Errorf("case %q %s file %q is not a regular file", c.ID, f.field, f.rel)
+		}
+	}
+	return nil
+}
+
+// checkNoSymlinkParents refuses a relative path whose PARENT chain under root
+// contains a symlink. Its callers each Lstat the FINAL component themselves; this
+// closes the components in between, which os.Lstat silently follows.
+//
+// That gap is the whole escape: `base_tree: "nested/base"` where `nested` links
+// out of the case directory passes isSafeRelPath (the string carries no ..) and
+// passes the final-component Lstat (`base` really is a directory), and
+// copyBaseTree then walks host content into the materialized repository. That
+// repository is what fanout.PrepareReview ships to external LLM providers, so the
+// hole is an exfiltration primitive rather than a hygiene gap — which is why this
+// is a component-by-component walk and not a one-shot check.
+//
+// A Lstat error is RETURNED for the same reason the callers return theirs: a check
+// that could not run must not read as a check that passed.
+func checkNoSymlinkParents(root, rel, what string) error {
+	segs := strings.Split(filepath.ToSlash(rel), "/")
+	cur := root
+	// len(segs)-1: the final component belongs to the caller's own check, which
+	// owns the wording the suite's existing diagnostics are written against.
+	for _, seg := range segs[:len(segs)-1] {
+		if seg == "" || seg == "." {
+			continue
+		}
+		cur = filepath.Join(cur, seg)
+		fi, err := os.Lstat(cur)
+		if err != nil {
+			return fmt.Errorf("checking %s %q for a symlinked path component: %w", what, rel, err)
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%s %q traverses %q, which is a symlink; a case must not reference a path outside its own directory",
+				what, rel, seg)
 		}
 	}
 	return nil
