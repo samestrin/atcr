@@ -363,6 +363,11 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 	if err := validateReviewerVocabulary(cmd.ErrOrStderr(), rr, in); err != nil {
 		return err
 	}
+	// The same gate, one array over. Wired directly beside its twin so the two
+	// cannot drift on when they run.
+	if err := validateReviewerPositionalRecall(cmd.ErrOrStderr(), rr, in); err != nil {
+		return err
+	}
 
 	// Same seam as the reviewer-identity check above, one field over. As of
 	// submission_schema 2 the case ids are PUBLISHED, and BuildSubmission scrubs them
@@ -742,6 +747,103 @@ const vocabularyRateTolerance = 5e-3
 // only so a difference that is mathematically equal to the tolerance is not rejected for
 // being a few ULP above it after the subtraction.
 const vocabularyRateEpsilon = 1e-9
+
+// validateReviewerPositionalRecall is validateReviewerVocabulary for the positional
+// array, applying the same rules to the same shape for the same reason.
+//
+// The asymmetry it closes: reviewer_vocabulary gets seven arithmetic arms and two
+// alignment warnings on the stated grounds that a run-result is untrusted
+// hand-supplied input, and out_of_vocabulary_rate gets a hard range check — while
+// reviewer_positional_recall, structurally identical (counts beside an optional
+// rate, joined positionally to rr.Reviewers), got nothing. A file carrying
+// matched_total 99 against expected_total 1, recall 42.0 and outside_diff_recall
+// -3.0 exported with exit 0 and no warning.
+//
+// "AC5 holds because BuildSubmission never copies the field" is not a reason to
+// skip it: that is equally true of reviewer_vocabulary, which is validated anyway.
+// The run-result is a published artifact in its own right.
+//
+// Counts and rates FAIL; the positional join only WARNS — the same split the
+// vocabulary validator makes, and for the same reason: an impossible number
+// describes no run, whereas a misaligned array is unreadable but harmless on a path
+// no consumer reads.
+func validateReviewerPositionalRecall(w io.Writer, rr benchmark.RunResult, path string) error {
+	if len(rr.PositionalRecall) == 0 {
+		return nil
+	}
+	for i, p := range rr.PositionalRecall {
+		// The three (expected, matched, rate) triples are checked by one loop rather
+		// than three copies: the total and its two halves obey identical rules, and
+		// spelling them out three times is how one of them ends up with a weaker gate.
+		for _, part := range []struct {
+			field             string
+			expected, matched int
+			rate              *float64
+		}{
+			{"expected_total/matched_total", p.ExpectedTotal, p.MatchedTotal, p.Recall},
+			{"expected_outside_diff/matched_outside_diff", p.ExpectedOutsideDiff, p.MatchedOutsideDiff, p.OutsideDiffRecall},
+			{"expected_within_diff/matched_within_diff", p.ExpectedWithinDiff, p.MatchedWithinDiff, p.WithinDiffRecall},
+		} {
+			if part.expected < 0 || part.matched < 0 {
+				return fmt.Errorf("run-result %s has reviewer_positional_recall[%d] with negative %s (%d/%d)",
+					path, i, part.field, part.expected, part.matched)
+			}
+			if part.matched > part.expected {
+				return fmt.Errorf("run-result %s has reviewer_positional_recall[%d] with matched %d exceeding expected %d (%s) — "+
+					"a numerator larger than its own denominator describes no run", path, i, part.matched, part.expected, part.field)
+			}
+			if part.rate == nil {
+				// nil is UNMEASURED (this reviewer's suite planted no such finding),
+				// never a defect — the nil-vs-zero distinction the pointer carries.
+				continue
+			}
+			// A rate on a ZERO denominator is that distinction collapsed. ScorePositional
+			// leaves the pointer nil when nothing was expected, so a value here publishes
+			// an unmeasured half as measured — and on THIS array that is the headline
+			// out-of-diff number.
+			if part.expected == 0 {
+				return fmt.Errorf("run-result %s has reviewer_positional_recall[%d] with a rate of %v for %s but expected nothing; "+
+					"an unmeasured half carries no rate at all, so this row describes no run", path, i, *part.rate, part.field)
+			}
+			// Range-checked before the quotient comparison, for the reason the vocabulary
+			// validator states: NaN compares false against the tolerance too, so this arm
+			// is what rejects it.
+			if r := *part.rate; math.IsNaN(r) || r < 0 || r > 1 {
+				return fmt.Errorf("run-result %s has reviewer_positional_recall[%d] rate %v for %s outside [0,1]", path, i, r, part.field)
+			}
+			// Same tolerance and same inclusive-bound epsilon as the vocabulary rate: the
+			// bound exists to admit an honestly-rounded hand-authored value while
+			// rejecting a rate that contradicts its own counts.
+			if want := float64(part.matched) / float64(part.expected); math.Abs(*part.rate-want)-vocabularyRateTolerance > vocabularyRateEpsilon {
+				return fmt.Errorf("run-result %s has reviewer_positional_recall[%d] rate %v for %s that does not match its own "+
+					"counts (%d/%d = %v)", path, i, *part.rate, part.field, part.matched, part.expected, want)
+			}
+		}
+	}
+
+	if len(rr.PositionalRecall) != len(rr.Reviewers) {
+		_, _ = fmt.Fprintf(w, "warning: run-result %s has %d reviewer_positional_recall row(s) against %d reviewer(s); "+
+			"the array documents a positional join (entry i describes reviewers[i]) that this file cannot satisfy. "+
+			"Publishing anyway — no consumer reads it on this path.\n", path, len(rr.PositionalRecall), len(rr.Reviewers))
+		return nil
+	}
+	for i, p := range rr.PositionalRecall {
+		if p.Model != rr.Reviewers[i].Model || p.Persona != rr.Reviewers[i].Persona {
+			// %q, NOT stripTerminalControlRunes — see the identical warning in
+			// validateReviewerVocabulary: this reports a COMPARISON, and stripping
+			// sanitizes by deletion, so two identities differing only by a control rune
+			// would print as the same text.
+			_, _ = fmt.Fprintf(w, "warning: run-result %s has reviewer_positional_recall[%d] (%q/%q) misaligned with "+
+				"reviewers[%d] (%q/%q); the documented positional join does not hold. Publishing anyway — "+
+				"no consumer reads it on this path.\n",
+				path, i,
+				p.Model, p.Persona, i,
+				rr.Reviewers[i].Model, rr.Reviewers[i].Persona)
+			return nil
+		}
+	}
+	return nil
+}
 
 func validateReviewerVocabulary(w io.Writer, rr benchmark.RunResult, path string) error {
 	if len(rr.Vocabulary) == 0 {

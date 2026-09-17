@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -69,12 +70,6 @@ func TestBenchmarkExport_RejectsImpossiblePositionalRecall(t *testing.T) {
 			want: "outside [0,1]",
 		},
 		{
-			name: "rate is NaN",
-			row: benchmark.ReviewerPositionalRecall{Model: "m-a", Persona: "p-a",
-				ExpectedOutsideDiff: 2, MatchedOutsideDiff: 1, OutsideDiffRecall: ptrFloat(math.NaN())},
-			want: "outside [0,1]",
-		},
-		{
 			name: "rate on a zero denominator",
 			row: benchmark.ReviewerPositionalRecall{Model: "m-a", Persona: "p-a",
 				WithinDiffRecall: ptrFloat(1.0)},
@@ -96,6 +91,23 @@ func TestBenchmarkExport_RejectsImpossiblePositionalRecall(t *testing.T) {
 				"the error must name the field so the operator can find it")
 		})
 	}
+}
+
+// A NaN rate cannot arrive through the file path — encoding/json rejects the JSON
+// spellings that would produce one — so the guard is exercised directly, exactly as
+// its reviewer_vocabulary twin is. It is kept because NaN compares false against
+// every bound: the quotient check alone lets it through.
+func TestValidateReviewerPositionalRecall_RejectsNaNRate(t *testing.T) {
+	nan := math.NaN()
+	err := validateReviewerPositionalRecall(io.Discard, benchmark.RunResult{
+		Reviewers: []scorecard.PublicRecord{{Model: "m-a", Persona: "p-a"}},
+		PositionalRecall: []benchmark.ReviewerPositionalRecall{
+			{Model: "m-a", Persona: "p-a", ExpectedOutsideDiff: 2, MatchedOutsideDiff: 1, OutsideDiffRecall: &nan},
+		},
+	}, "rr.json")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "reviewer_positional_recall")
+	assert.Contains(t, err.Error(), "outside [0,1]")
 }
 
 // The documented positional join (entry i describes reviewers[i]) gets the same
