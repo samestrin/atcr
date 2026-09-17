@@ -26,12 +26,9 @@ scores.
 > The tooling here operates against any suite directory that satisfies the contract
 > below — including the in-repo `internal/benchmark/testdata/suite-valid` fixture.
 
-> **Not every directory under `benchmarks/` is runnable.** `benchmarks/repo-state-v1/`
-> holds a second, future suite tier whose cases are small repositories rather than
-> diffs — see [`benchmarks/repo-state-v1/FORMAT.md`](../benchmarks/repo-state-v1/FORMAT.md).
-> Its format and first case are authored, but no loader reads them yet, so
-> `atcr benchmark` neither validates nor runs it. Everything below describes
-> `standard-v1`-shaped suites only.
+> **There are two suite tiers, and `benchmark run` routes between them.** `benchmarks/repo-state-v1/` is a second tier whose cases are small repositories rather than diffs — see [`benchmarks/repo-state-v1/FORMAT.md`](../benchmarks/repo-state-v1/FORMAT.md). `atcr benchmark run` reads the `suite` field of `suite.json` and dispatches on it, so the same `--suite-path` invocation works for either tier. **Everything below describes `standard-v1`-shaped suites** unless it says otherwise; the differences are collected under [Running a `repo-state-v1` suite](#running-a-repo-state-v1-suite).
+>
+> `atcr benchmark verify` and `atcr benchmark export` remain `standard-v1`-only. `verify` reports a `repo-state-v1` suite with an error naming the loader that does handle it.
 
 ---
 
@@ -266,6 +263,32 @@ already-paid-for work of cases `1..N-1` would otherwise be lost.
 Checkpointing is **opt-in**: without `--checkpoint`, behavior is unchanged — a
 total-roster case failure still aborts the run (a transient infrastructure failure
 is never scored as a genuine missed defect).
+
+---
+
+## Running a `repo-state-v1` suite
+
+A `repo-state-v1` case is a small repository rather than a diff: a `base/` tree, a commit message, and a change applied on top. `atcr benchmark run --suite-path benchmarks/repo-state-v1` works exactly as it does for `standard-v1` — the command reads the manifest's `suite` field and dispatches. The case format itself is specified in [`benchmarks/repo-state-v1/FORMAT.md`](../benchmarks/repo-state-v1/FORMAT.md), which this implementation follows rather than redefines.
+
+Four things differ from a `standard-v1` run.
+
+**It reviews a real git range, not an ingested diff.** Each case is materialized into a git repository — the base tree as one commit, the change as a second commit carrying `commit-message.txt` verbatim — and reviewed over `base..head`. The diff ingestion path builds no `RangeBuilder`, and both the claim ledger and context-aware pre-fetching live there, so a tier meant to measure those features has to present a real range.
+
+**Expected findings are located, and matched positionally.** A case declares `expected_findings[]` with a `file`, a line range, a per-finding `line_tolerance`, and an `outside_diff` flag. A reported finding matches when the file is equal, the line falls inside the tolerance window, and — for an `outside_diff: true` expectation — the cited line is not itself an added line of the case's own diff. One report settles at most one expectation, so N reports of a single defect score as one hit.
+
+**Out-of-diff recall is reported separately**, in the run-result's `reviewer_positional_recall` array:
+
+| Field | Meaning |
+|---|---|
+| `recall` | Matched expected findings ÷ all expected findings, micro-averaged over findings. |
+| `outside_diff_recall` | The same, restricted to `outside_diff: true` findings — the metric this tier exists to produce. |
+| `within_diff_recall` | The same, restricted to `outside_diff: false` findings. |
+
+Each rate sits beside its numerator and denominator, and is **absent** rather than `0` when nothing was expected — an unmeasured rate must not read as a measured zero. The array does **not** reach the public submission envelope: `corroboration_rate` keeps its category-recall meaning on every suite, and `scorecard.PublicRecord` is unchanged, so a benchmark-only column never appears on a production row that could not populate it.
+
+**`--checkpoint` is rejected, not ignored.** Resumable runs are implemented for the `standard-v1` diff path only. Accepting the flag silently would let you start a long run believing it was resumable and find out otherwise at the worst moment, so the command refuses it up front.
+
+> **The Epic 14.1 grounding gate stays ON for these runs, by design.** A finding whose cited file the patch never touched is dropped unless pre-fetching actually retrieved the cited span. That is the measurement rather than an obstacle to it: the tier's question is whether pre-fetching lets a genuine out-of-diff finding clear the shipped anti-hallucination gate. Turning the gate off for benchmark runs would hide exactly the thing being measured.
 
 ---
 
