@@ -105,6 +105,39 @@ func TestExecuteRepoStateBenchmarkRun_ParsesEveryCaseDiffBeforeAnyCompleterCall(
 	assert.Zero(t, cc.calls, "a malformed case-2 diff must be rejected before ANY completer call, not after case 1's panel was paid for")
 }
 
+// Nothing frees the materialized repositories between cases: every repo-i (a
+// full copied base tree plus a two-commit .git) and every review-i accumulate
+// under one temp dir for the life of the run — doubling the footprint the
+// standard tier leaves with real source trees, on a $TMPDIR volume a large
+// base-tree suite can exhaust mid-panel. The repo has no consumer once the
+// findings are read, so each case's repo must be released when its case
+// completes, not at run end.
+func TestExecuteRepoStateBenchmarkRun_ReleasesEachCaseRepoAfterItsCase(t *testing.T) {
+	suite := writeTwoCaseSuite(t)
+	cc := &repoCountingCompleter{}
+
+	_, err := executeRepoStateBenchmarkRun(context.Background(),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), cc, suite, time.Unix(0, 0).UTC())
+	require.NoError(t, err)
+
+	require.NotEmpty(t, cc.reposSeenPerCall, "the stub completer must have been called")
+	assert.Equal(t, 1, cc.reposSeenPerCall[len(cc.reposSeenPerCall)-1],
+		"case 2's completer call must see only case 2's repo; case 1's must already be released")
+}
+
+// repoCountingCompleter counts the repo-N directories visible under the run's
+// temp prefix at every completer call — the only observation point a test has
+// inside the paid loop.
+type repoCountingCompleter struct {
+	reposSeenPerCall []int
+}
+
+func (c *repoCountingCompleter) Complete(ctx context.Context, inv llmclient.Invocation) (string, error) {
+	matches, _ := filepath.Glob(filepath.Join(os.TempDir(), "atcr-repo-state-*", "repo-*"))
+	c.reposSeenPerCall = append(c.reposSeenPerCall, len(matches))
+	return stubLocatedCompleter{}.Complete(ctx, inv)
+}
+
 func TestExecuteRepoStateBenchmarkRun_ReportsBothMetrics(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 	gen := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
