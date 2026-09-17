@@ -124,6 +124,27 @@ func TestMaterializeCase_RejectsGitMetadataInBaseTree(t *testing.T) {
 	assert.Contains(t, err.Error(), ".gitignore")
 }
 
+// A base-tree ROOT that is itself a symlink must be refused with the symlink
+// diagnostic. WalkDir Lstats the root, sees a non-directory, never descends, and
+// the walk ends with zero files — which, if the root were classified only after
+// the rel=="." early return, surfaces as the misleading "base tree is empty"
+// error instead of naming the actual defect.
+func TestMaterializeCase_RejectsASymlinkedBaseTreeRoot(t *testing.T) {
+	c := materializableCase(t)
+	real := filepath.Join(t.TempDir(), "real-base")
+	require.NoError(t, os.MkdirAll(filepath.Join(real, "pkg"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(real, "pkg", "example.py"), []byte("one\n"), 0o600))
+	// Point the case's base tree at the symlink; materializableCase wrote real
+	// dirs, so replace the base dir with a link to one.
+	require.NoError(t, os.RemoveAll(filepath.Join(c.Dir, "base")))
+	require.NoError(t, os.Symlink(real, filepath.Join(c.Dir, "base")))
+
+	_, err := MaterializeCase(context.Background(), c, t.TempDir())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "symlink", "the root must be classified as a symlink, not as an empty tree")
+	assert.NotContains(t, err.Error(), "empty")
+}
+
 func TestMaterializeCase_ProducesAReviewableRange(t *testing.T) {
 	c := materializableCase(t)
 	mc, err := MaterializeCase(context.Background(), c, t.TempDir())
