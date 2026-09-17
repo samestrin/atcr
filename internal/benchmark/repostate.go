@@ -158,7 +158,16 @@ func DetectSuiteFormat(suitePath string) (string, error) {
 // Load makes, and for a sharper reason here: a case whose base tree is missing
 // would otherwise materialize an EMPTY tree and score every reviewer zero. A tier
 // whose whole purpose is detecting unwinnable cases must not ship one silently, so
-// every filesystem precondition is checked at load.
+// every filesystem precondition REACHABLE AT LOAD is checked here.
+//
+// Two are not reachable here, and the distinction is load-bearing rather than a
+// hedge: whether each expected finding's file exists, and whether its line range
+// falls inside that file, are facts about the HEAD state — the base tree with the
+// case's diff applied — which does not exist until the case is materialized. They
+// are checked by ValidateAgainstHead, which the runner calls immediately after
+// MaterializeCase and before the case's first paid completer call. An earlier
+// version of this comment claimed the guarantee outright, which made a case citing
+// pkg/x.py:9999 in a one-line file load with a nil error.
 func LoadRepoState(suitePath string) (*RepoStateManifest, error) {
 	manifestPath := filepath.Join(suitePath, "suite.json")
 	data, err := os.ReadFile(manifestPath)

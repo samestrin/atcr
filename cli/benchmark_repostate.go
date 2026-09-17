@@ -147,6 +147,14 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		if err != nil {
 			return nil, err
 		}
+		// The two winnability preconditions LoadRepoState structurally cannot reach:
+		// the head state does not exist until the case is materialized. Checked HERE,
+		// before this case's first paid completer call, so an unwinnable case costs a
+		// materialization rather than a panel — the same fail-early rule the diff
+		// pre-parse above follows.
+		if err := benchmark.ValidateAgainstHead(c, mc.Root); err != nil {
+			return nil, err
+		}
 
 		// Fixed Branch/Date/TimeSuffix and a zero StartedAt are carried verbatim from
 		// executeBenchmarkRun's request: the date and suffix only feed the review id,
