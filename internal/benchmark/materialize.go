@@ -52,7 +52,20 @@ const (
 //
 // dest must be an existing empty directory; the caller owns its lifetime, exactly
 // as executeBenchmarkRun owns the per-run temp directory it already creates.
+// Both halves are VERIFIED, not assumed: a stray file in dest would be swept
+// into the base commit by git add -A (base tree, range and working tree then
+// disagree), and a missing dest would be silently created by the copy.
 func MaterializeCase(ctx context.Context, c RepoStateCase, dest string) (*MaterializedCase, error) {
+	if entries, err := os.ReadDir(dest); err != nil {
+		return nil, fmt.Errorf("case %q: dest %s must be an existing directory: %w", c.ID, dest, err)
+	} else if len(entries) > 0 {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		return nil, fmt.Errorf("case %q: dest %s must be empty; found %d entr(y|ies): %s",
+			c.ID, dest, len(entries), strings.Join(names, ", "))
+	}
 	files, err := copyBaseTree(filepath.Join(c.Dir, c.BaseTree), dest)
 	if err != nil {
 		return nil, fmt.Errorf("case %q base tree: %w", c.ID, err)
