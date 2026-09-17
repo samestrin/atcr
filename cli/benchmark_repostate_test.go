@@ -44,6 +44,67 @@ func (stubInDiffOnlyCompleter) Complete(_ context.Context, _ llmclient.Invocatio
 // T7's headline: a repo-state-v1 invocation runs end to end and reports both
 // metrics — the category recall standard-v1 already produced, and the new
 // positional recall split by outside_diff.
+// writeTwoCaseSuite materializes a two-case temp suite shaped exactly like the
+// mini fixture (same diff, base tree and message; only the ids differ), so tests
+// can drive a multi-case run and fault one case. Case 2 is returned intact;
+// tests overwrite its files to plant the fault.
+func writeTwoCaseSuite(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, id := range []string{"first-case", "second-case"} {
+		dir := filepath.Join(root, id)
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "base", "app"), 0o755))
+		raw, err := os.ReadFile(filepath.Join(repoStateMiniPath, "mini-case", "case.json"))
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "case.json"),
+			[]byte(strings.ReplaceAll(string(raw), "mini-case", id)), 0o600))
+		for _, f := range []string{"change.diff", "commit-message.txt"} {
+			raw, rerr := os.ReadFile(filepath.Join(repoStateMiniPath, "mini-case", f))
+			require.NoError(t, rerr)
+			require.NoError(t, os.WriteFile(filepath.Join(dir, f), raw, 0o600))
+		}
+		raw, rerr := os.ReadFile(filepath.Join(repoStateMiniPath, "mini-case", "base", "app", "calc.py"))
+		require.NoError(t, rerr)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "base", "app", "calc.py"), raw, 0o600))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "suite.json"), []byte(
+		"{\"suite\":\"repo-state-v1\",\"suite_version\":\"1.0.0\",\"cases\":[{\"id\":\"first-case\",\"dir\":\"first-case\"},{\"id\":\"second-case\",\"dir\":\"second-case\"}]}"), 0o600))
+	return root
+}
+
+// countingLocatedCompleter drives the real panel while counting paid completer
+// calls, so a pre-flight guarantee ("the error precedes any completer call") is
+// assertable rather than assumed.
+type countingLocatedCompleter struct {
+	calls int
+}
+
+func (c *countingLocatedCompleter) Complete(ctx context.Context, inv llmclient.Invocation) (string, error) {
+	c.calls++
+	return stubLocatedCompleter{}.Complete(ctx, inv)
+}
+
+// loadCaseDiffLineMap runs INSIDE the paid per-case loop, so case N's diff is
+// first read and parsed only after cases 1..N-1 have driven the whole reviewer
+// panel — a mid-panel parse error forfeits every case already paid for, the
+// exact fail-late shape LoadRepoState's eager-load contract names one level up.
+// The parse must be pre-flight: every case's diff parsed before the FIRST
+// completer call, where the remedy is free.
+func TestExecuteRepoStateBenchmarkRun_ParsesEveryCaseDiffBeforeAnyCompleterCall(t *testing.T) {
+	suite := writeTwoCaseSuite(t)
+	// Case 2's diff is malformed: a hunk header the parser rejects outright.
+	require.NoError(t, os.WriteFile(filepath.Join(suite, "second-case", "change.diff"),
+		[]byte("diff --git a/app/calc.py b/app/calc.py\n--- a/app/calc.py\n+++ b/app/calc.py\n@@ -1 +x @@\n-old\n+new\n"), 0o600))
+	cc := &countingLocatedCompleter{}
+
+	_, err := executeRepoStateBenchmarkRun(context.Background(),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), cc, suite, time.Unix(0, 0).UTC())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "second-case", "the error names the defective case")
+	assert.Zero(t, cc.calls, "a malformed case-2 diff must be rejected before ANY completer call, not after case 1's panel was paid for")
+}
+
 func TestExecuteRepoStateBenchmarkRun_ReportsBothMetrics(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 	gen := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
