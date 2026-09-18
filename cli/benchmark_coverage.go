@@ -533,6 +533,21 @@ func validateCoveredSet(suite map[string]bool, covered []string, path, model, pe
 // so it inherits the stripping with it. The id sites inside validateCoveredSet are
 // deliberately left alone — they use %q, which already renders a control rune as a
 // literal escape sequence.
+func summarizeMissing(missing []string) string {
+	named := missing
+	if len(named) > maxNamedMissingCases {
+		named = named[:maxNamedMissingCases]
+	}
+	safe := make([]string, len(named))
+	for i, id := range named {
+		safe[i] = stripTerminalControlRunes(id)
+	}
+	if len(missing) <= maxNamedMissingCases {
+		return strings.Join(safe, ", ")
+	}
+	return fmt.Sprintf("%s and %d more", strings.Join(safe, ", "), len(missing)-maxNamedMissingCases)
+}
+
 // describeMissing splits one row's shortfall into the two things it can be, and
 // says which.
 //
@@ -546,7 +561,8 @@ func validateCoveredSet(suite map[string]bool, covered []string, path, model, pe
 // that has a good one.
 //
 // Both halves route through summarizeMissing, so each inherits the per-row cap and
-// the control-rune stripping rather than re-deriving them.
+// the control-rune stripping described there rather than re-deriving them — the
+// reason is stripped with the id it is composed onto.
 func describeMissing(missing []string, failed map[string]string) string {
 	var unexplained, unmeasured []string
 	for _, id := range missing {
@@ -564,21 +580,6 @@ func describeMissing(missing []string, failed map[string]string) string {
 		parts = append(parts, "unmeasured "+summarizeMissing(unmeasured))
 	}
 	return strings.Join(parts, "; ")
-}
-
-func summarizeMissing(missing []string) string {
-	named := missing
-	if len(named) > maxNamedMissingCases {
-		named = named[:maxNamedMissingCases]
-	}
-	safe := make([]string, len(named))
-	for i, id := range named {
-		safe[i] = stripTerminalControlRunes(id)
-	}
-	if len(missing) <= maxNamedMissingCases {
-		return strings.Join(safe, ", ")
-	}
-	return fmt.Sprintf("%s and %d more", strings.Join(safe, ", "), len(missing)-maxNamedMissingCases)
 }
 
 // firstNonPrintingRune reports the first control (Cc) or format (Cf) rune in s —
