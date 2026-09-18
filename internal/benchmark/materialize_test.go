@@ -383,3 +383,69 @@ func TestMaterializeCase_ShippedCaseMaterializes(t *testing.T) {
 		})
 	}
 }
+
+// stagedRepo builds a git repo under a fresh temp dir holding exactly n files,
+// ready for commitAll to stage. It is the minimum fixture for exercising the
+// staged-set assertion directly: MaterializeCase always passes the count
+// copyBaseTree just returned, so the mismatch arm is unreachable through it.
+func stagedRepo(t *testing.T, n int) string {
+	t.Helper()
+	root := t.TempDir()
+	require.NoError(t, runGit(context.Background(), root, "init", "-q"))
+	for i := 0; i < n; i++ {
+		require.NoError(t, os.WriteFile(filepath.Join(root, fmt.Sprintf("f%d.txt", i)), []byte("x\n"), 0o600))
+	}
+	return root
+}
+
+// The BACKSTOP behind the core.excludesFile/core.attributesFile pin, asserted on
+// its own rather than through MaterializeCase.
+//
+// TestMaterializeCase_IgnoresTheHostExcludeFile covers the pin — the primary
+// defense against a host ignore file dropping base-tree files from the commit.
+// This covers what catches any OTHER add filter: expectedFiles is what
+// copyBaseTree actually wrote, so a staged set that disagrees means something
+// consumed entries between the copy and the add. Left untested the guard is a
+// claim, not a check — deleting its condition leaves the package green, and the
+// failure it exists to catch is silent: the head tree lacks the files the case
+// planted findings in, every reviewer scores 0 on them, and the run publishes
+// that as a real measurement.
+func TestCommitAll_RefusesAStagedSetThatDisagreesWithTheCopiedCount(t *testing.T) {
+	root := stagedRepo(t, 2)
+
+	_, err := commitAll(context.Background(), root, 3, []string{"-m", "base"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "staged 2 file(s) but the base tree copied 3",
+		"the error must name BOTH counts — the operator cannot tell which side is wrong from one number")
+	assert.Contains(t, err.Error(), "something filtered the add")
+
+	// It refuses BEFORE committing. A guard that reports the mismatch after the
+	// commit lands leaves the wrong tree on disk with a SHA the range already names.
+	out, rerr := gitCmd(context.Background(), root, "rev-parse", "--verify", "-q", "HEAD").Output()
+	assert.Error(t, rerr, "no commit may exist after the assertion refuses: got %q", strings.TrimSpace(string(out)))
+}
+
+// The control arm: the guard fires ONLY on a mismatch. Without this, a mutation
+// that hard-fails every call would still satisfy the test above.
+func TestCommitAll_CommitsWhenTheStagedSetMatchesTheCopiedCount(t *testing.T) {
+	root := stagedRepo(t, 2)
+
+	sha, err := commitAll(context.Background(), root, 2, []string{"-m", "base"})
+
+	require.NoError(t, err)
+	assert.NotEmpty(t, sha)
+	assert.Equal(t, "f0.txt\nf1.txt\n", gitOut(t, root, "ls-tree", "-r", "--name-only", "HEAD"))
+}
+
+// A negative expectedFiles skips the assertion outright — commitAll's documented
+// contract for the HEAD commit, whose staged set is the applied diff's business.
+// Pinned so the skip stays deliberate rather than becoming an accident of how the
+// comparison is written.
+func TestCommitAll_ANegativeExpectedCountSkipsTheAssertion(t *testing.T) {
+	root := stagedRepo(t, 2)
+
+	_, err := commitAll(context.Background(), root, -1, []string{"-m", "base"})
+
+	require.NoError(t, err, "expectedFiles < 0 must not assert on the staged set")
+}
