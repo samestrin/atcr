@@ -310,9 +310,7 @@ When any case fails, the **work dir is retained** and its path is logged, exactl
 At export, a recorded failure **explains** a coverage shortfall; it **does not excuse** one. `atcr benchmark export` still rejects a partial run by default, but names the failed case and its reason rather than telling you to re-run cases that never ran:
 
 ```
-run-result run.json has reviewer row(s) scored over less than the full 3-case suite:
-llm-large/brad (2/3 cases, unmeasured case-02 (prepare));
-re-run the missing or unmeasured cases, or pass --allow-partial-coverage to publish the shortfall explicitly
+run-result run.json has reviewer row(s) scored over less than the full 3-case suite: claude-sonnet-4-6/bruce (2/3 cases, unmeasured case-02 (prepare)); re-run the missing or unmeasured cases, or pass --allow-partial-coverage to publish the shortfall explicitly
 ```
 
 The reason vocabulary is closed and fail-closed at that boundary: export **rejects** a `case_failures` entry whose reason is not one the producer writes, whose case the suite does not declare, whose case some reviewer also scored, or which names the same case twice.
