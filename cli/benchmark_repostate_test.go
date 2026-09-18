@@ -1270,11 +1270,13 @@ func (c *cancellingCompleter) Complete(ctx context.Context, inv llmclient.Invoca
 // the real cause behind the class this code deliberately keeps fatal for a
 // suite-authoring defect.
 //
-// The guarantee is enforced UPSTREAM of the failure channel for this input —
-// validatePublishableReviewerRoster rejects the roster before any case runs — so
-// this pins the OUTCOME rather than the site. The runner also propagates
-// fanout.ErrEmptyRoster from the execute split, for the narrower shape where every
-// slot is dropped at execution time rather than at config load.
+// An empty roster reaches the runner at PREPARE, not at execute: ErrEmptyRoster is
+// raised by validateReviewRequest inside fanout.PrepareReview, and
+// validatePublishableReviewerRoster returns nil on an empty list rather than
+// rejecting it. So the prepare branch carries the same sentinel split the execute
+// branch does, and this test pins BOTH halves — the sentinel survives for a caller
+// to classify, and the run does not misreport itself as a suite of transient
+// per-case failures.
 func TestExecuteRepoStateBenchmarkRun_EmptyRosterAborts(t *testing.T) {
 	cfg := benchCfg()
 
@@ -1283,6 +1285,10 @@ func TestExecuteRepoStateBenchmarkRun_EmptyRosterAborts(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, rr, "an empty roster is a configuration defect, not an unmeasured case")
+	assert.ErrorIs(t, err, fanout.ErrEmptyRoster,
+		"the sentinel must survive so a caller can tell a config defect from a transient fault")
+	assert.NotContains(t, err.Error(), "all 2 case(s) failed",
+		"recorded per-case it repeats on every case and buries the real cause under the transient class")
 }
 
 // A partial run prints recall numbers that read exactly like a full-suite
