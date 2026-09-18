@@ -314,7 +314,22 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			// "all N case(s) failed ... re-running is the remedy only if the cause was
 			// transient" — a config defect reported as bad luck, and with the sentinel
 			// buried where errors.Is cannot reach it.
-			if errors.Is(err, fanout.ErrEmptyRoster) {
+			//
+			// ErrNoReviewableContent joins it for the same reason ValidateAgainstHead
+			// stays fatal thirty lines up: a case whose materialized range changes no
+			// reviewable file is a suite-AUTHORING defect — deterministic, identical
+			// on every re-run, and undetectable at load (the NoIgnore note below says
+			// so). Recorded as transient it disappears from the paid measurement at
+			// exit 0, and the operator is told a re-run might help when it cannot.
+			//
+			// Classified, not currently reachable, and deliberately untested for that
+			// reason. Two properties close every route to it on THIS tier:
+			// MaterializeCase's head commit fails rather than producing a commit that
+			// changes nothing, and a changed file the payload builder cannot read
+			// still yields a one-line marker entry, so ReviewableCount never reaches
+			// 0 for a materialized case. The arm states the classification so a future
+			// change to either property lands on the correct side by default.
+			if errors.Is(err, fanout.ErrEmptyRoster) || errors.Is(err, fanout.ErrNoReviewableContent) {
 				releaseCaseRepo(ctx, repoDir, c.ID)
 				return nil, "", fmt.Errorf("preparing case %q: %w", c.ID, err)
 			}
@@ -339,8 +354,11 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			// as "all cases failed", burying the real cause under the transient class.
 			// The prepare branch above carries the identical arm — that is where a
 			// configured empty roster actually lands, since validateReviewRequest
-			// raises the sentinel inside PrepareReview. This arm covers the narrower
-			// shape where every slot is dropped at execution time instead.
+			// raises the sentinel inside PrepareReview. That makes THIS arm currently
+			// unreachable through the runner: no traced path reaches ExecuteReview
+			// with a roster PrepareReview accepted and Outcome then finds empty. It is
+			// kept defensively, not as a live runtime path, and deliberately carries
+			// no test — a test would assert a behaviour nothing can produce.
 			if errors.Is(err, fanout.ErrAllAgentsFailed) || errors.Is(err, fanout.ErrEmptyRoster) {
 				return nil, "", fmt.Errorf("executing case %q: %w", c.ID, err)
 			}
