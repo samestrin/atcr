@@ -923,6 +923,19 @@ func validateCaseFailures(rr benchmark.RunResult, path string) error {
 			return fmt.Errorf("run-result %s records a case_failures entry with a blank case_id; "+
 				"a failure record names the case it is about, so this file is malformed", path)
 		}
+		// A non-printing rune gets its OWN arm, before the membership arm below, because
+		// every comparison here is on the RAW id while every message prints the stripped
+		// one. validateScrubbedCaseIDs guarantees no suite_case_ids entry carries such a
+		// rune, so "case-02​" can never match — and the membership arm would then
+		// report `an entry for "case-02", which suite_case_ids does not declare` about a
+		// file whose suite_case_ids visibly contains case-02. Naming the rune is the rule
+		// duplicateIdentityError and anchorSuiteDenominator already state for the same
+		// class of message: a difference-showing diagnostic must show the difference.
+		if r, bad := firstNonPrintingRune(f.CaseID); bad {
+			return fmt.Errorf("run-result %s records a case_failures entry for case %q carrying a non-printing rune (U+%04X); "+
+				"the producer records the suite's own case ids, which cannot contain one, so this file is malformed",
+				path, id, r)
+		}
 		if !suite[f.CaseID] {
 			return fmt.Errorf("run-result %s records a case_failures entry for %q, which suite_case_ids does not declare; "+
 				"a failure naming a case outside the suite explains no shortfall in it, so this file is malformed",

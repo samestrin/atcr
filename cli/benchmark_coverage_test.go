@@ -455,6 +455,23 @@ func TestValidateCaseFailures_RejectsAnArrayLongerThanTheSuite(t *testing.T) {
 		"the shape is rejected on its own terms, not reported as a repeated case")
 }
 
+// Every comparison in validateCaseFailures is on the RAW case id while every message
+// prints the stripped one, so an id carrying a zero-width rune can never match a
+// suite id (validateScrubbedCaseIDs guarantees those are clean) and the membership arm
+// would report `an entry for "case-02", which suite_case_ids does not declare` about a
+// file whose suite_case_ids visibly contains case-02. The rune gets named instead.
+func TestValidateCaseFailures_NamesANonPrintingRuneInsteadOfContradictingItself(t *testing.T) {
+	rr := partialRun()
+	rr.CaseFailures[0].CaseID = "case-02​"
+
+	err := validateCaseFailures(rr, "rr.json")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "U+200B", "the message names the rune that made the id unmatchable")
+	assert.NotContains(t, err.Error(), "does not declare",
+		"a file whose suite_case_ids contains case-02 must not be told it does not")
+}
+
 func TestValidateCaseFailures_RejectsABlankCaseID(t *testing.T) {
 	rr := partialRun()
 	rr.CaseFailures[0].CaseID = "  "
