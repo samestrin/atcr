@@ -858,8 +858,13 @@ func warnCaseFailures(w io.Writer, rr *benchmark.RunResult, retainedWorkDir stri
 		fmt.Fprintf(&msg, "  The work dir is retained at %s — the scored cases' review artifacts "+
 			"survive there for inspection or manual rescoring.\n", retainedWorkDir)
 	} else {
-		msg.WriteString("  The work dir is retained (path in the run log) — the scored cases' review artifacts " +
-			"survive there for inspection or manual rescoring.\n")
+		// Stated as a CHECK, not as a fact. With no path in hand this function cannot
+		// observe whether retention happened: the deferred cleanup's own RemoveAll
+		// failure is warned rather than acted on, and a second caller — or a future
+		// path building a RunResult from a checkpoint-like source — would otherwise
+		// print a guarantee nobody verified.
+		msg.WriteString("  If the run log reports a retained work dir, the scored cases' review artifacts " +
+			"are there for inspection or manual rescoring.\n")
 	}
 	_, _ = io.WriteString(w, msg.String())
 }
