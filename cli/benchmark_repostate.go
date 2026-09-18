@@ -211,6 +211,14 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		repoDir := filepath.Join(tmp, fmt.Sprintf("repo-%d", i))
 		if err := os.MkdirAll(repoDir, 0o755); err != nil {
 			recordCaseFailure(ctx, &caseFailures, c.ID, benchmark.CaseFailureWorkDir, err)
+			// Released like every other failure path below, not skipped because the
+			// directory "was not created": MkdirAll builds the path element by element
+			// and returns on the first element it cannot make, so a partial tree is
+			// exactly what a failure here leaves behind. RemoveAll on a path that was
+			// never created is a no-op, so the call costs nothing when it really did
+			// create nothing — and omitting it is how the accumulation releaseCaseRepo's
+			// doc comment is about starts on a long suite.
+			releaseCaseRepo(ctx, repoDir, c.ID)
 			continue
 		}
 		mc, err := benchmark.MaterializeCase(ctx, c, repoDir)
