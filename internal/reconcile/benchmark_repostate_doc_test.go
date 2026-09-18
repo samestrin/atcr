@@ -253,3 +253,36 @@ func TestBenchmarkDoc_RepoStatePartialRunContractMatchesTheCode(t *testing.T) {
 	assert.Contains(t, coverage, "re-run the missing or unmeasured cases",
 		"the gate must still reject a short run-result by default")
 }
+
+// The doc's prose enumerates the failure stages, and the export gate names four
+// rejection arms. Neither was pinned: renaming a reason constant, or rewording a
+// rejection literal, left the doc stating a falsehood with this file green — the
+// one outcome the header above says these guards exist to prevent. The vocabulary
+// is extracted from case_failure.go rather than transcribed, so a renamed constant
+// (or a newly added one) fails here until the doc names it as the code writes it.
+func TestBenchmarkDoc_CaseFailureReasonVocabularyMatchesTheCode(t *testing.T) {
+	doc := readRepoFile(t, "../../docs/benchmark.md")
+	caseFailures := readRepoFile(t, "../../internal/benchmark/case_failure.go")
+	coverage := readRepoFile(t, "../../cli/benchmark_coverage.go")
+
+	// Every wire value the producer can write, the doc must name — backticked, so a
+	// prose word that merely resembles one ("prepared" vs `prepare`) does not count.
+	reasons := regexp.MustCompile(`CaseFailure\w+\s*=\s*"([^"]+)"`).FindAllStringSubmatch(caseFailures, -1)
+	require.NotEmpty(t, reasons, "case_failure.go must still declare the reason constants")
+	for _, reason := range reasons {
+		assert.Containsf(t, doc, "`"+reason[1]+"`",
+			"the doc must name the %q failure reason as the code writes it", reason[1])
+	}
+
+	// The export gate's four rejection arms, verbatim — the doc quotes the gate's
+	// behaviour, so a reworded arm must fail here until the doc agrees with it.
+	for _, literal := range []string{
+		"outside the failure vocabulary",
+		"suite_case_ids does not declare",
+		"both scored and infrastructure-failed",
+		"more than once",
+	} {
+		assert.Containsf(t, coverage, literal,
+			"the export gate must keep the %q rejection arm the doc describes", literal)
+	}
+}
