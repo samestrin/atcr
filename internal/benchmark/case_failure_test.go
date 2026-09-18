@@ -49,6 +49,26 @@ func TestCaseFailureReasonsDoNotCollideWithOutcomes(t *testing.T) {
 	}
 }
 
+// The collision check runs in BOTH directions. TestCaseFailureReasonsDoNotCollide
+// WithOutcomes above walks the failure vocabulary and asks whether each reason is
+// also an outcome; this test walks the OUTCOME vocabulary and asks whether any of
+// its values would be accepted as a failure reason. The two directions are not
+// equivalent: the existing direction routes through ValidOutcome, so an Outcome*
+// constant added WITHOUT a matching arm in ValidOutcome's switch could share a
+// spelling with a CaseFailure* value and no existing assertion would notice. This
+// test asks ValidCaseFailureReason directly, so a colliding spelling fails here
+// regardless of whether the outcome side admits it.
+func TestOutcomesDoNotCollideWithCaseFailureReasons(t *testing.T) {
+	for _, o := range []string{
+		OutcomeUnknown, OutcomeFindings, OutcomeClean, OutcomeUnparseable,
+		OutcomeTruncated, OutcomeIncomplete, OutcomeUngrounded, OutcomeFailed,
+		OutcomeUnknownLabel,
+	} {
+		assert.False(t, ValidCaseFailureReason(o),
+			"outcome value %q must not also be a storable failure reason", o)
+	}
+}
+
 // The channel serializes under its own key, and an unfailed run omits it entirely —
 // so a clean run-result is byte-identical to one written before the field existed,
 // the same omitempty contract SuiteCaseIDs and Vocabulary carry.
