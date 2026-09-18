@@ -451,6 +451,27 @@ func TestCheckCoverage_UnexplainedShortfallStillReadsAsMissing(t *testing.T) {
 	assert.Contains(t, err.Error(), "missing", "an unexplained shortfall is still reported as missing cases")
 }
 
+// The defence-in-depth drop is pinned through checkCoverage itself, not only through
+// validateCaseFailures. checkCoverage is callable without the export command's gate
+// in front of it — this test is such a caller — and the point of the drop is that the
+// diagnostic's safety must not rest on the order two functions happen to be called
+// in. An out-of-vocabulary reason is ignored, so the case falls back to reading as
+// plainly missing and neither the escape sequence nor the injected prose reaches the
+// message. Verify by removing the `continue` in checkCoverage's failure-index loop:
+// the case then reads as unmeasured and carries the injected text.
+func TestCheckCoverage_DropsAnOutOfVocabularyFailureReason(t *testing.T) {
+	rr := partialRun()
+	rr.CaseFailures[0].Reason = "prepare\x1b[2Kinjected"
+
+	err := checkCoverage(io.Discard, rr, "rr.json", false)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing case-02",
+		"a case whose reason is outside the vocabulary explains nothing, so it reads as plainly missing")
+	assert.NotContains(t, err.Error(), "\x1b", "no control rune reaches the operator's terminal")
+	assert.NotContains(t, err.Error(), "injected", "and neither does the arbitrary prose it was carrying")
+}
+
 // The opt-out still works on a partial run, and still says the rows are not
 // comparable — the failure channel explains a shortfall, it does not excuse one.
 func TestCheckCoverage_AllowPartialStillWarnsOnAnInfrastructureShortfall(t *testing.T) {
