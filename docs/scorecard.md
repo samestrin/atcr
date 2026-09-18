@@ -549,7 +549,16 @@ the surface, the less can leak.
 > A `benchmark export` submission is a different document, and since
 > `submission_schema` 2 it additionally publishes `suite_case_ids` and each row's
 > `reviewer_coverage.case_ids` — the suite's case ids, **scrubbed but otherwise
-> unaltered**.
+> unaltered** — plus `reviewer_coverage.grounding_enabled`, a boolean carrying no
+> content of its own.
+>
+> `grounding_enabled` says whether the Epic 14.1 grounding gate was live for the
+> run behind that row. It is published because `corroboration_rate` is scored over
+> the post-gate finding set, so a gated row and an ungated row can report the same
+> rate about different populations; without the tag the board has no way to tell
+> which two rows are comparable. It is absent on a production row, which has no
+> gate state to report, and is additive under the policy below — it does not bump
+> `submission_schema`.
 >
 > Case ids are producer-controlled and routinely encode repository identity: the
 > bundled importer derives them as `<owner>-<repo>-pr-<number>`, so

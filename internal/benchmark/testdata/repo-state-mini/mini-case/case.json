@@ -1,0 +1,29 @@
+{
+  "id": "mini-case",
+  "format": "repo-state-v1",
+  "base_tree": "base",
+  "commit_message": "commit-message.txt",
+  "diff": "change.diff",
+  "expected_findings": [
+    {
+      "id": "average-divides-by-zero",
+      "file": "app/calc.py",
+      "line_start": 12,
+      "line_end": 13,
+      "line_tolerance": 3,
+      "outside_diff": true,
+      "category": "correctness",
+      "summary": "average() divides by len(items) with no empty-list guard; the change does not touch it, so the defect is settled by an unchanged line."
+    },
+    {
+      "id": "safe-total-is-not-none-safe",
+      "file": "app/calc.py",
+      "line_start": 8,
+      "line_end": 8,
+      "line_tolerance": 3,
+      "outside_diff": false,
+      "category": "correctness",
+      "summary": "The commit message claims safe_total() returns 0 for a None input, but the added body calls total(items or []), which returns 0 only incidentally and is settled by an added line."
+    }
+  ]
+}

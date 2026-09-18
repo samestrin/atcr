@@ -1,0 +1,10 @@
+fix(billing): reject an unknown plan instead of silently billing a default
+
+A plan name that was never added to RATES billed at DEFAULT_RATE, so a typo in
+a provisioning script produced a plausible-looking invoice nobody questioned.
+An unknown plan is a provisioning bug and should be loud.
+
+- lookup_rate() raises UnknownPlan instead of falling back to DEFAULT_RATE
+- the unknown-plan path stays covered by the existing invoice tests
+
+Signed-off-by: A Dev <dev@example.com>

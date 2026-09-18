@@ -51,6 +51,48 @@ func writeTruncatedDenominatorRunResult(t *testing.T) string {
 	return path
 }
 
+// writeRepoStateRunResult writes a run-result tagged for the bundled mini
+// repo-state suite, with declaredID as its only declared case. Passing the real id
+// gives the healthy path; passing another gives the truncation the anchor exists
+// to catch.
+func writeRepoStateRunResult(t *testing.T, declaredID string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := fmt.Sprintf(`{"suite":"repo-state-v1","suite_version":"1.0.0","generated_at":"2026-06-24T12:00:00Z",`+
+		`"suite_case_ids":[%q],`+
+		`"reviewer_coverage":[{"model":"m-primary","persona":"brad","case_ids":[%q]}],`+
+		`"reviewers":[{"model":"m-primary","persona":"brad","runs":1,`+
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10}]}`, declaredID, declaredID)
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+	return path
+}
+
+// `benchmark run` routes both tiers and `benchmark export` accepts a repo-state
+// run-result, but --suite-path could not anchor one: anchorSuiteDenominator loaded
+// through benchmark.Load, which hard-rejects the discriminator. The new tier could
+// therefore publish to the same public board as standard-v1 while being permanently
+// held to the weaker self-consistency gate, and the operator's only way past the
+// error was to drop the flag — which silently downgrades the check.
+func TestBenchmarkExport_SuitePathAnchorsARepoStateRunResult(t *testing.T) {
+	in := writeRepoStateRunResult(t, "mini-case")
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", in, "--suite-path", repoStateMiniPath)
+
+	require.Equal(t, 0, code, "an anchored repo-state run-result must export: %s", out)
+	assert.Contains(t, out, "benchmark-suite")
+}
+
+// And the anchor has to actually BITE on the repo-state arm, not just stop erroring.
+func TestBenchmarkExport_SuitePathRejectsTruncatedRepoStateDenominator(t *testing.T) {
+	in := writeRepoStateRunResult(t, "not-in-the-suite")
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", in, "--suite-path", repoStateMiniPath)
+
+	require.NotEqual(t, 0, code,
+		"a repo-state run-result whose case list disagrees with the manifest must not export: %s", out)
+	assert.Contains(t, out, "mini-case", "the error names the case the run-result dropped")
+}
+
 // Without an external anchor the coverage gate's denominator is supplied by the
 // same file it validates, so truncating suite_case_ids AND every row's case_ids to
 // the same subset publishes a partial run as fully covered. --suite-path anchors

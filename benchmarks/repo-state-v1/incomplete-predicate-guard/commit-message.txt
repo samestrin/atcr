@@ -1,0 +1,10 @@
+fix(router): reject an unknown event kind before dispatch
+
+A malformed event with an unrecognised kind raised a bare KeyError from deep
+inside HANDLERS, which told an on-call engineer nothing about the event that
+caused it.
+
+- dispatch() validates the kind up front and raises UnknownKind
+- every kind in KINDS is accepted exactly as before
+
+Signed-off-by: A Dev <dev@example.com>

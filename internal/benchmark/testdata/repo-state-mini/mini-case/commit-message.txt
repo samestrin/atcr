@@ -1,0 +1,7 @@
+feat(calc): add a safe total helper
+
+safe_total() tolerates a None items argument, so a caller no longer has to
+guard before summing.
+
+- safe_total() returns 0 for a None input
+- average() is unchanged

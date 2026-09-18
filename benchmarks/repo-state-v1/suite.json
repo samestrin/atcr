@@ -1,7 +1,10 @@
 {
   "suite": "repo-state-v1",
-  "suite_version": "1.0.0",
+  "suite_version": "1.1.2",
   "cases": [
-    { "id": "claim-absent-cursor-fix", "dir": "claim-absent-cursor-fix" }
+    { "id": "claim-absent-cursor-fix", "dir": "claim-absent-cursor-fix" },
+    { "id": "quarantine-reconcile-silent-deletion", "dir": "quarantine-reconcile-silent-deletion" },
+    { "id": "mock-outlives-the-contract", "dir": "mock-outlives-the-contract" },
+    { "id": "incomplete-predicate-guard", "dir": "incomplete-predicate-guard" }
   ]
 }

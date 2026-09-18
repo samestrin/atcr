@@ -26,12 +26,9 @@ scores.
 > The tooling here operates against any suite directory that satisfies the contract
 > below — including the in-repo `internal/benchmark/testdata/suite-valid` fixture.
 
-> **Not every directory under `benchmarks/` is runnable.** `benchmarks/repo-state-v1/`
-> holds a second, future suite tier whose cases are small repositories rather than
-> diffs — see [`benchmarks/repo-state-v1/FORMAT.md`](../benchmarks/repo-state-v1/FORMAT.md).
-> Its format and first case are authored, but no loader reads them yet, so
-> `atcr benchmark` neither validates nor runs it. Everything below describes
-> `standard-v1`-shaped suites only.
+> **There are two suite tiers, and `benchmark run` routes between them.** `benchmarks/repo-state-v1/` is a second tier whose cases are small repositories rather than diffs — see [`benchmarks/repo-state-v1/FORMAT.md`](../benchmarks/repo-state-v1/FORMAT.md). `atcr benchmark run` reads the `suite` field of `suite.json` and dispatches on it, so the same `--suite-path` invocation works for either tier. **Everything below describes `standard-v1`-shaped suites** unless it says otherwise; the differences are collected under [Running a `repo-state-v1` suite](#running-a-repo-state-v1-suite).
+>
+> `atcr benchmark verify` and `atcr benchmark export` route both tiers too. `verify` validates a `repo-state-v1` suite through the same two gates `benchmark run` applies at load, and prints no reproducibility hash for it — that hash is defined over a `standard-v1` manifest's diff bytes and has no `repo-state-v1` equivalent. `export` accepts a `repo-state-v1` run-result and can anchor it with `--suite-path`.
 
 ---
 
@@ -266,6 +263,34 @@ already-paid-for work of cases `1..N-1` would otherwise be lost.
 Checkpointing is **opt-in**: without `--checkpoint`, behavior is unchanged — a
 total-roster case failure still aborts the run (a transient infrastructure failure
 is never scored as a genuine missed defect).
+
+---
+
+## Running a `repo-state-v1` suite
+
+A `repo-state-v1` case is a small repository rather than a diff: a `base/` tree, a commit message, and a change applied on top. `atcr benchmark run --suite-path benchmarks/repo-state-v1` works exactly as it does for `standard-v1` — the command reads the manifest's `suite` field and dispatches. The case format itself is specified in [`benchmarks/repo-state-v1/FORMAT.md`](../benchmarks/repo-state-v1/FORMAT.md), which this implementation follows rather than redefines.
+
+Four things differ from a `standard-v1` run.
+
+**It reviews a real git range, not an ingested diff.** Each case is materialized into a git repository — the base tree as one commit, the change as a second commit carrying `commit-message.txt` verbatim — and reviewed over `base..head`. The diff ingestion path builds no `RangeBuilder`, and both the claim ledger and context-aware pre-fetching live there, so a tier meant to measure those features has to present a real range.
+
+**Expected findings are located, and matched positionally.** A case declares `expected_findings[]` with a `file`, a line range, a per-finding `line_tolerance`, and an `outside_diff` flag. A reported finding matches when the file is equal, the line falls inside the tolerance window, and — for an `outside_diff: true` expectation — the cited line is not itself an added or removed line of the case's own diff. One report settles at most one expectation, so N reports of a single defect score as one hit.
+
+**Out-of-diff recall is reported separately**, in the run-result's `reviewer_positional_recall` array:
+
+| Field | Meaning |
+|---|---|
+| `recall` | Matched expected findings ÷ all expected findings, micro-averaged over findings. |
+| `outside_diff_recall` | The same, restricted to `outside_diff: true` findings — the metric this tier exists to produce. |
+| `within_diff_recall` | The same, restricted to `outside_diff: false` findings. |
+
+Each rate sits beside its numerator and denominator, and is **absent** rather than `0` when nothing was expected — an unmeasured rate must not read as a measured zero. The array does **not** reach the public submission envelope: `corroboration_rate` keeps its category-recall definition on every suite, and `scorecard.PublicRecord` is unchanged, so a benchmark-only column never appears on a production row that could not populate it.
+
+> **The same definition is not the same population.** `corroboration_rate` scores the categories in the merged `findings.txt`, which is written *after* the Epic 14.1 grounding gate. That gate is live on `repo-state-v1` and fails open on `standard-v1`, so a reviewer that found the planted out-of-diff defect and labelled it correctly still scores 0 for it here and 1 there — same formula, same denominator, different input set. Rather than fork a published metric by suite, each `reviewer_coverage[]` row carries `grounding_enabled`, so you can tell whether two rows are measuring the same thing before comparing them. A row is tagged `true` only when the gate was live for **every** case it scored.
+
+**`--checkpoint` is rejected, not ignored.** Resumable runs are implemented for the `standard-v1` diff path only. Accepting the flag silently would let you start a long run believing it was resumable and find out otherwise at the worst moment, so the command refuses it up front.
+
+> **The Epic 14.1 grounding gate stays ON for these runs, by design.** A finding whose cited file the patch never touched is dropped unless pre-fetching actually retrieved the cited span. That is the measurement rather than an obstacle to it: the tier's question is whether pre-fetching lets a genuine out-of-diff finding clear the shipped anti-hallucination gate. Turning the gate off for benchmark runs would hide exactly the thing being measured.
 
 ---
 
@@ -682,11 +707,18 @@ call failed all raise zero categories and score identically:
 | `unparseable` | Returned content that parsed to zero findings and was not the sentinel. |
 | `truncated` | Response cut off on `finish_reason: length`; whatever it raised is incomplete. |
 | `incomplete` | The reviewer saw only a fraction of the diff — either a chunked slot whose bins failed while it still reported ok, or a payload shed to fit a byte budget (`files_dropped` names the shed entries by path; the shed is accounted per entry, so a path listed there can still be present via another occurrence of the same path in the diff). |
+| `ungrounded` | The reviewer raised findings and **every one** was discarded by the Epic 14.1 grounding gate for citing a `FILE:LINE` the patch does not contain (`dropped_by_grounding > 0` with nothing surviving). Distinct from `incomplete`, which is the input-side signal: this reviewer saw the whole diff and had its output filtered afterwards. Reachable only when the gate is live, so in practice only on `repo-state-v1` — the `standard-v1` diff path supplies no range and the gate fails open there. |
 | `failed` | The call never produced a reviewable response. |
 | `unknown` | No outcome was recorded — a checkpoint written before this field existed. |
 
 Precedence when signals overlap is `failed > unparseable > truncated > incomplete >
-findings > clean`: data-integrity signals outrank volume signals.
+findings > ungrounded > clean`: data-integrity signals outrank volume signals, and a
+reviewer that kept even one finding is scored on what it kept.
+
+> **`ungrounded` is newer than the other values.** The outcome vocabulary is
+> fail-closed at the checkpoint-resume and coverage trust boundaries, so a build
+> predating it will refuse a checkpoint carrying it rather than re-key the tally. A
+> checkpoint written by this version cannot be resumed by an older one.
 
 `unknown` is deliberately distinct from `clean`. A resumed run whose checkpoint
 predates this field reports `unknown`, never "reviewed and found nothing" — the

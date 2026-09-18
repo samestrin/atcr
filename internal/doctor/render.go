@@ -16,9 +16,14 @@ func RenderJSON(w io.Writer, rep *Report) error {
 	// Report, is what gets marshalled, so a json tag added to Report alone emits
 	// nothing. PredicateRuleGaps shipped that way once, silently.
 	out := struct {
-		Agents            []AgentResult `json:"agents"`
-		PredicateRuleGaps []string      `json:"predicate_rule_gaps,omitempty"`
-	}{Agents: rep.Agents, PredicateRuleGaps: rep.PredicateRuleGaps}
+		Agents                  []AgentResult `json:"agents"`
+		PredicateRuleGaps       []string      `json:"predicate_rule_gaps,omitempty"`
+		PersonaResolutionErrors []string      `json:"persona_resolution_errors,omitempty"`
+	}{
+		Agents:                  rep.Agents,
+		PredicateRuleGaps:       rep.PredicateRuleGaps,
+		PersonaResolutionErrors: rep.PersonaResolutionErrors,
+	}
 	if out.Agents == nil {
 		out.Agents = []AgentResult{}
 	}

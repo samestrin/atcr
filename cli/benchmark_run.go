@@ -48,6 +48,25 @@ import (
 // Errors name the PRE-scrub value and the SUITE MANIFEST: the scrubbed value is empty
 // or rewritten by construction, and suite_case_ids and the envelope identity are
 // verbatim copies of the manifest, so editing a run-result would be the wrong action.
+// publishableSuiteIdentityArms is the suite identity's arm table — the two
+// published-identity arms BOTH tier validators apply. One table rather than two
+// verbatim copies: the consequence and remedy strings here carry twenty lines
+// of rationale, and two copies of those strings drift independently — a wrong
+// remedy sends the operator to discard a paid checkpoint. Consumed by
+// validateSuitePublishableCaseIDs and validateRepoStatePublishableCaseIDs, so
+// the latter's "the two tiers cannot drift" claim is a property of the code
+// rather than of two edits staying in sync.
+func publishableSuiteIdentityArms(suite, suiteVersion string) []struct{ noun, published, value, consequence, remedy string } {
+	return []struct{ noun, published, value, consequence, remedy string }{
+		{"suite name", "the envelope's suite name", suite,
+			"the published envelope must name the same suite the manifest does",
+			"rename the suite in the suite manifest"},
+		{"suite_version", "the envelope's suite_version", suiteVersion,
+			"the published envelope must name the same suite_version the manifest does",
+			"change suite_version in the suite manifest"},
+	}
+}
+
 func validateSuitePublishableCaseIDs(m *benchmark.Manifest, suitePath string) error {
 	// The suite IDENTITY is published scrubbed by the same BuildSubmission pass that
 	// publishes the ids, and validateSuiteIdentityForPublication hard-rejects all three
@@ -76,14 +95,7 @@ func validateSuitePublishableCaseIDs(m *benchmark.Manifest, suitePath string) er
 	// publishes inside suite_case_ids rather than as "a case", and the identity
 	// publishes in the envelope. Like consequence and remedy it is written out per
 	// field rather than interpolated from noun.
-	for _, f := range []struct{ noun, published, value, consequence, remedy string }{
-		{"suite name", "the envelope's suite name", m.Suite,
-			"the published envelope must name the same suite the manifest does",
-			"rename the suite in the suite manifest"},
-		{"suite_version", "the envelope's suite_version", m.SuiteVersion,
-			"the published envelope must name the same suite_version the manifest does",
-			"change suite_version in the suite manifest"},
-	} {
+	for _, f := range publishableSuiteIdentityArms(m.Suite, m.SuiteVersion) {
 		if err := checkPublishable(suitePath, "declares "+f.noun, f.value, f.published, f.consequence, f.remedy); err != nil {
 			return err
 		}
@@ -750,6 +762,23 @@ func reviewerOutcome(a fanout.AgentStatus, raised []string) string {
 		return benchmark.OutcomeIncomplete
 	case len(raised) > 0:
 		return benchmark.OutcomeFindings
+	// Below here the reviewer raised nothing that survived. A non-zero grounding
+	// drop count is what separates "found nothing" from "found things the Epic 14.1
+	// gate rejected" — the two shapes are otherwise identical at this call site
+	// (StatusOK, UnparseableResponse false, zero categories), which is exactly how
+	// the second one used to publish as clean.
+	//
+	// It sits BELOW findings deliberately: a reviewer that raised four and kept one
+	// reviewed successfully and has a finding to show for it, so only a total wipe
+	// is the ungrounded outcome. It sits below the data-integrity signals for the
+	// same reason they outrank each other — a failed call's drop count says nothing
+	// about the review.
+	//
+	// Unreachable on the standard-v1 diff path: that path supplies no Range, so
+	// groundFindings fails open and DroppedByGrounding is always 0. No historical
+	// standard-v1 row changes outcome.
+	case a.DroppedByGrounding > 0:
+		return benchmark.OutcomeUngrounded
 	default:
 		return benchmark.OutcomeClean
 	}
@@ -908,21 +937,28 @@ func readCaseFindings(reviewDir string) (map[string][]string, error) {
 	// one in with an EMPTY category, which counts as drift by the same rule that
 	// already governs an empty CATEGORY column.
 	//
-	// REVIEWER is the engine's last-appended column, so the final field survives an
-	// overflow earlier in the row. parse() strips trailing empty fields BEFORE
-	// classifying a row as skipped, so that field is non-empty by construction;
-	// mirror the strip here to land on the same one. An unrecognized reviewer name
-	// keys a map entry no agent reads, exactly as an unrecognized REVIEWER on a
-	// well-formed row already does.
+	// See skippedRowReviewer: the recovery lives in ONE place, shared with
+	// readCaseFindingsLocated, so the two projections cannot attribute the same
+	// skipped row to different reviewers.
 	for _, s := range parsed.Skipped {
-		fields := strings.Split(s.Content, "|")
-		for len(fields) > 1 && fields[len(fields)-1] == "" {
-			fields = fields[:len(fields)-1]
-		}
-		reviewer := fields[len(fields)-1]
-		out[reviewer] = append(out[reviewer], "")
+		out[skippedRowReviewer(s.Content)] = append(out[skippedRowReviewer(s.Content)], "")
 	}
 	return out, nil
+}
+
+// skippedRowReviewer recovers the REVIEWER column from a skipped (unparseable)
+// findings row. REVIEWER is the engine's last-appended column, so the final
+// field survives an overflow earlier in the row; parse() strips trailing empty
+// fields BEFORE classifying a row as skipped, so mirror that strip to land on
+// the same one. ONE helper rather than the two verbatim copies this used to be:
+// both projections drive the SAME out-of-vocabulary denominator, and a fix to
+// one copy silently diverged the other — a published-metric change, not a crash.
+func skippedRowReviewer(content string) string {
+	fields := strings.Split(content, "|")
+	for len(fields) > 1 && fields[len(fields)-1] == "" {
+		fields = fields[:len(fields)-1]
+	}
+	return fields[len(fields)-1]
 }
 
 // reviewerModel resolves a reviewer's model id, preferring the usage-reported

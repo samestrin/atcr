@@ -1,0 +1,35 @@
+diff --git a/store/pending.py b/store/pending.py
+index 75d4966..3d253c0 100644
+--- a/store/pending.py
++++ b/store/pending.py
+@@ -10,11 +10,16 @@ class CorruptStore(Exception):
+     """Raised when the store file is present but cannot be decoded."""
+ 
+ 
++def _quarantine(path):
++    """Move a damaged store aside so an operator can inspect it later."""
++    os.rename(path, path + ".corrupt")
++
++
+ def read_pending():
+     """Return every pending escalation record.
+ 
+-    Raises CorruptStore when the file exists but does not decode, so a caller
+-    cannot mistake a damaged store for an empty one.
++    A file that exists but does not decode is quarantined and reported as
++    empty, so the evening queue survives a damaged store.
+     """
+     if not os.path.exists(STORE_PATH):
+         return []
+@@ -22,8 +27,9 @@ def read_pending():
+         raw = fh.read()
+     try:
+         return json.loads(raw)
+-    except ValueError as exc:
+-        raise CorruptStore(STORE_PATH) from exc
++    except ValueError:
++        _quarantine(STORE_PATH)
++        return []
+ 
+ 
+ def write_pending(records):

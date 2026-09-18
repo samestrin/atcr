@@ -95,3 +95,30 @@ func TestBenchmarkLoadConfig_DefaultSeamResolvesFromTheWorkingDirectory(t *testi
 	require.NoError(t, err)
 	assert.Equal(t, direct.Settings, cfg.Settings)
 }
+
+// The repo-state tier's headline number reached NO operator surface: a --output
+// run prints nothing to stdout (the run-result goes to the file) and stderr
+// carried only the vocabulary diagnostics — an operator watching a whole panel
+// could not see the one number the tier exists to produce without opening the
+// JSON. The summary rides stderr beside the vocabulary warnings, through the
+// same real wiring this file exists to pin.
+func TestBenchmarkRunCmd_PositionalRecallReachesStderr(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+
+	restoreCfg := benchmarkLoadConfig
+	restoreCompleter := benchmarkNewCompleter
+	t.Cleanup(func() {
+		benchmarkLoadConfig = restoreCfg
+		benchmarkNewCompleter = restoreCompleter
+	})
+	benchmarkLoadConfig = func(string) (*fanout.ReviewConfig, error) { return cfg, nil }
+	benchmarkNewCompleter = func(context.Context) fanout.Completer { return stubLocatedCompleter{} }
+
+	code, stdout, stderr := execCmdSplit(t, "benchmark", "run", "--suite-path", repoStateMiniPath)
+	require.Equal(t, 0, code, "a headline summary is a diagnostic, never an exit-code change")
+
+	assert.Contains(t, stderr, "outside_diff_recall",
+		"the tier's headline number must reach the operator's stderr through the real wiring")
+	assert.Contains(t, stderr, "m-greta", "the summary names the reviewer it reports")
+	assert.True(t, strings.Contains(stdout, `"suite"`), "stdout stays the run-result JSON")
+}

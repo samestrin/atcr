@@ -116,6 +116,46 @@ func TestExecuteBenchmarkRun_ScoresSuite(t *testing.T) {
 		"every stub finding uses a taxonomy member -> measured 0, not unmeasured")
 }
 
+// AC2 is "a standard-v1 run scores byte-identically after the repo-state tier
+// landed", and until this test that rested on inspection plus the pre-existing
+// standard tests. TestLoad_StandardV1Unaffected checks only that Load still parses
+// the shipped suite and still declines a repo-state one — nothing marshalled a real
+// run-result and looked at the bytes.
+//
+// The repo-state-only keys are asserted ABSENT in the MARSHALLED JSON, not on the
+// struct: every one is `omitempty`, so a zero-valued field is invisible to a reader
+// and visible to a struct assertion. The bytes are what a leaderboard consumes.
+func TestExecuteBenchmarkRun_StandardV1RunResultCarriesNoRepoStateKeys(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"}, [3]string{"kai", "m-kai", "kai"})
+	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+
+	rr, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, "")
+	require.NoError(t, err)
+
+	data, err := json.Marshal(rr)
+	require.NoError(t, err)
+
+	for _, key := range []string{
+		"reviewer_positional_recall",
+		"outside_diff_recall",
+		"within_diff_recall",
+		"expected_outside_diff",
+	} {
+		assert.NotContains(t, string(data), key,
+			"a standard-v1 run-result must not gain the repo-state tier's keys: %q", key)
+	}
+
+	// Paired with the absence assertion on purpose. A run-result that emitted NO
+	// keys at all would satisfy the loop above, so the documented score is pinned
+	// here too — this is the "scores byte-identically" half of AC2, not a duplicate
+	// of TestExecuteBenchmarkRun_ScoresSuite's coverage.
+	require.Len(t, rr.Reviewers, 2)
+	assert.InDelta(t, 0.75, rr.Reviewers[0].CorroborationRate, 1e-9,
+		"the standard scorer's value for the valid fixture suite is unchanged: (1.0 + 0.5) / 2")
+	assert.Contains(t, string(data), "corroboration_rate",
+		"sanity: the standard keys really are present, so the absences above mean something")
+}
+
 // A run whose reviewers all drift off the vocabulary reports it. Paired with the
 // clean case above so the wiring is pinned in both directions rather than by a
 // single value that a hardcoded 0 would also satisfy.

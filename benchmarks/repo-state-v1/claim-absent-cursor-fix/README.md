@@ -1,6 +1,6 @@
 # Case `claim-absent-cursor-fix`
 
-**Not machine-runnable yet.** This case is authored against [`../FORMAT.md`](../FORMAT.md) and is hand-verifiable today, but nothing loads it: the `repo-state-v1` loader, matcher, and scorer are epic 35.16.10's work. Until that lands, the case is checked by reading it, using the authoring checklist at the end of `FORMAT.md`.
+**Machine-runnable as of epic 35.16.10.** This case is authored against [`../FORMAT.md`](../FORMAT.md) and was hand-verifiable from the day it was written; the `repo-state-v1` loader, matcher and scorer now exist, so `atcr benchmark run --suite-path benchmarks/repo-state-v1` executes it. The case content itself is unchanged since it was authored — only this paragraph, which used to say the loader did not exist yet, was corrected.
 
 ## What the case plants
 

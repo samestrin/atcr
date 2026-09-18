@@ -76,6 +76,91 @@ func TestDoctor_SilentWhenEveryRosterPersonaCarriesTheRule(t *testing.T) {
 		"a roster with no gaps must emit no warning at all")
 }
 
+// The warning said "these roster agents", but filterRoster has already narrowed
+// proj when --agents is set, so the scan covers only the selected subset while the
+// wording claims the roster. docs/registry.md:518 says "effective roster". The
+// message has to name the scope it actually checked.
+func TestDoctor_RuleGapWarningNamesTheSelectedScope(t *testing.T) {
+	srv := echoProvider(t, 0)
+	setupDoctorEnv(t, srv.URL)
+	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
+
+	writeProjectPersona(t, "bruce", "# bruce\n\n## Focus\n1. Correctness\n")
+
+	filtered, err := execute(t, "doctor", "--agents", "bruce")
+	require.NoError(t, err)
+	assert.Contains(t, filtered, "predicate-exhaustiveness rule gaps")
+	assert.Contains(t, filtered, "selected agents",
+		"with --agents the scan covers the selected subset, and the warning must say so")
+
+	unfiltered, err := execute(t, "doctor")
+	require.NoError(t, err)
+	assert.Contains(t, unfiltered, "roster agents",
+		"without --agents the scan really does cover the roster, and the wording is unchanged")
+}
+
+// setupDoctorEnvWithFallback is setupDoctorEnv plus a fallback link: bruce falls
+// back to bruce-backup. doctor.Resolve registers EVERY node of the chain in
+// res.Agents, which is what let the gap scan reach an agent whose persona is never
+// rendered at review time.
+func setupDoctorEnvWithFallback(t *testing.T, baseURL string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	regDir := filepath.Join(home, ".config", "atcr")
+	require.NoError(t, os.MkdirAll(regDir, 0o755))
+	registryYAML := "" +
+		"providers:\n" +
+		"  mock:\n" +
+		"    api_key_env: ATCR_DOCTOR_TEST_KEY\n" +
+		"    base_url: " + baseURL + "/v1\n" +
+		"agents:\n" +
+		"  bruce:\n" +
+		"    provider: mock\n" +
+		"    model: test-model\n" +
+		"    fallback: bruce-backup\n" +
+		"  bruce-backup:\n" +
+		"    provider: mock\n" +
+		"    model: test-model\n"
+	require.NoError(t, os.WriteFile(filepath.Join(regDir, "registry.yaml"), []byte(registryYAML), 0o644))
+
+	work := t.TempDir()
+	t.Chdir(work)
+	atcrDir := filepath.Join(work, ".atcr")
+	require.NoError(t, os.MkdirAll(atcrDir, 0o755))
+	projYAML := "" +
+		"agents:\n" +
+		"  - bruce\n" +
+		"payload_mode: blocks\n" +
+		"timeout_secs: 600\n" +
+		"fail_on: HIGH\n"
+	require.NoError(t, os.WriteFile(filepath.Join(atcrDir, "config.yaml"), []byte(projYAML), 0o644))
+}
+
+// agentToPersona was built from res.Agents, which carries every node of every
+// fallback chain. A fallback's OWN persona is never rendered: internal/fanout's
+// review path resolves the persona by the PRIMARY's name. So doctor could name a
+// -backup agent as a rule gap and send the operator to edit a file that affects no
+// review. Over-report only, but the remedy it prescribes does nothing.
+func TestDoctor_RuleGapSkipsAFallbackOnlyAgent(t *testing.T) {
+	srv := echoProvider(t, 0)
+	setupDoctorEnvWithFallback(t, srv.URL)
+	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
+
+	// Only the FALLBACK's persona lacks the rule; the listed head keeps the
+	// embedded built-in, which carries it.
+	writeProjectPersona(t, "bruce-backup", "# bruce-backup\n\n## Focus\n1. Correctness\n")
+
+	out, err := execute(t, "doctor")
+	require.NoError(t, err)
+
+	// Asserted on the WARNING, not on the whole output: bruce-backup legitimately
+	// appears in the health table (it is a real endpoint doctor probes). What must
+	// not happen is it being named as a rule gap.
+	assert.NotContains(t, out, "predicate-exhaustiveness rule gaps",
+		"a fallback's own persona is never rendered, so naming it is a remedy that changes nothing")
+}
+
 // A persona carrying only ONE of the two anchors is still a gap: the lens phrase
 // without the filing phrase produces findings cited on the untouched sibling line,
 // which the grounding gate discards before the report. This is the case that makes
@@ -97,4 +182,51 @@ func TestDoctor_WarnsForAHalfCarrierPersona(t *testing.T) {
 	assert.Contains(t, out, "predicate-exhaustiveness rule gaps",
 		"a prompt that can spot the asymmetry but not file it reportably is still a gap")
 	assert.Contains(t, out, "bruce")
+}
+
+// The stderr half: an agent whose persona cannot be resolved gets its OWN line,
+// distinct from the rule-gap warning. Before this, doctor reported a clean roster
+// while `atcr review` hard-failed on the same config — the two states were the same
+// observation.
+func TestDoctor_ReportsPersonaResolutionErrorsSeparately(t *testing.T) {
+	srv := echoProvider(t, 0)
+	setupDoctorEnvWithPersonaRef(t, srv.URL, "never-installed")
+	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
+
+	out, err := execute(t, "doctor")
+	require.NoError(t, err, "an unresolvable persona is a composition signal, not an endpoint failure")
+
+	assert.Contains(t, out, "persona resolution errors",
+		"an agent whose prompt could not be read must be named, not silently absent")
+	assert.Contains(t, out, "bruce")
+	assert.NotContains(t, out, "predicate-exhaustiveness rule gaps",
+		"and it must NOT be reported as lacking the rule — nothing was read, so there is no verdict")
+}
+
+// setupDoctorEnvWithPersonaRef is setupDoctorEnv with an explicit `persona:` ref on
+// bruce, which is what makes resolution FAIL rather than fall through to the
+// embedded default (persona != agentName).
+func setupDoctorEnvWithPersonaRef(t *testing.T, baseURL, personaRef string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	regDir := filepath.Join(home, ".config", "atcr")
+	require.NoError(t, os.MkdirAll(regDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(regDir, "registry.yaml"), []byte(""+
+		"providers:\n"+
+		"  mock:\n"+
+		"    api_key_env: ATCR_DOCTOR_TEST_KEY\n"+
+		"    base_url: "+baseURL+"/v1\n"+
+		"agents:\n"+
+		"  bruce:\n"+
+		"    provider: mock\n"+
+		"    model: test-model\n"+
+		"    persona: "+personaRef+"\n"), 0o644))
+
+	work := t.TempDir()
+	t.Chdir(work)
+	atcrDir := filepath.Join(work, ".atcr")
+	require.NoError(t, os.MkdirAll(atcrDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(atcrDir, "config.yaml"), []byte(""+
+		"agents:\n  - bruce\npayload_mode: blocks\ntimeout_secs: 600\nfail_on: HIGH\n"), 0o644))
 }

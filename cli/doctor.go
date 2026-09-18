@@ -125,17 +125,27 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	// prompt does not — observable until now only as a quieter member in review
 	// output. Name the gap at pre-flight; exit code is unchanged (this is
 	// composition, not invocation health).
-	agentToPersona := make(map[string]string, len(res.Agents))
-	for _, at := range res.Agents {
-		if ac, ok := reg.Agents[at.Agent]; ok {
-			agentToPersona[at.Agent] = ac.Persona // loader defaults an empty persona to the agent name
+	// DIRECTLY-LISTED agents only, not res.Agents. doctor.Resolve registers every
+	// node of every fallback chain in res.Agents, but a fallback's OWN persona is
+	// never rendered: internal/fanout resolves the persona by the PRIMARY's name, so
+	// a -backup entry's prompt reaches no review. Scanning the chain therefore named
+	// agents whose rule gap cannot affect anything and sent the operator to edit a
+	// file with no effect — an over-report whose prescribed remedy does nothing.
+	// (Over-report only: a listed head is still scanned, so no real gap is missed.)
+	listed := make([]string, 0, len(proj.Agents)+len(proj.SerialAgents))
+	listed = append(listed, proj.Agents...)
+	listed = append(listed, proj.SerialAgents...)
+	agentToPersona := make(map[string]string, len(listed))
+	for _, name := range listed {
+		if ac, ok := reg.Agents[name]; ok {
+			agentToPersona[name] = ac.Persona // loader defaults an empty persona to the agent name
 		}
 	}
 	personaDirs := registry.PersonaDirs{
 		Project:  filepath.Join(".atcr", "personas"),
 		Registry: filepath.Join(filepath.Dir(regPath), "personas"),
 	}
-	rep.PredicateRuleGaps = registry.PredicateRuleGaps(agentToPersona, personaDirs)
+	rep.PredicateRuleGaps, rep.PersonaResolutionErrors = registry.PredicateRuleGaps(agentToPersona, personaDirs)
 
 	if asJSON {
 		if err := doctor.RenderJSON(cmd.OutOrStdout(), rep); err != nil {
@@ -155,11 +165,30 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		}
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "doctor: %d ok / %d failed\n", okCount, len(rep.Agents)-okCount)
 		if len(rep.PredicateRuleGaps) > 0 {
+			// The scan covers whatever filterRoster left in proj, so with --agents it
+			// covers the SELECTED subset — not the roster the old wording claimed.
+			// Naming the real scope is what keeps the warning from implying the
+			// unselected agents were checked and found clean.
+			scope := "roster agents"
+			if len(agentsFilter) > 0 {
+				scope = "selected agents"
+			}
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
-				"doctor: WARNING — predicate-exhaustiveness rule gaps: these roster agents resolve "+
+				"doctor: WARNING — predicate-exhaustiveness rule gaps: these %s resolve "+
 					"to personas that do not carry the panel-wide rule (built-ins are test-enforced; "+
 					"community and project personas are not): %s\n",
-				strings.Join(rep.PredicateRuleGaps, ", "))
+				scope, strings.Join(rep.PredicateRuleGaps, ", "))
+		}
+		// A DISTINCT line, not folded into the warning above. These agents were not
+		// found to lack the rule — their prompt could not be read at all, so no
+		// verdict was reached — and `atcr review` hard-fails on the same config that
+		// doctor would otherwise report as clean.
+		if len(rep.PersonaResolutionErrors) > 0 {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+				"doctor: WARNING — persona resolution errors: these agents' personas could not be "+
+					"resolved, so no rule verdict was reached for them (`atcr review` resolves the same "+
+					"personas and fails the run): %s\n",
+				strings.Join(rep.PersonaResolutionErrors, ", "))
 		}
 	}
 

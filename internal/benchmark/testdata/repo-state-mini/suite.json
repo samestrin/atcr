@@ -1,0 +1,7 @@
+{
+  "suite": "repo-state-v1",
+  "suite_version": "1.0.0",
+  "cases": [
+    { "id": "mini-case", "dir": "mini-case" }
+  ]
+}
