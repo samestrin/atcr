@@ -836,3 +836,26 @@ func TestReadCaseFindingsLocated_FlagsAMissingFindingsFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, missing, "a present findings file is not missing")
 }
+
+// The refusal must name the ALTERNATIVE, not just say no. --checkpoint is reached
+// for by an operator trying not to forfeit a long paid run, and that concern is
+// already half-answered: a failed run retains its work dir and names the path. An
+// operator told only "not supported" has no way to learn that, and the natural next
+// move — re-running without the flag — reads as accepting the loss.
+//
+// Pinned because the actionable half is the part a future reword would drop first.
+func TestCheckRepoStateFlags_RefusalNamesTheRetainedWorkDir(t *testing.T) {
+	err := checkRepoStateFlags(benchmark.FormatRepoStateV1, "cp.json")
+	require.Error(t, err)
+
+	assert.Contains(t, err.Error(), "--checkpoint is not supported for a repo-state-v1 suite",
+		"the refusal itself is unchanged")
+	assert.Contains(t, err.Error(), "RETAINS its work dir",
+		"and it must point at the retention that already recovers the paid artifacts")
+
+	// The refusal is scoped: standard-v1 with a checkpoint, and repo-state without
+	// one, both stay legal. A guard that fired on either would be a regression the
+	// assertion above cannot see.
+	require.NoError(t, checkRepoStateFlags("standard-v1", "cp.json"))
+	require.NoError(t, checkRepoStateFlags(benchmark.FormatRepoStateV1, ""))
+}

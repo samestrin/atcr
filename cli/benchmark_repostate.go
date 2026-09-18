@@ -26,12 +26,43 @@ import (
 // otherwise only when it failed — the worst possible moment, and after the panel
 // had already been paid for. Refusing at parse time costs a re-run of a four-case
 // suite instead.
+//
+// WHY THIS IS A REFUSAL AND NOT A TODO. It looks like a one-line flag removal and
+// is not. Two blockers sit behind it, and both are decisions rather than
+// implementation:
+//
+//   - There is NO repo-state reproducibility hash. runCheckpoint.ReproHash comes
+//     from benchmark.ReproHashManifest, which hashes each case's DIFF BYTES and is
+//     standard-v1-only; a repo-state case is a base tree plus a diff plus
+//     case.json. validateCheckpoint compares that hash to refuse a resume across a
+//     changed suite, so this tier needs either a new hashing contract (which
+//     belongs in internal/benchmark beside the standard one — the same reason
+//     `benchmark verify` prints "not defined for repo-state-v1" rather than
+//     fabricating one) or the suite-identity guard skipped, which would remove the
+//     protection that makes resume safe in the first place.
+//   - checkpointReviewer carries Raised []string — bare categories, all
+//     CorroborationRate needs. This tier also scores ReviewerPositionalRecall over
+//     per-case []FindingMatch, none of which survives a checkpoint round-trip, so a
+//     resumed run would silently score positional recall over only the
+//     un-checkpointed cases.
+//
+// Removing the refusal without doing both produces exactly the failure the
+// paragraph above describes. The full analysis and sequencing live in
+// .planning/epics/active/35.16.10.1_repo-state-partial-failure-outcomes.md under
+// "Deferred follow-up: resumable runs".
 func checkRepoStateFlags(suiteFormat, checkpointPath string) error {
 	// EqualFold for the same reason runBenchmarkRun routes with it: a differently-
 	// cased discriminator is the same tier, and the refusal must fire before a run
 	// the operator believes is resumable is paid for.
 	if strings.EqualFold(suiteFormat, benchmark.FormatRepoStateV1) && checkpointPath != "" {
-		return fmt.Errorf("--checkpoint is not supported for a %s suite: resumable runs are implemented for the standard-v1 diff path only; re-run without --checkpoint",
+		// The message names the ALTERNATIVE, not just the refusal. --checkpoint is
+		// asked for to avoid forfeiting a long paid run, and that concern is already
+		// half-answered: a failed run retains its work dir and names the path, so the
+		// completed cases' review artifacts survive. An operator told only "no" has no
+		// way to know that.
+		return fmt.Errorf("--checkpoint is not supported for a %s suite: resumable runs are implemented for the standard-v1 diff path only. "+
+			"Re-run without --checkpoint — a failed run RETAINS its work dir and names the path in the error, so the completed cases' "+
+			"review artifacts (raw transcripts, findings.txt, summary.json) survive for inspection or manual rescoring rather than being discarded",
 			benchmark.FormatRepoStateV1)
 	}
 	return nil
