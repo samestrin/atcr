@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
@@ -306,6 +307,85 @@ func TestBenchmarkExport_InFlagRendersStringValueName(t *testing.T) {
 	require.Contains(t, out, "--in string",
 		"--in must render its real value name, not a backquoted example command")
 	require.NotContains(t, out, "--in atcr benchmark run")
+}
+
+// The DEFAULT exit contract is unchanged: a partial run still exits 0, because it is
+// a real measurement of the cases that ran and the run-result records which ones did
+// not. The two opt-in flags exist for the one caller that cannot read a stderr
+// warning -- a CI step gating on the exit code -- and each is evaluated against the
+// same failure count.
+func TestCaseFailureExitGate(t *testing.T) {
+	// A 10-case suite, parameterised by how many of them were lost.
+	run := func(failed int) *benchmark.RunResult {
+		rr := &benchmark.RunResult{}
+		for i := 1; i <= 10; i++ {
+			id := "case-" + strconv.Itoa(i)
+			rr.SuiteCaseIDs = append(rr.SuiteCaseIDs, id)
+			if i <= failed {
+				rr.CaseFailures = append(rr.CaseFailures,
+					benchmark.CaseFailure{CaseID: id, Reason: benchmark.CaseFailurePrepare})
+			}
+		}
+		return rr
+	}
+
+	for _, tc := range []struct {
+		name      string
+		failed    int
+		failOnAny bool
+		maxFail   int
+		wantErr   bool
+	}{
+		{"default tolerates one failure", 1, false, -1, false},
+		{"default tolerates half", 5, false, -1, false},
+		{"default tolerates all but one", 9, false, -1, false},
+		{"default on a clean run", 0, false, -1, false},
+
+		{"fail-on-case-failure rejects one", 1, true, -1, true},
+		{"fail-on-case-failure rejects half", 5, true, -1, true},
+		{"fail-on-case-failure rejects all but one", 9, true, -1, true},
+		{"fail-on-case-failure passes a clean run", 0, true, -1, false},
+
+		{"max-case-failures 0 rejects one", 1, false, 0, true},
+		{"max-case-failures 2 tolerates two", 2, false, 2, false},
+		{"max-case-failures 2 rejects three", 3, false, 2, true},
+		{"max-case-failures 2 rejects all but one", 9, false, 2, true},
+		{"max-case-failures passes a clean run", 0, false, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := caseFailureExitGate(run(tc.failed), tc.failOnAny, tc.maxFail)
+			if !tc.wantErr {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "run-result was still written",
+				"the gate changes the exit code, not the artifact")
+		})
+	}
+}
+
+// Export reads an operator-supplied run-result that every coverage gate then walks
+// again, so its size multiplies through the whole path. The read is capped the way
+// loadCheckpoint's is, and the rejection is loud rather than an unbounded read.
+func TestBenchmarkExport_RejectsAnOversizeRunResult(t *testing.T) {
+	orig := maxRunResultBytes
+	maxRunResultBytes = 64
+	defer func() { maxRunResultBytes = orig }()
+
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01"],` +
+		`"reviewer_coverage":[{"model":"m-primary","persona":"brad","case_ids":["case-01"]}],` +
+		`"reviewers":[{"model":"m-primary","persona":"brad","runs":1,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.Greater(t, int64(len(body)), maxRunResultBytes, "the fixture has to actually exceed the ceiling")
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+
+	require.NotEqual(t, 0, code, "an oversize run-result must not be read unbounded: %s", out)
+	require.Contains(t, out, "exceeds size limit", "the rejection names the ceiling it hit")
 }
 
 // The case_failures gate is pinned at the COMMAND, not only at validateCaseFailures.

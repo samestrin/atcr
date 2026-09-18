@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -159,6 +160,8 @@ func newBenchmarkRunCmd() *cobra.Command {
 	// parse-time warning pollutes merged-stream output consumers).
 	_ = cmd.Flags().MarkHidden("out")
 	cmd.Flags().String("checkpoint", "", "opt-in: path to a run checkpoint file (atomically replaces the target; a symlink at the path is replaced, not followed). Each scored case is durably recorded here before the next begins; re-running the same suite resumes from the first unscored case instead of restarting (and re-paying for) the whole run. The path must not be shared across concurrent benchmark run invocations. Empty = no checkpointing (default).")
+	cmd.Flags().Bool("fail-on-case-failure", false, "opt-in: exit non-zero when ANY case was lost to an infrastructure failure. Off by default, because a partial run is a real measurement of the cases that did run and the run-result records which ones did not — but a CI step gating on the exit code cannot see that, so this restores the all-or-nothing contract for callers that need it. Use --max-case-failures for a threshold instead of a floor of one.")
+	cmd.Flags().Int("max-case-failures", -1, "opt-in: exit non-zero once MORE than this many cases were lost to infrastructure failures. -1 (default) means no ceiling. 0 is equivalent to --fail-on-case-failure. Set it to tolerate the occasional flaky provider while still failing a systemically broken run.")
 	_ = cmd.MarkFlagRequired("suite-path")
 	return cmd
 }
@@ -189,6 +192,8 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 		out, _ = cmd.Flags().GetString("out")
 	}
 	checkpoint, _ := cmd.Flags().GetString("checkpoint")
+	failOnCaseFailure, _ := cmd.Flags().GetBool("fail-on-case-failure")
+	maxCaseFailures, _ := cmd.Flags().GetInt("max-case-failures")
 
 	// Discover config the same way `atcr review` does (registry + project config
 	// rooted at the cwd), so the benchmark roster is the project's reviewers.
@@ -251,11 +256,52 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("encoding run-result: %w", err)
 	}
 	if out == "" {
-		_, werr := cmd.OutOrStdout().Write(append(data, '\n'))
+		if _, werr := cmd.OutOrStdout().Write(append(data, '\n')); werr != nil {
+			return werr
+		}
+	} else if werr := writeExportFile(out, data); werr != nil {
+		// writeExportFile (leaderboard.go) atomically writes to path, creating parents.
 		return werr
 	}
-	// writeExportFile (leaderboard.go) atomically writes to path, creating parents.
-	return writeExportFile(out, data)
+	// LAST, after the run-result has been written. The strict gates change the EXIT
+	// CODE, not the artifact: a partial run is a real measurement of the cases that
+	// did run, and destroying it would make the opt-in cost the operator the paid work
+	// as well as the exit status.
+	return caseFailureExitGate(rr, failOnCaseFailure, maxCaseFailures)
+}
+
+// caseFailureExitGate implements the two opt-in strict exit contracts.
+//
+// The DEFAULT is unchanged and stays exit 0: a run that lost a case still measured
+// the ones it kept, records which it did not in case_failures, and says so on stderr
+// through warnCaseFailures. The only case that has always aborted is every case
+// failing, which the runner handles itself.
+//
+// That default is wrong for one caller though — a CI step or wrapper script gating on
+// the exit code, which cannot read a stderr warning and would silently accept a
+// 1-of-100 measurement. These flags are for that caller and nobody else, which is why
+// they are opt-in rather than a changed default: making the default strict would fail
+// interactive runs that are behaving exactly as designed.
+//
+// --fail-on-case-failure is the floor-of-one; --max-case-failures is the same gate
+// with a threshold, for a caller that tolerates the occasional flaky provider but not
+// a systemically broken run. Both are evaluated, so passing both means either can
+// fail the run.
+func caseFailureExitGate(rr *benchmark.RunResult, failOnAny bool, maxFailures int) error {
+	if rr == nil || len(rr.CaseFailures) == 0 {
+		return nil
+	}
+	failed, suite := len(rr.CaseFailures), len(rr.SuiteCaseIDs)
+	if failOnAny {
+		return fmt.Errorf("%d of %d case(s) were lost to infrastructure failures and --fail-on-case-failure is set; "+
+			"the run-result was still written and records which cases are missing", failed, suite)
+	}
+	if maxFailures >= 0 && failed > maxFailures {
+		return fmt.Errorf("%d of %d case(s) were lost to infrastructure failures, more than the %d allowed by "+
+			"--max-case-failures; the run-result was still written and records which cases are missing",
+			failed, suite, maxFailures)
+	}
+	return nil
 }
 
 // newBenchmarkExportCmd builds `atcr benchmark export --in <run-result.json>`:
@@ -287,6 +333,48 @@ func newBenchmarkExportCmd() *cobra.Command {
 	return cmd
 }
 
+// maxRunResultBytes caps the run-result read at export. The file is
+// operator-supplied and every gate in benchmark_coverage.go walks it again, so its
+// size multiplies through the whole export path — and it arrives having never passed
+// through the producer, the same premise those gates are built on. The ceiling
+// mirrors loadCheckpoint's maxCheckpointBytes (and fanout's readFileLimited), which
+// is the same 32 MiB for the same reason one command over. It is a var, not a const,
+// so tests can shrink it.
+var maxRunResultBytes int64 = 32 << 20 // 32 MiB
+
+// errRunResultTooLarge reports a run-result exceeding maxRunResultBytes. Export
+// fails loudly rather than reading an untrusted file unbounded.
+var errRunResultTooLarge = errors.New("run-result exceeds size limit")
+
+// readRunResultLimited stats-and-caps before reading, then reads through a
+// LimitReader anyway. The stat gives the useful diagnostic (it can name the actual
+// size); the LimitReader closes the window in which the file grows between the two
+// calls, which is the one shape a stat alone cannot cover.
+func readRunResultLimited(path string) ([]byte, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading run-result %s: %w", path, err)
+	}
+	if fi.Size() > maxRunResultBytes {
+		return nil, fmt.Errorf("%w: %s is %d bytes (limit %d)", errRunResultTooLarge, path, fi.Size(), maxRunResultBytes)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading run-result %s: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+	// One byte PAST the ceiling, so a file exactly at the limit still reads whole and
+	// only an over-limit one is detectable by length.
+	data, err := io.ReadAll(io.LimitReader(f, maxRunResultBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("reading run-result %s: %w", path, err)
+	}
+	if int64(len(data)) > maxRunResultBytes {
+		return nil, fmt.Errorf("%w: %s grew past %d bytes while it was being read", errRunResultTooLarge, path, maxRunResultBytes)
+	}
+	return data, nil
+}
+
 func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 	// Cobra GetString errors are unreachable: both flags are registered above
 	// ("in" is MarkFlagRequired), so GetString returns the flag value or its
@@ -296,9 +384,9 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 	allowPartial, _ := cmd.Flags().GetBool("allow-partial-coverage")
 	suitePath, _ := cmd.Flags().GetString("suite-path")
 
-	data, err := os.ReadFile(in)
+	data, err := readRunResultLimited(in)
 	if err != nil {
-		return fmt.Errorf("reading run-result %s: %w", in, err)
+		return err
 	}
 	var rr benchmark.RunResult
 	if err := json.Unmarshal(data, &rr); err != nil {
