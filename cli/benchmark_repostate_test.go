@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +15,7 @@ import (
 	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/stretchr/testify/assert"
@@ -66,8 +69,17 @@ func (stubInDiffOnlyCompleter) Complete(_ context.Context, _ llmclient.Invocatio
 // tests overwrite its files to plant the fault.
 func writeTwoCaseSuite(t *testing.T) string {
 	t.Helper()
+	return writeCaseSuite(t, "first-case", "second-case")
+}
+
+// writeCaseSuite is writeTwoCaseSuite for an arbitrary case count, so a test can
+// fault a MIDDLE case and assert the ones on either side of it still scored — the
+// shape a two-case suite cannot express, since faulting either of its cases leaves
+// nothing after the fault.
+func writeCaseSuite(t *testing.T, ids ...string) string {
+	t.Helper()
 	root := t.TempDir()
-	for _, id := range []string{"first-case", "second-case"} {
+	for _, id := range ids {
 		dir := filepath.Join(root, id)
 		require.NoError(t, os.MkdirAll(filepath.Join(dir, "base", "app"), 0o755))
 		raw, err := os.ReadFile(filepath.Join(repoStateMiniPath, "mini-case", "case.json"))
@@ -83,9 +95,46 @@ func writeTwoCaseSuite(t *testing.T) string {
 		require.NoError(t, rerr)
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "base", "app", "calc.py"), raw, 0o600))
 	}
-	require.NoError(t, os.WriteFile(filepath.Join(root, "suite.json"), []byte(
-		"{\"suite\":\"repo-state-v1\",\"suite_version\":\"1.0.0\",\"cases\":[{\"id\":\"first-case\",\"dir\":\"first-case\"},{\"id\":\"second-case\",\"dir\":\"second-case\"}]}"), 0o600))
+	entries := make([]string, 0, len(ids))
+	for _, id := range ids {
+		entries = append(entries, fmt.Sprintf("{%q:%q,%q:%q}", "id", id, "dir", id))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "suite.json"), []byte(fmt.Sprintf(
+		"{\"suite\":\"repo-state-v1\",\"suite_version\":\"1.0.0\",\"cases\":[%s]}", strings.Join(entries, ","))), 0o600))
 	return root
+}
+
+// faultMaterialization makes one case's diff well-formed to the loader (which
+// parses every diff at load) but unappliable by git: pkg/absent.py is not in the
+// base tree, so MaterializeCase fails MID-LOOP, after the work dir exists and any
+// earlier case has already been paid for.
+func faultMaterialization(t *testing.T, suite, caseID string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(suite, caseID, "change.diff"),
+		[]byte("diff --git a/pkg/absent.py b/pkg/absent.py\n--- a/pkg/absent.py\n+++ b/pkg/absent.py\n@@ -1,1 +1,1 @@\n-gone\n+here\n"), 0o600))
+}
+
+// faultUnwinnableExpectation pushes one case's expectation past the end of the
+// head file it cites, so benchmark.ValidateAgainstHead rejects it. That is a
+// suite-AUTHORING defect: deterministic, unchanged by a re-run, and detected
+// before this case's first paid completer call — which is why it keeps aborting
+// the run rather than joining the failure channel.
+func faultUnwinnableExpectation(t *testing.T, suite, caseID string) {
+	t.Helper()
+	path := filepath.Join(suite, caseID, "case.json")
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	faulted := strings.Replace(string(raw), `"line_end": 13`, `"line_end": 9001`, 1)
+	require.NotEqual(t, string(raw), faulted, "the fixture's expectation bounds must still be the string this helper rewrites")
+	require.NoError(t, os.WriteFile(path, []byte(faulted), 0o600))
+}
+
+// failingCompleter fails every call, so every slot in the panel fails and
+// fanout.ExecuteReview returns ErrAllAgentsFailed.
+type failingCompleter struct{}
+
+func (failingCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
+	return "", errors.New("provider unreachable")
 }
 
 // countingLocatedCompleter drives the real panel while counting paid completer
@@ -523,12 +572,12 @@ func (c capturingLocatedCompleter) Complete(_ context.Context, _ llmclient.Invoc
 // forfeits the whole panel with zero recoverable evidence.
 func TestExecuteRepoStateBenchmarkRun_RetainsTheWorkDirOnFailure(t *testing.T) {
 	suite := writeTwoCaseSuite(t)
-	// Well-formed to the loader (which parses every diff at load since the
-	// parse-at-load fix), but unappliable by git: pkg/absent.py does not exist in
-	// the base tree, so MaterializeCase fails MID-LOOP — after the work dir was
-	// created and case 1 was already paid for.
-	require.NoError(t, os.WriteFile(filepath.Join(suite, "second-case", "change.diff"),
-		[]byte("diff --git a/pkg/absent.py b/pkg/absent.py\n--- a/pkg/absent.py\n+++ b/pkg/absent.py\n@@ -1,1 +1,1 @@\n-gone\n+here\n"), 0o600))
+	// Faulted at a site that still ABORTS. This test used to fault materialization,
+	// which is now a record-and-continue site — the run would return no error at all
+	// and the assertions below would be testing nothing. An unwinnable expectation is
+	// the nearest still-fatal neighbour: it fails mid-loop, after the work dir exists
+	// and case 1 was already paid for, which is the shape this test is about.
+	faultUnwinnableExpectation(t, suite, "second-case")
 
 	_, err := executeRepoStateBenchmarkRun(context.Background(),
 		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC())
@@ -989,4 +1038,177 @@ func TestExecuteRepoStateBenchmarkRun_UngroundedOutcomeOnlyOnAGatedRow(t *testin
 		assert.True(t, *row.GroundingEnabled,
 			"ungrounded is unreachable with the gate off; the row contradicts itself")
 	}
+}
+
+// AC1 — a mid-suite infrastructure failure must produce a PARTIAL run-result, not
+// nothing. Before this, the first failing case aborted the whole run: a four-case
+// suite failing on case four forfeited three cases of paid panel output, and
+// --checkpoint is refused for this tier so there was no resume to fall back on.
+//
+// The failed case is recorded in the failure channel and scored NOWHERE. Recording
+// it as a zero-scored row instead would increment every reviewer's ExpectedTotal
+// without giving them a chance at the case — scoring an infrastructure failure as a
+// genuine missed defect, which docs/benchmark.md forbids for this tier.
+func TestExecuteRepoStateBenchmarkRun_MidSuiteFailureYieldsAPartialRunResult(t *testing.T) {
+	suite := writeCaseSuite(t, "first-case", "second-case", "third-case")
+	faultMaterialization(t, suite, "second-case")
+
+	rr, err := executeRepoStateBenchmarkRun(context.Background(),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC())
+	require.NoError(t, err, "a single case's infrastructure failure must not forfeit the cases that succeeded")
+	require.NotNil(t, rr)
+
+	require.Len(t, rr.CaseFailures, 1)
+	assert.Equal(t, "second-case", rr.CaseFailures[0].CaseID)
+	assert.Equal(t, benchmark.CaseFailureMaterialize, rr.CaseFailures[0].Reason)
+
+	assert.Equal(t, []string{"first-case", "second-case", "third-case"}, rr.SuiteCaseIDs,
+		"the suite denominator names every case; dropping the failed one would hide the shortfall instead of showing it")
+
+	require.Len(t, rr.Coverage, 1)
+	assert.Equal(t, []string{"first-case", "third-case"}, rr.Coverage[0].CaseIDs,
+		"the failed case is unmeasured, so it is absent from the covered set")
+	require.Len(t, rr.Reviewers, 1)
+	assert.Equal(t, 2, rr.Reviewers[0].Runs, "runs counts scored cases only")
+}
+
+// AC2 — the failed case contributes nothing to either recall denominator. The
+// reviewer scored both surviving cases perfectly, so recall over a 3-case suite
+// with 1 failed case must read exactly as recall over the 2 scored ones: 1.0, not
+// 2/3. A zero-scored row for the failed case would produce the latter.
+func TestExecuteRepoStateBenchmarkRun_FailedCaseLeavesTheDenominatorsAlone(t *testing.T) {
+	suite := writeCaseSuite(t, "first-case", "second-case", "third-case")
+	faultMaterialization(t, suite, "second-case")
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+
+	partial, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC())
+	require.NoError(t, err)
+
+	// The reference run: the same two cases, with no failed case present at all.
+	clean, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{},
+		writeCaseSuite(t, "first-case", "third-case"), time.Unix(0, 0).UTC())
+	require.NoError(t, err)
+
+	require.Len(t, partial.PositionalRecall, 1)
+	require.Len(t, clean.PositionalRecall, 1)
+	assert.Equal(t, clean.PositionalRecall[0].ExpectedTotal, partial.PositionalRecall[0].ExpectedTotal,
+		"an unmeasured case adds 0 to expected_total")
+	require.NotNil(t, partial.PositionalRecall[0].Recall)
+	assert.Equal(t, *clean.PositionalRecall[0].Recall, *partial.PositionalRecall[0].Recall,
+		"recall over 3 cases with 1 failed must equal recall over the 2 scored cases")
+
+	require.Len(t, partial.Reviewers, 1)
+	require.Len(t, clean.Reviewers, 1)
+	assert.Equal(t, clean.Reviewers[0].CorroborationRate, partial.Reviewers[0].CorroborationRate,
+		"the category-recall denominator excludes the failed case too")
+}
+
+// AC5 — the shipped all-agents-failed abort is the one ExecuteReview failure the
+// continue path must NOT swallow. A total-roster failure is exactly the transient
+// infrastructure failure docs/benchmark.md:265 forbids scoring as a genuine missed
+// defect, and recording it as an unmeasured case would publish a run whose missing
+// case looks identical to a disk fault.
+func TestExecuteRepoStateBenchmarkRun_TotalRosterFailureStillAborts(t *testing.T) {
+	suite := writeCaseSuite(t, "first-case", "second-case")
+
+	rr, err := executeRepoStateBenchmarkRun(context.Background(),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), failingCompleter{}, suite, time.Unix(0, 0).UTC())
+
+	require.Error(t, err, "a total-roster failure aborts; it is not recorded as an unmeasured case")
+	assert.ErrorIs(t, err, fanout.ErrAllAgentsFailed)
+	assert.Nil(t, rr, "no partial run-result is produced for a total-roster failure")
+}
+
+// AC6 — ValidateAgainstHead is a suite-AUTHORING defect, not transient bad luck: it
+// is deterministic, a re-run cannot fix it, and it fires before the case's first
+// paid completer call, so aborting forfeits nothing. Continuing would score around a
+// suite known to be broken and publish the number as if it measured something.
+func TestExecuteRepoStateBenchmarkRun_UnwinnableCaseStillAborts(t *testing.T) {
+	suite := writeCaseSuite(t, "first-case", "second-case")
+	faultUnwinnableExpectation(t, suite, "second-case")
+
+	rr, err := executeRepoStateBenchmarkRun(context.Background(),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unwinnable", "the diagnostic still names the authoring defect")
+	assert.Nil(t, rr, "an unwinnable case is not recorded into the failure channel")
+}
+
+// A suite in which EVERY case failed measured nothing, so there is no run-result
+// worth returning. Left to build one, it would carry suite_case_ids with zero
+// reviewer rows — which checkCoverage calls "malformed", the wrong diagnosis for a
+// runner that behaved exactly as designed. The shipped all-agents-failed abort does
+// not cover this: it fires inside ONE case's review call and cannot see a
+// suite-wide zero-scored outcome.
+func TestExecuteRepoStateBenchmarkRun_EveryCaseFailingIsAnError(t *testing.T) {
+	suite := writeCaseSuite(t, "first-case", "second-case")
+	faultMaterialization(t, suite, "first-case")
+	faultMaterialization(t, suite, "second-case")
+
+	rr, err := executeRepoStateBenchmarkRun(context.Background(),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no case could be scored")
+	assert.Nil(t, rr)
+}
+
+// AC4 — retention on a HARD failure already shipped; this is the other half. A
+// PARTIAL run returns err == nil, so the deferred cleanup fired and destroyed the
+// paid review artifacts of every case that DID succeed — the precise artifacts the
+// continue path exists to preserve.
+func TestExecuteRepoStateBenchmarkRun_RetainsTheWorkDirOnAPartialRun(t *testing.T) {
+	suite := writeCaseSuite(t, "first-case", "second-case", "third-case")
+	faultMaterialization(t, suite, "second-case")
+	var logs bytes.Buffer
+
+	rr, err := executeRepoStateBenchmarkRun(logCapturingContext(t, &logs),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC())
+	require.NoError(t, err)
+	require.NotEmpty(t, rr.CaseFailures)
+
+	path := retainedWorkDirFromLog(t, logs.String())
+	_, statErr := os.Stat(path)
+	assert.NoError(t, statErr, "a partial run's paid artifacts must survive for inspection or manual rescoring")
+	t.Cleanup(func() { _ = os.RemoveAll(path) })
+}
+
+// A run with no failures at all still cleans up: retention is the exception the
+// failure channel earns, not the new default.
+func TestExecuteRepoStateBenchmarkRun_CleanRunStillCleansUp(t *testing.T) {
+	var logs bytes.Buffer
+
+	rr, err := executeRepoStateBenchmarkRun(logCapturingContext(t, &logs),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, repoStateMiniPath, time.Unix(0, 0).UTC())
+	require.NoError(t, err)
+	assert.Empty(t, rr.CaseFailures)
+	assert.NotContains(t, logs.String(), "work dir retained", "a clean run has nothing to retain")
+}
+
+// logCapturingContext wires a text logger into the context so a test can assert on
+// what the runner REPORTED, not just on what it left on disk. The retained path is
+// only useful to an operator if it reaches them.
+func logCapturingContext(t *testing.T, into *bytes.Buffer) context.Context {
+	t.Helper()
+	logger, err := log.New("info", "text", into)
+	require.NoError(t, err)
+	return log.NewContext(context.Background(), logger)
+}
+
+// retainedWorkDirFromLog pulls the retained path out of the runner's own log line,
+// which is the only channel a partial run has to report it: unlike a hard failure,
+// it returns no error to carry the path in.
+func retainedWorkDirFromLog(t *testing.T, logs string) string {
+	t.Helper()
+	i := strings.Index(logs, "work dir retained")
+	require.GreaterOrEqual(t, i, 0, "the run must report a retained work dir; logs were:\n%s", logs)
+	j := strings.Index(logs[i:], "path=")
+	require.GreaterOrEqual(t, j, 0, "the retention line must name the path; logs were:\n%s", logs)
+	path := logs[i+j+len("path="):]
+	if end := strings.IndexAny(path, " \n"); end >= 0 {
+		path = path[:end]
+	}
+	require.NotEmpty(t, path, "the reported path is usable")
+	return path
 }
