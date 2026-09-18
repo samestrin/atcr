@@ -593,14 +593,9 @@ func summarizeMissing(missing []string) string {
 // the control-rune stripping described there rather than re-deriving them — the
 // reason is stripped with the id it is composed onto.
 //
-// THE CAP IS PER HALF, NOT PER ROW. Each half is summarized independently, so a row
-// with both kinds of shortfall names up to 2*maxNamedMissingCases ids and carries TWO
-// overflow counts, each computed against its own half: four unexplained and four
-// unmeasured print as "missing a, b, c and 1 more; unmeasured d (x), e (y), f (z) and
-// 1 more". That is deliberate — the two halves call for opposite responses, so
-// starving one of names to hold a single row-wide budget would hide the class an
-// operator has to act on — but it means maxNamedMissingCases bounds a HALF, and a
-// reader adds the two overflow counts to get the row's total.
+// Each half is capped independently, so the bound is PER HALF and a row carrying both
+// kinds of shortfall names up to 2*maxNamedMissingCases ids with two overflow counts —
+// see maxNamedMissingCases for why that is deliberate rather than an oversight.
 //
 // PRECONDITION: missing is non-empty. An empty slice returns "", which the caller
 // composes into `m/p (2/3 cases, )` — a shortfall message with a blank explanation.
