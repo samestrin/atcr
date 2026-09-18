@@ -246,9 +246,20 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 	// but the safety of an operator-facing diagnostic must not rest on the order two
 	// functions happen to be called in: a second caller would otherwise interpolate
 	// an arbitrary attacker-chosen string into the terminal.
+	// The drop is ANNOUNCED, not silent. Without this line the case simply reads as
+	// plainly missing, so a caller reaching checkCoverage without the export command's
+	// gate in front of it is told to re-run a case the file claims was unmeasured, with
+	// no hint that the file said anything about it. The entry is named by case id and
+	// the reason is reported stripped and under %q — the same treatment
+	// validateCaseFailures' own rejection gives it — so the operator learns the entry
+	// existed without the reason's arbitrary prose being interpolated as an explanation.
 	failed := make(map[string]string, len(rr.CaseFailures))
 	for _, f := range rr.CaseFailures {
 		if !benchmark.ValidCaseFailureReason(f.Reason) {
+			_, _ = fmt.Fprintf(w,
+				"warning: run-result %s records a case_failures entry for %s with reason %q, outside the failure vocabulary; "+
+					"it explains nothing and is ignored, so that case is reported as plainly missing.\n",
+				path, stripTerminalControlRunes(f.CaseID), stripTerminalControlRunes(f.Reason))
 			continue
 		}
 		failed[f.CaseID] = f.Reason

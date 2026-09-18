@@ -472,6 +472,23 @@ func TestCheckCoverage_DropsAnOutOfVocabularyFailureReason(t *testing.T) {
 	assert.NotContains(t, err.Error(), "injected", "and neither does the arbitrary prose it was carrying")
 }
 
+// Dropping the entry must not also hide it. A caller with no export gate in front of
+// it would otherwise be told to re-run a case the file claims was unmeasured, with
+// nothing saying the file made a claim at all. The warning names the case id and
+// reports the reason stripped and quoted, so the entry is visible without its prose
+// being interpolated as an explanation.
+func TestCheckCoverage_WarnsWhenItDropsAnOutOfVocabularyFailureReason(t *testing.T) {
+	rr := partialRun()
+	rr.CaseFailures[0].Reason = "prepare\x1b[2Kinjected"
+	var warn bytes.Buffer
+
+	require.Error(t, checkCoverage(&warn, rr, "rr.json", false))
+
+	assert.Contains(t, warn.String(), "case-02", "the dropped entry is named")
+	assert.Contains(t, warn.String(), "outside the failure vocabulary", "and so is why it was dropped")
+	assert.NotContains(t, warn.String(), "\x1b", "the reason is stripped before it reaches the terminal")
+}
+
 // The opt-out still works on a partial run, and still says the rows are not
 // comparable — the failure channel explains a shortfall, it does not excuse one.
 func TestCheckCoverage_AllowPartialStillWarnsOnAnInfrastructureShortfall(t *testing.T) {
