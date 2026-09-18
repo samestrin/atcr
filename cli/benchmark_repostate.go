@@ -388,6 +388,14 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		// over a janitorial fault — and failing the run outright, as this used to,
 		// discarded every other case with it. Same Warn-not-fail shape the run-level
 		// cleanup above already uses.
+		//
+		// The MATERIALIZED TREE IS DELIBERATELY NOT PART OF THE RETAINED-ARTIFACT
+		// PROMISE. Released here, before the per-agent loop, so the scored-twice
+		// identity guard and the post-loop scrub-collision guard both abort with this
+		// case's repo already gone. Those paths retain the work dir so "the artifacts
+		// survive for inspection", and what survives is the REVIEW dir — which carries
+		// the findings the guards are about. The tree is reconstructible from the
+		// suite; the panel's output is not.
 		releaseCaseRepo(ctx, repoDir, c.ID)
 
 		// Iterate the full roster, not just reviewers that raised something: a

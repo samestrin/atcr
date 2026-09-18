@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -293,4 +294,26 @@ func TestBenchmarkDoc_CaseFailureReasonVocabularyMatchesTheCode(t *testing.T) {
 		assert.Containsf(t, coverage, literal,
 			"the export gate must keep the %q rejection arm the doc describes", literal)
 	}
+}
+
+// The export rejection is emitted as ONE line by checkCoverage's fmt.Errorf, but the
+// doc rendered it as a three-line terminal block nobody will ever see. Pin the real
+// shape: prefix, shortfall row and remedy sentence on a single doc line, in the order
+// the format string writes them.
+func TestBenchmarkDoc_ExportRejectionExampleMatchesTheEmittedLine(t *testing.T) {
+	doc := readRepoFile(t, "../../docs/benchmark.md")
+	coverage := readRepoFile(t, "../../cli/benchmark_coverage.go")
+
+	assert.Contains(t, coverage, "has reviewer row(s) scored over less than the full %d-case suite: %s; ",
+		"the gate's format string must keep the shape the doc quotes")
+	onOneLine := false
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.Contains(line, "has reviewer row(s) scored over less than the full") &&
+			strings.Contains(line, "re-run the missing or unmeasured cases") {
+			onOneLine = true
+			break
+		}
+	}
+	assert.True(t, onOneLine,
+		"the doc's export-rejection example must be one line, as the gate emits it — not a wrapped three-line block nobody will see")
 }
