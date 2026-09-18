@@ -221,6 +221,9 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 	// shared with real review work.
 	benchCtx := hookobs.WithCall(cmd.Context(), hookobs.Call{Stage: "benchmark"})
 	var rr *benchmark.RunResult
+	// Only the repo-state runner retains a work dir on a partial run; the standard
+	// path leaves this empty and warnCaseFailures keeps its old wording.
+	var retainedWorkDir string
 	// Case-insensitive on purpose: DetectSuiteFormat already TrimSpaces the
 	// discriminator, and an exact match here would send a manifest declaring
 	// "Repo-State-V1" to the standard-v1 arm — which misses the known-other-format
@@ -236,7 +239,7 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 	// ran, without opening the run-result to check which metrics it carries.
 	log.FromContext(benchCtx).Info("benchmark run: executing suite", "suite_format", suiteFormat, "runner", runner)
 	if isRepoState {
-		rr, err = executeRepoStateBenchmarkRun(benchCtx, cfg, benchmarkNewCompleter(benchCtx), suitePath, time.Now().UTC())
+		rr, retainedWorkDir, err = executeRepoStateBenchmarkRun(benchCtx, cfg, benchmarkNewCompleter(benchCtx), suitePath, time.Now().UTC())
 	} else {
 		rr, err = executeBenchmarkRun(benchCtx, cfg, benchmarkNewCompleter(benchCtx), suitePath, time.Now().UTC(), checkpoint)
 	}
@@ -248,7 +251,7 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 	// BEFORE the recall summary, because it qualifies it: a partial run's recall
 	// covers only the cases that were scored, and a reader who sees the number first
 	// has already taken it for a full-suite measurement.
-	warnCaseFailures(cmd.ErrOrStderr(), rr)
+	warnCaseFailures(cmd.ErrOrStderr(), rr, retainedWorkDir)
 	warnPositionalRecallSummary(cmd.ErrOrStderr(), rr)
 
 	data, err := json.MarshalIndent(rr, "", "  ")

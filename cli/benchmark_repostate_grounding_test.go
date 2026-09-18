@@ -101,7 +101,7 @@ func TestExecuteRepoStateBenchmarkRun_UntouchedFileFindingIsDroppedByTheGroundin
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 	gen := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
 
-	rr, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubUntouchedFileCompleter{},
+	rr, _, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubUntouchedFileCompleter{},
 		writeUntouchedFileSuite(t), gen)
 	require.NoError(t, err)
 
@@ -128,7 +128,7 @@ func TestExecuteRepoStateBenchmarkRun_TheSameCitationScoresWhenItsFileIsInThePat
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 	gen := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
 
-	rr, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{},
+	rr, _, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{},
 		repoStateMiniPath, gen)
 	require.NoError(t, err)
 

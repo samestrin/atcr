@@ -557,19 +557,26 @@ func validateCoveredSet(suite map[string]bool, covered []string, path, model, pe
 
 // summarizeMissing renders up to maxNamedMissingCases ids, then an overflow count.
 //
-// It strips terminal control runes from every id it names, because this is the ONLY
-// route by which a case id reaches the operator's terminal under %s: both of
-// checkCoverage's shortfall messages (the rejection and the --allow-partial-coverage
-// warning) and all three of anchorSuiteDenominator's diagnostics funnel through here.
-// Case ids are untrusted for the same reason the reviewer identity is — they come from
-// the run-result being validated, and export is where a hand-supplied file first enters
-// the tool.
+// It strips terminal control runes from every id it names. Case ids are untrusted for
+// the same reason the reviewer identity is — they come from the run-result being
+// validated, and export is where a hand-supplied file first enters the tool.
 //
-// Sanitizing HERE rather than at the five call sites is what makes that claim checkable:
-// a future diagnostic that names ids has to come through this function to get the cap,
-// so it inherits the stripping with it. The id sites inside validateCoveredSet are
-// deliberately left alone — they use %q, which already renders a control rune as a
-// literal escape sequence.
+// It is the route for EXPORT's capped diagnostics — both of checkCoverage's shortfall
+// messages (the rejection and the --allow-partial-coverage warning) and all three of
+// anchorSuiteDenominator's — and sanitizing here rather than at those five call sites
+// is what keeps the guarantee checkable for them: a further capped diagnostic that
+// names ids has to come through this function to get the cap, so it inherits the
+// stripping with it.
+//
+// It is NOT, however, the only place a case id reaches the terminal under %s.
+// warnCaseFailures (cli/benchmark_repostate.go) prints one line per failed case on the
+// RUN path, where there is no cap to inherit — it names every failed case deliberately
+// — so it strips independently with the same stripTerminalControlRunes call. Two sites
+// applying one rule is the accurate statement; claiming a single choke point would
+// leave the next author of a run-path diagnostic believing the stripping came for free.
+//
+// The id sites inside validateCoveredSet are deliberately left alone — they use %q,
+// which already renders a control rune as a literal escape sequence.
 func summarizeMissing(missing []string) string {
 	named := missing
 	if len(named) > maxNamedMissingCases {

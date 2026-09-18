@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/samestrin/atcr/internal/benchmark"
@@ -103,20 +104,20 @@ func checkRepoStateFlags(suiteFormat, checkpointPath string) error {
 // The Completer is injected so the CLI passes the real llmclient and tests pass a
 // stub, and generatedAt is injected rather than read from the wall clock, for the
 // same reproducibility reason executeBenchmarkRun does both.
-func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, completer fanout.Completer, suitePath string, generatedAt time.Time) (rr *benchmark.RunResult, err error) {
+func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, completer fanout.Completer, suitePath string, generatedAt time.Time) (rr *benchmark.RunResult, retainedWorkDir string, err error) {
 	m, err := benchmark.LoadRepoState(suitePath)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	// The same two pre-flights executeBenchmarkRun applies, and for the same reason:
 	// an unpublishable case id or reviewer identity makes the finished run
 	// permanently unexportable, and the export gate would only say so after the
 	// whole panel had been paid for.
 	if err := validateRepoStatePublishableCaseIDs(m, suitePath); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if err := validatePublishableReviewerRoster(cfg); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	// Every case's diff is parsed BEFORE the first paid completer call. The parse
@@ -131,14 +132,14 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 	for i := range m.Cases {
 		lm, err := loadCaseDiffLineMap(m.Cases[i])
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		lineMaps[i] = lm
 	}
 
 	tmp, err := os.MkdirTemp("", "atcr-repo-state-")
 	if err != nil {
-		return nil, fmt.Errorf("creating benchmark work dir: %w", err)
+		return nil, "", fmt.Errorf("creating benchmark work dir: %w", err)
 	}
 	// Declared above the defer, not beside the other accumulators, because the
 	// retention decision below reads it. The run-result is not built until the loop
@@ -161,11 +162,21 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		if err != nil {
 			log.FromContext(ctx).Warn("benchmark work dir retained after a failed run", "path", tmp)
 			err = fmt.Errorf("%w (work dir retained at %s)", err, tmp)
+			retainedWorkDir = tmp
 			return
 		}
 		if len(caseFailures) > 0 {
 			log.FromContext(ctx).Warn("benchmark work dir retained after a partial run",
 				"path", tmp, "failed_cases", len(caseFailures))
+			// Returned to the caller as well as logged. The log line is suppressible —
+			// ATCR_LOG_LEVEL=error is a legal setting and drops Warn entirely — and the
+			// partial arm has no error to wrap the path into the way the failure arm
+			// above does. Without this the only copy of a ten-minute paid panel's
+			// artifacts is an unnamed /tmp/atcr-repo-state-* directory the operator has
+			// to go hunting for. It is a RETURN VALUE rather than a RunResult field on
+			// purpose: the run-result is a file operators hand to other people, and a
+			// local $TMPDIR path is machine-local scratch that has no business in it.
+			retainedWorkDir = tmp
 			return
 		}
 		if rmErr := os.RemoveAll(tmp); rmErr != nil {
@@ -200,7 +211,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		// decision to stop. Checked here and again after the loop, which together
 		// cover an interrupt arriving on any case including the last.
 		if cerr := ctx.Err(); cerr != nil {
-			return nil, fmt.Errorf("benchmark run cancelled after %d of %d case(s): %w", i, len(m.Cases), cerr)
+			return nil, "", fmt.Errorf("benchmark run cancelled after %d of %d case(s): %w", i, len(m.Cases), cerr)
 		}
 		caseIDs = append(caseIDs, c.ID)
 
@@ -210,6 +221,22 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		// keys its per-case output dir by index.
 		repoDir := filepath.Join(tmp, fmt.Sprintf("repo-%d", i))
 		if err := os.MkdirAll(repoDir, 0o755); err != nil {
+			// A HOST-LEVEL work-dir fault aborts instead of joining the failure
+			// channel. That channel is for transient, case-specific faults, and these
+			// four errnos are neither: the disk is full, the process or system is out
+			// of file descriptors, or the volume is read-only. Every remaining case
+			// repeats the identical syscall and fails identically, so a 200-case suite
+			// writes 200 entries and still exits 0 — and on EMFILE the same exhaustion
+			// then hits PrepareReview and ExecuteReview on any case that DID get a
+			// directory, burning the panel while the host has no file handles left.
+			// Narrow on purpose: only this site, only these errnos. A general
+			// consecutive-failure cap would overlap the opt-in exit gates on
+			// `benchmark run` and take the decision away from the operator.
+			if isFatalWorkDirError(err) {
+				releaseCaseRepo(ctx, repoDir, c.ID)
+				return nil, "", fmt.Errorf("creating case work dir for %q: %w "+
+					"(host-level fault, not case-specific: every remaining case would fail identically)", c.ID, err)
+			}
 			recordCaseFailure(ctx, &caseFailures, c.ID, benchmark.CaseFailureWorkDir, err)
 			// Released like every other failure path below, not skipped because the
 			// directory "was not created": MkdirAll builds the path element by element
@@ -240,7 +267,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		// already known to be broken, which is the same objection that keeps the
 		// scored-twice guard below fatal.
 		if err := benchmark.ValidateAgainstHead(c, mc.Root); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 
 		// Fixed Branch/Date/TimeSuffix and a zero StartedAt are carried verbatim from
@@ -294,7 +321,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			// roster before the first case, so this covers the narrower shape where
 			// every slot is dropped at execution time.
 			if errors.Is(err, fanout.ErrAllAgentsFailed) || errors.Is(err, fanout.ErrEmptyRoster) {
-				return nil, fmt.Errorf("executing case %q: %w", c.ID, err)
+				return nil, "", fmt.Errorf("executing case %q: %w", c.ID, err)
 			}
 			recordCaseFailure(ctx, &caseFailures, c.ID, benchmark.CaseFailureExecute, err)
 			releaseCaseRepo(ctx, repoDir, c.ID)
@@ -359,7 +386,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			// tier fails closed on exactly this, and so must this one: a merged
 			// identity is only meaningful when the two lanes PARTITION the suite.
 			if prior, dup := acc[key].scored[c.ID]; dup {
-				return nil, fmt.Errorf("case %q scored twice under realized identity %q/%q (agents %q and %q); "+
+				return nil, "", fmt.Errorf("case %q scored twice under realized identity %q/%q (agents %q and %q); "+
 					"two lanes sharing one identity must partition the suite, not both score it",
 					c.ID, key.model, key.persona, prior, a.Agent)
 			}
@@ -410,7 +437,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 	// case: that iteration has no successor to catch it, so without this the run
 	// would return a partial result whose missing case was the operator's own Ctrl-C.
 	if cerr := ctx.Err(); cerr != nil {
-		return nil, fmt.Errorf("benchmark run cancelled after %d of %d case(s): %w", len(m.Cases)-len(caseFailures), len(m.Cases), cerr)
+		return nil, "", fmt.Errorf("benchmark run cancelled after %d of %d case(s): %w", len(m.Cases)-len(caseFailures), len(m.Cases), cerr)
 	}
 
 	// A run that scored NOTHING measured nothing, so there is no partial result to
@@ -431,11 +458,11 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 	// one is reachable only now that a case failure stops aborting.
 	if len(order) == 0 {
 		if len(caseFailures) > 0 {
-			return nil, fmt.Errorf("no case could be scored: all %d case(s) failed (last reason %q on case %q); "+
+			return nil, "", fmt.Errorf("no case could be scored: all %d case(s) failed (last reason %q on case %q); "+
 				"re-running is the remedy only if the cause was transient",
 				len(caseFailures), caseFailures[len(caseFailures)-1].Reason, caseFailures[len(caseFailures)-1].CaseID)
 		}
-		return nil, fmt.Errorf("no case could be scored: the run produced no reviewer rows over %d case(s)", len(m.Cases))
+		return nil, "", fmt.Errorf("no case could be scored: the run produced no reviewer rows over %d case(s)", len(m.Cases))
 	}
 
 	// The post-scrub identity collision guard buildRunResult carries: scrubField
@@ -453,7 +480,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		s := scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: k.model, Persona: k.persona})
 		id := reviewerKey{model: s.Model, persona: s.Persona}
 		if prev, dup := public[id]; dup {
-			return nil, fmt.Errorf("distinct reviewer identities %q/%q and %q/%q scrub to the same public identity %q/%q: "+
+			return nil, "", fmt.Errorf("distinct reviewer identities %q/%q and %q/%q scrub to the same public identity %q/%q: "+
 				"scorecard's path/credential scrub is not injective, so publishing would emit two reviewer rows under one identity",
 				prev.model, prev.persona, k.model, k.persona, id.model, id.persona)
 		}
@@ -521,7 +548,9 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		Vocabulary:          benchmark.PerReviewerVocabulary(catScores),
 		PositionalRecall:    benchmark.ScorePositional(posScores),
 		CaseFailures:        caseFailures,
-	}, nil
+		// retainedWorkDir is set by the deferred cleanup above, which runs after this
+		// return and is the only place that knows whether the dir survived.
+	}, "", nil
 }
 
 // recordCaseFailure marks one case unmeasured and lets the run continue.
@@ -540,6 +569,23 @@ func recordCaseFailure(ctx context.Context, into *[]benchmark.CaseFailure, caseI
 	log.FromContext(ctx).Warn("repo-state case failed; recorded as unmeasured and skipped",
 		"case", caseID, "reason", reason, "err", cause)
 	*into = append(*into, benchmark.CaseFailure{CaseID: caseID, Reason: reason})
+}
+
+// isFatalWorkDirError reports whether a work-dir creation error is a property of the
+// HOST rather than of the case.
+//
+// The four here are the ones that cannot clear on their own within a run: no space
+// left (ENOSPC), the process or the system out of file descriptors (EMFILE/ENFILE),
+// and a read-only filesystem (EROFS). Recording any of them as one case's bad luck
+// invites the loop to repeat the same syscall for every remaining case.
+//
+// Deliberately NOT included: EACCES/EPERM and ENOTDIR. Those can be specific to the
+// path being created, so the per-case classification is the honest one for them.
+func isFatalWorkDirError(err error) bool {
+	return errors.Is(err, syscall.ENOSPC) ||
+		errors.Is(err, syscall.EMFILE) ||
+		errors.Is(err, syscall.ENFILE) ||
+		errors.Is(err, syscall.EROFS)
 }
 
 // releaseCaseRepo hands one case's materialized repository back, warning rather than
@@ -765,13 +811,16 @@ func readCaseFindingsLocated(reviewDir string, agents map[string]bool) (located 
 //
 // It writes to the passed stderr rather than the context logger for the same reason
 // warnVocabularyDiagnostics does: a shortfall an operator must act on should not be
-// suppressible by a log level. The retained work dir's PATH stays in the runner's
-// Warn line — it is machine-local scratch, and this message's job is to say the
-// artifacts exist at all, which is what an operator needs before going to look.
+// suppressible by a log level. That applies to the retained work dir's PATH too, which
+// is why retainedWorkDir is a parameter: it used to reach the operator ONLY through
+// the runner's Warn line, and ATCR_LOG_LEVEL=error — a legal setting — drops that
+// line, leaving the artifacts in an unnamed directory. An empty retainedWorkDir keeps
+// the old wording, so a caller that has no path to offer still says the artifacts
+// exist.
 //
 // Silent on a clean run, like every sibling summary on a suite that carries none of
 // its signal.
-func warnCaseFailures(w io.Writer, rr *benchmark.RunResult) {
+func warnCaseFailures(w io.Writer, rr *benchmark.RunResult, retainedWorkDir string) {
 	if rr == nil || len(rr.CaseFailures) == 0 {
 		return
 	}
@@ -783,7 +832,12 @@ func warnCaseFailures(w io.Writer, rr *benchmark.RunResult) {
 		fmt.Fprintf(&msg, "  %s: failed at %s\n",
 			stripTerminalControlRunes(f.CaseID), stripTerminalControlRunes(f.Reason))
 	}
-	msg.WriteString("  The work dir is retained (path in the run log) — the scored cases' review artifacts " +
-		"survive there for inspection or manual rescoring.\n")
+	if retainedWorkDir != "" {
+		fmt.Fprintf(&msg, "  The work dir is retained at %s — the scored cases' review artifacts "+
+			"survive there for inspection or manual rescoring.\n", retainedWorkDir)
+	} else {
+		msg.WriteString("  The work dir is retained (path in the run log) — the scored cases' review artifacts " +
+			"survive there for inspection or manual rescoring.\n")
+	}
 	_, _ = io.WriteString(w, msg.String())
 }
