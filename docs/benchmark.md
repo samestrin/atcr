@@ -270,7 +270,7 @@ is never scored as a genuine missed defect).
 
 A `repo-state-v1` case is a small repository rather than a diff: a `base/` tree, a commit message, and a change applied on top. `atcr benchmark run --suite-path benchmarks/repo-state-v1` works exactly as it does for `standard-v1` — the command reads the manifest's `suite` field and dispatches. The case format itself is specified in [`benchmarks/repo-state-v1/FORMAT.md`](../benchmarks/repo-state-v1/FORMAT.md), which this implementation follows rather than redefines.
 
-Four things differ from a `standard-v1` run.
+Five things differ from a `standard-v1` run.
 
 **It reviews a real git range, not an ingested diff.** Each case is materialized into a git repository — the base tree as one commit, the change as a second commit carrying `commit-message.txt` verbatim — and reviewed over `base..head`. The diff ingestion path builds no `RangeBuilder`, and both the claim ledger and context-aware pre-fetching live there, so a tier meant to measure those features has to present a real range.
 
@@ -289,6 +289,30 @@ Each rate sits beside its numerator and denominator, and is **absent** rather th
 > **The same definition is not the same population.** `corroboration_rate` scores the categories in the merged `findings.txt`, which is written *after* the Epic 14.1 grounding gate. That gate is live on `repo-state-v1` and fails open on `standard-v1`, so a reviewer that found the planted out-of-diff defect and labelled it correctly still scores 0 for it here and 1 there — same formula, same denominator, different input set. Rather than fork a published metric by suite, each `reviewer_coverage[]` row carries `grounding_enabled`, so you can tell whether two rows are measuring the same thing before comparing them. A row is tagged `true` only when the gate was live for **every** case it scored.
 
 **`--checkpoint` is rejected, not ignored.** Resumable runs are implemented for the `standard-v1` diff path only. Accepting the flag silently would let you start a long run believing it was resumable and find out otherwise at the worst moment, so the command refuses it up front.
+
+**A single case's infrastructure failure does not forfeit the run.** Because `--checkpoint` is refused for this tier, an abort on case *N* used to cost every paid case before it. Instead, a case that cannot be materialized, prepared, executed, summarized, or read back is recorded in the run-result's `case_failures[]` array — `{"case_id", "reason"}`, where the reason names the stage it died at — and the run continues with the next case.
+
+A case in that array is **unmeasured**, not missed. It appears in no reviewer's `case_ids`, and adds nothing to any recall denominator, so recall over a 3-case suite with one failed case reads exactly as recall over the two that were scored. Scoring it as a zero instead would charge every reviewer for a defect they were never shown — a transient infrastructure failure recorded as a genuine missed defect, which is the one thing this tier's contract forbids. `suite_case_ids` still names the failed case, because that list is the denominator the shortfall is visible against.
+
+Three failures still abort the whole run, and none of them is transient:
+
+| Failure | Why it aborts |
+|---|---|
+| A total-roster failure still aborts (every reviewer failed on one case). | Recording it would make a whole-provider outage read on the run-result exactly like a local disk fault. |
+| An **unwinnable expectation** (a case citing a file or line its own head state does not have). | A suite-authoring defect: deterministic, identical on a re-run, and caught before the case costs anything. Continuing would score around a suite already known to be broken. |
+| **Every case failing.** | Nothing was measured, so there is no partial result to salvage. |
+
+When any case fails, the **work dir is retained** and its path is logged, exactly as it is on a hard failure — the successful cases' raw transcripts, `findings.txt` and `summary.json` survive for inspection or manual rescoring.
+
+At export, a recorded failure **explains** a coverage shortfall; it **does not excuse** one. `atcr benchmark export` still rejects a partial run by default, but names the failed case and its reason rather than telling you to re-run cases that never ran:
+
+```
+run-result run.json has reviewer row(s) scored over less than the full 3-case suite:
+llm-large/brad (2/3 cases, unmeasured case-02 (prepare));
+re-run the missing or unmeasured cases, or pass --allow-partial-coverage to publish the shortfall explicitly
+```
+
+The reason vocabulary is closed and fail-closed at that boundary: export **rejects** a `case_failures` entry whose reason is not one the producer writes, whose case the suite does not declare, or whose case some reviewer also scored. A hand-supplied run-result cannot attach an excuse to a row that did not earn one.
 
 > **The Epic 14.1 grounding gate stays ON for these runs, by design.** A finding whose cited file the patch never touched is dropped unless pre-fetching actually retrieved the cited span. That is the measurement rather than an obstacle to it: the tier's question is whether pre-fetching lets a genuine out-of-diff finding clear the shipped anti-hallucination gate. Turning the gate off for benchmark runs would hide exactly the thing being measured.
 

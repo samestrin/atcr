@@ -205,3 +205,51 @@ func TestRepoStateSuite_ShipsItsVerificationDocuments(t *testing.T) {
 			"or bump the doc before shipping the suite at a version its verification does not cover",
 		m[1], manifest.SuiteVersion)
 }
+
+// The partial-run contract is the one claim in this section whose reader is making a
+// COST decision: "will a late failure forfeit the ten minutes of paid panel work I
+// already spent?" A doc that still describes the old all-or-nothing behaviour costs
+// them a re-run they did not need, and a doc that promises the new behaviour after
+// the code reverted costs them the run itself. Pinned bidirectionally for the same
+// reason as its siblings above.
+func TestBenchmarkDoc_RepoStatePartialRunContractMatchesTheCode(t *testing.T) {
+	doc := readRepoFile(t, "../../docs/benchmark.md")
+	runResult := readRepoFile(t, "../../internal/benchmark/benchmark.go")
+	cli := readRepoFile(t, "../../cli/benchmark_repostate.go")
+	coverage := readRepoFile(t, "../../cli/benchmark_coverage.go")
+
+	// The channel's own key, so a reader knows where in the run-result to look.
+	assert.Contains(t, doc, "`case_failures`",
+		"the doc must name the run-result array that records unmeasured cases")
+	assert.Contains(t, runResult, `json:"case_failures,omitempty"`,
+		"the run-result must still emit the key the doc names")
+
+	// The distinction the whole design rests on: unmeasured, not missed. A reader
+	// who takes a failed case for a zero would mis-read every recall on the run.
+	assert.Contains(t, doc, "unmeasured",
+		"the doc must say a failed case is unmeasured rather than scored as a miss")
+	assert.Contains(t, cli, "recorded as unmeasured and skipped",
+		"the runner must still skip the failed case rather than score it")
+
+	// The one execution failure that still aborts — AC5. A doc claiming a total-roster
+	// failure is survivable would invite publishing a run whose missing case came from
+	// a whole-provider outage.
+	assert.Contains(t, doc, "total-roster failure still aborts",
+		"the doc must keep the all-agents-failed abort's exception explicit")
+	assert.Contains(t, cli, "errors.Is(err, fanout.ErrAllAgentsFailed)",
+		"the runner must still propagate a total-roster failure rather than record it")
+
+	// Retention on a partial run — AC4. This is the sentence that tells an operator
+	// their paid artifacts are recoverable instead of gone.
+	assert.Contains(t, doc, "work dir is retained",
+		"the doc must state that a partial run keeps its work dir")
+	assert.Contains(t, cli, "benchmark work dir retained after a partial run",
+		"the runner must still retain and report the work dir on a partial run")
+
+	// The export gate is still closed by default on a partial run: a recorded failure
+	// EXPLAINS a shortfall, it does not excuse one.
+	assert.Contains(t, doc, "does not excuse",
+		"the doc must say a recorded failure does not waive the coverage gate")
+	assert.Contains(t, coverage, "re-run the missing or unmeasured cases",
+		"the gate must still reject a short run-result by default")
+}
