@@ -14,6 +14,7 @@ import (
 	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/hookobs"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/spf13/cobra"
@@ -62,6 +63,21 @@ func runBenchmarkVerify(cmd *cobra.Command, _ []string) error {
 	// enforces presence before RunE executes. Project-wide convention (27 sites).
 	suitePath, _ := cmd.Flags().GetString("suite-path")
 
+	// Route on the suite's own discriminator, exactly as runBenchmarkRun does.
+	// verify is the author's only FREE validation path; leaving it standard-v1-only
+	// while run executed both tiers meant a repo-state author could reach
+	// LoadRepoState and validateRepoStatePublishableCaseIDs by no route except
+	// `benchmark run`, which proceeds into a paid panel.
+	suiteFormat, err := benchmark.DetectSuiteFormat(suitePath)
+	if err != nil {
+		return err
+	}
+	// EqualFold for the same reason run routes with it: a differently-cased
+	// discriminator names the same tier.
+	if strings.EqualFold(suiteFormat, benchmark.FormatRepoStateV1) {
+		return verifyRepoStateSuite(cmd, suitePath)
+	}
+
 	m, err := benchmark.Load(suitePath)
 	if err != nil {
 		return err
@@ -89,6 +105,37 @@ func runBenchmarkVerify(cmd *cobra.Command, _ []string) error {
 	_, werr := fmt.Fprintf(cmd.OutOrStdout(),
 		"suite %q version %q: %d %s, valid\nreproducibility hash: %s\n",
 		m.Suite, m.SuiteVersion, len(m.Cases), noun, hash)
+	return werr
+}
+
+// verifyRepoStateSuite is runBenchmarkVerify's repo-state arm: the SAME two gates
+// executeRepoStateBenchmarkRun applies at load, in the same order, so verify and
+// run cannot disagree about what a valid repo-state suite is.
+//
+// No reproducibility hash. ReproHashManifest is defined over a standard-v1
+// *Manifest — it hashes each case's diff bytes — and there is no repo-state
+// equivalent to call. Printing nothing where the standard tier prints a hash would
+// read as a missing line, so the omission is NAMED rather than silent; inventing a
+// second hashing contract here would put an unversioned one in the CLI, where the
+// public submission format cannot see it.
+func verifyRepoStateSuite(cmd *cobra.Command, suitePath string) error {
+	m, err := benchmark.LoadRepoState(suitePath)
+	if err != nil {
+		return err
+	}
+	if err := validateRepoStatePublishableCaseIDs(m, suitePath); err != nil {
+		return err
+	}
+	noun := "cases"
+	if len(m.Cases) == 1 {
+		noun = "case"
+	}
+	// %q on both identity fields, for the reason the standard arm's comment gives:
+	// they come from a third-party suite.json and an escape sequence would otherwise
+	// survive to the terminal.
+	_, werr := fmt.Fprintf(cmd.OutOrStdout(),
+		"suite %q version %q: %d %s, valid\nreproducibility hash: not defined for %s (standard-v1 only)\n",
+		m.Suite, m.SuiteVersion, len(m.Cases), noun, benchmark.FormatRepoStateV1)
 	return werr
 }
 
@@ -150,16 +197,50 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	// Route on the suite's own discriminator. The two tiers return the same
+	// RunResult but reach it by different review paths — standard-v1 by diff
+	// ingestion, repo-state-v1 by materializing a real repository and reviewing a
+	// base..head range — so the choice cannot be deferred into a single loader.
+	// Reading only the discriminator keeps a malformed repo-state suite producing a
+	// repo-state error rather than a standard-v1 one.
+	suiteFormat, err := benchmark.DetectSuiteFormat(suitePath)
+	if err != nil {
+		return err
+	}
+	if err := checkRepoStateFlags(suiteFormat, checkpoint); err != nil {
+		return err
+	}
+
 	// Audit identity (Epic 35.0): a benchmark drives many models over many
 	// cases, so without a stage those records are unattributable in a stream
 	// shared with real review work.
 	benchCtx := hookobs.WithCall(cmd.Context(), hookobs.Call{Stage: "benchmark"})
-	rr, err := executeBenchmarkRun(benchCtx, cfg, benchmarkNewCompleter(benchCtx), suitePath, time.Now().UTC(), checkpoint)
+	var rr *benchmark.RunResult
+	// Case-insensitive on purpose: DetectSuiteFormat already TrimSpaces the
+	// discriminator, and an exact match here would send a manifest declaring
+	// "Repo-State-V1" to the standard-v1 arm — which misses the known-other-format
+	// guard and dies on "diff path is required", the exact misleading message the
+	// discriminator check exists to prevent.
+	isRepoState := strings.EqualFold(suiteFormat, benchmark.FormatRepoStateV1)
+	runner := "executeBenchmarkRun"
+	if isRepoState {
+		runner = "executeRepoStateBenchmarkRun"
+	}
+	// Name the routing decision on stderr (via the context logger): an operator who
+	// passed --suite-path must be able to tell from the log which tier actually
+	// ran, without opening the run-result to check which metrics it carries.
+	log.FromContext(benchCtx).Info("benchmark run: executing suite", "suite_format", suiteFormat, "runner", runner)
+	if isRepoState {
+		rr, err = executeRepoStateBenchmarkRun(benchCtx, cfg, benchmarkNewCompleter(benchCtx), suitePath, time.Now().UTC())
+	} else {
+		rr, err = executeBenchmarkRun(benchCtx, cfg, benchmarkNewCompleter(benchCtx), suitePath, time.Now().UTC(), checkpoint)
+	}
 	if err != nil {
 		return err
 	}
 
 	warnVocabularyDiagnostics(cmd.ErrOrStderr(), rr)
+	warnPositionalRecallSummary(cmd.ErrOrStderr(), rr)
 
 	data, err := json.MarshalIndent(rr, "", "  ")
 	if err != nil {
@@ -280,6 +361,11 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 		}
 	}
 	if err := validateReviewerVocabulary(cmd.ErrOrStderr(), rr, in); err != nil {
+		return err
+	}
+	// The same gate, one array over. Wired directly beside its twin so the two
+	// cannot drift on when they run.
+	if err := validateReviewerPositionalRecall(cmd.ErrOrStderr(), rr, in); err != nil {
 		return err
 	}
 
@@ -572,6 +658,44 @@ func warnIfVocabularyCeilingExceeded(w io.Writer, rate *float64) bool {
 	return true
 }
 
+// warnPositionalRecallSummary gives the repo-state tier's headline number an
+// operator surface. `benchmark run --output <path>` prints nothing to stdout (the
+// run-result goes to the file), so without this a whole-panel run shows a silent
+// terminal and the operator must open the JSON to learn the run measured
+// anything — the rationale warnVocabularyDiagnostics carries for the vocabulary
+// signals, applied to the one number this tier exists to produce. stderr, like
+// those warnings: stdout stays machine-readable. Non-fatal, deliberately not an
+// exit-code change, and wired at the same single call site so the pairing is
+// testable from a RunResult.
+//
+// A nil recall is UNMEASURED (the case set carries no findings of that half),
+// not zero — named as such rather than printed as 0.0, the same nil-vs-zero
+// distinction every recall pointer in this package carries.
+func warnPositionalRecallSummary(w io.Writer, rr *benchmark.RunResult) {
+	if rr == nil || len(rr.PositionalRecall) == 0 {
+		return // standard-v1 runs carry none: silent, like the in-range vocabulary rate
+	}
+	var msg strings.Builder
+	msg.WriteString("repo-state positional recall:\n")
+	for _, p := range rr.PositionalRecall {
+		model := stripTerminalControlRunes(p.Model)
+		persona := stripTerminalControlRunes(p.Persona)
+		if p.Recall == nil {
+			fmt.Fprintf(&msg, "  %s/%s: recall unmeasured (no expected findings)\n", model, persona)
+		} else {
+			fmt.Fprintf(&msg, "  %s/%s: recall %.2f (%d/%d matched)",
+				model, persona, *p.Recall, p.MatchedTotal, p.ExpectedTotal)
+			if p.OutsideDiffRecall == nil {
+				msg.WriteString("; outside_diff unmeasured (no outside_diff findings)\n")
+			} else {
+				fmt.Fprintf(&msg, "; outside_diff_recall %.2f (%d/%d matched)\n",
+					*p.OutsideDiffRecall, p.MatchedOutsideDiff, p.ExpectedOutsideDiff)
+			}
+		}
+	}
+	_, _ = io.WriteString(w, msg.String())
+}
+
 // validateReviewerVocabulary checks the reviewer_vocabulary diagnostic array on an
 // untrusted (possibly hand-supplied) run-result at the export boundary.
 //
@@ -623,6 +747,103 @@ const vocabularyRateTolerance = 5e-3
 // only so a difference that is mathematically equal to the tolerance is not rejected for
 // being a few ULP above it after the subtraction.
 const vocabularyRateEpsilon = 1e-9
+
+// validateReviewerPositionalRecall is validateReviewerVocabulary for the positional
+// array, applying the same rules to the same shape for the same reason.
+//
+// The asymmetry it closes: reviewer_vocabulary gets seven arithmetic arms and two
+// alignment warnings on the stated grounds that a run-result is untrusted
+// hand-supplied input, and out_of_vocabulary_rate gets a hard range check — while
+// reviewer_positional_recall, structurally identical (counts beside an optional
+// rate, joined positionally to rr.Reviewers), got nothing. A file carrying
+// matched_total 99 against expected_total 1, recall 42.0 and outside_diff_recall
+// -3.0 exported with exit 0 and no warning.
+//
+// "AC5 holds because BuildSubmission never copies the field" is not a reason to
+// skip it: that is equally true of reviewer_vocabulary, which is validated anyway.
+// The run-result is a published artifact in its own right.
+//
+// Counts and rates FAIL; the positional join only WARNS — the same split the
+// vocabulary validator makes, and for the same reason: an impossible number
+// describes no run, whereas a misaligned array is unreadable but harmless on a path
+// no consumer reads.
+func validateReviewerPositionalRecall(w io.Writer, rr benchmark.RunResult, path string) error {
+	if len(rr.PositionalRecall) == 0 {
+		return nil
+	}
+	for i, p := range rr.PositionalRecall {
+		// The three (expected, matched, rate) triples are checked by one loop rather
+		// than three copies: the total and its two halves obey identical rules, and
+		// spelling them out three times is how one of them ends up with a weaker gate.
+		for _, part := range []struct {
+			field             string
+			expected, matched int
+			rate              *float64
+		}{
+			{"expected_total/matched_total", p.ExpectedTotal, p.MatchedTotal, p.Recall},
+			{"expected_outside_diff/matched_outside_diff", p.ExpectedOutsideDiff, p.MatchedOutsideDiff, p.OutsideDiffRecall},
+			{"expected_within_diff/matched_within_diff", p.ExpectedWithinDiff, p.MatchedWithinDiff, p.WithinDiffRecall},
+		} {
+			if part.expected < 0 || part.matched < 0 {
+				return fmt.Errorf("run-result %s has reviewer_positional_recall[%d] with negative %s (%d/%d)",
+					path, i, part.field, part.expected, part.matched)
+			}
+			if part.matched > part.expected {
+				return fmt.Errorf("run-result %s has reviewer_positional_recall[%d] with matched %d exceeding expected %d (%s) — "+
+					"a numerator larger than its own denominator describes no run", path, i, part.matched, part.expected, part.field)
+			}
+			if part.rate == nil {
+				// nil is UNMEASURED (this reviewer's suite planted no such finding),
+				// never a defect — the nil-vs-zero distinction the pointer carries.
+				continue
+			}
+			// A rate on a ZERO denominator is that distinction collapsed. ScorePositional
+			// leaves the pointer nil when nothing was expected, so a value here publishes
+			// an unmeasured half as measured — and on THIS array that is the headline
+			// out-of-diff number.
+			if part.expected == 0 {
+				return fmt.Errorf("run-result %s has reviewer_positional_recall[%d] with a rate of %v for %s but expected nothing; "+
+					"an unmeasured half carries no rate at all, so this row describes no run", path, i, *part.rate, part.field)
+			}
+			// Range-checked before the quotient comparison, for the reason the vocabulary
+			// validator states: NaN compares false against the tolerance too, so this arm
+			// is what rejects it.
+			if r := *part.rate; math.IsNaN(r) || r < 0 || r > 1 {
+				return fmt.Errorf("run-result %s has reviewer_positional_recall[%d] rate %v for %s outside [0,1]", path, i, r, part.field)
+			}
+			// Same tolerance and same inclusive-bound epsilon as the vocabulary rate: the
+			// bound exists to admit an honestly-rounded hand-authored value while
+			// rejecting a rate that contradicts its own counts.
+			if want := float64(part.matched) / float64(part.expected); math.Abs(*part.rate-want)-vocabularyRateTolerance > vocabularyRateEpsilon {
+				return fmt.Errorf("run-result %s has reviewer_positional_recall[%d] rate %v for %s that does not match its own "+
+					"counts (%d/%d = %v)", path, i, *part.rate, part.field, part.matched, part.expected, want)
+			}
+		}
+	}
+
+	if len(rr.PositionalRecall) != len(rr.Reviewers) {
+		_, _ = fmt.Fprintf(w, "warning: run-result %s has %d reviewer_positional_recall row(s) against %d reviewer(s); "+
+			"the array documents a positional join (entry i describes reviewers[i]) that this file cannot satisfy. "+
+			"Publishing anyway — no consumer reads it on this path.\n", path, len(rr.PositionalRecall), len(rr.Reviewers))
+		return nil
+	}
+	for i, p := range rr.PositionalRecall {
+		if p.Model != rr.Reviewers[i].Model || p.Persona != rr.Reviewers[i].Persona {
+			// %q, NOT stripTerminalControlRunes — see the identical warning in
+			// validateReviewerVocabulary: this reports a COMPARISON, and stripping
+			// sanitizes by deletion, so two identities differing only by a control rune
+			// would print as the same text.
+			_, _ = fmt.Fprintf(w, "warning: run-result %s has reviewer_positional_recall[%d] (%q/%q) misaligned with "+
+				"reviewers[%d] (%q/%q); the documented positional join does not hold. Publishing anyway — "+
+				"no consumer reads it on this path.\n",
+				path, i,
+				p.Model, p.Persona, i,
+				rr.Reviewers[i].Model, rr.Reviewers[i].Persona)
+			return nil
+		}
+	}
+	return nil
+}
 
 func validateReviewerVocabulary(w io.Writer, rr benchmark.RunResult, path string) error {
 	if len(rr.Vocabulary) == 0 {

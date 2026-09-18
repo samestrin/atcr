@@ -7,10 +7,19 @@
 // ships the CONTRACT (Load/Validate/ReproHash), the suite-tagged Submission
 // envelope and the RunResult contract `atcr benchmark export` consumes, and the
 // scorer (Score, which folds per-case findings into the public reviewer schema).
-// It stays stdlib + scorecard-type only, with no live-LLM dependency: the suite
-// EXECUTION loop that drives each case's diff through the review pipeline lives in
-// cmd/atcr (the composition root that may import internal/fanout). The curated
-// standard-v1 suite CONTENT is bundled at benchmarks/standard-v1/ in this repo.
+// It carries NO live-LLM dependency: the suite EXECUTION loop that drives each
+// case through the review pipeline lives in the top-level cli package (which
+// imports internal/fanout). The curated standard-v1 suite CONTENT is bundled at
+// benchmarks/standard-v1/ in this repo.
+//
+// It also hosts the repo-state-v1 tier (epic 35.16.10): a second suite whose cases
+// carry repo STATE rather than a bare diff, with expected findings located by file
+// and line range. That tier materializes each case into a real git repository, so
+// this package's dependency set is stdlib + scorecard + version + gitexec rather
+// than the stdlib-and-scorecard-only set it held through epic 10.0. gitexec is the
+// hardened git constructor, a leaf with no internal dependencies of its own, and
+// the edge is the same one internal/benchmarkimport already carries — the
+// no-live-LLM property that makes this package testable offline is unchanged.
 package benchmark
 
 import (
@@ -50,14 +59,21 @@ type Case struct {
 	ExpectedCategories []string `json:"expected_categories"`
 }
 
-// knownOtherSuiteFormats maps a `suite` discriminator this package does NOT
-// implement to the document that defines it. It is deliberately an enumeration
-// of KNOWN other tiers rather than a whitelist of accepted names: a user may
-// bundle a private standard-v1 suite under any name, so rejecting everything
-// but "standard-v1" would break them. Only a tier this repo actually ships a
-// format document for is recognised and refused.
+// knownOtherSuiteFormats maps a `suite` discriminator this FUNCTION does not
+// implement to the way to load it. It is deliberately an enumeration of KNOWN
+// other tiers rather than a whitelist of accepted names: a user may bundle a
+// private standard-v1 suite under any name, so rejecting everything but
+// "standard-v1" would break them.
+//
+// The repo-state-v1 entry no longer points at a format document. As of epic
+// 35.16.10 the tier IS implemented here — by LoadRepoState, which returns a
+// RepoStateManifest. Load cannot return that type, so it still declines the
+// suite; what changed is that the suite is no longer refused by the TOOL, and the
+// message now names the function that handles it instead of a document the reader
+// would have to implement themselves. Callers that must accept either tier route
+// on DetectSuiteFormat.
 var knownOtherSuiteFormats = map[string]string{
-	"repo-state-v1": "benchmarks/repo-state-v1/FORMAT.md",
+	FormatRepoStateV1: "benchmark.LoadRepoState (or `atcr benchmark run`, which routes on the suite discriminator)",
 }
 
 // Load reads <suitePath>/suite.json, validates the manifest structurally, and
@@ -78,9 +94,9 @@ func Load(suitePath string) (*Manifest, error) {
 	// carries no `diff` field at all, so structural validation reports "diff path
 	// is required" — a message that sends the reader looking for a field the
 	// format never had, rather than telling them this is a different suite tier.
-	if doc, ok := knownOtherSuiteFormats[strings.TrimSpace(m.Suite)]; ok {
-		return nil, fmt.Errorf("unsupported suite format %q in %s: this loader implements standard-v1 only; see %s",
-			strings.TrimSpace(m.Suite), manifestPath, doc)
+	if loader, ok := knownOtherSuiteFormats[strings.TrimSpace(m.Suite)]; ok {
+		return nil, fmt.Errorf("unsupported suite format %q in %s: this loader implements standard-v1 only; load it with %s",
+			strings.TrimSpace(m.Suite), manifestPath, loader)
 	}
 	if err := m.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid suite manifest %s: %w", manifestPath, err)
@@ -159,15 +175,37 @@ func (m *Manifest) Validate() error {
 		// through a sibling's family. Costs valid suites nothing — the families are
 		// disjoint (TestEquivalence_FamiliesAreDisjoint), so only a hand-authored
 		// suite planting a fine word beside its coarse parent can trip this.
-		for i, a := range normCats {
-			for j, b := range normCats {
-				if i == j {
-					continue
-				}
-				for _, member := range familyOf(b) {
-					if member == a {
-						return fmt.Errorf("case %q: expected_category %q is already satisfied by %q's equivalence family; one raised finding would satisfy both and inflate recall", c.ID, a, b)
-					}
+		//
+		// The rule lives in ONE helper shared with the repo-state validator
+		// (rejectEquivalenceOverlap) — two copies of a subtle invariant had already
+		// drifted in wording, and the divergence changes a published recall
+		// denominator rather than crashing.
+		if err := rejectEquivalenceOverlap("expected_category", normCats); err != nil {
+			return fmt.Errorf("case %q: %w", c.ID, err)
+		}
+	}
+	return nil
+}
+
+// rejectEquivalenceOverlap rejects a deduplicated, normalized category set in
+// which one entry is already satisfied by another's equivalence family — the
+// shape where ONE raised finding satisfies TWO expectations and inflates recall.
+//
+// Both suite validators (Manifest.Validate for standard-v1 and
+// RepoStateCase.validateCategoryEquivalence) apply this identical rule through
+// this one helper, so the two tiers cannot drift on what an inflating pair is or
+// on how the diagnostic words it. The noun differs per caller ("expected_category"
+// on the flat standard-v1 list, "expected category" on the per-finding field).
+func rejectEquivalenceOverlap(noun string, normCats []string) error {
+	for i, a := range normCats {
+		for j, b := range normCats {
+			if i == j {
+				continue
+			}
+			for _, member := range familyOf(b) {
+				if member == a {
+					return fmt.Errorf("%s %q is already satisfied by %q's equivalence family; "+
+						"one raised finding would satisfy both and inflate recall", noun, a, b)
 				}
 			}
 		}
@@ -360,6 +398,52 @@ type RunResult struct {
 	// unmarshal to nil (the key is absent, tag or no tag), reading as "no breakdown
 	// recorded" rather than as a run with no reviewers.
 	Vocabulary []ReviewerVocabulary `json:"reviewer_vocabulary,omitempty"`
+
+	// PositionalRecall is the repo-state-v1 tier's located-finding recall per
+	// reviewer, with out-of-diff recall reported SEPARATELY from overall recall
+	// (epic 35.16.10, AC4). Produced by ScorePositional; this field only carries it.
+	//
+	// It sits here and NOT on scorecard.PublicRecord for the same reason
+	// OutOfVocabularyRate and Coverage do: that type is the frozen public schema
+	// shared byte-for-byte with production `leaderboard --export`, and a
+	// benchmark-only column would appear on production rows that can never populate
+	// it. BuildSubmission accordingly does not carry this field forward.
+	//
+	// It is also why CorroborationRate's DEFINITION is unchanged on a repo-state run.
+	// That field carries CATEGORY recall on every suite, which is a genuinely
+	// different quantity from located-finding recall — the same finding counted
+	// against a different denominator. Publishing located recall through it would
+	// fork a frozen shared key's meaning by suite, distinguishable only by the
+	// envelope's source tag, which score.go's cost-denominator comment already
+	// argues is worse than the hole it would close.
+	//
+	// The DEFINITION being unchanged is not the same as the two tiers' values being
+	// comparable, and an earlier version of this comment ran the two together. The
+	// categories CorroborationRate scores come from the merged findings.txt, written
+	// AFTER the Epic 14.1 gate: with the gate off (standard-v1, no range, fails
+	// open) that is everything the reviewer emitted; with it on (repo-state-v1) it is
+	// only the patch-anchored findings, so a reviewer that found the planted
+	// out-of-diff defect and categorized it correctly still scores 0 for it. Same
+	// formula, same denominator, different population. ReviewerCoverage.
+	// GroundingEnabled tags each row with which one it measured — the alternative,
+	// forking the formula by suite, would change a number already published and break
+	// the one-meaning-everywhere promise this paragraph opens with.
+	//
+	// A blended single number would hide the one measurement this tier exists to
+	// produce: a run that scores well on in-diff findings and zero on out-of-diff
+	// ones has demonstrated exactly the gap, and an average of the two reads as
+	// mediocre-at-everything instead.
+	//
+	// What a zero out-of-diff rate DOES and DOES NOT say: it counts out-of-diff
+	// findings that SURVIVED the Epic 14.1 grounding gate and matched. A finding
+	// whose cited file the patch never touched is dropped before scoring unless
+	// pre-fetching retrieved the span, so a 0.0 conflates "never consulted
+	// unchanged code" with "found it and the gate discarded it" — the rate names
+	// the surviving outcome, not the reviewer's attention.
+	//
+	// omitempty so a run-result written before this field existed unmarshals to nil
+	// and reports as unmeasured, exactly as a nil OutOfVocabularyRate does.
+	PositionalRecall []ReviewerPositionalRecall `json:"reviewer_positional_recall,omitempty"`
 }
 
 // ReviewerCoverage names the cases behind one reviewer row of the same run-result,
@@ -387,6 +471,29 @@ type ReviewerCoverage struct {
 	// failed, so folding it into the outcome enum would admit exactly the impossible
 	// combined states the enum exists to prevent.
 	FallbackCases int `json:"fallback_cases,omitempty"`
+
+	// GroundingEnabled records whether the Epic 14.1 grounding gate was live for the
+	// run behind this row, carried up from fanout.PoolSummary.GroundingEnabled.
+	//
+	// It is the COMPARABILITY tag for this row's CorroborationRate. That field's
+	// formula and denominator are identical on every suite — deliberately so, and
+	// unchanged here — but its INPUT is not: the categories it scores come from the
+	// merged findings.txt, which is written AFTER grounding. With the gate off
+	// (standard-v1, which supplies no range, so the gate fails open) that is every
+	// finding the reviewer emitted; with the gate on (repo-state-v1) it is only the
+	// patch-anchored ones. A reviewer that found the planted out-of-diff defect and
+	// categorized it correctly still scores 0 for it.
+	//
+	// So two rows can carry the same corroboration_rate meaning the same thing about
+	// a different population. Rather than fork the formula by suite — which would
+	// break the promise that the field means one thing everywhere, and change a
+	// number already published — the row states which population it measured and
+	// lets the reader decide whether two rows are comparable.
+	//
+	// A pointer for the same reason PoolSummary's is: a rebuilt or pre-gate summary
+	// cannot know the run's grounding state, and omitting the key is honest where
+	// asserting false is not.
+	GroundingEnabled *bool `json:"grounding_enabled,omitempty"`
 }
 
 // Submission is the suite-tagged public submission envelope — DISTINCT from the
@@ -436,11 +543,19 @@ type Submission struct {
 }
 
 // SubmissionCoverage is the PUBLIC, trimmed coverage row: which suite cases one
-// reviewer row actually scored, and nothing else. ReviewerCoverage's Outcomes and
-// FallbackCases are run-level diagnostics and stay out of the public allowlist
-// (docs/scorecard.md); the board needs only the covered-case SET to tell a full
-// run from a short one. The shared field names and JSON keys match
-// ReviewerCoverage's, so a consumer reading either document reads the same shape.
+// reviewer row actually scored, plus the one qualifier the board cannot score
+// without. ReviewerCoverage's Outcomes and FallbackCases are run-level diagnostics
+// and stay out of the public allowlist (docs/scorecard.md); the board needs only
+// the covered-case SET to tell a full run from a short one. The shared field names
+// and JSON keys match ReviewerCoverage's, so a consumer reading either document
+// reads the same shape.
+//
+// GroundingEnabled is the exception, and the line it draws is "does this qualify a
+// field the envelope already publishes". Outcomes and fallback_cases describe how a
+// run went and answer no question about a published number. GroundingEnabled says
+// which population corroboration_rate — carried on every PublicRecord row — was
+// computed over, so withholding it leaves the board comparing two rates that are
+// not comparable, with nothing on the document to reveal it.
 type SubmissionCoverage struct {
 	Model   string `json:"model"`
 	Persona string `json:"persona"`
@@ -448,6 +563,19 @@ type SubmissionCoverage struct {
 	// as a SET against Submission.SuiteCaseIDs; a row short of the suite was
 	// measured over less than the full benchmark.
 	CaseIDs []string `json:"case_ids"`
+
+	// GroundingEnabled is the ONE diagnostic that is not trimmed, because unlike
+	// outcomes and fallback_cases it qualifies a field the public envelope already
+	// carries. corroboration_rate rides scorecard.PublicRecord on every row; its
+	// input is the post-grounding finding set, so a gated row and an ungated row
+	// report the same number about different populations (see ReviewerCoverage.
+	// GroundingEnabled). Publishing the rate without the tag is what made two
+	// incomparable rows look comparable on one board.
+	//
+	// Additive and omitempty, so it never appears on a production row — which has no
+	// gate state to report — and does not bump submission_schema, matching the
+	// field-addition policy in docs/scorecard.md.
+	GroundingEnabled *bool `json:"grounding_enabled,omitempty"`
 }
 
 // MarshalJSON makes the "case_ids is always an array, never null" contract
@@ -651,9 +779,10 @@ func publicCoverage(rows []ReviewerCoverage, memo map[string]string) []Submissio
 			ids = []string{}
 		}
 		out[i] = SubmissionCoverage{
-			Model:   id.Model,
-			Persona: id.Persona,
-			CaseIDs: ids,
+			Model:            id.Model,
+			Persona:          id.Persona,
+			CaseIDs:          ids,
+			GroundingEnabled: c.GroundingEnabled,
 		}
 	}
 	// Deterministic row order: two run-results with identical logical content but

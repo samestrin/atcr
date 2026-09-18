@@ -1,0 +1,175 @@
+package benchmark
+
+import (
+	"sort"
+
+	"github.com/samestrin/atcr/internal/scorecard"
+)
+
+// RepoStateCaseScore is one reviewer's outcome on a single repo-state case: the
+// per-expected-finding match results MatchFindings produced. It carries MATCHES
+// rather than raw findings because the positional decision — which report settled
+// which expectation — is made once, by the matcher, and re-deriving it here would
+// be a second implementation of the tie-break rules to keep in step.
+// No CaseID. It was written by the runner and read by NOTHING, which made the
+// scorer look like it carried attribution it does not: positionalOne folds every
+// case's matches into four integers, so the run-result has no per-case outcome
+// either way. Carrying an unread id made that loss look accidental and invited a
+// reader to believe a per-case spot-check was possible from the artifact.
+//
+// Making the loss honest is deliberately NOT the same as accepting it. A real
+// per-case breakdown is a separate, larger piece of work, and it needs a
+// per-finding reported index that does not exist yet — FindingMatch is
+// {Expected, Matched} only.
+type RepoStateCaseScore struct {
+	Matches []FindingMatch
+}
+
+// RepoStateReviewerScore is the full per-reviewer input to ScorePositional: one
+// identity and its outcomes across the suite. It mirrors ReviewerScore's shape so
+// the two scorers read the same way, but stays a separate type — AC2 turns on
+// standard-v1's CaseScore semantics being untouched, and a shared type would put
+// both tiers one field away from each other.
+type RepoStateReviewerScore struct {
+	Model   string
+	Persona string
+	Cases   []RepoStateCaseScore
+}
+
+// ReviewerPositionalRecall is one reviewer's LOCATED-finding recall across a
+// repo-state suite, with the out-of-diff half reported separately.
+//
+// The separation is the point (AC4). A single blended score can improve for
+// unrelated reasons; a reviewer that finds every in-diff defect and no out-of-diff
+// one has demonstrated exactly the gap this tier exists to measure, and averaging
+// the two halves would report that reviewer as mediocre-at-everything rather than
+// as blind to unchanged code.
+//
+// WHAT A ZERO OUT-OF-DIFF RATE MEANS — read it carefully. The number counts
+// out-of-diff findings that SURVIVED the Epic 14.1 grounding gate and matched: a
+// finding whose cited file the patch never touched is DROPPED before scoring
+// unless pre-fetching (epic 35.16.8) actually retrieved the cited span. So
+// outside_diff_recall 0.0 conflates two causes — the reviewer never consulted
+// unchanged code, OR it found something the gate discarded before scoring. The
+// rate alone cannot tell them apart; that is a known limit of the number, not a
+// property of the reviewer. (Recording a per-reviewer gate-drop count beside the
+// rate is the follow-up that would separate the causes; it changes what the
+// runner emits, not what this scorer computes.)
+//
+// Every rate is a POINTER and every rate has its counts beside it. The counts are
+// what make a rate auditable — 1/2 and 50/100 are the same rate and not the same
+// evidence — and the pointer keeps an unmeasured rate distinguishable from a
+// measured zero, the rule CostPerCorroboratedFindingUSD and OutOfVocabularyRate
+// already follow on this type's siblings.
+type ReviewerPositionalRecall struct {
+	Model   string `json:"model"`
+	Persona string `json:"persona"`
+
+	// ExpectedTotal / MatchedTotal / Recall cover every expected finding in the
+	// suite, both halves together.
+	ExpectedTotal int      `json:"expected_total"`
+	MatchedTotal  int      `json:"matched_total"`
+	Recall        *float64 `json:"recall,omitempty"`
+
+	// The out-of-diff half: findings whose settling line the diff does not touch.
+	// This is the number epic 35.16.8's AC5 needs in order to be falsifiable.
+	ExpectedOutsideDiff int      `json:"expected_outside_diff"`
+	MatchedOutsideDiff  int      `json:"matched_outside_diff"`
+	OutsideDiffRecall   *float64 `json:"outside_diff_recall,omitempty"`
+
+	// The in-diff half, reported too rather than left to be derived. A reader
+	// comparing the two halves is the intended use, and a derived number invites
+	// each consumer to re-derive it slightly differently.
+	ExpectedWithinDiff int      `json:"expected_within_diff"`
+	MatchedWithinDiff  int      `json:"matched_within_diff"`
+	WithinDiffRecall   *float64 `json:"within_diff_recall,omitempty"`
+}
+
+// ScorePositional folds per-case match outcomes into per-reviewer recall.
+//
+// The rates are MICRO-averaged over findings, not macro-averaged over cases, which
+// is the opposite of Score's choice for CorroborationRate and deliberately so. A
+// macro-average needs a per-case rate, and a case that plants no out-of-diff
+// finding has none — every answer for it (0, 1, or excluded) is an invention. The
+// suite is also small and its out-of-diff findings are sparse, so macro weighting
+// would let a case planting one such finding outweigh a case planting five.
+//
+// Rows come back sorted by modelPersonaLess — the SAME comparator Score and
+// publicCoverage use, not a second copy — so reviewers[i] and
+// reviewer_positional_recall[i] are one row, the positional join Coverage and
+// Vocabulary already depend on.
+func ScorePositional(reviewers []RepoStateReviewerScore) []ReviewerPositionalRecall {
+	if len(reviewers) == 0 {
+		return nil
+	}
+	out := make([]ReviewerPositionalRecall, 0, len(reviewers))
+	for _, r := range reviewers {
+		out = append(out, positionalOne(r))
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return modelPersonaLess(out[i].Model, out[i].Persona, out[j].Model, out[j].Persona)
+	})
+	return out
+}
+
+// positionalOne computes one reviewer's recall row.
+//
+// The identity is SCRUBBED here, through the same scorecard.ScrubPublicRecord pass
+// Score applies to every row it emits. Two reasons, and both bite:
+//
+//   - This array ships inside the run-result, so an unscrubbed identity publishes
+//     whatever the provider echoed back — a credential-shaped model id such as
+//     `bedrock@us-east-1/claude` reaches a file an operator hands to someone else.
+//   - The sort below runs on the SCRUBBED pair in Score and would run on the RAW
+//     pair here, so the two arrays would order differently exactly when the scrub
+//     changes a string. That breaks the positional join this type's doc comment
+//     promises, in the one case where a reader most needs it to hold.
+func positionalOne(r RepoStateReviewerScore) ReviewerPositionalRecall {
+	id := scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: r.Model, Persona: r.Persona})
+	pr := ReviewerPositionalRecall{Model: id.Model, Persona: id.Persona}
+	for _, c := range r.Cases {
+		for _, m := range c.Matches {
+			outside := m.Expected.IsOutsideDiff()
+			pr.ExpectedTotal++
+			if outside {
+				pr.ExpectedOutsideDiff++
+			} else {
+				pr.ExpectedWithinDiff++
+			}
+			if !m.Matched {
+				continue
+			}
+			pr.MatchedTotal++
+			if outside {
+				pr.MatchedOutsideDiff++
+			} else {
+				pr.MatchedWithinDiff++
+			}
+		}
+	}
+	pr.Recall = rate(pr.MatchedTotal, pr.ExpectedTotal)
+	pr.OutsideDiffRecall = rate(pr.MatchedOutsideDiff, pr.ExpectedOutsideDiff)
+	pr.WithinDiffRecall = rate(pr.MatchedWithinDiff, pr.ExpectedWithinDiff)
+	return pr
+}
+
+// rate returns matched/expected, or nil when nothing was expected.
+//
+// nil rather than 0 because the two say opposite things. A suite that plants no
+// out-of-diff finding gives a reviewer nothing to miss, and reporting 0.0 would
+// claim they missed findings that were never there — on the one metric whose whole
+// job is being believed. The counts beside the rate let a consumer tell which case
+// it is without guessing.
+//
+// No clamp01: positionalOne increments each Matched counter only inside the
+// branch that already incremented the matching Expected counter, so matched <=
+// expected holds by construction, and the expected <= 0 arm above rules out NaN
+// and Inf. (score.go's rate() KEEPS its clamp — there the quotient is summed
+// over untrusted per-case input; here the invariant is local and checked.)
+func rate(matched, expected int) *float64 {
+	if expected <= 0 {
+		return nil
+	}
+	v := float64(matched) / float64(expected)
+	return &v
+}

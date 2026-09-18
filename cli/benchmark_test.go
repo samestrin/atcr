@@ -68,6 +68,29 @@ func TestBenchmarkVerify_RejectsSuiteThatRunWouldReject(t *testing.T) {
 	}
 }
 
+// verify is the suite-author pre-flight, and `benchmark run` now routes BOTH
+// tiers. A repo-state author whose only validation path is `benchmark run` has no
+// free one at all — run proceeds straight into a paid panel. So verify must route
+// on the same discriminator run does rather than hard-rejecting the tier the tool
+// implements.
+func TestBenchmarkVerify_AcceptsARepoStateSuite(t *testing.T) {
+	code, out := execCmdCapture(t, "benchmark", "verify", "--suite-path", repoStateMiniPath)
+	require.Equal(t, 0, code, "verify must validate the tier `benchmark run` executes: %s", out)
+	require.Contains(t, out, "repo-state-v1")
+	require.Contains(t, out, "valid")
+}
+
+// The validation has to be REAL, not a discriminator check that prints "valid" for
+// anything carrying the right suite string.
+func TestBenchmarkVerify_RejectsAnInvalidRepoStateSuite(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "suite.json"),
+		[]byte(`{"suite":"repo-state-v1","suite_version":"1.0.0","cases":[{"id":"gone","dir":"gone"}]}`), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "verify", "--suite-path", dir)
+	require.NotEqual(t, 0, code, "a repo-state suite whose case directory is missing must fail verify: %s", out)
+}
+
 func TestBenchmarkVerify_RequiresSuitePath(t *testing.T) {
 	code, _ := execCmdCapture(t, "benchmark", "verify")
 	require.NotEqual(t, 0, code, "verify without --suite-path is a usage error")

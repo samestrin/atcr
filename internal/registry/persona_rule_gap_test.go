@@ -33,7 +33,7 @@ func TestPredicateRuleGaps_NamesOnlyTheRuleLess(t *testing.T) {
 
 	dirs := PersonaDirs{Project: project}
 
-	gaps := PredicateRuleGaps(map[string]string{
+	gaps, _ := PredicateRuleGaps(map[string]string{
 		"sec-agent":  "owasp",  // rule-less community persona → named
 		"strict-bot": "strict", // carrier → silent
 		"bruce":      "bruce",  // embedded built-in carrier (empty dirs → level 5) → silent
@@ -51,10 +51,86 @@ func TestPredicateRuleGaps_NamesOnlyTheRuleLess(t *testing.T) {
 		"exactly the rule-less roster agent should be named; carriers and unresolvable personas stay silent")
 }
 
+// The sort survived mutation: deleting sort.Strings left the whole suite green,
+// because every other case produces exactly ONE gap and a one-element slice is
+// sorted by construction. Go map iteration is randomised and the doc comment
+// promises "sorted agent names" — and the unordered output would reach the
+// strings.Join in doctor's warning, so a second run would name the same gaps in a
+// different order and read as a changed roster.
+//
+// Three gaps whose insertion-order names are deliberately NOT alphabetical, and
+// the exact slice asserted. With a single iteration this would still pass ~1/6 of
+// the time, so the map is driven repeatedly: randomisation means one run proves
+// nothing, and the point is that NO ordering escapes.
+func TestPredicateRuleGaps_NamesMultipleGapsInSortedOrder(t *testing.T) {
+	project := t.TempDir()
+	ruleLess := []byte("# p\n\n## Focus\n1. Injection findings\n")
+	for _, name := range []string{"zulu", "mike", "alpha"} {
+		require.NoError(t, os.WriteFile(filepath.Join(project, name+".md"), ruleLess, 0o644))
+	}
+	dirs := PersonaDirs{Project: project}
+
+	roster := map[string]string{
+		"zulu":  "zulu",
+		"mike":  "mike",
+		"alpha": "alpha",
+	}
+	for i := 0; i < 50; i++ {
+		got, _ := PredicateRuleGaps(roster, dirs)
+		require.Equal(t, []string{"alpha", "mike", "zulu"}, got,
+			"the doc promises sorted names; Go map iteration is randomised, so the sort is what makes the output stable")
+	}
+}
+
+// The swallow made "resolved, and carries the rule" byte-identical to "the prompt
+// could not be read at all": both produce silence. The epic's own remediation makes
+// that reachable — operators are told to paste a ~1.1 KB bullet into installed
+// persona files, and a Registry-tier persona is re-validated against
+// MaxPersonaPromptLen on every resolve, so growing one past the cap makes the agent
+// VANISH from doctor's warning (reading as "fix applied") while `atcr review`
+// hard-fails on the same config.
+//
+// An unresolvable persona is still NOT a gap — that part of the contract is
+// unchanged, and asserted here. What changes is that it stops being invisible.
+func TestPredicateRuleGaps_ReportsUnresolvedSeparatelyFromGaps(t *testing.T) {
+	project := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(project, "owasp.md"),
+		[]byte("# owasp\n\n## Focus\n1. Injection findings\n"), 0o644))
+	dirs := PersonaDirs{Project: project}
+
+	gaps, unresolved := PredicateRuleGaps(map[string]string{
+		"sec-agent":    "owasp",           // rule-less, resolves → a GAP
+		"broken-agent": "never-installed", // explicit ref, no file → UNRESOLVED
+		"bruce":        "bruce",           // embedded carrier → silent in both
+	}, dirs)
+
+	require.Equal(t, []string{"sec-agent"}, gaps,
+		"an unreadable prompt supports no rule-absence verdict, so it must not be a gap")
+	require.Equal(t, []string{"broken-agent"}, unresolved,
+		"but it must not be silent either — silence has to mean \"read, and carries the rule\"")
+}
+
+// Both lists are sorted for the same reason: Go map iteration is randomised and
+// both reach a strings.Join in doctor's output.
+func TestPredicateRuleGaps_UnresolvedIsSorted(t *testing.T) {
+	dirs := PersonaDirs{Project: t.TempDir()}
+	roster := map[string]string{
+		"zulu-agent":  "no-such-persona",
+		"mike-agent":  "no-such-persona",
+		"alpha-agent": "no-such-persona",
+	}
+	for i := 0; i < 50; i++ {
+		_, unresolved := PredicateRuleGaps(roster, dirs)
+		require.Equal(t, []string{"alpha-agent", "mike-agent", "zulu-agent"}, unresolved)
+	}
+}
+
 // TestPredicateRuleGaps_EmptyRoster verifies the vacuous case: no roster, no
 // gaps, no panic.
 func TestPredicateRuleGaps_EmptyRoster(t *testing.T) {
-	require.Empty(t, PredicateRuleGaps(map[string]string{}, PersonaDirs{}))
+	gaps, unresolved := PredicateRuleGaps(map[string]string{}, PersonaDirs{})
+	require.Empty(t, gaps)
+	require.Empty(t, unresolved)
 }
 
 // A persona that genuinely FAILS to resolve is not reported as a gap — the
@@ -83,7 +159,7 @@ func TestPredicateRuleGaps_UnresolvablePersonaIsNotAGap(t *testing.T) {
 	require.ErrorIs(t, err, ErrPersonaNotFound,
 		"precondition: an explicit ref with no file must fail, not fall through")
 
-	gaps := PredicateRuleGaps(map[string]string{
+	gaps, _ := PredicateRuleGaps(map[string]string{
 		"sec-agent": "never-installed",
 	}, dirs)
 

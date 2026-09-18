@@ -341,6 +341,26 @@ type AgentStatus struct {
 	DroppedByMinSeverity   int `json:"dropped_by_min_severity"`
 	TruncatedByMaxFindings int `json:"truncated_by_max_findings"`
 
+	// DroppedByGrounding counts this agent's findings discarded by the Epic 14.1
+	// grounding gate — cited at a FILE:LINE the patch does not contain. It is the
+	// third post-processing counter and is persisted for the same reason as the
+	// other two: findings_count is the SURVIVING count, so without this a reader
+	// cannot tell "reviewed and found nothing" from "raised findings, all of them
+	// ungrounded". Those score identically and mean opposite things.
+	//
+	// It was deliberately stderr-only through epic 14.1, whose clarification
+	// accepted the per-agent warning as the observable mechanism. That held while
+	// the gate only ever ran on paths where a zero survivor count was rare. The
+	// repo-state-v1 benchmark tier (epic 35.16.10) made it the ROUTINE outcome —
+	// the tier exists to measure out-of-diff findings, which are exactly what the
+	// gate drops unless pre-fetching retrieved the span — and a benchmark that
+	// publishes those reviewers as "clean" asserts something false about them.
+	//
+	// omitempty is deliberately absent, matching the two counters above: a present
+	// zero says "the gate ran and dropped nothing", which is a different claim from
+	// an older status.json that never had the field.
+	DroppedByGrounding int `json:"dropped_by_grounding"`
+
 	// Per-agent usage (Epic 3.3 scorecard): the model id and provider-reported
 	// token counts, persisted so the reconcile-time scorecard emitter can source
 	// per-reviewer model/tokens (and derive cost) from a separate process.

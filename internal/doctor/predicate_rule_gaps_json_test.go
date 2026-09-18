@@ -52,3 +52,30 @@ func TestRenderJSON_OmitsPredicateRuleGapsWhenThereAreNone(t *testing.T) {
 	assert.NotContains(t, buf.String(), "predicate_rule_gaps",
 		"a roster with no gaps emits no key at all, so its absence reads as 'nothing to report'")
 }
+
+// The wrapper trap, one field later. RenderJSON marshals a private struct, not
+// Report, so a json tag added to Report alone emits nothing — which is exactly how
+// PredicateRuleGaps shipped silently once. PersonaResolutionErrors is the next
+// field through the same door, so it gets the same guard rather than trusting the
+// comment.
+func TestRenderJSON_ReportsPersonaResolutionErrors(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, RenderJSON(&buf, &Report{
+		Agents:                  []AgentResult{},
+		PersonaResolutionErrors: []string{"broken-agent", "zeta-agent"},
+	}))
+
+	var parsed struct {
+		PersonaResolutionErrors []string `json:"persona_resolution_errors"`
+	}
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &parsed))
+	assert.Equal(t, []string{"broken-agent", "zeta-agent"}, parsed.PersonaResolutionErrors,
+		"the unresolved list must reach --json; a Report-only json tag emits nothing through the wrapper")
+}
+
+// Omitted when empty, so a healthy roster's JSON is unchanged.
+func TestRenderJSON_OmitsPersonaResolutionErrorsWhenThereAreNone(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, RenderJSON(&buf, &Report{Agents: []AgentResult{}}))
+	assert.NotContains(t, buf.String(), "persona_resolution_errors")
+}

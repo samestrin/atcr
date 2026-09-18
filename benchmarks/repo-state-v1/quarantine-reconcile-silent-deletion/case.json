@@ -1,0 +1,29 @@
+{
+  "id": "quarantine-reconcile-silent-deletion",
+  "format": "repo-state-v1",
+  "base_tree": "base",
+  "commit_message": "commit-message.txt",
+  "diff": "change.diff",
+  "expected_findings": [
+    {
+      "id": "reconcile-deletes-on-quarantined-store",
+      "file": "queue/evening.py",
+      "line_start": 18,
+      "line_end": 19,
+      "line_tolerance": 3,
+      "outside_diff": true,
+      "category": "correctness",
+      "summary": "bump_stale_evening_to_today treats a pending record that is absent from read_pending() as answered and calls delete_entry on the linked queue entry, so once the change makes a quarantined store read as empty, a corrupt store durably deletes every confirmed escalation instead of crashing."
+    },
+    {
+      "id": "quarantine-reports-corruption-as-empty",
+      "file": "store/pending.py",
+      "line_start": 30,
+      "line_end": 32,
+      "line_tolerance": 1,
+      "outside_diff": false,
+      "category": "correctness",
+      "summary": "read_pending() swallows the decode failure and returns [], which is indistinguishable from a genuinely empty store, so every caller downstream loses the ability to tell 'no records' from 'records unreadable'."
+    }
+  ]
+}

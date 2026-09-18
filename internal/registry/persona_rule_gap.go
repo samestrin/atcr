@@ -26,21 +26,28 @@ import (
 // only, and a prompt that was never read supports no verdict either way —
 // naming it would assert the rule is missing from text nobody looked at.
 //
-// Be clear about what that costs, because an earlier version of this comment
-// was not: it claimed resolution errors "surface through their normal paths",
-// which is true of `atcr review` (internal/fanout resolves personas and fails
-// the run) and NOT true of `atcr doctor`. This is doctor's only persona
+// It is returned SEPARATELY instead, as the second result, and that separation is
+// the whole point. Silence from this function now means exactly one thing: "read,
+// and carries the rule."
+//
+// The swallow it replaces was not harmless. This is doctor's only persona
 // resolution, so a typo'd `persona:` ref, an oversized or template-bearing
-// community prompt rejected by validateCommunityPrompt, and an unreadable file
-// all leave doctor reporting a clean roster while `atcr review` would hard-fail
-// on the same config. Surfacing them needs a second return value and a channel
-// in the doctor report — deliberately not done here, since this function's
-// contract is rule absence, not resolution health.
-func PredicateRuleGaps(agentToPersona map[string]string, dirs PersonaDirs) []string {
-	var gaps []string
+// community prompt rejected by validateCommunityPrompt, and an unreadable file all
+// left doctor reporting a clean roster while `atcr review` hard-failed on the same
+// config. This epic's own remediation made that reachable: operators are told to
+// paste a ~1.1 KB rule bullet into installed persona files, a Registry-tier persona
+// is re-validated against MaxPersonaPromptLen on every resolve, and real headroom
+// is thin — so growing a persona past the cap makes the agent VANISH from the
+// warning, which reads as "fix applied".
+func PredicateRuleGaps(agentToPersona map[string]string, dirs PersonaDirs) (gaps []string, unresolved []string) {
 	for agent, personaRef := range agentToPersona {
 		p, err := ResolvePersona(agent, personaRef, nil, dirs)
 		if err != nil {
+			// RECORDED, not swallowed. It is still not a GAP — nothing was read, so
+			// there is no rule-absence verdict to give — but it must not be silent
+			// either, or "resolved and carries the rule" and "could not be read at
+			// all" are the same observation.
+			unresolved = append(unresolved, agent)
 			continue
 		}
 		if !personas.CarriesPredicateRule(p.Text) {
@@ -48,5 +55,6 @@ func PredicateRuleGaps(agentToPersona map[string]string, dirs PersonaDirs) []str
 		}
 	}
 	sort.Strings(gaps)
-	return gaps
+	sort.Strings(unresolved)
+	return gaps, unresolved
 }

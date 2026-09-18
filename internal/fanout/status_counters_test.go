@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -66,4 +67,48 @@ func TestCounters_LargeInt64ToolBytes(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &got))
 	require.NotNil(t, got.ToolBytes)
 	assert.EqualValues(t, 3_000_000_000, *got.ToolBytes)
+}
+
+// The grounding gate's per-agent drop count reaches status.json.
+//
+// It was stderr-only through epic 14.1. findings_count is the SURVIVING count, so
+// a reviewer that raised three findings and had all three dropped as ungrounded is
+// byte-identical on disk to one that genuinely found nothing — and the
+// repo-state-v1 benchmark tier publishes exactly that pair as the same "clean"
+// outcome. Persisting the count is what makes them distinguishable at all.
+func TestStatusFor_PersistsTheGroundingDropCount(t *testing.T) {
+	r := Result{Agent: "a", Status: StatusOK}
+
+	st := statusFor(r, findingsResult{Ungrounded: 3})
+
+	assert.Equal(t, 3, st.DroppedByGrounding,
+		"the ungrounded count must reach status.json, not stderr alone")
+}
+
+// A present zero is a real claim — "the gate ran and dropped nothing" — so the
+// field must serialize even when empty, exactly as the two sibling counters do.
+func TestStatusFor_GroundingDropCountSerializesAtZero(t *testing.T) {
+	st := statusFor(Result{Agent: "a", Status: StatusOK}, findingsResult{})
+
+	b, err := json.Marshal(st)
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"dropped_by_grounding":0`,
+		"a zero must be present, not omitted — absence means a status.json predating the field")
+}
+
+// findingsFor is where the count originates: groundFindings already returns it and
+// the result was discarded. Pinned end to end so the wiring cannot regress to a
+// stderr-only warning.
+func TestFindingsFor_RecordsTheUngroundedCount(t *testing.T) {
+	r := Result{
+		Agent:   "a",
+		Status:  StatusOK,
+		Content: "HIGH|nope.go:1|not in the patch|fix|correctness|5|ctx\n",
+	}
+	changed := payload.ChangedLines{"real.go": {Ranges: []payload.LineRange{{Start: 1, End: 1}}}}
+
+	fr := findingsFor(r, changed)
+
+	assert.Empty(t, fr.Findings, "a finding citing an untouched file is dropped")
+	assert.Equal(t, 1, fr.Ungrounded, "and the drop is counted, not just warned about")
 }

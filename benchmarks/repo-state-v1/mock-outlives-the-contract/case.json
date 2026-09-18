@@ -1,0 +1,29 @@
+{
+  "id": "mock-outlives-the-contract",
+  "format": "repo-state-v1",
+  "base_tree": "base",
+  "commit_message": "commit-message.txt",
+  "diff": "change.diff",
+  "expected_findings": [
+    {
+      "id": "mock-still-returns-a-rate-for-any-plan",
+      "file": "tests/test_invoice.py",
+      "line_start": 4,
+      "line_end": 6,
+      "line_tolerance": 3,
+      "outside_diff": true,
+      "category": "correctness",
+      "summary": "fake_lookup_rate returns 2.5 for every plan and never matched billing.rates.lookup_rate: the base implementation billed DEFAULT_RATE for an unknown plan, so a faithful stub would have failed test_unknown_plan_still_bills' 10.0 assertion. The test only ever passed against a stub that was already unfaithful, and the change (UnknownPlan now raised) makes that stub actively misleading about the unknown-plan path."
+    },
+    {
+      "id": "invoice-total-never-catches-unknown-plan",
+      "file": "billing/invoice.py",
+      "line_start": 11,
+      "line_end": 11,
+      "line_tolerance": 3,
+      "outside_diff": true,
+      "category": "error-handling",
+      "summary": "invoice_total calls lookup_rate with no unknown-plan branch and its docstring still asserts every plan resolves, so the newly raised UnknownPlan escapes to invoice_total's callers as an unhandled exception."
+    }
+  ]
+}
