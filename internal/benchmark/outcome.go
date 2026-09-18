@@ -122,7 +122,7 @@ const OutcomeUnknownLabel = "unknown"
 func ValidOutcome(s string) bool {
 	switch s {
 	case OutcomeUnknown, OutcomeFindings, OutcomeClean,
-		OutcomeUnparseable, OutcomeTruncated, OutcomeIncomplete, OutcomeFailed:
+		OutcomeUnparseable, OutcomeTruncated, OutcomeIncomplete, OutcomeUngrounded, OutcomeFailed:
 		return true
 	}
 	return false

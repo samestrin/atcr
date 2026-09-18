@@ -762,6 +762,23 @@ func reviewerOutcome(a fanout.AgentStatus, raised []string) string {
 		return benchmark.OutcomeIncomplete
 	case len(raised) > 0:
 		return benchmark.OutcomeFindings
+	// Below here the reviewer raised nothing that survived. A non-zero grounding
+	// drop count is what separates "found nothing" from "found things the Epic 14.1
+	// gate rejected" — the two shapes are otherwise identical at this call site
+	// (StatusOK, UnparseableResponse false, zero categories), which is exactly how
+	// the second one used to publish as clean.
+	//
+	// It sits BELOW findings deliberately: a reviewer that raised four and kept one
+	// reviewed successfully and has a finding to show for it, so only a total wipe
+	// is the ungrounded outcome. It sits below the data-integrity signals for the
+	// same reason they outrank each other — a failed call's drop count says nothing
+	// about the review.
+	//
+	// Unreachable on the standard-v1 diff path: that path supplies no Range, so
+	// groundFindings fails open and DroppedByGrounding is always 0. No historical
+	// standard-v1 row changes outcome.
+	case a.DroppedByGrounding > 0:
+		return benchmark.OutcomeUngrounded
 	default:
 		return benchmark.OutcomeClean
 	}

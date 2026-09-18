@@ -705,11 +705,18 @@ call failed all raise zero categories and score identically:
 | `unparseable` | Returned content that parsed to zero findings and was not the sentinel. |
 | `truncated` | Response cut off on `finish_reason: length`; whatever it raised is incomplete. |
 | `incomplete` | The reviewer saw only a fraction of the diff — either a chunked slot whose bins failed while it still reported ok, or a payload shed to fit a byte budget (`files_dropped` names the shed entries by path; the shed is accounted per entry, so a path listed there can still be present via another occurrence of the same path in the diff). |
+| `ungrounded` | The reviewer raised findings and **every one** was discarded by the Epic 14.1 grounding gate for citing a `FILE:LINE` the patch does not contain (`dropped_by_grounding > 0` with nothing surviving). Distinct from `incomplete`, which is the input-side signal: this reviewer saw the whole diff and had its output filtered afterwards. Reachable only when the gate is live, so in practice only on `repo-state-v1` — the `standard-v1` diff path supplies no range and the gate fails open there. |
 | `failed` | The call never produced a reviewable response. |
 | `unknown` | No outcome was recorded — a checkpoint written before this field existed. |
 
 Precedence when signals overlap is `failed > unparseable > truncated > incomplete >
-findings > clean`: data-integrity signals outrank volume signals.
+findings > ungrounded > clean`: data-integrity signals outrank volume signals, and a
+reviewer that kept even one finding is scored on what it kept.
+
+> **`ungrounded` is newer than the other values.** The outcome vocabulary is
+> fail-closed at the checkpoint-resume and coverage trust boundaries, so a build
+> predating it will refuse a checkpoint carrying it rather than re-key the tally. A
+> checkpoint written by this version cannot be resumed by an older one.
 
 `unknown` is deliberately distinct from `clean`. A resumed run whose checkpoint
 predates this field reports `unknown`, never "reviewed and found nothing" — the

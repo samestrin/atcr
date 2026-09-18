@@ -343,18 +343,22 @@ func findingsFor(r Result, changed payload.ChangedLines) findingsResult {
 	// the patch (hallucinations) before per-source constraints apply, so the
 	// max_findings cap ranks only real findings. Runs only when review-level
 	// grounding data was supplied; a nil/absent map disables the gate (fail open).
-	// The per-agent drop count is logged to stderr. Unlike the enforceConstraints
-	// min_severity/max_findings drops — which are ALSO persisted to status.json as
-	// DroppedByMinSeverity/TruncatedByMaxFindings — grounding drops are surfaced on
-	// stderr only, not in status.json or summary.json. This is deliberate: the epic
-	// 14.1 clarification accepted the per-agent stderr count as the observable
-	// mechanism, so the count is visible but intentionally not persisted.
+	// The per-agent drop count is logged to stderr AND persisted to status.json as
+	// DroppedByGrounding, alongside the enforceConstraints min_severity/max_findings
+	// drops.
+	//
+	// It was stderr-only through epic 14.1, whose clarification accepted the
+	// per-agent warning as the observable mechanism. The repo-state-v1 tier (epic
+	// 35.16.10) retired that decision: there the gate is live and dropping every
+	// finding is the ROUTINE outcome, so a consumer reading only findings_count
+	// cannot tell that reviewer from one that found nothing — and the benchmark
+	// published it as "clean". A warning on stderr is not reachable by a scorer.
 	grounded, ungrounded := groundFindings(findings, changed)
 	if ungrounded > 0 {
 		fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: dropped %d ungrounded finding(s) not present in the patch\n", r.Agent, ungrounded)
 	}
 	f, dropped, truncated := enforceConstraints(grounded, r.Agent, r.MinSeverity, r.MaxFindings)
-	return findingsResult{Findings: f, Dropped: dropped, Truncated: truncated}
+	return findingsResult{Findings: f, Dropped: dropped, Truncated: truncated, Ungrounded: ungrounded}
 }
 
 // agentDirName reduces an agent name to a safe single path segment and rejects
@@ -401,6 +405,7 @@ func statusFor(r Result, fr findingsResult) AgentStatus {
 		FallbackModel:          r.FallbackModel,
 		DroppedByMinSeverity:   fr.Dropped,
 		TruncatedByMaxFindings: fr.Truncated,
+		DroppedByGrounding:     fr.Ungrounded,
 		ResponseTruncated:      r.ResponseTruncated,
 		UnparseableResponse:    r.UnparseableResponse,
 		CacheHit:               r.CacheHit,
