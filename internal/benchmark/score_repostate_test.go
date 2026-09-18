@@ -25,7 +25,7 @@ func match(id string, outside, matched bool) FindingMatch {
 func TestScorePositional_SeparatesOutsideDiffRecallFromOverall(t *testing.T) {
 	got := ScorePositional([]RepoStateReviewerScore{{
 		Model: "m", Persona: "p",
-		Cases: []RepoStateCaseScore{{CaseID: "c1", Matches: []FindingMatch{
+		Cases: []RepoStateCaseScore{{Matches: []FindingMatch{
 			match("in-1", false, true),
 			match("in-2", false, true),
 			match("out-1", true, false),
@@ -58,11 +58,11 @@ func TestScorePositional_MicroAveragesOverFindingsNotCases(t *testing.T) {
 	got := ScorePositional([]RepoStateReviewerScore{{
 		Model: "m", Persona: "p",
 		Cases: []RepoStateCaseScore{
-			{CaseID: "big", Matches: []FindingMatch{
+			{Matches: []FindingMatch{
 				match("a", false, true), match("b", false, true),
 				match("c", false, true), match("d", false, false),
 			}},
-			{CaseID: "small", Matches: []FindingMatch{match("e", false, false)}},
+			{Matches: []FindingMatch{match("e", false, false)}},
 		},
 	}})
 	require.Len(t, got, 1)
@@ -78,7 +78,7 @@ func TestScorePositional_MicroAveragesOverFindingsNotCases(t *testing.T) {
 func TestScorePositional_AbsentDenominatorIsNilNotZero(t *testing.T) {
 	got := ScorePositional([]RepoStateReviewerScore{{
 		Model: "m", Persona: "p",
-		Cases: []RepoStateCaseScore{{CaseID: "c1", Matches: []FindingMatch{match("in", false, true)}}},
+		Cases: []RepoStateCaseScore{{Matches: []FindingMatch{match("in", false, true)}}},
 	}})
 	require.Len(t, got, 1)
 	assert.Nil(t, got[0].OutsideDiffRecall, "no out-of-diff finding was planted, so there is no rate")
@@ -128,7 +128,7 @@ func TestScorePositional_ScrubsIdentitiesLikeScore(t *testing.T) {
 		cat = append(cat, ReviewerScore{Model: r.model, Persona: r.persona,
 			Cases: []CaseScore{{Expected: []string{"correctness"}, Raised: []string{"correctness"}}}})
 		pos = append(pos, RepoStateReviewerScore{Model: r.model, Persona: r.persona,
-			Cases: []RepoStateCaseScore{{CaseID: "c1", Matches: []FindingMatch{match("f", false, true)}}}})
+			Cases: []RepoStateCaseScore{{Matches: []FindingMatch{match("f", false, true)}}}})
 	}
 
 	scored := Score(cat)
@@ -194,7 +194,7 @@ func TestRunResult_AbsentPositionalRecallUnmarshalsToNil(t *testing.T) {
 func TestScorePositional_CreditsAMatchedOutsideDiffFinding(t *testing.T) {
 	got := ScorePositional([]RepoStateReviewerScore{{
 		Model: "m", Persona: "p",
-		Cases: []RepoStateCaseScore{{CaseID: "c1", Matches: []FindingMatch{
+		Cases: []RepoStateCaseScore{{Matches: []FindingMatch{
 			match("in-1", false, false),
 			match("out-1", true, true),
 		}}},

@@ -257,7 +257,6 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 				Raised: categorical[a.Agent],
 			})
 			positional[key].Cases = append(positional[key].Cases, benchmark.RepoStateCaseScore{
-				CaseID:  c.ID,
 				Matches: benchmark.MatchFindings(c.ExpectedFindings, located[a.Agent], lm),
 			})
 

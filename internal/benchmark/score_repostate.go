@@ -11,8 +11,17 @@ import (
 // rather than raw findings because the positional decision — which report settled
 // which expectation — is made once, by the matcher, and re-deriving it here would
 // be a second implementation of the tie-break rules to keep in step.
+// No CaseID. It was written by the runner and read by NOTHING, which made the
+// scorer look like it carried attribution it does not: positionalOne folds every
+// case's matches into four integers, so the run-result has no per-case outcome
+// either way. Carrying an unread id made that loss look accidental and invited a
+// reader to believe a per-case spot-check was possible from the artifact.
+//
+// Making the loss honest is deliberately NOT the same as accepting it. A real
+// per-case breakdown is a separate, larger piece of work, and it needs a
+// per-finding reported index that does not exist yet — FindingMatch is
+// {Expected, Matched} only.
 type RepoStateCaseScore struct {
-	CaseID  string
 	Matches []FindingMatch
 }
 
