@@ -592,6 +592,29 @@ func summarizeMissing(missing []string) string {
 // Both halves route through summarizeMissing, so each inherits the per-row cap and
 // the control-rune stripping described there rather than re-deriving them — the
 // reason is stripped with the id it is composed onto.
+//
+// THE CAP IS PER HALF, NOT PER ROW. Each half is summarized independently, so a row
+// with both kinds of shortfall names up to 2*maxNamedMissingCases ids and carries TWO
+// overflow counts, each computed against its own half: four unexplained and four
+// unmeasured print as "missing a, b, c and 1 more; unmeasured d (x), e (y), f (z) and
+// 1 more". That is deliberate — the two halves call for opposite responses, so
+// starving one of names to hold a single row-wide budget would hide the class an
+// operator has to act on — but it means maxNamedMissingCases bounds a HALF, and a
+// reader adds the two overflow counts to get the row's total.
+//
+// PRECONDITION: missing is non-empty. An empty slice returns "", which the caller
+// composes into `m/p (2/3 cases, )` — a shortfall message with a blank explanation.
+// checkCoverage is the only caller and reaches this line only past its own
+// `len(missing) == 0` continue, so the condition holds by construction rather than by
+// a check here.
+//
+// PRECONDITION: every reason in failed already satisfies
+// benchmark.ValidCaseFailureReason. That filter lives in the CALLER, not in this
+// signature, so a second caller that builds the map itself would print an
+// attacker-chosen string as an explanation for a case. Terminal safety survives it —
+// summarizeMissing strips the composed string — but truthfulness does not.
+// validateCoveredSet states its own equivalent contract the same way, and this
+// function owes the same statement.
 func describeMissing(missing []string, failed map[string]string) string {
 	var unexplained, unmeasured []string
 	for _, id := range missing {
