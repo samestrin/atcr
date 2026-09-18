@@ -1248,6 +1248,31 @@ func TestExecuteRepoStateBenchmarkRun_CancellationOnTheFinalCaseStillAborts(t *t
 	assert.Nil(t, rr)
 }
 
+// Both cancellation diagnostics print the SAME sentence, so they must print it from
+// the same quantity. The in-loop site used the loop index — cases ATTEMPTED, failures
+// included — while the post-loop site used cases scored, so on a run that lost a case
+// to infrastructure the two disagreed for one interrupt and an operator reading one
+// line could not tell which number they had. Scored cases is the useful one: it is
+// what the run would have published.
+func TestExecuteRepoStateBenchmarkRun_CancellationCountsScoredCasesNotAttempted(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	suite := writeCaseSuite(t, "first-case", "second-case", "third-case")
+	faultMaterialization(t, suite, "first-case")
+
+	// Case 1 fails at materialization and never reaches a completer, so the single
+	// call below lands on case 2 — cancelling after case 2 has been scored and before
+	// case 3 begins. Attempted is 2; scored is 1.
+	rr, _, err := executeRepoStateBenchmarkRun(ctx,
+		benchCfg([3]string{"greta", "m-greta", "greta"}), &cancellingCompleter{cancel: cancel},
+		suite, time.Unix(0, 0).UTC())
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Nil(t, rr)
+	assert.Contains(t, err.Error(), "cancelled after 1 of 3 case(s)",
+		"the count is cases SCORED; counting the failed case as progress overstates what the run measured")
+}
+
 // cancellingCompleter serves the first case normally, then cancels the run's
 // context — standing in for a SIGINT that arrives mid-suite.
 type cancellingCompleter struct {
