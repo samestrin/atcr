@@ -1212,3 +1212,112 @@ func retainedWorkDirFromLog(t *testing.T, logs string) string {
 	require.NotEmpty(t, path, "the reported path is usable")
 	return path
 }
+
+// An operator INTERRUPT is not an infrastructure failure. cli/main.go cancels the
+// root context on SIGINT/SIGTERM, and MaterializeCase and PrepareReview both run
+// under it — so with a record-and-continue path in place, Ctrl-C would be recorded
+// as a per-case "materialize" fault, the loop would burn through every remaining
+// case recording the same thing, and the command would write a partial run-result
+// and exit 0. An interrupted run must never become a publishable artifact.
+func TestExecuteRepoStateBenchmarkRun_CancellationAbortsRatherThanRecording(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	rr, err := executeRepoStateBenchmarkRun(ctx,
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{},
+		writeCaseSuite(t, "first-case", "second-case"), time.Unix(0, 0).UTC())
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled, "cancellation propagates rather than being classified")
+	assert.Nil(t, rr, "an interrupted run produces no run-result to publish")
+}
+
+// The same rule when the interrupt lands on the LAST case: the loop has no further
+// iteration to catch it, so without a check after the loop the run would return a
+// partial result whose missing case was the operator's own Ctrl-C.
+func TestExecuteRepoStateBenchmarkRun_CancellationOnTheFinalCaseStillAborts(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cc := &cancellingCompleter{cancel: cancel}
+
+	rr, err := executeRepoStateBenchmarkRun(ctx,
+		benchCfg([3]string{"greta", "m-greta", "greta"}), cc,
+		writeCaseSuite(t, "first-case", "second-case"), time.Unix(0, 0).UTC())
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Nil(t, rr)
+}
+
+// cancellingCompleter serves the first case normally, then cancels the run's
+// context — standing in for a SIGINT that arrives mid-suite.
+type cancellingCompleter struct {
+	cancel context.CancelFunc
+	calls  int
+}
+
+func (c *cancellingCompleter) Complete(ctx context.Context, inv llmclient.Invocation) (string, error) {
+	c.calls++
+	out, err := stubLocatedCompleter{}.Complete(ctx, inv)
+	if c.calls == 1 {
+		c.cancel()
+	}
+	return out, err
+}
+
+// An EMPTY ROSTER is a configuration defect, not bad luck: no slot ran, and no
+// re-run fixes it until the config changes. Recorded as a transient "execute"
+// failure it would repeat on every case and surface as "all cases failed", hiding
+// the real cause behind the class this code deliberately keeps fatal for a
+// suite-authoring defect.
+//
+// The guarantee is enforced UPSTREAM of the failure channel for this input —
+// validatePublishableReviewerRoster rejects the roster before any case runs — so
+// this pins the OUTCOME rather than the site. The runner also propagates
+// fanout.ErrEmptyRoster from the execute split, for the narrower shape where every
+// slot is dropped at execution time rather than at config load.
+func TestExecuteRepoStateBenchmarkRun_EmptyRosterAborts(t *testing.T) {
+	cfg := benchCfg()
+
+	rr, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{},
+		writeCaseSuite(t, "first-case", "second-case"), time.Unix(0, 0).UTC())
+
+	require.Error(t, err)
+	assert.Nil(t, rr, "an empty roster is a configuration defect, not an unmeasured case")
+}
+
+// A partial run prints recall numbers that read exactly like a full-suite
+// measurement. The failure channel is in the run-result, but an operator watching
+// the terminal sees only the recall summary — so the one number this tier exists to
+// produce would be read as covering the whole suite. Reported beside that summary
+// on stderr, independent of the context logger's level, for the same reason
+// warnPositionalRecallSummary exists at all.
+func TestWarnCaseFailures(t *testing.T) {
+	var buf bytes.Buffer
+
+	warnCaseFailures(&buf, &benchmark.RunResult{
+		SuiteCaseIDs: []string{"case-01", "case-02", "case-03"},
+		CaseFailures: []benchmark.CaseFailure{
+			{CaseID: "case-02", Reason: benchmark.CaseFailurePrepare},
+		},
+	})
+
+	out := buf.String()
+	assert.Contains(t, out, "case-02")
+	assert.Contains(t, out, benchmark.CaseFailurePrepare, "the stage the case died at is the actionable part")
+	assert.Contains(t, out, "1 of 3", "the operator needs the scale of the shortfall, not just the list")
+	assert.Contains(t, out, "UNMEASURED", "a failed case must not read as a scored zero")
+	assert.Contains(t, out, "excluded from every recall denominator",
+		"the message must say what unmeasured DOES to the numbers printed beside it")
+	assert.Contains(t, out, "retained", "the paid artifacts survive, and the operator has to know that to use them")
+}
+
+// A clean run says nothing, exactly as the sibling summaries do on a suite that
+// carries none of their signal.
+func TestWarnCaseFailures_SilentOnACleanRun(t *testing.T) {
+	var buf bytes.Buffer
+
+	warnCaseFailures(&buf, &benchmark.RunResult{SuiteCaseIDs: []string{"case-01"}})
+	warnCaseFailures(&buf, nil)
+
+	assert.Empty(t, buf.String())
+}

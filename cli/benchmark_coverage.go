@@ -104,6 +104,14 @@ func duplicateIdentityError(path, what string, key reviewerKey, prevModel, prevP
 // message. Missing case ids within a row are interchangeable by contrast; the
 // first few plus the count diagnose the row fully. Pinned by
 // TestCheckCoverage_EveryShortRowIsNamed and TestRunBFixture_RejectedByExportGate.
+//
+// The bound is PER HALF of a row's shortfall, not per row. describeMissing splits a
+// row into genuinely-missing and infrastructure-unmeasured cases and caps each
+// independently, so a row carrying both can name up to 2*maxNamedMissingCases ids.
+// That is deliberate: the two halves call for different responses (re-run vs.
+// investigate the failure), and capping them jointly would let one half's overflow
+// hide the other half's existence — the same argument that keeps the outer list
+// uncapped, applied one level in.
 const maxNamedMissingCases = 3
 
 // checkCoverage is the publication gate: no reviewer row may reach the public board
@@ -231,8 +239,18 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 	// here was never measured, so "re-run the missing cases" is the wrong
 	// instruction for it — the case did not run, and whether a re-run helps depends
 	// on the reason, which is why the reason is what gets printed.
+	//
+	// An entry whose reason is outside the vocabulary is DROPPED rather than
+	// printed, so that case falls back to reading as plainly missing. runBenchmarkExport
+	// already rejects such a file through validateCaseFailures before calling this,
+	// but the safety of an operator-facing diagnostic must not rest on the order two
+	// functions happen to be called in: a second caller would otherwise interpolate
+	// an arbitrary attacker-chosen string into the terminal.
 	failed := make(map[string]string, len(rr.CaseFailures))
 	for _, f := range rr.CaseFailures {
+		if !benchmark.ValidCaseFailureReason(f.Reason) {
+			continue
+		}
 		failed[f.CaseID] = f.Reason
 	}
 
@@ -771,12 +789,18 @@ func validateSuiteIdentityForPublication(rr benchmark.RunResult, path string) er
 // hand-suppliable, having never passed through the producer, which is the same
 // premise every other check in this file is built on.
 //
-// The four rejections are the four ways an entry can be untrue rather than merely
-// unfamiliar: a reason outside the vocabulary (including the empty one — a failure
-// record always states its cause), a case the suite does not declare, a case some
-// reviewer also scored, and a case named twice. Each is impossible from the
-// producer, which records each failed case once, with a constant, before the case
-// can be scored.
+// The four rejections are the four ways an entry can be MALFORMED: a reason outside
+// the vocabulary (including the empty one — a failure record always states its
+// cause), a case the suite does not declare, a case some reviewer also scored, and a
+// case named twice. Each is impossible from the producer, which records each failed
+// case once, with a constant, before the case can be scored.
+//
+// WHAT THIS DOES NOT PROVE. It establishes that an entry is well-formed and
+// internally consistent, NOT that the case really failed. A valid reason paired with
+// a real, unscored case id passes every arm, so a truncated run can still be
+// relabelled from "missing" to "unmeasured" in the diagnostic below. That gap is not
+// closeable from inside the file being validated — only the producer knows what ran
+// — so it is stated rather than papered over, in docs/benchmark.md as well as here.
 func validateCaseFailures(rr benchmark.RunResult, path string) error {
 	if len(rr.CaseFailures) == 0 {
 		return nil

@@ -240,6 +240,10 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 	}
 
 	warnVocabularyDiagnostics(cmd.ErrOrStderr(), rr)
+	// BEFORE the recall summary, because it qualifies it: a partial run's recall
+	// covers only the cases that were scored, and a reader who sees the number first
+	// has already taken it for a full-suite measurement.
+	warnCaseFailures(cmd.ErrOrStderr(), rr)
 	warnPositionalRecallSummary(cmd.ErrOrStderr(), rr)
 
 	data, err := json.MarshalIndent(rr, "", "  ")

@@ -41,10 +41,16 @@ const (
 	CaseFailurePrepare = "prepare"
 
 	// CaseFailureExecute marks a case whose panel run failed for a reason OTHER than
-	// the whole roster failing. A total-roster failure is never recorded here: it
-	// aborts the run, because scoring around it would let a transient infrastructure
-	// failure read as a genuine missed defect — the contract docs/benchmark.md states
-	// for this tier.
+	// the whole roster failing or being empty. Neither of those is recorded here:
+	// both abort the run — the first because scoring around it would let a transient
+	// infrastructure failure read as a genuine missed defect (the contract
+	// docs/benchmark.md states for this tier), the second because an empty roster is
+	// a deterministic configuration defect rather than bad luck.
+	//
+	// Unlike its siblings, this reason does NOT tell you whether the case was paid
+	// for. It covers both a panel that died part-way and one that completed every
+	// call and then failed to persist its pool, so treat a case recorded here as
+	// possibly-paid and look in the retained work dir before re-running it.
 	CaseFailureExecute = "execute"
 
 	// CaseFailurePoolSummary marks a case whose pool summary could not be read back.

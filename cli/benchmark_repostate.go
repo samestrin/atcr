@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"path/filepath"
@@ -190,6 +191,17 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		caseExpected[i] = expectedCategories(m.Cases[i])
 	}
 	for i, c := range m.Cases {
+		// AN OPERATOR INTERRUPT IS NOT AN INFRASTRUCTURE FAILURE. cli/main.go cancels
+		// the root context on SIGINT/SIGTERM, and MaterializeCase and PrepareReview
+		// both run under it — so without this check Ctrl-C surfaces as a per-case
+		// fault, the loop records the same fault for every remaining case, and the
+		// command writes a partial run-result and exits 0. An interrupted run would
+		// become a publishable artifact whose missing cases were the operator's own
+		// decision to stop. Checked here and again after the loop, which together
+		// cover an interrupt arriving on any case including the last.
+		if cerr := ctx.Err(); cerr != nil {
+			return nil, fmt.Errorf("benchmark run cancelled after %d of %d case(s): %w", i, len(m.Cases), cerr)
+		}
 		caseIDs = append(caseIDs, c.ID)
 
 		lm := lineMaps[i]
@@ -266,7 +278,14 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			// exactly like a local disk fault, which is the distinction the abort
 			// exists to keep. Any OTHER execution error is one case's bad luck and
 			// joins the failure channel.
-			if errors.Is(err, fanout.ErrAllAgentsFailed) {
+			// ErrEmptyRoster rides the same split for the opposite reason: not a
+			// transient outage but a deterministic configuration defect, where no slot
+			// ran at all. Recorded per-case it would repeat on every case and surface
+			// as "all cases failed", burying the real cause under the transient class.
+			// validatePublishableReviewerRoster already rejects an empty configured
+			// roster before the first case, so this covers the narrower shape where
+			// every slot is dropped at execution time.
+			if errors.Is(err, fanout.ErrAllAgentsFailed) || errors.Is(err, fanout.ErrEmptyRoster) {
 				return nil, fmt.Errorf("executing case %q: %w", c.ID, err)
 			}
 			recordCaseFailure(ctx, &caseFailures, c.ID, benchmark.CaseFailureExecute, err)
@@ -379,20 +398,36 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		}
 	}
 
-	// A suite in which EVERY case failed measured nothing, so there is no partial
-	// result to salvage and nothing the caller can do with a run-result built from
-	// it. Returned as an error rather than an empty artifact because the alternative
+	// The loop's cancellation check again, for an interrupt that arrived on the LAST
+	// case: that iteration has no successor to catch it, so without this the run
+	// would return a partial result whose missing case was the operator's own Ctrl-C.
+	if cerr := ctx.Err(); cerr != nil {
+		return nil, fmt.Errorf("benchmark run cancelled after %d of %d case(s): %w", len(m.Cases)-len(caseFailures), len(m.Cases), cerr)
+	}
+
+	// A run that scored NOTHING measured nothing, so there is no partial result to
+	// salvage and nothing the caller can do with a run-result built from it.
+	// Returned as an error rather than an empty artifact because the alternative
 	// misdiagnoses itself downstream: a run-result carrying suite_case_ids with zero
 	// reviewer rows is what checkCoverage calls "malformed", which would blame the
 	// file for a runner that behaved exactly as designed.
 	//
+	// Keyed on the reviewer accumulator being EMPTY rather than on every case having
+	// recorded a failure. The two coincide today, but they are different claims: the
+	// failure count answers "did each case fail", and what the guard must prevent is
+	// the empty artifact, which any future path that skips a case without recording
+	// one would also produce.
+	//
 	// The shipped all-agents-failed abort does NOT cover this shape. That one fires
 	// inside a single case's review call and cannot see a suite-wide outcome; this
 	// one is reachable only now that a case failure stops aborting.
-	if len(caseFailures) > 0 && len(caseFailures) == len(m.Cases) {
-		return nil, fmt.Errorf("no case could be scored: all %d case(s) failed (last reason %q on case %q); "+
-			"re-running is the remedy only if the cause was transient",
-			len(caseFailures), caseFailures[len(caseFailures)-1].Reason, caseFailures[len(caseFailures)-1].CaseID)
+	if len(order) == 0 {
+		if len(caseFailures) > 0 {
+			return nil, fmt.Errorf("no case could be scored: all %d case(s) failed (last reason %q on case %q); "+
+				"re-running is the remedy only if the cause was transient",
+				len(caseFailures), caseFailures[len(caseFailures)-1].Reason, caseFailures[len(caseFailures)-1].CaseID)
+		}
+		return nil, fmt.Errorf("no case could be scored: the run produced no reviewer rows over %d case(s)", len(m.Cases))
 	}
 
 	// The post-scrub identity collision guard buildRunResult carries: scrubField
@@ -709,4 +744,38 @@ func readCaseFindingsLocated(reviewDir string, agents map[string]bool) (located 
 		categorical[reviewer] = append(categorical[reviewer], "")
 	}
 	return located, categorical, unattributed, false, nil
+}
+
+// warnCaseFailures gives a PARTIAL run an operator surface, beside the recall
+// summary whose numbers it qualifies.
+//
+// Without it the terminal shows a recall figure that reads exactly like a
+// full-suite measurement: the failure channel is in the run-result, but an operator
+// watching a ten-minute panel finish does not open the JSON to check whether the
+// number covers the suite. That is the one misreading this whole feature makes
+// possible, so it is reported where the number is.
+//
+// It writes to the passed stderr rather than the context logger for the same reason
+// warnVocabularyDiagnostics does: a shortfall an operator must act on should not be
+// suppressible by a log level. The retained work dir's PATH stays in the runner's
+// Warn line — it is machine-local scratch, and this message's job is to say the
+// artifacts exist at all, which is what an operator needs before going to look.
+//
+// Silent on a clean run, like every sibling summary on a suite that carries none of
+// its signal.
+func warnCaseFailures(w io.Writer, rr *benchmark.RunResult) {
+	if rr == nil || len(rr.CaseFailures) == 0 {
+		return
+	}
+	var msg strings.Builder
+	fmt.Fprintf(&msg, "warning: %d of %d case(s) were UNMEASURED — an infrastructure failure stopped them being reviewed, "+
+		"so they are excluded from every recall denominator rather than scored as misses:\n",
+		len(rr.CaseFailures), len(rr.SuiteCaseIDs))
+	for _, f := range rr.CaseFailures {
+		fmt.Fprintf(&msg, "  %s: failed at %s\n",
+			stripTerminalControlRunes(f.CaseID), stripTerminalControlRunes(f.Reason))
+	}
+	msg.WriteString("  The work dir is retained (path in the run log) — the scored cases' review artifacts " +
+		"survive there for inspection or manual rescoring.\n")
+	_, _ = io.WriteString(w, msg.String())
 }

@@ -294,13 +294,15 @@ Each rate sits beside its numerator and denominator, and is **absent** rather th
 
 A case in that array is **unmeasured**, not missed. It appears in no reviewer's `case_ids`, and adds nothing to any recall denominator, so recall over a 3-case suite with one failed case reads exactly as recall over the two that were scored. Scoring it as a zero instead would charge every reviewer for a defect they were never shown — a transient infrastructure failure recorded as a genuine missed defect, which is the one thing this tier's contract forbids. `suite_case_ids` still names the failed case, because that list is the denominator the shortfall is visible against.
 
-Three failures still abort the whole run, and none of them is transient:
+These failures still abort the whole run, and none of them is transient:
 
 | Failure | Why it aborts |
 |---|---|
-| A total-roster failure still aborts (every reviewer failed on one case). | Recording it would make a whole-provider outage read on the run-result exactly like a local disk fault. |
+| A total-roster failure still aborts (every reviewer failed on one case), as does an empty roster. | Recording it would make a whole-provider outage read on the run-result exactly like a local disk fault. |
 | An **unwinnable expectation** (a case citing a file or line its own head state does not have). | A suite-authoring defect: deterministic, identical on a re-run, and caught before the case costs anything. Continuing would score around a suite already known to be broken. |
-| **Every case failing.** | Nothing was measured, so there is no partial result to salvage. |
+| The **scored-twice identity guard** (two reviewer lanes realizing one `(model, persona)` both scoring the same case), and the post-scrub **identity-collision guard**. | Configuration or code bugs, not bad luck. Continuing would publish a knowingly double-counted score, or two rows under one public identity. |
+| **Cancellation** (SIGINT/SIGTERM). | An operator interrupt is a decision, not a fault. An interrupted run must not become a publishable artifact whose missing cases look like infrastructure failures. |
+| **Nothing scored at all.** | Nothing was measured, so there is no partial result to salvage. |
 
 When any case fails, the **work dir is retained** and its path is logged, exactly as it is on a hard failure — the successful cases' raw transcripts, `findings.txt` and `summary.json` survive for inspection or manual rescoring.
 
@@ -312,7 +314,9 @@ llm-large/brad (2/3 cases, unmeasured case-02 (prepare));
 re-run the missing or unmeasured cases, or pass --allow-partial-coverage to publish the shortfall explicitly
 ```
 
-The reason vocabulary is closed and fail-closed at that boundary: export **rejects** a `case_failures` entry whose reason is not one the producer writes, whose case the suite does not declare, or whose case some reviewer also scored. A hand-supplied run-result cannot attach an excuse to a row that did not earn one.
+The reason vocabulary is closed and fail-closed at that boundary: export **rejects** a `case_failures` entry whose reason is not one the producer writes, whose case the suite does not declare, whose case some reviewer also scored, or which names the same case twice.
+
+What that proves is that an entry is **well-formed and internally consistent** — not that it is true. A hand-supplied run-result can still pair a valid reason with a real, unscored case id and have it accepted, which relabels a shortfall from *missing* to *unmeasured* in the export diagnostic. The gate's job is to keep the vocabulary closed and the artifact self-consistent; only the producer can vouch for whether a case actually failed.
 
 > **The Epic 14.1 grounding gate stays ON for these runs, by design.** A finding whose cited file the patch never touched is dropped unless pre-fetching actually retrieved the cited span. That is the measurement rather than an obstacle to it: the tier's question is whether pre-fetching lets a genuine out-of-diff finding clear the shipped anti-hallucination gate. Turning the gate off for benchmark runs would hide exactly the thing being measured.
 
