@@ -1194,16 +1194,46 @@ func TestExecuteRepoStateBenchmarkRun_RetainsTheWorkDirOnAPartialRun(t *testing.
 	assert.NoError(t, statErr, "a partial run's paid artifacts must survive for inspection or manual rescoring")
 }
 
+// workDirNamingCompleter records the run's work dir path from INSIDE the loop. A
+// clean run logs no path and returns none — it has nothing to retain — so a completer
+// call is the only moment the directory can be named while it still exists.
+type workDirNamingCompleter struct {
+	since time.Time
+	tmp   string
+}
+
+func (c *workDirNamingCompleter) Complete(ctx context.Context, inv llmclient.Invocation) (string, error) {
+	matches, _ := filepath.Glob(filepath.Join(os.TempDir(), "atcr-repo-state-*"))
+	for _, m := range matches {
+		if fi, err := os.Stat(m); err == nil && fi.ModTime().After(c.since) {
+			c.tmp = m
+		}
+	}
+	return stubLocatedCompleter{}.Complete(ctx, inv)
+}
+
 // A run with no failures at all still cleans up: retention is the exception the
 // failure channel earns, not the new default.
+//
+// Asserted on the FILESYSTEM, not on the absence of a log line. The old assertion —
+// NotContains(logs, "work dir retained") — is equally true when the cleanup is deleted
+// outright, so a regression that stopped reclaiming the dir on every clean run passed
+// the one test named for catching it.
 func TestExecuteRepoStateBenchmarkRun_CleanRunStillCleansUp(t *testing.T) {
 	var logs bytes.Buffer
+	cc := &workDirNamingCompleter{since: time.Now()}
 
-	rr, _, err := executeRepoStateBenchmarkRun(logCapturingContext(t, &logs),
-		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, repoStateMiniPath, time.Unix(0, 0).UTC())
+	rr, retained, err := executeRepoStateBenchmarkRun(logCapturingContext(t, &logs),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), cc, repoStateMiniPath, time.Unix(0, 0).UTC())
+	releaseRetainedWorkDir(t, retained)
 	require.NoError(t, err)
 	assert.Empty(t, rr.CaseFailures)
 	assert.NotContains(t, logs.String(), "work dir retained", "a clean run has nothing to retain")
+
+	require.NotEmpty(t, cc.tmp, "the fixture must actually have observed the run's work dir")
+	_, statErr := os.Stat(cc.tmp)
+	assert.True(t, os.IsNotExist(statErr),
+		"a clean run reclaims the work dir it created; %s still exists", cc.tmp)
 }
 
 // releaseRetainedWorkDir registers the removal of a retained work dir the MOMENT its
