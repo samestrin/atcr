@@ -1373,6 +1373,55 @@ func (c *workDirFaultingCompleter) Complete(ctx context.Context, inv llmclient.I
 	return stubLocatedCompleter{}.Complete(ctx, inv)
 }
 
+// prepareFaultingCompleter plants a regular FILE where the NEXT case's review dir
+// must be created, so that case dies inside fanout.PrepareReview. Planted from a
+// completer call because the work dir is named by os.MkdirTemp inside the runner and
+// has no name until the run is under way.
+type prepareFaultingCompleter struct {
+	since     time.Time
+	caseIndex int
+	calls     int
+	planted   string
+}
+
+func (c *prepareFaultingCompleter) Complete(ctx context.Context, inv llmclient.Invocation) (string, error) {
+	c.calls++
+	if c.calls == c.caseIndex {
+		matches, _ := filepath.Glob(filepath.Join(os.TempDir(), "atcr-repo-state-*"))
+		for _, m := range matches {
+			if fi, err := os.Stat(m); err == nil && fi.ModTime().After(c.since) {
+				blocker := filepath.Join(m, fmt.Sprintf("review-%d", c.caseIndex))
+				if err := os.WriteFile(blocker, []byte("not a directory"), 0o644); err == nil {
+					c.planted = blocker
+				}
+			}
+		}
+	}
+	return stubLocatedCompleter{}.Complete(ctx, inv)
+}
+
+// The prepare site was driven only INCIDENTALLY, by the empty-roster test — which now
+// aborts rather than recording, so nothing reached the record-and-continue arm at all.
+// This drives the arm directly and pins the constant it writes.
+func TestExecuteRepoStateBenchmarkRun_RecordsAPrepareFailureAndContinues(t *testing.T) {
+	suite := writeCaseSuite(t, "first-case", "second-case")
+	cc := &prepareFaultingCompleter{since: time.Now(), caseIndex: 1}
+
+	rr, retained, err := executeRepoStateBenchmarkRun(context.Background(),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), cc, suite, time.Unix(0, 0).UTC())
+	if retained != "" {
+		t.Cleanup(func() { _ = os.RemoveAll(retained) })
+	}
+
+	require.NoError(t, err, "a case that cannot be prepared is unmeasured, not fatal")
+	require.NotEmpty(t, cc.planted, "the fixture must actually have blocked the next case's review dir")
+	require.Len(t, rr.CaseFailures, 1)
+	assert.Equal(t, "second-case", rr.CaseFailures[0].CaseID)
+	assert.Equal(t, benchmark.CaseFailurePrepare, rr.CaseFailures[0].Reason,
+		"the reason names the stage the case died at, and this is the only test that pins it for this site")
+	assert.Equal(t, []string{"first-case"}, rr.Coverage[0].CaseIDs, "case 1 still scored")
+}
+
 // poolWriteFaultingCompleter makes ONE case's post-fan-out persistence fail, by
 // planting a DIRECTORY where ExecuteReview must write summary.json. The agents
 // themselves all succeed, so the error that comes back is neither ErrAllAgentsFailed
