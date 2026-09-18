@@ -444,6 +444,9 @@ type RunResult struct {
 	// omitempty so a run-result written before this field existed unmarshals to nil
 	// and reports as unmeasured, exactly as a nil OutOfVocabularyRate does.
 	PositionalRecall []ReviewerPositionalRecall `json:"reviewer_positional_recall,omitempty"`
+
+	// CaseFailures is the RED stub field.
+	CaseFailures []CaseFailure `json:"case_failures"`
 }
 
 // ReviewerCoverage names the cases behind one reviewer row of the same run-result,
