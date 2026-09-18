@@ -298,7 +298,8 @@ These failures still abort the whole run, and none of them is transient:
 
 | Failure | Why it aborts |
 |---|---|
-| A total-roster failure still aborts (every reviewer failed on one case), as does an empty roster. | Recording it would make a whole-provider outage read on the run-result exactly like a local disk fault. |
+| A total-roster failure still aborts (every reviewer failed on one case). | Recording it would make a whole-provider outage read on the run-result exactly like a local disk fault. |
+| An **empty roster** (no slot configured, or every slot dropped at execution time). | Not a transient outage but a deterministic configuration defect: recorded per case it would repeat on every case and surface as "all cases failed", burying the real cause under the transient class. |
 | An **unwinnable expectation** (a case citing a file or line its own head state does not have). | A suite-authoring defect: deterministic, identical on a re-run, and caught before the case costs anything. Continuing would score around a suite already known to be broken. |
 | The **scored-twice identity guard** (two reviewer lanes realizing one `(model, persona)` both scoring the same case), and the post-scrub **identity-collision guard**. | Configuration or code bugs, not bad luck. Continuing would publish a knowingly double-counted score, or two rows under one public identity. |
 | **Cancellation** (SIGINT/SIGTERM). | An operator interrupt is a decision, not a fault. An interrupted run must not become a publishable artifact whose missing cases look like infrastructure failures. |
