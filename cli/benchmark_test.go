@@ -307,3 +307,31 @@ func TestBenchmarkExport_InFlagRendersStringValueName(t *testing.T) {
 		"--in must render its real value name, not a backquoted example command")
 	require.NotContains(t, out, "--in atcr benchmark run")
 }
+
+// The case_failures gate is pinned at the COMMAND, not only at validateCaseFailures.
+// Its unit tests prove the function rejects a bad reason; they say nothing about
+// whether runBenchmarkExport still calls it, or still calls it before checkCoverage —
+// and both are load-bearing. checkCoverage DROPS an out-of-vocabulary entry rather
+// than rejecting it, so with the call deleted (or moved after the gate) this fixture
+// exports at exit 0 under --allow-partial-coverage with the case reported as plainly
+// missing. Same shape as TestBenchmarkExport_SuitePathScrubErrorPrecedesAnchor: assert
+// the earlier gate's text fires AND the later gate's text does not.
+func TestBenchmarkExport_CaseFailureGateIsInstalledBeforeTheCoverageGate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01","case-02","case-03"],` +
+		`"case_failures":[{"case_id":"case-02","reason":"vibes"}],` +
+		`"reviewer_coverage":[{"model":"m-primary","persona":"brad","case_ids":["case-01","case-03"]}],` +
+		`"reviewers":[{"model":"m-primary","persona":"brad","runs":2,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path, "--allow-partial-coverage")
+
+	require.NotEqual(t, 0, code,
+		"an unvalidated case_failures reason must not reach an operator-facing diagnostic: %s", out)
+	require.Contains(t, out, "outside the failure vocabulary",
+		"the case_failures gate's own diagnostic must fire")
+	require.NotContains(t, out, "not comparable",
+		"the coverage gate must not be the last word on a file the failure gate rejects")
+}
