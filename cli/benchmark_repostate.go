@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -47,9 +48,17 @@ import (
 //     un-checkpointed cases.
 //
 // Removing the refusal without doing both produces exactly the failure the
-// paragraph above describes. The full analysis and sequencing live in
-// .planning/epics/active/35.16.10.1_repo-state-partial-failure-outcomes.md under
-// "Deferred follow-up: resumable runs".
+// paragraph above describes. Both blockers are stated in full above deliberately:
+// this comment is the whole record, and cites no planning document. The question it
+// answers ("why is --checkpoint refused, and what would it take?") is asked HERE, at
+// the function that refuses.
+//
+// The concern behind the flag is separately half-answered, which is why the refusal
+// can stand: a run that fails, and one that completes with cases missing, both
+// RETAIN their work dir and report the path, so the completed cases' paid review
+// artifacts survive for inspection or manual rescoring. A per-case infrastructure
+// failure no longer aborts the run at all — see executeRepoStateBenchmarkRun's
+// per-case failure channel.
 func checkRepoStateFlags(suiteFormat, checkpointPath string) error {
 	// EqualFold for the same reason runBenchmarkRun routes with it: a differently-
 	// cased discriminator is the same tier, and the refusal must fire before a run
@@ -130,15 +139,32 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 	if err != nil {
 		return nil, fmt.Errorf("creating benchmark work dir: %w", err)
 	}
+	// Declared above the defer, not beside the other accumulators, because the
+	// retention decision below reads it. The run-result is not built until the loop
+	// ends, so the deferred cleanup cannot consult rr.CaseFailures.
+	var caseFailures []benchmark.CaseFailure
 	defer func() {
 		// The work dir holds the paid review artifacts for every completed case. A
 		// FAILED run RETAINS it — and the returned error names the path — so the
 		// artifacts survive for inspection or manual rescoring instead of a
 		// transient failure destroying everything the panel produced; a clean run
 		// still cleans up. Cleanup failures are Warned, never swallowed silently.
+		//
+		// A PARTIAL run retains it for the same reason and has a harder time saying
+		// so. It returns err == nil, so without this second arm the deferred
+		// RemoveAll fired on exactly the runs the failure channel exists to rescue —
+		// destroying the successful cases' paid artifacts at the moment they became
+		// the only copy of work that will not be re-run. There is no error to wrap
+		// the path into either, so the log line is the whole report; the run-result's
+		// case_failures array names which cases are missing from it.
 		if err != nil {
 			log.FromContext(ctx).Warn("benchmark work dir retained after a failed run", "path", tmp)
 			err = fmt.Errorf("%w (work dir retained at %s)", err, tmp)
+			return
+		}
+		if len(caseFailures) > 0 {
+			log.FromContext(ctx).Warn("benchmark work dir retained after a partial run",
+				"path", tmp, "failed_cases", len(caseFailures))
 			return
 		}
 		if rmErr := os.RemoveAll(tmp); rmErr != nil {
@@ -172,17 +198,27 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		// keys its per-case output dir by index.
 		repoDir := filepath.Join(tmp, fmt.Sprintf("repo-%d", i))
 		if err := os.MkdirAll(repoDir, 0o755); err != nil {
-			return nil, fmt.Errorf("case %q work dir: %w", c.ID, err)
+			recordCaseFailure(ctx, &caseFailures, c.ID, benchmark.CaseFailureWorkDir, err)
+			continue
 		}
 		mc, err := benchmark.MaterializeCase(ctx, c, repoDir)
 		if err != nil {
-			return nil, err
+			recordCaseFailure(ctx, &caseFailures, c.ID, benchmark.CaseFailureMaterialize, err)
+			releaseCaseRepo(ctx, repoDir, c.ID)
+			continue
 		}
 		// The two winnability preconditions LoadRepoState structurally cannot reach:
 		// the head state does not exist until the case is materialized. Checked HERE,
 		// before this case's first paid completer call, so an unwinnable case costs a
 		// materialization rather than a panel — the same fail-early rule the diff
 		// pre-parse above follows.
+		//
+		// STILL ABORTS, and is never recorded into the failure channel. That channel
+		// is for transient INFRASTRUCTURE faults, and this is a suite-AUTHORING
+		// defect: deterministic, identical on a re-run, and caught before this case
+		// costs anything. Recording it would publish a score computed around a suite
+		// already known to be broken, which is the same objection that keeps the
+		// scored-twice guard below fatal.
 		if err := benchmark.ValidateAgainstHead(c, mc.Root); err != nil {
 			return nil, err
 		}
@@ -215,17 +251,34 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		}
 		prep, err := fanout.PrepareReview(ctx, cfg, req)
 		if err != nil {
-			return nil, fmt.Errorf("preparing case %q: %w", c.ID, err)
+			recordCaseFailure(ctx, &caseFailures, c.ID, benchmark.CaseFailurePrepare, err)
+			releaseCaseRepo(ctx, repoDir, c.ID)
+			continue
 		}
 		log.FromContext(ctx).Info("repo-state case executing", "case", c.ID, "reviewers", len(reviewerRoster(cfg)))
 		res, err := fanout.ExecuteReview(ctx, completer, prep)
 		if err != nil {
-			return nil, fmt.Errorf("executing case %q: %w", c.ID, err)
+			// THE ONE EXECUTION FAILURE THAT STILL ABORTS. Every slot in the panel
+			// failing is precisely the transient infrastructure failure
+			// docs/benchmark.md forbids scoring as a genuine missed defect, and the
+			// gate that enforces it is this propagation — recording the case as
+			// unmeasured instead would let a whole-roster outage read on the run-result
+			// exactly like a local disk fault, which is the distinction the abort
+			// exists to keep. Any OTHER execution error is one case's bad luck and
+			// joins the failure channel.
+			if errors.Is(err, fanout.ErrAllAgentsFailed) {
+				return nil, fmt.Errorf("executing case %q: %w", c.ID, err)
+			}
+			recordCaseFailure(ctx, &caseFailures, c.ID, benchmark.CaseFailureExecute, err)
+			releaseCaseRepo(ctx, repoDir, c.ID)
+			continue
 		}
 
 		summary, err := fanout.ReadPoolSummary(res.Dir)
 		if err != nil {
-			return nil, fmt.Errorf("reading pool summary for case %q: %w", c.ID, err)
+			recordCaseFailure(ctx, &caseFailures, c.ID, benchmark.CaseFailurePoolSummary, err)
+			releaseCaseRepo(ctx, repoDir, c.ID)
+			continue
 		}
 		// The agent set bounds the unattributed tally: a skipped row whose recovered
 		// reviewer is nobody on this panel is counted (and warned) rather than
@@ -236,7 +289,9 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		}
 		located, categorical, unattributed, missingFindingsFile, err := readCaseFindingsLocated(res.Dir, agentSet)
 		if err != nil {
-			return nil, fmt.Errorf("reading findings for case %q: %w", c.ID, err)
+			recordCaseFailure(ctx, &caseFailures, c.ID, benchmark.CaseFailureReadFindings, err)
+			releaseCaseRepo(ctx, repoDir, c.ID)
+			continue
 		}
 		if missingFindingsFile {
 			log.FromContext(ctx).Warn("case produced no findings file; every reviewer reads as raised-nothing",
@@ -251,9 +306,14 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		// artifacts. Released HERE rather than at run end, so a large-base-tree
 		// suite hands its repos back as it goes instead of accumulating one per
 		// case under a $TMPDIR volume a long panel can exhaust mid-run.
-		if err := os.RemoveAll(repoDir); err != nil {
-			return nil, fmt.Errorf("case %q: removing work repo: %w", c.ID, err)
-		}
+		//
+		// A cleanup failure is WARNED and NOT recorded as a case failure. The case
+		// has already been reviewed and is about to be scored; only the disk reclaim
+		// failed. Marking it unmeasured would discard a successful paid measurement
+		// over a janitorial fault — and failing the run outright, as this used to,
+		// discarded every other case with it. Same Warn-not-fail shape the run-level
+		// cleanup above already uses.
+		releaseCaseRepo(ctx, repoDir, c.ID)
 
 		// Iterate the full roster, not just reviewers that raised something: a
 		// reviewer that missed the whole case is recall 0, not an absent row.
@@ -317,6 +377,22 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 				acc[key].latencies = append(acc[key].latencies, a.DurationMS)
 			}
 		}
+	}
+
+	// A suite in which EVERY case failed measured nothing, so there is no partial
+	// result to salvage and nothing the caller can do with a run-result built from
+	// it. Returned as an error rather than an empty artifact because the alternative
+	// misdiagnoses itself downstream: a run-result carrying suite_case_ids with zero
+	// reviewer rows is what checkCoverage calls "malformed", which would blame the
+	// file for a runner that behaved exactly as designed.
+	//
+	// The shipped all-agents-failed abort does NOT cover this shape. That one fires
+	// inside a single case's review call and cannot see a suite-wide outcome; this
+	// one is reachable only now that a case failure stops aborting.
+	if len(caseFailures) > 0 && len(caseFailures) == len(m.Cases) {
+		return nil, fmt.Errorf("no case could be scored: all %d case(s) failed (last reason %q on case %q); "+
+			"re-running is the remedy only if the cause was transient",
+			len(caseFailures), caseFailures[len(caseFailures)-1].Reason, caseFailures[len(caseFailures)-1].CaseID)
 	}
 
 	// The post-scrub identity collision guard buildRunResult carries: scrubField
@@ -401,7 +477,40 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		Coverage:            coverage,
 		Vocabulary:          benchmark.PerReviewerVocabulary(catScores),
 		PositionalRecall:    benchmark.ScorePositional(posScores),
+		CaseFailures:        caseFailures,
 	}, nil
+}
+
+// recordCaseFailure marks one case unmeasured and lets the run continue.
+//
+// The full error goes to the LOG and the run-result gets the case id and the reason
+// only. That split is deliberate: a Go error on this path routinely embeds the run's
+// $TMPDIR path or a provider's message, and the run-result is a file operators hand
+// to other people, while the log stays on the machine that produced it. The reason
+// is the part a downstream reader can act on.
+//
+// The pointer-to-slice is what makes this one helper serve all six recording sites
+// with only the reason constant differing. Six inlined append-and-log pairs is how a
+// classification drifts: one of them eventually logs at a different level, or omits
+// the case id, and the difference reads as meaningful when it is not.
+func recordCaseFailure(ctx context.Context, into *[]benchmark.CaseFailure, caseID, reason string, cause error) {
+	log.FromContext(ctx).Warn("repo-state case failed; recorded as unmeasured and skipped",
+		"case", caseID, "reason", reason, "err", cause)
+	*into = append(*into, benchmark.CaseFailure{CaseID: caseID, Reason: reason})
+}
+
+// releaseCaseRepo hands one case's materialized repository back, warning rather than
+// failing if it cannot.
+//
+// Called on the failure paths too, not just after a scored case. A case that died at
+// materialization or prepare still left a partial tree behind, and on a long suite
+// those accumulate under the same $TMPDIR volume the run-end cleanup was already
+// moved off to protect. The paid artifacts a partial run retains live in the
+// per-case review dir, which this never touches.
+func releaseCaseRepo(ctx context.Context, repoDir, caseID string) {
+	if err := os.RemoveAll(repoDir); err != nil {
+		log.FromContext(ctx).Warn("case work repo cleanup failed", "case", caseID, "path", repoDir, "err", err)
+	}
 }
 
 // repoStateAcc is the per-identity bookkeeping the run-result needs beyond the two

@@ -388,6 +388,13 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 	}
+	// BEFORE the gate, not after: checkCoverage reads case_failures to explain a
+	// shortfall, so an unvalidated entry would reach an operator-facing diagnostic —
+	// and could attach an excuse to a row that never earned one — before anything
+	// checked it was a reason the producer can write.
+	if err := validateCaseFailures(rr, in); err != nil {
+		return err
+	}
 	if err := checkCoverage(cmd.ErrOrStderr(), rr, in, allowPartial); err != nil {
 		return err
 	}

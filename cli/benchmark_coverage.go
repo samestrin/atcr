@@ -227,6 +227,15 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		byIdentity[key] = c
 	}
 
+	// The infra-failure index behind every shortfall diagnostic below. A case in
+	// here was never measured, so "re-run the missing cases" is the wrong
+	// instruction for it — the case did not run, and whether a re-run helps depends
+	// on the reason, which is why the reason is what gets printed.
+	failed := make(map[string]string, len(rr.CaseFailures))
+	for _, f := range rr.CaseFailures {
+		failed[f.CaseID] = f.Reason
+	}
+
 	var short []string
 	consumed := make(map[reviewerKey]scorecard.PublicRecord, len(rr.Reviewers))
 	for _, rev := range rr.Reviewers {
@@ -300,8 +309,8 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		// rejected any repeat and any non-member, so every id in the row is a
 		// distinct suite member. A defensive recount would describe a state the
 		// checks above have already made unreachable.
-		short = append(short, fmt.Sprintf("%s/%s (%d/%d cases, missing %s)",
-			model, persona, len(cov.CaseIDs), len(suite), summarizeMissing(missing)))
+		short = append(short, fmt.Sprintf("%s/%s (%d/%d cases, %s)",
+			model, persona, len(cov.CaseIDs), len(suite), describeMissing(missing, failed)))
 	}
 
 	// The join is checked in BOTH directions: a coverage row no reviewer row
@@ -331,7 +340,7 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		return nil
 	}
 	return fmt.Errorf("run-result %s has reviewer row(s) scored over less than the full %d-case suite: %s; "+
-		"re-run the missing cases, or pass --allow-partial-coverage to publish the shortfall explicitly",
+		"re-run the missing or unmeasured cases, or pass --allow-partial-coverage to publish the shortfall explicitly",
 		path, len(suite), strings.Join(short, "; "))
 }
 
@@ -524,6 +533,39 @@ func validateCoveredSet(suite map[string]bool, covered []string, path, model, pe
 // so it inherits the stripping with it. The id sites inside validateCoveredSet are
 // deliberately left alone — they use %q, which already renders a control rune as a
 // literal escape sequence.
+// describeMissing splits one row's shortfall into the two things it can be, and
+// says which.
+//
+// They call for opposite responses. A case in the failure channel was never
+// measured — it did not run, and whether re-running helps depends on the reason,
+// which is why the reason is printed beside it. A case absent from BOTH the covered
+// set and the failure channel is unaccounted for: the row claims a suite it was not
+// scored over, and that is the shape the original "re-run the missing cases"
+// instruction was written for. Collapsing the two would tell an operator to re-run a
+// case that never ran, and would hide a row with no explanation at all behind one
+// that has a good one.
+//
+// Both halves route through summarizeMissing, so each inherits the per-row cap and
+// the control-rune stripping rather than re-deriving them.
+func describeMissing(missing []string, failed map[string]string) string {
+	var unexplained, unmeasured []string
+	for _, id := range missing {
+		if reason, ok := failed[id]; ok {
+			unmeasured = append(unmeasured, fmt.Sprintf("%s (%s)", id, reason))
+			continue
+		}
+		unexplained = append(unexplained, id)
+	}
+	var parts []string
+	if len(unexplained) > 0 {
+		parts = append(parts, "missing "+summarizeMissing(unexplained))
+	}
+	if len(unmeasured) > 0 {
+		parts = append(parts, "unmeasured "+summarizeMissing(unmeasured))
+	}
+	return strings.Join(parts, "; ")
+}
+
 func summarizeMissing(missing []string) string {
 	named := missing
 	if len(named) > maxNamedMissingCases {
@@ -718,5 +760,67 @@ func validateSuiteIdentityForPublication(rr benchmark.RunResult, path string) er
 	return nil
 }
 
-// validateCaseFailures is a RED stub.
-func validateCaseFailures(_ benchmark.RunResult, _ string) error { return nil }
+// validateCaseFailures is the EXPORT trust boundary for the per-case failure
+// channel — the only live one for this tier, since checkRepoStateFlags refuses
+// --checkpoint for repo-state-v1 and there is no resume path to guard.
+//
+// It exists because the array is CONSEQUENTIAL at the gate below: checkCoverage
+// reads it to explain a coverage shortfall, so an unvalidated entry is a way to
+// attach an excuse to a row that never earned one. A run-result reaches export
+// hand-suppliable, having never passed through the producer, which is the same
+// premise every other check in this file is built on.
+//
+// The four rejections are the four ways an entry can be untrue rather than merely
+// unfamiliar: a reason outside the vocabulary (including the empty one — a failure
+// record always states its cause), a case the suite does not declare, a case some
+// reviewer also scored, and a case named twice. Each is impossible from the
+// producer, which records each failed case once, with a constant, before the case
+// can be scored.
+func validateCaseFailures(rr benchmark.RunResult, path string) error {
+	if len(rr.CaseFailures) == 0 {
+		return nil
+	}
+	suite := make(map[string]bool, len(rr.SuiteCaseIDs))
+	for _, id := range rr.SuiteCaseIDs {
+		suite[id] = true
+	}
+	// A case any reviewer scored cannot also be unmeasured. Built from every
+	// coverage row rather than the first: the contradiction is worth catching
+	// wherever it appears, and the producer writes one identical covered set per
+	// fully-scored row anyway.
+	scored := map[string]bool{}
+	for _, c := range rr.Coverage {
+		for _, id := range c.CaseIDs {
+			scored[id] = true
+		}
+	}
+	seen := make(map[string]bool, len(rr.CaseFailures))
+	for _, f := range rr.CaseFailures {
+		// Stripped for the same reason every identity in this file is: these
+		// diagnostics reach the operator's terminal, and a case id is untrusted
+		// input here.
+		id := stripTerminalControlRunes(f.CaseID)
+		if !benchmark.ValidCaseFailureReason(f.Reason) {
+			return fmt.Errorf("run-result %s records case_failures reason %q for case %q, outside the failure vocabulary; "+
+				"the producer writes only benchmark.CaseFailure* values, so this file is malformed",
+				path, stripTerminalControlRunes(f.Reason), id)
+		}
+		if !suite[f.CaseID] {
+			return fmt.Errorf("run-result %s records a case_failures entry for %q, which suite_case_ids does not declare; "+
+				"a failure naming a case outside the suite explains no shortfall in it, so this file is malformed",
+				path, id)
+		}
+		if scored[f.CaseID] {
+			return fmt.Errorf("run-result %s records case %q as both scored and infrastructure-failed; "+
+				"the producer skips a failed case before scoring it, so this file is malformed",
+				path, id)
+		}
+		if seen[f.CaseID] {
+			return fmt.Errorf("run-result %s records case %q in case_failures more than once; "+
+				"the producer records each failed case exactly once, so this file is malformed",
+				path, id)
+		}
+		seen[f.CaseID] = true
+	}
+	return nil
+}
