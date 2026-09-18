@@ -239,6 +239,14 @@ func TestBenchmarkDoc_RepoStatePartialRunContractMatchesTheCode(t *testing.T) {
 	assert.Contains(t, cli, "errors.Is(err, fanout.ErrAllAgentsFailed)",
 		"the runner must still propagate a total-roster failure rather than record it")
 
+	// The empty roster aborts for the OPPOSITE reason — a deterministic configuration
+	// defect, not a transient outage — so the doc must give it its own row and its own
+	// rationale rather than folding it into the total-roster failure's justification.
+	assert.Contains(t, doc, "deterministic configuration defect",
+		"the doc must state the empty-roster abort's own rationale, not borrow the outage's")
+	assert.Contains(t, cli, "fanout.ErrEmptyRoster",
+		"the runner must still propagate an empty-roster execution failure rather than record it")
+
 	// Retention on a partial run — AC4. This is the sentence that tells an operator
 	// their paid artifacts are recoverable instead of gone.
 	assert.Contains(t, doc, "work dir is retained",
