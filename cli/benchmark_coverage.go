@@ -114,6 +114,13 @@ func duplicateIdentityError(path, what string, key reviewerKey, prevModel, prevP
 // uncapped, applied one level in.
 const maxNamedMissingCases = 3
 
+// halfSeparator divides describeMissing's two halves. It is deliberately NOT the
+// "; " checkCoverage uses between distinct short rows: the row list is the outer
+// nesting level, and a message that nests both must keep the two delimiters
+// distinguishable — otherwise a reader, or anything downstream that splits on it,
+// reads one reviewer row as two.
+const halfSeparator = " / "
+
 // checkCoverage is the publication gate: no reviewer row may reach the public board
 // having been scored over less than the suite the run-result declares.
 //
@@ -246,6 +253,7 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 	// but the safety of an operator-facing diagnostic must not rest on the order two
 	// functions happen to be called in: a second caller would otherwise interpolate
 	// an arbitrary attacker-chosen string into the terminal.
+	//
 	// The drop is ANNOUNCED, not silent. Without this line the case simply reads as
 	// plainly missing, so a caller reaching checkCoverage without the export command's
 	// gate in front of it is told to re-run a case the file claims was unmeasured, with
@@ -632,11 +640,6 @@ func describeMissing(missing []string, failed map[string]string) string {
 	// for anything downstream that splits the message on it.
 	return strings.Join(parts, halfSeparator)
 }
-
-// halfSeparator divides describeMissing's two halves. It is deliberately NOT the
-// "; " checkCoverage uses between short rows: the row list is the outer level, and
-// the two delimiters must stay distinguishable for a message that nests them.
-const halfSeparator = " / "
 
 // firstNonPrintingRune reports the first control (Cc) or format (Cf) rune in s —
 // the same predicate stripTerminalControlRunes applies to operator-facing
