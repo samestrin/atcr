@@ -445,8 +445,31 @@ type RunResult struct {
 	// and reports as unmeasured, exactly as a nil OutOfVocabularyRate does.
 	PositionalRecall []ReviewerPositionalRecall `json:"reviewer_positional_recall,omitempty"`
 
-	// CaseFailures is the RED stub field.
-	CaseFailures []CaseFailure `json:"case_failures"`
+	// CaseFailures names the suite cases that could not be scored at all, with the
+	// stage each one died at (case_failure.go documents the vocabulary). It is what
+	// makes a PARTIAL run legible: a case in this list is UNMEASURED — absent from
+	// every reviewer's covered set and from every recall denominator — rather than
+	// missed. Recording it as a zero-scored row instead would increment each
+	// reviewer's ExpectedTotal without giving them a chance at it, scoring an
+	// infrastructure failure as a genuine missed defect, which docs/benchmark.md
+	// forbids for this tier.
+	//
+	// SuiteCaseIDs deliberately still names these cases. That list is the suite
+	// denominator, so keeping the failed case in it is what makes the shortfall
+	// VISIBLE — every reviewer_coverage row is short by exactly the failed cases, and
+	// checkCoverage reads this array to say why rather than telling the operator to
+	// re-run cases that never ran.
+	//
+	// It sits here and NOT on ReviewerCoverage: an infrastructure failure stops the
+	// whole panel meeting the case, so a per-row copy would repeat one identical list
+	// on every row and owe a new all-rows-agree consistency check for information the
+	// run already states once.
+	//
+	// Run-result-only, like Vocabulary: it describes how a measurement was taken, not
+	// a reviewer's score, so BuildSubmission does not carry it into a Submission.
+	// omitempty so a clean run serializes identically to a run-result written before
+	// this field existed, and both unmarshal to nil.
+	CaseFailures []CaseFailure `json:"case_failures,omitempty"`
 }
 
 // ReviewerCoverage names the cases behind one reviewer row of the same run-result,
