@@ -877,6 +877,18 @@ func validateCaseFailures(rr benchmark.RunResult, path string) error {
 			"a failure names a case of the declared suite, and `atcr benchmark run` writes the two together, "+
 			"so this file is malformed", path)
 	}
+	// An impossible SHAPE is rejected before any index is built, the way the sibling
+	// validators in this file reject one rather than merely iterating it. Every entry
+	// must name a distinct declared case (the membership and repeat arms below), so an
+	// array longer than the declared suite cannot be well-formed whatever it contains —
+	// and the declared count is the bound rather than the distinct one, so a repeated
+	// suite id still reaches checkCoverage's sharper duplicate diagnostic instead of
+	// being preempted here.
+	if len(rr.CaseFailures) > len(rr.SuiteCaseIDs) {
+		return fmt.Errorf("run-result %s records %d case_failures entries over a %d-case suite; "+
+			"the producer records each failed case at most once, so this file is malformed",
+			path, len(rr.CaseFailures), len(rr.SuiteCaseIDs))
+	}
 	suite := make(map[string]bool, len(rr.SuiteCaseIDs))
 	for _, id := range rr.SuiteCaseIDs {
 		suite[id] = true

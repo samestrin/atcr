@@ -433,6 +433,28 @@ func TestValidateCaseFailures_RejectsAnArrayWithNoDenominator(t *testing.T) {
 		"and does not blame the case id for a defect one field over")
 }
 
+// An array longer than the declared suite cannot be well-formed: every entry must
+// name a distinct declared case. Rejecting the shape up front is what the sibling
+// validators in this file do, and it means the indexes are never built over an array
+// no producer can write.
+func TestValidateCaseFailures_RejectsAnArrayLongerThanTheSuite(t *testing.T) {
+	rr := partialRun()
+	rr.SuiteCaseIDs = []string{"case-01", "case-02"}
+	rr.Coverage[0].CaseIDs = []string{"case-01"}
+	rr.Reviewers[0].Runs = 1
+	rr.CaseFailures = []benchmark.CaseFailure{
+		{CaseID: "case-02", Reason: benchmark.CaseFailurePrepare},
+		{CaseID: "case-02", Reason: benchmark.CaseFailureExecute},
+		{CaseID: "case-02", Reason: benchmark.CaseFailureWorkDir},
+	}
+
+	err := validateCaseFailures(rr, "rr.json")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "3 case_failures entries over a 2-case suite",
+		"the shape is rejected on its own terms, not reported as a repeated case")
+}
+
 func TestValidateCaseFailures_RejectsABlankCaseID(t *testing.T) {
 	rr := partialRun()
 	rr.CaseFailures[0].CaseID = "  "
