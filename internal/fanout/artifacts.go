@@ -319,6 +319,10 @@ type findingsResult struct {
 	Findings  []stream.Finding
 	Dropped   int
 	Truncated int
+	// Ungrounded counts the findings the Epic 14.1 gate discarded before the
+	// min_severity/max_findings constraints ran, so it is a count of findings the
+	// reviewer RAISED, not of findings that survived.
+	Ungrounded int
 }
 
 func findingsFor(r Result, changed payload.ChangedLines) findingsResult {

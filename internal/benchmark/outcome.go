@@ -68,6 +68,30 @@ const (
 	// OUTPUT-side signal (finish_reason "length") and is a distinct value.
 	OutcomeIncomplete = "incomplete"
 
+	// OutcomeUngrounded marks a reviewer that RAISED findings and had every one of
+	// them discarded by the Epic 14.1 grounding gate — each cited a FILE:LINE the
+	// patch does not contain (fanout.AgentStatus.DroppedByGrounding > 0 with nothing
+	// surviving).
+	//
+	// It is its own value rather than a reuse of OutcomeIncomplete, which is the
+	// INPUT-side signal: "saw only a fraction of the diff". This reviewer saw the
+	// whole diff. Its OUTPUT was filtered afterwards, which is the opposite
+	// direction, and folding the two together would make the incomplete doc above
+	// false for half the rows carrying it.
+	//
+	// Publishing it as "clean" is the failure this value exists to prevent: clean
+	// asserts "reviewed and correctly found nothing", and a reviewer that found
+	// something the gate then rejected has not made that claim. The distinction is
+	// the whole measurement on the repo-state-v1 tier, where the gate is live and an
+	// out-of-diff finding survives only when pre-fetching retrieved the cited span.
+	//
+	// CROSS-VERSION NOTE: this value is new, so ValidOutcome in an OLDER binary
+	// rejects a checkpoint carrying it. That is the fail-closed direction the
+	// vocabulary is designed for — a stale reader refuses rather than silently
+	// re-keying the tally — but it does mean a checkpoint written here cannot be
+	// resumed by a pre-35.16.10 build.
+	OutcomeUngrounded = "ungrounded"
+
 	// OutcomeFailed marks a slot whose call did not succeed at all — the reviewer
 	// never produced a reviewable response for this case.
 	OutcomeFailed = "failed"

@@ -429,3 +429,72 @@ func TestApplyReviewerOutcome_TalliesFallbackSeparatelyFromOutcome(t *testing.T)
 	assert.Equal(t, 1, acc.outcomes[benchmark.OutcomeClean],
 		"and the review it served is still described by its own outcome")
 }
+
+// A reviewer whose findings were ALL discarded by the grounding gate is NOT clean.
+//
+// This is the repo-state-v1 tier's routine path, not an edge case: that tier
+// supplies a Range so the gate is live, and the out-of-diff findings it exists to
+// measure are precisely what the gate drops unless pre-fetching retrieved the span.
+// Before this arm both shapes produced UnparseableResponse=false and zero raised
+// categories, so they fell through to the same default — publishing "reviewed
+// successfully and emitted the NO FINDINGS sentinel" about a reviewer that had in
+// fact raised findings.
+func TestReviewerOutcome_AllFindingsDroppedByGroundingIsNotClean(t *testing.T) {
+	got := reviewerOutcome(fanout.AgentStatus{Status: fanout.StatusOK, DroppedByGrounding: 2}, nil)
+
+	assert.Equal(t, benchmark.OutcomeUngrounded, got)
+	assert.NotEqual(t, benchmark.OutcomeClean, got,
+		"clean asserts the reviewer found nothing; this one found things the gate rejected")
+}
+
+// Surviving findings outrank the drop count: a reviewer that raised four and kept
+// one reviewed successfully and has findings to show for it. Only a TOTAL wipe is
+// the ungrounded outcome.
+func TestReviewerOutcome_PartialGroundingDropsStillCountAsFindings(t *testing.T) {
+	got := reviewerOutcome(
+		fanout.AgentStatus{Status: fanout.StatusOK, DroppedByGrounding: 3},
+		[]string{"correctness"},
+	)
+
+	assert.Equal(t, benchmark.OutcomeFindings, got)
+}
+
+// The data-integrity signals still outrank it. A failed call that also recorded
+// drops is failed; a reviewer that saw a fraction of the diff is incomplete. Pinned
+// so the new arm is inserted at the right precedence rather than at the top.
+func TestReviewerOutcome_GroundingDropsYieldToDataIntegritySignals(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status fanout.AgentStatus
+		want   string
+	}{
+		{
+			name:   "failed outranks ungrounded",
+			status: fanout.AgentStatus{Status: fanout.StatusFailed, DroppedByGrounding: 2},
+			want:   benchmark.OutcomeFailed,
+		},
+		{
+			name:   "unparseable outranks ungrounded",
+			status: fanout.AgentStatus{Status: fanout.StatusOK, UnparseableResponse: true, DroppedByGrounding: 2},
+			want:   benchmark.OutcomeUnparseable,
+		},
+		{
+			name:   "incomplete outranks ungrounded",
+			status: fanout.AgentStatus{Status: fanout.StatusOK, UnreviewedChunks: 1, DroppedByGrounding: 2},
+			want:   benchmark.OutcomeIncomplete,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, reviewerOutcome(tc.status, nil))
+		})
+	}
+}
+
+// Grounding is OFF on the standard-v1 diff path (no Range, so groundFindings fails
+// open), which means DroppedByGrounding is always 0 there and the new arm can never
+// fire. Pinned because a regression here would re-key every historical standard-v1
+// row's outcome tally.
+func TestReviewerOutcome_StandardTierIsUnaffected(t *testing.T) {
+	assert.Equal(t, benchmark.OutcomeClean,
+		reviewerOutcome(fanout.AgentStatus{Status: fanout.StatusOK}, nil))
+}
