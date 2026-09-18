@@ -1094,8 +1094,19 @@ func TestExecuteRepoStateBenchmarkRun_FailedCaseLeavesTheDenominatorsAlone(t *te
 	assert.Equal(t, clean.PositionalRecall[0].ExpectedTotal, partial.PositionalRecall[0].ExpectedTotal,
 		"an unmeasured case adds 0 to expected_total")
 	require.NotNil(t, partial.PositionalRecall[0].Recall)
+	require.NotNil(t, clean.PositionalRecall[0].Recall)
 	assert.Equal(t, *clean.PositionalRecall[0].Recall, *partial.PositionalRecall[0].Recall,
 		"recall over 3 cases with 1 failed must equal recall over the 2 scored cases")
+
+	// The differential above is blind to the NUMERATOR: both sides run the same
+	// function, so a uniform miscount moves them together and the equality still
+	// holds. These pin the answer this test's own comment states — 1.0 over the 2
+	// scored cases, not 2/3 — so a runner that matched nothing would fail here
+	// instead of passing with recall 0 on both sides.
+	assert.Equal(t, 1.0, *partial.PositionalRecall[0].Recall,
+		"the reviewer scored both surviving cases perfectly")
+	assert.Equal(t, 4, partial.PositionalRecall[0].ExpectedTotal,
+		"expected_total counts the 2 scored cases' expectations only")
 
 	require.Len(t, partial.Reviewers, 1)
 	require.Len(t, clean.Reviewers, 1)
