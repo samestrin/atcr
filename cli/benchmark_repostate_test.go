@@ -35,6 +35,20 @@ func (stubLocatedCompleter) Complete(_ context.Context, _ llmclient.Invocation) 
 		"MEDIUM|app/calc.py:8|safe_total is not None-safe as claimed|handle None explicitly|correctness|15|def safe_total(items):", nil
 }
 
+// stubOnlyUntouchedFileCompleter raises ONLY the defect in the file the diff never
+// touches, so the Epic 14.1 gate drops every finding it emits (isGrounded returns
+// false on the file lookup itself — internal/fanout/grounding.go:70-73 — before the
+// line and evidence arms are consulted).
+//
+// A TOTAL wipe is what OutcomeUngrounded requires, and it is why the sibling
+// stubUntouchedFileCompleter cannot produce one: that stub also cites the in-patch
+// calc.py defect, which survives, so its reviewer scores `findings` instead.
+type stubOnlyUntouchedFileCompleter struct{}
+
+func (stubOnlyUntouchedFileCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
+	return "HIGH|app/helper.py:2|average divides by len(items) with no empty guard|add a guard|correctness|15|return total(items) / len(items)", nil
+}
+
 // stubInDiffOnlyCompleter raises ONLY the in-diff finding. It is the reviewer this
 // whole tier exists to identify: competent on the diff, blind to unchanged code.
 type stubInDiffOnlyCompleter struct{}
@@ -943,12 +957,28 @@ func TestFoldGroundingEnabled(t *testing.T) {
 // may carry ungrounded in its tally. Pinned because the two were fixed separately
 // and a future change to either could make the run-result self-contradictory --
 // claiming a gate-driven outcome on a row that says the gate was off.
+//
+// The fixture and the completer are BOTH load-bearing, and an earlier version of
+// this test got both wrong: it ran stubUntouchedFileCompleter against the mini
+// fixture, whose reviewer keeps its in-patch calc.py finding and therefore scores
+// `findings`. Every row then failed the `== 0` test and was skipped, so the loop
+// body never executed and the test asserted nothing -- it stayed green with
+// reviewerOutcome's ungrounded arm deleted outright. The tally assertion below is
+// the guard against that recurring: it fails on a fixture that produces no
+// ungrounded outcome, rather than passing vacuously over one.
 func TestExecuteRepoStateBenchmarkRun_UngroundedOutcomeOnlyOnAGatedRow(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 
-	rr, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubUntouchedFileCompleter{}, repoStateMiniPath, time.Unix(0, 0).UTC())
+	rr, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubOnlyUntouchedFileCompleter{}, writeUntouchedFileSuite(t), time.Unix(0, 0).UTC())
 	require.NoError(t, err)
 	require.NotEmpty(t, rr.Coverage)
+
+	ungrounded := 0
+	for _, row := range rr.Coverage {
+		ungrounded += row.Outcomes[benchmark.OutcomeUngrounded]
+	}
+	require.Positive(t, ungrounded,
+		"the fixture must actually produce an ungrounded outcome, or the per-row checks below assert nothing")
 
 	for _, row := range rr.Coverage {
 		if row.Outcomes[benchmark.OutcomeUngrounded] == 0 {
