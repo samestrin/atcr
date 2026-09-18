@@ -844,9 +844,38 @@ func validateSuiteIdentityForPublication(rr benchmark.RunResult, path string) er
 // relabelled from "missing" to "unmeasured" in the diagnostic below. That gap is not
 // closeable from inside the file being validated — only the producer knows what ran
 // — so it is stated rather than papered over, in docs/benchmark.md as well as here.
+//
+// NOT TIER-SCOPED, DELIBERATELY. The arms above accept case_failures on ANY
+// run-result, including a standard-v1 one whose producer never writes the array — so
+// a hand-edited standard-v1 file can carry, say, a `materialize` reason for a pipeline
+// that has no materialize stage. That is tolerated on three grounds. First, the entry
+// still has to name a declared, unscored, unrepeated case with a vocabulary reason, so
+// the claim it can make is "this case was not measured" — true of a case absent from
+// every coverage row whatever tier produced the file, and already covered by the
+// paragraph above. Second, the only available discriminator is
+// ReviewerCoverage.GroundingEnabled being non-nil, which is a property of what the
+// standard-v1 producer happens NOT to write today rather than of the tier; a change
+// making standard-v1 publish `false` would silently turn the arm into a no-op while
+// leaving it looking like a live gate. Third, the header's own premise — that the
+// export boundary is the only live one — is what makes this a diagnostic-quality
+// question rather than a resume-safety one. Add the arm only alongside a real tier
+// discriminator on the run-result.
 func validateCaseFailures(rr benchmark.RunResult, path string) error {
 	if len(rr.CaseFailures) == 0 {
 		return nil
+	}
+	// A failure array with NO denominator gets its own rejection rather than the
+	// membership arm's. Without it every entry fails `suite[f.CaseID]` and the message
+	// blames the case id for a file whose actual defect is the absent suite_case_ids —
+	// and the mirror shape one field over already has a sharper rejection (checkCoverage
+	// rejects "records reviewer coverage but no suite_case_ids"). It also closes the arm
+	// on which the channel was unvalidatable: checkCoverage returns early on a file with
+	// neither field, so nothing downstream reads the array either, and a hand-edited
+	// pre-coverage file could carry an arbitrary one through export with no gate firing.
+	if len(rr.SuiteCaseIDs) == 0 {
+		return fmt.Errorf("run-result %s records case_failures but no suite_case_ids; "+
+			"a failure names a case of the declared suite, and `atcr benchmark run` writes the two together, "+
+			"so this file is malformed", path)
 	}
 	suite := make(map[string]bool, len(rr.SuiteCaseIDs))
 	for _, id := range rr.SuiteCaseIDs {
@@ -872,6 +901,15 @@ func validateCaseFailures(rr benchmark.RunResult, path string) error {
 			return fmt.Errorf("run-result %s records case_failures reason %q for case %q, outside the failure vocabulary; "+
 				"the producer writes only benchmark.CaseFailure* values, so this file is malformed",
 				path, stripTerminalControlRunes(f.Reason), id)
+		}
+		// A blank id names nothing, so the membership arm below would report it as
+		// `an entry for "", which suite_case_ids does not declare` — a sentence that
+		// blames the denominator for an entry that never identified a case at all.
+		// This is the shape a partly-populated hand edit produces, the same one the
+		// empty reason is rejected for one field up.
+		if strings.TrimSpace(f.CaseID) == "" {
+			return fmt.Errorf("run-result %s records a case_failures entry with a blank case_id; "+
+				"a failure record names the case it is about, so this file is malformed", path)
 		}
 		if !suite[f.CaseID] {
 			return fmt.Errorf("run-result %s records a case_failures entry for %q, which suite_case_ids does not declare; "+

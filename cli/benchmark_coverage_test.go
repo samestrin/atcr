@@ -416,6 +416,34 @@ func TestValidateCaseFailures_RejectsARepeatedCase(t *testing.T) {
 	require.Error(t, validateCaseFailures(rr, "rr.json"))
 }
 
+// The membership arm is a catch-all, so the two structurally different malformed
+// shapes it used to swallow each get their own diagnostic. A file with no denominator
+// is not a file with a bad case id, and neither is an entry that names no case: the
+// old message blamed suite_case_ids for the first and the case id for the second,
+// with the same sentence.
+func TestValidateCaseFailures_RejectsAnArrayWithNoDenominator(t *testing.T) {
+	rr := partialRun()
+	rr.SuiteCaseIDs = nil
+
+	err := validateCaseFailures(rr, "rr.json")
+
+	require.Error(t, err, "the channel must not be unvalidatable on the very shape checkCoverage warns-and-exports")
+	assert.Contains(t, err.Error(), "no suite_case_ids", "the diagnostic names the absent denominator")
+	assert.NotContains(t, err.Error(), "does not declare",
+		"and does not blame the case id for a defect one field over")
+}
+
+func TestValidateCaseFailures_RejectsABlankCaseID(t *testing.T) {
+	rr := partialRun()
+	rr.CaseFailures[0].CaseID = "  "
+
+	err := validateCaseFailures(rr, "rr.json")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "blank case_id", "an entry that identifies no case says so")
+	assert.NotContains(t, err.Error(), "does not declare")
+}
+
 // The honest partial run passes every arm.
 func TestValidateCaseFailures_AcceptsAPartialRun(t *testing.T) {
 	assert.NoError(t, validateCaseFailures(partialRun(), "rr.json"))
