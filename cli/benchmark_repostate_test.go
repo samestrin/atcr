@@ -1311,6 +1311,62 @@ func TestWarnCaseFailures(t *testing.T) {
 	assert.Contains(t, out, "retained", "the paid artifacts survive, and the operator has to know that to use them")
 }
 
+// workDirFaultingCompleter makes the run's own work dir unwritable once case 1's
+// panel has been paid for, so case 2's os.MkdirAll(repo-1) fails MID-LOOP. It is the
+// only observation point a test has for that site: the work dir is created inside the
+// runner by os.MkdirTemp, so it has no name until the run is under way, and a
+// completer call is the one moment a test executes while the loop is running.
+//
+// EACCES on purpose, not ENOSPC: a permission fault is path-specific, which is
+// exactly the class that KEEPS the record-and-continue treatment (isFatalWorkDirError
+// deliberately excludes it). Faulting with a host-level errno would exercise the
+// abort arm instead, which is a different test.
+type workDirFaultingCompleter struct {
+	since   time.Time
+	tmp     string
+	calls   int
+	perCase int
+}
+
+func (c *workDirFaultingCompleter) Complete(ctx context.Context, inv llmclient.Invocation) (string, error) {
+	c.calls++
+	if c.calls == c.perCase {
+		matches, _ := filepath.Glob(filepath.Join(os.TempDir(), "atcr-repo-state-*"))
+		for _, m := range matches {
+			if fi, err := os.Stat(m); err == nil && fi.ModTime().After(c.since) {
+				c.tmp = m
+				_ = os.Chmod(m, 0o555)
+			}
+		}
+	}
+	return stubLocatedCompleter{}.Complete(ctx, inv)
+}
+
+// The work_dir record-and-continue site had coverage count 0: no test drove the
+// RUNNER to a work-dir failure, so the reason constant it records was unverified end
+// to end and a wrong one would have shipped invisibly.
+func TestExecuteRepoStateBenchmarkRun_RecordsAWorkDirFailureAndContinues(t *testing.T) {
+	suite := writeCaseSuite(t, "first-case", "second-case")
+	cc := &workDirFaultingCompleter{since: time.Now(), perCase: 1}
+	t.Cleanup(func() {
+		if cc.tmp != "" {
+			_ = os.Chmod(cc.tmp, 0o755)
+			_ = os.RemoveAll(cc.tmp)
+		}
+	})
+
+	rr, _, err := executeRepoStateBenchmarkRun(context.Background(),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), cc, suite, time.Unix(0, 0).UTC())
+
+	require.NoError(t, err, "a path-specific work-dir fault is one case's bad luck, not the run's")
+	require.NotEmpty(t, cc.tmp, "the fixture must actually have found and faulted the run's work dir")
+	require.Len(t, rr.CaseFailures, 1)
+	assert.Equal(t, "second-case", rr.CaseFailures[0].CaseID)
+	assert.Equal(t, benchmark.CaseFailureWorkDir, rr.CaseFailures[0].Reason,
+		"the reason constant is the actionable part, and this is the only test that pins it for this site")
+	assert.Equal(t, []string{"first-case"}, rr.Coverage[0].CaseIDs, "case 1 still scored")
+}
+
 // The retained path reaches the operator on the UN-SUPPRESSIBLE channel. It used to
 // exist only in the runner's Warn line, and ATCR_LOG_LEVEL=error -- a level
 // log.LevelFromString accepts -- drops that line entirely, leaving the only copy of a
