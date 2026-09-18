@@ -499,9 +499,15 @@ func TestCheckCoverage_ExplainsAnInfrastructureShortfall(t *testing.T) {
 	err := checkCoverage(io.Discard, partialRun(), "rr.json", false)
 
 	require.Error(t, err, "an unmeasured case still makes the row incomparable")
-	assert.Contains(t, err.Error(), "case-02")
-	assert.Contains(t, err.Error(), benchmark.CaseFailurePrepare,
-		"the shortfall is explained by the recorded failure, not reported as cases the operator forgot")
+	// Composed substrings, not loose words. "missing" alone is satisfied by the static
+	// remedy sentence the gate always prints, and benchmark.CaseFailurePrepare alone
+	// says nothing about which LABEL the case was filed under — so labelling both
+	// halves "unmeasured" (or both "missing") passed the old assertions while
+	// collapsing the exact distinction describeMissing exists to draw.
+	assert.Contains(t, err.Error(), "unmeasured case-02 ("+benchmark.CaseFailurePrepare+")",
+		"an explained shortfall is labelled unmeasured and carries its reason")
+	assert.NotContains(t, err.Error(), "missing case-02",
+		"and is not also reported as a case the operator forgot to run")
 }
 
 // A shortfall the failure channel does NOT explain keeps the original diagnosis. The
@@ -516,7 +522,10 @@ func TestCheckCoverage_UnexplainedShortfallStillReadsAsMissing(t *testing.T) {
 	err := checkCoverage(io.Discard, rr, "rr.json", false)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "missing", "an unexplained shortfall is still reported as missing cases")
+	assert.Contains(t, err.Error(), "missing case-02, case-03",
+		"an unexplained shortfall names its cases under the missing label")
+	assert.NotContains(t, err.Error(), "unmeasured case-",
+		"and no case is labelled unmeasured when the failure channel explains none of them")
 }
 
 // The defence-in-depth drop is pinned through checkCoverage itself, not only through
@@ -598,6 +607,37 @@ func TestCheckCoverage_AllowPartialStillWarnsOnAnInfrastructureShortfall(t *test
 	var warn bytes.Buffer
 
 	require.NoError(t, checkCoverage(&warn, partialRun(), "rr.json", true))
-	assert.Contains(t, warn.String(), "case-02")
+	assert.Contains(t, warn.String(), "unmeasured case-02 ("+benchmark.CaseFailurePrepare+")",
+		"the reason reaches the warn path too, not only the rejection path")
 	assert.Contains(t, warn.String(), "not comparable")
+}
+
+// A row short in BOTH ways at once is the shape neither sibling test reaches, and the
+// one the per-half cap is about: each half names up to maxNamedMissingCases ids and
+// carries its OWN overflow count, so the two segments appear side by side each ending
+// in "and N more". A joint cap, or a collapsed label, changes this message.
+func TestCheckCoverage_MixedShortfallNamesBothHalvesWithTheirOwnOverflow(t *testing.T) {
+	rr := benchmark.RunResult{
+		Reviewers: []scorecard.PublicRecord{{Model: "m", Persona: "p"}},
+		Coverage:  []benchmark.ReviewerCoverage{{Model: "m", Persona: "p"}},
+	}
+	// Five cases recorded as infrastructure failures, five unaccounted for.
+	for i := 1; i <= 10; i++ {
+		id := fmt.Sprintf("case-%02d", i)
+		rr.SuiteCaseIDs = append(rr.SuiteCaseIDs, id)
+		if i <= 5 {
+			rr.CaseFailures = append(rr.CaseFailures,
+				benchmark.CaseFailure{CaseID: id, Reason: benchmark.CaseFailurePrepare})
+		}
+	}
+
+	err := checkCoverage(io.Discard, rr, "rr.json", false)
+
+	require.Error(t, err)
+	msg := err.Error()
+	assert.Contains(t, msg, "missing case-06, case-07, case-08 and 2 more",
+		"the unexplained half names maxNamedMissingCases ids and counts the rest: %s", msg)
+	assert.Contains(t, msg,
+		fmt.Sprintf("unmeasured case-01 (%[1]s), case-02 (%[1]s), case-03 (%[1]s) and 2 more", benchmark.CaseFailurePrepare),
+		"and the unmeasured half does the same, independently: %s", msg)
 }
