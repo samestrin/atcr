@@ -449,3 +449,20 @@ func TestCommitAll_ANegativeExpectedCountSkipsTheAssertion(t *testing.T) {
 
 	require.NoError(t, err, "expectedFiles < 0 must not assert on the staged set")
 }
+
+// The per-file byte bound is one of the two resource guards copyBaseTree applies
+// to an adversarial base tree. Nothing else in the suite exercises it, so a
+// mutation that disables the comparison leaves the package green — this test
+// pins the refusal so the guard is load-bearing under `go test` as well as at
+// runtime. The fixture is written one byte over maxBaseFileBytes rather than
+// hardcoding 10MiB+1, so the bound and the test cannot drift apart.
+func TestCopyBaseTree_RejectsAFileOverThePerFileByteBound(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "big.bin"), make([]byte, maxBaseFileBytes+1), 0o600))
+
+	files, err := copyBaseTree(context.Background(), dir, t.TempDir())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "a single base file may not exceed")
+	assert.Zero(t, files, "the oversized file must not be counted as copied")
+}
