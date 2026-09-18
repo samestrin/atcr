@@ -145,7 +145,7 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		Project:  filepath.Join(".atcr", "personas"),
 		Registry: filepath.Join(filepath.Dir(regPath), "personas"),
 	}
-	rep.PredicateRuleGaps = registry.PredicateRuleGaps(agentToPersona, personaDirs)
+	rep.PredicateRuleGaps, rep.PersonaResolutionErrors = registry.PredicateRuleGaps(agentToPersona, personaDirs)
 
 	if asJSON {
 		if err := doctor.RenderJSON(cmd.OutOrStdout(), rep); err != nil {
@@ -178,6 +178,17 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 					"to personas that do not carry the panel-wide rule (built-ins are test-enforced; "+
 					"community and project personas are not): %s\n",
 				scope, strings.Join(rep.PredicateRuleGaps, ", "))
+		}
+		// A DISTINCT line, not folded into the warning above. These agents were not
+		// found to lack the rule — their prompt could not be read at all, so no
+		// verdict was reached — and `atcr review` hard-fails on the same config that
+		// doctor would otherwise report as clean.
+		if len(rep.PersonaResolutionErrors) > 0 {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+				"doctor: WARNING — persona resolution errors: these agents' personas could not be "+
+					"resolved, so no rule verdict was reached for them (`atcr review` resolves the same "+
+					"personas and fails the run): %s\n",
+				strings.Join(rep.PersonaResolutionErrors, ", "))
 		}
 	}
 

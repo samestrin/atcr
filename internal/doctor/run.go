@@ -151,6 +151,13 @@ type Report struct {
 	// warning in table mode and as this field in --json. Empty (omitted) when
 	// every roster persona carries the rule or resolves.
 	PredicateRuleGaps []string `json:"predicate_rule_gaps,omitempty"`
+	// PersonaResolutionErrors names the roster agents whose persona could not be
+	// RESOLVED at all. They are deliberately not PredicateRuleGaps entries — a
+	// prompt nobody read supports no rule-absence verdict — but they must not be
+	// silent either, which is what they were: doctor reported a clean roster while
+	// `atcr review` hard-failed on the same config. Separating the two lists is what
+	// makes an empty PredicateRuleGaps mean "read, and carries the rule".
+	PersonaResolutionErrors []string `json:"persona_resolution_errors,omitempty"`
 }
 
 // probeResult is the outcome of one distinct target.

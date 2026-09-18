@@ -183,3 +183,50 @@ func TestDoctor_WarnsForAHalfCarrierPersona(t *testing.T) {
 		"a prompt that can spot the asymmetry but not file it reportably is still a gap")
 	assert.Contains(t, out, "bruce")
 }
+
+// The stderr half: an agent whose persona cannot be resolved gets its OWN line,
+// distinct from the rule-gap warning. Before this, doctor reported a clean roster
+// while `atcr review` hard-failed on the same config — the two states were the same
+// observation.
+func TestDoctor_ReportsPersonaResolutionErrorsSeparately(t *testing.T) {
+	srv := echoProvider(t, 0)
+	setupDoctorEnvWithPersonaRef(t, srv.URL, "never-installed")
+	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
+
+	out, err := execute(t, "doctor")
+	require.NoError(t, err, "an unresolvable persona is a composition signal, not an endpoint failure")
+
+	assert.Contains(t, out, "persona resolution errors",
+		"an agent whose prompt could not be read must be named, not silently absent")
+	assert.Contains(t, out, "bruce")
+	assert.NotContains(t, out, "predicate-exhaustiveness rule gaps",
+		"and it must NOT be reported as lacking the rule — nothing was read, so there is no verdict")
+}
+
+// setupDoctorEnvWithPersonaRef is setupDoctorEnv with an explicit `persona:` ref on
+// bruce, which is what makes resolution FAIL rather than fall through to the
+// embedded default (persona != agentName).
+func setupDoctorEnvWithPersonaRef(t *testing.T, baseURL, personaRef string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	regDir := filepath.Join(home, ".config", "atcr")
+	require.NoError(t, os.MkdirAll(regDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(regDir, "registry.yaml"), []byte(""+
+		"providers:\n"+
+		"  mock:\n"+
+		"    api_key_env: ATCR_DOCTOR_TEST_KEY\n"+
+		"    base_url: "+baseURL+"/v1\n"+
+		"agents:\n"+
+		"  bruce:\n"+
+		"    provider: mock\n"+
+		"    model: test-model\n"+
+		"    persona: "+personaRef+"\n"), 0o644))
+
+	work := t.TempDir()
+	t.Chdir(work)
+	atcrDir := filepath.Join(work, ".atcr")
+	require.NoError(t, os.MkdirAll(atcrDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(atcrDir, "config.yaml"), []byte(""+
+		"agents:\n  - bruce\npayload_mode: blocks\ntimeout_secs: 600\nfail_on: HIGH\n"), 0o644))
+}
