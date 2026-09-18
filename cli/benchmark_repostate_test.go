@@ -1120,6 +1120,46 @@ func TestExecuteRepoStateBenchmarkRun_FailedCaseLeavesTheDenominatorsAlone(t *te
 		"the category-recall denominator excludes the failed case too")
 }
 
+// The run-level tests covered exactly two shapes: ONE middle case fails, and ALL
+// cases fail. This is the two that were missing, in one suite — several cases fail,
+// and the LAST one is among them.
+//
+// Multi-failure matters because nothing checked the failure channel's ORDER or
+// uniqueness beyond a single entry, and warnCaseFailures' "N of M" scale line was
+// never exercised for N greater than 1. A trailing failure matters because the
+// post-loop code — including the cases-scored arithmetic — only runs when the final
+// iteration is not the one that succeeded.
+func TestExecuteRepoStateBenchmarkRun_RecordsEveryFailureInSuiteOrderIncludingTheLast(t *testing.T) {
+	suite := writeCaseSuite(t, "first-case", "second-case", "third-case", "fourth-case")
+	faultMaterialization(t, suite, "second-case")
+	faultMaterialization(t, suite, "fourth-case")
+
+	rr, retained, err := executeRepoStateBenchmarkRun(context.Background(),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC())
+	releaseRetainedWorkDir(t, retained)
+	require.NoError(t, err, "two failures including the last case still leave two scored cases")
+	require.NotNil(t, rr)
+
+	require.Len(t, rr.CaseFailures, 2, "each failed case is recorded once, not once per remaining case")
+	assert.Equal(t, []string{"second-case", "fourth-case"},
+		[]string{rr.CaseFailures[0].CaseID, rr.CaseFailures[1].CaseID},
+		"the channel is read as a list beside the suite, so it carries suite order")
+
+	require.Len(t, rr.Coverage, 1)
+	assert.Equal(t, []string{"first-case", "third-case"}, rr.Coverage[0].CaseIDs,
+		"the covered set is the survivors, in suite order")
+	require.Len(t, rr.Reviewers, 1)
+	assert.Equal(t, 2, rr.Reviewers[0].Runs, "runs counts scored cases only")
+
+	require.NotEmpty(t, retained, "a partial run retains its work dir")
+	assert.DirExists(t, filepath.Join(retained, "review-0"),
+		"the scored cases' paid review artifacts are what retention protects")
+
+	var warn bytes.Buffer
+	warnCaseFailures(&warn, rr, retained)
+	assert.Contains(t, warn.String(), "2 of 4", "the scale line has to be right for more than one failure")
+}
+
 // AC5 — the shipped all-agents-failed abort is the one ExecuteReview failure the
 // continue path must NOT swallow. A total-roster failure is exactly the transient
 // infrastructure failure docs/benchmark.md:265 forbids scoring as a genuine missed
