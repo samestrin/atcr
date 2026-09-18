@@ -1467,6 +1467,29 @@ func TestExecuteRepoStateBenchmarkRun_ReleasesTheFailedCaseRepo(t *testing.T) {
 		"the scored case's paid review artifacts are exactly what retention protects")
 }
 
+// Both interpolated fields are stripped, and nothing drove either wrapper: removing
+// them was invisible to the suite. Its sibling on the other operator-facing surface,
+// TestCheckCoverage_StripsTerminalControlRunesFromShortfallWarning, pins exactly this
+// for checkCoverage, so only the case was missing. Defence in depth rather than the
+// live boundary — validateSuitePublishableCaseIDs rejects control runes at load — which
+// is why an untested wrapper here would have rotted quietly.
+func TestWarnCaseFailures_StripsTerminalControlRunesFromBothFields(t *testing.T) {
+	var buf bytes.Buffer
+
+	warnCaseFailures(&buf, &benchmark.RunResult{
+		SuiteCaseIDs: []string{"case-01", "case-02"},
+		CaseFailures: []benchmark.CaseFailure{
+			{CaseID: "case-02\x1b[2J", Reason: benchmark.CaseFailurePrepare + "​"},
+		},
+	}, "")
+
+	out := buf.String()
+	assert.NotContains(t, out, "\x1b", "an ANSI sequence in a case id must not reach the operator's terminal")
+	assert.NotContains(t, out, "​", "the reason is read off the same untrusted file as the case id")
+	assert.Contains(t, out, "case-02", "stripping removes the control runes, not the identifier")
+	assert.Contains(t, out, benchmark.CaseFailurePrepare, "the stage still has to be readable")
+}
+
 // A clean run says nothing, exactly as the sibling summaries do on a suite that
 // carries none of their signal.
 func TestWarnCaseFailures_SilentOnACleanRun(t *testing.T) {
