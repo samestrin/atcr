@@ -717,3 +717,6 @@ func validateSuiteIdentityForPublication(rr benchmark.RunResult, path string) er
 	}
 	return nil
 }
+
+// validateCaseFailures is a RED stub.
+func validateCaseFailures(_ benchmark.RunResult, _ string) error { return nil }

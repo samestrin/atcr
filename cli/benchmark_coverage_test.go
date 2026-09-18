@@ -337,3 +337,126 @@ func TestAnchorSuiteDenominator_MismatchStaysVisibleWhenTheDifferenceIsAControlR
 	assert.NotContains(t, got, `is for suite "fixture-mini"/"1.0.0" but the manifest at`,
 		"if the two halves render identically the message contradicts itself")
 }
+
+// partialRun is a 3-case run whose middle case failed infrastructurally: the
+// reviewer scored the other two, and the failure channel says why the third is
+// absent. It is the shape every check below is about.
+func partialRun() benchmark.RunResult {
+	return benchmark.RunResult{
+		SuiteCaseIDs: []string{"case-01", "case-02", "case-03"},
+		Reviewers:    []scorecard.PublicRecord{{Model: "m", Persona: "p", Runs: 2}},
+		Coverage: []benchmark.ReviewerCoverage{
+			{Model: "m", Persona: "p", CaseIDs: []string{"case-01", "case-03"}},
+		},
+		CaseFailures: []benchmark.CaseFailure{{CaseID: "case-02", Reason: benchmark.CaseFailurePrepare}},
+	}
+}
+
+// AC3 — the failure reason is fail-closed at the EXPORT trust boundary, the only
+// live one for this tier (--checkpoint is refused for repo-state-v1). A run-result
+// is hand-suppliable, so an unrecognized reason must be REJECTED rather than
+// carried into a published artifact that states why a case went unmeasured. Same
+// rule the outcome tally key already gets one field over.
+func TestValidateCaseFailures_RejectsAnUnknownReason(t *testing.T) {
+	rr := partialRun()
+	rr.CaseFailures[0].Reason = "vibes"
+
+	err := validateCaseFailures(rr, "rr.json")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "vibes")
+	assert.Contains(t, err.Error(), "case_failures")
+}
+
+// The empty reason is the shape omitempty and a partly-populated hand edit produce,
+// and it is exactly what the vocabulary must not admit: "unmeasured, cause
+// unstated" is the claim the channel exists to prevent.
+func TestValidateCaseFailures_RejectsAnEmptyReason(t *testing.T) {
+	rr := partialRun()
+	rr.CaseFailures[0].Reason = ""
+
+	require.Error(t, validateCaseFailures(rr, "rr.json"))
+}
+
+// A failure naming a case the suite does not contain describes nothing a reader can
+// locate, and would let a hand-assembled file explain away a shortfall that has no
+// relationship to the declared suite.
+func TestValidateCaseFailures_RejectsACaseOutsideTheSuite(t *testing.T) {
+	rr := partialRun()
+	rr.CaseFailures[0].CaseID = "case-99"
+
+	err := validateCaseFailures(rr, "rr.json")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "case-99")
+}
+
+// Scored AND unmeasured is a contradiction, and the permissive reading is the
+// dangerous one: it would let a file excuse a coverage shortfall using a case every
+// reviewer actually scored.
+func TestValidateCaseFailures_RejectsACaseThatAlsoScored(t *testing.T) {
+	rr := partialRun()
+	rr.CaseFailures[0].CaseID = "case-01"
+
+	err := validateCaseFailures(rr, "rr.json")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "case-01")
+}
+
+// The producer records each failed case once; a repeat is a hand edit, and would
+// inflate the count an operator reads as "how much of this run is missing".
+func TestValidateCaseFailures_RejectsARepeatedCase(t *testing.T) {
+	rr := partialRun()
+	rr.CaseFailures = append(rr.CaseFailures, benchmark.CaseFailure{
+		CaseID: "case-02", Reason: benchmark.CaseFailureExecute,
+	})
+
+	require.Error(t, validateCaseFailures(rr, "rr.json"))
+}
+
+// The honest partial run passes every arm.
+func TestValidateCaseFailures_AcceptsAPartialRun(t *testing.T) {
+	assert.NoError(t, validateCaseFailures(partialRun(), "rr.json"))
+	assert.NoError(t, validateCaseFailures(benchmark.RunResult{SuiteCaseIDs: []string{"case-01"}}, "rr.json"),
+		"a run with no failures has nothing to validate")
+}
+
+// T4 — the gate still REJECTS a partial run without --allow-partial-coverage: an
+// infra-failed case is unmeasured, which is exactly why its rows are not comparable
+// to fully-covered ones. What changes is the diagnosis. Told only to "re-run the
+// missing cases", an operator re-runs a case that never ran for a reason a re-run
+// may not fix; the gate names the failure instead.
+func TestCheckCoverage_ExplainsAnInfrastructureShortfall(t *testing.T) {
+	err := checkCoverage(io.Discard, partialRun(), "rr.json", false)
+
+	require.Error(t, err, "an unmeasured case still makes the row incomparable")
+	assert.Contains(t, err.Error(), "case-02")
+	assert.Contains(t, err.Error(), benchmark.CaseFailurePrepare,
+		"the shortfall is explained by the recorded failure, not reported as cases the operator forgot")
+}
+
+// A shortfall the failure channel does NOT explain keeps the original diagnosis. The
+// two must stay distinguishable: one is a run that lost a case, the other is a row
+// that was never scored over the suite it claims.
+func TestCheckCoverage_UnexplainedShortfallStillReadsAsMissing(t *testing.T) {
+	rr := partialRun()
+	rr.CaseFailures = nil
+	rr.Coverage[0].CaseIDs = []string{"case-01"}
+	rr.Reviewers[0].Runs = 1
+
+	err := checkCoverage(io.Discard, rr, "rr.json", false)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing", "an unexplained shortfall is still reported as missing cases")
+}
+
+// The opt-out still works on a partial run, and still says the rows are not
+// comparable — the failure channel explains a shortfall, it does not excuse one.
+func TestCheckCoverage_AllowPartialStillWarnsOnAnInfrastructureShortfall(t *testing.T) {
+	var warn bytes.Buffer
+
+	require.NoError(t, checkCoverage(&warn, partialRun(), "rr.json", true))
+	assert.Contains(t, warn.String(), "case-02")
+	assert.Contains(t, warn.String(), "not comparable")
+}
