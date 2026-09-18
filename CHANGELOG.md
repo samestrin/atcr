@@ -1,3 +1,22 @@
+## [35.23.0] - 2026-09-17
+
+*Epic 35.16.10.1 — repo-state partial-failure outcomes.*
+
+### Added
+
+- **A per-case failure channel on the run-result** (`case_failures[]`, carrying a case id and the stage it died at). A `repo-state-v1` case that cannot be materialized, prepared, executed, summarized, or read back is now recorded there and the run continues, instead of aborting a ten-minute paid panel on its last case. `--checkpoint` is refused for this tier, so there was no resume to fall back on.
+- A case in that array is **unmeasured, not missed**: it appears in no reviewer's `case_ids` and adds nothing to any recall denominator, so recall over a 3-case suite with one failed case reads exactly as recall over the two that were scored. Scoring it as a zero would charge every reviewer for a defect they were never shown.
+- `atcr benchmark run` now prints a partial-run summary to stderr naming each unmeasured case and its stage, above the recall summary it qualifies — a recall figure that covers less than the suite must not read like one that covers all of it.
+
+### Changed
+
+- **The work dir is now retained on a partial run**, not only on a hard failure, so the scored cases' review artifacts survive for inspection or manual rescoring. A fully clean run still cleans up.
+- `atcr benchmark export` still rejects a partial run by default, but now names the failed case and its stage rather than telling you to re-run cases that never ran. The failure reason vocabulary is closed and fail-closed at that boundary: an entry whose reason is unrecognized, whose case the suite does not declare, whose case some reviewer also scored, or which repeats a case is rejected as malformed.
+- **A per-case failure no longer makes `atcr benchmark run` exit non-zero for `repo-state-v1`.** A run that loses one case to infrastructure now writes a partial run-result and exits 0; a pipeline that gated on the old all-or-nothing contract should gate on `case_failures` being empty instead.
+- Five failure classes still abort the whole run, none of them transient: a total-roster or empty-roster failure, an unwinnable expectation, the scored-twice and identity-collision guards, cancellation (SIGINT/SIGTERM), and a run that scored nothing at all.
+
+*Shipped via /execute-epic (epic 35.16.10.1)*
+
 ## [35.22.0] - 2026-09-16
 
 *Epic 35.16.10 — repo-state benchmark tier.*
