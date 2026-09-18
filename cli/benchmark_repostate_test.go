@@ -900,3 +900,63 @@ func TestExecuteRepoStateBenchmarkRun_GroundingTagSerializes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(b), `"grounding_enabled":true`)
 }
+
+// The fold is AND with nil absorbing. The shipped fixture has ONE case, so the
+// runner tests only ever exercise the opening branch -- these are the arms a
+// multi-case suite reaches.
+//
+// Both failure directions point at "unmeasured" rather than at a claim: a row built
+// from a mix of gated and ungated cases measured a mixed population, and a nil from
+// any case (a rebuilt summary cannot know its run's gate state) makes the row nil.
+// An overstated tag is worse than an absent one -- it is the exact overstatement the
+// untagged row was already making.
+func TestFoldGroundingEnabled(t *testing.T) {
+	on, off := true, false
+	for _, tc := range []struct {
+		name          string
+		prior, caseSt *bool
+		first         bool
+		want          *bool
+	}{
+		{name: "first case adopts its own state", caseSt: &on, first: true, want: &on},
+		{name: "first case adopts a nil too", caseSt: nil, first: true, want: nil},
+		{name: "gated AND gated stays gated", prior: &on, caseSt: &on, want: &on},
+		{name: "gated AND ungated is ungated", prior: &on, caseSt: &off, want: &off},
+		{name: "ungated AND gated is ungated", prior: &off, caseSt: &on, want: &off},
+		{name: "a nil case absorbs a known prior", prior: &on, caseSt: nil, want: nil},
+		{name: "a nil prior absorbs a known case", prior: nil, caseSt: &on, want: nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := foldGroundingEnabled(tc.prior, tc.caseSt, tc.first)
+			if tc.want == nil {
+				assert.Nil(t, got)
+				return
+			}
+			require.NotNil(t, got)
+			assert.Equal(t, *tc.want, *got)
+		})
+	}
+}
+
+// The two halves of this fix must agree: the ungrounded outcome can only arise
+// where the gate ran, so a row that reports the gate as live is the only kind that
+// may carry ungrounded in its tally. Pinned because the two were fixed separately
+// and a future change to either could make the run-result self-contradictory --
+// claiming a gate-driven outcome on a row that says the gate was off.
+func TestExecuteRepoStateBenchmarkRun_UngroundedOutcomeOnlyOnAGatedRow(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+
+	rr, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubUntouchedFileCompleter{}, repoStateMiniPath, time.Unix(0, 0).UTC())
+	require.NoError(t, err)
+	require.NotEmpty(t, rr.Coverage)
+
+	for _, row := range rr.Coverage {
+		if row.Outcomes[benchmark.OutcomeUngrounded] == 0 {
+			continue
+		}
+		require.NotNil(t, row.GroundingEnabled,
+			"a row tallying ungrounded must state the gate state that produced it")
+		assert.True(t, *row.GroundingEnabled,
+			"ungrounded is unreachable with the gate off; the row contradicts itself")
+	}
+}
