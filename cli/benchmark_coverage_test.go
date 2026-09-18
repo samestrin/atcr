@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -470,6 +471,41 @@ func TestCheckCoverage_DropsAnOutOfVocabularyFailureReason(t *testing.T) {
 		"a case whose reason is outside the vocabulary explains nothing, so it reads as plainly missing")
 	assert.NotContains(t, err.Error(), "\x1b", "no control rune reaches the operator's terminal")
 	assert.NotContains(t, err.Error(), "injected", "and neither does the arbitrary prose it was carrying")
+}
+
+// mixedShortfallRun is a 4-case run in which EVERY reviewer row is short in both
+// ways at once: case-03 was recorded as an infrastructure failure (unmeasured) and
+// case-04 is unaccounted for (missing). Two reviewer rows, so the message nests a
+// row list around a two-half description — the shape the separators must keep
+// distinguishable.
+func mixedShortfallRun() benchmark.RunResult {
+	rr := benchmark.RunResult{
+		SuiteCaseIDs: []string{"case-01", "case-02", "case-03", "case-04"},
+		CaseFailures: []benchmark.CaseFailure{{CaseID: "case-03", Reason: benchmark.CaseFailurePrepare}},
+	}
+	for _, model := range []string{"m-a", "m-b"} {
+		rr.Reviewers = append(rr.Reviewers, scorecard.PublicRecord{Model: model, Persona: "p", Runs: 2})
+		rr.Coverage = append(rr.Coverage, benchmark.ReviewerCoverage{
+			Model: model, Persona: "p", CaseIDs: []string{"case-01", "case-02"},
+		})
+	}
+	return rr
+}
+
+// The two halves of one row's description and the list of distinct short ROWS are
+// different nesting levels, so they must not share a delimiter. With both at "; " a
+// reader — or anything downstream that splits on it — reads one reviewer row as two.
+func TestCheckCoverage_HalfSeparatorDoesNotCollideWithTheRowSeparator(t *testing.T) {
+	err := checkCoverage(io.Discard, mixedShortfallRun(), "rr.json", false)
+
+	require.Error(t, err)
+	msg := err.Error()
+	assert.Equal(t, 2, strings.Count(msg, halfSeparator),
+		"each of the two short rows splits its own description in half: %s", msg)
+	// One boundary between the two rows, plus the one the remedy clause is appended
+	// after. Both are row-level, which is the property "; " now exclusively carries.
+	assert.Equal(t, 2, strings.Count(msg, "; "),
+		"\"; \" stays reserved for the outer row list: %s", msg)
 }
 
 // Dropping the entry must not also hide it. A caller with no export gate in front of

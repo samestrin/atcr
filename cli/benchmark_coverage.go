@@ -631,8 +631,17 @@ func describeMissing(missing []string, failed map[string]string) string {
 	if len(unmeasured) > 0 {
 		parts = append(parts, "unmeasured "+summarizeMissing(unmeasured))
 	}
-	return strings.Join(parts, "; ")
+	// " / ", not "; ": checkCoverage joins distinct short ROWS with "; ", and a
+	// multi-short-row run is the normal case on a large roster. Using one delimiter at
+	// two nesting levels fragments a single reviewer row into two for a reader — and
+	// for anything downstream that splits the message on it.
+	return strings.Join(parts, halfSeparator)
 }
+
+// halfSeparator divides describeMissing's two halves. It is deliberately NOT the
+// "; " checkCoverage uses between short rows: the row list is the outer level, and
+// the two delimiters must stay distinguishable for a message that nests them.
+const halfSeparator = " / "
 
 // firstNonPrintingRune reports the first control (Cc) or format (Cf) rune in s —
 // the same predicate stripTerminalControlRunes applies to operator-facing
