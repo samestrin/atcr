@@ -1373,6 +1373,62 @@ func (c *workDirFaultingCompleter) Complete(ctx context.Context, inv llmclient.I
 	return stubLocatedCompleter{}.Complete(ctx, inv)
 }
 
+// poolWriteFaultingCompleter makes ONE case's post-fan-out persistence fail, by
+// planting a DIRECTORY where ExecuteReview must write summary.json. The agents
+// themselves all succeed, so the error that comes back is neither ErrAllAgentsFailed
+// nor ErrEmptyRoster — the non-sentinel execute failure that is supposed to be
+// recorded and skipped rather than aborting the run.
+//
+// A completer call is the only moment a test runs while the loop is mid-case, and the
+// planted path has to appear after PrepareReview built the scaffold and before
+// writePool reaches it, which is exactly that window.
+type poolWriteFaultingCompleter struct {
+	since     time.Time
+	caseIndex int
+	calls     int
+	planted   string
+}
+
+func (c *poolWriteFaultingCompleter) Complete(ctx context.Context, inv llmclient.Invocation) (string, error) {
+	c.calls++
+	if c.calls == c.caseIndex+1 {
+		matches, _ := filepath.Glob(filepath.Join(os.TempDir(), "atcr-repo-state-*"))
+		for _, m := range matches {
+			if fi, err := os.Stat(m); err == nil && fi.ModTime().After(c.since) {
+				pool := filepath.Join(m, fmt.Sprintf("review-%d", c.caseIndex), "sources", "pool")
+				if err := os.MkdirAll(filepath.Join(pool, "summary.json"), 0o755); err == nil {
+					c.planted = pool
+				}
+			}
+		}
+	}
+	return stubLocatedCompleter{}.Complete(ctx, inv)
+}
+
+// The non-sentinel ExecuteReview failure had coverage count 0. Every execute-path
+// test drove ErrAllAgentsFailed, which ABORTS — so the record-and-continue arm beside
+// it, and the reason constant it writes, were never executed. A wrong constant there
+// ships invisibly, and the arm is the one that decides whether one case's bad luck
+// costs the whole suite.
+func TestExecuteRepoStateBenchmarkRun_RecordsANonSentinelExecuteFailureAndContinues(t *testing.T) {
+	suite := writeCaseSuite(t, "first-case", "second-case")
+	cc := &poolWriteFaultingCompleter{since: time.Now(), caseIndex: 1}
+
+	rr, retained, err := executeRepoStateBenchmarkRun(context.Background(),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), cc, suite, time.Unix(0, 0).UTC())
+	if retained != "" {
+		t.Cleanup(func() { _ = os.RemoveAll(retained) })
+	}
+
+	require.NoError(t, err, "a non-sentinel execute failure is one case's bad luck, not the run's")
+	require.NotEmpty(t, cc.planted, "the fixture must actually have planted the fault in the run's review dir")
+	require.Len(t, rr.CaseFailures, 1)
+	assert.Equal(t, "second-case", rr.CaseFailures[0].CaseID)
+	assert.Equal(t, benchmark.CaseFailureExecute, rr.CaseFailures[0].Reason,
+		"the reason constant is the actionable part, and this is the only test that pins it for this site")
+	assert.Equal(t, []string{"first-case"}, rr.Coverage[0].CaseIDs, "case 1 still scored")
+}
+
 // The work_dir record-and-continue site had coverage count 0: no test drove the
 // RUNNER to a work-dir failure, so the reason constant it records was unverified end
 // to end and a wrong one would have shipped invisibly.
