@@ -875,3 +875,44 @@ func appendByte(t *testing.T, path string) {
 	require.NoError(t, err)
 	require.NoError(t, f.Close())
 }
+
+// The grounding tag survives the trim into the public submission.
+//
+// It is the one coverage diagnostic that does, and the test exists because the
+// trimming rule ("run-level diagnostics stay out") would otherwise read as covering
+// it. It does not: outcomes and fallback_cases answer no question about a published
+// number, while this one says which population corroboration_rate -- carried on
+// every PublicRecord row -- was computed over. A board comparing a gated row's rate
+// with an ungated row's is comparing different measurements, and without this field
+// the document gives it no way to know.
+func TestBuildSubmission_CarriesTheGroundingTagIntoTheSubmission(t *testing.T) {
+	rr := coverageRunResult()
+	on, off := true, false
+	rr.Coverage[0].GroundingEnabled = &on
+	rr.Coverage[1].GroundingEnabled = &off
+
+	sub := BuildSubmission(rr, time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC))
+	require.Len(t, sub.Coverage, 2)
+
+	require.NotNil(t, sub.Coverage[0].GroundingEnabled)
+	assert.True(t, *sub.Coverage[0].GroundingEnabled)
+	require.NotNil(t, sub.Coverage[1].GroundingEnabled)
+	assert.False(t, *sub.Coverage[1].GroundingEnabled)
+
+	data, err := json.Marshal(sub)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"grounding_enabled":true`)
+	assert.Contains(t, string(data), `"grounding_enabled":false`)
+}
+
+// A production row has no gate state to report, so the key must be absent rather
+// than asserting false -- the same unmeasured-vs-measured distinction the pointer
+// exists to preserve, and what keeps the addition off the production envelope
+// entirely (docs/scorecard.md's additive-field policy).
+func TestBuildSubmission_GroundingTagIsAbsentWhenUnmeasured(t *testing.T) {
+	data, err := json.Marshal(BuildSubmission(coverageRunResult(), time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)))
+	require.NoError(t, err)
+
+	assert.NotContains(t, string(data), `"grounding_enabled"`,
+		"an unmeasured gate state is absent, never a published false")
+}

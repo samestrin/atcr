@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -858,4 +859,44 @@ func TestCheckRepoStateFlags_RefusalNamesTheRetainedWorkDir(t *testing.T) {
 	// assertion above cannot see.
 	require.NoError(t, checkRepoStateFlags("standard-v1", "cp.json"))
 	require.NoError(t, checkRepoStateFlags(benchmark.FormatRepoStateV1, ""))
+}
+
+// The published coverage row states whether the grounding gate was live.
+//
+// CorroborationRate's formula and denominator are identical on every suite and stay
+// that way. Its INPUT is not: the categories it scores come from the merged
+// findings.txt, written AFTER grounding. On repo-state the gate is on, so a reviewer
+// that found the planted out-of-diff defect and labelled it correctly still scores 0
+// for it; on standard-v1 the gate fails open and the same reviewer scores 1. Two
+// rows then carry the same number about different populations, and
+// corroboration_rate reaches the frozen scorecard.PublicRecord the public board
+// shares with production leaderboard --export.
+//
+// Tagging the row is what makes that legible without forking a published metric.
+func TestExecuteRepoStateBenchmarkRun_CoverageRowTagsTheGroundingGateAsLive(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+	gen := time.Unix(0, 0).UTC()
+
+	rr, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{}, repoStateMiniPath, gen)
+	require.NoError(t, err)
+	require.NotEmpty(t, rr.Coverage)
+
+	for _, row := range rr.Coverage {
+		require.NotNil(t, row.GroundingEnabled,
+			"a repo-state row must state the gate's state, not leave it to be inferred")
+		assert.True(t, *row.GroundingEnabled,
+			"the repo-state runner supplies a Range, so the gate is live for every case")
+	}
+}
+
+// The tag rides the JSON, under the same key PoolSummary already uses.
+func TestExecuteRepoStateBenchmarkRun_GroundingTagSerializes(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+
+	rr, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{}, repoStateMiniPath, time.Unix(0, 0).UTC())
+	require.NoError(t, err)
+
+	b, err := json.Marshal(rr)
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"grounding_enabled":true`)
 }

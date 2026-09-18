@@ -409,13 +409,25 @@ type RunResult struct {
 	// benchmark-only column would appear on production rows that can never populate
 	// it. BuildSubmission accordingly does not carry this field forward.
 	//
-	// It is also why CorroborationRate's meaning is unchanged on a repo-state run.
+	// It is also why CorroborationRate's DEFINITION is unchanged on a repo-state run.
 	// That field carries CATEGORY recall on every suite, which is a genuinely
 	// different quantity from located-finding recall — the same finding counted
 	// against a different denominator. Publishing located recall through it would
 	// fork a frozen shared key's meaning by suite, distinguishable only by the
 	// envelope's source tag, which score.go's cost-denominator comment already
 	// argues is worse than the hole it would close.
+	//
+	// The DEFINITION being unchanged is not the same as the two tiers' values being
+	// comparable, and an earlier version of this comment ran the two together. The
+	// categories CorroborationRate scores come from the merged findings.txt, written
+	// AFTER the Epic 14.1 gate: with the gate off (standard-v1, no range, fails
+	// open) that is everything the reviewer emitted; with it on (repo-state-v1) it is
+	// only the patch-anchored findings, so a reviewer that found the planted
+	// out-of-diff defect and categorized it correctly still scores 0 for it. Same
+	// formula, same denominator, different population. ReviewerCoverage.
+	// GroundingEnabled tags each row with which one it measured — the alternative,
+	// forking the formula by suite, would change a number already published and break
+	// the one-meaning-everywhere promise this paragraph opens with.
 	//
 	// A blended single number would hide the one measurement this tier exists to
 	// produce: a run that scores well on in-diff findings and zero on out-of-diff
@@ -459,6 +471,29 @@ type ReviewerCoverage struct {
 	// failed, so folding it into the outcome enum would admit exactly the impossible
 	// combined states the enum exists to prevent.
 	FallbackCases int `json:"fallback_cases,omitempty"`
+
+	// GroundingEnabled records whether the Epic 14.1 grounding gate was live for the
+	// run behind this row, carried up from fanout.PoolSummary.GroundingEnabled.
+	//
+	// It is the COMPARABILITY tag for this row's CorroborationRate. That field's
+	// formula and denominator are identical on every suite — deliberately so, and
+	// unchanged here — but its INPUT is not: the categories it scores come from the
+	// merged findings.txt, which is written AFTER grounding. With the gate off
+	// (standard-v1, which supplies no range, so the gate fails open) that is every
+	// finding the reviewer emitted; with the gate on (repo-state-v1) it is only the
+	// patch-anchored ones. A reviewer that found the planted out-of-diff defect and
+	// categorized it correctly still scores 0 for it.
+	//
+	// So two rows can carry the same corroboration_rate meaning the same thing about
+	// a different population. Rather than fork the formula by suite — which would
+	// break the promise that the field means one thing everywhere, and change a
+	// number already published — the row states which population it measured and
+	// lets the reader decide whether two rows are comparable.
+	//
+	// A pointer for the same reason PoolSummary's is: a rebuilt or pre-gate summary
+	// cannot know the run's grounding state, and omitting the key is honest where
+	// asserting false is not.
+	GroundingEnabled *bool `json:"grounding_enabled,omitempty"`
 }
 
 // Submission is the suite-tagged public submission envelope — DISTINCT from the
@@ -508,11 +543,19 @@ type Submission struct {
 }
 
 // SubmissionCoverage is the PUBLIC, trimmed coverage row: which suite cases one
-// reviewer row actually scored, and nothing else. ReviewerCoverage's Outcomes and
-// FallbackCases are run-level diagnostics and stay out of the public allowlist
-// (docs/scorecard.md); the board needs only the covered-case SET to tell a full
-// run from a short one. The shared field names and JSON keys match
-// ReviewerCoverage's, so a consumer reading either document reads the same shape.
+// reviewer row actually scored, plus the one qualifier the board cannot score
+// without. ReviewerCoverage's Outcomes and FallbackCases are run-level diagnostics
+// and stay out of the public allowlist (docs/scorecard.md); the board needs only
+// the covered-case SET to tell a full run from a short one. The shared field names
+// and JSON keys match ReviewerCoverage's, so a consumer reading either document
+// reads the same shape.
+//
+// GroundingEnabled is the exception, and the line it draws is "does this qualify a
+// field the envelope already publishes". Outcomes and fallback_cases describe how a
+// run went and answer no question about a published number. GroundingEnabled says
+// which population corroboration_rate — carried on every PublicRecord row — was
+// computed over, so withholding it leaves the board comparing two rates that are
+// not comparable, with nothing on the document to reveal it.
 type SubmissionCoverage struct {
 	Model   string `json:"model"`
 	Persona string `json:"persona"`
@@ -520,6 +563,19 @@ type SubmissionCoverage struct {
 	// as a SET against Submission.SuiteCaseIDs; a row short of the suite was
 	// measured over less than the full benchmark.
 	CaseIDs []string `json:"case_ids"`
+
+	// GroundingEnabled is the ONE diagnostic that is not trimmed, because unlike
+	// outcomes and fallback_cases it qualifies a field the public envelope already
+	// carries. corroboration_rate rides scorecard.PublicRecord on every row; its
+	// input is the post-grounding finding set, so a gated row and an ungated row
+	// report the same number about different populations (see ReviewerCoverage.
+	// GroundingEnabled). Publishing the rate without the tag is what made two
+	// incomparable rows look comparable on one board.
+	//
+	// Additive and omitempty, so it never appears on a production row — which has no
+	// gate state to report — and does not bump submission_schema, matching the
+	// field-addition policy in docs/scorecard.md.
+	GroundingEnabled *bool `json:"grounding_enabled,omitempty"`
 }
 
 // MarshalJSON makes the "case_ids is always an array, never null" contract
@@ -723,9 +779,10 @@ func publicCoverage(rows []ReviewerCoverage, memo map[string]string) []Submissio
 			ids = []string{}
 		}
 		out[i] = SubmissionCoverage{
-			Model:   id.Model,
-			Persona: id.Persona,
-			CaseIDs: ids,
+			Model:            id.Model,
+			Persona:          id.Persona,
+			CaseIDs:          ids,
+			GroundingEnabled: c.GroundingEnabled,
 		}
 	}
 	// Deterministic row order: two run-results with identical logical content but

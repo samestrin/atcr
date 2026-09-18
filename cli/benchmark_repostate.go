@@ -296,6 +296,14 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			if a.FallbackUsed {
 				acc[key].fallbackCases++
 			}
+			// Fold the gate state across this row's cases, ANDing rather than
+			// overwriting: a row whose categories came from a mix of gated and ungated
+			// cases measured a mixed population, and claiming "gated" for it would be
+			// the same overstatement the tag exists to prevent. A nil from any case
+			// (a rebuilt summary cannot know) makes the whole row nil — unmeasured,
+			// not false.
+			acc[key].groundingEnabled = foldGroundingEnabled(
+				acc[key].groundingEnabled, summary.GroundingEnabled, len(acc[key].caseIDs) == 1)
 
 			// Cost and latency are usage-gated exactly as on the standard path: a
 			// stub completer reports no usage, so both stay 0 and the score is
@@ -376,9 +384,10 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			// function-local today, so the copy is defense against a future reader
 			// rather than a live bug; carrying it keeps the two runners' emit tails
 			// interchangeable without re-deriving that fact.
-			CaseIDs:       append([]string(nil), acc[k].caseIDs...),
-			Outcomes:      maps.Clone(acc[k].outcomes),
-			FallbackCases: acc[k].fallbackCases,
+			CaseIDs:          append([]string(nil), acc[k].caseIDs...),
+			Outcomes:         maps.Clone(acc[k].outcomes),
+			FallbackCases:    acc[k].fallbackCases,
+			GroundingEnabled: acc[k].groundingEnabled,
 		})
 	}
 
@@ -407,6 +416,12 @@ type repoStateAcc struct {
 	outcomes      map[string]int
 	fallbackCases int
 	latencies     []int64
+	// groundingEnabled is the run's Epic 14.1 gate state, carried up from each
+	// case's PoolSummary so the emitted coverage row can state which population its
+	// CorroborationRate measured. Folded with AND: the tag may only claim the gate
+	// was live if it was live for EVERY case this row scored, since one ungated case
+	// is enough to make the row's categories a mixed population.
+	groundingEnabled *bool
 }
 
 // expectedCategories projects a case's located expectations onto the bare category
@@ -423,8 +438,38 @@ type repoStateAcc struct {
 // The two metrics deliberately measure the SAME findings under different
 // denominators: category recall asks "did any finding carry the right word",
 // positional recall asks "did a finding land in the right place". Keeping
-// CorroborationRate's meaning identical across both suites is what lets a
+// CorroborationRate's DEFINITION identical across both suites is what lets a
 // repo-state row sit on the same public board as a standard-v1 one (AC5).
+//
+// Identical definition, not identical comparability — this comment used to claim
+// the second and only supported the first. The findings fed to the category scorer
+// are read from the post-grounding findings.txt, and the Epic 14.1 gate is live on
+// this tier and fails open on standard-v1, so the two tiers' rates are computed
+// over different populations. The row states which via
+// benchmark.ReviewerCoverage.GroundingEnabled rather than adjusting the rate, so
+// nothing already published changes value.
+// foldGroundingEnabled combines one case's grounding-gate state into a reviewer
+// row's running tag. first marks the row's opening case, where there is no prior
+// value to fold against.
+//
+// The fold is AND over three-valued logic, with nil ABSORBING: a row is tagged
+// gated only when every case it scored was gated, and any nil (a rebuilt summary
+// that cannot know its run's gate state) makes the whole row nil. Both directions
+// fail toward "unmeasured" rather than toward a claim, because the tag's only job
+// is to say which population the row's CorroborationRate came from — and an
+// overstated tag is worse than an absent one, being the exact overstatement the
+// untagged row was already making.
+func foldGroundingEnabled(prior, caseState *bool, first bool) *bool {
+	if first {
+		return caseState
+	}
+	if prior == nil || caseState == nil {
+		return nil
+	}
+	folded := *prior && *caseState
+	return &folded
+}
+
 func expectedCategories(c benchmark.RepoStateCase) []string {
 	seen := map[string]bool{}
 	out := make([]string, 0, len(c.ExpectedFindings))
