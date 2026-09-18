@@ -298,6 +298,17 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		}
 		prep, err := fanout.PrepareReview(ctx, cfg, req)
 		if err != nil {
+			// The empty-roster split belongs HERE, not only on the execute branch
+			// below: ErrEmptyRoster is raised by validateReviewRequest, which
+			// PrepareReview reaches and ExecuteReview never does. Recorded as a
+			// transient per-case fault it repeats on every case and the run dies as
+			// "all N case(s) failed ... re-running is the remedy only if the cause was
+			// transient" — a config defect reported as bad luck, and with the sentinel
+			// buried where errors.Is cannot reach it.
+			if errors.Is(err, fanout.ErrEmptyRoster) {
+				releaseCaseRepo(ctx, repoDir, c.ID)
+				return nil, "", fmt.Errorf("preparing case %q: %w", c.ID, err)
+			}
 			recordCaseFailure(ctx, &caseFailures, c.ID, benchmark.CaseFailurePrepare, err)
 			releaseCaseRepo(ctx, repoDir, c.ID)
 			continue
@@ -317,9 +328,10 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			// transient outage but a deterministic configuration defect, where no slot
 			// ran at all. Recorded per-case it would repeat on every case and surface
 			// as "all cases failed", burying the real cause under the transient class.
-			// validatePublishableReviewerRoster already rejects an empty configured
-			// roster before the first case, so this covers the narrower shape where
-			// every slot is dropped at execution time.
+			// The prepare branch above carries the identical arm — that is where a
+			// configured empty roster actually lands, since validateReviewRequest
+			// raises the sentinel inside PrepareReview. This arm covers the narrower
+			// shape where every slot is dropped at execution time instead.
 			if errors.Is(err, fanout.ErrAllAgentsFailed) || errors.Is(err, fanout.ErrEmptyRoster) {
 				return nil, "", fmt.Errorf("executing case %q: %w", c.ID, err)
 			}
