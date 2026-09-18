@@ -193,6 +193,15 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 	acc := map[reviewerKey]*repoStateAcc{}
 	var order []reviewerKey
 
+	// Both cancellation diagnostics print one sentence, so they print it from ONE
+	// quantity. The in-loop site used to pass the loop index (cases ATTEMPTED,
+	// failures included) and the post-loop site len(m.Cases)-len(caseFailures) (cases
+	// scored), so the same interrupt on a run with a failed case produced two
+	// different numbers under identical wording. Counted here, after the per-agent
+	// loop has folded a case into the accumulators, so the number means "cases this
+	// run would have published" at both sites by construction rather than by
+	// arithmetic that happens to agree.
+	scored := 0
 	caseIDs := make([]string, 0, len(m.Cases))
 	// expectedCategories was called inside the per-agent loop — the same case's
 	// projection rebuilt once per agent per case. One call per case, above the
@@ -211,7 +220,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		// decision to stop. Checked here and again after the loop, which together
 		// cover an interrupt arriving on any case including the last.
 		if cerr := ctx.Err(); cerr != nil {
-			return nil, "", fmt.Errorf("benchmark run cancelled after %d of %d case(s): %w", i, len(m.Cases), cerr)
+			return nil, "", fmt.Errorf("benchmark run cancelled after %d of %d case(s): %w", scored, len(m.Cases), cerr)
 		}
 		caseIDs = append(caseIDs, c.ID)
 
@@ -443,13 +452,14 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 				acc[key].latencies = append(acc[key].latencies, a.DurationMS)
 			}
 		}
+		scored++
 	}
 
 	// The loop's cancellation check again, for an interrupt that arrived on the LAST
 	// case: that iteration has no successor to catch it, so without this the run
 	// would return a partial result whose missing case was the operator's own Ctrl-C.
 	if cerr := ctx.Err(); cerr != nil {
-		return nil, "", fmt.Errorf("benchmark run cancelled after %d of %d case(s): %w", len(m.Cases)-len(caseFailures), len(m.Cases), cerr)
+		return nil, "", fmt.Errorf("benchmark run cancelled after %d of %d case(s): %w", scored, len(m.Cases), cerr)
 	}
 
 	// A run that scored NOTHING measured nothing, so there is no partial result to
