@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -230,6 +231,26 @@ func TestDoctor_PersonaResolutionErrorFailsTheExitCode(t *testing.T) {
 			assert.Contains(t, out, "bruce", "the failing agent must be named in the output")
 		})
 	}
+}
+
+// Both causes at once: a dead endpoint (the self-test fails) AND an unresolvable
+// persona. The persona branch must not shadow the endpoint failure — the two are
+// repaired in different files (an endpoint failure is a key or base_url, an
+// unresolvable persona is a missing prompt), so a message naming only one sends
+// the operator to the wrong repair. Under --json the human warnings are skipped
+// entirely, so this error string is the only prose the caller gets.
+func TestDoctor_ExitMessageNamesBothCausesWhenBothFire(t *testing.T) {
+	srv := echoProvider(t, http.StatusUnauthorized)
+	setupDoctorEnvWithPersonaRef(t, srv.URL, "never-installed")
+	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-bad")
+
+	out, err := execute(t, "doctor", "--json")
+	require.Error(t, err, "a dead endpoint plus an unresolvable persona must not exit 0")
+
+	msg := err.Error()
+	assert.Contains(t, msg, "persona", "the persona cause must still be named")
+	assert.Contains(t, msg, "endpoint", "the endpoint failure must be named too, not shadowed by the persona branch")
+	_ = out
 }
 
 // The advisory half must NOT have been dragged along. A rule gap is a genuine
