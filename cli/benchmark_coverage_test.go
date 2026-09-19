@@ -169,6 +169,35 @@ func TestCheckCoverage_RejectsMalformedOutcomeTallies(t *testing.T) {
 	require.NoError(t, err, "the unknown tally label is a legitimate key")
 }
 
+// The outcome vocabulary GREW (repo-state-v1 added "ungrounded"), so the commonest
+// way to reach the vocabulary rejection is no longer a hand-assembled file: it is an
+// older atcr running `benchmark export` over a newer run-result. Accusing that
+// operator of hand-assembly sends them auditing a file nobody edited, when the
+// remedy is one upgrade. duplicateIdentityError in this same file already names both
+// causes; this rejection is the boundary that ACTUALLY breaks on a new value.
+func TestCheckCoverage_VocabularyRejectionNamesVersionSkew(t *testing.T) {
+	rr := benchmark.RunResult{
+		SuiteCaseIDs: []string{"case-01"},
+		Reviewers:    []scorecard.PublicRecord{{Model: "m", Persona: "p", Runs: 1}},
+		Coverage: []benchmark.ReviewerCoverage{{
+			Model: "m", Persona: "p", CaseIDs: []string{"case-01"},
+			// A value a FUTURE atcr writes and this build does not know — the exact
+			// shape "ungrounded" had for a pre-35.16.10 reader.
+			Outcomes: map[string]int{"from-a-newer-atcr": 1},
+		}},
+	}
+
+	err := checkCoverage(io.Discard, rr, "rr.json", false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "from-a-newer-atcr", "the offending key is named")
+	assert.Contains(t, err.Error(), "version skew",
+		"version skew is the likelier cause and must be named, as duplicateIdentityError names it")
+	assert.Contains(t, err.Error(), "upgrade atcr",
+		"the remedy for the likelier cause must be stated, not left to the reader")
+	assert.Contains(t, err.Error(), "hand-assembled",
+		"the other cause stays named — this is an additive rewording, not a swap")
+}
+
 // grounding_enabled is published verbatim into the public envelope and rides beside
 // corroboration_rate as the tag saying which population that rate was computed over,
 // yet every OTHER coverage field is treated as hostile input here. The producer
