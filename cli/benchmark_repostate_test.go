@@ -1679,6 +1679,78 @@ func TestExecuteRepoStateBenchmarkRun_RecordsANonSentinelExecuteFailureAndContin
 	assert.Equal(t, []string{"first-case"}, rr.Coverage[0].CaseIDs, "case 1 still scored")
 }
 
+// The two POST-PAYMENT record-and-continue sites. Their doc comments promise "the
+// panel ran and was paid for; its artifacts are retained in the work dir", and nothing
+// reached either one: a completer-planted fault always lands on the WRITE, one step
+// earlier, and is recorded as `execute`. Faulted through the read-back seams instead,
+// which is what those seams exist for.
+//
+// Each case asserts three things: the run continues, the reason constant is the
+// site's own, and the paid review dir SURVIVES in the retained work dir — the last
+// being the promise itself, and the half no test made.
+func TestExecuteRepoStateBenchmarkRun_RecordsPostPaymentReadBackFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		wantReason string
+		install    func(t *testing.T)
+	}{
+		{
+			name:       "the pool summary cannot be read back",
+			wantReason: benchmark.CaseFailurePoolSummary,
+			install: func(t *testing.T) {
+				real := readPoolSummaryFn
+				calls := 0
+				readPoolSummaryFn = func(reviewDir string) (fanout.PoolSummary, error) {
+					calls++
+					if calls == 2 {
+						return fanout.PoolSummary{}, errors.New("summary.json unreadable")
+					}
+					return real(reviewDir)
+				}
+				t.Cleanup(func() { readPoolSummaryFn = real })
+			},
+		},
+		{
+			name:       "the findings cannot be read back",
+			wantReason: benchmark.CaseFailureReadFindings,
+			install: func(t *testing.T) {
+				real := readCaseFindingsLocatedFn
+				calls := 0
+				readCaseFindingsLocatedFn = func(reviewDir string, agents map[string]bool) (map[string][]benchmark.ReportedFinding, map[string][]string, int, bool, error) {
+					calls++
+					if calls == 2 {
+						return nil, nil, 0, false, errors.New("findings.txt unreadable")
+					}
+					return real(reviewDir, agents)
+				}
+				t.Cleanup(func() { readCaseFindingsLocatedFn = real })
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.install(t)
+			suite := writeCaseSuite(t, "first-case", "second-case")
+
+			rr, retained, err := executeRepoStateBenchmarkRun(context.Background(),
+				benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC())
+			releaseRetainedWorkDir(t, retained)
+
+			require.NoError(t, err, "a read-back fault is one case's bad luck, not the run's")
+			require.Len(t, rr.CaseFailures, 1)
+			assert.Equal(t, "second-case", rr.CaseFailures[0].CaseID)
+			assert.Equal(t, tc.wantReason, rr.CaseFailures[0].Reason,
+				"the reason names the stage the case died at, and this is the only test that pins it")
+			assert.Equal(t, []string{"first-case"}, rr.Coverage[0].CaseIDs, "case 1 still scored")
+
+			require.NotEmpty(t, retained, "a partial run retains its work dir")
+			assert.DirExists(t, filepath.Join(retained, "review-1"),
+				"the FAILED case's panel ran and was paid for, so its artifacts are what the promise is about")
+			assert.DirExists(t, filepath.Join(retained, "review-0"),
+				"the scored case's artifacts survive alongside")
+		})
+	}
+}
+
 // The work_dir record-and-continue site had coverage count 0: no test drove the
 // RUNNER to a work-dir failure, so the reason constant it records was unverified end
 // to end and a wrong one would have shipped invisibly.

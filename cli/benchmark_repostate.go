@@ -375,7 +375,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			continue
 		}
 
-		summary, err := fanout.ReadPoolSummary(res.Dir)
+		summary, err := readPoolSummaryFn(res.Dir)
 		if err != nil {
 			recordCaseFailure(ctx, &caseFailures, c.ID, benchmark.CaseFailurePoolSummary, err)
 			releaseCaseRepo(ctx, repoDir, c.ID)
@@ -388,7 +388,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		for _, a := range summary.Agents {
 			agentSet[a.Agent] = true
 		}
-		located, categorical, unattributed, missingFindingsFile, err := readCaseFindingsLocated(res.Dir, agentSet)
+		located, categorical, unattributed, missingFindingsFile, err := readCaseFindingsLocatedFn(res.Dir, agentSet)
 		if err != nil {
 			recordCaseFailure(ctx, &caseFailures, c.ID, benchmark.CaseFailureReadFindings, err)
 			releaseCaseRepo(ctx, repoDir, c.ID)
@@ -626,6 +626,21 @@ func recordCaseFailure(ctx context.Context, into *[]benchmark.CaseFailure, caseI
 		"case", caseID, "reason", reason, "err", cause)
 	*into = append(*into, benchmark.CaseFailure{CaseID: caseID, Reason: reason})
 }
+
+// readPoolSummaryFn and readCaseFindingsLocatedFn are the two POST-PAYMENT read-back
+// seams, indirected through package vars (like resolveAutoFixSandboxFn) so a test can
+// fault them. Production points at the real functions.
+//
+// They exist because these two record-and-continue sites are otherwise untestable.
+// Every other fault a test can inject rides a completer call, and a completer call
+// happens strictly BEFORE writePool — so anything planted there fails the WRITE and
+// the case is recorded at `execute`, never at `pool_summary` or `read_findings`. Those
+// are exactly the two reasons whose doc comments promise "the panel ran and was paid
+// for", which is the claim most worth proving and the one nothing could reach.
+var (
+	readPoolSummaryFn         = fanout.ReadPoolSummary
+	readCaseFindingsLocatedFn = readCaseFindingsLocated
+)
 
 // summarizeCaseFailureReasons renders the failure channel as a per-reason tally,
 // sorted so the same run always produces the same string.
