@@ -815,6 +815,23 @@ func warnPositionalRecallSummary(w io.Writer, rr *benchmark.RunResult) {
 			}
 		}
 	}
+	// The caveat the metric's own field doc carries, on the one surface an operator
+	// actually reads the number from. ReviewerPositionalRecall, score_repostate.go and
+	// docs/benchmark.md all state it at length; this line printed the figure bare, so
+	// a zero read as reviewer inattention when it may be gate attrition — and on this
+	// tier, whose whole subject is out-of-diff findings, that is the likelier cause.
+	//
+	// Appended ONCE per summary rather than per row: it describes how the metric is
+	// computed, which is identical for every reviewer, and repeating it would bury the
+	// numbers it qualifies. The run's grounding_enabled tag is deliberately not
+	// interpolated — it lives per reviewer on ReviewerCoverage, not as one run-level
+	// value, so naming it here would need a join that this warning has no other reason
+	// to do.
+	if len(rr.PositionalRecall) > 0 {
+		msg.WriteString("  note: an outside_diff_recall of 0.00 conflates \"never consulted unchanged " +
+			"code\" with \"found it and the grounding gate discarded it\" — check each row's " +
+			"reviewer_coverage.grounding_enabled before reading it as reviewer inattention\n")
+	}
 	_, _ = io.WriteString(w, msg.String())
 }
 
