@@ -488,6 +488,31 @@ type RunResult struct {
 	// omitempty so a clean run serializes identically to a run-result written before
 	// this field existed, and both unmarshal to nil.
 	CaseFailures []CaseFailure `json:"case_failures,omitempty"`
+
+	// SlotFailures names the (reviewer, case) pairs where ONE reviewer could not be
+	// shown a case the rest of the panel reviewed. It is CaseFailures one level down
+	// (slot_failure.go documents the vocabulary and why the two cannot share an axis):
+	// the case itself is measured and appears in the surviving reviewers' covered
+	// sets, while the failed reviewer's row is short by exactly it.
+	//
+	// It is what makes a short coverage row LEGIBLE. The runner skips a non-OK slot
+	// from the score, the covered set and the outcome tally together — correct, since
+	// charging a reviewer recall-0 for a case it was never shown is the conflation
+	// this tier forbids — and without this array that skip left no cause recorded
+	// anywhere: the run exited 0 in silence, the cleanup deleted the review dirs
+	// holding each slot's status.json, and export rejected the finished run-result
+	// while calling the gap "missing", the label reserved for a truncated or
+	// hand-assembled file.
+	//
+	// Run-result-only, on the same terms as CaseFailures and per the same epic
+	// 35.16.10.1 Clarifications: it explains a shortfall to the operator who paid for
+	// the run and answers no question the public board scores. BuildSubmission does
+	// not carry it, locked by TestBuildSubmission_DoesNotPublishSlotFailures — reverse
+	// that decision THERE first, with a schema bump, never as a silent change.
+	//
+	// omitempty so a run with no slot failure serializes identically to a run-result
+	// written before this field existed, and both unmarshal to nil.
+	SlotFailures []SlotFailure `json:"slot_failures,omitempty"`
 }
 
 // ReviewerCoverage names the cases behind one reviewer row of the same run-result,

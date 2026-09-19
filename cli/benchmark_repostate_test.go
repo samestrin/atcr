@@ -1952,6 +1952,72 @@ func TestExecuteRepoStateBenchmarkRun_AFailedSlotIsUnmeasuredNotMissed(t *testin
 	}
 }
 
+// A skipped slot must leave a CAUSE behind, and the paid artifacts must survive it.
+//
+// Keeping the failed slot out of the score is right, but it recorded the shortfall
+// nowhere: CaseFailures stays empty (the case itself was reviewed by the others), so
+// warnCaseFailures printed nothing, the run exited 0, and the deferred cleanup took
+// its clean-run branch and deleted the work dir — including the review-N/status.json
+// the skip's own comment named as where the failure "remains readable". The operator
+// then met the defect days later as an export rejection with no artifact to consult.
+//
+// The identity asserted here is the PUBLIC one, because the export diagnostic that
+// consumes this array matches it against reviewer_coverage rows, which are emitted
+// scrubbed.
+func TestExecuteRepoStateBenchmarkRun_ASlotFailureIsRecordedAndRetainsTheWorkDir(t *testing.T) {
+	suite := writeCaseSuite(t, "first-case", "second-case")
+
+	rr, retained, err := executeRepoStateBenchmarkRun(context.Background(),
+		benchCfg([3]string{"greta", "m-greta", "greta"}, [3]string{"otto", "m-otto", "otto"}),
+		oneAgentFailingCompleter{agent: "otto"}, suite, time.Unix(0, 0).UTC(), 0)
+	releaseRetainedWorkDir(t, retained)
+	require.NoError(t, err, "one failed slot is not a failed run")
+
+	require.Empty(t, rr.CaseFailures,
+		"the CASE was reviewed by the surviving reviewer — this is not a case-level failure")
+
+	require.Len(t, rr.SlotFailures, 2,
+		"otto's slot failed on both cases, and each (reviewer, case) pair is its own record")
+	for _, sf := range rr.SlotFailures {
+		assert.Equal(t, "m-otto", sf.Model, "the failed reviewer is named by its public identity")
+		assert.Equal(t, "otto", sf.Persona)
+		assert.Equal(t, benchmark.SlotFailureCall, sf.Reason,
+			"a completer returning an error is a failed call, not a timeout")
+	}
+	ids := []string{rr.SlotFailures[0].CaseID, rr.SlotFailures[1].CaseID}
+	assert.ElementsMatch(t, []string{"first-case", "second-case"}, ids,
+		"every case the slot missed is named, so the short row can be explained case by case")
+
+	// The retention half. Without it the cleanup deletes the only copy of the paid
+	// panel's artifacts on exactly the run that needs them for diagnosis.
+	require.NotEmpty(t, retained,
+		"a run that lost a slot must retain its work dir and report the path")
+	_, statErr := os.Stat(retained)
+	require.NoError(t, statErr, "the retained work dir must still exist on disk")
+}
+
+// The operator surface for the same defect. A slot failure is invisible on stderr
+// because warnCaseFailures keys on CaseFailures alone, so a run that silently lost a
+// reviewer looked exactly like a clean one.
+func TestWarnCaseFailures_ReportsSlotFailures(t *testing.T) {
+	rr := &benchmark.RunResult{
+		SuiteCaseIDs: []string{"case-01", "case-02"},
+		SlotFailures: []benchmark.SlotFailure{
+			{Model: "m-otto", Persona: "otto", CaseID: "case-01", Reason: benchmark.SlotFailureTimeout},
+		},
+	}
+
+	var buf bytes.Buffer
+	warnCaseFailures(&buf, rr, "/tmp/atcr-repo-state-probe")
+	out := buf.String()
+
+	assert.Contains(t, out, "m-otto/otto", "the warning names which reviewer lost a case")
+	assert.Contains(t, out, "case-01", "and which case it lost")
+	assert.Contains(t, out, benchmark.SlotFailureTimeout, "and why")
+	assert.Contains(t, out, "/tmp/atcr-repo-state-probe",
+		"the retained path reaches stderr on a slot-only failure too, not just a case failure")
+}
+
 // The two POST-PAYMENT record-and-continue sites. Their doc comments promise "the
 // panel ran and was paid for; its artifacts are retained in the work dir", and nothing
 // reached either one: a completer-planted fault always lands on the WRITE, one step
