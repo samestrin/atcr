@@ -517,12 +517,12 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			if a.FallbackUsed {
 				acc[key].fallbackCases++
 			}
-			// Fold the gate state across this row's cases, ANDing rather than
-			// overwriting: a row whose categories came from a mix of gated and ungated
-			// cases measured a mixed population, and claiming "gated" for it would be
-			// the same overstatement the tag exists to prevent. A nil from any case
-			// (a rebuilt summary cannot know) makes the whole row nil — unmeasured,
-			// not false.
+			// Fold the gate state across this row's cases, requiring UNANIMITY rather
+			// than overwriting: a row whose categories came from a mix of gated and
+			// ungated cases measured a mixed population, and claiming either state for
+			// it would be the overstatement the tag exists to prevent. A disagreement
+			// between cases, or a nil from any case (a rebuilt summary cannot know),
+			// makes the whole row nil — unmeasured, not false.
 			acc[key].groundingEnabled = foldGroundingEnabled(
 				acc[key].groundingEnabled, summary.GroundingEnabled, len(acc[key].caseIDs) == 1)
 
@@ -798,9 +798,9 @@ type repoStateAcc struct {
 	latencies     []int64
 	// groundingEnabled is the run's Epic 14.1 gate state, carried up from each
 	// case's PoolSummary so the emitted coverage row can state which population its
-	// CorroborationRate measured. Folded with AND: the tag may only claim the gate
-	// was live if it was live for EVERY case this row scored, since one ungated case
-	// is enough to make the row's categories a mixed population.
+	// CorroborationRate measured. Folded by UNANIMITY: the tag may only claim a state
+	// if every case this row scored reported that same state, since one disagreeing
+	// case is enough to make the row's categories a mixed population.
 	groundingEnabled *bool
 }
 
