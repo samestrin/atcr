@@ -239,6 +239,24 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 					path, k, model, persona)
 			}
 		}
+		// grounding_enabled is published verbatim into the public envelope and is the
+		// tag saying which population corroboration_rate was computed over, so it gets
+		// the same untrusted-input treatment as the tally above. The producer
+		// guarantees exactly one implication for free: reviewerOutcome reaches
+		// OutcomeUngrounded only via AgentStatus.DroppedByGrounding > 0, which the gate
+		// cannot produce when it is off. A row claiming both is self-contradictory.
+		//
+		// Only an EXPLICIT false is rejected. nil means unmeasured — a rebuilt summary,
+		// or a row folded across a mix of gated and ungated cases — which is
+		// uninformative rather than contradictory, and rejecting it would make a
+		// legitimate paid run unexportable at the one boundary with no remedy. That is
+		// narrower than "must be true", deliberately: this gate's job is to catch a
+		// claim the producer cannot make, not to require one it may not have.
+		if c.GroundingEnabled != nil && !*c.GroundingEnabled && c.Outcomes[benchmark.OutcomeUngrounded] > 0 {
+			return fmt.Errorf("run-result %s records %d %q outcome(s) for %s/%s while claiming grounding_enabled=false; "+
+				"that outcome is reached only when the grounding gate dropped a finding, so this file is malformed",
+				path, c.Outcomes[benchmark.OutcomeUngrounded], benchmark.OutcomeUngrounded, model, persona)
+		}
 		byIdentity[key] = c
 	}
 
