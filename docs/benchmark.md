@@ -748,9 +748,15 @@ findings > ungrounded > clean`: data-integrity signals outrank volume signals, a
 reviewer that kept even one finding is scored on what it kept.
 
 > **`ungrounded` is newer than the other values.** The outcome vocabulary is
-> fail-closed at the checkpoint-resume and coverage trust boundaries, so a build
-> predating it will refuse a checkpoint carrying it rather than re-key the tally. A
-> checkpoint written by this version cannot be resumed by an older one.
+> fail-closed at the coverage trust boundary: an older `atcr` running `benchmark
+> export` on a run-result carrying `ungrounded` rejects the file as malformed
+> rather than re-keying the tally (`cli/benchmark_coverage.go` validates every
+> tally key through `ValidOutcome`, and re-running under that build cannot help,
+> since an older producer writes only values it knows). A run-result written by
+> this version cannot be exported by an older one. The checkpoint-resume boundary
+> never sees the value: `--checkpoint` is refused for `repo-state-v1`, and
+> `ungrounded` cannot arise on `standard-v1`, whose diff path supplies no range
+> and fails the gate open.
 
 `unknown` is deliberately distinct from `clean`. A resumed run whose checkpoint
 predates this field reports `unknown`, never "reviewed and found nothing" — the
