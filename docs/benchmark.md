@@ -317,6 +317,9 @@ These failures still abort the whole run, and none of them is transient:
 | The **scored-twice identity guard** (two reviewer lanes realizing one `(model, persona)` both scoring the same case), and the post-scrub **identity-collision guard**. | Configuration or code bugs, not bad luck. Continuing would publish a knowingly double-counted score, or two rows under one public identity. |
 | **Cancellation** (SIGINT/SIGTERM). | An operator interrupt is a decision, not a fault. An interrupted run must not become a publishable artifact whose missing cases look like infrastructure failures. |
 | **Nothing scored at all.** | Nothing was measured, so there is no partial result to salvage. |
+| The **`--max-consecutive-case-failures` abort** (the run stops once that many consecutive cases have failed back to back). | A deliberate operator cost brake, not a transient outage: the remaining cases were never run, so there is no bill to stop and no per-case fault to record — the cases already recorded stay in `case_failures[]`. |
+| A **host-level work-dir fault** (`ENOSPC`, `EDQUOT`, `EMFILE`/`ENFILE`, or `EROFS` while creating a case's work directory). | A property of the host, not of the case: every remaining case repeats the identical failing syscall, so recording each as its own bad luck writes one entry per case and still exits 0 while the host stays broken. |
+| The **realized-identity printability guard** (a provider's usage payload supplied a model identity whose runes cannot survive publication). | Publishing would emit a public identity no consumer can join against, and a re-run on this tier re-pays the whole panel — so the guard fails the run before payment rather than letting export reject the finished artifact. |
 
 When any case fails, the **work dir is retained** and its path is logged, exactly as it is on a hard failure — the successful cases' raw transcripts, `findings.txt` and `summary.json` survive for inspection or manual rescoring.
 

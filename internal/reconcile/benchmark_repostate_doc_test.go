@@ -364,6 +364,9 @@ var abortClasses = []struct {
 	{"scored-twice / identity collision", "scored twice under realized identity", "**scored-twice identity guard**", "scored-twice and identity-collision guards"},
 	{"cancellation", "benchmark run cancelled after", "**Cancellation** (SIGINT/SIGTERM)", "cancellation (SIGINT/SIGTERM)"},
 	{"nothing scored", "no case could be scored", "**Nothing scored at all.**", "run that scored nothing at all"},
+	{"--max-consecutive-case-failures abort", "reaching --max-consecutive-case-failures", "**`--max-consecutive-case-failures` abort**", "--max-consecutive-case-failures abort"},
+	{"host-level work-dir fault", "isFatalWorkDirError(err)", "**host-level work-dir fault**", "host-level work-dir fault"},
+	{"realized-identity printability guard", "checkRealizedIdentityPrintable(k)", "**realized-identity printability guard**", "realized-identity printability guard"},
 }
 
 // The abort taxonomy must partition identically in the runner, the doc table and the
@@ -412,7 +415,7 @@ func TestBenchmarkDoc_AbortTaxonomyPartitionsIdenticallyEverywhere(t *testing.T)
 
 	// The changelog states the count in words. A numeral that disagrees with the table
 	// is the cheapest possible way for the two copies to fork again.
-	assert.Contains(t, changelog, "Six failure classes still abort the whole run",
+	assert.Contains(t, changelog, "Nine failure classes still abort the whole run",
 		"the CHANGELOG's count must match the abort table's row count")
 }
 
