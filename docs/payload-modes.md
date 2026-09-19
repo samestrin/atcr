@@ -176,7 +176,10 @@ A persona prompt carries exactly one scope rule, but per-file escalation can mix
 
 ### Grounding gate
 
-The scope rule is enforced, not merely requested. After a persona returns its findings — and before they reach the reconciler — atcr drops any finding whose cited `FILE:LINE` is not anchored in the patch's changed lines. A finding is kept when its line falls within a changed range (with a small ±3-line tolerance for reviewer drift), when its `EVIDENCE` text matches a changed line, or when it is tagged `CATEGORY` `out-of-scope` (which stays exempt so the annotate-don't-promote path above is unaffected). Ungrounded findings — the hallucinations a model invents for code it never saw change — are discarded and the per-agent drop count is logged to stderr. The gate needs the live diff, so it applies to `atcr review`; it is disabled for the range-less `atcr reconcile <dir>` path, which has no patch to check against.
+The scope rule is enforced, not merely requested. After a persona returns its findings — and before they reach the reconciler — atcr drops any finding whose cited `FILE:LINE` is not anchored in the patch's changed lines. A finding is kept when its line falls within a changed range (with a small ±3-line tolerance for reviewer drift), when its `EVIDENCE` text matches a changed line, or when it is tagged `CATEGORY` `out-of-scope` (which stays exempt so the annotate-don't-promote path above is unaffected). Ungrounded findings — the hallucinations a model invents for code it never saw change — are discarded; the per-agent drop count is logged to stderr and written to each
+agent's status.json as `dropped_by_grounding`. The field is deliberately not
+`omitempty`, so a present zero means the gate ran and dropped nothing — a different
+claim from an older status.json that never had the field. The gate needs the live diff, so it applies to `atcr review`; it is disabled for the range-less `atcr reconcile <dir>` path, which has no patch to check against.
 
 ## Tool agents (payload as starting point)
 
