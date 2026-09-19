@@ -1625,6 +1625,38 @@ func TestExecuteRepoStateBenchmarkRun_EmptyRosterAborts(t *testing.T) {
 		"recorded per-case it repeats on every case and buries the real cause under the transient class")
 }
 
+// outside_diff_recall printed bare is the tier's headline number stripped of the one
+// caveat that decides how to read it. internal/benchmark/benchmark.go, score_repostate.go
+// and docs/benchmark.md each spell out at length that a zero conflates "never
+// consulted unchanged code" with "found it and the grounding gate discarded it" — and
+// the single operator-facing surface for the number carried none of it, which is
+// where an operator actually reads it.
+//
+// The caveat rides the SUMMARY, not each row: it is a property of how the metric is
+// computed, identical for every reviewer, so repeating it per row would bury the
+// numbers it qualifies.
+func TestWarnPositionalRecallSummary_CarriesTheGroundingCaveat(t *testing.T) {
+	var buf bytes.Buffer
+	zero, one := 0.0, 1.0
+
+	warnPositionalRecallSummary(&buf, &benchmark.RunResult{
+		PositionalRecall: []benchmark.ReviewerPositionalRecall{{
+			Model: "m-greta", Persona: "greta",
+			Recall: &one, MatchedTotal: 4, ExpectedTotal: 4,
+			OutsideDiffRecall: &zero, MatchedOutsideDiff: 0, ExpectedOutsideDiff: 4,
+		}},
+	})
+
+	out := buf.String()
+	require.Contains(t, out, "outside_diff_recall 0.00", "the number itself must still be printed")
+	assert.Contains(t, out, "never consulted unchanged code",
+		"a zero must not read as reviewer inattention when it may be gate attrition")
+	assert.Contains(t, out, "grounding gate discarded",
+		"the other half of the conflation must be named too, or the caveat explains nothing")
+	assert.Equal(t, 1, strings.Count(out, "never consulted unchanged code"),
+		"the caveat qualifies the metric, not each row — repeating it per reviewer buries the numbers")
+}
+
 // A partial run prints recall numbers that read exactly like a full-suite
 // measurement. The failure channel is in the run-result, but an operator watching
 // the terminal sees only the recall summary — so the one number this tier exists to
