@@ -444,6 +444,11 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 				outcome:       outcome,
 				fallbackUsed:  a.FallbackUsed,
 				agent:         a.Agent,
+				// The gate state this case actually ran under, read from the same
+				// PoolSummary the agents were read from. The range-less standard-v1
+				// path fails the gate open and fanout records false, so this is what
+				// turns an absent key from "unmeasured" into the claim it should be.
+				groundingEnabled: summary.GroundingEnabled,
 			}); err != nil {
 				return nil, fmt.Errorf("scoring case %q: %w", c.ID, err)
 			}
@@ -467,7 +472,13 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 		// atomic write means a process killed mid-suite leaves a checkpoint holding
 		// exactly the cases that completed.
 		if cp != nil {
-			cp.Cases = append(cp.Cases, checkpointCase{Index: i, CaseID: c.ID, Expected: c.ExpectedCategories, Reviewers: caseReviewers})
+			cp.Cases = append(cp.Cases, checkpointCase{
+				Index: i, CaseID: c.ID, Expected: c.ExpectedCategories, Reviewers: caseReviewers,
+				// Recorded so a resume reproduces the uninterrupted run's coverage rows
+				// byte-for-byte; without it a fully replayed run publishes no gate tag
+				// where a fresh one publishes false.
+				GroundingEnabled: summary.GroundingEnabled,
+			})
 			if werr := saveCheckpoint(checkpointPath, cp); werr != nil {
 				return nil, fmt.Errorf("writing checkpoint for case %q: %w", c.ID, werr)
 			}
@@ -589,6 +600,10 @@ func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *b
 			CaseIDs:       append([]string(nil), acc.caseIDs...),
 			Outcomes:      maps.Clone(acc.outcomes),
 			FallbackCases: acc.fallbackCases,
+			// The folded gate state, emitted on the same terms as the repo-state
+			// runner's row. nil stays nil: an unmeasured tag is the fail-safe, and
+			// stamping false here would manufacture a claim from no observation.
+			GroundingEnabled: acc.groundingEnabled,
 		})
 	}
 
@@ -723,6 +738,11 @@ type reviewerAcc struct {
 	agents    map[string]struct{}
 	costUSD   float64
 	latencies []int64 // per-case wall-clock, recorded only when usage was reported
+	// groundingEnabled is the Epic 14.1 gate state carried up from each case's
+	// PoolSummary, folded by foldGroundingEnabled exactly as the repo-state runner
+	// folds its own. It mirrors repoStateAcc.groundingEnabled so both producers
+	// publish the same three-valued tag from the same rule.
+	groundingEnabled *bool
 }
 
 // reviewerOutcome classifies what actually happened when one reviewer met one case,
@@ -810,6 +830,10 @@ type reviewerCaseOutcome struct {
 	// no part in the fold — only in the duplicate-case diagnostic, which must name
 	// the colliding lanes.
 	agent string
+	// groundingEnabled is this case's recorded gate state. nil means "not observed"
+	// — a checkpoint written before the field existed — and absorbs through the fold,
+	// so such a replay reports unmeasured rather than claiming a state nobody saw.
+	groundingEnabled *bool
 }
 
 // applyReviewerOutcome folds one reviewer's single-case outcome into the
@@ -871,6 +895,9 @@ func applyReviewerOutcome(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKe
 	if o.fallbackUsed {
 		acc.fallbackCases++
 	}
+	// Folded AFTER caseIDs is appended, so len == 1 identifies this identity's
+	// opening case — the same first-case test the repo-state runner applies.
+	acc.groundingEnabled = foldGroundingEnabled(acc.groundingEnabled, o.groundingEnabled, len(acc.caseIDs) == 1)
 	if o.usageReported {
 		acc.costUSD += o.costUSD
 		acc.latencies = append(acc.latencies, o.latencyMS)
@@ -902,6 +929,10 @@ func replayCheckpointCase(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKe
 			outcome:      r.Outcome,
 			fallbackUsed: r.FallbackUsed,
 			agent:        r.Agent,
+			// Per CASE, not per reviewer — one pool summary served every slot. A
+			// checkpoint predating the field decodes to nil and folds to unmeasured,
+			// the same not-inferred rule the outcome field above follows.
+			groundingEnabled: entry.GroundingEnabled,
 		}); err != nil {
 			return fmt.Errorf("replaying checkpointed case %q: %w", entry.CaseID, err)
 		}
