@@ -196,8 +196,13 @@ func TestCheckCoverage_RejectsUngroundedOutcomeUnderAGateOffClaim(t *testing.T) 
 
 	err := checkCoverage(io.Discard, run(&off), "rr.json", false)
 	require.Error(t, err, "ungrounded is unreachable with the gate off")
-	assert.Contains(t, err.Error(), "malformed")
 	assert.Contains(t, err.Error(), benchmark.OutcomeUngrounded)
+	assert.Contains(t, err.Error(), "grounding_enabled=false")
+	// Both causes are named, like duplicateIdentityError's: a mixed multi-case fold
+	// still reports ungated rather than unmeasured, so a legitimate run reaches here
+	// and "hand-assembled" alone would misdiagnose it.
+	assert.Contains(t, err.Error(), "hand-assembled")
+	assert.Contains(t, err.Error(), "upgrade atcr")
 
 	require.NoError(t, checkCoverage(io.Discard, run(&on), "rr.json", false),
 		"a gated row tallying ungrounded is exactly what the producer writes")

@@ -252,9 +252,17 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		// legitimate paid run unexportable at the one boundary with no remedy. That is
 		// narrower than "must be true", deliberately: this gate's job is to catch a
 		// claim the producer cannot make, not to require one it may not have.
+		//
+		// The message names the PRODUCER alongside hand-assembly, the way
+		// duplicateIdentityError names version skew: a row folded across a mix of gated
+		// and ungated cases currently ANDs to false rather than to nil, so this pair is
+		// reachable from a legitimate paid run. Reporting only "hand-assembled" would
+		// send that operator hunting an edit nobody made.
 		if c.GroundingEnabled != nil && !*c.GroundingEnabled && c.Outcomes[benchmark.OutcomeUngrounded] > 0 {
 			return fmt.Errorf("run-result %s records %d %q outcome(s) for %s/%s while claiming grounding_enabled=false; "+
-				"that outcome is reached only when the grounding gate dropped a finding, so this file is malformed",
+				"that outcome is reached only when the grounding gate dropped a finding, so the two cannot both be true — "+
+				"either the file was hand-assembled, or it was written by a build whose multi-case fold reported a mixed "+
+				"run as ungated rather than as unmeasured (upgrade atcr and re-run)",
 				path, c.Outcomes[benchmark.OutcomeUngrounded], benchmark.OutcomeUngrounded, model, persona)
 		}
 		byIdentity[key] = c
