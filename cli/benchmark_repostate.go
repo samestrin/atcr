@@ -586,6 +586,17 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 	public := make(map[reviewerKey]reviewerKey, len(order))  // public identity -> pre-scrub key (collision naming)
 	scrubOf := make(map[reviewerKey]reviewerKey, len(order)) // pre-scrub key -> public identity (emit)
 	for _, k := range order {
+		// The REALIZED printability guard, shared with buildRunResult. This loop
+		// carried only the collision half: validatePublishableReviewerRoster at the
+		// top of this function covers the CONFIGURED registry values, but reviewerModel
+		// prefers the usage-reported and fallback models over the registry, so a Cc/Cf
+		// rune from a provider's own usage payload arrived here ungated and survived
+		// the scrub into the published identity. Failing now costs this run; failing at
+		// export costs the whole paid panel again, because --checkpoint is refused on
+		// this tier and a re-run re-derives the same rune.
+		if err := checkRealizedIdentityPrintable(k); err != nil {
+			return nil, "", err
+		}
 		s := scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: k.model, Persona: k.persona})
 		id := reviewerKey{model: s.Model, persona: s.Persona}
 		if prev, dup := public[id]; dup {
