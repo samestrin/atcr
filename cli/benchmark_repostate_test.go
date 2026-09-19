@@ -163,7 +163,7 @@ func TestExecuteRepoStateBenchmarkRun_ParsesEveryCaseDiffBeforeAnyCompleterCall(
 	cc := &countingLocatedCompleter{}
 
 	_, _, err := executeRepoStateBenchmarkRun(context.Background(),
-		benchCfg([3]string{"greta", "m-greta", "greta"}), cc, suite, time.Unix(0, 0).UTC())
+		benchCfg([3]string{"greta", "m-greta", "greta"}), cc, suite, time.Unix(0, 0).UTC(), 0)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "second-case", "the error names the defective case")
@@ -186,7 +186,7 @@ func TestExecuteRepoStateBenchmarkRun_ReleasesEachCaseRepoAfterItsCase(t *testin
 	cc := &repoCountingCompleter{since: testStart}
 
 	_, _, err := executeRepoStateBenchmarkRun(context.Background(),
-		benchCfg([3]string{"greta", "m-greta", "greta"}), cc, suite, time.Unix(0, 0).UTC())
+		benchCfg([3]string{"greta", "m-greta", "greta"}), cc, suite, time.Unix(0, 0).UTC(), 0)
 	require.NoError(t, err)
 
 	require.NotEmpty(t, cc.reposSeenPerCall, "the stub completer must have been called")
@@ -226,7 +226,7 @@ func TestExecuteRepoStateBenchmarkRun_ReviewsACaseWhoseTreeSelfIgnoresTheChange(
 	cc := &countingLocatedCompleter{}
 
 	rr, _, err := executeRepoStateBenchmarkRun(context.Background(),
-		benchCfg([3]string{"greta", "m-greta", "greta"}), cc, suite, time.Unix(0, 0).UTC())
+		benchCfg([3]string{"greta", "m-greta", "greta"}), cc, suite, time.Unix(0, 0).UTC(), 0)
 	require.NoError(t, err, "a case whose tree ignores its own changed path must still be reviewed: the diff defines the reviewable set")
 	assert.Equal(t, 2, cc.calls, "both cases' panels must have run")
 	assert.Contains(t, rr.SuiteCaseIDs, "second-case")
@@ -257,7 +257,7 @@ func TestExecuteRepoStateBenchmarkRun_RefusesTwoLanesSharingOneIdentity(t *testi
 	}
 
 	_, _, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{},
-		repoStateMiniPath, time.Unix(0, 0).UTC())
+		repoStateMiniPath, time.Unix(0, 0).UTC(), 0)
 	releaseRetainedWorkDirFromError(t, err)
 
 	require.Error(t, err, "two lanes sharing one realized identity must fail closed, not double the score")
@@ -304,7 +304,7 @@ func TestExecuteRepoStateBenchmarkRun_MedianLatencyAndAccumulatedCost(t *testing
 	cc := &usageLocatedCompleter{delay: []time.Duration{30 * time.Millisecond, 300 * time.Millisecond}}
 
 	rr, _, err := executeRepoStateBenchmarkRun(context.Background(),
-		benchCfg([3]string{"greta", "gpt-4o", "greta"}), cc, writeTwoCaseSuite(t), time.Unix(0, 0).UTC())
+		benchCfg([3]string{"greta", "gpt-4o", "greta"}), cc, writeTwoCaseSuite(t), time.Unix(0, 0).UTC(), 0)
 	require.NoError(t, err)
 
 	require.Len(t, rr.Reviewers, 1)
@@ -341,7 +341,7 @@ func TestExecuteRepoStateBenchmarkRun_CoverageJoinsReviewersByPosition(t *testin
 	)
 
 	rr, _, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{},
-		repoStateMiniPath, time.Unix(0, 0).UTC())
+		repoStateMiniPath, time.Unix(0, 0).UTC(), 0)
 	require.NoError(t, err)
 	require.Len(t, rr.Reviewers, 2)
 	require.Len(t, rr.Coverage, 2)
@@ -379,7 +379,7 @@ func TestExecuteRepoStateBenchmarkRun_RefusesDistinctIdentitiesScrubbingToOne(t 
 	}
 
 	_, _, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{},
-		repoStateMiniPath, time.Unix(0, 0).UTC())
+		repoStateMiniPath, time.Unix(0, 0).UTC(), 0)
 	releaseRetainedWorkDirFromError(t, err)
 
 	require.Error(t, err, "two identities scrubbing to one public identity must fail at the producer, not at export after the panel was paid")
@@ -398,7 +398,7 @@ func TestExecuteRepoStateBenchmarkRun_CoverageCarriesTheScrubbedIdentity(t *test
 	cfg := benchCfg([3]string{"greta", "bedrock@us-east-1/claude", "greta"})
 
 	rr, _, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{},
-		repoStateMiniPath, time.Unix(0, 0).UTC())
+		repoStateMiniPath, time.Unix(0, 0).UTC(), 0)
 	require.NoError(t, err)
 	require.Len(t, rr.Reviewers, 1)
 	require.Len(t, rr.Coverage, 1)
@@ -426,7 +426,7 @@ func TestExecuteRepoStateBenchmarkRun_DedupesExpectedCategoriesCaseInsensitively
 	require.NoError(t, os.WriteFile(filepath.Join(suite, "first-case", "case.json"), []byte(patched), 0o600))
 
 	rr, _, err := executeRepoStateBenchmarkRun(context.Background(),
-		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC())
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC(), 0)
 	require.NoError(t, err)
 	require.NotEmpty(t, rr.Reviewers)
 	// The raw Expected slice is internal; the observable is the recall math. The
@@ -453,7 +453,7 @@ func TestExecuteRepoStateBenchmarkRun_RejectsAnOversizedCaseDiff(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(suite, "second-case", "change.diff"), []byte(big), 0o600))
 
 	_, _, err := executeRepoStateBenchmarkRun(context.Background(),
-		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC())
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC(), 0)
 
 	require.Error(t, err, "a diff beyond the documented byte cap must be rejected before the read, not parsed")
 	assert.Contains(t, err.Error(), "exceeding", "the error names the cap")
@@ -545,7 +545,7 @@ func TestExecuteRepoStateBenchmarkRun_AddedLineDoesNotEarnOutsideDiffCredit(t *t
 		"MEDIUM|app/calc.py:8|safe_total is not None-safe as claimed|handle None explicitly|correctness|15|def safe_total(items):"}
 
 	rr, _, err := executeRepoStateBenchmarkRun(context.Background(),
-		benchCfg([3]string{"greta", "m-greta", "greta"}), cc, repoStateMiniPath, time.Unix(0, 0).UTC())
+		benchCfg([3]string{"greta", "m-greta", "greta"}), cc, repoStateMiniPath, time.Unix(0, 0).UTC(), 0)
 	require.NoError(t, err)
 
 	require.Len(t, rr.PositionalRecall, 1)
@@ -582,7 +582,7 @@ func TestExecuteRepoStateBenchmarkRun_RetainsTheWorkDirOnFailure(t *testing.T) {
 	faultUnwinnableExpectation(t, suite, "second-case")
 
 	_, _, err := executeRepoStateBenchmarkRun(context.Background(),
-		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC())
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC(), 0)
 	releaseRetainedWorkDirFromError(t, err)
 	require.Error(t, err)
 
@@ -601,7 +601,7 @@ func TestExecuteRepoStateBenchmarkRun_ReportsBothMetrics(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 	gen := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
 
-	rr, _, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{}, repoStateMiniPath, gen)
+	rr, _, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{}, repoStateMiniPath, gen, 0)
 	require.NoError(t, err)
 
 	assert.Equal(t, benchmark.FormatRepoStateV1, rr.Suite)
@@ -631,7 +631,7 @@ func TestExecuteRepoStateBenchmarkRun_SeparatesTheTwoHalves(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 	gen := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
 
-	rr, _, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubInDiffOnlyCompleter{}, repoStateMiniPath, gen)
+	rr, _, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubInDiffOnlyCompleter{}, repoStateMiniPath, gen, 0)
 	require.NoError(t, err)
 
 	require.Len(t, rr.PositionalRecall, 1)
@@ -649,7 +649,7 @@ func TestExecuteRepoStateBenchmarkRun_SeparatesTheTwoHalves(t *testing.T) {
 func TestExecuteRepoStateBenchmarkRun_LeavesPublicRecordAlone(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 	rr, _, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{},
-		repoStateMiniPath, time.Unix(0, 0).UTC())
+		repoStateMiniPath, time.Unix(0, 0).UTC(), 0)
 	require.NoError(t, err)
 
 	require.Len(t, rr.Reviewers, 1)
@@ -663,7 +663,7 @@ func TestExecuteRepoStateBenchmarkRun_LeavesPublicRecordAlone(t *testing.T) {
 // the CLI's job; this is the backstop that keeps a mis-route loud.
 func TestExecuteRepoStateBenchmarkRun_RefusesAStandardV1Suite(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
-	_, _, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, time.Unix(0, 0).UTC())
+	_, _, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, time.Unix(0, 0).UTC(), 0)
 	require.Error(t, err)
 	// A missing directory, a JSON syntax error, or a git failure would also
 	// produce SOME error; the assertion must discriminate the MIS-ROUTE backstop
@@ -943,7 +943,7 @@ func TestExecuteRepoStateBenchmarkRun_CoverageRowTagsTheGroundingGateAsLive(t *t
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 	gen := time.Unix(0, 0).UTC()
 
-	rr, _, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{}, repoStateMiniPath, gen)
+	rr, _, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{}, repoStateMiniPath, gen, 0)
 	require.NoError(t, err)
 	require.NotEmpty(t, rr.Coverage)
 
@@ -959,7 +959,7 @@ func TestExecuteRepoStateBenchmarkRun_CoverageRowTagsTheGroundingGateAsLive(t *t
 func TestExecuteRepoStateBenchmarkRun_GroundingTagSerializes(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 
-	rr, _, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{}, repoStateMiniPath, time.Unix(0, 0).UTC())
+	rr, _, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{}, repoStateMiniPath, time.Unix(0, 0).UTC(), 0)
 	require.NoError(t, err)
 
 	b, err := json.Marshal(rr)
@@ -1021,7 +1021,7 @@ func TestFoldGroundingEnabled(t *testing.T) {
 func TestExecuteRepoStateBenchmarkRun_UngroundedOutcomeOnlyOnAGatedRow(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 
-	rr, _, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubOnlyUntouchedFileCompleter{}, writeUntouchedFileSuite(t), time.Unix(0, 0).UTC())
+	rr, _, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubOnlyUntouchedFileCompleter{}, writeUntouchedFileSuite(t), time.Unix(0, 0).UTC(), 0)
 	require.NoError(t, err)
 	require.NotEmpty(t, rr.Coverage)
 
@@ -1057,7 +1057,7 @@ func TestExecuteRepoStateBenchmarkRun_MidSuiteFailureYieldsAPartialRunResult(t *
 	faultMaterialization(t, suite, "second-case")
 
 	rr, retained, err := executeRepoStateBenchmarkRun(context.Background(),
-		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC())
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC(), 0)
 	releaseRetainedWorkDir(t, retained)
 	require.NoError(t, err, "a single case's infrastructure failure must not forfeit the cases that succeeded")
 	require.NotNil(t, rr)
@@ -1085,13 +1085,13 @@ func TestExecuteRepoStateBenchmarkRun_FailedCaseLeavesTheDenominatorsAlone(t *te
 	faultMaterialization(t, suite, "second-case")
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 
-	partial, retained, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC())
+	partial, retained, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC(), 0)
 	releaseRetainedWorkDir(t, retained)
 	require.NoError(t, err)
 
 	// The reference run: the same two cases, with no failed case present at all.
 	clean, cleanRetained, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{},
-		writeCaseSuite(t, "first-case", "third-case"), time.Unix(0, 0).UTC())
+		writeCaseSuite(t, "first-case", "third-case"), time.Unix(0, 0).UTC(), 0)
 	releaseRetainedWorkDir(t, cleanRetained)
 	require.NoError(t, err)
 
@@ -1135,7 +1135,7 @@ func TestExecuteRepoStateBenchmarkRun_RecordsEveryFailureInSuiteOrderIncludingTh
 	faultMaterialization(t, suite, "fourth-case")
 
 	rr, retained, err := executeRepoStateBenchmarkRun(context.Background(),
-		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC())
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC(), 0)
 	releaseRetainedWorkDir(t, retained)
 	require.NoError(t, err, "two failures including the last case still leave two scored cases")
 	require.NotNil(t, rr)
@@ -1169,7 +1169,7 @@ func TestExecuteRepoStateBenchmarkRun_TotalRosterFailureStillAborts(t *testing.T
 	suite := writeCaseSuite(t, "first-case", "second-case")
 
 	rr, _, err := executeRepoStateBenchmarkRun(context.Background(),
-		benchCfg([3]string{"greta", "m-greta", "greta"}), failingCompleter{}, suite, time.Unix(0, 0).UTC())
+		benchCfg([3]string{"greta", "m-greta", "greta"}), failingCompleter{}, suite, time.Unix(0, 0).UTC(), 0)
 	releaseRetainedWorkDirFromError(t, err)
 
 	require.Error(t, err, "a total-roster failure aborts; it is not recorded as an unmeasured case")
@@ -1186,7 +1186,7 @@ func TestExecuteRepoStateBenchmarkRun_UnwinnableCaseStillAborts(t *testing.T) {
 	faultUnwinnableExpectation(t, suite, "second-case")
 
 	rr, _, err := executeRepoStateBenchmarkRun(context.Background(),
-		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC())
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC(), 0)
 	releaseRetainedWorkDirFromError(t, err)
 
 	require.Error(t, err)
@@ -1206,7 +1206,7 @@ func TestExecuteRepoStateBenchmarkRun_EveryCaseFailingIsAnError(t *testing.T) {
 	faultMaterialization(t, suite, "second-case")
 
 	rr, _, err := executeRepoStateBenchmarkRun(context.Background(),
-		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC())
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC(), 0)
 	releaseRetainedWorkDirFromError(t, err)
 
 	require.Error(t, err)
@@ -1258,7 +1258,7 @@ func TestExecuteRepoStateBenchmarkRun_EveryCaseFailingNamesTheReasonTally(t *tes
 	faultMaterialization(t, suite, "second-case")
 
 	_, _, err := executeRepoStateBenchmarkRun(context.Background(),
-		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC())
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC(), 0)
 	releaseRetainedWorkDirFromError(t, err)
 
 	require.Error(t, err)
@@ -1276,7 +1276,7 @@ func TestExecuteRepoStateBenchmarkRun_RetainsTheWorkDirOnAPartialRun(t *testing.
 	var logs bytes.Buffer
 
 	rr, retained, err := executeRepoStateBenchmarkRun(logCapturingContext(t, &logs),
-		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC())
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC(), 0)
 	releaseRetainedWorkDir(t, retained)
 	require.NoError(t, err)
 	require.NotEmpty(t, rr.CaseFailures)
@@ -1315,7 +1315,7 @@ func TestExecuteRepoStateBenchmarkRun_PartialRunReportsTheRetainedSize(t *testin
 	var logs bytes.Buffer
 
 	rr, retained, err := executeRepoStateBenchmarkRun(logCapturingContext(t, &logs),
-		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC())
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC(), 0)
 	releaseRetainedWorkDir(t, retained)
 	require.NoError(t, err)
 	require.NotEmpty(t, rr.CaseFailures)
@@ -1338,7 +1338,7 @@ func TestExecuteRepoStateBenchmarkRun_CleanRunStillCleansUp(t *testing.T) {
 	cc := &workDirNamingCompleter{since: time.Now()}
 
 	rr, retained, err := executeRepoStateBenchmarkRun(logCapturingContext(t, &logs),
-		benchCfg([3]string{"greta", "m-greta", "greta"}), cc, repoStateMiniPath, time.Unix(0, 0).UTC())
+		benchCfg([3]string{"greta", "m-greta", "greta"}), cc, repoStateMiniPath, time.Unix(0, 0).UTC(), 0)
 	releaseRetainedWorkDir(t, retained)
 	require.NoError(t, err)
 	assert.Empty(t, rr.CaseFailures)
@@ -1426,7 +1426,7 @@ func TestExecuteRepoStateBenchmarkRun_CancellationAbortsRatherThanRecording(t *t
 
 	rr, _, err := executeRepoStateBenchmarkRun(ctx,
 		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{},
-		writeCaseSuite(t, "first-case", "second-case"), time.Unix(0, 0).UTC())
+		writeCaseSuite(t, "first-case", "second-case"), time.Unix(0, 0).UTC(), 0)
 	releaseRetainedWorkDirFromError(t, err)
 
 	require.Error(t, err)
@@ -1443,7 +1443,7 @@ func TestExecuteRepoStateBenchmarkRun_CancellationOnTheFinalCaseStillAborts(t *t
 
 	rr, _, err := executeRepoStateBenchmarkRun(ctx,
 		benchCfg([3]string{"greta", "m-greta", "greta"}), cc,
-		writeCaseSuite(t, "first-case", "second-case"), time.Unix(0, 0).UTC())
+		writeCaseSuite(t, "first-case", "second-case"), time.Unix(0, 0).UTC(), 0)
 	releaseRetainedWorkDirFromError(t, err)
 
 	require.Error(t, err)
@@ -1467,7 +1467,7 @@ func TestExecuteRepoStateBenchmarkRun_CancellationCountsScoredCasesNotAttempted(
 	// case 3 begins. Attempted is 2; scored is 1.
 	rr, _, err := executeRepoStateBenchmarkRun(ctx,
 		benchCfg([3]string{"greta", "m-greta", "greta"}), &cancellingCompleter{cancel: cancel},
-		suite, time.Unix(0, 0).UTC())
+		suite, time.Unix(0, 0).UTC(), 0)
 	releaseRetainedWorkDirFromError(t, err)
 
 	require.Error(t, err)
@@ -1510,7 +1510,7 @@ func TestExecuteRepoStateBenchmarkRun_EmptyRosterAborts(t *testing.T) {
 	cfg := benchCfg()
 
 	rr, _, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{},
-		writeCaseSuite(t, "first-case", "second-case"), time.Unix(0, 0).UTC())
+		writeCaseSuite(t, "first-case", "second-case"), time.Unix(0, 0).UTC(), 0)
 	releaseRetainedWorkDirFromError(t, err)
 
 	require.Error(t, err)
@@ -1613,7 +1613,7 @@ func TestExecuteRepoStateBenchmarkRun_RecordsAPrepareFailureAndContinues(t *test
 	cc := &prepareFaultingCompleter{since: time.Now(), caseIndex: 1}
 
 	rr, retained, err := executeRepoStateBenchmarkRun(context.Background(),
-		benchCfg([3]string{"greta", "m-greta", "greta"}), cc, suite, time.Unix(0, 0).UTC())
+		benchCfg([3]string{"greta", "m-greta", "greta"}), cc, suite, time.Unix(0, 0).UTC(), 0)
 	releaseRetainedWorkDir(t, retained)
 
 	require.NoError(t, err, "a case that cannot be prepared is unmeasured, not fatal")
@@ -1667,7 +1667,7 @@ func TestExecuteRepoStateBenchmarkRun_RecordsANonSentinelExecuteFailureAndContin
 	cc := &poolWriteFaultingCompleter{since: time.Now(), caseIndex: 1}
 
 	rr, retained, err := executeRepoStateBenchmarkRun(context.Background(),
-		benchCfg([3]string{"greta", "m-greta", "greta"}), cc, suite, time.Unix(0, 0).UTC())
+		benchCfg([3]string{"greta", "m-greta", "greta"}), cc, suite, time.Unix(0, 0).UTC(), 0)
 	releaseRetainedWorkDir(t, retained)
 
 	require.NoError(t, err, "a non-sentinel execute failure is one case's bad luck, not the run's")
@@ -1677,6 +1677,60 @@ func TestExecuteRepoStateBenchmarkRun_RecordsANonSentinelExecuteFailureAndContin
 	assert.Equal(t, benchmark.CaseFailureExecute, rr.CaseFailures[0].Reason,
 		"the reason constant is the actionable part, and this is the only test that pins it for this site")
 	assert.Equal(t, []string{"first-case"}, rr.Coverage[0].CaseIDs, "case 1 still scored")
+}
+
+// The existing exit gates (--fail-on-case-failure, --max-case-failures) judge the run
+// AFTER it finishes, so a provider failing every case still bills the whole suite
+// before the operator learns anything. This cap is the mid-run half: it stops paying.
+//
+// OPT-IN, default off, which is what keeps it compatible with those gates rather than
+// overlapping them — a default cap would take the abort decision away from the
+// operator, which is why the work-dir arm's comment argues against a general one.
+func TestExecuteRepoStateBenchmarkRun_ConsecutiveFailureCap(t *testing.T) {
+	t.Run("aborts once the run of consecutive failures reaches the cap", func(t *testing.T) {
+		suite := writeCaseSuite(t, "first-case", "second-case", "third-case", "fourth-case")
+		for _, id := range []string{"first-case", "second-case", "third-case", "fourth-case"} {
+			faultMaterialization(t, suite, id)
+		}
+
+		rr, _, err := executeRepoStateBenchmarkRun(context.Background(),
+			benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC(), 2)
+		releaseRetainedWorkDirFromError(t, err)
+
+		require.Error(t, err)
+		assert.Nil(t, rr)
+		assert.Contains(t, err.Error(), "2 consecutive case(s) failed",
+			"the abort says WHY it stopped, so the operator can tell it from a suite that simply ended")
+		assert.Contains(t, err.Error(), "materialize", "and names what kept failing")
+	})
+
+	t.Run("a cap of 0 is off, and the whole suite still runs", func(t *testing.T) {
+		suite := writeCaseSuite(t, "first-case", "second-case", "third-case")
+		faultMaterialization(t, suite, "first-case")
+		faultMaterialization(t, suite, "second-case")
+
+		rr, retained, err := executeRepoStateBenchmarkRun(context.Background(),
+			benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC(), 0)
+		releaseRetainedWorkDir(t, retained)
+
+		require.NoError(t, err, "off by default: two consecutive failures do not stop a run that can still score case 3")
+		assert.Len(t, rr.CaseFailures, 2)
+		assert.Equal(t, []string{"third-case"}, rr.Coverage[0].CaseIDs)
+	})
+
+	t.Run("a scored case resets the run of failures", func(t *testing.T) {
+		suite := writeCaseSuite(t, "first-case", "second-case", "third-case", "fourth-case")
+		faultMaterialization(t, suite, "first-case")
+		faultMaterialization(t, suite, "third-case")
+
+		rr, retained, err := executeRepoStateBenchmarkRun(context.Background(),
+			benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC(), 2)
+		releaseRetainedWorkDir(t, retained)
+
+		require.NoError(t, err,
+			"CONSECUTIVE, not cumulative: two failures separated by a scored case are not a systemic run")
+		assert.Len(t, rr.CaseFailures, 2)
+	})
 }
 
 // oneAgentFailingCompleter fails every call made on behalf of one named agent and
@@ -1706,7 +1760,7 @@ func TestExecuteRepoStateBenchmarkRun_AFailedSlotIsUnmeasuredNotMissed(t *testin
 
 	rr, retained, err := executeRepoStateBenchmarkRun(context.Background(),
 		benchCfg([3]string{"greta", "m-greta", "greta"}, [3]string{"otto", "m-otto", "otto"}),
-		oneAgentFailingCompleter{agent: "otto"}, suite, time.Unix(0, 0).UTC())
+		oneAgentFailingCompleter{agent: "otto"}, suite, time.Unix(0, 0).UTC(), 0)
 	releaseRetainedWorkDir(t, retained)
 	require.NoError(t, err)
 	require.Len(t, rr.PositionalRecall, 2, "both reviewers still appear; one of them simply measured nothing")
@@ -1791,7 +1845,7 @@ func TestExecuteRepoStateBenchmarkRun_RecordsPostPaymentReadBackFailures(t *test
 			suite := writeCaseSuite(t, "first-case", "second-case")
 
 			rr, retained, err := executeRepoStateBenchmarkRun(context.Background(),
-				benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC())
+				benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC(), 0)
 			releaseRetainedWorkDir(t, retained)
 
 			require.NoError(t, err, "a read-back fault is one case's bad luck, not the run's")
@@ -1824,7 +1878,7 @@ func TestExecuteRepoStateBenchmarkRun_RecordsAWorkDirFailureAndContinues(t *test
 	})
 
 	rr, _, err := executeRepoStateBenchmarkRun(context.Background(),
-		benchCfg([3]string{"greta", "m-greta", "greta"}), cc, suite, time.Unix(0, 0).UTC())
+		benchCfg([3]string{"greta", "m-greta", "greta"}), cc, suite, time.Unix(0, 0).UTC(), 0)
 
 	require.NoError(t, err, "a path-specific work-dir fault is one case's bad luck, not the run's")
 	require.NotEmpty(t, cc.tmp, "the fixture must actually have found and faulted the run's work dir")
@@ -1860,7 +1914,7 @@ func TestExecuteRepoStateBenchmarkRun_ReturnsTheRetainedWorkDirOnAPartialRun(t *
 	faultMaterialization(t, suite, "second-case")
 
 	rr, retained, err := executeRepoStateBenchmarkRun(context.Background(),
-		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC())
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC(), 0)
 
 	releaseRetainedWorkDir(t, retained)
 	require.NoError(t, err)
@@ -1874,7 +1928,7 @@ func TestExecuteRepoStateBenchmarkRun_ReturnsTheRetainedWorkDirOnAPartialRun(t *
 func TestExecuteRepoStateBenchmarkRun_ReportsNoRetainedWorkDirOnACleanRun(t *testing.T) {
 	rr, retained, err := executeRepoStateBenchmarkRun(context.Background(),
 		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{},
-		writeCaseSuite(t, "first-case", "second-case"), time.Unix(0, 0).UTC())
+		writeCaseSuite(t, "first-case", "second-case"), time.Unix(0, 0).UTC(), 0)
 
 	require.NoError(t, err)
 	require.Empty(t, rr.CaseFailures)
@@ -1890,7 +1944,7 @@ func TestExecuteRepoStateBenchmarkRun_ReleasesTheFailedCaseRepo(t *testing.T) {
 	faultMaterialization(t, suite, "second-case")
 
 	rr, retained, err := executeRepoStateBenchmarkRun(context.Background(),
-		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC())
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC(), 0)
 	releaseRetainedWorkDir(t, retained)
 	require.NoError(t, err)
 	require.Len(t, rr.CaseFailures, 1)

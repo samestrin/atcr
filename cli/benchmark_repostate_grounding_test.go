@@ -102,7 +102,7 @@ func TestExecuteRepoStateBenchmarkRun_UntouchedFileFindingIsDroppedByTheGroundin
 	gen := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
 
 	rr, _, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubUntouchedFileCompleter{},
-		writeUntouchedFileSuite(t), gen)
+		writeUntouchedFileSuite(t), gen, 0)
 	require.NoError(t, err)
 
 	require.Len(t, rr.PositionalRecall, 1)
@@ -129,7 +129,7 @@ func TestExecuteRepoStateBenchmarkRun_TheSameCitationScoresWhenItsFileIsInThePat
 	gen := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
 
 	rr, _, err := executeRepoStateBenchmarkRun(context.Background(), cfg, stubLocatedCompleter{},
-		repoStateMiniPath, gen)
+		repoStateMiniPath, gen, 0)
 	require.NoError(t, err)
 
 	require.Len(t, rr.PositionalRecall, 1)

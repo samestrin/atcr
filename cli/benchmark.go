@@ -162,6 +162,7 @@ func newBenchmarkRunCmd() *cobra.Command {
 	cmd.Flags().String("checkpoint", "", "opt-in: path to a run checkpoint file (atomically replaces the target; a symlink at the path is replaced, not followed). Each scored case is durably recorded here before the next begins; re-running the same suite resumes from the first unscored case instead of restarting (and re-paying for) the whole run. The path must not be shared across concurrent benchmark run invocations. Empty = no checkpointing (default).")
 	cmd.Flags().Bool("fail-on-case-failure", false, "opt-in: exit non-zero when ANY case was lost to an infrastructure failure. Off by default, because a partial run is a real measurement of the cases that did run and the run-result records which ones did not — but a CI step gating on the exit code cannot see that, so this restores the all-or-nothing contract for callers that need it. Use --max-case-failures for a threshold instead of a floor of one.")
 	cmd.Flags().Int("max-case-failures", -1, "opt-in: exit non-zero once MORE than this many cases were lost to infrastructure failures. -1 (default) means no ceiling. 0 is equivalent to --fail-on-case-failure. Set it to tolerate the occasional flaky provider while still failing a systemically broken run.")
+	cmd.Flags().Int("max-consecutive-case-failures", 0, "opt-in (repo-state-v1 only): ABORT the run once this many cases have failed back to back, instead of paying for the rest of the suite. 0 (default) disables it. A scored case resets the count, so this stops a systemically broken provider — one bad key, a payload-size rejection — rather than the occasional flaky case. Unlike --fail-on-case-failure and --max-case-failures, which judge a run that has already been paid for in full, this one stops the bill mid-run.")
 	_ = cmd.MarkFlagRequired("suite-path")
 	return cmd
 }
@@ -194,6 +195,7 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 	checkpoint, _ := cmd.Flags().GetString("checkpoint")
 	failOnCaseFailure, _ := cmd.Flags().GetBool("fail-on-case-failure")
 	maxCaseFailures, _ := cmd.Flags().GetInt("max-case-failures")
+	maxConsecutiveCaseFailures, _ := cmd.Flags().GetInt("max-consecutive-case-failures")
 
 	// Discover config the same way `atcr review` does (registry + project config
 	// rooted at the cwd), so the benchmark roster is the project's reviewers.
@@ -239,7 +241,7 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 	// ran, without opening the run-result to check which metrics it carries.
 	log.FromContext(benchCtx).Info("benchmark run: executing suite", "suite_format", suiteFormat, "runner", runner)
 	if isRepoState {
-		rr, retainedWorkDir, err = executeRepoStateBenchmarkRun(benchCtx, cfg, benchmarkNewCompleter(benchCtx), suitePath, time.Now().UTC())
+		rr, retainedWorkDir, err = executeRepoStateBenchmarkRun(benchCtx, cfg, benchmarkNewCompleter(benchCtx), suitePath, time.Now().UTC(), maxConsecutiveCaseFailures)
 	} else {
 		rr, err = executeBenchmarkRun(benchCtx, cfg, benchmarkNewCompleter(benchCtx), suitePath, time.Now().UTC(), checkpoint)
 	}

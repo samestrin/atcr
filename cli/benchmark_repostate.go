@@ -104,7 +104,14 @@ func checkRepoStateFlags(suiteFormat, checkpointPath string) error {
 // The Completer is injected so the CLI passes the real llmclient and tests pass a
 // stub, and generatedAt is injected rather than read from the wall clock, for the
 // same reproducibility reason executeBenchmarkRun does both.
-func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, completer fanout.Completer, suitePath string, generatedAt time.Time) (rr *benchmark.RunResult, retainedWorkDir string, err error) {
+// maxConsecutiveFailures is the OPT-IN mid-run cost brake: once that many cases fail
+// back to back, the run aborts instead of paying for the rest of the suite. 0 disables
+// it, which is the default. It complements the --fail-on-case-failure /
+// --max-case-failures exit gates rather than duplicating them — those judge a run that
+// has already been paid for in full, and this one stops the bill. Off by default for
+// the reason the work-dir arm's comment gives: a general cap would take the abort
+// decision away from the operator.
+func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, completer fanout.Completer, suitePath string, generatedAt time.Time, maxConsecutiveFailures int) (rr *benchmark.RunResult, retainedWorkDir string, err error) {
 	m, err := benchmark.LoadRepoState(suitePath)
 	if err != nil {
 		return nil, "", err
@@ -210,6 +217,11 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 	// run would have published" at both sites by construction rather than by
 	// arithmetic that happens to agree.
 	scored := 0
+	// consecutiveFailures is reset by a scored case, so it measures a RUN of failures
+	// rather than a total. Two failures either side of a scored case are bad luck; two
+	// back to back on a 20-case panel are usually one broken provider, and every
+	// remaining case is billed at ten minutes to learn the same thing again.
+	consecutiveFailures := 0
 	caseIDs := make([]string, 0, len(m.Cases))
 	// expectedCategories was called inside the per-agent loop — the same case's
 	// projection rebuilt once per agent per case. One call per case, above the
@@ -229,6 +241,17 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		// cover an interrupt arriving on any case including the last.
 		if cerr := ctx.Err(); cerr != nil {
 			return nil, "", fmt.Errorf("benchmark run cancelled after %d of %d case(s): %w", scored, len(m.Cases), cerr)
+		}
+		// The opt-in cost brake, checked at the TOP of the iteration for the same
+		// reason the cancellation check is: this is the last moment before the case
+		// is paid for. Checked here rather than at the six recording sites so a
+		// future seventh site inherits it, and so the abort always happens with a
+		// case still left to save — once the suite is exhausted there is no bill left
+		// to stop, and the all-cases-failed guard below already covers that shape.
+		if maxConsecutiveFailures > 0 && consecutiveFailures >= maxConsecutiveFailures {
+			return nil, "", fmt.Errorf("benchmark run aborted: %d consecutive case(s) failed (%s), reaching --max-consecutive-case-failures=%d; "+
+				"the remaining %d case(s) were not run, so the panel was not paid for them",
+				consecutiveFailures, summarizeCaseFailureReasons(caseFailures), maxConsecutiveFailures, len(m.Cases)-i)
 		}
 		caseIDs = append(caseIDs, c.ID)
 
@@ -254,7 +277,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 				return nil, "", fmt.Errorf("creating case work dir for %q: %w "+
 					"(host-level fault, not case-specific: every remaining case would fail identically)", c.ID, err)
 			}
-			recordCaseFailure(ctx, &caseFailures, c.ID, benchmark.CaseFailureWorkDir, err)
+			recordCaseFailure(ctx, &caseFailures, &consecutiveFailures, c.ID, benchmark.CaseFailureWorkDir, err)
 			// Released like every other failure path below, not skipped because the
 			// directory "was not created": MkdirAll builds the path element by element
 			// and returns on the first element it cannot make, so a partial tree is
@@ -267,7 +290,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		}
 		mc, err := benchmark.MaterializeCase(ctx, c, repoDir)
 		if err != nil {
-			recordCaseFailure(ctx, &caseFailures, c.ID, benchmark.CaseFailureMaterialize, err)
+			recordCaseFailure(ctx, &caseFailures, &consecutiveFailures, c.ID, benchmark.CaseFailureMaterialize, err)
 			releaseCaseRepo(ctx, repoDir, c.ID)
 			continue
 		}
@@ -341,7 +364,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 				releaseCaseRepo(ctx, repoDir, c.ID)
 				return nil, "", fmt.Errorf("preparing case %q: %w", c.ID, err)
 			}
-			recordCaseFailure(ctx, &caseFailures, c.ID, benchmark.CaseFailurePrepare, err)
+			recordCaseFailure(ctx, &caseFailures, &consecutiveFailures, c.ID, benchmark.CaseFailurePrepare, err)
 			releaseCaseRepo(ctx, repoDir, c.ID)
 			continue
 		}
@@ -370,14 +393,14 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			if errors.Is(err, fanout.ErrAllAgentsFailed) || errors.Is(err, fanout.ErrEmptyRoster) {
 				return nil, "", fmt.Errorf("executing case %q: %w", c.ID, err)
 			}
-			recordCaseFailure(ctx, &caseFailures, c.ID, benchmark.CaseFailureExecute, err)
+			recordCaseFailure(ctx, &caseFailures, &consecutiveFailures, c.ID, benchmark.CaseFailureExecute, err)
 			releaseCaseRepo(ctx, repoDir, c.ID)
 			continue
 		}
 
 		summary, err := readPoolSummaryFn(res.Dir)
 		if err != nil {
-			recordCaseFailure(ctx, &caseFailures, c.ID, benchmark.CaseFailurePoolSummary, err)
+			recordCaseFailure(ctx, &caseFailures, &consecutiveFailures, c.ID, benchmark.CaseFailurePoolSummary, err)
 			releaseCaseRepo(ctx, repoDir, c.ID)
 			continue
 		}
@@ -390,7 +413,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		}
 		located, categorical, unattributed, missingFindingsFile, err := readCaseFindingsLocatedFn(res.Dir, agentSet)
 		if err != nil {
-			recordCaseFailure(ctx, &caseFailures, c.ID, benchmark.CaseFailureReadFindings, err)
+			recordCaseFailure(ctx, &caseFailures, &consecutiveFailures, c.ID, benchmark.CaseFailureReadFindings, err)
 			releaseCaseRepo(ctx, repoDir, c.ID)
 			continue
 		}
@@ -516,6 +539,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			}
 		}
 		scored++
+		consecutiveFailures = 0
 	}
 
 	// The loop's cancellation check again, for an interrupt that arrived on the LAST
@@ -650,10 +674,15 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 // with only the reason constant differing. Six inlined append-and-log pairs is how a
 // classification drifts: one of them eventually logs at a different level, or omits
 // the case id, and the difference reads as meaningful when it is not.
-func recordCaseFailure(ctx context.Context, into *[]benchmark.CaseFailure, caseID, reason string, cause error) {
+func recordCaseFailure(ctx context.Context, into *[]benchmark.CaseFailure, consecutive *int, caseID, reason string, cause error) {
 	log.FromContext(ctx).Warn("repo-state case failed; recorded as unmeasured and skipped",
 		"case", caseID, "reason", reason, "err", cause)
 	*into = append(*into, benchmark.CaseFailure{CaseID: caseID, Reason: reason})
+	// Counted HERE so the opt-in consecutive-failure cap cannot miss a site: the
+	// same property that makes one helper serve all six recording sites makes this
+	// the one place the run of failures can be tracked without relying on every
+	// future site remembering to.
+	*consecutive++
 }
 
 // readPoolSummaryFn and readCaseFindingsLocatedFn are the two POST-PAYMENT read-back
