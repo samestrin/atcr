@@ -273,6 +273,21 @@ func TestBenchmarkRunCmd_CheckpointHelpMentionsSymlink(t *testing.T) {
 	require.Contains(t, f.Usage, "symlink", "checkpoint help must document symlink replace-not-follow behavior")
 }
 
+// The two case-failure exit flags are inert on standard-v1: executeBenchmarkRun
+// never populates CaseFailures, so caseFailureExitGate returns nil on the empty
+// slice no matter how the flags are set. Their help must say so — scoped to
+// repo-state-v1 like --max-consecutive-case-failures — rather than promising a
+// tolerance the standard tier does not offer.
+func TestBenchmarkRunCmd_CaseFailureFlagsDeclareTierScope(t *testing.T) {
+	cmd := newBenchmarkRunCmd()
+	for _, name := range []string{"fail-on-case-failure", "max-case-failures"} {
+		f := cmd.Flags().Lookup(name)
+		require.NotNil(t, f, "benchmark run exposes a --%s flag", name)
+		require.Contains(t, f.Usage, "repo-state-v1 only",
+			"--%s help must scope its exit contract to repo-state-v1: the flag is inert on standard-v1, whose runner never populates case_failures", name)
+	}
+}
+
 // --output is the canonical run-result destination flag (matching benchmark
 // export and every other output-destination flag); --out remains a deprecated
 // hidden alias resolving identically.
