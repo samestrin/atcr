@@ -159,6 +159,12 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	// It matters most under --json, which skips the human warning entirely: a consumer
 	// checking the exit code alone saw nothing, and a CI gate concluded from exit 0
 	// that review would run, exactly when it would not.
+	// Whether the ENDPOINT verdict already failed is captured before the persona
+	// fold below overwrites the exit code: once ExitCode is 1 the two causes are
+	// indistinguishable, and the message at the bottom would then name only one of
+	// them — sending an operator with a dead key to the persona files (or the
+	// reverse, the mis-routing this block's comment already warns against).
+	endpointFailed := rep.ExitCode != 0
 	if len(rep.PersonaResolutionErrors) > 0 && rep.ExitCode == 0 {
 		rep.ExitCode = 1
 	}
@@ -213,6 +219,11 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		// endpoint failure is a key or base_url, an unresolvable persona is a missing
 		// prompt. A single "no working endpoint" sent the operator to the wrong one.
 		if len(rep.PersonaResolutionErrors) > 0 {
+			if endpointFailed {
+				return fmt.Errorf("one or more agents have no working invocation path "+
+					"(an endpoint probe failed, and personas could not be resolved for: %s)",
+					strings.Join(rep.PersonaResolutionErrors, ", "))
+			}
 			return fmt.Errorf("one or more agents have no working invocation path "+
 				"(persona could not be resolved for: %s)",
 				strings.Join(rep.PersonaResolutionErrors, ", "))
