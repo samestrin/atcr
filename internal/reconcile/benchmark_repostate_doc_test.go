@@ -317,6 +317,85 @@ func TestBenchmarkDoc_CaseFailureReasonVocabularyMatchesTheCode(t *testing.T) {
 	}
 }
 
+// abortClasses is the abort taxonomy's ONE enumeration. Every failure that still
+// kills a repo-state run appears here exactly once, with the code marker that
+// implements it and the phrase each prose copy must use to name it.
+//
+// The taxonomy had forked into four hand-kept copies — this runner, the
+// docs/benchmark.md abort table, the CHANGELOG paragraph, and case_failure.go's
+// "one failure site per reason, one to one" claim — and the copies already
+// disagreed on PARTITIONING: the changelog merged the empty roster into the
+// total-roster row while the code treats it as a distinct second sentinel with the
+// opposite rationale. Nothing failed when they diverged, so reclassifying a failure
+// site meant editing N prose sites in lockstep and hoping.
+//
+// Keying the table on the CODE MARKER is what makes this a single source of truth
+// rather than a fifth copy: a new abort with no entry here has no marker to match,
+// and an entry whose marker is deleted fails immediately.
+var abortClasses = []struct {
+	name      string // what this test calls it, for the failure message
+	codeMark  string // the arm in cli/benchmark_repostate.go that aborts
+	docPhrase string // how docs/benchmark.md's abort table names it
+	logPhrase string // how the CHANGELOG paragraph names it
+}{
+	{"total-roster failure", "errors.Is(err, fanout.ErrAllAgentsFailed)", "total-roster failure still aborts", "total-roster failure"},
+	{"empty roster", "fanout.ErrEmptyRoster", "**empty roster**", "empty-roster failure"},
+	{"unwinnable expectation", "benchmark.ValidateAgainstHead(c, mc.Root)", "**unwinnable expectation**", "unwinnable expectation"},
+	{"scored-twice / identity collision", "scored twice under realized identity", "**scored-twice identity guard**", "scored-twice and identity-collision guards"},
+	{"cancellation", "benchmark run cancelled after", "**Cancellation** (SIGINT/SIGTERM)", "cancellation (SIGINT/SIGTERM)"},
+	{"nothing scored", "no case could be scored", "**Nothing scored at all.**", "run that scored nothing at all"},
+}
+
+// The abort taxonomy must partition identically in the runner, the doc table and the
+// changelog. Counting the doc's table ROWS (rather than only matching phrases) is what
+// catches the drift direction that actually happened: a row added to the doc and never
+// mirrored into the changelog reads to a release-notes reader as a shorter list of
+// fatal failures than the tool really has.
+func TestBenchmarkDoc_AbortTaxonomyPartitionsIdenticallyEverywhere(t *testing.T) {
+	doc := readRepoFile(t, "../../docs/benchmark.md")
+	cli := readRepoFile(t, "../../cli/benchmark_repostate.go")
+	changelog := readRepoFile(t, "../../CHANGELOG.md")
+
+	for _, class := range abortClasses {
+		assert.Containsf(t, cli, class.codeMark,
+			"the runner must still abort on %s — this table is the taxonomy's source of truth", class.name)
+		assert.Containsf(t, doc, class.docPhrase,
+			"the doc's abort table must name %s", class.name)
+		assert.Containsf(t, changelog, class.logPhrase,
+			"the CHANGELOG must name %s; a class the doc lists and the changelog merges away "+
+				"is the partitioning fork this guard exists to stop", class.name)
+	}
+
+	// The doc table's row count, read off the rendered table rather than trusted from
+	// the phrase matches above: an EXTRA row (a class the code no longer has, or one
+	// nobody added here) is invisible to a per-class Contains.
+	rows := 0
+	inTable := false
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "| Failure | Why it aborts |") {
+			inTable = true
+			continue
+		}
+		if !inTable {
+			continue
+		}
+		if !strings.HasPrefix(line, "|") {
+			break
+		}
+		if strings.HasPrefix(line, "|---") {
+			continue
+		}
+		rows++
+	}
+	assert.Equal(t, len(abortClasses), rows,
+		"docs/benchmark.md's abort table must have exactly one row per abort class")
+
+	// The changelog states the count in words. A numeral that disagrees with the table
+	// is the cheapest possible way for the two copies to fork again.
+	assert.Contains(t, changelog, "Six failure classes still abort the whole run",
+		"the CHANGELOG's count must match the abort table's row count")
+}
+
 // The export rejection is emitted as ONE line by checkCoverage's fmt.Errorf, but the
 // doc rendered it as a three-line terminal block nobody will ever see. Pin the real
 // shape: prefix, shortfall row and remedy sentence on a single doc line, in the order
