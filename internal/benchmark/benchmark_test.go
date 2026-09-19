@@ -899,6 +899,19 @@ func TestBuildSubmission_CarriesTheGroundingTagIntoTheSubmission(t *testing.T) {
 	require.NotNil(t, sub.Coverage[1].GroundingEnabled)
 	assert.False(t, *sub.Coverage[1].GroundingEnabled)
 
+	// The submission must not SHARE storage with the caller's run-result. This file
+	// states the rule about itself two pointer fields up ("a PublicRecord struct copy
+	// aliases them, so mutating the submission would rewrite the caller's RunResult"),
+	// and grounding_enabled was the one exception to it — a latent break of a stated
+	// invariant, which a reader should not have to check field by field.
+	*sub.Coverage[0].GroundingEnabled = false
+	require.NotNil(t, rr.Coverage[0].GroundingEnabled)
+	assert.True(t, *rr.Coverage[0].GroundingEnabled,
+		"mutating the submission's tag must not rewrite the caller's run-result")
+
+	// Restore for the wire assertions below, which describe the projection as built.
+	*sub.Coverage[0].GroundingEnabled = true
+
 	data, err := json.Marshal(sub)
 	require.NoError(t, err)
 	assert.Contains(t, string(data), `"grounding_enabled":true`)

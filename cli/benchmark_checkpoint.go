@@ -66,6 +66,22 @@ type checkpointCase struct {
 	CaseID    string               `json:"case_id"`
 	Expected  []string             `json:"expected"`
 	Reviewers []checkpointReviewer `json:"reviewers"`
+
+	// GroundingEnabled is this case's Epic 14.1 gate state, read from its
+	// PoolSummary. It sits on the CASE rather than on each reviewer because that is
+	// where it is measured — one pool summary per case, shared by every slot — so
+	// storing it per reviewer would be N copies of one fact that could disagree.
+	//
+	// It is checkpointed at all because the coverage row publishes it: without this,
+	// a fully replayed run would emit nil where an uninterrupted run emits false,
+	// breaking the byte-identical-resume contract (AC3) the moment the tag shipped.
+	//
+	// PURELY ADDITIVE, and a POINTER for the same reason Outcome is a string enum: a
+	// checkpoint written before this field existed omits it and decodes to nil, which
+	// folds to "unmeasured" — the honest answer for a file that never recorded the
+	// gate state. A plain bool would default to false and assert "the gate was off"
+	// about cases nobody observed.
+	GroundingEnabled *bool `json:"grounding_enabled,omitempty"`
 }
 
 // checkpointReviewer captures exactly the per-reviewer fields the run loop folds

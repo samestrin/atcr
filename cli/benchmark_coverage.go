@@ -104,7 +104,23 @@ func duplicateIdentityError(path, what string, key reviewerKey, prevModel, prevP
 // message. Missing case ids within a row are interchangeable by contrast; the
 // first few plus the count diagnose the row fully. Pinned by
 // TestCheckCoverage_EveryShortRowIsNamed and TestRunBFixture_RejectedByExportGate.
+//
+// The bound is PER HALF of a row's shortfall, not per row. describeMissing splits a
+// row into genuinely-missing, case-level-unmeasured and slot-level-unshown cases and
+// caps each independently, so a row carrying all three can name up to
+// 3*maxNamedMissingCases ids. That is deliberate: the halves call for different
+// responses (re-run the suite vs. investigate a case fault vs. investigate one
+// reviewer's provider), and capping them jointly would let one half's overflow hide
+// another half's existence — the same argument that keeps the outer list uncapped,
+// applied one level in.
 const maxNamedMissingCases = 3
+
+// halfSeparator divides describeMissing's halves. It is deliberately NOT the
+// "; " checkCoverage uses between distinct short rows: the row list is the outer
+// nesting level, and a message that nests both must keep the two delimiters
+// distinguishable — otherwise a reader, or anything downstream that splits on it,
+// reads one reviewer row as two.
+const halfSeparator = " / "
 
 // checkCoverage is the publication gate: no reviewer row may reach the public board
 // having been scored over less than the suite the run-result declares.
@@ -218,16 +234,117 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 					"the producer counts one outcome per case, so this file is malformed",
 					path, model, persona, k, n)
 			}
+			// Both causes are named, like duplicateIdentityError above. The vocabulary
+			// GROWS — repo-state-v1 added "ungrounded" — so the commonest way to reach
+			// this branch is an older atcr exporting a newer run-result, not a hand-
+			// assembled file. Reporting only hand-assembly sends that operator auditing
+			// a file nobody edited. Version skew leads because it is both the likelier
+			// cause and the one with a remedy that terminates; re-running under this
+			// build cannot help, since a producer of this version writes only values
+			// this version knows.
 			if k != benchmark.OutcomeUnknownLabel && !benchmark.ValidOutcome(k) {
-				return fmt.Errorf("run-result %s records outcome tally key %q for %s/%s, outside the outcome vocabulary; "+
-					"the producer writes only benchmark.Outcome* values, so this file is malformed",
+				return fmt.Errorf("run-result %s records outcome tally key %q for %s/%s, outside the outcome vocabulary "+
+					"this build knows; the file was either written by a NEWER atcr whose vocabulary added the value "+
+					"(version skew — upgrade atcr and re-export) or hand-assembled, since a producer of this version "+
+					"writes only benchmark.Outcome* values",
 					path, k, model, persona)
 			}
+		}
+		// grounding_enabled is published verbatim into the public envelope and is the
+		// tag saying which population corroboration_rate was computed over, so it gets
+		// the same untrusted-input treatment as the tally above. The producer
+		// guarantees exactly one implication for free: reviewerOutcome reaches
+		// OutcomeUngrounded only via AgentStatus.DroppedByGrounding > 0, which the gate
+		// cannot produce when it is off. A row claiming both is self-contradictory.
+		//
+		// Only an EXPLICIT false is rejected. nil means unmeasured — a rebuilt summary,
+		// or a row folded across a mix of gated and ungated cases — which is
+		// uninformative rather than contradictory, and rejecting it would make a
+		// legitimate paid run unexportable at the one boundary with no remedy. That is
+		// narrower than "must be true", deliberately: this gate's job is to catch a
+		// claim the producer cannot make, not to require one it may not have.
+		//
+		// The message names the PRODUCER alongside hand-assembly, the way
+		// duplicateIdentityError names version skew: a row folded across a mix of gated
+		// and ungated cases currently ANDs to false rather than to nil, so this pair is
+		// reachable from a legitimate paid run. Reporting only "hand-assembled" would
+		// send that operator hunting an edit nobody made.
+		if c.GroundingEnabled != nil && !*c.GroundingEnabled && c.Outcomes[benchmark.OutcomeUngrounded] > 0 {
+			return fmt.Errorf("run-result %s records %d %q outcome(s) for %s/%s while claiming grounding_enabled=false; "+
+				"that outcome is reached only when the grounding gate dropped a finding, so the two cannot both be true — "+
+				"either the file was hand-assembled, or it was written by a build whose multi-case fold reported a mixed "+
+				"run as ungated rather than as unmeasured (upgrade atcr and re-run)",
+				path, c.Outcomes[benchmark.OutcomeUngrounded], benchmark.OutcomeUngrounded, model, persona)
 		}
 		byIdentity[key] = c
 	}
 
+	// The infra-failure index behind every shortfall diagnostic below. A case in
+	// here was never measured, so "re-run the missing cases" is the wrong
+	// instruction for it — the case did not run, and whether a re-run helps depends
+	// on the reason, which is why the reason is what gets printed.
+	//
+	// An entry whose reason is outside the vocabulary is DROPPED rather than
+	// printed, so that case falls back to reading as plainly missing. runBenchmarkExport
+	// already rejects such a file through validateCaseFailures before calling this,
+	// but the safety of an operator-facing diagnostic must not rest on the order two
+	// functions happen to be called in: a second caller would otherwise interpolate
+	// an arbitrary attacker-chosen string into the terminal.
+	//
+	// The drop is ANNOUNCED, not silent. Without this line the case simply reads as
+	// plainly missing, so a caller reaching checkCoverage without the export command's
+	// gate in front of it is told to re-run a case the file claims was unmeasured, with
+	// no hint that the file said anything about it. The entry is named by case id and
+	// the reason is reported stripped and under %q — the same treatment
+	// validateCaseFailures' own rejection gives it — so the operator learns the entry
+	// existed without the reason's arbitrary prose being interpolated as an explanation.
+	failed := make(map[string]string, len(rr.CaseFailures))
+	for _, f := range rr.CaseFailures {
+		if !benchmark.ValidCaseFailureReason(f.Reason) {
+			_, _ = fmt.Fprintf(w,
+				"warning: run-result %s records a case_failures entry for %s with reason %q, outside the failure vocabulary; "+
+					"it explains nothing and is ignored, so that case is reported as plainly missing.\n",
+				path, stripTerminalControlRunes(f.CaseID), stripTerminalControlRunes(f.Reason))
+			continue
+		}
+		failed[f.CaseID] = f.Reason
+	}
+
+	// The slot-failure index behind the third shortfall label. Keyed by IDENTITY
+	// first, because a slot failure is a statement about one reviewer: the case ran,
+	// and only this row is short by it. A flat case-keyed map would attach one
+	// reviewer's excuse to every other row that happens to be short of the same case
+	// — an unearned explanation, which is the shape validateSlotFailures exists to
+	// keep out of the file in the first place.
+	//
+	// The same defence-in-depth drop as the case index above, and for the same
+	// reason: runBenchmarkExport rejects an out-of-vocabulary reason through
+	// validateSlotFailures before reaching here, but a second caller must not be able
+	// to interpolate an arbitrary string into the terminal, and the drop is ANNOUNCED
+	// so the case does not silently fall back to "missing" with no hint the file said
+	// anything about it.
+	slotFailed := map[reviewerKey]map[string]string{}
+	for _, sf := range rr.SlotFailures {
+		if !benchmark.ValidSlotFailureReason(sf.Reason) {
+			_, _ = fmt.Fprintf(w,
+				"warning: run-result %s records a slot_failures entry for %s/%s on %s with reason %q, outside the "+
+					"failure vocabulary; it explains nothing and is ignored, so that case is reported as plainly missing.\n",
+				path, stripTerminalControlRunes(sf.Model), stripTerminalControlRunes(sf.Persona),
+				stripTerminalControlRunes(sf.CaseID), stripTerminalControlRunes(sf.Reason))
+			continue
+		}
+		k := coverageKey(sf.Model, sf.Persona)
+		if slotFailed[k] == nil {
+			slotFailed[k] = map[string]string{}
+		}
+		slotFailed[k][sf.CaseID] = sf.Reason
+	}
+
 	var short []string
+	// The identities behind `short`, kept in the same order so the remedy below can
+	// ask which short rows lost a slot. `short` itself is pre-formatted display text
+	// and cannot be matched back to an identity without re-parsing it.
+	var shortKeys []reviewerKey
 	consumed := make(map[reviewerKey]scorecard.PublicRecord, len(rr.Reviewers))
 	for _, rev := range rr.Reviewers {
 		key := coverageKey(rev.Model, rev.Persona)
@@ -300,8 +417,13 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		// rejected any repeat and any non-member, so every id in the row is a
 		// distinct suite member. A defensive recount would describe a state the
 		// checks above have already made unreachable.
-		short = append(short, fmt.Sprintf("%s/%s (%d/%d cases, missing %s)",
-			model, persona, len(cov.CaseIDs), len(suite), summarizeMissing(missing)))
+		short = append(short, fmt.Sprintf("%s/%s (%d/%d cases, %s)",
+			model, persona, len(cov.CaseIDs), len(suite), describeMissing(missing, failed, slotFailed[key])))
+		// The RAW key, because slotFailed is indexed by it. Stripping happens where the
+		// pair is rendered below, not here — a stripped key would silently miss its
+		// slotFailed entry for any identity carrying a control rune, which is exactly
+		// the case where a wrong answer matters.
+		shortKeys = append(shortKeys, key)
 	}
 
 	// The join is checked in BOTH directions: a coverage row no reviewer row
@@ -322,17 +444,66 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 	if len(short) == 0 {
 		return nil
 	}
+
+	// The SLOT caveat, computed once for both exits below. It applies only when a row
+	// is short because a reviewer was not shown a case — not when the whole panel lost
+	// one. That distinction is the point: a case-level shortfall hits every row
+	// equally, so the rows stay comparable to EACH OTHER and only the suite is short,
+	// while a slot-level one makes one row's denominator differ from its peers'.
+	var slotShortRows []string
+	for _, k := range shortKeys {
+		if len(slotFailed[k]) > 0 {
+			slotShortRows = append(slotShortRows,
+				stripTerminalControlRunes(k.model)+"/"+stripTerminalControlRunes(k.persona))
+		}
+	}
+
 	if allowPartial {
-		_, _ = fmt.Fprintf(w,
+		msg := fmt.Sprintf(
 			"warning: publishing %s with partial coverage (--allow-partial-coverage): %s — "+
 				partialCoverageVisibilityAdvisory+
 				", but the rows still are not comparable to fully-covered ones.\n",
 			path, strings.Join(short, "; "))
+		// What the override is about to publish, stated plainly. corroboration_rate is
+		// a mean over the cases a reviewer was SHOWN (score.go's ratedCases counts
+		// r.Cases, which the slot skip already removed them from), so a slot-short row
+		// is not penalised for what it missed and reads higher than a peer scored over
+		// the full suite. That is the correct measurement of what the reviewer saw and
+		// the wrong number to rank it by, and the envelope has no field that can say so
+		// — slot_failures is run-result-only. An operator overriding the gate is owed
+		// that sentence before the figure reaches a board.
+		if len(slotShortRows) > 0 {
+			msg += fmt.Sprintf(
+				"  note: %s lost individual reviewer slots, so each one's corroboration_rate is "+
+					"averaged over only the cases that reviewer was shown and is not penalised for the rest. "+
+					"It will read higher than a row scored over the full suite, and nothing in the submission "+
+					"distinguishes the two.\n",
+				strings.Join(slotShortRows, ", "))
+		}
+		_, _ = fmt.Fprint(w, msg)
 		return nil
 	}
-	return fmt.Errorf("run-result %s has reviewer row(s) scored over less than the full %d-case suite: %s; "+
-		"re-run the missing cases, or pass --allow-partial-coverage to publish the shortfall explicitly",
-		path, len(suite), strings.Join(short, "; "))
+
+	// The remedy is TIER-AWARE, because "re-run the missing or unmeasured cases"
+	// presumes per-case re-running and repo-state-v1 has none: checkRepoStateFlags
+	// refuses --checkpoint there, so the only re-run on offer is the entire paid
+	// panel. An operator weighing that against --allow-partial-coverage has to know
+	// which they are choosing between.
+	remedy := "re-run the missing or unmeasured cases, or pass --allow-partial-coverage to publish the shortfall explicitly"
+	if strings.EqualFold(rr.Suite, benchmark.FormatRepoStateV1) {
+		remedy = "on " + benchmark.FormatRepoStateV1 + " there is no per-case resume (--checkpoint is refused for this tier), " +
+			"so re-running re-pays the whole suite; weigh that against --allow-partial-coverage, which publishes the " +
+			"shortfall explicitly"
+	}
+	if len(slotShortRows) > 0 {
+		// A re-run is the wrong instruction for the slot half whatever the tier: the
+		// case ran and the other reviewers scored it, so what needs investigating is
+		// that reviewer's provider, not the suite.
+		remedy += ". Re-running will not help the `unshown` cases — those ran and the rest of the panel scored them; " +
+			"investigate the provider behind " + strings.Join(slotShortRows, ", ") + " instead"
+	}
+	return fmt.Errorf("run-result %s has reviewer row(s) scored over less than the full %d-case suite: %s; %s",
+		path, len(suite), strings.Join(short, "; "), remedy)
 }
 
 // suiteAnchor is the only part of a suite manifest the denominator anchor consults:
@@ -393,6 +564,12 @@ func loadSuiteAnchor(suitePath string) (suiteAnchor, error) {
 // to the wrong suite reports the wrong suite rather than reporting every case as
 // missing; then the presence of a denominator, since an unmeasured file has nothing to
 // anchor and passing the flag must not read as a check that silently did nothing; then
+//
+// THAT FIRST GUARANTEE HOLDS ON standard-v1 ONLY. A repo-state suite's name is fixed
+// by the format discriminator rather than chosen by its author, so the identity check
+// is a tautology on that tier and a wrong-suite anchor falls through to the case-set
+// check. The case-set diagnostics below carry a caveat naming that second possible
+// cause rather than asserting the run was truncated; see the comment beside them.
 // the case list itself, compared as a SET in both directions — a missing id is the
 // truncation this exists to catch, and an EXTRA id is a denominator inflated past what
 // the suite can support.
@@ -455,18 +632,46 @@ func anchorSuiteDenominator(rr benchmark.RunResult, suitePath, path string) erro
 	sort.Strings(missing)
 	sort.Strings(extra)
 
+	// On repo-state-v1 the identity check above cannot have told these two suites
+	// apart. LoadRepoState requires the manifest to declare exactly
+	// FormatRepoStateV1 and then stamps that constant onto what it returns, so every
+	// repo-state manifest and run-result carries the same literal — unlike
+	// standard-v1, whose suite name is author-chosen and therefore distinguishing.
+	// The documented ordering guarantee ("anchoring to the wrong suite reports the
+	// wrong suite rather than reporting every case as missing") does not hold here,
+	// so a case-set difference on this tier has TWO possible causes and the message
+	// must not pick one. Blaming the denominator asserts the run was truncated, which
+	// the file gives no evidence for; the likelier cause is a run-result anchored to
+	// a different repo-state suite that happens to share its suite_version.
+	//
+	// validateSuiteIdentityForPublication names the same hazard one level up: two
+	// different suites publishing a byte-identical (suite, suite_version) merge into
+	// one comparability bucket on the public board.
+	tierCaveat := ""
+	if strings.EqualFold(rr.Suite, benchmark.FormatRepoStateV1) {
+		tierCaveat = "; on " + benchmark.FormatRepoStateV1 + " the suite name is not author-distinguishable " +
+			"(every manifest declares the same literal), so this may equally mean the run-result was anchored " +
+			"to a DIFFERENT repo-state suite of the same suite_version rather than that it is short"
+	}
+
 	switch {
 	case len(missing) > 0 && len(extra) > 0:
 		return fmt.Errorf("run-result %s declares a %d-case suite but the suite manifest at %s has %d: "+
-			"missing %s; not in the suite: %s",
-			path, len(declared), suitePath, len(m.CaseIDs), summarizeMissing(missing), summarizeMissing(extra))
+			"missing %s; not in the suite: %s%s",
+			path, len(declared), suitePath, len(m.CaseIDs), summarizeMissing(missing), summarizeMissing(extra), tierCaveat)
 	case len(missing) > 0:
+		// The denominator claim is made ONLY where it is warranted: on a tier whose
+		// suite name already proved the two files describe the same suite.
+		cause := "; every reviewer row was therefore scored against a shrunken denominator"
+		if tierCaveat != "" {
+			cause = tierCaveat
+		}
 		return fmt.Errorf("run-result %s declares a %d-case suite but the suite manifest at %s has %d, "+
-			"missing %s; every reviewer row was therefore scored against a shrunken denominator",
-			path, len(declared), suitePath, len(m.CaseIDs), summarizeMissing(missing))
+			"missing %s%s",
+			path, len(declared), suitePath, len(m.CaseIDs), summarizeMissing(missing), cause)
 	case len(extra) > 0:
-		return fmt.Errorf("run-result %s declares case(s) the suite manifest at %s does not contain: %s",
-			path, suitePath, summarizeMissing(extra))
+		return fmt.Errorf("run-result %s declares case(s) the suite manifest at %s does not contain: %s%s",
+			path, suitePath, summarizeMissing(extra), tierCaveat)
 	}
 	return nil
 }
@@ -511,19 +716,27 @@ func validateCoveredSet(suite map[string]bool, covered []string, path, model, pe
 
 // summarizeMissing renders up to maxNamedMissingCases ids, then an overflow count.
 //
-// It strips terminal control runes from every id it names, because this is the ONLY
-// route by which a case id reaches the operator's terminal under %s: both of
-// checkCoverage's shortfall messages (the rejection and the --allow-partial-coverage
-// warning) and all three of anchorSuiteDenominator's diagnostics funnel through here.
-// Case ids are untrusted for the same reason the reviewer identity is — they come from
-// the run-result being validated, and export is where a hand-supplied file first enters
-// the tool.
+// It strips terminal control runes from every id it names. Case ids are untrusted for
+// the same reason the reviewer identity is — they come from the run-result being
+// validated, and export is where a hand-supplied file first enters the tool.
 //
-// Sanitizing HERE rather than at the five call sites is what makes that claim checkable:
-// a future diagnostic that names ids has to come through this function to get the cap,
-// so it inherits the stripping with it. The id sites inside validateCoveredSet are
-// deliberately left alone — they use %q, which already renders a control rune as a
-// literal escape sequence.
+// It is the route for EXPORT's capped diagnostics — both of checkCoverage's shortfall
+// messages (the rejection and the --allow-partial-coverage warning) and all three of
+// anchorSuiteDenominator's — and sanitizing here rather than at those five call sites
+// is what keeps the guarantee checkable for them: a further capped diagnostic that
+// names ids has to come through this function to get the cap, so it inherits the
+// stripping with it.
+//
+// It is NOT, however, the only place a case id reaches the terminal under %s.
+// warnCaseFailures (cli/benchmark_repostate.go) prints the failed cases on the RUN
+// path and strips independently with the same stripTerminalControlRunes call. It
+// applies its own cap (maxNamedFailedCases) rather than inheriting this one, so the
+// two sites now share BOTH rules while sharing no code. Two sites applying one rule is
+// the accurate statement; claiming a single choke point would leave the next author of
+// a run-path diagnostic believing the stripping came for free.
+//
+// The id sites inside validateCoveredSet are deliberately left alone — they use %q,
+// which already renders a control rune as a literal escape sequence.
 func summarizeMissing(missing []string) string {
 	named := missing
 	if len(named) > maxNamedMissingCases {
@@ -537,6 +750,87 @@ func summarizeMissing(missing []string) string {
 		return strings.Join(safe, ", ")
 	}
 	return fmt.Sprintf("%s and %d more", strings.Join(safe, ", "), len(missing)-maxNamedMissingCases)
+}
+
+// describeMissing splits one row's shortfall into the three things it can be, and
+// says which.
+//
+// They call for different responses, and each label names a different actor:
+//
+//   - `unmeasured` — the CASE never ran, for anybody (rr.CaseFailures). Whether a
+//     re-run helps depends on the reason, which is why the reason is printed.
+//   - `unshown` — the case ran and the rest of the panel scored it; THIS reviewer
+//     was not shown it (rr.SlotFailures). Re-running the case would not have helped
+//     the other reviewers, who already have it.
+//   - `missing` — accounted for by neither: the row claims a suite it was not scored
+//     over. That is the shape the original "re-run the missing cases" instruction was
+//     written for, and before the slot skip existed it was reachable only by
+//     tampering.
+//
+// Collapsing any pair loses the distinction that picks the remedy. Labelling a slot
+// shortfall `missing` told an operator to re-run cases that ran perfectly and made one
+// flaky provider read as a hand-assembled file; labelling it `unmeasured` would claim
+// the case never ran while the surviving reviewers' rows visibly contain it.
+//
+// All three halves route through summarizeMissing, so each inherits the per-row cap and
+// the control-rune stripping described there rather than re-deriving them — the
+// reason is stripped with the id it is composed onto.
+//
+// Each half is capped independently, so the bound is PER HALF and a row carrying all
+// three kinds of shortfall names up to 3*maxNamedMissingCases ids with three overflow
+// counts — see maxNamedMissingCases for why that is deliberate rather than an oversight.
+//
+// PRECONDITION: missing is non-empty. An empty slice returns "", which the caller
+// composes into `m/p (2/3 cases, )` — a shortfall message with a blank explanation.
+// checkCoverage is the only caller and reaches this line only past its own
+// `len(missing) == 0` continue, so the condition holds by construction rather than by
+// a check here.
+//
+// PRECONDITION: every reason in failed already satisfies
+// benchmark.ValidCaseFailureReason, and every reason in slotFailed satisfies
+// benchmark.ValidSlotFailureReason. Both filters live in the CALLER, not in this
+// signature, so a second caller that builds either map itself would print an
+// attacker-chosen string as an explanation for a case. Terminal safety survives it —
+// summarizeMissing strips the composed string — but truthfulness does not.
+// validateCoveredSet states its own equivalent contract the same way, and this
+// function owes the same statement.
+//
+// PRECONDITION: slotFailed holds only THIS row's reviewer. It is an
+// identity-scoped projection, and passing the whole run's slot failures would attach
+// one reviewer's excuse to another's short row.
+func describeMissing(missing []string, failed, slotFailed map[string]string) string {
+	var unexplained, unmeasured, unshown []string
+	for _, id := range missing {
+		// Case-level first: a case NOBODY was shown is the stronger statement, and the
+		// producer cannot record both for one (reviewer, case) pair — a failed case is
+		// skipped before the per-agent loop that records slot failures ever runs. The
+		// order therefore only settles a hand-assembled file, where naming the wider
+		// fault is the honest reading.
+		if reason, ok := failed[id]; ok {
+			unmeasured = append(unmeasured, fmt.Sprintf("%s (%s)", id, reason))
+			continue
+		}
+		if reason, ok := slotFailed[id]; ok {
+			unshown = append(unshown, fmt.Sprintf("%s (%s)", id, reason))
+			continue
+		}
+		unexplained = append(unexplained, id)
+	}
+	var parts []string
+	if len(unexplained) > 0 {
+		parts = append(parts, "missing "+summarizeMissing(unexplained))
+	}
+	if len(unmeasured) > 0 {
+		parts = append(parts, "unmeasured "+summarizeMissing(unmeasured))
+	}
+	if len(unshown) > 0 {
+		parts = append(parts, "unshown "+summarizeMissing(unshown))
+	}
+	// " / ", not "; ": checkCoverage joins distinct short ROWS with "; ", and a
+	// multi-short-row run is the normal case on a large roster. Using one delimiter at
+	// two nesting levels fragments a single reviewer row into two for a reader — and
+	// for anything downstream that splits the message on it.
+	return strings.Join(parts, halfSeparator)
 }
 
 // firstNonPrintingRune reports the first control (Cc) or format (Cf) rune in s —
@@ -714,6 +1008,254 @@ func validateSuiteIdentityForPublication(rr benchmark.RunResult, path string) er
 				"would publish one identity; rename the suite in the manifest",
 				path, f.name, f.value, s)
 		}
+	}
+	return nil
+}
+
+// validateCaseFailures is the EXPORT trust boundary for the per-case failure
+// channel — the only live one for this tier, since checkRepoStateFlags refuses
+// --checkpoint for repo-state-v1 and there is no resume path to guard.
+//
+// It exists because the array is CONSEQUENTIAL at the gate below: checkCoverage
+// reads it to explain a coverage shortfall, so an unvalidated entry is a way to
+// attach an excuse to a row that never earned one. A run-result reaches export
+// hand-suppliable, having never passed through the producer, which is the same
+// premise every other check in this file is built on.
+//
+// The four rejections are the four ways an entry can be MALFORMED: a reason outside
+// the vocabulary (including the empty one — a failure record always states its
+// cause), a case the suite does not declare, a case some reviewer also scored, and a
+// case named twice. Each is impossible from the producer, which records each failed
+// case once, with a constant, before the case can be scored.
+//
+// WHAT THIS DOES NOT PROVE. It establishes that an entry is well-formed and
+// internally consistent, NOT that the case really failed. A valid reason paired with
+// a real, unscored case id passes every arm, so a truncated run can still be
+// relabelled from "missing" to "unmeasured" in the diagnostic below. That gap is not
+// closeable from inside the file being validated — only the producer knows what ran
+// — so it is stated rather than papered over, in docs/benchmark.md as well as here.
+//
+// NOT TIER-SCOPED, DELIBERATELY. The arms above accept case_failures on ANY
+// run-result, including a standard-v1 one whose producer never writes the array — so
+// a hand-edited standard-v1 file can carry, say, a `materialize` reason for a pipeline
+// that has no materialize stage. That is tolerated on three grounds. First, the entry
+// still has to name a declared, unscored, unrepeated case with a vocabulary reason, so
+// the claim it can make is "this case was not measured" — true of a case absent from
+// every coverage row whatever tier produced the file, and already covered by the
+// paragraph above. Second, the only available discriminator is
+// ReviewerCoverage.GroundingEnabled being non-nil, which is a property of what the
+// standard-v1 producer happens NOT to write today rather than of the tier; a change
+// making standard-v1 publish `false` would silently turn the arm into a no-op while
+// leaving it looking like a live gate. Third, the header's own premise — that the
+// export boundary is the only live one — is what makes this a diagnostic-quality
+// question rather than a resume-safety one. Add the arm only alongside a real tier
+// discriminator on the run-result.
+func validateCaseFailures(rr benchmark.RunResult, path string) error {
+	if len(rr.CaseFailures) == 0 {
+		return nil
+	}
+	// A failure array with NO denominator gets its own rejection rather than the
+	// membership arm's. Without it every entry fails `suite[f.CaseID]` and the message
+	// blames the case id for a file whose actual defect is the absent suite_case_ids —
+	// and the mirror shape one field over already has a sharper rejection (checkCoverage
+	// rejects "records reviewer coverage but no suite_case_ids"). It also closes the arm
+	// on which the channel was unvalidatable: checkCoverage returns early on a file with
+	// neither field, so nothing downstream reads the array either, and a hand-edited
+	// pre-coverage file could carry an arbitrary one through export with no gate firing.
+	if len(rr.SuiteCaseIDs) == 0 {
+		return fmt.Errorf("run-result %s records case_failures but no suite_case_ids; "+
+			"a failure names a case of the declared suite, and `atcr benchmark run` writes the two together, "+
+			"so this file is malformed", path)
+	}
+	// An impossible SHAPE is rejected before any index is built, the way the sibling
+	// validators in this file reject one rather than merely iterating it. Every entry
+	// must name a distinct declared case (the membership and repeat arms below), so an
+	// array longer than the declared suite cannot be well-formed whatever it contains —
+	// and the declared count is the bound rather than the distinct one, so a repeated
+	// suite id still reaches checkCoverage's sharper duplicate diagnostic instead of
+	// being preempted here.
+	if len(rr.CaseFailures) > len(rr.SuiteCaseIDs) {
+		return fmt.Errorf("run-result %s records %d case_failures entries over a %d-case suite; "+
+			"the producer records each failed case at most once, so this file is malformed",
+			path, len(rr.CaseFailures), len(rr.SuiteCaseIDs))
+	}
+	suite := make(map[string]bool, len(rr.SuiteCaseIDs))
+	for _, id := range rr.SuiteCaseIDs {
+		suite[id] = true
+	}
+	// A case any reviewer scored cannot also be unmeasured. Built from every
+	// coverage row rather than the first: the contradiction is worth catching
+	// wherever it appears, and the producer writes one identical covered set per
+	// fully-scored row anyway.
+	scored := map[string]bool{}
+	for _, c := range rr.Coverage {
+		for _, id := range c.CaseIDs {
+			scored[id] = true
+		}
+	}
+	seen := make(map[string]bool, len(rr.CaseFailures))
+	for _, f := range rr.CaseFailures {
+		// Stripped for the same reason every identity in this file is: these
+		// diagnostics reach the operator's terminal, and a case id is untrusted
+		// input here.
+		id := stripTerminalControlRunes(f.CaseID)
+		if !benchmark.ValidCaseFailureReason(f.Reason) {
+			return fmt.Errorf("run-result %s records case_failures reason %q for case %q, outside the failure vocabulary; "+
+				"the producer writes only benchmark.CaseFailure* values, so this file is malformed",
+				path, stripTerminalControlRunes(f.Reason), id)
+		}
+		// A blank id names nothing, so the membership arm below would report it as
+		// `an entry for "", which suite_case_ids does not declare` — a sentence that
+		// blames the denominator for an entry that never identified a case at all.
+		// This is the shape a partly-populated hand edit produces, the same one the
+		// empty reason is rejected for one field up.
+		if strings.TrimSpace(f.CaseID) == "" {
+			return fmt.Errorf("run-result %s records a case_failures entry with a blank case_id; "+
+				"a failure record names the case it is about, so this file is malformed", path)
+		}
+		// A non-printing rune gets its OWN arm, before the membership arm below, because
+		// every comparison here is on the RAW id while every message prints the stripped
+		// one. validateScrubbedCaseIDs guarantees no suite_case_ids entry carries such a
+		// rune, so "case-02​" can never match — and the membership arm would then
+		// report `an entry for "case-02", which suite_case_ids does not declare` about a
+		// file whose suite_case_ids visibly contains case-02. Naming the rune is the rule
+		// duplicateIdentityError and anchorSuiteDenominator already state for the same
+		// class of message: a difference-showing diagnostic must show the difference.
+		if r, bad := firstNonPrintingRune(f.CaseID); bad {
+			return fmt.Errorf("run-result %s records a case_failures entry for case %q carrying a non-printing rune (U+%04X); "+
+				"the producer records the suite's own case ids, which cannot contain one, so this file is malformed",
+				path, id, r)
+		}
+		if !suite[f.CaseID] {
+			return fmt.Errorf("run-result %s records a case_failures entry for %q, which suite_case_ids does not declare; "+
+				"a failure naming a case outside the suite explains no shortfall in it, so this file is malformed",
+				path, id)
+		}
+		if scored[f.CaseID] {
+			return fmt.Errorf("run-result %s records case %q as both scored and infrastructure-failed; "+
+				"the producer skips a failed case before scoring it, so this file is malformed",
+				path, id)
+		}
+		if seen[f.CaseID] {
+			return fmt.Errorf("run-result %s records case %q in case_failures more than once; "+
+				"the producer records each failed case exactly once, so this file is malformed",
+				path, id)
+		}
+		seen[f.CaseID] = true
+	}
+	return nil
+}
+
+// validateSlotFailures is the export trust boundary for the per-SLOT failure channel,
+// the role validateCaseFailures plays one level up.
+//
+// It exists on the same premise: a run-result reaches export hand-suppliable, having
+// never passed through the producer, and this array is CONSEQUENTIAL — the shortfall
+// diagnostic reads it to explain why a reviewer row is short, so an unvalidated entry
+// is a way to attach an excuse to a row that never earned one, and to interpolate an
+// attacker-chosen string into an operator's terminal.
+//
+// The arms are the ways an entry can be MALFORMED, each impossible from the producer,
+// which writes one record per (reviewer, case) with a constant reason at the moment
+// it skips the slot:
+//
+//   - a reason outside the vocabulary, the empty one included
+//   - a blank or non-printing case id or identity
+//   - a case the suite does not declare
+//   - a case that same reviewer's coverage row also claims to have scored
+//   - the same (reviewer, case) pair twice
+//
+// WHAT IT DOES NOT PROVE, stated for the same reason its sibling states it: that an
+// entry is well-formed is not that the slot really failed. A valid reason on a real,
+// unscored (reviewer, case) pair passes every arm. Only the producer knows what ran.
+//
+// The identity is matched against the COVERAGE rows rather than the reviewer rows
+// because coverage is what carries the covered set this record explains, and the two
+// are already cross-checked in both directions by checkCoverage.
+func validateSlotFailures(rr benchmark.RunResult, path string) error {
+	if len(rr.SlotFailures) == 0 {
+		return nil
+	}
+	// The no-denominator rejection its sibling carries, for the same reason: without
+	// it every entry fails the membership arm and the message blames the case id for a
+	// file whose actual defect is the absent suite_case_ids.
+	if len(rr.SuiteCaseIDs) == 0 {
+		return fmt.Errorf("run-result %s records slot_failures but no suite_case_ids; "+
+			"a slot failure names a case of the declared suite, and `atcr benchmark run` writes the two together, "+
+			"so this file is malformed", path)
+	}
+	suite := make(map[string]bool, len(rr.SuiteCaseIDs))
+	for _, cid := range rr.SuiteCaseIDs {
+		suite[cid] = true
+	}
+	// Per-identity covered sets: a slot failure says THIS reviewer did not get this
+	// case, so the contradiction is with that reviewer's own row, not with any row.
+	// Keyed on the scrubbed pair, which is what both arrays carry.
+	covered := map[reviewerKey]map[string]bool{}
+	for _, c := range rr.Coverage {
+		k := reviewerKey{model: c.Model, persona: c.Persona}
+		if covered[k] == nil {
+			covered[k] = map[string]bool{}
+		}
+		for _, cid := range c.CaseIDs {
+			covered[k][cid] = true
+		}
+	}
+	seen := map[string]bool{}
+	for _, sf := range rr.SlotFailures {
+		// Stripped for display for the same reason every identity in this file is;
+		// every COMPARISON below stays on the raw value, which is why the rune arm
+		// has to fire before the membership arms.
+		id := stripTerminalControlRunes(sf.CaseID)
+		model := stripTerminalControlRunes(sf.Model)
+		persona := stripTerminalControlRunes(sf.Persona)
+
+		if !benchmark.ValidSlotFailureReason(sf.Reason) {
+			return fmt.Errorf("run-result %s records slot_failures reason %q for %s/%s on case %q, outside the failure "+
+				"vocabulary; the producer writes only benchmark.SlotFailure* values, so this file is malformed",
+				path, stripTerminalControlRunes(sf.Reason), model, persona, id)
+		}
+		if strings.TrimSpace(sf.CaseID) == "" {
+			return fmt.Errorf("run-result %s records a slot_failures entry with a blank case_id; "+
+				"a failure record names the case it is about, so this file is malformed", path)
+		}
+		if strings.TrimSpace(sf.Model) == "" || strings.TrimSpace(sf.Persona) == "" {
+			return fmt.Errorf("run-result %s records a slot_failures entry for case %q with a blank model or persona; "+
+				"a slot failure names the reviewer whose row it explains, so this file is malformed", path, id)
+		}
+		for _, f := range []struct{ name, value string }{
+			{"case_id", sf.CaseID}, {"model", sf.Model}, {"persona", sf.Persona},
+		} {
+			if r, bad := firstNonPrintingRune(f.value); bad {
+				return fmt.Errorf("run-result %s records a slot_failures entry whose %s %q carries a non-printing rune "+
+					"(U+%04X); the producer records the run's own scrubbed identities and suite case ids, which cannot "+
+					"contain one, so this file is malformed",
+					path, f.name, stripTerminalControlRunes(f.value), r)
+			}
+		}
+		if !suite[sf.CaseID] {
+			return fmt.Errorf("run-result %s records a slot_failures entry for %q, which suite_case_ids does not declare; "+
+				"a failure naming a case outside the suite explains no shortfall in it, so this file is malformed",
+				path, id)
+		}
+		k := reviewerKey{model: sf.Model, persona: sf.Persona}
+		if _, ok := covered[k]; !ok {
+			return fmt.Errorf("run-result %s records a slot_failures entry for %s/%s, which has no reviewer_coverage row; "+
+				"a slot failure explains why one row is short, so a record naming no row explains nothing and this file "+
+				"is malformed", path, model, persona)
+		}
+		if covered[k][sf.CaseID] {
+			return fmt.Errorf("run-result %s records case %q as both scored by and slot-failed for %s/%s; "+
+				"the producer skips a failed slot before scoring it, so this file is malformed",
+				path, id, model, persona)
+		}
+		pair := sf.Model + "\x00" + sf.Persona + "\x00" + sf.CaseID
+		if seen[pair] {
+			return fmt.Errorf("run-result %s records %s/%s on case %q in slot_failures more than once; "+
+				"the producer records each failed slot exactly once, so this file is malformed",
+				path, model, persona, id)
+		}
+		seen[pair] = true
 	}
 	return nil
 }

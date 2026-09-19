@@ -149,9 +149,12 @@ func MaterializeCase(ctx context.Context, c RepoStateCase, dest string) (*Materi
 // (per file and per tree) so an adversarial or generated base tree cannot OOM
 // the process or fill the disk. The per-file cap mirrors MaxDiffBytes (the
 // standard-v1 diff cap) — same class of input, same bound.
-const (
-	maxBaseFileBytes = 10 * 1024 * 1024 // mirrors MaxDiffBytes
-	maxBaseTreeBytes = 10 * maxBaseFileBytes
+// Package-level vars rather than consts so the byte-bound tests can shrink the
+// limits (and restore them) without fixtures in the hundreds of MiB. Nothing
+// outside the tests assigns them; production behavior is unchanged.
+var (
+	maxBaseFileBytes int64 = 10 * 1024 * 1024 // mirrors MaxDiffBytes
+	maxBaseTreeBytes       = 10 * maxBaseFileBytes
 )
 
 func copyBaseTree(ctx context.Context, src, dst string) (int, error) {

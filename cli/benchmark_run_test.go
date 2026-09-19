@@ -116,6 +116,69 @@ func TestExecuteBenchmarkRun_ScoresSuite(t *testing.T) {
 		"every stub finding uses a taxonomy member -> measured 0, not unmeasured")
 }
 
+// A standard-v1 row's grounding state is KNOWN, not unmeasured: the range-less
+// review path fails the Epic 14.1 gate open and the run's own pool summary records
+// grounding_enabled=false. Leaving the coverage row nil made omitempty drop the key,
+// and docs/scorecard.md reads an absent key as "a production row, which has no gate
+// state to report" — so a benchmark row was indistinguishable from an unmeasured one
+// and a board comparing it against a gated repo-state row read "gated vs UNKNOWN"
+// instead of "gated vs ungated". The producer must publish what the summary already
+// states.
+func TestExecuteBenchmarkRun_CoveragePublishesUngatedGroundingState(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"}, [3]string{"kai", "m-kai", "kai"})
+	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+
+	rr, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, "")
+	require.NoError(t, err)
+	require.Len(t, rr.Coverage, 2)
+
+	for _, row := range rr.Coverage {
+		require.NotNil(t, row.GroundingEnabled,
+			"row %q/%q: the gate state is recorded in the run's own pool summary, so absent means unmeasured and is a false claim here",
+			row.Model, row.Persona)
+		assert.False(t, *row.GroundingEnabled,
+			"row %q/%q: the standard-v1 path supplies no range, so the grounding gate fails open",
+			row.Model, row.Persona)
+	}
+
+	// The key has to survive omitempty onto the wire — a struct-only assertion would
+	// pass on a value no leaderboard can read.
+	data, err := json.Marshal(rr)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"grounding_enabled":false`,
+		"the published bytes, not just the struct, must carry the tag")
+}
+
+// The tag has to survive a RESUME, or AC3's byte-identical-resume contract breaks the
+// moment the tag exists: a fully replayed run would publish nil (key dropped) where an
+// uninterrupted one publishes false. The gate state is therefore checkpointed per case,
+// and a checkpoint written BEFORE the field existed replays as nil — unmeasured, which
+// is the honest answer for a file that never recorded it.
+func TestExecuteBenchmarkRun_GroundingStateSurvivesAResume(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	cp := filepath.Join(t.TempDir(), "cp.json")
+
+	full, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, cp)
+	require.NoError(t, err)
+
+	// Second invocation replays every case from the checkpoint — no completer call.
+	resumed, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, cp)
+	require.NoError(t, err)
+
+	fullJSON, err := json.Marshal(full)
+	require.NoError(t, err)
+	resumedJSON, err := json.Marshal(resumed)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(fullJSON), string(resumedJSON),
+		"a fully replayed run must reproduce the uninterrupted run byte-for-byte, grounding tag included")
+
+	require.Len(t, resumed.Coverage, 1)
+	require.NotNil(t, resumed.Coverage[0].GroundingEnabled,
+		"the replayed row must carry the checkpointed gate state, not fall back to unmeasured")
+	assert.False(t, *resumed.Coverage[0].GroundingEnabled)
+}
+
 // AC2 is "a standard-v1 run scores byte-identically after the repo-state tier
 // landed", and until this test that rested on inspection plus the pre-existing
 // standard tests. TestLoad_StandardV1Unaffected checks only that Load still parses

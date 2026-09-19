@@ -94,6 +94,14 @@ func Load(suitePath string) (*Manifest, error) {
 	// carries no `diff` field at all, so structural validation reports "diff path
 	// is required" — a message that sends the reader looking for a field the
 	// format never had, rather than telling them this is a different suite tier.
+	//
+	// UNREACHABLE FROM THE CLI, and that is expected rather than a gap. Every CLI
+	// entry point routes on DetectSuiteFormat with strings.EqualFold first, so a
+	// repo-state manifest — in any casing — reaches LoadRepoState and never arrives
+	// here. This arm serves a DIRECT library caller of Load, for whom it is the only
+	// thing standing between a repo-state suite and the misleading message above.
+	// The lookup stays an exact map match: routing already absorbed the casing, and
+	// a fold here would only change which of two correct errors a library caller sees.
 	if loader, ok := knownOtherSuiteFormats[strings.TrimSpace(m.Suite)]; ok {
 		return nil, fmt.Errorf("unsupported suite format %q in %s: this loader implements standard-v1 only; load it with %s",
 			strings.TrimSpace(m.Suite), manifestPath, loader)
@@ -444,6 +452,67 @@ type RunResult struct {
 	// omitempty so a run-result written before this field existed unmarshals to nil
 	// and reports as unmeasured, exactly as a nil OutOfVocabularyRate does.
 	PositionalRecall []ReviewerPositionalRecall `json:"reviewer_positional_recall,omitempty"`
+
+	// CaseFailures names the suite cases that could not be scored at all, with the
+	// stage each one died at (case_failure.go documents the vocabulary). It is what
+	// makes a PARTIAL run legible: a case in this list is UNMEASURED — absent from
+	// every reviewer's covered set and from every recall denominator — rather than
+	// missed. Recording it as a zero-scored row instead would increment each
+	// reviewer's ExpectedTotal without giving them a chance at it, scoring an
+	// infrastructure failure as a genuine missed defect, which docs/benchmark.md
+	// forbids for this tier.
+	//
+	// SuiteCaseIDs deliberately still names these cases. That list is the suite
+	// denominator, so keeping the failed case in it is what makes the shortfall
+	// VISIBLE — every reviewer_coverage row is short by exactly the failed cases, and
+	// checkCoverage reads this array to say why rather than telling the operator to
+	// re-run cases that never ran.
+	//
+	// It sits here and NOT on ReviewerCoverage: an infrastructure failure stops the
+	// whole panel meeting the case, so a per-row copy would repeat one identical list
+	// on every row and owe a new all-rows-agree consistency check for information the
+	// run already states once.
+	//
+	// Run-result-only: BuildSubmission does not carry it into a Submission. A
+	// published partial-coverage shortfall states HOW MUCH was skipped — the short
+	// reviewer_coverage rows measured against suite_case_ids — and deliberately never
+	// WHY. That exclusion is a decision, not an oversight, per the epic 35.16.10.1
+	// Clarifications (carrying case_failures into Submission is explicitly excluded,
+	// run-result only): the reason vocabulary is a producer-trust channel validated at
+	// the export boundary, and the public board has no column that could carry it
+	// without a submission_schema bump. GroundingEnabled is published despite being a
+	// similar provenance tag because it qualifies a rate the envelope already carries;
+	// a failure reason qualifies nothing the board scores. The exclusion is locked by
+	// TestBuildSubmission_DoesNotPublishCaseFailures — reverse the decision THERE
+	// first, with the schema bump, never as a silent schema change.
+	// omitempty so a clean run serializes identically to a run-result written before
+	// this field existed, and both unmarshal to nil.
+	CaseFailures []CaseFailure `json:"case_failures,omitempty"`
+
+	// SlotFailures names the (reviewer, case) pairs where ONE reviewer could not be
+	// shown a case the rest of the panel reviewed. It is CaseFailures one level down
+	// (slot_failure.go documents the vocabulary and why the two cannot share an axis):
+	// the case itself is measured and appears in the surviving reviewers' covered
+	// sets, while the failed reviewer's row is short by exactly it.
+	//
+	// It is what makes a short coverage row LEGIBLE. The runner skips a non-OK slot
+	// from the score, the covered set and the outcome tally together — correct, since
+	// charging a reviewer recall-0 for a case it was never shown is the conflation
+	// this tier forbids — and without this array that skip left no cause recorded
+	// anywhere: the run exited 0 in silence, the cleanup deleted the review dirs
+	// holding each slot's status.json, and export rejected the finished run-result
+	// while calling the gap "missing", the label reserved for a truncated or
+	// hand-assembled file.
+	//
+	// Run-result-only, on the same terms as CaseFailures and per the same epic
+	// 35.16.10.1 Clarifications: it explains a shortfall to the operator who paid for
+	// the run and answers no question the public board scores. BuildSubmission does
+	// not carry it, locked by TestBuildSubmission_DoesNotPublishSlotFailures — reverse
+	// that decision THERE first, with a schema bump, never as a silent change.
+	//
+	// omitempty so a run with no slot failure serializes identically to a run-result
+	// written before this field existed, and both unmarshal to nil.
+	SlotFailures []SlotFailure `json:"slot_failures,omitempty"`
 }
 
 // ReviewerCoverage names the cases behind one reviewer row of the same run-result,
@@ -779,10 +848,19 @@ func publicCoverage(rows []ReviewerCoverage, memo map[string]string) []Submissio
 			ids = []string{}
 		}
 		out[i] = SubmissionCoverage{
-			Model:            id.Model,
-			Persona:          id.Persona,
-			CaseIDs:          ids,
-			GroundingEnabled: c.GroundingEnabled,
+			Model:   id.Model,
+			Persona: id.Persona,
+			CaseIDs: ids,
+		}
+		// Deep-copied for the same reason BuildSubmission deep-copies its two pointer
+		// metrics: a struct copy aliases the pointer, so mutating the submission would
+		// rewrite the caller's RunResult. No mutator exists today, which is what makes
+		// this a latent break of a stated invariant rather than a live bug — but the
+		// invariant is stated in this file, about this projection, and a reader should
+		// not have to check which pointer fields are exempt.
+		if c.GroundingEnabled != nil {
+			v := *c.GroundingEnabled
+			out[i].GroundingEnabled = &v
 		}
 	}
 	// Deterministic row order: two run-results with identical logical content but

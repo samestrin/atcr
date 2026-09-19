@@ -556,9 +556,18 @@ the surface, the less can leak.
 > run behind that row. It is published because `corroboration_rate` is scored over
 > the post-gate finding set, so a gated row and an ungated row can report the same
 > rate about different populations; without the tag the board has no way to tell
-> which two rows are comparable. It is absent on a production row, which has no
-> gate state to report, and is additive under the policy below — it does not bump
-> `submission_schema`.
+> which two rows are comparable. It is additive under the policy below — it does
+> not bump `submission_schema`.
+>
+> **Absent means the gate state was not recorded, which is not the same as "off".**
+> A production row has no gate state to report and is always absent. A benchmark row
+> normally carries the tag — `false` on `standard-v1`, whose range-less path fails the
+> gate open, and `true` on `repo-state-v1`, where it is live — but it is absent there
+> too when the state was not observed: a run resumed from a checkpoint written before
+> the tag existed, or a row folded across a mix of gated and ungated cases. Treat an
+> absent tag on either kind of row as **unmeasured**, never as ungated; a board that
+> reads it as "off" would compare it against a genuinely ungated row as though the two
+> measured the same population.
 >
 > Case ids are producer-controlled and routinely encode repository identity: the
 > bundled importer derives them as `<owner>-<repo>-pr-<number>`, so

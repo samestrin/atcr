@@ -1,3 +1,24 @@
+## [35.23.0] - 2026-09-17
+
+*Epic 35.16.10.1 — repo-state partial-failure outcomes.*
+
+### Added
+
+- **A per-slot failure channel on the run-result** (`slot_failures[]`, carrying the reviewer identity, the case id, and whether the call failed or timed out). When one reviewer cannot be shown a case the rest of the panel reviewed, that pair is recorded rather than passing silently: the run used to exit 0 with no warning, delete the work dir holding each slot's `status.json`, and then have `benchmark export` reject the finished run-result while calling the gap "missing". The shortfall is now labelled `unshown`, the work dir is retained, and the remedy says to investigate that one provider rather than to re-run cases that ran fine. Run-result-only, like `case_failures[]`.
+- **A per-case failure channel on the run-result** (`case_failures[]`, carrying a case id and the stage it died at). A `repo-state-v1` case that cannot be materialized, prepared, executed, summarized, or read back is now recorded there and the run continues, instead of aborting a ten-minute paid panel on its last case. `--checkpoint` is refused for this tier, so there was no resume to fall back on.
+- A case in that array is **unmeasured, not missed**: it appears in no reviewer's `case_ids` and adds nothing to any recall denominator, so recall over a 3-case suite with one failed case reads exactly as recall over the two that were scored. Scoring it as a zero would charge every reviewer for a defect they were never shown.
+- `atcr benchmark run` now prints a partial-run summary to stderr naming each unmeasured case and its stage, above the recall summary it qualifies — a recall figure that covers less than the suite must not read like one that covers all of it.
+
+### Changed
+
+- **The work dir is now retained on a partial run**, not only on a hard failure, so the scored cases' review artifacts survive for inspection or manual rescoring. A fully clean run still cleans up.
+- **The export rejection's remedy is tier-aware.** It used to say "re-run the missing or unmeasured cases" on every tier, which is false for `repo-state-v1`: `--checkpoint` is refused there, so the only re-run available is the whole paid suite. The message now says so. Under `--allow-partial-coverage`, a row short because it lost reviewer slots now carries an explicit warning that its `corroboration_rate` is averaged over only the cases that reviewer was shown — it is not penalised for the rest and will read higher than a row scored over the full suite.
+- `atcr benchmark export` still rejects a partial run by default, but now names the failed case and its stage rather than telling you to re-run cases that never ran. The failure reason vocabulary is closed and fail-closed at that boundary: an entry whose reason is unrecognized, whose case the suite does not declare, whose case some reviewer also scored, or which repeats a case is rejected as malformed.
+- **A per-case failure no longer makes `atcr benchmark run` exit non-zero for `repo-state-v1`.** A run that loses one case to infrastructure now writes a partial run-result and exits 0; a pipeline that gated on the old all-or-nothing contract can restore it with `--fail-on-case-failure`, or set `--max-case-failures` for a threshold instead of a floor of one.
+- Nine failure classes still abort the whole run, none of them transient: a total-roster failure, an empty-roster failure, an unwinnable expectation, the scored-twice and identity-collision guards, cancellation (SIGINT/SIGTERM), a run that scored nothing at all, the opt-in --max-consecutive-case-failures abort, a host-level work-dir fault (`ENOSPC`, `EDQUOT`, `EMFILE`/`ENFILE`, `EROFS`), and the realized-identity printability guard. The first two are kept apart deliberately — a total-roster failure is a transient outage the run refuses to score around, while an empty roster is a deterministic configuration defect that would repeat on every case.
+
+*Shipped via /execute-epic (epic 35.16.10.1)*
+
 ## [35.22.0] - 2026-09-16
 
 *Epic 35.16.10 — repo-state benchmark tier.*

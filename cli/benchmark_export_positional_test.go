@@ -110,6 +110,36 @@ func TestValidateReviewerPositionalRecall_RejectsNaNRate(t *testing.T) {
 	assert.Contains(t, err.Error(), "outside [0,1]")
 }
 
+// A reviewer whose slot was skipped on a case has a SMALLER denominator: the slot
+// skip removes that case's expected findings from the skipped reviewer's row, so
+// reviewer_positional_recall rows no longer share a denominator — contradicting the
+// field doc's "cover every expected finding in the suite". Each row is internally
+// consistent (its rate matches its own counts), so the per-row arms all pass, and
+// nothing told a consumer comparing the rows side by side that they are not
+// comparable. Warns rather than fails: a differing denominator describes a real
+// run — only an impossible number fails.
+func TestBenchmarkExport_WarnsWhenPositionalRecallDenominatorsDiffer(t *testing.T) {
+	_, stderr, err := execExportErr(t, writeRunResultWithPositional(t,
+		[]benchmark.ReviewerPositionalRecall{
+			{Model: "m-a", Persona: "p-a", ExpectedTotal: 6, ExpectedOutsideDiff: 2, ExpectedWithinDiff: 4},
+			{Model: "m-b", Persona: "p-b", ExpectedTotal: 5, ExpectedOutsideDiff: 2, ExpectedWithinDiff: 3},
+		}))
+	require.NoError(t, err, "a differing denominator describes a real run — warn, do not fail: %s", stderr)
+	assert.Contains(t, stderr, "reviewer_positional_recall")
+	assert.Contains(t, stderr, "not comparable",
+		"the warning must say why equal-looking rates cannot be compared across these rows")
+
+	// Rows that DO share a denominator stay silent — the warning is a comparability
+	// caveat, not noise to attach to every export.
+	_, stderr2, err2 := execExportErr(t, writeRunResultWithPositional(t,
+		[]benchmark.ReviewerPositionalRecall{
+			{Model: "m-a", Persona: "p-a", ExpectedTotal: 6, ExpectedOutsideDiff: 2, ExpectedWithinDiff: 4},
+			{Model: "m-b", Persona: "p-b", ExpectedTotal: 6, ExpectedOutsideDiff: 2, ExpectedWithinDiff: 4},
+		}))
+	require.NoError(t, err2, "equal denominators are the common case: %s", stderr2)
+	assert.NotContains(t, stderr2, "not comparable")
+}
+
 // The documented positional join (entry i describes reviewers[i]) gets the same
 // WARNING the vocabulary array gets — not a rejection. AC5 holds either way because
 // BuildSubmission never copies the field, which is equally true of
@@ -130,13 +160,17 @@ func TestBenchmarkExport_WarnsOnMisalignedPositionalRecall(t *testing.T) {
 }
 
 // A well-formed array must stay silent, or the warning is noise on every valid run.
+// Both rows carry the SAME expected counts — a differing denominator is its own
+// warning (the slot-skip case), so a "well-formed" fixture must not trigger it.
 func TestBenchmarkExport_AcceptsAWellFormedPositionalRecall(t *testing.T) {
 	_, stderr, err := execExportErr(t, writeRunResultWithPositional(t,
 		[]benchmark.ReviewerPositionalRecall{
 			{Model: "m-a", Persona: "p-a", ExpectedTotal: 4, MatchedTotal: 1, Recall: ptrFloat(0.25),
 				ExpectedOutsideDiff: 2, MatchedOutsideDiff: 0, OutsideDiffRecall: ptrFloat(0),
 				ExpectedWithinDiff: 2, MatchedWithinDiff: 1, WithinDiffRecall: ptrFloat(0.5)},
-			{Model: "m-b", Persona: "p-b"},
+			{Model: "m-b", Persona: "p-b", ExpectedTotal: 4, MatchedTotal: 0, Recall: ptrFloat(0),
+				ExpectedOutsideDiff: 2, MatchedOutsideDiff: 0, OutsideDiffRecall: ptrFloat(0),
+				ExpectedWithinDiff: 2, MatchedWithinDiff: 0, WithinDiffRecall: ptrFloat(0)},
 		}))
 	require.NoError(t, err)
 	assert.NotContains(t, stderr, "reviewer_positional_recall")

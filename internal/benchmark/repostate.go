@@ -274,7 +274,25 @@ func loadRepoStateCase(caseDir string) (*RepoStateCase, error) {
 	// the case: its only consumer is the CLI runner's pre-flight pass, which
 	// already parses (and runs under the paid-run clock), and an exported field
 	// would widen the struct's public surface for a consumer that does not exist.
-	diffData, rerr := os.ReadFile(filepath.Join(caseDir, c.Diff))
+	//
+	// SIZE-CAPPED BEFORE THE READ, and here rather than in a caller. A case's
+	// change.diff is the same class of untrusted third-party input as a standard-v1
+	// diff, which ReproHash bounds with MaxDiffBytes. The CLI runner bounded its own
+	// read of this file — but this read already happened by then, so the cap ran after
+	// the memory it existed to protect had been spent, and the other two LoadRepoState
+	// callers (`benchmark verify`, `benchmark export --suite-path`) never reached it at
+	// all. Capping at the single point where the bytes become resident is what makes
+	// every caller inherit it.
+	diffPath := filepath.Join(caseDir, c.Diff)
+	fi, serr := os.Stat(diffPath)
+	if serr != nil {
+		return nil, fmt.Errorf("case %q: reading diff %s: %w", c.ID, c.Diff, serr)
+	}
+	if fi.Size() > MaxDiffBytes {
+		return nil, fmt.Errorf("case %q: diff %s is %d bytes, exceeding the %d-byte cap: a repo-state case's change.diff is bounded exactly like a standard-v1 one",
+			c.ID, c.Diff, fi.Size(), MaxDiffBytes)
+	}
+	diffData, rerr := os.ReadFile(diffPath)
 	if rerr != nil {
 		return nil, fmt.Errorf("case %q: reading diff %s: %w", c.ID, c.Diff, rerr)
 	}

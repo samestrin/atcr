@@ -498,3 +498,69 @@ func TestReviewerOutcome_StandardTierIsUnaffected(t *testing.T) {
 	assert.Equal(t, benchmark.OutcomeClean,
 		reviewerOutcome(fanout.AgentStatus{Status: fanout.StatusOK}, nil))
 }
+
+// The min_severity floor is the grounding gate's sibling and was left short: both
+// discard findings AFTER the reviewer raised them, `raised` is read from the merged
+// findings.txt written after enforceConstraints, and so both leave a reviewer that
+// found things reporting the NO FINDINGS sentinel. Unlike grounding, this one is
+// reachable on BOTH tiers — any registry agent can set min_severity — so it is the
+// wider of the two holes.
+func TestReviewerOutcome_AllFindingsDroppedByMinSeverityIsNotClean(t *testing.T) {
+	got := reviewerOutcome(fanout.AgentStatus{Status: fanout.StatusOK, DroppedByMinSeverity: 2}, nil)
+
+	assert.Equal(t, benchmark.OutcomeFiltered, got)
+	assert.NotEqual(t, benchmark.OutcomeClean, got,
+		"clean asserts the reviewer found nothing; this one found things the severity floor removed")
+}
+
+// Same yield rule as its sibling: a surviving finding outranks the drop count, and
+// every data-integrity signal outranks both. Only a TOTAL wipe is filtered.
+func TestReviewerOutcome_MinSeverityDropsYieldLikeGroundingDrops(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status fanout.AgentStatus
+		raised []string
+		want   string
+	}{
+		{
+			name:   "a surviving finding outranks the drop count",
+			status: fanout.AgentStatus{Status: fanout.StatusOK, DroppedByMinSeverity: 3},
+			raised: []string{"correctness"},
+			want:   benchmark.OutcomeFindings,
+		},
+		{
+			name:   "failed outranks filtered",
+			status: fanout.AgentStatus{Status: fanout.StatusFailed, DroppedByMinSeverity: 2},
+			want:   benchmark.OutcomeFailed,
+		},
+		{
+			name:   "unparseable outranks filtered",
+			status: fanout.AgentStatus{Status: fanout.StatusOK, UnparseableResponse: true, DroppedByMinSeverity: 2},
+			want:   benchmark.OutcomeUnparseable,
+		},
+		{
+			name:   "incomplete outranks filtered",
+			status: fanout.AgentStatus{Status: fanout.StatusOK, UnreviewedChunks: 1, DroppedByMinSeverity: 2},
+			want:   benchmark.OutcomeIncomplete,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, reviewerOutcome(tc.status, tc.raised))
+		})
+	}
+}
+
+// When BOTH counters are non-zero the row must resolve to ONE value, and the choice
+// has to be stated somewhere rather than falling out of switch-case order by
+// accident. Grounding wins: it is the gate that answers "did the reviewer look at
+// code the patch contains", which is the measurement the repo-state tier exists for,
+// whereas the severity floor is an operator preference applied to whatever survived.
+func TestReviewerOutcome_GroundingOutranksMinSeverityWhenBothFire(t *testing.T) {
+	got := reviewerOutcome(
+		fanout.AgentStatus{Status: fanout.StatusOK, DroppedByGrounding: 1, DroppedByMinSeverity: 1},
+		nil,
+	)
+
+	assert.Equal(t, benchmark.OutcomeUngrounded, got,
+		"the gate outranks the floor, and reviewerOutcome's PRECEDENCE doc must say so")
+}

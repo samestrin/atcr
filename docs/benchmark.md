@@ -270,7 +270,7 @@ is never scored as a genuine missed defect).
 
 A `repo-state-v1` case is a small repository rather than a diff: a `base/` tree, a commit message, and a change applied on top. `atcr benchmark run --suite-path benchmarks/repo-state-v1` works exactly as it does for `standard-v1` — the command reads the manifest's `suite` field and dispatches. The case format itself is specified in [`benchmarks/repo-state-v1/FORMAT.md`](../benchmarks/repo-state-v1/FORMAT.md), which this implementation follows rather than redefines.
 
-Four things differ from a `standard-v1` run.
+Five things differ from a `standard-v1` run.
 
 **It reviews a real git range, not an ingested diff.** Each case is materialized into a git repository — the base tree as one commit, the change as a second commit carrying `commit-message.txt` verbatim — and reviewed over `base..head`. The diff ingestion path builds no `RangeBuilder`, and both the claim ledger and context-aware pre-fetching live there, so a tier meant to measure those features has to present a real range.
 
@@ -289,6 +289,73 @@ Each rate sits beside its numerator and denominator, and is **absent** rather th
 > **The same definition is not the same population.** `corroboration_rate` scores the categories in the merged `findings.txt`, which is written *after* the Epic 14.1 grounding gate. That gate is live on `repo-state-v1` and fails open on `standard-v1`, so a reviewer that found the planted out-of-diff defect and labelled it correctly still scores 0 for it here and 1 there — same formula, same denominator, different input set. Rather than fork a published metric by suite, each `reviewer_coverage[]` row carries `grounding_enabled`, so you can tell whether two rows are measuring the same thing before comparing them. A row is tagged `true` only when the gate was live for **every** case it scored.
 
 **`--checkpoint` is rejected, not ignored.** Resumable runs are implemented for the `standard-v1` diff path only. Accepting the flag silently would let you start a long run believing it was resumable and find out otherwise at the worst moment, so the command refuses it up front.
+
+**A single case's infrastructure failure does not forfeit the run.** Because `--checkpoint` is refused for this tier, an abort on case *N* used to cost every paid case before it. Instead, a case that cannot have its work directory created (`work_dir`), be materialized (`materialize`), have its review payload built (`prepare`), execute its panel (`execute`), have its pool summary read back (`pool_summary`), or have its pool findings read back (`read_findings`) is recorded in the run-result's `case_failures[]` array — `{"case_id", "reason"}`, where the reason names the stage it died at — and the run continues with the next case.
+
+A case in that array is **unmeasured**, not missed. It appears in no reviewer's `case_ids`, and adds nothing to any recall denominator, so recall over a 3-case suite with one failed case reads exactly as recall over the two that were scored. Scoring it as a zero instead would charge every reviewer for a defect they were never shown — a transient infrastructure failure recorded as a genuine missed defect, which is the one thing this tier's contract forbids. `suite_case_ids` still names the failed case, because that list is the denominator the shortfall is visible against.
+
+**The exit contract is opt-in, not abandoned.** A partial run still exits 0 by default — it is a real measurement of the cases that ran — but three flags on `atcr benchmark run` restore or tighten that contract for callers that can only read an exit code (all three are `repo-state-v1` only, since `standard-v1`'s runner never populates `case_failures[]` and its old all-or-nothing contract was never changed):
+
+- **`--fail-on-case-failure`** — exit non-zero when ANY case was lost to an infrastructure failure. The all-or-nothing contract, restored by name.
+- **`--max-case-failures N`** — exit non-zero once MORE than *N* cases were lost. `-1` (default) means no ceiling; `0` is equivalent to `--fail-on-case-failure`. Set it to tolerate the occasional flaky provider while still failing a systemically broken run.
+- **`--max-consecutive-case-failures N`** — ABORT the run once *N* consecutive cases have failed back to back, instead of paying for the rest of the suite. `0` (default) disables it. A scored case resets the count, so this stops a systemically broken provider — one bad key, a payload-size rejection — rather than the occasional flaky case.
+
+The first two judge a run that has already been paid for in full — they change the **exit code**, not the artifact: the partial run-result is still written and still records which cases are missing. The third stops the bill mid-run. Passing both exit flags means either can fail the run.
+
+**The same rule applies one level down, to a single reviewer.** A case can run fine for the rest of the panel while one reviewer's slot fails on it — a provider timeout, a transport error. That reviewer is not shown the case, so it is skipped from that row's score, covered set and outcome tally together, and the pair is recorded in the run-result's `slot_failures[]` array: `{"model", "persona", "case_id", "reason"}`, where the reason is `call_failed` or `call_timeout` (or `call_status_unknown` for a status a newer producer wrote). The identity is the public, post-scrub one, so each record joins to the `reviewer_coverage` row it explains.
+
+It is a **separate array from `case_failures[]` and cannot be folded into it**: a case-level failure means nobody was shown the case, while a slot-level one means the survivors were — so the two make opposite claims about the same case id, and export rejects a `case_failures` entry for a case any reviewer scored.
+
+Both arrays are **run-result-only**. Neither is carried into the submission envelope, so a published shortfall states how much was skipped and never why.
+
+A slot failure has two visible consequences, and both are deliberate:
+
+- **The work dir is retained**, exactly as for a case failure. The review dirs hold each slot's `status.json`, which is the only record of why the slot died.
+- **`benchmark export` rejects the run by default**, because that reviewer's row is short of the suite. The shortfall is labelled `unshown` rather than `missing` or `unmeasured`, and re-running will not help it — the case ran and the rest of the panel scored it, so what needs investigating is that one provider.
+
+Under `--allow-partial-coverage` the row publishes, and the warning says what you are publishing: a slot-short row's `corroboration_rate` is averaged over only the cases that reviewer was shown, so it is **not penalised** for the ones it missed and will read higher than a row scored over the full suite. Nothing in the submission distinguishes the two.
+
+These failures still abort the whole run, and none of them is transient:
+
+| Failure | Why it aborts |
+|---|---|
+| A total-roster failure still aborts (every reviewer failed on one case). | Recording it would make a whole-provider outage read on the run-result exactly like a local disk fault. |
+| An **empty roster** (nothing usable configured, a roster rejected at prepare time, or every slot dropped at execution time). | Not a transient outage but a deterministic configuration defect: recorded per case it would repeat on every case and surface as "all cases failed", burying the real cause under the transient class. |
+| An **unwinnable expectation** (a case citing a file or line its own head state does not have). | A suite-authoring defect: deterministic, identical on a re-run, and caught before the case costs anything. Continuing would score around a suite already known to be broken. |
+| The **scored-twice identity guard** (two reviewer lanes realizing one `(model, persona)` both scoring the same case), and the post-scrub **identity-collision guard**. | Configuration or code bugs, not bad luck. Continuing would publish a knowingly double-counted score, or two rows under one public identity. |
+| **Cancellation** (SIGINT/SIGTERM). | An operator interrupt is a decision, not a fault. An interrupted run must not become a publishable artifact whose missing cases look like infrastructure failures. |
+| **Nothing scored at all.** | Nothing was measured, so there is no partial result to salvage. |
+| The **`--max-consecutive-case-failures` abort** (the run stops once that many consecutive cases have failed back to back). | A deliberate operator cost brake, not a transient outage: the remaining cases were never run, so there is no bill to stop and no per-case fault to record — the cases already recorded stay in `case_failures[]`. |
+| A **host-level work-dir fault** (`ENOSPC`, `EDQUOT`, `EMFILE`/`ENFILE`, or `EROFS` while creating a case's work directory). | A property of the host, not of the case: every remaining case repeats the identical failing syscall, so recording each as its own bad luck writes one entry per case and still exits 0 while the host stays broken. |
+| The **realized-identity printability guard** (a provider's usage payload supplied a model identity whose runes cannot survive publication). | Publishing would emit a public identity no consumer can join against, and a re-run on this tier re-pays the whole panel — so the guard fails the run before payment rather than letting export reject the finished artifact. |
+
+When any case fails, the **work dir is retained** and its path is logged, exactly as it is on a hard failure — the successful cases' raw transcripts, `findings.txt` and `summary.json` survive for inspection or manual rescoring.
+
+**That retention is unbounded, and reclaiming it is yours to do.** Nothing prunes, caps or expires a retained work dir, deliberately: it holds the only copy of a panel you already paid for, so the run will not delete it on your behalf. The trade is that a scheduled suite losing one case per run leaves one full work dir behind per run. The partial-run warning reports the size alongside the path so the growth is visible before the volume is:
+
+```
+WARN benchmark work dir retained after a partial run path=/tmp/atcr-repo-state-1234 failed_cases=1 retained_bytes=41231882
+```
+
+Watch `retained_bytes`, and once you have inspected or rescored a run, reclaim it with `rm -rf` on the path from that line. A run that scores every case cleans up after itself, so only partial and failed runs accumulate.
+
+At export, a recorded failure **explains** a coverage shortfall; it **does not excuse** one. `atcr benchmark export` still rejects a partial run by default, but names the failed case and its reason rather than telling you to re-run cases that never ran:
+
+```
+run-result run.json has reviewer row(s) scored over less than the full 3-case suite: claude-sonnet-4-6/bruce (2/3 cases, unmeasured case-02 (prepare)); on repo-state-v1 there is no per-case resume (--checkpoint is refused for this tier), so re-running re-pays the whole suite; weigh that against --allow-partial-coverage, which publishes the shortfall explicitly
+```
+
+The remedy is tier-aware because on `repo-state-v1` the generic one is false: with no `--checkpoint` there is no per-case re-run, and the only re-run on offer is the entire paid panel. On `standard-v1`, which does support resume, the message keeps the plain "re-run the missing or unmeasured cases" wording.
+
+A row short for **slot** reasons reads differently again, and says so:
+
+```
+run-result run.json has reviewer row(s) scored over less than the full 3-case suite: claude-sonnet-4-6/bruce (2/3 cases, unshown case-02 (call_timeout)); ... Re-running will not help the `unshown` cases — those ran and the rest of the panel scored them; investigate the provider behind claude-sonnet-4-6/bruce instead
+```
+
+Both reason vocabularies are closed and fail-closed at that boundary. Export **rejects** a `case_failures` entry whose reason is not one the producer writes, whose case the suite does not declare, whose case some reviewer also scored, or which names the same case twice — and a `slot_failures` entry whose reason is not one the producer writes, whose case the suite does not declare, whose identity has no `reviewer_coverage` row, whose case **that same reviewer** also scored, or which names the same (reviewer, case) pair twice. The scored-and-failed check is per identity on the slot side, because a case another reviewer scored is exactly what a slot failure means.
+
+What that proves is that an entry is **well-formed and internally consistent** — not that it is true. A hand-supplied run-result can still pair a valid reason with a real, unscored case id and have it accepted, which relabels a shortfall from *missing* to *unmeasured* or *unshown* in the export diagnostic. The gate's job is to keep the vocabulary closed and the artifact self-consistent; only the producer can vouch for whether a case or a slot actually failed.
 
 > **The Epic 14.1 grounding gate stays ON for these runs, by design.** A finding whose cited file the patch never touched is dropped unless pre-fetching actually retrieved the cited span. That is the measurement rather than an obstacle to it: the tier's question is whether pre-fetching lets a genuine out-of-diff finding clear the shipped anti-hallucination gate. Turning the gate off for benchmark runs would hide exactly the thing being measured.
 
@@ -394,7 +461,8 @@ and PR they name (see [`docs/scorecard.md`](scorecard.md)):
     {
       "model": "claude-sonnet-4-6",
       "persona": "bruce",
-      "case_ids": ["case-01-nil-deref", "case-02-sql-injection"]
+      "case_ids": ["case-01-nil-deref", "case-02-sql-injection"],
+      "grounding_enabled": false
     }
   ]
 }
@@ -417,8 +485,11 @@ Five properties are worth knowing:
 
 - **The coverage row is trimmed.** The run-result's richer `reviewer_coverage`
   entries also carry `outcomes` and `fallback_cases`. Those are run-level diagnostics
-  and stay run-result-only — the public submission is allowlist-based, and the board
-  needs only the covered-case set.
+  and stay run-result-only — the public submission is allowlist-based. One qualifier
+  survives the trim: `grounding_enabled`, which says whether the Epic 14.1 grounding
+  gate was live for the row's run and therefore which population `corroboration_rate`
+  was scored over (see [docs/scorecard.md](scorecard.md)). The sample above shows it
+  `false`, the value a `standard-v1` run records with the gate failed open.
 - **Absent means unmeasured, not empty.** Both keys are omitted entirely by a
   run-result that recorded no coverage (any file written before coverage existed).
   An absent key reads as "nobody measured"; it is never emitted as `null` or `[]`,
@@ -530,9 +601,10 @@ emits and the order the documented positional join depends on.
 not carried into the submission envelope.
 
 `suite_case_ids` and `reviewer_coverage` **are** carried, as of `submission_schema` 2,
-but in trimmed form: the submission keeps `model`, `persona`, and `case_ids`, and drops
-the `outcomes` tally and `fallback_cases` count shown above. Those two remain
-run-result-only.
+but in trimmed form: the submission keeps `model`, `persona`, `case_ids`, and
+`grounding_enabled`, and drops the `outcomes` tally and `fallback_cases` count shown
+above. Those two remain run-result-only; `grounding_enabled` is the one retained
+qualifier, pinned in [docs/scorecard.md](scorecard.md).
 
 Every one of these keys is omitted entirely by a producer that did not measure it,
 which is what lets export tell "unmeasured" apart from "short". For `suite_case_ids`
@@ -708,17 +780,31 @@ call failed all raise zero categories and score identically:
 | `truncated` | Response cut off on `finish_reason: length`; whatever it raised is incomplete. |
 | `incomplete` | The reviewer saw only a fraction of the diff — either a chunked slot whose bins failed while it still reported ok, or a payload shed to fit a byte budget (`files_dropped` names the shed entries by path; the shed is accounted per entry, so a path listed there can still be present via another occurrence of the same path in the diff). |
 | `ungrounded` | The reviewer raised findings and **every one** was discarded by the Epic 14.1 grounding gate for citing a `FILE:LINE` the patch does not contain (`dropped_by_grounding > 0` with nothing surviving). Distinct from `incomplete`, which is the input-side signal: this reviewer saw the whole diff and had its output filtered afterwards. Reachable only when the gate is live, so in practice only on `repo-state-v1` — the `standard-v1` diff path supplies no range and the gate fails open there. |
-| `failed` | The call never produced a reviewable response. |
+| `filtered` | The reviewer raised findings and **every one** was discarded by the configured `min_severity` floor (`dropped_by_min_severity > 0` with nothing surviving). `ungrounded`'s sibling, and the wider of the two: grounding is live only on `repo-state-v1`, while any registry agent on either tier can set a floor. |
+| `failed` | The call never produced a reviewable response. **Tier-dependent by construction.** On `standard-v1` the `failed` tally counts those calls. On `repo-state-v1` a failed call is a *slot* failure instead: the reviewer is skipped from that row's score, covered set and outcome tally together (recording it in the tally while omitting it from the covered set would trip the export gate's runs/coverage tamper check), and the cause is recorded in `slot_failures[]`. A `repo-state-v1` outcome tally therefore never contains `failed` — its absence means "no reviewer call failed on this row", and the calls that did fail live in `slot_failures[]`. |
 | `unknown` | No outcome was recorded — a checkpoint written before this field existed. |
 
 Precedence when signals overlap is `failed > unparseable > truncated > incomplete >
-findings > ungrounded > clean`: data-integrity signals outrank volume signals, and a
-reviewer that kept even one finding is scored on what it kept.
+findings > ungrounded > filtered > clean`: data-integrity signals outrank volume
+signals, and a reviewer that kept even one finding is scored on what it kept. When a
+row trips BOTH post-processing counters, `ungrounded` wins — it answers whether the
+reviewer cited code the patch contains, which is what `repo-state-v1` exists to
+measure, while the floor is an operator preference applied to whatever survived it.
 
-> **`ungrounded` is newer than the other values.** The outcome vocabulary is
-> fail-closed at the checkpoint-resume and coverage trust boundaries, so a build
-> predating it will refuse a checkpoint carrying it rather than re-key the tally. A
-> checkpoint written by this version cannot be resumed by an older one.
+> **`ungrounded` and `filtered` are newer than the other values.** The outcome
+> vocabulary is fail-closed at the coverage trust boundary: an older `atcr` running
+> `benchmark export` on a run-result carrying either one rejects the file as malformed
+> rather than re-keying the tally (`cli/benchmark_coverage.go` validates every
+> tally key through `ValidOutcome`, and re-running under that build cannot help,
+> since an older producer writes only values it knows). A run-result written by
+> this version cannot be exported by an older one. The checkpoint-resume boundary
+> differs per value. `filtered` DOES cross it: `--checkpoint` is refused for
+> `repo-state-v1`, so a checkpoint is written only on `standard-v1` — the tier
+> whose registry agents can set a `min_severity` floor and produce `filtered` —
+> and a checkpoint carrying it is rejected as corrupt (`ValidOutcome` at resume)
+> by an older binary, forfeiting every paid case in that checkpoint. `ungrounded`,
+> by contrast, never crosses the boundary: it cannot arise on `standard-v1`, whose
+> diff path supplies no range and fails the gate open.
 
 `unknown` is deliberately distinct from `clean`. A resumed run whose checkpoint
 predates this field reports `unknown`, never "reviewed and found nothing" — the
