@@ -248,7 +248,13 @@ func TestBenchmarkDoc_RepoStatePartialRunContractMatchesTheCode(t *testing.T) {
 
 	// The distinction the whole design rests on: unmeasured, not missed. A reader
 	// who takes a failed case for a zero would mis-read every recall on the run.
-	assert.Contains(t, doc, "unmeasured",
+	//
+	// Anchored to the SENTENCE, not the bare word. "unmeasured" already appears in
+	// eight paragraphs of this doc that predate the partial-run section, so deleting
+	// the section outright left this assertion green — verifying nothing about the
+	// claim it names. The sibling at the top of this file states the rule this
+	// violated: match a distinctive phrase, never a word the doc says elsewhere.
+	assert.Contains(t, doc, "is **unmeasured**, not missed",
 		"the doc must say a failed case is unmeasured rather than scored as a miss")
 	assert.Contains(t, cli, "recorded as unmeasured and skipped",
 		"the runner must still skip the failed case rather than score it")
@@ -278,8 +284,10 @@ func TestBenchmarkDoc_RepoStatePartialRunContractMatchesTheCode(t *testing.T) {
 
 	// The export gate is still closed by default on a partial run: a recorded failure
 	// EXPLAINS a shortfall, it does not excuse one.
-	assert.Contains(t, doc, "does not excuse",
-		"the doc must say a recorded failure does not waive the coverage gate")
+	// Same rule: "does not excuse" is a three-word fragment with no anchor to the
+	// section it is supposed to pin. The full clause names both halves of the claim.
+	assert.Contains(t, doc, "**explains** a coverage shortfall; it **does not excuse** one",
+		"the doc must say a recorded failure explains but does not waive the coverage gate")
 	assert.Contains(t, coverage, "re-run the missing or unmeasured cases",
 		"the gate must still reject a short run-result by default")
 }
