@@ -169,6 +169,42 @@ func TestCheckCoverage_RejectsMalformedOutcomeTallies(t *testing.T) {
 	require.NoError(t, err, "the unknown tally label is a legitimate key")
 }
 
+// grounding_enabled is published verbatim into the public envelope and rides beside
+// corroboration_rate as the tag saying which population that rate was computed over,
+// yet every OTHER coverage field is treated as hostile input here. The producer
+// guarantees one implication for free: the ungrounded outcome is reached only via
+// AgentStatus.DroppedByGrounding > 0, which is unreachable with the gate off. So a row
+// that tallies ungrounded beside an explicit "the gate was off for every case I scored"
+// is self-contradictory and can only be hand-assembled.
+//
+// A nil tag is NOT rejected. nil means unmeasured — a rebuilt summary, or a row folded
+// across a mix of gated and ungated cases — which is uninformative rather than
+// contradictory, and rejecting it would make a legitimate paid run unexportable.
+func TestCheckCoverage_RejectsUngroundedOutcomeUnderAGateOffClaim(t *testing.T) {
+	on, off := true, false
+	run := func(grounding *bool) benchmark.RunResult {
+		return benchmark.RunResult{
+			SuiteCaseIDs: []string{"case-01"},
+			Reviewers:    []scorecard.PublicRecord{{Model: "m", Persona: "p", Runs: 1}},
+			Coverage: []benchmark.ReviewerCoverage{{
+				Model: "m", Persona: "p", CaseIDs: []string{"case-01"},
+				Outcomes:         map[string]int{benchmark.OutcomeUngrounded: 1},
+				GroundingEnabled: grounding,
+			}},
+		}
+	}
+
+	err := checkCoverage(io.Discard, run(&off), "rr.json", false)
+	require.Error(t, err, "ungrounded is unreachable with the gate off")
+	assert.Contains(t, err.Error(), "malformed")
+	assert.Contains(t, err.Error(), benchmark.OutcomeUngrounded)
+
+	require.NoError(t, checkCoverage(io.Discard, run(&on), "rr.json", false),
+		"a gated row tallying ungrounded is exactly what the producer writes")
+	require.NoError(t, checkCoverage(io.Discard, run(nil), "rr.json", false),
+		"an unmeasured tag is uninformative, not contradictory")
+}
+
 // Every reviewer identity this gate interpolates into an operator-facing message comes
 // from the same untrusted, possibly hand-supplied run-result the gate is validating, and
 // cobra prints the returned error to the same terminal as the `short` warnings that were
