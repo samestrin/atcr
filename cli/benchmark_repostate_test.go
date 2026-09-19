@@ -1992,6 +1992,60 @@ func TestExecuteRepoStateBenchmarkRun_RecordsPostPaymentReadBackFailures(t *test
 	}
 }
 
+// The two warn branches beside the findings read-back were uncovered added lines: no
+// test drove the RUNNER with a case that produced no findings file, or with skipped
+// rows naming an off-panel reviewer. readCaseFindingsLocated returns both signals and
+// is itself tested; the runner's SURFACING of them is what was unverified, so a
+// regression that silently stopped warning would have shipped green.
+//
+// Neither is a case failure — the case is still scored — which is exactly why they
+// need their own coverage: nothing else in the run-result records that they fired.
+func TestExecuteRepoStateBenchmarkRun_WarnsOnMissingFindingsFileAndUnattributedRows(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		missing  bool
+		unattrib int
+		wantLog  string
+	}{
+		// Anchored on the FULL message, not a bare word: "findings" and
+		// "unattributed" each appear in the other branch's line and in unrelated
+		// runner output, so a bare-substring assertion would pass with the branch
+		// under test deleted.
+		{
+			name:    "no findings file for the case",
+			missing: true,
+			wantLog: "case produced no findings file; every reviewer reads as raised-nothing",
+		},
+		{
+			name:     "skipped rows name a reviewer off the panel",
+			unattrib: 3,
+			wantLog:  "skipped finding rows name a reviewer not in the panel; counted as unattributed",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			real := readCaseFindingsLocatedFn
+			readCaseFindingsLocatedFn = func(reviewDir string, agents map[string]bool) (map[string][]benchmark.ReportedFinding, map[string][]string, int, bool, error) {
+				loc, cat, _, _, err := real(reviewDir, agents)
+				return loc, cat, tc.unattrib, tc.missing, err
+			}
+			t.Cleanup(func() { readCaseFindingsLocatedFn = real })
+
+			var logs bytes.Buffer
+			ctx := logCapturingContext(t, &logs)
+
+			rr, retained, err := executeRepoStateBenchmarkRun(ctx,
+				benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{},
+				repoStateMiniPath, time.Unix(0, 0).UTC(), 0)
+			releaseRetainedWorkDir(t, retained)
+
+			require.NoError(t, err, "neither signal is a case failure — the case is still scored")
+			require.Empty(t, rr.CaseFailures, "these are warnings, not failures")
+			assert.Contains(t, logs.String(), tc.wantLog,
+				"the runner must surface the signal the reader returned; nothing else records that it fired")
+		})
+	}
+}
+
 // The work_dir record-and-continue site had coverage count 0: no test drove the
 // RUNNER to a work-dir failure, so the reason constant it records was unverified end
 // to end and a wrong one would have shipped invisibly.
