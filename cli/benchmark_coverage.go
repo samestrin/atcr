@@ -106,15 +106,16 @@ func duplicateIdentityError(path, what string, key reviewerKey, prevModel, prevP
 // TestCheckCoverage_EveryShortRowIsNamed and TestRunBFixture_RejectedByExportGate.
 //
 // The bound is PER HALF of a row's shortfall, not per row. describeMissing splits a
-// row into genuinely-missing and infrastructure-unmeasured cases and caps each
-// independently, so a row carrying both can name up to 2*maxNamedMissingCases ids.
-// That is deliberate: the two halves call for different responses (re-run vs.
-// investigate the failure), and capping them jointly would let one half's overflow
-// hide the other half's existence — the same argument that keeps the outer list
-// uncapped, applied one level in.
+// row into genuinely-missing, case-level-unmeasured and slot-level-unshown cases and
+// caps each independently, so a row carrying all three can name up to
+// 3*maxNamedMissingCases ids. That is deliberate: the halves call for different
+// responses (re-run the suite vs. investigate a case fault vs. investigate one
+// reviewer's provider), and capping them jointly would let one half's overflow hide
+// another half's existence — the same argument that keeps the outer list uncapped,
+// applied one level in.
 const maxNamedMissingCases = 3
 
-// halfSeparator divides describeMissing's two halves. It is deliberately NOT the
+// halfSeparator divides describeMissing's halves. It is deliberately NOT the
 // "; " checkCoverage uses between distinct short rows: the row list is the outer
 // nesting level, and a message that nests both must keep the two delimiters
 // distinguishable — otherwise a reader, or anything downstream that splits on it,
@@ -309,6 +310,36 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		failed[f.CaseID] = f.Reason
 	}
 
+	// The slot-failure index behind the third shortfall label. Keyed by IDENTITY
+	// first, because a slot failure is a statement about one reviewer: the case ran,
+	// and only this row is short by it. A flat case-keyed map would attach one
+	// reviewer's excuse to every other row that happens to be short of the same case
+	// — an unearned explanation, which is the shape validateSlotFailures exists to
+	// keep out of the file in the first place.
+	//
+	// The same defence-in-depth drop as the case index above, and for the same
+	// reason: runBenchmarkExport rejects an out-of-vocabulary reason through
+	// validateSlotFailures before reaching here, but a second caller must not be able
+	// to interpolate an arbitrary string into the terminal, and the drop is ANNOUNCED
+	// so the case does not silently fall back to "missing" with no hint the file said
+	// anything about it.
+	slotFailed := map[reviewerKey]map[string]string{}
+	for _, sf := range rr.SlotFailures {
+		if !benchmark.ValidSlotFailureReason(sf.Reason) {
+			_, _ = fmt.Fprintf(w,
+				"warning: run-result %s records a slot_failures entry for %s/%s on %s with reason %q, outside the "+
+					"failure vocabulary; it explains nothing and is ignored, so that case is reported as plainly missing.\n",
+				path, stripTerminalControlRunes(sf.Model), stripTerminalControlRunes(sf.Persona),
+				stripTerminalControlRunes(sf.CaseID), stripTerminalControlRunes(sf.Reason))
+			continue
+		}
+		k := coverageKey(sf.Model, sf.Persona)
+		if slotFailed[k] == nil {
+			slotFailed[k] = map[string]string{}
+		}
+		slotFailed[k][sf.CaseID] = sf.Reason
+	}
+
 	var short []string
 	consumed := make(map[reviewerKey]scorecard.PublicRecord, len(rr.Reviewers))
 	for _, rev := range rr.Reviewers {
@@ -383,7 +414,7 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		// distinct suite member. A defensive recount would describe a state the
 		// checks above have already made unreachable.
 		short = append(short, fmt.Sprintf("%s/%s (%d/%d cases, %s)",
-			model, persona, len(cov.CaseIDs), len(suite), describeMissing(missing, failed)))
+			model, persona, len(cov.CaseIDs), len(suite), describeMissing(missing, failed, slotFailed[key])))
 	}
 
 	// The join is checked in BOTH directions: a coverage row no reviewer row
@@ -663,25 +694,33 @@ func summarizeMissing(missing []string) string {
 	return fmt.Sprintf("%s and %d more", strings.Join(safe, ", "), len(missing)-maxNamedMissingCases)
 }
 
-// describeMissing splits one row's shortfall into the two things it can be, and
+// describeMissing splits one row's shortfall into the three things it can be, and
 // says which.
 //
-// They call for opposite responses. A case in the failure channel was never
-// measured — it did not run, and whether re-running helps depends on the reason,
-// which is why the reason is printed beside it. A case absent from BOTH the covered
-// set and the failure channel is unaccounted for: the row claims a suite it was not
-// scored over, and that is the shape the original "re-run the missing cases"
-// instruction was written for. Collapsing the two would tell an operator to re-run a
-// case that never ran, and would hide a row with no explanation at all behind one
-// that has a good one.
+// They call for different responses, and each label names a different actor:
 //
-// Both halves route through summarizeMissing, so each inherits the per-row cap and
+//   - `unmeasured` — the CASE never ran, for anybody (rr.CaseFailures). Whether a
+//     re-run helps depends on the reason, which is why the reason is printed.
+//   - `unshown` — the case ran and the rest of the panel scored it; THIS reviewer
+//     was not shown it (rr.SlotFailures). Re-running the case would not have helped
+//     the other reviewers, who already have it.
+//   - `missing` — accounted for by neither: the row claims a suite it was not scored
+//     over. That is the shape the original "re-run the missing cases" instruction was
+//     written for, and before the slot skip existed it was reachable only by
+//     tampering.
+//
+// Collapsing any pair loses the distinction that picks the remedy. Labelling a slot
+// shortfall `missing` told an operator to re-run cases that ran perfectly and made one
+// flaky provider read as a hand-assembled file; labelling it `unmeasured` would claim
+// the case never ran while the surviving reviewers' rows visibly contain it.
+//
+// All three halves route through summarizeMissing, so each inherits the per-row cap and
 // the control-rune stripping described there rather than re-deriving them — the
 // reason is stripped with the id it is composed onto.
 //
-// Each half is capped independently, so the bound is PER HALF and a row carrying both
-// kinds of shortfall names up to 2*maxNamedMissingCases ids with two overflow counts —
-// see maxNamedMissingCases for why that is deliberate rather than an oversight.
+// Each half is capped independently, so the bound is PER HALF and a row carrying all
+// three kinds of shortfall names up to 3*maxNamedMissingCases ids with three overflow
+// counts — see maxNamedMissingCases for why that is deliberate rather than an oversight.
 //
 // PRECONDITION: missing is non-empty. An empty slice returns "", which the caller
 // composes into `m/p (2/3 cases, )` — a shortfall message with a blank explanation.
@@ -690,17 +729,31 @@ func summarizeMissing(missing []string) string {
 // a check here.
 //
 // PRECONDITION: every reason in failed already satisfies
-// benchmark.ValidCaseFailureReason. That filter lives in the CALLER, not in this
-// signature, so a second caller that builds the map itself would print an
+// benchmark.ValidCaseFailureReason, and every reason in slotFailed satisfies
+// benchmark.ValidSlotFailureReason. Both filters live in the CALLER, not in this
+// signature, so a second caller that builds either map itself would print an
 // attacker-chosen string as an explanation for a case. Terminal safety survives it —
 // summarizeMissing strips the composed string — but truthfulness does not.
 // validateCoveredSet states its own equivalent contract the same way, and this
 // function owes the same statement.
-func describeMissing(missing []string, failed map[string]string) string {
-	var unexplained, unmeasured []string
+//
+// PRECONDITION: slotFailed holds only THIS row's reviewer. It is an
+// identity-scoped projection, and passing the whole run's slot failures would attach
+// one reviewer's excuse to another's short row.
+func describeMissing(missing []string, failed, slotFailed map[string]string) string {
+	var unexplained, unmeasured, unshown []string
 	for _, id := range missing {
+		// Case-level first: a case NOBODY was shown is the stronger statement, and the
+		// producer cannot record both for one (reviewer, case) pair — a failed case is
+		// skipped before the per-agent loop that records slot failures ever runs. The
+		// order therefore only settles a hand-assembled file, where naming the wider
+		// fault is the honest reading.
 		if reason, ok := failed[id]; ok {
 			unmeasured = append(unmeasured, fmt.Sprintf("%s (%s)", id, reason))
+			continue
+		}
+		if reason, ok := slotFailed[id]; ok {
+			unshown = append(unshown, fmt.Sprintf("%s (%s)", id, reason))
 			continue
 		}
 		unexplained = append(unexplained, id)
@@ -711,6 +764,9 @@ func describeMissing(missing []string, failed map[string]string) string {
 	}
 	if len(unmeasured) > 0 {
 		parts = append(parts, "unmeasured "+summarizeMissing(unmeasured))
+	}
+	if len(unshown) > 0 {
+		parts = append(parts, "unshown "+summarizeMissing(unshown))
 	}
 	// " / ", not "; ": checkCoverage joins distinct short ROWS with "; ", and a
 	// multi-short-row run is the normal case on a large roster. Using one delimiter at
