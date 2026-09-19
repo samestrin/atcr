@@ -888,6 +888,13 @@ func expectedCategories(c benchmark.RepoStateCase) []string {
 // standard tier (ReproHash rejects an oversized diff there): this is the same
 // class of untrusted third-party input, and a multi-gigabyte change.diff would
 // otherwise OOM the process at read/parse time.
+//
+// The LOAD-TIME cap in benchmark.loadRepoStateCase is the one that actually bounds
+// memory — it sits at the first read of this file, and every LoadRepoState caller
+// inherits it. This check is kept as a cheap assertion for the same reason the
+// runner re-validates other load-time invariants: it costs one Stat, it keeps this
+// function safe for any future caller that did not come through the loader, and a
+// file that grew between load and here is a real (if unlikely) shape.
 func loadCaseDiffLineMap(c benchmark.RepoStateCase) (benchmark.DiffLineMap, error) {
 	path := filepath.Join(c.Dir, c.Diff)
 	if fi, err := os.Stat(path); err != nil {
