@@ -164,7 +164,10 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	// indistinguishable, and the message at the bottom would then name only one of
 	// them — sending an operator with a dead key to the persona files (or the
 	// reverse, the mis-routing this block's comment already warns against).
-	endpointFailed := rep.ExitCode != 0
+	// Compared against 1, not non-zero: exit 2 is exitVerdict's "no agents
+	// configured", a different verdict an endpoint-probe failure, and "an endpoint
+	// probe failed" would misname it if persona errors ever coexisted with it.
+	endpointFailed := rep.ExitCode == 1
 	if len(rep.PersonaResolutionErrors) > 0 && rep.ExitCode == 0 {
 		rep.ExitCode = 1
 	}
