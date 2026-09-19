@@ -1679,6 +1679,50 @@ func TestExecuteRepoStateBenchmarkRun_RecordsANonSentinelExecuteFailureAndContin
 	assert.Equal(t, []string{"first-case"}, rr.Coverage[0].CaseIDs, "case 1 still scored")
 }
 
+// oneAgentFailingCompleter fails every call made on behalf of one named agent and
+// serves the rest normally, so a case comes back with a MIXED roster: some slots OK,
+// one failed. The whole-case failure channel cannot see that shape — the case was
+// reviewed, and only one reviewer's slot died.
+type oneAgentFailingCompleter struct{ agent string }
+
+func (c oneAgentFailingCompleter) Complete(ctx context.Context, inv llmclient.Invocation) (string, error) {
+	// Keyed on the MODEL, the only slot-identifying field an Invocation carries.
+	if strings.Contains(inv.Model, c.agent) {
+		return "", errors.New("provider timeout")
+	}
+	return stubLocatedCompleter{}.Complete(ctx, inv)
+}
+
+// The unmeasured-not-missed rule applies AT SLOT GRANULARITY too. The whole-case
+// channel covers the all-reviewers case; one slot down, a provider timeout on 1 of 2
+// reviewers still produced a CaseScore with Raised nil and a positional row matched
+// against nothing — charging that reviewer full recall-0 for a case it never saw,
+// which is the one conflation this tier's contract forbids.
+//
+// The failed slot is still VISIBLE: its outcome tally records the failure. It is the
+// SCORE it must not enter.
+func TestExecuteRepoStateBenchmarkRun_AFailedSlotIsUnmeasuredNotMissed(t *testing.T) {
+	suite := writeCaseSuite(t, "first-case", "second-case")
+
+	rr, retained, err := executeRepoStateBenchmarkRun(context.Background(),
+		benchCfg([3]string{"greta", "m-greta", "greta"}, [3]string{"otto", "m-otto", "otto"}),
+		oneAgentFailingCompleter{agent: "otto"}, suite, time.Unix(0, 0).UTC())
+	releaseRetainedWorkDir(t, retained)
+	require.NoError(t, err)
+	require.Len(t, rr.PositionalRecall, 2, "both reviewers still appear; one of them simply measured nothing")
+
+	byPersona := map[string]benchmark.ReviewerPositionalRecall{}
+	for _, r := range rr.PositionalRecall {
+		byPersona[r.Persona] = r
+	}
+	require.Contains(t, byPersona, "greta")
+	require.Contains(t, byPersona, "otto")
+
+	assert.Positive(t, byPersona["greta"].ExpectedTotal, "the surviving reviewer scored the cases it saw")
+	assert.Zero(t, byPersona["otto"].ExpectedTotal,
+		"a slot that never ran adds 0 to the denominator; scoring it as recall-0 charges a reviewer for a case it was never shown")
+}
+
 // The two POST-PAYMENT record-and-continue sites. Their doc comments promise "the
 // panel ran and was paid for; its artifacts are retained in the work dir", and nothing
 // reached either one: a completer-planted fault always lands on the WRITE, one step
