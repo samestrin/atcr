@@ -1089,3 +1089,47 @@ func TestAnchorSuiteDenominator_StandardV1SubsetStillBlamesTheDenominator(t *tes
 	assert.NotContains(t, err.Error(), "not author-distinguishable",
 		"and the repo-state caveat would be false here")
 }
+
+// The defence-in-depth drop for the SLOT channel, pinned through checkCoverage
+// itself. Its case-level sibling has this test; without it a refactor folding the
+// drop into the validator would reinstate arbitrary-prose interpolation on any
+// caller that reaches checkCoverage without the export command's gate in front.
+func TestCheckCoverage_DropsAnOutOfVocabularySlotReason(t *testing.T) {
+	rr := slotFailureRun()
+	rr.SlotFailures[0].Reason = "\x1b[2Kinjected prose"
+
+	var buf bytes.Buffer
+	err := checkCoverage(&buf, rr, "rr.json", false)
+
+	require.Error(t, err)
+	assert.Contains(t, buf.String(), "outside the failure vocabulary",
+		"the drop is announced, not silent")
+	assert.NotContains(t, err.Error(), "unshown case-02",
+		"an unusable reason must not label the case as explained")
+	assert.Contains(t, err.Error(), "missing case-02",
+		"it falls back to plainly missing, which is the honest reading")
+	assert.NotContains(t, buf.String(), "\x1b[2K",
+		"and the injected prose is stripped before it reaches the terminal")
+}
+
+// The two blank-field arms. A partly-populated hand edit is the shape that produces
+// them, and each needs its own message: the membership arm would otherwise blame the
+// denominator for an entry that never identified a case or a reviewer.
+func TestValidateSlotFailures_RejectsBlankFields(t *testing.T) {
+	blankCase := slotFailureRun()
+	blankCase.SlotFailures[0].CaseID = "   "
+	err := validateSlotFailures(blankCase, "rr.json")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "blank case_id")
+
+	for _, tc := range []struct{ name, model, persona string }{
+		{"model", "", "p"},
+		{"persona", "m", ""},
+	} {
+		rr := slotFailureRun()
+		rr.SlotFailures[0].Model, rr.SlotFailures[0].Persona = tc.model, tc.persona
+		err := validateSlotFailures(rr, "rr.json")
+		require.Errorf(t, err, "a blank %s names no reviewer", tc.name)
+		assert.Contains(t, err.Error(), "blank model or persona")
+	}
+}

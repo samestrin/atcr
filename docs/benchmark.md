@@ -294,6 +294,19 @@ Each rate sits beside its numerator and denominator, and is **absent** rather th
 
 A case in that array is **unmeasured**, not missed. It appears in no reviewer's `case_ids`, and adds nothing to any recall denominator, so recall over a 3-case suite with one failed case reads exactly as recall over the two that were scored. Scoring it as a zero instead would charge every reviewer for a defect they were never shown — a transient infrastructure failure recorded as a genuine missed defect, which is the one thing this tier's contract forbids. `suite_case_ids` still names the failed case, because that list is the denominator the shortfall is visible against.
 
+**The same rule applies one level down, to a single reviewer.** A case can run fine for the rest of the panel while one reviewer's slot fails on it — a provider timeout, a transport error. That reviewer is not shown the case, so it is skipped from that row's score, covered set and outcome tally together, and the pair is recorded in the run-result's `slot_failures[]` array: `{"model", "persona", "case_id", "reason"}`, where the reason is `call_failed` or `call_timeout` (or `call_status_unknown` for a status a newer producer wrote). The identity is the public, post-scrub one, so each record joins to the `reviewer_coverage` row it explains.
+
+It is a **separate array from `case_failures[]` and cannot be folded into it**: a case-level failure means nobody was shown the case, while a slot-level one means the survivors were — so the two make opposite claims about the same case id, and export rejects a `case_failures` entry for a case any reviewer scored.
+
+Both arrays are **run-result-only**. Neither is carried into the submission envelope, so a published shortfall states how much was skipped and never why.
+
+A slot failure has two visible consequences, and both are deliberate:
+
+- **The work dir is retained**, exactly as for a case failure. The review dirs hold each slot's `status.json`, which is the only record of why the slot died.
+- **`benchmark export` rejects the run by default**, because that reviewer's row is short of the suite. The shortfall is labelled `unshown` rather than `missing` or `unmeasured`, and re-running will not help it — the case ran and the rest of the panel scored it, so what needs investigating is that one provider.
+
+Under `--allow-partial-coverage` the row publishes, and the warning says what you are publishing: a slot-short row's `corroboration_rate` is averaged over only the cases that reviewer was shown, so it is **not penalised** for the ones it missed and will read higher than a row scored over the full suite. Nothing in the submission distinguishes the two.
+
 These failures still abort the whole run, and none of them is transient:
 
 | Failure | Why it aborts |
@@ -318,12 +331,20 @@ Watch `retained_bytes`, and once you have inspected or rescored a run, reclaim i
 At export, a recorded failure **explains** a coverage shortfall; it **does not excuse** one. `atcr benchmark export` still rejects a partial run by default, but names the failed case and its reason rather than telling you to re-run cases that never ran:
 
 ```
-run-result run.json has reviewer row(s) scored over less than the full 3-case suite: claude-sonnet-4-6/bruce (2/3 cases, unmeasured case-02 (prepare)); re-run the missing or unmeasured cases, or pass --allow-partial-coverage to publish the shortfall explicitly
+run-result run.json has reviewer row(s) scored over less than the full 3-case suite: claude-sonnet-4-6/bruce (2/3 cases, unmeasured case-02 (prepare)); on repo-state-v1 there is no per-case resume (--checkpoint is refused for this tier), so re-running re-pays the whole suite; weigh that against --allow-partial-coverage, which publishes the shortfall explicitly
 ```
 
-The reason vocabulary is closed and fail-closed at that boundary: export **rejects** a `case_failures` entry whose reason is not one the producer writes, whose case the suite does not declare, whose case some reviewer also scored, or which names the same case twice.
+The remedy is tier-aware because on `repo-state-v1` the generic one is false: with no `--checkpoint` there is no per-case re-run, and the only re-run on offer is the entire paid panel. On `standard-v1`, which does support resume, the message keeps the plain "re-run the missing or unmeasured cases" wording.
 
-What that proves is that an entry is **well-formed and internally consistent** — not that it is true. A hand-supplied run-result can still pair a valid reason with a real, unscored case id and have it accepted, which relabels a shortfall from *missing* to *unmeasured* in the export diagnostic. The gate's job is to keep the vocabulary closed and the artifact self-consistent; only the producer can vouch for whether a case actually failed.
+A row short for **slot** reasons reads differently again, and says so:
+
+```
+run-result run.json has reviewer row(s) scored over less than the full 3-case suite: claude-sonnet-4-6/bruce (2/3 cases, unshown case-02 (call_timeout)); ... Re-running will not help the `unshown` cases — those ran and the rest of the panel scored them; investigate the provider behind claude-sonnet-4-6/bruce instead
+```
+
+Both reason vocabularies are closed and fail-closed at that boundary. Export **rejects** a `case_failures` entry whose reason is not one the producer writes, whose case the suite does not declare, whose case some reviewer also scored, or which names the same case twice — and a `slot_failures` entry whose reason is not one the producer writes, whose case the suite does not declare, whose identity has no `reviewer_coverage` row, whose case **that same reviewer** also scored, or which names the same (reviewer, case) pair twice. The scored-and-failed check is per identity on the slot side, because a case another reviewer scored is exactly what a slot failure means.
+
+What that proves is that an entry is **well-formed and internally consistent** — not that it is true. A hand-supplied run-result can still pair a valid reason with a real, unscored case id and have it accepted, which relabels a shortfall from *missing* to *unmeasured* or *unshown* in the export diagnostic. The gate's job is to keep the vocabulary closed and the artifact self-consistent; only the producer can vouch for whether a case or a slot actually failed.
 
 > **The Epic 14.1 grounding gate stays ON for these runs, by design.** A finding whose cited file the patch never touched is dropped unless pre-fetching actually retrieved the cited span. That is the measurement rather than an obstacle to it: the tier's question is whether pre-fetching lets a genuine out-of-diff finding clear the shipped anti-hallucination gate. Turning the gate off for benchmark runs would hide exactly the thing being measured.
 

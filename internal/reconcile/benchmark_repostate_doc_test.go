@@ -424,16 +424,41 @@ func TestBenchmarkDoc_ExportRejectionExampleMatchesTheEmittedLine(t *testing.T) 
 	doc := readRepoFile(t, "../../docs/benchmark.md")
 	coverage := readRepoFile(t, "../../cli/benchmark_coverage.go")
 
-	assert.Contains(t, coverage, "has reviewer row(s) scored over less than the full %d-case suite: %s; ",
+	assert.Contains(t, coverage, "has reviewer row(s) scored over less than the full %d-case suite: %s; %s",
 		"the gate's format string must keep the shape the doc quotes")
-	onOneLine := false
-	for _, line := range strings.Split(doc, "\n") {
-		if strings.Contains(line, "has reviewer row(s) scored over less than the full") &&
-			strings.Contains(line, "re-run the missing or unmeasured cases") {
-			onOneLine = true
-			break
+
+	// The remedy is now TIER-AWARE, so the doc's example — which sits in the
+	// repo-state section — must quote the repo-state remedy, not the generic one.
+	// Both spellings are pinned against the source that emits them, so a reword on
+	// either side fails here rather than leaving the doc quoting a sentence no run
+	// can produce.
+	const repoStateRemedy = "so re-running re-pays the whole suite"
+	const standardRemedy = "re-run the missing or unmeasured cases"
+	assert.Contains(t, coverage, repoStateRemedy,
+		"the repo-state remedy the doc quotes must be the one the gate emits")
+	assert.Contains(t, coverage, standardRemedy,
+		"the standard-v1 remedy must survive: that tier supports --checkpoint, so per-case re-running is real there")
+
+	// Each example is checked for the SAME property the test was written for: the
+	// gate emits one line, so the doc must show one line.
+	for _, want := range []struct{ label, remedy string }{
+		{"case-level (unmeasured)", repoStateRemedy},
+		{"slot-level (unshown)", "investigate the provider behind"},
+	} {
+		onOneLine := false
+		for _, line := range strings.Split(doc, "\n") {
+			if strings.Contains(line, "has reviewer row(s) scored over less than the full") &&
+				strings.Contains(line, want.remedy) {
+				onOneLine = true
+				break
+			}
 		}
+		assert.Truef(t, onOneLine,
+			"the doc's %s export-rejection example must be one line, as the gate emits it — "+
+				"not a wrapped block nobody will see", want.label)
 	}
-	assert.True(t, onOneLine,
-		"the doc's export-rejection example must be one line, as the gate emits it — not a wrapped three-line block nobody will see")
+
+	// The slot remedy's own source text, so the example above cannot drift from it.
+	assert.Contains(t, coverage, "Re-running will not help the `unshown` cases",
+		"the slot remedy the doc quotes must be the one the gate emits")
 }

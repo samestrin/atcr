@@ -2502,3 +2502,28 @@ func TestExecuteRepoStateBenchmarkRun_CancellationStopsTheLoopAtTheNextCase(t *t
 		"the interrupt landed during case 1, so case 2 must never be entered — the in-loop check "+
 			"is what stops the bill, and without it the loop walks the rest of the suite")
 }
+
+// The slot list is CAPPED like the case list, and for the same reason: one dead
+// provider on a 200-case suite would otherwise write 200 lines ahead of the recall
+// summary this warning exists to qualify, scrolling it off the terminal.
+func TestWarnCaseFailures_CapsTheSlotList(t *testing.T) {
+	rr := &benchmark.RunResult{SuiteCaseIDs: make([]string, 25)}
+	for i := 0; i < 25; i++ {
+		id := fmt.Sprintf("case-%02d", i)
+		rr.SuiteCaseIDs[i] = id
+		rr.SlotFailures = append(rr.SlotFailures, benchmark.SlotFailure{
+			Model: "m", Persona: "p", CaseID: id, Reason: benchmark.SlotFailureCall,
+		})
+	}
+
+	var buf bytes.Buffer
+	warnCaseFailures(&buf, rr, "")
+	out := buf.String()
+
+	assert.Equal(t, maxNamedFailedCases, strings.Count(out, ": "+benchmark.SlotFailureCall),
+		"exactly maxNamedFailedCases slot lines are printed")
+	assert.Contains(t, out, fmt.Sprintf("... and %d more", 25-maxNamedFailedCases),
+		"the overflow count carries the rest")
+	assert.Contains(t, out, "25 reviewer slot(s)",
+		"and the scale line still carries the true total")
+}
