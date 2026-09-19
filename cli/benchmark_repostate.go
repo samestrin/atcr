@@ -152,6 +152,11 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 	// retention decision below reads it. The run-result is not built until the loop
 	// ends, so the deferred cleanup cannot consult rr.CaseFailures.
 	var caseFailures []benchmark.CaseFailure
+	// Slot failures share that placement for the same reason: retention now turns on
+	// them too. Keyed by the PRE-SCRUB reviewer identity, because that is what the
+	// per-agent loop has in hand; the emit tail maps each key through scrubOf so the
+	// published array names the same identity as the coverage row it explains.
+	slotFailures := map[reviewerKey][]benchmark.SlotFailure{}
 	defer func() {
 		// The work dir holds the paid review artifacts for every completed case. A
 		// FAILED run RETAINS it — and the returned error names the path — so the
@@ -172,7 +177,13 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			retainedWorkDir = tmp
 			return
 		}
-		if len(caseFailures) > 0 {
+		// A SLOT failure retains too, not just a whole-case one. This arm used to read
+		// len(caseFailures) alone, so a run that lost one reviewer on one case — the
+		// case itself reviewed fine by the others — fell through to the RemoveAll
+		// below and destroyed every review dir, including the status.json holding the
+		// failure the operator would need to diagnose it. The two are one condition:
+		// whatever went unmeasured, the paid artifacts are the only record of why.
+		if len(caseFailures) > 0 || len(slotFailures) > 0 {
 			// The retained BYTES are reported, not just the path. Retention is
 			// unbounded and unconditional on a partial run by design — the artifacts
 			// are the only copy of a paid panel, so capping or pruning them would
@@ -182,7 +193,8 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			// work dir every run; a size on the same line that names the path is what
 			// makes that visible before the volume fills.
 			log.FromContext(ctx).Warn("benchmark work dir retained after a partial run",
-				"path", tmp, "failed_cases", len(caseFailures), "retained_bytes", dirSizeBytes(tmp))
+				"path", tmp, "failed_cases", len(caseFailures), "failed_slots", len(slotFailures),
+				"retained_bytes", dirSizeBytes(tmp))
 			// Returned to the caller as well as logged. The log line is suppressible —
 			// ATCR_LOG_LEVEL=error is a legal setting and drops Warn entirely — and the
 			// partial arm has no error to wrap the path into the way the failure arm
@@ -480,9 +492,21 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			// runs == len(case_ids) == sum(outcomes) as a tamper check, so recording the
 			// failed slot in the tally while omitting it from the covered set would make
 			// every run with a failed slot fail the export gate as "malformed" — after
-			// the panel had been paid for. The per-slot failure remains readable in the
-			// review dir's own status.json.
+			// the panel had been paid for.
+			//
+			// The CAUSE is recorded instead, on its own axis (benchmark.SlotFailure),
+			// which is what keeps the skip from being silent. It cannot go on the
+			// case-level channel: validateCaseFailures rejects a case some reviewer
+			// scored, and the surviving reviewers did score this one. Keyed by the
+			// PRE-SCRUB identity here and mapped through scrubOf at emit, so the
+			// published record joins to the coverage row it explains.
 			if a.Status != fanout.StatusOK {
+				slotFailures[key] = append(slotFailures[key], benchmark.SlotFailure{
+					CaseID: c.ID,
+					Reason: benchmark.SlotFailureReasonForStatus(a.Status),
+				})
+				log.FromContext(ctx).Warn("reviewer slot failed; recorded as unmeasured for this case",
+					"case", c.ID, "agent", a.Agent, "status", a.Status, "err", a.Error)
 				continue
 			}
 
@@ -668,9 +692,50 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		Vocabulary:          benchmark.PerReviewerVocabulary(catScores),
 		PositionalRecall:    benchmark.ScorePositional(posScores),
 		CaseFailures:        caseFailures,
+		SlotFailures:        publicSlotFailures(slotFailures, order, scrubOf),
 		// retainedWorkDir is set by the deferred cleanup above, which runs after this
 		// return and is the only place that knows whether the dir survived.
 	}, "", nil
+}
+
+// publicSlotFailures flattens the per-identity slot-failure map into the emitted
+// array, translating each key to the identity the coverage rows carry.
+//
+// The TRANSLATION is the point. The per-agent loop holds the pre-scrub key, and the
+// emitted rows are scrubbed, so publishing the raw keys would produce an array naming
+// identities that appear nowhere else in the document — unjoinable by the export
+// diagnostic that exists to read it.
+//
+// Iterated over `order` rather than over the map, for the reason the coverage rows
+// are: `order` is already sorted by the scrubbed pair, so two runs with identical
+// logical content produce byte-identical arrays. Ranging a Go map here would make the
+// output order random per run.
+//
+// A key absent from scrubOf is skipped rather than emitted raw. The only way to reach
+// that is a reviewer whose every slot failed on every case before the identity was
+// registered, which the loop's registration order rules out — but emitting an
+// untranslated identity would be worse than emitting nothing, since it would look
+// joinable and not be.
+func publicSlotFailures(byKey map[reviewerKey][]benchmark.SlotFailure, order []reviewerKey, scrubOf map[reviewerKey]reviewerKey) []benchmark.SlotFailure {
+	if len(byKey) == 0 {
+		return nil
+	}
+	var out []benchmark.SlotFailure
+	for _, k := range order {
+		id, ok := scrubOf[k]
+		if !ok {
+			continue
+		}
+		for _, sf := range byKey[k] {
+			out = append(out, benchmark.SlotFailure{
+				Model:   id.model,
+				Persona: id.persona,
+				CaseID:  sf.CaseID,
+				Reason:  sf.Reason,
+			})
+		}
+	}
+	return out
 }
 
 // recordCaseFailure marks one case unmeasured and lets the run continue.
@@ -1045,23 +1110,50 @@ func readCaseFindingsLocated(reviewDir string, agents map[string]bool) (located 
 // The scale line above the list already carries the true total, so the cap costs no
 // information that matters at a glance.
 func warnCaseFailures(w io.Writer, rr *benchmark.RunResult, retainedWorkDir string) {
-	if rr == nil || len(rr.CaseFailures) == 0 {
+	if rr == nil || (len(rr.CaseFailures) == 0 && len(rr.SlotFailures) == 0) {
 		return
 	}
 	var msg strings.Builder
-	fmt.Fprintf(&msg, "warning: %d of %d case(s) were UNMEASURED — an infrastructure failure stopped them being reviewed, "+
-		"so they are excluded from every recall denominator rather than scored as misses:\n",
-		len(rr.CaseFailures), len(rr.SuiteCaseIDs))
-	named := rr.CaseFailures
-	if len(named) > maxNamedFailedCases {
-		named = named[:maxNamedFailedCases]
+	if len(rr.CaseFailures) > 0 {
+		fmt.Fprintf(&msg, "warning: %d of %d case(s) were UNMEASURED — an infrastructure failure stopped them being reviewed, "+
+			"so they are excluded from every recall denominator rather than scored as misses:\n",
+			len(rr.CaseFailures), len(rr.SuiteCaseIDs))
+		named := rr.CaseFailures
+		if len(named) > maxNamedFailedCases {
+			named = named[:maxNamedFailedCases]
+		}
+		for _, f := range named {
+			fmt.Fprintf(&msg, "  %s: failed at %s\n",
+				stripTerminalControlRunes(f.CaseID), stripTerminalControlRunes(f.Reason))
+		}
+		if overflow := len(rr.CaseFailures) - len(named); overflow > 0 {
+			fmt.Fprintf(&msg, "  ... and %d more\n", overflow)
+		}
 	}
-	for _, f := range named {
-		fmt.Fprintf(&msg, "  %s: failed at %s\n",
-			stripTerminalControlRunes(f.CaseID), stripTerminalControlRunes(f.Reason))
-	}
-	if overflow := len(rr.CaseFailures) - len(named); overflow > 0 {
-		fmt.Fprintf(&msg, "  ... and %d more\n", overflow)
+	// The SLOT half, reported separately because it means something different: the
+	// case ran and is in the other reviewers' covered sets, and only this reviewer's
+	// row is short by it. Folding the two lists together would tell an operator a case
+	// went unmeasured when it was measured by everyone else on the panel.
+	//
+	// Capped on the same terms as the case list above, and for the same reason — one
+	// dead provider on a 200-case suite produces 200 slot failures, which would scroll
+	// the recall summary this warning exists to qualify off the terminal.
+	if len(rr.SlotFailures) > 0 {
+		fmt.Fprintf(&msg, "warning: %d reviewer slot(s) were UNMEASURED — the case ran, but one reviewer could not be "+
+			"shown it, so that reviewer's row is short by it rather than scored a miss:\n",
+			len(rr.SlotFailures))
+		namedSlots := rr.SlotFailures
+		if len(namedSlots) > maxNamedFailedCases {
+			namedSlots = namedSlots[:maxNamedFailedCases]
+		}
+		for _, sf := range namedSlots {
+			fmt.Fprintf(&msg, "  %s/%s on %s: %s\n",
+				stripTerminalControlRunes(sf.Model), stripTerminalControlRunes(sf.Persona),
+				stripTerminalControlRunes(sf.CaseID), stripTerminalControlRunes(sf.Reason))
+		}
+		if overflow := len(rr.SlotFailures) - len(namedSlots); overflow > 0 {
+			fmt.Fprintf(&msg, "  ... and %d more\n", overflow)
+		}
 	}
 	if retainedWorkDir != "" {
 		fmt.Fprintf(&msg, "  The work dir is retained at %s — the scored cases' review artifacts "+
