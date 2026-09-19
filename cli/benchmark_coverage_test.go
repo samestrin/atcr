@@ -465,6 +465,154 @@ func partialRun() benchmark.RunResult {
 	}
 }
 
+// slotFailureRun is partialRun's slot-level sibling: the case RAN and one reviewer
+// missed it, so the case is in nobody's failure list and only this reviewer's
+// covered set is short by it.
+func slotFailureRun() benchmark.RunResult {
+	return benchmark.RunResult{
+		SuiteCaseIDs: []string{"case-01", "case-02", "case-03"},
+		Reviewers:    []scorecard.PublicRecord{{Model: "m", Persona: "p", Runs: 2}},
+		Coverage: []benchmark.ReviewerCoverage{
+			{Model: "m", Persona: "p", CaseIDs: []string{"case-01", "case-03"}},
+		},
+		SlotFailures: []benchmark.SlotFailure{
+			{Model: "m", Persona: "p", CaseID: "case-02", Reason: benchmark.SlotFailureTimeout},
+		},
+	}
+}
+
+// The slot channel gets the same fail-closed treatment as the case channel, and for
+// a sharper reason: the shortfall diagnostic interpolates this reason into an
+// operator's terminal, so an unvalidated entry is arbitrary attacker-chosen prose
+// presented as an explanation.
+func TestValidateSlotFailures_RejectsAnUnknownReason(t *testing.T) {
+	rr := slotFailureRun()
+	rr.SlotFailures[0].Reason = "vibes"
+
+	err := validateSlotFailures(rr, "rr.json")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "vibes")
+	assert.Contains(t, err.Error(), "slot_failures")
+}
+
+// The empty reason is what omitempty and a partly-populated hand edit produce, and
+// "this reviewer missed it, cause unstated" is the claim the channel exists to stop.
+func TestValidateSlotFailures_RejectsAnEmptyReason(t *testing.T) {
+	rr := slotFailureRun()
+	rr.SlotFailures[0].Reason = ""
+
+	require.Error(t, validateSlotFailures(rr, "rr.json"))
+}
+
+// A slot failure explains why ONE row is short. Naming an identity with no coverage
+// row explains nothing, and would let a hand-assembled file attach an excuse to a
+// reviewer the run never had.
+func TestValidateSlotFailures_RejectsAnIdentityWithNoCoverageRow(t *testing.T) {
+	rr := slotFailureRun()
+	rr.SlotFailures[0].Model = "ghost"
+
+	err := validateSlotFailures(rr, "rr.json")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ghost")
+	assert.Contains(t, err.Error(), "no reviewer_coverage row")
+}
+
+// The contradiction arm, and it is PER IDENTITY rather than global — that is the
+// whole difference from the case-level channel. A case another reviewer scored is
+// perfectly consistent with this reviewer having missed it; a case THIS reviewer's
+// own row claims is not.
+func TestValidateSlotFailures_RejectsACaseTheSameReviewerScored(t *testing.T) {
+	rr := slotFailureRun()
+	rr.SlotFailures[0].CaseID = "case-01" // already in that row's covered set
+
+	err := validateSlotFailures(rr, "rr.json")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "both scored by and slot-failed for")
+}
+
+// The mirror of the arm above: a case a DIFFERENT reviewer scored is the normal
+// shape, not a contradiction. Without this the validator would reject every genuine
+// partial-slot run, which is the failure mode that makes an over-strict gate worse
+// than none.
+func TestValidateSlotFailures_AcceptsACaseAnotherReviewerScored(t *testing.T) {
+	rr := slotFailureRun()
+	rr.Coverage = append(rr.Coverage, benchmark.ReviewerCoverage{
+		Model: "m2", Persona: "p2", CaseIDs: []string{"case-01", "case-02", "case-03"},
+	})
+
+	require.NoError(t, validateSlotFailures(rr, "rr.json"),
+		"the surviving reviewer scoring the case is exactly what a slot failure means")
+}
+
+// A case outside the declared suite explains no shortfall in it.
+func TestValidateSlotFailures_RejectsACaseOutsideTheSuite(t *testing.T) {
+	rr := slotFailureRun()
+	rr.SlotFailures[0].CaseID = "case-99"
+
+	require.Error(t, validateSlotFailures(rr, "rr.json"))
+}
+
+// Every comparison runs on the RAW id while every message prints the stripped one,
+// so the rune arm has to fire before the membership arms — otherwise the rejection
+// would report that suite_case_ids does not declare a case it visibly declares.
+func TestValidateSlotFailures_RejectsANonPrintingRune(t *testing.T) {
+	rr := slotFailureRun()
+	rr.SlotFailures[0].CaseID = "case-02​"
+
+	err := validateSlotFailures(rr, "rr.json")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "non-printing rune")
+	assert.Contains(t, err.Error(), "U+200B")
+	assert.NotContains(t, err.Error(), "does not declare",
+		"naming the rune is the point; blaming the denominator would send the reader to the wrong file")
+}
+
+// The producer writes one record per (reviewer, case) pair.
+func TestValidateSlotFailures_RejectsADuplicatePair(t *testing.T) {
+	rr := slotFailureRun()
+	rr.SlotFailures = append(rr.SlotFailures, rr.SlotFailures[0])
+
+	err := validateSlotFailures(rr, "rr.json")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "more than once")
+}
+
+// Two reviewers missing the SAME case is not a duplicate — it is two independent
+// slot failures. The key is the triple, not the case id.
+func TestValidateSlotFailures_AcceptsTwoReviewersMissingOneCase(t *testing.T) {
+	rr := slotFailureRun()
+	rr.Coverage = append(rr.Coverage, benchmark.ReviewerCoverage{
+		Model: "m2", Persona: "p2", CaseIDs: []string{"case-01", "case-03"},
+	})
+	rr.SlotFailures = append(rr.SlotFailures, benchmark.SlotFailure{
+		Model: "m2", Persona: "p2", CaseID: "case-02", Reason: benchmark.SlotFailureCall,
+	})
+
+	require.NoError(t, validateSlotFailures(rr, "rr.json"))
+}
+
+// A file carrying the array but no denominator gets its own rejection rather than
+// the membership arm's, which would blame the case id for an absent suite_case_ids.
+func TestValidateSlotFailures_RejectsAnAbsentDenominator(t *testing.T) {
+	rr := slotFailureRun()
+	rr.SuiteCaseIDs = nil
+
+	err := validateSlotFailures(rr, "rr.json")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no suite_case_ids")
+}
+
+// A clean run carries no array and must pass untouched.
+func TestValidateSlotFailures_CleanRunPasses(t *testing.T) {
+	require.NoError(t, validateSlotFailures(partialRun(), "rr.json"))
+}
+
 // AC3 — the failure reason is fail-closed at the EXPORT trust boundary, the only
 // live one for this tier (--checkpoint is refused for repo-state-v1). A run-result
 // is hand-suppliable, so an unrecognized reason must be REJECTED rather than

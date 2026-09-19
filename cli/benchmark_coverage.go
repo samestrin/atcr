@@ -1031,3 +1031,117 @@ func validateCaseFailures(rr benchmark.RunResult, path string) error {
 	}
 	return nil
 }
+
+// validateSlotFailures is the export trust boundary for the per-SLOT failure channel,
+// the role validateCaseFailures plays one level up.
+//
+// It exists on the same premise: a run-result reaches export hand-suppliable, having
+// never passed through the producer, and this array is CONSEQUENTIAL — the shortfall
+// diagnostic reads it to explain why a reviewer row is short, so an unvalidated entry
+// is a way to attach an excuse to a row that never earned one, and to interpolate an
+// attacker-chosen string into an operator's terminal.
+//
+// The arms are the ways an entry can be MALFORMED, each impossible from the producer,
+// which writes one record per (reviewer, case) with a constant reason at the moment
+// it skips the slot:
+//
+//   - a reason outside the vocabulary, the empty one included
+//   - a blank or non-printing case id or identity
+//   - a case the suite does not declare
+//   - a case that same reviewer's coverage row also claims to have scored
+//   - the same (reviewer, case) pair twice
+//
+// WHAT IT DOES NOT PROVE, stated for the same reason its sibling states it: that an
+// entry is well-formed is not that the slot really failed. A valid reason on a real,
+// unscored (reviewer, case) pair passes every arm. Only the producer knows what ran.
+//
+// The identity is matched against the COVERAGE rows rather than the reviewer rows
+// because coverage is what carries the covered set this record explains, and the two
+// are already cross-checked in both directions by checkCoverage.
+func validateSlotFailures(rr benchmark.RunResult, path string) error {
+	if len(rr.SlotFailures) == 0 {
+		return nil
+	}
+	// The no-denominator rejection its sibling carries, for the same reason: without
+	// it every entry fails the membership arm and the message blames the case id for a
+	// file whose actual defect is the absent suite_case_ids.
+	if len(rr.SuiteCaseIDs) == 0 {
+		return fmt.Errorf("run-result %s records slot_failures but no suite_case_ids; "+
+			"a slot failure names a case of the declared suite, and `atcr benchmark run` writes the two together, "+
+			"so this file is malformed", path)
+	}
+	suite := make(map[string]bool, len(rr.SuiteCaseIDs))
+	for _, cid := range rr.SuiteCaseIDs {
+		suite[cid] = true
+	}
+	// Per-identity covered sets: a slot failure says THIS reviewer did not get this
+	// case, so the contradiction is with that reviewer's own row, not with any row.
+	// Keyed on the scrubbed pair, which is what both arrays carry.
+	covered := map[reviewerKey]map[string]bool{}
+	for _, c := range rr.Coverage {
+		k := reviewerKey{model: c.Model, persona: c.Persona}
+		if covered[k] == nil {
+			covered[k] = map[string]bool{}
+		}
+		for _, cid := range c.CaseIDs {
+			covered[k][cid] = true
+		}
+	}
+	seen := map[string]bool{}
+	for _, sf := range rr.SlotFailures {
+		// Stripped for display for the same reason every identity in this file is;
+		// every COMPARISON below stays on the raw value, which is why the rune arm
+		// has to fire before the membership arms.
+		id := stripTerminalControlRunes(sf.CaseID)
+		model := stripTerminalControlRunes(sf.Model)
+		persona := stripTerminalControlRunes(sf.Persona)
+
+		if !benchmark.ValidSlotFailureReason(sf.Reason) {
+			return fmt.Errorf("run-result %s records slot_failures reason %q for %s/%s on case %q, outside the failure "+
+				"vocabulary; the producer writes only benchmark.SlotFailure* values, so this file is malformed",
+				path, stripTerminalControlRunes(sf.Reason), model, persona, id)
+		}
+		if strings.TrimSpace(sf.CaseID) == "" {
+			return fmt.Errorf("run-result %s records a slot_failures entry with a blank case_id; "+
+				"a failure record names the case it is about, so this file is malformed", path)
+		}
+		if strings.TrimSpace(sf.Model) == "" || strings.TrimSpace(sf.Persona) == "" {
+			return fmt.Errorf("run-result %s records a slot_failures entry for case %q with a blank model or persona; "+
+				"a slot failure names the reviewer whose row it explains, so this file is malformed", path, id)
+		}
+		for _, f := range []struct{ name, value string }{
+			{"case_id", sf.CaseID}, {"model", sf.Model}, {"persona", sf.Persona},
+		} {
+			if r, bad := firstNonPrintingRune(f.value); bad {
+				return fmt.Errorf("run-result %s records a slot_failures entry whose %s %q carries a non-printing rune "+
+					"(U+%04X); the producer records the run's own scrubbed identities and suite case ids, which cannot "+
+					"contain one, so this file is malformed",
+					path, f.name, stripTerminalControlRunes(f.value), r)
+			}
+		}
+		if !suite[sf.CaseID] {
+			return fmt.Errorf("run-result %s records a slot_failures entry for %q, which suite_case_ids does not declare; "+
+				"a failure naming a case outside the suite explains no shortfall in it, so this file is malformed",
+				path, id)
+		}
+		k := reviewerKey{model: sf.Model, persona: sf.Persona}
+		if _, ok := covered[k]; !ok {
+			return fmt.Errorf("run-result %s records a slot_failures entry for %s/%s, which has no reviewer_coverage row; "+
+				"a slot failure explains why one row is short, so a record naming no row explains nothing and this file "+
+				"is malformed", path, model, persona)
+		}
+		if covered[k][sf.CaseID] {
+			return fmt.Errorf("run-result %s records case %q as both scored by and slot-failed for %s/%s; "+
+				"the producer skips a failed slot before scoring it, so this file is malformed",
+				path, id, model, persona)
+		}
+		pair := sf.Model + "\x00" + sf.Persona + "\x00" + sf.CaseID
+		if seen[pair] {
+			return fmt.Errorf("run-result %s records %s/%s on case %q in slot_failures more than once; "+
+				"the producer records each failed slot exactly once, so this file is malformed",
+				path, model, persona, id)
+		}
+		seen[pair] = true
+	}
+	return nil
+}

@@ -415,3 +415,32 @@ func TestBenchmarkExport_CaseFailureGateIsInstalledBeforeTheCoverageGate(t *test
 	require.NotContains(t, out, "not comparable",
 		"the coverage gate must not be the last word on a file the failure gate rejects")
 }
+
+// The slot_failures gate gets the same COMMAND-level pin, and it needs it for the
+// same demonstrated reason: validateSlotFailures had eleven unit tests and nothing
+// proved runBenchmarkExport still calls it. Verified by mutation — deleting the call
+// left the whole cli suite green, which is exactly how the sibling gate's call site
+// went unpinned until a --post round caught it.
+//
+// --allow-partial-coverage is passed so the coverage gate CANNOT be what fails the
+// command: with the slot gate removed this fixture exports at exit 0, so a green
+// assertion here would be meaningless without it.
+func TestBenchmarkExport_SlotFailureGateIsInstalled(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01","case-02","case-03"],` +
+		`"slot_failures":[{"model":"m-primary","persona":"brad","case_id":"case-02","reason":"vibes"}],` +
+		`"reviewer_coverage":[{"model":"m-primary","persona":"brad","case_ids":["case-01","case-03"]}],` +
+		`"reviewers":[{"model":"m-primary","persona":"brad","runs":2,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path, "--allow-partial-coverage")
+
+	require.NotEqual(t, 0, code,
+		"an unvalidated slot_failures reason must not reach an operator-facing diagnostic: %s", out)
+	require.Contains(t, out, "outside the failure vocabulary",
+		"the slot_failures gate's own diagnostic must fire")
+	require.Contains(t, out, "slot_failures",
+		"and must name the channel, so the operator edits the right array")
+}

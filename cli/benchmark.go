@@ -501,6 +501,13 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 	if err := validateCaseFailures(rr, in); err != nil {
 		return err
 	}
+	// Beside its sibling and for the identical reason: checkCoverage reads
+	// slot_failures to explain a short reviewer row, so an unvalidated entry would
+	// reach an operator-facing diagnostic — and could attach an excuse to a row that
+	// never earned one — before anything checked the producer could have written it.
+	if err := validateSlotFailures(rr, in); err != nil {
+		return err
+	}
 	if err := checkCoverage(cmd.ErrOrStderr(), rr, in, allowPartial); err != nil {
 		return err
 	}
