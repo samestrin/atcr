@@ -787,9 +787,13 @@ measure, while the floor is an operator preference applied to whatever survived 
 > tally key through `ValidOutcome`, and re-running under that build cannot help,
 > since an older producer writes only values it knows). A run-result written by
 > this version cannot be exported by an older one. The checkpoint-resume boundary
-> never sees the value: `--checkpoint` is refused for `repo-state-v1`, and
-> `ungrounded` cannot arise on `standard-v1`, whose diff path supplies no range
-> and fails the gate open.
+> differs per value. `filtered` DOES cross it: `--checkpoint` is refused for
+> `repo-state-v1`, so a checkpoint is written only on `standard-v1` — the tier
+> whose registry agents can set a `min_severity` floor and produce `filtered` —
+> and a checkpoint carrying it is rejected as corrupt (`ValidOutcome` at resume)
+> by an older binary, forfeiting every paid case in that checkpoint. `ungrounded`,
+> by contrast, never crosses the boundary: it cannot arise on `standard-v1`, whose
+> diff path supplies no range and fails the gate open.
 
 `unknown` is deliberately distinct from `clean`. A resumed run whose checkpoint
 predates this field reports `unknown`, never "reviewed and found nothing" — the
