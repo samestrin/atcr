@@ -341,6 +341,10 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 	}
 
 	var short []string
+	// The identities behind `short`, kept in the same order so the remedy below can
+	// ask which short rows lost a slot. `short` itself is pre-formatted display text
+	// and cannot be matched back to an identity without re-parsing it.
+	var shortKeys []reviewerKey
 	consumed := make(map[reviewerKey]scorecard.PublicRecord, len(rr.Reviewers))
 	for _, rev := range rr.Reviewers {
 		key := coverageKey(rev.Model, rev.Persona)
@@ -415,6 +419,11 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		// checks above have already made unreachable.
 		short = append(short, fmt.Sprintf("%s/%s (%d/%d cases, %s)",
 			model, persona, len(cov.CaseIDs), len(suite), describeMissing(missing, failed, slotFailed[key])))
+		// The RAW key, because slotFailed is indexed by it. Stripping happens where the
+		// pair is rendered below, not here — a stripped key would silently miss its
+		// slotFailed entry for any identity carrying a control rune, which is exactly
+		// the case where a wrong answer matters.
+		shortKeys = append(shortKeys, key)
 	}
 
 	// The join is checked in BOTH directions: a coverage row no reviewer row
@@ -435,17 +444,66 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 	if len(short) == 0 {
 		return nil
 	}
+
+	// The SLOT caveat, computed once for both exits below. It applies only when a row
+	// is short because a reviewer was not shown a case — not when the whole panel lost
+	// one. That distinction is the point: a case-level shortfall hits every row
+	// equally, so the rows stay comparable to EACH OTHER and only the suite is short,
+	// while a slot-level one makes one row's denominator differ from its peers'.
+	var slotShortRows []string
+	for _, k := range shortKeys {
+		if len(slotFailed[k]) > 0 {
+			slotShortRows = append(slotShortRows,
+				stripTerminalControlRunes(k.model)+"/"+stripTerminalControlRunes(k.persona))
+		}
+	}
+
 	if allowPartial {
-		_, _ = fmt.Fprintf(w,
+		msg := fmt.Sprintf(
 			"warning: publishing %s with partial coverage (--allow-partial-coverage): %s — "+
 				partialCoverageVisibilityAdvisory+
 				", but the rows still are not comparable to fully-covered ones.\n",
 			path, strings.Join(short, "; "))
+		// What the override is about to publish, stated plainly. corroboration_rate is
+		// a mean over the cases a reviewer was SHOWN (score.go's ratedCases counts
+		// r.Cases, which the slot skip already removed them from), so a slot-short row
+		// is not penalised for what it missed and reads higher than a peer scored over
+		// the full suite. That is the correct measurement of what the reviewer saw and
+		// the wrong number to rank it by, and the envelope has no field that can say so
+		// — slot_failures is run-result-only. An operator overriding the gate is owed
+		// that sentence before the figure reaches a board.
+		if len(slotShortRows) > 0 {
+			msg += fmt.Sprintf(
+				"  note: %s lost individual reviewer slots, so each one's corroboration_rate is "+
+					"averaged over only the cases that reviewer was shown and is not penalised for the rest. "+
+					"It will read higher than a row scored over the full suite, and nothing in the submission "+
+					"distinguishes the two.\n",
+				strings.Join(slotShortRows, ", "))
+		}
+		_, _ = fmt.Fprint(w, msg)
 		return nil
 	}
-	return fmt.Errorf("run-result %s has reviewer row(s) scored over less than the full %d-case suite: %s; "+
-		"re-run the missing or unmeasured cases, or pass --allow-partial-coverage to publish the shortfall explicitly",
-		path, len(suite), strings.Join(short, "; "))
+
+	// The remedy is TIER-AWARE, because "re-run the missing or unmeasured cases"
+	// presumes per-case re-running and repo-state-v1 has none: checkRepoStateFlags
+	// refuses --checkpoint there, so the only re-run on offer is the entire paid
+	// panel. An operator weighing that against --allow-partial-coverage has to know
+	// which they are choosing between.
+	remedy := "re-run the missing or unmeasured cases, or pass --allow-partial-coverage to publish the shortfall explicitly"
+	if strings.EqualFold(rr.Suite, benchmark.FormatRepoStateV1) {
+		remedy = "on " + benchmark.FormatRepoStateV1 + " there is no per-case resume (--checkpoint is refused for this tier), " +
+			"so re-running re-pays the whole suite; weigh that against --allow-partial-coverage, which publishes the " +
+			"shortfall explicitly"
+	}
+	if len(slotShortRows) > 0 {
+		// A re-run is the wrong instruction for the slot half whatever the tier: the
+		// case ran and the other reviewers scored it, so what needs investigating is
+		// that reviewer's provider, not the suite.
+		remedy += ". Re-running will not help the `unshown` cases — those ran and the rest of the panel scored them; " +
+			"investigate the provider behind " + strings.Join(slotShortRows, ", ") + " instead"
+	}
+	return fmt.Errorf("run-result %s has reviewer row(s) scored over less than the full %d-case suite: %s; %s",
+		path, len(suite), strings.Join(short, "; "), remedy)
 }
 
 // suiteAnchor is the only part of a suite manifest the denominator anchor consults:

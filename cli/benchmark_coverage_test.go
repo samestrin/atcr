@@ -981,3 +981,62 @@ func TestCheckCoverage_MixedShortfallNamesBothHalvesWithTheirOwnOverflow(t *test
 		fmt.Sprintf("unmeasured case-01 (%[1]s), case-02 (%[1]s), case-03 (%[1]s) and 2 more", benchmark.CaseFailurePrepare),
 		"and the unmeasured half does the same, independently: %s", msg)
 }
+
+// The rejection's remedy is TIER-AWARE, because on repo-state-v1 it was false.
+// "Re-run the missing or unmeasured cases" presumes per-case re-running, and
+// checkRepoStateFlags refuses --checkpoint for that tier — so the only re-run
+// available is the entire paid suite, which the operator should know before choosing
+// it over --allow-partial-coverage.
+func TestCheckCoverage_RemedyNamesTheRepoStateCost(t *testing.T) {
+	rr := slotFailureRun()
+	rr.Suite = benchmark.FormatRepoStateV1
+
+	err := checkCoverage(io.Discard, rr, "rr.json", false)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "re-running re-pays the whole suite",
+		"the tier has no --checkpoint, so per-case re-running is not on offer")
+}
+
+// The standard tier keeps the plain remedy: it supports --checkpoint, so re-running
+// the missing cases really is what an operator should do.
+func TestCheckCoverage_RemedyStaysPlainOnStandardV1(t *testing.T) {
+	rr := partialRun()
+	rr.Suite = "mini"
+
+	err := checkCoverage(io.Discard, rr, "rr.json", false)
+
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "re-running re-pays the whole suite",
+		"standard-v1 supports --checkpoint, so the repo-state caveat would be false here")
+}
+
+// --allow-partial-coverage must say what it is about to publish. A row short for
+// SLOT reasons has its corroboration_rate averaged over only the cases that reviewer
+// was shown (score.go's ratedCases counts r.Cases, which the skip already excluded
+// them from), so the published figure is not penalised for the cases it missed and
+// is not comparable to a peer averaged over the full suite. Overriding the gate
+// without being told that is the "silently" half of the defect.
+func TestCheckCoverage_AllowPartialWarnsAboutTheShrunkenDenominator(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, checkCoverage(&buf, slotFailureRun(), "rr.json", true))
+
+	out := buf.String()
+	assert.Contains(t, out, "m/p",
+		"the warning names which reviewer's rate was computed over fewer cases")
+	assert.Contains(t, out, "averaged over",
+		"and states that the rate's denominator is that reviewer's own shown cases")
+	assert.Contains(t, out, "not penalised",
+		"and that the missed cases cost it nothing, which is why the figure reads high")
+}
+
+// A run short only for CASE-level reasons does not get the slot caveat: every
+// reviewer lost the same cases, so the rows remain comparable to each other and the
+// extra sentence would be noise.
+func TestCheckCoverage_AllowPartialOmitsTheSlotCaveatWithoutSlotFailures(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, checkCoverage(&buf, partialRun(), "rr.json", true))
+
+	assert.NotContains(t, buf.String(), "not penalised",
+		"a case-level shortfall hits every row equally, so the comparability caveat does not apply")
+}
