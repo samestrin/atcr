@@ -13,7 +13,7 @@
 - **The work dir is now retained on a partial run**, not only on a hard failure, so the scored cases' review artifacts survive for inspection or manual rescoring. A fully clean run still cleans up.
 - `atcr benchmark export` still rejects a partial run by default, but now names the failed case and its stage rather than telling you to re-run cases that never ran. The failure reason vocabulary is closed and fail-closed at that boundary: an entry whose reason is unrecognized, whose case the suite does not declare, whose case some reviewer also scored, or which repeats a case is rejected as malformed.
 - **A per-case failure no longer makes `atcr benchmark run` exit non-zero for `repo-state-v1`.** A run that loses one case to infrastructure now writes a partial run-result and exits 0; a pipeline that gated on the old all-or-nothing contract should gate on `case_failures` being empty instead.
-- Five failure classes still abort the whole run, none of them transient: a total-roster or empty-roster failure, an unwinnable expectation, the scored-twice and identity-collision guards, cancellation (SIGINT/SIGTERM), and a run that scored nothing at all.
+- Six failure classes still abort the whole run, none of them transient: a total-roster failure, an empty-roster failure, an unwinnable expectation, the scored-twice and identity-collision guards, cancellation (SIGINT/SIGTERM), and a run that scored nothing at all. The first two are kept apart deliberately — a total-roster failure is a transient outage the run refuses to score around, while an empty roster is a deterministic configuration defect that would repeat on every case.
 
 *Shipped via /execute-epic (epic 35.16.10.1)*
 
