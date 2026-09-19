@@ -1645,6 +1645,30 @@ func TestWarnCaseFailures(t *testing.T) {
 	assert.Contains(t, out, "retained", "the paid artifacts survive, and the operator has to know that to use them")
 }
 
+// The multi-failure shape, which the single-failure case above cannot pin: the
+// scale line must count the FAILURES (2), not the suite, every failed case gets its
+// own "failed at <stage>" line in the order recorded, and both stages are named —
+// an operator triaging a partial run needs to know TWO different stages died, not
+// just that something did.
+func TestWarnCaseFailures_MultipleFailures(t *testing.T) {
+	var buf bytes.Buffer
+
+	warnCaseFailures(&buf, &benchmark.RunResult{
+		SuiteCaseIDs: []string{"case-01", "case-02", "case-03"},
+		CaseFailures: []benchmark.CaseFailure{
+			{CaseID: "case-02", Reason: benchmark.CaseFailureMaterialize},
+			{CaseID: "case-03", Reason: benchmark.CaseFailureExecute},
+		},
+	}, "")
+
+	out := buf.String()
+	assert.Contains(t, out, "2 of 3", "the scale line counts the failures against the suite")
+	assert.Contains(t, out, "case-02: failed at materialize")
+	assert.Contains(t, out, "case-03: failed at execute")
+	assert.Less(t, strings.Index(out, "case-02"), strings.Index(out, "case-03"),
+		"failures are listed in the order the run recorded them")
+}
+
 // workDirFaultingCompleter makes the run's own work dir unwritable once case 1's
 // panel has been paid for, so case 2's os.MkdirAll(repo-1) fails MID-LOOP. It is the
 // only observation point a test has for that site: the work dir is created inside the
