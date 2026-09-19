@@ -967,6 +967,28 @@ func validateReviewerPositionalRecall(w io.Writer, rr benchmark.RunResult, path 
 		}
 	}
 
+	// Cross-row denominator equality. The slot skip removes a case's expected
+	// findings from the reviewer whose slot failed, so two rows can carry different
+	// ExpectedTotal/ExpectedOutsideDiff while each stays internally consistent —
+	// "cover every expected finding in the suite" stopped being a property of every
+	// row the moment slots could fail, and warnPositionalRecallSummary prints the
+	// rows side by side. WARN, not FAIL: a differing denominator describes a real
+	// run — only an impossible number fails here.
+	if len(rr.PositionalRecall) > 1 {
+		first := rr.PositionalRecall[0]
+		for _, p := range rr.PositionalRecall[1:] {
+			if p.ExpectedTotal != first.ExpectedTotal || p.ExpectedOutsideDiff != first.ExpectedOutsideDiff ||
+				p.ExpectedWithinDiff != first.ExpectedWithinDiff {
+				_, _ = fmt.Fprintf(w, "warning: run-result %s has reviewer_positional_recall rows with differing denominators "+
+					"(%s/%s: %d expected (%d outside_diff) vs %s/%s: %d expected (%d outside_diff)) — the slot skip makes a row's "+
+					"denominator reviewer-dependent, so the rows are not comparable on rate alone; compare only rows with equal expected counts\n",
+					path, first.Model, first.Persona, first.ExpectedTotal, first.ExpectedOutsideDiff,
+					p.Model, p.Persona, p.ExpectedTotal, p.ExpectedOutsideDiff)
+				break
+			}
+		}
+	}
+
 	if len(rr.PositionalRecall) != len(rr.Reviewers) {
 		_, _ = fmt.Fprintf(w, "warning: run-result %s has %d reviewer_positional_recall row(s) against %d reviewer(s); "+
 			"the array documents a positional join (entry i describes reviewers[i]) that this file cannot satisfy. "+
