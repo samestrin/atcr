@@ -1992,6 +1992,49 @@ func TestExecuteRepoStateBenchmarkRun_RecordsPostPaymentReadBackFailures(t *test
 	}
 }
 
+// The FallbackUsed accounting (`if a.FallbackUsed { acc[key].fallbackCases++ }`) was
+// an uncovered added line: no repo-state test drove a case whose reviewer was served
+// by a fallback, so the per-reviewer fallback_cases figure this tier PUBLISHES was
+// unverified end to end.
+//
+// The fault is injected at readPoolSummaryFn rather than by configuring a real
+// fallback chain, and the boundary is deliberate. What is untested here is the
+// RUNNER's accounting — does a reported fallback reach the emitted coverage row —
+// not fanout's decision to report one, which internal/fanout tests on its own. The
+// seam stands in for exactly one fact ("fanout said this slot was served by a
+// fallback") and the assertion is about what the runner then does with it, so the
+// stub cannot guarantee its own result.
+func TestExecuteRepoStateBenchmarkRun_FallbackCasesReachTheCoverageRow(t *testing.T) {
+	real := readPoolSummaryFn
+	readPoolSummaryFn = func(reviewDir string) (fanout.PoolSummary, error) {
+		s, err := real(reviewDir)
+		if err != nil {
+			return s, err
+		}
+		require.NotEmpty(t, s.Agents, "the fixture must produce at least one agent slot to mark")
+		for i := range s.Agents {
+			s.Agents[i].FallbackUsed = true
+		}
+		return s, nil
+	}
+	t.Cleanup(func() { readPoolSummaryFn = real })
+
+	rr, retained, err := executeRepoStateBenchmarkRun(context.Background(),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{},
+		repoStateMiniPath, time.Unix(0, 0).UTC(), 0)
+	releaseRetainedWorkDir(t, retained)
+	require.NoError(t, err)
+	require.NotEmpty(t, rr.Coverage)
+
+	assert.Equal(t, 1, rr.Coverage[0].FallbackCases,
+		"a fallback-served case must be counted on the row this tier publishes")
+
+	// And onto the wire, since the count is only useful to a reader of the file.
+	data, jerr := json.Marshal(rr)
+	require.NoError(t, jerr)
+	assert.Contains(t, string(data), `"fallback_cases":1`)
+}
+
 // The two warn branches beside the findings read-back were uncovered added lines: no
 // test drove the RUNNER with a case that produced no findings file, or with skipped
 // rows naming an off-panel reviewer. readCaseFindingsLocated returns both signals and
