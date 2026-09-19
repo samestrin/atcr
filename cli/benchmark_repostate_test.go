@@ -1410,7 +1410,12 @@ func releaseRetainedWorkDirFromError(t *testing.T, err error) {
 		return
 	}
 	path := err.Error()[i+len(token):]
-	if end := strings.IndexAny(path, ") \n"); end >= 0 {
+	// Terminate at the closing paren, not at the first space: the wrap site
+	// (benchmark_repostate.go:171) always appends "path)" with the path UNQUOTED —
+	// it is fmt.Errorf, not the slog text handler — so on a host whose $TMPDIR
+	// contains a space, cutting at a space truncated the path and the cleanup
+	// silently leaked the retained dir.
+	if end := strings.Index(path, ")"); end >= 0 {
 		path = path[:end]
 	}
 	releaseRetainedWorkDir(t, path)
