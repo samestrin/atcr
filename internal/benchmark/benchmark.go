@@ -465,8 +465,18 @@ type RunResult struct {
 	// on every row and owe a new all-rows-agree consistency check for information the
 	// run already states once.
 	//
-	// Run-result-only, like Vocabulary: it describes how a measurement was taken, not
-	// a reviewer's score, so BuildSubmission does not carry it into a Submission.
+	// Run-result-only: BuildSubmission does not carry it into a Submission. A
+	// published partial-coverage shortfall states HOW MUCH was skipped — the short
+	// reviewer_coverage rows measured against suite_case_ids — and deliberately never
+	// WHY. That exclusion is a decision, not an oversight, per the epic 35.16.10.1
+	// Clarifications (carrying case_failures into Submission is explicitly excluded,
+	// run-result only): the reason vocabulary is a producer-trust channel validated at
+	// the export boundary, and the public board has no column that could carry it
+	// without a submission_schema bump. GroundingEnabled is published despite being a
+	// similar provenance tag because it qualifies a rate the envelope already carries;
+	// a failure reason qualifies nothing the board scores. The exclusion is locked by
+	// TestBuildSubmission_DoesNotPublishCaseFailures — reverse the decision THERE
+	// first, with the schema bump, never as a silent schema change.
 	// omitempty so a clean run serializes identically to a run-result written before
 	// this field existed, and both unmarshal to nil.
 	CaseFailures []CaseFailure `json:"case_failures,omitempty"`

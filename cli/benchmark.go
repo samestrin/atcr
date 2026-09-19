@@ -566,8 +566,17 @@ const vocabularyAgreementAdvisory = "Treat corroboration_rate as a measure of vo
 // benchmark_coverage.go and the flag help below), so a reword cannot drift them
 // apart — the rule vocabularyAgreementAdvisory already established, applied to the
 // pair that has now gone stale twice.
-const partialCoverageVisibilityAdvisory = "the shortfall is carried into the submission — " +
-	"a consumer can compare each reviewer_coverage row's case_ids against suite_case_ids and see the row is short"
+//
+// "without reasons" is load-bearing, not decoration: the submission carries the
+// SIZE of the shortfall (short case_ids sets against suite_case_ids) but nothing
+// that says WHY any case is missing — case_failures is run-result-only per the
+// epic 35.16.10.1 Clarifications (see RunResult.CaseFailures). Earlier wordings of
+// this clause promised visibility the submission does not deliver; the clause now
+// states the limit in the same breath as the visibility, and
+// TestBuildSubmission_DoesNotPublishCaseFailures pins the wire side of it.
+const partialCoverageVisibilityAdvisory = "the shortfall is carried into the submission, without reasons — " +
+	"a consumer can compare each reviewer_coverage row's case_ids against suite_case_ids and see the row is short; " +
+	"nothing in the submission says why a case is missing"
 
 // maxDriftWarningRows caps the per-reviewer drift listing. The realistic breach cause
 // is a findings-parser regression, which drifts every reviewer at once — on a 27-model

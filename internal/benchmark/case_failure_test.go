@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -140,6 +141,36 @@ func TestOutcomesDoNotCollideWithCaseFailureReasons(t *testing.T) {
 		assert.False(t, ValidCaseFailureReason(o),
 			"outcome value %q must not also be a storable failure reason", o)
 	}
+}
+
+// The epic Clarifications for 35.16.10.1 exclude carrying case_failures into the
+// public Submission — the field is run-result-only, like Vocabulary. This arm locks
+// that DECISION at the same seam the run-result-side round-trip above locks the wire
+// format: a Submission marshalled from a run-result WITH recorded failures must not
+// grow a case_failures key.
+//
+// It exists because the advisory text and the field comment both promise the
+// published artifact's shape, and a future "while we're here" field addition would
+// silently make both promises false: a submission published with
+// --allow-partial-coverage would then carry the full suite_case_ids and short
+// reviewer_coverage rows WITH failure reasons attached, distinguishing an
+// infrastructure failure from a truncated or cherry-picked run — exactly the
+// provenance claim the Clarifications declined to publish. If that decision is ever
+// reversed, it must reverse HERE first (this test fails), then in the comment and
+// the advisory, with a submission_schema bump — never as a silent schema change.
+func TestBuildSubmission_DoesNotPublishCaseFailures(t *testing.T) {
+	data, err := json.Marshal(BuildSubmission(RunResult{
+		Suite:        "s",
+		SuiteVersion: "1",
+		CaseFailures: []CaseFailure{{CaseID: "case-02", Reason: CaseFailurePrepare}},
+	}, time.Date(2026, 9, 18, 0, 0, 0, 0, time.UTC)))
+	require.NoError(t, err)
+
+	var back map[string]any
+	require.NoError(t, json.Unmarshal(data, &back))
+	assert.NotContains(t, back, "case_failures",
+		"the public submission schema must not carry failure reasons — a published "+
+			"partial-coverage shortfall states HOW MUCH was skipped, never WHY")
 }
 
 // The channel serializes under its own key, and an unfailed run omits it entirely —
