@@ -1721,6 +1721,21 @@ func TestExecuteRepoStateBenchmarkRun_AFailedSlotIsUnmeasuredNotMissed(t *testin
 	assert.Positive(t, byPersona["greta"].ExpectedTotal, "the surviving reviewer scored the cases it saw")
 	assert.Zero(t, byPersona["otto"].ExpectedTotal,
 		"a slot that never ran adds 0 to the denominator; scoring it as recall-0 charges a reviewer for a case it was never shown")
+
+	// The export gate enforces runs == len(case_ids) == sum(outcomes) as a tamper
+	// check. Excluding a failed slot from the score but leaving it in either of the
+	// other two would make every run with a failed slot read as MALFORMED at export,
+	// after the panel was paid for — so the three have to move together.
+	for i, cov := range rr.Coverage {
+		tally := 0
+		for _, n := range cov.Outcomes {
+			tally += n
+		}
+		assert.Equal(t, len(cov.CaseIDs), tally,
+			"coverage row %d: the outcomes tally and the covered set are written together", i)
+		assert.Equal(t, rr.Reviewers[i].Runs, len(cov.CaseIDs),
+			"coverage row %d: runs and the covered set are written together", i)
+	}
 }
 
 // The two POST-PAYMENT record-and-continue sites. Their doc comments promise "the

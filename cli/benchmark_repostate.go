@@ -434,6 +434,35 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 				acc[key] = &repoStateAcc{scored: map[string]string{}, outcomes: map[string]int{}}
 				order = append(order, key)
 			}
+			// THE UNMEASURED-NOT-MISSED RULE, AT SLOT GRANULARITY. The whole-case
+			// failure channel covers the all-reviewers outage; one slot down, a
+			// provider timeout on 1 of N reviewers still produced a CaseScore with
+			// Raised nil and a positional row matched against nothing — charging that
+			// reviewer full recall-0 for a case it was never shown. That is the exact
+			// conflation docs/benchmark.md forbids for this tier ("a transient
+			// infrastructure failure recorded as a genuine missed defect"), surviving
+			// one level below where the whole-case channel can see it.
+			//
+			// The row is still EMITTED — the identity was registered just above — so a
+			// reviewer whose every slot failed appears with an empty covered set and no
+			// score, reading as "measured nothing" rather than vanishing or, worse,
+			// "missed everything".
+			//
+			// Skipped BEFORE the duplicate-identity guard on purpose: a failed slot must
+			// not claim the case, or a second lane sharing that identity would trip the
+			// scored-twice abort for a case only one of them actually reviewed.
+			//
+			// ALL THREE of score, covered set and outcome tally are skipped together,
+			// and that is load-bearing rather than tidy. checkCoverage enforces
+			// runs == len(case_ids) == sum(outcomes) as a tamper check, so recording the
+			// failed slot in the tally while omitting it from the covered set would make
+			// every run with a failed slot fail the export gate as "malformed" — after
+			// the panel had been paid for. The per-slot failure remains readable in the
+			// review dir's own status.json.
+			if a.Status != fanout.StatusOK {
+				continue
+			}
+
 			// Two lanes can realize the SAME (model, persona) — a parallel and a
 			// serial slot pointing at one registry entry, or a fallback converging on
 			// another agent's model. Both then append a CaseScore for this case,
