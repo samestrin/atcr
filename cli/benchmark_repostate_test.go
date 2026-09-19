@@ -2467,3 +2467,38 @@ func TestExecuteRepoStateBenchmarkRun_APathSpecificWorkDirFaultContinues(t *test
 	assert.Equal(t, benchmark.CaseFailureWorkDir, rr.CaseFailures[0].Reason)
 	assert.Equal(t, "first-case", rr.CaseFailures[0].CaseID)
 }
+
+// The IN-LOOP cancellation check exists to stop the run at the next case boundary.
+// Nothing asserted that, and the check survived deletion: with it gone the loop
+// keeps iterating, every remaining case fails under the cancelled context, and the
+// POST-LOOP guard then prints the identical "cancelled after N of M case(s)"
+// sentence the old assertions matched. Both arms produce the same error, so only the
+// work actually attempted tells them apart.
+//
+// Counted through mkdirAllFn, which runs exactly once per case entered — the first
+// thing the loop body does after the two guards. One call means the loop stopped at
+// the boundary; three means it ground through the suite the operator interrupted.
+func TestExecuteRepoStateBenchmarkRun_CancellationStopsTheLoopAtTheNextCase(t *testing.T) {
+	realMkdir := mkdirAllFn
+	cases := 0
+	mkdirAllFn = func(path string, perm os.FileMode) error {
+		cases++
+		return realMkdir(path, perm)
+	}
+	t.Cleanup(func() { mkdirAllFn = realMkdir })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cc := &cancellingCompleter{cancel: cancel}
+
+	rr, _, err := executeRepoStateBenchmarkRun(ctx,
+		benchCfg([3]string{"greta", "m-greta", "greta"}), cc,
+		writeCaseSuite(t, "first-case", "second-case", "third-case"), time.Unix(0, 0).UTC(), 0)
+	releaseRetainedWorkDirFromError(t, err)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Nil(t, rr)
+	assert.Equal(t, 1, cases,
+		"the interrupt landed during case 1, so case 2 must never be entered — the in-loop check "+
+			"is what stops the bill, and without it the loop walks the rest of the suite")
+}
