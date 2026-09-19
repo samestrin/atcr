@@ -1286,6 +1286,34 @@ func TestExecuteRepoStateBenchmarkRun_RetainsTheWorkDirOnAPartialRun(t *testing.
 	assert.NoError(t, statErr, "a partial run's paid artifacts must survive for inspection or manual rescoring")
 }
 
+// The retained path must survive a TMPDIR containing a space. log/slog's text
+// handler QUOTES any attribute value containing a space, so the naive "cut at the
+// first space" parse of the retention line returns a truncated quote-prefixed
+// string and the os.Stat below fails for a reason unrelated to retention — the
+// exact failure the helper exists to prevent.
+func TestExecuteRepoStateBenchmarkRun_RetainsWorkDirWithSpaceInTMPDIR(t *testing.T) {
+	spaced := filepath.Join(t.TempDir(), "has space")
+	require.NoError(t, os.Mkdir(spaced, 0o755))
+	t.Setenv("TMPDIR", spaced)
+
+	suite := writeCaseSuite(t, "first-case", "second-case")
+	faultMaterialization(t, suite, "second-case")
+	var logs bytes.Buffer
+
+	_, retained, err := executeRepoStateBenchmarkRun(logCapturingContext(t, &logs),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC(), 0)
+	releaseRetainedWorkDir(t, retained)
+	require.NoError(t, err)
+
+	path := retainedWorkDirFromLog(t, logs.String())
+	assert.True(t, strings.HasPrefix(path, spaced),
+		"the parsed path %q must live under the spaced TMPDIR %q — truncation at the first space reads a quoted slog value as bare text", path, spaced)
+	_, statErr := os.Stat(path)
+	require.NoError(t, statErr, "the reported path must exist exactly as logged; logs were:\n%s", logs.String())
+	_, err = os.Stat(filepath.Join(path, "review-0"))
+	assert.NoError(t, err, "the scored case's paid review artifacts survive under the spaced path")
+}
+
 // workDirNamingCompleter records the run's work dir path from INSIDE the loop. A
 // clean run logs no path and returns none — it has nothing to retain — so a completer
 // call is the only moment the directory can be named while it still exists.
