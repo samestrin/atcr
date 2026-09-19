@@ -788,6 +788,86 @@ func TestCheckCoverage_UnexplainedShortfallStillReadsAsMissing(t *testing.T) {
 		"and no case is labelled unmeasured when the failure channel explains none of them")
 }
 
+// A SLOT-level shortfall is a third thing, and it must not borrow either of the other
+// two labels.
+//
+// "missing" means unaccounted-for — a row claiming a suite it was not scored over,
+// which before the slot skip existed was reachable only by tampering. "unmeasured"
+// means the case never ran for anyone. This case ran, the rest of the panel scored
+// it, and one reviewer was not shown it; calling that "missing" told the operator to
+// re-run cases that ran perfectly, and made one flaky provider slot read as a
+// hand-assembled file.
+func TestCheckCoverage_ExplainsASlotShortfall(t *testing.T) {
+	err := checkCoverage(io.Discard, slotFailureRun(), "rr.json", false)
+
+	require.Error(t, err, "a reviewer short of the suite is still not comparable")
+	assert.Contains(t, err.Error(), "unshown case-02 ("+benchmark.SlotFailureTimeout+")",
+		"a slot shortfall is labelled unshown and carries the reason the slot failed")
+	assert.NotContains(t, err.Error(), "missing case-02",
+		"and must not read as a case nobody ran — the rest of the panel scored it")
+	assert.NotContains(t, err.Error(), "unmeasured case-02",
+		"nor as a case-level failure, which is a different channel with a different remedy")
+}
+
+// The three halves are independent and coexist on one row. A row can be short for all
+// three reasons at once, and collapsing any pair would hide one behind another.
+func TestCheckCoverage_SeparatesAllThreeShortfallKinds(t *testing.T) {
+	rr := benchmark.RunResult{
+		SuiteCaseIDs: []string{"case-01", "case-02", "case-03", "case-04"},
+		Reviewers:    []scorecard.PublicRecord{{Model: "m", Persona: "p", Runs: 1}},
+		Coverage: []benchmark.ReviewerCoverage{
+			{Model: "m", Persona: "p", CaseIDs: []string{"case-01"}},
+		},
+		CaseFailures: []benchmark.CaseFailure{
+			{CaseID: "case-02", Reason: benchmark.CaseFailurePrepare},
+		},
+		SlotFailures: []benchmark.SlotFailure{
+			{Model: "m", Persona: "p", CaseID: "case-03", Reason: benchmark.SlotFailureCall},
+		},
+		// case-04 is accounted for by nothing — the genuine "missing" shape.
+	}
+
+	err := checkCoverage(io.Discard, rr, "rr.json", false)
+
+	require.Error(t, err)
+	msg := err.Error()
+	assert.Contains(t, msg, "missing case-04", "the unaccounted-for case keeps the original label")
+	assert.Contains(t, msg, "unmeasured case-02 ("+benchmark.CaseFailurePrepare+")",
+		"the case-level failure keeps its label and reason")
+	assert.Contains(t, msg, "unshown case-03 ("+benchmark.SlotFailureCall+")",
+		"the slot-level failure gets its own")
+}
+
+// A slot failure belonging to ANOTHER reviewer must not explain THIS reviewer's
+// shortfall. The index is per identity, and getting that wrong would attach one
+// reviewer's excuse to another's row — the "excuse a row never earned" shape the
+// export validator exists to prevent, reproduced one layer up.
+func TestCheckCoverage_SlotShortfallIsScopedToItsOwnReviewer(t *testing.T) {
+	rr := benchmark.RunResult{
+		SuiteCaseIDs: []string{"case-01", "case-02"},
+		Reviewers: []scorecard.PublicRecord{
+			{Model: "m1", Persona: "p1", Runs: 1},
+			{Model: "m2", Persona: "p2", Runs: 1},
+		},
+		Coverage: []benchmark.ReviewerCoverage{
+			{Model: "m1", Persona: "p1", CaseIDs: []string{"case-01"}},
+			{Model: "m2", Persona: "p2", CaseIDs: []string{"case-01"}},
+		},
+		SlotFailures: []benchmark.SlotFailure{
+			{Model: "m1", Persona: "p1", CaseID: "case-02", Reason: benchmark.SlotFailureCall},
+		},
+	}
+
+	err := checkCoverage(io.Discard, rr, "rr.json", false)
+
+	require.Error(t, err)
+	msg := err.Error()
+	assert.Contains(t, msg, "m1/p1 (1/2 cases, unshown case-02 ("+benchmark.SlotFailureCall+"))",
+		"the reviewer that lost the slot carries the explanation")
+	assert.Contains(t, msg, "m2/p2 (1/2 cases, missing case-02)",
+		"the reviewer that did not lose a slot is still unexplained — it borrowed nobody's reason")
+}
+
 // The defence-in-depth drop is pinned through checkCoverage itself, not only through
 // validateCaseFailures. checkCoverage is callable without the export command's gate
 // in front of it — this test is such a caller — and the point of the drop is that the
