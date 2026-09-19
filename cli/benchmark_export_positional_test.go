@@ -160,13 +160,17 @@ func TestBenchmarkExport_WarnsOnMisalignedPositionalRecall(t *testing.T) {
 }
 
 // A well-formed array must stay silent, or the warning is noise on every valid run.
+// Both rows carry the SAME expected counts — a differing denominator is its own
+// warning (the slot-skip case), so a "well-formed" fixture must not trigger it.
 func TestBenchmarkExport_AcceptsAWellFormedPositionalRecall(t *testing.T) {
 	_, stderr, err := execExportErr(t, writeRunResultWithPositional(t,
 		[]benchmark.ReviewerPositionalRecall{
 			{Model: "m-a", Persona: "p-a", ExpectedTotal: 4, MatchedTotal: 1, Recall: ptrFloat(0.25),
 				ExpectedOutsideDiff: 2, MatchedOutsideDiff: 0, OutsideDiffRecall: ptrFloat(0),
 				ExpectedWithinDiff: 2, MatchedWithinDiff: 1, WithinDiffRecall: ptrFloat(0.5)},
-			{Model: "m-b", Persona: "p-b"},
+			{Model: "m-b", Persona: "p-b", ExpectedTotal: 4, MatchedTotal: 0, Recall: ptrFloat(0),
+				ExpectedOutsideDiff: 2, MatchedOutsideDiff: 0, OutsideDiffRecall: ptrFloat(0),
+				ExpectedWithinDiff: 2, MatchedWithinDiff: 0, WithinDiffRecall: ptrFloat(0)},
 		}))
 	require.NoError(t, err)
 	assert.NotContains(t, stderr, "reviewer_positional_recall")
