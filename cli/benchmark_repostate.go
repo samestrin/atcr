@@ -832,13 +832,25 @@ type repoStateAcc struct {
 // row's running tag. first marks the row's opening case, where there is no prior
 // value to fold against.
 //
-// The fold is AND over three-valued logic, with nil ABSORBING: a row is tagged
-// gated only when every case it scored was gated, and any nil (a rebuilt summary
-// that cannot know its run's gate state) makes the whole row nil. Both directions
-// fail toward "unmeasured" rather than toward a claim, because the tag's only job
-// is to say which population the row's CorroborationRate came from — and an
-// overstated tag is worse than an absent one, being the exact overstatement the
-// untagged row was already making.
+// The fold is UNANIMITY over three-valued logic, with nil ABSORBING: a row keeps a
+// state only when every case it scored reported that same state, and anything else —
+// a nil from a rebuilt summary that cannot know, or two cases that disagree — makes
+// the whole row nil. Every direction fails toward "unmeasured" rather than toward a
+// claim, because the tag's only job is to say which population the row's
+// CorroborationRate came from, and an overstated tag is worse than an absent one.
+//
+// It is NOT a boolean AND, and the difference is the whole point. AND folded a
+// disagreement to false, which a consumer cannot distinguish from "every case this
+// row scored was ungated" — and only the second is comparable with a standard-v1 row.
+// A row mixing gated and ungated cases measured a mixed population and is comparable
+// with neither, so it must say so. The mixed case is reachable per case:
+// internal/fanout/review.go stamps &false for a case whose changed-lines computation
+// failed or came back empty, while its siblings in the same run are gated.
+//
+// It also kept the run-result self-contradictory: a row could tally `ungrounded` from
+// a gated case 1 and fold to false on a fail-open case 2, publishing a gate-driven
+// outcome beside a claim that the gate was off — which the export gate in
+// cli/benchmark_coverage.go now rejects outright.
 func foldGroundingEnabled(prior, caseState *bool, first bool) *bool {
 	if first {
 		return caseState
@@ -846,8 +858,13 @@ func foldGroundingEnabled(prior, caseState *bool, first bool) *bool {
 	if prior == nil || caseState == nil {
 		return nil
 	}
-	folded := *prior && *caseState
-	return &folded
+	if *prior != *caseState {
+		return nil
+	}
+	// A FRESH pointer, not prior itself: the accumulator must not end up sharing
+	// storage with a PoolSummary the caller still holds.
+	agreed := *prior
+	return &agreed
 }
 
 func expectedCategories(c benchmark.RepoStateCase) []string {
