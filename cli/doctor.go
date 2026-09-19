@@ -147,6 +147,22 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	}
 	rep.PredicateRuleGaps, rep.PersonaResolutionErrors = registry.PredicateRuleGaps(agentToPersona, personaDirs)
 
+	// A persona that cannot be RESOLVED is invocation health, not composition, so it
+	// fails the exit code. The command's contract is "exits 0 when every agent has a
+	// working invocation path, 1 when any agent has none", and `atcr review` resolves
+	// these same personas and hard-fails the run — so such an agent has none.
+	//
+	// The "exit code is unchanged" rationale above belongs to PredicateRuleGaps, whose
+	// personas WERE read and whose reviews run fine; it was carried onto this list by
+	// proximity. Only this one is folded in.
+	//
+	// It matters most under --json, which skips the human warning entirely: a consumer
+	// checking the exit code alone saw nothing, and a CI gate concluded from exit 0
+	// that review would run, exactly when it would not.
+	if len(rep.PersonaResolutionErrors) > 0 && rep.ExitCode == 0 {
+		rep.ExitCode = 1
+	}
+
 	if asJSON {
 		if err := doctor.RenderJSON(cmd.OutOrStdout(), rep); err != nil {
 			return err
@@ -193,6 +209,14 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	}
 
 	if rep.ExitCode != 0 {
+		// The cause is named, because the two are repaired in different files: an
+		// endpoint failure is a key or base_url, an unresolvable persona is a missing
+		// prompt. A single "no working endpoint" sent the operator to the wrong one.
+		if len(rep.PersonaResolutionErrors) > 0 {
+			return fmt.Errorf("one or more agents have no working invocation path "+
+				"(persona could not be resolved for: %s)",
+				strings.Join(rep.PersonaResolutionErrors, ", "))
+		}
 		return fmt.Errorf("one or more agents have no working endpoint")
 	}
 	return nil
