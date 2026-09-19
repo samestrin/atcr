@@ -946,7 +946,15 @@ type repoStateAcc struct {
 // cli/benchmark_coverage.go now rejects outright.
 func foldGroundingEnabled(prior, caseState *bool, first bool) *bool {
 	if first {
-		return caseState
+		if caseState == nil {
+			return nil
+		}
+		// A FRESH pointer, not caseState itself: the accumulator must not end up
+		// sharing storage with a PoolSummary the caller still holds. The copy below
+		// and this one enforce the same invariant for every row length — the
+		// one-case row reaches this arm, the multi-case row the one further down.
+		agreed := *caseState
+		return &agreed
 	}
 	if prior == nil || caseState == nil {
 		return nil
