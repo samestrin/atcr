@@ -15,7 +15,8 @@ import (
 func TestValidOutcome(t *testing.T) {
 	for _, v := range []string{
 		OutcomeUnknown, OutcomeFindings, OutcomeClean,
-		OutcomeUnparseable, OutcomeTruncated, OutcomeIncomplete, OutcomeUngrounded, OutcomeFailed,
+		OutcomeUnparseable, OutcomeTruncated, OutcomeIncomplete, OutcomeUngrounded,
+		OutcomeFiltered, OutcomeFailed,
 	} {
 		assert.True(t, ValidOutcome(v), "stored wire value %q must be valid", v)
 	}

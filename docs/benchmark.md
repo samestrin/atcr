@@ -748,16 +748,20 @@ call failed all raise zero categories and score identically:
 | `truncated` | Response cut off on `finish_reason: length`; whatever it raised is incomplete. |
 | `incomplete` | The reviewer saw only a fraction of the diff — either a chunked slot whose bins failed while it still reported ok, or a payload shed to fit a byte budget (`files_dropped` names the shed entries by path; the shed is accounted per entry, so a path listed there can still be present via another occurrence of the same path in the diff). |
 | `ungrounded` | The reviewer raised findings and **every one** was discarded by the Epic 14.1 grounding gate for citing a `FILE:LINE` the patch does not contain (`dropped_by_grounding > 0` with nothing surviving). Distinct from `incomplete`, which is the input-side signal: this reviewer saw the whole diff and had its output filtered afterwards. Reachable only when the gate is live, so in practice only on `repo-state-v1` — the `standard-v1` diff path supplies no range and the gate fails open there. |
+| `filtered` | The reviewer raised findings and **every one** was discarded by the configured `min_severity` floor (`dropped_by_min_severity > 0` with nothing surviving). `ungrounded`'s sibling, and the wider of the two: grounding is live only on `repo-state-v1`, while any registry agent on either tier can set a floor. |
 | `failed` | The call never produced a reviewable response. |
 | `unknown` | No outcome was recorded — a checkpoint written before this field existed. |
 
 Precedence when signals overlap is `failed > unparseable > truncated > incomplete >
-findings > ungrounded > clean`: data-integrity signals outrank volume signals, and a
-reviewer that kept even one finding is scored on what it kept.
+findings > ungrounded > filtered > clean`: data-integrity signals outrank volume
+signals, and a reviewer that kept even one finding is scored on what it kept. When a
+row trips BOTH post-processing counters, `ungrounded` wins — it answers whether the
+reviewer cited code the patch contains, which is what `repo-state-v1` exists to
+measure, while the floor is an operator preference applied to whatever survived it.
 
-> **`ungrounded` is newer than the other values.** The outcome vocabulary is
-> fail-closed at the coverage trust boundary: an older `atcr` running `benchmark
-> export` on a run-result carrying `ungrounded` rejects the file as malformed
+> **`ungrounded` and `filtered` are newer than the other values.** The outcome
+> vocabulary is fail-closed at the coverage trust boundary: an older `atcr` running
+> `benchmark export` on a run-result carrying either one rejects the file as malformed
 > rather than re-keying the tally (`cli/benchmark_coverage.go` validates every
 > tally key through `ValidOutcome`, and re-running under that build cannot help,
 > since an older producer writes only values it knows). A run-result written by

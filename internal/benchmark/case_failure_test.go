@@ -135,7 +135,7 @@ func TestCaseFailureReasonsDoNotCollideWithOutcomes(t *testing.T) {
 func TestOutcomesDoNotCollideWithCaseFailureReasons(t *testing.T) {
 	for _, o := range []string{
 		OutcomeUnknown, OutcomeFindings, OutcomeClean, OutcomeUnparseable,
-		OutcomeTruncated, OutcomeIncomplete, OutcomeUngrounded, OutcomeFailed,
+		OutcomeTruncated, OutcomeIncomplete, OutcomeUngrounded, OutcomeFiltered, OutcomeFailed,
 		OutcomeUnknownLabel,
 	} {
 		assert.False(t, ValidCaseFailureReason(o),

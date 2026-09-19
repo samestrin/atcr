@@ -752,7 +752,8 @@ type reviewerAcc struct {
 // against raw content, because excluding the sentinel is exactly what preserves the
 // clean-vs-garbage distinction.
 //
-// PRECEDENCE — failed > unparseable > truncated > incomplete > findings > clean.
+// PRECEDENCE — failed > unparseable > truncated > incomplete > findings > ungrounded
+// > filtered > clean.
 // The signals are not mutually exclusive on the wire (a truncated response can also
 // raise findings; a failed slot has no findings either way), so the order is a
 // decision rather than an implication, and this switch is its single statement of
@@ -799,6 +800,22 @@ func reviewerOutcome(a fanout.AgentStatus, raised []string) string {
 	// standard-v1 row changes outcome.
 	case a.DroppedByGrounding > 0:
 		return benchmark.OutcomeUngrounded
+	// The grounding gate's SIBLING, and the wider of the two. Both discard findings
+	// after the reviewer raised them — `raised` is read from the merged findings.txt
+	// written after enforceConstraints — so both leave a reviewer that found things
+	// looking identical here to one that found nothing. Grounding is repo-state-only;
+	// min_severity is any registry agent on either tier (internal/fanout/engine.go,
+	// loop.go), so this arm is reachable where the one above never fires.
+	//
+	// It sits BELOW ungrounded, and that ordering is a decision rather than an
+	// implication: the two counters can both be non-zero on one row, and only one
+	// value can be published. Grounding wins because it answers whether the reviewer
+	// cited code the patch actually contains — the measurement the repo-state tier
+	// exists for — whereas the floor is an operator preference applied to whatever
+	// survived that gate. Pinned by
+	// TestReviewerOutcome_GroundingOutranksMinSeverityWhenBothFire.
+	case a.DroppedByMinSeverity > 0:
+		return benchmark.OutcomeFiltered
 	default:
 		return benchmark.OutcomeClean
 	}
