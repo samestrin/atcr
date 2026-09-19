@@ -1488,9 +1488,16 @@ func TestExecuteRepoStateBenchmarkRun_CancellationAbortsRatherThanRecording(t *t
 // The same rule when the interrupt lands on the LAST case: the loop has no further
 // iteration to catch it, so without a check after the loop the run would return a
 // partial result whose missing case was the operator's own Ctrl-C.
+//
+// cancelAfter=2 makes the cancel land DURING case 2's review of a 2-case suite, so
+// no loop iteration follows the interrupt and only the post-loop guard can catch it
+// — the arm this test is named for. (The completer's default, cancel on the first
+// call, is caught by the IN-LOOP check at the next iteration, which leaves the
+// post-loop guard and its scored-count arithmetic dead code as far as this suite is
+// concerned: deleting the guard outright left the cli package green.)
 func TestExecuteRepoStateBenchmarkRun_CancellationOnTheFinalCaseStillAborts(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	cc := &cancellingCompleter{cancel: cancel}
+	cc := &cancellingCompleter{cancel: cancel, cancelAfter: 2}
 
 	rr, _, err := executeRepoStateBenchmarkRun(ctx,
 		benchCfg([3]string{"greta", "m-greta", "greta"}), cc,
@@ -1500,6 +1507,7 @@ func TestExecuteRepoStateBenchmarkRun_CancellationOnTheFinalCaseStillAborts(t *t
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled)
 	assert.Nil(t, rr)
+	assert.Equal(t, 2, cc.calls, "the interrupt must land on the LAST case's review, not an earlier one")
 }
 
 // Both cancellation diagnostics print the SAME sentence, so they must print it from
@@ -1529,16 +1537,19 @@ func TestExecuteRepoStateBenchmarkRun_CancellationCountsScoredCasesNotAttempted(
 }
 
 // cancellingCompleter serves the first case normally, then cancels the run's
-// context — standing in for a SIGINT that arrives mid-suite.
+// context — standing in for a SIGINT that arrives mid-suite. cancelAfter picks
+// WHICH call cancels: 1 (the default, for the mid-suite arms) or, on the final-case
+// arm, the last case's call, which no in-loop check can catch.
 type cancellingCompleter struct {
-	cancel context.CancelFunc
-	calls  int
+	cancel      context.CancelFunc
+	calls       int
+	cancelAfter int
 }
 
 func (c *cancellingCompleter) Complete(ctx context.Context, inv llmclient.Invocation) (string, error) {
 	c.calls++
 	out, err := stubLocatedCompleter{}.Complete(ctx, inv)
-	if c.calls == 1 {
+	if c.calls == max(c.cancelAfter, 1) {
 		c.cancel()
 	}
 	return out, err
