@@ -47,6 +47,14 @@ const (
 	// docs/benchmark.md states for this tier), the second because an empty roster is
 	// a deterministic configuration defect rather than bad luck.
 	//
+	// The empty-roster abort is fanout.ErrEmptyRoster, and it lands at PREPARE, not
+	// here: validateReviewRequest raises the sentinel inside PrepareReview, so the
+	// runner's prepare branch (cli/benchmark_repostate.go) aborts the run on it and
+	// this execute-side arm carries it only defensively — no traced path reaches
+	// ExecuteReview with a roster PrepareReview accepted and Outcome then finds
+	// empty. Name kept here so the vocabulary doc and the runner's split cannot
+	// drift apart.
+	//
 	// Unlike its siblings, this reason does NOT tell you whether the case was paid
 	// for. It covers both a panel that died part-way and one that completed every
 	// call and then failed to persist its pool, so treat a case recorded here as
