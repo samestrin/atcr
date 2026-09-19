@@ -795,6 +795,42 @@ func TestRunBenchmarkRun_RepoStateArmReachesStdout(t *testing.T) {
 		"sanity: a clean-vocabulary stub run emits no drift diagnostic on the repo-state arm")
 }
 
+// The command-level counterpart to TestWarnCaseFailures: that test proves the
+// MESSAGE is right, this one proves the function is ever CALLED — deleting the
+// warnCaseFailures call from runBenchmarkRun left the full cli suite green, and
+// with it the entire operator-facing justification of the warning. It also pins
+// the ordering contract: warnCaseFailures runs BEFORE warnPositionalRecallSummary
+// because it qualifies the summary (a partial run's recall covers only the scored
+// cases), so the UNMEASURED warning must appear EARLIER on the same stream.
+func TestRunBenchmarkRun_WarnCaseFailuresFiresBeforeTheRecallSummary(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+	restoreCfg := benchmarkLoadConfig
+	restoreCompleter := benchmarkNewCompleter
+	t.Cleanup(func() {
+		benchmarkLoadConfig = restoreCfg
+		benchmarkNewCompleter = restoreCompleter
+	})
+	benchmarkLoadConfig = func(string) (*fanout.ReviewConfig, error) { return cfg, nil }
+	benchmarkNewCompleter = func(context.Context) fanout.Completer { return stubLocatedCompleter{} }
+
+	suite := writeCaseSuite(t, "first-case", "second-case")
+	faultMaterialization(t, suite, "second-case")
+
+	code, stdout, stderr := execCmdSplit(t, "benchmark", "run", "--suite-path", suite)
+	require.Equal(t, 0, code, stdout)
+	assert.Contains(t, stderr, "UNMEASURED",
+		"the unmeasured-case warning must reach the operator through the COMMAND, "+
+			"not only through the direct unit test of the message")
+	warnAt := strings.Index(stderr, "UNMEASURED")
+	summaryAt := strings.Index(stderr, "repo-state positional recall:")
+	require.GreaterOrEqual(t, summaryAt, 0, "the recall summary must also reach stderr; stderr was:\n%s", stderr)
+	assert.Less(t, warnAt, summaryAt,
+		"the warning must precede the recall summary it qualifies — a reader who sees "+
+			"the number first has already taken it for a full-suite measurement")
+	assert.Contains(t, stdout, "reviewer_positional_recall",
+		"sanity: the run published a run-result at all")
+}
+
 func TestRunBenchmarkRun_RejectsCheckpointForARepoStateSuiteThroughTheCommand(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 	restoreCfg := benchmarkLoadConfig
