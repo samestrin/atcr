@@ -307,6 +307,14 @@ These failures still abort the whole run, and none of them is transient:
 
 When any case fails, the **work dir is retained** and its path is logged, exactly as it is on a hard failure — the successful cases' raw transcripts, `findings.txt` and `summary.json` survive for inspection or manual rescoring.
 
+**That retention is unbounded, and reclaiming it is yours to do.** Nothing prunes, caps or expires a retained work dir, deliberately: it holds the only copy of a panel you already paid for, so the run will not delete it on your behalf. The trade is that a scheduled suite losing one case per run leaves one full work dir behind per run. The partial-run warning reports the size alongside the path so the growth is visible before the volume is:
+
+```
+WARN benchmark work dir retained after a partial run path=/tmp/atcr-repo-state-1234 failed_cases=1 retained_bytes=41231882
+```
+
+Watch `retained_bytes`, and once you have inspected or rescored a run, reclaim it with `rm -rf` on the path from that line. A run that scores every case cleans up after itself, so only partial and failed runs accumulate.
+
 At export, a recorded failure **explains** a coverage shortfall; it **does not excuse** one. `atcr benchmark export` still rejects a partial run by default, but names the failed case and its reason rather than telling you to re-run cases that never ran:
 
 ```

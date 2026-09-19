@@ -282,6 +282,18 @@ func TestBenchmarkDoc_RepoStatePartialRunContractMatchesTheCode(t *testing.T) {
 	assert.Contains(t, cli, "benchmark work dir retained after a partial run",
 		"the runner must still retain and report the work dir on a partial run")
 
+	// Retention is UNBOUNDED on purpose — the runner's own comment argues that capping
+	// or pruning would destroy the only copy of a paid panel — but that makes reclaim
+	// the operator's job, and the doc never said so. A scheduled suite losing one case
+	// per run accumulates a full work dir every run; without a stated reclaim step the
+	// first signal is a full $TMPDIR volume.
+	assert.Contains(t, doc, "retention is unbounded",
+		"the doc must state that retained work dirs accumulate rather than being capped")
+	assert.Contains(t, doc, "retained_bytes",
+		"the doc must name the log field an operator watches the growth on")
+	assert.Contains(t, cli, `"retained_bytes", dirSizeBytes(tmp)`,
+		"the runner must still emit the size field the doc tells the operator to watch")
+
 	// The export gate is still closed by default on a partial run: a recorded failure
 	// EXPLAINS a shortfall, it does not excuse one.
 	// Same rule: "does not excuse" is a three-word fragment with no anchor to the
