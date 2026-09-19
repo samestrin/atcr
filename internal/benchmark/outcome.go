@@ -92,6 +92,31 @@ const (
 	// resumed by a pre-35.16.10 build.
 	OutcomeUngrounded = "ungrounded"
 
+	// OutcomeFiltered marks a reviewer that RAISED findings and had every one of them
+	// discarded by the configured `min_severity` floor
+	// (fanout.AgentStatus.DroppedByMinSeverity > 0 with nothing surviving).
+	//
+	// It is OutcomeUngrounded's sibling and exists for the identical reason: `raised`
+	// is read from the merged findings.txt written AFTER enforceConstraints, so a
+	// total wipe is indistinguishable at the call site from a reviewer that found
+	// nothing, and publishing it as "clean" asserts something false about the row.
+	//
+	// It is a DISTINCT value rather than a reuse of OutcomeUngrounded, which names
+	// the Epic 14.1 grounding gate specifically. The two answer different questions —
+	// grounding asks whether a finding cited code the patch contains, the floor asks
+	// whether it cleared an operator-chosen severity — and folding them together
+	// would make the ungrounded doc false for half the rows carrying it.
+	//
+	// It is also the WIDER of the two: grounding is repo-state-only (the standard-v1
+	// path supplies no range and fails open), while any registry agent on either tier
+	// can set min_severity.
+	//
+	// CROSS-VERSION NOTE: like OutcomeUngrounded, this value is new, so ValidOutcome
+	// in an OLDER binary rejects a checkpoint carrying it. That is the fail-closed
+	// direction the vocabulary is designed for — a stale reader refuses rather than
+	// silently re-keying the tally.
+	OutcomeFiltered = "filtered"
+
 	// OutcomeFailed marks a slot whose call did not succeed at all — the reviewer
 	// never produced a reviewable response for this case.
 	OutcomeFailed = "failed"
@@ -122,7 +147,8 @@ const OutcomeUnknownLabel = "unknown"
 func ValidOutcome(s string) bool {
 	switch s {
 	case OutcomeUnknown, OutcomeFindings, OutcomeClean,
-		OutcomeUnparseable, OutcomeTruncated, OutcomeIncomplete, OutcomeUngrounded, OutcomeFailed:
+		OutcomeUnparseable, OutcomeTruncated, OutcomeIncomplete, OutcomeUngrounded,
+		OutcomeFiltered, OutcomeFailed:
 		return true
 	}
 	return false
