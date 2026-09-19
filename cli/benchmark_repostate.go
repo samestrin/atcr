@@ -275,8 +275,8 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		if err := mkdirAllFn(repoDir, 0o755); err != nil {
 			// A HOST-LEVEL work-dir fault aborts instead of joining the failure
 			// channel. That channel is for transient, case-specific faults, and these
-			// four errnos are neither: the disk is full, the process or system is out
-			// of file descriptors, or the volume is read-only. Every remaining case
+			// five errnos are neither: the disk is full or over quota, the process or
+			// system is out of file descriptors, or the volume is read-only. Every remaining case
 			// repeats the identical syscall and fails identically, so a 200-case suite
 			// writes 200 entries and still exits 0 — and on EMFILE the same exhaustion
 			// then hits PrepareReview and ExecuteReview on any case that DID get a
@@ -845,15 +845,19 @@ var mkdirAllFn = os.MkdirAll
 // isFatalWorkDirError reports whether a work-dir creation error is a property of the
 // HOST rather than of the case.
 //
-// The four here are the ones that cannot clear on their own within a run: no space
-// left (ENOSPC), the process or the system out of file descriptors (EMFILE/ENFILE),
-// and a read-only filesystem (EROFS). Recording any of them as one case's bad luck
-// invites the loop to repeat the same syscall for every remaining case.
+// The five here are the ones that cannot clear on their own within a run: no space
+// left (ENOSPC), a volume over its quota (EDQUOT), the process or the system out of
+// file descriptors (EMFILE/ENFILE), and a read-only filesystem (EROFS). EDQUOT is
+// grouped with ENOSPC rather than left out because a quota-exhausted volume behaves
+// identically at the call site — every remaining case repeats the identical failing
+// syscall — so recording it as one case's bad luck invites the loop to fail the
+// whole suite the same way an out-of-space volume does.
 //
 // Deliberately NOT included: EACCES/EPERM and ENOTDIR. Those can be specific to the
 // path being created, so the per-case classification is the honest one for them.
 func isFatalWorkDirError(err error) bool {
 	return errors.Is(err, syscall.ENOSPC) ||
+		errors.Is(err, syscall.EDQUOT) ||
 		errors.Is(err, syscall.EMFILE) ||
 		errors.Is(err, syscall.ENFILE) ||
 		errors.Is(err, syscall.EROFS)
