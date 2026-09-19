@@ -1024,8 +1024,14 @@ func TestFoldGroundingEnabled(t *testing.T) {
 		{name: "first case adopts its own state", caseSt: &on, first: true, want: &on},
 		{name: "first case adopts a nil too", caseSt: nil, first: true, want: nil},
 		{name: "gated AND gated stays gated", prior: &on, caseSt: &on, want: &on},
-		{name: "gated AND ungated is ungated", prior: &on, caseSt: &off, want: &off},
-		{name: "ungated AND gated is ungated", prior: &off, caseSt: &on, want: &off},
+		{name: "ungated AND ungated stays ungated", prior: &off, caseSt: &off, want: &off},
+		// A DISAGREEMENT is unmeasured, not ungated. The AND this replaced folded a
+		// mixed population to &false, which a consumer cannot tell from "every case
+		// this row scored was ungated" — and only the latter is comparable with a
+		// standard-v1 row. Emitting a positive claim about a mixed population is the
+		// same overstatement the nil arm below already refuses.
+		{name: "gated then ungated is unmeasured, not ungated", prior: &on, caseSt: &off, want: nil},
+		{name: "ungated then gated is unmeasured, not ungated", prior: &off, caseSt: &on, want: nil},
 		{name: "a nil case absorbs a known prior", prior: &on, caseSt: nil, want: nil},
 		{name: "a nil prior absorbs a known case", prior: nil, caseSt: &on, want: nil},
 	} {
