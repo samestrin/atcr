@@ -1992,6 +1992,48 @@ func TestExecuteRepoStateBenchmarkRun_RecordsPostPaymentReadBackFailures(t *test
 	}
 }
 
+// The repo-state emit tail carried only ONE of buildRunResult's two identity guards.
+// validatePublishableReviewerRoster covers the CONFIGURED registry values, but
+// reviewerModel prefers the usage-reported (and fallback) model over the registry —
+// so a Cc/Cf rune arriving in a provider's own usage payload passes the roster gate
+// untouched. scorecard.ScrubPublicString leaves those runes alone, so it survived
+// into Reviewers[i].Model and export hard-rejected the finished artifact.
+//
+// It is worse on this tier than on standard-v1: that rejection's remedy is a
+// hand-repair of the checkpoint, and checkRepoStateFlags REFUSES --checkpoint here,
+// so the only way out was re-running the whole paid panel — which re-derives the same
+// rune. The run must fail BEFORE the panel is paid for.
+//
+// The rune is injected through the pool-summary seam because that is exactly where a
+// provider-reported model enters: the stub completer reports no usage, so without it
+// the realized model falls back to the registry value the roster gate already covers.
+func TestExecuteRepoStateBenchmarkRun_RejectsANonPrintingRuneInTheRealizedIdentity(t *testing.T) {
+	real := readPoolSummaryFn
+	readPoolSummaryFn = func(reviewDir string) (fanout.PoolSummary, error) {
+		s, err := real(reviewDir)
+		if err != nil {
+			return s, err
+		}
+		require.NotEmpty(t, s.Agents, "the fixture must produce an agent slot to poison")
+		for i := range s.Agents {
+			// A bidi override in the USAGE-REPORTED model — invisible in a rendered
+			// document, and never present in any local config file.
+			s.Agents[i].Model = "m-greta‮evil"
+		}
+		return s, nil
+	}
+	t.Cleanup(func() { readPoolSummaryFn = real })
+
+	_, retained, err := executeRepoStateBenchmarkRun(context.Background(),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{},
+		repoStateMiniPath, time.Unix(0, 0).UTC(), 0)
+	releaseRetainedWorkDir(t, retained)
+
+	require.Error(t, err, "a non-printing rune in the realized identity must fail the run, not reach export")
+	assert.Contains(t, err.Error(), "non-printing rune", "the rejection must name the defect class")
+	assert.Contains(t, err.Error(), "U+202E", "and the offending rune, which is invisible in the value itself")
+}
+
 // The FallbackUsed accounting (`if a.FallbackUsed { acc[key].fallbackCases++ }`) was
 // an uncovered added line: no repo-state test drove a case whose reviewer was served
 // by a fallback, so the per-reviewer fallback_cases figure this tier PUBLISHES was
