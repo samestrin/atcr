@@ -233,9 +233,19 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 					"the producer counts one outcome per case, so this file is malformed",
 					path, model, persona, k, n)
 			}
+			// Both causes are named, like duplicateIdentityError above. The vocabulary
+			// GROWS — repo-state-v1 added "ungrounded" — so the commonest way to reach
+			// this branch is an older atcr exporting a newer run-result, not a hand-
+			// assembled file. Reporting only hand-assembly sends that operator auditing
+			// a file nobody edited. Version skew leads because it is both the likelier
+			// cause and the one with a remedy that terminates; re-running under this
+			// build cannot help, since a producer of this version writes only values
+			// this version knows.
 			if k != benchmark.OutcomeUnknownLabel && !benchmark.ValidOutcome(k) {
-				return fmt.Errorf("run-result %s records outcome tally key %q for %s/%s, outside the outcome vocabulary; "+
-					"the producer writes only benchmark.Outcome* values, so this file is malformed",
+				return fmt.Errorf("run-result %s records outcome tally key %q for %s/%s, outside the outcome vocabulary "+
+					"this build knows; the file was either written by a NEWER atcr whose vocabulary added the value "+
+					"(version skew — upgrade atcr and re-export) or hand-assembled, since a producer of this version "+
+					"writes only benchmark.Outcome* values",
 					path, k, model, persona)
 			}
 		}

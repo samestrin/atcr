@@ -155,13 +155,27 @@ func TestCheckCoverage_RejectsMalformedOutcomeTallies(t *testing.T) {
 		}
 	}
 
-	for name, outcomes := range map[string]map[string]int{
-		"negative count":        {"clean": -1, "findings": 2}, // sums to 1: the sum check passes it
-		"out-of-vocabulary key": {"fabricated": 1},            // sums to 1: also passes
+	// The two arms reject for different reasons and say so differently: a negative
+	// count can only be hand-assembly, while an unknown KEY is more often a newer
+	// producer than a tampered file, so that arm names version skew instead.
+	for name, tc := range map[string]struct {
+		outcomes map[string]int
+		wants    []string
+	}{
+		"negative count": { // sums to 1: the sum check passes it
+			outcomes: map[string]int{"clean": -1, "findings": 2},
+			wants:    []string{"malformed", "negative outcome tally"},
+		},
+		"out-of-vocabulary key": { // sums to 1: also passes
+			outcomes: map[string]int{"fabricated": 1},
+			wants:    []string{"outside the outcome vocabulary", "version skew", "hand-assembled"},
+		},
 	} {
-		err := checkCoverage(io.Discard, base(outcomes), "rr.json", false)
+		err := checkCoverage(io.Discard, base(tc.outcomes), "rr.json", false)
 		require.Error(t, err, name)
-		assert.Contains(t, err.Error(), "malformed", name)
+		for _, want := range tc.wants {
+			assert.Contains(t, err.Error(), want, name)
+		}
 	}
 
 	// The legitimate vocabulary — including the "unknown" tally label — stays legal.
