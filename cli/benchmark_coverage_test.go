@@ -375,6 +375,34 @@ func TestCoverageDiagnostics_SanitizeUntrustedCaseIDs(t *testing.T) {
 // of anchorSuiteDenominator's three checks, so it is the one an attacker-supplied file
 // trips most easily, and it is the only one that does not funnel through
 // summarizeMissing's stripping.
+// On repo-state-v1 the suite NAME cannot distinguish two suites: LoadRepoState
+// requires the manifest to declare exactly "repo-state-v1" and then stamps that
+// constant onto the loaded manifest, so every repo-state run-result and every
+// repo-state manifest carry the same literal. The identity check above is therefore
+// a tautology on this tier, and the documented ordering guarantee — "anchoring to
+// the wrong suite reports the wrong suite rather than reporting every case as
+// missing" — is false here: anchoring run-result A against suite B falls through to
+// the case-set check and reports "every reviewer row was scored against a shrunken
+// denominator", a claim about the run that is simply not true.
+//
+// The gate must still REJECT (it does, via the case set). What it must stop doing is
+// asserting the wrong cause.
+func TestAnchorSuiteDenominator_RepoStateMismatchDoesNotBlameTheDenominator(t *testing.T) {
+	// A run-result carrying the repo-state identity and a case list from some OTHER
+	// repo-state suite — the shape the tautological name check cannot catch.
+	err := anchorSuiteDenominator(benchmark.RunResult{
+		Suite:        benchmark.FormatRepoStateV1,
+		SuiteVersion: "1.0.0",
+		SuiteCaseIDs: []string{"a-case-from-another-suite"},
+	}, repoStateMiniPath, "rr.json")
+
+	require.Error(t, err, "a run-result from a different repo-state suite must still be rejected")
+	assert.Contains(t, err.Error(), "not author-distinguishable",
+		"the message must say the suite name cannot tell two repo-state suites apart")
+	assert.NotContains(t, err.Error(), "shrunken denominator",
+		"blaming the denominator asserts the run was truncated, which this file gives no evidence for")
+}
+
 func TestAnchorSuiteDenominator_SanitizesTheUntrustedSuiteIdentity(t *testing.T) {
 	const esc = "\x1b[2K\x1b[1Gall checks passed"
 
