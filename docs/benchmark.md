@@ -421,7 +421,8 @@ and PR they name (see [`docs/scorecard.md`](scorecard.md)):
     {
       "model": "claude-sonnet-4-6",
       "persona": "bruce",
-      "case_ids": ["case-01-nil-deref", "case-02-sql-injection"]
+      "case_ids": ["case-01-nil-deref", "case-02-sql-injection"],
+      "grounding_enabled": false
     }
   ]
 }
@@ -444,8 +445,11 @@ Five properties are worth knowing:
 
 - **The coverage row is trimmed.** The run-result's richer `reviewer_coverage`
   entries also carry `outcomes` and `fallback_cases`. Those are run-level diagnostics
-  and stay run-result-only — the public submission is allowlist-based, and the board
-  needs only the covered-case set.
+  and stay run-result-only — the public submission is allowlist-based. One qualifier
+  survives the trim: `grounding_enabled`, which says whether the Epic 14.1 grounding
+  gate was live for the row's run and therefore which population `corroboration_rate`
+  was scored over (see [docs/scorecard.md](scorecard.md)). The sample above shows it
+  `false`, the value a `standard-v1` run records with the gate failed open.
 - **Absent means unmeasured, not empty.** Both keys are omitted entirely by a
   run-result that recorded no coverage (any file written before coverage existed).
   An absent key reads as "nobody measured"; it is never emitted as `null` or `[]`,
@@ -557,9 +561,10 @@ emits and the order the documented positional join depends on.
 not carried into the submission envelope.
 
 `suite_case_ids` and `reviewer_coverage` **are** carried, as of `submission_schema` 2,
-but in trimmed form: the submission keeps `model`, `persona`, and `case_ids`, and drops
-the `outcomes` tally and `fallback_cases` count shown above. Those two remain
-run-result-only.
+but in trimmed form: the submission keeps `model`, `persona`, `case_ids`, and
+`grounding_enabled`, and drops the `outcomes` tally and `fallback_cases` count shown
+above. Those two remain run-result-only; `grounding_enabled` is the one retained
+qualifier, pinned in [docs/scorecard.md](scorecard.md).
 
 Every one of these keys is omitted entirely by a producer that did not measure it,
 which is what lets export tell "unmeasured" apart from "short". For `suite_case_ids`
