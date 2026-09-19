@@ -2391,7 +2391,7 @@ func TestWarnCaseFailures_SilentOnACleanRun(t *testing.T) {
 // specific to the path being created, so classifying them fatal would abort a whole
 // paid suite over one bad case directory. Both directions are pinned here.
 func TestIsFatalWorkDirError(t *testing.T) {
-	for _, e := range []syscall.Errno{syscall.ENOSPC, syscall.EMFILE, syscall.ENFILE, syscall.EROFS} {
+	for _, e := range []syscall.Errno{syscall.ENOSPC, syscall.EMFILE, syscall.ENFILE, syscall.EROFS, syscall.EDQUOT} {
 		assert.Truef(t, isFatalWorkDirError(e),
 			"%v is a HOST fault: every remaining case repeats the identical syscall and fails identically", e)
 		// Wrapped, because the call site never sees a bare errno — os.MkdirAll returns
