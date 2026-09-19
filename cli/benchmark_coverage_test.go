@@ -1040,3 +1040,52 @@ func TestCheckCoverage_AllowPartialOmitsTheSlotCaveatWithoutSlotFailures(t *test
 	assert.NotContains(t, buf.String(), "not penalised",
 		"a case-level shortfall hits every row equally, so the comparability caveat does not apply")
 }
+
+// The repo-state caveat has THREE arms and only two were exercised. The existing
+// test declares a case the suite does not contain, which produces both a missing and
+// an extra and lands on the combined arm; the missing-ONLY arm — a run-result
+// declaring a strict subset of the suite — substitutes the caveat for the
+// shrunken-denominator claim on its own line, and that substitution was an uncovered
+// added line that survived mutation.
+//
+// It is the arm most worth pinning: it is the one where the two possible causes
+// (a truncated run, or an anchor against a different repo-state suite of the same
+// version) are genuinely indistinguishable, so it is the one where asserting the
+// denominator is wrong.
+func TestAnchorSuiteDenominator_RepoStateSubsetDoesNotBlameTheDenominator(t *testing.T) {
+	suite := writeCaseSuite(t, "first-case", "second-case")
+
+	err := anchorSuiteDenominator(benchmark.RunResult{
+		Suite:        benchmark.FormatRepoStateV1,
+		SuiteVersion: "1.0.0",
+		SuiteCaseIDs: []string{"first-case"}, // a strict SUBSET: missing, no extras
+	}, suite, "rr.json")
+
+	require.Error(t, err, "a short denominator must still be rejected")
+	assert.Contains(t, err.Error(), "missing second-case",
+		"the difference is still shown")
+	assert.Contains(t, err.Error(), "not author-distinguishable",
+		"the caveat must replace the denominator claim on this arm too")
+	assert.NotContains(t, err.Error(), "shrunken denominator",
+		"asserting the run was truncated is exactly the claim this tier cannot support")
+}
+
+// The mirror that keeps the caveat from swallowing the real diagnosis. standard-v1
+// suite names ARE author-chosen, so the identity check above already proved the two
+// files describe the same suite — and there the shrunken-denominator claim is
+// warranted and must survive.
+func TestAnchorSuiteDenominator_StandardV1SubsetStillBlamesTheDenominator(t *testing.T) {
+	err := anchorSuiteDenominator(benchmark.RunResult{
+		// The fixture's OWN identity, so the identity check passes and the case-set
+		// check is what rejects — otherwise this asserts nothing about the arm.
+		Suite:        "fixture-mini",
+		SuiteVersion: "1.0.0",
+		SuiteCaseIDs: []string{"case-01-nil-deref"},
+	}, suiteValidPath, "rr.json")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "shrunken denominator",
+		"on a tier whose suite name is distinguishing, the denominator claim is warranted")
+	assert.NotContains(t, err.Error(), "not author-distinguishable",
+		"and the repo-state caveat would be false here")
+}
