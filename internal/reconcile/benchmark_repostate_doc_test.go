@@ -416,6 +416,96 @@ func TestBenchmarkDoc_AbortTaxonomyPartitionsIdenticallyEverywhere(t *testing.T)
 		"the CHANGELOG's count must match the abort table's row count")
 }
 
+// Every abort site in the runner's PAID region — the per-case loop onward, where
+// each abort discards work that was already paid for — must map to a declared
+// class in abortClasses. abortClasses itself is keyed on code markers, so an entry
+// whose marker is deleted fails the partition test above; what nothing caught was
+// the opposite drift: a NEW abort site added to the runner with no taxonomy entry,
+// invisible to a per-class Contains in both directions.
+//
+// The enumeration is mechanical: extract the message-opening fragment of every
+// `return nil, "", fmt.Errorf(` site in the runner, and require each to be either
+// (a) mapped to an abortClasses entry here, or (b) explicitly listed as a PRE-PAID
+// pre-flight — sites before the first case, which abort before anything is paid for
+// and are classified at their call sites, not in the run taxonomy. A message-less
+// forwarding site (`return nil, "", err`) is enumerated through the distinctive
+// call that feeds it instead (the realized-identity printability guard's only
+// surface is its check call). A future abort site whose fragment matches nothing
+// here fails this test with the fragment named — the "new abort with no entry here
+// has no marker to match" hole the abortClasses comment admits, closed.
+func TestBenchmarkDoc_EveryAbortSiteMapsToADeclaredClass(t *testing.T) {
+	cli := readRepoFile(t, "../../cli/benchmark_repostate.go")
+
+	// Maps an abort site's message-opening fragment (as `return nil, "",
+	// fmt.Errorf("<fragment>` appears in the source) to the abortClasses entry name
+	// that classifies it.
+	mapped := map[string]string{
+		"benchmark run cancelled after ":                             "cancellation",
+		"benchmark run aborted: ":                                    "--max-consecutive-case-failures abort",
+		"creating case work dir for ":                                "host-level work-dir fault",
+		"preparing case ":                                            "empty roster",
+		"executing case ":                                            "total-roster failure",
+		"scored twice under realized identity":                       "scored-twice / identity collision",
+		"no case could be scored: all ":                              "nothing scored",
+		"no case could be scored: the run produced no reviewer rows": "nothing scored",
+		"distinct reviewer identities":                               "scored-twice / identity collision",
+	}
+	// Sites the taxonomy deliberately does not classify: both fire BEFORE the
+	// first paid case, so there is no work to discard and no run taxonomy to join —
+	// a load failure is refused at the door, not mid-run.
+	prePaid := []string{
+		"creating benchmark work dir: ",
+	}
+	// Message-less abort sites, enumerated via the distinctive call that feeds them.
+	// The realized-identity printability guard returns the check's own error, so no
+	// fmt.Errorf fragment exists to extract for it.
+	presenceOnly := map[string]string{
+		"checkRealizedIdentityPrintable(k)": "realized-identity printability guard",
+	}
+
+	classNames := map[string]bool{}
+	for _, class := range abortClasses {
+		classNames[class.name] = true
+	}
+
+	for fragment, class := range mapped {
+		assert.Containsf(t, cli, fragment,
+			"abort site fragment %q vanished from the runner — update this enumeration", fragment)
+		assert.Truef(t, classNames[class],
+			"abort site %q maps to class %q, which abortClasses does not declare", fragment, class)
+	}
+	for fragment := range presenceOnly {
+		assert.Containsf(t, cli, fragment,
+			"abort site marker %q vanished from the runner — update this enumeration", fragment)
+		assert.Truef(t, classNames[presenceOnly[fragment]],
+			"abort site %q maps to class %q, which abortClasses does not declare", fragment, presenceOnly[fragment])
+	}
+
+	re := regexp.MustCompile(`return nil, "", fmt\.Errorf\("([^"\n]{10,})`)
+	for _, m := range re.FindAllStringSubmatch(cli, -1) {
+		fragment := m[1]
+		covered := false
+		for key := range mapped {
+			if strings.Contains(fragment, key) {
+				covered = true
+				break
+			}
+		}
+		if covered {
+			continue
+		}
+		unmapped := true
+		for _, p := range prePaid {
+			if strings.Contains(fragment, p) {
+				unmapped = false
+				break
+			}
+		}
+		assert.Falsef(t, unmapped,
+			"abort site with message %q has no declared class — add it to abortClasses and map it here", fragment)
+	}
+}
+
 // The export rejection is emitted as ONE line by checkCoverage's fmt.Errorf, but the
 // doc rendered it as a three-line terminal block nobody will ever see. Pin the real
 // shape: prefix, shortfall row and remedy sentence on a single doc line, in the order
