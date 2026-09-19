@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1428,13 +1429,30 @@ func logCapturingContext(t *testing.T, into *bytes.Buffer) context.Context {
 // retainedWorkDirFromLog pulls the retained path out of the runner's own log line,
 // which is the only channel a partial run has to report it: unlike a hard failure,
 // it returns no error to carry the path in.
+//
+// The anchor is the FULL partial-run message, not the substring "work dir
+// retained": the failed-run arm (benchmark_repostate.go:170) logs a message that
+// contains that same substring, so a test producing both lines would silently read
+// the wrong one. The path value is read QUOTE-AWARE: slog's text handler quotes any
+// value containing a space, so on a host whose $TMPDIR has a space the naive
+// cut-at-first-space parse returned a truncated quote-prefixed string.
 func retainedWorkDirFromLog(t *testing.T, logs string) string {
 	t.Helper()
-	i := strings.Index(logs, "work dir retained")
+	const partialAnchor = "benchmark work dir retained after a partial run"
+	i := strings.Index(logs, partialAnchor)
 	require.GreaterOrEqual(t, i, 0, "the run must report a retained work dir; logs were:\n%s", logs)
 	j := strings.Index(logs[i:], "path=")
 	require.GreaterOrEqual(t, j, 0, "the retention line must name the path; logs were:\n%s", logs)
 	path := logs[i+j+len("path="):]
+	if strings.HasPrefix(path, "\"") {
+		// Quoted by the text handler: the value ends at the closing quote, not at
+		// the first space, and strconv.Unquote resolves any escapes inside it.
+		end := strings.Index(path[1:], "\"")
+		require.GreaterOrEqual(t, end, 0, "the quoted path value must terminate; logs were:\n%s", logs)
+		unquoted, err := strconv.Unquote(path[:end+2])
+		require.NoError(t, err, "the quoted path value must unquote cleanly; logs were:\n%s", logs)
+		return unquoted
+	}
 	if end := strings.IndexAny(path, " \n"); end >= 0 {
 		path = path[:end]
 	}
