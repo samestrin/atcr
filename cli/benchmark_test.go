@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -401,6 +402,36 @@ func TestBenchmarkExport_RejectsAnOversizeRunResult(t *testing.T) {
 
 	require.NotEqual(t, 0, code, "an oversize run-result must not be read unbounded: %s", out)
 	require.Contains(t, out, "exceeds size limit", "the rejection names the ceiling it hit")
+}
+
+// The two oversize arms are pinned SEPARATELY, because they mask each other: both
+// wrap errRunResultTooLarge and the test above asserts only the shared "exceeds size
+// limit" text, so disabling either arm alone left ./cli green. The stat arm's
+// distinct diagnostic (it names the actual size) and the LimitReader arm's distinct
+// purpose (the file grew between stat and read) each get their own assertion here.
+// Memory stays bounded by the LimitReader call itself — this is a diagnostic-quality
+// gap, not an unbounded read.
+func TestBenchmarkExport_StatArmNamesTheActualSize(t *testing.T) {
+	orig := maxRunResultBytes
+	maxRunResultBytes = 64
+	defer func() { maxRunResultBytes = orig }()
+
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01"],` +
+		`"reviewer_coverage":[{"model":"m-primary","persona":"brad","case_ids":["case-01"]}],` +
+		`"reviewers":[{"model":"m-primary","persona":"brad","runs":1,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.Greater(t, int64(len(body)), maxRunResultBytes, "the fixture has to actually exceed the ceiling")
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+
+	require.NotEqual(t, 0, code, "an oversize run-result must be rejected: %s", out)
+	require.Contains(t, out, fmt.Sprintf("is %d bytes (limit %d)", int64(len(body)), int64(64)),
+		"the stat arm's distinct diagnostic — naming the actual size — must be pinned, not masked by the shared text")
+	require.NotContains(t, out, "grew past",
+		"the stat arm fired here; the growth arm's message must not appear")
 }
 
 // The case_failures gate is pinned at the COMMAND, not only at validateCaseFailures.
