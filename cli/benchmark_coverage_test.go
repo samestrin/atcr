@@ -560,7 +560,7 @@ func TestValidateSlotFailures_RejectsACaseOutsideTheSuite(t *testing.T) {
 // would report that suite_case_ids does not declare a case it visibly declares.
 func TestValidateSlotFailures_RejectsANonPrintingRune(t *testing.T) {
 	rr := slotFailureRun()
-	rr.SlotFailures[0].CaseID = "case-02​"
+	rr.SlotFailures[0].CaseID = "case-02\u200b"
 
 	err := validateSlotFailures(rr, "rr.json")
 
@@ -722,7 +722,7 @@ func TestValidateCaseFailures_RejectsAnArrayLongerThanTheSuite(t *testing.T) {
 // file whose suite_case_ids visibly contains case-02. The rune gets named instead.
 func TestValidateCaseFailures_NamesANonPrintingRuneInsteadOfContradictingItself(t *testing.T) {
 	rr := partialRun()
-	rr.CaseFailures[0].CaseID = "case-02​"
+	rr.CaseFailures[0].CaseID = "case-02\u200b"
 
 	err := validateCaseFailures(rr, "rr.json")
 

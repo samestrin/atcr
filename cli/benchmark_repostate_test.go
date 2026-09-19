@@ -2117,7 +2117,7 @@ func TestExecuteRepoStateBenchmarkRun_RejectsANonPrintingRuneInTheRealizedIdenti
 		for i := range s.Agents {
 			// A bidi override in the USAGE-REPORTED model — invisible in a rendered
 			// document, and never present in any local config file.
-			s.Agents[i].Model = "m-greta‮evil"
+			s.Agents[i].Model = "m-greta\u202eevil"
 		}
 		return s, nil
 	}
@@ -2336,13 +2336,13 @@ func TestWarnCaseFailures_StripsTerminalControlRunesFromBothFields(t *testing.T)
 	warnCaseFailures(&buf, &benchmark.RunResult{
 		SuiteCaseIDs: []string{"case-01", "case-02"},
 		CaseFailures: []benchmark.CaseFailure{
-			{CaseID: "case-02\x1b[2J", Reason: benchmark.CaseFailurePrepare + "​"},
+			{CaseID: "case-02\x1b[2J", Reason: benchmark.CaseFailurePrepare + "\u200b"},
 		},
 	}, "")
 
 	out := buf.String()
 	assert.NotContains(t, out, "\x1b", "an ANSI sequence in a case id must not reach the operator's terminal")
-	assert.NotContains(t, out, "​", "the reason is read off the same untrusted file as the case id")
+	assert.NotContains(t, out, "\u200b", "the reason is read off the same untrusted file as the case id")
 	assert.Contains(t, out, "case-02", "stripping removes the control runes, not the identifier")
 	assert.Contains(t, out, benchmark.CaseFailurePrepare, "the stage still has to be readable")
 }
