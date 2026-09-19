@@ -225,6 +225,27 @@ func TestBenchmarkDoc_RepoStatePartialRunContractMatchesTheCode(t *testing.T) {
 	assert.Contains(t, runResult, `json:"case_failures,omitempty"`,
 		"the run-result must still emit the key the doc names")
 
+	// The field's back-compat contract. The omitempty tag makes a clean run
+	// serialize identically to a pre-field run-result, and both unmarshal to nil —
+	// the reason a consumer that never heard of the channel still parses a partial
+	// run. That contract lived only in the field's comment, unenforced by any test;
+	// pinned here so an edit that silently drops the omitempty (which would emit
+	// `"case_failures":null` on every clean run and break byte-identity) fails this
+	// guard instead of shipping as a silent schema change.
+	//
+	// Whitespace-normalized before matching because the sentence wraps across
+	// comment lines in the source: comment continuation markers (`\n// `) are
+	// folded into spaces first, then runs of whitespace collapse, so a reflow that
+	// keeps the words keeps the guard green. The phrase is unique to the
+	// CaseFailures comment — the Vocabulary field's similar sentence continues
+	// with an em-dash ("existed — and both"), not this comma.
+	joined := regexp.MustCompile(`\n\s*//\s?`).ReplaceAllString(runResult, " ")
+	compactRunResult := regexp.MustCompile(`\s+`).ReplaceAllString(joined, " ")
+	assert.Contains(t, compactRunResult,
+		"omitempty so a clean run serializes identically to a run-result written before this field existed, and both unmarshal to nil.",
+		"the CaseFailures field comment must keep its omitempty/back-compat contract — "+
+			"it is the only statement of why a clean run stays byte-identical to a pre-field run-result")
+
 	// The distinction the whole design rests on: unmeasured, not missed. A reader
 	// who takes a failed case for a zero would mis-read every recall on the run.
 	assert.Contains(t, doc, "unmeasured",
