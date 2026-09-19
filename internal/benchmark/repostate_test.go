@@ -396,6 +396,62 @@ func TestLoadRepoState_RejectsAMalformedDiff(t *testing.T) {
 	assert.Contains(t, err.Error(), "good-case", "the error must name the broken case")
 }
 
+// The two halves of the tier discriminator follow DIFFERENT rules on purpose, and
+// this pins the loader's half so the split stays a decision rather than an accident.
+//
+// ROUTING (cli/benchmark.go, cli/benchmark_coverage.go) is case-INSENSITIVE, and what
+// that buys is a precise error: a manifest declaring "Repo-State-V1" reaches the
+// repo-state arm instead of falling through to the standard loader and dying on "diff
+// path is required", a message about a field the format never had.
+//
+// LOADING is exact. The `suite` value is a published format contract, not a
+// convenience spelling — it is compared literally wherever suite identity is compared
+// — so the loader accepts one spelling and says so. Routing tolerance exists to
+// deliver THIS error, not to widen what counts as a valid repo-state suite.
+func TestLoadRepoState_RejectsACasedDiscriminatorWithAnActionableError(t *testing.T) {
+	dir := writeRepoStateSuite(t, validCaseJSON)
+	manifest, err := os.ReadFile(filepath.Join(dir, "suite.json"))
+	require.NoError(t, err)
+	cased := strings.Replace(string(manifest), `"`+FormatRepoStateV1+`"`, `"Repo-State-V1"`, 1)
+	require.NotEqual(t, string(manifest), cased, "the fixture rewrite must actually change the discriminator")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "suite.json"), []byte(cased), 0o600))
+
+	_, err = LoadRepoState(dir)
+	require.Error(t, err, "the loader accepts exactly one spelling of the discriminator")
+	assert.Contains(t, err.Error(), "Repo-State-V1", "the error must quote what the manifest actually declared")
+	assert.Contains(t, err.Error(), FormatRepoStateV1, "and what it must declare instead")
+}
+
+// The size cap has to live HERE, before the read, because this is where the bytes
+// become resident. The CLI runner capped its own os.ReadFile, but loadRepoStateCase
+// had already read the same file unbounded to satisfy its parseability contract —
+// so the cap ran after the memory it was protecting had been spent. The other two
+// LoadRepoState callers (`benchmark verify` and `benchmark export --suite-path`)
+// never reached the CLI cap at all and were fully uncapped on input this package's
+// own comments call "the same class of untrusted third-party input" as standard-v1's
+// MaxDiffBytes.
+func TestLoadRepoState_RejectsAnOversizedDiffBeforeReadingIt(t *testing.T) {
+	dir := writeRepoStateSuite(t, validCaseJSON)
+
+	// Shrink the cap rather than writing a 10 MiB fixture: the bound under test is
+	// the comparison, not the constant, and a multi-megabyte temp file per run is a
+	// real cost for no extra coverage.
+	restore := MaxDiffBytes
+	MaxDiffBytes = 64
+	t.Cleanup(func() { MaxDiffBytes = restore })
+
+	oversized := "diff --git a/pkg/example.py b/pkg/example.py\n" +
+		"--- a/pkg/example.py\n+++ b/pkg/example.py\n" +
+		"@@ -1,2 +1,2 @@\n-x = 1\n+x = 2\n"
+	require.Greater(t, int64(len(oversized)), MaxDiffBytes, "the fixture must actually exceed the cap")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "good-case", "change.diff"), []byte(oversized), 0o600))
+
+	_, err := LoadRepoState(dir)
+	require.Error(t, err, "an oversized diff must be rejected at load, before it is read into memory")
+	assert.Contains(t, err.Error(), "good-case", "the error must name the offending case")
+	assert.Contains(t, err.Error(), "exceed", "the error must say the cap was exceeded")
+}
+
 // The case-directory symlink guard must not fail OPEN: a non-nil Lstat error used
 // to silently SKIP the AC7 check — the one place a discarded syscall error
 // disabled a security control rather than merely losing a diagnostic. A case dir

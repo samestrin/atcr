@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -72,8 +73,9 @@ func runBenchmarkVerify(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	// EqualFold for the same reason run routes with it: a differently-cased
-	// discriminator names the same tier.
+	// EqualFold for the same reason run routes with it, and with the same limit: a
+	// differently-cased discriminator is ROUTED as this tier so the loader can refuse
+	// it precisely — it is not ACCEPTED as this tier. See the note at runBenchmarkRun.
 	if strings.EqualFold(suiteFormat, benchmark.FormatRepoStateV1) {
 		return verifyRepoStateSuite(cmd, suitePath)
 	}
@@ -159,6 +161,9 @@ func newBenchmarkRunCmd() *cobra.Command {
 	// parse-time warning pollutes merged-stream output consumers).
 	_ = cmd.Flags().MarkHidden("out")
 	cmd.Flags().String("checkpoint", "", "opt-in: path to a run checkpoint file (atomically replaces the target; a symlink at the path is replaced, not followed). Each scored case is durably recorded here before the next begins; re-running the same suite resumes from the first unscored case instead of restarting (and re-paying for) the whole run. The path must not be shared across concurrent benchmark run invocations. Empty = no checkpointing (default).")
+	cmd.Flags().Bool("fail-on-case-failure", false, "opt-in (repo-state-v1 only): exit non-zero when ANY case was lost to an infrastructure failure. Off by default, because a partial run is a real measurement of the cases that did run and the run-result records which ones did not — but a CI step gating on the exit code cannot see that, so this restores the all-or-nothing contract for callers that need it. Use --max-case-failures for a threshold instead of a floor of one. Inert on standard-v1, whose runner never populates case_failures.")
+	cmd.Flags().Int("max-case-failures", -1, "opt-in (repo-state-v1 only): exit non-zero once MORE than this many cases were lost to infrastructure failures. -1 (default) means no ceiling. 0 is equivalent to --fail-on-case-failure. Set it to tolerate the occasional flaky provider while still failing a systemically broken run. Inert on standard-v1, whose runner never populates case_failures.")
+	cmd.Flags().Int("max-consecutive-case-failures", 0, "opt-in (repo-state-v1 only): ABORT the run once this many cases have failed back to back, instead of paying for the rest of the suite. 0 (default) disables it. A scored case resets the count, so this stops a systemically broken provider — one bad key, a payload-size rejection — rather than the occasional flaky case. Unlike --fail-on-case-failure and --max-case-failures, which judge a run that has already been paid for in full, this one stops the bill mid-run.")
 	_ = cmd.MarkFlagRequired("suite-path")
 	return cmd
 }
@@ -189,6 +194,9 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 		out, _ = cmd.Flags().GetString("out")
 	}
 	checkpoint, _ := cmd.Flags().GetString("checkpoint")
+	failOnCaseFailure, _ := cmd.Flags().GetBool("fail-on-case-failure")
+	maxCaseFailures, _ := cmd.Flags().GetInt("max-case-failures")
+	maxConsecutiveCaseFailures, _ := cmd.Flags().GetInt("max-consecutive-case-failures")
 
 	// Discover config the same way `atcr review` does (registry + project config
 	// rooted at the cwd), so the benchmark roster is the project's reviewers.
@@ -216,11 +224,22 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 	// shared with real review work.
 	benchCtx := hookobs.WithCall(cmd.Context(), hookobs.Call{Stage: "benchmark"})
 	var rr *benchmark.RunResult
-	// Case-insensitive on purpose: DetectSuiteFormat already TrimSpaces the
-	// discriminator, and an exact match here would send a manifest declaring
-	// "Repo-State-V1" to the standard-v1 arm — which misses the known-other-format
-	// guard and dies on "diff path is required", the exact misleading message the
-	// discriminator check exists to prevent.
+	// Only the repo-state runner retains a work dir on a partial run; the standard
+	// path leaves this empty and warnCaseFailures keeps its old wording.
+	var retainedWorkDir string
+	// Case-insensitive ROUTING, and what it buys is a precise ERROR — not acceptance
+	// of the cased spelling. DetectSuiteFormat already TrimSpaces the discriminator;
+	// an exact match here would send a manifest declaring "Repo-State-V1" to the
+	// standard-v1 arm, which misses the known-other-format guard and dies on "diff
+	// path is required", a message about a field the repo-state format never had.
+	// Routed here instead, it reaches LoadRepoState, whose own EXACT tier check says
+	// which spelling the manifest declared and which it must declare
+	// (TestLoadRepoState_RejectsACasedDiscriminatorWithAnActionableError). The suite
+	// is still refused either way; the difference is whether the operator is told why.
+	//
+	// The two rules are deliberately different: `suite` is a published format
+	// contract compared literally wherever suite identity is compared, so the loader
+	// accepts one spelling, while routing is only deciding which error to produce.
 	isRepoState := strings.EqualFold(suiteFormat, benchmark.FormatRepoStateV1)
 	runner := "executeBenchmarkRun"
 	if isRepoState {
@@ -231,7 +250,7 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 	// ran, without opening the run-result to check which metrics it carries.
 	log.FromContext(benchCtx).Info("benchmark run: executing suite", "suite_format", suiteFormat, "runner", runner)
 	if isRepoState {
-		rr, err = executeRepoStateBenchmarkRun(benchCtx, cfg, benchmarkNewCompleter(benchCtx), suitePath, time.Now().UTC())
+		rr, retainedWorkDir, err = executeRepoStateBenchmarkRun(benchCtx, cfg, benchmarkNewCompleter(benchCtx), suitePath, time.Now().UTC(), maxConsecutiveCaseFailures)
 	} else {
 		rr, err = executeBenchmarkRun(benchCtx, cfg, benchmarkNewCompleter(benchCtx), suitePath, time.Now().UTC(), checkpoint)
 	}
@@ -240,6 +259,10 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 	}
 
 	warnVocabularyDiagnostics(cmd.ErrOrStderr(), rr)
+	// BEFORE the recall summary, because it qualifies it: a partial run's recall
+	// covers only the cases that were scored, and a reader who sees the number first
+	// has already taken it for a full-suite measurement.
+	warnCaseFailures(cmd.ErrOrStderr(), rr, retainedWorkDir)
 	warnPositionalRecallSummary(cmd.ErrOrStderr(), rr)
 
 	data, err := json.MarshalIndent(rr, "", "  ")
@@ -247,11 +270,52 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("encoding run-result: %w", err)
 	}
 	if out == "" {
-		_, werr := cmd.OutOrStdout().Write(append(data, '\n'))
+		if _, werr := cmd.OutOrStdout().Write(append(data, '\n')); werr != nil {
+			return werr
+		}
+	} else if werr := writeExportFile(out, data); werr != nil {
+		// writeExportFile (leaderboard.go) atomically writes to path, creating parents.
 		return werr
 	}
-	// writeExportFile (leaderboard.go) atomically writes to path, creating parents.
-	return writeExportFile(out, data)
+	// LAST, after the run-result has been written. The strict gates change the EXIT
+	// CODE, not the artifact: a partial run is a real measurement of the cases that
+	// did run, and destroying it would make the opt-in cost the operator the paid work
+	// as well as the exit status.
+	return caseFailureExitGate(rr, failOnCaseFailure, maxCaseFailures)
+}
+
+// caseFailureExitGate implements the two opt-in strict exit contracts.
+//
+// The DEFAULT is unchanged and stays exit 0: a run that lost a case still measured
+// the ones it kept, records which it did not in case_failures, and says so on stderr
+// through warnCaseFailures. The only case that has always aborted is every case
+// failing, which the runner handles itself.
+//
+// That default is wrong for one caller though — a CI step or wrapper script gating on
+// the exit code, which cannot read a stderr warning and would silently accept a
+// 1-of-100 measurement. These flags are for that caller and nobody else, which is why
+// they are opt-in rather than a changed default: making the default strict would fail
+// interactive runs that are behaving exactly as designed.
+//
+// --fail-on-case-failure is the floor-of-one; --max-case-failures is the same gate
+// with a threshold, for a caller that tolerates the occasional flaky provider but not
+// a systemically broken run. Both are evaluated, so passing both means either can
+// fail the run.
+func caseFailureExitGate(rr *benchmark.RunResult, failOnAny bool, maxFailures int) error {
+	if rr == nil || len(rr.CaseFailures) == 0 {
+		return nil
+	}
+	failed, suite := len(rr.CaseFailures), len(rr.SuiteCaseIDs)
+	if failOnAny {
+		return fmt.Errorf("%d of %d case(s) were lost to infrastructure failures and --fail-on-case-failure is set; "+
+			"the run-result was still written and records which cases are missing", failed, suite)
+	}
+	if maxFailures >= 0 && failed > maxFailures {
+		return fmt.Errorf("%d of %d case(s) were lost to infrastructure failures, more than the %d allowed by "+
+			"--max-case-failures; the run-result was still written and records which cases are missing",
+			failed, suite, maxFailures)
+	}
+	return nil
 }
 
 // newBenchmarkExportCmd builds `atcr benchmark export --in <run-result.json>`:
@@ -283,6 +347,48 @@ func newBenchmarkExportCmd() *cobra.Command {
 	return cmd
 }
 
+// maxRunResultBytes caps the run-result read at export. The file is
+// operator-supplied and every gate in benchmark_coverage.go walks it again, so its
+// size multiplies through the whole export path — and it arrives having never passed
+// through the producer, the same premise those gates are built on. The ceiling
+// mirrors loadCheckpoint's maxCheckpointBytes (and fanout's readFileLimited), which
+// is the same 32 MiB for the same reason one command over. It is a var, not a const,
+// so tests can shrink it.
+var maxRunResultBytes int64 = 32 << 20 // 32 MiB
+
+// errRunResultTooLarge reports a run-result exceeding maxRunResultBytes. Export
+// fails loudly rather than reading an untrusted file unbounded.
+var errRunResultTooLarge = errors.New("run-result exceeds size limit")
+
+// readRunResultLimited stats-and-caps before reading, then reads through a
+// LimitReader anyway. The stat gives the useful diagnostic (it can name the actual
+// size); the LimitReader closes the window in which the file grows between the two
+// calls, which is the one shape a stat alone cannot cover.
+func readRunResultLimited(path string) ([]byte, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading run-result %s: %w", path, err)
+	}
+	if fi.Size() > maxRunResultBytes {
+		return nil, fmt.Errorf("%w: %s is %d bytes (limit %d)", errRunResultTooLarge, path, fi.Size(), maxRunResultBytes)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading run-result %s: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+	// One byte PAST the ceiling, so a file exactly at the limit still reads whole and
+	// only an over-limit one is detectable by length.
+	data, err := io.ReadAll(io.LimitReader(f, maxRunResultBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("reading run-result %s: %w", path, err)
+	}
+	if int64(len(data)) > maxRunResultBytes {
+		return nil, fmt.Errorf("%w: %s grew past %d bytes while it was being read", errRunResultTooLarge, path, maxRunResultBytes)
+	}
+	return data, nil
+}
+
 func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 	// Cobra GetString errors are unreachable: both flags are registered above
 	// ("in" is MarkFlagRequired), so GetString returns the flag value or its
@@ -292,9 +398,9 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 	allowPartial, _ := cmd.Flags().GetBool("allow-partial-coverage")
 	suitePath, _ := cmd.Flags().GetString("suite-path")
 
-	data, err := os.ReadFile(in)
+	data, err := readRunResultLimited(in)
 	if err != nil {
-		return fmt.Errorf("reading run-result %s: %w", in, err)
+		return err
 	}
 	var rr benchmark.RunResult
 	if err := json.Unmarshal(data, &rr); err != nil {
@@ -388,6 +494,20 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 	}
+	// BEFORE the gate, not after: checkCoverage reads case_failures to explain a
+	// shortfall, so an unvalidated entry would reach an operator-facing diagnostic —
+	// and could attach an excuse to a row that never earned one — before anything
+	// checked it was a reason the producer can write.
+	if err := validateCaseFailures(rr, in); err != nil {
+		return err
+	}
+	// Beside its sibling and for the identical reason: checkCoverage reads
+	// slot_failures to explain a short reviewer row, so an unvalidated entry would
+	// reach an operator-facing diagnostic — and could attach an excuse to a row that
+	// never earned one — before anything checked the producer could have written it.
+	if err := validateSlotFailures(rr, in); err != nil {
+		return err
+	}
 	if err := checkCoverage(cmd.ErrOrStderr(), rr, in, allowPartial); err != nil {
 		return err
 	}
@@ -462,8 +582,17 @@ const vocabularyAgreementAdvisory = "Treat corroboration_rate as a measure of vo
 // benchmark_coverage.go and the flag help below), so a reword cannot drift them
 // apart — the rule vocabularyAgreementAdvisory already established, applied to the
 // pair that has now gone stale twice.
-const partialCoverageVisibilityAdvisory = "the shortfall is carried into the submission — " +
-	"a consumer can compare each reviewer_coverage row's case_ids against suite_case_ids and see the row is short"
+//
+// "without reasons" is load-bearing, not decoration: the submission carries the
+// SIZE of the shortfall (short case_ids sets against suite_case_ids) but nothing
+// that says WHY any case is missing — case_failures is run-result-only per the
+// epic 35.16.10.1 Clarifications (see RunResult.CaseFailures). Earlier wordings of
+// this clause promised visibility the submission does not deliver; the clause now
+// states the limit in the same breath as the visibility, and
+// TestBuildSubmission_DoesNotPublishCaseFailures pins the wire side of it.
+const partialCoverageVisibilityAdvisory = "the shortfall is carried into the submission, without reasons — " +
+	"a consumer can compare each reviewer_coverage row's case_ids against suite_case_ids and see the row is short; " +
+	"nothing in the submission says why a case is missing"
 
 // maxDriftWarningRows caps the per-reviewer drift listing. The realistic breach cause
 // is a findings-parser regression, which drifts every reviewer at once — on a 27-model
@@ -693,6 +822,23 @@ func warnPositionalRecallSummary(w io.Writer, rr *benchmark.RunResult) {
 			}
 		}
 	}
+	// The caveat the metric's own field doc carries, on the one surface an operator
+	// actually reads the number from. ReviewerPositionalRecall, score_repostate.go and
+	// docs/benchmark.md all state it at length; this line printed the figure bare, so
+	// a zero read as reviewer inattention when it may be gate attrition — and on this
+	// tier, whose whole subject is out-of-diff findings, that is the likelier cause.
+	//
+	// Appended ONCE per summary rather than per row: it describes how the metric is
+	// computed, which is identical for every reviewer, and repeating it would bury the
+	// numbers it qualifies. The run's grounding_enabled tag is deliberately not
+	// interpolated — it lives per reviewer on ReviewerCoverage, not as one run-level
+	// value, so naming it here would need a join that this warning has no other reason
+	// to do.
+	if len(rr.PositionalRecall) > 0 {
+		msg.WriteString("  note: an outside_diff_recall of 0.00 conflates \"never consulted unchanged " +
+			"code\" with \"found it and the grounding gate discarded it\" — check each row's " +
+			"reviewer_coverage.grounding_enabled before reading it as reviewer inattention\n")
+	}
 	_, _ = io.WriteString(w, msg.String())
 }
 
@@ -817,6 +963,28 @@ func validateReviewerPositionalRecall(w io.Writer, rr benchmark.RunResult, path 
 			if want := float64(part.matched) / float64(part.expected); math.Abs(*part.rate-want)-vocabularyRateTolerance > vocabularyRateEpsilon {
 				return fmt.Errorf("run-result %s has reviewer_positional_recall[%d] rate %v for %s that does not match its own "+
 					"counts (%d/%d = %v)", path, i, *part.rate, part.field, part.matched, part.expected, want)
+			}
+		}
+	}
+
+	// Cross-row denominator equality. The slot skip removes a case's expected
+	// findings from the reviewer whose slot failed, so two rows can carry different
+	// ExpectedTotal/ExpectedOutsideDiff while each stays internally consistent —
+	// "cover every expected finding in the suite" stopped being a property of every
+	// row the moment slots could fail, and warnPositionalRecallSummary prints the
+	// rows side by side. WARN, not FAIL: a differing denominator describes a real
+	// run — only an impossible number fails here.
+	if len(rr.PositionalRecall) > 1 {
+		first := rr.PositionalRecall[0]
+		for _, p := range rr.PositionalRecall[1:] {
+			if p.ExpectedTotal != first.ExpectedTotal || p.ExpectedOutsideDiff != first.ExpectedOutsideDiff ||
+				p.ExpectedWithinDiff != first.ExpectedWithinDiff {
+				_, _ = fmt.Fprintf(w, "warning: run-result %s has reviewer_positional_recall rows with differing denominators "+
+					"(%s/%s: %d expected (%d outside_diff) vs %s/%s: %d expected (%d outside_diff)) — the slot skip makes a row's "+
+					"denominator reviewer-dependent, so the rows are not comparable on rate alone; compare only rows with equal expected counts\n",
+					path, first.Model, first.Persona, first.ExpectedTotal, first.ExpectedOutsideDiff,
+					p.Model, p.Persona, p.ExpectedTotal, p.ExpectedOutsideDiff)
+				break
 			}
 		}
 	}

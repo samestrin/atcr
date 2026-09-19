@@ -449,3 +449,41 @@ func TestCommitAll_ANegativeExpectedCountSkipsTheAssertion(t *testing.T) {
 
 	require.NoError(t, err, "expectedFiles < 0 must not assert on the staged set")
 }
+
+// The per-file byte bound is one of the two resource guards copyBaseTree applies
+// to an adversarial base tree. Nothing else in the suite exercises it, so a
+// mutation that disables the comparison leaves the package green — this test
+// pins the refusal so the guard is load-bearing under `go test` as well as at
+// runtime. The fixture is written one byte over maxBaseFileBytes rather than
+// hardcoding 10MiB+1, so the bound and the test cannot drift apart.
+func TestCopyBaseTree_RejectsAFileOverThePerFileByteBound(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "big.bin"), make([]byte, maxBaseFileBytes+1), 0o600))
+
+	files, err := copyBaseTree(context.Background(), dir, t.TempDir())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "a single base file may not exceed")
+	assert.Zero(t, files, "the oversized file must not be counted as copied")
+}
+
+// The cumulative per-tree byte bound is the second resource guard copyBaseTree
+// applies to an adversarial base tree (the per-file bound has its own test).
+// A fixture that crosses the real 100 MiB limit would be slow and wasteful, so
+// the test shrinks both bounds through the package-level seam and restores them
+// afterwards. Two files under the (shrunken) per-file cap whose total crosses
+// the (shrunken) tree cap isolate the cumulative check from the per-file one.
+func TestCopyBaseTree_RejectsATreeOverTheCumulativeByteBound(t *testing.T) {
+	origFile, origTree := maxBaseFileBytes, maxBaseTreeBytes
+	maxBaseFileBytes, maxBaseTreeBytes = 4, 6
+	defer func() { maxBaseFileBytes, maxBaseTreeBytes = origFile, origTree }()
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("wxyz"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "b.txt"), []byte("wxyz"), 0o600))
+
+	_, err := copyBaseTree(context.Background(), dir, t.TempDir())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "in total")
+}

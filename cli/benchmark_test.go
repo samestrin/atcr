@@ -2,11 +2,13 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
@@ -272,6 +274,21 @@ func TestBenchmarkRunCmd_CheckpointHelpMentionsSymlink(t *testing.T) {
 	require.Contains(t, f.Usage, "symlink", "checkpoint help must document symlink replace-not-follow behavior")
 }
 
+// The two case-failure exit flags are inert on standard-v1: executeBenchmarkRun
+// never populates CaseFailures, so caseFailureExitGate returns nil on the empty
+// slice no matter how the flags are set. Their help must say so — scoped to
+// repo-state-v1 like --max-consecutive-case-failures — rather than promising a
+// tolerance the standard tier does not offer.
+func TestBenchmarkRunCmd_CaseFailureFlagsDeclareTierScope(t *testing.T) {
+	cmd := newBenchmarkRunCmd()
+	for _, name := range []string{"fail-on-case-failure", "max-case-failures"} {
+		f := cmd.Flags().Lookup(name)
+		require.NotNil(t, f, "benchmark run exposes a --%s flag", name)
+		require.Contains(t, f.Usage, "repo-state-v1 only",
+			"--%s help must scope its exit contract to repo-state-v1: the flag is inert on standard-v1, whose runner never populates case_failures", name)
+	}
+}
+
 // --output is the canonical run-result destination flag (matching benchmark
 // export and every other output-destination flag); --out remains a deprecated
 // hidden alias resolving identically.
@@ -306,4 +323,170 @@ func TestBenchmarkExport_InFlagRendersStringValueName(t *testing.T) {
 	require.Contains(t, out, "--in string",
 		"--in must render its real value name, not a backquoted example command")
 	require.NotContains(t, out, "--in atcr benchmark run")
+}
+
+// The DEFAULT exit contract is unchanged: a partial run still exits 0, because it is
+// a real measurement of the cases that ran and the run-result records which ones did
+// not. The two opt-in flags exist for the one caller that cannot read a stderr
+// warning -- a CI step gating on the exit code -- and each is evaluated against the
+// same failure count.
+func TestCaseFailureExitGate(t *testing.T) {
+	// A 10-case suite, parameterised by how many of them were lost.
+	run := func(failed int) *benchmark.RunResult {
+		rr := &benchmark.RunResult{}
+		for i := 1; i <= 10; i++ {
+			id := "case-" + strconv.Itoa(i)
+			rr.SuiteCaseIDs = append(rr.SuiteCaseIDs, id)
+			if i <= failed {
+				rr.CaseFailures = append(rr.CaseFailures,
+					benchmark.CaseFailure{CaseID: id, Reason: benchmark.CaseFailurePrepare})
+			}
+		}
+		return rr
+	}
+
+	for _, tc := range []struct {
+		name      string
+		failed    int
+		failOnAny bool
+		maxFail   int
+		wantErr   bool
+	}{
+		{"default tolerates one failure", 1, false, -1, false},
+		{"default tolerates half", 5, false, -1, false},
+		{"default tolerates all but one", 9, false, -1, false},
+		{"default on a clean run", 0, false, -1, false},
+
+		{"fail-on-case-failure rejects one", 1, true, -1, true},
+		{"fail-on-case-failure rejects half", 5, true, -1, true},
+		{"fail-on-case-failure rejects all but one", 9, true, -1, true},
+		{"fail-on-case-failure passes a clean run", 0, true, -1, false},
+
+		{"max-case-failures 0 rejects one", 1, false, 0, true},
+		{"max-case-failures 2 tolerates two", 2, false, 2, false},
+		{"max-case-failures 2 rejects three", 3, false, 2, true},
+		{"max-case-failures 2 rejects all but one", 9, false, 2, true},
+		{"max-case-failures passes a clean run", 0, false, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := caseFailureExitGate(run(tc.failed), tc.failOnAny, tc.maxFail)
+			if !tc.wantErr {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "run-result was still written",
+				"the gate changes the exit code, not the artifact")
+		})
+	}
+}
+
+// Export reads an operator-supplied run-result that every coverage gate then walks
+// again, so its size multiplies through the whole path. The read is capped the way
+// loadCheckpoint's is, and the rejection is loud rather than an unbounded read.
+func TestBenchmarkExport_RejectsAnOversizeRunResult(t *testing.T) {
+	orig := maxRunResultBytes
+	maxRunResultBytes = 64
+	defer func() { maxRunResultBytes = orig }()
+
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01"],` +
+		`"reviewer_coverage":[{"model":"m-primary","persona":"brad","case_ids":["case-01"]}],` +
+		`"reviewers":[{"model":"m-primary","persona":"brad","runs":1,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.Greater(t, int64(len(body)), maxRunResultBytes, "the fixture has to actually exceed the ceiling")
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+
+	require.NotEqual(t, 0, code, "an oversize run-result must not be read unbounded: %s", out)
+	require.Contains(t, out, "exceeds size limit", "the rejection names the ceiling it hit")
+}
+
+// The two oversize arms are pinned SEPARATELY, because they mask each other: both
+// wrap errRunResultTooLarge and the test above asserts only the shared "exceeds size
+// limit" text, so disabling either arm alone left ./cli green. The stat arm's
+// distinct diagnostic (it names the actual size) and the LimitReader arm's distinct
+// purpose (the file grew between stat and read) each get their own assertion here.
+// Memory stays bounded by the LimitReader call itself — this is a diagnostic-quality
+// gap, not an unbounded read.
+func TestBenchmarkExport_StatArmNamesTheActualSize(t *testing.T) {
+	orig := maxRunResultBytes
+	maxRunResultBytes = 64
+	defer func() { maxRunResultBytes = orig }()
+
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01"],` +
+		`"reviewer_coverage":[{"model":"m-primary","persona":"brad","case_ids":["case-01"]}],` +
+		`"reviewers":[{"model":"m-primary","persona":"brad","runs":1,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.Greater(t, int64(len(body)), maxRunResultBytes, "the fixture has to actually exceed the ceiling")
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+
+	require.NotEqual(t, 0, code, "an oversize run-result must be rejected: %s", out)
+	require.Contains(t, out, fmt.Sprintf("is %d bytes (limit %d)", int64(len(body)), int64(64)),
+		"the stat arm's distinct diagnostic — naming the actual size — must be pinned, not masked by the shared text")
+	require.NotContains(t, out, "grew past",
+		"the stat arm fired here; the growth arm's message must not appear")
+}
+
+// The case_failures gate is pinned at the COMMAND, not only at validateCaseFailures.
+// Its unit tests prove the function rejects a bad reason; they say nothing about
+// whether runBenchmarkExport still calls it, or still calls it before checkCoverage —
+// and both are load-bearing. checkCoverage DROPS an out-of-vocabulary entry rather
+// than rejecting it, so with the call deleted (or moved after the gate) this fixture
+// exports at exit 0 under --allow-partial-coverage with the case reported as plainly
+// missing. Same shape as TestBenchmarkExport_SuitePathScrubErrorPrecedesAnchor: assert
+// the earlier gate's text fires AND the later gate's text does not.
+func TestBenchmarkExport_CaseFailureGateIsInstalledBeforeTheCoverageGate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01","case-02","case-03"],` +
+		`"case_failures":[{"case_id":"case-02","reason":"vibes"}],` +
+		`"reviewer_coverage":[{"model":"m-primary","persona":"brad","case_ids":["case-01","case-03"]}],` +
+		`"reviewers":[{"model":"m-primary","persona":"brad","runs":2,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path, "--allow-partial-coverage")
+
+	require.NotEqual(t, 0, code,
+		"an unvalidated case_failures reason must not reach an operator-facing diagnostic: %s", out)
+	require.Contains(t, out, "outside the failure vocabulary",
+		"the case_failures gate's own diagnostic must fire")
+	require.NotContains(t, out, "not comparable",
+		"the coverage gate must not be the last word on a file the failure gate rejects")
+}
+
+// The slot_failures gate gets the same COMMAND-level pin, and it needs it for the
+// same demonstrated reason: validateSlotFailures had eleven unit tests and nothing
+// proved runBenchmarkExport still calls it. Verified by mutation — deleting the call
+// left the whole cli suite green, which is exactly how the sibling gate's call site
+// went unpinned until a --post round caught it.
+//
+// --allow-partial-coverage is passed so the coverage gate CANNOT be what fails the
+// command: with the slot gate removed this fixture exports at exit 0, so a green
+// assertion here would be meaningless without it.
+func TestBenchmarkExport_SlotFailureGateIsInstalled(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01","case-02","case-03"],` +
+		`"slot_failures":[{"model":"m-primary","persona":"brad","case_id":"case-02","reason":"vibes"}],` +
+		`"reviewer_coverage":[{"model":"m-primary","persona":"brad","case_ids":["case-01","case-03"]}],` +
+		`"reviewers":[{"model":"m-primary","persona":"brad","runs":2,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path, "--allow-partial-coverage")
+
+	require.NotEqual(t, 0, code,
+		"an unvalidated slot_failures reason must not reach an operator-facing diagnostic: %s", out)
+	require.Contains(t, out, "outside the failure vocabulary",
+		"the slot_failures gate's own diagnostic must fire")
+	require.Contains(t, out, "slot_failures",
+		"and must name the channel, so the operator edits the right array")
 }

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -194,13 +195,80 @@ func TestDoctor_ReportsPersonaResolutionErrorsSeparately(t *testing.T) {
 	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
 
 	out, err := execute(t, "doctor")
-	require.NoError(t, err, "an unresolvable persona is a composition signal, not an endpoint failure")
+	require.Error(t, err, "an agent whose persona cannot be resolved has no working invocation path")
 
 	assert.Contains(t, out, "persona resolution errors",
 		"an agent whose prompt could not be read must be named, not silently absent")
 	assert.Contains(t, out, "bruce")
 	assert.NotContains(t, out, "predicate-exhaustiveness rule gaps",
 		"and it must NOT be reported as lacking the rule — nothing was read, so there is no verdict")
+}
+
+// The exit code, not just the warning. doctor's contract is "exits 0 when every agent
+// has a working invocation path, 1 when any agent has none", and `atcr review`
+// resolves these same personas and FAILS the run — so an agent whose persona cannot
+// be resolved has none. The "exit code is unchanged" rationale was written for
+// PredicateRuleGaps, a genuine composition advisory, and was carried onto a list that
+// measures invocation health.
+//
+// --json is the case that matters most: RenderJSON skips the human warning entirely,
+// so a JSON consumer checking only the exit code saw NOTHING at all and a CI gate
+// concluded from exit 0 that review would run, exactly when it would not.
+func TestDoctor_PersonaResolutionErrorFailsTheExitCode(t *testing.T) {
+	for _, mode := range []string{"table", "json"} {
+		t.Run(mode, func(t *testing.T) {
+			srv := echoProvider(t, 0)
+			setupDoctorEnvWithPersonaRef(t, srv.URL, "never-installed")
+			t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
+
+			args := []string{"doctor"}
+			if mode == "json" {
+				args = append(args, "--json")
+			}
+			out, err := execute(t, args...)
+
+			require.Error(t, err, "an unresolvable persona must not exit 0")
+			assert.Contains(t, out, "bruce", "the failing agent must be named in the output")
+		})
+	}
+}
+
+// Both causes at once: a dead endpoint (the self-test fails) AND an unresolvable
+// persona. The persona branch must not shadow the endpoint failure — the two are
+// repaired in different files (an endpoint failure is a key or base_url, an
+// unresolvable persona is a missing prompt), so a message naming only one sends
+// the operator to the wrong repair. Under --json the human warnings are skipped
+// entirely, so this error string is the only prose the caller gets.
+func TestDoctor_ExitMessageNamesBothCausesWhenBothFire(t *testing.T) {
+	srv := echoProvider(t, http.StatusUnauthorized)
+	setupDoctorEnvWithPersonaRef(t, srv.URL, "never-installed")
+	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-bad")
+
+	out, err := execute(t, "doctor", "--json")
+	require.Error(t, err, "a dead endpoint plus an unresolvable persona must not exit 0")
+
+	msg := err.Error()
+	assert.Contains(t, msg, "persona", "the persona cause must still be named")
+	assert.Contains(t, msg, "endpoint", "the endpoint failure must be named too, not shadowed by the persona branch")
+	_ = out
+}
+
+// The advisory half must NOT have been dragged along. A rule gap is a genuine
+// composition signal about a persona that WAS read — review runs fine on it — so it
+// keeps exiting 0. Pinned beside the change above because widening the exit code to
+// both lists is the obvious over-correction.
+func TestDoctor_RuleGapAloneStillExitsZero(t *testing.T) {
+	srv := echoProvider(t, 0)
+	setupDoctorEnv(t, srv.URL)
+	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
+
+	// A readable project persona carrying neither anchor: a rule gap with no
+	// resolution error beside it.
+	writeProjectPersona(t, "bruce", "# bruce\n\n## Focus\n1. Correctness\n")
+
+	out, err := execute(t, "doctor")
+	require.NoError(t, err, "a readable persona that lacks the rule is advisory, not an invocation failure")
+	assert.Contains(t, out, "predicate-exhaustiveness rule gaps")
 }
 
 // setupDoctorEnvWithPersonaRef is setupDoctorEnv with an explicit `persona:` ref on

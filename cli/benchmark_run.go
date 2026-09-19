@@ -444,6 +444,11 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 				outcome:       outcome,
 				fallbackUsed:  a.FallbackUsed,
 				agent:         a.Agent,
+				// The gate state this case actually ran under, read from the same
+				// PoolSummary the agents were read from. The range-less standard-v1
+				// path fails the gate open and fanout records false, so this is what
+				// turns an absent key from "unmeasured" into the claim it should be.
+				groundingEnabled: summary.GroundingEnabled,
 			}); err != nil {
 				return nil, fmt.Errorf("scoring case %q: %w", c.ID, err)
 			}
@@ -467,7 +472,13 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 		// atomic write means a process killed mid-suite leaves a checkpoint holding
 		// exactly the cases that completed.
 		if cp != nil {
-			cp.Cases = append(cp.Cases, checkpointCase{Index: i, CaseID: c.ID, Expected: c.ExpectedCategories, Reviewers: caseReviewers})
+			cp.Cases = append(cp.Cases, checkpointCase{
+				Index: i, CaseID: c.ID, Expected: c.ExpectedCategories, Reviewers: caseReviewers,
+				// Recorded so a resume reproduces the uninterrupted run's coverage rows
+				// byte-for-byte; without it a fully replayed run publishes no gate tag
+				// where a fresh one publishes false.
+				GroundingEnabled: summary.GroundingEnabled,
+			})
 			if werr := saveCheckpoint(checkpointPath, cp); werr != nil {
 				return nil, fmt.Errorf("writing checkpoint for case %q: %w", c.ID, werr)
 			}
@@ -512,45 +523,8 @@ func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *b
 	rows := make([]scoredRow, 0, len(order))
 	scrubbed := make(map[reviewerKey]reviewerKey, len(order)) // public identity -> pre-scrub key
 	for _, k := range order {
-		// The REALIZED half of the printability rule validatePublishableReviewerRoster
-		// applies to the configured panel. Only half of a reviewer identity is
-		// configured: reviewerModel prefers the usage-reported model and then the
-		// fallback model over the registry entry, so a Cc/Cf rune arriving in a
-		// provider's own usage payload never passes through the roster gate. Without
-		// this arm the fold would still emit an artifact export rejects permanently.
-		//
-		// Checked BEFORE the scrub, like every other printability arm: ScrubPublicString
-		// provably leaves Cc and Cf alone, so the rune survives into the published
-		// envelope and neither the collision guard below nor the export gate's
-		// empty-once-scrubbed arm can see it — the value is non-empty on both sides and
-		// two identities differing only by an invisible rune do not collide.
-		for _, f := range []struct{ name, value string }{
-			{"model", k.model},
-			{"persona", k.persona},
-		} {
-			if r, bad := firstNonPrintingRune(f.value); bad {
-				// The remedy is named because this arm, unlike the load-time gate, can
-				// fire on an identity NO local file contains: a model id echoed back in
-				// a provider's usage payload. Failing here forfeits the run rather than
-				// writing an artifact export refuses until the identity is corrected in
-				// it — the refusal is not permanent, but the repair is a hand-edit to a
-				// file the run produced, discovered only at export time — so the message
-				// has to say where to look and what to do with the checkpoint.
-				//
-				// It names REPAIR, not discard. The offending value is the per-case
-				// `model` field the checkpoint recorded, and a resume validates only the
-				// suite identity plus rosterSignature — which reads the registry, not the
-				// checkpoint — so correcting that string resumes for free. Sending the
-				// operator to discard re-pays the whole paid suite for no reason.
-				return nil, fmt.Errorf("reviewer identity %s %q contains a non-printing rune (U+%04X); "+
-					"control and format runes are invisible or reorder text in the published document, "+
-					"so a leaderboard row can be misattributed to a model that was never measured — "+
-					"if the reviewer registry is clean the id came from the provider's own usage report, "+
-					"so pin or repoint that model; a checkpoint holding this identity replays into the "+
-					"same rejection until the recorded model is corrected in the checkpoint file "+
-					"(discarding it re-runs the whole suite)",
-					f.name, f.value, r)
-			}
+		if err := checkRealizedIdentityPrintable(k); err != nil {
+			return nil, err
 		}
 		s := scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: k.model, Persona: k.persona})
 		id := reviewerKey{model: s.Model, persona: s.Persona}
@@ -589,6 +563,10 @@ func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *b
 			CaseIDs:       append([]string(nil), acc.caseIDs...),
 			Outcomes:      maps.Clone(acc.outcomes),
 			FallbackCases: acc.fallbackCases,
+			// The folded gate state, emitted on the same terms as the repo-state
+			// runner's row. nil stays nil: an unmeasured tag is the fail-safe, and
+			// stamping false here would manufacture a claim from no observation.
+			GroundingEnabled: acc.groundingEnabled,
 		})
 	}
 
@@ -614,6 +592,59 @@ func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *b
 		SuiteCaseIDs: suiteCaseIDs,
 		Coverage:     coverage,
 	}, nil
+}
+
+// checkRealizedIdentityPrintable is the REALIZED half of the printability rule
+// validatePublishableReviewerRoster applies to the configured panel. Only half of a
+// reviewer identity is configured: reviewerModel prefers the usage-reported model and
+// then the fallback model over the registry entry, so a Cc/Cf rune arriving in a
+// provider's own usage payload never passes through the roster gate. Without this arm
+// a fold would still emit an artifact export rejects permanently.
+//
+// It is SHARED by both tiers' emit tails (buildRunResult and
+// executeRepoStateBenchmarkRun) rather than inlined in one. Only the standard tier
+// carried it, and the repo-state runner reached its scrub/collision loop with no
+// printability arm at all — so the rune survived into Reviewers[i].Model and export
+// hard-rejected the finished run-result. That is worse on repo-state than on
+// standard-v1: the rejection's documented remedy is a hand-repair of the checkpoint,
+// and checkRepoStateFlags REFUSES --checkpoint on that tier, leaving re-running the
+// entire paid panel — which re-derives the same rune — as the only exit.
+//
+// Checked BEFORE the scrub, like every other printability arm: ScrubPublicString
+// provably leaves Cc and Cf alone, so the rune survives into the published envelope
+// and neither the collision guard nor the export gate's empty-once-scrubbed arm can
+// see it — the value is non-empty on both sides and two identities differing only by
+// an invisible rune do not collide.
+func checkRealizedIdentityPrintable(k reviewerKey) error {
+	for _, f := range []struct{ name, value string }{
+		{"model", k.model},
+		{"persona", k.persona},
+	} {
+		if r, bad := firstNonPrintingRune(f.value); bad {
+			// The remedy is named because this arm, unlike the load-time gate, can
+			// fire on an identity NO local file contains: a model id echoed back in
+			// a provider's usage payload. Failing here forfeits the run rather than
+			// writing an artifact export refuses until the identity is corrected in
+			// it — the refusal is not permanent, but the repair is a hand-edit to a
+			// file the run produced, discovered only at export time — so the message
+			// has to say where to look and what to do with the checkpoint.
+			//
+			// It names REPAIR, not discard. The offending value is the per-case
+			// `model` field the checkpoint recorded, and a resume validates only the
+			// suite identity plus rosterSignature — which reads the registry, not the
+			// checkpoint — so correcting that string resumes for free. Sending the
+			// operator to discard re-pays the whole paid suite for no reason.
+			return fmt.Errorf("reviewer identity %s %q contains a non-printing rune (U+%04X); "+
+				"control and format runes are invisible or reorder text in the published document, "+
+				"so a leaderboard row can be misattributed to a model that was never measured — "+
+				"if the reviewer registry is clean the id came from the provider's own usage report, "+
+				"so pin or repoint that model; a checkpoint holding this identity replays into the "+
+				"same rejection until the recorded model is corrected in the checkpoint file "+
+				"(discarding it re-runs the whole suite)",
+				f.name, f.value, r)
+		}
+	}
+	return nil
 }
 
 // reviewerRoster returns the full configured reviewer panel: the parallel lane then
@@ -723,6 +754,11 @@ type reviewerAcc struct {
 	agents    map[string]struct{}
 	costUSD   float64
 	latencies []int64 // per-case wall-clock, recorded only when usage was reported
+	// groundingEnabled is the Epic 14.1 gate state carried up from each case's
+	// PoolSummary, folded by foldGroundingEnabled exactly as the repo-state runner
+	// folds its own. It mirrors repoStateAcc.groundingEnabled so both producers
+	// publish the same three-valued tag from the same rule.
+	groundingEnabled *bool
 }
 
 // reviewerOutcome classifies what actually happened when one reviewer met one case,
@@ -732,7 +768,8 @@ type reviewerAcc struct {
 // against raw content, because excluding the sentinel is exactly what preserves the
 // clean-vs-garbage distinction.
 //
-// PRECEDENCE — failed > unparseable > truncated > incomplete > findings > clean.
+// PRECEDENCE — failed > unparseable > truncated > incomplete > findings > ungrounded
+// > filtered > clean.
 // The signals are not mutually exclusive on the wire (a truncated response can also
 // raise findings; a failed slot has no findings either way), so the order is a
 // decision rather than an implication, and this switch is its single statement of
@@ -779,6 +816,22 @@ func reviewerOutcome(a fanout.AgentStatus, raised []string) string {
 	// standard-v1 row changes outcome.
 	case a.DroppedByGrounding > 0:
 		return benchmark.OutcomeUngrounded
+	// The grounding gate's SIBLING, and the wider of the two. Both discard findings
+	// after the reviewer raised them — `raised` is read from the merged findings.txt
+	// written after enforceConstraints — so both leave a reviewer that found things
+	// looking identical here to one that found nothing. Grounding is repo-state-only;
+	// min_severity is any registry agent on either tier (internal/fanout/engine.go,
+	// loop.go), so this arm is reachable where the one above never fires.
+	//
+	// It sits BELOW ungrounded, and that ordering is a decision rather than an
+	// implication: the two counters can both be non-zero on one row, and only one
+	// value can be published. Grounding wins because it answers whether the reviewer
+	// cited code the patch actually contains — the measurement the repo-state tier
+	// exists for — whereas the floor is an operator preference applied to whatever
+	// survived that gate. Pinned by
+	// TestReviewerOutcome_GroundingOutranksMinSeverityWhenBothFire.
+	case a.DroppedByMinSeverity > 0:
+		return benchmark.OutcomeFiltered
 	default:
 		return benchmark.OutcomeClean
 	}
@@ -810,6 +863,10 @@ type reviewerCaseOutcome struct {
 	// no part in the fold — only in the duplicate-case diagnostic, which must name
 	// the colliding lanes.
 	agent string
+	// groundingEnabled is this case's recorded gate state. nil means "not observed"
+	// — a checkpoint written before the field existed — and absorbs through the fold,
+	// so such a replay reports unmeasured rather than claiming a state nobody saw.
+	groundingEnabled *bool
 }
 
 // applyReviewerOutcome folds one reviewer's single-case outcome into the
@@ -871,6 +928,9 @@ func applyReviewerOutcome(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKe
 	if o.fallbackUsed {
 		acc.fallbackCases++
 	}
+	// Folded AFTER caseIDs is appended, so len == 1 identifies this identity's
+	// opening case — the same first-case test the repo-state runner applies.
+	acc.groundingEnabled = foldGroundingEnabled(acc.groundingEnabled, o.groundingEnabled, len(acc.caseIDs) == 1)
 	if o.usageReported {
 		acc.costUSD += o.costUSD
 		acc.latencies = append(acc.latencies, o.latencyMS)
@@ -902,6 +962,10 @@ func replayCheckpointCase(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKe
 			outcome:      r.Outcome,
 			fallbackUsed: r.FallbackUsed,
 			agent:        r.Agent,
+			// Per CASE, not per reviewer — one pool summary served every slot. A
+			// checkpoint predating the field decodes to nil and folds to unmeasured,
+			// the same not-inferred rule the outcome field above follows.
+			groundingEnabled: entry.GroundingEnabled,
 		}); err != nil {
 			return fmt.Errorf("replaying checkpointed case %q: %w", entry.CaseID, err)
 		}

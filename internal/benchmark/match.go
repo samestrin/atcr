@@ -133,6 +133,26 @@ func MatchFindings(expected []ExpectedFinding, reported []ReportedFinding, lm Di
 		// distance, so they differ only in which report settles it. The remaining
 		// keys make that choice deterministic; they cannot change the match SET,
 		// because two reports tied this far are interchangeable for scoring.
+		//
+		// THE FINAL repIdx TIE-BREAK IS NOT OBSERVABLE THROUGH THE RETURN VALUE, and
+		// that is a property of FindingMatch rather than an oversight to fix with a
+		// test. Candidates tied through repLine share an expID, hence an expIdx, so
+		// they compete for ONE expectation; FindingMatch carries only Expected and
+		// Matched, never the report that settled it; and the losing reports stay
+		// available and — being at the same file and line — are interchangeable
+		// candidates everywhere else. Replacing this line with `return false` leaves
+		// ./internal/benchmark/... green for that reason, so a test claiming to pin it
+		// would be asserting something no caller can see.
+		//
+		// It is kept because the sort is sort.Slice, NOT sort.SliceStable: without a
+		// total order the candidate SLICE order is arbitrary between runs. Nothing
+		// downstream reads that order today, which is exactly why the mutation is
+		// silent — but a future consumer that does (an artifact naming which report
+		// settled each expectation is the obvious one) would inherit reproducibility
+		// for free rather than discovering it was never there.
+		//
+		// Order-independence of the RESULT is the claim that is testable, and it is
+		// pinned in match_test.go in both declaration orders.
 		if a.repFile != b.repFile {
 			return a.repFile < b.repFile
 		}
