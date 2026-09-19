@@ -73,8 +73,9 @@ func runBenchmarkVerify(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	// EqualFold for the same reason run routes with it: a differently-cased
-	// discriminator names the same tier.
+	// EqualFold for the same reason run routes with it, and with the same limit: a
+	// differently-cased discriminator is ROUTED as this tier so the loader can refuse
+	// it precisely — it is not ACCEPTED as this tier. See the note at runBenchmarkRun.
 	if strings.EqualFold(suiteFormat, benchmark.FormatRepoStateV1) {
 		return verifyRepoStateSuite(cmd, suitePath)
 	}
@@ -226,11 +227,19 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 	// Only the repo-state runner retains a work dir on a partial run; the standard
 	// path leaves this empty and warnCaseFailures keeps its old wording.
 	var retainedWorkDir string
-	// Case-insensitive on purpose: DetectSuiteFormat already TrimSpaces the
-	// discriminator, and an exact match here would send a manifest declaring
-	// "Repo-State-V1" to the standard-v1 arm — which misses the known-other-format
-	// guard and dies on "diff path is required", the exact misleading message the
-	// discriminator check exists to prevent.
+	// Case-insensitive ROUTING, and what it buys is a precise ERROR — not acceptance
+	// of the cased spelling. DetectSuiteFormat already TrimSpaces the discriminator;
+	// an exact match here would send a manifest declaring "Repo-State-V1" to the
+	// standard-v1 arm, which misses the known-other-format guard and dies on "diff
+	// path is required", a message about a field the repo-state format never had.
+	// Routed here instead, it reaches LoadRepoState, whose own EXACT tier check says
+	// which spelling the manifest declared and which it must declare
+	// (TestLoadRepoState_RejectsACasedDiscriminatorWithAnActionableError). The suite
+	// is still refused either way; the difference is whether the operator is told why.
+	//
+	// The two rules are deliberately different: `suite` is a published format
+	// contract compared literally wherever suite identity is compared, so the loader
+	// accepts one spelling, while routing is only deciding which error to produce.
 	isRepoState := strings.EqualFold(suiteFormat, benchmark.FormatRepoStateV1)
 	runner := "executeBenchmarkRun"
 	if isRepoState {

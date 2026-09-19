@@ -94,6 +94,14 @@ func Load(suitePath string) (*Manifest, error) {
 	// carries no `diff` field at all, so structural validation reports "diff path
 	// is required" — a message that sends the reader looking for a field the
 	// format never had, rather than telling them this is a different suite tier.
+	//
+	// UNREACHABLE FROM THE CLI, and that is expected rather than a gap. Every CLI
+	// entry point routes on DetectSuiteFormat with strings.EqualFold first, so a
+	// repo-state manifest — in any casing — reaches LoadRepoState and never arrives
+	// here. This arm serves a DIRECT library caller of Load, for whom it is the only
+	// thing standing between a repo-state suite and the misleading message above.
+	// The lookup stays an exact map match: routing already absorbed the casing, and
+	// a fold here would only change which of two correct errors a library caller sees.
 	if loader, ok := knownOtherSuiteFormats[strings.TrimSpace(m.Suite)]; ok {
 		return nil, fmt.Errorf("unsupported suite format %q in %s: this loader implements standard-v1 only; load it with %s",
 			strings.TrimSpace(m.Suite), manifestPath, loader)
