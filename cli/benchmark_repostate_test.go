@@ -1774,6 +1774,31 @@ func TestWarnCaseFailures_StripsTerminalControlRunesFromBothFields(t *testing.T)
 	assert.Contains(t, out, benchmark.CaseFailurePrepare, "the stage still has to be readable")
 }
 
+// warnCaseFailures used to print one line per failure with no cap, unlike every
+// sibling diagnostic in this file. A suite that loses 200 cases to a systemic fault
+// wrote 200 lines to stderr AHEAD of the recall summary the warning exists to
+// qualify — pushing the number the operator actually needs off the visible terminal,
+// which is the exact misreading the function was added to prevent.
+func TestWarnCaseFailures_CapsTheListWithAnOverflowCount(t *testing.T) {
+	var buf bytes.Buffer
+	rr := &benchmark.RunResult{}
+	for i := 0; i < maxNamedFailedCases+4; i++ {
+		id := fmt.Sprintf("case-%02d", i)
+		rr.SuiteCaseIDs = append(rr.SuiteCaseIDs, id)
+		rr.CaseFailures = append(rr.CaseFailures,
+			benchmark.CaseFailure{CaseID: id, Reason: benchmark.CaseFailureExecute})
+	}
+
+	warnCaseFailures(&buf, rr, "")
+
+	out := buf.String()
+	assert.Equal(t, maxNamedFailedCases, strings.Count(out, ": failed at "),
+		"the per-case list is capped, like summarizeMissing's")
+	assert.Contains(t, out, "and 4 more", "the cases past the cap are counted, not dropped silently")
+	assert.Contains(t, out, fmt.Sprintf("%d of %d", len(rr.CaseFailures), len(rr.SuiteCaseIDs)),
+		"the scale line still reports the true total, which is the number the cap must not hide")
+}
+
 // A clean run says nothing, exactly as the sibling summaries do on a suite that
 // carries none of their signal.
 func TestWarnCaseFailures_SilentOnACleanRun(t *testing.T) {

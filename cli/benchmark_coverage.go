@@ -569,11 +569,12 @@ func validateCoveredSet(suite map[string]bool, covered []string, path, model, pe
 // stripping with it.
 //
 // It is NOT, however, the only place a case id reaches the terminal under %s.
-// warnCaseFailures (cli/benchmark_repostate.go) prints one line per failed case on the
-// RUN path, where there is no cap to inherit — it names every failed case deliberately
-// — so it strips independently with the same stripTerminalControlRunes call. Two sites
-// applying one rule is the accurate statement; claiming a single choke point would
-// leave the next author of a run-path diagnostic believing the stripping came for free.
+// warnCaseFailures (cli/benchmark_repostate.go) prints the failed cases on the RUN
+// path and strips independently with the same stripTerminalControlRunes call. It
+// applies its own cap (maxNamedFailedCases) rather than inheriting this one, so the
+// two sites now share BOTH rules while sharing no code. Two sites applying one rule is
+// the accurate statement; claiming a single choke point would leave the next author of
+// a run-path diagnostic believing the stripping came for free.
 //
 // The id sites inside validateCoveredSet are deliberately left alone — they use %q,
 // which already renders a control rune as a literal escape sequence.

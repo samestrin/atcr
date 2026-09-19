@@ -645,6 +645,12 @@ func summarizeCaseFailureReasons(failures []benchmark.CaseFailure) string {
 	return strings.Join(parts, ", ")
 }
 
+// maxNamedFailedCases bounds the per-case list in warnCaseFailures, matching
+// maxNamedMissingCases' role for the coverage shortfall. Larger than that one because
+// this list is the run's own failure report rather than a clause inside a sentence,
+// and an operator triaging a partial run wants a few concrete case ids to start from.
+const maxNamedFailedCases = 10
+
 // isFatalWorkDirError reports whether a work-dir creation error is a property of the
 // HOST rather than of the case.
 //
@@ -894,6 +900,13 @@ func readCaseFindingsLocated(reviewDir string, agents map[string]bool) (located 
 //
 // Silent on a clean run, like every sibling summary on a suite that carries none of
 // its signal.
+//
+// The per-case list is CAPPED, like summarizeMissing's and warnDriftingReviewers'. It
+// was not, and a suite losing 200 cases to one systemic fault wrote 200 lines ahead of
+// the recall summary this warning exists to qualify — scrolling the number the
+// operator needs off the terminal, which is the misreading it was added to prevent.
+// The scale line above the list already carries the true total, so the cap costs no
+// information that matters at a glance.
 func warnCaseFailures(w io.Writer, rr *benchmark.RunResult, retainedWorkDir string) {
 	if rr == nil || len(rr.CaseFailures) == 0 {
 		return
@@ -902,9 +915,16 @@ func warnCaseFailures(w io.Writer, rr *benchmark.RunResult, retainedWorkDir stri
 	fmt.Fprintf(&msg, "warning: %d of %d case(s) were UNMEASURED — an infrastructure failure stopped them being reviewed, "+
 		"so they are excluded from every recall denominator rather than scored as misses:\n",
 		len(rr.CaseFailures), len(rr.SuiteCaseIDs))
-	for _, f := range rr.CaseFailures {
+	named := rr.CaseFailures
+	if len(named) > maxNamedFailedCases {
+		named = named[:maxNamedFailedCases]
+	}
+	for _, f := range named {
 		fmt.Fprintf(&msg, "  %s: failed at %s\n",
 			stripTerminalControlRunes(f.CaseID), stripTerminalControlRunes(f.Reason))
+	}
+	if overflow := len(rr.CaseFailures) - len(named); overflow > 0 {
+		fmt.Fprintf(&msg, "  ... and %d more\n", overflow)
 	}
 	if retainedWorkDir != "" {
 		fmt.Fprintf(&msg, "  The work dir is retained at %s — the scored cases' review artifacts "+
