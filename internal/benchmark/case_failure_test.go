@@ -195,3 +195,53 @@ func TestRunResultCaseFailuresRoundTrip(t *testing.T) {
 	assert.Equal(t, "case-02", back.CaseFailures[0].CaseID)
 	assert.Equal(t, CaseFailurePrepare, back.CaseFailures[0].Reason)
 }
+
+// caseFailureConstDoc returns the doc comment text of the named CaseFailure*
+// constant, parsed from case_failure.go rather than hand-copied, so the assertion
+// below tracks the comment the vocabulary ACTUALLY ships.
+func caseFailureConstDoc(t *testing.T, constName string) string {
+	t.Helper()
+	_, thisFile, _, ok := runtime.Caller(0)
+	require.True(t, ok, "runtime.Caller failed")
+	src, err := os.ReadFile(filepath.Join(filepath.Dir(thisFile), "case_failure.go"))
+	require.NoError(t, err)
+	file, err := parser.ParseFile(token.NewFileSet(), "case_failure.go", src, parser.ParseComments)
+	require.NoError(t, err)
+
+	var doc string
+	ast.Inspect(file, func(n ast.Node) bool {
+		vs, ok := n.(*ast.ValueSpec)
+		if !ok || len(vs.Names) == 0 || vs.Names[0].Name != constName {
+			return true
+		}
+		if vs.Doc != nil {
+			doc = vs.Doc.Text()
+		}
+		return false
+	})
+	require.NotEmpty(t, doc, "no doc comment found for %s — the guard asserts the comment, so it must exist", constName)
+	return doc
+}
+
+// CaseFailureExecute's doc promises a one-to-one mapping from reason to failure
+// site, but the empty-roster abort beside that site was named only in an inline
+// comment in cli/benchmark_repostate.go and a docs table row — the vocabulary doc
+// itself never names fanout.ErrEmptyRoster, and never says WHERE the empty-roster
+// abort lands. That matters because the runner aborts on ErrEmptyRoster at PREPARE
+// (validateReviewRequest raises the sentinel inside PrepareReview) and keeps its
+// execute-side arm only defensively, so a reader trusting the doc alone would look
+// for the abort in the wrong stage and could "fix" the split backwards.
+//
+// The guard is parsed-not-grepped, like deriveCaseFailureReasons above: the doc must
+// name the sentinel and state the prepare-side abort, so the vocabulary doc and the
+// runner's split cannot drift apart silently.
+func TestCaseFailureExecuteDocNamesEmptyRoster(t *testing.T) {
+	doc := caseFailureConstDoc(t, "CaseFailureExecute")
+
+	assert.Contains(t, doc, "ErrEmptyRoster",
+		"CaseFailureExecute's doc must name fanout.ErrEmptyRoster explicitly — an "+
+			"unnamed sentinel is the drift this guard exists to prevent")
+	assert.Contains(t, doc, "prepare",
+		"CaseFailureExecute's doc must state that an empty roster aborts at PREPARE "+
+			"rather than being recorded at execute")
+}
