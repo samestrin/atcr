@@ -506,9 +506,9 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 	// one is reachable only now that a case failure stops aborting.
 	if len(order) == 0 {
 		if len(caseFailures) > 0 {
-			return nil, "", fmt.Errorf("no case could be scored: all %d case(s) failed (last reason %q on case %q); "+
+			return nil, "", fmt.Errorf("no case could be scored: all %d case(s) failed (%s); "+
 				"re-running is the remedy only if the cause was transient",
-				len(caseFailures), caseFailures[len(caseFailures)-1].Reason, caseFailures[len(caseFailures)-1].CaseID)
+				len(caseFailures), summarizeCaseFailureReasons(caseFailures))
 		}
 		return nil, "", fmt.Errorf("no case could be scored: the run produced no reviewer rows over %d case(s)", len(m.Cases))
 	}
@@ -617,6 +617,32 @@ func recordCaseFailure(ctx context.Context, into *[]benchmark.CaseFailure, caseI
 	log.FromContext(ctx).Warn("repo-state case failed; recorded as unmeasured and skipped",
 		"case", caseID, "reason", reason, "err", cause)
 	*into = append(*into, benchmark.CaseFailure{CaseID: caseID, Reason: reason})
+}
+
+// summarizeCaseFailureReasons renders the failure channel as a per-reason tally,
+// sorted so the same run always produces the same string.
+//
+// The all-cases-failed diagnostic used to name caseFailures[len-1] — "the last
+// reason". On a mixed systemic failure that is one arbitrary reason out of N, and the
+// sentence beside it tells the operator that re-running helps "only if the cause was
+// transient" while withholding what the causes were. The whole list is in hand at
+// that point and is published nowhere else on this path, since the run returns no
+// run-result.
+func summarizeCaseFailureReasons(failures []benchmark.CaseFailure) string {
+	tally := map[string]int{}
+	for _, f := range failures {
+		tally[f.Reason]++
+	}
+	reasons := make([]string, 0, len(tally))
+	for r := range tally {
+		reasons = append(reasons, r)
+	}
+	sort.Strings(reasons)
+	parts := make([]string, 0, len(reasons))
+	for _, r := range reasons {
+		parts = append(parts, fmt.Sprintf("%s x%d", r, tally[r]))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // isFatalWorkDirError reports whether a work-dir creation error is a property of the

@@ -1214,6 +1214,58 @@ func TestExecuteRepoStateBenchmarkRun_EveryCaseFailingIsAnError(t *testing.T) {
 	assert.Nil(t, rr)
 }
 
+// The all-cases-failed diagnostic used to name ONE reason — whichever happened to be
+// last. On a mixed systemic failure that is an arbitrary pick out of N, and the same
+// sentence then tells the operator a re-run helps "only if the cause was transient"
+// without saying which causes there were. The full list is already in hand.
+//
+// Tested on the tally directly rather than end to end. A run in which EVERY case
+// fails makes no completer call at all — every case dies before execute — so the
+// fixtures have no in-loop hook to plant a SECOND fault kind with, and the only
+// hook-free fault (a diff that does not apply) yields one reason for every case.
+// The summarizer is where the arbitrary pick lived, so it is where the fix is pinned.
+func TestSummarizeCaseFailureReasons(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		failures []benchmark.CaseFailure
+		want     string
+	}{
+		{
+			name: "mixed reasons are all named, sorted for determinism",
+			failures: []benchmark.CaseFailure{
+				{CaseID: "c1", Reason: benchmark.CaseFailurePoolSummary},
+				{CaseID: "c2", Reason: benchmark.CaseFailureExecute},
+				{CaseID: "c3", Reason: benchmark.CaseFailureExecute},
+			},
+			want: "execute x2, pool_summary x1",
+		},
+		{
+			name:     "a single reason still reads as a tally",
+			failures: []benchmark.CaseFailure{{CaseID: "c1", Reason: benchmark.CaseFailureMaterialize}},
+			want:     "materialize x1",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, summarizeCaseFailureReasons(tc.failures))
+		})
+	}
+}
+
+// The tally reaches the operator, not just the helper's unit test.
+func TestExecuteRepoStateBenchmarkRun_EveryCaseFailingNamesTheReasonTally(t *testing.T) {
+	suite := writeCaseSuite(t, "first-case", "second-case")
+	faultMaterialization(t, suite, "first-case")
+	faultMaterialization(t, suite, "second-case")
+
+	_, _, err := executeRepoStateBenchmarkRun(context.Background(),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC())
+	releaseRetainedWorkDirFromError(t, err)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "materialize x2",
+		"the operator is told how many cases died of what, not just the last one")
+}
+
 // AC4 — retention on a HARD failure already shipped; this is the other half. A
 // PARTIAL run returns err == nil, so the deferred cleanup fired and destroyed the
 // paid review artifacts of every case that DID succeed — the precise artifacts the
