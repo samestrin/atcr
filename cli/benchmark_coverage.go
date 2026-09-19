@@ -475,6 +475,12 @@ func loadSuiteAnchor(suitePath string) (suiteAnchor, error) {
 // to the wrong suite reports the wrong suite rather than reporting every case as
 // missing; then the presence of a denominator, since an unmeasured file has nothing to
 // anchor and passing the flag must not read as a check that silently did nothing; then
+//
+// THAT FIRST GUARANTEE HOLDS ON standard-v1 ONLY. A repo-state suite's name is fixed
+// by the format discriminator rather than chosen by its author, so the identity check
+// is a tautology on that tier and a wrong-suite anchor falls through to the case-set
+// check. The case-set diagnostics below carry a caveat naming that second possible
+// cause rather than asserting the run was truncated; see the comment beside them.
 // the case list itself, compared as a SET in both directions — a missing id is the
 // truncation this exists to catch, and an EXTRA id is a denominator inflated past what
 // the suite can support.
@@ -537,18 +543,46 @@ func anchorSuiteDenominator(rr benchmark.RunResult, suitePath, path string) erro
 	sort.Strings(missing)
 	sort.Strings(extra)
 
+	// On repo-state-v1 the identity check above cannot have told these two suites
+	// apart. LoadRepoState requires the manifest to declare exactly
+	// FormatRepoStateV1 and then stamps that constant onto what it returns, so every
+	// repo-state manifest and run-result carries the same literal — unlike
+	// standard-v1, whose suite name is author-chosen and therefore distinguishing.
+	// The documented ordering guarantee ("anchoring to the wrong suite reports the
+	// wrong suite rather than reporting every case as missing") does not hold here,
+	// so a case-set difference on this tier has TWO possible causes and the message
+	// must not pick one. Blaming the denominator asserts the run was truncated, which
+	// the file gives no evidence for; the likelier cause is a run-result anchored to
+	// a different repo-state suite that happens to share its suite_version.
+	//
+	// validateSuiteIdentityForPublication names the same hazard one level up: two
+	// different suites publishing a byte-identical (suite, suite_version) merge into
+	// one comparability bucket on the public board.
+	tierCaveat := ""
+	if strings.EqualFold(rr.Suite, benchmark.FormatRepoStateV1) {
+		tierCaveat = "; on " + benchmark.FormatRepoStateV1 + " the suite name is not author-distinguishable " +
+			"(every manifest declares the same literal), so this may equally mean the run-result was anchored " +
+			"to a DIFFERENT repo-state suite of the same suite_version rather than that it is short"
+	}
+
 	switch {
 	case len(missing) > 0 && len(extra) > 0:
 		return fmt.Errorf("run-result %s declares a %d-case suite but the suite manifest at %s has %d: "+
-			"missing %s; not in the suite: %s",
-			path, len(declared), suitePath, len(m.CaseIDs), summarizeMissing(missing), summarizeMissing(extra))
+			"missing %s; not in the suite: %s%s",
+			path, len(declared), suitePath, len(m.CaseIDs), summarizeMissing(missing), summarizeMissing(extra), tierCaveat)
 	case len(missing) > 0:
+		// The denominator claim is made ONLY where it is warranted: on a tier whose
+		// suite name already proved the two files describe the same suite.
+		cause := "; every reviewer row was therefore scored against a shrunken denominator"
+		if tierCaveat != "" {
+			cause = tierCaveat
+		}
 		return fmt.Errorf("run-result %s declares a %d-case suite but the suite manifest at %s has %d, "+
-			"missing %s; every reviewer row was therefore scored against a shrunken denominator",
-			path, len(declared), suitePath, len(m.CaseIDs), summarizeMissing(missing))
+			"missing %s%s",
+			path, len(declared), suitePath, len(m.CaseIDs), summarizeMissing(missing), cause)
 	case len(extra) > 0:
-		return fmt.Errorf("run-result %s declares case(s) the suite manifest at %s does not contain: %s",
-			path, suitePath, summarizeMissing(extra))
+		return fmt.Errorf("run-result %s declares case(s) the suite manifest at %s does not contain: %s%s",
+			path, suitePath, summarizeMissing(extra), tierCaveat)
 	}
 	return nil
 }
