@@ -1048,6 +1048,24 @@ func TestFoldGroundingEnabled(t *testing.T) {
 	}
 }
 
+// The stated invariant — "the accumulator must not end up sharing storage with a
+// PoolSummary the caller still holds" — must hold for EVERY row length. The shipped
+// fixture has ONE case, so the opening branch's `return caseState` aliased the
+// caller's summary on exactly the row the runner tests exercised: later mutation of
+// that summary through its own pointer would silently rewrite the folded row's
+// gate state. Same latent-aliasing class publicCoverage fixed one level up.
+func TestFoldGroundingEnabled_FirstCaseDoesNotAliasTheCallerSummary(t *testing.T) {
+	on := true
+	caseSt := &on
+	got := foldGroundingEnabled(nil, caseSt, true)
+	require.NotNil(t, got)
+	require.NotSame(t, caseSt, got,
+		"the first-case branch must hand back fresh storage, not the caller's pointer")
+	*caseSt = false
+	assert.True(t, *got,
+		"mutating the caller's PoolSummary after the fold must not rewrite the accumulator")
+}
+
 // The two halves of this fix must agree: the ungrounded outcome can only arise
 // where the gate ran, so a row that reports the gate as live is the only kind that
 // may carry ungrounded in its tally. Pinned because the two were fixed separately
