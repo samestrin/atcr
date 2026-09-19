@@ -815,10 +815,19 @@ func publicCoverage(rows []ReviewerCoverage, memo map[string]string) []Submissio
 			ids = []string{}
 		}
 		out[i] = SubmissionCoverage{
-			Model:            id.Model,
-			Persona:          id.Persona,
-			CaseIDs:          ids,
-			GroundingEnabled: c.GroundingEnabled,
+			Model:   id.Model,
+			Persona: id.Persona,
+			CaseIDs: ids,
+		}
+		// Deep-copied for the same reason BuildSubmission deep-copies its two pointer
+		// metrics: a struct copy aliases the pointer, so mutating the submission would
+		// rewrite the caller's RunResult. No mutator exists today, which is what makes
+		// this a latent break of a stated invariant rather than a live bug — but the
+		// invariant is stated in this file, about this projection, and a reader should
+		// not have to check which pointer fields are exempt.
+		if c.GroundingEnabled != nil {
+			v := *c.GroundingEnabled
+			out[i].GroundingEnabled = &v
 		}
 	}
 	// Deterministic row order: two run-results with identical logical content but
