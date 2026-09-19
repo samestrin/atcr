@@ -1304,6 +1304,28 @@ func (c *workDirNamingCompleter) Complete(ctx context.Context, inv llmclient.Inv
 	return stubLocatedCompleter{}.Complete(ctx, inv)
 }
 
+// Retention on a partial run is unbounded and unconditional ON PURPOSE — the
+// artifacts are the only copy of a paid panel, so a byte cap or a keep-only-the-failed-
+// case policy would destroy exactly what the arm exists to save. That makes growth
+// something the operator has to SEE, so the retention line reports the size beside the
+// path. A scheduled suite losing one case per run otherwise fills the volume silently.
+func TestExecuteRepoStateBenchmarkRun_PartialRunReportsTheRetainedSize(t *testing.T) {
+	suite := writeCaseSuite(t, "first-case", "second-case")
+	faultMaterialization(t, suite, "second-case")
+	var logs bytes.Buffer
+
+	rr, retained, err := executeRepoStateBenchmarkRun(logCapturingContext(t, &logs),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC())
+	releaseRetainedWorkDir(t, retained)
+	require.NoError(t, err)
+	require.NotEmpty(t, rr.CaseFailures)
+
+	assert.Contains(t, logs.String(), "retained_bytes=",
+		"the retention line reports how much is being kept, not only where")
+	assert.NotContains(t, logs.String(), "retained_bytes=0",
+		"a retained run holds real paid artifacts, so the measured size is non-zero")
+}
+
 // A run with no failures at all still cleans up: retention is the exception the
 // failure channel earns, not the new default.
 //

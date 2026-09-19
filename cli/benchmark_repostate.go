@@ -166,8 +166,16 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			return
 		}
 		if len(caseFailures) > 0 {
+			// The retained BYTES are reported, not just the path. Retention is
+			// unbounded and unconditional on a partial run by design — the artifacts
+			// are the only copy of a paid panel, so capping or pruning them would
+			// destroy what this arm exists to save — which leaves growth as something
+			// the operator must SEE rather than something the code may silently
+			// reclaim. A scheduled suite losing one case per run accumulates a full
+			// work dir every run; a size on the same line that names the path is what
+			// makes that visible before the volume fills.
 			log.FromContext(ctx).Warn("benchmark work dir retained after a partial run",
-				"path", tmp, "failed_cases", len(caseFailures))
+				"path", tmp, "failed_cases", len(caseFailures), "retained_bytes", dirSizeBytes(tmp))
 			// Returned to the caller as well as logged. The log line is suppressible —
 			// ATCR_LOG_LEVEL=error is a legal setting and drops Warn entirely — and the
 			// partial arm has no error to wrap the path into the way the failure arm
@@ -643,6 +651,27 @@ func summarizeCaseFailureReasons(failures []benchmark.CaseFailure) string {
 		parts = append(parts, fmt.Sprintf("%s x%d", r, tally[r]))
 	}
 	return strings.Join(parts, ", ")
+}
+
+// dirSizeBytes totals the regular-file bytes under root, best-effort.
+//
+// Reported beside the retained path so unbounded retention is VISIBLE rather than
+// merely documented. Errors are swallowed on purpose: this runs inside a deferred
+// cleanup whose whole contract is warn-never-fail, and a run must not change its
+// outcome because a size could not be measured. A partial total is still a signal;
+// zero is the honest answer when nothing could be walked.
+func dirSizeBytes(root string) int64 {
+	var total int64
+	_ = filepath.WalkDir(root, func(_ string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if info, ierr := d.Info(); ierr == nil {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
 }
 
 // maxNamedFailedCases bounds the per-case list in warnCaseFailures, matching
