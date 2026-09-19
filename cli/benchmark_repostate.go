@@ -272,7 +272,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		// cannot overwrite each other's tree, the same reason executeBenchmarkRun
 		// keys its per-case output dir by index.
 		repoDir := filepath.Join(tmp, fmt.Sprintf("repo-%d", i))
-		if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		if err := mkdirAllFn(repoDir, 0o755); err != nil {
 			// A HOST-LEVEL work-dir fault aborts instead of joining the failure
 			// channel. That channel is for transient, case-specific faults, and these
 			// four errnos are neither: the disk is full, the process or system is out
@@ -828,6 +828,19 @@ func dirSizeBytes(root string) int64 {
 // this list is the run's own failure report rather than a clause inside a sentence,
 // and an operator triaging a partial run wants a few concrete case ids to start from.
 const maxNamedFailedCases = 10
+
+// mkdirAllFn is the per-case work-dir creation seam, indirected through a package
+// var like readPoolSummaryFn and resolveAutoFixSandboxFn. Production points at
+// os.MkdirAll.
+//
+// It exists because the host-level abort below is otherwise untestable, and was
+// measurably untested: the run's work dir is created INSIDE the runner by
+// os.MkdirTemp, so it has no name a test could chmod before the run starts, and the
+// only fault a test could previously stage there was EACCES — which is
+// path-specific and deliberately NOT in the fatal set, so it exercised the
+// record-and-continue arm instead. `if false && isFatalWorkDirError(err)` left the
+// whole cli suite green.
+var mkdirAllFn = os.MkdirAll
 
 // isFatalWorkDirError reports whether a work-dir creation error is a property of the
 // HOST rather than of the case.

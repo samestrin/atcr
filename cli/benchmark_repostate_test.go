@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -2380,4 +2381,89 @@ func TestWarnCaseFailures_SilentOnACleanRun(t *testing.T) {
 	warnCaseFailures(&buf, nil, "")
 
 	assert.Empty(t, buf.String())
+}
+
+// The fatal/transient split is a PREDICATE over errnos, and it had no unit test at
+// all — so the four fatal values and the three deliberately-excluded ones were
+// asserted nowhere, in either direction.
+//
+// The exclusions matter as much as the inclusions: EACCES/EPERM/ENOTDIR can be
+// specific to the path being created, so classifying them fatal would abort a whole
+// paid suite over one bad case directory. Both directions are pinned here.
+func TestIsFatalWorkDirError(t *testing.T) {
+	for _, e := range []syscall.Errno{syscall.ENOSPC, syscall.EMFILE, syscall.ENFILE, syscall.EROFS} {
+		assert.Truef(t, isFatalWorkDirError(e),
+			"%v is a HOST fault: every remaining case repeats the identical syscall and fails identically", e)
+		// Wrapped, because the call site never sees a bare errno — os.MkdirAll returns
+		// a *PathError. A predicate using == instead of errors.Is would pass the bare
+		// case above and fail every real one.
+		assert.Truef(t, isFatalWorkDirError(&os.PathError{Op: "mkdir", Path: "/x", Err: e}),
+			"%v must still classify through the *PathError os.MkdirAll actually returns", e)
+	}
+
+	for _, e := range []syscall.Errno{syscall.EACCES, syscall.EPERM, syscall.ENOTDIR} {
+		assert.Falsef(t, isFatalWorkDirError(e),
+			"%v can be specific to the path being created, so it stays a per-case fault", e)
+	}
+
+	assert.False(t, isFatalWorkDirError(nil), "no error is not a fatal one")
+	assert.False(t, isFatalWorkDirError(errors.New("some other failure")),
+		"an unclassified error stays per-case rather than aborting a paid suite")
+}
+
+// The CALL SITE, driven through the seam. The unit test above proves the predicate;
+// nothing proved the runner consults it, and deleting the guard left the cli suite
+// green because the only fault a test could previously stage at this site was EACCES
+// — which is excluded from the fatal set by design.
+//
+// Asserts the three things the abort promises: the run stops, the message says the
+// fault is host-level rather than case-specific, and NO case_failures entry was
+// written — recording one is precisely the 200-entries-and-exit-0 behaviour the
+// guard exists to prevent.
+func TestExecuteRepoStateBenchmarkRun_AHostLevelWorkDirFaultAborts(t *testing.T) {
+	real := mkdirAllFn
+	mkdirAllFn = func(path string, perm os.FileMode) error {
+		return &os.PathError{Op: "mkdir", Path: path, Err: syscall.ENOSPC}
+	}
+	t.Cleanup(func() { mkdirAllFn = real })
+
+	suite := writeCaseSuite(t, "first-case", "second-case")
+	rr, retained, err := executeRepoStateBenchmarkRun(context.Background(),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{},
+		suite, time.Unix(0, 0).UTC(), 0)
+	releaseRetainedWorkDir(t, retained)
+	releaseRetainedWorkDirFromError(t, err)
+
+	require.Error(t, err, "a full disk is not one case's bad luck")
+	assert.Contains(t, err.Error(), "host-level fault",
+		"the message must say why this is not being recorded as a per-case failure")
+	assert.Contains(t, err.Error(), "first-case", "and which case hit it")
+	assert.Nil(t, rr, "an aborted run publishes no run-result")
+}
+
+// The mirror, and it is what keeps the guard NARROW. A path-specific fault at the
+// same site must still record-and-continue, or one unwritable case directory would
+// forfeit a whole paid panel.
+func TestExecuteRepoStateBenchmarkRun_APathSpecificWorkDirFaultContinues(t *testing.T) {
+	real := mkdirAllFn
+	calls := 0
+	mkdirAllFn = func(path string, perm os.FileMode) error {
+		calls++
+		if calls == 1 {
+			return &os.PathError{Op: "mkdir", Path: path, Err: syscall.EACCES}
+		}
+		return real(path, perm)
+	}
+	t.Cleanup(func() { mkdirAllFn = real })
+
+	suite := writeCaseSuite(t, "first-case", "second-case")
+	rr, retained, err := executeRepoStateBenchmarkRun(context.Background(),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{},
+		suite, time.Unix(0, 0).UTC(), 0)
+	releaseRetainedWorkDir(t, retained)
+
+	require.NoError(t, err, "EACCES is path-specific, so the run continues with the next case")
+	require.Len(t, rr.CaseFailures, 1, "the lost case is recorded rather than aborting the run")
+	assert.Equal(t, benchmark.CaseFailureWorkDir, rr.CaseFailures[0].Reason)
+	assert.Equal(t, "first-case", rr.CaseFailures[0].CaseID)
 }
