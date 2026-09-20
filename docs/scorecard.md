@@ -73,7 +73,7 @@ carries neither and is read as "not measured", never as a measured zero.
 | `survived_skeptic_rate` | float | conditional | `findings_verified / (findings_verified + findings_refuted)`. Present only when `findings_verified + findings_refuted > 0` — a *stricter* condition than the two counts above, which are present whenever verification ran. When verification ran but nothing countable survived (every verdict truncated, or this reviewer's findings drew none) the two counts still ship as `0` and this key is omitted: `0/0` would publish `0.0`, which is indistinguishable from a reviewer whose findings were all refuted. Read the three keys individually, not as a set. |
 | `raised_includes_unresolved` | bool | conditional | Superseded but retained. `true` when `findings_raised` counts the Tier-4-routed findings (every record written from Epic 35.16.6.5 onward); omitted on records written before it. The denominator has since changed meaning a second time (the 35.16.6.8 `doc_shield` carve-out), which a bool cannot express — `raised_denominator` below is the era discriminator a new reader should use. This field stays because existing readers and stores depend on it, and because `true` is still exactly right about the one thing it claims: routed findings are in the denominator. |
 | `raised_denominator` | int | conditional | Which definition of `findings_raised` produced this record: `1` = routed findings excluded (everything before 35.16.6.5; never stamped — it is what an absent discriminator means), `2` = routed findings included (35.16.6.5, stamped as `raised_includes_unresolved: true` before this field existed), `3` = routed findings included EXCEPT the doc-shielded ones (35.16.6.8, the current definition; those are counted in `findings_doc_shielded`). Omitted on records that predate the discriminator — their era is read from `raised_includes_unresolved` instead. `TrustPriors` splits eras on this value (see `unresolvedEraRuns`), so a rate is never averaged across two definitions. |
-| `outcome` | string | conditional | WHY this record's counts look the way they do, from the nine-value vocabulary in `internal/benchmark/outcome.go`: `findings`, `clean`, `unparseable`, `truncated`, `incomplete`, `ungrounded`, `filtered`, `failed`, or absent (unknown). It exists because a reviewer that read the diff and correctly found nothing, one that emitted prose no parser could use, and one whose call failed outright all record zero findings and would otherwise score identically. `TrustPriors` counts a record only when its outcome is `findings`, `clean`, `ungrounded` or `filtered` — see the eligibility rule below. Omitted when unknown, which is how every pre-v2 record reads. |
+| `outcome` | string | conditional | WHY this record's counts look the way they do, from the nine-value vocabulary in `internal/benchmark/outcome.go`: `findings`, `clean`, `unparseable`, `truncated`, `incomplete`, `ungrounded`, `filtered`, `failed`, or absent (unknown). It exists because a reviewer that read the diff and correctly found nothing, one that emitted prose no parser could use, and one whose call failed outright all record zero findings and would otherwise score identically. `TrustPriors` counts a record only when its outcome is `findings`, `clean`, `ungrounded` or `filtered` — see the eligibility rule below. Omitted when unknown. Two things read as unknown: every pre-v2 record, and a v2 record whose `AgentStatus` was not internally coherent. A reviewer with no `AgentStatus` at all — a path-anchored review with no pool summary — is NOT unknown: it is recorded as `findings`, because being named on a finding that survived reconcile is exactly what that value means. |
 | `categories_raised` | array of string | conditional | The distinct `CATEGORY` values this reviewer's counted findings raised in the run, drawn from the closed vocabulary in `reconcile/category.go`. Declared by the v2 bump for opportunity-set scoping; not yet populated. Omitted when absent, which means "not measured" rather than "measured empty". |
 
 **Conditional verification fields.** `findings_verified`, `findings_refuted`, and
@@ -436,6 +436,8 @@ than growing a third aggregation.
   difference is visible on an upgrade: a store written before `schema_version` 2
   has no `outcome` on any record, so every reviewer in it is excluded and the
   table renders all-`n/a` with the "no data" footer until fresh runs accumulate.
+  A reviewer recovered from the findings of a pool-summary-less review is NOT
+  affected — it records `findings` and scores normally.
   A rate computed from unclassified runs is not a measurement, so absence is the
   honest answer — but absence is not neutral (see the bullet above: it switches
   demotion off as well as exemption), and on an existing install this is a
@@ -450,7 +452,9 @@ than growing a third aggregation.
   consensus-filter behaviours go dark for that period: a high-trust singleton
   stops being exempted, and a low-trust phantom-raiser stops being demoted to
   `LOW` — the second being a loosening that shows up in `findings.json`
-  confidence. This is a one-time upgrade cost and it recovers on its own; it is
+  confidence. This is a one-time upgrade cost and it recovers as new records
+  accumulate — every reconcile writes v2 records, including a path-anchored
+  one with no pool summary. It is
   documented because it is otherwise invisible. Mechanically, it is
   `DefaultDir()` plus a read at `DefaultTrustMinRuns` in one best-effort call,
   degrading to a nil map on any failure (an unresolvable config dir, a

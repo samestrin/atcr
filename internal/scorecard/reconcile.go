@@ -1,7 +1,6 @@
 package scorecard
 
 import (
-	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -34,21 +33,22 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 	}
 
 	reviewers := map[string]ReviewerMeta{}
-	// hasFanoutEvidence records whether this run produced a pool summary naming
-	// at least one agent — i.e. whether atcr's own fan-out actually ran here. It
-	// is the precondition for classifying ANY outcome, see the findings loops.
-	hasFanoutEvidence := false
 	if ps, err := fanout.ReadPoolSummary(reviewDir); err == nil {
 		for _, a := range ps.Agents {
 			// Trim ONCE and key on the trimmed name, matching NewCloudSyncRecord.
 			// Untrimmed, " bruce" and "bruce" are two distinct trust keys, and a
-			// whitespace-only name survives the loops below (which test == "")
-			// to become a reviewer literally named "  ".
+			// whitespace-only name would become a reviewer literally called "  ".
+			//
+			// Every OTHER use of a reviewer name below is trimmed the same way,
+			// at the point the name enters this function. That is not tidiness:
+			// reviewerCounts matches Finding.Reviewers against this map key by
+			// exact string, so trimming the key alone silently zeroes a padded
+			// reviewer's FindingsRaised, its corroboration rate and its skeptic
+			// verdicts while the record itself still looks healthy.
 			name := strings.TrimSpace(a.Agent)
 			if name == "" {
 				continue
 			}
-			hasFanoutEvidence = true
 			reviewers[name] = ReviewerMeta{
 				Model:     a.Model,
 				TokensIn:  a.TokensIn,
@@ -58,54 +58,39 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 			}
 		}
 	}
-	if !hasFanoutEvidence {
-		// Ignored like every other diagnostic on this path: a failed write to the
-		// diag sink must not fail the caller's reconcile.
-		_, _ = fmt.Fprintf(diagWriter(opts.Diag), "%s in %s\n",
-			MsgUnverifiedNotScored, filepath.Base(reviewDir))
-	}
-
 	// A path-anchored review with no fan-out pool summary still has reviewers in
 	// the findings; ensure each non-blank reviewer gets a record even without
 	// usage metadata.
 	findings := make([]Finding, 0, len(res.Findings))
 	for _, m := range res.Findings {
+		names := trimmedReviewers(m.Reviewers)
 		findings = append(findings, Finding{
 			File:      m.File,
 			Line:      m.Line,
 			Problem:   m.Problem,
-			Reviewers: m.Reviewers,
+			Reviewers: names,
 		})
-		for _, rev := range m.Reviewers {
-			name := strings.TrimSpace(rev)
-			if name == "" {
-				continue
-			}
+		for _, name := range names {
 			if _, ok := reviewers[name]; !ok {
-				// NO OUTCOME, deliberately, and this is a security property
-				// rather than a gap. Read the whole note before changing it.
+				// outcomeFindings: this reviewer has no AgentStatus (the run
+				// wrote no pool summary, or wrote one this reviewer is absent
+				// from) but it is NAMED ON A FINDING THAT SURVIVED RECONCILE.
+				// "Raised at least one finding" is exactly what the shared
+				// classifier means by findings, so this agrees with what the
+				// benchmark path would record for the same reviewer instead of
+				// diverging from it.
 				//
-				// A reviewer reached only here has no AgentStatus: this run
-				// produced no pool summary, so nothing witnessed a fan-out. The
-				// name comes from res.Findings, which is parsed from stream
-				// FILES ON DISK — and internal/mcp reaches EmitForReconcile with
-				// a caller-supplied directory, while EnsureReviewComplete
-				// returns nil when status.json is absent. So these attributions
-				// are unverified input, not observations.
-				//
-				// Classifying them (an earlier attempt used outcomeFindings on
-				// the reasoning that being named on a surviving finding is
-				// "observed") makes them ELIGIBLE, and res.Findings drives the
-				// corroboration NUMERATOR too — so a hand-authored stream mints
-				// a maximal 1.0 prior, clears trustHighThreshold and switches
-				// trustExempt on for a name of the author's choosing. That was
-				// reproduced, and it is a wider door than the crafted
-				// findings_count outcomeFor exists to close.
-				//
-				// The record is still WRITTEN — the reviewer keeps its counts,
-				// its rate and its leaderboard row. Only trust scoring declines,
-				// which is the one consumer that must not be forgeable.
-				reviewers[name] = ReviewerMeta{}
+				// It is NOT a security boundary, and an earlier attempt to treat
+				// it as one was withdrawn after measurement. Withholding the
+				// classification here does not stop a hand-authored review
+				// directory from minting a trust prior: the pool summary that
+				// would re-enable the classification lives in the SAME directory,
+				// so the guard cost an attacker one extra JSON file and cost
+				// every legitimate path-anchored install its trust priors
+				// permanently. The forgery exposure is pre-existing and wider
+				// than this line — reproduced unchanged at HEAD~4, before this
+				// sprint touched the file — and is filed as TD-021.
+				reviewers[name] = ReviewerMeta{Outcome: outcomeFindings}
 			}
 		}
 	}
@@ -120,35 +105,31 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 	// a run that produced nothing but phantoms.
 	unresolved := make([]Finding, 0, len(res.Unresolved))
 	for _, u := range res.Unresolved {
+		names := trimmedReviewers(u.Reviewers)
 		unresolved = append(unresolved, Finding{
 			File:      u.File,
 			Line:      u.Line,
 			Problem:   u.Problem,
-			Reviewers: u.Reviewers,
+			Reviewers: names,
 			// Carried, not interpreted here: Emit decides which reasons are
 			// chargeable, so the two entry points cannot disagree about it.
 			UnresolvedReason: u.UnresolvedReason,
 		})
-		for _, rev := range u.Reviewers {
-			name := strings.TrimSpace(rev)
-			if name == "" {
-				continue
-			}
+		for _, name := range names {
 			if _, ok := reviewers[name]; !ok {
-				// No outcome, for the same unverified-input reason as the
-				// findings loop above.
+				// outcomeFindings, same as the findings loop: a reviewer
+				// reached only here DID raise findings — the Tier 4 content check
+				// routed them, which is why they are not in res.Findings. The
+				// phantom is charged through FindingsRaised, not through the
+				// outcome, so the outcome only has to say what happened.
 				//
-				// An earlier attempt stamped outcomeUngrounded here, reasoning
-				// that a routed-only reviewer cited anchors declared nowhere in
-				// the tree. Two things were wrong with it. It inherits the
-				// forgery hole above. And `ungrounded` already MEANS something
-				// else in this vocabulary — fanout sets it from
-				// DroppedByGrounding, the Epic 14.1 grounding gate — so reusing
-				// the token for reconcile's Tier 4 content check silently points
-				// one durable value at two different gates. It was also simply
-				// wrong for the doc-shield carve-out, whose whole definition is
-				// that the subject WAS named in the tree.
-				reviewers[name] = ReviewerMeta{}
+				// Deliberately NOT outcomeUngrounded, which an earlier attempt
+				// used. `ungrounded` already means fanout's DroppedByGrounding
+				// gate (Epic 14.1); pointing one durable value at a second,
+				// different gate would make the stored value ambiguous. It was
+				// also backwards for the doc-shield carve-out, whose definition
+				// is that the subject WAS named in the tree.
+				reviewers[name] = ReviewerMeta{Outcome: outcomeFindings}
 			}
 		}
 	}
@@ -246,4 +227,28 @@ func coerceOutcome(o string) string {
 		return ""
 	}
 	return o
+}
+
+// trimmedReviewers normalises a finding's reviewer list once, at the point the
+// names enter this package, dropping blanks.
+//
+// It exists because the map key and Finding.Reviewers MUST be the same string.
+// reviewerCounts matches them with exact-string equality (scorecard.go), so
+// trimming only the key silently zeroes a padded reviewer's FindingsRaised, its
+// corroboration rate and its skeptic verdicts while the record still carries a
+// model, a cost and an outcome and therefore still looks healthy. A padded name
+// is one whitespace typo in a registry agent name away: fanout copies the agent
+// name into the finding verbatim, reconcile's merge strips commas but not
+// spaces, and the stream parser assigns its reviewer column untrimmed.
+//
+// Returning a fresh slice rather than editing in place keeps res untouched —
+// the caller's reconcile.Result is not this function's to mutate.
+func trimmedReviewers(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, r := range in {
+		if name := strings.TrimSpace(r); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
 }

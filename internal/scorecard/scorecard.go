@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -87,14 +88,6 @@ const (
 const (
 	MsgMalformedSkip = "skipping malformed record"
 	MsgWriteFailed   = "scorecard: write failed"
-	// MsgUnverifiedNotScored fires when a reconcile produced no pool summary
-	// naming any agent, so nothing witnessed a fan-out and the run's reviewer
-	// attributions come from stream files alone. Those records are still
-	// written; they are only withheld from trust scoring, which is the one
-	// consumer that must not be forgeable. It is announced rather than silent
-	// because the effect — a store that never accumulates a trust prior — is
-	// otherwise invisible and looks exactly like a bug.
-	MsgUnverifiedNotScored = "scorecard: no fan-out evidence, outcomes not scored"
 )
 
 // defaultRole labels per-reviewer records produced from a reconcile run. Every
@@ -791,7 +784,11 @@ func contains(xs []string, s string) bool {
 func distinctCount(xs []string) int {
 	seen := make(map[string]bool, len(xs))
 	for _, x := range xs {
-		if x != "" {
+		// TrimSpace, not just != "": a whitespace-only name is dropped
+		// everywhere else (EmitForReconcile's trimmedReviewers, the pool loop,
+		// NewCloudSyncRecord), so counting one here would let a reviewer that
+		// leaves no record of its own act as a distinct corroborator.
+		if strings.TrimSpace(x) != "" {
 			seen[x] = true
 		}
 	}
