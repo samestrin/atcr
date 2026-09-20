@@ -1,6 +1,7 @@
 package scorecard
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -33,17 +34,22 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 	}
 
 	reviewers := map[string]ReviewerMeta{}
+	// hasFanoutEvidence records whether this run produced a pool summary naming
+	// at least one agent — i.e. whether atcr's own fan-out actually ran here. It
+	// is the precondition for classifying ANY outcome, see the findings loops.
+	hasFanoutEvidence := false
 	if ps, err := fanout.ReadPoolSummary(reviewDir); err == nil {
 		for _, a := range ps.Agents {
-			// Blank-name guard, matching the two findings loops below and
-			// NewCloudSyncRecord. Without it a summary carrying "agent": ""
-			// emits a record keyed on the empty string, and since sprint 36.0
-			// that record now also carries an eligible outcome and reaches the
-			// trust priors as a reviewer literally named "".
-			if strings.TrimSpace(a.Agent) == "" {
+			// Trim ONCE and key on the trimmed name, matching NewCloudSyncRecord.
+			// Untrimmed, " bruce" and "bruce" are two distinct trust keys, and a
+			// whitespace-only name survives the loops below (which test == "")
+			// to become a reviewer literally named "  ".
+			name := strings.TrimSpace(a.Agent)
+			if name == "" {
 				continue
 			}
-			reviewers[a.Agent] = ReviewerMeta{
+			hasFanoutEvidence = true
+			reviewers[name] = ReviewerMeta{
 				Model:     a.Model,
 				TokensIn:  a.TokensIn,
 				TokensOut: a.TokensOut,
@@ -51,6 +57,12 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 				Outcome:   outcomeFor(a),
 			}
 		}
+	}
+	if !hasFanoutEvidence {
+		// Ignored like every other diagnostic on this path: a failed write to the
+		// diag sink must not fail the caller's reconcile.
+		_, _ = fmt.Fprintf(diagWriter(opts.Diag), "%s in %s\n",
+			MsgUnverifiedNotScored, filepath.Base(reviewDir))
 	}
 
 	// A path-anchored review with no fan-out pool summary still has reviewers in
@@ -65,24 +77,35 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 			Reviewers: m.Reviewers,
 		})
 		for _, rev := range m.Reviewers {
-			if rev == "" {
+			name := strings.TrimSpace(rev)
+			if name == "" {
 				continue
 			}
-			if _, ok := reviewers[rev]; !ok {
-				// outcomeFindings, not unknown. This reviewer has no AgentStatus
-				// — there is no pool summary — but it is NAMED ON A FINDING that
-				// survived reconcile, so "raised at least one finding" is
-				// OBSERVED here, not inferred. That is the whole difference from
-				// OutcomeClean, which AC 02-03 rightly forbids on this path:
-				// clean asserts a successful review of the diff, which nothing
-				// here witnessed.
+			if _, ok := reviewers[name]; !ok {
+				// NO OUTCOME, deliberately, and this is a security property
+				// rather than a gap. Read the whole note before changing it.
 				//
-				// Leaving it unknown was a permanent blackout, not a one-time
-				// upgrade cost: an install that only ever reconciles
-				// path-anchored reviews would produce nothing but unclassified
-				// records and could NEVER accumulate a trust prior, silently
-				// disabling trustExempt and demoteByTrust forever.
-				reviewers[rev] = ReviewerMeta{Outcome: outcomeFindings}
+				// A reviewer reached only here has no AgentStatus: this run
+				// produced no pool summary, so nothing witnessed a fan-out. The
+				// name comes from res.Findings, which is parsed from stream
+				// FILES ON DISK — and internal/mcp reaches EmitForReconcile with
+				// a caller-supplied directory, while EnsureReviewComplete
+				// returns nil when status.json is absent. So these attributions
+				// are unverified input, not observations.
+				//
+				// Classifying them (an earlier attempt used outcomeFindings on
+				// the reasoning that being named on a surviving finding is
+				// "observed") makes them ELIGIBLE, and res.Findings drives the
+				// corroboration NUMERATOR too — so a hand-authored stream mints
+				// a maximal 1.0 prior, clears trustHighThreshold and switches
+				// trustExempt on for a name of the author's choosing. That was
+				// reproduced, and it is a wider door than the crafted
+				// findings_count outcomeFor exists to close.
+				//
+				// The record is still WRITTEN — the reviewer keeps its counts,
+				// its rate and its leaderboard row. Only trust scoring declines,
+				// which is the one consumer that must not be forgeable.
+				reviewers[name] = ReviewerMeta{}
 			}
 		}
 	}
@@ -107,22 +130,25 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 			UnresolvedReason: u.UnresolvedReason,
 		})
 		for _, rev := range u.Reviewers {
-			if rev == "" {
+			name := strings.TrimSpace(rev)
+			if name == "" {
 				continue
 			}
-			if _, ok := reviewers[rev]; !ok {
-				// outcomeUngrounded, and that is the accurate value rather than
-				// a softer one. A reviewer reached ONLY here raised findings of
-				// which every single one was routed out by the Tier 4 content
-				// check — its cited anchors are declared nowhere in the tracked
-				// tree. That is precisely what ungrounded names.
+			if _, ok := reviewers[name]; !ok {
+				// No outcome, for the same unverified-input reason as the
+				// findings loop above.
 				//
-				// It is on the ELIGIBLE side, which is correct and is the point:
-				// the reviewer got a fair attempt and produced phantoms, so the
-				// run must count against it. Excluding it would hand a
-				// phantom-raiser the same protection the gate exists to give a
-				// lens with a broken proxy.
-				reviewers[rev] = ReviewerMeta{Outcome: outcomeUngrounded}
+				// An earlier attempt stamped outcomeUngrounded here, reasoning
+				// that a routed-only reviewer cited anchors declared nowhere in
+				// the tree. Two things were wrong with it. It inherits the
+				// forgery hole above. And `ungrounded` already MEANS something
+				// else in this vocabulary — fanout sets it from
+				// DroppedByGrounding, the Epic 14.1 grounding gate — so reusing
+				// the token for reconcile's Tier 4 content check silently points
+				// one durable value at two different gates. It was also simply
+				// wrong for the doc-shield carve-out, whose whole definition is
+				// that the subject WAS named in the tree.
+				reviewers[name] = ReviewerMeta{}
 			}
 		}
 	}

@@ -436,9 +436,10 @@ than growing a third aggregation.
   difference is visible on an upgrade: a store written before `schema_version` 2
   has no `outcome` on any record, so every reviewer in it is excluded and the
   table renders all-`n/a` with the "no data" footer until fresh runs accumulate.
-  That is the same absent-means-neutral contract the floor already had — a rate
-  computed from unclassified runs is not a measurement — but it is a visible
-  change on an existing install rather than a silent one.
+  A rate computed from unclassified runs is not a measurement, so absence is the
+  honest answer — but absence is not neutral (see the bullet above: it switches
+  demotion off as well as exemption), and on an existing install this is a
+  visible change rather than a silent one.
 - **`scorecard.ResolveTrustPriors()` (epic 35.9)** is the third consumer, and it
   is the one on the primary path of **every** `atcr review`, `review --resume`,
   `reconcile` and MCP `atcr_reconcile` call — so the outcome-eligibility rule
@@ -463,8 +464,9 @@ than growing a third aggregation.
   effective retention is 180 days plus however far into that month the cutoff
   falls — up to roughly 210 days, i.e. as many as 7 month files. Two
   consequences: a reviewer with no runs in any month file overlapping the last
-  180 days falls back to the neutral "no history" state
-  (absent from the map — the same state a brand-new reviewer occupies), and
+  180 days falls back to the "no history" state (absent from the map — the same
+  state a brand-new reviewer occupies, and not a neutral one: it disables
+  demotion as well as exemption), and
   `TrustPriors(dir, minRuns)` itself is **unchanged and still all-history**, so
   `atcr personas list --scores` keeps reporting on the whole store. Every
   `atcr reconcile` /

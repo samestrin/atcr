@@ -122,8 +122,16 @@ func TestDocs_ScorecardMdDocumentsOutcomeAndEligibility(t *testing.T) {
 	if countedStart < 0 || excludedStart <= countedStart {
 		t.Fatalf("docs/scorecard.md must render the eligibility split as a Counted: bullet followed by an Excluded: bullet; the pin below cannot work otherwise")
 	}
+	// Bound the excluded bullet explicitly. strings.Index returns -1 when the
+	// bullet is the final block, and slicing on that panics with "slice bounds
+	// out of range" — a routine doc edit would crash this test instead of
+	// failing it with the diagnostic it exists to print.
+	excludedEnd := strings.Index(doc[excludedStart:], "\n\n")
+	if excludedEnd < 0 {
+		t.Fatalf("docs/scorecard.md: the Excluded: bullet must be followed by a blank line so its extent is unambiguous")
+	}
 	counted := doc[countedStart:excludedStart]
-	excluded := doc[excludedStart : excludedStart+strings.Index(doc[excludedStart:], "\n\n")]
+	excluded := doc[excludedStart : excludedStart+excludedEnd]
 
 	// Each value must be named on the side the CODE actually puts it on, so
 	// moving one across the allowlist without moving it in the doc fails here.

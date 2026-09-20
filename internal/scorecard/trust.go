@@ -47,9 +47,12 @@ const DefaultTrustMinRuns = 20
 // overlapping the last 180d — monthOverlapsWindow includes the whole calendar
 // month holding the cutoff, so effective retention is 180d plus up to a month,
 // roughly 210d in the worst case — drops
-// out of the priors map and reverts to the neutral no-history state — the same
-// state a brand-new reviewer occupies (reconcile/consensus.go does a plain map
-// lookup with no distinct "dormant" handling). Re-widening this constant, not an
+// out of the priors map and reverts to the no-history state — the same state a
+// brand-new reviewer occupies (reconcile/consensus.go does a plain map lookup
+// with no distinct "dormant" handling). That state is not NEUTRAL: absence
+// disables demotion as well as exemption, so a dormant phantom-raiser stops
+// being demoted. See the note on unresolvedEraRuns below, which says the same
+// thing about its own era gap. Re-widening this constant, not an
 // empty-map fallback, is the fix if that ever bites: the map stays non-empty
 // while any reviewer is active, so a fallback keyed on emptiness would never
 // fire for a single dormant reviewer.

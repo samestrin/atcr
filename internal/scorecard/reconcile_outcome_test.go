@@ -1,7 +1,9 @@
 package scorecard
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -116,45 +118,111 @@ func TestEmitForReconcile_RaisedIsTheAgentsPostEnforcementCount(t *testing.T) {
 		"raised must come from AgentStatus.FindingsCount, not from res.Findings")
 }
 
-// TestEmitForReconcile_NoPoolSummaryClassifiesFromTheFindings covers AC 02-03
-// Edge Case 1, with the correction the Phase 2 gate forced.
+// TestEmitForReconcile_NoPoolSummaryYieldsUnknownOutcome is AC 02-03 Edge Case
+// 1, and the reason it is worth more than a "the AC said so" test.
 //
-// AC 02-03 says every reviewer on this path gets OutcomeUnknown. Its REASON is
-// sound — there is no AgentStatus, so OutcomeClean would assert a successful
-// review of the diff that nothing witnessed — but applying it to a reviewer
-// NAMED ON A SURVIVING FINDING throws away an observation rather than declining
-// to guess. The gate proved the cost: an install that only ever reconciles
-// path-anchored reviews would write nothing but unclassified records and could
-// never accumulate a trust prior at all, permanently disabling trustExempt and
-// demoteByTrust with no diagnostic.
+// Gate pass 1 read this exclusion as a bug: an install that only ever reconciles
+// pool-summary-less reviews accumulates no trust prior, ever. Gate pass 2 proved
+// the cure was worse. res.Findings is parsed from stream FILES ON DISK, and it
+// drives the corroboration numerator as well as eligibility — so classifying
+// these reviewers let a hand-authored directory mint a maximal 1.0 prior for any
+// name, clearing trustHighThreshold and switching trustExempt on. internal/mcp
+// reaches this code with a caller-supplied directory.
 //
-// So: named on a finding -> findings (observed). Named only on a Tier-4-routed
-// finding -> ungrounded (also observed, and it correctly counts AGAINST the
-// reviewer). Never clean, which remains the fabricated claim AC 02-03 forbids.
-func TestEmitForReconcile_NoPoolSummaryClassifiesFromTheFindings(t *testing.T) {
+// So the exclusion is a security property, not an oversight. Absence of fan-out
+// evidence means nothing witnessed a review; a record with no witness is written
+// but not scored.
+func TestEmitForReconcile_NoPoolSummaryYieldsUnknownOutcome(t *testing.T) {
 	reviewDir := t.TempDir() // no sources/pool/summary.json written at all
 
 	recs := emitAndRead(t, reviewDir, resWith("bruce", "greta"))
 
 	for _, name := range []string{"bruce", "greta"} {
 		r := findReviewer(recs, name)
-		require.NotNil(t, r, name)
-		assert.Equal(t, testOutcomeFindings, r.Outcome, name)
-		assert.NotEqual(t, testOutcomeClean, r.Outcome,
-			"%s's review was never observed; clean would be a fabricated claim", name)
-		assert.NotEqual(t, testOutcomeUnknown, r.Outcome,
-			"%s is named on a surviving finding, so it is not unclassifiable", name)
+		require.NotNil(t, r, "%s must still get a record — only scoring declines", name)
+		assert.Equal(t, testOutcomeUnknown, r.Outcome, name)
+		assert.Empty(t, eligibleOutcomeRuns([]Record{*r}),
+			"%s was never witnessed, so it must not be scoreable", name)
 	}
 }
 
-// TestEmitForReconcile_RoutedOnlyReviewerIsUngrounded is the other half of the
-// gate's HIGH fix. A reviewer whose every finding the Tier 4 content check
-// routed out cited anchors that are declared nowhere in the tracked tree — which
-// is exactly what ungrounded names, and it is on the ELIGIBLE side on purpose.
-// Excluding it would hand a phantom-raiser the same protection the gate exists
-// to give a lens with a broken proxy.
-func TestEmitForReconcile_RoutedOnlyReviewerIsUngrounded(t *testing.T) {
+// TestEmitForReconcile_UnverifiedStreamCannotForgeATrustPrior is the regression
+// test for gate pass 2's HIGH, written as the attack rather than as the rule.
+//
+// Without the guard this builds a perfect 1.0 prior for a name of the author's
+// choosing out of nothing but files in a directory.
+func TestEmitForReconcile_UnverifiedStreamCannotForgeATrustPrior(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	// Every finding names both reviewers, so each one corroborates the other and
+	// the corroboration rate is a maximal 1.0 by construction.
+	forged := reconcile.Result{
+		Findings: []reconcile.Merged{{
+			Finding: reconcile.Finding{
+				File: "a.go", Line: 1, Problem: "p",
+				Reviewers: []string{"attacker", "sockpuppet"},
+			},
+		}},
+		Summary: reconcile.Summary{
+			ReconciledAt:   "2026-06-14T10:00:00Z",
+			ConsensusLevel: "strict",
+		},
+	}
+	for i := 0; i < DefaultTrustMinRuns+5; i++ {
+		reviewDir := t.TempDir() // never any sources/pool/summary.json
+		EmitForReconcile(reviewDir, forged, EmitOpts{Diag: io.Discard})
+	}
+
+	cfg, err := os.UserConfigDir()
+	require.NoError(t, err)
+	dir := filepath.Join(cfg, "atcr", "scorecard")
+
+	rates, err := TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+	assert.Empty(t, rates,
+		"a directory of hand-authored findings must not mint a trust prior")
+
+	// And the records ARE there — this is refusal to score, not refusal to record.
+	recs, err := ReadAll(dir, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.NotEmpty(t, recs, "the run is still recorded; only trust scoring declines")
+}
+
+// TestEmitForReconcile_AnnouncesUnverifiedRun pins that the refusal above is not
+// silent. Gate pass 1's complaint was legitimate on exactly this point: a store
+// that never accumulates a prior looks identical to a bug unless something says
+// why.
+func TestEmitForReconcile_AnnouncesUnverifiedRun(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	var diag bytes.Buffer
+	EmitForReconcile(t.TempDir(), resWith("bruce"), EmitOpts{Diag: &diag})
+	assert.Contains(t, diag.String(), MsgUnverifiedNotScored)
+
+	// A run WITH fan-out evidence says nothing.
+	diag.Reset()
+	withPool := t.TempDir()
+	writePoolSummary(t, withPool,
+		fanout.AgentStatus{Agent: "bruce", Status: fanout.StatusOK, FindingsCount: 1})
+	EmitForReconcile(withPool, resWith("bruce"), EmitOpts{Diag: &diag})
+	assert.NotContains(t, diag.String(), MsgUnverifiedNotScored)
+}
+
+// TestEmitForReconcile_RoutedOnlyReviewerIsClassifiedFromTheSummary closes gate
+// pass 2's parity finding. The same reviewer, exhibiting the same behaviour,
+// must not classify differently depending on which artifacts happen to be on
+// disk — that is precisely what AC 02-02 exists to prevent.
+//
+// phantom raised one finding, which the Tier 4 check routed. With a summary
+// present its AgentStatus classifies it, exactly as the benchmark path would.
+func TestEmitForReconcile_RoutedOnlyReviewerIsClassifiedFromTheSummary(t *testing.T) {
 	reviewDir := t.TempDir()
+	status := fanout.AgentStatus{Agent: "phantom", Status: fanout.StatusOK, FindingsCount: 1}
+	writePoolSummary(t, reviewDir, status)
 
 	res := reconcile.Result{
 		Unresolved: []reconcile.JSONFinding{{
@@ -166,27 +234,41 @@ func TestEmitForReconcile_RoutedOnlyReviewerIsUngrounded(t *testing.T) {
 
 	r := findReviewer(recs, "phantom")
 	require.NotNil(t, r)
-	assert.Equal(t, testOutcomeUngrounded, r.Outcome)
-
-	kept := eligibleOutcomeRuns([]Record{*r})
-	assert.Len(t, kept, 1, "a phantom-raiser must stay scoreable, not be excused")
+	// The recorded value is whatever the SHARED classifier says for this status,
+	// asserted against the classifier itself rather than against a literal — so
+	// the two paths cannot drift apart without this failing.
+	assert.Equal(t, fanout.ReviewerOutcome(status, []string{""}), r.Outcome)
+	assert.Len(t, eligibleOutcomeRuns([]Record{*r}), 1,
+		"a witnessed phantom-raiser stays scoreable, so the run counts against it")
 }
 
-// TestEmitForReconcile_BlankAgentNameIsNotRecorded matches the guard the two
-// findings loops already had. A summary naming an agent "" would otherwise emit
-// a record for a reviewer literally called "" — and since Phase 2 that record
-// also carries an eligible outcome and reaches the trust priors.
+// TestEmitForReconcile_BlankAgentNameIsNotRecorded covers whitespace, not just
+// the empty string. The first version of this guard used TrimSpace in the pool
+// loop while the findings loops still tested == "", so an agent named "  " was
+// skipped in one place and re-registered in the other — promoting a FAILED
+// reviewer into the record with its model and usage lost. All three loops now
+// trim, and the map key is the trimmed name so " bruce" and "bruce" cannot
+// become two distinct trust keys.
 func TestEmitForReconcile_BlankAgentNameIsNotRecorded(t *testing.T) {
 	reviewDir := t.TempDir()
 	writePoolSummary(t, reviewDir,
-		fanout.AgentStatus{Agent: "", Status: fanout.StatusOK, FindingsCount: 0},
-		fanout.AgentStatus{Agent: "bruce", Status: fanout.StatusOK, FindingsCount: 1},
+		fanout.AgentStatus{Agent: "", Status: fanout.StatusOK},
+		fanout.AgentStatus{Agent: "   ", Status: "error", Error: "boom"},
+		fanout.AgentStatus{Agent: " bruce ", Status: fanout.StatusOK, FindingsCount: 1, Model: "opus"},
 	)
 
-	recs := emitAndRead(t, reviewDir, resWith("bruce"))
+	res := resWith("bruce")
+	res.Findings[0].Reviewers = []string{"", "   ", " bruce "}
+	recs := emitAndRead(t, reviewDir, res)
 
-	assert.Nil(t, findReviewer(recs, ""), "a blank-named agent must not become a reviewer record")
-	require.NotNil(t, findReviewer(recs, "bruce"))
+	for _, blank := range []string{"", "   ", " "} {
+		assert.Nil(t, findReviewer(recs, blank),
+			"a blank-named agent (%q) must not become a reviewer record", blank)
+	}
+	bruce := findReviewer(recs, "bruce")
+	require.NotNil(t, bruce, "the trimmed name is the key")
+	assert.Equal(t, "opus", bruce.Model, "the summary entry must win, not a bare re-registration")
+	assert.Nil(t, findReviewer(recs, " bruce "), "the untrimmed name must not be a second key")
 }
 
 // TestEmitForReconcile_OutOfVocabularyOutcomeIsCoercedToUnknown is AC 02-03

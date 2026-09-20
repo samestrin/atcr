@@ -87,6 +87,14 @@ const (
 const (
 	MsgMalformedSkip = "skipping malformed record"
 	MsgWriteFailed   = "scorecard: write failed"
+	// MsgUnverifiedNotScored fires when a reconcile produced no pool summary
+	// naming any agent, so nothing witnessed a fan-out and the run's reviewer
+	// attributions come from stream files alone. Those records are still
+	// written; they are only withheld from trust scoring, which is the one
+	// consumer that must not be forgeable. It is announced rather than silent
+	// because the effect — a store that never accumulates a trust prior — is
+	// otherwise invisible and looks exactly like a bug.
+	MsgUnverifiedNotScored = "scorecard: no fan-out evidence, outcomes not scored"
 )
 
 // defaultRole labels per-reviewer records produced from a reconcile run. Every
@@ -341,10 +349,19 @@ type ReviewerMeta struct {
 	// classification is derived from) and Emit (which builds the Record), so no
 	// new parameter or parallel map is introduced.
 	//
-	// The zero value is benchmark.OutcomeUnknown (""), which is exactly right
-	// for a reviewer recovered from the findings alone: a path-anchored review
-	// with no pool summary has no AgentStatus to classify, and guessing clean
-	// there would assert a successful review that never happened.
+	// There is exactly ONE source of a non-empty value: outcomeFor, applied to
+	// an AgentStatus read from this run's pool summary. Everything else leaves
+	// the zero value, and each of those cases is deliberate:
+	//   - no pool summary naming any agent — nothing witnessed a fan-out, so
+	//     the reviewer names in res.Findings are unverified input rather than
+	//     observations, and classifying them would make a hand-authored stream
+	//     forge a trust prior (MsgUnverifiedNotScored announces this)
+	//   - an AgentStatus that is not internally coherent (see outcomeFor)
+	//   - a direct Emit caller that does not populate the field
+	//
+	// The zero value is benchmark.OutcomeUnknown (""), which excludes the record
+	// from trust scoring and from nothing else — the record is still written and
+	// still carries its counts, its rate and its leaderboard row.
 	Outcome string
 }
 
