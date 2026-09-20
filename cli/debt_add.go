@@ -43,7 +43,26 @@ var debtStdinIsTTY = func(in io.Reader) bool {
 // with no recorded rationale, and — since resolve then treats the id as settled —
 // no way to attach one afterwards. Filing a finding and dismissing it are also
 // not the same act.
-var debtAddStatuses = map[string]bool{"open": true, "deferred": true, "resolved": true}
+//
+// `unreproducible` and `attempts-exhausted` are excluded for the same reason,
+// and the reason is stronger for them than it is for wontfix. `debt resolve`
+// makes `--reason` MANDATORY for both (wontfix's can be satisfied by an already
+// stored rationale), because for these two the text IS the payload: an
+// unreproducible finding's value as a ground-truth signal is entirely in what
+// was tried and what happened, and this command collects no `--reason` at all.
+// Admitting them here would let an operator file a closed, evidence-free outcome
+// straight into the store and quietly poison the signal the status exists to
+// produce. `add` files findings; `resolve` closes them.
+//
+// The narrowing is deliberate, so it is pinned: cli/debt_exhaustive_test.go
+// requires every localdebt.Status* constant to be accepted here or named in a
+// documented-exclusion list, which is what turns this comment into a guard
+// rather than a note.
+var debtAddStatuses = map[string]bool{
+	"open":                   true,
+	localdebt.StatusDeferred: true,
+	localdebt.StatusResolved: true,
+}
 
 // wizardDefaults seeds the interactive prompts with values already supplied as
 // flags, so partial flag input carries into the wizard instead of being

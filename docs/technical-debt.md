@@ -96,7 +96,7 @@ rather than a fabricated value that `resolve` could not match.
 | `model` | string | Model that produced the finding |
 | `justification` | string | Why it was resolved/dismissed (`--reason`) |
 | `source_report` | object | Report the finding came from: `{"path": …, "line": …, "section": …}` (`line`/`section` omitted when unset) |
-| `status` | string | Empty (open), `deferred`, `resolved`, or `wontfix` |
+| `status` | string | Empty (open), `deferred`, `resolved`, `wontfix`, `unreproducible`, or `attempts-exhausted` |
 | `resolved_at` | string | Timestamp of the terminal record |
 | `origin` | string | **v3** — `review` or `manual` |
 | `occurrences` | int | **v3** — times this id has been seen; carried through compaction |
@@ -116,13 +116,20 @@ a binary that cannot understand it.
 | `wontfix` | Terminal | Suppression is the feature; a false positive is stable at a stable location, so its id is stable and permanent dismissal works. Requires a `--reason`. |
 | `resolved` | Re-openable on re-detection | The same id after a fix implies a regression — the thing most worth surfacing. |
 | `deferred` | Re-surfaces on re-detection | "Not now" is not "never". A deferred item leaves the `debt resolve` worklist while it stands, but stays in `debt list` and the dashboard as live debt, and stays closeable by id. |
+| `unreproducible` | Re-openable on re-detection | Investigated and could not be reproduced. A determination was reached, so the item leaves the live backlog — but re-detection at the same location is evidence the call was wrong, which is the last thing to suppress. Requires a `--reason`. |
+| `attempts-exhausted` | Re-surfaces on re-detection | The fix attempts ran out without a resolution. The defect is presumed real and the work unfinished, so like `deferred` it stays live debt and stays closeable by id. Requires a `--reason`. |
 
 So `atcr debt list` can show an item as `resolved` today and as open again after
 a later `atcr reconcile` re-detects it. Only `wontfix` is final.
 
 `occurrences` is the regression count for an id: `occurrences - 1` re-detections
 after the first. When divergent terminal records exist for one id, precedence is
-`wontfix` > `resolved` > `deferred`.
+`wontfix` > `unreproducible` > `attempts-exhausted` > `resolved` > `deferred`.
+
+That order ranks by how certainly a record carries a human-typed `--reason`,
+because the rationale text exists nowhere else in the store and precedence
+decides which record survives compaction. `--reason` is mandatory for every
+status except `resolved`, which is why the three mandatory ones sit above it.
 
 ## Commands
 
@@ -150,7 +157,7 @@ atcr debt list --json                           # the same selection, as JSON
 ```
 
 Flags: `--store`, `--severity` (exact, case-insensitive), `--status` (exact:
-`open|deferred|resolved|wontfix`),
+`open|deferred|resolved|wontfix|unreproducible|attempts-exhausted`),
 `--category` (substring), `--component` (path prefix, e.g. `internal/autofix`),
 `--origin` (exact: `review|manual`), `--sort` (`severity|age|est|file`), `--json`.
 
@@ -229,11 +236,17 @@ atcr debt resolve                              # open items, most severe first
 atcr debt resolve --json --max 5               # the same, as JSON, capped
 atcr debt resolve <id>                         # mark it fixed
 atcr debt resolve <id> --status wontfix --reason "accepted pattern"
+atcr debt resolve <id> --status unreproducible --reason "no repro on current main"
+atcr debt resolve <id> --status attempts-exhausted --reason "three attempts regressed unrelated tests"
 ```
 
 Flags: `--store`, `--json`, `--severity`, `--max`,
-`--status` (`resolved|wontfix`), `--reason`. The id is positional. `--status wontfix` requires a
-`--reason` — it is a permanent dismissal, so the rationale is recorded with it.
+`--status` (`resolved|wontfix|unreproducible|attempts-exhausted`), `--reason`. The id is positional.
+Every status other than `resolved` requires a `--reason`: a dismissal, a
+not-reproducible determination and an exhausted attempt budget are each a
+judgement whose rationale exists nowhere else, while a fix explains itself in the
+diff. That rationale is also what makes the technical-debt lifecycle usable as
+ground truth when scoring which review lenses produce real findings.
 
 Resolution is append-only: a terminal record is appended, never edited in place,
 and the original id is preserved so the resolution lines up with the finding.

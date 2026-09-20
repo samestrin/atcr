@@ -115,12 +115,38 @@ var defaultDebtResolveDir = localdebt.DefaultDir(".")
 // elsewhere in cli/debt.go.
 var resolveSeverities = map[string]bool{"CRITICAL": true, "HIGH": true, "MEDIUM": true, "LOW": true}
 
-// resolveStatuses is the validated --status enum for a mark action. Both values are
+// resolveStatuses is the validated --status enum for a mark action. Every value is
 // terminal (isClosedStatus folds them out): "resolved" means the code was actually
 // fixed; "wontfix" (Epic 24.0) dismisses a false-positive/accepted pattern so agents
-// stop re-surfacing it. "deferred" is intentionally excluded — it is written by other
-// paths, not by an explicit resolve.
-var resolveStatuses = map[string]bool{"resolved": true, "wontfix": true}
+// stop re-surfacing it; "unreproducible" records that the finding was investigated
+// and could not be reproduced; "attempts-exhausted" records that the fix attempts ran
+// out without a resolution. "deferred" is intentionally excluded — it is written by
+// other paths, not by an explicit resolve.
+//
+// The last two are Story 36.0's ground-truth outcomes. They exist because
+// "confirmed real and fixed", "was never real" and "real but unfixed" are three
+// different facts about the reviewer that raised the finding, and a store that
+// recorded only the first could not tell them apart. The `--reason` text is that
+// signal's payload, which is why the gate below requires it for both.
+var resolveStatuses = map[string]bool{
+	localdebt.StatusResolved:          true,
+	localdebt.StatusWontfix:           true,
+	localdebt.StatusUnreproducible:    true,
+	localdebt.StatusAttemptsExhausted: true,
+}
+
+// resolveStatusList renders the accepted values for an error message, derived
+// from the map rather than retyped. A hand-written "resolved|wontfix" literal is
+// exactly what went stale when this enum grew: the value was accepted while the
+// rejection message still named two.
+func resolveStatusList() string {
+	out := make([]string, 0, len(resolveStatuses))
+	for s := range resolveStatuses {
+		out = append(out, s)
+	}
+	sort.Strings(out)
+	return strings.Join(out, "|")
+}
 
 // newDebtResolveCmd builds `atcr debt resolve [id]`: the .atcr/-scoped resolver surface
 // the debt-resolve skill route shells out to. It lists open items from the local TD
@@ -210,7 +236,7 @@ func runDebtResolve(cmd *cobra.Command, args []string) error {
 		}
 		status := strings.ToLower(strings.TrimSpace(mustFlag(cmd, "status")))
 		if !resolveStatuses[status] {
-			return usageError(fmt.Errorf("invalid --status %q: expected resolved|wontfix", status))
+			return usageError(fmt.Errorf("invalid --status %q: expected %s", status, resolveStatusList()))
 		}
 		return markDebtResolved(cmd, dir, id, status, mustFlag(cmd, "reason"))
 	}
@@ -625,8 +651,18 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 		return fmt.Errorf("id %q has no file location and cannot be resolved; it must be corrected in the store", id)
 	}
 	orig := *effective
-	if status == "wontfix" && strings.TrimSpace(reason) == "" && !isRecordedRationale(orig.Justification) {
-		return usageError(fmt.Errorf("--status wontfix requires --reason <justification>"))
+	// Every status other than `resolved` requires a rationale. The condition is
+	// written against StatusResolved rather than as a list of the statuses that
+	// DO need one, so a sixth status inherits the gate the moment it joins
+	// resolveStatuses — with no edit here, which is where the old wontfix-only
+	// literal would have silently let one through.
+	//
+	// `resolved` is the exception because the fix itself is the explanation and
+	// the diff records it. For every other status the text is the only evidence
+	// that survives: it is what makes the TD lifecycle usable as ground truth
+	// for lens scoring rather than just a state flag.
+	if status != localdebt.StatusResolved && strings.TrimSpace(reason) == "" && !isRecordedRationale(orig.Justification) {
+		return usageError(fmt.Errorf("--status %s requires --reason <justification>", status))
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)

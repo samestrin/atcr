@@ -307,11 +307,32 @@ func newDebtListCmd() *cobra.Command {
 	return cmd
 }
 
-// debtListStatuses is the accepted --status enum for `debt list`. It is the four
-// buckets debtStatusBucket renders, NOT debt_add's narrower set: `wontfix` cannot
-// be FILED by add (dismissing needs resolve's --reason) but a dismissed item is
-// still viewable, so it must stay filterable.
-var debtListStatuses = map[string]bool{"open": true, "deferred": true, "resolved": true, "wontfix": true}
+// debtListStatuses is the accepted --status enum for `debt list`. It is the six
+// buckets debtStatusBucket renders, NOT debt_add's narrower set: `wontfix`,
+// `unreproducible` and `attempts-exhausted` cannot be FILED by add (each needs
+// resolve's --reason) but a closed item is still viewable, so every one of them
+// must stay filterable. A status that renders but cannot be filtered is worse
+// than a hidden one — the operator can see the row and has no way to select it.
+var debtListStatuses = map[string]bool{
+	"open":                            true,
+	localdebt.StatusDeferred:          true,
+	localdebt.StatusResolved:          true,
+	localdebt.StatusWontfix:           true,
+	localdebt.StatusUnreproducible:    true,
+	localdebt.StatusAttemptsExhausted: true,
+}
+
+// debtListStatusList renders the accepted filter values for an error message,
+// derived from the map rather than retyped, for the reason resolveStatusList
+// gives: the retyped literal is what went stale when the enum grew.
+func debtListStatusList() string {
+	out := make([]string, 0, len(debtListStatuses))
+	for s := range debtListStatuses {
+		out = append(out, s)
+	}
+	sort.Strings(out)
+	return strings.Join(out, "|")
+}
 
 // validateDebtListFilters rejects an unrecognized --severity or --status.
 //
@@ -328,7 +349,7 @@ func validateDebtListFilters(cmd *cobra.Command) error {
 		return usageError(fmt.Errorf("invalid --severity %q: expected CRITICAL|HIGH|MEDIUM|LOW", mustFlag(cmd, "severity")))
 	}
 	if st := strings.ToLower(strings.TrimSpace(mustFlag(cmd, "status"))); st != "" && !debtListStatuses[st] {
-		return usageError(fmt.Errorf("invalid --status %q: expected open|deferred|resolved|wontfix", mustFlag(cmd, "status")))
+		return usageError(fmt.Errorf("invalid --status %q: expected %s", mustFlag(cmd, "status"), debtListStatusList()))
 	}
 	if o := strings.ToLower(strings.TrimSpace(mustFlag(cmd, "origin"))); o != "" &&
 		o != localdebt.OriginReview && o != localdebt.OriginManual {

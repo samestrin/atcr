@@ -111,6 +111,9 @@ func wordCount(s string) int {
 type debtSeverityCount struct {
 	Severity                          string
 	Open, Deferred, Resolved, Wontfix int
+	// Unreproducible and AttemptsExhausted complete the six presentation
+	// buckets. Total must stay an exact sum across every counter here.
+	Unreproducible, AttemptsExhausted int
 	Total                             int
 }
 
@@ -134,6 +137,10 @@ type debtAgeBucket struct {
 type debtSummary struct {
 	Total                             int
 	Open, Deferred, Resolved, Wontfix int
+	// This counter list repeats debtSeverityCount's verbatim. Both must grow
+	// together: a fix pass that stops at the first match leaves the other
+	// under-counting, with Total silently failing to equal its parts.
+	Unreproducible, AttemptsExhausted int
 	BySeverity                        []debtSeverityCount
 	ByComponent                       []debtComponentCount
 	ByAge                             []debtAgeBucket
@@ -175,18 +182,27 @@ var debtAgeBands = []struct {
 	{">90d", -1},
 }
 
-// debtStatusBucket classifies a record into one of the four presentation
+// debtStatusBucket classifies a record into one of the six presentation
 // buckets. The store's canonical open record carries an empty status, so an
 // unrecognized or absent status is open — the same "treat anything else as open"
 // rule the ported code used, extended to cover the empty spelling.
+//
+// Every KNOWN terminal status must have its own arm. The `default` is for
+// genuine garbage (a hand-edited record, a schema skew), not for a status the
+// enum declares: a closed item rendering as live backlog corrupts the dashboard
+// and the filter in the same silent way, and nothing on screen says so.
 func debtStatusBucket(status string) string {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "resolved":
-		return "resolved"
-	case "deferred":
-		return "deferred"
-	case "wontfix":
-		return "wontfix"
+	case localdebt.StatusResolved:
+		return localdebt.StatusResolved
+	case localdebt.StatusDeferred:
+		return localdebt.StatusDeferred
+	case localdebt.StatusWontfix:
+		return localdebt.StatusWontfix
+	case localdebt.StatusUnreproducible:
+		return localdebt.StatusUnreproducible
+	case localdebt.StatusAttemptsExhausted:
+		return localdebt.StatusAttemptsExhausted
 	default:
 		return "open"
 	}
@@ -254,12 +270,16 @@ func summarizeDebt(recs []localdebt.Record, now time.Time, topN int) debtSummary
 	for _, r := range recs {
 		bucket := debtStatusBucket(r.Status)
 		switch bucket {
-		case "resolved":
+		case localdebt.StatusResolved:
 			s.Resolved++
-		case "deferred":
+		case localdebt.StatusDeferred:
 			s.Deferred++
-		case "wontfix":
+		case localdebt.StatusWontfix:
 			s.Wontfix++
+		case localdebt.StatusUnreproducible:
+			s.Unreproducible++
+		case localdebt.StatusAttemptsExhausted:
+			s.AttemptsExhausted++
 		default:
 			s.Open++
 		}
@@ -285,12 +305,16 @@ func summarizeDebt(recs []localdebt.Record, now time.Time, topN int) debtSummary
 		}
 		sc.Total++
 		switch bucket {
-		case "resolved":
+		case localdebt.StatusResolved:
 			sc.Resolved++
-		case "deferred":
+		case localdebt.StatusDeferred:
 			sc.Deferred++
-		case "wontfix":
+		case localdebt.StatusWontfix:
 			sc.Wontfix++
+		case localdebt.StatusUnreproducible:
+			sc.Unreproducible++
+		case localdebt.StatusAttemptsExhausted:
+			sc.AttemptsExhausted++
 		default:
 			sc.Open++
 		}
