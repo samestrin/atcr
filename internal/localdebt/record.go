@@ -49,6 +49,30 @@ import (
 // forward-incompat-skip model safe to downgrade into, and it is a prerequisite for
 // T5's automatic compaction, which removes the "a human chose to run compact" step
 // that used to bound the exposure.
+//
+// # Status-value evolution (a widening this version counter does NOT cover)
+//
+// The bumps above all added FIELDS. Story 36.0 did something this counter cannot
+// express: it widened the accepted VALUE DOMAIN of an existing field, adding
+// `unreproducible` and `attempts-exhausted` to `status` without a bump — correctly,
+// since the wire shape is unchanged and a bump would have made every new record
+// invisible to a v3 reader that can decode it perfectly well.
+//
+// The accepted exposure is therefore NOT invisibility but MISCLASSIFICATION. A
+// pre-36.0 binary decodes such a record and answers `false` to IsClosedStatus,
+// so it reports a closed finding as open. That is a read-side misreport, and it
+// self-corrects the moment the binary is updated.
+//
+// One path is worse than a misreport and is worth naming, because it is the
+// reason bearsRationale is value-based rather than version-based:
+// `atcr debt backfill-justifications` is the only command that rewrites shard
+// lines IN PLACE, and it skips records that may hold operator-typed text. An
+// older binary's skip gate does not know `attempts-exhausted`, so it would
+// replay a review excerpt over that record's mandatory `--reason` — the same
+// irreversible loss the gate exists to prevent, reachable by version skew rather
+// than by code path. Nothing in this repo can stop an older binary from doing
+// that; a reader running mixed versions over one store should run backfill from
+// the newer one.
 const SchemaVersion = 3
 
 // Diagnostic message substrings emitted on the read path, exported so tests assert

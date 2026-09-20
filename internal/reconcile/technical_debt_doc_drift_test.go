@@ -198,3 +198,44 @@ func TestTechnicalDebtDoc_ReasonGateProseIsGeneralized(t *testing.T) {
 	assert.Contains(t, doc, "Every status other than `resolved` requires a",
 		"the published --reason gate must state the generalized rule the code enforces")
 }
+
+// skillResolveDocPath is the agent-facing resolve route. It is the PRODUCER
+// side of the status vocabulary: `docs/technical-debt.md` tells an operator the
+// statuses exist, but this file is what tells the agent that actually closes
+// findings when to use them.
+//
+// It is covered here because a status nothing writes is a ground-truth signal
+// that stays permanently empty — and the emptiness is indistinguishable from a
+// reviewer that simply never produced that outcome. cli/debt_exhaustive_test.go
+// guards the same failure one layer down, at the CLI vocabulary; this guards it
+// at the layer that decides to call the CLI at all.
+const skillResolveDocPath = "../../skills/atcr/debt-resolve.md"
+
+// TestSkillResolveDocDocumentsEveryWritableStatus locks the producer side: every
+// status `atcr debt resolve` accepts must be documented in the route that drives
+// it.
+func TestSkillResolveDocDocumentsEveryWritableStatus(t *testing.T) {
+	b, err := os.ReadFile(skillResolveDocPath)
+	require.NoError(t, err, "the agent-facing resolve route must be readable from this package")
+	doc := string(b)
+
+	// The writable set, minus `deferred` (written by other paths, not by resolve)
+	// and `resolved` (the bare, statusless default this route already documents).
+	for _, status := range localdebtTerminalStatuses(t) {
+		if status == "deferred" || status == "resolved" {
+			continue
+		}
+		assert.Contains(t, doc, "--status "+status,
+			"%s never tells the resolving agent how to write %q, so nothing will ever "+
+				"produce it and the ground-truth signal stays empty", skillResolveDocPath, status)
+	}
+}
+
+// TestSkillResolveDocStatesTheGeneralizedReasonRule guards the half an agent is
+// most likely to get wrong: it must not learn "--reason is for wontfix".
+func TestSkillResolveDocStatesTheGeneralizedReasonRule(t *testing.T) {
+	b, err := os.ReadFile(skillResolveDocPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(b), "`--reason` is required for every status except",
+		"the route must state the generalized --reason rule, not only the wontfix case")
+}

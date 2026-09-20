@@ -47,6 +47,28 @@ file read and never a direct engine call, consistent with the dispatcher contrac
   reads as narrative, but everything from the marker on is a quoted example atcr
   released, not reviewer prose — follow `source_report`); a reasonless permanent
   dismissal is rejected as a usage error.
+- `atcr debt resolve <id> --status unreproducible --reason "<what was tried, what happened>"` —
+  record that the finding was investigated and could not be reproduced. Use this
+  instead of `wontfix` when the finding may well have been correct and you simply
+  cannot make it happen: `wontfix` says "this is not a defect", `unreproducible`
+  says "I could not confirm it". The item leaves the open backlog, but unlike
+  `wontfix` it does **not** suppress — if a later `atcr reconcile` re-detects the
+  same file, line and problem, that is evidence the finding was real and it
+  returns to the backlog.
+- `atcr debt resolve <id> --status attempts-exhausted --reason "<what was tried, why it stopped>"` —
+  record that the fix attempts ran out without a resolution. The defect is presumed
+  real and the work unfinished, so the item **stays** in the live backlog and stays
+  closeable by id; this is a checkpoint, not a closure.
+
+**`--reason` is required for every status except plain `resolved`,** and for these
+two it is the entire point. The text is the only durable record of what was tried,
+and atcr reads these outcomes as ground truth when scoring which review lenses
+produce real findings — a finding that was fixed, one that was never reproducible
+and one that resisted every attempt say three different things about the reviewer
+that raised it. Write the reason for a reader who was not there. Do not reach for
+`wontfix` when the honest answer is one of these two: a dismissal that was really a
+failed investigation teaches the scorer the wrong thing about a reviewer that may
+have been right.
 
 If the store is empty or missing, the command prints a "no items" line and exits 0 —
 report "no items to resolve" and halt cleanly; do **not** enter any resolution stage.

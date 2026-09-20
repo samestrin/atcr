@@ -2294,7 +2294,7 @@ func TestCompact_PreservesQualitySignalModelRecovery(t *testing.T) {
 		return AggregateQualitySignal(recs)
 	}
 	want := signal()
-	require.Equal(t, []QualityRow{{Persona: "bruce", Model: "claude-x", DismissedCount: 1}}, want,
+	require.Equal(t, []QualityRow{{Persona: "bruce", Model: "claude-x", DismissedCount: 1, TerminalOutcomes: 1}}, want,
 		"before compaction the model is recovered from the earlier resolution")
 
 	for i := 1; i <= 3; i++ {
@@ -2547,7 +2547,7 @@ func TestCompact_DeferredEffectiveRecordEmitsNoSignalEitherWay(t *testing.T) {
 	dismissed.Status = "wontfix"
 	require.NoError(t, Append(dir, dismissed))
 	want := signal()
-	require.Equal(t, []QualityRow{{Persona: "bruce", Model: "claude-x", DismissedCount: 1}}, want)
+	require.Equal(t, []QualityRow{{Persona: "bruce", Model: "claude-x", DismissedCount: 1, TerminalOutcomes: 1}}, want)
 	for i := 1; i <= 3; i++ {
 		_, err := Compact(dir, ReadOpts{Writer: io.Discard})
 		require.NoError(t, err)
@@ -2823,4 +2823,89 @@ func TestRetainForCompaction_AttemptsExhaustedAlsoOutranksResolved(t *testing.T)
 	require.Len(t, terminals, 1, "retention is bounded at one terminal per id")
 	assert.Equal(t, StatusAttemptsExhausted, terminals[0],
 		"the reasoned attempts-exhausted must be retained over the earlier reason-less resolved")
+}
+
+// TestRetainForCompaction_UnsettledCountedStatusKeepsItsModelDonor is the guard
+// on phase-gate finding HIGH-1: compaction silently deleted a quality-signal row.
+//
+// modelDonor ran only on the settled branch, because "settled" and "produces a
+// signal row" selected the same records until Story 36.0. `attempts-exhausted`
+// is a counted outcome that is deliberately NOT settled, so an id whose
+// effective record is attempts-exhausted with no Model lost its attribution
+// donor at compaction — and with it the whole outcome, since
+// AggregateQualitySignal excludes an empty Model. Compaction runs automatically
+// inside reconcile, so the loss was silent, unattended and permanent.
+func TestRetainForCompaction_UnsettledCountedStatusKeepsItsModelDonor(t *testing.T) {
+	const id = "id-donor"
+	// An earlier attributed resolution is the only record carrying a Model.
+	resolved := mkTerminal(id, "2026-09-01T00:00:00Z", StatusResolved)
+	resolved.Model = "claude-sonnet-4-6"
+	resolved.Reviewers = []string{"vera"}
+	// The effective record: later, counted, unsettled, and attribution-less.
+	exhausted := mkTerminal(id, "2026-09-02T00:00:00Z", StatusAttemptsExhausted)
+	exhausted.Reviewers = []string{"vera"}
+
+	recs := []Record{resolved, exhausted}
+
+	before := AggregateQualitySignal(recs)
+	require.Len(t, before, 1, "precondition: the outcome is reported before compaction")
+	assert.Equal(t, 1, before[0].AttemptsExhaustedCount)
+
+	after := AggregateQualitySignal(retainForCompaction(recs))
+	require.Len(t, after, 1, "compaction must not delete the row")
+	assert.Equal(t, before[0].Model, after[0].Model, "the recovered model must be unchanged")
+	assert.Equal(t, before[0].AttemptsExhaustedCount, after[0].AttemptsExhaustedCount)
+}
+
+// TestRetainForCompaction_IsIdempotentForUnsettledCountedStatus locks the
+// property the added donor could most easily break: a second Compact must retain
+// the same set and the fold must still select the same effective record.
+func TestRetainForCompaction_IsIdempotentForUnsettledCountedStatus(t *testing.T) {
+	const id = "id-donor-idem"
+	resolved := mkTerminal(id, "2026-09-01T00:00:00Z", StatusResolved)
+	resolved.Model = "claude-sonnet-4-6"
+	resolved.Reviewers = []string{"vera"}
+	unrepro := mkTerminal(id, "2026-09-02T00:00:00Z", StatusUnreproducible)
+	unrepro.Reviewers = []string{"vera"}
+	exhausted := mkTerminal(id, "2026-09-03T00:00:00Z", StatusAttemptsExhausted)
+	exhausted.Reviewers = []string{"vera"}
+
+	pass1 := retainForCompaction([]Record{resolved, unrepro, exhausted})
+	pass2 := retainForCompaction(pass1)
+
+	assert.Len(t, pass1, len(pass2), "a second compaction must retain the same count")
+	assert.LessOrEqual(t, len(pass1), 3, "retention stays bounded per id")
+
+	eff1 := FoldRecords(pass1)
+	eff2 := FoldRecords(pass2)
+	require.Len(t, eff1, 1)
+	require.Len(t, eff2, 1)
+	assert.Equal(t, eff1[0].Status, eff2[0].Status, "the effective record must not oscillate")
+	assert.Equal(t, StatusAttemptsExhausted, eff1[0].Status,
+		"the latest record stays effective across compaction (fold-stable)")
+
+	// And the signal survives both passes unchanged.
+	assert.Equal(t, AggregateQualitySignal(pass1), AggregateQualitySignal(pass2))
+}
+
+// TestProducesQualitySignal_MatchesTheAggregationSwitch pins the predicate to
+// the switch it exists to mirror. A status counted in one and not the other is
+// the exact drift that deleted outcomes at compaction.
+func TestProducesQualitySignal_MatchesTheAggregationSwitch(t *testing.T) {
+	for _, s := range []string{StatusWontfix, StatusResolved, StatusUnreproducible, StatusAttemptsExhausted} {
+		assert.True(t, producesQualitySignal(s), "%q is a counted outcome", s)
+		rows := AggregateQualitySignal([]Record{{
+			ID: "x-" + s, RunID: "r", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"p"}, Model: "m", Status: s,
+		}})
+		assert.Len(t, rows, 1, "%q must actually produce a row", s)
+	}
+	for _, s := range []string{StatusDeferred, "", "open", "bogus"} {
+		assert.False(t, producesQualitySignal(s), "%q is not a counted outcome", s)
+		rows := AggregateQualitySignal([]Record{{
+			ID: "y-" + s, RunID: "r", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"p"}, Model: "m", Status: s,
+		}})
+		assert.Empty(t, rows, "%q must produce no row", s)
+	}
 }

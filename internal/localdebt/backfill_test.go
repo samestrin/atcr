@@ -170,8 +170,8 @@ func TestBackfillJustifications(t *testing.T) {
 			"a wontfix record is settled: its justification is the operator's --reason, not a review excerpt, so it must not even be scanned")
 		assert.Equal(t, reason, findByID(t, store, "2026-09", "cccc3333")["justification"],
 			"the human-typed --reason exists nowhere else in the tree and the store is append-only, so replaying over it is irreversible loss")
-		assert.Equal(t, 1, res.SkippedSettled,
-			"the skip has to be REPORTED: a settled id is suppressed silently, so \"0 scanned\" is otherwise indistinguishable from \"nothing needs repair\"")
+		assert.Equal(t, 1, res.SkippedRationaleBearing,
+			"the skip has to be REPORTED: a suppressed id is skipped silently, so \"0 scanned\" is otherwise indistinguishable from \"nothing needs repair\"")
 	})
 
 	// The skip is per-record inside the fold, so ONE settled record makes the whole
@@ -195,10 +195,45 @@ func TestBackfillJustifications(t *testing.T) {
 		res, err := BackfillJustifications(store, reviewRoot, false)
 		require.NoError(t, err)
 
-		assert.Equal(t, 2, res.SkippedSettled,
-			"both settled classes are counted: resolved and wontfix")
+		assert.Equal(t, 2, res.SkippedRationaleBearing,
+			"both rationale-bearing classes are counted: resolved and wontfix")
 		assert.Equal(t, 2, res.Scanned,
 			"the counter reports the suppression; it does not change what is scanned")
+	})
+
+	// The UNSETTLED half of the bearsRationale switch, which a settledness-named
+	// gate and a settledness-named counter together hid. `attempts-exhausted` is
+	// not settled — it stays closeable, like deferred — but unlike deferred its
+	// --reason is MANDATORY, so it always carries operator text that exists
+	// nowhere else. Gating on settledness would replay a review excerpt straight
+	// over it: irreversible, in an append-only store, on the one command that
+	// rewrites shard lines in place.
+	t.Run("suppresses the unsettled rationale-bearing status", func(t *testing.T) {
+		store, reviewRoot := setup(t)
+		const reason = "three fix attempts each regressed the retry tests"
+		writeTerminal(t, store, "cccc3333", StatusAttemptsExhausted, reason)
+
+		res, err := BackfillJustifications(store, reviewRoot, false)
+		require.NoError(t, err)
+
+		assert.Equal(t, 1, res.SkippedRationaleBearing,
+			"attempts-exhausted carries a mandatory operator --reason and must be suppressed")
+		assert.Equal(t, reason, findByID(t, store, "2026-09", "cccc3333")["justification"],
+			"the operator's attempt trail exists nowhere else and must not be replayed over")
+	})
+
+	// deferred is the control: terminal, unsettled, and NOT reason-gated, so its
+	// stale excerpt is exactly what this pass exists to repair. It must stay
+	// scannable — the widened gate must not have swept it in.
+	t.Run("still scans deferred, which carries no operator rationale", func(t *testing.T) {
+		store, reviewRoot := setup(t)
+		writeTerminal(t, store, "cccc3333", StatusDeferred, "stale review excerpt")
+
+		res, err := BackfillJustifications(store, reviewRoot, false)
+		require.NoError(t, err)
+
+		assert.Zero(t, res.SkippedRationaleBearing,
+			"deferred records no rationale, so the repair must still reach it")
 	})
 
 	t.Run("repairs a deferred record's stale excerpt", func(t *testing.T) {

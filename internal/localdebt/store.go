@@ -975,6 +975,22 @@ func retainForCompaction(recs []Record) []Record {
 				resolutions = append(resolutions, r)
 			}
 		}
+		// An UNSETTLED effective record can still produce a quality-signal row:
+		// `attempts-exhausted` is deliberately not settled (it stays closeable)
+		// yet it is a counted outcome. If it carries no Model, the signal
+		// recovers one from an earlier same-id terminal record — so dropping
+		// that donor here deletes the whole outcome from the signal, silently
+		// and permanently, inside the reconcile that emits the signal.
+		//
+		// The settled branch above has always done this; the test there is
+		// settledness only because, until Story 36.0, settled and counted
+		// selected the same records. Ask producesQualitySignal instead, so a
+		// future counted-but-unsettled status is covered without an edit here.
+		var donor *Record
+		if producesQualitySignal(eff.Status) {
+			donor = modelDonor(byID[eff.ID], eff)
+		}
+
 		if len(resolutions) > 0 {
 			trail := highestRankedTerminal(resolutions)
 			// The retained record is a TRAIL entry, not an occurrence: the id's
@@ -991,6 +1007,28 @@ func retainForCompaction(recs []Record) []Record {
 			trail.FirstSeen = ""
 			trail.CountedThrough = ""
 			out = append(out, trail)
+
+			// The trail may already BE the donor, in which case the attribution
+			// is preserved and nothing more is owed. Compare by append identity,
+			// the same test used to exclude the effective record above.
+			if donor != nil && donor.RunID == trail.RunID &&
+				donor.Timestamp == trail.Timestamp &&
+				normalizeStatus(donor.Status) == normalizeStatus(trail.Status) {
+				donor = nil
+			}
+		}
+		// Retention is bounded at THREE records per id on this branch, not two,
+		// and only when all three are genuinely distinct: the effective record,
+		// the highest-ranked rationale, and — when the effective record is a
+		// counted outcome carrying no Model — the attribution donor. The two
+		// cannot be collapsed: the trail is chosen by rank so the human-typed
+		// rationale survives, while the donor is chosen by recency-among-
+		// model-carriers so the recovered Model matches what the signal would
+		// have read before compaction. Picking one record for both jobs would
+		// silently sacrifice whichever property lost the tie. Growth stays O(1)
+		// per live finding, which is what the bound exists to protect.
+		if donor != nil {
+			out = append(out, *donor)
 		}
 	}
 	return out
@@ -1014,9 +1052,15 @@ func retainForCompaction(recs []Record) []Record {
 // effective record is OPEN is filtered out of the quality signal by
 // foldTerminalByID (an unsettled finding is not an outcome). A `deferred` one is
 // admitted by that filter and even has its Model recovered, but
-// AggregateQualitySignal's status switch maps anything that is neither wontfix nor
-// resolved to no counter and no group, so it emits no row whatever its attribution.
-// Only a settled effective record can produce a row, so only it can lose one.
+// AggregateQualitySignal's status switch maps `deferred` — and any non-terminal
+// status — to no counter and no group, so such an id emits no row whatever its
+// attribution and has nothing to lose.
+//
+// "Only a settled effective record can produce a row" WAS the argument here, and
+// Story 36.0 falsified it: `attempts-exhausted` is a counted outcome that is
+// deliberately not settled. Both callers now gate on producesQualitySignal
+// instead, which is the property that actually matters — can this id emit a row,
+// and therefore can it lose one.
 func modelDonor(group []Record, eff Record) *Record {
 	if strings.TrimSpace(eff.Model) != "" {
 		return nil

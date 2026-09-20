@@ -125,9 +125,11 @@ type debtSeverityCount struct {
 	Total                             int
 }
 
-// debtComponentCount is the live (open+deferred) item count for one component.
-// Settled items are excluded: By Component is the dashboard's prioritization
-// rollup, so it shares the live-backlog scope of By Age and Top Priority.
+// debtComponentCount is the live item count for one component — live meaning
+// exactly what debtIsLive admits, never a re-derived sum of statuses believed to
+// be live. Settled items are excluded: By Component is the dashboard's
+// prioritization rollup, so it shares the live-backlog scope of By Age and Top
+// Priority.
 type debtComponentCount struct {
 	Component string
 	Total     int
@@ -259,8 +261,10 @@ func debtBandLabel(days int) string {
 }
 
 // summarizeDebt aggregates recs into a debtSummary. ByComponent, age buckets,
-// and Top cover only live (open+deferred) items — resolved and dismissed debt
-// is not part of the backlog. Top is ordered most-severe first, then oldest
+// and Top cover only items debtIsLive admits — settled debt is not part of the
+// backlog. That set is open, deferred and attempts-exhausted today; do not
+// re-derive it as a status sum here or at any consumer, which is the drift the
+// Live counter exists to end. Top is ordered most-severe first, then oldest
 // first, capped at topN.
 //
 // A ZERO `now` means "no clock supplied" and yields a nil ByAge rather than a

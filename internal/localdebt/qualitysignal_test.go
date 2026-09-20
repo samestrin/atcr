@@ -115,7 +115,7 @@ func TestAggregateQualitySignal_SinglePersonaModelMixedStatuses(t *testing.T) {
 		term("c", "security-reviewer", "claude-sonnet-4-6", "resolved"),
 	}
 	got := AggregateQualitySignal(recs)
-	want := []QualityRow{{Persona: "security-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 2, ConfirmedCount: 1}}
+	want := []QualityRow{{Persona: "security-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 2, ConfirmedCount: 1, TerminalOutcomes: 3}}
 	assert.Equal(t, want, got)
 }
 
@@ -130,9 +130,9 @@ func TestAggregateQualitySignal_MultiplePersonasAndModels(t *testing.T) {
 	}
 	got := AggregateQualitySignal(recs)
 	want := []QualityRow{
-		{Persona: "perf-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1, ConfirmedCount: 0},
-		{Persona: "security-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1, ConfirmedCount: 0},
-		{Persona: "security-reviewer", Model: "gpt-5.1", DismissedCount: 0, ConfirmedCount: 1},
+		{Persona: "perf-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1, ConfirmedCount: 0, TerminalOutcomes: 1},
+		{Persona: "security-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1, ConfirmedCount: 0, TerminalOutcomes: 1},
+		{Persona: "security-reviewer", Model: "gpt-5.1", DismissedCount: 0, ConfirmedCount: 1, TerminalOutcomes: 1},
 	}
 	assert.Equal(t, want, got, "rows sorted persona asc, then model asc")
 }
@@ -173,7 +173,7 @@ func TestAggregateQualitySignal_ExcludesEmptyModelRecords(t *testing.T) {
 		term("b", "security-reviewer", "claude-sonnet-4-6", "wontfix"), // kept
 	}
 	got := AggregateQualitySignal(recs)
-	want := []QualityRow{{Persona: "security-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1}}
+	want := []QualityRow{{Persona: "security-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1, TerminalOutcomes: 1}}
 	assert.Equal(t, want, got, "empty-model records are excluded, never an empty-model bucket")
 }
 
@@ -188,7 +188,7 @@ func TestAggregateQualitySignal_WhitespaceModelAndPersonaExcluded(t *testing.T) 
 			Reviewers: []string{"  ", "security-reviewer"}, Model: "m", Status: "wontfix"},
 	}
 	got := AggregateQualitySignal(recs)
-	want := []QualityRow{{Persona: "security-reviewer", Model: "m", DismissedCount: 1}}
+	want := []QualityRow{{Persona: "security-reviewer", Model: "m", DismissedCount: 1, TerminalOutcomes: 1}}
 	assert.Equal(t, want, got, "whitespace model excluded; whitespace persona skipped")
 }
 
@@ -200,8 +200,8 @@ func TestAggregateQualitySignal_MultiReviewerAttributesToEveryPersona(t *testing
 		Reviewers: []string{"security-reviewer", "perf-reviewer"}, Model: "claude-sonnet-4-6", Status: "wontfix"}}
 	got := AggregateQualitySignal(recs)
 	want := []QualityRow{
-		{Persona: "perf-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1},
-		{Persona: "security-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1},
+		{Persona: "perf-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1, TerminalOutcomes: 1},
+		{Persona: "security-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1, TerminalOutcomes: 1},
 	}
 	assert.Equal(t, want, got, "both listed personas receive the increment")
 }
@@ -222,7 +222,7 @@ func TestAggregateQualitySignal_DuplicateReviewerEntryDedupedPerRecord(t *testin
 	recs := []Record{{ID: "a", RunID: "a", Timestamp: "2026-07-01T00:00:00Z",
 		Reviewers: []string{"security-reviewer", "", "security-reviewer"}, Model: "m", Status: "wontfix"}}
 	got := AggregateQualitySignal(recs)
-	want := []QualityRow{{Persona: "security-reviewer", Model: "m", DismissedCount: 1}}
+	want := []QualityRow{{Persona: "security-reviewer", Model: "m", DismissedCount: 1, TerminalOutcomes: 1}}
 	assert.Equal(t, want, got, "duplicate reviewer counts once, empty entry skipped")
 }
 
@@ -306,7 +306,7 @@ func TestAggregateQualitySignal_PrefersModelReviewersOverFullList(t *testing.T) 
 		Model:     "claude-sonnet-4-6", ModelReviewers: []string{"security-reviewer"}, Status: "wontfix"}}
 
 	got := AggregateQualitySignal(recs)
-	want := []QualityRow{{Persona: "security-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1}}
+	want := []QualityRow{{Persona: "security-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1, TerminalOutcomes: 1}}
 	assert.Equal(t, want, got, "only the model-attributable subset is credited; the full list is not")
 }
 
@@ -323,7 +323,7 @@ func TestAggregateQualitySignal_GraftedModelCreditsDonorSubsetOnly(t *testing.T)
 		Reviewers: []string{"security-reviewer", "style-reviewer"}, Status: "wontfix"}
 
 	got := AggregateQualitySignal([]Record{donor, effective})
-	want := []QualityRow{{Persona: "security-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1}}
+	want := []QualityRow{{Persona: "security-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1, TerminalOutcomes: 1}}
 	assert.Equal(t, want, got,
 		"style-reviewer never ran on the donor's model and must receive no per-model credit from the graft")
 }
@@ -413,4 +413,51 @@ func TestAggregateQualitySignal_AttemptsExhaustedThenResolvedCountsOnce(t *testi
 	require.Len(t, rows, 1)
 	assert.Equal(t, 1, rows[0].ConfirmedCount, "only the final resolved outcome counts")
 	assert.Zero(t, rows[0].AttemptsExhaustedCount, "the superseded earlier outcome is not double-counted")
+}
+
+// TestAggregateQualitySignal_TerminalOutcomesIsTheSampleSize is the guard on
+// phase-gate finding HIGH-2. Phase 4 derives a weight from these counters and
+// must know whether the sample is big enough to mean anything — a bare int
+// cannot distinguish a measured zero from an unmeasured axis.
+func TestAggregateQualitySignal_TerminalOutcomesIsTheSampleSize(t *testing.T) {
+	rows := AggregateQualitySignal([]Record{
+		{ID: "a", RunID: "r1", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"vera"}, Model: "m1", Status: StatusResolved},
+		{ID: "b", RunID: "r2", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"vera"}, Model: "m1", Status: StatusWontfix},
+		{ID: "c", RunID: "r3", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"vera"}, Model: "m1", Status: StatusUnreproducible},
+		// deferred is terminal but not counted: it must not inflate the sample.
+		{ID: "d", RunID: "r4", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"vera"}, Model: "m1", Status: StatusDeferred},
+	})
+	require.Len(t, rows, 1)
+	assert.Equal(t, 3, rows[0].TerminalOutcomes, "deferred is not a measured outcome")
+	assert.Zero(t, rows[0].AttemptsExhaustedCount,
+		"this axis is zero, and TerminalOutcomes is what says the zero was measured")
+}
+
+// TestAggregateQualitySignal_TerminalOutcomesEqualsTheCounterSum pins the
+// invariant across every emitted row, so a fifth counted outcome added without
+// incrementing the denominator fails here rather than silently skewing a Phase 4
+// ratio.
+func TestAggregateQualitySignal_TerminalOutcomesEqualsTheCounterSum(t *testing.T) {
+	recs := []Record{}
+	for i, s := range []string{
+		StatusResolved, StatusWontfix, StatusUnreproducible, StatusAttemptsExhausted,
+		StatusResolved, StatusDeferred,
+	} {
+		recs = append(recs, Record{
+			ID: fmt.Sprintf("id-%d", i), RunID: "r", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"dax", "vera"}, Model: "m1", Status: s,
+		})
+	}
+	rows := AggregateQualitySignal(recs)
+	require.NotEmpty(t, rows)
+	for _, r := range rows {
+		sum := r.DismissedCount + r.ConfirmedCount + r.UnreproducibleCount + r.AttemptsExhaustedCount
+		assert.Equal(t, sum, r.TerminalOutcomes,
+			"TerminalOutcomes must equal the sum of the counted axes for %s/%s", r.Persona, r.Model)
+		assert.NotZero(t, r.TerminalOutcomes, "an emitted row always has at least one measured outcome")
+	}
 }

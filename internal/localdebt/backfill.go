@@ -14,10 +14,11 @@ import (
 )
 
 // BackfillResult reports one backfill pass. Four non-Scanned counters — Rewritten,
-// Unchanged, Unresolved, Ambiguous — partition the scanned set. SkippedSettled sits
-// OUTSIDE that partition: a settled record is suppressed before Scanned++ runs, so the
+// Unchanged, Unresolved, Ambiguous — partition the scanned set.
+// SkippedRationaleBearing sits
+// OUTSIDE that partition: a suppressed record is skipped before Scanned++ runs, so the
 // printed "N scanned ... M skipped" does not mean the skipped are among the scanned
-// (10 ids with 4 settled print "6 scanned ... 4 skipped", and the four partition
+// (10 ids with 4 suppressed print "6 scanned ... 4 skipped", and the four partition
 // counters sum to 6, not 10). The three partition counters that are not Rewritten
 // each mean something the operator may want to act on separately — a pruned review
 // tree (Unresolved), a repo holding several reviews that anchor the same finding
@@ -38,11 +39,17 @@ type BackfillResult struct {
 	Unresolved int
 	Ambiguous  int // several surviving candidates disagreed, so none was written
 
-	// SkippedSettled counts effective records the fold filter suppressed because the
-	// id is settled. Without it the suppression is invisible: a store whose ids are
-	// all settled reports "0 scanned, 0 rewritten", which reads identically to a
-	// store that needs no repair.
-	SkippedSettled int
+	// SkippedRationaleBearing counts effective records the fold filter suppressed
+	// because the record may hold an operator-typed rationale this pass must not
+	// overwrite (bearsRationale: resolved, wontfix, unreproducible,
+	// attempts-exhausted). Without it the suppression is invisible: a store whose
+	// ids are all suppressed reports "0 scanned, 0 rewritten", which reads
+	// identically to a store that needs no repair.
+	//
+	// It was SkippedSettled until Story 36.0, and the rename is not cosmetic:
+	// `attempts-exhausted` is suppressed here and is NOT settled, so the old name
+	// described the wrong set on the one command that rewrites the store in place.
+	SkippedRationaleBearing int
 
 	// RewrittenLines counts the SHARD LINES the pass wrote, which Rewritten does
 	// not: one id can carry several lines (a re-detection after a resolution
@@ -172,7 +179,7 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 				// FoldRecords makes it effective. What the skip owes instead is
 				// VISIBILITY: counted below, so "0 scanned" is distinguishable from a
 				// scan that was suppressed.
-				res.SkippedSettled++
+				res.SkippedRationaleBearing++
 				continue
 			}
 			sr := r.SourceReport
@@ -246,7 +253,7 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 		// take away from a half-completed rewrite of an append-only store.
 		//
 		// Only the fields describing WORK DONE survive. The scan counters (Scanned,
-		// Rewritten, Unresolved, Ambiguous, Unchanged, SkippedSettled) describe a pass
+		// Rewritten, Unresolved, Ambiguous, Unchanged, SkippedRationaleBearing) describe a pass
 		// that completed, and this one did not, so carrying them would report a
 		// partition of a scan whose writes were never finished.
 		return BackfillResult{

@@ -296,7 +296,7 @@ func newDebtListCmd() *cobra.Command {
 	}
 	addDebtStoreFlag(cmd)
 	cmd.Flags().String("severity", "", "filter by severity (exact, case-insensitive: CRITICAL|HIGH|MEDIUM|LOW)")
-	cmd.Flags().String("status", "", "filter by status (exact: open|deferred|resolved|wontfix)")
+	cmd.Flags().String("status", "", "filter by status (exact: "+debtListStatusList()+")")
 	cmd.Flags().String("category", "", "filter by category (substring match)")
 	cmd.Flags().String("component", "", "filter by component (path prefix, e.g. internal/autofix)")
 	cmd.Flags().String("origin", "", "filter by origin (exact: review|manual)")
@@ -422,7 +422,7 @@ func mustFlag(cmd *cobra.Command, name string) string {
 // excluded from the record schema by the atcr<->cadence seam.
 type debtFilter struct {
 	Severity  string // exact, case-insensitive (CRITICAL|HIGH|MEDIUM|LOW)
-	Status    string // exact (open|deferred|resolved|wontfix); "open" matches an empty status
+	Status    string // exact (see debtListStatuses); "open" matches an empty status
 	Category  string // substring, case-insensitive
 	Component string // path-prefix match against the record's File
 	Origin    string // exact, case-insensitive (review|manual); matches the EFFECTIVE origin

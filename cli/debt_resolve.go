@@ -171,8 +171,8 @@ func newDebtResolveCmd() *cobra.Command {
 	cmd.Flags().Bool("json", false, "emit the selected items as a JSON array")
 	cmd.Flags().String("severity", "", "filter by severity (exact, case-insensitive: CRITICAL|HIGH|MEDIUM|LOW)")
 	cmd.Flags().Int("max", 10, "action cap: how many items are selected to act on (0 = no cap). Distinct from debt dashboard --top, which is a ranked-display cutoff over a full aggregation — and where 0 suppresses the list rather than removing the cap")
-	cmd.Flags().String("status", "resolved", "terminal status to record for the positional id (resolved|wontfix)")
-	cmd.Flags().String("reason", "", "justification recorded on the resolution record; replaces any existing justification (e.g. why a finding is wontfix)")
+	cmd.Flags().String("status", "resolved", "terminal status to record for the positional id ("+resolveStatusList()+")")
+	cmd.Flags().String("reason", "", "justification recorded on the resolution record; replaces any existing justification. Required for every status other than resolved")
 	// The retired flags fail with guidance, not a bare pflag "unknown flag":
 	// --resolve <id> stuttered against the subcommand name and is now the
 	// positional form; --list duplicated `atcr debt list`.

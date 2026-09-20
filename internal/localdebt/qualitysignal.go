@@ -85,6 +85,29 @@ func foldTerminalByID(records []Record) []Record {
 	return terminal
 }
 
+// producesQualitySignal reports whether an effective record with this status
+// contributes a row to AggregateQualitySignal — i.e. whether the status is one
+// of the four COUNTED terminal outcomes, as opposed to merely terminal.
+//
+// `deferred` is the one terminal status that is not counted: it records that a
+// decision was postponed, which says nothing about whether the finding was real
+// and so is not a quality signal about the reviewer that raised it.
+//
+// This exists as a predicate rather than as a second copy of the switch in
+// AggregateQualitySignal because compaction has to ask the same question.
+// retainForCompaction preserves an id's model attribution only when losing it
+// would delete a signal row, and that test used settledness as a proxy until
+// Story 36.0 made `attempts-exhausted` both unsettled AND counted. A status
+// counted in one place and not the other silently deletes outcomes.
+func producesQualitySignal(status string) bool {
+	switch normalizeStatus(status) {
+	case StatusWontfix, StatusResolved, StatusUnreproducible, StatusAttemptsExhausted:
+		return true
+	default:
+		return false
+	}
+}
+
 // QualityRow is one aggregated per-(persona, model) quality-signal row: how many
 // findings that persona+model raised were later dismissed (status wontfix) versus
 // confirmed (status resolved). It is the internal aggregation shape — a fixed,
@@ -109,6 +132,30 @@ type QualityRow struct {
 	// them is a separate, deliberate edit.
 	UnreproducibleCount    int
 	AttemptsExhaustedCount int
+
+	// TerminalOutcomes is the number of terminal records that produced this row:
+	// the sample size behind the four counters above. It always equals their sum
+	// today, and it is carried explicitly anyway because a consumer must be able
+	// to tell a MEASURED zero from an UNMEASURED axis, and a bare int counter
+	// cannot say which it is.
+	//
+	// Without it, UnreproducibleCount == 0 collapses three different facts: the
+	// pair genuinely never had that outcome; the store predates these statuses
+	// so the axis was never measurable; or the outcome existed and was
+	// superseded by a later resolution, which after compaction is not
+	// reconstructable at all. A weight derived from a ratio over these counters
+	// needs the denominator to know whether the sample is big enough to mean
+	// anything — the same "is this measurable yet?" question
+	// DefaultTrustMinRuns answers for trust priors.
+	//
+	// It is also why these counters must be read as CURRENT FOLD STATE, not as
+	// cumulative history. AggregateQualitySignal folds to one terminal record
+	// per finding id, so an id that was attempts-exhausted and later resolved
+	// contributes one confirmation and no exhausted attempt. That is the correct
+	// answer to "what happened in the end", and the wrong answer to "how often
+	// did this reviewer's findings resist a fix" — do not use these as the
+	// latter.
+	TerminalOutcomes int
 }
 
 // AggregateQualitySignal folds the append-only debt stream by ID to its terminal
@@ -166,6 +213,10 @@ func AggregateQualitySignal(records []Record) []QualityRow {
 		default:
 			continue // deferred (or any other terminal) is neither a signal nor a group
 		}
+		// Keep the arms above and producesQualitySignal in step. The predicate is
+		// what store.go's compaction consults to decide whether an id's model
+		// attribution still has to be preserved; a status counted here but absent
+		// there loses its donor and the whole outcome vanishes from the signal.
 
 		seen := map[string]bool{}
 		// ModelReviewers is the attributable subset for the record's Model. An
@@ -194,6 +245,7 @@ func AggregateQualitySignal(records []Record) []QualityRow {
 			row.ConfirmedCount += confirmed
 			row.UnreproducibleCount += unreproducible
 			row.AttemptsExhaustedCount += attemptsExhausted
+			row.TerminalOutcomes++
 		}
 	}
 
