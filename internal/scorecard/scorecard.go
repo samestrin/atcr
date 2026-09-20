@@ -342,19 +342,26 @@ type ReviewerMeta struct {
 	// classification is derived from) and Emit (which builds the Record), so no
 	// new parameter or parallel map is introduced.
 	//
-	// There is exactly ONE source of a non-empty value: outcomeFor, applied to
-	// an AgentStatus read from this run's pool summary. Everything else leaves
-	// the zero value, and each of those cases is deliberate:
-	//   - no pool summary naming any agent — nothing witnessed a fan-out, so
-	//     the reviewer names in res.Findings are unverified input rather than
-	//     observations, and classifying them would make a hand-authored stream
-	//     forge a trust prior (MsgUnverifiedNotScored announces this)
-	//   - an AgentStatus that is not internally coherent (see outcomeFor)
-	//   - a direct Emit caller that does not populate the field
+	// Three sources produce a non-empty value, and they agree by construction
+	// because all three describe what the reviewer actually did:
+	//   - outcomeFor, applied to an AgentStatus from this run's pool summary.
+	//     This is the witnessed case and it WINS when it exists, so a reviewer
+	//     recorded as failed stays failed even if res.Findings also names it.
+	//   - outcomeFindings, for a reviewer with no AgentStatus that is named on
+	//     a finding which survived reconcile. Being named there means it raised
+	//     one, which is exactly what the shared classifier means by findings.
+	//   - outcomeFindings again, for a reviewer reached only through
+	//     res.Unresolved: the Tier 4 check routed its findings, which is why
+	//     they are not in res.Findings. The phantom is charged through
+	//     FindingsRaised, not through this field.
 	//
-	// The zero value is benchmark.OutcomeUnknown (""), which excludes the record
-	// from trust scoring and from nothing else — the record is still written and
-	// still carries its counts, its rate and its leaderboard row.
+	// The zero value survives in exactly two cases: an AgentStatus that is not
+	// internally coherent (see outcomeFor), and a direct Emit caller that does
+	// not populate the field.
+	//
+	// It is benchmark.OutcomeUnknown (""), which excludes the record from trust
+	// scoring and from nothing else — the record is still written and still
+	// carries its counts, its rate and its leaderboard row.
 	Outcome string
 }
 
@@ -788,8 +795,13 @@ func distinctCount(xs []string) int {
 		// everywhere else (EmitForReconcile's trimmedReviewers, the pool loop,
 		// NewCloudSyncRecord), so counting one here would let a reviewer that
 		// leaves no record of its own act as a distinct corroborator.
-		if strings.TrimSpace(x) != "" {
-			seen[x] = true
+		if name := strings.TrimSpace(x); name != "" {
+			// Key on the TRIMMED name. Filtering on the trimmed value while
+			// keying on the raw one would let " bruce" and "bruce" count as two
+			// distinct corroborators of the same finding — a reviewer
+			// corroborating itself. Unreachable through EmitForReconcile, which
+			// pre-trims, but Emit is exported.
+			seen[name] = true
 		}
 	}
 	return len(seen)

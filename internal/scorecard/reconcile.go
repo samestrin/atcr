@@ -88,8 +88,8 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 				// so the guard cost an attacker one extra JSON file and cost
 				// every legitimate path-anchored install its trust priors
 				// permanently. The forgery exposure is pre-existing and wider
-				// than this line — reproduced unchanged at HEAD~4, before this
-				// sprint touched the file — and is filed as TD-021.
+				// than this line — reproduced unchanged at 197eaa93 (yielding
+				// map[attacker:1 sockpuppet:1]), before this sprint touched the file — and is filed as TD-021.
 				reviewers[name] = ReviewerMeta{Outcome: outcomeFindings}
 			}
 		}

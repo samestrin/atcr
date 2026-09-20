@@ -130,7 +130,8 @@ func TestEmitForReconcile_RaisedIsTheAgentsPostEnforcementCount(t *testing.T) {
 // hand-authored directory forging a trust prior. It does not, and that was
 // measured rather than argued: the pool summary that re-enables classification
 // lives in the SAME directory, and the identical forgery reproduces unchanged at
-// HEAD~4, before this sprint touched the file. The guard cost an attacker one
+// 197eaa93 — yielding map[attacker:1 sockpuppet:1] — before this sprint
+// touched the file. The guard cost an attacker one
 // extra JSON file and cost every legitimate path-anchored install its trust
 // priors permanently. See TD-021.
 func TestEmitForReconcile_NoPoolSummaryClassifiesFromTheFindings(t *testing.T) {
@@ -216,6 +217,29 @@ func TestEmitForReconcile_PaddedReviewerNameKeepsItsCounts(t *testing.T) {
 	assert.Equal(t, 1, bruce.FindingsCorroborated)
 	assert.InDelta(t, 0.5, bruce.CorroborationRate, 1e-9)
 	assert.Equal(t, "opus", bruce.Model)
+
+	// trimmedReviewers must return a FRESH slice, never trim in place. res is
+	// not this package's to mutate and it is consumed after this call: the CLI
+	// hands the same Result to persistLocalDebt, and internal/localdebt reads
+	// f.Reviewers off it. An in-place trim would silently rewrite localdebt
+	// records, and nothing else in the suite would notice.
+	assert.Equal(t, []string{" bruce ", "greta"}, res.Findings[0].Reviewers,
+		"EmitForReconcile must not mutate the caller's Result")
+	assert.Equal(t, []string{" bruce "}, res.Findings[1].Reviewers)
+}
+
+// TestDistinctCount_IgnoresWhitespaceAndCollapsesPaddedDuplicates covers the
+// corroboration counter directly. It is defensive rather than reachable through
+// EmitForReconcile, which pre-trims — but Emit is exported, so a caller that
+// builds its own Finding reaches it, and both halves matter there: a
+// whitespace-only name must not corroborate anything, and a padded duplicate of
+// a real name must not let a reviewer corroborate itself.
+func TestDistinctCount_IgnoresWhitespaceAndCollapsesPaddedDuplicates(t *testing.T) {
+	assert.Equal(t, 0, distinctCount([]string{"", "  ", "\t"}))
+	assert.Equal(t, 1, distinctCount([]string{"bruce", "   "}))
+	assert.Equal(t, 1, distinctCount([]string{" bruce ", "bruce"}),
+		"a padded duplicate is the same reviewer, not a second corroborator")
+	assert.Equal(t, 2, distinctCount([]string{"bruce", "greta"}))
 }
 
 // TestEmitForReconcile_RoutedOnlyReviewerIsClassifiedFromTheSummary closes gate
