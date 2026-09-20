@@ -947,15 +947,31 @@ func retainForCompaction(recs []Record) []Record {
 			continue
 		}
 		out = append(out, eff)
-		// SETTLED, not merely closed, on both sides. An effective `deferred` record
-		// is not a resolution — it carries no justification, and treating it as one
-		// would discard an earlier `resolved` record and the --reason text only that
-		// record holds. Selecting only settled candidates also excludes the effective
-		// record from its own trail without an identity comparison, since a record
-		// that reached this line is by definition not settled.
+		// RATIONALE-BEARING, not merely closed, on both sides. An effective
+		// `deferred` record is not a resolution — it carries no justification, and
+		// treating it as one would discard an earlier `resolved` record and the
+		// --reason text only that record holds.
+		//
+		// The gate reads bearsRationale rather than IsSettledStatus because Story
+		// 36.0 split those two apart: `attempts-exhausted` is unsettled (it stays
+		// closeable) but its `--reason` is mandatory, so it is precisely the kind of
+		// record this trail exists to preserve. See bearsRationale in record.go.
+		//
+		// The old gate excluded the effective record from its own trail for free:
+		// a record reaching this line was by definition not settled, so it could
+		// never be its own candidate. Widening the gate costs that property —
+		// an effective `attempts-exhausted` record is unsettled AND
+		// rationale-bearing, so it would be retained a second time as its own
+		// trail entry, breaking both the two-records-per-id bound and
+		// fold-stability. Restore the exclusion explicitly, by append identity
+		// (RunID + Timestamp + Status is unique within one id: markDebtResolved
+		// stamps RunID as timestamp+"-"+status).
 		var resolutions []Record
 		for _, r := range byID[eff.ID] {
-			if IsSettledStatus(r.Status) {
+			if r.RunID == eff.RunID && r.Timestamp == eff.Timestamp && r.Status == eff.Status {
+				continue // the effective record is not its own trail entry
+			}
+			if bearsRationale(r.Status) {
 				resolutions = append(resolutions, r)
 			}
 		}
@@ -1032,6 +1048,12 @@ func modelDonor(group []Record, eff Record) *Record {
 // resolution trail, and a `resolved` record can carry a human-typed --reason
 // while a `deferred` one cannot (nothing writes a justification with it), so a
 // later deferral must not displace an earlier resolution and its rationale.
+//
+// ClosedStatusRank is that criterion made explicit, and Story 36.0 extended it
+// rather than bolting two statuses onto the end. `unreproducible` and
+// `attempts-exhausted` both REQUIRE --reason where `resolved` does not, so they
+// rank above it: the record most certain to carry a rationale wins the retention
+// slot. See ClosedStatusRank's own comment for the full chain.
 func highestRankedTerminal(terminals []Record) Record {
 	best := terminals[0]
 	for _, r := range terminals[1:] {

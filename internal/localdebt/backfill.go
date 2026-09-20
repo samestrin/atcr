@@ -135,9 +135,9 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 		// rewriteJustifications.
 		want := map[string]replacement{}
 		for _, r := range FoldRecords(recs) {
-			if IsSettledStatus(r.Status) {
-				// SETTLED, not merely closed — the distinction record.go draws
-				// between the two predicates decides both directions here.
+			if bearsRationale(r.Status) {
+				// RATIONALE-BEARING, not merely closed — the distinction record.go
+				// draws between the predicates decides both directions here.
 				// `resolved` and `wontfix` are done: a resolved id is settled
 				// history whose excerpt gates nothing, and a wontfix id's
 				// justification MAY be the operator's --reason rather than a review
@@ -146,6 +146,15 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 				// carries a terminal marker but means "not now": it is live,
 				// closeable debt whose stale excerpt is exactly what this pass exists
 				// to repair, so it must NOT be skipped.
+				//
+				// The gate reads bearsRationale rather than IsSettledStatus because
+				// Story 36.0 split the two apart. `attempts-exhausted` is UNSETTLED
+				// (it stays closeable, like deferred) but its `--reason` is
+				// MANDATORY, so unlike deferred it always holds operator-typed text
+				// that exists nowhere else. Gating on settledness would replay a
+				// review excerpt straight over it. That is the same irreversible loss
+				// the wontfix skip exists to prevent, arriving by the one route the
+				// old proxy could not see — and here it is DOES, not MAY.
 				//
 				// MAY, not DOES: --reason is OPTIONAL for wontfix. cli/debt_resolve.go
 				// permits an empty --reason whenever isRecordedRationale holds of the

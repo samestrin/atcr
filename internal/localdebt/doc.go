@@ -151,12 +151,32 @@
 //	                                         terminal rule used to silence.
 //	deferred   Re-surfaces on re-detection   "Not now" is not "never".
 //
-// Three predicates express this, and `deferred` is the status that separates
-// them. IsClosedStatus classifies a RECORD as terminal (all three statuses);
-// IsSettledStatus asks whether the ITEM is done (resolved|wontfix), which gates
-// closability and the live-backlog count — a deferred item carries a terminal
-// marker but is still work, so it must stay closeable; IsSuppressingStatus
-// decides whether a terminal state outlives a re-detection (wontfix only).
+//	unreproducible      Re-opens on           Investigated, could not be
+//	                    re-detection          reproduced. A determination was
+//	                                          reached, so the item is done — but
+//	                                          re-detection is evidence the call
+//	                                          was wrong, so it never suppresses.
+//	attempts-exhausted  Re-surfaces on        Fix attempts ran out. The defect is
+//	                    re-detection          presumed real and the work
+//	                                          unfinished, so it stays live and
+//	                                          closeable, like deferred.
+//
+// Four predicates express this, and no single status separates them all.
+// IsClosedStatus classifies a RECORD as terminal (every status above);
+// IsSettledStatus asks whether the ITEM is done (resolved|wontfix|
+// unreproducible), which gates closability and the live-backlog count — a
+// deferred or attempts-exhausted item carries a terminal marker but is still
+// work, so it must stay closeable; IsSuppressingStatus decides whether a
+// terminal state outlives a re-detection (wontfix only); bearsRationale
+// (unexported) asks whether the RECORD may hold operator-typed text that exists
+// nowhere else, which gates compaction retention and justification backfill.
+//
+// The fourth exists because Story 36.0 pulled "is the item done?" apart from
+// "does the record carry a rationale?". Until then the two selected the same
+// records and IsSettledStatus served as a proxy for both. `attempts-exhausted`
+// is the counterexample: unsettled, yet `--reason` is mandatory for it, so a
+// settledness-gated maintenance pass would delete or overwrite the only copy of
+// why a human closed the finding.
 // FoldRecords implements the table: a
 // suppressing record wins unconditionally, otherwise the effective record is the
 // latest by timestamp, so a re-detection appended after a resolution is the
@@ -262,7 +282,8 @@
 // Exactly one live writer: `atcr debt add --status deferred` (cli/debt_add.go),
 // which files a manual record with that status. It is new — T2 created it when it
 // rewired `add` onto this store. `atcr debt resolve` cannot write `deferred`
-// (resolveStatuses admits resolved|wontfix only), and persistLocalDebt writes an
+// (resolveStatuses admits resolved|wontfix|unreproducible|attempts-exhausted
+// only — Story 36.0 widened it, still excluding `deferred`), and persistLocalDebt writes an
 // empty status (open). The historical `deferred` writers lived in the
 // .planning/-scoped store — internal/tdmigrate's Item.Status and
 // internal/debt's aggregate classification — and both packages were deleted by

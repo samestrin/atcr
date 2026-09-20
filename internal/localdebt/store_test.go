@@ -2709,3 +2709,118 @@ func BenchmarkAppendBatch500(b *testing.B) {
 		}
 	}
 }
+
+// --- Sprint 36.0 Story 01 / AC 01-02: the five-term rank chain's real effects ---
+
+// mkTerminal builds a terminal record for one id at a chosen timestamp. The id
+// is set directly rather than stamped, because these tests are about which
+// record for a GIVEN id wins, not about id derivation.
+func mkTerminal(id, ts, status string) Record {
+	return Record{
+		SchemaVersion: SchemaVersion,
+		ID:            id,
+		RunID:         ts + "-" + status,
+		Timestamp:     ts,
+		Severity:      "HIGH",
+		File:          "internal/x/y.go",
+		Line:          12,
+		Problem:       "unbounded retry loop",
+		Status:        status,
+		Justification: "recorded rationale",
+	}
+}
+
+// TestFoldRecords_EqualTimestampDivergentNewStatuses locks AC 01-02 Edge Case 1.
+// latestItem is RECENCY-first, so ClosedStatusRank decides only on an exact
+// timestamp tie — which is why the fixture pins equal timestamps. unreproducible
+// outranks attempts-exhausted: a completed determination beats unfinished work.
+func TestFoldRecords_EqualTimestampDivergentNewStatuses(t *testing.T) {
+	const ts = "2026-09-01T00:00:00Z"
+	exhausted := mkTerminal("id-eq", ts, StatusAttemptsExhausted)
+	unrepro := mkTerminal("id-eq", ts, StatusUnreproducible)
+
+	// Assert in both append orders so the result is precedence, not read order.
+	for _, recs := range [][]Record{{exhausted, unrepro}, {unrepro, exhausted}} {
+		folded := FoldRecords(recs)
+		require.Len(t, folded, 1)
+		assert.Equal(t, StatusUnreproducible, folded[0].Status,
+			"on an exact timestamp tie, rank decides and unreproducible outranks attempts-exhausted")
+	}
+}
+
+// TestFoldRecords_DistinctTimestampsAreDecidedByRecencyNotRank is the companion
+// AC 01-02 Edge Case 1 demands: it documents which key actually governs the read
+// path. attempts-exhausted ranks BELOW unreproducible, yet the later
+// attempts-exhausted record still wins, because latestItem is recency-first.
+func TestFoldRecords_DistinctTimestampsAreDecidedByRecencyNotRank(t *testing.T) {
+	unrepro := mkTerminal("id-recency", "2026-09-01T00:00:00Z", StatusUnreproducible)
+	exhausted := mkTerminal("id-recency", "2026-09-02T00:00:00Z", StatusAttemptsExhausted)
+
+	folded := FoldRecords([]Record{unrepro, exhausted})
+	require.Len(t, folded, 1)
+	assert.Equal(t, StatusAttemptsExhausted, folded[0].Status,
+		"the later record wins outright on the read path; rank is not consulted")
+}
+
+// TestRetainForCompaction_ReasonedNewStatusOutranksResolved locks AC 01-02 Edge
+// Case 1b under sprint-plan.md → Phase 1 Clarifications → C1.
+//
+// This is the path where the rank chain genuinely changes behaviour for records
+// that already exist: highestRankedTerminal is RANK-first, and it justifies that
+// ordering by how certainly a record carries a human-typed --reason. Only
+// wontfix was ever reason-gated and AC 01-03 leaves resolved ungated, so a
+// reason-less resolved must NOT displace a reasoned unreproducible in the
+// retained trail. Under the originally-planned chain (resolved above both new
+// statuses) this test fails, which is exactly why C1 flipped it.
+func TestRetainForCompaction_ReasonedNewStatusOutranksResolved(t *testing.T) {
+	open := Record{
+		SchemaVersion: SchemaVersion, ID: "id-retain",
+		RunID: "2026-09-03T00:00:00Z-open", Timestamp: "2026-09-03T00:00:00Z",
+		Severity: "HIGH", File: "internal/x/y.go", Line: 12,
+		Problem: "unbounded retry loop", Status: "",
+	}
+	resolved := mkTerminal("id-retain", "2026-09-01T00:00:00Z", StatusResolved)
+	unrepro := mkTerminal("id-retain", "2026-09-02T00:00:00Z", StatusUnreproducible)
+
+	retained := retainForCompaction([]Record{resolved, unrepro, open})
+
+	var terminals []string
+	var sawOpen bool
+	for _, r := range retained {
+		if IsClosedStatus(r.Status) {
+			terminals = append(terminals, r.Status)
+			continue
+		}
+		sawOpen = true
+	}
+	assert.True(t, sawOpen, "the effective open record is always retained")
+	require.Len(t, terminals, 1, "retention is bounded at one terminal per id")
+	assert.Equal(t, StatusUnreproducible, terminals[0],
+		"the reasoned unreproducible must be retained over the earlier reason-less resolved")
+}
+
+// TestRetainForCompaction_AttemptsExhaustedAlsoOutranksResolved covers the
+// second half of C1: attempts-exhausted is equally reason-gated by AC 01-03, so
+// it too must survive against an earlier resolved.
+func TestRetainForCompaction_AttemptsExhaustedAlsoOutranksResolved(t *testing.T) {
+	open := Record{
+		SchemaVersion: SchemaVersion, ID: "id-retain-2",
+		RunID: "2026-09-03T00:00:00Z-open", Timestamp: "2026-09-03T00:00:00Z",
+		Severity: "HIGH", File: "internal/x/y.go", Line: 12,
+		Problem: "unbounded retry loop", Status: "",
+	}
+	resolved := mkTerminal("id-retain-2", "2026-09-01T00:00:00Z", StatusResolved)
+	exhausted := mkTerminal("id-retain-2", "2026-09-02T00:00:00Z", StatusAttemptsExhausted)
+
+	retained := retainForCompaction([]Record{resolved, exhausted, open})
+
+	var terminals []string
+	for _, r := range retained {
+		if IsClosedStatus(r.Status) {
+			terminals = append(terminals, r.Status)
+		}
+	}
+	require.Len(t, terminals, 1, "retention is bounded at one terminal per id")
+	assert.Equal(t, StatusAttemptsExhausted, terminals[0],
+		"the reasoned attempts-exhausted must be retained over the earlier reason-less resolved")
+}

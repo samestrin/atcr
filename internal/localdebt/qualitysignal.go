@@ -96,21 +96,39 @@ type QualityRow struct {
 	Model          string
 	DismissedCount int
 	ConfirmedCount int
+	// UnreproducibleCount and AttemptsExhaustedCount are the Story 36.0
+	// ground-truth outcomes, counted SEPARATELY rather than folded into the two
+	// counters above. Merging them would destroy the distinction the durable
+	// lens score is built on: "was fixed", "was never real" and "could not be
+	// fixed" say different things about the reviewer that raised the finding,
+	// and only the first is a confirmation.
+	//
+	// These two stay internal to this package for now. The outbound
+	// telemetry.QualitySignal payload and the local maintainer report are
+	// field-by-field allowlists and are deliberately NOT extended here; growing
+	// them is a separate, deliberate edit.
+	UnreproducibleCount    int
+	AttemptsExhaustedCount int
 }
 
 // AggregateQualitySignal folds the append-only debt stream by ID to its terminal
-// records, then groups those by (persona, model) and sums dismissed (wontfix) and
-// confirmed (resolved) counts, returning one row per distinct pair sorted persona
-// ascending then model ascending. It mirrors internal/scorecard/aggregate.go's
+// records, then groups those by (persona, model) and sums dismissed (wontfix),
+// confirmed (resolved), unreproducible and attempts-exhausted counts, returning
+// one row per distinct pair sorted persona ascending then model ascending. The
+// last two are the Story 36.0 ground-truth outcomes and are counted on their own
+// axes — see QualityRow for why they are not folded into the first two. It
+// mirrors internal/scorecard/aggregate.go's
 // Aggregate() grouping/sort idiom (map-of-key + insertion-order slice +
 // sort.SliceStable tie-break).
 //
 // Exclusion rules (all content-free, reading only Reviewers/Model/Status):
 //   - Records with an empty Model (v1, or v2 with unresolved attribution) are
 //     excluded from every per-model row rather than bucketed under "" (AC 01-02).
-//   - A terminal status that is neither wontfix nor resolved (i.e. deferred)
-//     contributes to neither counter and creates no group, so a deferred-only
-//     pair emits no row (AC 01-01 EC2).
+//   - A terminal status outside the four counted outcomes (i.e. deferred)
+//     contributes to no counter and creates no group, so a deferred-only pair
+//     emits no row (AC 01-01 EC2). `unreproducible` and `attempts-exhausted`
+//     deliberately do NOT take this arm: each is a measured outcome, so a pair
+//     whose only outcome is one of them still emits a row.
 //   - Every listed persona receives the outcome, deduplicated per-record with
 //     empty entries skipped (AC 01-03); an empty reviewer list contributes to
 //     no group. The list read is ModelReviewers (the subset the record's Model
@@ -135,12 +153,16 @@ func AggregateQualitySignal(records []Record) []QualityRow {
 		if model == "" {
 			continue // attribution-incomplete: excluded from per-model rows
 		}
-		var dismissed, confirmed int
+		var dismissed, confirmed, unreproducible, attemptsExhausted int
 		switch normalizeStatus(rec.Status) {
 		case StatusWontfix:
 			dismissed = 1
 		case StatusResolved:
 			confirmed = 1
+		case StatusUnreproducible:
+			unreproducible = 1
+		case StatusAttemptsExhausted:
+			attemptsExhausted = 1
 		default:
 			continue // deferred (or any other terminal) is neither a signal nor a group
 		}
@@ -170,6 +192,8 @@ func AggregateQualitySignal(records []Record) []QualityRow {
 			}
 			row.DismissedCount += dismissed
 			row.ConfirmedCount += confirmed
+			row.UnreproducibleCount += unreproducible
+			row.AttemptsExhaustedCount += attemptsExhausted
 		}
 	}
 

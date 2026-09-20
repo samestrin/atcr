@@ -327,3 +327,90 @@ func TestAggregateQualitySignal_GraftedModelCreditsDonorSubsetOnly(t *testing.T)
 	assert.Equal(t, want, got,
 		"style-reviewer never ran on the donor's model and must receive no per-model credit from the graft")
 }
+
+// --- Sprint 36.0 Story 01 / AC 01-04: the two new terminal outcomes ----------
+
+// TestAggregateQualitySignal_CountsNewTerminalStatusesAsTheirOwnSignal locks AC
+// 01-04 Scenario 3: unreproducible and attempts-exhausted each get their own
+// counter. They are NOT folded into ConfirmedCount or DismissedCount — the whole
+// point of the ground-truth signal is that "was fixed", "was never real" and
+// "could not be fixed" are three different facts — and they are NOT dropped the
+// way deferred is.
+func TestAggregateQualitySignal_CountsNewTerminalStatusesAsTheirOwnSignal(t *testing.T) {
+	recs := []Record{
+		{ID: "a", RunID: "r1", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"vera"}, Model: "m1", Status: StatusUnreproducible},
+		{ID: "b", RunID: "r2", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"vera"}, Model: "m1", Status: StatusAttemptsExhausted},
+		{ID: "c", RunID: "r3", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"vera"}, Model: "m1", Status: StatusResolved},
+		{ID: "d", RunID: "r4", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"vera"}, Model: "m1", Status: StatusWontfix},
+	}
+
+	rows := AggregateQualitySignal(recs)
+	require.Len(t, rows, 1, "one (persona, model) pair yields one row")
+	row := rows[0]
+
+	assert.Equal(t, 1, row.ConfirmedCount, "resolved stays the confirmed counter")
+	assert.Equal(t, 1, row.DismissedCount, "wontfix stays the dismissed counter")
+	assert.Equal(t, 1, row.UnreproducibleCount, "unreproducible is its own signal")
+	assert.Equal(t, 1, row.AttemptsExhaustedCount, "attempts-exhausted is its own signal")
+}
+
+// TestAggregateQualitySignal_NewStatusAloneStillEmitsARow locks the half of AC
+// 01-04 that a merged-counter implementation would pass by accident: a pair
+// whose ONLY outcome is a new status must still produce a row. deferred creates
+// no group (qualitysignal.go's default arm), so the new statuses must not take
+// that same arm.
+func TestAggregateQualitySignal_NewStatusAloneStillEmitsARow(t *testing.T) {
+	rows := AggregateQualitySignal([]Record{
+		{ID: "a", RunID: "r1", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"archer"}, Model: "m1", Status: StatusUnreproducible},
+	})
+	require.Len(t, rows, 1, "an unreproducible-only pair must still emit a row")
+	assert.Equal(t, 1, rows[0].UnreproducibleCount)
+	assert.Zero(t, rows[0].ConfirmedCount)
+	assert.Zero(t, rows[0].DismissedCount)
+}
+
+// TestAggregateQualitySignal_DeferredStillCreatesNoGroup is the regression guard
+// for the existing rule the new statuses must NOT inherit: deferred is still
+// neither a signal nor a group.
+func TestAggregateQualitySignal_DeferredStillCreatesNoGroup(t *testing.T) {
+	rows := AggregateQualitySignal([]Record{
+		{ID: "a", RunID: "r1", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"otto"}, Model: "m1", Status: StatusDeferred},
+	})
+	assert.Empty(t, rows, "a deferred-only pair emits no row, unchanged by Story 01")
+}
+
+// TestAggregateQualitySignal_NewStatusWithoutModelIsExcluded locks AC 01-04 Edge
+// Case 2: the attribution-incomplete exclusion applies to the new statuses
+// exactly as it already does to resolved and wontfix.
+func TestAggregateQualitySignal_NewStatusWithoutModelIsExcluded(t *testing.T) {
+	rows := AggregateQualitySignal([]Record{
+		{ID: "a", RunID: "r1", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"vera"}, Model: "", Status: StatusUnreproducible},
+		{ID: "b", RunID: "r2", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"vera"}, Model: "   ", Status: StatusAttemptsExhausted},
+	})
+	assert.Empty(t, rows, "attribution-incomplete records contribute to no group")
+}
+
+// TestAggregateQualitySignal_AttemptsExhaustedThenResolvedCountsOnce locks AC
+// 01-04 Edge Case 1. The later resolved wins because FoldRecords is
+// recency-first (latestItem), NOT because attempts-exhausted is re-resolvable
+// and NOT because of ClosedStatusRank — hence the strictly later timestamp on
+// the second record.
+func TestAggregateQualitySignal_AttemptsExhaustedThenResolvedCountsOnce(t *testing.T) {
+	rows := AggregateQualitySignal([]Record{
+		{ID: "a", RunID: "r1", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"dax"}, Model: "m1", Status: StatusAttemptsExhausted},
+		{ID: "a", RunID: "r2", Timestamp: "2026-09-02T00:00:00Z",
+			Reviewers: []string{"dax"}, Model: "m1", Status: StatusResolved},
+	})
+	require.Len(t, rows, 1)
+	assert.Equal(t, 1, rows[0].ConfirmedCount, "only the final resolved outcome counts")
+	assert.Zero(t, rows[0].AttemptsExhaustedCount, "the superseded earlier outcome is not double-counted")
+}
