@@ -537,7 +537,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			})
 
 			acc[key].caseIDs = append(acc[key].caseIDs, c.ID)
-			acc[key].outcomes[benchmark.OutcomeTallyKey(reviewerOutcome(a, categorical[a.Agent]))]++
+			acc[key].outcomes[benchmark.OutcomeTallyKey(fanout.ReviewerOutcome(a, categorical[a.Agent]))]++
 			if a.FallbackUsed {
 				acc[key].fallbackCases++
 			}

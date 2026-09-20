@@ -15,9 +15,18 @@ func runIDAt(t time.Time, base string) string {
 	return t.UTC().Format(time.RFC3339) + "-" + base
 }
 
+// reviewer builds the stand-in for "a record the current emitter wrote", which
+// is what nearly every test in this package actually means by a record.
+//
+// Outcome is stamped because sprint 36.0 made it part of that meaning: Emit now
+// writes one on every record, and trustPriorsSince excludes records that carry
+// none. Leaving it blank here would make this helper produce records no emitter
+// can produce, and would silently reduce a few dozen trust-rate assertions to
+// assertions about the schema era instead.
 func reviewer(runID, name, model string, raised, corroborated int, cost float64, latency int64) Record {
 	return Record{
 		SchemaVersion:        SchemaVersion,
+		Outcome:              outcomeFindings,
 		RecordType:           RecordTypeReviewer,
 		RunID:                runID,
 		Reviewer:             name,

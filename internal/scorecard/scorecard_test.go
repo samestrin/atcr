@@ -69,8 +69,12 @@ func TestEmit_SchemaValidation(t *testing.T) {
 	} {
 		assert.Contains(t, m, k, "required field %q must be present", k)
 	}
-	// schema_version is the integer 1, not a string.
-	assert.EqualValues(t, 1, m["schema_version"])
+	// schema_version is an integer, not a string, and it tracks the constant
+	// rather than a literal — sprint 36.0 bumped it 1 -> 2 and this assertion is
+	// about the JSON TYPE, not about which version is current. Pinning the value
+	// itself is TestSchemaVersion_IsTwo's job.
+	assert.EqualValues(t, SchemaVersion, m["schema_version"])
+	assert.IsType(t, float64(0), m["schema_version"], "must decode as a JSON number")
 }
 
 func TestEmit_PerReviewerMetricsAndCost(t *testing.T) {

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/audit"
+	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/history"
 	"github.com/samestrin/atcr/internal/payload"
@@ -189,6 +190,7 @@ func seedTrustedReviewer(t *testing.T, reviewer string) {
 		require.NoError(t, scorecard.Append(dir, scorecard.Record{
 			SchemaVersion:        1,
 			RecordType:           scorecard.RecordTypeReviewer,
+			Outcome:              benchmark.OutcomeFindings,
 			RunID:                fmt.Sprintf("%s-r%02d", stamp, i),
 			Reviewer:             reviewer,
 			Model:                "m",

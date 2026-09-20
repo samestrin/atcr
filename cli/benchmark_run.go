@@ -430,7 +430,7 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 				latency = a.DurationMS
 			}
 
-			outcome := reviewerOutcome(a, raised)
+			outcome := fanout.ReviewerOutcome(a, raised)
 
 			if err := applyReviewerOutcome(accs, &order, reviewerCaseOutcome{
 				model:         model,
@@ -759,82 +759,6 @@ type reviewerAcc struct {
 	// folds its own. It mirrors repoStateAcc.groundingEnabled so both producers
 	// publish the same three-valued tag from the same rule.
 	groundingEnabled *bool
-}
-
-// reviewerOutcome classifies what actually happened when one reviewer met one case,
-// reading signals fanout already computed and stamped onto the AgentStatus. Nothing
-// here re-derives them: UnparseableResponse in particular encodes a decision about
-// the clean-review sentinel (stream.IsNoFindings) that must not be re-implemented
-// against raw content, because excluding the sentinel is exactly what preserves the
-// clean-vs-garbage distinction.
-//
-// PRECEDENCE — failed > unparseable > truncated > incomplete > findings > ungrounded
-// > filtered > clean.
-// The signals are not mutually exclusive on the wire (a truncated response can also
-// raise findings; a failed slot has no findings either way), so the order is a
-// decision rather than an implication, and this switch is its single statement of
-// record.
-//
-// Data-integrity signals outrank volume signals throughout. A truncated response that
-// raised five findings reports "truncated", not "findings", because the
-// incompleteness is the load-bearing fact about that row — the five categories it did
-// raise are still recorded in the score, so nothing is lost by saying so. A reviewer
-// whose INPUT was cut short reports "incomplete" for the same reason: it may have
-// raised nothing, but only about the fraction it read. Both routes to a partial input
-// map to that one value — a chunked persona whose bins failed (UnreviewedChunks) and a
-// byte-budget shed of the payload itself (Truncated, with FilesDropped naming the
-// shed entries by path). Reusing OutcomeIncomplete rather than minting a new value is
-// deliberate: the vocabulary is fail-closed at the checkpoint and coverage trust
-// boundaries, so an older binary reading a newer run's outcome must find a value it
-// already knows.
-func reviewerOutcome(a fanout.AgentStatus, raised []string) string {
-	switch {
-	case a.Status != fanout.StatusOK || a.Error != "":
-		return benchmark.OutcomeFailed
-	case a.UnparseableResponse:
-		return benchmark.OutcomeUnparseable
-	case a.ResponseTruncated:
-		return benchmark.OutcomeTruncated
-	case a.UnreviewedChunks > 0 || a.Truncated:
-		return benchmark.OutcomeIncomplete
-	case len(raised) > 0:
-		return benchmark.OutcomeFindings
-	// Below here the reviewer raised nothing that survived. A non-zero grounding
-	// drop count is what separates "found nothing" from "found things the Epic 14.1
-	// gate rejected" — the two shapes are otherwise identical at this call site
-	// (StatusOK, UnparseableResponse false, zero categories), which is exactly how
-	// the second one used to publish as clean.
-	//
-	// It sits BELOW findings deliberately: a reviewer that raised four and kept one
-	// reviewed successfully and has a finding to show for it, so only a total wipe
-	// is the ungrounded outcome. It sits below the data-integrity signals for the
-	// same reason they outrank each other — a failed call's drop count says nothing
-	// about the review.
-	//
-	// Unreachable on the standard-v1 diff path: that path supplies no Range, so
-	// groundFindings fails open and DroppedByGrounding is always 0. No historical
-	// standard-v1 row changes outcome.
-	case a.DroppedByGrounding > 0:
-		return benchmark.OutcomeUngrounded
-	// The grounding gate's SIBLING, and the wider of the two. Both discard findings
-	// after the reviewer raised them — `raised` is read from the merged findings.txt
-	// written after enforceConstraints — so both leave a reviewer that found things
-	// looking identical here to one that found nothing. Grounding is repo-state-only;
-	// min_severity is any registry agent on either tier (internal/fanout/engine.go,
-	// loop.go), so this arm is reachable where the one above never fires.
-	//
-	// It sits BELOW ungrounded, and that ordering is a decision rather than an
-	// implication: the two counters can both be non-zero on one row, and only one
-	// value can be published. Grounding wins because it answers whether the reviewer
-	// cited code the patch actually contains — the measurement the repo-state tier
-	// exists for — whereas the floor is an operator preference applied to whatever
-	// survived that gate. Pinned by
-	// TestReviewerOutcome_GroundingOutranksMinSeverityWhenBothFire.
-	case a.DroppedByMinSeverity > 0:
-		return benchmark.OutcomeFiltered
-	default:
-		return benchmark.OutcomeClean
-	}
 }
 
 // reviewerCaseOutcome is everything one reviewer produced on one case: the realized

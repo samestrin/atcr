@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/samestrin/atcr/internal/scorecard"
 )
 
@@ -23,9 +24,14 @@ func storeRecord(t *testing.T, rec scorecard.Record) {
 	require.NoError(t, scorecard.Append(dir, rec))
 }
 
+// reviewerRec is the cli-side stand-in for a record the emitter wrote. Outcome
+// is stamped for the reason sprint 36.0 added the field: trustPriorsSince scores
+// only runs the lens got a fair attempt at, so a record carrying no outcome is
+// excluded and any trust-rate assertion built on one silently measures nothing.
 func reviewerRec(runID, reviewer, model string, raised, corroborated int) scorecard.Record {
 	return scorecard.Record{
 		SchemaVersion:        scorecard.SchemaVersion,
+		Outcome:              benchmark.OutcomeFindings,
 		RecordType:           scorecard.RecordTypeReviewer,
 		RunID:                runID,
 		Reviewer:             reviewer,

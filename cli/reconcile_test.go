@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/samestrin/atcr/internal/localdebt"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
@@ -1307,6 +1308,7 @@ func seedUntrustedReviewer(t *testing.T, reviewer string) {
 		require.NoError(t, scorecard.Append(dir, scorecard.Record{
 			SchemaVersion:        1,
 			RecordType:           scorecard.RecordTypeReviewer,
+			Outcome:              benchmark.OutcomeFindings,
 			RunID:                fmt.Sprintf("%s-u%02d", stamp, i),
 			Reviewer:             reviewer,
 			Model:                "m",

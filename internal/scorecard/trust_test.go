@@ -196,6 +196,7 @@ func TestTrustPriors_IgnoresNonStrictRuns(t *testing.T) {
 		require.NoError(t, Append(dir, Record{
 			SchemaVersion:        SchemaVersion,
 			RecordType:           RecordTypeReviewer,
+			Outcome:              outcomeFindings,
 			RunID:                fmt.Sprintf("2026-07-01T00:00:00Z-s%02d", i),
 			Reviewer:             "bruce",
 			Model:                "m",
@@ -211,6 +212,7 @@ func TestTrustPriors_IgnoresNonStrictRuns(t *testing.T) {
 		require.NoError(t, Append(dir, Record{
 			SchemaVersion:        SchemaVersion,
 			RecordType:           RecordTypeReviewer,
+			Outcome:              outcomeFindings,
 			RunID:                fmt.Sprintf("2026-07-02T00:00:00Z-o%02d", i),
 			Reviewer:             "bruce",
 			Model:                "m",
@@ -238,6 +240,7 @@ func TestTrustPriors_EmptyConsensusLevelCountsAsStrict(t *testing.T) {
 		require.NoError(t, Append(dir, Record{
 			SchemaVersion: SchemaVersion,
 			RecordType:    RecordTypeReviewer,
+			Outcome:       outcomeFindings,
 			RunID:         fmt.Sprintf("2026-06-01T00:00:00Z-l%02d", i),
 			Reviewer:      "greta",
 			Model:         "m",
@@ -264,6 +267,7 @@ func TestTrustPriors_AllNonStrictYieldsNoPrior(t *testing.T) {
 		require.NoError(t, Append(dir, Record{
 			SchemaVersion:        SchemaVersion,
 			RecordType:           RecordTypeReviewer,
+			Outcome:              outcomeFindings,
 			RunID:                fmt.Sprintf("2026-07-03T00:00:00Z-n%02d", i),
 			Reviewer:             "robin",
 			Model:                "m",
@@ -293,6 +297,7 @@ func TestTrustPriors_UnrecognizedConsensusLevelExcluded(t *testing.T) {
 		require.NoError(t, Append(dir, Record{
 			SchemaVersion:        SchemaVersion,
 			RecordType:           RecordTypeReviewer,
+			Outcome:              outcomeFindings,
 			RunID:                fmt.Sprintf("2026-07-04T00:00:00Z-x%02d", i),
 			Reviewer:             "alfred",
 			Model:                "m",
@@ -613,6 +618,7 @@ func TestTrustPriors_IgnoresPreUnresolvedDenominatorRuns(t *testing.T) {
 		require.NoError(t, Append(dir, Record{
 			SchemaVersion:        SchemaVersion,
 			RecordType:           RecordTypeReviewer,
+			Outcome:              outcomeFindings,
 			RunID:                fmt.Sprintf("2026-07-01T00:00:00Z-old%02d", i),
 			Reviewer:             "bruce",
 			Model:                "m",
@@ -626,6 +632,7 @@ func TestTrustPriors_IgnoresPreUnresolvedDenominatorRuns(t *testing.T) {
 		require.NoError(t, Append(dir, Record{
 			SchemaVersion:            SchemaVersion,
 			RecordType:               RecordTypeReviewer,
+			Outcome:                  outcomeFindings,
 			RunID:                    fmt.Sprintf("2026-07-02T00:00:00Z-new%02d", i),
 			Reviewer:                 "bruce",
 			Model:                    "m",
@@ -657,6 +664,7 @@ func TestTrustPriors_PreUnresolvedOnlyHistoryStillCounts(t *testing.T) {
 		require.NoError(t, Append(dir, Record{
 			SchemaVersion:        SchemaVersion,
 			RecordType:           RecordTypeReviewer,
+			Outcome:              outcomeFindings,
 			RunID:                fmt.Sprintf("2026-07-01T00:00:00Z-old%02d", i),
 			Reviewer:             "bruce",
 			Model:                "m",
@@ -696,6 +704,7 @@ func TestTrustPriors_EraFilterIsPerReviewerNotGlobal(t *testing.T) {
 		require.NoError(t, Append(dir, Record{
 			SchemaVersion:        SchemaVersion,
 			RecordType:           RecordTypeReviewer,
+			Outcome:              outcomeFindings,
 			RunID:                fmt.Sprintf("2026-07-01T00:00:00Z-bruce%02d", i),
 			Reviewer:             "bruce",
 			Model:                "m",
@@ -709,6 +718,7 @@ func TestTrustPriors_EraFilterIsPerReviewerNotGlobal(t *testing.T) {
 		require.NoError(t, Append(dir, Record{
 			SchemaVersion:            SchemaVersion,
 			RecordType:               RecordTypeReviewer,
+			Outcome:                  outcomeFindings,
 			RunID:                    fmt.Sprintf("2026-07-02T00:00:00Z-greta%02d", i),
 			Reviewer:                 "greta",
 			Model:                    "m",
@@ -742,6 +752,7 @@ func TestTrustPriors_PerReviewerPreferCurrentStillExcludesTheMix(t *testing.T) {
 		require.NoError(t, Append(dir, Record{
 			SchemaVersion:        SchemaVersion,
 			RecordType:           RecordTypeReviewer,
+			Outcome:              outcomeFindings,
 			RunID:                fmt.Sprintf("2026-07-01T00:00:00Z-old%02d", i),
 			Reviewer:             "bruce",
 			Model:                "m",
@@ -754,6 +765,7 @@ func TestTrustPriors_PerReviewerPreferCurrentStillExcludesTheMix(t *testing.T) {
 		require.NoError(t, Append(dir, Record{
 			SchemaVersion:            SchemaVersion,
 			RecordType:               RecordTypeReviewer,
+			Outcome:                  outcomeFindings,
 			RunID:                    fmt.Sprintf("2026-07-02T00:00:00Z-new%02d", i),
 			Reviewer:                 "bruce",
 			Model:                    "m",
@@ -768,6 +780,7 @@ func TestTrustPriors_PerReviewerPreferCurrentStillExcludesTheMix(t *testing.T) {
 		require.NoError(t, Append(dir, Record{
 			SchemaVersion:        SchemaVersion,
 			RecordType:           RecordTypeReviewer,
+			Outcome:              outcomeFindings,
 			RunID:                fmt.Sprintf("2026-07-01T00:00:00Z-carol%02d", i),
 			Reviewer:             "carol",
 			Model:                "m",
@@ -805,7 +818,7 @@ func TestUnresolvedEraRuns_SkipsAggregateRecords(t *testing.T) {
 		FindingsRaised:           9,
 	}
 	emptyNameEra1 := Record{
-		SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+		SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer, Outcome: outcomeFindings,
 		RunID: "2026-09-02T00:00:00Z-anon", Reviewer: "", Model: "m",
 		FindingsRaised: 2, // no era markers: definition 1
 	}
@@ -838,7 +851,7 @@ func TestUnresolvedEraRuns_SkipsAggregateRecords(t *testing.T) {
 func TestUnresolvedEraRuns_ExcludesAboveCurrentDenominators(t *testing.T) {
 	mk := func(runID string, denom int) Record {
 		return Record{
-			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer, Outcome: outcomeFindings,
 			RunID: runID, Reviewer: "bruce", Model: "m",
 			RaisedIncludesUnresolved: true, RaisedDenominator: denom,
 			FindingsRaised: 2, FindingsCorroborated: 1,
@@ -881,7 +894,7 @@ func TestUnresolvedEraRuns_ExcludesAboveCurrentDenominators(t *testing.T) {
 	t.Run("an above-current record does not delete the reviewer's pre-epic history", func(t *testing.T) {
 		preEpic := func(runID string) Record {
 			return Record{
-				SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+				SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer, Outcome: outcomeFindings,
 				RunID: runID, Reviewer: "bruce", Model: "m",
 				// No era markers at all: definition 1 (pre-epic).
 				FindingsRaised: 2, FindingsCorroborated: 1,
@@ -915,7 +928,7 @@ func TestTrustPriors_ShieldedCountsDiscountTheRate(t *testing.T) {
 	dir := t.TempDir()
 	for i := 0; i < DefaultTrustMinRuns; i++ {
 		require.NoError(t, Append(dir, Record{
-			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer, Outcome: outcomeFindings,
 			RunID:    fmt.Sprintf("2026-09-01T00:00:00Z-sh%02d", i),
 			Reviewer: "gamer", Model: "m",
 			ConsensusLevel:           reclib.ConsensusStrict,
@@ -955,7 +968,7 @@ func TestTrustPriors_RoutedErasAreOneWindow(t *testing.T) {
 	// window. On its own this is DefaultTrustMinRuns-1 runs — under the floor.
 	for i := 0; i < DefaultTrustMinRuns-1; i++ {
 		require.NoError(t, Append(dir, Record{
-			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer, Outcome: outcomeFindings,
 			RunID:    fmt.Sprintf("2026-08-01T00:00:00Z-era2-%02d", i),
 			Reviewer: "bruce", Model: "m",
 			ConsensusLevel:           reclib.ConsensusStrict,
@@ -968,7 +981,7 @@ func TestTrustPriors_RoutedErasAreOneWindow(t *testing.T) {
 	// 3 chargeable + 1 shielded is the same finding set an era-2 record would
 	// have reported as FindingsRaised: 4.
 	require.NoError(t, Append(dir, Record{
-		SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+		SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer, Outcome: outcomeFindings,
 		RunID:    "2026-08-20T00:00:00Z-era3-00",
 		Reviewer: "bruce", Model: "m",
 		ConsensusLevel:           reclib.ConsensusStrict,
@@ -999,7 +1012,7 @@ func TestTrustPriors_PreEpicStillSplitsFromRoutedEras(t *testing.T) {
 	// A flattering pre-epic half...
 	for i := 0; i < DefaultTrustMinRuns; i++ {
 		require.NoError(t, Append(dir, Record{
-			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer, Outcome: outcomeFindings,
 			RunID:    fmt.Sprintf("2026-07-01T00:00:00Z-pre%02d", i),
 			Reviewer: "bruce", Model: "m",
 			ConsensusLevel:       reclib.ConsensusStrict,
@@ -1010,7 +1023,7 @@ func TestTrustPriors_PreEpicStillSplitsFromRoutedEras(t *testing.T) {
 	// ...and an era-3 half that is the only thing the priors may measure.
 	for i := 0; i < DefaultTrustMinRuns; i++ {
 		require.NoError(t, Append(dir, Record{
-			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer, Outcome: outcomeFindings,
 			RunID:    fmt.Sprintf("2026-08-01T00:00:00Z-cur%02d", i),
 			Reviewer: "bruce", Model: "m",
 			ConsensusLevel:           reclib.ConsensusStrict,
@@ -1044,7 +1057,8 @@ func TestTrustPriors_PreEpicStillSplitsFromRoutedEras(t *testing.T) {
 func TestMergeRoutedEras_PinsEveryElementOfItsGuard(t *testing.T) {
 	t.Run("a current-era reviewer record is rewritten whole", func(t *testing.T) {
 		in := []Record{{
-			RecordType: RecordTypeReviewer, Reviewer: "bruce",
+			RecordType: RecordTypeReviewer,
+			Outcome:    outcomeFindings, Reviewer: "bruce",
 			RaisedDenominator:   RaisedDenominatorCurrent,
 			FindingsRaised:      3,
 			FindingsDocShielded: 1,
@@ -1074,7 +1088,8 @@ func TestMergeRoutedEras_PinsEveryElementOfItsGuard(t *testing.T) {
 		// finding was routed, so it is uncorroborated by construction and belongs
 		// in solo — the same disjoint partition the fold's equivalence rests on.
 		in := []Record{{
-			RecordType: RecordTypeReviewer, Reviewer: "bruce",
+			RecordType: RecordTypeReviewer,
+			Outcome:    outcomeFindings, Reviewer: "bruce",
 			RaisedDenominator:    RaisedDenominatorCurrent,
 			FindingsRaised:       3,
 			FindingsCorroborated: 2,
@@ -1094,7 +1109,8 @@ func TestMergeRoutedEras_PinsEveryElementOfItsGuard(t *testing.T) {
 
 	t.Run("an above-current record is left alone", func(t *testing.T) {
 		in := []Record{{
-			RecordType: RecordTypeReviewer, Reviewer: "bruce",
+			RecordType: RecordTypeReviewer,
+			Outcome:    outcomeFindings, Reviewer: "bruce",
 			RaisedDenominator:   RaisedDenominatorCurrent + 1,
 			FindingsRaised:      7,
 			FindingsDocShielded: 2,
@@ -1128,7 +1144,8 @@ func TestMergeRoutedEras_PinsEveryElementOfItsGuard(t *testing.T) {
 
 	t.Run("the caller's slice is never mutated", func(t *testing.T) {
 		in := []Record{{
-			RecordType: RecordTypeReviewer, Reviewer: "bruce",
+			RecordType: RecordTypeReviewer,
+			Outcome:    outcomeFindings, Reviewer: "bruce",
 			RaisedDenominator:   RaisedDenominatorCurrent,
 			FindingsRaised:      3,
 			FindingsDocShielded: 1,
@@ -1158,7 +1175,7 @@ func TestTrustPriors_AboveCurrentRecordsNeverReachThePrior(t *testing.T) {
 
 	for i := 0; i < DefaultTrustMinRuns; i++ {
 		require.NoError(t, Append(dir, Record{
-			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer, Outcome: outcomeFindings,
 			RunID:    fmt.Sprintf("2026-08-01T00:00:00Z-cur%02d", i),
 			Reviewer: "bruce", Model: "m",
 			ConsensusLevel:           reclib.ConsensusStrict,
@@ -1171,7 +1188,7 @@ func TestTrustPriors_AboveCurrentRecordsNeverReachThePrior(t *testing.T) {
 	// One record from a NEWER atcr, under a definition this binary does not
 	// implement. A hand-edit or a benchmark-stamped denominator reads the same.
 	require.NoError(t, Append(dir, Record{
-		SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+		SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer, Outcome: outcomeFindings,
 		RunID:    "2026-08-20T00:00:00Z-future",
 		Reviewer: "bruce", Model: "m",
 		ConsensusLevel:           reclib.ConsensusStrict,

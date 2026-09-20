@@ -21,7 +21,38 @@ import (
 // SchemaVersion is the scorecard record schema version. It is emitted as an
 // integer on every record so Epic 10.0's public submission format can evolve
 // independently; a future change increments this and old records stay readable.
-const SchemaVersion = 1
+//
+// Version 2 (sprint 36.0) is the store's FIRST-EVER bump. It carries three
+// additive fields together, in one increment rather than three:
+//   - Record.Outcome — why this reviewer's counts look the way they do
+//   - Record.CategoriesRaised — the distinct categories its findings raised
+//   - Finding.Category — the per-finding value the fold above reads
+//
+// All three are omitempty with era-safe absent meaning, so no migration shim is
+// needed. That is a DECISION, not an omission: the read gate at store.go
+// reserves this spot for "an explicit migration shim... when one appears", and
+// this is the first bump to reach it. Both directions were checked, and only one
+// of them is safe by construction:
+//
+//   - BACKWARD (old records, new binary) — safe. The gate skips records whose
+//     version is STRICTLY GREATER than this constant, with no lower bound, so
+//     every v1 record still decodes. Its absent fields read as "not measured"
+//     and are excluded from trust scoring rather than inferred.
+//   - FORWARD (new records, old binary) — a silent population change. Any atcr
+//     build still compiled at SchemaVersion = 1 skips EVERY v2 record and
+//     computes TrustPriors from the pre-bump subset alone, warning on stderr but
+//     returning a normal map. A stale install, or a CI image lagging a local
+//     build, therefore produces quietly different trust priors rather than an
+//     error. No code change is available for that; it is recorded here so it is
+//     not rediscovered as a surprise.
+//
+// Rollout note: excluding unclassified (v1) records from trust scoring is what
+// trust.go's own era comments call blacking out an existing history, and that
+// would normally be serious. It is not here — the store is created on first
+// reconcile, so a fresh install has nothing to strand, and an existing store
+// reverts each affected lens to the neutral 1/N baseline (absent from the priors
+// map) rather than to a punitive zero. See eligibleOutcomeRuns.
+const SchemaVersion = 2
 
 // Record type discriminators (AC 01-05): one "reviewer" record per participating
 // reviewer plus one "aggregate" record summarizing the whole run.
@@ -120,6 +151,41 @@ type Record struct {
 	// existed must serialize as it always did.
 	RaisedDenominator int `json:"raised_denominator,omitempty"`
 
+	// Outcome records WHY this reviewer's counts look the way they do: it is the
+	// nine-value vocabulary defined in internal/benchmark/outcome.go, carrying
+	// the distinction that file's header exists for — a reviewer that read the
+	// diff and correctly found nothing, one that emitted prose no parser could
+	// use, and one whose call failed outright all report zero findings and
+	// otherwise score identically.
+	//
+	// It is what lets trustPriorsSince score only the runs a lens got a fair
+	// attempt at (see eligibleOutcomeRuns), so an infrastructure fault —
+	// a LiteLLM timeout, a silently capped prompt, a billing-cap auth failure —
+	// never durably demotes a lens for its hosting rather than its judgment.
+	//
+	// The VALUE is a plain string, not a benchmark.Outcome* constant, and that
+	// is forced rather than chosen: internal/benchmark imports this package, so
+	// importing it back would close a cycle. internal/fanout is the safe leaf
+	// that owns the classifier (fanout.ReviewerOutcome) and its validator
+	// (fanout.ValidReviewerOutcome); a drift test in cli/ — a legal importer of
+	// both — pins those literals to internal/benchmark's constants.
+	//
+	// omitempty: absent means benchmark.OutcomeUnknown (""), which is what every
+	// record written before schema 2 reads as. Absent is NOT inferred as clean —
+	// that would assert "reviewed successfully and found nothing" about a run
+	// nobody classified — it is excluded from the trust tally instead.
+	Outcome string `json:"outcome,omitempty"`
+	// CategoriesRaised holds the distinct reconcile.Categories() values this
+	// reviewer's counted findings raised in the run. It is the per-record input
+	// to Phase 3's opportunity-set scoping: a lens is scored on a case only when
+	// some reviewer raised a category inside that lens's remit, so a specialist
+	// that is correctly silent on an out-of-remit diff is neither credited nor
+	// penalised.
+	//
+	// omitempty: absent means "not measured" (a pre-schema-2 record), which is
+	// excluded rather than read as either in-remit or out-of-remit.
+	CategoriesRaised []string `json:"categories_raised,omitempty"`
+
 	FindingsVerified    *int     `json:"findings_verified,omitempty"`
 	FindingsRefuted     *int     `json:"findings_refuted,omitempty"`
 	SurvivedSkepticRate *float64 `json:"survived_skeptic_rate,omitempty"`
@@ -216,6 +282,14 @@ type Finding struct {
 	// reconcile.JSONFinding.UnresolvedReason. Empty means the ordinary no-match:
 	// the anchors appear nowhere in the tracked tree.
 	UnresolvedReason string
+	// Category is the finding's reconcile.Categories() value, carried verbatim
+	// from reconcile.Finding.Category. Emit folds the distinct values a
+	// reviewer's counted findings raised into Record.CategoriesRaised; this
+	// struct is never persisted, so the fold is where the value becomes durable.
+	//
+	// Declared by Phase 2's single schema bump and left zero-valued until Phase
+	// 3 threads it at the two EmitForReconcile construction sites.
+	Category string
 }
 
 // ReviewerMeta carries the per-reviewer identity/usage sourced from the fan-out's
@@ -228,6 +302,17 @@ type ReviewerMeta struct {
 	TokensIn  int
 	TokensOut int
 	LatencyMS int64
+	// Outcome is this reviewer's classified run outcome, stamped onto
+	// Record.Outcome by Emit. It rides ReviewerMeta because that is already the
+	// carrier between EmitForReconcile (which holds the fanout.AgentStatus the
+	// classification is derived from) and Emit (which builds the Record), so no
+	// new parameter or parallel map is introduced.
+	//
+	// The zero value is benchmark.OutcomeUnknown (""), which is exactly right
+	// for a reviewer recovered from the findings alone: a path-anchored review
+	// with no pool summary has no AgentStatus to classify, and guessing clean
+	// there would assert a successful review that never happened.
+	Outcome string
 }
 
 // EmitOpts controls emission side-effects. NoScorecard suppresses all I/O (the
@@ -395,6 +480,7 @@ func Emit(in EmitInput, opts EmitOpts) error {
 			FindingsCorroborated:     corroborated,
 			FindingsSolo:             raised - corroborated,
 			FindingsDocShielded:      shielded,
+			Outcome:                  meta.Outcome,
 			CorroborationRate:        ratio(corroborated, raised),
 			CostUSD:                  llmclient.ComputeCostUSD(meta.Model, meta.TokensIn, meta.TokensOut),
 			TokensIn:                 meta.TokensIn,

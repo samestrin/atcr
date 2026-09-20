@@ -361,7 +361,7 @@ func TestReviewerOutcome_Precedence(t *testing.T) {
 		{name: "clean", status: fanout.AgentStatus{Status: fanout.StatusOK}, want: benchmark.OutcomeClean},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, reviewerOutcome(tc.status, tc.raised))
+			assert.Equal(t, tc.want, fanout.ReviewerOutcome(tc.status, tc.raised))
 		})
 	}
 }
@@ -440,7 +440,7 @@ func TestApplyReviewerOutcome_TalliesFallbackSeparatelyFromOutcome(t *testing.T)
 // successfully and emitted the NO FINDINGS sentinel" about a reviewer that had in
 // fact raised findings.
 func TestReviewerOutcome_AllFindingsDroppedByGroundingIsNotClean(t *testing.T) {
-	got := reviewerOutcome(fanout.AgentStatus{Status: fanout.StatusOK, DroppedByGrounding: 2}, nil)
+	got := fanout.ReviewerOutcome(fanout.AgentStatus{Status: fanout.StatusOK, DroppedByGrounding: 2}, nil)
 
 	assert.Equal(t, benchmark.OutcomeUngrounded, got)
 	assert.NotEqual(t, benchmark.OutcomeClean, got,
@@ -451,7 +451,7 @@ func TestReviewerOutcome_AllFindingsDroppedByGroundingIsNotClean(t *testing.T) {
 // one reviewed successfully and has findings to show for it. Only a TOTAL wipe is
 // the ungrounded outcome.
 func TestReviewerOutcome_PartialGroundingDropsStillCountAsFindings(t *testing.T) {
-	got := reviewerOutcome(
+	got := fanout.ReviewerOutcome(
 		fanout.AgentStatus{Status: fanout.StatusOK, DroppedByGrounding: 3},
 		[]string{"correctness"},
 	)
@@ -485,7 +485,7 @@ func TestReviewerOutcome_GroundingDropsYieldToDataIntegritySignals(t *testing.T)
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, reviewerOutcome(tc.status, nil))
+			assert.Equal(t, tc.want, fanout.ReviewerOutcome(tc.status, nil))
 		})
 	}
 }
@@ -496,7 +496,7 @@ func TestReviewerOutcome_GroundingDropsYieldToDataIntegritySignals(t *testing.T)
 // row's outcome tally.
 func TestReviewerOutcome_StandardTierIsUnaffected(t *testing.T) {
 	assert.Equal(t, benchmark.OutcomeClean,
-		reviewerOutcome(fanout.AgentStatus{Status: fanout.StatusOK}, nil))
+		fanout.ReviewerOutcome(fanout.AgentStatus{Status: fanout.StatusOK}, nil))
 }
 
 // The min_severity floor is the grounding gate's sibling and was left short: both
@@ -506,7 +506,7 @@ func TestReviewerOutcome_StandardTierIsUnaffected(t *testing.T) {
 // reachable on BOTH tiers — any registry agent can set min_severity — so it is the
 // wider of the two holes.
 func TestReviewerOutcome_AllFindingsDroppedByMinSeverityIsNotClean(t *testing.T) {
-	got := reviewerOutcome(fanout.AgentStatus{Status: fanout.StatusOK, DroppedByMinSeverity: 2}, nil)
+	got := fanout.ReviewerOutcome(fanout.AgentStatus{Status: fanout.StatusOK, DroppedByMinSeverity: 2}, nil)
 
 	assert.Equal(t, benchmark.OutcomeFiltered, got)
 	assert.NotEqual(t, benchmark.OutcomeClean, got,
@@ -545,7 +545,7 @@ func TestReviewerOutcome_MinSeverityDropsYieldLikeGroundingDrops(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, reviewerOutcome(tc.status, tc.raised))
+			assert.Equal(t, tc.want, fanout.ReviewerOutcome(tc.status, tc.raised))
 		})
 	}
 }
@@ -556,7 +556,7 @@ func TestReviewerOutcome_MinSeverityDropsYieldLikeGroundingDrops(t *testing.T) {
 // code the patch contains", which is the measurement the repo-state tier exists for,
 // whereas the severity floor is an operator preference applied to whatever survived.
 func TestReviewerOutcome_GroundingOutranksMinSeverityWhenBothFire(t *testing.T) {
-	got := reviewerOutcome(
+	got := fanout.ReviewerOutcome(
 		fanout.AgentStatus{Status: fanout.StatusOK, DroppedByGrounding: 1, DroppedByMinSeverity: 1},
 		nil,
 	)

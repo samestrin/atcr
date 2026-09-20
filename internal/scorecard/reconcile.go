@@ -23,6 +23,48 @@ import (
 // degrades to finding-only records (reviewers recovered from the findings), and
 // Emit logs its own write failures, so scorecard emission never fails the
 // caller's reconcile.
+// raisedSlotsFor supplies ReviewerOutcome's `raised` parameter on the reconcile
+// path. The classifier reads only whether the slice is non-empty, so a slice of
+// that length carries everything it needs.
+//
+// The COUNT is the load-bearing part, and it comes from the agent's own status
+// rather than from reconcile.Result. That is AC 02-02 Scenario 0, and it is the
+// parity test's blind spot: feeding the same function from two call sites proves
+// nothing if one of them computes its input differently. The benchmark path
+// reads `raised` from the merged findings.txt written AFTER enforceConstraints,
+// and AgentStatus.FindingsCount is that same post-enforcement, post-grounding
+// number. res.Findings is not — it is reconcile's post-merge output, so a
+// reviewer whose findings all clustered under another reviewer's name is absent
+// from it entirely and would classify CLEAN: "read the diff and found nothing",
+// asserted about a lens that raised several.
+func raisedSlotsFor(a fanout.AgentStatus) []string {
+	if a.FindingsCount <= 0 {
+		return nil
+	}
+	return make([]string, a.FindingsCount)
+}
+
+// coerceOutcome is the write-time trust boundary for Record.Outcome: a value
+// that is not a member of the vocabulary never reaches the durable store.
+//
+// It is deliberately SILENT and fail-neutral rather than an error return.
+// EmitForReconcile has no error return by contract — scorecard emission never
+// fails the caller's reconcile — so the only two choices here are "write
+// something wrong" and "write unknown". Unknown is right: it is excluded from
+// trust scoring downstream, so a classifier bug costs a lens nothing, whereas a
+// garbage value persisted for the 180-day window could not be interpreted at
+// all.
+//
+// The real classifier cannot return an invalid value (see
+// TestFanoutReviewerOutcome_AlwaysReturnsAKnownValue), so this guards the case
+// where that stops being true, which is exactly when a guard is worth having.
+func coerceOutcome(o string) string {
+	if !fanout.ValidReviewerOutcome(o) {
+		return ""
+	}
+	return o
+}
+
 func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 	// Honor suppression before any work: a --no-scorecard run must do truly zero
 	// I/O, so gate here — ahead of the pool-summary read below — not only at
@@ -39,6 +81,7 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 				TokensIn:  a.TokensIn,
 				TokensOut: a.TokensOut,
 				LatencyMS: a.DurationMS,
+				Outcome:   coerceOutcome(fanout.ReviewerOutcome(a, raisedSlotsFor(a))),
 			}
 		}
 	}

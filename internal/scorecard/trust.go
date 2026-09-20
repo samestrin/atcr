@@ -148,7 +148,10 @@ func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Tim
 	// one era and are never split against each other. It also folds the shielded
 	// count into FindingsRaised, which is what makes a plain t.raised the full
 	// trust denominator below.
-	for _, row := range Aggregate(unresolvedEraRuns(mergeRoutedEras(strictRuns(records)))) {
+	// eligibleOutcomeRuns runs immediately after strictRuns and BEFORE the two
+	// era links — see its doc comment; the position is load-bearing, not
+	// cosmetic.
+	for _, row := range Aggregate(unresolvedEraRuns(mergeRoutedEras(eligibleOutcomeRuns(strictRuns(records))))) {
 		key := strings.ToLower(row.Reviewer)
 		t := byReviewer[key]
 		if t == nil {
@@ -261,6 +264,76 @@ func mergeRoutedEras(records []Record) []Record {
 // itself: the `atcr scorecard` leaderboard reports what actually happened across
 // all runs, while the trust prior is a behavioral measurement that is only
 // comparable at a fixed level.
+// eligibleOutcomeRuns keeps only the runs where the lens actually got a fair
+// attempt, so a durable score measures judgment rather than hosting.
+//
+// The panel this feeds is deliberately heterogeneous, and its failure history is
+// infrastructural rather than editorial: one lens hung on a 1200s proxy timeout
+// three times over, another returned truncated-with-zero-findings on every run
+// because its host silently capped prompts at 16,384 tokens while answering
+// HTTP 200, a third was auth-failed on a billing cap. Without this link all
+// three look identical to a lens that read the diff and had nothing to say, and
+// every one of them is durably demoted for its wiring.
+//
+// ELIGIBLE: findings, clean, ungrounded, filtered.
+// EXCLUDED: unparseable, truncated, incomplete, failed, unknown.
+//
+// ungrounded and filtered sit on the eligible side deliberately, and it is the
+// one genuinely open call here. Neither is a broken attempt: both are downstream
+// of a complete, parseable response whose findings were discarded for cause, so
+// they report on judgment. Revisit once a live store exists to measure against.
+//
+// unknown is excluded rather than inferred. It is the Go zero value, so it means
+// both "written before schema 2" and "nobody classified this"; reading it as
+// clean would credit a full trust rate to runs no one ever observed.
+//
+// The membership test is an ALLOWLIST, not a denylist, so a tenth outcome value
+// added to the vocabulary is excluded until somebody decides otherwise — the
+// fail-neutral direction for a score that persists for 180 days.
+//
+// Aggregate records pass through untouched, matching unresolvedEraRuns below. An
+// aggregate is not a reviewer and carries no outcome, so judging it on one would
+// make this the first link in the chain to drop aggregates over a property that
+// does not apply to them.
+//
+// The input slice is never mutated.
+//
+// WHY IT SITS WHERE IT DOES (immediately after strictRuns, before
+// mergeRoutedEras): outcome eligibility is a per-record property of the raw run
+// — did this lens get a fair attempt — and is independent of era routing, so an
+// ineligible record must be dropped before it can take part in an era decision.
+// That is not merely tidy. unresolvedEraRuns is prefer-newest per reviewer: run
+// this link after it, and one failed run stamped at a newer era sets that
+// reviewer's newest era, and its entire older history is discarded as "the mix"
+// before the failure itself is ever discarded. A single timeout would erase a
+// lens's whole record. strictRuns stays first, preserving the existing
+// cheapest-narrowing-first ordering.
+func eligibleOutcomeRuns(records []Record) []Record {
+	kept := make([]Record, 0, len(records))
+	for _, r := range records {
+		if r.RecordType != RecordTypeReviewer {
+			kept = append(kept, r) // aggregates pass through untouched
+			continue
+		}
+		switch r.Outcome {
+		case outcomeFindings, outcomeClean, outcomeUngrounded, outcomeFiltered:
+			kept = append(kept, r)
+		}
+	}
+	return kept
+}
+
+// The four eligible outcome values, spelled as literals because
+// internal/benchmark imports this package and importing it back would close a
+// cycle. internal/benchmark/outcome.go stays the vocabulary's single definition;
+// cli/fanout_outcome_parity_test.go is the pin that keeps these equal to it.
+const (
+	outcomeFindings   = "findings"
+	outcomeClean      = "clean"
+	outcomeUngrounded = "ungrounded"
+	outcomeFiltered   = "filtered"
+)
+
 func strictRuns(records []Record) []Record {
 	kept := make([]Record, 0, len(records))
 	for _, r := range records {
