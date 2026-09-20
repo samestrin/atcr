@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -1204,4 +1205,174 @@ func TestTrustPriors_AboveCurrentRecordsNeverReachThePrior(t *testing.T) {
 	require.Contains(t, priors, "bruce")
 	assert.InDelta(t, 0.5, priors["bruce"], 0.0001,
 		"the above-current record must be excluded outright — 0.357 is what its 100 raised buys if it is normalised into era 2")
+}
+
+// --- Phase 3 (Story 03): the opportunity-set filter-chain link --------------
+//
+// opportunitySetRuns is its own func([]Record) []Record sibling link, not a
+// condition inside the tally loop, per the sprint's Implementation Standards.
+
+// oppRec builds a schema-2 reviewer record for the opportunity-link tests.
+func oppRec(runID, reviewer string, cats []string) Record {
+	return Record{
+		SchemaVersion:            SchemaVersion,
+		RecordType:               RecordTypeReviewer,
+		RunID:                    runID,
+		Reviewer:                 reviewer,
+		Outcome:                  outcomeFindings,
+		CategoriesRaised:         cats,
+		RaisedIncludesUnresolved: true,
+		RaisedDenominator:        RaisedDenominatorCurrent,
+		FindingsRaised:           1,
+	}
+}
+
+// TestOpportunitySetRuns_DropsOutOfRemitRecords is the epic's headline property
+// expressed on the chain: a mapped lens whose remit no reviewer touched on that
+// run leaves the denominator entirely.
+func TestOpportunitySetRuns_DropsOutOfRemitRecords(t *testing.T) {
+	in := []Record{
+		oppRec("run-1", "sasha", nil),                     // silent security lens
+		oppRec("run-1", "penny", []string{"performance"}), // raised the only category
+	}
+	out := opportunitySetRuns(in)
+
+	names := map[string]bool{}
+	for _, r := range out {
+		names[r.Reviewer] = true
+	}
+	assert.True(t, names["penny"], "performance was in play, so penny is scored")
+	assert.False(t, names["sasha"], "no security category was raised by anyone, so sasha is not scored")
+}
+
+// TestOpportunitySetRuns_KeepsASilentLensWhenItsRemitWasInPlay proves membership
+// is a property of the CASE, not of what the lens itself said. A security lens
+// that stayed silent while another reviewer raised `security` IS scored — that
+// silence is a judgement, and scoring it is the whole point of the denominator.
+func TestOpportunitySetRuns_KeepsASilentLensWhenItsRemitWasInPlay(t *testing.T) {
+	in := []Record{
+		oppRec("run-1", "sasha", nil),
+		// bruce RAISED security even though security is not in bruce's own
+		// remit: CategoriesRaised records what a lens said, not what it is
+		// scored on. correctness is what puts bruce itself in remit here.
+		oppRec("run-1", "bruce", []string{"security", "correctness"}),
+	}
+	out := opportunitySetRuns(in)
+
+	names := map[string]bool{}
+	for _, r := range out {
+		names[r.Reviewer] = true
+	}
+	assert.True(t, names["sasha"], "sasha's remit was in play via bruce's finding")
+	assert.True(t, names["bruce"], "bruce's remit covers security too")
+}
+
+// TestOpportunitySetRuns_UnionIsPerRunNotGlobal pins the grouping key. Unioning
+// across the whole store instead of per RunID would make every lens in-remit
+// forever after one broad run.
+func TestOpportunitySetRuns_UnionIsPerRunNotGlobal(t *testing.T) {
+	in := []Record{
+		oppRec("run-1", "bruce", []string{"security"}),
+		oppRec("run-2", "sasha", nil),
+		oppRec("run-2", "penny", []string{"performance"}),
+	}
+	out := opportunitySetRuns(in)
+
+	for _, r := range out {
+		assert.False(t, r.RunID == "run-2" && r.Reviewer == "sasha",
+			"run-1's security category must not make sasha in-remit on run-2")
+	}
+}
+
+// TestOpportunitySetRuns_UnmappedPersonaPassesThroughUntouched is the
+// no-silent-regression guard for C11. vera and the four other registry-only
+// lenses have no remit under Option A; dropping their records would remove trust
+// scoring for five of thirteen lenses as a side effect of this link. Unmapped
+// means "not opportunity-scoped", not "deleted".
+func TestOpportunitySetRuns_UnmappedPersonaPassesThroughUntouched(t *testing.T) {
+	in := []Record{
+		oppRec("run-1", "vera", nil),
+		oppRec("run-1", "penny", []string{"performance"}),
+	}
+	out := opportunitySetRuns(in)
+
+	names := map[string]bool{}
+	for _, r := range out {
+		names[r.Reviewer] = true
+	}
+	assert.True(t, names["vera"],
+		"an unmapped lens keeps the behaviour it had before this link existed")
+}
+
+// TestOpportunitySetRuns_AggregatesPassThroughUntouched matches the documented
+// precedent of eligibleOutcomeRuns and unresolvedEraRuns. An aggregate is not a
+// reviewer and carries no remit.
+func TestOpportunitySetRuns_AggregatesPassThroughUntouched(t *testing.T) {
+	agg := Record{SchemaVersion: SchemaVersion, RecordType: RecordTypeAggregate, RunID: "run-1"}
+	out := opportunitySetRuns([]Record{agg, oppRec("run-1", "sasha", nil)})
+
+	found := false
+	for _, r := range out {
+		if r.RecordType == RecordTypeAggregate {
+			found = true
+		}
+	}
+	assert.True(t, found, "aggregates are never judged on a property they do not carry")
+}
+
+// TestOpportunitySetRuns_UnmeasuredRecordsAreNotJudgedAsOutOfRemit is the era
+// discipline Phase 2 applied to an empty Outcome, applied here to an absent
+// category set. A pre-schema-2 record has no categories because nothing measured
+// them — reading that as "out-of-remit for everyone" would silently shrink every
+// persona's denominator across the whole back-catalogue.
+func TestOpportunitySetRuns_UnmeasuredRecordsAreNotJudgedAsOutOfRemit(t *testing.T) {
+	old := oppRec("run-old", "sasha", nil)
+	old.SchemaVersion = 1
+
+	out := opportunitySetRuns([]Record{old})
+	require.Len(t, out, 1, "an unmeasured record passes through rather than being judged")
+	assert.Equal(t, 1, out[0].SchemaVersion)
+}
+
+// TestOpportunitySetRuns_DoesNotMutateItsInput matches every sibling link's
+// documented contract: callers hand in records read from the store.
+func TestOpportunitySetRuns_DoesNotMutateItsInput(t *testing.T) {
+	in := []Record{
+		oppRec("run-1", "sasha", nil),
+		oppRec("run-1", "penny", []string{"performance"}),
+	}
+	before := append([]Record{}, in...)
+	opportunitySetRuns(in)
+	assert.Equal(t, before, in, "the input slice is never rewritten")
+}
+
+// TestTrustPriors_OutOfRemitRunNeverReachesThePrior is the end-to-end proof that
+// the link is actually wired into trustPriorsSince, not merely defined. Without
+// the wiring every assertion above passes and the feature ships inert.
+func TestTrustPriors_OutOfRemitRunNeverReachesThePrior(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	month := filepath.Join(dir, now.Format("2006-01")+".jsonl")
+
+	var lines []string
+	for i := 0; i < 3; i++ {
+		runID := fmt.Sprintf("run-%d", i)
+		// Only performance is ever raised, so sasha is out-of-remit on every run.
+		for _, r := range []Record{
+			oppRec(runID, "sasha", nil),
+			oppRec(runID, "penny", []string{"performance"}),
+		} {
+			r.RunID = runID
+			b, err := json.Marshal(r)
+			require.NoError(t, err)
+			lines = append(lines, string(b))
+		}
+	}
+	require.NoError(t, os.WriteFile(month, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
+
+	priors, err := trustPriorsSince(dir, 1, 180*24*time.Hour, now)
+	require.NoError(t, err)
+	assert.NotContains(t, priors, "sasha",
+		"every one of sasha's runs was out-of-remit, so it earns no durable prior")
+	assert.Contains(t, priors, "penny")
 }

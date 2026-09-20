@@ -531,6 +531,7 @@ func Emit(in EmitInput, opts EmitOpts) error {
 			FindingsSolo:             raised - corroborated,
 			FindingsDocShielded:      shielded,
 			Outcome:                  meta.Outcome,
+			CategoriesRaised:         reviewerCategories(name, in.Findings, chargeableUnresolved),
 			CorroborationRate:        ratio(corroborated, raised),
 			CostUSD:                  llmclient.ComputeCostUSD(meta.Model, meta.TokensIn, meta.TokensOut),
 			TokensIn:                 meta.TokensIn,
@@ -601,6 +602,60 @@ func Emit(in EmitInput, opts EmitOpts) error {
 		}
 	}
 	return firstErr
+}
+
+// reviewerCategories returns the distinct CATEGORY values the findings name
+// raised, deduped and sorted, across every stream passed in.
+//
+// It is the durable half of opportunity-set scoping: the per-finding Category
+// lives on Finding, which is never persisted, so this fold is where the value
+// becomes readable 180 days from now.
+//
+// Three rules, each of which has a way of going wrong quietly:
+//
+//   - The VOCABULARY GATE is here, not at the wire boundary. A value that is not
+//     a literal reclib.Categories() member is dropped from the SET while the
+//     finding itself still counts toward FindingsRaised. Dropping the finding
+//     too would let a reviewer shrink its own denominator by emitting a junk
+//     category. Failing the emit outright would breach EmitForReconcile's
+//     contract that scorecard emission never fails the caller's reconcile. So it
+//     fails NEUTRAL — recorded as absent, never trusted into the opportunity
+//     gate — matching coerceOutcome's stance on the same path.
+//   - DOC-SHIELDED findings never reach here, because the caller passes the
+//     chargeable split rather than in.UnresolvedFindings. That is the same
+//     carve-out FindingsRaised applies, and the two must agree: a shielded
+//     finding that reached the category set would put its reviewer in-remit on a
+//     case the denominator deliberately did not charge it for.
+//   - The result is SORTED, not map-ordered. Two byte-identical runs must
+//     serialize byte-identically, or a diff of the store reports churn that is
+//     really just Go's map iteration.
+//
+// An empty result returns nil, so omitempty omits the key entirely and a
+// measured-empty record is byte-identical to a pre-schema-2 one. That collision
+// is deliberate and is resolved a layer up, by SchemaVersion, in
+// opportunitySetRuns — not by writing an empty array here.
+func reviewerCategories(name string, streams ...[]Finding) []string {
+	seen := map[string]struct{}{}
+	for _, findings := range streams {
+		for _, f := range findings {
+			if !contains(f.Reviewers, name) {
+				continue
+			}
+			if !inVocabulary(f.Category) {
+				continue
+			}
+			seen[f.Category] = struct{}{}
+		}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(seen))
+	for c := range seen {
+		out = append(out, c)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // reviewerCounts returns how many findings name raised and how many of those were

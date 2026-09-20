@@ -154,7 +154,9 @@ func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Tim
 	// eligibleOutcomeRuns runs immediately after strictRuns and BEFORE the two
 	// era links — see its doc comment; the position is load-bearing, not
 	// cosmetic.
-	for _, row := range Aggregate(unresolvedEraRuns(mergeRoutedEras(eligibleOutcomeRuns(strictRuns(records))))) {
+	// opportunitySetRuns runs immediately after eligibleOutcomeRuns and before
+	// the two era links — see its doc comment; the position is load-bearing.
+	for _, row := range Aggregate(unresolvedEraRuns(mergeRoutedEras(opportunitySetRuns(eligibleOutcomeRuns(strictRuns(records)))))) {
 		key := strings.ToLower(row.Reviewer)
 		t := byReviewer[key]
 		if t == nil {
@@ -330,6 +332,87 @@ func eligibleOutcomeRuns(records []Record) []Record {
 		}
 		switch r.Outcome {
 		case outcomeFindings, outcomeClean, outcomeUngrounded, outcomeFiltered:
+			kept = append(kept, r)
+		}
+	}
+	return kept
+}
+
+// opportunitySetRuns keeps a reviewer's record only when that run was an
+// opportunity for its lens — when some reviewer on the run raised a category
+// inside that lens's remit.
+//
+// This is the epic's headline property expressed on the chain. A narrow lens is
+// SUPPOSED to be silent most of the time; scored against the full corpus it
+// looks like a lens that never contributes, while the generalist accumulates
+// standing simply by being in scope everywhere. Removing out-of-remit runs from
+// the denominator is what makes a specialist's rate comparable to a
+// generalist's.
+//
+// The opportunity is a property of the CASE, so the union is taken per RunID
+// across every reviewer's CategoriesRaised. Unioning across the whole store
+// instead would make every lens permanently in-remit after one broad run.
+//
+// THREE KINDS OF RECORD ARE NEVER JUDGED, and each would be a distinct silent
+// failure:
+//
+//   - AGGREGATES pass through, matching eligibleOutcomeRuns and unresolvedEraRuns
+//     above. An aggregate is not a reviewer and carries no remit.
+//   - PRE-SCHEMA-2 records pass through. Their category set is absent because
+//     nothing measured it, and omitempty makes that byte-identical to a measured
+//     empty set. Judging them would read the whole unmeasured back-catalogue as
+//     "out-of-remit for everyone" and silently shrink every persona's
+//     denominator — the cross-era blending unresolvedEraRuns exists to prevent.
+//     (They do not in fact reach here today: eligibleOutcomeRuns already drops
+//     them for their absent Outcome. The guard is kept because that is an
+//     upstream link's behaviour, not this one's contract.)
+//   - UNMAPPED personas pass through. vera, pace, brad, archer and ronin have no
+//     in-repo definition to ground a remit against (personaRemit's comment), so
+//     they are not opportunity-scoped. Dropping them instead would remove trust
+//     scoring outright for five of the thirteen live lenses as a SIDE EFFECT of
+//     a fairness fix — a regression nothing in this sprint asked for. Unmapped
+//     means "not scoped", never "deleted".
+//   - RUNS WITH NO IN-VOCABULARY CATEGORY AT ALL pass through, every record of
+//     them. This is the one that looks like a rule and is really a refusal to
+//     guess, and it is NOT the same as the predicate's "a clean case is
+//     out-of-remit for everyone". A run reaches an empty union by two routes
+//     that the store cannot tell apart: nobody raised anything, or everybody
+//     raised findings whose CATEGORY word was outside the closed vocabulary and
+//     was dropped at the write gate. The second is not hypothetical —
+//     reconcile/category.go records a dry run in which 72.3% of findings used a
+//     word the scorer did not recognise. Judging an empty union would durably
+//     un-score every lens on such a run for a LABELLING failure, which is the
+//     same class of mistake as demoting a lens for its hosting: the exact thing
+//     the outcome gate above exists to refuse.
+//
+// The input slice is never mutated: callers hand in records read from the store.
+func opportunitySetRuns(records []Record) []Record {
+	// One pass to union each run's raised categories, a second to filter. The
+	// union must be complete before any record of that run is judged, so this
+	// cannot collapse into a single pass.
+	raisedByRun := map[string][]string{}
+	for _, r := range records {
+		if r.RecordType != RecordTypeReviewer || r.SchemaVersion < SchemaVersion {
+			continue
+		}
+		raisedByRun[r.RunID] = append(raisedByRun[r.RunID], r.CategoriesRaised...)
+	}
+
+	kept := make([]Record, 0, len(records))
+	for _, r := range records {
+		if r.RecordType != RecordTypeReviewer || r.SchemaVersion < SchemaVersion {
+			kept = append(kept, r)
+			continue
+		}
+		if len(raisedByRun[r.RunID]) == 0 {
+			kept = append(kept, r)
+			continue
+		}
+		if _, mapped := RemitCategories(r.Reviewer); !mapped {
+			kept = append(kept, r)
+			continue
+		}
+		if InOpportunitySet(r.Reviewer, raisedByRun[r.RunID]) {
 			kept = append(kept, r)
 		}
 	}

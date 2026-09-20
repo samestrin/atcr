@@ -69,6 +69,23 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 			Line:      m.Line,
 			Problem:   m.Problem,
 			Reviewers: names,
+			// Carried, not interpreted here: Emit decides which values are
+			// durable (see reviewerCategories' vocabulary gate), so the two
+			// entry points cannot disagree about it.
+			//
+			// READ THE MEANING, it is not the obvious one. m is a
+			// reconcile.Merged, whose Category is ModalCategory(group) — the
+			// CLUSTER's modal value, not this reviewer's own word. In a cluster
+			// where one lens said `security` and two said `performance`, the
+			// merged category is `performance` and the first lens's own term is
+			// unrecoverable from res.Findings. This threading therefore adopts
+			// the cluster-modal meaning EXPLICITLY, which is sound for the only
+			// consumer: opportunity-set membership unions the categories across
+			// every reviewer on the case and asks "was this topic in play",
+			// which the modal value answers faithfully. It would NOT be sound
+			// for a per-reviewer claim about what that lens personally raised,
+			// and nothing may read it as one.
+			Category: m.Category,
 		})
 		for _, name := range names {
 			if _, ok := reviewers[name]; !ok {
@@ -114,6 +131,13 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 			// Carried, not interpreted here: Emit decides which reasons are
 			// chargeable, so the two entry points cannot disagree about it.
 			UnresolvedReason: u.UnresolvedReason,
+			// Threaded at THIS site too, not only the primary one above. A
+			// reviewer whose every finding was Tier-4 routed is reachable
+			// nowhere else, so skipping it here would give exactly the lenses
+			// that produced nothing but phantoms an empty category set — and an
+			// empty set reads as out-of-remit, quietly excusing them from the
+			// denominator this store exists to charge.
+			Category: u.Category,
 		})
 		for _, name := range names {
 			if _, ok := reviewers[name]; !ok {

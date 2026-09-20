@@ -3,6 +3,7 @@ package scorecard
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/fanout"
@@ -338,4 +339,217 @@ func TestEmitForReconcile_RoutedEmptyReviewerNameNotRegistered(t *testing.T) {
 		"the real reviewer on the same routed finding must still be recorded")
 	require.NotNil(t, findReviewer(recs, "greta"),
 		"the real reviewer on the same surviving finding must still be recorded")
+}
+
+// --- Phase 3 (Story 03): Category threading ------------------------------
+//
+// These tests drive the REAL EmitForReconcile path and read the written JSONL
+// back, per AC 03-02's requirement that the category is proven to survive to
+// disk rather than asserted on a hand-built Record.
+
+// TestEmitForReconcile_CategoryThreadedFromPrimaryStream is AC 03-02 Happy Path
+// Scenario 1 at the primary (res.Findings) construction site.
+func TestEmitForReconcile_CategoryThreadedFromPrimaryStream(t *testing.T) {
+	reviewDir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	res := reconcile.Result{
+		Findings: []reconcile.Merged{
+			{Finding: reconcile.Finding{File: "a.go", Line: 1, Problem: "p1", Category: "api-contract", Reviewers: []string{"vera"}}},
+			{Finding: reconcile.Finding{File: "b.go", Line: 2, Problem: "p2", Category: "error-handling", Reviewers: []string{"dax"}}},
+		},
+		Summary: reconcile.Summary{ReconciledAt: "2026-06-14T10:00:00Z"},
+	}
+	EmitForReconcile(reviewDir, res, EmitOpts{})
+
+	cfg, err := os.UserConfigDir()
+	require.NoError(t, err)
+	recs, err := ReadRecords(filepath.Join(cfg, "atcr", "scorecard", "2026-06.jsonl"), ReadOpts{})
+	require.NoError(t, err)
+
+	vera := findReviewer(recs, "vera")
+	require.NotNil(t, vera)
+	assert.Equal(t, []string{"api-contract"}, vera.CategoriesRaised)
+
+	dax := findReviewer(recs, "dax")
+	require.NotNil(t, dax)
+	assert.Equal(t, []string{"error-handling"}, dax.CategoriesRaised)
+}
+
+// TestEmitForReconcile_CategoryThreadedFromUnresolvedStream is AC 03-02 Edge Case
+// 1: the Tier-4-routed res.Unresolved construction site is the one a reader
+// skims past, and a reviewer whose every finding was routed is reachable ONLY
+// through it.
+func TestEmitForReconcile_CategoryThreadedFromUnresolvedStream(t *testing.T) {
+	reviewDir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	res := reconcile.Result{
+		Unresolved: []reconcile.JSONFinding{
+			{File: "ghost.go", Line: 7, Problem: "phantom", Category: "security", Reviewers: []string{"sasha"}},
+		},
+		Summary: reconcile.Summary{ReconciledAt: "2026-06-14T10:00:00Z"},
+	}
+	EmitForReconcile(reviewDir, res, EmitOpts{})
+
+	cfg, err := os.UserConfigDir()
+	require.NoError(t, err)
+	recs, err := ReadRecords(filepath.Join(cfg, "atcr", "scorecard", "2026-06.jsonl"), ReadOpts{})
+	require.NoError(t, err)
+
+	sasha := findReviewer(recs, "sasha")
+	require.NotNil(t, sasha)
+	assert.Equal(t, 1, sasha.FindingsRaised, "a routed finding still charges the denominator")
+	assert.Equal(t, []string{"security"}, sasha.CategoriesRaised,
+		"the routed construction site must thread Category too")
+}
+
+// TestEmitForReconcile_CategoriesRaisedIsDedupedAndSorted is AC 03-02 Happy Path
+// Scenario 2. Sorted output is asserted deliberately: the field is persisted for
+// 180 days and compared across records, so a map-iteration-ordered slice would
+// make two identical runs serialize differently.
+func TestEmitForReconcile_CategoriesRaisedIsDedupedAndSorted(t *testing.T) {
+	reviewDir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	res := reconcile.Result{
+		Findings: []reconcile.Merged{
+			{Finding: reconcile.Finding{File: "a.go", Line: 1, Problem: "p1", Category: "testing", Reviewers: []string{"dax"}}},
+			{Finding: reconcile.Finding{File: "b.go", Line: 2, Problem: "p2", Category: "testing", Reviewers: []string{"dax"}}},
+			{Finding: reconcile.Finding{File: "c.go", Line: 3, Problem: "p3", Category: "error-handling", Reviewers: []string{"dax"}}},
+		},
+		Summary: reconcile.Summary{ReconciledAt: "2026-06-14T10:00:00Z"},
+	}
+	EmitForReconcile(reviewDir, res, EmitOpts{})
+
+	cfg, err := os.UserConfigDir()
+	require.NoError(t, err)
+	recs, err := ReadRecords(filepath.Join(cfg, "atcr", "scorecard", "2026-06.jsonl"), ReadOpts{})
+	require.NoError(t, err)
+
+	dax := findReviewer(recs, "dax")
+	require.NotNil(t, dax)
+	assert.Equal(t, []string{"error-handling", "testing"}, dax.CategoriesRaised,
+		"deduped once and in deterministic (sorted) order")
+}
+
+// TestEmitForReconcile_DocShieldedCategoryIsNotRaised is AC 03-02 Edge Case 2.
+// The doc-shield carve-out already excludes these findings from FindingsRaised;
+// the category set must follow the same rule or the shield leaks back in through
+// the opportunity gate.
+func TestEmitForReconcile_DocShieldedCategoryIsNotRaised(t *testing.T) {
+	reviewDir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	res := reconcile.Result{
+		Findings: []reconcile.Merged{
+			{Finding: reconcile.Finding{File: "a.go", Line: 1, Problem: "real", Category: "correctness", Reviewers: []string{"bruce"}}},
+		},
+		Unresolved: []reconcile.JSONFinding{
+			{
+				File: "README.md", Line: 3, Problem: "shielded", Category: "docs",
+				Reviewers: []string{"bruce"}, UnresolvedReason: reconcile.UnresolvedReasonDocShield,
+			},
+		},
+		Summary: reconcile.Summary{ReconciledAt: "2026-06-14T10:00:00Z"},
+	}
+	EmitForReconcile(reviewDir, res, EmitOpts{})
+
+	cfg, err := os.UserConfigDir()
+	require.NoError(t, err)
+	recs, err := ReadRecords(filepath.Join(cfg, "atcr", "scorecard", "2026-06.jsonl"), ReadOpts{})
+	require.NoError(t, err)
+
+	bruce := findReviewer(recs, "bruce")
+	require.NotNil(t, bruce)
+	assert.Equal(t, []string{"correctness"}, bruce.CategoriesRaised)
+	assert.NotContains(t, bruce.CategoriesRaised, "docs",
+		"a doc-shielded finding is excluded from the category set exactly as it is from FindingsRaised")
+}
+
+// TestEmitForReconcile_EmptyAndOutOfVocabularyCategoriesAreDropped covers AC
+// 03-01 Edge Case 2 and sprint-plan task 3.2 step 1a. A category that is not a
+// reclib.Categories() member fails NEUTRAL: dropped from the persisted set,
+// never trusted into the opportunity gate, and never a hard error that fails the
+// caller's reconcile.
+func TestEmitForReconcile_EmptyAndOutOfVocabularyCategoriesAreDropped(t *testing.T) {
+	reviewDir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	res := reconcile.Result{
+		Findings: []reconcile.Merged{
+			{Finding: reconcile.Finding{File: "a.go", Line: 1, Problem: "p1", Category: "", Reviewers: []string{"bruce"}}},
+			{Finding: reconcile.Finding{File: "b.go", Line: 2, Problem: "p2", Category: "NOT-A-CATEGORY", Reviewers: []string{"bruce"}}},
+			{Finding: reconcile.Finding{File: "c.go", Line: 3, Problem: "p3", Category: "Correctness", Reviewers: []string{"bruce"}}},
+			{Finding: reconcile.Finding{File: "d.go", Line: 4, Problem: "p4", Category: "state", Reviewers: []string{"bruce"}}},
+		},
+		Summary: reconcile.Summary{ReconciledAt: "2026-06-14T10:00:00Z"},
+	}
+	EmitForReconcile(reviewDir, res, EmitOpts{})
+
+	cfg, err := os.UserConfigDir()
+	require.NoError(t, err)
+	recs, err := ReadRecords(filepath.Join(cfg, "atcr", "scorecard", "2026-06.jsonl"), ReadOpts{})
+	require.NoError(t, err)
+
+	bruce := findReviewer(recs, "bruce")
+	require.NotNil(t, bruce)
+	assert.Equal(t, []string{"state"}, bruce.CategoriesRaised,
+		"empty, out-of-vocabulary and mis-cased values are all dropped; the findings still count")
+	assert.Equal(t, 4, bruce.FindingsRaised,
+		"dropping a category must NOT drop the finding from the denominator")
+}
+
+// TestEmitForReconcile_ReviewerWithNoFindingsHasNoCategories is AC 03-02 Edge
+// Case 3: a reviewer present only in the pool summary must not inherit another
+// reviewer's categories, and the key must be omitted rather than written empty.
+func TestEmitForReconcile_ReviewerWithNoFindingsHasNoCategories(t *testing.T) {
+	reviewDir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	pool := filepath.Join(reviewDir, "sources", "pool")
+	_, err := fanout.WritePool(pool, []fanout.Result{
+		{Agent: "bruce", Status: fanout.StatusOK, Content: "x", Model: "m"},
+		{Agent: "otto", Status: fanout.StatusOK, Content: "x", Model: "m"},
+	}, nil)
+	require.NoError(t, err)
+
+	res := reconcile.Result{
+		Findings: []reconcile.Merged{
+			{Finding: reconcile.Finding{File: "a.go", Line: 1, Problem: "p1", Category: "correctness", Reviewers: []string{"bruce"}}},
+		},
+		Summary: reconcile.Summary{ReconciledAt: "2026-06-14T10:00:00Z"},
+	}
+	EmitForReconcile(reviewDir, res, EmitOpts{})
+
+	cfg, err := os.UserConfigDir()
+	require.NoError(t, err)
+	path := filepath.Join(cfg, "atcr", "scorecard", "2026-06.jsonl")
+	recs, err := ReadRecords(path, ReadOpts{})
+	require.NoError(t, err)
+
+	otto := findReviewer(recs, "otto")
+	require.NotNil(t, otto)
+	assert.Empty(t, otto.CategoriesRaised, "a silent reviewer inherits nobody's categories")
+
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		if strings.Contains(line, `"reviewer":"otto"`) {
+			assert.NotContains(t, line, "categories_raised",
+				"omitempty must omit the key entirely for an empty set")
+		}
+	}
 }

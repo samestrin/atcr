@@ -212,3 +212,143 @@ func TestIntegration_NoScorecardSuppresses(t *testing.T) {
 		t.Errorf("store has %d records when suppressed, want 0", len(recs))
 	}
 }
+
+// --- Phase 3 (Story 03): opportunity-set differential ----------------------
+
+// representativeCorpus is a hand-built stand-in for a real panel's output
+// distribution, per AC 03-05's Test Data Requirements. Each entry is ONE case's
+// union of raised categories, drawn across the five groups reconcile/category.go
+// documents: defect classes, contract/interface, resource/dependency,
+// structure/design, and cross-cutting concerns.
+//
+// It is deliberately NOT the adversarial shape from Edge Case 2 (every case
+// touching every remit), which is covered separately below.
+var representativeCorpus = [][]string{
+	// API-contract-heavy cases.
+	{"api-contract", "contract"},
+	{"api-contract", "correctness"},
+	{"contract", "naming"},
+	// Error-handling / testing-heavy cases.
+	{"error-handling", "testing"},
+	{"testing", "correctness"},
+	{"error-handling", "resource-leak"},
+	{"testing"},
+	// Security cases.
+	{"security", "input-validation"},
+	{"secret", "observability"},
+	{"security", "correctness"},
+	// Pure structure / style cleanup — no specialist remit in play.
+	{"style", "naming"},
+	{"docs", "naming"},
+	{"style", "maintainability"},
+	{"maintainability", "complexity"},
+	{"docs"},
+	// Performance cases.
+	{"performance", "complexity"},
+	{"performance", "leak"},
+	// Mixed correctness cases.
+	{"correctness", "state"},
+	{"logic", "invariant"},
+	{"correctness", "error-handling", "state"},
+	// One fully clean case: nobody raised anything.
+	{},
+}
+
+// opportunitySetSize counts the corpus cases that are an opportunity for
+// persona. Test-only helper (AC 03-05 explicitly keeps it out of the production
+// file — it has no production caller).
+func opportunitySetSize(persona string, cases [][]string) int {
+	n := 0
+	for _, c := range cases {
+		if InOpportunitySet(persona, c) {
+			n++
+		}
+	}
+	return n
+}
+
+// TestOpportunitySet_SpecialistsMaterialSmallerThanGeneralist is AC 03-05 Happy
+// Path Scenario 1, with C11's substitution applied: vera is unmapped under
+// Option A, so its opportunity-set size would be a constant 0 and the assertion
+// would pass for the wrong reason. The specialists measured here are the in-repo
+// dax (testing/error-handling) and sasha (security), exactly as AC 03-05's own
+// blocked-on note instructs.
+func TestOpportunitySet_SpecialistsMaterialSmallerThanGeneralist(t *testing.T) {
+	bruce := opportunitySetSize("bruce", representativeCorpus)
+	dax := opportunitySetSize("dax", representativeCorpus)
+	sasha := opportunitySetSize("sasha", representativeCorpus)
+
+	if bruce <= dax+2 {
+		t.Errorf("generalist bruce (%d) must be MATERIALLY larger than specialist dax (%d)", bruce, dax)
+	}
+	if bruce <= sasha+2 {
+		t.Errorf("generalist bruce (%d) must be MATERIALLY larger than specialist sasha (%d)", bruce, sasha)
+	}
+	if bruce >= len(representativeCorpus) {
+		t.Errorf("even the generalist must not be in-remit on every case (%d of %d)", bruce, len(representativeCorpus))
+	}
+}
+
+// TestOpportunitySet_SilentSpecialistDoesNotDisturbOthers is AC 03-05 Happy Path
+// Scenario 2: each persona's membership is computed independently from the same
+// shared raised-category data, so a specialist's correct silence cannot inflate
+// or deflate anyone else's set.
+func TestOpportunitySet_SilentSpecialistDoesNotDisturbOthers(t *testing.T) {
+	bruceBefore := opportunitySetSize("bruce", representativeCorpus)
+	daxBefore := opportunitySetSize("dax", representativeCorpus)
+
+	// Re-running over the same corpus, in a different persona order, must not
+	// change either answer — the predicate holds no cross-persona state.
+	if got := opportunitySetSize("dax", representativeCorpus); got != daxBefore {
+		t.Errorf("dax's set changed between runs: %d then %d", daxBefore, got)
+	}
+	if got := opportunitySetSize("bruce", representativeCorpus); got != bruceBefore {
+		t.Errorf("bruce's set changed between runs: %d then %d", bruceBefore, got)
+	}
+}
+
+// TestOpportunitySet_CleanCaseCountsForNobody is AC 03-05 Error Scenario 1,
+// asserted explicitly rather than allowed to pass as an off-by-one in the corpus
+// size.
+func TestOpportunitySet_CleanCaseCountsForNobody(t *testing.T) {
+	clean := [][]string{{}}
+	for _, p := range []string{"bruce", "dax", "sasha", "otto", "penny", "kai", "mira", "greta", "ingrid"} {
+		if got := opportunitySetSize(p, clean); got != 0 {
+			t.Errorf("a clean case must contribute 0 to %q's set, got %d", p, got)
+		}
+	}
+}
+
+// TestOpportunitySet_CorpusWithNoMatchingCategoryIsAnExplicitZero is AC 03-05
+// Edge Case 1: a degenerate zero is a valid outcome, not a crash and not a test
+// failure.
+func TestOpportunitySet_CorpusWithNoMatchingCategoryIsAnExplicitZero(t *testing.T) {
+	noSecurity := [][]string{{"style", "naming"}, {"docs"}, {"performance"}}
+	if got := opportunitySetSize("sasha", noSecurity); got != 0 {
+		t.Errorf("sasha's opportunity set over a security-free corpus must be 0, got %d", got)
+	}
+}
+
+// TestOpportunitySet_AdversarialCorpusCollapsesTheDifferential is AC 03-05 Edge
+// Case 2, documented as a known collapse point rather than silently ignored:
+// when every case touches every remit, specialist and generalist sets are equal.
+// That is a correct consequence of the membership rule, and it is why the
+// representative corpus above is deliberately NOT built this way.
+func TestOpportunitySet_AdversarialCorpusCollapsesTheDifferential(t *testing.T) {
+	everything := []string{}
+	for _, p := range []string{"bruce", "dax", "sasha", "otto", "penny", "kai", "mira", "greta", "ingrid"} {
+		cats, ok := RemitCategories(p)
+		if !ok {
+			t.Fatalf("persona %q must be mapped", p)
+		}
+		everything = append(everything, cats...)
+	}
+	adversarial := [][]string{everything, everything, everything}
+
+	bruce := opportunitySetSize("bruce", adversarial)
+	dax := opportunitySetSize("dax", adversarial)
+	if bruce != len(adversarial) || dax != len(adversarial) {
+		t.Errorf("every persona must be in-remit on every adversarial case: bruce=%d dax=%d of %d",
+			bruce, dax, len(adversarial))
+	}
+}
