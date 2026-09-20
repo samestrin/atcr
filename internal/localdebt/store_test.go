@@ -3031,3 +3031,70 @@ func TestRetainForCompaction_IsAFixedPoint(t *testing.T) {
 	assert.Equal(t, pass1[len(pass1)-1].Occurrences, pass2[len(pass2)-1].Occurrences,
 		"the occurrence count itself is stable from the first pass")
 }
+
+// TestRetainForCompaction_RecoveredModelIsCompactionInvariant is the guard on
+// gate-pass-3 HIGH: the outcome must be credited to the SAME model before and
+// after compaction, which is modelDonor's own stated guarantee and the property
+// Phase 4's per-(persona, model) lens score depends on.
+//
+// It broke when the donor was emitted BEFORE the trail. foldTerminalByID's donor
+// index keeps the latest model-carrier with `>=` — last-wins on a timestamp tie —
+// so a trail that also carries a Model and ties the donor overwrote it, and the
+// signal silently switched models. Wrong attribution is worse than a missing row:
+// a missing row is visibly absent, a wrong one is believed.
+func TestRetainForCompaction_RecoveredModelIsCompactionInvariant(t *testing.T) {
+	const id = "id-model-invariant"
+	// Two model-carrying terminals tied on timestamp, different models. Their
+	// order in the stream is what decides the recovery, so compaction must not
+	// reorder them relative to each other.
+	unrepro := mkTerminal(id, "2026-09-01T00:00:00Z", StatusUnreproducible)
+	unrepro.Model = "m1"
+	unrepro.Reviewers = []string{"vera"}
+	resolved := mkTerminal(id, "2026-09-01T00:00:00Z", StatusResolved)
+	resolved.Model = "m2"
+	resolved.Reviewers = []string{"vera"}
+	// A later counted effective record with no Model, so a donor is needed.
+	eff := mkTerminal(id, "2026-09-02T00:00:00Z", StatusAttemptsExhausted)
+	eff.Reviewers = []string{"vera"}
+
+	recs := []Record{unrepro, resolved, eff}
+
+	before := AggregateQualitySignal(recs)
+	require.Len(t, before, 1)
+	after := AggregateQualitySignal(retainForCompaction(recs))
+	require.Len(t, after, 1, "the row must survive compaction")
+
+	assert.Equal(t, before[0].Model, after[0].Model,
+		"the recovered model must not depend on whether the store has been compacted")
+	assert.Equal(t, before[0].AttemptsExhaustedCount, after[0].AttemptsExhaustedCount)
+}
+
+// TestRetainForCompaction_OrderSatisfiesBothConstraints pins the two opposing
+// ordering requirements together, so a future edit cannot satisfy one by
+// breaking the other: eff must stay effective (it is emitted last) AND the
+// donor's model must win the recovery (it is emitted after the trail).
+func TestRetainForCompaction_OrderSatisfiesBothConstraints(t *testing.T) {
+	const id = "id-both-order"
+	trail := mkTerminal(id, "2026-09-01T00:00:00Z", StatusUnreproducible)
+	trail.Model = "m-trail"
+	trail.Reviewers = []string{"vera"}
+	donor := mkTerminal(id, "2026-09-01T00:00:00Z", StatusResolved)
+	donor.Model = "m-donor"
+	donor.Reviewers = []string{"vera"}
+	eff := mkTerminal(id, "2026-09-02T00:00:00Z", StatusAttemptsExhausted)
+	eff.Reviewers = []string{"vera"}
+
+	recs := []Record{trail, donor, eff}
+	retained := retainForCompaction(recs)
+
+	// Constraint 1: eff still wins its own fold.
+	folded := FoldRecords(retained)
+	require.Len(t, folded, 1)
+	assert.Equal(t, StatusAttemptsExhausted, folded[0].Status,
+		"the effective record must be emitted last so it wins its own group")
+
+	// Constraint 2: the model recovery is unchanged by compaction.
+	assert.Equal(t, AggregateQualitySignal(recs)[0].Model,
+		AggregateQualitySignal(retained)[0].Model,
+		"the donor must be emitted after the trail so its model wins the recovery")
+}

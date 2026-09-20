@@ -239,3 +239,40 @@ func TestSkillResolveDocStatesTheGeneralizedReasonRule(t *testing.T) {
 	assert.Contains(t, string(b), "`--reason` is required for every status except",
 		"the route must state the generalized --reason rule, not only the wontfix case")
 }
+
+// backfillSourcePath is the command whose printed summary the catalog quotes as
+// a worked example.
+const backfillSourcePath = "../../cli/debt_backfill.go"
+
+// TestTechnicalDebtDoc_BackfillSampleMatchesThePrintedLabel closes the drift
+// that actually bit during Story 36.0: the backfill summary's "skipped (…)"
+// label existed in THREE places — the format string, a test assertion, and a
+// sample block in this catalog — and renaming it in one left the other two
+// wrong. The test assertion failed loudly (it was the red suite); the doc sample
+// failed silently and would have rotted indefinitely, because the other guards
+// in this file cover status tables and flag prose, not quoted output.
+//
+// The expected text is extracted from the format string in source, not retyped,
+// so the doc is pinned to what the command actually prints.
+func TestTechnicalDebtDoc_BackfillSampleMatchesThePrintedLabel(t *testing.T) {
+	src, err := os.ReadFile(backfillSourcePath)
+	require.NoError(t, err, "the backfill command source must be readable from this package")
+
+	// Take the literal tail of the format string from "skipped (" to its closing
+	// paren. It carries no verbs, so it appears in the output verbatim.
+	const marker = "skipped ("
+	i := strings.Index(string(src), marker)
+	require.GreaterOrEqual(t, i, 0,
+		"the backfill summary must still print a %q clause; if it was reworded, this guard needs the new anchor", marker)
+	rest := string(src)[i:]
+	j := strings.Index(rest, ")")
+	require.GreaterOrEqual(t, j, 0, "the skipped clause must be parenthesised")
+	label := rest[:j+1]
+
+	require.NotContains(t, label, "%",
+		"the extracted clause must be literal text, not a format verb, or this guard compares nothing")
+
+	assert.Contains(t, technicalDebtDoc(t), label,
+		"the catalog's backfill sample output must quote the label the command actually prints (%q); "+
+			"this is the third copy of that string and the one nothing else guards", label)
+}

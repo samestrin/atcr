@@ -918,11 +918,22 @@ func foldByID[T foldable](items []T) ([]T, map[string][]T) {
 //
 // It is also fold-stable and idempotent — FoldRecords over {open(t3),
 // resolved(t2)} still selects open(t3), so every reader sees exactly what it saw
-// before compaction, and a second Compact retains the same records. "Same
-// records", not "byte-identical output": aggregateCounters stamps CountedThrough
-// on the effective record the first time it is folded as a carrier, so full
-// value equality is reached at the second pass. Occurrences is stable from the
-// first.
+// before compaction.
+//
+// Convergence is at the SECOND pass, not the first, and the claim is deliberately
+// stated that weakly. Two things move between pass 1 and pass 2: aggregateCounters
+// stamps CountedThrough on the effective record the first time it is folded as a
+// carrier (Occurrences itself is stable from pass 1), and a donor retained as a
+// distinct record in pass 1 can collapse into the trail slot in pass 2, because
+// pass 1's OUTPUT ORDER can hand it the trail's rank/timestamp tie. So pass 2 can
+// retain one fewer record than pass 1. From pass 2 the output is a true fixed
+// point. Do not strengthen this to "the same records from the first pass" — that
+// is measurably false.
+//
+// Fold stability assumes WELL-FORMED RFC3339 timestamps. A record whose timestamp
+// cannot be ordered makes latestIndex's precedence non-transitive, so dropping any
+// record can move the effective one; see the TD note on latestIndex's unorderable
+// arm.
 //
 // A suppressing (wontfix) id never reaches the second half: rule 1 makes the
 // wontfix record itself the effective one, so its justification is retained by
@@ -1025,34 +1036,49 @@ func retainForCompaction(recs []Record) []Record {
 			donorIdx = -1
 		}
 
-		// ORDER IS LOAD-BEARING, and for the reason the settled branch states
-		// above: every retained record for this id can tie the effective one on
-		// both timestamp and ClosedStatusRank, and latestItem breaks a full tie by
-		// APPEND ORDER, last wins. An unorderable timestamp (which the read path
-		// tolerates) hands the win to the later record outright. So anything
-		// emitted AFTER eff can seize the fold and become the effective record —
-		// flipping a live `attempts-exhausted` item to `deferred`, changing what
-		// `debt list` shows, whether debtIsLive counts it, whether `debt resolve`
-		// will touch it, and which outcome the signal reports. Emit the trail
-		// entries FIRST and eff LAST so eff always wins its own group.
-		if donorIdx >= 0 {
-			donor := group[donorIdx]
+		// ORDER IS LOAD-BEARING TWICE OVER, and the two constraints point in
+		// opposite directions. Emitting trail, then donor, then eff satisfies both.
+		//
+		// 1. eff LAST, so it wins its own fold. Every retained record for this id
+		//    can tie eff on both timestamp and ClosedStatusRank, and latestItem
+		//    breaks a full tie by APPEND ORDER, last wins; an unorderable
+		//    timestamp (which the read path tolerates) hands the win to the later
+		//    record outright. Anything emitted after eff can therefore seize the
+		//    fold and become the effective record — flipping a live
+		//    `attempts-exhausted` item to `deferred`, changing what `debt list`
+		//    shows, whether debtIsLive counts it, whether `debt resolve` will touch
+		//    it, and which outcome the signal reports.
+		//
+		// 2. donor AFTER trail, so the donor's Model wins the recovery.
+		//    foldTerminalByID's donor index (qualitysignal.go) keeps the latest
+		//    model-carrier with `>=`, i.e. LAST-WINS on a timestamp tie. When the
+		//    trail also carries a Model and ties the donor on timestamp, emitting
+		//    the donor first lets the trail overwrite it, and the outcome is
+		//    credited to the WRONG model after compaction — falsifying modelDonor's
+		//    own guarantee that the recovery returns the same model before and
+		//    after. Phase 4's durable lens score keys on (persona, model), so a
+		//    silent misattribution there is worse than a missing row.
+		//
+		// The two are compatible only in this order. Do not "simplify" by moving
+		// the donor next to its comment or by grouping the two trail writes.
+		if trailIdx >= 0 {
+			trail := group[trailIdx]
 			// A trail entry is not an occurrence: the id's aggregate counters live
 			// solely on the effective record, or a second carrier would let the fold
 			// count part of the history twice (aggregateCounters). Zeroing FirstSeen
 			// is safe because the aggregation skips empty values rather than
 			// comparing them.
-			donor.Occurrences = 0
-			donor.FirstSeen = ""
-			donor.CountedThrough = ""
-			out = append(out, donor)
-		}
-		if trailIdx >= 0 {
-			trail := group[trailIdx]
 			trail.Occurrences = 0
 			trail.FirstSeen = ""
 			trail.CountedThrough = ""
 			out = append(out, trail)
+		}
+		if donorIdx >= 0 {
+			donor := group[donorIdx]
+			donor.Occurrences = 0
+			donor.FirstSeen = ""
+			donor.CountedThrough = ""
+			out = append(out, donor)
 		}
 		// Retention is bounded at THREE records per id on this branch, not two,
 		// and only when all three are genuinely distinct: the effective record,
@@ -1079,10 +1105,11 @@ func retainForCompaction(recs []Record) []Record {
 // compaction. A different rule here would make the signal depend on whether the
 // store had been compacted yet.
 //
-// Both compaction branches call this, not just the settled one. The settled
-// branch retains no resolution trail, so a donor there keeps retention at two.
-// The unsettled branch may retain a trail as well, which is the one case where
-// an id reaches three — see retainForCompaction's bound note.
+// The SETTLED branch calls this; the unsettled branch calls modelDonorIndex
+// directly, because it must compare the donor's position against the trail's.
+// The settled branch retains no resolution trail, so a donor there keeps
+// retention at two; the unsettled branch may retain both, which is the one case
+// where an id reaches three — see retainForCompaction's bound note.
 //
 // Settled — not merely closed — is the right gate, and not by luck. An id whose
 // effective record is OPEN is filtered out of the quality signal by
@@ -1140,7 +1167,7 @@ func modelDonorIndex(group []Record, eff Record) int {
 	return best
 }
 
-// highestRankedTerminal picks which terminal record to retain for an id whose
+// highestRankedTerminalIndex picks which terminal record to retain for an id whose
 // effective record is open: rank first, recency only as a tiebreak — the inverse
 // of latestRecord's ordering, and deliberately so. The point of retention is the
 // resolution trail, and a `resolved` record can carry a human-typed --reason
@@ -1152,14 +1179,6 @@ func modelDonorIndex(group []Record, eff Record) int {
 // `attempts-exhausted` both REQUIRE --reason where `resolved` does not, so they
 // rank above it: the record most certain to carry a rationale wins the retention
 // slot. See ClosedStatusRank's own comment for the full chain.
-func highestRankedTerminal(terminals []Record) Record {
-	return terminals[highestRankedTerminalIndex(terminals)]
-}
-
-// highestRankedTerminalIndex is highestRankedTerminal's selection rule returning
-// the winner's INDEX, so a caller holding a candidate index set can map the
-// result back to a position in the original group. See latestIndex for why
-// position, not value, is the usable identity inside one id group.
 func highestRankedTerminalIndex(terminals []Record) int {
 	best := 0
 	for i := 1; i < len(terminals); i++ {
