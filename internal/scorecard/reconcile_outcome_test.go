@@ -116,10 +116,22 @@ func TestEmitForReconcile_RaisedIsTheAgentsPostEnforcementCount(t *testing.T) {
 		"raised must come from AgentStatus.FindingsCount, not from res.Findings")
 }
 
-// TestEmitForReconcile_NoPoolSummaryYieldsUnknownOutcome is AC 02-03 Edge Case
-// 1. A path-anchored review has no AgentStatus to classify, and clean would
-// assert a successful review nobody observed.
-func TestEmitForReconcile_NoPoolSummaryYieldsUnknownOutcome(t *testing.T) {
+// TestEmitForReconcile_NoPoolSummaryClassifiesFromTheFindings covers AC 02-03
+// Edge Case 1, with the correction the Phase 2 gate forced.
+//
+// AC 02-03 says every reviewer on this path gets OutcomeUnknown. Its REASON is
+// sound — there is no AgentStatus, so OutcomeClean would assert a successful
+// review of the diff that nothing witnessed — but applying it to a reviewer
+// NAMED ON A SURVIVING FINDING throws away an observation rather than declining
+// to guess. The gate proved the cost: an install that only ever reconciles
+// path-anchored reviews would write nothing but unclassified records and could
+// never accumulate a trust prior at all, permanently disabling trustExempt and
+// demoteByTrust with no diagnostic.
+//
+// So: named on a finding -> findings (observed). Named only on a Tier-4-routed
+// finding -> ungrounded (also observed, and it correctly counts AGAINST the
+// reviewer). Never clean, which remains the fabricated claim AC 02-03 forbids.
+func TestEmitForReconcile_NoPoolSummaryClassifiesFromTheFindings(t *testing.T) {
 	reviewDir := t.TempDir() // no sources/pool/summary.json written at all
 
 	recs := emitAndRead(t, reviewDir, resWith("bruce", "greta"))
@@ -127,10 +139,54 @@ func TestEmitForReconcile_NoPoolSummaryYieldsUnknownOutcome(t *testing.T) {
 	for _, name := range []string{"bruce", "greta"} {
 		r := findReviewer(recs, name)
 		require.NotNil(t, r, name)
-		assert.Equal(t, testOutcomeUnknown, r.Outcome, name)
+		assert.Equal(t, testOutcomeFindings, r.Outcome, name)
 		assert.NotEqual(t, testOutcomeClean, r.Outcome,
-			"%s was never classified; clean would be a fabricated claim", name)
+			"%s's review was never observed; clean would be a fabricated claim", name)
+		assert.NotEqual(t, testOutcomeUnknown, r.Outcome,
+			"%s is named on a surviving finding, so it is not unclassifiable", name)
 	}
+}
+
+// TestEmitForReconcile_RoutedOnlyReviewerIsUngrounded is the other half of the
+// gate's HIGH fix. A reviewer whose every finding the Tier 4 content check
+// routed out cited anchors that are declared nowhere in the tracked tree — which
+// is exactly what ungrounded names, and it is on the ELIGIBLE side on purpose.
+// Excluding it would hand a phantom-raiser the same protection the gate exists
+// to give a lens with a broken proxy.
+func TestEmitForReconcile_RoutedOnlyReviewerIsUngrounded(t *testing.T) {
+	reviewDir := t.TempDir()
+
+	res := reconcile.Result{
+		Unresolved: []reconcile.JSONFinding{{
+			File: "ghost.go", Line: 1, Problem: "p", Reviewers: []string{"phantom"},
+		}},
+		Summary: reconcile.Summary{ReconciledAt: "2026-06-14T10:00:00Z"},
+	}
+	recs := emitAndRead(t, reviewDir, res)
+
+	r := findReviewer(recs, "phantom")
+	require.NotNil(t, r)
+	assert.Equal(t, testOutcomeUngrounded, r.Outcome)
+
+	kept := eligibleOutcomeRuns([]Record{*r})
+	assert.Len(t, kept, 1, "a phantom-raiser must stay scoreable, not be excused")
+}
+
+// TestEmitForReconcile_BlankAgentNameIsNotRecorded matches the guard the two
+// findings loops already had. A summary naming an agent "" would otherwise emit
+// a record for a reviewer literally called "" — and since Phase 2 that record
+// also carries an eligible outcome and reaches the trust priors.
+func TestEmitForReconcile_BlankAgentNameIsNotRecorded(t *testing.T) {
+	reviewDir := t.TempDir()
+	writePoolSummary(t, reviewDir,
+		fanout.AgentStatus{Agent: "", Status: fanout.StatusOK, FindingsCount: 0},
+		fanout.AgentStatus{Agent: "bruce", Status: fanout.StatusOK, FindingsCount: 1},
+	)
+
+	recs := emitAndRead(t, reviewDir, resWith("bruce"))
+
+	assert.Nil(t, findReviewer(recs, ""), "a blank-named agent must not become a reviewer record")
+	require.NotNil(t, findReviewer(recs, "bruce"))
 }
 
 // TestEmitForReconcile_OutOfVocabularyOutcomeIsCoercedToUnknown is AC 02-03
@@ -174,11 +230,19 @@ func TestEmitForReconcile_HostileFindingsCountDoesNotPanic(t *testing.T) {
 
 			bruce := findReviewer(recs, "bruce")
 			require.NotNil(t, bruce, "the run must still emit, not crash")
-			// A huge count still means "this reviewer raised something", so the
-			// classification is honest; only the allocation was the problem.
 			if count[0] == '-' {
-				assert.Equal(t, testOutcomeClean, bruce.Outcome)
+				// A negative count is INCOHERENT — atcr's fan-out cannot produce
+				// one — so the status is not classifiable and the honest answer
+				// is unknown, which is excluded from scoring. Passing it through
+				// lands on clean, which is ELIGIBLE: a crafted summary.json in a
+				// caller-supplied MCP directory would otherwise mint durable
+				// records asserting a successful clean review that never ran.
+				assert.Equal(t, testOutcomeUnknown, bruce.Outcome)
+				assert.Empty(t, eligibleOutcomeRuns([]Record{*bruce}),
+					"an incoherent status must not produce a scoreable record")
 			} else {
+				// A huge positive count still means "raised something", so the
+				// classification is honest; only the allocation was the problem.
 				assert.Equal(t, testOutcomeFindings, bruce.Outcome)
 			}
 		})

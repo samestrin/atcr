@@ -108,11 +108,41 @@ func TestDocs_ScorecardMdDocumentsOutcomeAndEligibility(t *testing.T) {
 		}
 	}
 
-	// The eligible set must be named exactly, so widening the allowlist in code
-	// without widening the doc fails here rather than in a support thread.
-	for _, o := range []string{outcomeFindings, outcomeClean, outcomeUngrounded, outcomeFiltered} {
-		if !strings.Contains(doc, "`"+o+"`") {
-			t.Errorf("eligible outcome %q is not named in docs/scorecard.md", o)
+	// Pin the doc's OWN eligibility sentence against the code allowlist, not the
+	// whole file. A whole-file substring search cannot fail: all nine vocabulary
+	// values already appear backticked somewhere in this document, so adding
+	// `truncated` to eligibleOutcomeRuns would leave the check green while the
+	// doc went on stating that truncated is excluded.
+	//
+	// The sentence lists the counted set and then the excluded set, so asserting
+	// each value appears on the correct SIDE of "are excluded" makes the two
+	// lists a real complement of each other.
+	countedStart := strings.Index(doc, "- **Counted:**")
+	excludedStart := strings.Index(doc, "- **Excluded:**")
+	if countedStart < 0 || excludedStart <= countedStart {
+		t.Fatalf("docs/scorecard.md must render the eligibility split as a Counted: bullet followed by an Excluded: bullet; the pin below cannot work otherwise")
+	}
+	counted := doc[countedStart:excludedStart]
+	excluded := doc[excludedStart : excludedStart+strings.Index(doc[excludedStart:], "\n\n")]
+
+	// Each value must be named on the side the CODE actually puts it on, so
+	// moving one across the allowlist without moving it in the doc fails here.
+	// A whole-file substring search cannot do this: all nine values already
+	// appear backticked somewhere in this document.
+	for _, o := range allTestOutcomes {
+		if o == "" {
+			continue // absent/unknown is prose, not a backticked token
+		}
+		admitted := len(eligibleOutcomeRuns([]Record{{RecordType: RecordTypeReviewer, Outcome: o}})) > 0
+		side, other := excluded, counted
+		if admitted {
+			side, other = counted, excluded
+		}
+		if !strings.Contains(side, "`"+o+"`") {
+			t.Errorf("code treats %q as admitted=%v but docs/scorecard.md does not name it on that side of the eligibility split", o, admitted)
+		}
+		if strings.Contains(other, "`"+o+"`") {
+			t.Errorf("docs/scorecard.md names %q on BOTH sides of the eligibility split", o)
 		}
 	}
 }

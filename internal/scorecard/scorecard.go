@@ -55,11 +55,21 @@ import (
 //     not rediscovered as a surprise.
 //
 // Rollout note: excluding unclassified (v1) records from trust scoring is what
-// trust.go's own era comments call blacking out an existing history, and that
-// would normally be serious. It is not here — the store is created on first
-// reconcile, so a fresh install has nothing to strand, and an existing store
-// reverts each affected lens to the neutral 1/N baseline (absent from the priors
-// map) rather than to a punitive zero. See eligibleOutcomeRuns.
+// trust.go's own era comments call blacking out an existing history. A fresh
+// install has nothing to strand — the store is created on first reconcile — but
+// an EXISTING store does, for roughly DefaultTrustMinRuns strict runs per lens.
+//
+// Absent from the priors map is not punitive (it is never read as a zero rate:
+// reconcile/consensus.go's trustExempt and demoteByTrust both gate on the
+// comma-ok), but it is NOT "neutral" either, and the difference is the thing to
+// understand. Absence disables BOTH directions: a high-trust lens stops being
+// exempted from the consensus filter, and a low-trust phantom-raiser stops being
+// demoted to LOW. The second is a LOOSENING, visible in findings.json
+// confidence. unresolvedEraRuns says the same thing about its own era gap.
+//
+// (Do not call this the 1/N baseline. 1/N is the per-run PageRank uniform
+// authority in reconcile/pagerank.go — a different mechanism. Trust priors have
+// no baseline value at all; they have presence or absence.)
 const SchemaVersion = 2
 
 // Record type discriminators (AC 01-05): one "reviewer" record per participating
@@ -183,10 +193,21 @@ type Record struct {
 	// that would assert "reviewed successfully and found nothing" about a run
 	// nobody classified — it is excluded from the trust tally instead.
 	Outcome string `json:"outcome,omitempty"`
-	// CategoriesRaised WILL hold the distinct reconcile.Categories() values this
-	// reviewer's counted findings raised in the run. Nothing writes it yet — the
-	// field is declared by the v2 bump so the schema changes once, and Phase 3
-	// threads the value. Every v2 record written today omits it.
+	// CategoriesRaised WILL hold the distinct reconcile.Categories() values
+	// attached to the findings this reviewer participated in. Nothing writes it
+	// yet — the field is declared by the v2 bump so the schema changes once, and
+	// Phase 3 threads the value. Every v2 record written today omits it.
+	//
+	// READ THE WORDING CAREFULLY, because the obvious reading is wrong and the
+	// Phase 2 gate caught it: these are NOT per-reviewer categories. The only
+	// Category reachable where the record is built is reconcile.Merged.Category,
+	// which Merge sets to ModalCategory(group) — the cluster's modal value. In a
+	// cluster where one lens raised `security` and two raised `performance`, the
+	// merged category is `performance` and the first lens's own category is
+	// unrecoverable from res.Findings. Phase 3 must either adopt this
+	// cluster-modal meaning explicitly or source categories from the raw
+	// per-source findings instead; it must not ship modal data under a
+	// per-reviewer claim.
 	//
 	// It is the per-record input to Phase 3's opportunity-set scoping: a lens
 	// will be scored on a case only when some reviewer raised a category inside

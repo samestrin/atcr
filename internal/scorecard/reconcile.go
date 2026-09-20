@@ -2,6 +2,7 @@ package scorecard
 
 import (
 	"path/filepath"
+	"strings"
 
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -34,12 +35,20 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 	reviewers := map[string]ReviewerMeta{}
 	if ps, err := fanout.ReadPoolSummary(reviewDir); err == nil {
 		for _, a := range ps.Agents {
+			// Blank-name guard, matching the two findings loops below and
+			// NewCloudSyncRecord. Without it a summary carrying "agent": ""
+			// emits a record keyed on the empty string, and since sprint 36.0
+			// that record now also carries an eligible outcome and reaches the
+			// trust priors as a reviewer literally named "".
+			if strings.TrimSpace(a.Agent) == "" {
+				continue
+			}
 			reviewers[a.Agent] = ReviewerMeta{
 				Model:     a.Model,
 				TokensIn:  a.TokensIn,
 				TokensOut: a.TokensOut,
 				LatencyMS: a.DurationMS,
-				Outcome:   coerceOutcome(fanout.ReviewerOutcome(a, raisedSlotsFor(a))),
+				Outcome:   outcomeFor(a),
 			}
 		}
 	}
@@ -60,7 +69,20 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 				continue
 			}
 			if _, ok := reviewers[rev]; !ok {
-				reviewers[rev] = ReviewerMeta{}
+				// outcomeFindings, not unknown. This reviewer has no AgentStatus
+				// — there is no pool summary — but it is NAMED ON A FINDING that
+				// survived reconcile, so "raised at least one finding" is
+				// OBSERVED here, not inferred. That is the whole difference from
+				// OutcomeClean, which AC 02-03 rightly forbids on this path:
+				// clean asserts a successful review of the diff, which nothing
+				// here witnessed.
+				//
+				// Leaving it unknown was a permanent blackout, not a one-time
+				// upgrade cost: an install that only ever reconciles
+				// path-anchored reviews would produce nothing but unclassified
+				// records and could NEVER accumulate a trust prior, silently
+				// disabling trustExempt and demoteByTrust forever.
+				reviewers[rev] = ReviewerMeta{Outcome: outcomeFindings}
 			}
 		}
 	}
@@ -89,7 +111,18 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 				continue
 			}
 			if _, ok := reviewers[rev]; !ok {
-				reviewers[rev] = ReviewerMeta{}
+				// outcomeUngrounded, and that is the accurate value rather than
+				// a softer one. A reviewer reached ONLY here raised findings of
+				// which every single one was routed out by the Tier 4 content
+				// check — its cited anchors are declared nowhere in the tracked
+				// tree. That is precisely what ungrounded names.
+				//
+				// It is on the ELIGIBLE side, which is correct and is the point:
+				// the reviewer got a fair attempt and produced phantoms, so the
+				// run must count against it. Excluding it would hand a
+				// phantom-raiser the same protection the gate exists to give a
+				// lens with a broken proxy.
+				reviewers[rev] = ReviewerMeta{Outcome: outcomeUngrounded}
 			}
 		}
 	}
@@ -143,6 +176,23 @@ func raisedSlotsFor(a fanout.AgentStatus) []string {
 	// the classifier can use. Returning exactly one also keeps the allocation
 	// O(1) per reviewer rather than O(findings).
 	return []string{""}
+}
+
+// outcomeFor classifies one agent's status for the durable record, refusing to
+// classify a status that is not internally coherent.
+//
+// A negative FindingsCount is the case worth naming. It cannot happen from
+// atcr's own fan-out, so a summary.json carrying one is corrupt or crafted —
+// and internal/mcp reads that file from a CALLER-SUPPLIED directory. Passed
+// straight through, it looks to the classifier exactly like "raised nothing" and
+// lands on OutcomeClean, which is ELIGIBLE: a crafted file would mint durable,
+// trust-scoring records asserting a successful clean review that never ran.
+// Unknown is the honest answer for an incoherent status, and it is excluded.
+func outcomeFor(a fanout.AgentStatus) string {
+	if a.FindingsCount < 0 {
+		return ""
+	}
+	return coerceOutcome(fanout.ReviewerOutcome(a, raisedSlotsFor(a)))
 }
 
 // coerceOutcome is the reconcile path's guard on Record.Outcome: a value that is

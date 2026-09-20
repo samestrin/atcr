@@ -399,18 +399,35 @@ than growing a third aggregation.
   directory yields an empty map and a nil error — this is a read-only,
   never-fails resolver; it does not create the store or write to it.
 - **Outcome eligibility.** A record counts toward a reviewer's rate only when its
-  `outcome` is `findings`, `clean`, `ungrounded` or `filtered`. `unparseable`,
-  `truncated`, `incomplete`, `failed` and absent/unknown are excluded: the lens
-  did not get a fair attempt, and a durable score has to measure judgment rather
-  than hosting. The panel's real history is the argument — a lens that hung on a
-  proxy timeout, one whose host silently capped prompts at 16,384 tokens while
-  answering HTTP 200, and one auth-failed on a billing cap would all have been
-  demoted for their wiring. `ungrounded` and `filtered` are on the counted side
-  deliberately: both follow a complete, parseable response whose findings were
-  discarded for cause, which is a judgment result. The test is an allowlist, so a
+  `outcome` is on the counted side of this split:
+  - **Counted:** `findings`, `clean`, `ungrounded`, `filtered`.
+  - **Excluded:** `unparseable`, `truncated`, `incomplete`, `failed`, and
+    absent/unknown.
+
+  The excluded ones mean the lens did not get a fair attempt, and a durable score
+  has to measure judgment rather than hosting. The panel's real history is the
+  argument — a lens that hung on a proxy timeout, one whose host silently capped
+  prompts at 16,384 tokens while answering HTTP 200, and one auth-failed on a
+  billing cap would all have been demoted for their wiring. `ungrounded` and
+  `filtered` are counted deliberately: both follow a complete, parseable response
+  whose findings were discarded for cause, which is a judgment result. The test
+  is an allowlist, so a
   future tenth outcome value is excluded until someone decides otherwise. A
   reviewer left with zero eligible runs is ABSENT from the map, never present at
-  `0.0` — the same neutral contract as the `minRuns` floor.
+  `0.0` — never a punitive score for a broken proxy.
+- **The filter is scoped to `TrustPriors`, exactly as `strictRuns` and
+  `unresolvedEraRuns` are.** `leaderboard --export` and `PublishedSet` do NOT
+  apply it: the leaderboard reports what actually happened across all runs, so a
+  `failed` or `truncated` row still contributes to the exported
+  `corroboration_rate` and `findings_raised_avg`. The trust prior is a
+  behavioural measurement, and only that one is gated.
+- **Absent is not the same as neutral.** An absent key is never read as a rate of
+  `0.0` — `trustExempt` and `demoteByTrust` both gate on the comma-ok — but its
+  absence switches BOTH of them off. A high-trust lens stops being exempted from
+  the consensus filter, and a low-trust phantom-raiser stops being demoted to
+  `LOW`. That second direction is a LOOSENING, visible in `findings.json`
+  confidence. (This is not the `1/N` baseline, which is the per-run PageRank
+  uniform authority — a different mechanism entirely.)
 - `DefaultTrustMinRuns` is the conservative default floor (`20`) for a caller
   that does not pick its own `minRuns`. `atcr personas list --scores` calls
   `TrustPriors(dir, 0)` explicitly instead — that table is meant to show every
@@ -422,7 +439,18 @@ than growing a third aggregation.
   That is the same absent-means-neutral contract the floor already had — a rate
   computed from unclassified runs is not a measurement — but it is a visible
   change on an existing install rather than a silent one.
-- **`scorecard.ResolveTrustPriors()` (epic 35.9)** is the third consumer —
+- **`scorecard.ResolveTrustPriors()` (epic 35.9)** is the third consumer, and it
+  is the one on the primary path of **every** `atcr review`, `review --resume`,
+  `reconcile` and MCP `atcr_reconcile` call — so the outcome-eligibility rule
+  above reaches production through here, not only through `personas list
+  --scores`. On an upgrade to `schema_version` 2 every stored record is still v1
+  and therefore unclassified, so the priors map is empty until each reviewer
+  accumulates `DefaultTrustMinRuns` strict runs under the new schema. Both
+  consensus-filter behaviours go dark for that period: a high-trust singleton
+  stops being exempted, and a low-trust phantom-raiser stops being demoted to
+  `LOW` — the second being a loosening that shows up in `findings.json`
+  confidence. This is a one-time upgrade cost and it recovers on its own; it is
+  documented because it is otherwise invisible. Mechanically, it is
   `DefaultDir()` plus a read at `DefaultTrustMinRuns` in one best-effort call,
   degrading to a nil map on any failure (an unresolvable config dir, a
   missing/unreadable store) rather than erroring. Unlike `TrustPriors`, that

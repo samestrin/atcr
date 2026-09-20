@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/fanout"
 	reclib "github.com/samestrin/atcr/reconcile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -51,8 +52,21 @@ func TestEligibleOutcomeRuns_AllowlistIsExactlyTheFourEligibleOutcomes(t *testin
 		testOutcomeUnparseable, testOutcomeTruncated, testOutcomeIncomplete,
 		testOutcomeFailed, testOutcomeUnknown,
 	}
-	require.Len(t, append(append([]string{}, eligible...), ineligible...), 9,
-		"the vocabulary is nine values; a tenth needs an explicit decision here")
+	// Tie the two halves to the file's declared vocabulary rather than counting
+	// them. A bare Len(..., 9) over two literals declared three lines up is a
+	// tautology: it cannot notice a tenth value, which is the only thing it
+	// claims to guard. ElementsMatch at least fails if a value is dropped,
+	// duplicated across the halves, or added to one list only.
+	require.ElementsMatch(t, allTestOutcomes, append(append([]string{}, eligible...), ineligible...),
+		"every vocabulary value must be classified eligible or ineligible, exactly once")
+
+	// And every one of them must be a value the producer side recognises, which
+	// is a real cross-package check — internal/scorecard already imports
+	// internal/fanout, so this reaches the shipped validator rather than a copy.
+	for _, o := range allTestOutcomes {
+		assert.True(t, fanout.ValidReviewerOutcome(o),
+			"%q is classified here but is not in the shipped vocabulary", o)
+	}
 
 	for _, o := range eligible {
 		t.Run("eligible/"+o, func(t *testing.T) {
@@ -85,7 +99,7 @@ func TestEligibleOutcomeRuns_UnrecognizedOutcomeFailsClosed(t *testing.T) {
 func TestEligibleOutcomeRuns_DoesNotMutateInput(t *testing.T) {
 	in := []Record{
 		outcomeRec("vera", testOutcomeFindings, 1, 1),
-		outcomeRec("vera", testOutcomeFailed, 9, 0),
+		outcomeRec("vera", testOutcomeFailed, 0, 0),
 		outcomeRec("vera", testOutcomeClean, 2, 2),
 	}
 	before := append([]Record{}, in...)
@@ -233,9 +247,13 @@ func TestTrustPriors_TruncationHistoryDoesNotMoveTheRate(t *testing.T) {
 
 // TestTrustPriors_AuthFailureOnlyHistoryIsOmittedNotZeroed is AC 02-04 Edge Case
 // 2 joined to AC 02-05 Scenario 1, the epic's third live example: kai-backup is
-// auth_failed on a Moonshot billing cap. Absent means the neutral 1/N baseline
-// in reconcile/consensus.go; present at 0.0 would be a durable punishment for a
-// billing problem.
+// auth_failed on a Moonshot billing cap.
+//
+// Absent means no prior — reconcile/consensus.go's trustExempt and demoteByTrust
+// both gate on the comma-ok, so the key is simply not consulted. Present at 0.0
+// would instead be a durable punishment for a billing problem. Absence is not
+// the same as neutral: it also switches OFF demotion, so it is the safe answer
+// here only because the alternative is actively wrong.
 func TestTrustPriors_AuthFailureOnlyHistoryIsOmittedNotZeroed(t *testing.T) {
 	dir := t.TempDir()
 	for i := 0; i < 40; i++ {
