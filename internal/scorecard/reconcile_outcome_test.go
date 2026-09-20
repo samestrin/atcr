@@ -130,8 +130,10 @@ func TestEmitForReconcile_RaisedIsTheAgentsPostEnforcementCount(t *testing.T) {
 // hand-authored directory forging a trust prior. It does not, and that was
 // measured rather than argued: the pool summary that re-enables classification
 // lives in the SAME directory, and the identical forgery reproduces unchanged at
-// 197eaa93 — yielding map[attacker:1 sockpuppet:1] — before this sprint
-// touched the file. The guard cost an attacker one
+// 3aad9a7d — yielding map[attacker:1 sockpuppet:1] — before this sprint
+// touched the file. That sha is the branch merge-base and is already on main,
+// so the measurement stays re-runnable after this branch is squash-merged;
+// a sha reachable only from the branch becomes "bad object" the day it lands. The guard cost an attacker one
 // extra JSON file and cost every legitimate path-anchored install its trust
 // priors permanently. See TD-021.
 func TestEmitForReconcile_NoPoolSummaryClassifiesFromTheFindings(t *testing.T) {
