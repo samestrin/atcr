@@ -99,6 +99,10 @@ func foldTerminalByID(records []Record) []Record {
 // would delete a signal row, and that test used settledness as a proxy until
 // Story 36.0 made `attempts-exhausted` both unsettled AND counted. A status
 // counted in one place and not the other silently deletes outcomes.
+//
+// Only compaction's UNSETTLED branch consults this. The settled branch keeps
+// gating on IsSettledStatus and calls modelDonor unconditionally, which is
+// still correct because every settled status is also counted — see modelDonor.
 func producesQualitySignal(status string) bool {
 	switch normalizeStatus(status) {
 	case StatusWontfix, StatusResolved, StatusUnreproducible, StatusAttemptsExhausted:
@@ -134,27 +138,27 @@ type QualityRow struct {
 	AttemptsExhaustedCount int
 
 	// TerminalOutcomes is the number of terminal records that produced this row:
-	// the sample size behind the four counters above. It always equals their sum
-	// today, and it is carried explicitly anyway because a consumer must be able
-	// to tell a MEASURED zero from an UNMEASURED axis, and a bare int counter
-	// cannot say which it is.
+	// the explicit denominator for any rate built over the four counters above.
 	//
-	// Without it, UnreproducibleCount == 0 collapses three different facts: the
-	// pair genuinely never had that outcome; the store predates these statuses
-	// so the axis was never measurable; or the outcome existed and was
-	// superseded by a later resolution, which after compaction is not
-	// reconstructable at all. A weight derived from a ratio over these counters
-	// needs the denominator to know whether the sample is big enough to mean
-	// anything — the same "is this measurable yet?" question
-	// DefaultTrustMinRuns answers for trust priors.
+	// It is exactly their sum, and therefore carries no information they do not
+	// — it is a convenience and a pinned invariant, not a new signal. Say so
+	// plainly, because the obvious richer claim is FALSE and a consumer acting
+	// on it would be wrong: this field does NOT distinguish a measured zero from
+	// an unmeasured axis. A pre-36.0 store and a post-36.0 store whose reviewer
+	// simply never produced an `unreproducible` outcome emit byte-identical
+	// rows. Nothing in this shape can tell them apart; doing so would need the
+	// store's observed status horizon, which is not recorded anywhere.
 	//
-	// It is also why these counters must be read as CURRENT FOLD STATE, not as
-	// cumulative history. AggregateQualitySignal folds to one terminal record
-	// per finding id, so an id that was attempts-exhausted and later resolved
-	// contributes one confirmation and no exhausted attempt. That is the correct
-	// answer to "what happened in the end", and the wrong answer to "how often
-	// did this reviewer's findings resist a fix" — do not use these as the
-	// latter.
+	// What it does give a consumer is the sample size without re-summing, so
+	// "is this measurable yet?" — the question DefaultTrustMinRuns answers for
+	// trust priors — can be asked directly of the row.
+	//
+	// These counters are CURRENT FOLD STATE, not cumulative history.
+	// AggregateQualitySignal folds to one terminal record per finding id, so an
+	// id that was attempts-exhausted and later resolved contributes one
+	// confirmation and no exhausted attempt. That is the correct answer to "what
+	// happened in the end", and the wrong answer to "how often did this
+	// reviewer's findings resist a fix" — do not use these as the latter.
 	TerminalOutcomes int
 }
 

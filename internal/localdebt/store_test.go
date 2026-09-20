@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -2908,4 +2909,125 @@ func TestProducesQualitySignal_MatchesTheAggregationSwitch(t *testing.T) {
 		}})
 		assert.Empty(t, rows, "%q must produce no row", s)
 	}
+}
+
+// --- Gate re-review: the donor fix's own defects -----------------------------
+
+// TestRetainForCompaction_TwinRecordsDoNotDedupeEachOther is the guard on
+// gate-re-review HIGH-1. The first donor fix deduped the donor against the trail
+// by the value triple RunID+Timestamp+Status. That key cannot be unique inside
+// one id group: markDebtResolved derives RunID as timestamp+"-"+status, so two
+// records written in the same second with the same status match on all three
+// while differing in exactly the field that matters — Model. The attributed
+// donor was deduped away against its model-less twin and the signal row went to
+// zero.
+func TestRetainForCompaction_TwinRecordsDoNotDedupeEachOther(t *testing.T) {
+	const id, ts = "id-twins", "2026-09-01T00:00:00Z"
+	// Two unreproducible twins at the same second: identical RunID/Timestamp/
+	// Status, different Model. Only one carries the attribution.
+	attributed := mkTerminal(id, ts, StatusUnreproducible)
+	attributed.Model = "claude-sonnet-4-6"
+	attributed.Reviewers = []string{"vera"}
+	bare := mkTerminal(id, ts, StatusUnreproducible)
+	bare.Reviewers = []string{"vera"}
+	// A later effective record that is counted and carries no Model.
+	eff := mkTerminal(id, "2026-09-02T00:00:00Z", StatusAttemptsExhausted)
+	eff.Reviewers = []string{"vera"}
+
+	recs := []Record{attributed, bare, eff}
+
+	before := AggregateQualitySignal(recs)
+	require.Len(t, before, 1, "precondition: the outcome is reported before compaction")
+
+	after := AggregateQualitySignal(retainForCompaction(recs))
+	require.Len(t, after, 1, "compaction must not delete the row via a twin collision")
+	assert.Equal(t, before[0].Model, after[0].Model)
+	assert.Equal(t, before[0].AttemptsExhaustedCount, after[0].AttemptsExhaustedCount)
+}
+
+// TestRetainForCompaction_TrailEntriesNeverSeizeTheFold is the guard on
+// gate-re-review HIGH-2. The first fix appended the donor AFTER the effective
+// record, breaking the package's stated order invariant. latestItem breaks a
+// full timestamp/rank tie by append order (last wins) and hands the win outright
+// when either timestamp is unorderable — a state the read path tolerates — so a
+// trailing donor could seize the fold and silently flip the id's effective
+// status, changing debt list, debtIsLive, resolve-closability and the reported
+// outcome.
+func TestRetainForCompaction_TrailEntriesNeverSeizeTheFold(t *testing.T) {
+	cases := []struct {
+		name     string
+		donorTS  string
+		donorSta string
+	}{
+		// Unorderable timestamp: latestItem gives the later-appended record the
+		// win outright, with no comparison at all.
+		{"unorderable donor timestamp", "", StatusDeferred},
+		// Full tie on both timestamp and rank: broken by append order.
+		{"full timestamp and rank tie", "2026-09-02T00:00:00Z", StatusAttemptsExhausted},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			const id = "id-order"
+			donor := mkTerminal(id, tc.donorTS, tc.donorSta)
+			donor.Model = "claude-sonnet-4-6"
+			donor.Reviewers = []string{"vera"}
+			eff := mkTerminal(id, "2026-09-02T00:00:00Z", StatusAttemptsExhausted)
+			eff.Reviewers = []string{"vera"}
+
+			recs := []Record{donor, eff}
+			wantStatus := FoldRecords(recs)[0].Status
+
+			folded := FoldRecords(retainForCompaction(recs))
+			require.Len(t, folded, 1)
+			assert.Equal(t, wantStatus, folded[0].Status,
+				"a retained trail entry must never displace the effective record")
+		})
+	}
+}
+
+// TestRetainForCompaction_IsAFixedPoint asserts what the package doc claims —
+// "a second Compact retains the same pair" — as SET equality rather than as a
+// length comparison. The weaker length check passed while pass 2 quietly
+// discarded a different record than pass 1 kept.
+func TestRetainForCompaction_IsAFixedPoint(t *testing.T) {
+	const id = "id-fixed"
+	resolved := mkTerminal(id, "2026-09-01T00:00:00Z", StatusResolved)
+	resolved.Model = "claude-sonnet-4-6"
+	resolved.Reviewers = []string{"vera"}
+	unrepro := mkTerminal(id, "2026-09-02T00:00:00Z", StatusUnreproducible)
+	unrepro.Reviewers = []string{"vera"}
+	exhausted := mkTerminal(id, "2026-09-03T00:00:00Z", StatusAttemptsExhausted)
+	exhausted.Reviewers = []string{"vera"}
+
+	pass1 := retainForCompaction([]Record{resolved, unrepro, exhausted})
+	pass2 := retainForCompaction(pass1)
+	pass3 := retainForCompaction(pass2)
+
+	// The claim in the doc is "a second Compact retains the same PAIR", i.e. the
+	// same records. Assert that as set identity — RunID+Status names a record
+	// uniquely across this fixture — rather than as a length comparison, which
+	// passed while pass 2 quietly kept a different record than pass 1 did.
+	names := func(recs []Record) []string {
+		out := make([]string, 0, len(recs))
+		for _, r := range recs {
+			out = append(out, r.RunID+"|"+r.Status)
+		}
+		sort.Strings(out)
+		return out
+	}
+	assert.Equal(t, names(pass1), names(pass2), "compaction must retain the same records")
+	assert.LessOrEqual(t, len(pass1), 3, "retention stays bounded per id")
+	assert.Equal(t, AggregateQualitySignal(pass1), AggregateQualitySignal(pass2),
+		"the signal must be identical across compactions")
+
+	// Full value equality is reached at pass 2, not pass 1, and the one field
+	// that moves is CountedThrough: aggregateCounters stamps it on the effective
+	// record the first time that record is folded as a carrier. That is the
+	// mechanism which makes Occurrences idempotent (it records the boundary
+	// already accounted for), so it converging on the next pass is the counter
+	// working, not drift — Occurrences itself is stable from pass 1. Pin the
+	// convergence so a real instability cannot hide behind this known one.
+	assert.Equal(t, pass2, pass3, "compaction reaches a true fixed point by the second pass")
+	assert.Equal(t, pass1[len(pass1)-1].Occurrences, pass2[len(pass2)-1].Occurrences,
+		"the occurrence count itself is stable from the first pass")
 }

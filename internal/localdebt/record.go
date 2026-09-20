@@ -63,16 +63,24 @@ import (
 // so it reports a closed finding as open. That is a read-side misreport, and it
 // self-corrects the moment the binary is updated.
 //
-// One path is worse than a misreport and is worth naming, because it is the
-// reason bearsRationale is value-based rather than version-based:
-// `atcr debt backfill-justifications` is the only command that rewrites shard
-// lines IN PLACE, and it skips records that may hold operator-typed text. An
-// older binary's skip gate does not know `attempts-exhausted`, so it would
-// replay a review excerpt over that record's mandatory `--reason` — the same
-// irreversible loss the gate exists to prevent, reachable by version skew rather
-// than by code path. Nothing in this repo can stop an older binary from doing
-// that; a reader running mixed versions over one store should run backfill from
-// the newer one.
+// Two paths are worse than a misreport and are worth naming, because between
+// them they are why bearsRationale is value-based rather than version-based.
+// Neither can be prevented from here: an older binary's gates are compiled into
+// that binary. A tree running mixed atcr versions over one store should run the
+// newer one.
+//
+//  1. AUTOMATIC, and therefore the likelier of the two. MaybeCompact runs inside
+//     PersistForReconcile on every `atcr reconcile`, and a pre-36.0
+//     retainForCompaction gated its rationale trail on IsSettledStatus. That
+//     gate does not admit `attempts-exhausted`, so such a record is not retained
+//     at all — the mandatory `--reason` is DELETED, not merely overwritten — and
+//     the same gate re-opens the donor loss that costs the id its quality-signal
+//     row. No human chose to run anything.
+//
+//  2. MANUAL. `atcr debt backfill-justifications` rewrites shard lines in place
+//     and skips records that may hold operator-typed text. An older binary's
+//     skip gate does not know `attempts-exhausted`, so it replays a review
+//     excerpt over that record's `--reason`.
 const SchemaVersion = 3
 
 // Diagnostic message substrings emitted on the read path, exported so tests assert
