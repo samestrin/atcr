@@ -28,14 +28,21 @@ import (
 //   - Record.Outcome — why this reviewer's counts look the way they do.
 //     Written today.
 //   - Record.CategoriesRaised — the distinct categories its findings raised.
-//     Declared only; Phase 3 writes it.
-//   - Finding.Category — the per-finding value that fold will read. Declared
-//     only; Phase 3 threads it.
+//     Written today.
+//   - Finding.Category — the per-finding value that fold reads. Threaded today.
 //
-// The two unwritten fields are here deliberately: the schema changes ONCE for
-// this body of work, so Phase 3 adds behaviour rather than another era. Until
-// then a v2 record omits both, which reads identically to a v1 record — "not
-// measured" — so no consumer can mistake the gap for a measured empty.
+// All three were declared by this single increment even though the latter two
+// only started being WRITTEN a phase later: the schema changes ONCE for this
+// body of work, so the follow-on phase added behaviour rather than another era.
+//
+// THAT LEAVES A V2 SUB-ERA, and it is worth knowing about: v2 records written
+// before the threading landed omit both fields. Nothing discriminates them from
+// a v2 record that measured an empty set, because omitempty makes the two
+// byte-identical. They are not mis-scored — the opportunity link passes through
+// any run whose union holds no discriminating category, which is exactly what
+// such a record contributes — but the protection comes from that pass-through,
+// not from an era marker. Do not add one retroactively; there is nothing in the
+// bytes to key it on.
 //
 // All three are omitempty with era-safe absent meaning, so no migration shim is
 // needed. That is a DECISION, not an omission: the read gate at store.go
@@ -194,10 +201,16 @@ type Record struct {
 	// that would assert "reviewed successfully and found nothing" about a run
 	// nobody classified — it is excluded from the trust tally instead.
 	Outcome string `json:"outcome,omitempty"`
-	// CategoriesRaised WILL hold the distinct reconcile.Categories() values
-	// attached to the findings this reviewer participated in. Nothing writes it
-	// yet — the field is declared by the v2 bump so the schema changes once, and
-	// Phase 3 threads the value. Every v2 record written today omits it.
+	// CategoriesRaised holds the distinct reconcile.Categories() values attached
+	// to the findings this reviewer participated in. The field was declared by
+	// the v2 bump so the schema changes once; it is WRITTEN on every reviewer
+	// record this emitter produces.
+	//
+	// Three streams feed it, and the third is not obvious: the surviving
+	// findings, the Tier-4-routed ones, and EmitInput.AmbiguousFindings — the
+	// clusters reconcile set aside. See that field's comment for the starvation
+	// loop the third one breaks. The ambiguous stream contributes categories
+	// only; it touches no count.
 	//
 	// READ THE WORDING CAREFULLY, because the obvious reading is wrong and the
 	// Phase 2 gate caught it: these are NOT per-reviewer categories. The only
@@ -205,12 +218,13 @@ type Record struct {
 	// which Merge sets to ModalCategory(group) — the cluster's modal value. In a
 	// cluster where one lens raised `security` and two raised `performance`, the
 	// merged category is `performance` and the first lens's own category is
-	// unrecoverable from res.Findings. Phase 3 must either adopt this
-	// cluster-modal meaning explicitly or source categories from the raw
-	// per-source findings instead; it must not ship modal data under a
-	// per-reviewer claim.
+	// unrecoverable from res.Findings. The cluster-modal meaning is therefore
+	// ADOPTED EXPLICITLY, which is sound for the only consumer — opportunity-set
+	// membership asks "was this topic in play on the case", which the modal value
+	// answers faithfully. Nothing may read it as a per-reviewer claim. Filed as
+	// TD-022.
 	//
-	// It is the per-record input to Phase 3's opportunity-set scoping: a lens
+	// It is the per-record input to opportunity-set scoping: a lens
 	// will be scored on a case only when some reviewer raised a category inside
 	// that lens's remit, so a specialist that is correctly silent on an
 	// out-of-remit diff is neither credited nor penalised.
@@ -315,14 +329,15 @@ type Finding struct {
 	// reconcile.JSONFinding.UnresolvedReason. Empty means the ordinary no-match:
 	// the anchors appear nowhere in the tracked tree.
 	UnresolvedReason string
-	// Category WILL carry the finding's reconcile.Categories() value verbatim
-	// from reconcile.Finding.Category, for Emit to fold into
-	// Record.CategoriesRaised — this struct is never persisted, so that fold is
-	// where the value would become durable. Neither the threading nor the fold
-	// exists yet; both are Phase 3.
+	// Category carries the finding's reconcile.Categories() value verbatim from
+	// reconcile.Finding.Category, for Emit to fold into Record.CategoriesRaised —
+	// this struct is never persisted, so that fold is where the value becomes
+	// durable. EmitForReconcile threads it at all three construction sites
+	// (res.Findings, res.Unresolved, res.Ambiguous).
 	//
-	// Declared by Phase 2's single schema bump and left zero-valued until Phase
-	// 3 threads it at the two EmitForReconcile construction sites.
+	// Carried verbatim, judged in Emit: reviewerCategories applies the
+	// reconcile.Categories() vocabulary gate, so the construction sites cannot
+	// disagree with each other about which values are durable.
 	Category string
 }
 
@@ -429,7 +444,27 @@ type EmitInput struct {
 	// not corroboration, and treating it as such would restore the same inflation
 	// through a narrower door.
 	UnresolvedFindings []Finding
-	VerificationPath   string
+	// AmbiguousFindings holds reconcile.Result.Ambiguous flattened to its member
+	// findings. It feeds Record.CategoriesRaised and NOTHING ELSE — never
+	// FindingsRaised, never FindingsCorroborated, and it never mints a reviewer
+	// record for a name that has none. It is evidence about the CASE, not a count
+	// against a lens.
+	//
+	// IT CLOSES A FEEDBACK LOOP, which is why it is worth a field. Under strict
+	// consensus, reconcile routes an uncorroborated singleton into Ambiguous
+	// unless trustExempt spares it — and trustExempt is OFF for exactly the lenses
+	// with no prior yet. So a new or narrow lens's solo finding is filtered out of
+	// res.Findings, its category never reaches CategoriesRaised, the run reads
+	// out-of-remit, the opportunity filter deletes the record, its run count stays
+	// under DefaultTrustMinRuns, and it never earns the prior that would have
+	// spared the finding. The lens is starved by the very filter its missing prior
+	// caused — against AC 1 and AC 6 both. Reading Ambiguous for categories breaks
+	// the cycle without giving a filtered finding any scoring credit.
+	//
+	// It is also simply truer to the field's name: a consensus-filtered finding
+	// WAS raised. Only its survival was denied.
+	AmbiguousFindings []Finding
+	VerificationPath  string
 }
 
 // Emit computes per-reviewer metrics, builds one record per reviewer plus one
@@ -531,12 +566,15 @@ func Emit(in EmitInput, opts EmitOpts) error {
 			FindingsSolo:             raised - corroborated,
 			FindingsDocShielded:      shielded,
 			Outcome:                  meta.Outcome,
-			CategoriesRaised:         reviewerCategories(name, in.Findings, chargeableUnresolved),
-			CorroborationRate:        ratio(corroborated, raised),
-			CostUSD:                  llmclient.ComputeCostUSD(meta.Model, meta.TokensIn, meta.TokensOut),
-			TokensIn:                 meta.TokensIn,
-			TokensOut:                meta.TokensOut,
-			LatencyMS:                meta.LatencyMS,
+			// in.AmbiguousFindings is a category stream ONLY — it is absent from
+			// every reviewerCounts call above, so it moves no numerator and no
+			// denominator. See the field's comment for the loop it breaks.
+			CategoriesRaised:  reviewerCategories(name, in.Findings, chargeableUnresolved, in.AmbiguousFindings),
+			CorroborationRate: ratio(corroborated, raised),
+			CostUSD:           llmclient.ComputeCostUSD(meta.Model, meta.TokensIn, meta.TokensOut),
+			TokensIn:          meta.TokensIn,
+			TokensOut:         meta.TokensOut,
+			LatencyMS:         meta.LatencyMS,
 		}
 		if hasVerification {
 			v, r := verified[name], refuted[name]

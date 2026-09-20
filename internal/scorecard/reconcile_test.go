@@ -408,6 +408,88 @@ func TestEmitForReconcile_CategoryThreadedFromUnresolvedStream(t *testing.T) {
 		"the routed construction site must thread Category too")
 }
 
+// TestEmitForReconcile_ConsensusFilteredSingletonStillRecordsItsCategory closes
+// the starvation loop the Phase 3 gate found.
+//
+// Under strict consensus an uncorroborated singleton is routed into
+// res.Ambiguous unless trustExempt spares it — and trustExempt is OFF for a lens
+// with no prior. Read only res.Findings and that lens's category never lands, so
+// its own run reads out-of-remit, the opportunity filter deletes the record, the
+// run count stays under the floor, and the prior that would have spared the
+// finding is never earned. The lens is starved by its own missing prior.
+//
+// sasha below is exactly that lens: its only finding was filtered. The category
+// must land; the COUNTS must not move.
+func TestEmitForReconcile_ConsensusFilteredSingletonStillRecordsItsCategory(t *testing.T) {
+	reviewDir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	res := reconcile.Result{
+		Findings: []reconcile.Merged{
+			// Keeps sasha in in.Reviewers with a real, surviving finding, so the
+			// test measures the CATEGORY stream rather than record creation.
+			{Finding: reconcile.Finding{File: "a.go", Line: 1, Problem: "p1", Category: "correctness", Reviewers: []string{"sasha"}}},
+		},
+		Ambiguous: []reconcile.AmbiguousCluster{
+			{Findings: []reconcile.Finding{
+				{File: "b.go", Line: 9, Problem: "solo security nit", Category: "security", Reviewers: []string{"sasha"}},
+			}},
+		},
+		Summary: reconcile.Summary{ReconciledAt: "2026-06-14T10:00:00Z"},
+	}
+	EmitForReconcile(reviewDir, res, EmitOpts{})
+
+	cfg, err := os.UserConfigDir()
+	require.NoError(t, err)
+	recs, err := ReadRecords(filepath.Join(cfg, "atcr", "scorecard", "2026-06.jsonl"), ReadOpts{})
+	require.NoError(t, err)
+
+	sasha := findReviewer(recs, "sasha")
+	require.NotNil(t, sasha)
+	assert.Equal(t, []string{"correctness", "security"}, sasha.CategoriesRaised,
+		"the filtered singleton's category is still evidence sasha's remit was in play")
+	assert.Equal(t, 1, sasha.FindingsRaised,
+		"a filtered finding must earn NO scoring credit — only the surviving one counts")
+	assert.Equal(t, 0, sasha.FindingsCorroborated,
+		"and it must never be read as corroboration")
+}
+
+// TestEmitForReconcile_AmbiguousNeverMintsAReviewerRecord is the boundary on the
+// change above. The ambiguous stream widens what an EXISTING record knows about
+// its case; it must not create one, or a change whose remit is categories would
+// quietly add records carrying a zero denominator.
+func TestEmitForReconcile_AmbiguousNeverMintsAReviewerRecord(t *testing.T) {
+	reviewDir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	res := reconcile.Result{
+		Findings: []reconcile.Merged{
+			{Finding: reconcile.Finding{File: "a.go", Line: 1, Problem: "p1", Category: "correctness", Reviewers: []string{"bruce"}}},
+		},
+		Ambiguous: []reconcile.AmbiguousCluster{
+			// Per-source shape: Reviewer singular, and a lens present nowhere else.
+			{Findings: []reconcile.Finding{
+				{File: "b.go", Line: 9, Problem: "solo", Category: "security", Reviewer: "sasha"},
+			}},
+		},
+		Summary: reconcile.Summary{ReconciledAt: "2026-06-14T10:00:00Z"},
+	}
+	EmitForReconcile(reviewDir, res, EmitOpts{})
+
+	cfg, err := os.UserConfigDir()
+	require.NoError(t, err)
+	recs, err := ReadRecords(filepath.Join(cfg, "atcr", "scorecard", "2026-06.jsonl"), ReadOpts{})
+	require.NoError(t, err)
+
+	assert.Nil(t, findReviewer(recs, "sasha"),
+		"a lens reachable only through a filtered cluster gets no record of its own")
+	require.NotNil(t, findReviewer(recs, "bruce"))
+}
+
 // TestEmitForReconcile_CategoriesRaisedIsDedupedAndSorted is AC 03-02 Happy Path
 // Scenario 2. Sorted output is asserted deliberately: the field is persisted for
 // 180 days and compared across records, so a map-iteration-ordered slice would

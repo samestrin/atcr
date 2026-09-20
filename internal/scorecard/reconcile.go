@@ -158,6 +158,41 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 		}
 	}
 
+	// Third category stream: the clusters reconcile set aside. Under strict
+	// consensus an uncorroborated singleton is routed here unless trustExempt
+	// spares it, and trustExempt is off for precisely the lenses that have no
+	// prior yet — see EmitInput.AmbiguousFindings for the loop that closes.
+	//
+	// Reviewers are NOT registered from this stream, deliberately. A reviewer
+	// reachable only through a filtered cluster gets no record: that would be a
+	// new record minted by a change whose remit is categories, and the record
+	// would carry a zero denominator. The stream widens what an EXISTING record
+	// knows about its case; it never creates one.
+	//
+	// Per-source findings carry Reviewer (singular) and reconciled ones carry
+	// Reviewers; consensusNoiseCluster is built from a Merged, so it is the
+	// plural. Read both, or the noise clusters — the whole point of the field —
+	// are silently attributed to nobody.
+	ambiguous := make([]Finding, 0, len(res.Ambiguous))
+	for _, c := range res.Ambiguous {
+		for _, f := range c.Findings {
+			names := trimmedReviewers(f.Reviewers)
+			if len(names) == 0 && strings.TrimSpace(f.Reviewer) != "" {
+				names = []string{strings.TrimSpace(f.Reviewer)}
+			}
+			if len(names) == 0 {
+				continue
+			}
+			ambiguous = append(ambiguous, Finding{
+				File:      f.File,
+				Line:      f.Line,
+				Problem:   f.Problem,
+				Reviewers: names,
+				Category:  f.Category,
+			})
+		}
+	}
+
 	runID := res.Summary.ReconciledAt + "-" + filepath.Base(reviewDir)
 	verPath := filepath.Join(reviewDir, "reconciled", "verification.json")
 	// Emit is best-effort and logs its own failures; ignore the return so
@@ -173,6 +208,7 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 		// lenient run durably depress the priors later strict runs read.
 		ConsensusLevel:     res.Summary.ConsensusLevel,
 		UnresolvedFindings: unresolved,
+		AmbiguousFindings:  ambiguous,
 		VerificationPath:   verPath,
 	}, opts)
 }

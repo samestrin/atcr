@@ -153,12 +153,16 @@ func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Tim
 	// trust denominator below.
 	// eligibleOutcomeRuns runs immediately after strictRuns and BEFORE the two
 	// era links — see its doc comment; the position is load-bearing, not
-	// cosmetic.
-	// opportunitySetRuns runs BEFORE eligibleOutcomeRuns, not after it — see its
-	// doc comment. The order is load-bearing and it supersedes D5's "immediately
-	// after strictRuns" wording for the outcome link: D5's actual requirement is
-	// that outcome eligibility precedes the two ERA links, which it still does.
-	for _, row := range Aggregate(unresolvedEraRuns(mergeRoutedEras(eligibleOutcomeRuns(opportunitySetRuns(strictRuns(records)))))) {
+	// cosmetic. D5's requirement is that outcome eligibility precedes the two ERA
+	// links, which it does.
+	//
+	// The opportunity set is split across the two ends of the chain and BOTH
+	// positions are load-bearing — see opportunityUnions and opportunitySetRuns.
+	// The union is taken from the RAW records so no upstream per-record filter can
+	// shrink a case's evidence; the filter runs LAST so the era decision is never
+	// made from an opportunity-shrunk record set.
+	unions := opportunityUnions(records)
+	for _, row := range Aggregate(opportunitySetRuns(unresolvedEraRuns(mergeRoutedEras(eligibleOutcomeRuns(strictRuns(records)))), unions)) {
 		key := strings.ToLower(row.Reviewer)
 		t := byReviewer[key]
 		if t == nil {
@@ -340,6 +344,44 @@ func eligibleOutcomeRuns(records []Record) []Record {
 	return kept
 }
 
+// opportunityUnions builds, per RunID, the set of DISCRIMINATING categories any
+// reviewer raised on that run. It is deliberately computed from the RAW record
+// slice handed to trustPriorsSince — before strictRuns, before the outcome gate
+// and before either era link — because the opportunity is a property of the
+// CASE, and every one of those links is a PER-RECORD filter that can delete a
+// reviewer from a run the rest of the panel still worked.
+//
+// Taking the union downstream of any of them is the same bug three times over:
+//
+//   - after strictRuns, one corrupt or hand-edited consensus_level removes that
+//     reviewer's categories from the union, and a specialist is then dropped
+//     from a run where its remit demonstrably WAS in play;
+//   - after eligibleOutcomeRuns, a TRUNCATED reviewer's categories are lost even
+//     though internal/fanout records that a truncated reviewer can still have
+//     raised findings;
+//   - after the era links, the surviving-era subset decides the union.
+//
+// The filter half is opportunitySetRuns below, and it runs LAST in the chain for
+// a separate reason — see its comment.
+func opportunityUnions(records []Record) map[string]map[string]struct{} {
+	seenByRun := map[string]map[string]struct{}{}
+	for _, r := range records {
+		if r.RecordType != RecordTypeReviewer || r.SchemaVersion < SchemaVersion {
+			continue
+		}
+		for _, c := range r.CategoriesRaised {
+			if !discriminating(c) {
+				continue
+			}
+			if seenByRun[r.RunID] == nil {
+				seenByRun[r.RunID] = map[string]struct{}{}
+			}
+			seenByRun[r.RunID][c] = struct{}{}
+		}
+	}
+	return seenByRun
+}
+
 // opportunitySetRuns keeps a reviewer's record only when that run was an
 // opportunity for its lens — when some reviewer on the run raised a category
 // inside that lens's remit.
@@ -388,43 +430,25 @@ func eligibleOutcomeRuns(records []Record) []Record {
 //     same class of mistake as demoting a lens for its hosting: the exact thing
 //     the outcome gate below exists to refuse.
 //
-// WHY THIS LINK RUNS BEFORE eligibleOutcomeRuns, NOT AFTER IT. The opportunity
-// is a property of the CASE, so the union has to see every reviewer that took
-// part in it. eligibleOutcomeRuns drops truncated, incomplete and unparseable
-// records — and a truncated reviewer CAN have raised findings whose categories
-// were recorded (internal/fanout documents exactly that). Taking the union after
-// that filter loses those categories, and a specialist then gets dropped from a
-// run where its remit demonstrably WAS in play. The chain therefore reads
-// eligibleOutcomeRuns(opportunitySetRuns(strictRuns(records))): this link judges
-// some records that the next link is about to discard anyway, which costs
-// nothing, and never judges a record against a truncated view of its own case.
+// THE UNION AND THE FILTER SIT AT OPPOSITE ENDS OF THE CHAIN, ON PURPOSE.
+// opportunityUnions is computed from the RAW records (see its comment: the
+// opportunity is a property of the CASE, so no per-record filter may shrink the
+// evidence for it). This half — the filter — runs LAST, outside both era links.
+//
+// WHY THE FILTER RUNS AFTER unresolvedEraRuns. That pass computes each
+// reviewer's NEWEST raised-denominator era from the records that reach it, then
+// keeps only that era. If the opportunity filter ran first, dropping a
+// reviewer's newest-era records as out-of-remit would rewind its era window to
+// an older definition — and era 1 EXCLUDES routed phantoms from the denominator
+// rather than partitioning them, so the rate goes UP and a phantom-raising lens
+// can flip from demoted to exempt. The era must be decided by which definition
+// the reviewer actually ran under, never by which of its runs happened to be in
+// remit. Running last also keeps the filter clear of mergeRoutedEras, which
+// rewrites denominators but never touches RunID, Reviewer or CategoriesRaised,
+// so the union stays valid across it.
 //
 // The input slice is never mutated: callers hand in records read from the store.
-func opportunitySetRuns(records []Record) []Record {
-	// One pass to union each run's discriminating categories, a second to
-	// filter. The union must be complete before any record of that run is
-	// judged, so this cannot collapse into a single pass.
-	//
-	// Deduped as it is built. A 13-lens panel appends up to reviewers x
-	// categories entries, so an undeduped union is bounded by the panel size
-	// rather than by the 32-member vocabulary, and it is scanned once per mapped
-	// reviewer per run across the whole 180-day store.
-	seenByRun := map[string]map[string]struct{}{}
-	for _, r := range records {
-		if r.RecordType != RecordTypeReviewer || r.SchemaVersion < SchemaVersion {
-			continue
-		}
-		for _, c := range r.CategoriesRaised {
-			if !discriminating(c) {
-				continue
-			}
-			if seenByRun[r.RunID] == nil {
-				seenByRun[r.RunID] = map[string]struct{}{}
-			}
-			seenByRun[r.RunID][c] = struct{}{}
-		}
-	}
-
+func opportunitySetRuns(records []Record, seenByRun map[string]map[string]struct{}) []Record {
 	kept := make([]Record, 0, len(records))
 	for _, r := range records {
 		if r.RecordType != RecordTypeReviewer || r.SchemaVersion < SchemaVersion {

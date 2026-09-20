@@ -1212,6 +1212,14 @@ func TestTrustPriors_AboveCurrentRecordsNeverReachThePrior(t *testing.T) {
 // opportunitySetRuns is its own func([]Record) []Record sibling link, not a
 // condition inside the tally loop, per the sprint's Implementation Standards.
 
+// opportunityFilter composes the split opportunity link exactly the way
+// trustPriorsSince does — union from the records handed in, then filter — so a
+// direct-call test exercises the shipped composition rather than a shape only
+// the test knows how to build.
+func opportunityFilter(records []Record) []Record {
+	return opportunitySetRuns(records, opportunityUnions(records))
+}
+
 // oppRec builds a schema-2 reviewer record for the opportunity-link tests.
 func oppRec(runID, reviewer string, cats []string) Record {
 	return Record{
@@ -1235,7 +1243,7 @@ func TestOpportunitySetRuns_DropsOutOfRemitRecords(t *testing.T) {
 		oppRec("run-1", "sasha", nil),                     // silent security lens
 		oppRec("run-1", "penny", []string{"performance"}), // raised the only category
 	}
-	out := opportunitySetRuns(in)
+	out := opportunityFilter(in)
 
 	names := map[string]bool{}
 	for _, r := range out {
@@ -1257,7 +1265,7 @@ func TestOpportunitySetRuns_KeepsASilentLensWhenItsRemitWasInPlay(t *testing.T) 
 		// scored on. correctness is what puts bruce itself in remit here.
 		oppRec("run-1", "bruce", []string{"security", "correctness"}),
 	}
-	out := opportunitySetRuns(in)
+	out := opportunityFilter(in)
 
 	names := map[string]bool{}
 	for _, r := range out {
@@ -1276,7 +1284,7 @@ func TestOpportunitySetRuns_UnionIsPerRunNotGlobal(t *testing.T) {
 		oppRec("run-2", "sasha", nil),
 		oppRec("run-2", "penny", []string{"performance"}),
 	}
-	out := opportunitySetRuns(in)
+	out := opportunityFilter(in)
 
 	for _, r := range out {
 		assert.False(t, r.RunID == "run-2" && r.Reviewer == "sasha",
@@ -1294,7 +1302,7 @@ func TestOpportunitySetRuns_UnmappedPersonaPassesThroughUntouched(t *testing.T) 
 		oppRec("run-1", "vera", nil),
 		oppRec("run-1", "penny", []string{"performance"}),
 	}
-	out := opportunitySetRuns(in)
+	out := opportunityFilter(in)
 
 	names := map[string]bool{}
 	for _, r := range out {
@@ -1309,7 +1317,7 @@ func TestOpportunitySetRuns_UnmappedPersonaPassesThroughUntouched(t *testing.T) 
 // reviewer and carries no remit.
 func TestOpportunitySetRuns_AggregatesPassThroughUntouched(t *testing.T) {
 	agg := Record{SchemaVersion: SchemaVersion, RecordType: RecordTypeAggregate, RunID: "run-1"}
-	out := opportunitySetRuns([]Record{agg, oppRec("run-1", "sasha", nil)})
+	out := opportunityFilter([]Record{agg, oppRec("run-1", "sasha", nil)})
 
 	found := false
 	for _, r := range out {
@@ -1329,7 +1337,7 @@ func TestOpportunitySetRuns_UnmeasuredRecordsAreNotJudgedAsOutOfRemit(t *testing
 	old := oppRec("run-old", "sasha", nil)
 	old.SchemaVersion = 1
 
-	out := opportunitySetRuns([]Record{old})
+	out := opportunityFilter([]Record{old})
 	require.Len(t, out, 1, "an unmeasured record passes through rather than being judged")
 	assert.Equal(t, 1, out[0].SchemaVersion)
 }
@@ -1350,7 +1358,7 @@ func TestOpportunitySetRuns_DoesNotMutateItsInput(t *testing.T) {
 		before[i] = r
 		before[i].CategoriesRaised = append([]string(nil), r.CategoriesRaised...)
 	}
-	opportunitySetRuns(in)
+	opportunityFilter(in)
 	assert.Equal(t, before, in, "the input slice is never rewritten")
 }
 
@@ -1402,7 +1410,7 @@ func TestOpportunitySetRuns_ControlOnlyUnionBlacksOutNobody(t *testing.T) {
 			oppRec("run-1", "penny", []string{control}),
 			oppRec("run-1", "dax", nil),
 		}
-		out := opportunitySetRuns(in)
+		out := opportunityFilter(in)
 		assert.Len(t, out, len(in),
 			"a union of only %q carries no topic, so every lens must pass through un-scoped", control)
 	}
@@ -1416,7 +1424,7 @@ func TestOpportunitySetRuns_ControlValuesDoNotMaskARealTopic(t *testing.T) {
 		oppRec("run-1", "sasha", []string{reclib.CategoryOther, "security"}),
 		oppRec("run-1", "penny", nil),
 	}
-	out := opportunitySetRuns(in)
+	out := opportunityFilter(in)
 
 	names := map[string]bool{}
 	for _, r := range out {
@@ -1440,7 +1448,7 @@ func TestOpportunitySetRuns_UnionSeesReviewersTheOutcomeGateWillDrop(t *testing.
 	truncated.Outcome = "truncated"
 
 	in := []Record{truncated, oppRec("run-1", "sasha", nil)}
-	out := opportunitySetRuns(in)
+	out := opportunityFilter(in)
 
 	names := map[string]bool{}
 	for _, r := range out {
@@ -1493,4 +1501,96 @@ func TestTrustPriors_OpportunityUnionIsTakenBeforeTheOutcomeGate(t *testing.T) {
 	assert.NotContains(t, priors, "archer",
 		"the truncated record itself is still excluded by the outcome gate")
 	assert.Contains(t, priors, "penny", "penny's own remit was in play on every run")
+}
+
+// TestTrustPriors_EraIsDecidedBeforeTheOpportunityFilter pins the OTHER end of
+// the split link: the filter half must run AFTER unresolvedEraRuns.
+//
+// sasha here has a high-scoring era-1 history (in remit, routed phantoms
+// EXCLUDED from the denominator) and a current-era history that is out of remit.
+// unresolvedEraRuns must see both and pick era 3 as sasha's newest definition,
+// dropping the era-1 half; the opportunity filter then drops what is left,
+// leaving sasha with no scoreable runs and therefore ABSENT.
+//
+// Compose it the other way round — opportunity filter first — and the era-3
+// records are gone before the era pass runs, so era 1 becomes sasha's "newest"
+// definition and its flattering pre-epic rate is published under the current
+// one. That is a cross-era blend arrived at through a side door, and it can flip
+// a phantom-raising lens from demoted to exempt.
+func TestTrustPriors_EraIsDecidedBeforeTheOpportunityFilter(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	month := filepath.Join(dir, now.Format("2006-01")+".jsonl")
+
+	var lines []string
+	write := func(r Record) {
+		b, err := json.Marshal(r)
+		require.NoError(t, err)
+		lines = append(lines, string(b))
+	}
+	for i := 0; i < 3; i++ {
+		// Era 1: in remit (a security category is raised on the run) and perfect.
+		runID := fmt.Sprintf("old-%d", i)
+		old := oppRec(runID, "sasha", []string{"security"})
+		old.RaisedIncludesUnresolved = false
+		old.RaisedDenominator = 0 // absent discriminator == era 1
+		old.FindingsRaised, old.FindingsCorroborated = 4, 4
+		write(old)
+
+		// Era 3 (current): out of remit — penny raises the run's only category.
+		runID = fmt.Sprintf("new-%d", i)
+		write(oppRec(runID, "penny", []string{"performance"}))
+		write(oppRec(runID, "sasha", nil))
+	}
+	require.NoError(t, os.WriteFile(month, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
+
+	priors, err := trustPriorsSince(dir, 1, 180*24*time.Hour, now)
+	require.NoError(t, err)
+	assert.NotContains(t, priors, "sasha",
+		"sasha's newest era is the current one and every current-era run was out of remit, so it has no scoreable history; a present entry here means the era was decided from an opportunity-shrunk record set")
+	assert.Contains(t, priors, "penny", "penny's remit was in play on the current-era runs")
+}
+
+// TestTrustPriors_OpportunityUnionSurvivesANonStrictRecord pins that the union
+// is taken from the RAW records, upstream of strictRuns as well as of the
+// outcome gate.
+//
+// strictRuns is a PER-RECORD filter: one record with an unrecognized
+// consensus_level — a hand-edit, or a row from a future atcr — is dropped on its
+// own. If the union were taken downstream of it, that single dropped record
+// would delete its category from the case, and a specialist is then judged
+// out-of-remit on a run where its remit demonstrably was in play. That is the
+// identical hazard the outcome-gate ordering above exists to refuse.
+func TestTrustPriors_OpportunityUnionSurvivesANonStrictRecord(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	month := filepath.Join(dir, now.Format("2006-01")+".jsonl")
+
+	var lines []string
+	for i := 0; i < 3; i++ {
+		runID := fmt.Sprintf("run-%d", i)
+		// The ONLY source of a security category on this run is a record
+		// strictRuns will drop for its unrecognized consensus level.
+		nonStrict := oppRec(runID, "archer", []string{"security"})
+		nonStrict.ConsensusLevel = "not-a-consensus-level"
+		// Keeps the post-strictRuns union non-empty, so the run cannot fall into
+		// the no-discriminating-category pass-through and pass by accident.
+		penny := oppRec(runID, "penny", []string{"performance"})
+		sasha := oppRec(runID, "sasha", nil)
+		sasha.Outcome = outcomeClean
+		sasha.FindingsRaised, sasha.FindingsCorroborated = 1, 1
+		for _, r := range []Record{nonStrict, penny, sasha} {
+			b, err := json.Marshal(r)
+			require.NoError(t, err)
+			lines = append(lines, string(b))
+		}
+	}
+	require.NoError(t, os.WriteFile(month, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
+
+	priors, err := trustPriorsSince(dir, 1, 180*24*time.Hour, now)
+	require.NoError(t, err)
+	assert.Contains(t, priors, "sasha",
+		"the non-strict record's category is still evidence this was a security case, so sasha was in remit")
+	assert.NotContains(t, priors, "archer",
+		"the non-strict record itself is still excluded by strictRuns")
 }

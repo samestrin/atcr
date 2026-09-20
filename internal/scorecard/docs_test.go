@@ -155,6 +155,57 @@ func TestDocs_ScorecardMdDocumentsOutcomeAndEligibility(t *testing.T) {
 	}
 }
 
+// TestDocs_ScorecardMdDocumentsOpportunitySetScoping keeps docs/scorecard.md
+// honest about the opportunity-set link.
+//
+// Two drifts are pinned here because the Phase 3 gate found both. First, the
+// `categories_raised` row said "not yet populated" for a whole phase AFTER the
+// field started being written on every reviewer record — a reader was told the
+// opposite of the truth about a persisted field. Second, the TrustPriors section
+// enumerates the filters that decide the denominator and omitted the largest
+// change to it, so a reader counting runs would get a different number than the
+// code does.
+//
+// The pins are behavioural, not textual: each asserts the doc names something
+// the CODE does, so deleting the behaviour fails the test too.
+func TestDocs_ScorecardMdDocumentsOpportunitySetScoping(t *testing.T) {
+	doc := string(readDoc(t, "scorecard.md"))
+
+	// The field row must not claim the field is unwritten. Emit writes it on
+	// every reviewer record, which the assertion below proves independently.
+	assert.NotContains(t, doc, "not yet populated",
+		"categories_raised is written on every reviewer record; the doc must not say otherwise")
+
+	assert.NotEmpty(t, reviewerCategories("sasha", []Finding{
+		{Reviewers: []string{"sasha"}, Category: "security"},
+	}), "the doc's 'populated since schema 2' claim rests on this fold producing values")
+
+	assert.Contains(t, doc, "Opportunity-set scoping",
+		"the TrustPriors filter list must name the opportunity-set link, or a reader cannot reproduce the denominator")
+
+	// Each pass-through class the code implements must be named. A class the doc
+	// omits reads to a maintainer as a class that gets judged.
+	assert.True(t, len(opportunitySetRuns(
+		[]Record{{RecordType: RecordTypeAggregate}},
+		map[string]map[string]struct{}{},
+	)) == 1, "aggregates pass through, which is what the doc claims")
+	for _, class := range []string{"aggregates", "pre-schema-2", "non-discriminating"} {
+		assert.Contains(t, doc, class,
+			"the doc must name every record class the opportunity link passes through untouched")
+	}
+	// The non-discriminating values are a closed set in remit.go; naming them in
+	// the doc is how an operator reads a surprising score.
+	for c := range nonDiscriminating {
+		assert.Contains(t, doc, "`"+c+"`",
+			"docs/scorecard.md must name every non-discriminating category by value")
+	}
+
+	// The floor interaction is the known limit an operator most needs; TD-025
+	// tracks the re-measurement.
+	assert.Contains(t, doc, "reduces the run count the `minRuns` floor sees",
+		"the doc must state that opportunity scoping changes the quantity minRuns is applied to")
+}
+
 // readDoc reads a file from docs/ relative to the repo root.
 func readDoc(t *testing.T, name string) []byte {
 	t.Helper()

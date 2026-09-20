@@ -2,6 +2,7 @@ package scorecard
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -154,7 +155,10 @@ func TestRemitCategories_TableIsGroundedInTheEmbeddedPersonaFiles(t *testing.T) 
 		_, ok := RemitCategories(p)
 		require.True(t, ok, "persona %q must be mapped", p)
 
-		body, err := os.ReadFile("../../personas/" + p + ".md")
+		// repoRoot, not "../../": the package already provides it (docs_test.go)
+		// precisely so a test does not encode its own directory depth and break
+		// on a package move for a reason unrelated to what it asserts.
+		body, err := os.ReadFile(filepath.Join(repoRoot(t), "personas", p+".md"))
 		require.NoError(t, err, "persona %q must ship an in-repo definition to be grounded against", p)
 		assert.Contains(t, string(body), "## Focus",
 			"persona %q's file must carry the ## Focus list its remit is grounded in", p)
