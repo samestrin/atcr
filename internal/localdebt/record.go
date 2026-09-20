@@ -460,7 +460,7 @@ func bearsRationale(status string) bool {
 // The chain is wontfix > unreproducible > attempts-exhausted > resolved >
 // deferred, and it ranks by HOW CERTAINLY A RECORD CARRIES A HUMAN-TYPED
 // RATIONALE. That is not an aesthetic ordering — it is the criterion
-// highestRankedTerminal (store.go) already states for being rank-first: the
+// highestRankedTerminalIndex (store.go) already states for being rank-first: the
 // point of retention is the resolution trail, and the justification text exists
 // nowhere else in the tree, so the record most likely to carry one must win.
 //

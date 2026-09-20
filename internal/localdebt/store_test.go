@@ -2767,7 +2767,7 @@ func TestFoldRecords_DistinctTimestampsAreDecidedByRecencyNotRank(t *testing.T) 
 // Case 1b under sprint-plan.md → Phase 1 Clarifications → C1.
 //
 // This is the path where the rank chain genuinely changes behaviour for records
-// that already exist: highestRankedTerminal is RANK-first, and it justifies that
+// that already exist: highestRankedTerminalIndex is RANK-first, and it justifies that
 // ordering by how certainly a record carries a human-typed --reason. Only
 // wontfix was ever reason-gated and AC 01-03 leaves resolved ungated, so a
 // reason-less resolved must NOT displace a reasoned unreproducible in the
@@ -2985,10 +2985,15 @@ func TestRetainForCompaction_TrailEntriesNeverSeizeTheFold(t *testing.T) {
 	}
 }
 
-// TestRetainForCompaction_IsAFixedPoint asserts what the package doc claims —
-// "a second Compact retains the same pair" — as SET equality rather than as a
-// length comparison. The weaker length check passed while pass 2 quietly
-// discarded a different record than pass 1 kept.
+// TestRetainForCompaction_IsAFixedPoint asserts the convergence the package doc
+// actually claims, which is weaker than it once was and deliberately so: the
+// retained SET is stable from the SECOND pass, not the first.
+//
+// The earlier version of this test asserted set equality between pass 1 and
+// pass 2 and passed only because its fixture dodged the collapse case. That is
+// the strengthening the doc now explicitly forbids ("measurably false"), so the
+// assertion is moved to pass 2 vs pass 3 and a fixture that DOES collapse is
+// pinned below, rather than left to luck.
 func TestRetainForCompaction_IsAFixedPoint(t *testing.T) {
 	const id = "id-fixed"
 	resolved := mkTerminal(id, "2026-09-01T00:00:00Z", StatusResolved)
@@ -3003,19 +3008,8 @@ func TestRetainForCompaction_IsAFixedPoint(t *testing.T) {
 	pass2 := retainForCompaction(pass1)
 	pass3 := retainForCompaction(pass2)
 
-	// The claim in the doc is "a second Compact retains the same PAIR", i.e. the
-	// same records. Assert that as set identity — RunID+Status names a record
-	// uniquely across this fixture — rather than as a length comparison, which
-	// passed while pass 2 quietly kept a different record than pass 1 did.
-	names := func(recs []Record) []string {
-		out := make([]string, 0, len(recs))
-		for _, r := range recs {
-			out = append(out, r.RunID+"|"+r.Status)
-		}
-		sort.Strings(out)
-		return out
-	}
-	assert.Equal(t, names(pass1), names(pass2), "compaction must retain the same records")
+	assert.Equal(t, recordNames(pass2), recordNames(pass3),
+		"the retained set must be stable from the second pass onward")
 	assert.LessOrEqual(t, len(pass1), 3, "retention stays bounded per id")
 	assert.Equal(t, AggregateQualitySignal(pass1), AggregateQualitySignal(pass2),
 		"the signal must be identical across compactions")
@@ -3097,4 +3091,58 @@ func TestRetainForCompaction_OrderSatisfiesBothConstraints(t *testing.T) {
 	assert.Equal(t, AggregateQualitySignal(recs)[0].Model,
 		AggregateQualitySignal(retained)[0].Model,
 		"the donor must be emitted after the trail so its model wins the recovery")
+}
+
+// recordNames renders a retained set as sorted per-record names, so two sets can
+// be compared by membership rather than by slice order.
+func recordNames(recs []Record) []string {
+	out := make([]string, 0, len(recs))
+	for _, r := range recs {
+		out = append(out, r.RunID+"|"+r.Status+"|"+r.Model)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// TestRetainForCompaction_SecondPassCanRetainOneFewer pins the collapse the doc
+// warns about, so "set stable from pass 2" is anchored on a fixture that
+// actually exercises it rather than on one that happens to avoid it.
+//
+// Mechanism: pass 1 keeps the donor and the trail as distinct records; in pass
+// 1's OUTPUT order the donor then wins the trail's rank/timestamp tie, so the
+// two collapse into one slot at pass 2.
+func TestRetainForCompaction_SecondPassCanRetainOneFewer(t *testing.T) {
+	const id, ts = "id-collapse", "2026-09-01T00:00:00Z"
+	attributed := mkTerminal(id, ts, StatusAttemptsExhausted)
+	attributed.Model = "m1"
+	attributed.Justification = "REASON-A"
+	attributed.Reviewers = []string{"vera"}
+	bare := mkTerminal(id, ts, StatusAttemptsExhausted)
+	bare.Justification = "REASON-B"
+	bare.Reviewers = []string{"vera"}
+	eff := mkTerminal(id, "2026-09-02T00:00:00Z", StatusAttemptsExhausted)
+	eff.Reviewers = []string{"vera"}
+
+	pass1 := retainForCompaction([]Record{attributed, bare, eff})
+	pass2 := retainForCompaction(pass1)
+	pass3 := retainForCompaction(pass2)
+
+	assert.Less(t, len(pass2), len(pass1),
+		"this fixture must actually collapse, or it is not pinning the documented case")
+	assert.Equal(t, recordNames(pass2), recordNames(pass3),
+		"having collapsed once, the set is stable from pass 2")
+
+	// The record that disappears is the TRAIL slot occupant, and it carries a
+	// rationale. That is a real, documented cost of the second pass, not a
+	// bookkeeping detail — pin it so the doc and the behaviour cannot drift.
+	var pass2Reasons []string
+	for _, r := range pass2 {
+		pass2Reasons = append(pass2Reasons, r.Justification)
+	}
+	assert.NotContains(t, pass2Reasons, "REASON-B",
+		"documented cost: the second compaction drops the trail occupant's rationale")
+
+	// The signal, at least, is unaffected: attribution survives the collapse.
+	assert.Equal(t, AggregateQualitySignal(pass1), AggregateQualitySignal(pass2),
+		"the collapse must not change the reported outcome or its model")
 }

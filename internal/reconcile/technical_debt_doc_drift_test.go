@@ -252,27 +252,61 @@ const backfillSourcePath = "../../cli/debt_backfill.go"
 // failed silently and would have rotted indefinitely, because the other guards
 // in this file cover status tables and flag prose, not quoted output.
 //
-// The expected text is extracted from the format string in source, not retyped,
-// so the doc is pinned to what the command actually prints.
+// The expected text is extracted from the AST, not by scanning the file's bytes.
+// A byte scan takes the first "skipped (" anywhere in the source, COMMENTS
+// INCLUDED — so a package comment quoting the old wording would keep this guard
+// green while the printed label drifted, which is precisely the silent
+// false-negative it exists to prevent. Parsing with a nil comment map makes
+// comments unreachable by construction rather than by care.
 func TestTechnicalDebtDoc_BackfillSampleMatchesThePrintedLabel(t *testing.T) {
-	src, err := os.ReadFile(backfillSourcePath)
-	require.NoError(t, err, "the backfill command source must be readable from this package")
-
-	// Take the literal tail of the format string from "skipped (" to its closing
-	// paren. It carries no verbs, so it appears in the output verbatim.
-	const marker = "skipped ("
-	i := strings.Index(string(src), marker)
-	require.GreaterOrEqual(t, i, 0,
-		"the backfill summary must still print a %q clause; if it was reworded, this guard needs the new anchor", marker)
-	rest := string(src)[i:]
-	j := strings.Index(rest, ")")
-	require.GreaterOrEqual(t, j, 0, "the skipped clause must be parenthesised")
-	label := rest[:j+1]
-
-	require.NotContains(t, label, "%",
-		"the extracted clause must be literal text, not a format verb, or this guard compares nothing")
-
+	label := backfillSkippedLabel(t)
 	assert.Contains(t, technicalDebtDoc(t), label,
 		"the catalog's backfill sample output must quote the label the command actually prints (%q); "+
 			"this is the third copy of that string and the one nothing else guards", label)
+}
+
+// backfillSkippedLabel returns the literal "skipped (…)" clause from the backfill
+// summary's format string, read out of the AST as a string literal. It requires
+// exactly one match so an ambiguous source — two format strings carrying the
+// clause — fails loudly instead of silently pinning the wrong one.
+func backfillSkippedLabel(t *testing.T) string {
+	t.Helper()
+	fset := token.NewFileSet()
+	// parser.ParseComments is deliberately NOT passed: comments must not be
+	// searchable, or a stale quotation in prose satisfies the guard.
+	f, err := parser.ParseFile(fset, backfillSourcePath, nil, 0)
+	require.NoError(t, err, "the backfill command source must parse")
+
+	const marker = "skipped ("
+	var found []string
+	ast.Inspect(f, func(n ast.Node) bool {
+		lit, ok := n.(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			return true
+		}
+		v, err := strconv.Unquote(lit.Value)
+		if err != nil {
+			return true
+		}
+		i := strings.Index(v, marker)
+		if i < 0 {
+			return true
+		}
+		rest := v[i:]
+		j := strings.Index(rest, ")")
+		if j < 0 {
+			return true
+		}
+		found = append(found, rest[:j+1])
+		return true
+	})
+
+	require.Len(t, found, 1,
+		"expected exactly one string literal carrying a %q clause in %s; "+
+			"zero means the summary was reworded and this guard needs a new anchor, "+
+			"more than one means the anchor is ambiguous and could pin the wrong copy",
+		marker, backfillSourcePath)
+	require.NotContains(t, found[0], "%",
+		"the extracted clause must be literal text, not a format verb, or this guard compares nothing")
+	return found[0]
 }

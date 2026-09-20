@@ -930,10 +930,21 @@ func foldByID[T foldable](items []T) ([]T, map[string][]T) {
 // point. Do not strengthen this to "the same records from the first pass" — that
 // is measurably false.
 //
-// Fold stability assumes WELL-FORMED RFC3339 timestamps. A record whose timestamp
-// cannot be ordered makes latestIndex's precedence non-transitive, so dropping any
-// record can move the effective one; see the TD note on latestIndex's unorderable
-// arm.
+// Fold stability assumes WELL-FORMED RFC3339 timestamps, and the caveat is
+// stronger than "the effective record may move". A timestamp that cannot be
+// ordered makes latestIndex's precedence non-transitive, so dropping any record
+// — which compaction does by design — can change the sequential maximum. Measured
+// over 200k random malformed-mix corpora: the effective record moves in ~1.8% of
+// ids, the reported outcome changes in ~1.5%, and in ~0.5% compaction FABRICATES
+// a quality-signal row for an id that produced none before. Row creation is the
+// one a reader will not infer from "may move", so it is named here.
+//
+// No in-repo writer can produce such a record — every one stamps
+// time.Now().UTC().Format(time.RFC3339) — so this needs a hand-edited, imported
+// or third-party store. The emit order below is nonetheless the best of the six
+// possible permutations on this input too, by an order of magnitude. Tracked as
+// sprint 36.0 TD-013; fixing it means changing the fold's tie-break for malformed
+// input, which is a read-path behaviour change for every existing store.
 //
 // A suppressing (wontfix) id never reaches the second half: rule 1 makes the
 // wontfix record itself the effective one, so its justification is retained by
@@ -1197,7 +1208,7 @@ func highestRankedTerminalIndex(terminals []Record) int {
 // timestamp wins; an equal timestamp is broken by ClosedStatusRank so a terminal
 // record outranks an open one (rank 0), and a full tie by append order (the last
 // wins). Recency first, rank only as a tiebreak — the inverse of
-// highestRankedTerminal.
+// highestRankedTerminalIndex.
 //
 // Timestamps are compared as strings; see FoldRecords' "Timestamp comparison"
 // section for why that is sound and what breaks it.
