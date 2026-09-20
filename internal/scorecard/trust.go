@@ -213,6 +213,16 @@ func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Tim
 // always had: a reviewer cannot launder phantoms out of its prior by anchoring
 // them on doc-named tokens, because the shield never reaches this denominator.
 //
+// THAT PROPERTY IS NO LONGER ABSOLUTE, and the qualification belongs here rather
+// than only at the far end. reviewerCategories withholds a doc-shielded
+// finding's CATEGORY (AC 03-02 Edge Case 2) while this fold restores its CHARGE,
+// so the two now disagree for the trust tally. A lens whose only in-remit
+// evidence on a run was doc-shielded contributes nothing to that run's union,
+// and opportunitySetRuns then drops the whole record — re-folded charge included
+// — whenever some other reviewer raised a discriminating out-of-remit category.
+// The laundering route is narrower than before this fold existed, not closed.
+// Filed as TD-036.
+//
 // Era 1 is deliberately NOT merged. It EXCLUDES routed findings from
 // FindingsRaised rather than partitioning them, so its denominator covers a
 // smaller finding set and blending it in would compare two different quantities —

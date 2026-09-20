@@ -181,6 +181,11 @@ func TestDocs_ScorecardMdDocumentsOpportunitySetScoping(t *testing.T) {
 		"categories_raised is written on every reviewer record; its row must not say otherwise")
 	assert.Contains(t, row, "populated since schema 2",
 		"the row must state when the field started being written")
+	// The routed stream carries the same doc_shield carve-out findings_raised
+	// does (reviewerCategories takes the chargeable split). The row twelve lines
+	// up documents it precisely; this one must not read as unconditional.
+	assert.Contains(t, row, "doc_shield",
+		"the routed-stream clause must name the doc_shield exception, matching the findings_raised row")
 
 	assert.NotEmpty(t, reviewerCategories("sasha", []Finding{
 		{Reviewers: []string{"sasha"}, Category: "security"},
@@ -202,7 +207,11 @@ func TestDocs_ScorecardMdDocumentsOpportunitySetScoping(t *testing.T) {
 	// The empty-union class has THREE routes and the code cannot tell them apart.
 	// Naming only one leaves an operator unable to explain the likeliest cause of
 	// a whole panel going un-scoped.
-	assert.Contains(t, doc, "outside the closed\n  vocabulary",
+	// Whitespace-normalised before matching. Pinning a prose fragment across a
+	// hard line break plus its continuation indent makes an ordinary reflow fail
+	// this test claiming the route is MISSING when it is merely rewrapped.
+	flat := strings.Join(strings.Fields(doc), " ")
+	assert.Contains(t, flat, "outside the closed vocabulary and was dropped at the write gate",
 		"the doc must name the vocabulary-drop route to an empty union, not only the non-discriminating one")
 	// The non-discriminating values are a closed set in remit.go; naming them in
 	// the doc is how an operator reads a surprising score.

@@ -677,11 +677,26 @@ func Emit(in EmitInput, opts EmitOpts) error {
 //     contract that scorecard emission never fails the caller's reconcile. So it
 //     fails NEUTRAL — recorded as absent, never trusted into the opportunity
 //     gate — matching coerceOutcome's stance on the same path.
+//
 //   - DOC-SHIELDED findings never reach here, because the caller passes the
-//     chargeable split rather than in.UnresolvedFindings. That is the same
-//     carve-out FindingsRaised applies, and the two must agree: a shielded
-//     finding that reached the category set would put its reviewer in-remit on a
-//     case the denominator deliberately did not charge it for.
+//     chargeable split rather than in.UnresolvedFindings. That matches the
+//     carve-out Record.FindingsRaised applies, and it is what AC 03-02 Edge Case
+//     2 requires: a shielded finding in the category set would put its reviewer
+//     in-remit on a case that record deliberately did not charge it for.
+//
+//     DO NOT read that as "the two carve-outs agree everywhere" — an earlier
+//     version of this comment did, and it was wrong about the only denominator
+//     this field feeds. mergeRoutedEras folds FindingsDocShielded BACK into
+//     FindingsRaised before the opportunity link runs, precisely so a reviewer
+//     cannot launder phantoms out of its prior by anchoring them on doc-named
+//     tokens. So in the trust tally the shielded finding IS charged while its
+//     category is still withheld, and a lens whose only in-remit evidence on a
+//     run was doc-shielded contributes nothing to that run's union — its record,
+//     re-folded charge and all, is then dropped whenever another reviewer raised
+//     a discriminating out-of-remit category. That is a real residual escape
+//     from the anti-laundering property, filed as TD-036. The code here is
+//     correct against its AC; only the old rationale was.
+//
 //   - The result is SORTED, not map-ordered. Two byte-identical runs must
 //     serialize byte-identically, or a diff of the store reports churn that is
 //     really just Go's map iteration.
