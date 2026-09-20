@@ -12,8 +12,15 @@ package fanout
 // definition and is not edited; this file speaks the same nine values by value.
 // That duplication is pinned — not merely hoped for — by
 // cli/fanout_outcome_parity_test.go, which is a legal importer of both packages
-// and asserts every literal here equals its benchmark.Outcome* counterpart. If
-// that test is deleted, this file can drift from the vocabulary in silence.
+// and asserts every literal in THIS file equals its benchmark.Outcome*
+// counterpart. If that test is deleted, this file can drift in silence.
+//
+// It does NOT reach internal/scorecard's own copy of the four eligible values
+// (trust.go), which are unexported and invisible to cli. Those are pinned only
+// indirectly, by internal/scorecard's independently-written literals plus its
+// coercion test. Filed as TD: the durable fix is for internal/benchmark to
+// export the vocabulary as a slice both sides iterate, so a tenth value cannot
+// be added without every site changing.
 //
 // Relocated here from cli/benchmark_run.go by sprint 36.0 (AC 02-02) so the
 // benchmark path and the reconcile path classify identically instead of one

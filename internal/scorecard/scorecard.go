@@ -22,11 +22,19 @@ import (
 // integer on every record so Epic 10.0's public submission format can evolve
 // independently; a future change increments this and old records stay readable.
 //
-// Version 2 (sprint 36.0) is the store's FIRST-EVER bump. It carries three
+// Version 2 (sprint 36.0) is the store's FIRST-EVER bump. It DECLARES three
 // additive fields together, in one increment rather than three:
-//   - Record.Outcome — why this reviewer's counts look the way they do
-//   - Record.CategoriesRaised — the distinct categories its findings raised
-//   - Finding.Category — the per-finding value the fold above reads
+//   - Record.Outcome — why this reviewer's counts look the way they do.
+//     Written today.
+//   - Record.CategoriesRaised — the distinct categories its findings raised.
+//     Declared only; Phase 3 writes it.
+//   - Finding.Category — the per-finding value that fold will read. Declared
+//     only; Phase 3 threads it.
+//
+// The two unwritten fields are here deliberately: the schema changes ONCE for
+// this body of work, so Phase 3 adds behaviour rather than another era. Until
+// then a v2 record omits both, which reads identically to a v1 record — "not
+// measured" — so no consumer can mistake the gap for a measured empty.
 //
 // All three are omitempty with era-safe absent meaning, so no migration shim is
 // needed. That is a DECISION, not an omission: the read gate at store.go
@@ -175,12 +183,15 @@ type Record struct {
 	// that would assert "reviewed successfully and found nothing" about a run
 	// nobody classified — it is excluded from the trust tally instead.
 	Outcome string `json:"outcome,omitempty"`
-	// CategoriesRaised holds the distinct reconcile.Categories() values this
-	// reviewer's counted findings raised in the run. It is the per-record input
-	// to Phase 3's opportunity-set scoping: a lens is scored on a case only when
-	// some reviewer raised a category inside that lens's remit, so a specialist
-	// that is correctly silent on an out-of-remit diff is neither credited nor
-	// penalised.
+	// CategoriesRaised WILL hold the distinct reconcile.Categories() values this
+	// reviewer's counted findings raised in the run. Nothing writes it yet — the
+	// field is declared by the v2 bump so the schema changes once, and Phase 3
+	// threads the value. Every v2 record written today omits it.
+	//
+	// It is the per-record input to Phase 3's opportunity-set scoping: a lens
+	// will be scored on a case only when some reviewer raised a category inside
+	// that lens's remit, so a specialist that is correctly silent on an
+	// out-of-remit diff is neither credited nor penalised.
 	//
 	// omitempty: absent means "not measured" (a pre-schema-2 record), which is
 	// excluded rather than read as either in-remit or out-of-remit.
@@ -282,10 +293,11 @@ type Finding struct {
 	// reconcile.JSONFinding.UnresolvedReason. Empty means the ordinary no-match:
 	// the anchors appear nowhere in the tracked tree.
 	UnresolvedReason string
-	// Category is the finding's reconcile.Categories() value, carried verbatim
-	// from reconcile.Finding.Category. Emit folds the distinct values a
-	// reviewer's counted findings raised into Record.CategoriesRaised; this
-	// struct is never persisted, so the fold is where the value becomes durable.
+	// Category WILL carry the finding's reconcile.Categories() value verbatim
+	// from reconcile.Finding.Category, for Emit to fold into
+	// Record.CategoriesRaised — this struct is never persisted, so that fold is
+	// where the value would become durable. Neither the threading nor the fold
+	// exists yet; both are Phase 3.
 	//
 	// Declared by Phase 2's single schema bump and left zero-valued until Phase
 	// 3 threads it at the two EmitForReconcile construction sites.

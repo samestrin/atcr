@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -35,6 +36,47 @@ func TestLoadPersonasScores_RealStoreSumsAcrossModelsAndCase(t *testing.T) {
 	assert.InDelta(t, 0.4, data.rates["sasha"], 1e-9)
 	assert.Contains(t, data.rates, "penny", "minRuns=0 at this call site must keep a single-run reviewer")
 	assert.InDelta(t, 0.0, data.rates["penny"], 1e-9)
+}
+
+// TestLoadPersonasScores_PreV2StoreRendersNoScores pins the one operator-visible
+// regression sprint 36.0 phase 2 introduces, so it is a decision on the record
+// rather than a surprise in the field.
+//
+// `atcr personas list --scores` calls TrustPriors(dir, 0) — it opts out of the
+// DefaultTrustMinRuns floor, which used to mean "show every reviewer with any
+// history at all". It does NOT opt out of the outcome-eligibility filter, and
+// every record written before schema 2 carries no outcome. So on an existing
+// install the table renders all-n/a with the "no data" footer until fresh runs
+// accumulate, even though the store is full and perfectly readable.
+//
+// That is intended: a rate computed from runs nobody classified is not a
+// measurement, and absent-means-neutral is the same contract the floor already
+// had. It is pinned here because the alternative — discovering it from a user —
+// is much worse, and because a future change that quietly re-admits unclassified
+// records should have to delete this test to do it.
+func TestLoadPersonasScores_PreV2StoreRendersNoScores(t *testing.T) {
+	isolate(t)
+	for i := 0; i < scorecard.DefaultTrustMinRuns*2; i++ {
+		rec := reviewerRec(
+			fmt.Sprintf("%s-v1%02d", time.Now().UTC().Format(time.RFC3339), i),
+			"sasha", "opus", 4, 2)
+		rec.SchemaVersion = 1
+		rec.Outcome = "" // exactly how a pre-sprint-36.0 record reads back
+		storeRecord(t, rec)
+	}
+
+	data, err := loadPersonasScores(io.Discard)
+	require.NoError(t, err, "a readable pre-v2 store is not an error")
+	assert.Empty(t, data.rates,
+		"unclassified history yields no rate; absent is neutral, not punitive")
+
+	// The same store DOES still read — this is exclusion, not a broken read.
+	dir, err := scorecard.DefaultDir()
+	require.NoError(t, err)
+	recs, err := scorecard.ReadAll(dir, scorecard.ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.Len(t, recs, scorecard.DefaultTrustMinRuns*2,
+		"every record is readable; only trust scoring declines to count them")
 }
 
 // TestLoadPersonasScores_EmptyStoreYieldsEmptyMapNoError locks the AC4

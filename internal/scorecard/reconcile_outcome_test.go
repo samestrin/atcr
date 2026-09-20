@@ -2,6 +2,7 @@ package scorecard
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -145,6 +146,56 @@ func TestEmitForReconcile_OutOfVocabularyOutcomeIsCoercedToUnknown(t *testing.T)
 	assert.Equal(t, testOutcomeUnknown, got)
 	assert.Equal(t, testOutcomeFiltered, coerceOutcome(testOutcomeFiltered))
 	assert.Equal(t, testOutcomeUnknown, coerceOutcome(testOutcomeUnknown))
+}
+
+// TestEmitForReconcile_HostileFindingsCountDoesNotPanic guards the availability
+// hole the 2.2 adversarial review reproduced: FindingsCount is decoded from a
+// summary.json on disk, and internal/mcp/handlers.go reaches EmitForReconcile
+// with a CALLER-SUPPLIED review directory. Sizing an allocation from that number
+// let a count near math.MaxInt panic makeslice and take the process down from
+// inside a function contracted never to fail its caller's reconcile.
+//
+// Both signs are covered: negative exercises the zero-guard, huge-positive is
+// the one that actually crashed.
+func TestEmitForReconcile_HostileFindingsCountDoesNotPanic(t *testing.T) {
+	for name, count := range map[string]string{
+		"huge positive": "9223372036854775807",
+		"huge negative": "-9223372036854775808",
+	} {
+		t.Run(name, func(t *testing.T) {
+			reviewDir := t.TempDir()
+			pool := filepath.Join(reviewDir, "sources", "pool")
+			require.NoError(t, os.MkdirAll(pool, 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(pool, "summary.json"),
+				[]byte(`{"agents":[{"agent":"bruce","status":"ok","findings_count":`+count+`}],"total":1}`),
+				0o644))
+
+			recs := emitAndRead(t, reviewDir, resWith("bruce"))
+
+			bruce := findReviewer(recs, "bruce")
+			require.NotNil(t, bruce, "the run must still emit, not crash")
+			// A huge count still means "this reviewer raised something", so the
+			// classification is honest; only the allocation was the problem.
+			if count[0] == '-' {
+				assert.Equal(t, testOutcomeClean, bruce.Outcome)
+			} else {
+				assert.Equal(t, testOutcomeFindings, bruce.Outcome)
+			}
+		})
+	}
+}
+
+// TestRaisedSlotsFor_IsBoundedRegardlessOfCount pins the allocation itself, so a
+// future edit cannot quietly restore make([]string, a.FindingsCount) while the
+// end-to-end test above keeps passing on a machine with enough memory.
+func TestRaisedSlotsFor_IsBoundedRegardlessOfCount(t *testing.T) {
+	assert.Nil(t, raisedSlotsFor(fanout.AgentStatus{FindingsCount: 0}))
+	assert.Nil(t, raisedSlotsFor(fanout.AgentStatus{FindingsCount: -5}))
+	for _, n := range []int{1, 7, 1 << 20, math.MaxInt} {
+		got := raisedSlotsFor(fanout.AgentStatus{FindingsCount: n})
+		assert.Len(t, got, 1, "count %d must not size the slice", n)
+		assert.NotEmpty(t, got, "non-empty is the only property the classifier reads")
+	}
 }
 
 // TestEmitForReconcile_NoScorecardDoesNoOutcomeWork is AC 02-03 Error Scenario

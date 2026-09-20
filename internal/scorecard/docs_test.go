@@ -1,6 +1,7 @@
 package scorecard
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,6 +66,65 @@ func TestDocs_ScorecardMdRaisedDenominator(t *testing.T) {
 	if !strings.Contains(doc, "Superseded but retained") {
 		t.Errorf("raised_includes_unresolved row must be described as superseded-but-retained now that raised_denominator carries the era")
 	}
+}
+
+// TestDocs_ScorecardMdSchemaVersionMatchesTheConstant is the pin the v1->v2 bump
+// needed and did not have. docs/scorecard.md states the current version in four
+// places, and a bump that updates the constant while leaving the doc claiming
+// "Currently 1" publishes a reference that is simply false — the exact drift the
+// sibling pins in this file exist to stop.
+func TestDocs_ScorecardMdSchemaVersionMatchesTheConstant(t *testing.T) {
+	doc := string(readDoc(t, "scorecard.md"))
+
+	for _, want := range []string{
+		fmt.Sprintf("## Record Schema (v%d)", SchemaVersion),
+		fmt.Sprintf(`"schema_version": %d,`, SchemaVersion),
+		fmt.Sprintf("| `schema_version` | int | always | Record schema version. Currently `%d`. |", SchemaVersion),
+		fmt.Sprintf("- `schema_version` (`%d`) is stamped on every **stored** record", SchemaVersion),
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/scorecard.md has drifted from SchemaVersion = %d; missing:\n%s",
+				SchemaVersion, want)
+		}
+	}
+}
+
+// TestDocs_ScorecardMdDocumentsOutcomeAndEligibility pins the two fields the v2
+// bump carries and the trust rule that reads the first of them. The eligibility
+// rule is the one that changes what an operator SEES — a pre-v2 store renders an
+// all-n/a `personas list --scores` table — so an undocumented version of it is a
+// support problem, not a cosmetic gap.
+func TestDocs_ScorecardMdDocumentsOutcomeAndEligibility(t *testing.T) {
+	doc := string(readDoc(t, "scorecard.md"))
+
+	for _, want := range []string{
+		"| `outcome` | string | conditional |",
+		"| `categories_raised` | array of string | conditional |",
+		"- **Outcome eligibility.**",
+		"every reviewer in it is excluded and the",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/scorecard.md is missing required passage:\n%s", want)
+		}
+	}
+
+	// The eligible set must be named exactly, so widening the allowlist in code
+	// without widening the doc fails here rather than in a support thread.
+	for _, o := range []string{outcomeFindings, outcomeClean, outcomeUngrounded, outcomeFiltered} {
+		if !strings.Contains(doc, "`"+o+"`") {
+			t.Errorf("eligible outcome %q is not named in docs/scorecard.md", o)
+		}
+	}
+}
+
+// readDoc reads a file from docs/ relative to the repo root.
+func readDoc(t *testing.T, name string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", name))
+	if err != nil {
+		t.Fatalf("read docs/%s: %v", name, err)
+	}
+	return data
 }
 
 // TestDocs_PublicEnvelopeRaisedDenominator pins the PUBLIC-envelope reference

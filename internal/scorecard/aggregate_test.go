@@ -24,9 +24,16 @@ func runIDAt(t time.Time, base string) string {
 // can produce, and would silently reduce a few dozen trust-rate assertions to
 // assertions about the schema era instead.
 func reviewer(runID, name, model string, raised, corroborated int, cost float64, latency int64) Record {
+	// findings means "raised at least one finding that survived", so a
+	// zero-raised fixture has to be clean or the helper produces a record no
+	// emitter could ever write — the exact defect this helper exists to avoid.
+	outcome := outcomeFindings
+	if raised == 0 {
+		outcome = outcomeClean
+	}
 	return Record{
 		SchemaVersion:        SchemaVersion,
-		Outcome:              outcomeFindings,
+		Outcome:              outcome,
 		RecordType:           RecordTypeReviewer,
 		RunID:                runID,
 		Reviewer:             name,

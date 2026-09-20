@@ -264,6 +264,16 @@ func mergeRoutedEras(records []Record) []Record {
 // itself: the `atcr scorecard` leaderboard reports what actually happened across
 // all runs, while the trust prior is a behavioral measurement that is only
 // comparable at a fixed level.
+func strictRuns(records []Record) []Record {
+	kept := make([]Record, 0, len(records))
+	for _, r := range records {
+		if c, ok := reclib.NormalizeConsensus(r.ConsensusLevel); ok && c == reclib.ConsensusStrict {
+			kept = append(kept, r)
+		}
+	}
+	return kept
+}
+
 // eligibleOutcomeRuns keeps only the runs where the lens actually got a fair
 // attempt, so a durable score measures judgment rather than hosting.
 //
@@ -325,24 +335,20 @@ func eligibleOutcomeRuns(records []Record) []Record {
 
 // The four eligible outcome values, spelled as literals because
 // internal/benchmark imports this package and importing it back would close a
-// cycle. internal/benchmark/outcome.go stays the vocabulary's single definition;
-// cli/fanout_outcome_parity_test.go is the pin that keeps these equal to it.
+// cycle. internal/benchmark/outcome.go stays the vocabulary's single definition.
+//
+// These four are NOT covered by cli/fanout_outcome_parity_test.go — they are
+// unexported, so that test cannot see them. They are pinned only indirectly, by
+// this package's independently-written test literals and by
+// TestEmitForReconcile_OutOfVocabularyOutcomeIsCoercedToUnknown. Filed as TD:
+// the durable fix is an exported vocabulary slice in internal/benchmark that
+// every site iterates.
 const (
 	outcomeFindings   = "findings"
 	outcomeClean      = "clean"
 	outcomeUngrounded = "ungrounded"
 	outcomeFiltered   = "filtered"
 )
-
-func strictRuns(records []Record) []Record {
-	kept := make([]Record, 0, len(records))
-	for _, r := range records {
-		if c, ok := reclib.NormalizeConsensus(r.ConsensusLevel); ok && c == reclib.ConsensusStrict {
-			kept = append(kept, r)
-		}
-	}
-	return kept
-}
 
 // unresolvedEraRuns keeps the records of ONE FindingsRaised definition, never a
 // mix of both.

@@ -16,9 +16,17 @@ import (
 )
 
 // sampleRecord builds a minimal valid reviewer record for store tests.
+//
+// "Valid" includes an Outcome since sprint 36.0: trustPriorsSince drops records
+// that carry none, so a blank one here would silently reduce every trust
+// assertion built on this helper to an assertion about the schema era instead.
+// TestTrustPriors_PartialReadFailureYieldsEmptyMap is the one that got caught —
+// it guards the anti-corruption fail-neutral return, and without this stamp it
+// passed whether or not that guard existed.
 func sampleRecord(runID, reviewer string) Record {
 	return Record{
 		SchemaVersion:  SchemaVersion,
+		Outcome:        outcomeFindings,
 		RecordType:     RecordTypeReviewer,
 		RunID:          runID,
 		Reviewer:       reviewer,

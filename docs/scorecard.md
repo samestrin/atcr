@@ -15,18 +15,20 @@ to enable it; pass `--no-scorecard` to suppress it for a single run.
 
 ---
 
-## Record Schema (v1)
+## Record Schema (v2)
 
 Each reconcile run appends one **reviewer** record per participating reviewer plus
 one **aggregate** record summarizing the whole run. Records are JSON objects, one
-per line (JSONL). `schema_version` is `1` on every record; a future schema change
+per line (JSONL). `schema_version` is `2` on every record atcr writes today; a schema change
 increments it and leaves old records readable (see [Schema versioning](#schema-versioning)).
+Version `2` added `outcome` and `categories_raised`, both optional — a `1` record
+carries neither and is read as "not measured", never as a measured zero.
 
 ### Example (per-reviewer record)
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "record_type": "reviewer",
   "run_id": "2026-06-14T10:00:00Z-abc123",
   "reviewer": "bruce",
@@ -40,6 +42,7 @@ increments it and leaves old records readable (see [Schema versioning](#schema-v
   "tokens_in": 14200,
   "tokens_out": 4000,
   "latency_ms": 9100,
+  "outcome": "findings",
   "findings_verified": 4,
   "findings_refuted": 1,
   "survived_skeptic_rate": 0.8
@@ -50,7 +53,7 @@ increments it and leaves old records readable (see [Schema versioning](#schema-v
 
 | Field | Type | Presence | Description |
 |-------|------|----------|-------------|
-| `schema_version` | int | always | Record schema version. Currently `1`. |
+| `schema_version` | int | always | Record schema version. Currently `2`. |
 | `record_type` | string | always | `"reviewer"` for a per-reviewer row, `"aggregate"` for the run summary. Aggregate rows leave `reviewer`/`model`/`role` empty; consumers key on `record_type`. |
 | `run_id` | string | always | `<RFC3339 reconciled_at>-<review-dir base>`, e.g. `2026-06-14T10:00:00Z-abc123`. Uniquely identifies the run and selects the month file. |
 | `reviewer` | string | always (empty on aggregate) | Reviewer/persona name (e.g. `bruce`). |
@@ -70,6 +73,8 @@ increments it and leaves old records readable (see [Schema versioning](#schema-v
 | `survived_skeptic_rate` | float | conditional | `findings_verified / (findings_verified + findings_refuted)`. Present only when `findings_verified + findings_refuted > 0` — a *stricter* condition than the two counts above, which are present whenever verification ran. When verification ran but nothing countable survived (every verdict truncated, or this reviewer's findings drew none) the two counts still ship as `0` and this key is omitted: `0/0` would publish `0.0`, which is indistinguishable from a reviewer whose findings were all refuted. Read the three keys individually, not as a set. |
 | `raised_includes_unresolved` | bool | conditional | Superseded but retained. `true` when `findings_raised` counts the Tier-4-routed findings (every record written from Epic 35.16.6.5 onward); omitted on records written before it. The denominator has since changed meaning a second time (the 35.16.6.8 `doc_shield` carve-out), which a bool cannot express — `raised_denominator` below is the era discriminator a new reader should use. This field stays because existing readers and stores depend on it, and because `true` is still exactly right about the one thing it claims: routed findings are in the denominator. |
 | `raised_denominator` | int | conditional | Which definition of `findings_raised` produced this record: `1` = routed findings excluded (everything before 35.16.6.5; never stamped — it is what an absent discriminator means), `2` = routed findings included (35.16.6.5, stamped as `raised_includes_unresolved: true` before this field existed), `3` = routed findings included EXCEPT the doc-shielded ones (35.16.6.8, the current definition; those are counted in `findings_doc_shielded`). Omitted on records that predate the discriminator — their era is read from `raised_includes_unresolved` instead. `TrustPriors` splits eras on this value (see `unresolvedEraRuns`), so a rate is never averaged across two definitions. |
+| `outcome` | string | conditional | WHY this record's counts look the way they do, from the nine-value vocabulary in `internal/benchmark/outcome.go`: `findings`, `clean`, `unparseable`, `truncated`, `incomplete`, `ungrounded`, `filtered`, `failed`, or absent (unknown). It exists because a reviewer that read the diff and correctly found nothing, one that emitted prose no parser could use, and one whose call failed outright all record zero findings and would otherwise score identically. `TrustPriors` counts a record only when its outcome is `findings`, `clean`, `ungrounded` or `filtered` — see the eligibility rule below. Omitted when unknown, which is how every pre-v2 record reads. |
+| `categories_raised` | array of string | conditional | The distinct `CATEGORY` values this reviewer's counted findings raised in the run, drawn from the closed vocabulary in `reconcile/category.go`. Declared by the v2 bump for opportunity-set scoping; not yet populated. Omitted when absent, which means "not measured" rather than "measured empty". |
 
 **Conditional verification fields.** `findings_verified`, `findings_refuted`, and
 `survived_skeptic_rate` are included only when the run had a readable, well-formed
@@ -393,11 +398,30 @@ than growing a third aggregation.
 - **Best-effort against the store.** A missing, empty, or unreadable store
   directory yields an empty map and a nil error — this is a read-only,
   never-fails resolver; it does not create the store or write to it.
+- **Outcome eligibility.** A record counts toward a reviewer's rate only when its
+  `outcome` is `findings`, `clean`, `ungrounded` or `filtered`. `unparseable`,
+  `truncated`, `incomplete`, `failed` and absent/unknown are excluded: the lens
+  did not get a fair attempt, and a durable score has to measure judgment rather
+  than hosting. The panel's real history is the argument — a lens that hung on a
+  proxy timeout, one whose host silently capped prompts at 16,384 tokens while
+  answering HTTP 200, and one auth-failed on a billing cap would all have been
+  demoted for their wiring. `ungrounded` and `filtered` are on the counted side
+  deliberately: both follow a complete, parseable response whose findings were
+  discarded for cause, which is a judgment result. The test is an allowlist, so a
+  future tenth outcome value is excluded until someone decides otherwise. A
+  reviewer left with zero eligible runs is ABSENT from the map, never present at
+  `0.0` — the same neutral contract as the `minRuns` floor.
 - `DefaultTrustMinRuns` is the conservative default floor (`20`) for a caller
   that does not pick its own `minRuns`. `atcr personas list --scores` calls
   `TrustPriors(dir, 0)` explicitly instead — that table is meant to show every
-  reviewer with any history at all, so it opts out of the default floor rather
-  than inheriting it.
+  reviewer with any SCOREABLE history, so it opts out of the default floor rather
+  than inheriting it. **It does not opt out of the eligibility filter**, and the
+  difference is visible on an upgrade: a store written before `schema_version` 2
+  has no `outcome` on any record, so every reviewer in it is excluded and the
+  table renders all-`n/a` with the "no data" footer until fresh runs accumulate.
+  That is the same absent-means-neutral contract the floor already had — a rate
+  computed from unclassified runs is not a measurement — but it is a visible
+  change on an existing install rather than a silent one.
 - **`scorecard.ResolveTrustPriors()` (epic 35.9)** is the third consumer —
   `DefaultDir()` plus a read at `DefaultTrustMinRuns` in one best-effort call,
   degrading to a nil map on any failure (an unresolvable config dir, a
@@ -618,7 +642,7 @@ guarantee, and the auth exit code — in **[docs/telemetry.md](telemetry.md)**.
 
 There are **two independent version numbers**:
 
-- `schema_version` (`1`) is stamped on every **stored** record (the local JSONL
+- `schema_version` (`2`) is stamped on every **stored** record (the local JSONL
   store).
 - `submission_schema` (`2`) is stamped on every **public submission** envelope
   (`leaderboard --export` and `benchmark export`).
