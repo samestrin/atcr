@@ -80,6 +80,24 @@ import (
 // no baseline value at all; they have presence or absence.)
 const SchemaVersion = 2
 
+// categoriesRaisedSinceSchema is the schema version that INTRODUCED
+// Record.CategoriesRaised. The opportunity-set link gates on this, never on
+// SchemaVersion itself.
+//
+// The difference is the whole point and it is a landmine, not a style choice.
+// SchemaVersion MOVES — TD-030 already puts a v3 bump on Phase 4a's table. A
+// guard written as `r.SchemaVersion < SchemaVersion` reads "pre-schema-2" only
+// while the constant happens to be 2; the day it becomes 3, every v2 record —
+// each carrying a genuinely MEASURED category set — is silently reclassified as
+// unmeasured, the runs lose their category evidence, and opportunity scoping
+// switches itself off for the entire back-catalogue. No test would catch it,
+// because a test that builds its fixture with `SchemaVersion: SchemaVersion`
+// moves with the constant.
+//
+// So: one named constant per field era, pinned by a test that hardcodes the
+// literal 2. A later field gets its own constant; it does not reuse this one.
+const categoriesRaisedSinceSchema = 2
+
 // Record type discriminators (AC 01-05): one "reviewer" record per participating
 // reviewer plus one "aggregate" record summarizing the whole run.
 const (

@@ -158,10 +158,22 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 		}
 	}
 
-	// Third category stream: the clusters reconcile set aside. Under strict
-	// consensus an uncorroborated singleton is routed here unless trustExempt
-	// spares it, and trustExempt is off for precisely the lenses that have no
-	// prior yet — see EmitInput.AmbiguousFindings for the loop that closes.
+	// Third category stream: res.Ambiguous. The motivating route is the
+	// consensus filter — under strict consensus an uncorroborated singleton is
+	// routed here unless trustExempt spares it, and trustExempt is off for
+	// precisely the lenses that have no prior yet, so reading only res.Findings
+	// starves them (see EmitInput.AmbiguousFindings for the full loop).
+	//
+	// IT IS WIDER THAN THAT ROUTE, and the difference matters when reading a
+	// stored record. reconcile/dedupe.go appends two other kinds of cluster on
+	// EVERY run at EVERY consensus level: DBSCAN-isolated noise singletons, and
+	// gray-zone PAIRS. Gray-pair members are guarded out of the noise exclusion,
+	// so they also reach res.Findings — meaning one finding can contribute a
+	// category here AND there. That is harmless to the value (CategoriesRaised is
+	// a deduped set) but not to its meaning: the res.Findings copy carries
+	// Merge's cluster-MODAL category while this copy carries the reviewer's own
+	// raw word, so the set can gain both. The field's documented meaning is
+	// modal; this mixed provenance is filed as TD-035.
 	//
 	// Reviewers are NOT registered from this stream, deliberately. A reviewer
 	// reachable only through a filtered cluster gets no record: that would be a
@@ -169,10 +181,14 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 	// would carry a zero denominator. The stream widens what an EXISTING record
 	// knows about its case; it never creates one.
 	//
-	// Per-source findings carry Reviewer (singular) and reconciled ones carry
-	// Reviewers; consensusNoiseCluster is built from a Merged, so it is the
-	// plural. Read both, or the noise clusters — the whole point of the field —
-	// are silently attributed to nobody.
+	// THE SINGULAR SHAPE IS THE PRODUCTION ONE. singletonAmbiguousCluster
+	// (reconcile/dedupe.go) normalises a one-reviewer finding BACK to the raw
+	// per-source shape — Reviewer set, Reviewers and Confidence cleared — and a
+	// consensus-filtered finding is always one-reviewer, because both consensus
+	// floors are HIGH/MEDIUM and ConfidenceFor only reaches those with 2+ distinct
+	// reviewers. The plural read below is DEFENSIVE, for the gray-pair route and
+	// for any future producer that does not normalise. Reading only the plural
+	// would attribute the motivating route to nobody at all.
 	ambiguous := make([]Finding, 0, len(res.Ambiguous))
 	for _, c := range res.Ambiguous {
 		for _, f := range c.Findings {

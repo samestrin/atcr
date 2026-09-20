@@ -1503,6 +1503,46 @@ func TestTrustPriors_OpportunityUnionIsTakenBeforeTheOutcomeGate(t *testing.T) {
 	assert.Contains(t, priors, "penny", "penny's own remit was in play on every run")
 }
 
+// TestOpportunity_SchemaGateIsPinnedToTheIntroducingVersionNotTheMovingOne is
+// the guard a `SchemaVersion: SchemaVersion` fixture can never be.
+//
+// Both halves of the opportunity link skip records below
+// categoriesRaisedSinceSchema. Written as `< SchemaVersion` instead, the guard
+// is correct only while that constant happens to equal 2 — and TD-030 already
+// puts a v3 bump on Phase 4a's table. On that bump every v2 record, each
+// carrying a genuinely measured category set, would be reclassified as
+// unmeasured: the union would lose its evidence and every v2 record would pass
+// through unjudged, switching opportunity scoping off for the whole
+// back-catalogue. Every other test in this file builds fixtures with
+// `SchemaVersion: SchemaVersion`, so they move with the constant and stay green
+// through exactly that regression.
+//
+// The literal 2 below is therefore deliberate. Do not "tidy" it into the
+// constant; that deletes the only thing this test asserts.
+func TestOpportunity_SchemaGateIsPinnedToTheIntroducingVersionNotTheMovingOne(t *testing.T) {
+	assert.Equal(t, 2, categoriesRaisedSinceSchema,
+		"CategoriesRaised was introduced at schema 2; a later field gets its own constant rather than moving this one")
+
+	// A v2 record with a measured category set, built at the LITERAL version.
+	measured := oppRec("run-1", "sasha", []string{"security"})
+	measured.SchemaVersion = 2
+	other := oppRec("run-1", "penny", []string{"performance"})
+	other.SchemaVersion = 2
+
+	unions := opportunityUnions([]Record{measured, other})
+	require.Contains(t, unions, "run-1",
+		"a literal-v2 record must still contribute its categories to the union")
+	assert.Contains(t, unions["run-1"], "security")
+
+	// And it must still be JUDGED: dax's remit is untouched by this run, so it
+	// is dropped. A record treated as unmeasured would pass through instead.
+	dax := oppRec("run-1", "dax", nil)
+	dax.SchemaVersion = 2
+	out := opportunitySetRuns([]Record{dax}, unions)
+	assert.Empty(t, out,
+		"a literal-v2 record must be judged, not passed through as unmeasured")
+}
+
 // TestTrustPriors_EraIsDecidedBeforeTheOpportunityFilter pins the OTHER end of
 // the split link: the filter half must run AFTER unresolvedEraRuns.
 //

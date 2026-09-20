@@ -13,6 +13,22 @@ import (
 // pick its own minRuns. Live-store analysis (2026-07-29) showed rates were
 // still unstable at 10 summed runs but converged by 20; core reviewers already
 // run 100+ runs, so this floor does not strand real reviewers.
+//
+// KNOWN LIMIT — the floor is now applied to a DIFFERENT QUANTITY than the one it
+// was measured against, and that has not been re-measured. The 2026-07-29
+// analysis counted unfiltered strict runs. opportunitySetRuns then removes every
+// run where a lens's remit was not in play, and Aggregate increments Runs per
+// record, so a narrow lens now needs proportionally MORE strict runs to clear a
+// floor its broader peers clear at 20 — and absence from the priors map is not
+// neutral (it disables demoteByTrust as well as trustExempt), so the fairness fix
+// can strip trust scoring from exactly the specialists it was written to protect.
+//
+// It is not corrected here because correcting it means either inventing a
+// constant, which this epic's constraints forbid, or re-measuring against a live
+// store, and there is no store on the machine this was written on. The exposure
+// is nil today for that same reason: an empty store strands nobody. Tracked as
+// TD-025 — re-measure the floor against in-remit run counts once a real store
+// exists, and record the measurement here the way the one above is recorded.
 const DefaultTrustMinRuns = 20
 
 // defaultTrustWindow bounds the reconcile-side trust-prior read (epic 35.11).
@@ -366,7 +382,7 @@ func eligibleOutcomeRuns(records []Record) []Record {
 func opportunityUnions(records []Record) map[string]map[string]struct{} {
 	seenByRun := map[string]map[string]struct{}{}
 	for _, r := range records {
-		if r.RecordType != RecordTypeReviewer || r.SchemaVersion < SchemaVersion {
+		if r.RecordType != RecordTypeReviewer || r.SchemaVersion < categoriesRaisedSinceSchema {
 			continue
 		}
 		for _, c := range r.CategoriesRaised {
@@ -451,7 +467,7 @@ func opportunityUnions(records []Record) map[string]map[string]struct{} {
 func opportunitySetRuns(records []Record, seenByRun map[string]map[string]struct{}) []Record {
 	kept := make([]Record, 0, len(records))
 	for _, r := range records {
-		if r.RecordType != RecordTypeReviewer || r.SchemaVersion < SchemaVersion {
+		if r.RecordType != RecordTypeReviewer || r.SchemaVersion < categoriesRaisedSinceSchema {
 			kept = append(kept, r)
 			continue
 		}

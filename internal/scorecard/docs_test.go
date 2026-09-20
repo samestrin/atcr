@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestDocs_ScorecardMdExists asserts the user-facing reference doc
@@ -171,10 +172,15 @@ func TestDocs_ScorecardMdDocumentsOutcomeAndEligibility(t *testing.T) {
 func TestDocs_ScorecardMdDocumentsOpportunitySetScoping(t *testing.T) {
 	doc := string(readDoc(t, "scorecard.md"))
 
-	// The field row must not claim the field is unwritten. Emit writes it on
-	// every reviewer record, which the assertion below proves independently.
-	assert.NotContains(t, doc, "not yet populated",
-		"categories_raised is written on every reviewer record; the doc must not say otherwise")
+	// The field row must not claim the field is unwritten. Scoped to the ROW, not
+	// banned document-wide: "not yet populated" is a generic phrase that a future
+	// field row could legitimately use, and a whole-file ban would fail that edit
+	// with a message pointing at categories_raised.
+	row := docTableRow(t, doc, "`categories_raised`")
+	assert.NotContains(t, row, "not yet populated",
+		"categories_raised is written on every reviewer record; its row must not say otherwise")
+	assert.Contains(t, row, "populated since schema 2",
+		"the row must state when the field started being written")
 
 	assert.NotEmpty(t, reviewerCategories("sasha", []Finding{
 		{Reviewers: []string{"sasha"}, Category: "security"},
@@ -193,6 +199,11 @@ func TestDocs_ScorecardMdDocumentsOpportunitySetScoping(t *testing.T) {
 		assert.Contains(t, doc, class,
 			"the doc must name every record class the opportunity link passes through untouched")
 	}
+	// The empty-union class has THREE routes and the code cannot tell them apart.
+	// Naming only one leaves an operator unable to explain the likeliest cause of
+	// a whole panel going un-scoped.
+	assert.Contains(t, doc, "outside the closed\n  vocabulary",
+		"the doc must name the vocabulary-drop route to an empty union, not only the non-discriminating one")
 	// The non-discriminating values are a closed set in remit.go; naming them in
 	// the doc is how an operator reads a surprising score.
 	for c := range nonDiscriminating {
@@ -204,6 +215,29 @@ func TestDocs_ScorecardMdDocumentsOpportunitySetScoping(t *testing.T) {
 	// tracks the re-measurement.
 	assert.Contains(t, doc, "reduces the run count the `minRuns` floor sees",
 		"the doc must state that opportunity scoping changes the quantity minRuns is applied to")
+	// And the referent must exist. The doc sends a reader to the comment beside
+	// DefaultTrustMinRuns; a pointer at a note that does not mention this link is
+	// worse than no pointer, because it reads as already-explained.
+	src, err := os.ReadFile(filepath.Join(repoRoot(t), "internal", "scorecard", "trust.go"))
+	require.NoError(t, err)
+	minRunsBlock := string(src)
+	cut := strings.Index(minRunsBlock, "const DefaultTrustMinRuns")
+	require.Positive(t, cut, "DefaultTrustMinRuns declaration not found")
+	assert.Contains(t, minRunsBlock[:cut], "opportunitySetRuns",
+		"the doc points an operator at the comment beside DefaultTrustMinRuns; that comment must actually name the opportunity link")
+}
+
+// docTableRow returns the single markdown table row whose first cell contains
+// key, so a pin defends the row it is about instead of the whole document.
+func docTableRow(t *testing.T, doc, key string) string {
+	t.Helper()
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "| ") && strings.Contains(line, key) {
+			return line
+		}
+	}
+	t.Fatalf("docs/scorecard.md has no table row for %s", key)
+	return ""
 }
 
 // readDoc reads a file from docs/ relative to the repo root.

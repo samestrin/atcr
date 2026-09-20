@@ -456,6 +456,51 @@ func TestEmitForReconcile_ConsensusFilteredSingletonStillRecordsItsCategory(t *t
 		"and it must never be read as corroboration")
 }
 
+// TestEmitForReconcile_AmbiguousSingularReviewerShapeIsTheProductionOne is the
+// test the one above cannot be.
+//
+// singletonAmbiguousCluster normalises a one-reviewer finding BACK to the raw
+// per-source shape (Reviewer set, Reviewers cleared), and a consensus-filtered
+// finding is always one-reviewer — both consensus floors are HIGH/MEDIUM and
+// ConfidenceFor only reaches those with 2+ distinct reviewers. So the SINGULAR
+// branch is the one the motivating route actually takes. A fixture built with
+// Reviewers populated exercises a shape that stream never produces: delete the
+// singular fallback and the headline starvation fix stops working while the
+// plural-shaped test stays green.
+func TestEmitForReconcile_AmbiguousSingularReviewerShapeIsTheProductionOne(t *testing.T) {
+	reviewDir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	res := reconcile.Result{
+		Findings: []reconcile.Merged{
+			// Registers sasha, so the assertion is about the CATEGORY landing on
+			// an existing record rather than about record creation.
+			{Finding: reconcile.Finding{File: "a.go", Line: 1, Problem: "p1", Category: "correctness", Reviewers: []string{"sasha"}}},
+		},
+		Ambiguous: []reconcile.AmbiguousCluster{
+			{Findings: []reconcile.Finding{
+				// The production shape: Reviewer singular, Reviewers nil.
+				{File: "b.go", Line: 9, Problem: "solo security nit", Category: "security", Reviewer: "sasha"},
+			}},
+		},
+		Summary: reconcile.Summary{ReconciledAt: "2026-06-14T10:00:00Z"},
+	}
+	EmitForReconcile(reviewDir, res, EmitOpts{})
+
+	cfg, err := os.UserConfigDir()
+	require.NoError(t, err)
+	recs, err := ReadRecords(filepath.Join(cfg, "atcr", "scorecard", "2026-06.jsonl"), ReadOpts{})
+	require.NoError(t, err)
+
+	sasha := findReviewer(recs, "sasha")
+	require.NotNil(t, sasha)
+	assert.Equal(t, []string{"correctness", "security"}, sasha.CategoriesRaised,
+		"the singular-Reviewer shape is what the consensus filter emits; reading only Reviewers attributes it to nobody")
+	assert.Equal(t, 1, sasha.FindingsRaised, "still no scoring credit for a filtered finding")
+}
+
 // TestEmitForReconcile_AmbiguousNeverMintsAReviewerRecord is the boundary on the
 // change above. The ambiguous stream widens what an EXISTING record knows about
 // its case; it must not create one, or a change whose remit is categories would
