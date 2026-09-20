@@ -154,9 +154,11 @@ func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Tim
 	// eligibleOutcomeRuns runs immediately after strictRuns and BEFORE the two
 	// era links — see its doc comment; the position is load-bearing, not
 	// cosmetic.
-	// opportunitySetRuns runs immediately after eligibleOutcomeRuns and before
-	// the two era links — see its doc comment; the position is load-bearing.
-	for _, row := range Aggregate(unresolvedEraRuns(mergeRoutedEras(opportunitySetRuns(eligibleOutcomeRuns(strictRuns(records)))))) {
+	// opportunitySetRuns runs BEFORE eligibleOutcomeRuns, not after it — see its
+	// doc comment. The order is load-bearing and it supersedes D5's "immediately
+	// after strictRuns" wording for the outcome link: D5's actual requirement is
+	// that outcome eligibility precedes the two ERA links, which it still does.
+	for _, row := range Aggregate(unresolvedEraRuns(mergeRoutedEras(eligibleOutcomeRuns(opportunitySetRuns(strictRuns(records)))))) {
 		key := strings.ToLower(row.Reviewer)
 		t := byReviewer[key]
 		if t == nil {
@@ -372,30 +374,55 @@ func eligibleOutcomeRuns(records []Record) []Record {
 //     scoring outright for five of the thirteen live lenses as a SIDE EFFECT of
 //     a fairness fix — a regression nothing in this sprint asked for. Unmapped
 //     means "not scoped", never "deleted".
-//   - RUNS WITH NO IN-VOCABULARY CATEGORY AT ALL pass through, every record of
+//   - RUNS WITH NO DISCRIMINATING CATEGORY AT ALL pass through, every record of
 //     them. This is the one that looks like a rule and is really a refusal to
 //     guess, and it is NOT the same as the predicate's "a clean case is
-//     out-of-remit for everyone". A run reaches an empty union by two routes
-//     that the store cannot tell apart: nobody raised anything, or everybody
-//     raised findings whose CATEGORY word was outside the closed vocabulary and
-//     was dropped at the write gate. The second is not hypothetical —
+//     out-of-remit for everyone". A run reaches an empty union by three routes
+//     that the store cannot tell apart: nobody raised anything; everybody raised
+//     findings whose CATEGORY word was outside the closed vocabulary and was
+//     dropped at the write gate; or every raised value was non-discriminating
+//     (see nonDiscriminating in remit.go). The second is not hypothetical —
 //     reconcile/category.go records a dry run in which 72.3% of findings used a
 //     word the scorer did not recognise. Judging an empty union would durably
 //     un-score every lens on such a run for a LABELLING failure, which is the
 //     same class of mistake as demoting a lens for its hosting: the exact thing
-//     the outcome gate above exists to refuse.
+//     the outcome gate below exists to refuse.
+//
+// WHY THIS LINK RUNS BEFORE eligibleOutcomeRuns, NOT AFTER IT. The opportunity
+// is a property of the CASE, so the union has to see every reviewer that took
+// part in it. eligibleOutcomeRuns drops truncated, incomplete and unparseable
+// records — and a truncated reviewer CAN have raised findings whose categories
+// were recorded (internal/fanout documents exactly that). Taking the union after
+// that filter loses those categories, and a specialist then gets dropped from a
+// run where its remit demonstrably WAS in play. The chain therefore reads
+// eligibleOutcomeRuns(opportunitySetRuns(strictRuns(records))): this link judges
+// some records that the next link is about to discard anyway, which costs
+// nothing, and never judges a record against a truncated view of its own case.
 //
 // The input slice is never mutated: callers hand in records read from the store.
 func opportunitySetRuns(records []Record) []Record {
-	// One pass to union each run's raised categories, a second to filter. The
-	// union must be complete before any record of that run is judged, so this
-	// cannot collapse into a single pass.
-	raisedByRun := map[string][]string{}
+	// One pass to union each run's discriminating categories, a second to
+	// filter. The union must be complete before any record of that run is
+	// judged, so this cannot collapse into a single pass.
+	//
+	// Deduped as it is built. A 13-lens panel appends up to reviewers x
+	// categories entries, so an undeduped union is bounded by the panel size
+	// rather than by the 32-member vocabulary, and it is scanned once per mapped
+	// reviewer per run across the whole 180-day store.
+	seenByRun := map[string]map[string]struct{}{}
 	for _, r := range records {
 		if r.RecordType != RecordTypeReviewer || r.SchemaVersion < SchemaVersion {
 			continue
 		}
-		raisedByRun[r.RunID] = append(raisedByRun[r.RunID], r.CategoriesRaised...)
+		for _, c := range r.CategoriesRaised {
+			if !discriminating(c) {
+				continue
+			}
+			if seenByRun[r.RunID] == nil {
+				seenByRun[r.RunID] = map[string]struct{}{}
+			}
+			seenByRun[r.RunID][c] = struct{}{}
+		}
 	}
 
 	kept := make([]Record, 0, len(records))
@@ -404,19 +431,37 @@ func opportunitySetRuns(records []Record) []Record {
 			kept = append(kept, r)
 			continue
 		}
-		if len(raisedByRun[r.RunID]) == 0 {
+		union := seenByRun[r.RunID]
+		if len(union) == 0 {
 			kept = append(kept, r)
 			continue
 		}
-		if _, mapped := RemitCategories(r.Reviewer); !mapped {
+		// Resolved once per record and reused, rather than calling
+		// RemitCategories here and letting InOpportunitySet call it again —
+		// every call allocates a defensive copy.
+		remit, mapped := RemitCategories(r.Reviewer)
+		if !mapped {
 			kept = append(kept, r)
 			continue
 		}
-		if InOpportunitySet(r.Reviewer, raisedByRun[r.RunID]) {
+		if intersects(remit, union) {
 			kept = append(kept, r)
 		}
 	}
 	return kept
+}
+
+// intersects reports whether any member of remit is present in union. It is the
+// set-shaped inner half of InOpportunitySet, split out so the chain can hoist
+// the remit lookup and reuse one deduped union per run; InOpportunitySet keeps
+// the slice-shaped public signature its acceptance criteria pin.
+func intersects(remit []string, union map[string]struct{}) bool {
+	for _, c := range remit {
+		if _, ok := union[c]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // The four eligible outcome values, spelled as literals because

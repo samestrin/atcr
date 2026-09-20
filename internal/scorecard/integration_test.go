@@ -250,6 +250,18 @@ var representativeCorpus = [][]string{
 	{"correctness", "state"},
 	{"logic", "invariant"},
 	{"correctness", "error-handling", "state"},
+	// invariant appears on a realistic fraction of cases, NOT once as a token
+	// gesture: item 6 of all nine persona prompts instructs the reviewer to file
+	// predicate-exhaustiveness findings with CATEGORY invariant, so it is one of
+	// the commonest words the panel emits. If it were treated as a remit
+	// category the differential below would collapse on every one of these rows,
+	// which is exactly why nonDiscriminating excludes it.
+	{"invariant"},
+	{"invariant", "style"},
+	{"invariant", "naming"},
+	{"invariant", "docs"},
+	{"other"},
+	{"out-of-scope"},
 	// One fully clean case: nobody raised anything.
 	{},
 }
@@ -293,17 +305,36 @@ func TestOpportunitySet_SpecialistsMaterialSmallerThanGeneralist(t *testing.T) {
 // Scenario 2: each persona's membership is computed independently from the same
 // shared raised-category data, so a specialist's correct silence cannot inflate
 // or deflate anyone else's set.
+//
+// It varies the INPUT, not just the call order. Calling one pure function twice
+// with identical arguments and asserting the answers match proves nothing — it
+// passes just as happily against a stubbed `return false`.
 func TestOpportunitySet_SilentSpecialistDoesNotDisturbOthers(t *testing.T) {
 	bruceBefore := opportunitySetSize("bruce", representativeCorpus)
-	daxBefore := opportunitySetSize("dax", representativeCorpus)
-
-	// Re-running over the same corpus, in a different persona order, must not
-	// change either answer — the predicate holds no cross-persona state.
-	if got := opportunitySetSize("dax", representativeCorpus); got != daxBefore {
-		t.Errorf("dax's set changed between runs: %d then %d", daxBefore, got)
+	sashaBefore := opportunitySetSize("sasha", representativeCorpus)
+	if sashaBefore == 0 {
+		t.Fatalf("corpus must put sasha in remit somewhere, or this test proves nothing")
 	}
-	if got := opportunitySetSize("bruce", representativeCorpus); got != bruceBefore {
-		t.Errorf("bruce's set changed between runs: %d then %d", bruceBefore, got)
+
+	// Remove every security-flavoured category from the corpus — sasha falls
+	// silent across those cases. bruce's set must not move.
+	quieted := make([][]string, 0, len(representativeCorpus))
+	for _, c := range representativeCorpus {
+		kept := make([]string, 0, len(c))
+		for _, cat := range c {
+			if cat == "security" || cat == "secret" || cat == "input-validation" || cat == "validation" || cat == "leak" {
+				continue
+			}
+			kept = append(kept, cat)
+		}
+		quieted = append(quieted, kept)
+	}
+
+	if got := opportunitySetSize("sasha", quieted); got >= sashaBefore {
+		t.Errorf("sasha's set must shrink when its remit categories leave the corpus: %d then %d", sashaBefore, got)
+	}
+	if got := opportunitySetSize("bruce", quieted); got != bruceBefore {
+		t.Errorf("bruce's set must be unaffected by sasha's silence: %d then %d", bruceBefore, got)
 	}
 }
 

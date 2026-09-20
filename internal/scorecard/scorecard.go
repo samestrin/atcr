@@ -631,9 +631,17 @@ func Emit(in EmitInput, opts EmitOpts) error {
 //     really just Go's map iteration.
 //
 // An empty result returns nil, so omitempty omits the key entirely and a
-// measured-empty record is byte-identical to a pre-schema-2 one. That collision
-// is deliberate and is resolved a layer up, by SchemaVersion, in
-// opportunitySetRuns — not by writing an empty array here.
+// measured-empty record is byte-identical to a pre-schema-2 one.
+//
+// BE PRECISE ABOUT WHAT RESOLVES THAT COLLISION, because the obvious answer is
+// wrong. opportunitySetRuns' SchemaVersion guard separates v1 from v2 and
+// nothing else — and this branch shipped SchemaVersion 2 one phase EARLY, with
+// CategoriesRaised declared and never written, so there is a v2 era whose empty
+// set is unmeasured and which no discriminator distinguishes. What actually
+// protects those records is the same guard that protects a genuinely clean run:
+// a run with no discriminating category is passed through un-scoped rather than
+// judged. That is a behavioural safety net, not an era marker, and it would stop
+// covering them if that pass-through were ever narrowed.
 func reviewerCategories(name string, streams ...[]Finding) []string {
 	seen := map[string]struct{}{}
 	for _, findings := range streams {

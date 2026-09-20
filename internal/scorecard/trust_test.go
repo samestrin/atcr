@@ -1341,7 +1341,15 @@ func TestOpportunitySetRuns_DoesNotMutateItsInput(t *testing.T) {
 		oppRec("run-1", "sasha", nil),
 		oppRec("run-1", "penny", []string{"performance"}),
 	}
-	before := append([]Record{}, in...)
+	// DEEP copy. append([]Record{}, in...) copies the structs but shares every
+	// CategoriesRaised backing array, so an in-place sort or dedupe inside the
+	// link would mutate both sides and this assertion would still pass — the
+	// guard would report exactly nothing.
+	before := make([]Record, len(in))
+	for i, r := range in {
+		before[i] = r
+		before[i].CategoriesRaised = append([]string(nil), r.CategoriesRaised...)
+	}
 	opportunitySetRuns(in)
 	assert.Equal(t, before, in, "the input slice is never rewritten")
 }
@@ -1375,4 +1383,114 @@ func TestTrustPriors_OutOfRemitRunNeverReachesThePrior(t *testing.T) {
 	assert.NotContains(t, priors, "sasha",
 		"every one of sasha's runs was out-of-remit, so it earns no durable prior")
 	assert.Contains(t, priors, "penny")
+}
+
+// TestOpportunitySetRuns_ControlOnlyUnionBlacksOutNobody is the regression guard
+// for the worst bug this link can have.
+//
+// `other` and `out-of-scope` are full reclib.Categories() members, so they clear
+// the vocabulary gate and make a run's union NON-empty — but neither names a
+// topic, so neither matches any remit. Judged, such a run deletes every MAPPED
+// lens's record while the unmapped ones keep theirs: a wrong durable score that
+// favours precisely the lenses with no remit. ModalCategory returns out-of-scope
+// for any cluster whose findings are all out of scope, so this is reachable
+// without a single reviewer typing the word.
+func TestOpportunitySetRuns_ControlOnlyUnionBlacksOutNobody(t *testing.T) {
+	for _, control := range []string{reclib.CategoryOther, reclib.CategoryOutOfScope, reclib.CategoryInvariant} {
+		in := []Record{
+			oppRec("run-1", "sasha", []string{control}),
+			oppRec("run-1", "penny", []string{control}),
+			oppRec("run-1", "dax", nil),
+		}
+		out := opportunitySetRuns(in)
+		assert.Len(t, out, len(in),
+			"a union of only %q carries no topic, so every lens must pass through un-scoped", control)
+	}
+}
+
+// TestOpportunitySetRuns_ControlValuesDoNotMaskARealTopic is the other half of
+// the guard above: the exclusion must drop the control values from the union,
+// not abandon the whole run the moment one appears.
+func TestOpportunitySetRuns_ControlValuesDoNotMaskARealTopic(t *testing.T) {
+	in := []Record{
+		oppRec("run-1", "sasha", []string{reclib.CategoryOther, "security"}),
+		oppRec("run-1", "penny", nil),
+	}
+	out := opportunitySetRuns(in)
+
+	names := map[string]bool{}
+	for _, r := range out {
+		names[r.Reviewer] = true
+	}
+	assert.True(t, names["sasha"], "security is still a real topic alongside the control value")
+	assert.False(t, names["penny"], "no performance-flavoured category was raised")
+}
+
+// TestOpportunitySetRuns_UnionSeesReviewersTheOutcomeGateWillDrop pins the chain
+// ORDER, which is the difference between scoring a case and scoring a filtered
+// view of it.
+//
+// A truncated reviewer is excluded from trust scoring by eligibleOutcomeRuns —
+// it did not get a fair attempt — but it can still have raised findings whose
+// categories were recorded, and those categories are evidence about WHAT THE
+// CASE WAS. Run this link after the outcome gate and that evidence is gone, so a
+// specialist is dropped from a run where its remit demonstrably was in play.
+func TestOpportunitySetRuns_UnionSeesReviewersTheOutcomeGateWillDrop(t *testing.T) {
+	truncated := oppRec("run-1", "archer", []string{"security"})
+	truncated.Outcome = "truncated"
+
+	in := []Record{truncated, oppRec("run-1", "sasha", nil)}
+	out := opportunitySetRuns(in)
+
+	names := map[string]bool{}
+	for _, r := range out {
+		names[r.Reviewer] = true
+	}
+	assert.True(t, names["sasha"],
+		"the truncated reviewer's category is still evidence the case was a security case")
+}
+
+// TestTrustPriors_OpportunityUnionIsTakenBeforeTheOutcomeGate pins the CHAIN
+// COMPOSITION, which no direct call to opportunitySetRuns can reach.
+//
+// The only reviewer that raises a security category on this run is truncated,
+// so eligibleOutcomeRuns will drop its record. If the opportunity link runs
+// AFTER that gate it never sees the category, sasha looks out-of-remit, and
+// sasha earns no prior — the specialist is punished for another lens's hosting
+// failure. Composed the other way round, sasha keeps its runs.
+func TestTrustPriors_OpportunityUnionIsTakenBeforeTheOutcomeGate(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	month := filepath.Join(dir, now.Format("2006-01")+".jsonl")
+
+	var lines []string
+	for i := 0; i < 3; i++ {
+		runID := fmt.Sprintf("run-%d", i)
+		// The truncated lens is the ONLY source of a security category.
+		truncated := oppRec(runID, "archer", []string{"security"})
+		truncated.Outcome = "truncated"
+		// penny keeps the post-gate union NON-empty, which is what makes this
+		// test bite: without it the run would fall into the "no discriminating
+		// category" pass-through and sasha would survive either composition,
+		// proving nothing about the order.
+		penny := oppRec(runID, "penny", []string{"performance"})
+		sasha := oppRec(runID, "sasha", nil)
+		sasha.Outcome = outcomeClean
+		sasha.FindingsRaised = 1
+		sasha.FindingsCorroborated = 1
+		for _, r := range []Record{truncated, penny, sasha} {
+			b, err := json.Marshal(r)
+			require.NoError(t, err)
+			lines = append(lines, string(b))
+		}
+	}
+	require.NoError(t, os.WriteFile(month, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
+
+	priors, err := trustPriorsSince(dir, 1, 180*24*time.Hour, now)
+	require.NoError(t, err)
+	assert.Contains(t, priors, "sasha",
+		"the truncated lens's category still proves this was a security case, so sasha was in remit")
+	assert.NotContains(t, priors, "archer",
+		"the truncated record itself is still excluded by the outcome gate")
+	assert.Contains(t, priors, "penny", "penny's own remit was in play on every run")
 }

@@ -97,3 +97,28 @@ func TestInOpportunitySet_DoesNotMutateItsInput(t *testing.T) {
 	InOpportunitySet("sasha", raised)
 	assert.Equal(t, before, raised, "InOpportunitySet must not reorder or rewrite its input")
 }
+
+// TestInOpportunitySet_NonDiscriminatingValuesNeverPutALensInRemit pins the
+// exported predicate's half of the nonDiscriminating filter.
+//
+// invariant is the case that matters: it IS in all nine remit lists, so without
+// an explicit skip a plain intersection returns true for every persona and the
+// opportunity gate does nothing on any run carrying one. other and out-of-scope
+// are in no remit, so they are guarded by the table too — asserted here anyway
+// so the three stay a set rather than drifting apart.
+func TestInOpportunitySet_NonDiscriminatingValuesNeverPutALensInRemit(t *testing.T) {
+	for _, control := range []string{"invariant", "other", "out-of-scope"} {
+		for _, p := range inRepoPersonas {
+			assert.False(t, InOpportunitySet(p, []string{control}),
+				"%q carries no topic, so it must not put %q in remit", control, p)
+		}
+	}
+}
+
+// TestInOpportunitySet_ControlValueDoesNotSuppressARealOne is the other
+// direction: skipping a non-discriminating value must not abandon the whole
+// match attempt.
+func TestInOpportunitySet_ControlValueDoesNotSuppressARealOne(t *testing.T) {
+	assert.True(t, InOpportunitySet("sasha", []string{"invariant", "security"}))
+	assert.True(t, InOpportunitySet("dax", []string{"other", "testing"}))
+}

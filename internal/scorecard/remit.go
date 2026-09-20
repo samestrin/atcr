@@ -80,14 +80,20 @@ var personaRemit = map[string][]string{
 		reclib.CategoryInvariant,
 	},
 	// personas/ingrid.md ## Focus — language idioms. Item 1 error handling,
-	// 2 resource and task leaks, 3 abstraction misuse and over-broad dynamic
-	// typing is type, 4 concurrency misuse, 5 standard-library reinvention is
-	// duplication plus idiom misuse (style), 6 is invariant.
+	// 2 resource and task leaks, 3 abstraction misuse is type plus bloat
+	// ("unnecessary indirection or wrapper layers" is category.go's "unused
+	// abstraction, speculative generality"), 4 concurrency misuse names
+	// "unsynchronized access to shared state" verbatim, which category.go
+	// distinguishes as race rather than concurrency, so BOTH belong,
+	// 5 standard-library reinvention is duplication plus idiom misuse (style),
+	// 6 is invariant.
 	"ingrid": {
 		reclib.CategoryErrorHandling,
 		reclib.CategoryResourceLeak,
 		reclib.CategoryType,
+		reclib.CategoryBloat,
 		reclib.CategoryConcurrency,
+		reclib.CategoryRace,
 		reclib.CategoryDuplication,
 		reclib.CategoryStyle,
 		reclib.CategoryInvariant,
@@ -95,9 +101,12 @@ var personaRemit = map[string][]string{
 	// personas/kai.md ## Focus — architecture and design fit. Items 1/2 boundary
 	// violations and coupling, 3 contract design ("APIs that lie") covers both
 	// the published-interface and the honours-its-own-name senses, 4 duplication
-	// of responsibility, 5 extensibility traps, 6 invariant.
+	// of responsibility, 5 extensibility traps, 6 invariant. Item 1's "layers
+	// importing upward, circular knowledge" is also dependency, which
+	// category.go glosses as a dependency that "points the wrong way".
 	"kai": {
 		reclib.CategoryCoupling,
+		reclib.CategoryDependency,
 		reclib.CategoryAPIContract,
 		reclib.CategoryContract,
 		reclib.CategoryDuplication,
@@ -105,23 +114,29 @@ var personaRemit = map[string][]string{
 		reclib.CategoryInvariant,
 	},
 	// personas/mira.md ## Focus — production feasibility. Item 1 failure
-	// handling, 2 resource exhaustion, 3 observability, 4 race-prone
-	// startup/shutdown is concurrency, 5 configuration, 6 invariant.
+	// handling, 2 resource exhaustion, 3 observability, 4 "race-prone
+	// startup/shutdown" is concurrency AND race — category.go keeps the two
+	// apart on purpose, so mapping only one of them narrows mira against its
+	// own declared focus — 5 configuration, 6 invariant.
 	"mira": {
 		reclib.CategoryErrorHandling,
 		reclib.CategoryResourceLeak,
 		reclib.CategoryObservability,
 		reclib.CategoryConcurrency,
+		reclib.CategoryRace,
 		reclib.CategoryConfiguration,
 		reclib.CategoryInvariant,
 	},
 	// personas/otto.md ## Focus — style, naming, readability. Item 1 misleading
-	// names, 2 idiom violations, 3 structure is maintainability, 4 comments is
-	// docs, 5 consistency is naming again, 6 invariant.
+	// names, 2 idiom violations, 3 structure is maintainability plus complexity
+	// ("deep nesting, boolean parameter soup" is category.go's "harder to follow
+	// than the problem requires"), 4 comments is docs, 5 consistency is naming
+	// again, 6 invariant.
 	"otto": {
 		reclib.CategoryNaming,
 		reclib.CategoryStyle,
 		reclib.CategoryMaintainability,
+		reclib.CategoryComplexity,
 		reclib.CategoryDocs,
 		reclib.CategoryInvariant,
 	},
@@ -138,12 +153,14 @@ var personaRemit = map[string][]string{
 	// personas/sasha.md ## Focus — dedicated security. Item 1 injection is
 	// security plus input-validation, 2 broken auth is security, 3 secrets
 	// leakage is secret, 4 insecure defaults is security plus validation,
-	// 5 sensitive data exposure is security, 6 invariant.
+	// 5 sensitive data exposure is security plus leak ("overbroad error detail"
+	// is category.go's "a leaked secret or internal detail"), 6 invariant.
 	"sasha": {
 		reclib.CategorySecurity,
 		reclib.CategoryInputValidation,
 		reclib.CategorySecret,
 		reclib.CategoryValidation,
+		reclib.CategoryLeak,
 		reclib.CategoryInvariant,
 	},
 }
@@ -204,4 +221,50 @@ var vocabulary = func() map[string]struct{} {
 func inVocabulary(c string) bool {
 	_, ok := vocabulary[c]
 	return ok
+}
+
+// nonDiscriminating names the CATEGORY values that carry NO remit signal, and
+// which the opportunity union therefore ignores. Each is a member of
+// reclib.Categories(), so none of them is caught by the vocabulary gate — they
+// have to be named here or they silently decide which lenses get scored.
+//
+// The failure they cause is the same one and it is severe: a run whose union
+// consists only of these values is NON-EMPTY, so it skips opportunitySetRuns'
+// "refuse to guess" pass-through, matches no persona's remit, and deletes every
+// MAPPED lens's record for that run from the trust denominator — while the five
+// unmapped lenses keep theirs. That is a wrong durable score, on reachable
+// input, favouring exactly the lenses this sprint could not ground.
+//
+//   - other is reclib's own "escape hatch that makes the set closed rather than
+//     lossy" (reconcile/category.go). It means "a real finding that fits no
+//     member", which is by definition not a topic.
+//   - out-of-scope is a ROUTING value, and reconcile/merge.go's ModalCategory
+//     returns it for any cluster whose every finding is out of scope — so a run
+//     can reach a whole union of it without a single reviewer typing the word.
+//   - invariant is different and is the one worth reading twice. It IS in every
+//     one of the nine remits, and truthfully so: item 6 of all nine ## Focus
+//     lists instructs the reviewer to file predicate-exhaustiveness findings
+//     "with CATEGORY invariant". It is a FILING CONVENTION the whole panel
+//     shares, not a remit that distinguishes one lens from another. Left in the
+//     union, one invariant finding from any reviewer puts all nine lenses
+//     in-remit and the opportunity gate does nothing for that run — the
+//     specialist-vs-generalist differential this sprint exists to produce
+//     collapses in a common case. It stays in personaRemit (it is true, and AC
+//     03-03 names it for bruce specifically); it is excluded here, where the
+//     question is which lens the case DISCRIMINATES toward.
+//
+// TestPersonaRemit_InvariantIsInEveryRemit pins the premise of that third
+// bullet, so if invariant ever stops being universal this exclusion is revisited
+// rather than silently over-applying.
+var nonDiscriminating = map[string]struct{}{
+	reclib.CategoryOther:      {},
+	reclib.CategoryOutOfScope: {},
+	reclib.CategoryInvariant:  {},
+}
+
+// discriminating reports whether c says anything about WHICH lens a case
+// belongs to. See nonDiscriminating.
+func discriminating(c string) bool {
+	_, skip := nonDiscriminating[c]
+	return !skip
 }

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	builtins "github.com/samestrin/atcr/personas"
 	reclib "github.com/samestrin/atcr/reconcile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -12,13 +13,15 @@ import (
 
 // inRepoPersonas is the closed set personas/personas.go registers and panics at
 // init unless the embedded .md files match exactly. RemitCategories is grounded
-// in these nine files and ONLY these nine (sprint-plan.md C9, AC 03-03 Option
-// A): the five registry-only lenses (vera, pace, brad, archer, ronin) have no
-// in-repo definition to ground against, and resolving them at runtime would
-// read _base.md's generic fallback text as if it were their declared focus.
-var inRepoPersonas = []string{
-	"bruce", "dax", "greta", "ingrid", "kai", "mira", "otto", "penny", "sasha",
-}
+// in these files and ONLY these (sprint-plan.md C9, AC 03-03 Option A): the five
+// registry-only lenses (vera, pace, brad, archer, ronin) have no in-repo
+// definition to ground against, and resolving them at runtime would read
+// _base.md's generic fallback text as if it were their declared focus.
+//
+// It is builtins.Names(), NOT a literal copy of it. A literal would let a tenth
+// persona ship with no remit entry and every test in this file still green —
+// which is the exact failure the coverage test below claims to prevent.
+var inRepoPersonas = builtins.Names()
 
 // registryOnlyLenses are on the live 13-lens roster but ship no personas/<n>.md.
 // C11 records that they are unmapped BY DESIGN, so this pins the decision rather
@@ -155,5 +158,85 @@ func TestRemitCategories_TableIsGroundedInTheEmbeddedPersonaFiles(t *testing.T) 
 		require.NoError(t, err, "persona %q must ship an in-repo definition to be grounded against", p)
 		assert.Contains(t, string(body), "## Focus",
 			"persona %q's file must carry the ## Focus list its remit is grounded in", p)
+	}
+}
+
+// TestRemitCategories_GoldenTable pins every entry exactly.
+//
+// The membership and required-member tests above are both satisfiable by a table
+// in which most values were swapped for arbitrary other vocabulary members — the
+// first only checks that a value IS a member, the second covers four personas
+// and a third of the values. This one makes any edit to the mapping a
+// deliberate, reviewable diff instead of a silent one, which is the whole basis
+// of the "grounded in its own ## Focus list" claim in remit.go.
+func TestRemitCategories_GoldenTable(t *testing.T) {
+	golden := map[string][]string{
+		"bruce":  {"correctness", "logic", "error-handling", "contract", "state", "resource-leak", "invariant"},
+		"dax":    {"testing", "error-handling", "invariant"},
+		"greta":  {"correctness", "logic", "type", "state", "complexity", "performance", "invariant"},
+		"ingrid": {"error-handling", "resource-leak", "type", "bloat", "concurrency", "race", "duplication", "style", "invariant"},
+		"kai":    {"coupling", "dependency", "api-contract", "contract", "duplication", "extensibility", "invariant"},
+		"mira":   {"error-handling", "resource-leak", "observability", "concurrency", "race", "configuration", "invariant"},
+		"otto":   {"naming", "style", "maintainability", "complexity", "docs", "invariant"},
+		"penny":  {"performance", "leak", "complexity", "resource-leak", "invariant"},
+		"sasha":  {"security", "input-validation", "secret", "validation", "leak", "invariant"},
+	}
+	require.Len(t, golden, len(inRepoPersonas), "the golden table must cover every registered persona")
+	for _, p := range inRepoPersonas {
+		want, declared := golden[p]
+		require.True(t, declared, "persona %q has no golden entry — add one when adding a persona", p)
+		got, ok := RemitCategories(p)
+		require.True(t, ok, "persona %q must be mapped", p)
+		assert.ElementsMatch(t, want, got, "persona %q's remit changed", p)
+	}
+}
+
+// TestPersonaRemit_EveryDiscriminatingCategoryHasALens is the guard against a
+// nine-lens blackout.
+//
+// A vocabulary member in NO persona's remit is not a gap in coverage, it is a
+// trap: a run whose union is exactly that member is non-empty, so it skips
+// opportunitySetRuns' pass-through, matches nobody, and deletes every mapped
+// lens's record for that run. `race` was such a member before this test existed,
+// despite being named verbatim in two personas' Focus lists.
+func TestPersonaRemit_EveryDiscriminatingCategoryHasALens(t *testing.T) {
+	covered := map[string]bool{}
+	for _, p := range inRepoPersonas {
+		cats, ok := RemitCategories(p)
+		require.True(t, ok)
+		for _, c := range cats {
+			covered[c] = true
+		}
+	}
+	for _, c := range reclib.Categories() {
+		if !discriminating(c) {
+			continue // carries no topic; excluded from the union by design
+		}
+		assert.True(t, covered[c],
+			"category %q is in no persona's remit, so a run raising only %q blacks out every mapped lens", c, c)
+	}
+}
+
+// TestPersonaRemit_InvariantIsInEveryRemit pins the premise nonDiscriminating
+// relies on: `invariant` is excluded from the opportunity union BECAUSE every
+// persona's Focus item 6 instructs it, making it a shared filing convention
+// rather than a distinguishing remit. If that ever stops being true the
+// exclusion is over-applying and must be revisited here.
+func TestPersonaRemit_InvariantIsInEveryRemit(t *testing.T) {
+	for _, p := range inRepoPersonas {
+		cats, ok := RemitCategories(p)
+		require.True(t, ok)
+		assert.Contains(t, cats, reclib.CategoryInvariant,
+			"persona %q must carry invariant, or nonDiscriminating's rationale no longer holds", p)
+	}
+}
+
+// TestNonDiscriminating_AreAllRealVocabularyMembers proves the exclusion set is
+// load-bearing rather than decorative: if these were NOT members they would be
+// dropped by the vocabulary gate at write time and never reach the union at all.
+func TestNonDiscriminating_AreAllRealVocabularyMembers(t *testing.T) {
+	for c := range nonDiscriminating {
+		assert.True(t, inVocabulary(c),
+			"%q must be a real vocabulary member, or excluding it here is dead code", c)
 	}
 }

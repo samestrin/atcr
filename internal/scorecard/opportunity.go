@@ -30,18 +30,31 @@ package scorecard
 // An unrecognised raised value (corrupt store, pre-vocabulary record) is just a
 // string that matches no remit. It is neither an error nor a wildcard.
 //
+// NON-DISCRIMINATING values are skipped before matching, so `other`,
+// `out-of-scope` and `invariant` never put a lens in remit on their own even
+// though invariant IS in all nine remit lists. See nonDiscriminating in
+// remit.go for why each one carries no topic. The filter lives on BOTH sides —
+// here and in opportunitySetRuns' union — deliberately: this function is
+// exported and its acceptance criteria are written against it directly, so a
+// caller reaching it without going through the chain must get the same answer
+// the chain would give.
+//
 // The input slice is read only — never sorted, deduped, or rewritten in place.
 // One case's union is shared across every persona asked about that case, so a
 // mutation here would corrupt every later persona's answer for the same case.
+//
+// The nested scan is O(remit x raised) with no allocation. remit is bounded by
+// the vocabulary; raisedCategories is bounded by the caller (opportunitySetRuns
+// dedupes its union first, so it is bounded by the vocabulary there too).
 func InOpportunitySet(persona string, raisedCategories []string) bool {
 	remit, ok := RemitCategories(persona)
 	if !ok {
 		return false
 	}
-	// Both sides are bounded by the 32-member vocabulary, so the nested scan is
-	// cheaper than allocating a set per call on a path that runs per (persona,
-	// case) pair across the whole store.
 	for _, want := range remit {
+		if !discriminating(want) {
+			continue
+		}
 		for _, got := range raisedCategories {
 			if got == want {
 				return true
