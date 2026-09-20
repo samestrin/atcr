@@ -1598,3 +1598,48 @@ func TestDebtAdd_StillRejectsNewStatuses(t *testing.T) {
 		})
 	}
 }
+
+// TestDebtResolve_NewStatusesIgnoreTheWontfixReasonHatch is the guard on
+// adversarial finding 1.2.A-HIGH-3. isRecordedRationale lets a `wontfix` close
+// without --reason when a usable rationale is already stored. That hatch must
+// NOT extend to the two Story 36.0 statuses: reconcile enriches ordinary
+// findings with a Justification, so an unscoped hatch would let an operator
+// close an item as attempts-exhausted with zero input and persist the
+// REVIEWER's own finding text as the operator's attempt trail — a fabricated,
+// circular ground-truth signal rather than a missing one.
+func TestDebtResolve_NewStatusesIgnoreTheWontfixReasonHatch(t *testing.T) {
+	// A justification shaped like reconcile's enrichment: reviewer prose, which
+	// isRecordedRationale accepts.
+	const enriched = "The reviewer noted the nil check is missing before the deref, " +
+		"which would panic on an empty pool summary."
+
+	for _, status := range []string{localdebt.StatusUnreproducible, localdebt.StatusAttemptsExhausted} {
+		t.Run(status, func(t *testing.T) {
+			rec := openRec("2026-09-01T10:00:00Z", "HIGH", "internal/x/y.go", 12, "unbounded retry loop")
+			rec.Justification = enriched
+			dir := writeDebtStore(t, rec)
+
+			_, err := runDebt(t, "resolve", "--dir", dir, rec.ID, "--status", status)
+			require.Error(t, err,
+				"a stored reviewer excerpt must not stand in for the operator's --reason on %s", status)
+			assert.Contains(t, err.Error(), "--reason")
+
+			// And the store must be untouched: no terminal record appended.
+			for _, r := range readStoreRecords(t, dir) {
+				assert.NotEqual(t, status, r.Status,
+					"the rejected close must not have written a %s record", status)
+			}
+		})
+	}
+}
+
+// TestDebtResolve_WontfixKeepsItsReasonHatch is the other half: scoping the
+// hatch must not remove it from the status it was written for.
+func TestDebtResolve_WontfixKeepsItsReasonHatch(t *testing.T) {
+	rec := openRec("2026-09-01T10:00:00Z", "HIGH", "internal/x/y.go", 12, "unbounded retry loop")
+	rec.Justification = "The reviewer noted this is an accepted pattern in this package."
+	dir := writeDebtStore(t, rec)
+
+	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID, "--status", localdebt.StatusWontfix)
+	require.NoError(t, err, "wontfix keeps the stored-rationale hatch it was written for")
+}

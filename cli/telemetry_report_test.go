@@ -326,3 +326,31 @@ func TestQualityReport_StripsControlSequences_MDAndJSON(t *testing.T) {
 		assert.Contains(t, out, "bruce", "the printable portion of the persona must survive sanitization")
 	}
 }
+
+// TestQualityReportRows_OmitsPairsWithNoDismissalOrConfirmation is the report
+// half of adversarial finding 1.2.A-HIGH-4. Story 36.0's two outcomes create a
+// QualityRow without touching either counter this report has a column for, so
+// such a row would print `| 0 | 0 | 0.0% |` — a reviewer that has never been
+// wrong — and sort to the head of a table ordered by dismissal rate, where it
+// reads as the best performer rather than the unmeasured one.
+func TestQualityReportRows_OmitsPairsWithNoDismissalOrConfirmation(t *testing.T) {
+	rows := qualityReportRows([]localdebt.QualityRow{
+		{Persona: "vera", Model: "m1", UnreproducibleCount: 3},
+		{Persona: "archer", Model: "m1", AttemptsExhaustedCount: 2},
+	})
+	assert.Empty(t, rows, "an unmeasured pair must be absent, not printed as flawless")
+}
+
+// TestQualityReportRows_KeepsPairsThatHaveAMeasuredOutcome is the other
+// direction: the filter keys on the two reportable counters, not on the presence
+// of a new status beside them.
+func TestQualityReportRows_KeepsPairsThatHaveAMeasuredOutcome(t *testing.T) {
+	rows := qualityReportRows([]localdebt.QualityRow{
+		{Persona: "bruce", Model: "m1", DismissedCount: 1, ConfirmedCount: 3, UnreproducibleCount: 5},
+	})
+	require.Len(t, rows, 1)
+	assert.Equal(t, 1, rows[0].DismissedCount)
+	assert.Equal(t, 3, rows[0].ConfirmedCount)
+	assert.InDelta(t, 0.25, rows[0].DismissalRate, 0.0001,
+		"the new outcomes must not enter the dismissal-rate denominator")
+}

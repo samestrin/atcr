@@ -661,7 +661,23 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 	// the diff records it. For every other status the text is the only evidence
 	// that survives: it is what makes the TD lifecycle usable as ground truth
 	// for lens scoring rather than just a state flag.
-	if status != localdebt.StatusResolved && strings.TrimSpace(reason) == "" && !isRecordedRationale(orig.Justification) {
+	//
+	// The isRecordedRationale escape hatch is scoped to `wontfix`, which is the
+	// status it was written for (see its doc block). Letting it satisfy the two
+	// Story 36.0 statuses would defeat the gate in the COMMON case, not an edge
+	// one: reconcile enriches ordinary findings with a Justification, so an
+	// operator could close an item as `attempts-exhausted` with no input at all
+	// and the reviewer's own finding text would be persisted and later read back
+	// as the operator's attempt trail. That is worse than an empty signal — it
+	// is a fabricated one, and it is circular, since the ground-truth record
+	// would then be quoting the very reviewer it is meant to score.
+	//
+	// The scoping is also what makes ClosedStatusRank's ordering rationale true:
+	// that chain ranks by certainty of carrying a human-typed --reason, which is
+	// only a real guarantee for these two statuses while this branch has no
+	// bypass.
+	storedRationaleStandsIn := status == localdebt.StatusWontfix && isRecordedRationale(orig.Justification)
+	if status != localdebt.StatusResolved && strings.TrimSpace(reason) == "" && !storedRationaleStandsIn {
 		return usageError(fmt.Errorf("--status %s requires --reason <justification>", status))
 	}
 

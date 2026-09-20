@@ -122,6 +122,16 @@ func renderQualityReport(w io.Writer, rows []localdebt.QualityRow, format string
 func qualityReportRows(rows []localdebt.QualityRow) []qualityReportRow {
 	out := make([]qualityReportRow, 0, len(rows))
 	for _, r := range rows {
+		// Same exclusion buildQualitySignalPayload applies, for the same reason.
+		// This report has columns for dismissed and confirmed only, so a row
+		// whose only outcomes are unreproducible or attempts-exhausted would
+		// print `| 0 | 0 | 0.0% |` — which reads as a reviewer that has never
+		// been wrong, the exact opposite of "not measured on this axis". It also
+		// sorts to the bottom of a table ordered by dismissal rate, where it
+		// looks like the best performer.
+		if r.DismissedCount+r.ConfirmedCount == 0 {
+			continue
+		}
 		out = append(out, qualityReportRow{
 			Persona:        cell(r.Persona),
 			Model:          cell(r.Model),
@@ -142,10 +152,14 @@ func qualityReportRows(rows []localdebt.QualityRow) []qualityReportRow {
 	return out
 }
 
-// dismissalRate is dismissed / (dismissed + confirmed). Every emitted QualityRow has
-// at least one terminal outcome (Story 1 AC 01-01), so the denominator is non-zero
-// in practice; the zero guard is defensive — a 0/0 pair renders 0.0, never a NaN or
-// a divide-by-zero panic (AC 04-01 EC1).
+// dismissalRate is dismissed / (dismissed + confirmed). A QualityRow no longer
+// guarantees a non-zero denominator: Story 36.0 added the `unreproducible` and
+// `attempts-exhausted` outcomes, which create a row without touching either of
+// these two counters, so a 0/0 pair is now a real shape rather than a
+// theoretical one. qualityReportRows filters those rows out before reaching
+// here — this report has no column for them and 0.0% would read as a flawless
+// reviewer — so the guard below stays defence in depth rather than the live
+// path, but it is no longer merely defensive against an impossible input.
 func dismissalRate(dismissed, confirmed int) float64 {
 	total := dismissed + confirmed
 	if total == 0 {

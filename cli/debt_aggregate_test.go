@@ -543,3 +543,85 @@ func TestDebtIsLive_NewStatusesSplitOnSettledness(t *testing.T) {
 	assert.False(t, debtIsLive(unrepro), "a reached determination is not live work")
 	assert.True(t, debtIsLive(exhausted), "out of attempts is still work to do")
 }
+
+// --- Adversarial 1.2.A HIGH fixes -------------------------------------------
+
+// TestRenderDebtDashboard_HeaderAndBySeverityCountNewStatuses is the guard on
+// finding 1.2.A-HIGH-1. The two counters were added to both tally structs but
+// not to the render, so a store of only new-status records printed
+// `Total: 2 | Open: 0 | ... | Wontfix: 0` with a By Severity row summing to
+// zero — a table that does not add up to its own header, with nothing on screen
+// to explain the gap.
+func TestRenderDebtDashboard_HeaderAndBySeverityCountNewStatuses(t *testing.T) {
+	out := renderDebtDashboard([]localdebt.Record{
+		mkDebtRecord(localdebt.StatusUnreproducible, "HIGH", "internal/x/a.go", 1, "2026-07-01"),
+		mkDebtRecord(localdebt.StatusAttemptsExhausted, "HIGH", "internal/x/b.go", 2, "2026-07-01"),
+	}, 5)
+
+	assert.Contains(t, out, "**Unreproducible:** 1", "the header must account for unreproducible")
+	assert.Contains(t, out, "**Attempts-exhausted:** 1", "the header must account for attempts-exhausted")
+	assert.Contains(t, out, "| Unreproducible |", "By Severity needs a column per counter")
+	assert.Contains(t, out, "| Attempts-exhausted |", "By Severity needs a column per counter")
+	// The HIGH row must add up: 0 open, 0 deferred, 0 resolved, 0 wontfix,
+	// 1 unreproducible, 1 attempts-exhausted, total 2.
+	assert.Contains(t, out, "| HIGH | 0 | 0 | 0 | 0 | 1 | 1 | 2 |",
+		"the By Severity row must sum to its own Total")
+}
+
+// TestRenderDebtDashboard_AttemptsExhaustedIsRealBacklog is the guard on finding
+// 1.2.A-HIGH-2. attempts-exhausted is unsettled, so debtIsLive admits it and it
+// reaches By Component and the month histogram. The Top Priority branch used a
+// re-derived Open+Deferred sum and printed "no unresolved items" on the same
+// page — omitting real backlog from the one list an operator works from.
+func TestRenderDebtDashboard_AttemptsExhaustedIsRealBacklog(t *testing.T) {
+	out := renderDebtDashboard([]localdebt.Record{
+		mkDebtRecord(localdebt.StatusAttemptsExhausted, "HIGH", "internal/x/b.go", 2, "2026-07-01"),
+	}, 5)
+
+	assert.NotContains(t, out, "_No unresolved items._\n",
+		"an attempts-exhausted item is live backlog and must reach Top Priority")
+	assert.Contains(t, out, "internal/x/b.go", "the live item must appear in the top list")
+}
+
+// TestRenderDebtDashboard_SettledOnlyStoreStillReportsNoBacklog is the other
+// direction: unreproducible IS settled, so a store of only settled records must
+// still say there is nothing to work on.
+func TestRenderDebtDashboard_SettledOnlyStoreStillReportsNoBacklog(t *testing.T) {
+	out := renderDebtDashboard([]localdebt.Record{
+		mkDebtRecord(localdebt.StatusUnreproducible, "HIGH", "internal/x/a.go", 1, "2026-07-01"),
+		mkDebtRecord(localdebt.StatusResolved, "HIGH", "internal/x/c.go", 3, "2026-07-01"),
+	}, 5)
+	assert.Contains(t, out, "_No unresolved items._", "settled items are not backlog")
+}
+
+// TestSummarizeDebt_LiveIsCountedThroughTheOnePredicate pins the replacement for
+// the re-derived Open+Deferred sum. Live must agree with debtIsLive for every
+// status, so a future status cannot drift the two apart again.
+func TestSummarizeDebt_LiveIsCountedThroughTheOnePredicate(t *testing.T) {
+	recs := debtAllStatusRecords()
+	s := summarizeDebt(recs, debtRefNow, 10)
+
+	var want int
+	for _, r := range recs {
+		if debtIsLive(r) {
+			want++
+		}
+	}
+	assert.Equal(t, want, s.Live, "Live must equal the debtIsLive count exactly")
+	// open + deferred + attempts-exhausted are live; resolved, wontfix and
+	// unreproducible are settled.
+	assert.Equal(t, 3, s.Live)
+}
+
+// TestSummarizeDebt_LiveIsNotLenTop guards the trap in the obvious fix: Top is
+// capped at topN and is empty when topN is 0, which means "suppressed", not
+// "nothing to show". Live must be independent of the cap.
+func TestSummarizeDebt_LiveIsNotLenTop(t *testing.T) {
+	s := summarizeDebt(debtAllStatusRecords(), debtRefNow, 0)
+	assert.Empty(t, s.Top, "topN 0 suppresses the list")
+	assert.Equal(t, 3, s.Live, "...but the backlog is still there")
+
+	out := renderDebtDashboard(debtAllStatusRecords(), 0)
+	assert.Contains(t, out, "_(top list suppressed)_",
+		"a suppressed list must not be reported as an empty backlog")
+}
