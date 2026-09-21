@@ -483,13 +483,19 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		// (internal/benchmark/score.go:110), leaving corroboration_rate at its 0.00 zero
 		// value — the floor, not an inflated figure. Telling that operator to discount
 		// the row as flattering would be exactly backwards, so both ends are named.
+		// The rate alone distinguishes nothing (a full-suite reviewer that matched
+		// nothing also publishes 0.00), but runs and case_ids do: the row that lost
+		// every slot is the only one with runs 0 and an empty covered set, and the
+		// closing sentence points the operator at that shape rather than asserting
+		// nothing on the submission carries it.
 		if len(slotShortRows) > 0 {
 			msg += fmt.Sprintf(
 				"  note: %s lost individual reviewer slots, so each one's corroboration_rate is "+
 					"averaged over only the cases that reviewer was shown and is not penalised for the rest. "+
 					"It is not comparable to a row scored over the full suite: it reads higher where the "+
 					"reviewer was shown some cases, and 0.00 where every slot failed and it was shown none. "+
-					"Nothing in the submission distinguishes any of the three.\n",
+					"The all-slots-lost row is distinguishable by its shape, not by the rate: runs 0 with an empty "+
+					"case_ids array (runs is always published and a covered set is always an array).\n",
 				strings.Join(slotShortRows, ", "))
 		}
 		_, _ = fmt.Fprint(w, msg)
