@@ -176,7 +176,7 @@ func candidateLess(a, b candidate) bool {
 	if a.repLine != b.repLine {
 		return a.repLine < b.repLine
 	}
-	return false
+	return a.repIdx < b.repIdx
 }
 
 // pathMatches reports whether a reviewer's cited path names the expectation's
