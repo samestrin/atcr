@@ -240,7 +240,18 @@ func explainTrustPriorsSince(dir string, minRuns int, since time.Duration, now t
 		}
 	}
 
-	return applyExplainFloor(details, keptForTrust(records), minRuns), nil
+	// The floor reuses the walk's own last link instead of calling
+	// keptForTrust(records), which would re-run the whole chain AND
+	// opportunityUnions a second time from scratch. The two are identical by
+	// construction — keptForTrust is exactly this composition over the same
+	// records — and TestExplainTrustPriors_CountedExcludesEveryLinkTheChainDrops
+	// pins that by computing keptForTrust independently and comparing.
+	//
+	// It matters because cli/personas.go calls TrustPriors AND
+	// ExplainTrustPriors, so `personas list --scores` was reading the store twice
+	// and evaluating the filter chain three times over a store that is already
+	// thousands of records and has no rotation.
+	return applyExplainFloor(details, opportunitySetRuns(afterEra, unions), minRuns), nil
 }
 
 // applyExplainFloor keeps exactly the personas TrustPriors would key, so the two

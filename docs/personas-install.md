@@ -82,16 +82,26 @@ atcr personas list
 
 Columns: `NAME`, `VERSION` (`built-in` for the built-in personas; the installed manifest version for community personas), `SOURCE` (`built-in` or `community`), and `LANGUAGE` (the persona's declared `language` scope, comma-joined, or `-` when unscoped). If the personas directory is unreadable, `list` prints a warning to stderr and still renders the built-ins (exit 0).
 
-**With corroboration scores.** Add `--scores` to append a `CORROBORATION` column showing each persona's historical corroboration rate from past review runs:
+**With corroboration scores.** Add `--scores` to append a `CORROBORATION` column and a `CASES` column:
 
 ```bash
 atcr personas list --scores
-# NAME             VERSION    SOURCE      LANGUAGE  CORROBORATION
-# security/owasp   1.2.0      community   -         72.4%
-# sasha            built-in   built-in    -         n/a
+# NAME             VERSION    SOURCE      LANGUAGE  CORROBORATION  CASES
+# security/owasp   1.2.0      community   -         72.4%          31 counted · 8 excluded (outcome-ineligible)
+# greta            built-in   built-in    -         55.0%          12 counted (3 unlabelled) · 0 excluded
+# sasha            built-in   built-in    -         n/a            n/a
 ```
 
-The rate is the fraction of a persona's findings that other reviewers or the verify stage corroborated, formatted as `XX.X%`, or `n/a` when there is no run history for that persona. When no scorecard data exists at all, every row shows `n/a` and a footer names the path that was checked:
+The rate is the fraction of a persona's findings that other reviewers or the verify stage corroborated, formatted as `XX.X%`, or `n/a` when there is no run history for that persona.
+
+`CASES` is what stops the rate being read on its own, and it is the difference between "this lens is weak" and "this lens is barely measured" — a persona at `0.0%` over ONE counted case is not a persona to drop. It reads:
+
+- `N counted` — the cases the rate actually rests on.
+- `(N unlabelled)` — of those, how many raised findings the scorer could not attribute to a topic. Counted and charged, not excluded.
+- `N excluded (reason)` — cases set aside, with the largest single reason named. The reason is one of `outcome-ineligible` (the reviewer never got a fair attempt: a timeout, a truncated response, an unparseable one) or `category-not-in-opportunity-set` (the case was outside that lens's remit, so its silence is neither credited nor penalised). The excluded figure is always shown, including at `0`.
+- `n/a` — no usable measurement at all, matching the `CORROBORATION` cell. A persona is never shown a fabricated `0 counted`.
+
+`counted + excluded` can be less than a persona's total run count: runs measured at a non-strict consensus level, and runs recorded under a superseded `raised_denominator` definition, are dropped without a reason label. When no scorecard data exists at all, every row shows `n/a` and a footer names the path that was checked:
 
 ```
 No scorecard data found at <path>

@@ -1015,3 +1015,41 @@ func TestFormatScoreDetail_ZeroExclusionsIsDistinctFromNoData(t *testing.T) {
 	assert.NotContains(t, noData, "0",
 		"the no-data marker must never render a count, or it reads as a measured zero")
 }
+
+func TestDocs_PersonasInstallMdDocumentsTheCasesColumn(t *testing.T) {
+	// The Phase 5 gate caught docs/personas-install.md still publishing the
+	// pre-Phase-5 five-column table while docs/scorecard.md described six — two
+	// published docs disagreeing with each other, with no test reading either.
+	// This is that test. It lives in cli/ because renderScoredList and
+	// formatScoreDetail are here, so the doc is pinned against the RENDERER
+	// rather than against prose.
+	raw, err := os.ReadFile(filepath.Join("..", "docs", "personas-install.md"))
+	require.NoError(t, err)
+	doc := string(raw)
+
+	// The header the renderer emits must be the header the doc shows.
+	var table bytes.Buffer
+	require.NoError(t, renderScoredList(&table, nil))
+	header := strings.Fields(strings.SplitN(table.String(), "\n", 2)[0])
+	require.Equal(t, []string{"NAME", "VERSION", "SOURCE", "LANGUAGE", "CORROBORATION", "CASES"}, header)
+	for _, col := range header {
+		assert.Contains(t, doc, col, "docs/personas-install.md must name every --scores column")
+	}
+
+	// Every reason label a reader can meet in the cell must be documented, and
+	// the source of truth for the list is scorecard's closed vocabulary — not a
+	// hand-kept copy here — so a fourth member fails this test automatically.
+	for _, reason := range scorecard.ScoreReasons() {
+		if !scorecard.ReasonExcludes(reason) {
+			continue // annotations render as the word "unlabelled", asserted below
+		}
+		assert.Contains(t, doc, "`"+reason+"`",
+			"docs/personas-install.md must name every exclusion reason the CASES cell can print")
+	}
+
+	// The exact strings the renderer produces, so a wording change fails here.
+	assert.Contains(t, doc, "unlabelled")
+	assert.Contains(t, doc, formatScoreDetail(nil), "the no-data marker must be documented")
+	assert.Contains(t, doc, "The excluded figure is always shown, including at `0`",
+		"AC 06-04's explicit-zero behaviour must be documented, not only tested")
+}

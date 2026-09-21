@@ -486,6 +486,10 @@ func confirmationFactor(c Confirmation) (float64, bool) {
 // TestMinConfirmationOutcomes_NotNarrowedWithoutRemeasurement pins the literal.
 const minConfirmationOutcomes = 20
 
+// NOT WIRED (TD-039): no production caller supplies a lookup, so this function
+// is reachable only from tests today. Read the DO-NOT-WIRE block below before
+// changing that.
+//
 // TrustPriorsWithGroundTruth is TrustPriors with C18's read-time confirmation
 // half supplied by the caller. TrustPriors itself passes no lookup, so its
 // numbers and its map[string]float64 shape are byte-identical to before and
@@ -1317,6 +1321,9 @@ func ResolveTrustPriors() map[string]float64 {
 	return ResolveTrustPriorsWithGroundTruth(nil)
 }
 
+// NOT WIRED (TD-039): no production caller supplies a lookup. This is the more
+// urgent of the two, because it is the function the production path calls.
+//
 // ResolveTrustPriorsWithGroundTruth is ResolveTrustPriors with C18's read-time
 // confirmation half supplied by the caller. It keeps ResolveTrustPriors' window
 // (defaultTrustWindow) and floor (DefaultTrustMinRuns) and passes that same

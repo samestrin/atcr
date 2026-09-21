@@ -314,5 +314,8 @@ func TestSortScoredPersonas_NeverConsultsTheDetailFields(t *testing.T) {
 //
 // The duplication is safe because this package never INTERPRETS the label: it
 // carries Reasons through as opaque keys. The value is asserted against
-// scorecard's own constant by cli/personas_test.go, which legally imports both.
+// scorecard's own constant by cli/personas_test.go's
+// TestPersonasScoreDetailLabels_MatchScorecardsVocabulary, which legally imports
+// both packages — that test is this literal's authority, named here so a reader
+// of internal/personas is not left holding a bare string with no provenance.
 const reasonOutcomeIneligibleForTest = "outcome-ineligible"
