@@ -393,3 +393,25 @@ func TestDocs_ScorecardMdDocumentsTheWeightedCreditSurface(t *testing.T) {
 		}
 	}
 }
+
+// TestDocs_ScorecardMdDocumentsTheRoutedCount guards the field that makes the
+// weighted-credit ceiling computable at read time.
+//
+// It is worth its own pin because the doc has to keep the two "not in
+// findings_raised" / "inside findings_raised" cases APART. Reading
+// findings_routed as the doc-shield's twin, and subtracting both, under-bounds
+// an honest record; reading neither leaves the bound loose by the routed count.
+// A doc that blurs them invites either error.
+func TestDocs_ScorecardMdDocumentsTheRoutedCount(t *testing.T) {
+	doc := string(readDoc(t, "scorecard.md"))
+
+	for _, want := range []string{
+		"| `findings_routed` | int | conditional |",
+		`"findings_routed": 1,`,
+		"a doc-shielded finding is counted **instead of** being counted in `findings_raised`, a chargeable routed one is counted **inside** it",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/scorecard.md has drifted from the routed count; missing:\n%s", want)
+		}
+	}
+}

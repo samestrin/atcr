@@ -998,31 +998,67 @@ func TestNormalizeReviewerName_IsTheOneIdentityRuleBothSurfacesUse(t *testing.T)
 
 func TestPairTallies_RunsTheSharedTrustChainNotACopyOfIt(t *testing.T) {
 	// The pair fold reads keptForTrust, not its own inlined chain. Nothing in
-	// this file previously produced a non-strict or ineligible record, so a
-	// re-inlined chain missing strictRuns survived the suite — the exact drift
-	// the shared helper exists to prevent, invisible from the pair surface.
+	// this file previously produced a record any link would reject, so a
+	// re-inlined copy dropping a link survived the suite — the exact drift the
+	// shared helper exists to prevent, invisible from the pair surface.
+	//
+	// ONE TAINT PER LINK. An earlier version covered only strictRuns and
+	// eligibleOutcomeRuns; mutating the other four links to identity survived
+	// it, including opportunitySetRuns — which keptForTrust's own doc names as
+	// the drift it exists to prevent.
+	//
+	// sasha (security) and penny (performance) are used throughout because both
+	// are MAPPED personas, so the unmapped pass-through cannot rescue them from
+	// the opportunity gate. Untainted runs carry no CategoriesRaised, so the
+	// per-run union is empty and every other case reaches the fold — proved by
+	// the control test below, without which every subtest here could be passing
+	// because the fixture never arrived at all.
 	for name, taint := range map[string]func(*Record){
-		"non-strict run":  func(r *Record) { r.ConsensusLevel = "off" },
-		"truncated run":   func(r *Record) { r.Outcome = "truncated" },
-		"failed run":      func(r *Record) { r.Outcome = "failed" },
-		"unparseable run": func(r *Record) { r.Outcome = "unparseable" },
+		"non-strict run (strictRuns)":           func(r *Record) { r.ConsensusLevel = "off" },
+		"truncated run (eligibleOutcomeRuns)":   func(r *Record) { r.Outcome = "truncated" },
+		"failed run (eligibleOutcomeRuns)":      func(r *Record) { r.Outcome = "failed" },
+		"unparseable run (eligibleOutcomeRuns)": func(r *Record) { r.Outcome = "unparseable" },
+		"above-current denominator (unresolvedEraRuns)": func(r *Record) {
+			r.RaisedDenominator = RaisedDenominatorCurrent + 1
+		},
+		"out-of-remit categories (opportunitySetRuns)": func(r *Record) {
+			// Neither security nor performance is in play on a run whose only
+			// raised category is testing, so both members are dropped.
+			r.CategoriesRaised = []string{"testing"}
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
-			for i := 0; i < minPairCases*2; i++ {
-				runID := pairRunID(fmt.Sprintf("tainted-%03d", i))
-				for _, pair := range [][2]string{{"bruce", "dax"}, {"dax", "bruce"}} {
-					r := pairReviewer(runID, pair[0], "m1", 2, 2,
-						PairSignal{Peer: pair[1], Agreed: 2})
-					taint(&r)
-					require.NoError(t, Append(dir, r))
-				}
-			}
+			seedPennySasha(t, dir, "tainted", taint)
 
 			tallies, err := PairDisagreements(dir)
 			require.NoError(t, err)
 			assert.Empty(t, tallies,
 				"a run the trust chain excludes must not produce pair evidence either")
 		})
+	}
+}
+
+func TestPairTallies_UntaintedControlActuallyReachesTheFold(t *testing.T) {
+	// The control for the table above.
+	dir := t.TempDir()
+	seedPennySasha(t, dir, "clean", func(*Record) {})
+
+	tallies, err := PairDisagreements(dir)
+	require.NoError(t, err)
+	assert.Contains(t, tallies, "penny|sasha", "the untainted control must reach the fold")
+}
+
+// seedPennySasha writes a co-eligible penny/sasha history well clear of both
+// minPairCases axes, applying taint to every record before it is appended.
+func seedPennySasha(t *testing.T, dir, label string, taint func(*Record)) {
+	t.Helper()
+	for i := 0; i < minPairCases*2; i++ {
+		runID := pairRunID(fmt.Sprintf("%s-%03d", label, i))
+		for _, pair := range [][2]string{{"sasha", "penny"}, {"penny", "sasha"}} {
+			r := pairReviewer(runID, pair[0], "m1", 2, 2, PairSignal{Peer: pair[1], Agreed: 2})
+			taint(&r)
+			require.NoError(t, Append(dir, r))
+		}
 	}
 }

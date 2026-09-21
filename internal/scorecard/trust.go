@@ -218,19 +218,33 @@ func keptForTrust(records []Record) []Record {
 // the emitter could have written for it, and it runs BEFORE mergeRoutedEras
 // because that is the last point at which the question can be asked.
 //
-// THE BOUND IS FindingsRaised * isolatedFindingWeight, AND IT IS NOT
-// FindingsRaised MINUS FindingsDocShielded. That subtraction is the obvious
-// reading and it is wrong HERE, because "here" is pre-merge: a doc-shielded
-// finding is counted in FindingsDocShielded INSTEAD of FindingsRaised (see that
-// field's comment), not as well, so subtracting it removes something that was
-// never added and under-bounds an honest record. A reviewer with 5 raised and 3
-// shielded can legitimately carry 5.0 of credit; the tighter bound would scrub
-// it as forged.
+// THE BOUND IS (FindingsRaised - FindingsRouted) * maxPerFindingCredit(), and
+// each of those three parts is there because the obvious alternative is wrong.
 //
-// Credit is emitted from EmitInput.Findings only — never from the routed or
-// doc-shielded sets — so it is a sum over a SUBSET of FindingsRaised with each
-// term at most isolatedFindingWeight. FindingsRaised is therefore the honest
-// ceiling, exactly. Negative credit is impossible at any era.
+// NOT MINUS FindingsDocShielded. That subtraction is the obvious reading and it
+// is wrong HERE, because "here" is pre-merge: a doc-shielded finding is counted
+// in FindingsDocShielded INSTEAD of FindingsRaised (see that field's comment),
+// not as well, so subtracting it removes something never added and under-bounds
+// an honest record. A reviewer with 5 raised and 3 shielded can legitimately
+// carry 5.0 of credit.
+//
+// MINUS FindingsRouted, though, and this is the half a previous version of this
+// comment got wrong while asserting the word "exactly". Credit is emitted from
+// EmitInput.Findings only, but FindingsRaised also counts the CHARGEABLE routed
+// phantoms (scorecard.go does raised += routedRaised), so FindingsRaised alone
+// is loose by exactly that count. Probe: one real finding plus three chargeable
+// phantoms gives FindingsRaised=4 against an honest ceiling of 1.0 — a gap of
+// 3.0, and it is widest for the reviewers carrying the most fabrication
+// evidence. FindingsRouted exists to close it.
+//
+// maxPerFindingCredit(), NOT isolatedFindingWeight. reviewerCounts scales only
+// the SOLO branch by the constant; the corroborated branch is a hardcoded
+// 1/distinctCount, worth up to 0.5. The constant is documented PROVISIONAL with
+// a re-measurement trigger, so a future value below 0.5 would make this bound
+// tighter than what an honest emitter writes and scrub real records — silently,
+// and for exactly the corroborated-heavy population. See maxPerFindingCredit.
+//
+// Negative credit is impossible at any era.
 //
 // WHY THE POSITION IS LOAD-BEARING, and this is the whole point of the function
 // existing rather than an inline check further down: mergeRoutedEras does
@@ -256,6 +270,39 @@ func keptForTrust(records []Record) []Record {
 // and other binaries and eras write it too.
 //
 // The input slice is never mutated.
+// maxPerFindingCredit is the largest credit any single finding can contribute,
+// across both branches of reviewerCounts.
+//
+// It is max(isolatedFindingWeight, 0.5) and not isolatedFindingWeight, because
+// only the solo branch is scaled by the constant: a corroborated finding
+// contributes 1/distinctCount(Reviewers), which peaks at 0.5 for a pair and is
+// not governed by the constant at all. Reading the constant as the per-finding
+// maximum is correct only while it stays at or above 0.5, and it is documented
+// PROVISIONAL with a named re-measurement trigger — so a later narrowing to,
+// say, 0.4 would make every ceiling derived from it too tight and scrub honest
+// corroborated-heavy records without a word of warning.
+//
+// The honest fix would be to scale both branches by one number. That is a
+// scoring-semantics change rather than a bound fix, so it is not made here;
+// this function makes the bound correct under either choice.
+//
+// IT TAKES THE WEIGHT AS A PARAMETER rather than reading the constant, purely
+// so the floor is testable. Read off the constant directly, the max() is
+// indistinguishable from returning the constant while isolatedFindingWeight
+// stays above 0.5 — a guard no mutation can kill and therefore no guard at all.
+// Its one production caller passes isolatedFindingWeight.
+func maxPerFindingCredit(weight float64) float64 {
+	// corroboratedCreditCeiling is 1/distinctCount(Reviewers) at its maximum,
+	// i.e. a finding raised by exactly two reviewers. That branch of
+	// reviewerCounts is NOT scaled by the weight, so it sets a floor under the
+	// per-finding maximum that the weight cannot lower.
+	const corroboratedCreditCeiling = 0.5
+	if weight > corroboratedCreditCeiling {
+		return weight
+	}
+	return corroboratedCreditCeiling
+}
+
 func scrubForgedCredit(records []Record) []Record {
 	out := make([]Record, len(records))
 	copy(out, records)
@@ -263,7 +310,7 @@ func scrubForgedCredit(records []Record) []Record {
 		if out[i].RecordType != RecordTypeReviewer || out[i].CreditEra == 0 {
 			continue
 		}
-		bound := float64(out[i].FindingsRaised) * isolatedFindingWeight
+		bound := float64(out[i].FindingsRaised-out[i].FindingsRouted) * maxPerFindingCredit(isolatedFindingWeight)
 		if out[i].WeightedCredit < 0 || out[i].WeightedCredit > bound {
 			out[i].WeightedCredit = 0
 			out[i].CreditEra = 0
@@ -319,13 +366,18 @@ func weightedCreditByPersona(records []Record) map[string]weightedTally {
 		// finding, never negative — so a record outside that bound was not
 		// written by this emitter and is dropped rather than clamped, matching
 		// how the era fields treat a value they did not write.
-		// The CEILING is not checked here, and deliberately so: by this point
-		// mergeRoutedEras has folded FindingsDocShielded into FindingsRaised and
-		// zeroed it, so the honest ceiling is no longer computable from the
-		// record. scrubForgedCredit asks that question earlier in the chain, where
-		// the two counts are still separate, and un-measures anything outside it.
-		// A negative is still rejected here because it is unconditionally
-		// impossible and costs nothing to re-check.
+		// THE CEILING IS ENFORCED EARLIER, by scrubForgedCredit, because by this
+		// point mergeRoutedEras has folded FindingsDocShielded into
+		// FindingsRaised and zeroed it, so the honest ceiling is no longer
+		// computable from the record.
+		//
+		// The backstop below is deliberately kept rather than removed as
+		// redundant. Post-scrub it can only ever be a no-op on the one
+		// production path, but the ceiling guard is now POSITIONAL — it lives in
+		// a chain link, not at the consumer — so a future second caller of this
+		// function that does not route through keptForTrust would re-open the
+		// whole forgery with no compile error and no failing test. A negative is
+		// unconditionally impossible at any era and costs nothing to re-check.
 		if r.WeightedCredit < 0 {
 			continue
 		}
@@ -596,13 +648,12 @@ func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Tim
 // at its worst on the first upgrade, when almost every record is pre-era.
 //
 // The result is bounded by construction and the bound is worth stating: each
-// finding contributes at most isolatedFindingWeight (1.0) to w.credit and
-// exactly 1 to w.raised, weightedCreditByPersona drops any record outside that
-// bound, and factor is in [0,1] — so the rate cannot exceed 1.0 while
-// isolatedFindingWeight stays at its provisional value. A future re-measurement
-// above 1.0 would break that, and the caller — reconcile's demoteByTrust — has
-// no defence against a rate above 1. Whoever moves the constant has to decide
-// the clamp here.
+// finding contributes at most maxPerFindingCredit(isolatedFindingWeight) to w.credit and exactly 1 to
+// w.raised, scrubForgedCredit un-measures any record outside that bound, and
+// factor is in [0,1] — so the rate cannot exceed 1.0 while isolatedFindingWeight
+// stays at its provisional value. A future re-measurement ABOVE 1.0 would break
+// it, and the caller — reconcile's demoteByTrust — has no defence against a rate
+// above 1. Whoever moves the constant has to decide the clamp here.
 func weightedRate(corroborated, raised int, w weightedTally, c Confirmation, minRuns int) float64 {
 	binary := ratio(corroborated, raised)
 	if w.raised <= 0 {

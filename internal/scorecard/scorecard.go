@@ -298,6 +298,28 @@ type Record struct {
 	// omitempty: absent is indistinguishable from a measured 0.0, so CreditEra —
 	// not this field — is what says the record was measured.
 	WeightedCredit float64 `json:"weighted_credit,omitempty"`
+	// FindingsRouted counts the chargeable Tier-4-routed findings inside
+	// FindingsRaised — the phantoms that charge the denominator and can never
+	// earn credit (a routed finding cites a file the patch does not contain, so
+	// paying isolation credit for one would pay MOST for the most fabricated).
+	//
+	// It exists ONLY to make the credit ceiling computable at read time, and it
+	// is the counterpart to FindingsDocShielded rather than a duplicate of it:
+	// a doc-shielded finding is counted INSTEAD of being counted in
+	// FindingsRaised, a chargeable routed one is counted INSIDE it. Without this
+	// field the widest honest ceiling is FindingsRaised, which is loose by
+	// exactly the routed count — and that gap is widest for the reviewers
+	// carrying the most fabrication evidence. See scrubForgedCredit.
+	//
+	// omitempty: absent means zero routed findings, which is not ambiguous here
+	// the way an absent WeightedCredit is. This field and CreditEra are written
+	// together by this emitter, so any record carrying the era also carries a
+	// true routed count — nonzero when there were routed findings, elided when
+	// there were none, and zero is then the correct value rather than an unknown
+	// one. That holds because both fields ship in the same unreleased change; a
+	// LATER binary that stamps the era without this count would have to bump
+	// CreditEraCurrent rather than rely on the same argument.
+	FindingsRouted int `json:"findings_routed,omitempty"`
 	// CreditEra is the weighted-credit measurement era marker (D8), stamped
 	// unconditionally on every reviewer record this emitter writes for exactly
 	// the reason PairEra is: a pre-weighting record and a genuinely-zero one
@@ -690,7 +712,11 @@ func Emit(in EmitInput, opts EmitOpts) error {
 			// Stamped unconditionally alongside the value, including when the
 			// value is 0.0 — see CreditEraCurrent for why the marker rather than
 			// the value is what records that this run was measured.
-			WeightedCredit:    credit,
+			WeightedCredit: credit,
+			// Stamped beside the credit and the era, never independently: the
+			// read-time ceiling is computed from it, and a record carrying the
+			// era without it would be bounded too loosely. See FindingsRouted.
+			FindingsRouted:    routedRaised,
 			CreditEra:         CreditEraCurrent,
 			CorroborationRate: ratio(corroborated, raised),
 			CostUSD:           llmclient.ComputeCostUSD(meta.Model, meta.TokensIn, meta.TokensOut),

@@ -2225,3 +2225,88 @@ func TestResolveTrustPriorsWithGroundTruth_KeepsResolveTrustPriorsBehaviourOnNil
 	assert.NotContains(t, got, "quiet", "the DefaultTrustMinRuns floor must still apply")
 	assert.Equal(t, ResolveTrustPriors(), got)
 }
+
+func TestTrustPriors_RoutedPhantomsCannotBeLaunderedIntoWeightedCredit(t *testing.T) {
+	// THE SECOND DOOR. FindingsRaised counts chargeable Tier-4-routed phantoms,
+	// and credit is emitted only from the real findings — so a bound of
+	// FindingsRaised alone is loose by exactly the routed count, and that gap is
+	// WIDEST for the reviewer carrying the most fabrication evidence. One real
+	// finding plus three phantoms bounds at 4.0 against an honest ceiling of 1.0.
+	dir := t.TempDir()
+	for i := 0; i < DefaultTrustMinRuns; i++ {
+		r := reviewer_(runIDAt(time.Now(), fmt.Sprintf("laundered-%03d", i)), "Ghost", "m1", 4, 0)
+		r.FindingsRouted = 3 // of the 4 raised, 3 were phantoms
+		r.WeightedCredit = 4.0
+		r.CreditEra = CreditEraCurrent
+		require.NoError(t, Append(dir, r))
+	}
+
+	rates, err := TrustPriorsWithGroundTruth(dir, DefaultTrustMinRuns, allConfirmed("ghost"))
+	require.NoError(t, err)
+	require.Contains(t, rates, "ghost")
+	assert.InDelta(t, 0.0, rates["ghost"], 1e-9,
+		"credit above the non-routed ceiling must be un-measured, leaving the binary rate")
+}
+
+func TestEmit_StampsTheRoutedCountBesideTheCredit(t *testing.T) {
+	// The read-time ceiling is computed from FindingsRouted, so a record that
+	// carries the era must carry the count too or it is bounded too loosely.
+	dir := t.TempDir()
+	in := EmitInput{
+		RunID:     pairRunID("r-routed-count"),
+		Reviewers: map[string]ReviewerMeta{"dax": {Model: "m1", Outcome: outcomeFindings}},
+		Findings: []Finding{
+			{File: "a.go", Line: 1, Problem: "real", Reviewers: []string{"dax"}},
+		},
+		UnresolvedFindings: []Finding{
+			{File: "g1.go", Line: 1, Problem: "phantom", Reviewers: []string{"dax"}},
+			{File: "g2.go", Line: 2, Problem: "phantom", Reviewers: []string{"dax"}},
+		},
+	}
+	require.NoError(t, Emit(in, EmitOpts{Dir: dir}))
+
+	got := reviewerRecordsByName(t, dir)["dax"]
+	assert.Equal(t, 3, got.FindingsRaised)
+	assert.Equal(t, 2, got.FindingsRouted, "the routed count must be persisted, not recomputed")
+	assert.InDelta(t, 1.0, got.WeightedCredit, 1e-9)
+
+	// The emitted record must sit exactly AT its own ceiling, not above it —
+	// this is the invariant scrubForgedCredit relies on.
+	bound := float64(got.FindingsRaised-got.FindingsRouted) * maxPerFindingCredit(isolatedFindingWeight)
+	assert.LessOrEqual(t, got.WeightedCredit, bound)
+}
+
+func TestMaxPerFindingCredit_CoversTheCorroboratedBranchToo(t *testing.T) {
+	// reviewerCounts scales ONLY the solo branch by isolatedFindingWeight; a
+	// corroborated finding contributes 1/distinctCount, up to 0.5 for a pair. A
+	// ceiling derived from the constant alone is therefore too tight the moment
+	// the constant is re-measured below 0.5 — and it would scrub honest
+	// corroborated-heavy records silently.
+	// The floor is exercised at hypothetical weights, because at the constant's
+	// current 1.0 the max() is indistinguishable from returning the weight — a
+	// guard no mutation could kill, and therefore no guard at all.
+	for name, tc := range map[string]struct{ weight, want float64 }{
+		"weight above the floor": {1.0, 1.0},
+		"weight at the floor":    {0.5, 0.5},
+		"weight below the floor": {0.4, 0.5},
+		"weight far below":       {0.05, 0.5},
+		"weight well above":      {2.0, 2.0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.InDelta(t, tc.want, maxPerFindingCredit(tc.weight), 1e-9)
+		})
+	}
+	assert.GreaterOrEqual(t, maxPerFindingCredit(isolatedFindingWeight), isolatedFindingWeight,
+		"the solo branch is governed by the constant")
+
+	// Two findings, each corroborated by exactly one peer: credit 1.0 over 2
+	// raised, which is 0.5 per finding — the corroborated branch's maximum.
+	_, corroborated, credit := reviewerCounts("dax", []Finding{
+		{Reviewers: []string{"dax", "bruce"}},
+		{Reviewers: []string{"dax", "greta"}},
+	})
+	require.Equal(t, 2, corroborated)
+	assert.InDelta(t, 1.0, credit, 1e-9)
+	assert.LessOrEqual(t, credit, 2*maxPerFindingCredit(isolatedFindingWeight),
+		"an honest record must never exceed its own ceiling")
+}
