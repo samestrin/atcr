@@ -1394,6 +1394,26 @@ func (c *workDirNamingCompleter) Complete(ctx context.Context, inv llmclient.Inv
 	return stubLocatedCompleter{}.Complete(ctx, inv)
 }
 
+// A walk that cannot even read the ROOT used to log retained_bytes=0 for a
+// directory that IS retained — docs/benchmark.md tells the operator to watch exactly
+// that number for growth before the volume fills, and a zero reads as "nothing
+// retained". dirSizeBytes therefore reports whether the size was measured at all, so
+// the caller can log "unknown" instead of a lying zero. A mid-walk failure still
+// returns the partial total as a signal, and the deferred cleanup stays
+// warn-never-fail either way.
+func TestDirSizeBytesReportsUnmeasuredRootWalk(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.bin"), make([]byte, 128), 0o600))
+
+	size, measured := dirSizeBytes(dir)
+	require.True(t, measured, "a readable root measures fine")
+	assert.Equal(t, int64(128), size)
+
+	size, measured = dirSizeBytes(filepath.Join(dir, "missing"))
+	assert.False(t, measured, "a walk that cannot read the root measures nothing — the caller must log unknown, not zero")
+	assert.Equal(t, int64(0), size)
+}
+
 // Retention on a partial run is unbounded and unconditional ON PURPOSE — the
 // artifacts are the only copy of a paid panel, so a byte cap or a keep-only-the-failed-
 // case policy would destroy exactly what the arm exists to save. That makes growth
