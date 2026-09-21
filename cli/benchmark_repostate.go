@@ -512,6 +512,16 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			// scored, and the surviving reviewers did score this one. Keyed by the
 			// PRE-SCRUB identity here and mapped through scrubOf at emit, so the
 			// published record joins to the coverage row it explains.
+			//
+			// The predicate tests Status only, NOT a.Error beside it — deliberately,
+			// unlike ReviewerOutcome's failed arm (internal/fanout/revieweroutcome.go),
+			// which reads Status != StatusOK || a.Error != "". No live fanout producer
+			// emits StatusOK with a non-empty Error, so the pair is latent; and a skip
+			// that fired on it would need a slot-failure REASON for an OK status, which
+			// the vocabulary has no entry for (SlotFailureReasonForStatus documents that
+			// an OK slot is never skipped). If a producer of that pair ever appears, the
+			// predicate here and that reason mapping must move together — unify both
+			// sides in the same change, never this one alone.
 			if a.Status != fanout.StatusOK {
 				slotFailures[key] = append(slotFailures[key], benchmark.SlotFailure{
 					CaseID: c.ID,
