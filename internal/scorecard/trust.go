@@ -266,8 +266,27 @@ func keptForTrust(records []Record) []Record {
 // silently delete a real run from the trust denominator, which is a second
 // attack rather than a defence.
 //
-// The store is untrusted input for this purpose: it is plain user-writable JSONL
-// and other binaries and eras write it too.
+// IT IS A SANITY CHECK, NOT A SECURITY BOUNDARY, and that distinction is the
+// most important sentence here because three separate gate passes each found a
+// new way the bound was loose and each rated it HIGH. The bound can always be
+// made tighter and it can never be made sufficient: anyone who can hand-edit
+// this store can simply write `raised: 20, weighted_credit: 20, routed: 0` and
+// satisfy any bound this function could compute. TD-021 already established the
+// general form of that lesson for the sibling forgery — "a file-presence check
+// inside the directory under attack cannot work, and shipping one as if it does
+// is worse than the documented gap" — and a value check inside the file under
+// attack is the same shape of non-defence.
+//
+// What it DOES buy, and what it is worth keeping for: it catches corruption,
+// partial writes, and version skew — a record written by a binary whose
+// weighting rule differed — and it does so in the direction that matters, by
+// falling back to the pre-existing binary rate rather than publishing a number
+// nothing produced. Treat a loose bound as hygiene to tighten when convenient,
+// not as a vulnerability to escalate. Authenticating the run is the only real
+// remedy and it belongs to the security-scoped epic TD-021 names.
+//
+// The store is nonetheless untrusted input for correctness purposes: it is plain
+// user-writable JSONL and other binaries and eras write it too.
 //
 // The input slice is never mutated.
 // maxPerFindingCredit is the largest credit any single finding can contribute,
