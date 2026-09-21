@@ -1319,6 +1319,25 @@ func TestPublicSlotFailuresWarnsOnAnUntranslatableKey(t *testing.T) {
 		"the skip must warn rather than discard silently")
 }
 
+// The signature change that gave executeRepoStateBenchmarkRun its (rr, workDir, err)
+// shape rewrote four error-propagation returns whose only coverage was the
+// validators' own direct tests — the propagation THROUGH the runner was unpinned. A
+// pre-flight rejection must reach the caller as an error with an EMPTY retained work
+// dir: the rejection fires before the work dir is even created, so the deferred
+// cleanup has nothing to retain and no path to name.
+func TestExecuteRepoStateBenchmarkRun_PreFlightRejectionRetainsNothing(t *testing.T) {
+	// scrubEmail rewrites "case@01" to the empty string, so the publishable-identity
+	// pre-flight rejects the suite before any completer call or work dir exists.
+	suite := writeCaseSuite(t, "case@01")
+
+	rr, retained, err := executeRepoStateBenchmarkRun(context.Background(),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC(), 0)
+
+	require.Error(t, err, "the pre-flight rejection reaches the caller, not just the validator's own test")
+	assert.Nil(t, rr)
+	assert.Empty(t, retained, "a run rejected before the work dir exists retains nothing")
+}
+
 // The all-cases-failed diagnostic used to name ONE reason — whichever happened to be
 // last. On a mixed systemic failure that is an arbitrary pick out of N, and the same
 // sentence then tells the operator a re-run helps "only if the cause was transient"
