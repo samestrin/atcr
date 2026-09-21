@@ -84,12 +84,19 @@ const PairEraCurrent = 1
 // second floor.
 //
 // IT IS PROVISIONAL, AND THE MEASUREMENT BEHIND DefaultTrustMinRuns WAS NOT
-// REDONE FOR IT. Measured 2026-09-20: there is no scorecard store on this
-// machine at all (~/.config/atcr/scorecard/ does not exist), so PairDisagreements
-// returns an empty map today and no live pair has ever been observed. The value
-// is therefore ADOPTED BY ANALOGY from DefaultTrustMinRuns = 20, whose own
-// 2026-07-29 analysis found per-reviewer rates unstable at 10 summed runs and
-// converged by 20.
+// REDONE FOR IT. PairDisagreements returns an empty map today and no live pair
+// has ever been observed, so the value is ADOPTED BY ANALOGY from
+// DefaultTrustMinRuns = 20, whose own 2026-07-29 analysis found per-reviewer
+// rates unstable at 10 summed runs and converged by 20.
+//
+// CORRECTED 2026-09-21: an earlier version of this note blamed the empty map on
+// there being "no scorecard store on this machine at all", checking
+// ~/.config/atcr/scorecard/. That path is wrong — scorecard.DefaultDir() builds
+// on os.UserConfigDir(), which is ~/Library/Application Support on darwin — and
+// the real store holds 2,265 reviewer records across 211 runs. None of them
+// carries a PairEra, because none predates this epic, so the map is empty for
+// ERA reasons rather than for want of a store. The practical difference is that
+// the existing history can never be re-scored for pairs; only new runs count.
 //
 // IT NOW FLOORS TWO AXES, AND ONLY THE FIRST INHERITS THE ANALOGY. Say that
 // plainly, because an earlier version of this comment argued against the second

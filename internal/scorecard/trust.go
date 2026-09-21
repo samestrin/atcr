@@ -115,9 +115,28 @@ const defaultTrustWindow = 180 * 24 * time.Hour
 // store at .atcr/debt/*.jsonl held 363 records on that date and ZERO of them
 // carried any terminal status — Story 01 shipped StatusUnreproducible and
 // StatusAttemptsExhausted days earlier and nothing has been closed under the
-// new vocabulary yet. There is also no scorecard store on this machine at all
-// (~/.config/atcr/scorecard/ does not exist), so the solo-versus-corroborated
-// split has no population either. Sample size: 0 on both sides.
+// new vocabulary yet. Sample size on the ground-truth side: 0.
+//
+// CORRECTED 2026-09-21, and the correction matters more than the number: an
+// earlier version of this note said "there is no scorecard store on this
+// machine at all". That was FALSE and it was false because it checked the wrong
+// path. scorecard.DefaultDir() builds on os.UserConfigDir(), which on darwin is
+// ~/Library/Application Support — not ~/.config, where the registry and personas
+// live. The real store held 2,265 reviewer records across 211 runs going back to
+// June 2026.
+//
+// The CONCLUSION survives and is now better evidenced. Every one of those
+// records is pre-schema-2: outcome empty on all 2,265, raised_denominator 0 on
+// all, no CreditEra, no PairSignals. So TrustPriors does return an empty map
+// today — for ERA reasons, not for absence of data, and the eligibility gate is
+// doing exactly what it was built to do. The two readings call for opposite
+// remedies, which is why the distinction is worth this paragraph: "no store"
+// says wait for ordinary usage to accumulate one, while "a store full of
+// pre-era records" says that history can NEVER be recovered for this purpose
+// and only runs made by a binary carrying these fields will ever help.
+//
+// So the solo-versus-corroborated split has no SCORABLE population either, and
+// no amount of waiting recovers the back-catalogue for it.
 //
 // WHAT THIS CANNOT SHOW — stated plainly, the way defaultTrustWindow's "the
 // store was only ~35 days old" limitation is: nothing here establishes that
@@ -497,7 +516,8 @@ const minConfirmationOutcomes = 20
 //
 // Both thresholds therefore have to be re-derived against weighted evidence
 // before any production caller switches to this function, and that derivation
-// needs a live scorecard store that does not exist yet (see
+// needs a live scorecard store carrying these fields, which does not exist yet —
+// the store on disk is real and substantial but entirely pre-era (see
 // isolatedFindingWeight's own measurement note). Until then TrustPriors and
 // ResolveTrustPriors pass a nil lookup and the production path is unchanged.
 // Filed as a Phase 5 prerequisite.
