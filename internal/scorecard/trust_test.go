@@ -2093,3 +2093,57 @@ func TestGroundTruthLookup_ReceivesTheSameWindowTheRecordReadUsed(t *testing.T) 
 	assert.Equal(t, defaultTrustWindow, gotSince)
 	assert.Equal(t, now, gotNow)
 }
+
+func TestKeptForTrust_IsTheSameChainBothSurfacesRun(t *testing.T) {
+	// The chain used to be spelled out verbatim in trust.go and pairtally.go.
+	// A sixth link added to one would silently not reach the other, re-admitting
+	// through the pair surface every run the trust gates had just excluded.
+	records := []Record{
+		reviewer_("run-a", "Dax", "m1", 2, 1),
+		func() Record { r := reviewer_("run-b", "Dax", "m1", 2, 1); r.ConsensusLevel = "off"; return r }(),
+		func() Record { r := reviewer_("run-c", "Greta", "m1", 2, 1); r.Outcome = "truncated"; return r }(),
+	}
+	before := append([]Record{}, records...)
+
+	kept := keptForTrust(records)
+	require.Len(t, kept, 1, "the lenient run and the truncated run must both be gone")
+	assert.Equal(t, "run-a", kept[0].RunID)
+	assert.Equal(t, before, records, "the chain must not mutate its input")
+}
+
+func TestTrustPriorsWithGroundTruth_WeightedFloorHoldsEvenWithNoCallerFloor(t *testing.T) {
+	// cli/personas.go calls TrustPriors(dir, 0) deliberately, to render every
+	// persona it has any history for. On that path a `minRuns > 0 &&` guard is
+	// switched off entirely, and one era-marked run would publish a full
+	// weighted rate.
+	dir := t.TempDir()
+	weighted(t, dir, 1, "Solo", 1, 0, 1.0)
+
+	rates, err := TrustPriorsWithGroundTruth(dir, 0, allConfirmed("solo"))
+	require.NoError(t, err)
+	require.Contains(t, rates, "solo")
+	assert.InDelta(t, 0.0, rates["solo"], 1e-9,
+		"one measured run must not publish a weighted rate even when the caller asked for no floor")
+}
+
+func TestWeightedCreditByPersona_BoundsAgainstThePreMergeDenominator(t *testing.T) {
+	// mergeRoutedEras folds FindingsDocShielded into FindingsRaised before these
+	// records arrive, while credit is emitted from in.Findings only — never from
+	// the shielded set. Bounded against the merged number, forged credit in the
+	// gap passes, and the gap fails OPEN toward a higher prior.
+	r := reviewer_("run-a", "Dax", "m1", 5, 0) // 5 raised, of which...
+	r.FindingsDocShielded = 3                  // ...3 were shielded, so 2 could have earned credit
+	r.WeightedCredit = 4.0                     // above 2, below 5: the gap
+	r.CreditEra = CreditEraCurrent
+
+	assert.NotContains(t, weightedCreditByPersona([]Record{r}), "dax",
+		"credit above the pre-merge denominator could not have been emitted")
+}
+
+func TestResolveTrustPriorsWithGroundTruth_KeepsResolveTrustPriorsBehaviourOnNil(t *testing.T) {
+	// The seam Phase 5 needs is additive: passing nil must be byte-identical to
+	// the no-argument entry point every production caller already uses.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AppData", t.TempDir())
+	assert.Equal(t, ResolveTrustPriors(), ResolveTrustPriorsWithGroundTruth(nil))
+}

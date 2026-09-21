@@ -2,7 +2,6 @@ package scorecard
 
 import (
 	"io"
-	"strings"
 	"time"
 
 	reclib "github.com/samestrin/atcr/reconcile"
@@ -177,7 +176,43 @@ type Confirmation struct {
 // while an un-windowed lookup would scale that 180-day isolation credit by an
 // all-time confirmation ratio — two populations multiplied as though they were
 // commensurate. since <= 0 means "no window", matching trustPriorsSince.
+//
+// BE PRECISE ABOUT WHAT THE WINDOW CAN AND CANNOT ALIGN, because passing it does
+// not make the two populations the same one. The scorecard side windows on the
+// REVIEW RUN's time (ReadSince selects month files by run id). The debt side's
+// timestamps are STATUS-CHANGE times, so a finding raised two hundred days ago
+// and resolved yesterday sits outside the scorecard window and inside the debt
+// one. The argument narrows the mismatch; it does not close it, and an adapter
+// must document which of the two its own filter uses. Closing it properly needs
+// the lookup keyed on a run-id set rather than a duration — worth doing if the
+// wire-in ever ships.
 type GroundTruthLookup func(since time.Duration, now time.Time) (map[string]Confirmation, error)
+
+// keptForTrust runs the trust filter chain and returns the records that survived
+// it. It is THE definition of "a run that counts", and it is a function rather
+// than an expression because two surfaces need exactly the same answer:
+// trustPriorsSince and pairTallies. Spelled out separately in both files (they
+// were), a sixth link added to one silently does not reach the other, and the
+// pair surface would re-admit every archer truncation, every vera timeout and
+// every out-of-remit case the gates just removed — the precise failure
+// pairTallies' own doc comment says the shared chain exists to prevent.
+//
+// THE ORDER IS LOAD-BEARING AT BOTH ENDS and each link's own doc comment argues
+// its position:
+//   - strictRuns first, the cheapest narrowing.
+//   - eligibleOutcomeRuns before either era link (D5): outcome eligibility is a
+//     property of the raw run and must drop a record before it can take part in
+//     an era decision.
+//   - the opportunity UNION is taken from the RAW records, so no upstream
+//     per-record filter can shrink a case's evidence (C13), while
+//     opportunitySetRuns runs LAST so the era decision is never made from an
+//     opportunity-shrunk record set.
+//
+// The input slice is never mutated.
+func keptForTrust(records []Record) []Record {
+	unions := opportunityUnions(records)
+	return opportunitySetRuns(unresolvedEraRuns(mergeRoutedEras(eligibleOutcomeRuns(strictRuns(records)))), unions)
+}
 
 // weightedTally is one persona's weighted-credit evidence, summed across every
 // model and run that carries the current credit era.
@@ -226,10 +261,17 @@ func weightedCreditByPersona(records []Record) map[string]weightedTally {
 		// finding, never negative — so a record outside that bound was not
 		// written by this emitter and is dropped rather than clamped, matching
 		// how the era fields treat a value they did not write.
-		if r.WeightedCredit < 0 || r.WeightedCredit > float64(r.FindingsRaised)*isolatedFindingWeight {
+		// The bound is against the PRE-MERGE denominator. mergeRoutedEras has
+		// already folded FindingsDocShielded into FindingsRaised by the time
+		// these records arrive, and credit is emitted from in.Findings only —
+		// never from the shielded set — so comparing against the merged number
+		// leaves a gap exactly the width of the shielded count, and the gap
+		// fails OPEN, toward a higher prior.
+		bound := float64(r.FindingsRaised-r.FindingsDocShielded) * isolatedFindingWeight
+		if r.WeightedCredit < 0 || r.WeightedCredit > bound {
 			continue
 		}
-		key := strings.ToLower(r.Reviewer)
+		key := normalizeReviewerName(r.Reviewer)
 		t := out[key]
 		t.credit += r.WeightedCredit
 		t.raised += r.FindingsRaised
@@ -420,8 +462,7 @@ func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Tim
 	// The union is taken from the RAW records so no upstream per-record filter can
 	// shrink a case's evidence; the filter runs LAST so the era decision is never
 	// made from an opportunity-shrunk record set.
-	unions := opportunityUnions(records)
-	kept := opportunitySetRuns(unresolvedEraRuns(mergeRoutedEras(eligibleOutcomeRuns(strictRuns(records)))), unions)
+	kept := keptForTrust(records)
 	// The weighted fold reads the SAME filtered slice Aggregate does, not the raw
 	// records: a run the eligibility or opportunity gate just excluded must not
 	// re-enter through the weighted numerator. It is a second pass rather than a
@@ -429,7 +470,7 @@ func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Tim
 	// D8's whole point is that no non-trust consumer changes.
 	weights := weightedCreditByPersona(kept)
 	for _, row := range Aggregate(kept) {
-		key := strings.ToLower(row.Reviewer)
+		key := normalizeReviewerName(row.Reviewer)
 		t := byReviewer[key]
 		if t == nil {
 			t = &tally{}
@@ -509,7 +550,19 @@ func weightedRate(corroborated, raised int, w weightedTally, c Confirmation, min
 	if w.raised <= 0 {
 		return binary
 	}
-	if minRuns > 0 && w.runs < minRuns {
+	// The floor is UNCONDITIONAL, not `minRuns > 0 && ...`, and that is the one
+	// place this differs from the caller's own floor. cli/personas.go calls
+	// TrustPriors(dir, 0) — no floor — precisely to render every persona it has
+	// any history for, and on that path a single era-marked run would otherwise
+	// publish a full weighted rate. DefaultTrustMinRuns is the floor even when
+	// the caller asked for none, because falling back costs the caller nothing:
+	// it gets the binary rate, which is exactly what it received before this
+	// phase existed.
+	floor := minRuns
+	if floor < DefaultTrustMinRuns {
+		floor = DefaultTrustMinRuns
+	}
+	if w.runs < floor {
 		return binary
 	}
 	factor, ok := confirmationFactor(c)
@@ -955,7 +1008,7 @@ func unresolvedEraRuns(records []Record) []Record {
 			// future era as the current one.
 			continue
 		}
-		k := strings.ToLower(r.Reviewer)
+		k := normalizeReviewerName(r.Reviewer)
 		if d := raisedDenominatorOf(r); d > newest[k] {
 			newest[k] = d
 		}
@@ -975,7 +1028,7 @@ func unresolvedEraRuns(records []Record) []Record {
 		// out an existing store. What is dropped is only the older half of a
 		// reviewer that spans a change — the mix, which is the one combination
 		// measuring neither.
-		if raisedDenominatorOf(r) == newest[strings.ToLower(r.Reviewer)] {
+		if raisedDenominatorOf(r) == newest[normalizeReviewerName(r.Reviewer)] {
 			kept = append(kept, r)
 		}
 	}
@@ -1004,6 +1057,27 @@ func unresolvedEraRuns(records []Record) []Record {
 // internal/reconcile (EmitForReconcile takes a reconcile.Result), so the
 // reverse import would cycle.
 func ResolveTrustPriors() map[string]float64 {
+	return ResolveTrustPriorsWithGroundTruth(nil)
+}
+
+// ResolveTrustPriorsWithGroundTruth is ResolveTrustPriors with C18's read-time
+// confirmation half supplied by the caller. It keeps ResolveTrustPriors' window
+// (defaultTrustWindow) and floor (DefaultTrustMinRuns) and passes that same
+// window to the lookup.
+//
+// IT EXISTS SO PHASE 5 IS A CALL-SITE SWAP, not a signature break across four
+// packages. Every production consumer of the priors map calls the no-argument
+// ResolveTrustPriors — cli/review.go, cli/resume.go, cli/reconcile.go and
+// internal/mcp/handlers.go — and the only seam shipped before this one hung off
+// TrustPriors, which is all-history and used solely by cli/personas.go. Without
+// this function the wire-in could not be built on the exported API at all.
+//
+// THE SAME DO-NOT-WIRE WARNING APPLIES HERE and is the more urgent of the two,
+// because this is the function the production path calls: the weighted rate is
+// on a different scale from the thresholds reconcile compares it against. Read
+// TrustPriorsWithGroundTruth's doc comment and TD-039 before passing a non-nil
+// lookup from any production call site.
+func ResolveTrustPriorsWithGroundTruth(gt GroundTruthLookup) map[string]float64 {
 	dir, err := DefaultDir()
 	if err != nil {
 		return nil
@@ -1011,12 +1085,11 @@ func ResolveTrustPriors() map[string]float64 {
 	// The read is documented best-effort and never returns a non-nil error, so
 	// the error is discarded (matching cli/personas.go's convention).
 	//
-	// No ground-truth lookup is passed, so this returns the binary corroboration
-	// rate exactly as it did before Phase 4b. internal/scorecard cannot import
-	// internal/localdebt, so the adapter has to be supplied by a caller that can
-	// see both packages — cli/ and internal/mcp/ both can. Wiring them is Phase
-	// 5's job (the explainability + wire-in phase); until then the weighted rate
-	// is reachable only through TrustPriorsWithGroundTruth.
-	priors, _ := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, time.Now(), nil)
+	// gt is threaded straight through. ResolveTrustPriors passes nil, so its
+	// behaviour is the binary corroboration rate exactly as it was before Phase
+	// 4b. internal/scorecard cannot import internal/localdebt, so the adapter has
+	// to come from a caller that sees both packages — cli/ and internal/mcp/ both
+	// do. Building that adapter is Phase 5's job, gated on TD-039.
+	priors, _ := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, time.Now(), gt)
 	return priors
 }

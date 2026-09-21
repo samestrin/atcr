@@ -201,8 +201,8 @@ const pairKeySep = "|"
 //     source-derived (a registry entry, a pool summary, a findings cell), so
 //     this is not provably unreachable and is rejected rather than assumed away.
 func PairKey(a, b string) (string, bool) {
-	x := strings.ToLower(strings.TrimSpace(a))
-	y := strings.ToLower(strings.TrimSpace(b))
+	x := normalizeReviewerName(a)
+	y := normalizeReviewerName(b)
 	if x == "" || y == "" || x == y {
 		return "", false
 	}
@@ -240,8 +240,25 @@ func PairKey(a, b string) (string, bool) {
 // this re-folds on every call exactly as trustPriorsSince does. Persisting a
 // precomputed tally beside the records would be the second durable store the
 // epic puts out of scope.
+// The error return is PERMANENTLY NIL and is kept deliberately: every read
+// failure here is documented as fail-neutral, and the shape matches TrustPriors'
+// so a caller can treat the two alike. Do not read a nil error as "the store was
+// readable".
 func PairDisagreements(dir string) (map[string]PairTally, error) {
-	records, err := ReadSince(dir, 0, time.Now(), ReadOpts{Writer: io.Discard})
+	return pairDisagreementsSince(dir, 0, time.Now())
+}
+
+// pairDisagreementsSince is PairDisagreements' body with the read bounded to the
+// month files overlapping [now-since, now], mirroring trustPriorsSince.
+//
+// It exists because ResolveTrustPriors windows its scorecard read to
+// defaultTrustWindow while PairDisagreements reads all history: an
+// explainability surface rendering a weighted rate beside a pair verdict would
+// otherwise show two numbers computed over different populations, which is the
+// same fault GroundTruthLookup's window argument refuses for the ground-truth
+// half. since <= 0 means "no window".
+func pairDisagreementsSince(dir string, since time.Duration, now time.Time) (map[string]PairTally, error) {
+	records, err := ReadSince(dir, since, now, ReadOpts{Writer: io.Discard})
 	if err != nil {
 		return map[string]PairTally{}, nil
 	}
@@ -294,8 +311,10 @@ type pairEvidence struct {
 //
 // The input slice is never mutated.
 func pairTallies(records []Record) map[string]PairTally {
-	unions := opportunityUnions(records)
-	kept := opportunitySetRuns(unresolvedEraRuns(mergeRoutedEras(eligibleOutcomeRuns(strictRuns(records)))), unions)
+	// keptForTrust, not a second copy of the chain: spelled out separately here
+	// (it was), a sixth link added to trustPriorsSince would silently not reach
+	// this surface.
+	kept := keptForTrust(records)
 
 	// runsByPersona answers "was this lens in play on this run", which is what
 	// Cases counts. evidence answers "what did this pair say about each other",
@@ -320,7 +339,7 @@ func pairTallies(records []Record) map[string]PairTally {
 		if r.PairEra < 1 || r.PairEra > PairEraCurrent {
 			continue
 		}
-		name := strings.ToLower(strings.TrimSpace(r.Reviewer))
+		name := normalizeReviewerName(r.Reviewer)
 		if name == "" {
 			continue
 		}
@@ -372,7 +391,19 @@ func pairTallies(records []Record) map[string]PairTally {
 				t.Cases++
 			}
 		}
-		t.Sufficient = t.Cases >= minPairCases
+		// ONE FLOOR, TWO AXES (D6 forbids a SECOND constant, not a second
+		// application of the one constant). Cases alone is the wrong question
+		// for a drop verdict: a pair co-eligible on a hundred runs that
+		// connected on exactly ONE finding scores Cases=100, Agreed=1,
+		// Disagreed=0, rate 0.00 — and is reported as redundant. That is the
+		// MAXIMALLY INDEPENDENT pair, recommended for deletion, which is the
+		// specialist population AC 05-03 exists to protect.
+		//
+		// So the verdict needs both: enough opportunity to have observed the
+		// pair, and enough shared findings for the rate to mean anything. Both
+		// are floored at minPairCases, whose doc comment argues a sample size
+		// rather than a unit.
+		t.Sufficient = t.Cases >= minPairCases && t.Agreed+t.Disagreed >= minPairCases
 		// Insufficient data is never a drop candidate AND never a confident
 		// non-candidate — the caller reads Sufficient to tell those apart.
 		t.DropCandidate = t.Sufficient && t.DisagreementRate() <= dropCandidateMaxRate
@@ -429,7 +460,7 @@ func pairTallies(records []Record) map[string]PairTally {
 // byte-identically; unsorted, a diff of the store reports Go's map iteration
 // order as churn.
 func reviewerPairSignals(name string, findings []Finding) []PairSignal {
-	self := strings.ToLower(strings.TrimSpace(name))
+	self := normalizeReviewerName(name)
 	if self == "" {
 		return nil
 	}
@@ -445,10 +476,22 @@ func reviewerPairSignals(name string, findings []Finding) []PairSignal {
 		if !peers[self] {
 			continue
 		}
-		split := f.Disagreement != ""
-		if split && len(peers) != 2 {
+		// THE CLUSTER-SIZE TEST IS SYMMETRIC, and it has to be. An earlier
+		// version discarded a 3+-reviewer SPLIT (unattributable) while still
+		// counting a 3+-reviewer AGREEMENT, which biased every pair's rate
+		// toward zero — the drop-candidate direction. A pair that agreed ten
+		// times and split ten times, all inside three-reviewer clusters,
+		// reported a rate of 0.00 and was flagged as redundant: the exact
+		// opposite of "evidence is discarded, so the flag goes un-raised".
+		//
+		// Both halves of the rate must come from the same population. A cluster
+		// that is not exactly a pair contributes NOTHING — not a split, because
+		// nobody can say between whom, and not an agreement either, because the
+		// same finding might have been a split this fold cannot attribute.
+		if len(peers) != 2 {
 			continue // unattributable; see the note above
 		}
+		split := f.Disagreement != ""
 		for peer := range peers {
 			if _, ok := PairKey(self, peer); !ok {
 				continue // blank, self, or delimiter-bearing
@@ -487,15 +530,16 @@ func reviewerPairSignals(name string, findings []Finding) []PairSignal {
 // distinctPeers normalizes one finding's reviewer cell into the identity set the
 // pair surface keys on: trimmed, lower-cased, deduped, blanks dropped.
 //
-// It is deliberately NOT distinctCount's fallback-collapsing notion of
-// distinctness. That one asks "how many independent voices" and merges two
-// personas served by one fallback model; this one asks "which lenses were on
-// this finding", and merging two named lenses into one would delete the pair
-// they form. The two answer different questions over the same slice.
+// It differs from distinctCount in exactly ONE way — it folds CASE as well as
+// whitespace — and both now route through normalizeReviewerName so that
+// difference cannot drift apart again. An earlier version of this comment
+// claimed distinctCount collapses fallback models; it does not, and the false
+// justification hid a real divergence: ["Bruce","bruce"] counted as two distinct
+// corroborators on the credit path while this one saw a single lens.
 func distinctPeers(reviewers []string) map[string]bool {
 	out := make(map[string]bool, len(reviewers))
 	for _, r := range reviewers {
-		n := strings.ToLower(strings.TrimSpace(r))
+		n := normalizeReviewerName(r)
 		if n == "" {
 			continue
 		}

@@ -419,7 +419,14 @@ type Finding struct {
 	// was. This struct is never persisted, so both are free: no schema change,
 	// no store migration, no era marker (C16).
 	//
-	// THE PAIR SIGNAL NEEDS BOTH, and Disagreement is the load-bearing one.
+	// DISAGREEMENT IS THE LOAD-BEARING ONE, and it is the only one read today.
+	// reviewerPairSignals keys entirely off Disagreement; nothing in this
+	// package reads Severity. It is threaded anyway, and kept, because the two
+	// arrive from the same reconcile.Finding at the same construction sites and
+	// splitting them would make a future consumer re-open the seam — but a
+	// reader should not infer from its presence that a per-reviewer severity is
+	// available. An earlier version of this comment claimed the pair signal
+	// needs both; it does not.
 	// reconcile.Merge sets Severity to the cluster MAX, so a merged finding's
 	// severity cannot by itself reveal that its members disagreed; Merge
 	// records that fact separately, in Disagreement ("<lo> vs <hi>"), and
@@ -1061,6 +1068,24 @@ func contains(xs []string, s string) bool {
 
 // distinctCount counts distinct non-empty reviewer names in a finding's reviewer
 // list (the list is deduped upstream, but the emitter does not rely on that).
+// normalizeReviewerName is the ONE identity rule for a reviewer name read out of
+// a findings cell: trimmed and lower-cased, empty when nothing is left.
+//
+// It exists because two helpers over the same slice had drifted apart.
+// distinctCount trimmed but did not fold case, while distinctPeers did both, so
+// Reviewers: ["Bruce","bruce"] counted as TWO distinct corroborators on the
+// credit path — a lens corroborating itself, and a persisted one — while the
+// pair path correctly saw one lens and rejected the self-pair. Every consumer
+// past that point looks the name up case-insensitively (trustPriorsSince lowers
+// its key, reconcile/consensus.go lowers its lookup), so folding case here is
+// what makes the counting agree with the reading.
+//
+// Emit is exported, so a caller's reviewer list is untrusted input and this
+// cannot be pushed up to the producer.
+func normalizeReviewerName(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
+}
+
 func distinctCount(xs []string) int {
 	seen := make(map[string]bool, len(xs))
 	for _, x := range xs {
@@ -1068,7 +1093,7 @@ func distinctCount(xs []string) int {
 		// everywhere else (EmitForReconcile's trimmedReviewers, the pool loop,
 		// NewCloudSyncRecord), so counting one here would let a reviewer that
 		// leaves no record of its own act as a distinct corroborator.
-		if name := strings.TrimSpace(x); name != "" {
+		if name := normalizeReviewerName(x); name != "" {
 			// Key on the TRIMMED name. Filtering on the trimmed value while
 			// keying on the raw one would let " bruce" and "bruce" count as two
 			// distinct corroborators of the same finding — a reviewer

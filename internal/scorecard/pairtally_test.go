@@ -188,11 +188,19 @@ func TestEmit_PairSignalsAreDeterministicallyOrdered(t *testing.T) {
 			"greta": {Model: "m3", Outcome: outcomeFindings},
 			"sasha": {Model: "m4", Outcome: outcomeFindings},
 		},
-		Findings: []Finding{{
-			File: "a.go", Line: 1, Problem: "p",
-			Reviewers: []string{"sasha", "greta", "dax", "bruce"},
-			Category:  "correctness", Severity: "HIGH",
-		}},
+		// THREE SEPARATE TWO-REVIEWER findings, not one four-reviewer cluster.
+		// A cluster that is not exactly a pair now contributes nothing at all —
+		// symmetrically, so the rate's two halves come from one population — so
+		// the old single-cluster fixture would produce no signals to order.
+		// What this test pins is the ORDERING, which is unchanged.
+		Findings: []Finding{
+			{File: "a.go", Line: 1, Problem: "p", Reviewers: []string{"sasha", "bruce"},
+				Category: "correctness", Severity: "HIGH"},
+			{File: "b.go", Line: 2, Problem: "q", Reviewers: []string{"greta", "bruce"},
+				Category: "correctness", Severity: "HIGH"},
+			{File: "c.go", Line: 3, Problem: "r", Reviewers: []string{"dax", "bruce"},
+				Category: "correctness", Severity: "HIGH"},
+		},
 	}
 	require.NoError(t, Emit(in, EmitOpts{Dir: dir}))
 
@@ -811,7 +819,11 @@ func TestPairTallies_CasesCountCoEligibilityNotSharedFindings(t *testing.T) {
 	got := tallies["pace|penny"]
 	assert.Equal(t, minPairCases, got.Cases, "Cases counts co-eligible runs, not shared findings")
 	assert.Equal(t, 5, got.Agreed)
-	assert.True(t, got.Sufficient)
+	// Cases clears the floor and the EVIDENCE does not, which is the whole point
+	// of flooring both axes: five shared findings across twenty co-eligible runs
+	// is ample opportunity and a sample far too thin to call a pair redundant on.
+	assert.False(t, got.Sufficient,
+		"opportunity alone must not make a pair sufficient — the rate needs evidence too")
 }
 
 func TestPairTallies_ExcludesAboveCurrentPairEras(t *testing.T) {
@@ -888,4 +900,92 @@ func pairTalliesFromDir(t *testing.T, dir string) map[string]PairTally {
 	got, err := PairDisagreements(dir)
 	require.NoError(t, err)
 	return got
+}
+
+func TestReviewerPairSignals_ClusterSizeDiscardIsSymmetric(t *testing.T) {
+	// THE BIAS THIS PINS INVERTED THE VERDICT. An earlier version dropped a
+	// 3+-reviewer SPLIT as unattributable while still counting a 3+-reviewer
+	// AGREEMENT, so a pair that agreed ten times and split ten times — all
+	// inside three-reviewer clusters — reported a disagreement rate of 0.00 and
+	// was flagged as a drop candidate. The published claim is the opposite:
+	// discarded evidence makes the flag go un-raised, never wrongly raised.
+	three := func(file, disagreement string) Finding {
+		return Finding{
+			File: file, Line: 1, Problem: "p",
+			Reviewers:    []string{"bruce", "greta", "otto"},
+			Category:     "correctness",
+			Severity:     "HIGH",
+			Disagreement: disagreement,
+		}
+	}
+	findings := []Finding{three("a.go", ""), three("b.go", "LOW vs HIGH")}
+
+	assert.Nil(t, reviewerPairSignals("bruce", findings),
+		"a cluster that is not exactly a pair must contribute neither an agreement nor a split")
+
+	// The two-reviewer complement still counts both, so the fix narrows the
+	// input rather than disabling the surface.
+	pair := []Finding{
+		{File: "c.go", Line: 1, Problem: "p", Reviewers: []string{"bruce", "greta"}},
+		{File: "d.go", Line: 2, Problem: "q", Reviewers: []string{"bruce", "greta"}, Disagreement: "LOW vs HIGH"},
+	}
+	assert.Equal(t, []PairSignal{{Peer: "greta", Agreed: 1, Disagreed: 1}},
+		reviewerPairSignals("bruce", pair))
+}
+
+func TestPairTallies_ThinEvidenceIsNeverADropCandidate(t *testing.T) {
+	// The maximally INDEPENDENT pair used to be the one most likely to be
+	// deleted: co-eligible on many runs, connected on almost nothing, so its
+	// rate was 0.00 over a sample of one — and Sufficient keyed only on the
+	// opportunity axis, so the verdict shipped as confident.
+	dir := t.TempDir()
+	for i := 0; i < minPairCases*2; i++ {
+		runID := pairRunID(fmt.Sprintf("indep-%03d", i))
+		var aSig, bSig []PairSignal
+		if i == 0 { // exactly ONE shared finding across the whole history
+			aSig = []PairSignal{{Peer: "sasha", Agreed: 1}}
+			bSig = []PairSignal{{Peer: "dax", Agreed: 1}}
+		}
+		require.NoError(t, Append(dir, pairReviewer(runID, "dax", "m1", 1, 1, aSig...)))
+		require.NoError(t, Append(dir, pairReviewer(runID, "sasha", "m1", 1, 1, bSig...)))
+	}
+
+	tallies, err := PairDisagreements(dir)
+	require.NoError(t, err)
+	got := tallies["dax|sasha"]
+	require.GreaterOrEqual(t, got.Cases, minPairCases, "the fixture must clear the opportunity floor")
+	assert.Equal(t, 1, got.Agreed+got.Disagreed)
+	assert.False(t, got.Sufficient, "one shared finding is not a sample")
+	assert.False(t, got.DropCandidate,
+		"the most independent pair in the store must never be reported as redundant")
+}
+
+func TestPairDisagreementsSince_BoundsTheReadTheSameWayTrustPriorsDoes(t *testing.T) {
+	// An explainability surface rendering a weighted rate beside a pair verdict
+	// must compute both over one population.
+	dir := t.TempDir()
+	coEligible(t, dir, minPairCases, "bruce", "dax", 1, 0)
+
+	all, err := pairDisagreementsSince(dir, 0, time.Now())
+	require.NoError(t, err)
+	assert.Contains(t, all, "bruce|dax")
+
+	// A window that ends before the fixture was written selects no month file.
+	none, err := pairDisagreementsSince(dir, time.Hour, time.Now().AddDate(-2, 0, 0))
+	require.NoError(t, err)
+	assert.Empty(t, none, "the window must bound the read, not be ignored")
+}
+
+func TestNormalizeReviewerName_IsTheOneIdentityRuleBothSurfacesUse(t *testing.T) {
+	// The two helpers had drifted: distinctCount trimmed without folding case,
+	// distinctPeers did both. ["Bruce","bruce"] therefore counted as TWO
+	// distinct corroborators on the persisted credit path — a lens corroborating
+	// itself — while the pair path saw one lens and rejected the self-pair.
+	assert.Equal(t, 1, distinctCount([]string{"Bruce", "bruce", " BRUCE "}),
+		"one lens named three ways is one corroborator")
+	assert.Equal(t, map[string]bool{"bruce": true}, distinctPeers([]string{"Bruce", "bruce", " BRUCE "}))
+
+	_, _, credit := reviewerCounts("Bruce", []Finding{{Reviewers: []string{"Bruce", "bruce"}}})
+	assert.InDelta(t, 1.0, credit, 1e-9,
+		"a lens cannot corroborate itself into a halved isolation credit")
 }
