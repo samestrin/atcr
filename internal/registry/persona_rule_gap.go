@@ -33,12 +33,28 @@ import (
 // The swallow it replaces was not harmless. This is doctor's only persona
 // resolution, so a typo'd `persona:` ref, an oversized or template-bearing
 // community prompt rejected by validateCommunityPrompt, and an unreadable file all
-// left doctor reporting a clean roster while `atcr review` hard-failed on the same
-// config. This epic's own remediation made that reachable: operators are told to
-// paste a ~1.1 KB rule bullet into installed persona files, a Registry-tier persona
-// is re-validated against MaxPersonaPromptLen on every resolve, and real headroom
-// is thin — so growing a persona past the cap makes the agent VANISH from the
-// warning, which reads as "fix applied".
+// left doctor reporting a clean roster. This epic's own remediation made that
+// reachable: operators are told to paste a ~1.1 KB rule bullet into installed
+// persona files, a Registry-tier persona is re-validated against
+// MaxPersonaPromptLen on every resolve, and real headroom is thin — so growing a
+// persona past the cap makes the agent VANISH from the warning, which reads as
+// "fix applied".
+//
+// WHAT THE UNRESOLVED LIST MEANS DEPENDS ON THE AGENT'S ROLE, and this is the part
+// to read before treating an entry as an outage. For an agent listed directly in
+// project.agents or project.serial_agents, an unresolved persona IS a review-time
+// hard failure: those two rosters are the only ones review iterates
+// (internal/fanout/review.go:2758, 2763), and each resolves through the same
+// personaFor call, which returns the error rather than degrading.
+//
+// For a FALLBACK it is not. A fallback never resolves a persona of its own —
+// buildChain seeds it with `fbPrompt := primary.Prompt` (review.go:3394), inheriting
+// the primary's already-rendered text verbatim — so its `persona:` ref is dead at
+// review time and a broken one costs nothing there. On this repo's own registry
+// several fallbacks (the -backup agents, dax-local) sit in this list today while
+// review runs fine. That is still worth reporting: the ref is live for `doctor`, for
+// any future direct promotion of that agent onto a roster, and as a plain
+// configuration error. It just is not the outage the roster case is.
 func PredicateRuleGaps(agentToPersona map[string]string, dirs PersonaDirs) (gaps []string, unresolved []string) {
 	for agent, personaRef := range agentToPersona {
 		p, err := ResolvePersona(agent, personaRef, nil, dirs)

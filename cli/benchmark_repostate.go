@@ -127,14 +127,20 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		return nil, "", err
 	}
 
-	// Every case's diff is parsed BEFORE the first paid completer call. The parse
-	// used to run inside the per-case loop, so case N's malformed hunk header
-	// surfaced only after cases 1..N-1 had driven the whole reviewer panel — the
-	// exact fail-late shape LoadRepoState's eager-load contract names one level up
-	// ("a defective case fails at load, where the remedy is free, instead of
-	// part-way through a paid panel run"). Folding it into LoadRepoState itself
-	// would also put it behind `benchmark verify`; that is internal/benchmark's
-	// file, so this pre-flight is the in-runner guarantee.
+	// This loop builds the LINE MAPS the per-case scoring below needs. It is not the
+	// parse gate, and reading it as one is the mistake to avoid: LoadRepoState already
+	// parsed every case's diff at load (internal/benchmark/repostate.go:268), so a
+	// malformed hunk header failed above, before this function reached its first paid
+	// completer call. That guarantee lives in the loader deliberately — it is where
+	// `benchmark verify` and `benchmark export --suite-path` inherit it too, which a
+	// runner-only pre-flight could never give them.
+	//
+	// So this is a SECOND parse of the same bytes, and it is redundant only in the
+	// narrow sense that its error arm is unreachable in practice. The loader does not
+	// cache the map (its doc says why: no consumer outside this runner), so the work is
+	// the price of not widening RepoStateCase's public surface for one caller. The err
+	// check stays regardless — an unreachable arm that returns is cheaper than one that
+	// panics if the two parses ever diverge.
 	lineMaps := make([]benchmark.DiffLineMap, len(m.Cases))
 	for i := range m.Cases {
 		lm, err := loadCaseDiffLineMap(m.Cases[i])

@@ -85,11 +85,21 @@ const (
 	// the whole measurement on the repo-state-v1 tier, where the gate is live and an
 	// out-of-diff finding survives only when pre-fetching retrieved the cited span.
 	//
-	// CROSS-VERSION NOTE: this value is new, so ValidOutcome in an OLDER binary
-	// rejects a checkpoint carrying it. That is the fail-closed direction the
-	// vocabulary is designed for — a stale reader refuses rather than silently
-	// re-keying the tally — but it does mean a checkpoint written here cannot be
-	// resumed by a pre-35.16.10 build.
+	// CROSS-VERSION NOTE: this value is new, so an OLDER binary rejects a run-result
+	// carrying it rather than re-keying the tally. That is the fail-closed direction
+	// the vocabulary is designed for, and the boundary it fires at is `benchmark
+	// export`, which validates every tally key through this same ValidOutcome
+	// (cli/benchmark_coverage.go). A run-result written by this version cannot be
+	// exported by an older one.
+	//
+	// It is NOT the checkpoint-resume boundary, despite that being the obvious guess:
+	// a checkpoint carrying this value cannot exist. checkRepoStateFlags refuses
+	// --checkpoint for a repo-state suite, so checkpoints are written only on
+	// standard-v1 — and the arm producing this value is unreachable there, since that
+	// diff path supplies no Range and the grounding gate fails open. OutcomeFiltered
+	// below is the one that DOES cross resume, and the two notes differ for that
+	// reason rather than by oversight. Published twin: docs/benchmark.md, "ungrounded
+	// and filtered are newer than the other values".
 	OutcomeUngrounded = "ungrounded"
 
 	// OutcomeFiltered marks a reviewer that RAISED findings and had every one of them

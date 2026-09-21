@@ -3183,14 +3183,24 @@ func inheritedPayloadFits(primary Agent, budget int64) bool {
 		total += int64(len(ref.Body))
 	}
 	if measured == 0 {
-		// UNREACHABLE, and left in deliberately. Reaching it would need EVERY
-		// section to be unattributable, but a combined (diff --cc) section still
-		// carries +++/--- lines that diffSectionPath resolves, and a header-only
-		// section resolves through headPathFromGitHeader
-		// (internal/payload/ingest.go:344-357) — so a non-empty CodeContext always
-		// has at least one measurable path. That is why this arm is uncovered: it
-		// cannot be reached, not because a test was skipped. Do NOT close the gap
-		// with a test that fakes reachability — the arm is defensive only.
+		// Unreachable FROM THE GIT-RANGE RENDER PATH, which is why it is uncovered
+		// today. Reaching it needs EVERY section to be unattributable, and a payload
+		// the range builder rendered cannot manage that: a combined (diff --cc)
+		// section still carries +++/--- lines diffSectionPath resolves, and a
+		// header-only section resolves through headPathFromGitHeader
+		// (internal/payload/ingest.go:344-357).
+		//
+		// That guarantee is a property of the PRODUCER, not of the type. CodeContext
+		// is built by codeContextFor (:2928) from whatever payload text the slot was
+		// handed, and on the ingestion path that text is supplied rather than
+		// rendered. renderedSectionPath returns "" for either diffSectionPath error —
+		// an unresolvable header, or the traversal-safety rejection — and
+		// internal/payload/rendered.go treats that as "a body with no path rather
+		// than a dropped body", so a supplied payload whose only marked section has a
+		// hostile or headerless section yields a non-empty CodeContext measuring
+		// nothing. A test driving THAT path is legitimate and welcome; what would not
+		// be is one hand-building a CodeContext the renderer cannot produce, since
+		// that pins the arm without exercising anything real.
 		//
 		// Nothing measurable: "may not fit", never "fits" — the same bias the
 		// empty-CodeContext arm above takes, and for the same reason.
