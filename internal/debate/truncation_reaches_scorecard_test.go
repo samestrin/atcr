@@ -211,8 +211,9 @@ func overturnedRulingOnA() map[FindingKey]ruleApply {
 //
 // Clearing tool_budget_bytes takes the finding out of the score's truncated
 // exclusion and puts it back into survived_skeptic_rate. The verdict it is then
-// counted under comes from the SAME file — and runDebate deliberately never
-// rewrites it (debate.go's atomic-group scope note). So on an OVERTURN the sync
+// counted under comes from the SAME file — which runDebate rewrites ONLY on the
+// records this sync touches (debate.go's atomic-group scope note), leaving every
+// other record at its as-of-verify verdict. So on an OVERTURN the sync
 // used to restore a finding to the ratio under the pre-debate verdict: the judge
 // refuted it, and the score credited the reviewer for a confirm.
 //

@@ -52,19 +52,22 @@ type Result struct {
 // three-turn debate per item through the Epic 2.0 tool loop, and integrates the
 // judge rulings: it re-emits findings.json with the settled verdicts/severities,
 // writes reconciled/debate.json, records "debate" in the manifest stages, and
-// writes per-item transcripts under debate/. It deliberately does NOT re-emit the
-// verify-stage snapshots summary.json (verdictCounts) or verification.json's
-// VERDICTS: after debate, findings.json together with debate.json is the
-// authoritative record of settled verdicts/severities, while those snapshots
-// remain as-of-verify audit artifacts that may legitimately lag findings.json
-// (see the artifacts group below).
+// writes per-item transcripts under debate/. It deliberately does NOT re-emit
+// summary.json (verdictCounts), and it re-emits verification.json's verdicts on
+// one narrow class of record only: after debate, findings.json together with
+// debate.json is the authoritative record of settled verdicts/severities, while
+// those snapshots remain as-of-verify audit artifacts that may legitimately lag
+// findings.json (see the artifacts group below).
 //
-// The one exception is a fact, not a verdict: when a ruling clears a finding's
-// truncation caveat it also clears the matching tool_budget_bytes entry in
-// verification.json, because that entry describes how the SAME recorded verdict
-// was reached and is the copy internal/scorecard reads. See
-// syncVerificationTruncation for why the correction has to land there rather
-// than on findings.json.
+// The one exception is scoped to the records whose tool_budget_bytes caveat a
+// ruling cleared. On those, and on nothing else, the stage clears the matching
+// entry in verification.json and rewrites the single verdict field that entry
+// describes (with debateJudge/debateReasoning naming who produced it), because
+// the caveat and the verdict describe the SAME recorded outcome and that file is
+// the copy internal/scorecard reads. Every other record's verdict is left at its
+// as-of-verify value. See syncVerificationTruncation for why the correction has
+// to land there rather than on findings.json, and the atomic-group scope note
+// below for the full field list.
 //
 // It is the single orchestrator shared by `atcr debate`, `atcr review
 // --verify --debate`, and the atcr_debate MCP tool. repoRoot is the git repo the
