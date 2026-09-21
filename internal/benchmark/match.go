@@ -139,8 +139,7 @@ func MatchFindings(expected []ExpectedFinding, reported []ReportedFinding, lm Di
 // candidateLess is the total order MatchFindings sorts its candidates by. It is a
 // named function rather than an inline closure so the key sequence is reachable from
 // an in-package test: the last key is invisible through MatchFindings' return value
-// (see below), so pinning it at the call site is the only place it can be pinned at
-// all.
+// (see below), so the comparator itself is the only level at which it can be pinned.
 func candidateLess(a, b candidate) bool {
 	if a.midDistance != b.midDistance {
 		return a.midDistance < b.midDistance
