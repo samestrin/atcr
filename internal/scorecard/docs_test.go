@@ -415,3 +415,48 @@ func TestDocs_ScorecardMdDocumentsTheRoutedCount(t *testing.T) {
 		}
 	}
 }
+
+// TestDocs_ScorecardMdDocumentsTheUnscopeableCarveOut pins TD-032's fifth
+// pass-through class against the code that implements it.
+//
+// It is a separate test from the four-class pin above because the claim is a
+// different KIND: the other four are "not enough information to judge", while
+// this one is "enough information to judge, and judging would let a
+// phantom-raiser escape". A reader who takes it for a fifth ignorance case has
+// the rationale backwards, so the doc has to carry the reason and not only the
+// behaviour.
+func TestDocs_ScorecardMdDocumentsTheUnscopeableCarveOut(t *testing.T) {
+	flat := strings.Join(strings.Fields(string(readDoc(t, "scorecard.md"))), " ")
+
+	assert.Contains(t, flat, "raised findings but contributed no discriminating category of its own",
+		"the doc must state the carve-out's condition, or a reader cannot reproduce the denominator")
+	assert.Contains(t, flat, "self-exculpating",
+		"the doc must carry WHY the record is kept; the behaviour alone reads as an ignorance case")
+
+	// The boundary is the half most easily lost in a later edit, and losing it
+	// silently breaks epic acceptance criterion 1 rather than failing a build.
+	assert.Contains(t, flat, "correctly silent on an out-of-remit case and must still leave the denominator",
+		"the doc must state that a lens which raised NOTHING is still dropped")
+
+	// And the behaviour the doc describes must be the behaviour the code has.
+	// Both records below contribute nothing to a union that another reviewer made
+	// non-empty; only the one that RAISED findings survives.
+	union := map[string]struct{}{"performance": {}}
+	raiser := Record{
+		SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+		RunID: "r", Reviewer: "dax", Outcome: outcomeFindings, FindingsRaised: 3,
+	}
+	silent := Record{
+		SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+		RunID: "r", Reviewer: "dax", Outcome: outcomeClean, FindingsRaised: 0,
+	}
+	assert.Equal(t, dispUnscopeable, opportunityDisposition(raiser, union),
+		"the doc says an unlabelled RAISER is kept as unscopeable")
+	assert.Equal(t, dispOutOfRemit, opportunityDisposition(silent, union),
+		"the doc says a SILENT lens on an out-of-remit run still leaves the denominator")
+
+	// The CLI wording the doc sends an operator to must be the wording the
+	// renderer emits, or the pointer is worse than none.
+	assert.Contains(t, flat, "`CASES` column as *unlabelled*",
+		"the doc names the column and word `personas list --scores` renders")
+}

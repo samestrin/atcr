@@ -833,3 +833,136 @@ func TestPersonasTest_ZeroCasesWarn(t *testing.T) {
 	assert.Contains(t, stderr, "WARN")
 	assert.NotContains(t, stdout, "PASS")
 }
+
+// --- AC 06-04: the explainability summary column ----------------------------
+
+func TestPersonasList_ScoresRendersTheExplainabilitySummary(t *testing.T) {
+	// AC 06-04. The maintainer's question is "can I drop or repoint this lens?",
+	// so the column has to say how many cases the rate rests on and how many were
+	// set aside — a rate alone cannot distinguish a lens measured over forty
+	// cases from one measured over two.
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withPersonasScores(t, personasScoreData{
+		rates: map[string]float64{"sasha": 0.72},
+		details: map[string]scorecard.PersonaScoreDetail{
+			"sasha": {Counted: 20, Excluded: 5, Reasons: map[string]int{
+				scorecard.ReasonOutcomeIneligible: 5,
+			}},
+		},
+		path: "/tmp/sc",
+	}, nil, nil)
+
+	stdout, _, err := executeSplit(t, "personas", "list", "--scores")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "CASES")
+	assert.Regexp(t, `sasha\s.*72\.0%\s.*20 counted`, stdout)
+	assert.Contains(t, stdout, "5 excluded (outcome-ineligible)")
+}
+
+func TestPersonasList_ScoresSummaryIsNotAPerCaseDump(t *testing.T) {
+	// The bound task 5.3 exists to hold. Three reason labels on one persona must
+	// still render as ONE line naming the dominant reason, never one line per
+	// reason or per case — a thirteen-lens panel would be unreadable.
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withPersonasScores(t, personasScoreData{
+		rates: map[string]float64{"sasha": 0.5},
+		details: map[string]scorecard.PersonaScoreDetail{
+			"sasha": {Counted: 10, Excluded: 9, Reasons: map[string]int{
+				scorecard.ReasonOutcomeIneligible:    2,
+				scorecard.ReasonNotInOpportunitySet:  7,
+				scorecard.ReasonNoRecognizedCategory: 3,
+			}},
+		},
+		path: "/tmp/sc",
+	}, nil, nil)
+
+	stdout, _, err := executeSplit(t, "personas", "list", "--scores")
+	require.NoError(t, err)
+
+	sashaLines := 0
+	for _, line := range strings.Split(stdout, "\n") {
+		if strings.Contains(line, "sasha") {
+			sashaLines++
+		}
+	}
+	assert.Equal(t, 1, sashaLines, "one persona renders on exactly one row")
+	assert.Contains(t, stdout, "9 excluded (category-not-in-opportunity-set)",
+		"the dominant exclusion reason is named; the others are summarised away")
+}
+
+func TestPersonasList_ScoresRendersNoDataRatherThanAFabricatedZero(t *testing.T) {
+	// AC 06-05 Edge Cases 1/2 at the render layer. A persona below
+	// DefaultTrustMinRuns is absent from BOTH scorecard maps, and the table must
+	// say so rather than printing "0 counted", which reads as "measured, found
+	// nothing" — the opposite of the truth.
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withPersonasScores(t, personasScoreData{
+		rates:   map[string]float64{},
+		details: map[string]scorecard.PersonaScoreDetail{},
+		path:    "/tmp/sc",
+	}, nil, nil)
+
+	stdout, _, err := executeSplit(t, "personas", "list", "--scores")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "CASES")
+	assert.NotContains(t, stdout, "0 counted",
+		"an unmeasured lens must render n/a, never a fabricated zero-case summary")
+}
+
+func TestFormatScoreDetail_SummaryShapes(t *testing.T) {
+	// The renderer's own contract, table-driven so each shape is named.
+	tests := []struct {
+		name   string
+		detail *scorecard.PersonaScoreDetail
+		want   string
+	}{
+		{"no data at all", nil, "n/a"},
+		{"nothing excluded", &scorecard.PersonaScoreDetail{Counted: 20}, "20 counted"},
+		{
+			"one exclusion reason",
+			&scorecard.PersonaScoreDetail{Counted: 20, Excluded: 5, Reasons: map[string]int{
+				scorecard.ReasonOutcomeIneligible: 5,
+			}},
+			"20 counted · 5 excluded (outcome-ineligible)",
+		},
+		{
+			"TD-032's annotation is not an exclusion",
+			&scorecard.PersonaScoreDetail{Counted: 24, Reasons: map[string]int{
+				scorecard.ReasonNoRecognizedCategory: 4,
+			}},
+			"24 counted (4 unlabelled)",
+		},
+		{
+			"annotation and exclusion together",
+			&scorecard.PersonaScoreDetail{Counted: 24, Excluded: 3, Reasons: map[string]int{
+				scorecard.ReasonNoRecognizedCategory: 4,
+				scorecard.ReasonNotInOpportunitySet:  3,
+			}},
+			"24 counted (4 unlabelled) · 3 excluded (category-not-in-opportunity-set)",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, formatScoreDetail(tt.detail))
+		})
+	}
+}
+
+func TestFormatScoreDetail_TiedReasonsAreDeterministic(t *testing.T) {
+	// Two reasons at the same count must not render differently between runs —
+	// Go's map iteration order is randomised, so the tie-break has to be the
+	// ScoreReasons() vocabulary order rather than whichever key came out first.
+	d := &scorecard.PersonaScoreDetail{Counted: 5, Excluded: 4, Reasons: map[string]int{
+		scorecard.ReasonOutcomeIneligible:   2,
+		scorecard.ReasonNotInOpportunitySet: 2,
+	}}
+	first := formatScoreDetail(d)
+	for i := 0; i < 50; i++ {
+		assert.Equal(t, first, formatScoreDetail(d))
+	}
+	assert.Contains(t, first, "(outcome-ineligible)",
+		"a tie resolves to the earlier member of ScoreReasons()")
+}

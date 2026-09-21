@@ -21,7 +21,11 @@ import (
 // path checked. An empty rates map drives the "no data" footer.
 type personasScoreData struct {
 	rates map[string]float64
-	path  string
+	// details is the explainability companion from scorecard.ExplainTrustPriors,
+	// keyed identically to rates. scorecard omits a below-floor lens from BOTH
+	// maps, so a persona is never present in one and missing from the other.
+	details map[string]scorecard.PersonaScoreDetail
+	path    string
 }
 
 // personasScores loads corroboration rates from the scorecard store. A package
@@ -42,7 +46,11 @@ func loadPersonasScores(_ io.Writer) (personasScoreData, error) {
 	}
 	// TrustPriors is best-effort by contract: it never returns a non-nil error.
 	rates, _ := scorecard.TrustPriors(dir, 0)
-	return personasScoreData{rates: rates, path: dir}, nil
+	// ExplainTrustPriors is best-effort on the same terms and reads the same
+	// store over the same chain, so its membership matches rates exactly. It is
+	// called IN ADDITION to TrustPriors, never instead of it (D4).
+	details, _ := scorecard.ExplainTrustPriors(dir, 0)
+	return personasScoreData{rates: rates, details: details, path: dir}, nil
 }
 
 // personasDir resolves the community personas directory. A package var so tests
@@ -231,7 +239,7 @@ func listPersonasWithScores(cmd *cobra.Command, dir string) error {
 	// Use the same three-tier resolver ordering as the plain list so the Source
 	// column is consistent and project overrides shadow community/built-ins.
 	projectDir := filepath.Join(".atcr", "personas")
-	scored, listErr := commpersonas.ListTiersWithScores(projectDir, dir, data.rates)
+	scored, listErr := commpersonas.ListTiersWithScores(projectDir, dir, data.rates, data.details)
 	if listErr != nil {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", listErr)
 	}
@@ -538,11 +546,68 @@ func renderPersonaList(w io.Writer, metas []commpersonas.PersonaMeta) error {
 func renderScoredList(w io.Writer, scored []commpersonas.ScoredPersona) error {
 	rows := make([]string, len(scored))
 	for i, s := range scored {
-		rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s\t%s",
+		rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s",
 			sanitizeCell(s.Name), sanitizeCell(s.Version), sanitizeCell(s.Source),
-			sanitizeCell(formatLanguages(s.Language)), commpersonas.FormatRate(s.Rate))
+			sanitizeCell(formatLanguages(s.Language)), commpersonas.FormatRate(s.Rate),
+			formatScoreDetail(s.Detail))
 	}
-	return writeTable(w, "NAME\tVERSION\tSOURCE\tLANGUAGE\tCORROBORATION", rows)
+	return writeTable(w, "NAME\tVERSION\tSOURCE\tLANGUAGE\tCORROBORATION\tCASES", rows)
+}
+
+// formatScoreDetail renders one lens's explainability record as a SUMMARY cell,
+// never a per-case dump: a thirteen-lens panel each listing every excluded case
+// is unreadable, and the question the column answers — "can I drop or repoint
+// this lens?" — needs the shape of the evidence, not its contents.
+//
+// It names at most ONE exclusion reason, the dominant one by count, because a
+// maintainer acting on this decides between "its hosting is broken" and "it is
+// out of remit here" and the largest bucket is what distinguishes them.
+//
+// TD-032's annotation renders separately and deliberately: those records were
+// COUNTED, so folding them into the excluded figure would report a lens as less
+// measured than it is. "unlabelled" is the operator-facing word for
+// ReasonNoRecognizedCategory — the lens raised findings the scorer could not
+// attribute to a topic.
+//
+// A nil detail renders "n/a", the same marker FormatRate uses for an absent
+// rate, and for the same reason: scorecard omits a below-floor lens from both
+// maps, so "0 counted" would report an unmeasured lens as measured and empty.
+func formatScoreDetail(d *scorecard.PersonaScoreDetail) string {
+	if d == nil {
+		return "n/a"
+	}
+	out := fmt.Sprintf("%d counted", d.Counted)
+	if n := d.Reasons[scorecard.ReasonNoRecognizedCategory]; n > 0 {
+		out += fmt.Sprintf(" (%d unlabelled)", n)
+	}
+	if d.Excluded > 0 {
+		out += fmt.Sprintf(" · %d excluded", d.Excluded)
+		if reason := dominantExclusionReason(d.Reasons); reason != "" {
+			out += fmt.Sprintf(" (%s)", reason)
+		}
+	}
+	return out
+}
+
+// dominantExclusionReason returns the excluding reason with the most records, or
+// "" when none fired.
+//
+// Ties break on ScoreReasons() order rather than on map iteration, and that is a
+// correctness requirement rather than tidiness: Go randomises map iteration, so
+// a tie resolved by "whichever key came out first" renders differently between
+// two runs over identical data. A maintainer comparing today's table against
+// yesterday's would read that as the panel changing.
+func dominantExclusionReason(reasons map[string]int) string {
+	best, bestN := "", 0
+	for _, reason := range scorecard.ScoreReasons() {
+		if !scorecard.ReasonExcludes(reason) {
+			continue
+		}
+		if n := reasons[reason]; n > bestN {
+			best, bestN = reason, n
+		}
+	}
+	return best
 }
 
 // renderPersonaSearch writes the Name/Version/Provider/Model/Description table of

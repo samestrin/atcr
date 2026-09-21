@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/scorecard"
 	builtins "github.com/samestrin/atcr/personas"
 	"gopkg.in/yaml.v3"
 )
@@ -119,38 +120,66 @@ func listProject(projectDir string) ([]PersonaMeta, error) {
 // ScoredPersona is one row of `personas list --scores`: a persona joined with
 // its corroboration rate. Rate is nil when the persona has no scorecard data,
 // which renders as "n/a" (distinct from a real 0.0 rate).
+//
+// Detail is the explainability companion (scorecard.ExplainTrustPriors), nil on
+// exactly the personas whose Rate is nil — scorecard keys both maps identically
+// and omits a below-floor lens from both, so the two are never half-present.
+// It is ADDITIVE to Rate and is never consulted by sortScoredPersonas.
 type ScoredPersona struct {
 	PersonaMeta
-	Rate *float64
+	Rate   *float64
+	Detail *scorecard.PersonaScoreDetail
 }
 
 // ListWithScores returns the personas from List joined with corroboration rates
 // from scores (keyed by lowercase persona name, as built by the caller from
-// scorecard.Aggregate). The result is sorted by rate descending, then n/a rows
-// alphabetically after all numeric rows. A directory walk error is returned
-// alongside the rows gathered so far, mirroring List.
-func ListWithScores(personasDir string, scores map[string]float64) ([]ScoredPersona, error) {
+// scorecard.Aggregate) and with the explainability detail from details (keyed
+// the same way, as built by scorecard.ExplainTrustPriors). The result is sorted
+// by rate descending, then n/a rows alphabetically after all numeric rows. A
+// directory walk error is returned alongside the rows gathered so far,
+// mirroring List.
+//
+// details is a SECOND parameter rather than a widening of scores (sprint 36.0
+// D4): the rate path and the explainability path stay independently testable,
+// and scorecard.TrustPriors keeps its map[string]float64 shape for
+// reconcile/consensus.go. A nil details map is legal and yields nil Detail on
+// every row.
+func ListWithScores(personasDir string, scores map[string]float64, details map[string]scorecard.PersonaScoreDetail) ([]ScoredPersona, error) {
 	metas, err := List(personasDir)
-	return joinScores(metas, scores), err
+	return joinScores(metas, scores, details), err
 }
 
 // ListTiersWithScores returns the personas from ListTiers joined with
-// corroboration rates from scores. It mirrors ListWithScores but sources the
-// persona set from the three resolver tiers (project > community > built-in)
-// so the --scores table agrees with the plain list on the Source column.
-func ListTiersWithScores(projectDir, communityDir string, scores map[string]float64) ([]ScoredPersona, error) {
+// corroboration rates from scores and explainability detail from details. It
+// mirrors ListWithScores but sources the persona set from the three resolver
+// tiers (project > community > built-in) so the --scores table agrees with the
+// plain list on the Source column.
+func ListTiersWithScores(projectDir, communityDir string, scores map[string]float64, details map[string]scorecard.PersonaScoreDetail) ([]ScoredPersona, error) {
 	metas, err := ListTiers(projectDir, communityDir)
-	return joinScores(metas, scores), err
+	return joinScores(metas, scores, details), err
 }
 
-// joinScores attaches corroboration rates to metas and sorts the result.
-func joinScores(metas []PersonaMeta, scores map[string]float64) []ScoredPersona {
+// joinScores attaches corroboration rates and explainability detail to metas and
+// sorts the result. Both maps are read with the same strings.ToLower(m.Name) key
+// the rate lookup has always used, so a persona cannot be present in one and
+// missed in the other for a casing reason.
+func joinScores(metas []PersonaMeta, scores map[string]float64, details map[string]scorecard.PersonaScoreDetail) []ScoredPersona {
 	scored := make([]ScoredPersona, 0, len(metas))
 	for _, m := range metas {
 		sp := ScoredPersona{PersonaMeta: m}
-		if rate, ok := scores[strings.ToLower(m.Name)]; ok && !math.IsNaN(rate) {
+		key := strings.ToLower(m.Name)
+		if rate, ok := scores[key]; ok && !math.IsNaN(rate) {
 			r := rate
 			sp.Rate = &r
+		}
+		// Comma-ok, never a bare lookup: a persona absent from the detail map has
+		// no history (or sits below DefaultTrustMinRuns, which scorecard reports
+		// the same way), and the zero-valued struct a bare lookup returns would
+		// render as "0 counted" — "measured, found nothing", the opposite of the
+		// truth. nil Detail is the "no data" marker, matching nil Rate.
+		if d, ok := details[key]; ok {
+			detail := d
+			sp.Detail = &detail
 		}
 		scored = append(scored, sp)
 	}

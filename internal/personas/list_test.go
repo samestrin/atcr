@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -79,7 +80,7 @@ func TestListTiersWithScores_IncludesProjectOverride(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(communityDir, "security", "owasp.yaml"), []byte(validPersonaYAML), 0o644))
 
 	scores := map[string]float64{"bruce": 0.9, "security/owasp": 0.6}
-	scored, err := ListTiersWithScores(projectDir, communityDir, scores)
+	scored, err := ListTiersWithScores(projectDir, communityDir, scores, nil)
 	require.NoError(t, err)
 
 	bruce := scoredByName(scored, "bruce")
@@ -121,7 +122,7 @@ func scoredByName(scored []ScoredPersona, name string) *ScoredPersona {
 
 func TestListWithScores_HasRateAndNa(t *testing.T) {
 	scores := map[string]float64{"sasha": 0.72} // penny absent
-	scored, err := ListWithScores(filepath.Join(t.TempDir(), "absent"), scores)
+	scored, err := ListWithScores(filepath.Join(t.TempDir(), "absent"), scores, nil)
 	require.NoError(t, err)
 
 	sasha := scoredByName(scored, "sasha")
@@ -142,7 +143,7 @@ func TestListWithScores_CaseInsensitiveJoin(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "security", "Owasp.yaml"), []byte(validPersonaYAML), 0o644))
 
 	scores := map[string]float64{"security/owasp": 0.6} // lowercase key
-	scored, err := ListWithScores(dir, scores)
+	scored, err := ListWithScores(dir, scores, nil)
 	require.NoError(t, err)
 
 	owasp := scoredByName(scored, "security/Owasp")
@@ -153,7 +154,7 @@ func TestListWithScores_CaseInsensitiveJoin(t *testing.T) {
 
 func TestListWithScores_ZeroRateIsNotNa(t *testing.T) {
 	scores := map[string]float64{"sasha": 0.0}
-	scored, err := ListWithScores(filepath.Join(t.TempDir(), "absent"), scores)
+	scored, err := ListWithScores(filepath.Join(t.TempDir(), "absent"), scores, nil)
 	require.NoError(t, err)
 	sasha := scoredByName(scored, "sasha")
 	require.NotNil(t, sasha)
@@ -163,7 +164,7 @@ func TestListWithScores_ZeroRateIsNotNa(t *testing.T) {
 
 func TestListWithScores_NaNRateTreatedAsNa(t *testing.T) {
 	scores := map[string]float64{"sasha": math.NaN()}
-	scored, err := ListWithScores(filepath.Join(t.TempDir(), "absent"), scores)
+	scored, err := ListWithScores(filepath.Join(t.TempDir(), "absent"), scores, nil)
 	require.NoError(t, err)
 	sasha := scoredByName(scored, "sasha")
 	require.NotNil(t, sasha)
@@ -214,8 +215,94 @@ func TestSortScoredPersonas_AllNaAlphabetical(t *testing.T) {
 func TestListWithScores_SortedOutput(t *testing.T) {
 	// End-to-end: ListWithScores applies the sort so the first numeric row leads.
 	scores := map[string]float64{"sasha": 0.9, "ingrid": 0.4}
-	scored, err := ListWithScores(filepath.Join(t.TempDir(), "absent"), scores)
+	scored, err := ListWithScores(filepath.Join(t.TempDir(), "absent"), scores, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, scored)
 	assert.Equal(t, "sasha", scored[0].Name, "highest numeric rate sorts first")
+}
+
+// --- AC 06-05: the explainability detail joins additively -------------------
+
+func TestJoinScores_AttachesDetailAlongsideTheExistingRate(t *testing.T) {
+	// AC 06-05 Scenario 1. The detail map is a SECOND input (D4), keyed by the
+	// same strings.ToLower(m.Name) the rate lookup has always used, and it never
+	// replaces or perturbs Rate.
+	metas := []PersonaMeta{{Name: "dax"}, {Name: "bruce"}}
+	scores := map[string]float64{"dax": 0.8, "bruce": 0.4}
+	details := map[string]scorecard.PersonaScoreDetail{
+		"dax": {Counted: 20, Excluded: 5, Reasons: map[string]int{
+			scorecard.ReasonOutcomeIneligible: 5,
+		}},
+		"bruce": {Counted: 40, Excluded: 0},
+	}
+
+	scored := joinScores(metas, scores, details)
+
+	dax := scoredByName(scored, "dax")
+	require.NotNil(t, dax)
+	require.NotNil(t, dax.Rate)
+	assert.InDelta(t, 0.8, *dax.Rate, 1e-9, "the rate path is untouched by the detail path")
+	require.NotNil(t, dax.Detail)
+	assert.Equal(t, 20, dax.Detail.Counted)
+	assert.Equal(t, 5, dax.Detail.Excluded)
+	assert.Equal(t, 5, dax.Detail.Reasons[scorecard.ReasonOutcomeIneligible])
+
+	bruce := scoredByName(scored, "bruce")
+	require.NotNil(t, bruce)
+	require.NotNil(t, bruce.Detail)
+	assert.Equal(t, 40, bruce.Detail.Counted)
+}
+
+func TestJoinScores_MixedCasePersonaFindsItsDetail(t *testing.T) {
+	// The casing convention is shared by both lookups, so a persona cannot be
+	// present in one map and missed in the other for a casing reason.
+	metas := []PersonaMeta{{Name: "SASHA"}}
+	scored := joinScores(metas,
+		map[string]float64{"sasha": 0.5},
+		map[string]scorecard.PersonaScoreDetail{"sasha": {Counted: 7}})
+
+	require.Len(t, scored, 1)
+	require.NotNil(t, scored[0].Detail)
+	assert.Equal(t, 7, scored[0].Detail.Counted)
+}
+
+func TestJoinScores_AbsentFromDetailMapIsNilNotAFabricatedZero(t *testing.T) {
+	// AC 06-05 Edge Cases 1 and 2. A persona with no history, and a below-floor
+	// persona scorecard omitted, must both read as "no data" — never as an
+	// evaluated-but-empty history, which would tell a maintainer the lens was
+	// measured and found wanting when it was never measured at all.
+	metas := []PersonaMeta{{Name: "ghost"}}
+	scored := joinScores(metas, map[string]float64{}, map[string]scorecard.PersonaScoreDetail{})
+
+	require.Len(t, scored, 1)
+	assert.Nil(t, scored[0].Rate)
+	assert.Nil(t, scored[0].Detail,
+		"absent from the detail map must be nil Detail, never a zero-valued struct")
+}
+
+func TestJoinScores_NilDetailMapIsLegalAndYieldsNilDetail(t *testing.T) {
+	// Every pre-Phase-5 caller passed no detail at all; a nil map must behave as
+	// "no explainability available" rather than panicking.
+	scored := joinScores([]PersonaMeta{{Name: "dax"}}, map[string]float64{"dax": 0.3}, nil)
+	require.Len(t, scored, 1)
+	require.NotNil(t, scored[0].Rate)
+	assert.Nil(t, scored[0].Detail)
+}
+
+func TestSortScoredPersonas_NeverConsultsTheDetailFields(t *testing.T) {
+	// AC 06-05 Scenario 2. Identical rates, wildly different detail — the
+	// comparator must still fall through to the alphabetical tie-break, because
+	// sortScoredPersonas' contract keys on Rate alone (D4/D6).
+	metas := []PersonaMeta{{Name: "Zeta"}, {Name: "Alpha"}}
+	scores := map[string]float64{"zeta": 0.5, "alpha": 0.5}
+	details := map[string]scorecard.PersonaScoreDetail{
+		"zeta":  {Counted: 999, Excluded: 0},
+		"alpha": {Counted: 1, Excluded: 500},
+	}
+
+	scored := joinScores(metas, scores, details)
+	require.Len(t, scored, 2)
+	assert.Equal(t, "Alpha", scored[0].Name,
+		"equal rates tie-break alphabetically; the new fields must not reorder them")
+	assert.Equal(t, "Zeta", scored[1].Name)
 }

@@ -878,6 +878,23 @@ func strictRuns(records []Record) []Record {
 // before the failure itself is ever discarded. A single timeout would erase a
 // lens's whole record. strictRuns stays first, preserving the existing
 // cheapest-narrowing-first ordering.
+// outcomeEligible reports whether a reviewer record's outcome means the lens got
+// a fair attempt. Extracted for the same reason opportunityDisposition is: it is
+// read by both eligibleOutcomeRuns and ExplainTrustPriors, and two copies of a
+// closed-vocabulary switch drift silently the day a tenth outcome value lands.
+//
+// The four eligible values are spelled as literals rather than borrowed from
+// internal/benchmark, which internal/scorecard cannot import without closing a
+// cycle (C5); the cli/ drift test pins their agreement.
+func outcomeEligible(r Record) bool {
+	switch r.Outcome {
+	case outcomeFindings, outcomeClean, outcomeUngrounded, outcomeFiltered:
+		return true
+	default:
+		return false
+	}
+}
+
 func eligibleOutcomeRuns(records []Record) []Record {
 	kept := make([]Record, 0, len(records))
 	for _, r := range records {
@@ -885,8 +902,8 @@ func eligibleOutcomeRuns(records []Record) []Record {
 			kept = append(kept, r) // aggregates pass through untouched
 			continue
 		}
-		switch r.Outcome {
-		case outcomeFindings, outcomeClean, outcomeUngrounded, outcomeFiltered:
+		switch {
+		case outcomeEligible(r):
 			kept = append(kept, r)
 		}
 	}
@@ -1004,24 +1021,106 @@ func opportunitySetRuns(records []Record, seenByRun map[string]map[string]struct
 			kept = append(kept, r)
 			continue
 		}
-		union := seenByRun[r.RunID]
-		if len(union) == 0 {
-			kept = append(kept, r)
-			continue
-		}
-		// Resolved once per record and reused, rather than calling
-		// RemitCategories here and letting InOpportunitySet call it again —
-		// every call allocates a defensive copy.
-		remit, mapped := RemitCategories(r.Reviewer)
-		if !mapped {
-			kept = append(kept, r)
-			continue
-		}
-		if intersects(remit, union) {
+		if opportunityDisposition(r, seenByRun[r.RunID]) != dispOutOfRemit {
 			kept = append(kept, r)
 		}
 	}
 	return kept
+}
+
+// disposition is opportunitySetRuns' per-record answer. It is a THREE-valued
+// answer, not a boolean, and that is the whole reason it exists as a named type:
+// "kept because its remit was in play" and "kept because nothing could be said
+// about its remit" are the same outcome for the tally and completely different
+// facts for a maintainer reading ExplainTrustPriors.
+type disposition int
+
+const (
+	// dispInRemit: the record's remit was in play on this run, or the run
+	// carried no scopeable evidence at all, or the lens has no remit entry. Kept
+	// and unremarkable.
+	dispInRemit disposition = iota
+	// dispUnscopeable: TD-032. Raised findings, contributed nothing to the
+	// union. Kept and annotated — see ReasonNoRecognizedCategory.
+	dispUnscopeable
+	// dispOutOfRemit: the run's union was discriminating and none of it fell in
+	// this lens's remit. Dropped — see ReasonNotInOpportunitySet.
+	dispOutOfRemit
+)
+
+// opportunityDisposition is the per-record opportunity-set decision, extracted
+// so opportunitySetRuns and ExplainTrustPriors read ONE predicate rather than
+// two copies that can drift. This is keptForTrust's own rationale applied one
+// level down: a rule spelled out separately in both places is a rule that
+// silently stops agreeing, and here the disagreement would be invisible — the
+// explanation would name a reason the chain never acted on.
+//
+// The caller has already established that r is a reviewer record at or above
+// categoriesRaisedSinceSchema; a pre-era record carries no CategoriesRaised at
+// all and must never be judged as out-of-remit for the absence.
+func opportunityDisposition(r Record, union map[string]struct{}) disposition {
+	if len(union) == 0 {
+		// Nobody on the run contributed a discriminating topic, so there is no
+		// evidence about anyone's remit. Refuse to guess.
+		return dispInRemit
+	}
+	// TD-032: a record that RAISED findings but contributed nothing to its
+	// run's union is UNSCOPEABLE, not out of remit, and it is kept.
+	//
+	// The bug this closes is that bad labelling was self-exculpating.
+	// reviewerCategories drops a CATEGORY value outside reclib.Categories()
+	// while correctly keeping the finding, so a lens whose every label is a
+	// word the scorer does not recognise adds nothing to the union — the
+	// remit test below then matches nothing and deletes the very record
+	// demoteByTrust needed, on the runs where that lens raised the most
+	// unattributable findings. reconcile/category.go records a dry run in
+	// which 72.3% of findings used an unrecognised word, so the escape is
+	// reachable rather than theoretical.
+	//
+	// IT MUST NOT SWALLOW THE SILENT SPECIALIST, which is the whole point of
+	// the gate it sits in front of. A lens that raised NOTHING also
+	// contributes no category, and that lens is correctly silent on an
+	// out-of-remit case — epic acceptance criterion 1 requires it be neither
+	// credited nor penalised, so it has to keep taking the remit path below.
+	// FindingsRaised > 0 is what separates the two, and it is the right
+	// discriminator rather than a proxy: the question is whether the record
+	// had evidence to label, not whether it happened to be scopeable.
+	if r.FindingsRaised > 0 && !contributesToUnion(r) {
+		return dispUnscopeable
+	}
+	// Resolved once per record and reused, rather than calling
+	// RemitCategories here and letting InOpportunitySet call it again —
+	// every call allocates a defensive copy.
+	remit, mapped := RemitCategories(r.Reviewer)
+	if !mapped {
+		// An unmapped lens (the five registry-only ones, per C11) is never
+		// scoped, so it keeps every record it would have kept before Phase 3.
+		return dispInRemit
+	}
+	if intersects(remit, union) {
+		return dispInRemit
+	}
+	return dispOutOfRemit
+}
+
+// contributesToUnion reports whether this record put any DISCRIMINATING category
+// into its run's opportunity union — the same test opportunityUnions applies, so
+// the two can never disagree about what a record contributed.
+//
+// It covers both ways a contribution can be empty, because the escape TD-032
+// closes is identical either way: a value outside reclib.Categories() entirely,
+// and a value that is a real member but carries no remit signal (invariant,
+// other, out-of-scope — see nonDiscriminating). A lens labelling every finding
+// `invariant` would otherwise buy exactly the free pass an out-of-vocabulary
+// word does, and `invariant` is in all nine remits by C14, so it is the easier
+// of the two to reach by accident.
+func contributesToUnion(r Record) bool {
+	for _, c := range r.CategoriesRaised {
+		if discriminating(c) {
+			return true
+		}
+	}
+	return false
 }
 
 // intersects reports whether any member of remit is present in union. It is the

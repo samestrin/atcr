@@ -1221,18 +1221,47 @@ func opportunityFilter(records []Record) []Record {
 }
 
 // oppRec builds a schema-2 reviewer record for the opportunity-link tests.
+// oppRec builds one reviewer record for the opportunity-set tests. Every call
+// site that passes nil cats means "a SILENT lens", so a nil cats must produce a
+// record that actually IS silent: zero raised and outcome clean.
+//
+// It used to stamp FindingsRaised: 1 unconditionally, which made its "silent"
+// fixture a record no emitter could write — a reviewer that raised a finding
+// always carries that finding's category unless the word was outside
+// reclib.Categories(), and reviewerCategories drops only the word, never the
+// count. Nothing read FindingsRaised in this gate, so the inconsistency was
+// invisible until TD-032's fix made it the discriminator between "silent, out of
+// remit" and "raised findings nobody could attribute". The same rule already
+// governs the sibling helper: reviewer() picks outcome clean for a zero-raised
+// fixture "or the helper produces a record no emitter could ever write".
 func oppRec(runID, reviewer string, cats []string) Record {
+	raised, outcome := 1, outcomeFindings
+	if len(cats) == 0 {
+		raised, outcome = 0, outcomeClean
+	}
 	return Record{
 		SchemaVersion:            SchemaVersion,
 		RecordType:               RecordTypeReviewer,
 		RunID:                    runID,
 		Reviewer:                 reviewer,
-		Outcome:                  outcomeFindings,
+		Outcome:                  outcome,
 		CategoriesRaised:         cats,
 		RaisedIncludesUnresolved: true,
 		RaisedDenominator:        RaisedDenominatorCurrent,
-		FindingsRaised:           1,
+		FindingsRaised:           raised,
 	}
+}
+
+// oppRecUnlabelled is the case oppRec deliberately cannot express: a lens that
+// RAISED findings whose every CATEGORY the scorer could not use, so the count is
+// non-zero while CategoriesRaised is empty. It is TD-032's subject, and keeping
+// it a separate helper stops a future edit from quietly reintroducing the
+// inconsistent fixture oppRec's comment describes.
+func oppRecUnlabelled(runID, reviewer string, raised int) Record {
+	r := oppRec(runID, reviewer, []string{"placeholder"})
+	r.CategoriesRaised = nil
+	r.FindingsRaised = raised
+	return r
 }
 
 // TestOpportunitySetRuns_DropsOutOfRemitRecords is the epic's headline property
@@ -2309,4 +2338,178 @@ func TestMaxPerFindingCredit_CoversTheCorroboratedBranchToo(t *testing.T) {
 	assert.InDelta(t, 1.0, credit, 1e-9)
 	assert.LessOrEqual(t, credit, 2*maxPerFindingCredit(isolatedFindingWeight),
 		"an honest record must never exceed its own ceiling")
+}
+
+// --- Phase 5 (Story 06) regression guards and TD-032 pin ---
+
+func TestTrustPriors_RecordSurvivesAModelRepoint(t *testing.T) {
+	// AC 06-02 and epic acceptance criterion 5. The registry churn this guards
+	// against is real and recurring — qwen3.6-plus -> qwen3.7-plus,
+	// nemotron-3-ultra-550b pulled, mellum2 deprecated — and a persona repointed
+	// at a new model must keep the standing it earned under the old one.
+	//
+	// It is pinned against the ACTUAL trustPriorsSince loop and its
+	// normalizeReviewerName(row.Reviewer) key, not a hand-built equivalent: the
+	// property depends on Aggregate grouping by (Reviewer, Model) and the loop
+	// summing those rows under one persona key, so a mock of the loop would
+	// assert the mock rather than the behaviour.
+	dir := t.TempDir()
+	// Ten runs under the retired model, ten under its replacement. Neither half
+	// clears the floor of twenty alone; the persona does only if they sum.
+	appendN(t, dir, 10, "Greta", "qwen3.6-plus", 4, 3)
+	appendN(t, dir, 10, "Greta", "qwen3.7-plus", 4, 3)
+
+	rates, err := TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+	require.Contains(t, rates, "greta",
+		"a persona's twenty runs must clear the floor as one record, not as two ten-run model records")
+	assert.InDelta(t, 0.75, rates["greta"], 1e-9,
+		"the repoint must not move the rate: 60 corroborated of 80 raised, whichever model ran them")
+
+	// The same persona under a THIRD, never-before-seen model still reads as one
+	// record rather than resetting to a cold start.
+	appendN(t, dir, 5, "Greta", "kimi-k3", 4, 3)
+	rates, err = TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.75, rates["greta"], 1e-9)
+}
+
+func TestTrustPriors_CasingOfAModelRepointNeverSplitsAPersona(t *testing.T) {
+	// The half of AC 06-02 that a same-casing fixture cannot catch. The store
+	// carries the panel's original casing (registry.yaml agent names are free
+	// text), so a persona re-registered as "GRETA" must land on the same key.
+	// This is the mutation normalizeReviewerName exists to survive.
+	dir := t.TempDir()
+	appendN(t, dir, 10, "Greta", "m1", 4, 3)
+	appendN(t, dir, 10, "GRETA", "m2", 4, 3)
+
+	rates, err := TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+	require.Len(t, rates, 1, "one persona, one key — casing must not fork the record")
+	require.Contains(t, rates, "greta")
+	assert.InDelta(t, 0.75, rates["greta"], 1e-9)
+}
+
+func TestTrustPriors_NewLensIsOmittedNotStarvedAtZero(t *testing.T) {
+	// AC 06-03 and epic acceptance criterion 6. The cold-start death spiral this
+	// prevents: a lens with no record must not be down-weighted into never being
+	// dispatched, or it can never earn one.
+	//
+	// The mechanism is ABSENCE, not a floor value. reconcile/consensus.go does a
+	// plain map lookup in both consumers (trustExempt returns false on !ok,
+	// demoteByTrust returns m unchanged on !ok), so an absent lens reverts to the
+	// neutral baseline. A present-at-zero lens would instead sit at or below
+	// trustLowThreshold and be demoted to ConfLow on every singleton — the exact
+	// starvation the criterion forbids. The reconcile half of this is pinned by
+	// reconcile/trust_test.go's TestTrustPriors_AbsentReviewerNoOp.
+	dir := t.TempDir()
+	appendN(t, dir, 25, "Bruce", "m1", 4, 4)
+	appendN(t, dir, 3, "Newlens", "m1", 2, 0)
+
+	rates, err := TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+
+	rate, present := rates["newlens"]
+	assert.False(t, present,
+		"a below-floor lens must be ABSENT, never present at a punitive zero")
+	assert.Zero(t, rate, "the comma-ok zero value is what an absent lookup yields in reconcile")
+	require.Contains(t, rates, "bruce", "a lens that cleared the floor is unaffected")
+
+	// The map handed to reconcile is exactly this one, so the absence travels.
+	var opts reclib.Options
+	opts.TrustPriors = rates
+	_, exempt := opts.TrustPriors["newlens"]
+	assert.False(t, exempt)
+}
+
+func TestTrustPriors_JunkLabelledRaiserIsStillChargedForItsFindings(t *testing.T) {
+	// TD-032's pinning test, on the RATE rather than on the explainability
+	// surface — the escape it closes is a scoring escape, so the proof has to be
+	// a number demoteByTrust would read.
+	//
+	// The lens raises three findings per junk run and none of them is
+	// corroborated. Before the fix its record was deleted from the tally (its
+	// unreadable labels put it out of every remit), so those uncorroborated
+	// findings never reached the denominator and bad labelling was
+	// self-exculpating. After the fix the rate must FALL.
+	dir := t.TempDir()
+	clean := t.TempDir()
+
+	seed := func(d string, withJunk bool) {
+		for i := 0; i < 20; i++ {
+			rec := reviewer_(runIDAt(time.Now(), fmt.Sprintf("good-%03d", i)), "Dax", "m1", 1, 1)
+			rec.CategoriesRaised = []string{reclib.CategoryTesting}
+			require.NoError(t, Append(d, rec))
+		}
+		if !withJunk {
+			return
+		}
+		for i := 0; i < 10; i++ {
+			runID := runIDAt(time.Now(), fmt.Sprintf("junk-%03d", i))
+			// CategoriesRaised empty, matching what reviewerCategories writes for
+			// a reviewer whose every CATEGORY was outside reclib.Categories().
+			junk := reviewer_(runID, "Dax", "m1", 3, 0)
+			require.NoError(t, Append(d, junk))
+			other := reviewer_(runID, "Pace", "m1", 1, 0)
+			other.CategoriesRaised = []string{reclib.CategoryPerformance}
+			require.NoError(t, Append(d, other))
+		}
+	}
+	seed(dir, true)
+	seed(clean, false)
+
+	withJunk, err := TrustPriors(dir, 10)
+	require.NoError(t, err)
+	without, err := TrustPriors(clean, 10)
+	require.NoError(t, err)
+
+	assert.InDelta(t, 1.0, without["dax"], 1e-9, "the control: twenty corroborated of twenty raised")
+	assert.Less(t, withJunk["dax"], without["dax"],
+		"thirty uncorroborated findings under unreadable labels must lower the rate, not vanish from it")
+	// 20 corroborated of (20 + 30) raised.
+	assert.InDelta(t, 20.0/50.0, withJunk["dax"], 1e-9)
+}
+
+// TestOpportunitySetRuns_UnscopeableRaiserIsKeptWhileSilentLensIsDropped is
+// TD-032's fix and its boundary in one assertion pair, at the filter level.
+//
+// Both lenses contribute nothing to the run's union and both are out of remit
+// for the only topic raised. They must be treated DIFFERENTLY, and the
+// difference is the only thing separating a closed escape from a broken
+// guarantee: the one that RAISED findings is charged (else bad labelling
+// exculpates a phantom-raiser), the one that stayed SILENT is dropped (else a
+// specialist is penalised for correct silence, breaking epic AC 1).
+func TestOpportunitySetRuns_UnscopeableRaiserIsKeptWhileSilentLensIsDropped(t *testing.T) {
+	in := []Record{
+		oppRec("run-1", "penny", []string{"performance"}), // the only topic in play
+		oppRec("run-1", "sasha", nil),                     // silent, out of remit
+		oppRecUnlabelled("run-1", "dax", 3),               // raised 3, none attributable
+	}
+	out := opportunityFilter(in)
+
+	names := map[string]bool{}
+	for _, r := range out {
+		names[r.Reviewer] = true
+	}
+	assert.True(t, names["penny"], "performance was in play")
+	assert.False(t, names["sasha"],
+		"a lens that raised NOTHING on an out-of-remit run is correctly silent and leaves the denominator")
+	assert.True(t, names["dax"],
+		"a lens that RAISED findings the scorer could not attribute must stay chargeable (TD-032)")
+}
+
+func TestOpportunityDisposition_IsTheOnePredicateBothSurfacesRead(t *testing.T) {
+	// The extraction's whole justification. opportunitySetRuns and
+	// ExplainTrustPriors must not each carry their own copy of this rule, or the
+	// explanation names a reason the chain never acted on — a divergence no test
+	// of either surface alone can see.
+	union := map[string]struct{}{"performance": {}}
+
+	assert.Equal(t, dispInRemit, opportunityDisposition(oppRec("r", "penny", []string{"performance"}), union))
+	assert.Equal(t, dispOutOfRemit, opportunityDisposition(oppRec("r", "sasha", nil), union))
+	assert.Equal(t, dispUnscopeable, opportunityDisposition(oppRecUnlabelled("r", "dax", 2), union))
+	assert.Equal(t, dispInRemit, opportunityDisposition(oppRec("r", "vera", nil), union),
+		"an unmapped registry-only lens is never opportunity-scoped (C11)")
+	assert.Equal(t, dispInRemit, opportunityDisposition(oppRec("r", "sasha", nil), nil),
+		"an empty union means nobody had scopeable evidence — refuse to guess")
 }
