@@ -422,6 +422,21 @@ func TestBenchmarkDoc_AbortTaxonomyPartitionsIdenticallyEverywhere(t *testing.T)
 	// is the cheapest possible way for the two copies to fork again.
 	assert.Contains(t, changelog, "Nine failure classes still abort the whole run",
 		"the CHANGELOG's count must match the abort table's row count")
+
+	// The consecutive-failure abort returns an error and writes NO run-result —
+	// cli/benchmark.go returns before json.MarshalIndent — so the already-recorded
+	// case failures survive only in the abort error's per-reason tally and the
+	// per-case warn logs. The row used to promise they "stay in case_failures[]",
+	// which is unwritable on this path; a reader counting on that promise would
+	// look for an array that does not exist. Pin both directions: the corrected
+	// claim must be present, and the false promise must stay gone.
+	assert.Contains(t, doc, "The run-result is not written on an abort",
+		"the consecutive-abort row must state that no run-result is written, so the "+
+			"recorded failures' only survivors are the error tally and the logs")
+	assert.NotContains(t, doc, "the cases already recorded stay in `case_failures[]`",
+		"the abort row must not promise a case_failures[] array the abort path never writes")
+	assert.Contains(t, cli, "summarizeCaseFailureReasons(caseFailures)",
+		"the abort error must still carry the per-reason tally of the already-recorded failures")
 }
 
 // Every abort site in the runner's PAID region — the per-case loop onward, where
