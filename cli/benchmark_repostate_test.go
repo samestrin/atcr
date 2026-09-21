@@ -1276,6 +1276,28 @@ func TestExecuteRepoStateBenchmarkRun_EveryCaseFailingIsAnError(t *testing.T) {
 	assert.Nil(t, rr)
 }
 
+// The zero-scored guard used to carry TWO returns: an all-cases-failed message and
+// a fallback for a shape no test can reach (an empty accumulator with no recorded
+// failure — the empty case list is rejected at load, and an all-roster failure
+// aborts per case). The untested fallback is folded into the one return, so the
+// single message carries the failure tally and stays legible at zero failures too —
+// the file no longer carries a branch nothing can execute.
+func TestExecuteRepoStateBenchmarkRun_ZeroScoredErrorCarriesTheTally(t *testing.T) {
+	suite := writeCaseSuite(t, "first-case", "second-case")
+	faultMaterialization(t, suite, "first-case")
+	faultMaterialization(t, suite, "second-case")
+
+	rr, _, err := executeRepoStateBenchmarkRun(context.Background(),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC(), 0)
+	releaseRetainedWorkDirFromError(t, err)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no case could be scored")
+	assert.Contains(t, err.Error(), "2 of 2 case(s) failed",
+		"the folded message reports the tally, not a separate all-failed phrasing")
+	assert.Nil(t, rr)
+}
+
 // The all-cases-failed diagnostic used to name ONE reason — whichever happened to be
 // last. On a mixed systemic failure that is an arbitrary pick out of N, and the same
 // sentence then tells the operator a re-run helps "only if the cause was transient"
