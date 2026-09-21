@@ -2608,3 +2608,40 @@ func TestTrustPriors_OutOfRemitPhantomsAreChargedNotForgiven(t *testing.T) {
 	assert.Less(t, withPhantoms["dax"], 0.3,
 		"and must drop the lens below reconcile's trustHighThreshold, not leave it exempt at 1.00")
 }
+
+func TestTrustPriors_OutOfRemitCorroborationAlsoRaisesAPrior(t *testing.T) {
+	// The OTHER half of the 5.5 narrowing, which the change's first telling
+	// described only in the charging direction. Keeping an out-of-remit raiser
+	// puts it in the NUMERATOR as well as the denominator, so out-of-remit work
+	// that the panel agreed with now lifts a prior where it used to be dropped.
+	//
+	// That is the honest consequence of the rule and not a leak to patch: a lens
+	// cannot be accountable for its out-of-lane mistakes and unrewarded for its
+	// out-of-lane hits by the same gate. It is pinned here because a reader who
+	// met only the phantom probe would expect this direction to be impossible.
+	dir := t.TempDir()
+	// Twenty in-remit runs, none corroborated: the floor case, rate 0.0.
+	for i := 0; i < 20; i++ {
+		r := reviewer_(runIDAt(time.Now(), fmt.Sprintf("inremit-%03d", i)), "Dax", "m1", 1, 0)
+		r.CategoriesRaised = []string{reclib.CategoryTesting}
+		require.NoError(t, Append(dir, r))
+	}
+	floor, err := TrustPriors(dir, 10)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.0, floor["dax"], 1e-9,
+		"the control: twenty raised, none corroborated")
+
+	// Twenty more runs of five CORROBORATED findings each, all labelled
+	// security — real vocabulary, outside dax's remit.
+	for i := 0; i < 20; i++ {
+		r := reviewer_(runIDAt(time.Now(), fmt.Sprintf("outremit-%03d", i)), "Dax", "m1", 5, 5)
+		r.CategoriesRaised = []string{reclib.CategorySecurity}
+		require.NoError(t, Append(dir, r))
+	}
+	lifted, err := TrustPriors(dir, 10)
+	require.NoError(t, err)
+	// 100 corroborated of 120 raised.
+	assert.InDelta(t, 100.0/120.0, lifted["dax"], 1e-9)
+	assert.Greater(t, lifted["dax"], floor["dax"],
+		"out-of-remit corroboration must raise the prior, symmetrically with out-of-remit phantoms lowering it")
+}

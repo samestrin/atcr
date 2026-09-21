@@ -1002,15 +1002,17 @@ func TestPairTallies_RunsTheSharedTrustChainNotACopyOfIt(t *testing.T) {
 	// re-inlined copy dropping a link survived the suite — the exact drift the
 	// shared helper exists to prevent, invisible from the pair surface.
 	//
-	// ONE TAINT PER LINK, WITH ONE LINK NOW UNTAINTABLE. An earlier version
-	// covered only strictRuns and eligibleOutcomeRuns; mutating the other four
-	// links to identity survived it, including opportunitySetRuns — which
-	// keptForTrust's own doc names as the drift it exists to prevent.
+	// ONE TAINT PER LINK. An earlier version covered only strictRuns and
+	// eligibleOutcomeRuns; mutating the other four links to identity survived
+	// it, including opportunitySetRuns — which keptForTrust's own doc names as
+	// the drift it exists to prevent.
 	//
-	// The opportunitySetRuns taint has since been REMOVED rather than repaired,
-	// and TestPairTallies_TheOpportunityLinkCannotBeTaintedFromThisSurface below
-	// carries the proof and the reason. It is not a gap that was overlooked: the
-	// link provably cannot drop any record this surface can construct.
+	// The opportunitySetRuns taint was briefly DELETED, on the claim that the
+	// link could no longer reject any record this surface can build. That claim
+	// was false and the gate re-review disproved it by construction; the taint is
+	// restored above with FindingsRaised zeroed alongside the categories. Do not
+	// delete it again on a reachability argument without running
+	// TestEmit_WritesPairSignalsOnAZeroRaisedRecord first.
 	//
 	// sasha (security) and penny (performance) are used throughout because both
 	// are MAPPED personas, so the unmapped pass-through cannot rescue them from
@@ -1025,6 +1027,20 @@ func TestPairTallies_RunsTheSharedTrustChainNotACopyOfIt(t *testing.T) {
 		"unparseable run (eligibleOutcomeRuns)": func(r *Record) { r.Outcome = "unparseable" },
 		"above-current denominator (unresolvedEraRuns)": func(r *Record) {
 			r.RaisedDenominator = RaisedDenominatorCurrent + 1
+		},
+		"out-of-remit categories (opportunitySetRuns)": func(r *Record) {
+			// Neither security nor performance is in play on a run whose only
+			// raised category is testing, so both members are dropped.
+			//
+			// FindingsRaised MUST be zeroed with it: since the 5.5 gate change
+			// the link drops only a lens that raised nothing, so a taint that
+			// left the count at 2 would be kept and this subtest would assert
+			// nothing. The pairing of zero raised WITH pair signals is not a
+			// contrived fixture — it is a shape both emitters really write, and
+			// TestEmit_WritesPairSignalsOnAZeroRaisedRecord below constructs it
+			// through Emit rather than asserting it.
+			r.CategoriesRaised = []string{"testing"}
+			r.FindingsRaised = 0
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -1063,64 +1079,61 @@ func seedPennySasha(t *testing.T, dir, label string, taint func(*Record)) {
 	}
 }
 
-// TestPairTallies_TheOpportunityLinkCannotBeTaintedFromThisSurface records WHY
-// the sibling test above has five taints and not six, so the missing link reads
-// as a proved impossibility rather than an oversight.
+// TestEmit_WritesPairSignalsOnAZeroRaisedRecord constructs the record shape a
+// previous version of this file asserted no emitter could produce, and is the
+// evidence behind the opportunitySetRuns taint above.
 //
-// The pair surface's one-taint-per-link guard needs, for each chain link, a
-// record that link rejects. For opportunitySetRuns no such record exists here,
-// and the reason is a chain of two facts in the emitter:
+// THE CAUSE IS AN ASYMMETRY BETWEEN TWO NAME MATCHERS over the same
+// Finding.Reviewers cell. reviewerCounts tests membership with contains, an
+// exact string compare; reviewerPairSignals tests it with distinctPeers, which
+// folds case through normalizeReviewerName. So a reviewer keyed "Penny" in the
+// pool summary whose findings carry "penny" matches for pair signals and does
+// NOT match for the raised count — one finding raised, FindingsRaised 0, pair
+// signals present.
 //
-//   - PairSignals are built from EmitInput.Findings ONLY (scorecard.go, beside
-//     the CategoriesRaised assignment), and FindingsRaised is reviewerCounts
-//     over that same stream. So a record carrying pair signals has
-//     FindingsRaised > 0. There is no route to signals without findings — the
-//     routed and ambiguous streams both contribute signals to neither.
-//   - After the 5.5 phase-gate decision, opportunityDisposition drops ONLY a
-//     lens that raised nothing. Any record with FindingsRaised > 0 returns
-//     dispCounted or dispUnscopeable, both of which are kept.
-//
-// Therefore opportunitySetRuns is a no-op for every record the pair fold can
-// see. Building the missing taint would require a record with pair signals and
-// FindingsRaised == 0 — a shape no emitter can write, and the exact class of
-// inconsistent fixture this suite already corrected once in oppRec. The
-// coverage is not faked and it is not silently dropped; it is unnecessary.
-//
-// Filed as TD-045 so the day the drop rule widens again, this pin fails and the
-// sixth taint comes back with it.
-func TestPairTallies_TheOpportunityLinkCannotBeTaintedFromThisSurface(t *testing.T) {
-	// Fact 1: the emitter never writes pair signals onto a zero-raised record.
-	// Asserted against the real fixture builder the taints use, so a change to
-	// it is caught here.
-	r := pairReviewer(pairRunID("probe"), "sasha", "m1", 2, 2, PairSignal{Peer: "penny", Agreed: 2})
-	require.NotEmpty(t, r.PairSignals)
-	assert.Positive(t, r.FindingsRaised,
-		"a record carrying pair signals always carries findings; signals come from the same stream")
+// That asymmetry is a real defect in its own right and is NOT fixed here: the
+// same mismatch silently drops the reviewer's findings out of both the trust
+// numerator and denominator, so a lens can be un-scored on a run it actually
+// worked. Filed as TD-047. This test pins only the SHAPE, so it keeps passing
+// whichever way TD-047 is closed — and if TD-047 is closed by normalizing
+// reviewerCounts, this test fails and points at the taint that has to change
+// with it.
+func TestEmit_WritesPairSignalsOnAZeroRaisedRecord(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, Emit(EmitInput{
+		RunID: pairRunID("case-divergence"),
+		// The reviewers map is keyed with the pool summary's casing.
+		Reviewers: map[string]ReviewerMeta{
+			"Penny": {Model: "m1", Outcome: outcomeFindings},
+			"sasha": {Model: "m1", Outcome: outcomeFindings},
+		},
+		// The finding cell carries the lowercase form, as reconcile writes it.
+		Findings: []Finding{{
+			Reviewers: []string{"penny", "sasha"},
+			Category:  "performance",
+			Severity:  "MEDIUM",
+		}},
+	}, EmitOpts{Dir: dir}))
 
-	// Fact 2: with findings present, the gate never returns the dropping
-	// disposition — whatever the run's union says, in remit or out of it.
-	for _, cats := range [][]string{
-		{"performance"},        // real topic, outside sasha's remit
-		{"security"},           // real topic, inside it
-		nil,                    // nothing the scorer could attribute
-		{"invariant", "other"}, // real members that carry no topic
-	} {
-		r.CategoriesRaised = cats
-		for _, union := range []map[string]struct{}{
-			{"performance": {}},
-			{"testing": {}},
-			{"security": {}},
-		} {
-			assert.NotEqual(t, dispOutOfRemit, opportunityDisposition(r, union),
-				"a raiser is never dropped, so this link cannot reject a pair-bearing record (cats=%v)", cats)
+	records, err := ReadSince(dir, 0, time.Now(), ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+
+	var penny *Record
+	for i := range records {
+		if records[i].RecordType == RecordTypeReviewer && records[i].Reviewer == "Penny" {
+			penny = &records[i]
 		}
 	}
+	require.NotNil(t, penny, "the emitter must have written a record for the mixed-case reviewer")
+	assert.Zero(t, penny.FindingsRaised,
+		"contains() is an exact match, so the mixed-case reviewer counts none of its own findings")
+	assert.NotEmpty(t, penny.PairSignals,
+		"distinctPeers() folds case, so the SAME finding still yields a pair signal — the shape that was called impossible")
 
-	// And the boundary that makes the above non-vacuous: the SAME record with no
-	// findings IS dropped, so the link is genuinely still in the chain.
-	silent := r
-	silent.FindingsRaised = 0
-	silent.CategoriesRaised = nil
-	assert.Equal(t, dispOutOfRemit, opportunityDisposition(silent, map[string]struct{}{"performance": {}}),
-		"the link still drops a silent out-of-remit lens; it is untaintable HERE, not inert")
+	// And that shape is exactly what the opportunitySetRuns taint needs: zero
+	// raised means the gate can still drop it.
+	penny.CategoriesRaised = []string{"testing"}
+	assert.Equal(t, dispOutOfRemit,
+		opportunityDisposition(*penny, map[string]struct{}{"testing": {}}),
+		"a real emitted record, carrying pair signals, that the opportunity link still rejects")
 }

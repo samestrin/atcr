@@ -1047,8 +1047,27 @@ func TestDocs_PersonasInstallMdDocumentsTheCasesColumn(t *testing.T) {
 			"docs/personas-install.md must name every exclusion reason the CASES cell can print")
 	}
 
-	// The exact strings the renderer produces, so a wording change fails here.
-	assert.Contains(t, doc, "unlabelled")
+	// The exact strings the renderer produces, DERIVED from the renderer rather
+	// than re-typed here — a doc pin that hard-codes its own expectation only
+	// proves the doc agrees with the test.
+	sample := formatScoreDetail(&personas.ScoreDetail{
+		Counted:  12,
+		Excluded: 3,
+		Reasons: map[string]int{
+			scorecard.ReasonNoRecognizedCategory: 4,
+			scorecard.ReasonOutcomeIneligible:    3,
+		},
+	})
+	require.Equal(t, "12 counted (4 unlabelled) · 3 excluded (outcome-ineligible)", sample,
+		"guard on the guard: if the cell format changes, the substrings below are re-derived, not silently relaxed")
+	for _, fragment := range []string{"counted", "unlabelled", "excluded"} {
+		assert.Contains(t, sample, fragment)
+		assert.Contains(t, doc, fragment,
+			"every word the CASES cell prints must appear in the doc that explains it")
+	}
+	// The cell's SHAPE, not just its words: the doc shows a worked example, so a
+	// renderer change that reorders or re-punctuates the cell fails here.
+	assert.Contains(t, doc, "· ", "the doc's worked example must use the renderer's separator")
 	assert.Contains(t, doc, formatScoreDetail(nil), "the no-data marker must be documented")
 	assert.Contains(t, doc, "The excluded figure is always shown, including at `0`",
 		"AC 06-04's explicit-zero behaviour must be documented, not only tested")

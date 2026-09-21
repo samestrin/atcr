@@ -217,7 +217,7 @@ func explainTrustPriorsSince(dir string, minRuns int, since time.Duration, now t
 
 	// The opportunity gate, asked per record through the SAME predicate
 	// opportunitySetRuns uses. This one cannot be diffed: dispUnscopeable and
-	// dispInRemit both survive, and telling them apart is the entire point of
+	// dispCounted both survive, and telling them apart is the entire point of
 	// TD-032's annotation.
 	for _, r := range afterEra {
 		if r.RecordType != RecordTypeReviewer {
