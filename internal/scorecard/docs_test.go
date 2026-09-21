@@ -416,47 +416,55 @@ func TestDocs_ScorecardMdDocumentsTheRoutedCount(t *testing.T) {
 	}
 }
 
-// TestDocs_ScorecardMdDocumentsTheUnscopeableCarveOut pins TD-032's fifth
-// pass-through class against the code that implements it.
+// TestDocs_ScorecardMdDocumentsTheRaiserIsNeverDropped pins the opportunity
+// gate's drop rule against the doc that publishes it.
 //
-// It is a separate test from the four-class pin above because the claim is a
-// different KIND: the other four are "not enough information to judge", while
-// this one is "enough information to judge, and judging would let a
-// phantom-raiser escape". A reader who takes it for a fifth ignorance case has
-// the rationale backwards, so the doc has to carry the reason and not only the
-// behaviour.
-func TestDocs_ScorecardMdDocumentsTheUnscopeableCarveOut(t *testing.T) {
+// The rule changed at the 5.5 phase gate — the gate now drops ONLY a lens that
+// raised nothing — and that change REPEALS a sentence this document used to
+// state as the opportunity set's definition. A doc that keeps the old rule while
+// the code runs the new one is worse than an undocumented one, because the old
+// rule is the exact thing an operator would reason about when a score surprises
+// them. So the doc must carry three things and all three are pinned here: the
+// rule, the reason it changed, and what it cost.
+func TestDocs_ScorecardMdDocumentsTheRaiserIsNeverDropped(t *testing.T) {
 	flat := strings.Join(strings.Fields(string(readDoc(t, "scorecard.md"))), " ")
 
-	assert.Contains(t, flat, "raised findings but contributed no discriminating category of its own",
-		"the doc must state the carve-out's condition, or a reader cannot reproduce the denominator")
-	assert.Contains(t, flat, "self-exculpating",
-		"the doc must carry WHY the record is kept; the behaviour alone reads as an ignorance case")
-
-	// The boundary is the half most easily lost in a later edit, and losing it
-	// silently breaks epic acceptance criterion 1 rather than failing a build.
-	assert.Contains(t, flat, "correctly silent on an out-of-remit case and must still leave the denominator",
-		"the doc must state that a lens which raised NOTHING is still dropped")
+	assert.Contains(t, flat, "A record that RAISED findings is never dropped by this gate",
+		"the doc must state the rule, or an operator cannot reproduce the denominator")
+	assert.Contains(t, flat, "mislabelling profitable",
+		"the doc must carry WHY the rule changed; the behaviour alone reads as an arbitrary choice")
+	assert.Contains(t, flat, "holds for SILENT lenses only",
+		"the doc must state what the change COST — the opportunity-set rule is narrowed, not merely clarified")
+	assert.Contains(t, flat, "additionally annotated as *unlabelled*",
+		"the doc must name the annotation the CASES column prints")
 
 	// And the behaviour the doc describes must be the behaviour the code has.
-	// Both records below contribute nothing to a union that another reviewer made
-	// non-empty; only the one that RAISED findings survives.
+	// Same reviewer, same run, same union; only the raised count differs.
 	union := map[string]struct{}{"performance": {}}
-	raiser := Record{
+	base := Record{
 		SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
-		RunID: "r", Reviewer: "dax", Outcome: outcomeFindings, FindingsRaised: 3,
+		RunID: "r", Reviewer: "dax", Outcome: outcomeFindings,
 	}
-	silent := Record{
-		SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
-		RunID: "r", Reviewer: "dax", Outcome: outcomeClean, FindingsRaised: 0,
-	}
-	assert.Equal(t, dispUnscopeable, opportunityDisposition(raiser, union),
-		"the doc says an unlabelled RAISER is kept as unscopeable")
-	assert.Equal(t, dispOutOfRemit, opportunityDisposition(silent, union),
-		"the doc says a SILENT lens on an out-of-remit run still leaves the denominator")
 
-	// The CLI wording the doc sends an operator to must be the wording the
-	// renderer emits, or the pointer is worse than none.
-	assert.Contains(t, flat, "`CASES` column as *unlabelled*",
-		"the doc names the column and word `personas list --scores` renders")
+	unlabelledRaiser := base
+	unlabelledRaiser.FindingsRaised = 3
+	assert.Equal(t, dispUnscopeable, opportunityDisposition(unlabelledRaiser, union),
+		"the doc says a raiser that attributed nothing is kept AND annotated")
+
+	outOfRemitRaiser := base
+	outOfRemitRaiser.FindingsRaised = 3
+	outOfRemitRaiser.CategoriesRaised = []string{"performance"}
+	assert.Equal(t, dispCounted, opportunityDisposition(outOfRemitRaiser, union),
+		"the doc says a raiser under a real out-of-remit topic is simply counted")
+
+	silent := base
+	silent.Outcome = outcomeClean
+	assert.Equal(t, dispOutOfRemit, opportunityDisposition(silent, union),
+		"the doc says the narrowed rule still drops a lens that raised nothing")
+
+	// The CLI wording the doc sends an operator to must be what the renderer
+	// emits. formatScoreDetail lives in cli/, so the word is asserted here and
+	// the rendering itself in cli/personas_test.go.
+	assert.Contains(t, flat, "`CASES` column",
+		"the doc names the column an operator reads this on")
 }

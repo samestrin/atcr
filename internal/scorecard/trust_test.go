@@ -2505,35 +2505,47 @@ func TestOpportunityDisposition_IsTheOnePredicateBothSurfacesRead(t *testing.T) 
 	// of either surface alone can see.
 	union := map[string]struct{}{"performance": {}}
 
-	assert.Equal(t, dispInRemit, opportunityDisposition(oppRec("r", "penny", []string{"performance"}), union))
+	assert.Equal(t, dispCounted, opportunityDisposition(oppRec("r", "penny", []string{"performance"}), union))
 	assert.Equal(t, dispOutOfRemit, opportunityDisposition(oppRec("r", "sasha", nil), union))
 	assert.Equal(t, dispUnscopeable, opportunityDisposition(oppRecUnlabelled("r", "dax", 2), union))
-	assert.Equal(t, dispInRemit, opportunityDisposition(oppRec("r", "vera", nil), union),
+	assert.Equal(t, dispCounted, opportunityDisposition(oppRec("r", "vera", nil), union),
 		"an unmapped registry-only lens is never opportunity-scoped (C11)")
-	assert.Equal(t, dispInRemit, opportunityDisposition(oppRec("r", "sasha", nil), nil),
+	assert.Equal(t, dispCounted, opportunityDisposition(oppRec("r", "sasha", nil), nil),
 		"an empty union means nobody had scopeable evidence — refuse to guess")
 }
 
-// TestOpportunitySetRuns_DropsAnOutOfRemitLensThatDidRaiseFindings closes the
-// coverage hole the 5.2.A review proved by mutation.
+// TestOpportunitySetRuns_ARaiserIsNeverDroppedForBeingOutOfItsOwnRemit REVERSES
+// a property this file previously pinned as intended, and the reversal is
+// recorded here rather than slipped in.
 //
-// Correcting oppRec (nil cats now means a genuinely silent record) moved every
-// "dropped" fixture in this suite to FindingsRaised 0, so nothing exercised the
-// drop path for a lens that ACTUALLY RAISED something. The reviewer's mutant —
-// `if r.FindingsRaised > 0 { return dispInRemit }` at the top of
-// opportunityDisposition, which deletes the epic's headline property for every
-// raising lens — left the whole opportunity suite green.
+// The old test — TestOpportunitySetRuns_DropsAnOutOfRemitLensThatDidRaiseFindings,
+// added in task 5.3 to close a coverage hole the 5.2.A review found by mutation —
+// asserted the opposite: that a mapped lens raising a discriminating
+// out-of-its-own-remit category leaves the denominator. That was the shipped
+// behaviour and it was wrong, proved by probe at the 5.5 phase gate. dax's remit
+// is testing and error-handling. Against a 20-run honest baseline scoring 1.00,
+// 20 further runs of five uncorroborated findings each labelled `security` left
+// dax at 1.00 — a hundred phantoms charged nothing — while the same phantoms
+// under an unrecognised word dropped dax to 0.17. Labelling a phantom CORRECTLY
+// was more exculpating than labelling it as gibberish.
 //
-// sasha here raises a real, discriminating, in-vocabulary category that is
-// simply not in its own remit. It must still be dropped: raising something is
-// not the same as being in remit, and only the unscopeable case (TD-032, no
-// discriminating contribution at all) earns the carve-out.
-func TestOpportunitySetRuns_DropsAnOutOfRemitLensThatDidRaiseFindings(t *testing.T) {
+// The mutation coverage the old test bought is NOT lost; it moves. The mutant it
+// killed (`if r.FindingsRaised > 0 { return dispCounted }` at the top of
+// opportunityDisposition) is now close to the intended behaviour, so the guard
+// that matters is the opposite one: that a SILENT lens is still dropped. That is
+// asserted below and in
+// TestOpportunitySetRuns_UnscopeableRaiserIsKeptWhileSilentLensIsDropped.
+func TestOpportunitySetRuns_ARaiserIsNeverDroppedForBeingOutOfItsOwnRemit(t *testing.T) {
 	in := []Record{
 		oppRec("run-1", "penny", []string{"performance"}),
-		// sasha's remit is security; performance is neither its remit nor a
-		// control value, so this record is judged and fails the test.
+		// sasha's remit is security. performance is a real, discriminating
+		// vocabulary word outside it — the exact shape that used to buy a free
+		// pass for every finding on the record.
 		oppRec("run-1", "sasha", []string{"performance"}),
+		// And the silent lens on the same run, which must STILL be dropped:
+		// that is the guarantee epic acceptance criterion 1 actually makes, and
+		// the boundary this change must not cross.
+		oppRec("run-1", "dax", nil),
 	}
 	out := opportunityFilter(in)
 
@@ -2542,34 +2554,57 @@ func TestOpportunitySetRuns_DropsAnOutOfRemitLensThatDidRaiseFindings(t *testing
 		names[r.Reviewer] = true
 	}
 	assert.True(t, names["penny"], "performance is penny's remit")
-	assert.False(t, names["sasha"],
-		"a lens that raised a discriminating out-of-its-own-remit category is still dropped")
+	assert.True(t, names["sasha"],
+		"a lens that RAISED findings is not silent; it stays accountable for them even out of remit")
+	assert.False(t, names["dax"],
+		"a lens that raised NOTHING on an out-of-remit run is correctly silent and still leaves the denominator")
 
-	// And the same fact at the predicate, where the mutant lived.
-	assert.Equal(t, dispOutOfRemit,
+	assert.Equal(t, dispCounted,
 		opportunityDisposition(oppRec("run-1", "sasha", []string{"performance"}),
 			map[string]struct{}{"performance": {}}),
-		"raising findings must not by itself buy opportunity-set membership")
+		"an out-of-remit RAISER is counted, not annotated: no exclusion happened and no reason label applies")
 }
 
-func TestTrustPriors_OutOfRemitRaiserLeavesTheDenominatorToo(t *testing.T) {
-	// The same property end to end on the rate, so the guard survives a refactor
-	// that moves the decision out of opportunityDisposition entirely.
-	dir := t.TempDir()
-	for i := 0; i < 20; i++ {
-		runID := runIDAt(time.Now(), fmt.Sprintf("or-%03d", i))
-		// sasha raises a perfect-looking record, but on performance — not its remit.
-		sasha := reviewer_(runID, "Sasha", "m1", 1, 1)
-		sasha.CategoriesRaised = []string{reclib.CategoryPerformance}
-		require.NoError(t, Append(dir, sasha))
-		penny := reviewer_(runID, "Penny", "m1", 1, 1)
-		penny.CategoriesRaised = []string{reclib.CategoryPerformance}
-		require.NoError(t, Append(dir, penny))
+func TestTrustPriors_OutOfRemitPhantomsAreChargedNotForgiven(t *testing.T) {
+	// The phase-gate probe, turned into a permanent guard, on the RATE rather
+	// than the filter — the escape it closes ended at reconcile's trustExempt,
+	// so the proof has to be a number demoteByTrust would read.
+	//
+	// Both stores give dax the same 20 honest, fully-corroborated runs. One adds
+	// 20 runs of five uncorroborated findings each, labelled `security`: real
+	// vocabulary, discriminating, outside dax's remit. Before this change those
+	// records were dropped and dax stayed at a perfect 1.00, clearing
+	// reconcile's trustHighThreshold of 0.7 for blanket exemption.
+	seed := func(t *testing.T, withPhantoms bool) string {
+		t.Helper()
+		dir := t.TempDir()
+		for i := 0; i < 20; i++ {
+			runID := runIDAt(time.Now(), fmt.Sprintf("honest-%03d", i))
+			r := reviewer_(runID, "Dax", "m1", 1, 1)
+			r.CategoriesRaised = []string{reclib.CategoryTesting}
+			require.NoError(t, Append(dir, r))
+		}
+		if !withPhantoms {
+			return dir
+		}
+		for i := 0; i < 20; i++ {
+			runID := runIDAt(time.Now(), fmt.Sprintf("phantom-%03d", i))
+			p := reviewer_(runID, "Dax", "m1", 5, 0)
+			p.CategoriesRaised = []string{reclib.CategorySecurity}
+			require.NoError(t, Append(dir, p))
+		}
+		return dir
 	}
 
-	rates, err := TrustPriors(dir, 10)
+	clean, err := TrustPriors(seed(t, false), 10)
 	require.NoError(t, err)
-	assert.NotContains(t, rates, "sasha",
-		"every sasha run was out of remit, so sasha has no scoreable history at all")
-	assert.Contains(t, rates, "penny", "penny's remit was in play on every run")
+	assert.InDelta(t, 1.0, clean["dax"], 1e-9, "the control: twenty corroborated of twenty raised")
+
+	withPhantoms, err := TrustPriors(seed(t, true), 10)
+	require.NoError(t, err)
+	// 20 corroborated of (20 + 100) raised.
+	assert.InDelta(t, 20.0/120.0, withPhantoms["dax"], 1e-9,
+		"a hundred uncorroborated out-of-remit findings must reach the denominator")
+	assert.Less(t, withPhantoms["dax"], 0.3,
+		"and must drop the lens below reconcile's trustHighThreshold, not leave it exempt at 1.00")
 }

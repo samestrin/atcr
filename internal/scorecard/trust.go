@@ -1040,10 +1040,10 @@ func opportunitySetRuns(records []Record, seenByRun map[string]map[string]struct
 type disposition int
 
 const (
-	// dispInRemit: the record's remit was in play on this run, or the run
+	// dispCounted: the record's remit was in play on this run, or the run
 	// carried no scopeable evidence at all, or the lens has no remit entry. Kept
 	// and unremarkable.
-	dispInRemit disposition = iota
+	dispCounted disposition = iota
 	// dispUnscopeable: TD-032. Raised findings, contributed nothing to the
 	// union. Kept and annotated — see ReasonNoRecognizedCategory.
 	dispUnscopeable
@@ -1066,50 +1066,66 @@ func opportunityDisposition(r Record, union map[string]struct{}) disposition {
 	if len(union) == 0 {
 		// Nobody on the run contributed a discriminating topic, so there is no
 		// evidence about anyone's remit. Refuse to guess.
-		return dispInRemit
+		return dispCounted
 	}
-	// Resolved once per record and reused, rather than calling
-	// RemitCategories here and letting InOpportunitySet call it again —
-	// every call allocates a defensive copy.
+	// Resolved once per record and reused, rather than calling RemitCategories
+	// here and letting InOpportunitySet call it again — every call allocates a
+	// defensive copy.
 	//
-	// THE UNMAPPED CHECK COMES FIRST, ahead of TD-032's carve-out below, and the
-	// order is about what gets REPORTED rather than what gets kept — both
-	// branches keep the record. The five registry-only lenses (vera, pace, brad,
-	// archer, ronin per C11) are never opportunity-scoped at all, so answering
-	// dispUnscopeable for one would have ExplainTrustPriors render "(N
-	// unlabelled)" against a lens the gate never judged: a reason the chain did
-	// not act on, which is the precise drift this predicate was extracted to
-	// prevent.
+	// THE UNMAPPED CHECK COMES FIRST, ahead of the raised-count test below. The
+	// five registry-only lenses (vera, pace, brad, archer, ronin per C11) are
+	// never opportunity-scoped at all, so answering dispUnscopeable for one would
+	// have ExplainTrustPriors render "(N unlabelled)" against a lens the gate
+	// never judged — a reason the chain did not act on.
 	remit, mapped := RemitCategories(r.Reviewer)
 	if !mapped {
-		return dispInRemit
+		return dispCounted
 	}
-	// TD-032: a record that RAISED findings but contributed nothing to its
-	// run's union is UNSCOPEABLE, not out of remit, and it is kept.
+	// THE GATE DROPS ONLY A LENS THAT RAISED NOTHING. A record with findings is
+	// never removed from the denominator for being out of remit.
 	//
-	// The bug this closes is that bad labelling was self-exculpating.
-	// reviewerCategories drops a CATEGORY value outside reclib.Categories()
-	// while correctly keeping the finding, so a lens whose every label is a
-	// word the scorer does not recognise adds nothing to the union — the
-	// remit test below then matches nothing and deletes the very record
-	// demoteByTrust needed, on the runs where that lens raised the most
-	// unattributable findings. reconcile/category.go records a dry run in
-	// which 72.3% of findings used an unrecognised word, so the escape is
-	// reachable rather than theoretical.
+	// This is a deliberate narrowing of the Phase 3 rule and it REVERSES a
+	// property a Phase 5 test previously pinned as intended
+	// (TestOpportunitySetRuns_DropsAnOutOfRemitLensThatDidRaiseFindings, since
+	// rewritten). It was decided on a probe, not an argument. dax's remit is
+	// testing and error-handling; against a 20-run honest baseline scoring 1.00,
+	// adding 20 runs of five uncorroborated findings each labelled `security` —
+	// a real, discriminating vocabulary word outside dax's remit — left dax at
+	// 1.00, charging exactly nothing for 100 phantoms. The SAME phantoms under a
+	// word the scorer does not recognise dropped dax to 0.17, because an
+	// unrecognised word is stripped at emit time and the record then took the
+	// unscopeable carve-out. Mislabelling a phantom CORRECTLY was therefore
+	// strictly more exculpating than mislabelling it as gibberish, which is
+	// backwards, and 1.00 clears reconcile's trustHighThreshold for blanket
+	// trustExempt.
 	//
-	// IT MUST NOT SWALLOW THE SILENT SPECIALIST, which is the whole point of
-	// the gate it sits in front of. A lens that raised NOTHING also
-	// contributes no category, and that lens is correctly silent on an
-	// out-of-remit case — epic acceptance criterion 1 requires it be neither
-	// credited nor penalised, so it has to keep taking the remit path below.
-	// FindingsRaised > 0 is what separates the two, and it is the right
-	// discriminator rather than a proxy: the question is whether the record
-	// had evidence to label, not whether it happened to be scopeable.
-	if r.FindingsRaised > 0 && !contributesToUnion(r) {
-		return dispUnscopeable
+	// WHAT THIS REPEALS, stated plainly rather than left for a reader to infer.
+	// original-requirements.md defines the opportunity set as "a case is in a
+	// lens's denominator only when that lens's remit was in play". After this
+	// change that rule survives for SILENT lenses only. The narrower guarantee
+	// the epic actually asks for is the one in acceptance criterion 1 — "a lens
+	// correctly SILENT on out-of-remit cases does not lose standing" — and a lens
+	// that raised a hundred findings is not silent. It made a judgment call on
+	// that case and is accountable for it.
+	//
+	// The escape was not only adversarial. It made every ordinary uncorroborated
+	// out-of-lane finding free — a testing lens that files a security bug and is
+	// wrong pays nothing — and it protected only the nine grounded personas,
+	// since the five unmapped ones never reach this branch at all.
+	if r.FindingsRaised > 0 {
+		if !contributesToUnion(r) {
+			// Raised findings the scorer could attribute to no topic. Kept AND
+			// annotated, because the reader needs to know this lens's standing
+			// rests on cases nothing could scope (TD-032).
+			return dispUnscopeable
+		}
+		// Raised findings under a real topic outside its own remit. Kept and
+		// unremarkable — there is no fourth reason label for it, and inventing
+		// one would report an exclusion that did not happen.
+		return dispCounted
 	}
 	if intersects(remit, union) {
-		return dispInRemit
+		return dispCounted
 	}
 	return dispOutOfRemit
 }
