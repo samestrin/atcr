@@ -320,3 +320,35 @@ func TestDocs_ScorecardMdDocumentsDocShieldedColumn(t *testing.T) {
 	assert.GreaterOrEqual(t, strings.Count(doc, "DOC-SHIELDED"), 2,
 		"both column lists must document the conditional DOC-SHIELDED column, not just one")
 }
+
+// TestDocs_ScorecardMdDocumentsThePairSurface pins docs/scorecard.md against the
+// pair fields' JSON tags and era constant.
+//
+// The era marker is the part worth a drift test rather than the field names.
+// pair_era exists ONLY to make "measured, no pairs" distinguishable from
+// "written before the field existed" — a reader who takes an absent pair_era as
+// a measured zero reads the whole pre-existing store as a panel of lenses that
+// never co-occur, which is the drop-candidate verdict applied to every pair. A
+// doc that stops saying so is a doc that invites exactly that reading.
+func TestDocs_ScorecardMdDocumentsThePairSurface(t *testing.T) {
+	doc := string(readDoc(t, "scorecard.md"))
+
+	for _, want := range []string{
+		"| `pair_signals` | array of object | conditional |",
+		"| `pair_era` | int | conditional |",
+		`"pair_era": 1,`,
+		fmt.Sprintf("The measurement era for `pair_signals`, currently `%d`.", PairEraCurrent),
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/scorecard.md has drifted from the pair surface; missing:\n%s", want)
+		}
+	}
+
+	// The fields are additive at v2 BY DECISION (C15), not by omission. If a
+	// later change bumps SchemaVersion, this assertion fires and the doc's
+	// "still at version 2" sentence has to be rewritten rather than left to
+	// quietly contradict the constant.
+	if SchemaVersion == 2 && !strings.Contains(doc, "**still at version `2`**") {
+		t.Error("docs/scorecard.md no longer records that the pair fields are additive at v2")
+	}
+}

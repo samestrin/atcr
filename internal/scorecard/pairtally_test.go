@@ -1,0 +1,682 @@
+package scorecard
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/samestrin/atcr/internal/reconcile"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// Phase 4a (Story 05) — the per-pair disagreement tally.
+//
+// It lives in its own file rather than in trust_test.go for the reason Phase 2
+// and Phase 3 split out trust_outcome_test.go and opportunity_test.go: the
+// surface is new, self-contained, and trust_test.go is already 1600+ lines.
+// The sprint plan's task 4.1 names trust_test.go; this is the same tests in the
+// file layout the two preceding phases established.
+
+// pairReviewer builds a reviewer record carrying pair signals and the current
+// pair era, i.e. what the post-4.2 emitter writes.
+func pairReviewer(runID, name, model string, raised, corroborated int, signals ...PairSignal) Record {
+	r := reviewer_(runID, name, model, raised, corroborated)
+	r.PairSignals = signals
+	r.PairEra = PairEraCurrent
+	return r
+}
+
+// pairRunID stamps the YYYY-MM prefix Append derives the month file from, so a
+// fixture run id is a real one rather than a bare label.
+func pairRunID(base string) string { return runIDAt(time.Now(), base) }
+
+// coEligible seeds n runs on which both personas were eligible and in play,
+// sharing agreedEach agreements and disagreedEach severity splits per run.
+func coEligible(t *testing.T, dir string, n int, a, b string, agreedEach, disagreedEach int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		runID := pairRunID(fmt.Sprintf("run-%s-%s-%03d", a, b, i))
+		ra := pairReviewer(runID, a, "m1", agreedEach+disagreedEach, agreedEach,
+			PairSignal{Peer: b, Agreed: agreedEach, Disagreed: disagreedEach})
+		rb := pairReviewer(runID, b, "m1", agreedEach+disagreedEach, agreedEach,
+			PairSignal{Peer: a, Agreed: agreedEach, Disagreed: disagreedEach})
+		require.NoError(t, Append(dir, ra))
+		require.NoError(t, Append(dir, rb))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// AC 05-01 — pair key normalization
+// ---------------------------------------------------------------------------
+
+func TestPairKey_OrderNormalizedAndLowercase(t *testing.T) {
+	forward, ok := PairKey("Penny", "pace")
+	require.True(t, ok)
+	reverse, ok := PairKey("pace", "PENNY")
+	require.True(t, ok)
+
+	assert.Equal(t, "pace|penny", forward, "key must be lowercase and alphabetically ordered")
+	assert.Equal(t, forward, reverse, "both input orderings must collapse to one key")
+}
+
+func TestPairKey_EmptyOrWhitespaceMemberIsRejected(t *testing.T) {
+	// Error Scenario 2: a malformed reviewer name must never become half of a
+	// key. Fail closed, never a "|<other>" key and never a panic.
+	for _, tc := range []struct{ a, b string }{
+		{"", "pace"},
+		{"pace", ""},
+		{"   ", "pace"},
+		{"pace", "\t"},
+		{"", ""},
+	} {
+		key, ok := PairKey(tc.a, tc.b)
+		assert.False(t, ok, "PairKey(%q, %q) must be rejected", tc.a, tc.b)
+		assert.Empty(t, key, "a rejected pair must return no key")
+	}
+}
+
+func TestPairKey_SelfPairIsRejected(t *testing.T) {
+	// A reviewer is never its own co-reviewer; a "bruce|bruce" key would be a
+	// tally of a lens against itself and would always read as total agreement.
+	key, ok := PairKey("Bruce", "bruce")
+	assert.False(t, ok, "a persona paired with itself must be rejected")
+	assert.Empty(t, key)
+}
+
+// ---------------------------------------------------------------------------
+// AC 05-01 / C15 / C16 — the emit seam
+// ---------------------------------------------------------------------------
+
+func TestEmit_RecordCarriesPairSignalsForCoReviewers(t *testing.T) {
+	dir := t.TempDir()
+	in := EmitInput{
+		RunID: pairRunID("r1"),
+		Reviewers: map[string]ReviewerMeta{
+			"bruce": {Model: "m1", Outcome: outcomeFindings},
+			"dax":   {Model: "m2", Outcome: outcomeFindings},
+		},
+		Findings: []Finding{{
+			File: "a.go", Line: 1, Problem: "p",
+			Reviewers: []string{"bruce", "dax"},
+			Category:  "correctness", Severity: "HIGH",
+		}},
+	}
+	require.NoError(t, Emit(in, EmitOpts{Dir: dir}))
+
+	byName := reviewerRecordsByName(t, dir)
+	require.Contains(t, byName, "bruce")
+	require.Contains(t, byName, "dax")
+
+	assert.Equal(t, []PairSignal{{Peer: "dax", Agreed: 1}}, byName["bruce"].PairSignals)
+	assert.Equal(t, []PairSignal{{Peer: "bruce", Agreed: 1}}, byName["dax"].PairSignals)
+}
+
+func TestEmit_SeveritySplitCountsAsDisagreed(t *testing.T) {
+	// reconcile.Merge stamps Disagreement ("<lo> vs <hi>") when the cluster's
+	// members did not agree on severity, and BuildDisagreements keys
+	// KindSeveritySplit off exactly that field. The merged Severity alone is the
+	// MAX and cannot reveal the split, which is why Disagreement is threaded
+	// alongside it.
+	dir := t.TempDir()
+	in := EmitInput{
+		RunID: pairRunID("r1"),
+		Reviewers: map[string]ReviewerMeta{
+			"bruce": {Model: "m1", Outcome: outcomeFindings},
+			"dax":   {Model: "m2", Outcome: outcomeFindings},
+		},
+		Findings: []Finding{
+			{
+				File: "a.go", Line: 1, Problem: "agreed",
+				Reviewers: []string{"bruce", "dax"},
+				Category:  "correctness", Severity: "HIGH",
+			},
+			{
+				File: "b.go", Line: 2, Problem: "split",
+				Reviewers: []string{"bruce", "dax"},
+				Category:  "correctness", Severity: "HIGH",
+				Disagreement: "LOW vs HIGH",
+			},
+		},
+	}
+	require.NoError(t, Emit(in, EmitOpts{Dir: dir}))
+
+	byName := reviewerRecordsByName(t, dir)
+	assert.Equal(t, []PairSignal{{Peer: "dax", Agreed: 1, Disagreed: 1}}, byName["bruce"].PairSignals)
+	assert.Equal(t, []PairSignal{{Peer: "bruce", Agreed: 1, Disagreed: 1}}, byName["dax"].PairSignals)
+}
+
+func TestEmit_SoloFindingCreatesNoPairSignal(t *testing.T) {
+	// AC 05-01 Edge Case 2: a persona sharing no finding gets NO entry, never a
+	// zero-disagreement one — the two are indistinguishable downstream and the
+	// second reads as "never disagrees", which is the drop-candidate verdict.
+	dir := t.TempDir()
+	in := EmitInput{
+		RunID: pairRunID("r1"),
+		Reviewers: map[string]ReviewerMeta{
+			"bruce": {Model: "m1", Outcome: outcomeFindings},
+			"vera":  {Model: "m2", Outcome: outcomeClean},
+		},
+		Findings: []Finding{{
+			File: "a.go", Line: 1, Problem: "p",
+			Reviewers: []string{"bruce"},
+			Category:  "correctness", Severity: "HIGH",
+		}},
+	}
+	require.NoError(t, Emit(in, EmitOpts{Dir: dir}))
+
+	byName := reviewerRecordsByName(t, dir)
+	assert.Empty(t, byName["bruce"].PairSignals, "a solo finding pairs bruce with nobody")
+	assert.Empty(t, byName["vera"].PairSignals, "a silent lens pairs with nobody")
+}
+
+func TestEmit_PairSignalsAreDeterministicallyOrdered(t *testing.T) {
+	// Two byte-identical runs must serialize byte-identically, or a diff of the
+	// store reports churn that is really Go's map iteration order.
+	dir := t.TempDir()
+	in := EmitInput{
+		RunID: pairRunID("r1"),
+		Reviewers: map[string]ReviewerMeta{
+			"bruce": {Model: "m1", Outcome: outcomeFindings},
+			"dax":   {Model: "m2", Outcome: outcomeFindings},
+			"greta": {Model: "m3", Outcome: outcomeFindings},
+			"sasha": {Model: "m4", Outcome: outcomeFindings},
+		},
+		Findings: []Finding{{
+			File: "a.go", Line: 1, Problem: "p",
+			Reviewers: []string{"sasha", "greta", "dax", "bruce"},
+			Category:  "correctness", Severity: "HIGH",
+		}},
+	}
+	require.NoError(t, Emit(in, EmitOpts{Dir: dir}))
+
+	got := reviewerRecordsByName(t, dir)["bruce"].PairSignals
+	assert.Equal(t, []PairSignal{
+		{Peer: "dax", Agreed: 1},
+		{Peer: "greta", Agreed: 1},
+		{Peer: "sasha", Agreed: 1},
+	}, got, "peers must be sorted, not map-ordered")
+}
+
+func TestEmit_StampsThePairEraMarker(t *testing.T) {
+	// C15: an absent pair_signals key is byte-identical whether the run measured
+	// no pairs or predates the field entirely. The era marker is the only thing
+	// in the bytes that tells them apart, so it is stamped UNCONDITIONALLY —
+	// including on a run that produced no pair at all, which is exactly the case
+	// the marker has to distinguish.
+	dir := t.TempDir()
+	in := EmitInput{
+		RunID:     pairRunID("r1"),
+		Reviewers: map[string]ReviewerMeta{"bruce": {Model: "m1", Outcome: outcomeClean}},
+	}
+	require.NoError(t, Emit(in, EmitOpts{Dir: dir}))
+
+	assert.Equal(t, PairEraCurrent, reviewerRecordsByName(t, dir)["bruce"].PairEra,
+		"a measured-empty run must be distinguishable from a pre-era record")
+}
+
+func TestPairSignals_RoundTripThroughTheStore(t *testing.T) {
+	dir := t.TempDir()
+	want := pairReviewer(pairRunID("r1"), "bruce", "m1", 3, 2,
+		PairSignal{Peer: "dax", Agreed: 2, Disagreed: 1})
+	require.NoError(t, Append(dir, want))
+
+	got := reviewerRecordsByName(t, dir)["bruce"]
+	assert.Equal(t, want.PairSignals, got.PairSignals)
+	assert.Equal(t, PairEraCurrent, got.PairEra)
+}
+
+func TestPairSignals_AbsentKeysOmittedFromJSON(t *testing.T) {
+	// omitempty on both, so a record that measured nothing serializes exactly as
+	// a pre-4a record did.
+	raw, err := json.Marshal(Record{SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer})
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "pair_signals")
+	assert.NotContains(t, string(raw), "pair_era")
+}
+
+func TestPairSignals_DoNotBumpTheSchemaVersion(t *testing.T) {
+	// C15 closes TD-030 the D8 way: an additive omitempty field plus its own era
+	// marker is NOT a schema era. The literal is deliberate — asserting against
+	// the constant would contract with it and pass at any value.
+	assert.Equal(t, 2, SchemaVersion,
+		"PairSignals is additive; bumping SchemaVersion would reclassify every measured v2 record as unmeasured")
+}
+
+// ---------------------------------------------------------------------------
+// AC 05-01 — the cross-run fold
+// ---------------------------------------------------------------------------
+
+func TestPairTallies_AggregatesAcrossRuns(t *testing.T) {
+	dir := t.TempDir()
+	coEligible(t, dir, minPairCases, "penny", "pace", 3, 1)
+
+	tallies, err := PairDisagreements(dir, 0)
+	require.NoError(t, err)
+
+	got, ok := tallies["pace|penny"]
+	require.True(t, ok, "expected a tally under the normalized key, got keys %v", keysOf(tallies))
+	assert.Equal(t, minPairCases*3, got.Agreed)
+	assert.Equal(t, minPairCases*1, got.Disagreed)
+	assert.Equal(t, minPairCases, got.Cases)
+	assert.InDelta(t, 0.25, got.DisagreementRate(), 1e-9)
+}
+
+func TestPairTallies_IsDeterministicAcrossReads(t *testing.T) {
+	// AC 05-01 Scenario 3, read as the AC itself instructs: assert determinism
+	// (two reads of an unchanged store agree), not the absence of recomputation.
+	// trustPriorsSince re-folds on every call and holds no cache; a persisted
+	// precomputed tally would be the second durable store the epic forbids.
+	dir := t.TempDir()
+	coEligible(t, dir, minPairCases, "penny", "pace", 3, 1)
+
+	first, err := PairDisagreements(dir, 0)
+	require.NoError(t, err)
+	second, err := PairDisagreements(dir, 0)
+	require.NoError(t, err)
+
+	assert.Equal(t, first, second, "two reads of an unchanged store must agree exactly")
+}
+
+func TestPairTallies_BothOrderingsCollapseToOneKey(t *testing.T) {
+	dir := t.TempDir()
+	// Run 1 names the pair one way round, run 2 the other.
+	r1, r2 := pairRunID("r1"), pairRunID("r2")
+	require.NoError(t, Append(dir, pairReviewer(r1, "penny", "m1", 1, 1, PairSignal{Peer: "pace", Agreed: 1})))
+	require.NoError(t, Append(dir, pairReviewer(r1, "pace", "m1", 1, 1, PairSignal{Peer: "penny", Agreed: 1})))
+	require.NoError(t, Append(dir, pairReviewer(r2, "pace", "m1", 1, 1, PairSignal{Peer: "penny", Agreed: 1})))
+	require.NoError(t, Append(dir, pairReviewer(r2, "penny", "m1", 1, 1, PairSignal{Peer: "pace", Agreed: 1})))
+
+	tallies, err := PairDisagreements(dir, 0)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"pace|penny"}, keysOf(tallies), "both orderings must form ONE key")
+	assert.Equal(t, 2, tallies["pace|penny"].Agreed, "each run must be counted once, not twice")
+}
+
+func TestPairTallies_CountsASharedFindingOnceNotOncePerMember(t *testing.T) {
+	// Both members' records carry the same run's signal. Folding both sides
+	// naively doubles every count, which halves every disagreement rate's
+	// denominator-relative meaning and would silently make pairs look more
+	// agreeable than they are.
+	dir := t.TempDir()
+	runID := pairRunID("r1")
+	require.NoError(t, Append(dir, pairReviewer(runID, "bruce", "m1", 2, 2,
+		PairSignal{Peer: "dax", Agreed: 2, Disagreed: 1})))
+	require.NoError(t, Append(dir, pairReviewer(runID, "dax", "m1", 2, 2,
+		PairSignal{Peer: "bruce", Agreed: 2, Disagreed: 1})))
+
+	tallies, err := PairDisagreements(dir, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 2, tallies["bruce|dax"].Agreed)
+	assert.Equal(t, 1, tallies["bruce|dax"].Disagreed)
+	assert.Equal(t, 1, tallies["bruce|dax"].Cases)
+}
+
+func TestPairTallies_RequiresBothMembersToSurviveTheChain(t *testing.T) {
+	// The whole point of the eligibility gate is that a lens whose call timed
+	// out did not get a fair attempt. A pair signal read off the SURVIVING
+	// member's record alone would re-admit exactly that run through the pair
+	// surface — scoring a relationship with a lens the gate just excluded.
+	dir := t.TempDir()
+	runID := pairRunID("r1")
+	ok := pairReviewer(runID, "bruce", "m1", 1, 1, PairSignal{Peer: "archer", Agreed: 1})
+	truncated := pairReviewer(runID, "archer", "m2", 1, 1, PairSignal{Peer: "bruce", Agreed: 1})
+	truncated.Outcome = "truncated" // ineligible: an infrastructure fault, not a judgment
+	require.NoError(t, Append(dir, ok))
+	require.NoError(t, Append(dir, truncated))
+
+	tallies, err := PairDisagreements(dir, 0)
+	require.NoError(t, err)
+	assert.NotContains(t, tallies, "archer|bruce",
+		"a pair may not be scored on a run one member was excluded from")
+}
+
+func TestPairTallies_ExcludesRecordsWithoutThePairEraMarker(t *testing.T) {
+	// AC 05-01 Edge Case 3: items predating the pair signal are excluded from
+	// the validated count, never read as a measured zero.
+	dir := t.TempDir()
+	for i := 0; i < minPairCases; i++ {
+		runID := pairRunID(fmt.Sprintf("old-%03d", i))
+		a := pairReviewer(runID, "penny", "m1", 1, 1, PairSignal{Peer: "pace", Agreed: 1})
+		b := pairReviewer(runID, "pace", "m1", 1, 1, PairSignal{Peer: "penny", Agreed: 1})
+		a.PairEra, b.PairEra = 0, 0 // pre-era
+		a.PairSignals, b.PairSignals = nil, nil
+		require.NoError(t, Append(dir, a))
+		require.NoError(t, Append(dir, b))
+	}
+
+	tallies, err := PairDisagreements(dir, 0)
+	require.NoError(t, err)
+	assert.Empty(t, tallies, "pre-era records carry no pair evidence and must not form a tally")
+}
+
+func TestPairTallies_NoEntryForAPersonaThatNeverSharesAFinding(t *testing.T) {
+	// AC 05-01 Edge Case 2 again, at the fold rather than the emitter.
+	dir := t.TempDir()
+	for i := 0; i < minPairCases; i++ {
+		runID := pairRunID(fmt.Sprintf("r-%03d", i))
+		require.NoError(t, Append(dir, pairReviewer(runID, "bruce", "m1", 1, 1)))
+		require.NoError(t, Append(dir, pairReviewer(runID, "sasha", "m2", 1, 1)))
+	}
+
+	tallies, err := PairDisagreements(dir, 0)
+	require.NoError(t, err)
+	assert.Empty(t, tallies, "co-eligibility alone is not a pair; a shared finding is")
+}
+
+func TestPairTallies_EmptyStoreYieldsEmptyMapNoError(t *testing.T) {
+	tallies, err := PairDisagreements(t.TempDir(), 0)
+	require.NoError(t, err)
+	assert.Empty(t, tallies)
+}
+
+func TestPairTallies_MissingStoreDegradesNotErrors(t *testing.T) {
+	// Matches TrustPriors' best-effort contract: a missing store is "no data
+	// yet", never an error and never a panic.
+	tallies, err := PairDisagreements(filepath.Join(t.TempDir(), "absent"), 0)
+	require.NoError(t, err)
+	assert.Empty(t, tallies)
+}
+
+func TestPairTallies_MalformedPeerNameIsSkipped(t *testing.T) {
+	// Error Scenario 2 at the fold: a whitespace-only peer must not become
+	// "bruce|" — fail closed, silent skip, matching soloItem's convention.
+	dir := t.TempDir()
+	runID := pairRunID("r1")
+	require.NoError(t, Append(dir, pairReviewer(runID, "bruce", "m1", 1, 1,
+		PairSignal{Peer: "   ", Agreed: 1})))
+	require.NoError(t, Append(dir, pairReviewer(runID, "dax", "m1", 1, 1,
+		PairSignal{Peer: "bruce", Agreed: 1})))
+
+	tallies, err := PairDisagreements(dir, 0)
+	require.NoError(t, err)
+	for k := range tallies {
+		assert.NotContains(t, k, "|\"", "no malformed key may be formed")
+		assert.False(t, strings.HasPrefix(k, "|") || strings.HasSuffix(k, "|"),
+			"malformed key %q formed from a blank peer", k)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// AC 05-02 — the floor and the drop-candidate threshold
+// ---------------------------------------------------------------------------
+
+func TestPairTallies_BelowFloorIsInsufficientDataNotAZeroRate(t *testing.T) {
+	// AC 05-01 Edge Case 1 / D6: ONE floor for the whole pair surface. A sparse
+	// pair is "insufficient data" — never a numeric 0 read as perfect agreement,
+	// and never a confident non-candidate either.
+	dir := t.TempDir()
+	coEligible(t, dir, minPairCases-1, "penny", "pace", 4, 0)
+
+	tallies, err := PairDisagreements(dir, 0)
+	require.NoError(t, err)
+
+	got := tallies["pace|penny"]
+	assert.False(t, got.Sufficient, "a pair below the floor must not be marked sufficient")
+	assert.False(t, got.DropCandidate, "insufficient data may never produce a drop candidate")
+}
+
+func TestDropCandidate_AtOrBelowThresholdIsFlagged(t *testing.T) {
+	dir := t.TempDir()
+	// 0 disagreements over a sufficient sample: the penny test's pure case.
+	coEligible(t, dir, minPairCases, "penny", "pace", 4, 0)
+
+	tallies, err := PairDisagreements(dir, 0)
+	require.NoError(t, err)
+
+	got := tallies["pace|penny"]
+	assert.True(t, got.Sufficient)
+	assert.True(t, got.DropCandidate, "a pair that never disagrees over a sufficient sample IS the penny test")
+}
+
+func TestDropCandidate_StrictlyAboveThresholdIsNotFlagged(t *testing.T) {
+	// AC 05-02 Edge Case 1: at-or-below semantics, not "near".
+	dir := t.TempDir()
+	// 1 disagreement in 10 shared findings per run = 0.10, above the threshold.
+	coEligible(t, dir, minPairCases, "penny", "pace", 9, 1)
+
+	tallies, err := PairDisagreements(dir, 0)
+	require.NoError(t, err)
+
+	got := tallies["pace|penny"]
+	require.True(t, got.Sufficient)
+	require.Greater(t, got.DisagreementRate(), dropCandidateMaxRate)
+	assert.False(t, got.DropCandidate, "a rate above the threshold is never flagged")
+}
+
+func TestDropCandidateMaxRate_NotNarrowedWithoutRemeasurement(t *testing.T) {
+	// Mirrors TestDefaultTrustWindow_NotNarrowedWithoutRemeasurement. The
+	// literal is deliberate: derived from the constant, this test would contract
+	// with it and pass at any value.
+	//
+	// The constant is PROVISIONAL — there is no scorecard store to measure it
+	// against. Moving it requires the measurement its doc comment names, and
+	// updating this literal in the same commit.
+	assert.Equal(t, 0.05, dropCandidateMaxRate,
+		"redo the live-store measurement in dropCandidateMaxRate's doc comment before moving this")
+}
+
+func TestMinPairCases_NotNarrowedWithoutRemeasurement(t *testing.T) {
+	// D6: this is the ONE floor for the whole pair surface. AC 04-05's Edge
+	// Case 2 defers to it; Story 4 must not introduce a second.
+	assert.Equal(t, 20, minPairCases,
+		"redo the live-store measurement in minPairCases' doc comment before moving this")
+}
+
+// ---------------------------------------------------------------------------
+// AC 05-03 — specialist protection
+// ---------------------------------------------------------------------------
+
+func TestDropCandidate_HighDisagreementSpecialistPairIsNeverFlagged(t *testing.T) {
+	// AC 05-03 Scenario 1, with C11's substitution applied: vera has no in-repo
+	// persona file, so the worked example uses two in-repo specialists with
+	// genuinely distinct remits instead — sasha (security) and otto (style).
+	dir := t.TempDir()
+	coEligible(t, dir, minPairCases*2, "sasha", "otto", 1, 9)
+
+	tallies, err := PairDisagreements(dir, 0)
+	require.NoError(t, err)
+
+	got := tallies["otto|sasha"]
+	require.True(t, got.Sufficient)
+	assert.False(t, got.DropCandidate,
+		"distinct remits disagree often; frequent disagreement is evidence of independence, never redundancy")
+}
+
+func TestPairTallies_DoNotAlterIndividualTrustRates(t *testing.T) {
+	// AC 05-03 Scenario 2 / Error Scenario 1: the pair surface is READ-ONLY
+	// against the individual-rate pipeline. If a future change wires the tally
+	// into trustPriorsSince, this fails.
+	dir := t.TempDir()
+	coEligible(t, dir, minPairCases, "sasha", "otto", 1, 9)
+
+	before, err := TrustPriors(dir, 0)
+	require.NoError(t, err)
+
+	_, err = PairDisagreements(dir, 0)
+	require.NoError(t, err)
+
+	after, err := TrustPriors(dir, 0)
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "computing pair tallies must not move any individual rate")
+}
+
+func TestDropCandidate_GeneralistPairVolumeIsNotItselfASignal(t *testing.T) {
+	// AC 05-03 Edge Case 1: bruce pairs with every specialist, so it appears in
+	// the most pairs by construction. Pair COUNT must never be the signal; only
+	// the per-pair RATE is.
+	dir := t.TempDir()
+	specialists := []string{"dax", "greta", "ingrid", "kai", "mira", "otto", "penny", "sasha"}
+	for _, s := range specialists {
+		coEligible(t, dir, minPairCases, "bruce", s, 6, 4) // rate 0.4, well above threshold
+	}
+
+	tallies, err := PairDisagreements(dir, 0)
+	require.NoError(t, err)
+	require.Len(t, tallies, len(specialists), "bruce should appear in one pair per specialist")
+
+	for key, got := range tallies {
+		assert.False(t, got.DropCandidate,
+			"pair %s flagged on volume alone; only the per-pair rate may flag", key)
+	}
+}
+
+func TestPairTallies_OutOfRemitSilenceIsNotTacitAgreement(t *testing.T) {
+	// AC 05-03 Edge Case 2: a narrow lens raising nothing on an out-of-remit
+	// case must not have that silence counted as agreeing with everyone. Read
+	// as agreement it would drive the pair rate to zero and flag a correctly
+	// silent specialist as redundant — the epic's headline failure mode.
+	dir := t.TempDir()
+	for i := 0; i < minPairCases; i++ {
+		runID := pairRunID(fmt.Sprintf("r-%03d", i))
+		// bruce raises; sasha is eligible but silent and shares no finding.
+		require.NoError(t, Append(dir, pairReviewer(runID, "bruce", "m1", 1, 0)))
+		silent := pairReviewer(runID, "sasha", "m2", 0, 0)
+		silent.Outcome = outcomeClean
+		require.NoError(t, Append(dir, silent))
+	}
+
+	tallies, err := PairDisagreements(dir, 0)
+	require.NoError(t, err)
+	assert.NotContains(t, tallies, "bruce|sasha",
+		"silence is not agreement; it forms no pair evidence at all")
+}
+
+// ---------------------------------------------------------------------------
+// AC 05-04 — reporting-only safety boundary
+// ---------------------------------------------------------------------------
+
+func TestPairSurface_DoesNotImportInternalRegistry(t *testing.T) {
+	// AC 05-04 Error Scenario 1. internal/boundaries_test.go already pins this
+	// package's allowed internal imports and omits registry, so the guard exists
+	// repo-wide; a third copy of that AST scan is the very smell TD-009 files.
+	// This test pins the fact LOCALLY, where a reader of the pair surface will
+	// see it, by asserting the package source names no registry import.
+	// The needle is ASSEMBLED rather than written as one literal, and _test.go
+	// files are skipped. Without both, this test scans its own source, finds the
+	// path it is searching for, and fails on itself — which it did on the first
+	// run of the RED pass.
+	needle := `"` + "github.com/samestrin/atcr/internal" + "/registry" + `"`
+
+	entries, err := os.ReadDir(".")
+	require.NoError(t, err)
+	scanned := 0
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(name)
+		require.NoError(t, err)
+		scanned++
+		assert.NotContains(t, string(src), needle,
+			"%s imports internal/registry; the pair surface reports, it never touches the registry", name)
+	}
+	require.NotZero(t, scanned, "the scan found no package source to check")
+}
+
+func TestPairDisagreements_PerformsNoWrites(t *testing.T) {
+	// AC 05-04 Scenario 1: flagging a drop candidate writes nothing, anywhere.
+	dir := t.TempDir()
+	coEligible(t, dir, minPairCases, "penny", "pace", 4, 0)
+
+	before := snapshotDir(t, dir)
+	_, err := PairDisagreements(dir, 0)
+	require.NoError(t, err)
+	assert.Equal(t, before, snapshotDir(t, dir), "the pair surface is read-only")
+}
+
+// ---------------------------------------------------------------------------
+// helpers
+// ---------------------------------------------------------------------------
+
+func reviewerRecordsByName(t *testing.T, dir string) map[string]Record {
+	t.Helper()
+	recs, err := ReadAll(dir, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	out := map[string]Record{}
+	for _, r := range recs {
+		if r.RecordType == RecordTypeReviewer {
+			out[r.Reviewer] = r
+		}
+	}
+	return out
+}
+
+func keysOf(m map[string]PairTally) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// snapshotDir records every file's name, size and modification time so a write
+// of any kind shows up as a difference.
+func snapshotDir(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		out[path] = fmt.Sprintf("%d|%s", info.Size(), info.ModTime().Format(time.RFC3339Nano))
+		return nil
+	})
+	require.NoError(t, err)
+	return out
+}
+
+// ---------------------------------------------------------------------------
+// C16 — the reconcile seam threads Severity and Disagreement
+// ---------------------------------------------------------------------------
+
+func TestEmitForReconcile_ThreadsDisagreementIntoPairSignals(t *testing.T) {
+	// The gap C16 closes end to end: reconcile.Merge records a severity split in
+	// Merged.Disagreement, and without threading it the emitter sees only the
+	// cluster's MAX severity and reads every split as plain agreement.
+	reviewDir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	res := reconcile.Result{
+		Findings: []reconcile.Merged{
+			{Finding: reconcile.Finding{
+				File: "a.go", Line: 1, Problem: "agreed",
+				Reviewers: []string{"bruce", "greta"},
+				Severity:  "HIGH",
+			}},
+			{Finding: reconcile.Finding{
+				File: "b.go", Line: 2, Problem: "split",
+				Reviewers:    []string{"bruce", "greta"},
+				Severity:     "HIGH",
+				Disagreement: "LOW vs HIGH",
+			}},
+		},
+		Summary: reconcile.Summary{ReconciledAt: "2026-06-14T10:00:00Z"},
+	}
+
+	EmitForReconcile(reviewDir, res, EmitOpts{})
+
+	cfg, err := os.UserConfigDir()
+	require.NoError(t, err)
+	recs, err := ReadRecords(filepath.Join(cfg, "atcr", "scorecard", "2026-06.jsonl"), ReadOpts{})
+	require.NoError(t, err)
+
+	bruce := findReviewer(recs, "bruce")
+	require.NotNil(t, bruce)
+	assert.Equal(t, []PairSignal{{Peer: "greta", Agreed: 1, Disagreed: 1}}, bruce.PairSignals,
+		"the severity split must survive the reconcile seam, not just a direct Emit call")
+	assert.Equal(t, PairEraCurrent, bruce.PairEra)
+}

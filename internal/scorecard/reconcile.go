@@ -86,6 +86,21 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 			// for a per-reviewer claim about what that lens personally raised,
 			// and nothing may read it as one.
 			Category: m.Category,
+			// Threaded at THIS site ONLY, and the asymmetry with Category just
+			// above is deliberate rather than an oversight. reviewerPairSignals
+			// reads in.Findings and nothing else, so these two values are dead
+			// weight on the other two streams: a Tier-4-routed phantom has no
+			// co-reviewer to relate to (routing is what took it out of the
+			// merged set), and the ambiguous stream is documented as
+			// category-only precisely so it moves no count.
+			//
+			// Both carry reconcile.Merge's CLUSTER values, same as Category.
+			// Severity is the cluster MAX; Disagreement is Merge's record that
+			// the members did not agree on it ("<lo> vs <hi>"), which is what
+			// BuildDisagreements calls a severity_split. The split lives in the
+			// second field, never in the first.
+			Severity:     m.Severity,
+			Disagreement: m.Disagreement,
 		})
 		for _, name := range names {
 			if _, ok := reviewers[name]; !ok {

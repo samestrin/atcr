@@ -85,7 +85,12 @@ const SchemaVersion = 2
 // SchemaVersion itself.
 //
 // The difference is the whole point and it is a landmine, not a style choice.
-// SchemaVersion MOVES — TD-030 already puts a v3 bump on Phase 4a's table. A
+// SchemaVersion MOVES — and the fact that it has NOT moved for Phase 4a is a
+// decision, not an accident. TD-030 originally put a v3 bump on that phase's
+// table; C15 closed it the other way, with an additive omitempty field plus its
+// own era marker (Record.PairEra), exactly as D8 closes WeightedCredit. The
+// "schema changes ONCE for this body of work" sentence above therefore still
+// holds. A future field may yet move the constant, which is the point below. A
 // guard written as `r.SchemaVersion < SchemaVersion` reads "pre-schema-2" only
 // while the constant happens to be 2; the day it becomes 3, every v2 record —
 // each carrying a genuinely MEASURED category set — is silently reclassified as
@@ -251,6 +256,26 @@ type Record struct {
 	// excluded rather than read as either in-remit or out-of-remit.
 	CategoriesRaised []string `json:"categories_raised,omitempty"`
 
+	// PairSignals records how this reviewer related to each co-reviewer it
+	// shared a finding with on this run: agreed on the defect, or split on its
+	// severity. It is the durable half of the penny test — "if the two never
+	// disagree, drop one" — and it exists because nothing else on this record
+	// carries co-reviewer identity at all (TD-030). See PairSignal.
+	//
+	// omitempty: absent means the run produced no pair. PairEra, not this
+	// field, is what says the run was MEASURED.
+	PairSignals []PairSignal `json:"pair_signals,omitempty"`
+	// PairEra is the pair-signal measurement era marker (C15, closing TD-030
+	// the way D8 closes WeightedCredit). It is stamped on every reviewer record
+	// this emitter writes, including one with no pairs, because an absent
+	// PairSignals is byte-identical on a measured-empty run and a pre-4a record
+	// — and scoring the pre-4a back-catalogue as "these lenses never
+	// co-occurred" is the drop-candidate verdict applied to the whole store.
+	//
+	// This is an ADDITIVE omitempty field plus an era marker, so it does NOT
+	// increment SchemaVersion. See PairEraCurrent.
+	PairEra int `json:"pair_era,omitempty"`
+
 	FindingsVerified    *int     `json:"findings_verified,omitempty"`
 	FindingsRefuted     *int     `json:"findings_refuted,omitempty"`
 	SurvivedSkepticRate *float64 `json:"survived_skeptic_rate,omitempty"`
@@ -357,6 +382,26 @@ type Finding struct {
 	// reconcile.Categories() vocabulary gate, so the construction sites cannot
 	// disagree with each other about which values are durable.
 	Category string
+	// Severity and Disagreement carry reconcile.Finding's own values verbatim,
+	// threaded at the EmitForReconcile construction sites exactly as Category
+	// was. This struct is never persisted, so both are free: no schema change,
+	// no store migration, no era marker (C16).
+	//
+	// THE PAIR SIGNAL NEEDS BOTH, and Disagreement is the load-bearing one.
+	// reconcile.Merge sets Severity to the cluster MAX, so a merged finding's
+	// severity cannot by itself reveal that its members disagreed; Merge
+	// records that fact separately, in Disagreement ("<lo> vs <hi>"), and
+	// BuildDisagreements keys KindSeveritySplit off exactly that field.
+	// Carrying Severity alone would let Emit see the outcome of a split and
+	// never the split.
+	//
+	// Same cluster-modal caveat as Category, and for the same reason: after a
+	// merge the per-reviewer severities are unrecoverable (reconcile.Position
+	// says so in its own comment, which is why Positions is populated only for
+	// gray-zone clusters). These are the CLUSTER's values. Nothing may read
+	// them as a per-reviewer claim.
+	Severity     string
+	Disagreement string
 }
 
 // ReviewerMeta carries the per-reviewer identity/usage sourced from the fan-out's
@@ -587,7 +632,17 @@ func Emit(in EmitInput, opts EmitOpts) error {
 			// in.AmbiguousFindings is a category stream ONLY — it is absent from
 			// every reviewerCounts call above, so it moves no numerator and no
 			// denominator. See the field's comment for the loop it breaks.
-			CategoriesRaised:  reviewerCategories(name, in.Findings, chargeableUnresolved, in.AmbiguousFindings),
+			CategoriesRaised: reviewerCategories(name, in.Findings, chargeableUnresolved, in.AmbiguousFindings),
+			// Pair signals come from in.Findings ONLY. A routed phantom has no
+			// co-reviewer to relate to (routing is what removed it from the
+			// merged set), and the ambiguous stream is documented as
+			// category-only — feeding it here would move a count it is
+			// deliberately kept out of.
+			PairSignals: reviewerPairSignals(name, in.Findings),
+			// Stamped unconditionally, including on a run with no pairs at all:
+			// the marker, not the slice, is what records that this run was
+			// measured. See PairEraCurrent.
+			PairEra:           PairEraCurrent,
 			CorroborationRate: ratio(corroborated, raised),
 			CostUSD:           llmclient.ComputeCostUSD(meta.Model, meta.TokensIn, meta.TokensOut),
 			TokensIn:          meta.TokensIn,
