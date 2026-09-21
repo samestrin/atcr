@@ -513,9 +513,14 @@ type AgentConfig struct {
 	Binding string `yaml:"binding,omitempty"`
 
 	// Active in Epic 2.0 — the engine acts on these (tool loop + budgets).
-	Tools           bool   `yaml:"tools"`             // enables the multi-turn tool loop
-	MaxTurns        *int   `yaml:"max_turns"`         // agent-loop turn cap (default 10 when tools=true)
-	ToolBudgetBytes *int64 `yaml:"tool_budget_bytes"` // cumulative tool-result budget (0 = unlimited, matches PayloadByteBudget)
+	Tools    bool `yaml:"tools"`     // enables the multi-turn tool loop
+	MaxTurns *int `yaml:"max_turns"` // agent-loop turn cap (default 10 when tools=true)
+	// ToolBudgetBytes is the cumulative tool-result budget; 0 = unlimited, matching
+	// PayloadByteBudget — in the review, debate and executor lanes. The skeptic
+	// lane is the exception: verify.skepticToolBudget clamps this value, a 0
+	// included, down to the ceiling derived from a declared context_window_tokens,
+	// so there a 0 is bounded rather than unlimited.
+	ToolBudgetBytes *int64 `yaml:"tool_budget_bytes"`
 	// Reserved for the agentic stages — parsed + validated, inert in 2.0.
 	Role string `yaml:"role"` // Stage 3/4 — reviewer | skeptic | judge
 

@@ -4099,9 +4099,18 @@ func resolveMaxTokens(ac registry.AgentConfig, override int) int {
 
 // maxTokensFor is resolveMaxTokens bound to this run's settings — the form every
 // call site in the review path uses, so the CLI tier can never be applied at some
-// sites and forgotten at others. The cap it returns feeds BOTH the Invocation and
-// the sizing reservation; those must be the same number, or an agent is sized for
-// one output budget and then asked for another.
+// sites and forgotten at others. In THIS lane the cap it returns feeds BOTH the
+// Invocation and the sizing reservation; those must be the same number, or an
+// agent is sized for one output budget and then asked for another.
+//
+// That coupling is the review lane's, not a repo-wide invariant. The skeptic lane
+// splits the two deliberately: internal/verify/reservedOutputTokens reserves the
+// built-in default for an agent that declares no cap, while buildSkepticAgent
+// forwards the declaration verbatim (a nil stays nil) so the provider's own
+// default applies on the wire — reserving conservatively costs tool budget,
+// sending a built-in cap would change what the model is allowed to say. See
+// internal/verify/invoke.go's reservedOutputTokens for that argument; it is not a
+// bug to "fix" by making this sentence true everywhere.
 // cfg is dereferenced unconditionally: all three callers (buildSlots, renderAgent,
 // buildFallbackAgent) read cfg.Registry or cfg.Settings before reaching here, so a nil
 // would already have panicked upstream. The nil guard that used to sit here was an

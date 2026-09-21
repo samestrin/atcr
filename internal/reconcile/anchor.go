@@ -487,6 +487,26 @@ func scanFixAnchors(text string) ([]string, anchorScan) {
 	return out, s
 }
 
+// filterImprecise is the one walk both imprecise-filtering consumers share: it
+// collects the scan's anchors whose recorded imprecision kind the predicate
+// accepts, in the already-sorted anchor order. The empty-imprecise fast path is
+// shared too — it is behaviourally identical to falling through the loop, so
+// both callers keep one nil-guard policy. Callers keep their OWN arm guards
+// (capped/unaccounted): those differ deliberately between the PROBLEM and FIX
+// sides and are documented at each consumer.
+func (s anchorScan) filterImprecise(keep func(anchorImprecision) bool) []string {
+	if len(s.imprecise) == 0 {
+		return nil
+	}
+	var out []string
+	for _, tok := range s.anchors {
+		if keep(s.imprecise[tok]) {
+			out = append(out, tok)
+		}
+	}
+	return out
+}
+
 // boundaryCutAnchors returns the members of the scan's anchor set that are a
 // PROPER SUFFIX of what the reviewer wrote — the tail a spaceless-script word
 // boundary cut a call name down to, with no clean span in the same text vouching
@@ -510,26 +530,6 @@ func scanFixAnchors(text string) ([]string, anchorScan) {
 // abandoned — it is the evidence the no-match verdict rests on — so its
 // boundary-cut members are always meaningful, and withholding them on a capped
 // set would hand resolve a set it believes is fully faithful.
-// filterImprecise is the one walk both imprecise-filtering consumers share: it
-// collects the scan's anchors whose recorded imprecision kind the predicate
-// accepts, in the already-sorted anchor order. The empty-imprecise fast path is
-// shared too — it is behaviourally identical to falling through the loop, so
-// both callers keep one nil-guard policy. Callers keep their OWN arm guards
-// (capped/unaccounted): those differ deliberately between the PROBLEM and FIX
-// sides and are documented at each consumer.
-func (s anchorScan) filterImprecise(keep func(anchorImprecision) bool) []string {
-	if len(s.imprecise) == 0 {
-		return nil
-	}
-	var out []string
-	for _, tok := range s.anchors {
-		if keep(s.imprecise[tok]) {
-			out = append(out, tok)
-		}
-	}
-	return out
-}
-
 func (s anchorScan) boundaryCutAnchors() []string {
 	return s.filterImprecise(func(kind anchorImprecision) bool {
 		return kind&impreciseBoundaryCut != 0
@@ -801,8 +801,11 @@ func collectCallAnchors(text string, seen, clean map[string]struct{}, impreciseI
 			// rejects on the '.' — disabling the guard for every qualified
 			// spelling of the very shape it was added for. The declared name
 			// the break destroyed is the trailing segment `設定_a`, so this
-			// branch and the fragment branch above now ask their question of
-			// the same reduction rather than of two different strings.
+			// branch and the fragment branch above now agree on the QUALIFIER
+			// STRIP — the one reduction that was making them disagree. They
+			// still differ on the NFC fold: the fragment branch goes through
+			// recordedAnchorForm, this one applies trailingSegment alone. That
+			// asymmetry is deliberate, for the reason the next paragraph gives.
 			//
 			// The qualifier strip ONLY, deliberately not recordedAnchorForm:
 			// this branch asks whether something COULD have qualified, and the

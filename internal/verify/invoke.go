@@ -327,8 +327,13 @@ func tripsVoidTheVerdict(tripped []string, derivedBudget bool) bool {
 // function calling degrades to single-shot in the engine rather than failing every
 // call — mirroring fanout.renderAgent. Per-finding budgets are forwarded from the
 // AgentConfig; a nil budget pointer becomes 0, which the engine reads as "use the
-// default" (MaxTurns→10), "unlimited" (ToolBudgetBytes→0), or "parent deadline
-// only" (TimeoutSecs→0). The provider's BaseURL/APIKeyEnv are threaded onto the
+// default" (MaxTurns→10) or "parent deadline only" (TimeoutSecs→0).
+// ToolBudgetBytes is the exception and is NOT forwarded that way: it goes through
+// skepticToolBudget, which clamps it — a 0 included — to the ceiling derived from
+// a declared context_window_tokens, and floors it at one byte for a window with
+// no input room. So in this lane a nil pointer yields an unlimited budget only
+// when the agent declares no usable window; otherwise the skeptic is bounded.
+// The provider's BaseURL/APIKeyEnv are threaded onto the
 // Invocation so llmclient.Chat can route the call (without them a production
 // skeptic would hit an empty endpoint with no key).
 //
