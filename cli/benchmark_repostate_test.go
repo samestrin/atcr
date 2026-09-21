@@ -1307,7 +1307,7 @@ func TestExecuteRepoStateBenchmarkRun_ZeroScoredErrorCarriesTheTally(t *testing.
 func TestPublicSlotFailuresWarnsOnAnUntranslatableKey(t *testing.T) {
 	var logs bytes.Buffer
 	key := reviewerKey{model: "m-greta", persona: "greta"}
-	out := publicSlotFailures(
+	out := publicSlotFailures(logCapturingContext(t, &logs),
 		map[reviewerKey][]benchmark.SlotFailure{
 			key: {{CaseID: "case-01", Reason: benchmark.SlotFailureCall}},
 		},

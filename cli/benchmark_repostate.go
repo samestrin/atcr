@@ -721,7 +721,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		Vocabulary:          benchmark.PerReviewerVocabulary(catScores),
 		PositionalRecall:    benchmark.ScorePositional(posScores),
 		CaseFailures:        caseFailures,
-		SlotFailures:        publicSlotFailures(slotFailures, order, scrubOf),
+		SlotFailures:        publicSlotFailures(ctx, slotFailures, order, scrubOf),
 		// retainedWorkDir is set by the deferred cleanup above, which runs after this
 		// return and is the only place that knows whether the dir survived.
 	}, "", nil
@@ -744,8 +744,10 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 // that is a reviewer whose every slot failed on every case before the identity was
 // registered, which the loop's registration order rules out — but emitting an
 // untranslated identity would be worse than emitting nothing, since it would look
-// joinable and not be.
-func publicSlotFailures(byKey map[reviewerKey][]benchmark.SlotFailure, order []reviewerKey, scrubOf map[reviewerKey]reviewerKey) []benchmark.SlotFailure {
+// joinable and not be. The skip is WARNED, not silent: this is the channel built to
+// end silent drops, and an unreachable case becoming a silent one would repeat the
+// exact failure the channel exists to prevent.
+func publicSlotFailures(ctx context.Context, byKey map[reviewerKey][]benchmark.SlotFailure, order []reviewerKey, scrubOf map[reviewerKey]reviewerKey) []benchmark.SlotFailure {
 	if len(byKey) == 0 {
 		return nil
 	}
@@ -753,6 +755,8 @@ func publicSlotFailures(byKey map[reviewerKey][]benchmark.SlotFailure, order []r
 	for _, k := range order {
 		id, ok := scrubOf[k]
 		if !ok {
+			log.FromContext(ctx).Warn("slot failure dropped: identity missing from the scrub map",
+				"model", k.model, "persona", k.persona, "slot_failures", len(byKey[k]))
 			continue
 		}
 		for _, sf := range byKey[k] {
