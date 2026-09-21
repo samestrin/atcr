@@ -338,6 +338,15 @@ func TestDocs_ScorecardMdDocumentsThePairSurface(t *testing.T) {
 		"| `pair_era` | int | conditional |",
 		`"pair_era": 1,`,
 		fmt.Sprintf("The measurement era for `pair_signals`, currently `%d`.", PairEraCurrent),
+		// The attribution rule, not just the field's existence. An earlier
+		// version of this row claimed disagreed "counts those the two split
+		// on severity" full stop, which is false for any cluster of 3+ — and
+		// this drift test was pinning the false claim in place.
+		"**A split is only counted when the cluster held exactly two reviewers.**",
+		"`gray_zone` disagreements are likewise not counted",
+		// Both thresholds are provisional, and that warning has to reach a
+		// READER of the doc rather than living only in Go comments.
+		"The pair surface's two thresholds are provisional and unmeasured.",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("docs/scorecard.md has drifted from the pair surface; missing:\n%s", want)

@@ -23,6 +23,13 @@ import (
 // TrustPriors: the fold reads the same records trustPriorsSince does and
 // returns a separate value. A future edit that wires a tally back into an
 // individual rate fails TestPairTallies_DoNotAlterIndividualTrustRates.
+//
+// EVERY UNATTRIBUTABLE SIGNAL IS DISCARDED RATHER THAN SPREAD. That rule is
+// applied three times below (a 3+-reviewer split, a duplicate record, a peer
+// name that cannot form a key) and it is the same rule trust.go applies to an
+// unrecognized consensus level and an out-of-vocabulary category: excluding
+// evidence only forgoes data, while apportioning it invents a durable number
+// nobody measured.
 
 // PairSignal is one co-reviewer relationship observed on a single run, carried
 // on the record of the reviewer it belongs to.
@@ -36,10 +43,9 @@ import (
 // reconciled/disagreements.json at query time — the second full-store read D2
 // rules out, and the second durable store the epic lists as out of scope.
 //
-// Agreed and Disagreed count FINDINGS, not runs. Two reviewers on one merged
-// finding agreed that the defect is real; reconcile.Merge stamps Disagreement
-// on that same finding when they did not agree on its SEVERITY, which is what
-// BuildDisagreements calls a severity_split. That split is the disagreement.
+// Agreed and Disagreed count FINDINGS, not runs. Peer is stored already
+// normalized (lower-cased, trimmed), so the fold never has to re-derive an
+// identity the writer could have settled.
 type PairSignal struct {
 	Peer      string `json:"peer"`
 	Agreed    int    `json:"agreed"`
@@ -62,6 +68,13 @@ type PairSignal struct {
 // categoriesRaisedSinceSchema's: a SchemaVersion-keyed constant cannot
 // discriminate WITHIN v2, and both eras here are v2.
 //
+// ABOVE-CURRENT IS EXCLUDED, not clamped, exactly as unresolvedEraRuns excludes
+// an above-current RaisedDenominator. A record stamped era 2 was measured under
+// a rule this binary does not implement, and a future era-2 record still
+// carries schema_version 2, so the store's read gate admits it — nothing but
+// this check stops it blending with era-1 evidence. Whoever adds era 2 has to
+// come back here and decide the mixing rule rather than inherit a silent blend.
+//
 // The literal is pinned by TestPairSignals_DoNotBumpTheSchemaVersion, which
 // asserts SchemaVersion is still the literal 2.
 const PairEraCurrent = 1
@@ -78,18 +91,24 @@ const PairEraCurrent = 1
 // 2026-07-29 analysis found per-reviewer rates unstable at 10 summed runs and
 // converged by 20.
 //
-// WHAT THAT ANALOGY CANNOT SHOW, and it is not a small gap: a PAIR rate is a
-// scarcer quantity than a single reviewer's rate. It needs both members
-// eligible and in remit on the same run, so a pair accumulates cases strictly
-// slower than either member accumulates runs — plausibly much slower for two
-// narrow specialists, which is exactly the population AC 05-03 protects. 20 may
-// well be too low (flagging a drop candidate off a thin sample) or too high
-// (stranding every specialist pair as insufficient). Nothing here discriminates
-// between those.
+// THE ANALOGY IS APPLIED TO THE SAME KIND OF QUANTITY, and that is deliberate:
+// PairTally.Cases counts runs on which both members were CO-ELIGIBLE, not runs
+// on which they happened to connect. DefaultTrustMinRuns counts a lens's runs
+// of opportunity; this counts a pair's. An earlier draft counted only runs with
+// a shared finding, which is strictly scarcer than anything the analogy
+// describes and would have made 20 a much harsher floor than the same number
+// means for a single lens.
+//
+// WHAT THE ANALOGY STILL CANNOT SHOW: a pair accumulates co-eligible runs more
+// slowly than either member accumulates runs, and how much more slowly depends
+// on how far apart the two remits sit — plausibly much slower for two narrow
+// specialists, which is exactly the population AC 05-03 protects. 20 may still
+// be too low (flagging off a thin sample) or too high (stranding every
+// specialist pair as insufficient). Nothing here discriminates between those.
 //
 // RE-MEASUREMENT TRIGGER: redo this against the live store once 30+ distinct
-// pairs have any eligible case at all, and record the measurement here the way
-// DefaultTrustMinRuns' is recorded. Until then no caller may present a
+// pairs have any co-eligible case at all, and record the measurement here the
+// way DefaultTrustMinRuns' is recorded. Until then no caller may present a
 // sufficient/insufficient verdict as an evidence-backed one.
 // TestMinPairCases_NotNarrowedWithoutRemeasurement pins the literal so a later
 // narrowing cannot ride in without that measurement.
@@ -116,7 +135,8 @@ const minPairCases = 20
 // and set this at the separation the data actually shows — the way
 // defaultTrustWindow was set from the 2026-07-31 store rather than from
 // intuition. TestDropCandidateMaxRate_NotNarrowedWithoutRemeasurement pins the
-// literal until then.
+// literal, and TestDropCandidate_ExactlyAtThresholdIsFlagged pins the boundary
+// itself so the at-or-below comparison cannot be narrowed to a strict one.
 //
 // REPORTING-ONLY (AC 05-04): crossing this threshold produces a flag on a value
 // a human reads. It repoints nothing, disables no lens, and writes no registry.
@@ -126,7 +146,9 @@ const dropCandidateMaxRate = 0.05
 //
 // Cases counts RUNS on which both members survived the trust filter chain —
 // both got a fair attempt (eligibleOutcomeRuns) and both had their remit in
-// play (opportunitySetRuns). It is the sample size the floor is applied to.
+// play (opportunitySetRuns). It is the pair's OPPORTUNITY, and it is the
+// quantity minPairCases is a floor on, so the floor means for a pair what
+// DefaultTrustMinRuns means for a lens.
 //
 // Agreed and Disagreed count FINDINGS across those runs, so the rate is
 // computed from the evidence and the floor from the opportunity. A pair can
@@ -153,6 +175,13 @@ func (p PairTally) DisagreementRate() float64 {
 	return ratio(p.Disagreed, p.Agreed+p.Disagreed)
 }
 
+// pairKeySep joins the two members of a pair key. It is named because the
+// delimiter is an INVARIANT on the member names, not merely a formatting
+// choice: a name containing it would make two distinct pairs collide on one
+// key. reconcile.distinctReviewers enforces the same kind of invariant for its
+// own comma-joined cell, and for the same reason.
+const pairKeySep = "|"
+
 // PairKey normalizes two persona names into the one canonical key both
 // orderings collapse to: lowercase, alphabetically ordered, joined with "|".
 //
@@ -166,44 +195,64 @@ func (p PairTally) DisagreementRate() float64 {
 //     which by construction never disagrees — so it would be flagged as a drop
 //     candidate the moment it cleared the floor, recommending that a lens be
 //     dropped for duplicating itself.
+//   - A MEMBER CONTAINING "|" would merge two different pairs into one tally:
+//     PairKey("a|b", "c") and PairKey("a", "b|c") both produce "a|b|c", and
+//     their evidence then sums under one key naming neither. Reviewer names are
+//     source-derived (a registry entry, a pool summary, a findings cell), so
+//     this is not provably unreachable and is rejected rather than assumed away.
 func PairKey(a, b string) (string, bool) {
 	x := strings.ToLower(strings.TrimSpace(a))
 	y := strings.ToLower(strings.TrimSpace(b))
 	if x == "" || y == "" || x == y {
 		return "", false
 	}
+	if strings.Contains(x, pairKeySep) || strings.Contains(y, pairKeySep) {
+		return "", false
+	}
 	if x > y {
 		x, y = y, x
 	}
-	return x + "|" + y, true
+	return x + pairKeySep + y, true
 }
 
 // PairDisagreements reads the scorecard store at dir and returns the per-pair
 // disagreement tallies, keyed by PairKey.
 //
-// minRuns is accepted and threaded for symmetry with TrustPriors, so a caller
-// holding one floor can pass it to both; the PAIR floor that decides
-// sufficiency is minPairCases, per D6.
+// It takes NO minRuns. An earlier signature accepted one "for symmetry with
+// TrustPriors" and discarded it, which is worse than not offering it: a caller
+// passing a floor would have been silently ignored. The pair floor is
+// minPairCases and it is not caller-configurable, matching defaultTrustWindow's
+// own reasoning about reopening internal filter constants as flags.
 //
-// The read is best-effort in exactly the way TrustPriors' is: a missing,
-// unreadable or partially readable store yields an empty map and a nil error,
-// never a failure for the caller. A partial read is treated as no data rather
-// than folded, because a truncated store can only understate a pair's cases and
-// understating cases is what turns a real pair into "insufficient data" — a
-// quieter wrong answer than no answer.
+// The read is best-effort in exactly the way TrustPriors' is: a missing or
+// unreadable store yields an empty map and a nil error, never a failure for the
+// caller. BE PRECISE ABOUT WHAT "unreadable" COVERS, because the two levels
+// behave differently: a whole-file IO failure fails neutral here (empty map),
+// while ReadRecords logs and SKIPS an individual malformed or forward-version
+// line and reports no error at all. So a partially corrupt month file IS folded
+// with those lines missing, and losing a disagreement-bearing run can flip a
+// pair toward DropCandidate. That is inherited from the store's read contract
+// rather than chosen here, and it is stated so a reader does not take the
+// file-level guarantee for a line-level one.
 //
 // "Durable" here means deterministically re-derivable, NOT cached — read AC
 // 05-01 Scenario 3 that way, as the AC itself instructs. There is no cache:
 // this re-folds on every call exactly as trustPriorsSince does. Persisting a
 // precomputed tally beside the records would be the second durable store the
 // epic puts out of scope.
-func PairDisagreements(dir string, minRuns int) (map[string]PairTally, error) {
+func PairDisagreements(dir string) (map[string]PairTally, error) {
 	records, err := ReadSince(dir, 0, time.Now(), ReadOpts{Writer: io.Discard})
 	if err != nil {
 		return map[string]PairTally{}, nil
 	}
-	_ = minRuns
 	return pairTallies(records), nil
+}
+
+// pairEvidence is one pair's counts on one run, before they are summed across
+// runs.
+type pairEvidence struct {
+	agreed    int
+	disagreed int
 }
 
 // pairTallies folds records into per-pair tallies.
@@ -215,97 +264,107 @@ func PairDisagreements(dir string, minRuns int) (map[string]PairTally, error) {
 // lens was correctly silent on. Those are the exact exclusions this sprint
 // exists to make, so the pair tally has to inherit them.
 //
-// BOTH MEMBERS MUST SURVIVE THE RUN, and this is the subtle half. Each member
-// carries its own copy of the pair's signal, so the fold could read either one.
-// Reading the surviving side alone would score a relationship with a lens the
-// eligibility gate had just removed from that run — crediting a pair for an
-// exchange only one of them was present for. Requiring both also resolves the
-// double-count: the signal is taken once, from the alphabetically first
-// member's record, and the second member's copy is used only as proof of
-// presence.
+// BOTH MEMBERS MUST SURVIVE THE RUN. Each member carries its own mirrored copy
+// of the pair's signal, so the fold could read either. Reading one alone would
+// score a relationship with a lens the eligibility gate had just removed from
+// that run — crediting a pair for an exchange only one of them was present for.
+//
+// THE TWO COPIES ARE COMBINED BY MAX PER RUN, NOT SUMMED, AND NOT TAKEN FROM A
+// FIXED SIDE. Summing double-counts every shared finding. Taking the
+// alphabetically-first member's copy (an earlier draft did) silently discarded
+// the whole pair's evidence whenever that member's record carried none — which
+// is reachable, not hypothetical, since a reviewer can hold more than one
+// record per run. Max is the reconciliation that survives both: the copies are
+// written from the same finding set and agree in the ordinary case, so max
+// changes nothing there and recovers the evidence when one side is missing it.
+// It also absorbs a reviewer appearing twice in one run (two models, or a
+// re-emitted RunID), which a sum would double.
 //
 // A TALLY IS CREATED ONLY WHERE A FINDING WAS SHARED. Co-eligibility alone is
 // not a pair (AC 05-01 Edge Case 2, AC 05-03 Edge Case 2): two lenses both in
 // play on a case that neither connected on have produced no evidence about each
 // other, and recording that as a zero-disagreement entry would be
 // indistinguishable from "never disagrees" — which is the drop verdict. Silence
-// is not tacit agreement.
+// is not tacit agreement. Cases, by contrast, is counted over CO-ELIGIBILITY,
+// because the floor is a question about opportunity rather than about evidence.
+//
+// COST: one pass over records, then one intersection per pair that actually has
+// evidence. It is never O(personas^2 x records) — no step enumerates candidate
+// pairs, only observed ones, which for the 13-lens roster is at most ~78.
 //
 // The input slice is never mutated.
 func pairTallies(records []Record) map[string]PairTally {
 	unions := opportunityUnions(records)
 	kept := opportunitySetRuns(unresolvedEraRuns(mergeRoutedEras(eligibleOutcomeRuns(strictRuns(records)))), unions)
 
-	// Who survived each run, and what each survivor said about its peers.
-	// Presence is keyed lowercase to match every other reviewer key on this
-	// path (trustPriorsSince's byReviewer, unresolvedEraRuns' era key).
-	present := map[string]map[string]bool{}
-	signals := map[string]map[string][]PairSignal{}
+	// runsByPersona answers "was this lens in play on this run", which is what
+	// Cases counts. evidence answers "what did this pair say about each other",
+	// keyed (pairKey, runID) so the two mirrored copies reconcile per run.
+	runsByPersona := map[string]map[string]bool{}
+	evidence := map[string]map[string]pairEvidence{}
+
 	for _, r := range kept {
-		if r.RecordType != RecordTypeReviewer || r.PairEra == 0 {
-			// PairEra == 0 is a record written before the pair signal existed.
-			// Its absent slice is not a measured empty set and must never be
-			// folded as one (AC 05-01 Edge Case 3).
+		if r.RecordType != RecordTypeReviewer {
+			continue
+		}
+		// PairEra == 0 is a record written before the pair signal existed: its
+		// absent slice is not a measured empty set (AC 05-01 Edge Case 3).
+		// Above-current is a record measured under a rule this binary does not
+		// implement. Both are excluded rather than read as evidence.
+		if r.PairEra == 0 || r.PairEra > PairEraCurrent {
 			continue
 		}
 		name := strings.ToLower(strings.TrimSpace(r.Reviewer))
 		if name == "" {
 			continue
 		}
-		if present[r.RunID] == nil {
-			present[r.RunID] = map[string]bool{}
-			signals[r.RunID] = map[string][]PairSignal{}
+		if runsByPersona[name] == nil {
+			runsByPersona[name] = map[string]bool{}
 		}
-		present[r.RunID][name] = true
-		signals[r.RunID][name] = append(signals[r.RunID][name], r.PairSignals...)
+		runsByPersona[name][r.RunID] = true
+
+		for _, s := range r.PairSignals {
+			key, ok := PairKey(name, s.Peer)
+			if !ok {
+				continue // blank, self, or delimiter-bearing peer: no key formed
+			}
+			if evidence[key] == nil {
+				evidence[key] = map[string]pairEvidence{}
+			}
+			cur := evidence[key][r.RunID]
+			// Max, not +=. See the "TWO COPIES" note above.
+			if s.Agreed > cur.agreed {
+				cur.agreed = s.Agreed
+			}
+			if s.Disagreed > cur.disagreed {
+				cur.disagreed = s.Disagreed
+			}
+			evidence[key][r.RunID] = cur
+		}
 	}
 
 	out := map[string]PairTally{}
-	// Cases are counted per (pair, run) rather than per record: a reviewer that
-	// ran under two models in one run yields two records, and both name the same
-	// peer. Without this the pair would bank one case per record.
-	countedCase := map[string]map[string]bool{}
-
-	for runID, byName := range signals {
-		for name, sigs := range byName {
-			for _, s := range sigs {
-				peer := strings.ToLower(strings.TrimSpace(s.Peer))
-				key, ok := PairKey(name, peer)
-				if !ok {
-					continue // blank or self peer: fail closed, no key formed
-				}
-				if !present[runID][peer] {
-					continue // the peer did not survive this run's gates
-				}
-				// Take the counts ONCE, from the alphabetically first member.
-				// The peer's mirrored copy proves presence and nothing else.
-				if !strings.HasPrefix(key, name+"|") {
-					continue
-				}
-				t, seen := out[key]
-				if !seen {
-					a, b, _ := strings.Cut(key, "|")
-					t = PairTally{A: a, B: b}
-				}
-				t.Agreed += s.Agreed
-				t.Disagreed += s.Disagreed
-				if countedCase[key] == nil {
-					countedCase[key] = map[string]bool{}
-				}
-				if !countedCase[key][runID] {
-					countedCase[key][runID] = true
-					t.Cases++
-				}
-				out[key] = t
+	for key, byRun := range evidence {
+		a, b, _ := strings.Cut(key, pairKeySep)
+		t := PairTally{A: a, B: b}
+		for runID, e := range byRun {
+			// Both members must have survived THIS run, or the evidence is a
+			// one-sided account of an exchange the gate already excluded.
+			if !runsByPersona[a][runID] || !runsByPersona[b][runID] {
+				continue
 			}
+			t.Agreed += e.agreed
+			t.Disagreed += e.disagreed
 		}
-	}
-
-	for key, t := range out {
 		if t.Agreed+t.Disagreed == 0 {
-			// Co-eligible but never connected: no evidence about each other.
-			delete(out, key)
+			// Never connected on a run they both survived: no evidence about
+			// each other, so no entry at all.
 			continue
+		}
+		for runID := range runsByPersona[a] {
+			if runsByPersona[b][runID] {
+				t.Cases++
+			}
 		}
 		t.Sufficient = t.Cases >= minPairCases
 		// Insufficient data is never a drop candidate AND never a confident
@@ -326,6 +385,22 @@ func pairTallies(records []Record) map[string]PairTally {
 // Severity is the MAX and so cannot reveal a split on its own, which is why
 // Disagreement is threaded beside it rather than instead of it.
 //
+// A SPLIT IS ONLY ATTRIBUTABLE WHEN THE CLUSTER HELD EXACTLY TWO REVIEWERS, and
+// getting this wrong is the defect the 4.2 adversarial pass caught. Disagreement
+// is a property of the WHOLE GROUP — reconcile.MergeSeverity sets it when the
+// group's severities span more than one value — so on a three-reviewer cluster
+// where two said HIGH and one said LOW, charging every pair a split invents two
+// disagreements that never happened AND deletes the one real agreement. It
+// inflates every multi-reviewer pair's rate, which systematically SUPPRESSES the
+// drop-candidate flag this whole surface exists to raise.
+//
+// The per-reviewer severities are genuinely unrecoverable after a merge —
+// reconcile.Position says so in its own comment, which is why Positions is
+// populated only for gray-zone clusters. So a 3+-reviewer split contributes
+// NOTHING: not a disagreement, because nobody can say between whom, and not an
+// agreement either, because the group demonstrably did not agree. Discarding it
+// forgoes data; apportioning it would fabricate a durable number.
+//
 // WHAT THIS DOES NOT COVER, stated rather than left to be discovered: the
 // gray_zone half of AC 05-01 Scenario 1. A gray-zone pair is two near-duplicate
 // findings DBSCAN left unmerged, so its evidence is the AMBIGUOUS CLUSTER's
@@ -334,46 +409,91 @@ func pairTallies(records []Record) map[string]PairTally {
 // cluster-shaped EmitInput field, and feeding that stream into pair COUNTS
 // would re-open TD-034's asymmetry in a new direction (an ambiguous finding
 // currently moves no count by design). Filed as TD rather than guessed at here.
+// Note the two gaps point the same way: both discard evidence, and the
+// drop-candidate flag is the thing that goes un-raised, never wrongly raised.
+//
+// Peer names are TRIMMED, LOWER-CASED AND DEDUPED per finding, matching
+// distinctCount's documented reasoning at the same layer (Emit is exported, so
+// a caller's reviewer list is untrusted input): without it, " dax" and "dax" on
+// one finding produce two entries that the fold then collapses into one key
+// with the counts summed, inflating Agreed for a single shared finding — and an
+// inflated Agreed drives the rate DOWN, toward a false drop-candidate flag.
 //
 // The result is sorted by peer so two byte-identical runs serialize
 // byte-identically; unsorted, a diff of the store reports Go's map iteration
 // order as churn.
 func reviewerPairSignals(name string, findings []Finding) []PairSignal {
+	self := strings.ToLower(strings.TrimSpace(name))
+	if self == "" {
+		return nil
+	}
 	agreed := map[string]int{}
 	disagreed := map[string]int{}
+
 	for _, f := range findings {
-		if !contains(f.Reviewers, name) {
+		// The participation test uses the same normalized identity the fold
+		// keys on. An exact-string test (an earlier draft used one) misses a
+		// reviewer whose map key and findings cell differ only in case, and the
+		// mirrored copy on the peer's record is then the only witness.
+		peers := distinctPeers(f.Reviewers)
+		if !peers[self] {
 			continue
 		}
-		for _, peer := range f.Reviewers {
-			if _, ok := PairKey(name, peer); !ok {
-				continue // blank peer, or the reviewer itself
+		split := f.Disagreement != ""
+		if split && len(peers) != 2 {
+			continue // unattributable; see the note above
+		}
+		for peer := range peers {
+			if _, ok := PairKey(self, peer); !ok {
+				continue // blank, self, or delimiter-bearing
 			}
-			if f.Disagreement != "" {
+			if split {
 				disagreed[peer]++
 				continue
 			}
 			agreed[peer]++
 		}
 	}
+
 	if len(agreed)+len(disagreed) == 0 {
 		// nil, not an empty slice: omitempty then omits the key entirely and a
 		// no-pair run serializes exactly as a pre-4a record did.
 		return nil
 	}
+	seen := map[string]bool{}
 	peers := make([]string, 0, len(agreed)+len(disagreed))
-	for p := range agreed {
-		peers = append(peers, p)
-	}
-	for p := range disagreed {
-		if _, both := agreed[p]; !both {
-			peers = append(peers, p)
+	for _, m := range []map[string]int{agreed, disagreed} {
+		for p := range m {
+			if !seen[p] {
+				seen[p] = true
+				peers = append(peers, p)
+			}
 		}
 	}
 	sort.Strings(peers)
 	out := make([]PairSignal, 0, len(peers))
 	for _, p := range peers {
 		out = append(out, PairSignal{Peer: p, Agreed: agreed[p], Disagreed: disagreed[p]})
+	}
+	return out
+}
+
+// distinctPeers normalizes one finding's reviewer cell into the identity set the
+// pair surface keys on: trimmed, lower-cased, deduped, blanks dropped.
+//
+// It is deliberately NOT distinctCount's fallback-collapsing notion of
+// distinctness. That one asks "how many independent voices" and merges two
+// personas served by one fallback model; this one asks "which lenses were on
+// this finding", and merging two named lenses into one would delete the pair
+// they form. The two answer different questions over the same slice.
+func distinctPeers(reviewers []string) map[string]bool {
+	out := make(map[string]bool, len(reviewers))
+	for _, r := range reviewers {
+		n := strings.ToLower(strings.TrimSpace(r))
+		if n == "" {
+			continue
+		}
+		out[n] = true
 	}
 	return out
 }
