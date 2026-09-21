@@ -249,11 +249,24 @@ func extractChangedSymbols(src string, ranges []LineRange, root astgroup.Node, i
 	// Pass 1 — the declarations the diff actually touched. EnclosingSymbolName
 	// walks up past anonymous control-flow blocks, so an edit inside an `if` arm
 	// resolves to the function that contains it rather than to the `if`.
+	// This pass is bounded on TWO axes, and the guard below checks both. scanned
+	// caps the changed LINES walked, which is what bounds the astgroup tree walks
+	// a very large diff can cost; maxChangedSymbols caps the symbols COLLECTED,
+	// which is what bounds the `git grep` pattern set downstream. A file can hit
+	// either without the other — a thousand edited lines inside one function
+	// exhausts the first and collects one symbol; a thousand one-line edits to
+	// distinct declarations exhausts the second on far fewer lines.
 	scanned := 0
-	// Labeled break, NOT return: exhausting the declaration pass's line budget
-	// must not skip the AC6 cue pass below. Returning here made the mock half of
-	// the feature vanish on exactly the large changed test files it was written
-	// for — the budget is spent walking declarations, and the cue scan never ran.
+	// The label exits BOTH loops. A bare `break` would leave only this range and
+	// let the outer loop start the next one, which does not stop anything — the
+	// budget is a per-FILE total, not per-range.
+	//
+	// And a labeled break, NOT return: exhausting the declaration pass's line
+	// budget must not skip the AC6 cue pass below. Returning here made the mock
+	// half of the feature vanish on exactly the large changed test files it was
+	// written for — the budget is spent walking declarations, and the cue scan
+	// never ran. That is also why pass 2 carries its own counter rather than
+	// sharing this one.
 declPass:
 	for _, r := range ranges {
 		for line := r.Start; line <= r.End; line++ {
@@ -768,6 +781,14 @@ func grepPatterns(symbols []changedSymbol) []string {
 
 // validGrepSymbol reports whether name is a plain identifier safe to pass as a
 // fixed-string search pattern.
+//
+// "valid" here is a SAFETY test, not a taste one, and the two rejections that
+// matter are argv-shaped rather than identifier-shaped: a name beginning with `-`
+// would be read by git as a flag, and one containing a glob, a space or a shell
+// metacharacter would change what is searched. Restricting to identifier runes
+// rejects both by construction. The caller (grepPatterns) states the full
+// rationale; it is repeated here because this is the function a reader lands on
+// when asking whether a new call site may pass unvalidated input.
 //
 // The length floor counts RUNES, not bytes: "é" is two bytes but one character,
 // and the floor is about how much a pattern matches, not how it is encoded.
