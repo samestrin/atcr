@@ -800,8 +800,12 @@ func TestPairTallies_EvidenceSurvivesAOneSidedSignal(t *testing.T) {
 func TestPairTallies_CasesCountCoEligibilityNotSharedFindings(t *testing.T) {
 	// PairTally.Cases is the pair's OPPORTUNITY, which is what makes
 	// minPairCases mean for a pair what DefaultTrustMinRuns means for a lens.
-	// Counted from shared findings instead, 20 would be a far harsher floor
-	// than the analogy it is adopted from describes.
+	// Counted from shared findings instead, Cases would be a far harsher
+	// quantity than the analogy it is adopted from describes.
+	//
+	// The floor is now applied to the evidence axis as WELL — see minPairCases —
+	// but that is a second application to a second quantity. This test pins what
+	// Cases itself counts, which is unchanged.
 	dir := t.TempDir()
 	for i := 0; i < minPairCases; i++ {
 		runID := pairRunID(fmt.Sprintf("r-%03d", i))
@@ -985,7 +989,40 @@ func TestNormalizeReviewerName_IsTheOneIdentityRuleBothSurfacesUse(t *testing.T)
 		"one lens named three ways is one corroborator")
 	assert.Equal(t, map[string]bool{"bruce": true}, distinctPeers([]string{"Bruce", "bruce", " BRUCE "}))
 
-	_, _, credit := reviewerCounts("Bruce", []Finding{{Reviewers: []string{"Bruce", "bruce"}}})
+	_, corroborated, credit := reviewerCounts("Bruce", []Finding{{Reviewers: []string{"Bruce", "bruce"}}})
 	assert.InDelta(t, 1.0, credit, 1e-9,
 		"a lens cannot corroborate itself into a halved isolation credit")
+	assert.Equal(t, 0, corroborated,
+		"the persisted FindingsCorroborated half of the same change: one lens named twice is not corroboration")
+}
+
+func TestPairTallies_RunsTheSharedTrustChainNotACopyOfIt(t *testing.T) {
+	// The pair fold reads keptForTrust, not its own inlined chain. Nothing in
+	// this file previously produced a non-strict or ineligible record, so a
+	// re-inlined chain missing strictRuns survived the suite — the exact drift
+	// the shared helper exists to prevent, invisible from the pair surface.
+	for name, taint := range map[string]func(*Record){
+		"non-strict run":  func(r *Record) { r.ConsensusLevel = "off" },
+		"truncated run":   func(r *Record) { r.Outcome = "truncated" },
+		"failed run":      func(r *Record) { r.Outcome = "failed" },
+		"unparseable run": func(r *Record) { r.Outcome = "unparseable" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			for i := 0; i < minPairCases*2; i++ {
+				runID := pairRunID(fmt.Sprintf("tainted-%03d", i))
+				for _, pair := range [][2]string{{"bruce", "dax"}, {"dax", "bruce"}} {
+					r := pairReviewer(runID, pair[0], "m1", 2, 2,
+						PairSignal{Peer: pair[1], Agreed: 2})
+					taint(&r)
+					require.NoError(t, Append(dir, r))
+				}
+			}
+
+			tallies, err := PairDisagreements(dir)
+			require.NoError(t, err)
+			assert.Empty(t, tallies,
+				"a run the trust chain excludes must not produce pair evidence either")
+		})
+	}
 }

@@ -1,8 +1,6 @@
 package scorecard
 
 import (
-	"strings"
-
 	reclib "github.com/samestrin/atcr/reconcile"
 )
 
@@ -189,7 +187,7 @@ var personaRemit = map[string][]string{
 // would let one caller corrupt every later lookup in the same process — the same
 // defence reclib.Categories() documents for its own return.
 func RemitCategories(persona string) ([]string, bool) {
-	cats, ok := personaRemit[strings.ToLower(strings.TrimSpace(persona))]
+	cats, ok := personaRemit[normalizeReviewerName(persona)]
 	if !ok {
 		return nil, false
 	}

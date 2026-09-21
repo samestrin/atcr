@@ -91,13 +91,43 @@ const PairEraCurrent = 1
 // 2026-07-29 analysis found per-reviewer rates unstable at 10 summed runs and
 // converged by 20.
 //
-// THE ANALOGY IS APPLIED TO THE SAME KIND OF QUANTITY, and that is deliberate:
-// PairTally.Cases counts runs on which both members were CO-ELIGIBLE, not runs
-// on which they happened to connect. DefaultTrustMinRuns counts a lens's runs
-// of opportunity; this counts a pair's. An earlier draft counted only runs with
-// a shared finding, which is strictly scarcer than anything the analogy
-// describes and would have made 20 a much harsher floor than the same number
-// means for a single lens.
+// IT NOW FLOORS TWO AXES, AND ONLY THE FIRST INHERITS THE ANALOGY. Say that
+// plainly, because an earlier version of this comment argued against the second
+// and then the code grew it anyway.
+//
+//   - OPPORTUNITY (PairTally.Cases): runs on which both members were
+//     CO-ELIGIBLE, not runs on which they connected. DefaultTrustMinRuns counts
+//     a lens's runs of opportunity; this counts a pair's, so the analogy
+//     transfers and this is the axis it was adopted for.
+//   - EVIDENCE (Agreed + Disagreed): findings the two actually shared, from
+//     clusters of exactly two reviewers. THE ANALOGY DOES NOT COVER THIS AXIS
+//     AND THERE IS NO MEASUREMENT BEHIND IT. It is strictly scarcer than the
+//     opportunity axis — scarcer even than the shared-finding count an earlier
+//     draft rejected as too harsh, since the symmetric cluster-size discard
+//     removes 3+-reviewer findings from it entirely.
+//
+// The second axis is there because the first alone produces a wrong verdict
+// rather than a weak one: a pair co-eligible on a hundred runs that shared ONE
+// finding scores a rate of 0.00 and is reported redundant, which is the
+// maximally INDEPENDENT pair recommended for deletion. A floor with no
+// measurement behind it beats a confident wrong answer, and the direction of
+// its error is to withhold the flag. It reuses this constant rather than
+// introducing a second (D6 forbids a second floor, not a second application),
+// but reuse is not evidence and must not be read as any.
+//
+// CONCRETE REACHABILITY ESTIMATE FOR THE EVIDENCE AXIS, recorded because the
+// gate review computed it and nothing else in the code does. On the live 13-lens
+// roster there are C(13,2) = 78 pairs. At roughly 40 merged findings per run of
+// which perhaps a quarter sit in exactly-two-reviewer clusters, about 10
+// countable findings per run spread across 78 pairs is ~0.13 per pair per run —
+// about 155 runs to clear 20, against 20 runs to clear the opportunity floor.
+// The evidence axis therefore binds something like 8x harder, and the pairs most
+// likely to be genuinely redundant are the ones that co-occur inside LARGE
+// clusters, which contribute nothing. SO THE HONEST POSITION IS THAT
+// DropCandidate MAY NEVER FIRE ON A REAL ROSTER. That is a fail-safe failure —
+// no lens is wrongly recommended for dropping — but it would make the surface
+// decorative, and it is invisible without measurement. Add it to the trigger
+// below as an outcome to check, not merely a number to refine.
 //
 // WHAT THE ANALOGY STILL CANNOT SHOW: a pair accumulates co-eligible runs more
 // slowly than either member accumulates runs, and how much more slowly depends
@@ -110,6 +140,11 @@ const PairEraCurrent = 1
 // pairs have any co-eligible case at all, and record the measurement here the
 // way DefaultTrustMinRuns' is recorded. Until then no caller may present a
 // sufficient/insufficient verdict as an evidence-backed one.
+//
+// THE TRIGGER MUST CHECK AN OUTCOME, NOT JUST A NUMBER: first establish whether
+// ANY pair ever clears the evidence axis. If none does, the estimate above was
+// right and the fix is a separate evidence floor (or counting 3+-reviewer
+// agreements against a separately-floored denominator), not a smaller 20.
 // TestMinPairCases_NotNarrowedWithoutRemeasurement pins the literal so a later
 // narrowing cannot ride in without that measurement.
 const minPairCases = 20
@@ -150,10 +185,18 @@ const dropCandidateMaxRate = 0.05
 // quantity minPairCases is a floor on, so the floor means for a pair what
 // DefaultTrustMinRuns means for a lens.
 //
-// Agreed and Disagreed count FINDINGS across those runs, so the rate is
-// computed from the evidence and the floor from the opportunity. A pair can
-// therefore be plentiful in findings and still insufficient in cases, which is
-// the honest reading: twenty splits inside two runs say little about a pair.
+// Agreed and Disagreed count FINDINGS across those runs, and only findings from
+// clusters of EXACTLY TWO reviewers — a larger cluster contributes to neither,
+// because a split inside one cannot be attributed and counting only its
+// agreement half biased every rate toward the drop verdict.
+//
+// Sufficient floors BOTH quantities at minPairCases, so the failure runs in
+// both directions: a pair can be plentiful in findings and still insufficient
+// in cases (twenty splits inside two runs say little), and it can be plentiful
+// in cases and still insufficient in findings (a hundred co-eligible runs
+// sharing one finding is the most INDEPENDENT pair in the store, not a
+// redundant one). See minPairCases for which of the two axes the measurement
+// behind the constant actually covers — it is the first only.
 type PairTally struct {
 	A             string
 	B             string

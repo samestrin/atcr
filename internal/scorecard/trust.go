@@ -211,7 +211,65 @@ type GroundTruthLookup func(since time.Duration, now time.Time) (map[string]Conf
 // The input slice is never mutated.
 func keptForTrust(records []Record) []Record {
 	unions := opportunityUnions(records)
-	return opportunitySetRuns(unresolvedEraRuns(mergeRoutedEras(eligibleOutcomeRuns(strictRuns(records)))), unions)
+	return opportunitySetRuns(unresolvedEraRuns(mergeRoutedEras(scrubForgedCredit(eligibleOutcomeRuns(strictRuns(records))))), unions)
+}
+
+// scrubForgedCredit un-measures any record whose WeightedCredit is outside what
+// the emitter could have written for it, and it runs BEFORE mergeRoutedEras
+// because that is the last point at which the question can be asked.
+//
+// THE BOUND IS FindingsRaised * isolatedFindingWeight, AND IT IS NOT
+// FindingsRaised MINUS FindingsDocShielded. That subtraction is the obvious
+// reading and it is wrong HERE, because "here" is pre-merge: a doc-shielded
+// finding is counted in FindingsDocShielded INSTEAD of FindingsRaised (see that
+// field's comment), not as well, so subtracting it removes something that was
+// never added and under-bounds an honest record. A reviewer with 5 raised and 3
+// shielded can legitimately carry 5.0 of credit; the tighter bound would scrub
+// it as forged.
+//
+// Credit is emitted from EmitInput.Findings only — never from the routed or
+// doc-shielded sets — so it is a sum over a SUBSET of FindingsRaised with each
+// term at most isolatedFindingWeight. FindingsRaised is therefore the honest
+// ceiling, exactly. Negative credit is impossible at any era.
+//
+// WHY THE POSITION IS LOAD-BEARING, and this is the whole point of the function
+// existing rather than an inline check further down: mergeRoutedEras does
+// `FindingsRaised += FindingsDocShielded; FindingsDocShielded = 0`, and every
+// record this emitter writes carries the era that branch fires on. Asked after
+// the merge, the subtraction is a no-op against a zero and the bound collapses
+// to the merged FindingsRaised — which is exactly the number the forgery
+// inflates. A record with raised=2, doc_shielded=3 and a hand-edited credit of
+// 5.0 then passes a "bound" of 5.0 against an honest ceiling of 2.0, and
+// publishes a prior of 1.0: blanket trustExempt for that lens. This was shipped
+// once and caught by the phase gate, so the position is pinned by a test that
+// runs the WHOLE chain rather than this function alone.
+//
+// IT UN-MEASURES RATHER THAN DROPS. Clearing CreditEra puts the record in
+// exactly the state a pre-weighting record is in — excluded from both sides of
+// the weighted rate — while leaving FindingsRaised and FindingsCorroborated
+// untouched, so the binary rate, the leaderboard and every other consumer see
+// the record they always saw. Dropping it outright would let a forged float
+// silently delete a real run from the trust denominator, which is a second
+// attack rather than a defence.
+//
+// The store is untrusted input for this purpose: it is plain user-writable JSONL
+// and other binaries and eras write it too.
+//
+// The input slice is never mutated.
+func scrubForgedCredit(records []Record) []Record {
+	out := make([]Record, len(records))
+	copy(out, records)
+	for i := range out {
+		if out[i].RecordType != RecordTypeReviewer || out[i].CreditEra == 0 {
+			continue
+		}
+		bound := float64(out[i].FindingsRaised) * isolatedFindingWeight
+		if out[i].WeightedCredit < 0 || out[i].WeightedCredit > bound {
+			out[i].WeightedCredit = 0
+			out[i].CreditEra = 0
+		}
+	}
+	return out
 }
 
 // weightedTally is one persona's weighted-credit evidence, summed across every
@@ -261,14 +319,14 @@ func weightedCreditByPersona(records []Record) map[string]weightedTally {
 		// finding, never negative — so a record outside that bound was not
 		// written by this emitter and is dropped rather than clamped, matching
 		// how the era fields treat a value they did not write.
-		// The bound is against the PRE-MERGE denominator. mergeRoutedEras has
-		// already folded FindingsDocShielded into FindingsRaised by the time
-		// these records arrive, and credit is emitted from in.Findings only —
-		// never from the shielded set — so comparing against the merged number
-		// leaves a gap exactly the width of the shielded count, and the gap
-		// fails OPEN, toward a higher prior.
-		bound := float64(r.FindingsRaised-r.FindingsDocShielded) * isolatedFindingWeight
-		if r.WeightedCredit < 0 || r.WeightedCredit > bound {
+		// The CEILING is not checked here, and deliberately so: by this point
+		// mergeRoutedEras has folded FindingsDocShielded into FindingsRaised and
+		// zeroed it, so the honest ceiling is no longer computable from the
+		// record. scrubForgedCredit asks that question earlier in the chain, where
+		// the two counts are still separate, and un-measures anything outside it.
+		// A negative is still rejected here because it is unconditionally
+		// impossible and costs nothing to re-check.
+		if r.WeightedCredit < 0 {
 			continue
 		}
 		key := normalizeReviewerName(r.Reviewer)
@@ -550,8 +608,11 @@ func weightedRate(corroborated, raised int, w weightedTally, c Confirmation, min
 	if w.raised <= 0 {
 		return binary
 	}
-	// The floor is UNCONDITIONAL, not `minRuns > 0 && ...`, and that is the one
-	// place this differs from the caller's own floor. cli/personas.go calls
+	// The floor is max(minRuns, DefaultTrustMinRuns) — UNCONDITIONAL, not
+	// `minRuns > 0 && ...`. Note it RAISES a caller floor below 20 as well as
+	// filling in a zero: TrustPriorsWithGroundTruth(dir, 5, gt) uses 20 for the
+	// weighted branch while the caller's own 5 still governs map membership.
+	// cli/personas.go calls
 	// TrustPriors(dir, 0) — no floor — precisely to render every persona it has
 	// any history for, and on that path a single era-marked run would otherwise
 	// publish a full weighted rate. DefaultTrustMinRuns is the floor even when

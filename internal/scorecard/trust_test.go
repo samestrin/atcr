@@ -2024,10 +2024,14 @@ func TestWeightedCreditByPersona_DropsCreditThatNoEmitterCouldHaveWritten(t *tes
 		r.CreditEra = era
 		return r
 	}
+	// The CEILING moved to scrubForgedCredit, which runs earlier in the chain
+	// where FindingsDocShielded is still separate — see
+	// TestScrubForgedCredit_UnMeasuresRatherThanDropsAndKeepsHonestRecords and
+	// TestTrustPriors_ForgedCreditCannotReachThePriorThroughTheEraMerge. What
+	// stays here are the two checks that need no pre-merge knowledge.
 	for name, tc := range map[string]Record{
-		"credit above the per-finding bound": withCredit("run-hi", 1, 50.0, CreditEraCurrent),
-		"negative credit":                    withCredit("run-neg", 4, -5.0, CreditEraCurrent),
-		"negative era marker":                withCredit("run-era", 4, 4.0, -7),
+		"negative credit":     withCredit("run-neg", 4, -5.0, CreditEraCurrent),
+		"negative era marker": withCredit("run-era", 4, 4.0, -7),
 	} {
 		t.Run(name, func(t *testing.T) {
 			assert.NotContains(t, weightedCreditByPersona([]Record{tc}), "dax",
@@ -2126,24 +2130,98 @@ func TestTrustPriorsWithGroundTruth_WeightedFloorHoldsEvenWithNoCallerFloor(t *t
 		"one measured run must not publish a weighted rate even when the caller asked for no floor")
 }
 
-func TestWeightedCreditByPersona_BoundsAgainstThePreMergeDenominator(t *testing.T) {
-	// mergeRoutedEras folds FindingsDocShielded into FindingsRaised before these
-	// records arrive, while credit is emitted from in.Findings only — never from
-	// the shielded set. Bounded against the merged number, forged credit in the
-	// gap passes, and the gap fails OPEN toward a higher prior.
-	r := reviewer_("run-a", "Dax", "m1", 5, 0) // 5 raised, of which...
-	r.FindingsDocShielded = 3                  // ...3 were shielded, so 2 could have earned credit
-	r.WeightedCredit = 4.0                     // above 2, below 5: the gap
-	r.CreditEra = CreditEraCurrent
+func TestTrustPriors_ForgedCreditCannotReachThePriorThroughTheEraMerge(t *testing.T) {
+	// THIS TEST RUNS THE WHOLE CHAIN ON PURPOSE. An earlier version called
+	// weightedCreditByPersona directly with a hand-built record, which skipped
+	// mergeRoutedEras — and the merge is precisely what defeated the bound it
+	// was asserting. It passed while the gap was open end to end.
+	//
+	// The forgery: 2 raised findings plus 3 doc-shielded ones (pre-merge those
+	// are separate, so the honest emit-time ceiling is 2.0), with a hand-edited
+	// credit of 5.0. After the merge the record reads raised=5, shielded=0, so a
+	// bound taken THERE is 5.0 and the forgery passes — publishing a maximal
+	// prior of 1.0 for a lens whose binary rate is 0.0. Asked before the merge,
+	// the same bound is 2.0 and the forgery is scrubbed.
+	dir := t.TempDir()
+	for i := 0; i < DefaultTrustMinRuns; i++ {
+		r := reviewer_(runIDAt(time.Now(), fmt.Sprintf("forged-%03d", i)), "Forger", "m1", 2, 0)
+		r.RaisedDenominator = raisedDenominatorRoutedExShield
+		r.FindingsDocShielded = 3
+		r.WeightedCredit = 5.0
+		r.CreditEra = CreditEraCurrent
+		require.NoError(t, Append(dir, r))
+	}
 
-	assert.NotContains(t, weightedCreditByPersona([]Record{r}), "dax",
-		"credit above the pre-merge denominator could not have been emitted")
+	rates, err := TrustPriorsWithGroundTruth(dir, DefaultTrustMinRuns, allConfirmed("forger"))
+	require.NoError(t, err)
+	require.Contains(t, rates, "forger")
+	assert.InDelta(t, 0.0, rates["forger"], 1e-9,
+		"forged credit must be un-measured, leaving the pre-existing binary rate")
+}
+
+func TestScrubForgedCredit_UnMeasuresRatherThanDropsAndKeepsHonestRecords(t *testing.T) {
+	// The scrub must not become a second attack surface: a forged float may not
+	// delete a real run from the trust denominator, only from the weighted one.
+	forged := reviewer_("run-a", "Dax", "m1", 2, 1)
+	forged.FindingsDocShielded = 3
+	forged.WeightedCredit = 5.0
+	forged.CreditEra = CreditEraCurrent
+
+	// Exactly at the honest ceiling, WITH a large shielded count beside it.
+	// Pre-merge a doc-shielded finding is counted INSTEAD of being counted in
+	// FindingsRaised, so all 4 raised could have earned credit and this record
+	// must survive. An earlier version of the bound subtracted the shielded
+	// count here and would have scrubbed it.
+	honest := reviewer_("run-b", "Dax", "m1", 4, 0)
+	honest.FindingsDocShielded = 3
+	honest.WeightedCredit = 4.0
+	honest.CreditEra = CreditEraCurrent
+
+	negative := reviewer_("run-c", "Dax", "m1", 4, 0)
+	negative.WeightedCredit = -1.0
+	negative.CreditEra = CreditEraCurrent
+
+	in := []Record{forged, honest, negative}
+	before := append([]Record{}, in...)
+	out := scrubForgedCredit(in)
+
+	require.Len(t, out, 3, "a forged record is un-measured, never dropped")
+	assert.Equal(t, 2, out[0].FindingsRaised, "the binary counters must be untouched")
+	assert.Equal(t, 1, out[0].FindingsCorroborated)
+	assert.Zero(t, out[0].CreditEra, "the forged record reads as pre-weighting")
+	assert.Zero(t, out[0].WeightedCredit)
+
+	assert.Equal(t, CreditEraCurrent, out[1].CreditEra,
+		"a record exactly at the ceiling, with shielded findings beside it, stays measured")
+	assert.InDelta(t, 4.0, out[1].WeightedCredit, 1e-9)
+
+	assert.Zero(t, out[2].CreditEra, "negative credit is impossible at any era")
+	assert.Equal(t, before, in, "the link must not mutate its input")
 }
 
 func TestResolveTrustPriorsWithGroundTruth_KeepsResolveTrustPriorsBehaviourOnNil(t *testing.T) {
 	// The seam Phase 5 needs is additive: passing nil must be byte-identical to
 	// the no-argument entry point every production caller already uses.
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("AppData", t.TempDir())
-	assert.Equal(t, ResolveTrustPriors(), ResolveTrustPriorsWithGroundTruth(nil))
+	//
+	// THE STORE IS SEEDED. An earlier version pointed HOME at an empty temp dir,
+	// so both sides read nothing and the test compared two empty maps — it could
+	// not see a divergent floor or window and a mutation that changed the floor
+	// survived it.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AppData", home)
+	dir, err := DefaultDir()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	appendN(t, dir, DefaultTrustMinRuns+5, "Sasha", "m1", 4, 3)
+	// BELOW the floor, so a divergent floor changes the KEY SET and not merely a
+	// rate. Without this second persona a mutation swapping DefaultTrustMinRuns
+	// for 1 survives, since both floors admit Sasha at the same rate.
+	appendN(t, dir, 2, "Quiet", "m1", 4, 1)
+
+	got := ResolveTrustPriorsWithGroundTruth(nil)
+	require.Contains(t, got, "sasha", "the fixture must actually reach the store")
+	assert.InDelta(t, 3.0/4.0, got["sasha"], 1e-9)
+	assert.NotContains(t, got, "quiet", "the DefaultTrustMinRuns floor must still apply")
+	assert.Equal(t, ResolveTrustPriors(), got)
 }

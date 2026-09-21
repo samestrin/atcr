@@ -1082,6 +1082,15 @@ func contains(xs []string, s string) bool {
 //
 // Emit is exported, so a caller's reviewer list is untrusted input and this
 // cannot be pushed up to the producer.
+//
+// TWO SITES DELIBERATELY DO NOT USE IT, and both are correct:
+//   - telemetry.go's HashPersonaID spells the same formula by hand because it
+//     is a HASH STABILITY contract — the hashed id must not move if this rule
+//     ever changes, so the two must be free to diverge.
+//   - reconcile.go's trimmedReviewers trims WITHOUT folding case, because
+//     reviewerCounts matches Finding.Reviewers against the EmitInput.Reviewers
+//     map key by exact string equality; folding case at that boundary alone
+//     would break the match rather than fix it.
 func normalizeReviewerName(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
 }
@@ -1094,11 +1103,12 @@ func distinctCount(xs []string) int {
 		// NewCloudSyncRecord), so counting one here would let a reviewer that
 		// leaves no record of its own act as a distinct corroborator.
 		if name := normalizeReviewerName(x); name != "" {
-			// Key on the TRIMMED name. Filtering on the trimmed value while
-			// keying on the raw one would let " bruce" and "bruce" count as two
-			// distinct corroborators of the same finding — a reviewer
-			// corroborating itself. Unreachable through EmitForReconcile, which
-			// pre-trims, but Emit is exported.
+			// Key on the NORMALIZED name — trimmed and lower-cased. Filtering
+			// on the normalized value while keying on the raw one would let
+			// " bruce", "bruce" and "Bruce" count as three distinct
+			// corroborators of the same finding: a reviewer corroborating
+			// itself. Unreachable through EmitForReconcile, which pre-trims
+			// (but does not lower-case), and Emit is exported anyway.
 			seen[name] = true
 		}
 	}
