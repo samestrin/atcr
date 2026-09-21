@@ -3859,8 +3859,16 @@ func refitFallbackPayload(cfg *ReviewConfig, refit fallbackRefit, fbBudget int64
 	// Nothing shed: either the entries measurably fit this budget after all (the
 	// overflow was detected off an UNMEASURABLE CodeContext, which reads as "may
 	// not fit" by design), or the slot is a single file that cannot be made any
-	// smaller. Re-rendering would produce the same payload, so report no re-fit and
-	// let the caller keep the honest overflow record.
+	// smaller. There is no smaller REVIEWABLE payload to send, so report no re-fit
+	// and let the caller keep the honest overflow record.
+	//
+	// "No smaller reviewable payload", not "the same payload": Truncated is
+	// derived from the REVIEWABLE count, so a slot holding [ledger, one smaller
+	// file] that reached keepSmallestEntry via the AllDropped reroute above keeps
+	// the file, drops the exempt ledger and still reads Truncated=false. Re-fitting
+	// it WOULD produce strictly fewer bytes. Declining anyway is the deliberate
+	// trade — ledger delivery over byte reduction — not an assertion that the
+	// payload cannot shrink.
 	if !trunc.Truncated {
 		return refitPayload{}, false, nil
 	}

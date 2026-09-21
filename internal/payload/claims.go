@@ -668,21 +668,27 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 //     findings; the second has no equivalent verdict, because context asserts
 //     nothing to be checked against.
 //  4. The sentinel can reach a published artifact. droppedPathsExcept
-//     (internal/fanout/review.go:2882) builds its dropped list from every entry
+//     (internal/fanout/review.go:3124) builds its dropped list from every entry
 //     but the kept one, so "<claims>" can appear in Truncation.FilesDropped and
 //     from there in status.json's files_dropped, alongside real repository
 //     paths.
-//  5. The ledger is absent from the model-invocation audit record.
-//     EntriesFromRenderedPayload (the Epic 35.0 audit seam) reconstructs what a
-//     reviewer actually saw from the flat prompt text, and markedEntryStarts
-//     deliberately discards everything before the first column-0 marker
-//     (internal/payload/rendered.go:85-87). The ledger sits entirely above that
-//     marker, so up to ~10.6 KiB of verdict-shaping instruction text is missing
-//     from every audit record: an auditor reconstructing why a reviewer returned
-//     a finding sees the code and not the instructions that shaped it. Closing it
-//     means having EntriesFromRenderedPayload surface the pre-marker prefix as an
-//     unattributed entry, which is a change to the audit seam rather than to this
-//     file.
+//  5. The ledger sits ABOVE the first column-0 marker, so every consumer that
+//     reconstructs or measures a payload by splitting on those markers has to
+//     decide what to do with the prefix, and they do not all decide the same
+//     thing.
+//     EntriesFromRenderedPayload (the Epic 35.0 audit seam) now surfaces it as
+//     an unattributed entry with an empty Path (splitMarkedEntries,
+//     internal/payload/rendered.go:83-86), so the audit record is complete —
+//     this consequence USED to be "the ledger is absent from the audit record"
+//     and no longer is. The remaining consumers are in internal/fanout:
+//     entriesFromPrimary (internal/fanout/review.go:3236) rebuilds the inherited
+//     entries and inheritedPayloadFits (internal/fanout/review.go:3175) sums
+//     them to decide whether the AC4 overflow gate fires. Both deliberately
+//     measure only the bytes the byte budget governs, and the ledger is exempt
+//     from that budget, so the gate under-measures a fallback's real dispatched
+//     payload by the ledger's size — in the direction that SUPPRESSES the
+//     warning. That is by design and bounded: DefaultMaxClaimBytes caps the
+//     under-measurement at 8 KiB.
 //  6. An on_overflow=truncate FALLBACK whose budget cannot fund BOTH the ledger
 //     and a reviewable file re-fits WITHOUT the ledger — whenever some
 //     reviewable file with a NON-EMPTY body is smaller than the ledger. The
@@ -697,10 +703,10 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 //     the Context Definitions block at rank 0 — the block is the one that loses
 //     funding first, and the ledger can be unfunded by its own size alone.
 //     A zero-byte reviewable entry changes neither side of
-//     that: it sorts LAST under the largest-first order (budget.go:117-121)
+//     that: it sorts LAST under the largest-first order (budget.go:115-118)
 //     and the shed loop breaks once used <= budget, so it is never shed and
 //     never trips AllDropped, and keepSmallestEntry skips empty bodies
-//     (internal/fanout/review.go:3673-3675) so it cannot win the reroute — a
+//     (internal/fanout/review.go:3691-3693) so it cannot win the reroute — a
 //     0-byte py.typed beside a 10 KB file leaves the ledger in place with no
 //     code funded. The bound and the reroute are two stages of one pass, not
 //     two independent drop routes, and the ledger's absence has one terminal
@@ -710,7 +716,7 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 //     bound, but that alone never leaves it absent — the emptied payload
 //     trips AllDropped and the reroute brings the ledger BACK when no smaller
 //     non-empty file exists (budget 50, ledger 100, one 200-byte file: both
-//     shed, then keepSmallestEntry (internal/fanout/review.go:3666-3682)
+//     shed, then keepSmallestEntry (internal/fanout/review.go:3684-3710)
 //     returns the ledger itself). When every reviewable file is LARGER, the
 //     same branch keeps the ledger and sheds all the
 //     code — consequence #3's shape reached by a different route. That backup
@@ -738,7 +744,7 @@ const ClaimLedgerPath = "<claims>"
 // ledger's own condition is unchanged by its presence.
 // Funding a reviewable file is NOT part of that
 // contract — it is downstream: internal/fanout's AllDropped reroute to
-// keepSmallestEntry (internal/fanout/review.go:3666-3682) can displace the
+// keepSmallestEntry (internal/fanout/review.go:3684-3710) can displace the
 // ledger afterwards, but only while some reviewable file with a non-empty
 // body is smaller than the ledger, since that reroute keeps the smallest
 // ENTRY and will keep the ledger itself when every file is larger (accepted
