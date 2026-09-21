@@ -47,3 +47,35 @@ func TestReadRunResultLimited_GrowthArmFiresWhenTheFileGrowsPastTheCeiling(t *te
 	require.NotContains(t, err.Error(), " is ",
 		"the growth arm fired here; the stat arm's message must not appear")
 }
+
+// The os.Open and io.ReadAll error arms of readRunResultLimited were added lines
+// with no coverage: every other test reaches the function through a readable file,
+// so a regression in either arm — a dropped wrap, a lost path prefix — would pass
+// the suite silently. Both arms are staged honestly here: a chmod-0 file passes
+// os.Stat (stat needs directory execute, not file read) and fails os.Open; a
+// directory path opens fine and fails io.ReadAll with EISDIR. chmod cannot block
+// root, so the permission fixture skips there — the directory fixture still runs.
+func TestReadRunResultLimited_UnreadableFileFailsAtTheOpenArm(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("chmod does not block root")
+	}
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	require.NoError(t, os.WriteFile(path, []byte("{}"), 0o000))
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+
+	_, err := readRunResultLimited(path)
+	require.Error(t, err, "an unreadable run-result must fail, not read empty")
+	require.Contains(t, err.Error(), "reading run-result",
+		"the Open arm wraps the failure with the path context, like its siblings")
+	// The stat arm must NOT have fired: os.Stat succeeds on a chmod-0 file, so an
+	// error here can only have come from the Open arm this test exists to pin.
+	require.NotContains(t, err.Error(), "no such file",
+		"the stat arm passing is what makes this fixture reach the Open arm at all")
+}
+
+func TestReadRunResultLimited_DirectoryAsPathFailsAtTheReadArm(t *testing.T) {
+	_, err := readRunResultLimited(t.TempDir())
+	require.Error(t, err, "a directory is not a readable run-result")
+	require.Contains(t, err.Error(), "reading run-result",
+		"the ReadAll arm wraps the failure with the path context, like its siblings")
+}
