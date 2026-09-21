@@ -14,13 +14,16 @@ import (
 // would let it displace the diff it is supposed to be checked against.
 // A maxBytes <= 0 means unlimited.
 //
-// 8 KiB, not the 64 KiB a sprint plan gets, because these bytes are UNCOUNTED.
-// The ledger entry carries Size 0 and is exempt from every shed, so its text
-// rides outside payload_byte_budget AND outside each model's per-agent budget —
-// the budget arithmetic cannot see it. A cap here is therefore the only thing
-// bounding how far a long branch history can push a narrow-window agent past
-// its context limit. 8 KiB is roughly 80 claims, more than any real branch
-// asserts, and small enough that even a 32k-token window absorbs it.
+// 8 KiB, not the 64 KiB a sprint plan gets, because these bytes are UNCOUNTED ON
+// THE ORDINARY SHED. The ledger entry carries Size 0, so its text rides outside
+// payload_byte_budget and outside each model's per-agent budget — the ordinary
+// budget arithmetic cannot see it, on_overflow=fail included. The exception is the
+// fallback re-fit, which re-sizes every entry to the bytes it will actually dispatch
+// and so counts the ledger like any other entry. A cap here is therefore the only
+// thing bounding how far a long branch history can push a narrow-window agent past
+// its context limit on the path that does not re-fit. 8 KiB is roughly 80 claims,
+// more than any real branch asserts, and small enough that even a 32k-token window
+// absorbs it.
 const DefaultMaxClaimBytes int64 = 8 * 1024
 
 // DefaultMaxClaimCommits bounds how many commits the ledger read walks at all.

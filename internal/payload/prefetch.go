@@ -1642,13 +1642,13 @@ const PrefetchContextPath = "<context>"
 // payload_byte_budget.
 //
 // The accepted consequences of carrying a synthetic section as a FileEntry are
-// enumerated on ClaimLedgerPath and apply here too — with one PARTIALLY
-// mitigated: buildPayloads derives its reported file count from ReviewableCount
-// rather than len(kept), so a second synthetic entry does not inflate the count
-// the manifest and the persona-visible {{.FileCount}} report for the range. The
-// PER-AGENT re-derivations in internal/fanout's buildSlots still count synthetic
-// entries and remain inflated; that half is tracked as technical debt rather
-// than fixed here.
+// enumerated on ClaimLedgerPath and apply here too — with one MITIGATED:
+// buildPayloads derives its reported file count from ReviewableCount rather than
+// len(kept), so a second synthetic entry does not inflate the count the manifest
+// and the persona-visible {{.FileCount}} report for the range. The per-agent
+// re-derivations in internal/fanout's buildSlots now apply the same rule — the
+// zero-budget keepSmallestEntry arm was the last holdout — so every reader of
+// FileCount agrees. See internal/fanout/review.go:1485-1494.
 func newPrefetchEntry(section string) FileEntry {
 	// exemptRank 0 is BELOW the claim ledger's 1, stated explicitly rather than
 	// left to the zero value: when a budget cannot fund both synthetic sections,

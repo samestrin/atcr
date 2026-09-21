@@ -108,10 +108,15 @@ func opensSection(line string) bool {
 // and the filing anchor buried in a fenced ## Output Format example satisfied
 // both checks, splitting a rule whose whole point is that the lens is
 // unreportable without the filing mechanic attached to it. Resolving the rule
-// line within the ## Focus span and requiring both anchors ON IT enforces what
-// the failure messages have always promised ("as a numbered bullet under
-// ## Focus") and keeps the rule outside the {{if .ToolsEnabled}} block, which
-// opens two sections later — so single-shot agents still receive it.
+// line within the ## Focus span and requiring both anchors ON IT is what fixed
+// that, and it keeps the rule outside the {{if .ToolsEnabled}} block, which opens
+// two sections later — so single-shot agents still receive it.
+//
+// WHAT IT DOES NOT CHECK: that the line is NUMBERED. The span and the two anchors
+// are the whole predicate; a rule on an unnumbered line under ## Focus passes. The
+// shipped built-ins all number it `6.` and docs/personas-authoring.md tells authors
+// to, but that is an authoring convention this guard does not enforce, so neither
+// this comment nor the error below claims it does.
 func predicateRuleLineUnderFocus(text string) (string, error) {
 	lines := strings.Split(text, "\n")
 	start := -1
@@ -132,9 +137,9 @@ func predicateRuleLineUnderFocus(text string) (string, error) {
 			return line, nil
 		}
 	}
-	return "", fmt.Errorf("the lens anchor %q is absent from the ## Focus section — it must be a "+
-		"numbered bullet there, in prose adapted to this persona's voice, not in another "+
-		"section and not inside a fenced example", predicateRuleAnchor)
+	return "", fmt.Errorf("the lens anchor %q is absent from the ## Focus section — it must be on a "+
+		"bullet there (the shipped built-ins number it 6.), in prose adapted to this persona's "+
+		"voice, not in another section and not inside a fenced example", predicateRuleAnchor)
 }
 
 // TestEveryBuiltinPersona_PredicateRuleStaysInItsOwnVoice pins the heterogeneity
