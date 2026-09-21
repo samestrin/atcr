@@ -612,12 +612,19 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 	// inside a single case's review call and cannot see a suite-wide outcome; this
 	// one is reachable only now that a case failure stops aborting.
 	if len(order) == 0 {
-		if len(caseFailures) > 0 {
-			return nil, "", fmt.Errorf("no case could be scored: all %d case(s) failed (%s); "+
-				"re-running is the remedy only if the cause was transient",
-				len(caseFailures), summarizeCaseFailureReasons(caseFailures))
+		// One return, not two: the fallback that named a no-rows-no-failures shape
+		// was a branch no test could reach (the empty case list is rejected at load
+		// and an all-roster failure aborts per case), and an untestable arm is dead
+		// weight the file carries for nothing. The folded message still reads at
+		// zero failures — the tally renders as "no failure was recorded" — so the
+		// guard keeps preventing the empty artifact whatever future path reaches it.
+		reasons := summarizeCaseFailureReasons(caseFailures)
+		if reasons == "" {
+			reasons = "no failure was recorded"
 		}
-		return nil, "", fmt.Errorf("no case could be scored: the run produced no reviewer rows over %d case(s)", len(m.Cases))
+		return nil, "", fmt.Errorf("no case could be scored: %d of %d case(s) failed (%s); "+
+			"re-running is the remedy only if the cause was transient",
+			len(caseFailures), len(m.Cases), reasons)
 	}
 
 	// The post-scrub identity collision guard buildRunResult carries: scrubField
