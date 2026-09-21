@@ -313,7 +313,7 @@ A slot failure has two visible consequences, and both are deliberate:
 - **The work dir is retained**, exactly as for a case failure. The review dirs hold each slot's `status.json`, which is the only record of why the slot died.
 - **`benchmark export` rejects the run by default**, because that reviewer's row is short of the suite. The shortfall is labelled `unshown` rather than `missing` or `unmeasured`, and re-running will not help it — the case ran and the rest of the panel scored it, so what needs investigating is that one provider.
 
-Under `--allow-partial-coverage` the row publishes, and the warning says what you are publishing: a slot-short row's `corroboration_rate` is averaged over only the cases that reviewer was shown, so it is **not penalised** for the ones it missed and will read higher than a row scored over the full suite. Nothing in the submission distinguishes the two.
+Under `--allow-partial-coverage` the row publishes, and the warning says what you are publishing: a slot-short row's `corroboration_rate` is averaged over only the cases that reviewer was shown, so it is **not penalised** for the ones it missed and is **not comparable** to a row scored over the full suite. It reads higher where the reviewer was shown some cases. Where it lost *every* slot it reads `0.00` — the floor, not an inflated figure — because the scorer has no case to average over. Nothing in the submission distinguishes any of the three.
 
 These failures still abort the whole run, and none of them is transient:
 

@@ -1932,8 +1932,13 @@ func (c oneAgentFailingCompleter) Complete(ctx context.Context, inv llmclient.In
 // against nothing — charging that reviewer full recall-0 for a case it never saw,
 // which is the one conflation this tier's contract forbids.
 //
-// The failed slot is still VISIBLE: its outcome tally records the failure. It is the
-// SCORE it must not enter.
+// Score, covered set and outcome tally are skipped TOGETHER, which is what the second
+// half of this test pins. Leaving the failure in the tally while omitting it from the
+// covered set would break the runs == len(case_ids) == sum(outcomes) tamper check and
+// make every run with a failed slot read as malformed at export.
+//
+// The failed slot is still VISIBLE, just on its own axis: benchmark.SlotFailure records
+// the cause, which is what keeps the three-way skip from being silent.
 func TestExecuteRepoStateBenchmarkRun_AFailedSlotIsUnmeasuredNotMissed(t *testing.T) {
 	suite := writeCaseSuite(t, "first-case", "second-case")
 

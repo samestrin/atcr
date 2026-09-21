@@ -266,9 +266,13 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		//
 		// The message names the PRODUCER alongside hand-assembly, the way
 		// duplicateIdentityError names version skew: a row folded across a mix of gated
-		// and ungated cases currently ANDs to false rather than to nil, so this pair is
-		// reachable from a legitimate paid run. Reporting only "hand-assembled" would
-		// send that operator hunting an edit nobody made.
+		// and ungated cases USED TO AND to false rather than to nil, so this pair is
+		// reachable from a legitimate paid run written by such a build. It is no longer
+		// reachable from a CURRENT one — foldGroundingEnabled
+		// (cli/benchmark_repostate.go:947) requires unanimity and yields nil for a mixed
+		// row — which is why the error text below is past tense and names an upgrade as
+		// the remedy. Reporting only "hand-assembled" would send that operator hunting an
+		// edit nobody made.
 		if c.GroundingEnabled != nil && !*c.GroundingEnabled && c.Outcomes[benchmark.OutcomeUngrounded] > 0 {
 			return fmt.Errorf("run-result %s records %d %q outcome(s) for %s/%s while claiming grounding_enabled=false; "+
 				"that outcome is reached only when the grounding gate dropped a finding, so the two cannot both be true — "+
@@ -472,12 +476,20 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		// the wrong number to rank it by, and the envelope has no field that can say so
 		// — slot_failures is run-result-only. An operator overriding the gate is owed
 		// that sentence before the figure reaches a board.
+		//
+		// "Reads higher" is the direction, not a guarantee, and the note must not claim
+		// otherwise: this branch fires on any non-empty slotFailed entry, including the
+		// row that lost EVERY slot. Score returns early on len(r.Cases) == 0
+		// (internal/benchmark/score.go:110), leaving corroboration_rate at its 0.00 zero
+		// value — the floor, not an inflated figure. Telling that operator to discount
+		// the row as flattering would be exactly backwards, so both ends are named.
 		if len(slotShortRows) > 0 {
 			msg += fmt.Sprintf(
 				"  note: %s lost individual reviewer slots, so each one's corroboration_rate is "+
 					"averaged over only the cases that reviewer was shown and is not penalised for the rest. "+
-					"It will read higher than a row scored over the full suite, and nothing in the submission "+
-					"distinguishes the two.\n",
+					"It is not comparable to a row scored over the full suite: it reads higher where the "+
+					"reviewer was shown some cases, and 0.00 where every slot failed and it was shown none. "+
+					"Nothing in the submission distinguishes any of the three.\n",
 				strings.Join(slotShortRows, ", "))
 		}
 		_, _ = fmt.Fprint(w, msg)
@@ -1042,14 +1054,17 @@ func validateSuiteIdentityForPublication(rr benchmark.RunResult, path string) er
 // still has to name a declared, unscored, unrepeated case with a vocabulary reason, so
 // the claim it can make is "this case was not measured" — true of a case absent from
 // every coverage row whatever tier produced the file, and already covered by the
-// paragraph above. Second, the only available discriminator is
-// ReviewerCoverage.GroundingEnabled being non-nil, which is a property of what the
-// standard-v1 producer happens NOT to write today rather than of the tier; a change
-// making standard-v1 publish `false` would silently turn the arm into a no-op while
-// leaving it looking like a live gate. Third, the header's own premise — that the
-// export boundary is the only live one — is what makes this a diagnostic-quality
-// question rather than a resume-safety one. Add the arm only alongside a real tier
-// discriminator on the run-result.
+// paragraph above. Second, the run-result's only tier discriminator is UNTRUSTED at
+// this boundary. `suite` is a real one — a repo-state manifest must declare the
+// literal `repo-state-v1` (internal/benchmark/repostate.go:181), and checkCoverage
+// already routes its remedy on it — but it is a field of the same hand-suppliable file
+// the arm would be policing, so anyone editing in a `materialize` reason edits the
+// discriminator beside it. (ReviewerCoverage.GroundingEnabled is NOT the alternative:
+// standard-v1 publishes it too, as `false`, since cli/benchmark_run.go:451 carries up
+// the gate state of a range-less run that failed open.) Third, the header's own premise
+// — that the export boundary is the only live one — is what makes this a
+// diagnostic-quality question rather than a resume-safety one. Add the arm only
+// alongside a tier discriminator this file cannot restate about itself.
 func validateCaseFailures(rr benchmark.RunResult, path string) error {
 	if len(rr.CaseFailures) == 0 {
 		return nil
@@ -1190,7 +1205,17 @@ func validateSlotFailures(rr benchmark.RunResult, path string) error {
 	}
 	// Per-identity covered sets: a slot failure says THIS reviewer did not get this
 	// case, so the contradiction is with that reviewer's own row, not with any row.
-	// Keyed on the scrubbed pair, which is what both arrays carry.
+	//
+	// Keyed on the RAW pair, not the scrubbed one — this map and its lookup below both
+	// build reviewerKey directly, where checkCoverage re-scrubs through coverageKey. The
+	// two agree in practice because the producer writes both arrays from one already-
+	// scrubbed accumulator, and where they would not, this join fails CLOSED: a raw pair
+	// that only collides after scrubbing misses its covered set and is rejected by the
+	// no-reviewer_coverage-row arm. Nothing upstream makes them agree by construction,
+	// though — runBenchmarkExport (cli/benchmark.go:454) checks only that the scrubbed
+	// identity is non-empty and printable, never that it is scrub-STABLE. Switching both
+	// sites to coverageKey would close the gap; correcting the claim is the smaller step
+	// and the one taken here.
 	covered := map[reviewerKey]map[string]bool{}
 	for _, c := range rr.Coverage {
 		k := reviewerKey{model: c.Model, persona: c.Persona}
