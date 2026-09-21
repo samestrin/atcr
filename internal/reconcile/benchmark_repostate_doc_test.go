@@ -291,8 +291,13 @@ func TestBenchmarkDoc_RepoStatePartialRunContractMatchesTheCode(t *testing.T) {
 		"the doc must state that retained work dirs accumulate rather than being capped")
 	assert.Contains(t, doc, "retained_bytes",
 		"the doc must name the log field an operator watches the growth on")
-	assert.Contains(t, cli, `"retained_bytes", dirSizeBytes(tmp)`,
+	// The size is emitted through the attrs block since dirSizeBytes learned to
+	// report an unmeasurable walk: measured logs the byte count, unmeasurable logs
+	// "unknown" — never a zero that reads as "nothing retained".
+	assert.Contains(t, cli, `"retained_bytes", size`,
 		"the runner must still emit the size field the doc tells the operator to watch")
+	assert.Contains(t, cli, `"retained_bytes", "unknown"`,
+		"an unmeasurable walk must log unknown, not a zero that reads as nothing retained")
 
 	// The export gate is still closed by default on a partial run: a recorded failure
 	// EXPLAINS a shortfall, it does not excuse one.
@@ -443,15 +448,17 @@ func TestBenchmarkDoc_EveryAbortSiteMapsToADeclaredClass(t *testing.T) {
 	// fmt.Errorf("<fragment>` appears in the source) to the abortClasses entry name
 	// that classifies it.
 	mapped := map[string]string{
-		"benchmark run cancelled after ":                             "cancellation",
-		"benchmark run aborted: ":                                    "--max-consecutive-case-failures abort",
-		"creating case work dir for ":                                "host-level work-dir fault",
-		"preparing case ":                                            "empty roster",
-		"executing case ":                                            "total-roster failure",
-		"scored twice under realized identity":                       "scored-twice / identity collision",
-		"no case could be scored: all ":                              "nothing scored",
-		"no case could be scored: the run produced no reviewer rows": "nothing scored",
-		"distinct reviewer identities":                               "scored-twice / identity collision",
+		"benchmark run cancelled after ":       "cancellation",
+		"benchmark run aborted: ":              "--max-consecutive-case-failures abort",
+		"creating case work dir for ":          "host-level work-dir fault",
+		"preparing case ":                      "empty roster",
+		"executing case ":                      "total-roster failure",
+		"scored twice under realized identity": "scored-twice / identity collision",
+		// The all-failed abort and the no-rows fallback were folded into one return
+		// (the fallback was a branch no test could reach); the folded message carries
+		// the tally and still classifies as "nothing scored".
+		"no case could be scored: %d of %d case(s) failed": "nothing scored",
+		"distinct reviewer identities":                     "scored-twice / identity collision",
 	}
 	// Sites the taxonomy deliberately does not classify: both fire BEFORE the
 	// first paid case, so there is no work to discard and no run taxonomy to join —
