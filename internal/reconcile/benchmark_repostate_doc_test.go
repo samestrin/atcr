@@ -309,6 +309,52 @@ func TestBenchmarkDoc_RepoStatePartialRunContractMatchesTheCode(t *testing.T) {
 		"the gate must still reject a short run-result by default")
 }
 
+// docs/benchmark.md's --allow-partial-coverage paragraph used to claim "Nothing in
+// the submission distinguishes any of the three" — the full-suite row, the
+// slot-short row, and the all-slots-lost row. That is false: the all-slots-lost row
+// is the only shape pairing corroboration_rate 0 with runs 0 and an empty
+// "case_ids": [], because runs is never omitted and a covered set is always an
+// array rather than null. A board that consults the covered set can tell "shown
+// nothing" from "shown the suite and matched nothing" with no schema change —
+// which is the resolution technical debt row internal/benchmark/score.go:110 was
+// closed under: keep the 0.00 encoding, document the discriminator, change no wire
+// shape. The guard pins all three halves, so neither side can silently retreat:
+// the doc must keep stating the discriminator (and must not reinstate the false
+// sentence), and the two code facts that make it TRUE must hold — runs published
+// unconditionally, and the always-an-array contract enforced in MarshalJSON, whose
+// comment declares itself "the SOLE owner" of that contract.
+func TestBenchmarkDoc_AllSlotsLostRowIsDistinguishableInTheSubmission(t *testing.T) {
+	doc := readRepoFile(t, "../../docs/benchmark.md")
+	runResult := readRepoFile(t, "../../internal/benchmark/benchmark.go")
+	export := readRepoFile(t, "../../internal/scorecard/export.go")
+
+	assert.NotContains(t, doc, "Nothing in the submission distinguishes any of the three",
+		"the doc must not claim the submission distinguishes nothing — runs 0 plus an "+
+			"empty case_ids array does distinguish the all-slots-lost row")
+	assert.Contains(t, doc, "the only shape that pairs",
+		"the doc must state that the all-slots-lost row is identifiable by its runs/case_ids shape")
+	assert.Contains(t, doc, "`runs: 0`",
+		"the doc must name runs 0 as one half of the discriminator")
+
+	// The code facts the doc's claim rests on. The exact tag string pins the
+	// encoding decision: `json:"runs"` matches only while the field is published
+	// unconditionally — adding omitempty or making it a pointer changes the tag and
+	// fails here, which is exactly the wire-shape retreat this row resolved against.
+	assert.Contains(t, export, `json:"runs"`,
+		"PublicRecord.Runs must stay unconditionally published — it is half the "+
+			"discriminator the doc promises")
+	assert.Contains(t, export, `json:"corroboration_rate"`,
+		"CorroborationRate must keep the plain-float64 encoding — the exact tag fails "+
+			"under an omitempty or pointer retreat, which the row's resolution rejected")
+	// The always-an-array contract: MarshalJSON's nil arm is its sole owner per its
+	// own comment, so the two lines below are the enforcement, not decoration.
+	assert.Contains(t, runResult, "if c.CaseIDs == nil {",
+		"SubmissionCoverage.MarshalJSON must keep the nil→empty-array arm the "+
+			"discriminator's case_ids half rests on")
+	assert.Contains(t, runResult, "c.CaseIDs = []string{}",
+		"SubmissionCoverage.MarshalJSON must still substitute the empty array for nil")
+}
+
 // The doc's prose enumerates the failure stages, and the export gate names four
 // rejection arms. Neither was pinned: renaming a reason constant, or rewording a
 // rejection literal, left the doc stating a falsehood with this file green — the
