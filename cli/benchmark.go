@@ -302,18 +302,24 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 // a systemically broken run. Both are evaluated, so passing both means either can
 // fail the run.
 func caseFailureExitGate(rr *benchmark.RunResult, failOnAny bool, maxFailures int) error {
-	if rr == nil || len(rr.CaseFailures) == 0 {
+	// A slot failure IS an infrastructure failure (internal/benchmark/slot_failure.go):
+	// one reviewer lost one case the rest of the panel scored. Both flags' help
+	// promises a non-zero exit when a case was lost to an infrastructure failure, so
+	// slot failures fold into the same trigger — otherwise a run that lost reviewer
+	// SLOTS exits 0 and checkCoverage then hard-rejects the same run-result the CI
+	// step just accepted.
+	if rr == nil || (len(rr.CaseFailures) == 0 && len(rr.SlotFailures) == 0) {
 		return nil
 	}
-	failed, suite := len(rr.CaseFailures), len(rr.SuiteCaseIDs)
+	failed, suite := len(rr.CaseFailures)+len(rr.SlotFailures), len(rr.SuiteCaseIDs)
 	if failOnAny {
-		return fmt.Errorf("%d of %d case(s) were lost to infrastructure failures and --fail-on-case-failure is set; "+
-			"the run-result was still written and records which cases are missing", failed, suite)
+		return fmt.Errorf("%d infrastructure failure(s) (%d lost case(s), %d lost reviewer slot(s)) on a %d-case suite and --fail-on-case-failure is set; "+
+			"the run-result was still written and records which cases are missing", failed, len(rr.CaseFailures), len(rr.SlotFailures), suite)
 	}
 	if maxFailures >= 0 && failed > maxFailures {
-		return fmt.Errorf("%d of %d case(s) were lost to infrastructure failures, more than the %d allowed by "+
+		return fmt.Errorf("%d infrastructure failure(s) (%d lost case(s), %d lost reviewer slot(s)) on a %d-case suite, more than the %d allowed by "+
 			"--max-case-failures; the run-result was still written and records which cases are missing",
-			failed, suite, maxFailures)
+			failed, len(rr.CaseFailures), len(rr.SlotFailures), suite, maxFailures)
 	}
 	return nil
 }
