@@ -77,11 +77,15 @@ type BackfillResult struct {
 	// when the rewrite was computed.
 	//
 	// It is populated on every pass that completed its locked listing — including a
-	// pass with nothing to rewrite — and is nil only when the store directory does
-	// not exist (the "no backlog yet" state ReadAll already tolerates) or the pass
-	// failed before it could list. "Shards present but none needing repair" and "no
-	// shards" are therefore distinguishable, and the field's meaning does not
-	// depend on Changes being non-empty.
+	// pass with nothing to rewrite — and is nil in three cases: the store directory
+	// does not exist (the "no backlog yet" state ReadAll already tolerates), the
+	// directory exists but holds no shard file at all (shardFileNames appends to a
+	// nil slice, so an empty result IS nil), or the pass failed before it could
+	// list. Do not read nil as "the pass did not run". "Shards present but none
+	// needing repair" and "no shards" are still distinguishable — the first yields
+	// a non-empty set — and the field's meaning does not depend on Changes being
+	// non-empty. No consumer separates nil from empty today: both readers
+	// short-circuit on an empty change set.
 	ShardNames []string
 }
 

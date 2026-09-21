@@ -270,13 +270,20 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// (e.g. findings.json updated but manifest.json or debate.json missing).
 	//
 	// Scope note: the atomic group is debate.json + findings.json + manifest.json,
-	// plus verification.json ONLY when a ruling invalidated a truncation caveat it
-	// records (syncVerificationTruncation — one entry, on ruled findings only).
-	// The verify-stage snapshots are otherwise NOT recomputed here: summary.json
-	// (verdictCounts) and verification.json's verdicts are point-in-time verify
-	// audit artifacts. findings.json (with debate.json) is the
-	// authoritative post-debate record; any consumer needing settled verdict counts
-	// must derive them from findings.json, not from the now-stale summary.json.
+	// plus TWO further entries when syncVerificationTruncation has a correction to
+	// publish — verification.json itself and its verification.json.debate.bak
+	// pre-rewrite snapshot, which is a group entry published WITH the rewrite
+	// rather than a copy taken before it.
+	//
+	// What that pass rewrites is narrow but not a single field: on the records
+	// whose tool_budget_bytes caveat a ruling dropped it writes trippedBudgets,
+	// verdict, debateJudge and debateReasoning, and deletes any standing
+	// modelWithheldReason. So verification.json's verdicts are point-in-time verify
+	// audit artifacts for every OTHER record, but not for a ruled one. summary.json
+	// (verdictCounts) is NOT recomputed here at all and stays point-in-time.
+	// findings.json (with debate.json) is the authoritative post-debate record; any
+	// consumer needing settled verdict counts must derive them from findings.json,
+	// not from the now-stale summary.json.
 	debatePath, debateBytes, err := computeDebateBytes(reviewDir, DebateFile{
 		SchemaVersion: DebateSchemaVersion,
 		Items:         items,

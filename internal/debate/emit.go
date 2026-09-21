@@ -443,8 +443,9 @@ func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFindi
 	// through encoding/json, so nothing breaks — but a verify-written and a
 	// debate-written snapshot are NOT byte-comparable, which makes golden fixtures
 	// and manual diffs across the two stages noisy. Do not add one. runDebate
-	// takes a .bak before publishing this, so the pre-debate bytes remain
-	// recoverable.
+	// publishes the pre-rewrite bytes as verification.json.debate.bak — a further
+	// entry in the SAME atomic group as this rewrite, not a copy taken before it —
+	// so the pre-debate bytes remain recoverable.
 	//
 	// Residual: a JSON number round-trips through float64 here, so an int64 field
 	// added later above 2^53 would lose precision (9007199254740993 becomes
@@ -499,8 +500,13 @@ func syncVerificationTruncation(reviewDir string, findings []reconcile.JSONFindi
 				// the recompute debate.go's scope note rules out.
 				//
 				// A record already saying all three is left strictly alone. This pass
-				// draws its candidates from the prior debate.json, so every finding a
-				// debate ever ruled stays a candidate forever; marking the file changed
+				// draws its candidates from the prior debate.json, which runDebate
+				// REPLACES wholesale each run (debate.go writes Items from this run's
+				// selection only). So the candidate set is the PREVIOUS run's items, not
+				// cumulative history, and the repair has a one-run window: an intervening
+				// `atcr debate` that does not re-select the finding erases the only
+				// surviving copy of its residue judge and the record can never be
+				// repaired. Within that window, marking the file changed
 				// for an identical value would republish verification.json — and mint a
 				// fresh .debate.bak, spending the one snapshot generation that exists —
 				// on every later `atcr debate`, with nothing to show for it.
@@ -654,7 +660,7 @@ func isPartialWriteResidue(rec map[string]any) bool {
 // this switch would have skipped never entered `rulings` in the run that produced
 // the file, so it must not enter this reconstruction of it either. Attributing a
 // verdict to a judge that never ruled it is not a cosmetic error —
-// internal/verify/pipeline.go:434 reads a non-empty debateJudge as "a judge
+// internal/verify/pipeline.go:456 reads a non-empty debateJudge as "a judge
 // produced this verdict" and withholds the real skeptic's model on every later
 // re-verify.
 func priorDebateRulings(reviewDir string) map[FindingKey]ruleApply {

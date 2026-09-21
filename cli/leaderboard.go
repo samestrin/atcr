@@ -312,8 +312,10 @@ func runLeaderboardExportAt(cmd *cobra.Command, records []scorecard.Record, filt
 	// returned as-is rather than re-wrapped.
 	// The guard above already scrubbed every identity it inspected; handing the memo
 	// over means ExportSelected does not re-derive them. scrubField is a fixed-point
-	// loop over 7 compiled regexes, so the second pass was roughly 28 regex executions
-	// per field per record across the whole unrotated store.
+	// loop over 7 compiled regexes that breaks on the first unchanged pass, so the
+	// second pass cost 7 regex executions per field per record for an identity needing
+	// no scrubbing and 14 for one that changes once — across the whole unrotated store.
+	// (Up to 56 under the scrubPasses cap, which no current rule reaches.)
 	data, err := scorecard.ExportSelectedCached(selected, now, scrubs)
 	if err != nil {
 		return err

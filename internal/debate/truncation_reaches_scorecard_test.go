@@ -1154,7 +1154,7 @@ func TestSyncVerificationTruncation_ClearsAStaleWithheldReasonOnTheRuledRecord(t
 // gray-zone item, whose decision is cluster-level and never enters the
 // single-finding rulings map (debate.go:218-239). Projecting those back as
 // rulings attributes a verdict to an agent that never ruled it — and because
-// internal/verify/pipeline.go:434 reads a non-empty debateJudge as "a judge
+// internal/verify/pipeline.go:456 reads a non-empty debateJudge as "a judge
 // produced this verdict", the real skeptic's model and durationMs are then
 // withheld on every later re-verify.
 //
