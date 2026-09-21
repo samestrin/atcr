@@ -921,6 +921,20 @@ type repoStateAcc struct {
 // over different populations. The row states which via
 // benchmark.ReviewerCoverage.GroundingEnabled rather than adjusting the rate, so
 // nothing already published changes value.
+func expectedCategories(c benchmark.RepoStateCase) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(c.ExpectedFindings))
+	for _, f := range c.ExpectedFindings {
+		n := strings.ToLower(strings.TrimSpace(f.Category))
+		if seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, f.Category)
+	}
+	return out
+}
+
 // foldGroundingEnabled combines one case's grounding-gate state into a reviewer
 // row's running tag. first marks the row's opening case, where there is no prior
 // value to fold against.
@@ -966,20 +980,6 @@ func foldGroundingEnabled(prior, caseState *bool, first bool) *bool {
 	// storage with a PoolSummary the caller still holds.
 	agreed := *prior
 	return &agreed
-}
-
-func expectedCategories(c benchmark.RepoStateCase) []string {
-	seen := map[string]bool{}
-	out := make([]string, 0, len(c.ExpectedFindings))
-	for _, f := range c.ExpectedFindings {
-		n := strings.ToLower(strings.TrimSpace(f.Category))
-		if seen[n] {
-			continue
-		}
-		seen[n] = true
-		out = append(out, f.Category)
-	}
-	return out
 }
 
 // loadCaseDiffLineMap reads and parses a case's own diff, which is what makes

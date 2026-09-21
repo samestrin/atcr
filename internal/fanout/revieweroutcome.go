@@ -52,10 +52,19 @@ package fanout
 // raised nothing, but only about the fraction it read. Both routes to a partial input
 // map to that one value — a chunked persona whose bins failed (UnreviewedChunks) and a
 // byte-budget shed of the payload itself (Truncated, with FilesDropped naming the
-// shed entries by path). Reusing OutcomeIncomplete rather than minting a new value is
-// deliberate: the vocabulary is fail-closed at the checkpoint and coverage trust
-// boundaries, so an older binary reading a newer run's outcome must find a value it
-// already knows.
+// shed entries by path). Reusing "incomplete" for the second route rather than minting
+// a value for it is deliberate: the vocabulary is fail-closed at the checkpoint and
+// coverage trust boundaries, so an older binary reading a newer run's outcome must find
+// a value it already knows.
+//
+// That is a statement about THOSE TWO ROUTES, not a rule against new values — the
+// ungrounded and filtered arms below both mint one, and took the opposite side of the
+// same tradeoff knowingly. The difference is what the reuse would cost: a chunked
+// persona's failed bins and a shed payload are the same fact about a row (it saw a
+// fraction of the input), so one value describes both without lying, whereas publishing
+// a gate-wiped reviewer as "clean" asserts something false. Where reuse is free, take
+// it; where it would falsify the row, pay the skew instead — and say so, which is what
+// the CROSS-VERSION NOTEs on internal/benchmark/outcome.go:88 and :114 do.
 func ReviewerOutcome(a AgentStatus, raised []string) string {
 	switch {
 	case a.Status != StatusOK || a.Error != "":
