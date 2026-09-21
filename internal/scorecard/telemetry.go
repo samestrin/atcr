@@ -30,8 +30,9 @@ import (
 // call site, which is exactly the one-site fix that generalizes here.
 //
 // Plain strings.ToLower, deliberately: NOT golang.org/x/text/cases folding and NOT
-// NFC normalization. The persona catalog (personas/community/*.yaml) is pure
-// lowercase ASCII, x/text is not a direct dependency, and atcr.dev must reproduce
+// NFC normalization — even though the module now requires golang.org/x/text
+// directly, so availability is not the reason. The persona catalog
+// (personas/community/*.yaml) is pure lowercase ASCII, and atcr.dev must reproduce
 // this transform in one line of JS to build its persona dictionary. The Go/JS
 // equivalence holds for ASCII names (which is the entire published catalog — all
 // personas/community/*.yaml name values are lowercase ASCII), and a CASED

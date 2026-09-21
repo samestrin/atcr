@@ -109,6 +109,11 @@ const minAnchorLen = 3
 //
 // The returned slice is deduped and lexically sorted; nil when nothing
 // qualifies.
+//
+// It survives as a TEST-ONLY wrapper over scanProblemAnchors. Production reads
+// the scan directly (validate.go calls scanProblemAnchors and derives the flag
+// from anchorScan.truncated), so the contract above is the scan's contract —
+// this function only flattens it. The return values are byte-identical.
 func extractAnchorSet(text string) (anchors []string, truncated bool) {
 	anchors, s := scanProblemAnchors(text)
 	return anchors, s.truncated()
@@ -1269,11 +1274,17 @@ func isQualifiedIdentRune(r rune) bool {
 // nothing" on whatever co-cited ASCII anchor happened to miss.
 //
 // Combining marks (Mn and Mc) are admitted at non-initial positions for the
-// same reason: a macOS- or git-normalised file spells café as e + U+0301, and
-// Devanagari names carry vowel signs (नाम is न + ा + म), so a mark-rejecting
-// filter drops the name of a declaration the grammar (isDeclNameRune,
-// symbolindex.go) admits — the two must agree, or a grammar-admitted
-// declaration never reaches presentInSource. Admission here is only the SHAPE
+// same reason: an editor or input method can emit the decomposed form, so the
+// same declaration reaches the index spelling café as e + U+0301 or as the
+// precomposed rune, and Devanagari names carry vowel signs (नाम is न + ा + म).
+// A mark-rejecting filter drops the name of a declaration the grammar
+// (isDeclNameRune, symbolindex.go) admits — the two SHOULD agree, because a
+// grammar-admitted declaration the harvest rejects never reaches
+// presentInSource. They do not agree completely: the harvest still rejects an
+// Nl- or Pc-bearing name and a LEADING Other_ID_Start mark, and splits on `$`.
+// Those are accepted residuals, enumerated with their reasoning at
+// isDeclNameRune's doc (symbolindex.go) — the misfire direction is safe (a real
+// name moves to absent, never a fabricated one to present). Admission here is only the SHAPE
 // half, though: a caseless-script name still carries no identifier signal
 // (hasIdentifierSignal), so it reaches present from the harvest but anchors a
 // finding only when it also carries an underscore. Me (enclosing marks) stays

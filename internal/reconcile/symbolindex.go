@@ -1091,10 +1091,12 @@ func collectSourceIdentifiers(src []byte, out map[string]uint8, flag uint8) {
 
 // collectExportedIdentifiers adds the identifier-shaped tokens on EXPORT lines of
 // src to out, and nothing else. A line qualifies when it begins with `export`
-// followed by an ESM form (`default`, `const`, `let`, `var`, `function`,
-// `class`, `async`, the TypeScript declaration keywords `type`, `interface`,
-// `enum`, `declare`, `abstract`, or `{` / `*`), is indented at most 3 spaces, and
-// is not inside a fenced code block.
+// followed by a body isESMExportBody accepts, is indented at most 3 spaces, and
+// is not inside a fenced code block. That is a GRAMMAR test, not a keyword
+// prefix match: a binding keyword must actually be followed by a declared name
+// in the form that keyword admits (see declShape), and the modifiers `async`,
+// `declare` and `abstract` recurse into the body that follows them. isESMExportBody
+// owns the keyword table — restating it here is how the two drift apart.
 //
 // This is the declaration half of an exportDeclaringExts file, and the whole
 // reason it is narrow is that the source bit of present is read by the primaryMatched gate
