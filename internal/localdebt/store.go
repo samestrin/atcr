@@ -1028,14 +1028,32 @@ func retainForCompaction(recs []Record) []Record {
 		// that donor here deletes the whole outcome from the signal, silently
 		// and permanently, inside the reconcile that emits the signal.
 		//
-		// The settled branch above has always done this; the test there is
-		// settledness only because, until Story 36.0, settled and counted
-		// selected the same records. Ask producesQualitySignal instead, so a
-		// future counted-but-unsettled status is covered without an edit here.
-		donorIdx := -1
-		if producesQualitySignal(eff.Status) {
-			donorIdx = modelDonorIndex(group, eff)
-		}
+		// THE DONOR IS RETAINED UNCONDITIONALLY, and the gate that used to stand
+		// here is TD-014's unsettled-branch defect rather than a safeguard.
+		//
+		// It asked producesQualitySignal(eff.Status), which is false for an OPEN
+		// or `deferred` effective record — so the donor was dropped for the whole
+		// interval an item sat open, and a later model-less terminal record then
+		// had nothing to recover its attribution from. Measured on the
+		// pre-fix code: {deferred@T1 m1, resolved@T2 m="", open@T3} plus a later
+		// resolved@T4 m="" yields row {vera, m1} uncompacted and [] compacted.
+		// The whole outcome vanishes from the ground-truth signal, silently and
+		// permanently, inside the same reconcile that emits it.
+		//
+		// The gate was asking the wrong question. Whether the CURRENT effective
+		// record produces a signal says nothing about whether a FUTURE append
+		// will need this id's attribution — and an open item is precisely the one
+		// most likely to be closed later. Retention has to serve the append that
+		// has not happened yet.
+		//
+		// This does NOT close TD-014's other half. modelDonorIndex still returns
+		// -1 when eff already carries a Model, so a newer, higher-precedence
+		// donor is still deleted on the settled branch. That half is blocked on a
+		// genuine tie-break conflict (eff must be emitted last to win its own
+		// fold; the donor must be emitted last to win the donor slot) and is
+		// deliberately left open — see TD-014 and the skipped reproduction in
+		// compact_append_differential_test.go.
+		donorIdx := modelDonorIndex(group, eff)
 
 		trailIdx := -1
 		if len(resolutions) > 0 {

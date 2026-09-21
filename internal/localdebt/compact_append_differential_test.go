@@ -25,6 +25,11 @@ import (
 // Phase 4 makes AggregateQualitySignal the durable per-(persona, model)
 // ground-truth signal behind the lens score, so a row lost or misattributed
 // here is a lens durably mis-scored.
+//
+// TD-014's two mechanisms are tested SEPARATELY because only one of them is
+// fixed. The unsettled branch is a live guard; the settled branch is a skipped
+// reproduction. Keeping them in one table would have meant skipping the guard
+// too, leaving the fixed half unprotected.
 
 // signalKey renders a QualityRow as a comparable string so two aggregations can
 // be diffed by value regardless of group order.
@@ -43,92 +48,96 @@ func signalSet(rows []QualityRow) []string {
 	return out
 }
 
-func TestCompactThenAppend_IsSignalInvariant(t *testing.T) {
-	// SKIPPED, AND THE SKIP IS THE POINT. This test REPRODUCES TD-014 rather
-	// than guarding against it: both sub-cases fail today, with exactly the two
-	// divergences TD-014 filed (a model misattribution m3 -> m2 on the settled
-	// branch, and a lost row on the unsettled branch). It is committed skipped
-	// so the reproduction is not lost and the suite is not left red.
-	//
-	// WHY IT IS NOT FIXED HERE. The unsettled branch is unambiguous — drop the
-	// producesQualitySignal(eff.Status) gate and retain the donor. The settled
-	// branch is not, and the obstacle is a genuine conflict between two
-	// ordering rules retainForCompaction already documents:
-	//
-	//   - eff must be emitted LAST, so it wins its own fold (latestItem breaks
-	//     a full tie by append order).
-	//   - the donor must win foldTerminalByID's donor slot, which also breaks a
-	//     timestamp tie by append order — i.e. the donor must come last.
-	//
-	// When the donor and eff carry DISTINCT timestamps the conflict is inert:
-	// the timestamp comparison dominates both selections and append order never
-	// decides. When they TIE, the two rules demand opposite orders and one of
-	// them has to give. Picking which is a decision about what every existing
-	// store retains, so it is not made inside a test.
-	//
-	// See .planning/sprints/active/36.0_durable_lens_authority/tech-debt-captured.md
-	// -> TD-014 for the measured divergence rates.
-	t.Skip("TD-014: reproduces the defect; the settled-branch tie-break needs a decision before the fix lands")
+// diffRecord builds one record of a single id's history.
+func diffRecord(id, status, model, ts string) Record {
+	return Record{
+		SchemaVersion: SchemaVersion,
+		ID:            id,
+		Status:        status,
+		Model:         model,
+		Timestamp:     ts,
+		Reviewers:     []string{"vera"},
+		File:          "a.go",
+		Line:          1,
+		Problem:       "p",
+		Fix:           "f",
+		Category:      "correctness",
+	}
+}
+
+// assertSignalInvariant is the property itself: compacting a history must not
+// change the quality signal a LATER append produces from it.
+func assertSignalInvariant(t *testing.T, before, later []Record) {
+	t.Helper()
+	uncompacted := append(append([]Record{}, before...), later...)
+	compacted := append(retainForCompaction(before), later...)
+
+	assert.Equal(t,
+		signalSet(AggregateQualitySignal(uncompacted)),
+		signalSet(AggregateQualitySignal(compacted)),
+		"compaction changed the quality signal a later append produces")
+}
+
+// TestCompactThenAppend_UnsettledBranchKeepsTheDonor is a LIVE GUARD on the half
+// of TD-014 that is fixed.
+//
+// The donor used to be gated on producesQualitySignal(eff.Status), which is
+// false for an OPEN or `deferred` effective record — so the attribution was
+// dropped for the whole interval an item sat open, and the row vanished
+// entirely when it was finally closed by a model-less record. That is a LOST
+// ROW, not a misattributed one: the outcome disappears from the ground-truth
+// signal the durable lens score is built on.
+func TestCompactThenAppend_UnsettledBranchKeepsTheDonor(t *testing.T) {
+	const id = "abc123"
+	assertSignalInvariant(t,
+		[]Record{
+			diffRecord(id, StatusDeferred, "m1", "2026-09-01T00:00:00Z"),
+			diffRecord(id, StatusResolved, "", "2026-09-02T00:00:00Z"),
+			diffRecord(id, "", "", "2026-09-03T00:00:00Z"), // open
+		},
+		[]Record{diffRecord(id, StatusResolved, "", "2026-09-04T00:00:00Z")},
+	)
+}
+
+// TestCompactThenAppend_SettledBranchDropsAHigherPrecedenceDonor REPRODUCES the
+// half of TD-014 that is NOT fixed. It is committed skipped so the reproduction
+// survives without leaving the suite red.
+//
+// modelDonorIndex returns -1 when the effective record already carries a Model,
+// so a NEWER, higher-precedence donor is deleted: {wontfix@T1 m2, resolved@T2
+// m3} compacts to {wontfix m2}, and a later model-less wontfix is then credited
+// to m2 instead of m3. A MISATTRIBUTION rather than a loss, which is the worse
+// of the two for a per-(persona, model) score.
+//
+// WHY IT IS NOT FIXED. retainForCompaction already documents two ordering rules
+// that point opposite ways:
+//
+//   - eff must be emitted LAST, so it wins its own fold (latestItem breaks a
+//     full tie by append order).
+//   - the donor must win foldTerminalByID's donor slot, which ALSO breaks a
+//     timestamp tie by append order — i.e. the donor must come last.
+//
+// With distinct timestamps the conflict is inert: the timestamp comparison
+// dominates both selections and append order never decides. On an exact tie the
+// two rules cannot both hold, and choosing which one gives is a decision about
+// what every existing store retains. Deciding it needs the identify-eff-by-
+// position change already filed as TD-003 for Phase 6, and a live store with
+// terminal records to measure against — which does not exist yet (the store
+// holds 363 records and zero terminal ones as of 2026-09-20).
+//
+// Ruled Option A by Sam, 2026-09-20: fix the lost-row half now, leave this one
+// open with its reproduction in place.
+func TestCompactThenAppend_SettledBranchDropsAHigherPrecedenceDonor(t *testing.T) {
+	t.Skip("TD-014 (open half): the settled-branch tie-break needs a decision before the fix lands")
 
 	const id = "abc123"
-	rec := func(status, model, ts string) Record {
-		return Record{
-			SchemaVersion: SchemaVersion,
-			ID:            id,
-			Status:        status,
-			Model:         model,
-			Timestamp:     ts,
-			Reviewers:     []string{"vera"},
-			File:          "a.go",
-			Line:          1,
-			Problem:       "p",
-			Fix:           "f",
-			Category:      "correctness",
-		}
-	}
-
-	for _, tc := range []struct {
-		name   string
-		before []Record
-		later  []Record
-	}{
-		{
-			// TD-014 settled branch. modelDonorIndex returns -1 when the
-			// effective record already carries a Model, so the NEWER,
-			// higher-precedence donor is deleted; a later model-less record is
-			// then credited to the surviving older model.
-			name: "settled branch drops the higher-precedence donor",
-			before: []Record{
-				rec(StatusWontfix, "m2", "2026-09-01T00:00:00Z"),
-				rec(StatusResolved, "m3", "2026-09-02T00:00:00Z"),
-			},
-			later: []Record{rec(StatusWontfix, "", "2026-09-03T00:00:00Z")},
+	assertSignalInvariant(t,
+		[]Record{
+			diffRecord(id, StatusWontfix, "m2", "2026-09-01T00:00:00Z"),
+			diffRecord(id, StatusResolved, "m3", "2026-09-02T00:00:00Z"),
 		},
-		{
-			// TD-014 unsettled branch. The donor is gated on
-			// producesQualitySignal(eff.Status), false for an OPEN or deferred
-			// effective record, so the donor is dropped during the open
-			// interval and the whole row vanishes.
-			name: "unsettled branch drops the donor while the item is open",
-			before: []Record{
-				rec(StatusDeferred, "m1", "2026-09-01T00:00:00Z"),
-				rec(StatusResolved, "", "2026-09-02T00:00:00Z"),
-				rec("" /* open */, "", "2026-09-03T00:00:00Z"),
-			},
-			later: []Record{rec(StatusResolved, "", "2026-09-04T00:00:00Z")},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			uncompacted := append(append([]Record{}, tc.before...), tc.later...)
-			compacted := append(retainForCompaction(tc.before), tc.later...)
-
-			want := signalSet(AggregateQualitySignal(uncompacted))
-			got := signalSet(AggregateQualitySignal(compacted))
-
-			assert.Equal(t, want, got,
-				"compaction changed the quality signal a later append produces")
-		})
-	}
+		[]Record{diffRecord(id, StatusWontfix, "", "2026-09-03T00:00:00Z")},
+	)
 }
 
 func TestCompactThenAppend_RetentionBoundStillHolds(t *testing.T) {
