@@ -30,8 +30,15 @@ type LeaderboardRow struct {
 	FindingsRaised       int
 	FindingsCorroborated int
 	// FindingsDocShielded sums the doc-shield carve-out counts. The leaderboard
-	// does not render it; TrustPriors reads it to keep shielded routings inside
-	// the trust rate's denominator.
+	// renders it CONDITIONALLY, as a DOC-SHIELDED column, only when some reviewer
+	// has a non-zero count.
+	//
+	// TrustPriors does NOT read this field. mergeRoutedEras folds it into
+	// FindingsRaised and zeroes it before Aggregate sums anything, so the trust
+	// denominator receives these routings through FindingsRaised — which is why
+	// the tally must not also charge them here. Adding them back would
+	// double-count; deleting the fold would silently drop the anti-gaming
+	// property.
 	FindingsDocShielded    int
 	CorroborationRate      float64
 	TotalCostUSD           float64

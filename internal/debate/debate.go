@@ -386,6 +386,15 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		// current file yields no snapshot rather than a lost correction, which is
 		// the same outcome the copy-based version produced.
 		if prior, rerr := os.ReadFile(verPath); rerr != nil {
+			// DELIBERATELY UNCOVERED, and not reachable from a test.
+			// syncVerificationTruncation reads this SAME file earlier in the same
+			// run (emit.go:431-434) and returns ("", nil, nil) when that read
+			// fails, so an unreadable verPath leaves verBytes nil and skips this
+			// whole block before the line is reached. A test that makes the path
+			// unreadable up front therefore never gets here and would pin the
+			// wrong line. Do not write one. (Same treatment as the other
+			// unreachable failure arms in this repo:
+			// internal/sandbox/oslevel.go and internal/fanout/reviewdir.go.)
 			log.FromContext(ctx).Warn("debate: could not snapshot verification.json before rewriting it", "path", verPath, "err", rerr)
 		} else {
 			artifacts = append(artifacts, atomicwrite.Entry{Path: verPath + debateBakSuffix, Data: prior})
