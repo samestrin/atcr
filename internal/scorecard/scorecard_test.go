@@ -3,6 +3,7 @@ package scorecard
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -577,4 +578,16 @@ func TestWeightedCredit_AbsentKeysOmittedFromJSON(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(raw), "weighted_credit")
 	assert.NotContains(t, string(raw), "credit_era")
+}
+
+func TestReviewerCounts_ZeroDistinctReviewersEarnsTheIsolatedWeightNotInfinity(t *testing.T) {
+	// contains() matches on the RAW name and distinctCount() trims, so a
+	// whitespace-only reviewer matches and then counts zero. Dividing by that
+	// count puts +Inf into a persisted float64, and json.Marshal rejects +Inf —
+	// which fails the whole Append, losing every reviewer's record for that run.
+	raised, corroborated, credit := reviewerCounts(" ", []Finding{{Reviewers: []string{" "}}})
+	require.Equal(t, 1, raised)
+	assert.Equal(t, 0, corroborated)
+	assert.False(t, math.IsInf(credit, 0), "a zero distinct-reviewer count must not divide")
+	assert.InDelta(t, 1.0, credit, 1e-9, "nobody corroborated it, so it earns the isolated weight")
 }

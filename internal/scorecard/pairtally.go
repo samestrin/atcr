@@ -307,11 +307,17 @@ func pairTallies(records []Record) map[string]PairTally {
 		if r.RecordType != RecordTypeReviewer {
 			continue
 		}
-		// PairEra == 0 is a record written before the pair signal existed: its
+		// PairEra below 1 is a record written before the pair signal existed: its
 		// absent slice is not a measured empty set (AC 05-01 Edge Case 3).
 		// Above-current is a record measured under a rule this binary does not
 		// implement. Both are excluded rather than read as evidence.
-		if r.PairEra == 0 || r.PairEra > PairEraCurrent {
+		//
+		// The test is "< 1", not "== 0", so a NEGATIVE marker is excluded too.
+		// The store is plain user-writable JSONL and a hand-edited pair_era of -7
+		// is not a marker this binary ever wrote; reading it as "measured under
+		// the current rule" admits evidence on the strength of a corrupt field.
+		// Record.CreditEra's guard reads the same way, for the same reason.
+		if r.PairEra < 1 || r.PairEra > PairEraCurrent {
 			continue
 		}
 		name := strings.ToLower(strings.TrimSpace(r.Reviewer))

@@ -171,13 +171,27 @@ type Confirmation struct {
 // absent from the returned map all mean "no ground truth", which degrades that
 // persona to the pre-existing binary corroboration rate — never to an inflated
 // score (AC 04-01 Error Scenario 1).
-type GroundTruthLookup func() (map[string]Confirmation, error)
+//
+// IT TAKES THE SAME WINDOW THE RECORD READ USED, and that argument is not
+// decoration. ResolveTrustPriors bounds its scorecard read to defaultTrustWindow
+// while an un-windowed lookup would scale that 180-day isolation credit by an
+// all-time confirmation ratio — two populations multiplied as though they were
+// commensurate. since <= 0 means "no window", matching trustPriorsSince.
+type GroundTruthLookup func(since time.Duration, now time.Time) (map[string]Confirmation, error)
 
 // weightedTally is one persona's weighted-credit evidence, summed across every
 // model and run that carries the current credit era.
+//
+// runs is counted separately from trustPriorsSince's own run tally and is not
+// redundant with it: that one counts every run that survived the filter chain,
+// this one only the era-marked subset the weighted number is actually computed
+// from. During the upgrade window those two differ by almost everything, and
+// applying a 20-run floor to the first while dividing by the second reports a
+// satisfied floor over a sample of one.
 type weightedTally struct {
 	credit float64
 	raised int
+	runs   int
 }
 
 // weightedCreditByPersona folds records into per-lowercase-persona weighted
@@ -200,13 +214,26 @@ func weightedCreditByPersona(records []Record) map[string]weightedTally {
 		if r.RecordType != RecordTypeReviewer {
 			continue
 		}
-		if r.CreditEra == 0 || r.CreditEra > CreditEraCurrent {
+		if r.CreditEra < 1 || r.CreditEra > CreditEraCurrent {
+			continue
+		}
+		// THE STORE IS NOT A TRUSTED INPUT HERE. It is plain user-writable JSONL
+		// that other binaries and eras also write, and this value is a float that
+		// lands in the map reconcile compares against its exemption threshold. A
+		// hand-edited weighted_credit of 50 on twenty runs yields a prior of 50.0
+		// and blanket trustExempt for that lens. Credit is bounded by
+		// construction at emit time — at most isolatedFindingWeight per raised
+		// finding, never negative — so a record outside that bound was not
+		// written by this emitter and is dropped rather than clamped, matching
+		// how the era fields treat a value they did not write.
+		if r.WeightedCredit < 0 || r.WeightedCredit > float64(r.FindingsRaised)*isolatedFindingWeight {
 			continue
 		}
 		key := strings.ToLower(r.Reviewer)
 		t := out[key]
 		t.credit += r.WeightedCredit
 		t.raised += r.FindingsRaised
+		t.runs++
 		out[key] = t
 	}
 	return out
@@ -222,20 +249,52 @@ func weightedCreditByPersona(records []Record) map[string]weightedTally {
 // weigh them differently without changing the record shape.
 //
 // ok is false when there is nothing to divide by, which covers an empty row, a
-// persona the ledger has never seen, and a malformed row carrying negative
-// counts. Every one of those means "no ground truth", and the caller's contract
-// for that is to fall back to the binary rate — never to scale a score by a
-// fabricated factor.
+// persona the ledger has never seen, a malformed row carrying negative counts,
+// and a row with too few outcomes to read anything from. Every one of those
+// means "no ground truth", and the caller's contract for that is to fall back to
+// the binary rate — never to scale a score by a fabricated factor.
+//
+// The negative check is SEPARATE from the total check and both are load-bearing.
+// A row of {Confirmed: -5, Dismissed: 30} has a positive total and would yield a
+// factor of -0.1667, putting a negative prior into the map reconcile reads.
 func confirmationFactor(c Confirmation) (float64, bool) {
 	if c.Confirmed < 0 || c.Dismissed < 0 || c.Unreproducible < 0 || c.AttemptsExhausted < 0 {
 		return 0, false
 	}
 	total := c.Confirmed + c.Dismissed + c.Unreproducible + c.AttemptsExhausted
-	if total <= 0 {
+	if total < minConfirmationOutcomes {
 		return 0, false
 	}
 	return float64(c.Confirmed) / float64(total), true
 }
+
+// minConfirmationOutcomes is the number of COUNTED terminal debt outcomes a
+// persona needs before its confirmation rate is allowed to scale its credit.
+//
+// It exists because the two halves of the score were otherwise floored very
+// differently: the isolation half needs DefaultTrustMinRuns runs before it is
+// reported at all, while the confirmation half would multiply that evidence by a
+// ratio read off a single row. One wontfix and nothing else gives a factor of
+// 0.0, which zeroes the prior of a lens with twenty strict runs behind it; one
+// resolved row gives 1.0. Neither is a measurement.
+//
+// IT IS PROVISIONAL, for exactly the reason minPairCases is and with the same
+// honesty: on 2026-09-21 the live ledger at .atcr/debt/*.jsonl held 363 records
+// and ZERO carrying any counted terminal status, so there is no distribution to
+// set this from. 20 is taken from DefaultTrustMinRuns deliberately — the two
+// floors answer the same shape of question ("is there enough of this to read")
+// and copying the one that WAS measured is a smaller invention than picking a
+// second number.
+//
+// WHAT IT CANNOT SHOW: whether 20 terminal outcomes per persona is reachable at
+// all. If real ledgers never accumulate that many per lens, this floor silently
+// disables the confirmation half everywhere and the score is the isolation half
+// alone — which is a fallback, not a failure, but it would be invisible.
+//
+// RE-MEASUREMENT TRIGGER: redo once the ledger holds counted terminal outcomes
+// for 10+ distinct personas, and record the measurement here.
+// TestMinConfirmationOutcomes_NotNarrowedWithoutRemeasurement pins the literal.
+const minConfirmationOutcomes = 20
 
 // TrustPriorsWithGroundTruth is TrustPriors with C18's read-time confirmation
 // half supplied by the caller. TrustPriors itself passes no lookup, so its
@@ -251,6 +310,26 @@ func confirmationFactor(c Confirmation) (float64, bool) {
 //
 // This reads ALL HISTORY, matching TrustPriors rather than ResolveTrustPriors:
 // the windowing decision belongs to the caller that has one.
+//
+// DO NOT WIRE THIS INTO ResolveTrustPriors YET, and the reason is a measurement
+// that has not been done rather than unfinished plumbing. The value this returns
+// is on a DIFFERENT SCALE from the binary corroboration rate every existing
+// consumer was calibrated against. reconcile/consensus.go compares the priors
+// map against trustHighThreshold (0.7) and trustLowThreshold (0.3), both derived
+// from corroborated/raised, where a lens the panel always agrees with scores
+// 1.00. Under this function that same lens scores about 1/N — roughly 0.33 on a
+// 3-reviewer cluster, before the confirmation factor lowers it further — so
+// feeding this map to the unchanged thresholds would push much of the panel
+// under trustLowThreshold and demoteByTrust would mark it all ConfLow. That is
+// the panel-wide blackout strictRuns and unresolvedEraRuns are both documented
+// as refusing to cause, arriving through the front door.
+//
+// Both thresholds therefore have to be re-derived against weighted evidence
+// before any production caller switches to this function, and that derivation
+// needs a live scorecard store that does not exist yet (see
+// isolatedFindingWeight's own measurement note). Until then TrustPriors and
+// ResolveTrustPriors pass a nil lookup and the production path is unchanged.
+// Filed as a Phase 5 prerequisite.
 func TrustPriorsWithGroundTruth(dir string, minRuns int, gt GroundTruthLookup) (map[string]float64, error) {
 	return trustPriorsSince(dir, minRuns, 0, time.Now(), gt)
 }
@@ -366,15 +445,19 @@ func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Tim
 	// loop below would turn it into an N+1.
 	var confirmations map[string]Confirmation
 	if gt != nil {
-		if c, err := gt(); err == nil {
+		if c, err := gt(since, now); err == nil {
 			confirmations = c
 		}
-		// An error is swallowed deliberately and leaves confirmations nil, which
-		// every persona then reads as "no ground truth". This matches the read
-		// above: a partial or failed read degrades toward the pre-existing
-		// behaviour rather than failing the caller, because the caller is
-		// reconcile deciding whether to exempt a finding and it has no better
-		// answer to fall back to than the one it had before this phase.
+		// An error DISCARDS whatever map came back with it, rather than using a
+		// partial one. An adapter over a truncated debt-store read can return
+		// both, and a partial ledger is not a smaller true answer — it is a
+		// confirmation ratio computed over a subset nobody chose, applied to
+		// every persona's credit. Dropping it leaves confirmations nil and every
+		// persona reads "no ground truth", which is the same fail-neutral posture
+		// the record read above takes when ReadSince fails: degrade toward the
+		// pre-existing behaviour rather than fail the caller, because the caller
+		// is reconcile deciding whether to exempt a finding and it has no better
+		// fallback than the answer it had before this phase.
 	}
 
 	rates := make(map[string]float64, len(byReviewer))
@@ -382,7 +465,7 @@ func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Tim
 		if minRuns > 0 && t.runs < minRuns {
 			continue
 		}
-		rates[name] = weightedRate(t.corroborated, t.raised, weights[name], confirmations[name])
+		rates[name] = weightedRate(t.corroborated, t.raised, weights[name], confirmations[name], minRuns)
 	}
 	return rates, nil
 }
@@ -391,24 +474,42 @@ func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Tim
 // records (w) and the CONFIRMATION half read off the debt ledger (c).
 //
 // It degrades to the pre-existing binary rate — corroborated/raised — whenever
-// either half is missing, and that direction is deliberate rather than merely
-// convenient. The weighted rate is HIGHER than the binary one for exactly the
-// lenses this sprint exists to promote (a specialist whose findings are all solo
-// scores 0.0 binary and up to 1.0 weighted), so falling back on a missing signal
-// can only ever lower a score. A fallback that went the other way would let an
-// unreadable debt store hand every lens a maximal prior.
+// either half is missing or is measured too thinly to read.
+//
+// BE PRECISE ABOUT WHAT THAT FALLBACK DOES, because the obvious claim is wrong
+// in one direction. It is NOT true that degrading can only lower a score. It
+// lowers a solo-heavy specialist, whose binary rate is near 0 and whose weighted
+// rate is near 1 — that is the population this sprint exists to promote. But it
+// RAISES a corroboration-heavy generalist, whose binary rate is 1.00 and whose
+// weighted rate is about 1/N: an unreadable debt store hands exactly that lens
+// its maximal prior back. The fallback restores the pre-existing behaviour in
+// both directions, no more and no less, and that is the honest description. It
+// is accepted because the pre-existing behaviour is the state every consumer was
+// calibrated against, not because it is conservative.
+//
+// The minRuns floor is applied to w.runs, NOT to the caller's own run tally, and
+// the two are different sets during the upgrade window. The caller's tally
+// counts every run that survived the filter chain; w.runs counts only the
+// era-marked subset this number is actually computed from. Checking the first
+// while dividing by the second lets nineteen pre-weighting runs plus ONE
+// measured run report a satisfied twenty-run floor over a sample of one — and
+// since that one run can be a perfect 1.0, it buys blanket trustExempt. This is
+// at its worst on the first upgrade, when almost every record is pre-era.
 //
 // The result is bounded by construction and the bound is worth stating: each
 // finding contributes at most isolatedFindingWeight (1.0) to w.credit and
-// exactly 1 to w.raised, and factor is in [0,1], so the rate cannot exceed 1.0
-// while isolatedFindingWeight stays at its provisional value. A future
-// re-measurement above 1.0 would break that, and the caller — reconcile's
-// demoteByTrust, which compares against a uniform 1/N baseline — has no defence
-// against a rate above 1. Whoever moves the constant has to decide the clamp
-// here.
-func weightedRate(corroborated, raised int, w weightedTally, c Confirmation) float64 {
+// exactly 1 to w.raised, weightedCreditByPersona drops any record outside that
+// bound, and factor is in [0,1] — so the rate cannot exceed 1.0 while
+// isolatedFindingWeight stays at its provisional value. A future re-measurement
+// above 1.0 would break that, and the caller — reconcile's demoteByTrust — has
+// no defence against a rate above 1. Whoever moves the constant has to decide
+// the clamp here.
+func weightedRate(corroborated, raised int, w weightedTally, c Confirmation, minRuns int) float64 {
 	binary := ratio(corroborated, raised)
 	if w.raised <= 0 {
+		return binary
+	}
+	if minRuns > 0 && w.runs < minRuns {
 		return binary
 	}
 	factor, ok := confirmationFactor(c)

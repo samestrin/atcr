@@ -860,3 +860,32 @@ func TestPairKey_DelimiterBearingMemberIsRejected(t *testing.T) {
 		assert.Empty(t, key)
 	}
 }
+
+func TestPairTallies_ExcludesANegativePairEra(t *testing.T) {
+	// The store is plain user-writable JSONL, so the marker can carry a value
+	// this binary never wrote. A "== 0" test would read -7 as "measured under the
+	// current rule" and fold a corrupt record's signals into a durable tally.
+	dir := t.TempDir()
+	runID := pairRunID("neg-era")
+	for _, name := range []string{"bruce", "dax"} {
+		peer := "dax"
+		if name == "dax" {
+			peer = "bruce"
+		}
+		r := pairReviewer(runID, name, "m1", 4, 4, PairSignal{Peer: peer, Agreed: 4})
+		r.PairEra = -7
+		require.NoError(t, Append(dir, r))
+	}
+
+	assert.Empty(t, pairTalliesFromDir(t, dir),
+		"a record carrying a negative era marker must not reach the tally")
+}
+
+// pairTalliesFromDir reads dir and folds it, so a test can assert on the fold
+// without reaching past PairDisagreements' own read contract.
+func pairTalliesFromDir(t *testing.T, dir string) map[string]PairTally {
+	t.Helper()
+	got, err := PairDisagreements(dir)
+	require.NoError(t, err)
+	return got
+}

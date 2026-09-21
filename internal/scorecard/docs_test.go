@@ -361,3 +361,35 @@ func TestDocs_ScorecardMdDocumentsThePairSurface(t *testing.T) {
 		t.Error("docs/scorecard.md no longer records that the pair fields are additive at v2")
 	}
 }
+
+// TestDocs_ScorecardMdDocumentsTheWeightedCreditSurface guards docs/scorecard.md
+// against drifting from the weighted-credit fields and their era constant.
+//
+// Two things here are worth a drift test rather than just the field names.
+// credit_era, like pair_era, is the only thing in the bytes that separates a
+// measured 0.0 from a record written before the field existed — and a reader who
+// takes an absent marker as a measured zero drags the whole pre-existing store
+// toward a zero score on upgrade. Separately, the doc has to keep saying that
+// this number is NOT what reconcile consumes yet: the weighted rate sits on a
+// different scale from corroboration_rate, and a reader who wires it into the
+// unchanged exemption thresholds demotes most of the panel.
+func TestDocs_ScorecardMdDocumentsTheWeightedCreditSurface(t *testing.T) {
+	doc := string(readDoc(t, "scorecard.md"))
+
+	for _, want := range []string{
+		"| `weighted_credit` | float | conditional |",
+		"| `credit_era` | int | conditional |",
+		`"credit_era": 1,`,
+		fmt.Sprintf("The measurement era for `weighted_credit`, currently `%d`.", CreditEraCurrent),
+		// The half-a-score caveat. Without it the field reads as a finished
+		// quality number rather than the isolation half of one.
+		"**This is only half the score.**",
+		// The scale warning, which has to reach a reader of the doc rather than
+		// living only in a Go comment.
+		"The weighted-credit score is not wired into review yet",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/scorecard.md has drifted from the weighted-credit surface; missing:\n%s", want)
+		}
+	}
+}

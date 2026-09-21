@@ -1654,12 +1654,13 @@ func weighted(t *testing.T, dir string, n int, persona string, raisedEach, corro
 
 // allConfirmed is a ground-truth lookup that reports every named persona as
 // fully confirmed, so a test can isolate the ISOLATION half of the split from
-// the confirmation half.
+// the confirmation half. The count clears minConfirmationOutcomes, since a row
+// below that floor is deliberately read as "no ground truth".
 func allConfirmed(personas ...string) GroundTruthLookup {
-	return func() (map[string]Confirmation, error) {
+	return func(time.Duration, time.Time) (map[string]Confirmation, error) {
 		out := map[string]Confirmation{}
 		for _, p := range personas {
-			out[strings.ToLower(p)] = Confirmation{Confirmed: 10}
+			out[strings.ToLower(p)] = Confirmation{Confirmed: minConfirmationOutcomes}
 		}
 		return out, nil
 	}
@@ -1691,8 +1692,8 @@ func TestTrustPriorsWithGroundTruth_ConfirmationRateScalesTheCredit(t *testing.T
 	dir := t.TempDir()
 	weighted(t, dir, 20, "Shaky", 1, 0, 1.0)
 
-	gt := func() (map[string]Confirmation, error) {
-		return map[string]Confirmation{"shaky": {Confirmed: 3, Dismissed: 1}}, nil
+	gt := func(time.Duration, time.Time) (map[string]Confirmation, error) {
+		return map[string]Confirmation{"shaky": {Confirmed: 30, Dismissed: 10}}, nil
 	}
 	rates, err := TrustPriorsWithGroundTruth(dir, 10, gt)
 	require.NoError(t, err)
@@ -1707,9 +1708,9 @@ func TestTrustPriorsWithGroundTruth_CountsEveryNonConfirmedOutcomeAgainstTheLens
 	dir := t.TempDir()
 	weighted(t, dir, 20, "Mixed", 1, 0, 1.0)
 
-	gt := func() (map[string]Confirmation, error) {
+	gt := func(time.Duration, time.Time) (map[string]Confirmation, error) {
 		return map[string]Confirmation{"mixed": {
-			Confirmed: 2, Dismissed: 2, Unreproducible: 2, AttemptsExhausted: 2,
+			Confirmed: 5, Dismissed: 5, Unreproducible: 5, AttemptsExhausted: 5,
 		}}, nil
 	}
 	rates, err := TrustPriorsWithGroundTruth(dir, 10, gt)
@@ -1756,20 +1757,34 @@ func TestTrustPriorsWithGroundTruth_MissingSignalDegradesToBinaryNeverInflates(t
 
 	for name, gt := range map[string]GroundTruthLookup{
 		"nil lookup": nil,
-		"lookup error": func() (map[string]Confirmation, error) {
+		"lookup error": func(time.Duration, time.Time) (map[string]Confirmation, error) {
 			return nil, fmt.Errorf("debt store unreadable")
 		},
-		"empty map": func() (map[string]Confirmation, error) {
+		// A truncated store read can plausibly return BOTH a populated map and an
+		// error. A partial ledger is not a smaller true answer — it is a ratio
+		// over a subset nobody chose — so the map must be discarded with the
+		// error rather than used.
+		"lookup error carrying a partial map": func(time.Duration, time.Time) (map[string]Confirmation, error) {
+			return map[string]Confirmation{"lone": {Confirmed: 40}}, fmt.Errorf("truncated month file")
+		},
+		"empty map": func(time.Duration, time.Time) (map[string]Confirmation, error) {
 			return map[string]Confirmation{}, nil
 		},
-		"persona absent from the map": func() (map[string]Confirmation, error) {
-			return map[string]Confirmation{"someone-else": {Confirmed: 5}}, nil
+		"persona absent from the map": func(time.Duration, time.Time) (map[string]Confirmation, error) {
+			return map[string]Confirmation{"someone-else": {Confirmed: 40}}, nil
 		},
-		"row with no counted outcomes": func() (map[string]Confirmation, error) {
+		"row with no counted outcomes": func(time.Duration, time.Time) (map[string]Confirmation, error) {
 			return map[string]Confirmation{"lone": {}}, nil
 		},
-		"negative counts": func() (map[string]Confirmation, error) {
-			return map[string]Confirmation{"lone": {Confirmed: -5, Dismissed: 1}}, nil
+		// Below minConfirmationOutcomes. One resolved row is not a measurement,
+		// and letting it through would hand this lens a factor of 1.0.
+		"row below the outcome floor": func(time.Duration, time.Time) (map[string]Confirmation, error) {
+			return map[string]Confirmation{"lone": {Confirmed: minConfirmationOutcomes - 1}}, nil
+		},
+		// The total is POSITIVE, so the total check cannot catch this one. Left
+		// unguarded it yields factor -0.5 and a negative prior.
+		"negative count inside a positive total": func(time.Duration, time.Time) (map[string]Confirmation, error) {
+			return map[string]Confirmation{"lone": {Confirmed: -5, Dismissed: 30}}, nil
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -1840,7 +1855,7 @@ func TestTrustPriorsWithGroundTruth_GeneralistDoesNotOutrankSpecialists(t *testi
 		"a specialist with no solo findings earns no isolation credit and must not be lifted above the generalist")
 }
 
-func TestTrustPriorsWithGroundTruth_ExposesThePairRatesThatExplainTheRanking(t *testing.T) {
+func TestPairDisagreements_ExposeTheRatesBehindTheWeightedRanking(t *testing.T) {
 	// AC 04-05. Story 4 CONSUMES Story 5's surface rather than rebuilding it
 	// (D2), so the per-pair rate behind the ranking above has to be independently
 	// queryable from the same store — not buried inside one opaque score.
@@ -1951,4 +1966,130 @@ func TestIsolatedFindingWeight_NotNarrowedWithoutRemeasurement(t *testing.T) {
 			"Moving it requires a fresh measurement against the localdebt ground-truth "+
 			"ledger, recorded in the constant's doc comment the way DefaultTrustMinRuns' "+
 			"and defaultTrustWindow's are. Update this literal in the same commit.")
+}
+
+// ---------------------------------------------------------------------------
+// 4.6 — guards the 4.5.A adversarial pass found unpinned
+// ---------------------------------------------------------------------------
+
+func TestTrustPriorsWithGroundTruth_WeightedFloorCountsOnlyEraMarkedRuns(t *testing.T) {
+	// The floor has to be applied to the sample the NUMBER came from. Nineteen
+	// pre-weighting runs plus one measured run clears a twenty-run floor on the
+	// caller's own tally while the weighted rate is computed from that single
+	// run — and one perfect run scores 1.0, which clears reconcile's exemption
+	// threshold outright. This is the ordinary state of the store on first
+	// upgrade, not a contrived one.
+	dir := t.TempDir()
+	appendN(t, dir, 19, "Fresh", "m1", 4, 0) // pre-weighting: binary rate 0.0
+	weighted(t, dir, 1, "Fresh", 1, 0, 1.0)  // the single measured run
+
+	rates, err := TrustPriorsWithGroundTruth(dir, 20, allConfirmed("fresh"))
+	require.NoError(t, err)
+	require.Contains(t, rates, "fresh")
+	assert.InDelta(t, 0.0, rates["fresh"], 1e-9,
+		"one era-marked run must not satisfy a twenty-run floor and buy a maximal prior")
+}
+
+func TestTrustPriorsWithGroundTruth_IneligibleRunsDoNotReEnterThroughTheNumerator(t *testing.T) {
+	// The weighted fold reads the FILTERED slice. Read off the raw records
+	// instead, a single exploratory `--consensus off` reconcile would durably
+	// move the prior every later strict run consults — the anti-gaming boundary
+	// strictRuns exists to hold.
+	dir := t.TempDir()
+	weighted(t, dir, 20, "Gamed", 1, 0, 0.0) // measured, earned nothing
+
+	// The credit stays INSIDE the per-finding bound weightedCreditByPersona
+	// enforces. An out-of-bound value would be dropped by that guard instead, and
+	// the test would pass while proving nothing about the filter chain.
+	lenient := reviewer_(runIDAt(time.Now(), "lenient-run"), "Gamed", "m1", 20, 0)
+	lenient.ConsensusLevel = "off"
+	lenient.WeightedCredit = 20.0
+	lenient.CreditEra = CreditEraCurrent
+	require.NoError(t, Append(dir, lenient))
+
+	rates, err := TrustPriorsWithGroundTruth(dir, 10, allConfirmed("gamed"))
+	require.NoError(t, err)
+	assert.InDelta(t, 0.0, rates["gamed"], 1e-9,
+		"a non-strict run must not contribute to the weighted numerator")
+}
+
+func TestWeightedCreditByPersona_DropsCreditThatNoEmitterCouldHaveWritten(t *testing.T) {
+	// The store is plain user-writable JSONL. Credit above raised x
+	// isolatedFindingWeight, or below zero, was not written by this emitter — and
+	// left in, a hand-edited weighted_credit of 50 becomes a prior of 50.0, which
+	// clears every threshold reconcile has.
+	withCredit := func(runID string, raised int, credit float64, era int) Record {
+		r := reviewer_(runID, "Dax", "m1", raised, 0)
+		r.WeightedCredit = credit
+		r.CreditEra = era
+		return r
+	}
+	for name, tc := range map[string]Record{
+		"credit above the per-finding bound": withCredit("run-hi", 1, 50.0, CreditEraCurrent),
+		"negative credit":                    withCredit("run-neg", 4, -5.0, CreditEraCurrent),
+		"negative era marker":                withCredit("run-era", 4, 4.0, -7),
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.NotContains(t, weightedCreditByPersona([]Record{tc}), "dax",
+				"a record this emitter could not have written must not reach the tally")
+		})
+	}
+
+	// The bound is inclusive, so an all-solo record at exactly the maximum stays.
+	kept := weightedCreditByPersona([]Record{withCredit("run-max", 4, 4.0, CreditEraCurrent)})
+	require.Contains(t, kept, "dax")
+	assert.InDelta(t, 4.0, kept["dax"].credit, 1e-9)
+}
+
+func TestWeightedCreditByPersona_IgnoresNonReviewerRecords(t *testing.T) {
+	// An aggregate row carries no Reviewer, so today it would only pollute the
+	// "" key — benign by accident of another file rather than by anything this
+	// function asserts.
+	agg := Record{
+		SchemaVersion:  SchemaVersion,
+		RecordType:     RecordTypeAggregate,
+		Reviewer:       "Dax",
+		FindingsRaised: 4,
+		WeightedCredit: 4.0,
+		CreditEra:      CreditEraCurrent,
+	}
+	assert.Empty(t, weightedCreditByPersona([]Record{agg}),
+		"only reviewer records carry a per-lens weighted credit")
+}
+
+func TestConfirmationFactor_RejectsANegativeCountInsideAPositiveTotal(t *testing.T) {
+	// The total check cannot catch this: -5 + 30 is 30. Unguarded it yields
+	// factor -0.1667 and a NEGATIVE prior in the map reconcile reads.
+	_, ok := confirmationFactor(Confirmation{Confirmed: -5, Dismissed: 30})
+	assert.False(t, ok, "a negative count must read as no ground truth, never as a negative factor")
+}
+
+func TestMinConfirmationOutcomes_NotNarrowedWithoutRemeasurement(t *testing.T) {
+	// The literal is deliberate, matching TestMinPairCases_NotNarrowedWithoutRemeasurement.
+	assert.Equal(t, 20, minConfirmationOutcomes,
+		"minConfirmationOutcomes is PROVISIONAL and borrowed from DefaultTrustMinRuns. "+
+			"Moving it requires a fresh measurement against the localdebt ground-truth "+
+			"ledger, recorded in the constant's doc comment. Update this literal in the same commit.")
+}
+
+func TestGroundTruthLookup_ReceivesTheSameWindowTheRecordReadUsed(t *testing.T) {
+	// ResolveTrustPriors bounds the scorecard read to defaultTrustWindow. An
+	// un-windowed lookup would scale that 180-day isolation credit by an all-time
+	// confirmation ratio — two different populations multiplied as though they
+	// were the same one.
+	dir := t.TempDir()
+	weighted(t, dir, 20, "Lone", 1, 0, 1.0)
+
+	var gotSince time.Duration
+	var gotNow time.Time
+	gt := func(since time.Duration, now time.Time) (map[string]Confirmation, error) {
+		gotSince, gotNow = since, now
+		return map[string]Confirmation{"lone": {Confirmed: 40}}, nil
+	}
+	now := time.Now()
+	_, err := trustPriorsSince(dir, 10, defaultTrustWindow, now, gt)
+	require.NoError(t, err)
+
+	assert.Equal(t, defaultTrustWindow, gotSince)
+	assert.Equal(t, now, gotNow)
 }
