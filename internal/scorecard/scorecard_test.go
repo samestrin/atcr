@@ -448,3 +448,133 @@ func TestRaisedDenominatorOf_ClampsAboveCurrent(t *testing.T) {
 	assert.Equal(t, raisedDenominatorAllRouted, raisedDenominatorOf(Record{RaisedIncludesUnresolved: true}))
 	assert.Equal(t, raisedDenominatorPreEpic, raisedDenominatorOf(Record{}))
 }
+
+// ---------------------------------------------------------------------------
+// AC 04-01 — disagreement-weighted credit (D8 field shape, C18 emit-time half)
+// ---------------------------------------------------------------------------
+
+func TestReviewerCounts_WeightedCreditScalesInverselyWithReviewerCount(t *testing.T) {
+	// The literals are deliberate. Asserting against 1/distinctCount(...) would
+	// re-derive the formula under test and pass at any implementation of it.
+	for name, tc := range map[string]struct {
+		reviewers []string
+		want      float64
+	}{
+		// N=1 is isolatedFindingWeight x 1.0. The expectation is the literal
+		// rather than the constant for the reason above; the constant's value is
+		// pinned separately by TestIsolatedFindingWeight_NotNarrowedWithoutRemeasurement.
+		"solo (N=1)":                  {[]string{"dax"}, 1.0},
+		"pair (N=2)":                  {[]string{"dax", "bruce"}, 0.5},
+		"five (N=5)":                  {[]string{"dax", "bruce", "kai", "mira", "otto"}, 0.2},
+		"duplicates collapse to solo": {[]string{"dax", "dax", "dax"}, 1.0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			raised, _, credit := reviewerCounts("dax", []Finding{{Reviewers: tc.reviewers}})
+			require.Equal(t, 1, raised, "the fixture must charge the denominator exactly once")
+			assert.InDelta(t, tc.want, credit, 1e-9)
+		})
+	}
+}
+
+func TestReviewerCounts_SoloCreditStrictlyExceedsCorroboratedCredit(t *testing.T) {
+	// AC 04-01 Scenario 2, as an ORDERING rather than three magnitudes: a
+	// 2-reviewer finding is worth strictly more per reviewer than a 5-reviewer
+	// one, and both strictly less than a solo find. This is the property the
+	// anti-generalist mechanism rests on, so it is pinned independently of the
+	// exact curve above.
+	credit := func(reviewers ...string) float64 {
+		_, _, c := reviewerCounts("dax", []Finding{{Reviewers: reviewers}})
+		return c
+	}
+	solo := credit("dax")
+	pair := credit("dax", "bruce")
+	five := credit("dax", "bruce", "kai", "mira", "otto")
+
+	assert.Greater(t, solo, pair, "an isolated finding must outweigh a corroborated one")
+	assert.Greater(t, pair, five, "credit must keep falling as the panel piles on")
+	assert.Greater(t, five, 0.0, "a finding the whole panel raised is at a floor, never zero or negative")
+}
+
+func TestEmit_WeightedCreditRoundTripsAsAFractionWithTheCountersIntact(t *testing.T) {
+	// AC 04-01 Scenario 3. dax raises two findings: one alone (1.0) and one
+	// alongside bruce (0.5), so the summed credit is 1.5 — a value that would be
+	// destroyed by an int destination, which is the whole reason D8 refuses to
+	// redefine FindingsCorroborated.
+	dir := t.TempDir()
+	in := EmitInput{
+		RunID: pairRunID("r-credit"),
+		Reviewers: map[string]ReviewerMeta{
+			"dax":   {Model: "m1", Outcome: outcomeFindings},
+			"bruce": {Model: "m2", Outcome: outcomeFindings},
+		},
+		Findings: []Finding{
+			{File: "a.go", Line: 1, Problem: "solo", Reviewers: []string{"dax"}},
+			{File: "b.go", Line: 2, Problem: "shared", Reviewers: []string{"dax", "bruce"}},
+		},
+	}
+	require.NoError(t, Emit(in, EmitOpts{Dir: dir}))
+
+	got := reviewerRecordsByName(t, dir)["dax"]
+	assert.InDelta(t, 1.5, got.WeightedCredit, 1e-9, "the fractional part must survive the JSONL round trip")
+
+	// The three existing integer counters keep their existing meanings, so every
+	// non-trust consumer (Aggregate, the export/leaderboard path) is untouched.
+	assert.Equal(t, 2, got.FindingsRaised)
+	assert.Equal(t, 1, got.FindingsCorroborated)
+	assert.Equal(t, 1, got.FindingsSolo)
+}
+
+func TestEmit_StampsTheCreditEraMarkerUnconditionally(t *testing.T) {
+	// Same argument PairEra makes: an absent weighted_credit key is byte-identical
+	// on a pre-weighting record and on a run that genuinely earned 0.0, and
+	// averaging the back-catalogue in as measured zeroes drives every lens's
+	// weighted rate toward zero. The marker, not the value, says "measured" — so
+	// it is stamped even on a clean run that raised nothing.
+	dir := t.TempDir()
+	in := EmitInput{
+		RunID:     pairRunID("r-clean"),
+		Reviewers: map[string]ReviewerMeta{"dax": {Model: "m1", Outcome: outcomeClean}},
+	}
+	require.NoError(t, Emit(in, EmitOpts{Dir: dir}))
+
+	assert.Equal(t, CreditEraCurrent, reviewerRecordsByName(t, dir)["dax"].CreditEra,
+		"a measured-empty run must be distinguishable from a pre-weighting record")
+}
+
+func TestEmit_RoutedPhantomsChargeTheDenominatorButEarnNoCredit(t *testing.T) {
+	// A Tier-4-routed finding is counted in FindingsRaised and never in
+	// FindingsCorroborated. Credit follows corroboration, not the denominator:
+	// crediting a phantom would pay a reviewer for a finding that cites a file
+	// the patch does not contain, and an isolated phantom would pay the MAXIMUM.
+	dir := t.TempDir()
+	in := EmitInput{
+		RunID:     pairRunID("r-routed"),
+		Reviewers: map[string]ReviewerMeta{"dax": {Model: "m1", Outcome: outcomeFindings}},
+		Findings: []Finding{
+			{File: "a.go", Line: 1, Problem: "real solo", Reviewers: []string{"dax"}},
+		},
+		UnresolvedFindings: []Finding{
+			{File: "ghost.go", Line: 9, Problem: "phantom solo", Reviewers: []string{"dax"}},
+		},
+	}
+	require.NoError(t, Emit(in, EmitOpts{Dir: dir}))
+
+	got := reviewerRecordsByName(t, dir)["dax"]
+	assert.Equal(t, 2, got.FindingsRaised, "the routed phantom still charges the denominator")
+	assert.InDelta(t, 1.0, got.WeightedCredit, 1e-9, "only the real finding earns credit")
+}
+
+func TestWeightedCredit_DoesNotBumpTheSchemaVersion(t *testing.T) {
+	// D8/C15: an additive omitempty field plus its own era marker is not a schema
+	// era. The literal is deliberate — asserting against the constant would
+	// contract with it and pass at any value.
+	assert.Equal(t, 2, SchemaVersion,
+		"WeightedCredit is additive; bumping SchemaVersion would reclassify every measured v2 record as unmeasured")
+}
+
+func TestWeightedCredit_AbsentKeysOmittedFromJSON(t *testing.T) {
+	raw, err := json.Marshal(Record{SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer})
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "weighted_credit")
+	assert.NotContains(t, string(raw), "credit_era")
+}

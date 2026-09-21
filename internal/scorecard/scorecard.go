@@ -276,6 +276,38 @@ type Record struct {
 	// increment SchemaVersion. See PairEraCurrent.
 	PairEra int `json:"pair_era,omitempty"`
 
+	// WeightedCredit is the ISOLATION half of the disagreement-weighted credit
+	// (D8, C18): the sum, over the findings this reviewer participated in, of
+	// 1/distinctCount(Reviewers). A finding raised alone contributes the full
+	// isolatedFindingWeight; one raised alongside four others contributes 0.2.
+	//
+	// It is a NEW field rather than a redefinition of FindingsCorroborated,
+	// which is a persisted int with consumers past trust priors (Aggregate, the
+	// export/leaderboard path) and would truncate every partial credit to
+	// nothing. FindingsRaised, FindingsCorroborated and FindingsSolo keep their
+	// existing integer meanings, so no non-trust consumer changes.
+	//
+	// THE GROUND-TRUTH HALF IS NOT IN THIS NUMBER, and that split is C18's
+	// decision rather than an omission. At emit time a finding has just been
+	// raised and has no TD status yet, so "did it prove real" cannot be known
+	// here; at read time the per-finding reviewer count no longer exists
+	// (scorecard.Finding is never persisted). The isolation half is therefore
+	// persisted here and the confirmation half applied per persona in the trust
+	// fold. See C19 for what that costs.
+	//
+	// omitempty: absent is indistinguishable from a measured 0.0, so CreditEra —
+	// not this field — is what says the record was measured.
+	WeightedCredit float64 `json:"weighted_credit,omitempty"`
+	// CreditEra is the weighted-credit measurement era marker (D8), stamped
+	// unconditionally on every reviewer record this emitter writes for exactly
+	// the reason PairEra is: a pre-weighting record and a genuinely-zero one
+	// serialize identically, and averaging the pre-weighting back-catalogue in
+	// as measured zeroes would drive every lens's weighted rate toward zero.
+	//
+	// This is an ADDITIVE omitempty field plus an era marker, so it does NOT
+	// increment SchemaVersion. See CreditEraCurrent.
+	CreditEra int `json:"credit_era,omitempty"`
+
 	FindingsVerified    *int     `json:"findings_verified,omitempty"`
 	FindingsRefuted     *int     `json:"findings_refuted,omitempty"`
 	SurvivedSkepticRate *float64 `json:"survived_skeptic_rate,omitempty"`
@@ -604,11 +636,16 @@ func Emit(in EmitInput, opts EmitOpts) error {
 
 	for _, name := range names {
 		meta := in.Reviewers[name]
-		raised, corroborated := reviewerCounts(name, in.Findings)
+		// credit comes from in.Findings ONLY, and the two calls below deliberately
+		// discard theirs. A routed phantom cites a file the patch does not
+		// contain, so paying credit for one would pay MOST for a phantom nobody
+		// else raised — isolation credit for a finding whose isolation is the
+		// evidence against it. Both still charge the denominator.
+		raised, corroborated, credit := reviewerCounts(name, in.Findings)
 		// Routed phantoms add to the denominator only — see UnresolvedFindings.
-		routedRaised, _ := reviewerCounts(name, chargeableUnresolved)
+		routedRaised, _, _ := reviewerCounts(name, chargeableUnresolved)
 		raised += routedRaised
-		shielded, _ := reviewerCounts(name, docShielded)
+		shielded, _, _ := reviewerCounts(name, docShielded)
 		rec := Record{
 			SchemaVersion: SchemaVersion,
 			// Stamped unconditionally, not only when UnresolvedFindings is
@@ -642,7 +679,12 @@ func Emit(in EmitInput, opts EmitOpts) error {
 			// Stamped unconditionally, including on a run with no pairs at all:
 			// the marker, not the slice, is what records that this run was
 			// measured. See PairEraCurrent.
-			PairEra:           PairEraCurrent,
+			PairEra: PairEraCurrent,
+			// Stamped unconditionally alongside the value, including when the
+			// value is 0.0 — see CreditEraCurrent for why the marker rather than
+			// the value is what records that this run was measured.
+			WeightedCredit:    credit,
+			CreditEra:         CreditEraCurrent,
 			CorroborationRate: ratio(corroborated, raised),
 			CostUSD:           llmclient.ComputeCostUSD(meta.Model, meta.TokensIn, meta.TokensOut),
 			TokensIn:          meta.TokensIn,
@@ -798,18 +840,60 @@ func reviewerCategories(name string, streams ...[]Finding) []string {
 // per reviewer, recomputing distinctCount per match) is intentional: emission is
 // a once-per-reconcile, best-effort path over a handful of reviewers and a
 // diff-bounded finding set, so a single-pass precompute buys no observable speed.
-func reviewerCounts(name string, findings []Finding) (raised, corroborated int) {
+// credit is the THIRD return value and it is a new quantity, not a restatement
+// of corroborated: the disagreement-weighted credit this reviewer earned, summed
+// over the same findings. Per-finding it is 1/distinctCount(Reviewers), so a
+// finding nobody else raised is worth a full point and one the whole panel
+// raised is worth a fraction of one — the inverse of what `corroborated` counts,
+// which is the point (see the epic's "credit disagreement, not agreement").
+//
+// It GROWS the signature rather than changing the meaning of the second return
+// value, per D8. FindingsCorroborated is a persisted int with consumers past
+// trust priors, and a fractional credit summed into it would truncate to
+// nothing.
+//
+// ONLY the confirmed-real half is missing from this number, and deliberately
+// (C18): at emit time no finding has a TD status yet. The trust fold applies
+// that factor per persona at read time.
+func reviewerCounts(name string, findings []Finding) (raised, corroborated int, credit float64) {
 	for _, f := range findings {
 		if !contains(f.Reviewers, name) {
 			continue
 		}
 		raised++
-		if distinctCount(f.Reviewers) >= 2 {
+		n := distinctCount(f.Reviewers)
+		if n >= 2 {
 			corroborated++
+			credit += 1.0 / float64(n)
+			continue
 		}
+		// n is 0 or 1 here. Zero is reachable — contains() matched on a name that
+		// distinctCount then normalised away — and dividing by it would put an
+		// +Inf into a persisted field and from there into reconcile's priors map.
+		// Both cases are the same judgment anyway: nobody corroborated this
+		// finding, so it earns the isolated weight.
+		credit += isolatedFindingWeight
 	}
-	return raised, corroborated
+	return raised, corroborated, credit
 }
+
+// CreditEraCurrent is the weighted-credit measurement era this binary writes.
+//
+// It exists for the same reason PairEraCurrent does and is stamped the same way:
+// unconditionally, on every reviewer record this emitter writes, including one
+// that earned 0.0. An absent weighted_credit key is byte-identical on a
+// pre-weighting record and on a genuinely-zero one, and reading the whole
+// pre-weighting back-catalogue as measured zeroes would drag every lens's
+// weighted rate toward zero on upgrade — the blackout strictRuns and
+// unresolvedEraRuns both refuse to cause.
+//
+// ABOVE-CURRENT IS EXCLUDED, not clamped, exactly as PairEra and
+// RaisedDenominator handle it: a record stamped era 2 was measured under a rule
+// this binary does not implement, and it still carries schema_version 2, so
+// nothing but this check stops it blending with era-1 evidence.
+//
+// See Record.CreditEra.
+const CreditEraCurrent = 1
 
 // verdictTallies reads VerificationPath and attributes each finding's skeptic
 // verdict to the reviewers that raised that finding (matched by file+line+problem

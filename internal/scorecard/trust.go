@@ -96,6 +96,165 @@ const DefaultTrustMinRuns = 20
 // with them and pass at any value.
 const defaultTrustWindow = 180 * 24 * time.Hour
 
+// isolatedFindingWeight is the credit a finding earns when exactly one lens
+// raised it. Every other finding earns 1/distinctCount(Reviewers), so this is
+// the top of that curve.
+//
+// IT IS PROVISIONAL, and 1.0 is the value that asserts the LEAST. The epic
+// forbids guessing a constant, and every value above 1.0 would be a guess about
+// how much more a solo find is worth than the 1/N curve already says — a claim
+// with no measurement behind it. 1.0 makes the solo case the curve's natural
+// maximum and adds nothing on top. The multiplier is applied in reviewerCounts
+// regardless, so re-measurement is a one-constant edit rather than a code
+// change.
+//
+// MEASURED 2026-09-21, and the measurement FAILED for lack of data rather than
+// returning a number. The derivation needs, per lens, the rate at which its
+// SOLO findings later resolved versus the rate at which its corroborated ones
+// did; the ratio of those two is the weight. The inputs are
+// localdebt.AggregateQualitySignal's counted terminal outcomes. The live debt
+// store at .atcr/debt/*.jsonl held 363 records on that date and ZERO of them
+// carried any terminal status — Story 01 shipped StatusUnreproducible and
+// StatusAttemptsExhausted days earlier and nothing has been closed under the
+// new vocabulary yet. There is also no scorecard store on this machine at all
+// (~/.config/atcr/scorecard/ does not exist), so the solo-versus-corroborated
+// split has no population either. Sample size: 0 on both sides.
+//
+// WHAT THIS CANNOT SHOW — stated plainly, the way defaultTrustWindow's "the
+// store was only ~35 days old" limitation is: nothing here establishes that
+// solo findings resolve at a DIFFERENT rate from corroborated ones at all. If
+// they resolve at the same rate the correct weight is 1.0 and this value is
+// right by accident; if solo findings resolve far more often the weight is well
+// above 1.0 and this value systematically under-credits exactly the specialists
+// the epic exists to protect. Both are invisible without the measurement, and
+// no later phase may cite this constant as evidence-backed.
+//
+// RE-MEASUREMENT TRIGGER: redo this once the debt ledger holds 50+ records
+// carrying a counted terminal status (resolved / wontfix / unreproducible /
+// attempts-exhausted) AND the scorecard store holds runs from 20+ distinct
+// lenses, then record the measurement here the way DefaultTrustMinRuns' is
+// recorded. TestIsolatedFindingWeight_NotNarrowedWithoutRemeasurement pins the
+// literal so a later move cannot ride in without that measurement.
+const isolatedFindingWeight = 1.0
+
+// Confirmation is one persona's ground-truth outcome counts, folded across every
+// model that persona ran under. It is the READ-TIME half of C18's split: the
+// scorecard store records how ISOLATED a lens's findings were, and this records
+// how often they turned out to be real.
+//
+// It deliberately mirrors internal/localdebt.QualityRow's counters without
+// importing that package. internal/scorecard must not depend on
+// internal/localdebt — the lookup is injected as a function value so the
+// weighting stays unit-testable with no live debt store (AC 04-01).
+//
+// The three non-Confirmed counters are kept SEPARATE rather than summed into
+// one "not real" total because they say different things about the lens that
+// raised the finding, exactly as localdebt.QualityRow documents.
+type Confirmation struct {
+	// Confirmed counts findings that became a TD row and were RESOLVED — the
+	// finding was real and got fixed.
+	Confirmed int
+	// Dismissed counts findings closed WONTFIX.
+	Dismissed int
+	// Unreproducible counts findings nobody could reproduce.
+	Unreproducible int
+	// AttemptsExhausted counts findings whose fix attempts ran out without a
+	// resolution.
+	AttemptsExhausted int
+}
+
+// GroundTruthLookup returns per-persona confirmation counts keyed by LOWERCASE
+// persona name, matching trustPriorsSince's own key convention.
+//
+// It is a function value rather than a direct internal/localdebt call so the
+// dependency stays one-way and injectable. A nil lookup, an error, or a persona
+// absent from the returned map all mean "no ground truth", which degrades that
+// persona to the pre-existing binary corroboration rate — never to an inflated
+// score (AC 04-01 Error Scenario 1).
+type GroundTruthLookup func() (map[string]Confirmation, error)
+
+// weightedTally is one persona's weighted-credit evidence, summed across every
+// model and run that carries the current credit era.
+type weightedTally struct {
+	credit float64
+	raised int
+}
+
+// weightedCreditByPersona folds records into per-lowercase-persona weighted
+// credit and its matching denominator, keyed the way trustPriorsSince keys its
+// own tally so a persona that ran under several models sums into one entry.
+//
+// A RECORD WITHOUT THE CURRENT CREDIT ERA CONTRIBUTES TO NEITHER SIDE. Dropping
+// it from the numerator alone would be worse than counting it: its FindingsRaised
+// would stay in the denominator and the lens would be charged for findings whose
+// credit was never measured. Excluding both is what makes the weighted rate a
+// statement about the era it was measured in.
+//
+// Above-current eras are excluded rather than clamped, matching PairEra's and
+// unresolvedEraRuns' treatment — see CreditEraCurrent.
+//
+// The input slice is never mutated; this reads records and returns a fresh map.
+func weightedCreditByPersona(records []Record) map[string]weightedTally {
+	out := map[string]weightedTally{}
+	for _, r := range records {
+		if r.RecordType != RecordTypeReviewer {
+			continue
+		}
+		if r.CreditEra == 0 || r.CreditEra > CreditEraCurrent {
+			continue
+		}
+		key := strings.ToLower(r.Reviewer)
+		t := out[key]
+		t.credit += r.WeightedCredit
+		t.raised += r.FindingsRaised
+		out[key] = t
+	}
+	return out
+}
+
+// confirmationFactor is the share of a persona's counted TD outcomes that were
+// CONFIRMATIONS, i.e. findings that became a debt row and were resolved.
+//
+// The three non-confirmed counters all sit in the denominator because the epic
+// reads them that way: a finding marked wontfix, one nobody could reproduce, and
+// one whose fix attempts ran out all failed to prove the reviewer right. They
+// are kept apart in Confirmation rather than pre-summed so a later phase can
+// weigh them differently without changing the record shape.
+//
+// ok is false when there is nothing to divide by, which covers an empty row, a
+// persona the ledger has never seen, and a malformed row carrying negative
+// counts. Every one of those means "no ground truth", and the caller's contract
+// for that is to fall back to the binary rate — never to scale a score by a
+// fabricated factor.
+func confirmationFactor(c Confirmation) (float64, bool) {
+	if c.Confirmed < 0 || c.Dismissed < 0 || c.Unreproducible < 0 || c.AttemptsExhausted < 0 {
+		return 0, false
+	}
+	total := c.Confirmed + c.Dismissed + c.Unreproducible + c.AttemptsExhausted
+	if total <= 0 {
+		return 0, false
+	}
+	return float64(c.Confirmed) / float64(total), true
+}
+
+// TrustPriorsWithGroundTruth is TrustPriors with C18's read-time confirmation
+// half supplied by the caller. TrustPriors itself passes no lookup, so its
+// numbers and its map[string]float64 shape are byte-identical to before and
+// reconcile/consensus.go's trustExempt/demoteByTrust need no call-site change
+// (AC 04-04).
+//
+// gt is a function value rather than a direct internal/localdebt call so the
+// dependency stays one-way and the weighting is unit-testable with no live debt
+// store. A nil lookup, a lookup that errors, and a persona absent from the
+// returned map all degrade that persona to the pre-existing binary corroboration
+// rate — see GroundTruthLookup.
+//
+// This reads ALL HISTORY, matching TrustPriors rather than ResolveTrustPriors:
+// the windowing decision belongs to the caller that has one.
+func TrustPriorsWithGroundTruth(dir string, minRuns int, gt GroundTruthLookup) (map[string]float64, error) {
+	return trustPriorsSince(dir, minRuns, 0, time.Now(), gt)
+}
+
 // TrustPriors reads the scorecard store at dir and returns each reviewer's
 // corroboration rate (findings corroborated / findings raised), keyed by
 // lowercase reviewer name. Aggregate groups by (Reviewer, Model), so a
@@ -136,7 +295,12 @@ func TrustPriors(dir string, minRuns int) (map[string]float64, error) {
 	// reads it: relying on that short-circuit would make this call correct only
 	// by evaluation order, and a zero now would silently read nothing if the
 	// order ever changed.
-	return trustPriorsSince(dir, minRuns, 0, time.Now())
+	//
+	// The nil lookup is the contract, not a TODO: TrustPriors' documented
+	// behaviour is the binary corroboration rate and AC 04-04 pins that it stays
+	// so. A caller that has a debt ledger to offer calls
+	// TrustPriorsWithGroundTruth instead.
+	return trustPriorsSince(dir, minRuns, 0, time.Now(), nil)
 }
 
 // trustPriorsSince is TrustPriors' body with the read bounded to the month files
@@ -150,7 +314,7 @@ func TrustPriors(dir string, minRuns int) (map[string]float64, error) {
 // fall below minRuns is omitted from the result entirely, so too narrow a window
 // silently stops trust exemption and demotion rather than merely speeding up the
 // read. See defaultTrustWindow.
-func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Time) (map[string]float64, error) {
+func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Time, gt GroundTruthLookup) (map[string]float64, error) {
 	records, err := ReadSince(dir, since, now, ReadOpts{Writer: io.Discard})
 	if err != nil {
 		// The record slice is truncated at the failed month file. Aggregating
@@ -178,7 +342,14 @@ func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Tim
 	// shrink a case's evidence; the filter runs LAST so the era decision is never
 	// made from an opportunity-shrunk record set.
 	unions := opportunityUnions(records)
-	for _, row := range Aggregate(opportunitySetRuns(unresolvedEraRuns(mergeRoutedEras(eligibleOutcomeRuns(strictRuns(records)))), unions)) {
+	kept := opportunitySetRuns(unresolvedEraRuns(mergeRoutedEras(eligibleOutcomeRuns(strictRuns(records)))), unions)
+	// The weighted fold reads the SAME filtered slice Aggregate does, not the raw
+	// records: a run the eligibility or opportunity gate just excluded must not
+	// re-enter through the weighted numerator. It is a second pass rather than a
+	// field on LeaderboardRow because that row is the export/leaderboard shape and
+	// D8's whole point is that no non-trust consumer changes.
+	weights := weightedCreditByPersona(kept)
+	for _, row := range Aggregate(kept) {
 		key := strings.ToLower(row.Reviewer)
 		t := byReviewer[key]
 		if t == nil {
@@ -190,14 +361,61 @@ func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Tim
 		t.raised += row.FindingsRaised
 	}
 
+	// One lookup call for the whole fold, not one per persona: the debt ledger is
+	// a store read on the far side of the injected function and the per-persona
+	// loop below would turn it into an N+1.
+	var confirmations map[string]Confirmation
+	if gt != nil {
+		if c, err := gt(); err == nil {
+			confirmations = c
+		}
+		// An error is swallowed deliberately and leaves confirmations nil, which
+		// every persona then reads as "no ground truth". This matches the read
+		// above: a partial or failed read degrades toward the pre-existing
+		// behaviour rather than failing the caller, because the caller is
+		// reconcile deciding whether to exempt a finding and it has no better
+		// answer to fall back to than the one it had before this phase.
+	}
+
 	rates := make(map[string]float64, len(byReviewer))
 	for name, t := range byReviewer {
 		if minRuns > 0 && t.runs < minRuns {
 			continue
 		}
-		rates[name] = ratio(t.corroborated, t.raised)
+		rates[name] = weightedRate(t.corroborated, t.raised, weights[name], confirmations[name])
 	}
 	return rates, nil
+}
+
+// weightedRate is where C18's two halves meet: the ISOLATION half read off the
+// records (w) and the CONFIRMATION half read off the debt ledger (c).
+//
+// It degrades to the pre-existing binary rate — corroborated/raised — whenever
+// either half is missing, and that direction is deliberate rather than merely
+// convenient. The weighted rate is HIGHER than the binary one for exactly the
+// lenses this sprint exists to promote (a specialist whose findings are all solo
+// scores 0.0 binary and up to 1.0 weighted), so falling back on a missing signal
+// can only ever lower a score. A fallback that went the other way would let an
+// unreadable debt store hand every lens a maximal prior.
+//
+// The result is bounded by construction and the bound is worth stating: each
+// finding contributes at most isolatedFindingWeight (1.0) to w.credit and
+// exactly 1 to w.raised, and factor is in [0,1], so the rate cannot exceed 1.0
+// while isolatedFindingWeight stays at its provisional value. A future
+// re-measurement above 1.0 would break that, and the caller — reconcile's
+// demoteByTrust, which compares against a uniform 1/N baseline — has no defence
+// against a rate above 1. Whoever moves the constant has to decide the clamp
+// here.
+func weightedRate(corroborated, raised int, w weightedTally, c Confirmation) float64 {
+	binary := ratio(corroborated, raised)
+	if w.raised <= 0 {
+		return binary
+	}
+	factor, ok := confirmationFactor(c)
+	if !ok {
+		return binary
+	}
+	return w.credit * factor / float64(w.raised)
 }
 
 // mergeRoutedEras rewrites each era-3 record into its exact era-2 equivalent, so
@@ -691,6 +909,13 @@ func ResolveTrustPriors() map[string]float64 {
 	}
 	// The read is documented best-effort and never returns a non-nil error, so
 	// the error is discarded (matching cli/personas.go's convention).
-	priors, _ := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, time.Now())
+	//
+	// No ground-truth lookup is passed, so this returns the binary corroboration
+	// rate exactly as it did before Phase 4b. internal/scorecard cannot import
+	// internal/localdebt, so the adapter has to be supplied by a caller that can
+	// see both packages — cli/ and internal/mcp/ both can. Wiring them is Phase
+	// 5's job (the explainability + wire-in phase); until then the weighted rate
+	// is reachable only through TrustPriorsWithGroundTruth.
+	priors, _ := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, time.Now(), nil)
 	return priors
 }

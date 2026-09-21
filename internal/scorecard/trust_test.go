@@ -354,7 +354,7 @@ func TestTrustPriorsSince_ExcludesMonthsOutsideTheWindow(t *testing.T) {
 	appendNAt(t, dir, 4, "Ancient", "opus", 1, 1, now.AddDate(-2, 0, 0))
 	appendNAt(t, dir, 4, "Recent", "opus", 1, 1, now.AddDate(0, 0, -1))
 
-	rates, err := trustPriorsSince(dir, 0, defaultTrustWindow, now)
+	rates, err := trustPriorsSince(dir, 0, defaultTrustWindow, now, nil)
 	require.NoError(t, err)
 	assert.NotContains(t, rates, "ancient", "a reviewer whose only runs predate the window is absent")
 	assert.Contains(t, rates, "recent")
@@ -382,12 +382,12 @@ func TestTrustPriorsSince_StrictRunsFloorIgnoresLenientRunsInsideTheWindow(t *te
 		require.NoError(t, Append(dir, rec))
 	}
 
-	rates, err := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, now)
+	rates, err := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, now, nil)
 	require.NoError(t, err)
 	assert.NotContains(t, rates, "lenny",
 		"only 5 strict runs inside the window — lenient runs must not top the floor up to DefaultTrustMinRuns")
 
-	rates, err = trustPriorsSince(dir, 5, defaultTrustWindow, now)
+	rates, err = trustPriorsSince(dir, 5, defaultTrustWindow, now, nil)
 	require.NoError(t, err)
 	assert.Contains(t, rates, "lenny", "at minRuns=5 the 5 strict runs clear the floor")
 }
@@ -409,7 +409,7 @@ func TestTrustPriorsSince_WindowCanPushAReviewerBelowMinRuns(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, allHistory, "fading", "30 strict runs over all history clears the floor")
 
-	windowed, err := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, now)
+	windowed, err := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, now, nil)
 	require.NoError(t, err)
 	assert.NotContains(t, windowed, "fading",
 		"only 5 strict runs inside the window — below DefaultTrustMinRuns, so the windowed read drops the reviewer")
@@ -424,7 +424,7 @@ func TestTrustPriorsSince_NoWindowMatchesTrustPriors(t *testing.T) {
 	appendNAt(t, dir, 4, "Ancient", "opus", 3, 1, now.AddDate(-2, 0, 0))
 	appendNAt(t, dir, 4, "Recent", "sonnet", 2, 2, now.AddDate(0, 0, -1))
 
-	windowed, err := trustPriorsSince(dir, 0, 0, now)
+	windowed, err := trustPriorsSince(dir, 0, 0, now, nil)
 	require.NoError(t, err)
 	all, err := TrustPriors(dir, 0)
 	require.NoError(t, err)
@@ -522,7 +522,7 @@ func TestDefaultTrustWindow_IsGenerousEnoughForTheMinRunsFloor(t *testing.T) {
 		appendNAt(t, dir, 1, "Steady", "opus", 1, 1, at)
 	}
 
-	rates, err := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, now)
+	rates, err := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, now, nil)
 	require.NoError(t, err)
 	assert.Contains(t, rates, "steady",
 		"a reviewer holding 20 strict runs spread across defaultTrustWindow must clear the floor — if this fails, the window and the floor have drifted apart and both need re-measuring (epic 35.11 AC3)")
@@ -1386,7 +1386,7 @@ func TestTrustPriors_OutOfRemitRunNeverReachesThePrior(t *testing.T) {
 	}
 	require.NoError(t, os.WriteFile(month, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
 
-	priors, err := trustPriorsSince(dir, 1, 180*24*time.Hour, now)
+	priors, err := trustPriorsSince(dir, 1, 180*24*time.Hour, now, nil)
 	require.NoError(t, err)
 	assert.NotContains(t, priors, "sasha",
 		"every one of sasha's runs was out-of-remit, so it earns no durable prior")
@@ -1494,7 +1494,7 @@ func TestTrustPriors_OpportunityUnionIsTakenBeforeTheOutcomeGate(t *testing.T) {
 	}
 	require.NoError(t, os.WriteFile(month, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
 
-	priors, err := trustPriorsSince(dir, 1, 180*24*time.Hour, now)
+	priors, err := trustPriorsSince(dir, 1, 180*24*time.Hour, now, nil)
 	require.NoError(t, err)
 	assert.Contains(t, priors, "sasha",
 		"the truncated lens's category still proves this was a security case, so sasha was in remit")
@@ -1584,7 +1584,7 @@ func TestTrustPriors_EraIsDecidedBeforeTheOpportunityFilter(t *testing.T) {
 	}
 	require.NoError(t, os.WriteFile(month, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
 
-	priors, err := trustPriorsSince(dir, 1, 180*24*time.Hour, now)
+	priors, err := trustPriorsSince(dir, 1, 180*24*time.Hour, now, nil)
 	require.NoError(t, err)
 	assert.NotContains(t, priors, "sasha",
 		"sasha's newest era is the current one and every current-era run was out of remit, so it has no scoreable history; a present entry here means the era was decided from an opportunity-shrunk record set")
@@ -1627,10 +1627,328 @@ func TestTrustPriors_OpportunityUnionSurvivesANonStrictRecord(t *testing.T) {
 	}
 	require.NoError(t, os.WriteFile(month, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
 
-	priors, err := trustPriorsSince(dir, 1, 180*24*time.Hour, now)
+	priors, err := trustPriorsSince(dir, 1, 180*24*time.Hour, now, nil)
 	require.NoError(t, err)
 	assert.Contains(t, priors, "sasha",
 		"the non-strict record's category is still evidence this was a security case, so sasha was in remit")
 	assert.NotContains(t, priors, "archer",
 		"the non-strict record itself is still excluded by strictRuns")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4b — C18's read-time ground-truth half
+// ---------------------------------------------------------------------------
+
+// weighted seeds n runs for persona, each raising raisedEach findings of which
+// corroboratedEach carried a co-reviewer, and carrying creditEach weighted
+// credit under the CURRENT credit era — i.e. what the post-4.5 emitter writes.
+func weighted(t *testing.T, dir string, n int, persona string, raisedEach, corroboratedEach int, creditEach float64) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		rec := reviewer_(runIDAt(time.Now(), fmt.Sprintf("w-%s-%03d", persona, i)), persona, "m1", raisedEach, corroboratedEach)
+		rec.WeightedCredit = creditEach
+		rec.CreditEra = CreditEraCurrent
+		require.NoError(t, Append(dir, rec))
+	}
+}
+
+// allConfirmed is a ground-truth lookup that reports every named persona as
+// fully confirmed, so a test can isolate the ISOLATION half of the split from
+// the confirmation half.
+func allConfirmed(personas ...string) GroundTruthLookup {
+	return func() (map[string]Confirmation, error) {
+		out := map[string]Confirmation{}
+		for _, p := range personas {
+			out[strings.ToLower(p)] = Confirmation{Confirmed: 10}
+		}
+		return out, nil
+	}
+}
+
+func TestTrustPriorsWithGroundTruth_SoloConfirmedBeatsCorroborated(t *testing.T) {
+	// AC 04-01 Scenarios 1-2, end to end. Both lenses raise exactly one finding
+	// per run over the same number of runs. "lone" raises it alone (credit 1.0,
+	// corroborated 0); "herd" always raises alongside one other lens (credit 0.5,
+	// corroborated 1). Under the OLD binary rate the ranking is exactly inverted,
+	// which is the failure this sprint exists to fix.
+	dir := t.TempDir()
+	weighted(t, dir, 20, "Lone", 1, 0, 1.0)
+	weighted(t, dir, 20, "Herd", 1, 1, 0.5)
+
+	rates, err := TrustPriorsWithGroundTruth(dir, 10, allConfirmed("lone", "herd"))
+	require.NoError(t, err)
+
+	assert.InDelta(t, 1.0, rates["lone"], 1e-9)
+	assert.InDelta(t, 0.5, rates["herd"], 1e-9)
+	assert.Greater(t, rates["lone"], rates["herd"],
+		"an isolated finding that proved real must outrank one four others also raised")
+}
+
+func TestTrustPriorsWithGroundTruth_ConfirmationRateScalesTheCredit(t *testing.T) {
+	// The read-time half. Identical scorecard evidence, different TD outcomes:
+	// three of "shaky"'s findings resolved and one was closed wontfix, so only
+	// three quarters of its isolation credit is earned.
+	dir := t.TempDir()
+	weighted(t, dir, 20, "Shaky", 1, 0, 1.0)
+
+	gt := func() (map[string]Confirmation, error) {
+		return map[string]Confirmation{"shaky": {Confirmed: 3, Dismissed: 1}}, nil
+	}
+	rates, err := TrustPriorsWithGroundTruth(dir, 10, gt)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.75, rates["shaky"], 1e-9)
+}
+
+func TestTrustPriorsWithGroundTruth_CountsEveryNonConfirmedOutcomeAgainstTheLens(t *testing.T) {
+	// The epic's own reading of the TD lifecycle: resolved means the finding was
+	// real; wontfix, unreproducible and attempts-exhausted each mean it probably
+	// was not. All three sit in the denominator, which is why Story 01 had to add
+	// the last two to the enum before this phase could use them.
+	dir := t.TempDir()
+	weighted(t, dir, 20, "Mixed", 1, 0, 1.0)
+
+	gt := func() (map[string]Confirmation, error) {
+		return map[string]Confirmation{"mixed": {
+			Confirmed: 2, Dismissed: 2, Unreproducible: 2, AttemptsExhausted: 2,
+		}}, nil
+	}
+	rates, err := TrustPriorsWithGroundTruth(dir, 10, gt)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.25, rates["mixed"], 1e-9)
+}
+
+func TestTrustPriorsWithGroundTruth_PreWeightingRecordsAreExcludedNotAveraged(t *testing.T) {
+	// AC 04-01 Scenario 3, second clause. Ten pre-weighting runs carry no credit
+	// era and no credit; twenty post-weighting runs each earned a full 1.0.
+	// Blended, the rate would be 20/30; excluded, it is 1.0. The wrong answer is
+	// the SILENT one, which is why the era marker exists.
+	dir := t.TempDir()
+	appendN(t, dir, 10, "Elder", "m1", 1, 1) // no CreditEra: pre-weighting
+	weighted(t, dir, 20, "Elder", 1, 0, 1.0)
+
+	rates, err := TrustPriorsWithGroundTruth(dir, 10, allConfirmed("elder"))
+	require.NoError(t, err)
+	assert.InDelta(t, 1.0, rates["elder"], 1e-9,
+		"a pre-weighting record must be excluded from the weighted rate, not counted as a measured zero")
+}
+
+func TestTrustPriorsWithGroundTruth_AllPreWeightingHistoryDegradesToBinary(t *testing.T) {
+	// The rollout case. A store written entirely before this phase has no
+	// weighted denominator at all, so the weighted rate is undefined rather than
+	// zero — and publishing zero would demote every lens in the panel on upgrade,
+	// the exact blackout strictRuns and unresolvedEraRuns refuse to cause.
+	dir := t.TempDir()
+	appendN(t, dir, 20, "Elder", "m1", 4, 3)
+
+	rates, err := TrustPriorsWithGroundTruth(dir, 10, allConfirmed("elder"))
+	require.NoError(t, err)
+	assert.InDelta(t, 3.0/4.0, rates["elder"], 1e-9,
+		"with no measured credit the rate must fall back to the pre-existing binary one")
+}
+
+func TestTrustPriorsWithGroundTruth_MissingSignalDegradesToBinaryNeverInflates(t *testing.T) {
+	// AC 04-01 Error Scenario 1, and its security clause: a missing or broken
+	// ground-truth signal must degrade TOWARD the prior behaviour, never toward
+	// an unearned boost. "Lone" has a binary rate of 0.0 and a weighted rate of
+	// 1.0, so every degraded path here is asserted against the LOWER number.
+	dir := t.TempDir()
+	weighted(t, dir, 20, "Lone", 1, 0, 1.0)
+
+	for name, gt := range map[string]GroundTruthLookup{
+		"nil lookup": nil,
+		"lookup error": func() (map[string]Confirmation, error) {
+			return nil, fmt.Errorf("debt store unreadable")
+		},
+		"empty map": func() (map[string]Confirmation, error) {
+			return map[string]Confirmation{}, nil
+		},
+		"persona absent from the map": func() (map[string]Confirmation, error) {
+			return map[string]Confirmation{"someone-else": {Confirmed: 5}}, nil
+		},
+		"row with no counted outcomes": func() (map[string]Confirmation, error) {
+			return map[string]Confirmation{"lone": {}}, nil
+		},
+		"negative counts": func() (map[string]Confirmation, error) {
+			return map[string]Confirmation{"lone": {Confirmed: -5, Dismissed: 1}}, nil
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rates, err := TrustPriorsWithGroundTruth(dir, 10, gt)
+			require.NoError(t, err)
+			assert.InDelta(t, 0.0, rates["lone"], 1e-9,
+				"a missing or malformed signal must never inflate a score")
+		})
+	}
+}
+
+func TestTrustPriorsWithGroundTruth_GeneralistDoesNotOutrankSpecialists(t *testing.T) {
+	// AC 04-02, epic acceptance criterion 3. bruce is pure overlap: every finding
+	// he raises is one a specialist also raised, and he raises nothing of his own.
+	// Each specialist additionally holds one finding it raised alone.
+	//
+	// Under the binary rate bruce scores a perfect 1.00 and every specialist 0.50,
+	// which is the backwards ranking the epic names. Weighted, bruce earns 0.5 per
+	// finding and the specialists 1.5 across two.
+	//
+	// vera, pace, brad, archer and ronin have no in-repo persona file, so per C11
+	// they are unmapped for opportunity scoping; that is irrelevant here because
+	// these fixtures carry no CategoriesRaised and the union is therefore empty
+	// for every run. The full roster is used anyway, per AC 04-02's requirement
+	// that the fixture not be a toy 2-reviewer case.
+	specialists := []string{"greta", "kai", "mira", "dax", "pace", "penny", "vera", "brad", "archer", "otto", "sasha"}
+	dir := t.TempDir()
+	for _, s := range specialists {
+		for i := 0; i < 20; i++ {
+			runID := runIDAt(time.Now(), fmt.Sprintf("panel-%s-%03d", s, i))
+			// The specialist: one shared finding (0.5) plus one solo (1.0).
+			spec := pairReviewer(runID, s, "m1", 2, 1, PairSignal{Peer: "bruce", Agreed: 1})
+			spec.WeightedCredit = 1.5
+			spec.CreditEra = CreditEraCurrent
+			// bruce: the shared finding only.
+			gen := pairReviewer(runID, "bruce", "m2", 1, 1, PairSignal{Peer: s, Agreed: 1})
+			gen.WeightedCredit = 0.5
+			gen.CreditEra = CreditEraCurrent
+			require.NoError(t, Append(dir, spec))
+			require.NoError(t, Append(dir, gen))
+		}
+	}
+	// AC 04-02 Edge Case 1: ronin only ever co-raises with bruce and holds no solo
+	// finding, so it is deliberately EXCLUDED from the "ranks above" assertion —
+	// isolation credit alone must not lift a lens that earned none.
+	for i := 0; i < 20; i++ {
+		runID := runIDAt(time.Now(), fmt.Sprintf("panel-ronin-%03d", i))
+		ronin := pairReviewer(runID, "ronin", "m1", 1, 1, PairSignal{Peer: "bruce", Agreed: 1})
+		ronin.WeightedCredit = 0.5
+		ronin.CreditEra = CreditEraCurrent
+		gen := pairReviewer(runID, "bruce", "m2", 1, 1, PairSignal{Peer: "ronin", Agreed: 1})
+		gen.WeightedCredit = 0.5
+		gen.CreditEra = CreditEraCurrent
+		require.NoError(t, Append(dir, ronin))
+		require.NoError(t, Append(dir, gen))
+	}
+
+	rates, err := TrustPriorsWithGroundTruth(dir, DefaultTrustMinRuns, allConfirmed(append(specialists, "bruce", "ronin")...))
+	require.NoError(t, err)
+
+	require.Contains(t, rates, "bruce")
+	for _, s := range specialists {
+		require.Contains(t, rates, s)
+		assert.Greater(t, rates[s], rates["bruce"],
+			"specialist %s must outrank the generalist, which earns its volume purely by overlapping", s)
+	}
+	assert.InDelta(t, rates["bruce"], rates["ronin"], 1e-9,
+		"a specialist with no solo findings earns no isolation credit and must not be lifted above the generalist")
+}
+
+func TestTrustPriorsWithGroundTruth_ExposesThePairRatesThatExplainTheRanking(t *testing.T) {
+	// AC 04-05. Story 4 CONSUMES Story 5's surface rather than rebuilding it
+	// (D2), so the per-pair rate behind the ranking above has to be independently
+	// queryable from the same store — not buried inside one opaque score.
+	dir := t.TempDir()
+	coEligible(t, dir, minPairCases, "bruce", "dax", 4, 0)
+
+	pairs, err := PairDisagreements(dir)
+	require.NoError(t, err)
+
+	key, ok := PairKey("bruce", "dax")
+	require.True(t, ok)
+	tally, ok := pairs[key]
+	require.True(t, ok, "a pair that co-occurred must be queryable")
+	assert.InDelta(t, 0.0, tally.DisagreementRate(), 1e-9)
+	assert.True(t, tally.Sufficient, "minPairCases co-eligible runs clears the floor")
+	assert.True(t, tally.DropCandidate, "a pair that never splits is the penny test's drop candidate")
+
+	// Edge Case 1: a pair that never co-occurred is ABSENT, never a spurious rate.
+	missing, ok := PairKey("bruce", "sasha")
+	require.True(t, ok)
+	assert.NotContains(t, pairs, missing)
+}
+
+func TestTrustPriorsWithGroundTruth_ZeroRaisedReviewerStaysRateZero(t *testing.T) {
+	// AC 04-01 Edge Case 3: the existing zero-denominator convention is untouched
+	// by the weighting — no divide-by-zero, no panic, no NaN reaching the map
+	// reconcile reads.
+	dir := t.TempDir()
+	weighted(t, dir, 20, "Quiet", 0, 0, 0.0)
+
+	rates, err := TrustPriorsWithGroundTruth(dir, 10, allConfirmed("quiet"))
+	require.NoError(t, err)
+	require.Contains(t, rates, "quiet")
+	assert.False(t, math.IsNaN(rates["quiet"]), "a zero denominator must not produce NaN")
+	assert.InDelta(t, 0.0, rates["quiet"], 1e-9)
+}
+
+func TestTrustPriors_ContractIsUnchangedByTheWeighting(t *testing.T) {
+	// AC 04-04 Scenarios 1 and 3. TrustPriors itself supplies no ground truth, so
+	// its numbers and its map[string]float64 shape are exactly what they were —
+	// reconcile/consensus.go's trustExempt and demoteByTrust need no call-site
+	// change.
+	dir := t.TempDir()
+	weighted(t, dir, 20, "Lone", 1, 0, 1.0)
+
+	var want map[string]float64
+	got, err := TrustPriors(dir, 10)
+	require.NoError(t, err)
+	want = got // compile-time proof the return type is still map[string]float64
+	require.Contains(t, want, "lone")
+	assert.InDelta(t, 0.0, want["lone"], 1e-9,
+		"without an injected lookup TrustPriors must return the pre-existing binary rate")
+}
+
+func TestWeightedCreditByPersona_ExcludesUnmarkedRecordsAndNeverMutatesItsInput(t *testing.T) {
+	// AC 04-04 Scenario 2: the new stage follows the existing chain links'
+	// convention — pure, non-mutating, independently testable.
+	records := []Record{
+		func() Record {
+			r := reviewer_("run-a", "Dax", "m1", 2, 0)
+			r.WeightedCredit = 2.0
+			r.CreditEra = CreditEraCurrent
+			return r
+		}(),
+		reviewer_("run-b", "Dax", "m1", 5, 4), // pre-weighting: no era, no credit
+		func() Record {
+			r := reviewer_("run-c", "Dax", "m1", 1, 0)
+			r.WeightedCredit = 1.0
+			r.CreditEra = CreditEraCurrent + 1 // above current: measured under a rule this binary does not implement
+			return r
+		}(),
+	}
+	before := append([]Record{}, records...)
+
+	got := weightedCreditByPersona(records)
+	require.Contains(t, got, "dax")
+	assert.InDelta(t, 2.0, got["dax"].credit, 1e-9)
+	assert.Equal(t, 2, got["dax"].raised,
+		"only the era-marked record contributes to the weighted denominator")
+	assert.Equal(t, before, records, "the stage must not mutate its input slice")
+}
+
+func TestMergeRoutedEras_PreservesTheWeightedCreditFields(t *testing.T) {
+	// mergeRoutedEras rewrites a record to normalise its denominator era. The
+	// weighting fields are on the same struct and must ride through untouched, or
+	// the fold above would read a rewritten record as pre-weighting.
+	r := reviewer_("run-a", "Dax", "m1", 3, 2)
+	r.RaisedDenominator = raisedDenominatorRoutedExShield
+	r.FindingsDocShielded = 1
+	r.WeightedCredit = 1.25
+	r.CreditEra = CreditEraCurrent
+
+	out := mergeRoutedEras([]Record{r})
+	require.Len(t, out, 1)
+	assert.InDelta(t, 1.25, out[0].WeightedCredit, 1e-9)
+	assert.Equal(t, CreditEraCurrent, out[0].CreditEra)
+}
+
+func TestIsolatedFindingWeight_NotNarrowedWithoutRemeasurement(t *testing.T) {
+	// AC 04-03 Error Scenario 1, mirroring
+	// TestDefaultTrustWindow_NotNarrowedWithoutRemeasurement and
+	// TestMinPairCases_NotNarrowedWithoutRemeasurement.
+	//
+	// The literal is deliberate: derived from the constant, this test would
+	// contract with it and pass at any value.
+	assert.InDelta(t, 1.0, isolatedFindingWeight, 1e-9,
+		"isolatedFindingWeight is PROVISIONAL and its value is not evidence-backed. "+
+			"Moving it requires a fresh measurement against the localdebt ground-truth "+
+			"ledger, recorded in the constant's doc comment the way DefaultTrustMinRuns' "+
+			"and defaultTrustWindow's are. Update this literal in the same commit.")
 }
