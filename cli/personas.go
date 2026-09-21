@@ -603,11 +603,15 @@ func formatScoreDetail(d *commpersonas.ScoreDetail) string {
 	if n := d.Reasons[scorecard.ReasonNoRecognizedCategory]; n > 0 {
 		out += fmt.Sprintf(" (%d unlabelled)", n)
 	}
-	if d.Excluded > 0 {
-		out += fmt.Sprintf(" · %d excluded", d.Excluded)
-		if reason := dominantExclusionReason(d.Reasons); reason != "" {
-			out += fmt.Sprintf(" (%s)", reason)
-		}
+	// The excluded figure is ALWAYS rendered, including at zero, per AC 06-04's
+	// "a persona with zero exclusions renders an explicit 0, distinct from the
+	// n/a no-data case". Omitting the clause would leave a reader deciding
+	// between "the gate ran and excluded nothing" and "this column just does not
+	// say" — and those carry opposite weight when the question is whether to keep
+	// a lens. "n/a" (nil detail) remains the only no-data marker.
+	out += fmt.Sprintf(" · %d excluded", d.Excluded)
+	if reason := dominantExclusionReason(d.Reasons); reason != "" {
+		out += fmt.Sprintf(" (%s)", reason)
 	}
 	return out
 }

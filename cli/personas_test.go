@@ -920,7 +920,7 @@ func TestFormatScoreDetail_SummaryShapes(t *testing.T) {
 		want   string
 	}{
 		{"no data at all", nil, "n/a"},
-		{"nothing excluded", &personas.ScoreDetail{Counted: 20}, "20 counted"},
+		{"zero exclusions renders an explicit 0, not an omitted clause (AC 06-04)", &personas.ScoreDetail{Counted: 20}, "20 counted · 0 excluded"},
 		{
 			"one exclusion reason",
 			&personas.ScoreDetail{Counted: 20, Excluded: 5, Reasons: map[string]int{
@@ -933,7 +933,7 @@ func TestFormatScoreDetail_SummaryShapes(t *testing.T) {
 			&personas.ScoreDetail{Counted: 24, Reasons: map[string]int{
 				scorecard.ReasonNoRecognizedCategory: 4,
 			}},
-			"24 counted (4 unlabelled)",
+			"24 counted (4 unlabelled) · 0 excluded",
 		},
 		{
 			"annotation and exclusion together",
@@ -1001,4 +1001,17 @@ func TestPersonasScoreDetailLabels_MatchScorecardsVocabulary(t *testing.T) {
 	// rather than letting the two drift silently.
 	assert.Equal(t, "outcome-ineligible", scorecard.ReasonOutcomeIneligible)
 	assert.Contains(t, scorecard.ScoreReasons(), scorecard.ReasonOutcomeIneligible)
+}
+
+func TestFormatScoreDetail_ZeroExclusionsIsDistinctFromNoData(t *testing.T) {
+	// AC 06-04's explicit-zero requirement, stated as the contrast it is about:
+	// "measured, excluded nothing" and "never measured" must not look alike.
+	measured := formatScoreDetail(&personas.ScoreDetail{Counted: 12})
+	noData := formatScoreDetail(nil)
+
+	assert.Equal(t, "12 counted · 0 excluded", measured)
+	assert.Equal(t, "n/a", noData)
+	assert.NotEqual(t, measured, noData)
+	assert.NotContains(t, noData, "0",
+		"the no-data marker must never render a count, or it reads as a measured zero")
 }
