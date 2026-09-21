@@ -666,6 +666,16 @@ the surface, the less can leak.
 > reads it as "off" would compare it against a genuinely ungated row as though the two
 > measured the same population.
 >
+> **One carve-out supersedes the rule above for benchmark `standard-v1` rows.** The
+> tag is recent: a submission produced before it existed carries no tag at all. On
+> `repo-state-v1` that absence is genuinely unmeasured. On `standard-v1` it is not —
+> that tier's gate has never been live; its range-less path fails open today exactly
+> as it did before the tag existed — so a tag-less `standard-v1` row measures the
+> same ungated population as one tagged `false`. When comparing across the upgrade
+> boundary, treat an absent tag on a `standard-v1` benchmark row as equivalent to
+> `false`; the unmeasured reading applies only to `repo-state-v1` rows and to
+> production rows.
+>
 > Case ids are producer-controlled and routinely encode repository identity: the
 > bundled importer derives them as `<owner>-<repo>-pr-<number>`, so
 > `standard-v1` ids read like `bluewave-labs-checkmate-pr-2883`. Exporting a
