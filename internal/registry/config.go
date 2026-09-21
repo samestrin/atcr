@@ -798,7 +798,12 @@ func LoadRegistry(path string) (*Registry, error) {
 func (r *Registry) validate() error {
 	var errs []error
 
-	// Settings-level checks, in fixed source order.
+	// Settings-level checks. What the joined message's determinism needs is that
+	// this block have SOME fixed order, not that it track the struct's field
+	// declaration order — it already does not (max_sprint_plan_bytes is declared
+	// before max_claim_bytes and max_prefetch_bytes but checked after them).
+	// Appending a new check anywhere in this block is therefore fine; moving an
+	// existing one reorders a joined error message the registry tests assert on.
 	if r.TimeoutSecs != nil && (*r.TimeoutSecs <= 0 || *r.TimeoutSecs > MaxTimeoutSecs) {
 		errs = append(errs, fmt.Errorf("timeout_secs must be within 1..%d", MaxTimeoutSecs))
 	}

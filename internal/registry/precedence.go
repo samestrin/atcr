@@ -420,8 +420,13 @@ func deref(p *string) string {
 	return strings.TrimSpace(*p)
 }
 
-// claimBytesPtr returns a pointer to v. Settings.MaxClaimBytes is a pointer so an
-// explicit 0 (ledger disabled) stays distinguishable from an unresolved field.
+// claimBytesPtr returns a pointer to v. Despite the name it is generic, and
+// serves every pointer-valued byte ceiling in this file: Settings.MaxClaimBytes
+// and Settings.MaxPrefetchBytes are both pointers so an explicit 0 (the feature
+// disabled) stays distinguishable from an unresolved field. It takes the address
+// of its own parameter copy, so it snapshots rather than aliasing the caller's
+// pointer. Grepping this name to find the claim-ledger plumbing will therefore
+// also return pre-fetch hits.
 func claimBytesPtr(v int64) *int64 { return &v }
 
 // ResolvedMaxClaimBytes returns the effective claim-ledger byte ceiling: the
