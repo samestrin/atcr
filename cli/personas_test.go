@@ -916,28 +916,28 @@ func TestFormatScoreDetail_SummaryShapes(t *testing.T) {
 	// The renderer's own contract, table-driven so each shape is named.
 	tests := []struct {
 		name   string
-		detail *scorecard.PersonaScoreDetail
+		detail *personas.ScoreDetail
 		want   string
 	}{
 		{"no data at all", nil, "n/a"},
-		{"nothing excluded", &scorecard.PersonaScoreDetail{Counted: 20}, "20 counted"},
+		{"nothing excluded", &personas.ScoreDetail{Counted: 20}, "20 counted"},
 		{
 			"one exclusion reason",
-			&scorecard.PersonaScoreDetail{Counted: 20, Excluded: 5, Reasons: map[string]int{
+			&personas.ScoreDetail{Counted: 20, Excluded: 5, Reasons: map[string]int{
 				scorecard.ReasonOutcomeIneligible: 5,
 			}},
 			"20 counted · 5 excluded (outcome-ineligible)",
 		},
 		{
 			"TD-032's annotation is not an exclusion",
-			&scorecard.PersonaScoreDetail{Counted: 24, Reasons: map[string]int{
+			&personas.ScoreDetail{Counted: 24, Reasons: map[string]int{
 				scorecard.ReasonNoRecognizedCategory: 4,
 			}},
 			"24 counted (4 unlabelled)",
 		},
 		{
 			"annotation and exclusion together",
-			&scorecard.PersonaScoreDetail{Counted: 24, Excluded: 3, Reasons: map[string]int{
+			&personas.ScoreDetail{Counted: 24, Excluded: 3, Reasons: map[string]int{
 				scorecard.ReasonNoRecognizedCategory: 4,
 				scorecard.ReasonNotInOpportunitySet:  3,
 			}},
@@ -955,7 +955,7 @@ func TestFormatScoreDetail_TiedReasonsAreDeterministic(t *testing.T) {
 	// Two reasons at the same count must not render differently between runs —
 	// Go's map iteration order is randomised, so the tie-break has to be the
 	// ScoreReasons() vocabulary order rather than whichever key came out first.
-	d := &scorecard.PersonaScoreDetail{Counted: 5, Excluded: 4, Reasons: map[string]int{
+	d := &personas.ScoreDetail{Counted: 5, Excluded: 4, Reasons: map[string]int{
 		scorecard.ReasonOutcomeIneligible:   2,
 		scorecard.ReasonNotInOpportunitySet: 2,
 	}}
@@ -965,4 +965,40 @@ func TestFormatScoreDetail_TiedReasonsAreDeterministic(t *testing.T) {
 	}
 	assert.Contains(t, first, "(outcome-ineligible)",
 		"a tie resolves to the earlier member of ScoreReasons()")
+}
+
+func TestToPersonaDetails_ConvertsWithoutAliasingOrLosingLabels(t *testing.T) {
+	// cli/ is the one layer that imports BOTH internal/personas and
+	// internal/scorecard, so this is where the duplicated DTO is proven
+	// equivalent. internal/personas must not import internal/scorecard (its
+	// allowlist in internal/boundaries_test.go), which is why the conversion
+	// exists at all.
+	in := map[string]scorecard.PersonaScoreDetail{
+		"dax": {Counted: 20, Excluded: 5, Reasons: map[string]int{
+			scorecard.ReasonOutcomeIneligible:    5,
+			scorecard.ReasonNoRecognizedCategory: 2,
+		}},
+	}
+	out := toPersonaDetails(in)
+
+	require.Contains(t, out, "dax")
+	assert.Equal(t, 20, out["dax"].Counted)
+	assert.Equal(t, 5, out["dax"].Excluded)
+	assert.Equal(t, 5, out["dax"].Reasons[scorecard.ReasonOutcomeIneligible])
+	assert.Equal(t, 2, out["dax"].Reasons[scorecard.ReasonNoRecognizedCategory])
+
+	// No aliasing across the boundary.
+	out["dax"].Reasons[scorecard.ReasonOutcomeIneligible] = 999
+	assert.Equal(t, 5, in["dax"].Reasons[scorecard.ReasonOutcomeIneligible])
+
+	assert.Nil(t, toPersonaDetails(nil), "a nil map converts to nil, not an empty map")
+}
+
+func TestPersonasScoreDetailLabels_MatchScorecardsVocabulary(t *testing.T) {
+	// internal/personas/list_test.go spells "outcome-ineligible" as a literal
+	// because it cannot import internal/scorecard. This is the pin that keeps
+	// that literal honest — it fails here, in a package that legally sees both,
+	// rather than letting the two drift silently.
+	assert.Equal(t, "outcome-ineligible", scorecard.ReasonOutcomeIneligible)
+	assert.Contains(t, scorecard.ScoreReasons(), scorecard.ReasonOutcomeIneligible)
 }

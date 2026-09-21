@@ -146,9 +146,17 @@ func explainTrustPriorsSince(dir string, minRuns int, since time.Duration, now t
 	// The chain is walked link by link rather than in one keptForTrust call
 	// because the QUESTION here is which link dropped a record, and a single
 	// call answers only whether one survived. Each step below invokes the SAME
-	// function the production chain does, in the same order, so the survivor set
-	// this ends on is keptForTrust's by construction — pinned by
-	// TestExplainTrustPriors_WalksExactlyTheProductionChain.
+	// function the production chain does, in the same order.
+	//
+	// THAT SAMENESS IS NOT SELF-ENFORCING and this comment used to claim it was
+	// ("keptForTrust's by construction"). It is not: nothing stops an edit here
+	// from dropping a link, and the 5.2.A review proved it by replacing
+	// strictRuns(records) with records and watching the whole suite stay green.
+	// It is pinned instead by
+	// TestExplainTrustPriors_CountedExcludesEveryLinkTheChainDrops, which seeds a
+	// non-strict, an ineligible and a superseded-era record and asserts the
+	// counted total against keptForTrust's own output rather than against a
+	// re-spelled chain expression.
 	unions := opportunityUnions(records)
 	afterStrict := strictRuns(records)
 	afterOutcome := eligibleOutcomeRuns(afterStrict)
@@ -178,15 +186,31 @@ func explainTrustPriorsSince(dir string, minRuns int, since time.Duration, now t
 		details[key] = d
 	}
 
-	// The outcome gate, diffed against its own input. Records strictRuns already
-	// dropped are not in afterStrict and are therefore never attributed — see
-	// PersonaScoreDetail's note on what this surface does not explain (TD-041).
-	survived := reviewerKeys(afterOutcome)
+	// The outcome gate, asked PER RECORD through the same outcomeEligible
+	// predicate eligibleOutcomeRuns reads — not by diffing afterStrict against
+	// afterOutcome.
+	//
+	// The diff is the obvious implementation and it is wrong, which the 5.2.A
+	// review proved rather than argued. Two records identify identically under
+	// any key built from the record's own fields (RunID plus reviewer name is the
+	// only candidate — Record carries no unique id, and C15 refused to add one),
+	// so when one run holds two records for a reviewer and only one is eligible,
+	// the ineligible one's key is still present among the survivors and its
+	// exclusion is never noted. Not hypothetical: reconcile.go derives a run id
+	// as ReconciledAt + "-" + the review directory's basename, so two reconciles
+	// of one directory inside the same second collide.
+	//
+	// Re-asking the predicate has no such failure mode, is cheaper than building
+	// the key set, and is the reason outcomeEligible was extracted at all.
+	//
+	// Records strictRuns already dropped are not in afterStrict and are therefore
+	// never attributed — see PersonaScoreDetail's note on what this surface does
+	// not explain (TD-041).
 	for _, r := range afterStrict {
 		if r.RecordType != RecordTypeReviewer {
 			continue
 		}
-		if _, ok := survived[recordKey(r)]; !ok {
+		if !outcomeEligible(r) {
 			note(r.Reviewer, ReasonOutcomeIneligible)
 		}
 	}
@@ -219,49 +243,67 @@ func explainTrustPriorsSince(dir string, minRuns int, since time.Duration, now t
 	return applyExplainFloor(details, keptForTrust(records), minRuns), nil
 }
 
-// applyExplainFloor drops every persona below the caller's minRuns so
-// ExplainTrustPriors' membership matches TrustPriors' exactly.
+// applyExplainFloor keeps exactly the personas TrustPriors would key, so the two
+// maps a renderer joins are never half-present.
 //
-// The floor is computed from Aggregate over the SAME surviving records
-// trustPriorsSince aggregates, and against row.Runs rather than a record count,
-// because that is the quantity TrustPriors compares to minRuns. Counting
-// records instead would agree on today's one-record-per-run store and diverge
-// silently the day Aggregate groups differently — and the divergence would show
-// up as a persona with a rate and no explanation, or the reverse.
+// THE FLOOR IS APPLIED UNCONDITIONALLY, including when minRuns <= 0, and that is
+// the fix for a real divergence rather than defensive tidying. details is
+// accumulated from records the opportunity gate has not run on yet plus the
+// outcome-gate notes, so a persona whose every record the chain later dropped
+// still has an entry — at Counted 0 with its exclusions. An early return on
+// minRuns <= 0 published that entry, and minRuns <= 0 is not a corner: it is the
+// ONLY production call, cli/personas.go's ExplainTrustPriors(dir, 0). The 5.2.A
+// review proved the consequences end to end — a lens whose every run was
+// truncated rendered a row reading "0 counted · 2 excluded (outcome-ineligible)"
+// underneath the footer "No scorecard data found", with a non-nil Detail beside
+// a nil Rate, falsifying three doc comments and the two tests that forbid a
+// fabricated zero.
+//
+// Membership is therefore "present in Aggregate(kept) with enough runs", which
+// is TrustPriors' own rule read off TrustPriors' own inputs.
+//
+// THE COST IS REAL AND IS NOT A BUG: a lens whose every run was an
+// infrastructure failure disappears from this surface entirely, which is exactly
+// the lens (archer, vera) epic acceptance criterion 2 is written about. It is
+// accepted because TrustPriors says nothing about that lens either — it is
+// absent from the priors map and reverts to the neutral baseline — so "n/a" is
+// the honest report of a lens atcr has no usable measurement of, and a row
+// claiming otherwise beside an empty rate would be worse. Filed as TD-042.
+//
+// The floor is measured against row.Runs rather than a record count because that
+// is the quantity TrustPriors compares to minRuns; counting records instead
+// would agree on today's one-record-per-run store and diverge silently the day
+// Aggregate groups differently.
 func applyExplainFloor(details map[string]PersonaScoreDetail, kept []Record, minRuns int) map[string]PersonaScoreDetail {
-	if minRuns <= 0 {
-		return details
-	}
 	runs := map[string]int{}
 	for _, row := range Aggregate(kept) {
 		runs[normalizeReviewerName(row.Reviewer)] += row.Runs
 	}
 	out := make(map[string]PersonaScoreDetail, len(details))
 	for name, d := range details {
-		if runs[name] < minRuns {
+		n, ok := runs[name]
+		if !ok || n < minRuns {
+			// !ok covers the every-record-dropped persona at any minRuns; the
+			// comparison covers the floor itself. minRuns <= 0 asks for no floor
+			// and still requires presence, because TrustPriors requires it too.
 			continue
 		}
+		// Reasons is handed out by value on the struct but the map header is
+		// shared, so a caller mutating it would corrupt this result. Copy it,
+		// matching the defensive-copy convention RemitCategories already follows.
+		d.Reasons = copyReasons(d.Reasons)
 		out[name] = d
 	}
 	return out
 }
 
-// recordKey identifies one reviewer record for the diff above. RunID is not
-// collision-proof (TD-031) and the pair is not unique if a run ever emits two
-// records for one reviewer, so a collision merges two records' explanations.
-// That is acceptable HERE and only here: this surface reports, it never feeds
-// the rate, and the alternative — a synthetic id on the persisted record — is
-// the shape change C15 refused.
-func recordKey(r Record) string {
-	return r.RunID + "\x00" + normalizeReviewerName(r.Reviewer)
-}
-
-func reviewerKeys(records []Record) map[string]struct{} {
-	keys := make(map[string]struct{}, len(records))
-	for _, r := range records {
-		if r.RecordType == RecordTypeReviewer {
-			keys[recordKey(r)] = struct{}{}
-		}
+func copyReasons(in map[string]int) map[string]int {
+	if in == nil {
+		return nil
 	}
-	return keys
+	out := make(map[string]int, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }

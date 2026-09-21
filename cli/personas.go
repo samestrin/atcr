@@ -239,7 +239,7 @@ func listPersonasWithScores(cmd *cobra.Command, dir string) error {
 	// Use the same three-tier resolver ordering as the plain list so the Source
 	// column is consistent and project overrides shadow community/built-ins.
 	projectDir := filepath.Join(".atcr", "personas")
-	scored, listErr := commpersonas.ListTiersWithScores(projectDir, dir, data.rates, data.details)
+	scored, listErr := commpersonas.ListTiersWithScores(projectDir, dir, data.rates, toPersonaDetails(data.details))
 	if listErr != nil {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", listErr)
 	}
@@ -572,7 +572,30 @@ func renderScoredList(w io.Writer, scored []commpersonas.ScoredPersona) error {
 // A nil detail renders "n/a", the same marker FormatRate uses for an absent
 // rate, and for the same reason: scorecard omits a below-floor lens from both
 // maps, so "0 counted" would report an unmeasured lens as measured and empty.
-func formatScoreDetail(d *scorecard.PersonaScoreDetail) string {
+// toPersonaDetails converts scorecard's explainability records into
+// internal/personas' local DTO. cli/ is the layer that imports both, which is
+// why the conversion lives here — see ScoreDetail's own comment for why
+// internal/personas must not import internal/scorecard (the import allowlist in
+// internal/boundaries_test.go, and the direction it protects).
+//
+// The Reasons map is copied rather than aliased: the two layers must not share a
+// mutable header across a package boundary.
+func toPersonaDetails(in map[string]scorecard.PersonaScoreDetail) map[string]commpersonas.ScoreDetail {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]commpersonas.ScoreDetail, len(in))
+	for name, d := range in {
+		reasons := make(map[string]int, len(d.Reasons))
+		for k, v := range d.Reasons {
+			reasons[k] = v
+		}
+		out[name] = commpersonas.ScoreDetail{Counted: d.Counted, Excluded: d.Excluded, Reasons: reasons}
+	}
+	return out
+}
+
+func formatScoreDetail(d *commpersonas.ScoreDetail) string {
 	if d == nil {
 		return "n/a"
 	}

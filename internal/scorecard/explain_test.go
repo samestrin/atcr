@@ -296,38 +296,6 @@ func unlabelled(t *testing.T, dir string, n int, persona string) {
 	}
 }
 
-func TestExplainTrustPriors_WalksExactlyTheProductionChain(t *testing.T) {
-	// The claim explainTrustPriorsSince' own comment makes. It re-walks the
-	// chain link by link to learn WHICH link dropped a record, and that
-	// re-walking is only honest while its survivor set is keptForTrust's.
-	//
-	// Mutating the walk — dropping a link, reordering two — makes Counted
-	// disagree with the records that actually fed the rate, and the explanation
-	// would then describe a pipeline the binary does not run.
-	records := []Record{}
-	add := func(runID, name string, raised, corr int, outcome string, cats ...string) {
-		r := reviewer_(runID, name, "m1", raised, corr)
-		r.Outcome = outcome
-		r.CategoriesRaised = append([]string(nil), cats...)
-		records = append(records, r)
-	}
-	add("r1", "Dax", 1, 1, outcomeFindings, reclib.CategoryTesting)
-	add("r1", "Pace", 1, 0, outcomeFindings, reclib.CategoryPerformance)
-	add("r2", "Dax", 1, 0, outcomeTruncatedLiteral, reclib.CategoryTesting)
-	add("r3", "Dax", 0, 0, outcomeClean)
-	add("r3", "Pace", 1, 0, outcomeFindings, reclib.CategoryPerformance)
-	add("r4", "Dax", 2, 0, outcomeFindings) // raised, unlabelled
-	add("r4", "Pace", 1, 0, outcomeFindings, reclib.CategoryPerformance)
-
-	unions := opportunityUnions(records)
-	walked := opportunitySetRuns(
-		unresolvedEraRuns(mergeRoutedEras(scrubForgedCredit(eligibleOutcomeRuns(strictRuns(records))))),
-		unions)
-
-	assert.Equal(t, keptForTrust(records), walked,
-		"the explain walk must compose the identical chain keptForTrust does")
-}
-
 func TestExplainTrustPriors_CountedMatchesTheRecordsBehindTheRate(t *testing.T) {
 	// The cross-check that makes Counted meaningful rather than decorative: it
 	// must equal the number of reviewer records keptForTrust actually kept for
@@ -349,4 +317,195 @@ func TestExplainTrustPriors_CountedMatchesTheRecordsBehindTheRate(t *testing.T) 
 		}
 	}
 	assert.Equal(t, kept, detail["dax"].Counted)
+}
+
+func TestExplainTrustPriors_CountedExcludesEveryLinkTheChainDrops(t *testing.T) {
+	// Replaces TestExplainTrustPriors_WalksExactlyTheProductionChain, which the
+	// 5.2.A review proved was a tautology: it re-spelled the chain expression
+	// inside the test body and compared THAT against keptForTrust, so explain.go
+	// could drop a link and stay green. The mutant that proved it — replacing
+	// strictRuns(records) with records in explainTrustPriorsSince — passed the
+	// entire suite.
+	//
+	// This pins the walk against keptForTrust's own output instead, over a store
+	// that exercises all four dropping links, so removing any one of them makes
+	// the counted total disagree.
+	dir := t.TempDir()
+	// era stamps a record at the CURRENT raised-denominator definition. reviewer_
+	// leaves the field at its zero value, which reads as era 1 — so without this
+	// the "superseded era" arm below shares an era with everything else and the
+	// era link drops nothing.
+	era := func(r Record) Record {
+		r.RaisedIncludesUnresolved = true
+		r.RaisedDenominator = RaisedDenominatorCurrent
+		return r
+	}
+	good := func(n int, tag string) {
+		for i := 0; i < n; i++ {
+			r := era(reviewer_(runIDAt(time.Now(), fmt.Sprintf("%s-%03d", tag, i)), "Dax", "m1", 1, 1))
+			r.CategoriesRaised = []string{reclib.CategoryTesting}
+			require.NoError(t, Append(dir, r))
+		}
+	}
+	good(12, "good")
+
+	// strictRuns: measured at --consensus off, never trusted.
+	for i := 0; i < 3; i++ {
+		r := era(reviewer_(runIDAt(time.Now(), fmt.Sprintf("lenient-%03d", i)), "Dax", "m1", 1, 1))
+		r.CategoriesRaised = []string{reclib.CategoryTesting}
+		r.ConsensusLevel = reclib.ConsensusOff
+		require.NoError(t, Append(dir, r))
+	}
+	// eligibleOutcomeRuns: a hosting failure, not a judgment.
+	for i := 0; i < 4; i++ {
+		r := era(reviewer_(runIDAt(time.Now(), fmt.Sprintf("trunc-%03d", i)), "Dax", "m1", 1, 0))
+		r.CategoriesRaised = []string{reclib.CategoryTesting}
+		r.Outcome = outcomeTruncatedLiteral
+		require.NoError(t, Append(dir, r))
+	}
+	// unresolvedEraRuns: an older raised_denominator than dax's newest. Left
+	// UNSTAMPED on purpose — an absent field is exactly what era 1 means.
+	for i := 0; i < 5; i++ {
+		r := reviewer_(runIDAt(time.Now(), fmt.Sprintf("olderaz-%03d", i)), "Dax", "m1", 1, 1)
+		r.CategoriesRaised = []string{reclib.CategoryTesting}
+		require.NoError(t, Append(dir, r))
+	}
+	// opportunitySetRuns: correct silence on an out-of-remit case.
+	for i := 0; i < 2; i++ {
+		runID := runIDAt(time.Now(), fmt.Sprintf("offremit-%03d", i))
+		quiet := era(reviewer_(runID, "Dax", "m1", 0, 0))
+		require.NoError(t, Append(dir, quiet))
+		other := era(reviewer_(runID, "Pace", "m1", 1, 0))
+		other.CategoriesRaised = []string{reclib.CategoryPerformance}
+		require.NoError(t, Append(dir, other))
+	}
+
+	detail, err := ExplainTrustPriors(dir, 0)
+	require.NoError(t, err)
+
+	records, err := ReadSince(dir, 0, time.Now(), ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	want := 0
+	for _, r := range keptForTrust(records) {
+		if r.RecordType == RecordTypeReviewer && normalizeReviewerName(r.Reviewer) == "dax" {
+			want++
+		}
+	}
+	require.Equal(t, 12, want, "the fixture must leave exactly the twelve good runs standing")
+	assert.Equal(t, want, detail["dax"].Counted,
+		"Counted must equal what keptForTrust actually kept; a dropped link makes these disagree")
+	assert.Equal(t, 4, detail["dax"].Reasons[ReasonOutcomeIneligible])
+	assert.Equal(t, 2, detail["dax"].Reasons[ReasonNotInOpportunitySet])
+}
+
+func TestExplainTrustPriors_MembershipMatchesTrustPriorsWithNoFloor(t *testing.T) {
+	// The 5.2.A review's first HIGH, and it was reachable on the ONLY production
+	// call: cli/personas.go asks for ExplainTrustPriors(dir, 0). A persona whose
+	// every record the chain dropped used to survive the (absent) floor at
+	// Counted 0, giving a non-nil Detail beside a nil Rate and rendering the
+	// literal "0 counted" that formatScoreDetail's own contract forbids.
+	dir := t.TempDir()
+	// sasha is silent on a run whose only topic is out of its remit, so every
+	// sasha record leaves the tally.
+	runID := runIDAt(time.Now(), "solo-run")
+	quiet := reviewer_(runID, "Sasha", "m1", 0, 0)
+	require.NoError(t, Append(dir, quiet))
+	penny := reviewer_(runID, "Penny", "m1", 1, 0)
+	penny.CategoriesRaised = []string{reclib.CategoryPerformance}
+	require.NoError(t, Append(dir, penny))
+
+	rates, err := TrustPriors(dir, 0)
+	require.NoError(t, err)
+	detail, err := ExplainTrustPriors(dir, 0)
+	require.NoError(t, err)
+
+	require.NotContains(t, rates, "sasha", "the control: TrustPriors omits a fully-dropped persona")
+	assert.NotContains(t, detail, "sasha",
+		"ExplainTrustPriors must omit it too, never publish it at Counted 0")
+	assert.Equal(t, len(rates), len(detail))
+	for k := range rates {
+		assert.Contains(t, detail, k)
+	}
+}
+
+func TestExplainTrustPriors_AllInfrastructureFailureLensIsOmittedNotZeroed(t *testing.T) {
+	// The same HIGH via the outcome gate, which is the shape a real archer or
+	// vera takes: every run truncated or timed out. TD-042 records the diagnostic
+	// this costs; what it must NOT do is render a row under the "no scorecard
+	// data" footer.
+	dir := t.TempDir()
+	scopedOutcome(t, dir, 6, "Archer", outcomeTruncatedLiteral, 1, reclib.CategoryTesting)
+
+	rates, err := TrustPriors(dir, 0)
+	require.NoError(t, err)
+	detail, err := ExplainTrustPriors(dir, 0)
+	require.NoError(t, err)
+
+	assert.Empty(t, rates)
+	assert.Empty(t, detail,
+		"a lens with no usable measurement reads n/a; a 0-counted row beside an empty rate map is worse than silence")
+}
+
+func TestExplainTrustPriors_TwoRecordsOneRunBothGetTheirReason(t *testing.T) {
+	// The 5.2.A review's recordKey finding. The outcome gate used to be
+	// attributed by diffing key sets built from RunID + reviewer name; with two
+	// records for one reviewer on one run, the eligible one's key masked the
+	// ineligible one and the exclusion was silently lost. Reachable because
+	// reconcile.go derives a run id from a timestamp plus a directory basename.
+	dir := t.TempDir()
+	scoped(t, dir, 20, "Dax", 1, 1, reclib.CategoryTesting)
+
+	runID := runIDAt(time.Now(), "collide")
+	good := reviewer_(runID, "Dax", "m1", 1, 1)
+	good.CategoriesRaised = []string{reclib.CategoryTesting}
+	require.NoError(t, Append(dir, good))
+	bad := reviewer_(runID, "Dax", "m1", 1, 0)
+	bad.CategoriesRaised = []string{reclib.CategoryTesting}
+	bad.Outcome = outcomeTruncatedLiteral
+	require.NoError(t, Append(dir, bad))
+
+	detail, err := ExplainTrustPriors(dir, 10)
+	require.NoError(t, err)
+	assert.Equal(t, 1, detail["dax"].Reasons[ReasonOutcomeIneligible],
+		"the truncated record shares a run and a name with an eligible one; its exclusion must still be reported")
+	assert.Equal(t, 1, detail["dax"].Excluded)
+}
+
+func TestExplainTrustPriors_UnmappedLensIsNeverAnnotatedUnlabelled(t *testing.T) {
+	// The 5.2.A review's LOW. vera and the four other registry-only lenses are
+	// never opportunity-scoped (C11), so reporting "(N unlabelled)" against one
+	// would name a reason the chain did not act on.
+	dir := t.TempDir()
+	for i := 0; i < 20; i++ {
+		runID := runIDAt(time.Now(), fmt.Sprintf("vr-%03d", i))
+		vera := reviewer_(runID, "Vera", "m1", 2, 1) // raised, no categories
+		require.NoError(t, Append(dir, vera))
+		other := reviewer_(runID, "Pace", "m1", 1, 0)
+		other.CategoriesRaised = []string{reclib.CategoryPerformance}
+		require.NoError(t, Append(dir, other))
+	}
+
+	detail, err := ExplainTrustPriors(dir, 10)
+	require.NoError(t, err)
+	require.Contains(t, detail, "vera")
+	assert.Equal(t, 20, detail["vera"].Counted)
+	assert.Zero(t, detail["vera"].Reasons[ReasonNoRecognizedCategory],
+		"a lens the opportunity gate never judges must carry no opportunity-flavoured reason")
+	assert.Empty(t, detail["vera"].Reasons)
+}
+
+func TestExplainTrustPriors_ReasonsMapIsNotAliasedToTheInternalFold(t *testing.T) {
+	// A caller mutating the returned map must not corrupt the next read.
+	dir := t.TempDir()
+	scoped(t, dir, 20, "Dax", 1, 1, reclib.CategoryTesting)
+	scopedOutcome(t, dir, 3, "Dax", outcomeTruncatedLiteral, 1, reclib.CategoryTesting)
+
+	first, err := ExplainTrustPriors(dir, 10)
+	require.NoError(t, err)
+	require.Equal(t, 3, first["dax"].Reasons[ReasonOutcomeIneligible])
+	first["dax"].Reasons[ReasonOutcomeIneligible] = 999
+
+	second, err := ExplainTrustPriors(dir, 10)
+	require.NoError(t, err)
+	assert.Equal(t, 3, second["dax"].Reasons[ReasonOutcomeIneligible])
 }

@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/samestrin/atcr/internal/registry"
-	"github.com/samestrin/atcr/internal/scorecard"
 	builtins "github.com/samestrin/atcr/personas"
 	"gopkg.in/yaml.v3"
 )
@@ -117,18 +116,38 @@ func listProject(projectDir string) ([]PersonaMeta, error) {
 	return out, walkErr
 }
 
+// ScoreDetail is the explainability companion for one persona: how many cases
+// its rate rests on, how many were excluded, and the reason labels behind both.
+//
+// IT IS A LOCAL STRUCT, NOT internal/scorecard's PersonaScoreDetail, and the
+// duplication is deliberate. internal/boundaries_test.go allowlists this
+// package's imports as {registry, payload, gitexec}; importing internal/scorecard
+// to borrow one DTO would put the ROSTER package downstream of the review-outcome
+// LEDGER, which is backwards and forecloses the reverse edge structurally. The
+// sibling field is the precedent: Rate is a *float64 carrying a
+// scorecard-computed number without this package knowing scorecard exists.
+//
+// The caller converts. cli/personas.go imports both and does it in one loop.
+// Reasons' KEYS are still scorecard's closed vocabulary (scorecard.ScoreReasons);
+// this type copies no label constant, so the vocabulary has exactly one home.
+type ScoreDetail struct {
+	Counted  int
+	Excluded int
+	Reasons  map[string]int
+}
+
 // ScoredPersona is one row of `personas list --scores`: a persona joined with
 // its corroboration rate. Rate is nil when the persona has no scorecard data,
 // which renders as "n/a" (distinct from a real 0.0 rate).
 //
-// Detail is the explainability companion (scorecard.ExplainTrustPriors), nil on
-// exactly the personas whose Rate is nil — scorecard keys both maps identically
-// and omits a below-floor lens from both, so the two are never half-present.
-// It is ADDITIVE to Rate and is never consulted by sortScoredPersonas.
+// Detail is nil on exactly the personas whose Rate is nil — scorecard keys its
+// priors map and its explainability map identically and omits a below-floor or
+// fully-dropped lens from both, so the two are never half-present. Detail is
+// ADDITIVE to Rate and is never consulted by sortScoredPersonas.
 type ScoredPersona struct {
 	PersonaMeta
 	Rate   *float64
-	Detail *scorecard.PersonaScoreDetail
+	Detail *ScoreDetail
 }
 
 // ListWithScores returns the personas from List joined with corroboration rates
@@ -144,7 +163,7 @@ type ScoredPersona struct {
 // and scorecard.TrustPriors keeps its map[string]float64 shape for
 // reconcile/consensus.go. A nil details map is legal and yields nil Detail on
 // every row.
-func ListWithScores(personasDir string, scores map[string]float64, details map[string]scorecard.PersonaScoreDetail) ([]ScoredPersona, error) {
+func ListWithScores(personasDir string, scores map[string]float64, details map[string]ScoreDetail) ([]ScoredPersona, error) {
 	metas, err := List(personasDir)
 	return joinScores(metas, scores, details), err
 }
@@ -154,7 +173,7 @@ func ListWithScores(personasDir string, scores map[string]float64, details map[s
 // mirrors ListWithScores but sources the persona set from the three resolver
 // tiers (project > community > built-in) so the --scores table agrees with the
 // plain list on the Source column.
-func ListTiersWithScores(projectDir, communityDir string, scores map[string]float64, details map[string]scorecard.PersonaScoreDetail) ([]ScoredPersona, error) {
+func ListTiersWithScores(projectDir, communityDir string, scores map[string]float64, details map[string]ScoreDetail) ([]ScoredPersona, error) {
 	metas, err := ListTiers(projectDir, communityDir)
 	return joinScores(metas, scores, details), err
 }
@@ -163,7 +182,7 @@ func ListTiersWithScores(projectDir, communityDir string, scores map[string]floa
 // sorts the result. Both maps are read with the same strings.ToLower(m.Name) key
 // the rate lookup has always used, so a persona cannot be present in one and
 // missed in the other for a casing reason.
-func joinScores(metas []PersonaMeta, scores map[string]float64, details map[string]scorecard.PersonaScoreDetail) []ScoredPersona {
+func joinScores(metas []PersonaMeta, scores map[string]float64, details map[string]ScoreDetail) []ScoredPersona {
 	scored := make([]ScoredPersona, 0, len(metas))
 	for _, m := range metas {
 		sp := ScoredPersona{PersonaMeta: m}

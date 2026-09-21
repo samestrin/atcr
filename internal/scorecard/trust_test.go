@@ -2513,3 +2513,63 @@ func TestOpportunityDisposition_IsTheOnePredicateBothSurfacesRead(t *testing.T) 
 	assert.Equal(t, dispInRemit, opportunityDisposition(oppRec("r", "sasha", nil), nil),
 		"an empty union means nobody had scopeable evidence — refuse to guess")
 }
+
+// TestOpportunitySetRuns_DropsAnOutOfRemitLensThatDidRaiseFindings closes the
+// coverage hole the 5.2.A review proved by mutation.
+//
+// Correcting oppRec (nil cats now means a genuinely silent record) moved every
+// "dropped" fixture in this suite to FindingsRaised 0, so nothing exercised the
+// drop path for a lens that ACTUALLY RAISED something. The reviewer's mutant —
+// `if r.FindingsRaised > 0 { return dispInRemit }` at the top of
+// opportunityDisposition, which deletes the epic's headline property for every
+// raising lens — left the whole opportunity suite green.
+//
+// sasha here raises a real, discriminating, in-vocabulary category that is
+// simply not in its own remit. It must still be dropped: raising something is
+// not the same as being in remit, and only the unscopeable case (TD-032, no
+// discriminating contribution at all) earns the carve-out.
+func TestOpportunitySetRuns_DropsAnOutOfRemitLensThatDidRaiseFindings(t *testing.T) {
+	in := []Record{
+		oppRec("run-1", "penny", []string{"performance"}),
+		// sasha's remit is security; performance is neither its remit nor a
+		// control value, so this record is judged and fails the test.
+		oppRec("run-1", "sasha", []string{"performance"}),
+	}
+	out := opportunityFilter(in)
+
+	names := map[string]bool{}
+	for _, r := range out {
+		names[r.Reviewer] = true
+	}
+	assert.True(t, names["penny"], "performance is penny's remit")
+	assert.False(t, names["sasha"],
+		"a lens that raised a discriminating out-of-its-own-remit category is still dropped")
+
+	// And the same fact at the predicate, where the mutant lived.
+	assert.Equal(t, dispOutOfRemit,
+		opportunityDisposition(oppRec("run-1", "sasha", []string{"performance"}),
+			map[string]struct{}{"performance": {}}),
+		"raising findings must not by itself buy opportunity-set membership")
+}
+
+func TestTrustPriors_OutOfRemitRaiserLeavesTheDenominatorToo(t *testing.T) {
+	// The same property end to end on the rate, so the guard survives a refactor
+	// that moves the decision out of opportunityDisposition entirely.
+	dir := t.TempDir()
+	for i := 0; i < 20; i++ {
+		runID := runIDAt(time.Now(), fmt.Sprintf("or-%03d", i))
+		// sasha raises a perfect-looking record, but on performance — not its remit.
+		sasha := reviewer_(runID, "Sasha", "m1", 1, 1)
+		sasha.CategoriesRaised = []string{reclib.CategoryPerformance}
+		require.NoError(t, Append(dir, sasha))
+		penny := reviewer_(runID, "Penny", "m1", 1, 1)
+		penny.CategoriesRaised = []string{reclib.CategoryPerformance}
+		require.NoError(t, Append(dir, penny))
+	}
+
+	rates, err := TrustPriors(dir, 10)
+	require.NoError(t, err)
+	assert.NotContains(t, rates, "sasha",
+		"every sasha run was out of remit, so sasha has no scoreable history at all")
+	assert.Contains(t, rates, "penny", "penny's remit was in play on every run")
+}

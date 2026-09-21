@@ -1064,6 +1064,22 @@ func opportunityDisposition(r Record, union map[string]struct{}) disposition {
 		// evidence about anyone's remit. Refuse to guess.
 		return dispInRemit
 	}
+	// Resolved once per record and reused, rather than calling
+	// RemitCategories here and letting InOpportunitySet call it again —
+	// every call allocates a defensive copy.
+	//
+	// THE UNMAPPED CHECK COMES FIRST, ahead of TD-032's carve-out below, and the
+	// order is about what gets REPORTED rather than what gets kept — both
+	// branches keep the record. The five registry-only lenses (vera, pace, brad,
+	// archer, ronin per C11) are never opportunity-scoped at all, so answering
+	// dispUnscopeable for one would have ExplainTrustPriors render "(N
+	// unlabelled)" against a lens the gate never judged: a reason the chain did
+	// not act on, which is the precise drift this predicate was extracted to
+	// prevent.
+	remit, mapped := RemitCategories(r.Reviewer)
+	if !mapped {
+		return dispInRemit
+	}
 	// TD-032: a record that RAISED findings but contributed nothing to its
 	// run's union is UNSCOPEABLE, not out of remit, and it is kept.
 	//
@@ -1087,15 +1103,6 @@ func opportunityDisposition(r Record, union map[string]struct{}) disposition {
 	// had evidence to label, not whether it happened to be scopeable.
 	if r.FindingsRaised > 0 && !contributesToUnion(r) {
 		return dispUnscopeable
-	}
-	// Resolved once per record and reused, rather than calling
-	// RemitCategories here and letting InOpportunitySet call it again —
-	// every call allocates a defensive copy.
-	remit, mapped := RemitCategories(r.Reviewer)
-	if !mapped {
-		// An unmapped lens (the five registry-only ones, per C11) is never
-		// scoped, so it keeps every record it would have kept before Phase 3.
-		return dispInRemit
 	}
 	if intersects(remit, union) {
 		return dispInRemit

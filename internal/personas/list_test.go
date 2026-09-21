@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -229,9 +228,9 @@ func TestJoinScores_AttachesDetailAlongsideTheExistingRate(t *testing.T) {
 	// replaces or perturbs Rate.
 	metas := []PersonaMeta{{Name: "dax"}, {Name: "bruce"}}
 	scores := map[string]float64{"dax": 0.8, "bruce": 0.4}
-	details := map[string]scorecard.PersonaScoreDetail{
+	details := map[string]ScoreDetail{
 		"dax": {Counted: 20, Excluded: 5, Reasons: map[string]int{
-			scorecard.ReasonOutcomeIneligible: 5,
+			reasonOutcomeIneligibleForTest: 5,
 		}},
 		"bruce": {Counted: 40, Excluded: 0},
 	}
@@ -245,7 +244,7 @@ func TestJoinScores_AttachesDetailAlongsideTheExistingRate(t *testing.T) {
 	require.NotNil(t, dax.Detail)
 	assert.Equal(t, 20, dax.Detail.Counted)
 	assert.Equal(t, 5, dax.Detail.Excluded)
-	assert.Equal(t, 5, dax.Detail.Reasons[scorecard.ReasonOutcomeIneligible])
+	assert.Equal(t, 5, dax.Detail.Reasons[reasonOutcomeIneligibleForTest])
 
 	bruce := scoredByName(scored, "bruce")
 	require.NotNil(t, bruce)
@@ -259,7 +258,7 @@ func TestJoinScores_MixedCasePersonaFindsItsDetail(t *testing.T) {
 	metas := []PersonaMeta{{Name: "SASHA"}}
 	scored := joinScores(metas,
 		map[string]float64{"sasha": 0.5},
-		map[string]scorecard.PersonaScoreDetail{"sasha": {Counted: 7}})
+		map[string]ScoreDetail{"sasha": {Counted: 7}})
 
 	require.Len(t, scored, 1)
 	require.NotNil(t, scored[0].Detail)
@@ -272,7 +271,7 @@ func TestJoinScores_AbsentFromDetailMapIsNilNotAFabricatedZero(t *testing.T) {
 	// evaluated-but-empty history, which would tell a maintainer the lens was
 	// measured and found wanting when it was never measured at all.
 	metas := []PersonaMeta{{Name: "ghost"}}
-	scored := joinScores(metas, map[string]float64{}, map[string]scorecard.PersonaScoreDetail{})
+	scored := joinScores(metas, map[string]float64{}, map[string]ScoreDetail{})
 
 	require.Len(t, scored, 1)
 	assert.Nil(t, scored[0].Rate)
@@ -295,7 +294,7 @@ func TestSortScoredPersonas_NeverConsultsTheDetailFields(t *testing.T) {
 	// sortScoredPersonas' contract keys on Rate alone (D4/D6).
 	metas := []PersonaMeta{{Name: "Zeta"}, {Name: "Alpha"}}
 	scores := map[string]float64{"zeta": 0.5, "alpha": 0.5}
-	details := map[string]scorecard.PersonaScoreDetail{
+	details := map[string]ScoreDetail{
 		"zeta":  {Counted: 999, Excluded: 0},
 		"alpha": {Counted: 1, Excluded: 500},
 	}
@@ -306,3 +305,14 @@ func TestSortScoredPersonas_NeverConsultsTheDetailFields(t *testing.T) {
 		"equal rates tie-break alphabetically; the new fields must not reorder them")
 	assert.Equal(t, "Zeta", scored[1].Name)
 }
+
+// reasonOutcomeIneligibleForTest is scorecard.ReasonOutcomeIneligible's literal
+// value. It is spelled out rather than imported because internal/personas must
+// not import internal/scorecard (see ScoreDetail), and a test import would be
+// just as much a boundary violation as a production one — internalImports in
+// internal/boundaries_test.go reads every .go file in the package.
+//
+// The duplication is safe because this package never INTERPRETS the label: it
+// carries Reasons through as opaque keys. The value is asserted against
+// scorecard's own constant by cli/personas_test.go, which legally imports both.
+const reasonOutcomeIneligibleForTest = "outcome-ineligible"
