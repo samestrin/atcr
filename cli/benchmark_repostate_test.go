@@ -1298,6 +1298,27 @@ func TestExecuteRepoStateBenchmarkRun_ZeroScoredErrorCarriesTheTally(t *testing.
 	assert.Nil(t, rr)
 }
 
+// publicSlotFailures silently dropped a slot failure whose key was absent from
+// scrubOf — a silent drop inside the channel built to end silent drops. The shape is
+// unreachable through the runner (every key in slotFailures is registered into order
+// before the skip fires, and scrubOf is built from order), but an unreachable case
+// must not quietly become a silent one: the skip warns, naming the key and the
+// failures it is dropping, while still never emitting an untranslated identity.
+func TestPublicSlotFailuresWarnsOnAnUntranslatableKey(t *testing.T) {
+	var logs bytes.Buffer
+	key := reviewerKey{model: "m-greta", persona: "greta"}
+	out := publicSlotFailures(
+		map[reviewerKey][]benchmark.SlotFailure{
+			key: {{CaseID: "case-01", Reason: benchmark.SlotFailureCall}},
+		},
+		[]reviewerKey{key},
+		map[reviewerKey]reviewerKey{}) // scrubOf deliberately lacks the key
+
+	assert.Nil(t, out, "an untranslated identity is never emitted raw")
+	assert.Contains(t, logs.String(), "slot failure dropped",
+		"the skip must warn rather than discard silently")
+}
+
 // The all-cases-failed diagnostic used to name ONE reason — whichever happened to be
 // last. On a mixed systemic failure that is an arbitrary pick out of N, and the same
 // sentence then tells the operator a re-run helps "only if the cause was transient"
