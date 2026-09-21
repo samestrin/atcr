@@ -429,6 +429,18 @@ With `--suite-path`, a run-result recording no coverage at all is an **error** r
 than an unmeasured warning: there is nothing to anchor, and the flag must not read as
 a check that silently did nothing.
 
+**Anchoring loads the whole manifest, size cap included.** A `repo-state-v1` suite is
+anchored through the same loader `benchmark run` and `benchmark verify` use, so each
+case's `change.diff` is subject to the same 10 MiB per-file cap even though anchoring
+itself consults only the identity pair and the case ids. A suite carrying one case
+whose diff exceeds the cap therefore cannot be anchored: export fails with that cap
+error ("diff … is N bytes, exceeding the …-byte cap"), which names the case and is
+diagnosable as a suite-size problem, not a corrupted run-result. Dropping the flag to
+get past it is the documented escape, but it downgrades the gate to the weaker
+internal-consistency check — make that trade deliberately, not as a workaround. (The
+bundled suite's largest diff is two orders of magnitude under the cap; this matters
+only for hand-built suites with very large case diffs.)
+
 The output envelope is **distinct from the production `leaderboard --export`** by
 its `source`, `suite`, and `suite_version` fields — that is what lets the public
 board accept suite submissions and reject production ones. The example below uses a
