@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+
+	"github.com/samestrin/atcr/internal/fanout"
 	"testing"
 	"time"
 
@@ -151,6 +153,21 @@ func TestSlotFailureReasonForStatus(t *testing.T) {
 		assert.Truef(t, ValidSlotFailureReason(SlotFailureReasonForStatus(s)),
 			"the mapping must only ever produce a storable reason (status %q)", s)
 	}
+}
+
+// The mapping above matches fanout's statuses by STRING LITERAL, so nothing in
+// this package alone would notice a rename of fanout.StatusFailed/StatusTimeout:
+// the switch would silently fall through to SlotFailureUnknownStatus — a legal
+// value at the export gate — and every failed or timed-out slot would be recorded
+// as an unknown status. Asserting through fanout's CONSTANTS pins the two
+// spellings together: a rename on either side breaks this test instead of the
+// export. (fanout does not import benchmark, so the test-only import is
+// cycle-free; the runner-side end-to-end pin lives in cli.)
+func TestSlotFailureReasonForStatus_TracksFanoutStatusConstants(t *testing.T) {
+	assert.Equal(t, SlotFailureCall, SlotFailureReasonForStatus(fanout.StatusFailed),
+		"the literal in SlotFailureReasonForStatus must track fanout.StatusFailed")
+	assert.Equal(t, SlotFailureTimeout, SlotFailureReasonForStatus(fanout.StatusTimeout),
+		"the literal in SlotFailureReasonForStatus must track fanout.StatusTimeout")
 }
 
 // The public submission must not carry slot failures — the same exclusion
