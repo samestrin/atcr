@@ -759,6 +759,12 @@ type reviewerAcc struct {
 	// folds its own. It mirrors repoStateAcc.groundingEnabled so both producers
 	// publish the same three-valued tag from the same rule.
 	groundingEnabled *bool
+	// groundingObserved records whether ANY case this identity scored carried a gate
+	// observation. It distinguishes "no observation yet" from "observations that
+	// disagreed or were unmeasured" — both leave groundingEnabled nil, but only the
+	// first is the fold's starting state, so the fold's first-case arm must fire on
+	// the first OBSERVED case, not merely on the identity's first case.
+	groundingObserved bool
 }
 
 // reviewerCaseOutcome is everything one reviewer produced on one case: the realized
@@ -788,8 +794,9 @@ type reviewerCaseOutcome struct {
 	// the colliding lanes.
 	agent string
 	// groundingEnabled is this case's recorded gate state. nil means "not observed"
-	// — a checkpoint written before the field existed — and absorbs through the fold,
-	// so such a replay reports unmeasured rather than claiming a state nobody saw.
+	// — a checkpoint written before the field existed — and is EXCLUDED from the
+	// fold, so such a replay reports what the observed cases recorded rather than
+	// poisoning the row to a state nobody saw.
 	groundingEnabled *bool
 }
 
@@ -852,9 +859,23 @@ func applyReviewerOutcome(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKe
 	if o.fallbackUsed {
 		acc.fallbackCases++
 	}
-	// Folded AFTER caseIDs is appended, so len == 1 identifies this identity's
-	// opening case — the same first-case test the repo-state runner applies.
-	acc.groundingEnabled = foldGroundingEnabled(acc.groundingEnabled, o.groundingEnabled, len(acc.caseIDs) == 1)
+	// Folded AFTER caseIDs is appended. A nil o.groundingEnabled means NO gate
+	// observation was ever made for this case — a checkpoint written before the tag
+	// shipped omits the key and decodes nil — and such a case must not participate in
+	// the fold: an observed nil would poison the whole row to unmeasured even when
+	// the freshly-executed cases recorded a state. The inference nil ⇒ key-absent is
+	// safe because every pool summary THIS binary writes carries a non-nil pointer
+	// (internal/fanout/artifacts.go builds it with &groundingEnabled; RebuildPool,
+	// the one nil producer, is reachable only from ExecuteResume, which the
+	// benchmark runner never calls).
+	//
+	// The first-case flag fires on the identity's first OBSERVED case, not merely its
+	// first case: earlier cases may all have been legacy replays with no observation,
+	// and the fold's first-case arm is what establishes the row's opening state.
+	if o.groundingEnabled != nil {
+		acc.groundingEnabled = foldGroundingEnabled(acc.groundingEnabled, o.groundingEnabled, !acc.groundingObserved)
+		acc.groundingObserved = true
+	}
 	if o.usageReported {
 		acc.costUSD += o.costUSD
 		acc.latencies = append(acc.latencies, o.latencyMS)
@@ -887,8 +908,9 @@ func replayCheckpointCase(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKe
 			fallbackUsed: r.FallbackUsed,
 			agent:        r.Agent,
 			// Per CASE, not per reviewer — one pool summary served every slot. A
-			// checkpoint predating the field decodes to nil and folds to unmeasured,
-			// the same not-inferred rule the outcome field above follows.
+			// checkpoint predating the field decodes to nil, which applyReviewerOutcome
+			// reads as "no observation" and excludes from the fold — the same
+			// not-inferred rule the outcome field above follows.
 			groundingEnabled: entry.GroundingEnabled,
 		}); err != nil {
 			return fmt.Errorf("replaying checkpointed case %q: %w", entry.CaseID, err)
