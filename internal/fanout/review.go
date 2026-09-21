@@ -1439,8 +1439,12 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 	// Context pre-fetch byte ceiling (Epic 35.16.8, max_prefetch_bytes). Threaded
 	// for the same reason as the claim ledger: the Context Definitions section is
 	// likewise uncounted on the ordinary shed, so this setting is the only operator
-	// control over its size — and 0 is the escape hatch that stops repository source from
-	// OUTSIDE the diff reaching a provider at all. This is the single
+	// control over its size ON THE PATH THAT ALWAYS SHIPS IT — and 0 is the escape
+	// hatch that stops repository source from OUTSIDE the diff reaching a provider at
+	// all. The fallback re-fit is the exception in both cases: it re-sizes every entry
+	// to its dispatched bytes and funds the exempt set cumulatively against the budget
+	// (internal/payload/budget.go:173-179), so a tight per-agent window can drop
+	// either section. Context carries the LOWER exempt rank, so it goes first. This is the single
 	// option-construction chokepoint, so the resume path (resume.go) inherits it
 	// without its own threading.
 	opts = append(opts, payload.WithMaxPrefetchBytes(cfg.Settings.ResolvedMaxPrefetchBytes()))
@@ -1484,8 +1488,12 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 		//
 		// ReviewableCount, not len(kept): the engine prepends up to TWO synthetic
 		// sections here — the claim ledger and the Context Definitions block — and
-		// counting them reports more files than the range changed, in the manifest
-		// and in the persona-visible {{.FileCount}}. Epic 35.16.7 recorded that
+		// counting them reports more files than the range changed. FileCount has
+		// exactly two consumers, both in this file: the persona-visible
+		// {{.FileCount}} (:2978) and the chunked no-op warning gated on
+		// FileCount > 1 (:2149). It reaches no manifest field — payload.Manifest has
+		// no file count at all, and PerFilePayload is derived independently from
+		// perFileModes. Epic 35.16.7 recorded that
 		// inflation as an accepted consequence only because it was forbidden from
 		// editing this package; pre-fetching would have doubled it, so it is
 		// corrected here instead. The per-agent re-derivations in buildSlots

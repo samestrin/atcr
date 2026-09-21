@@ -81,6 +81,16 @@ func isGrounded(f stream.Finding, changed payload.ChangedLines) bool {
 	// file; for a merely-referenced file neither holds, and either would let a
 	// fabricated file-level finding against an untouched file clear the Epic 14.1
 	// gate — a strictly wider hole than the one pre-fetching set out to open.
+	//
+	// THE NARROWING IS SCOPED TO NON-OUT-OF-SCOPE FINDINGS, and the arm it does not
+	// reach is ABOVE rather than below. The CATEGORY out-of-scope exemption returns
+	// true before the changed map is consulted at all, so a finding carrying that
+	// category clears this gate on a prefetch-only file with no line number and no
+	// span membership. That is pre-existing and deliberate, not an oversight of this
+	// epic — but this epic is what puts untouched files in front of the model, so the
+	// arm is newly reachable and worth naming here. The residual risk is bounded
+	// downstream rather than at the gate: the reconciler segregates out-of-scope
+	// findings and never promotes them, which is the whole premise of the exemption.
 	if fc.PrefetchOnly {
 		return f.Line > 0 && lineInExactRanges(f.Line, fc.Ranges)
 	}

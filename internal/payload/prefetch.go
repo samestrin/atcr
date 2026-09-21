@@ -1644,8 +1644,10 @@ const PrefetchContextPath = "<context>"
 // The accepted consequences of carrying a synthetic section as a FileEntry are
 // enumerated on ClaimLedgerPath and apply here too — with one MITIGATED:
 // buildPayloads derives its reported file count from ReviewableCount rather than
-// len(kept), so a second synthetic entry does not inflate the count the manifest
-// and the persona-visible {{.FileCount}} report for the range. The per-agent
+// len(kept), so a second synthetic entry does not inflate the count FileCount's
+// two consumers report — the persona-visible {{.FileCount}} and the chunked no-op
+// warning gated on FileCount > 1. (No manifest field reads it; Manifest carries no
+// file count.) The per-agent
 // re-derivations in internal/fanout's buildSlots now apply the same rule — the
 // zero-budget keepSmallestEntry arm was the last holdout — so every reader of
 // FileCount agrees. See internal/fanout/review.go:1485-1494.

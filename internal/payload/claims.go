@@ -640,28 +640,33 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 // which is the only place any of them could be fixed). They are recorded here
 // rather than only in planning notes, because here is where they are created:
 //
-//  1. Changed-file count is inflated by one. The review layer derives it as
-//     len(kept) in buildPayloads — the RANGE path, the only one that prepends
-//     the ledger (internal/fanout/review.go:1279) — and carries it as
-//     mp.FileCount into the manifest and the persona-visible {{.FileCount}},
-//     so both report one more file than the range changed. That count is
-//     re-derived on buildSlots' smallest-entry and re-pack arms
-//     (internal/fanout/review.go:2390, :2451), where the inflation instead
-//     becomes "1 file reported, possibly zero delivered" — consequence #3's
-//     shape. The other len(kept)
-//     sites (buildRepoPayloads, PrepareReviewFromDiff) never call
-//     withClaimLedger and are not on this path.
+//  1. Changed-file count WAS inflated by one; it no longer is. buildPayloads
+//     derived mp.FileCount as len(kept) on the RANGE path — the only one that
+//     prepends the ledger — so the count included the synthetic entry. Epic
+//     35.16.8 changed every derivation to payload.ReviewableCount, which skips
+//     shed-exempt entries, once pre-fetching made it a second synthetic section
+//     and would have doubled the error. buildSlots' smallest-entry and re-pack
+//     arms apply the same rule, so the count agrees everywhere it is read.
+//     FileCount has exactly two consumers, and NEITHER is the manifest:
+//     payload.Manifest carries no file-count field, and PerFilePayload is derived
+//     independently from perFileModes. The real readers are the persona-visible
+//     {{.FileCount}} template value and the chunked no-op warning gated on
+//     FileCount > 1. The other len(kept) sites (buildRepoPayloads,
+//     PrepareReviewFromDiff) never call withClaimLedger and are not on this path.
 //  2. A review_strategy=chunked run delivers the ledger to the FIRST chunk
 //     only. chunkDiff splits payload TEXT on column-0 diff markers, and the
 //     ledger sits above the first of them. (This is also why the strategy's
 //     no-op warning, gated on FileCount > 1, can now fire for a single-file
 //     files-mode payload where it previously stayed silent.)
 //  3. An agent whose declared window drives its effective budget to 0 takes an
-//     arm that ships exactly one entry, chosen by keepSmallestEntry
-//     (internal/fanout/review.go:3676-3678) on len(Body) — which may be the ledger,
-//     leaving that reviewer claims and no code. The section's NOT-IN-PAYLOAD
-//     verdict exists so that reviewer reports nothing rather than a full sheet
-//     of false UNSUPPORTED findings.
+//     arm that ships exactly one entry, chosen by keepSmallestEntry on len(Body)
+//     — which may be a SYNTHETIC one, leaving that reviewer no code. Since Epic
+//     35.16.8 there are two ways that lands: the ledger alone (claims and no
+//     code) or the Context Definitions block alone (retrieved context and no
+//     code). The section's NOT-IN-PAYLOAD verdict exists so a reviewer holding
+//     the first reports nothing rather than a full sheet of false UNSUPPORTED
+//     findings; the second has no equivalent verdict, because context asserts
+//     nothing to be checked against.
 //  4. The sentinel can reach a published artifact. droppedPathsExcept
 //     (internal/fanout/review.go:2882) builds its dropped list from every entry
 //     but the kept one, so "<claims>" can appear in Truncation.FilesDropped and
@@ -682,11 +687,16 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 //     and a reviewable file re-fits WITHOUT the ledger — whenever some
 //     reviewable file with a NON-EMPTY body is smaller than the ledger. The
 //     re-fit re-sizes
-//     every entry to len(Body)
-//     (internal/fanout/review.go:3810-3814) before shedding, which turns the
-//     bounded exemption in ApplyByteBudget — shedExempt AND clampSize(Size) <=
-//     budget — into a real comparison for the one entry that carries Size 0 on
-//     every other path. A zero-byte reviewable entry changes neither side of
+//     every entry to len(Body) before shedding, which turns the exemption in
+//     ApplyByteBudget into a real comparison for entries that carry Size 0 on
+//     every other path. That exemption is CUMULATIVE OVER THE FUNDED SET, not a
+//     per-entry bound: the funding loop (budget.go:175-181) walks the exempt
+//     entries in descending exemptRank and keeps each only while the RUNNING
+//     total still fits the budget. With one exempt entry it reduces exactly to
+//     the old `clampSize(Size) <= budget`; with two — the ledger at rank 1 and
+//     the Context Definitions block at rank 0 — the block is the one that loses
+//     funding first, and the ledger can be unfunded by its own size alone.
+//     A zero-byte reviewable entry changes neither side of
 //     that: it sorts LAST under the largest-first order (budget.go:117-121)
 //     and the shed loop breaks once used <= budget, so it is never shed and
 //     never trips AllDropped, and keepSmallestEntry skips empty bodies
@@ -716,12 +726,17 @@ const ClaimLedgerPath = "<claims>"
 // unforgeable: ClaimLedgerPath is a legal filename everywhere but Windows, so a
 // path-keyed exemption could be claimed by a real file in a reviewed repository.
 // Size 0 keeps the entry out of byte-budget accounting on the ordinary path,
-// where the exemption's `clampSize(Size) <= budget` bound is satisfied by every
-// budget. The fallback re-fit re-sizes the entry to len(Body), so there the
-// bound becomes real: this package's contract is exactly budget >= the
-// ledger's dispatched size — shedExempt AND clampSize(Size) <= budget,
-// evaluated on the ledger alone (budget.go:129-158, the only place the
-// exemption is checked). Funding a reviewable file is NOT part of that
+// where the exemption's bound is satisfied by every budget. The fallback re-fit
+// re-sizes the entry to len(Body), so there the bound becomes real — and it is a
+// bound on the funded exempt SET, not on this entry alone: budget.go:175-181
+// funds the exempt entries in descending exemptRank while their RUNNING total
+// fits the budget. So this package's contract is budget >= the dispatched size of
+// every exempt section funded at or above the ledger's rank. With the ledger as
+// the only exempt entry that is exactly budget >= the ledger's own dispatched
+// size, which is what it used to say; with the Context Definitions block also
+// present (rank 0, below the ledger's 1) the block is unfunded first, so the
+// ledger's own condition is unchanged by its presence.
+// Funding a reviewable file is NOT part of that
 // contract — it is downstream: internal/fanout's AllDropped reroute to
 // keepSmallestEntry (internal/fanout/review.go:3666-3682) can displace the
 // ledger afterwards, but only while some reviewable file with a non-empty
