@@ -872,7 +872,7 @@ func reviewerCategories(name string, streams ...[]Finding) []string {
 	seen := map[string]struct{}{}
 	for _, findings := range streams {
 		for _, f := range findings {
-			if !contains(f.Reviewers, name) {
+			if !participates(f, name) {
 				continue
 			}
 			if !inVocabulary(f.Category) {
@@ -915,7 +915,7 @@ func reviewerCategories(name string, streams ...[]Finding) []string {
 // that factor per persona at read time.
 func reviewerCounts(name string, findings []Finding) (raised, corroborated int, credit float64) {
 	for _, f := range findings {
-		if !contains(f.Reviewers, name) {
+		if !participates(f, name) {
 			continue
 		}
 		raised++
@@ -1111,6 +1111,23 @@ func ratio(num, den int) float64 {
 func contains(xs []string, s string) bool {
 	for _, x := range xs {
 		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// participates reports whether a finding names the given reviewer, comparing
+// both sides through normalizeReviewerName so the counts fold (reviewerCounts)
+// and the category fold (reviewerCategories) agree with the pair fold
+// (distinctPeers) about identity: a finding stored as "Bruce" is participation
+// for the map key "bruce" in all three, not only in the pair fold. Empty on
+// both sides still matches (the zero-distinct edge reviewerCounts defends
+// against stays reachable); only case and surrounding whitespace stop mattering.
+func participates(f Finding, name string) bool {
+	n := normalizeReviewerName(name)
+	for _, x := range f.Reviewers {
+		if normalizeReviewerName(x) == n {
 			return true
 		}
 	}
