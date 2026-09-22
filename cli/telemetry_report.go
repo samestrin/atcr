@@ -126,9 +126,11 @@ func qualityReportRows(rows []localdebt.QualityRow) []qualityReportRow {
 		// This report has columns for dismissed and confirmed only, so a row
 		// whose only outcomes are unreproducible or attempts-exhausted would
 		// print `| 0 | 0 | 0.0% |` — which reads as a reviewer that has never
-		// been wrong, the exact opposite of "not measured on this axis". It also
-		// sorts to the bottom of a table ordered by dismissal rate, where it
-		// looks like the best performer.
+		// been wrong, the exact opposite of "not measured on this axis". The
+		// sort below is DESCENDING (`>` — over-reporting first), so that
+		// hypothetical 0.0% row sorts to the BOTTOM of the table, where it
+		// reads as the WORST performer — the same misreading in the opposite
+		// direction, and just as wrong as the flattering one.
 		if r.DismissedCount+r.ConfirmedCount == 0 {
 			continue
 		}

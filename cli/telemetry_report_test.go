@@ -331,8 +331,10 @@ func TestQualityReport_StripsControlSequences_MDAndJSON(t *testing.T) {
 // half of adversarial finding 1.2.A-HIGH-4. Story 36.0's two outcomes create a
 // QualityRow without touching either counter this report has a column for, so
 // such a row would print `| 0 | 0 | 0.0% |` — a reviewer that has never been
-// wrong — and sort to the head of a table ordered by dismissal rate, where it
-// reads as the best performer rather than the unmeasured one.
+// wrong. The report sorts DESCENDING by dismissal rate (`>` — over-reporting
+// first), so that row would land at the BOTTOM, reading as the WORST performer
+// rather than the unmeasured one — the misreading the exclusion exists to
+// prevent, in the direction the earlier comment got backwards.
 func TestQualityReportRows_OmitsPairsWithNoDismissalOrConfirmation(t *testing.T) {
 	rows := qualityReportRows([]localdebt.QualityRow{
 		{Persona: "vera", Model: "m1", UnreproducibleCount: 3},
