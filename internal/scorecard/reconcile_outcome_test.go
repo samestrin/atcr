@@ -91,6 +91,38 @@ func TestEmitForReconcile_PopulatesOutcomePerReviewer(t *testing.T) {
 		"the fault is recorded truthfully here; exclusion is the trust filter's job")
 }
 
+// TestEmitForReconcile_RepeatedAgentTakesTheWorstOutcome closes the
+// last-write-wins collision in EmitForReconcile's reviewer loop: a pool summary
+// listing the same agent twice — first failed, then ok — must record the FAILED
+// outcome, not silently overwrite it with clean. The precedence kept is the
+// classifier's own (failed > unparseable > truncated > incomplete > findings >
+// ungrounded > filtered > clean), in both orders, so a crafted or buggy summary
+// cannot hide a failure behind a later clean entry for the same name.
+func TestEmitForReconcile_RepeatedAgentTakesTheWorstOutcome(t *testing.T) {
+	reviewDir := t.TempDir()
+	writePoolSummary(t, reviewDir,
+		// Failure first, clean second: clean must not win.
+		fanout.AgentStatus{Agent: "bruce", Status: "error", Error: "boom", Model: "opus"},
+		fanout.AgentStatus{Agent: "bruce", Status: fanout.StatusOK, FindingsCount: 0, Model: "opus"},
+		// Reverse order for vera: the worse outcome must win regardless of
+		// which entry came later.
+		fanout.AgentStatus{Agent: "vera", Status: fanout.StatusOK, FindingsCount: 0, Model: "opus"},
+		fanout.AgentStatus{Agent: "vera", Status: "error", Error: "boom", Model: "opus"},
+	)
+
+	recs := emitAndRead(t, reviewDir, resWith("bruce"))
+
+	bruce := findReviewer(recs, "bruce")
+	require.NotNil(t, bruce)
+	assert.Equal(t, testOutcomeFailed, bruce.Outcome,
+		"a repeated agent must keep the higher-precedence outcome, not the later one")
+
+	vera := findReviewer(recs, "vera")
+	require.NotNil(t, vera)
+	assert.Equal(t, testOutcomeFailed, vera.Outcome,
+		"order in the summary must not decide which outcome survives a collision")
+}
+
 // TestEmitForReconcile_RaisedIsTheAgentsPostEnforcementCount closes AC 02-02
 // Scenario 0, the parity test's stated blind spot.
 //
