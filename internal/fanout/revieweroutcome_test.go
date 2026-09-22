@@ -26,8 +26,8 @@ func TestValidReviewerOutcome_AcceptsExactlyReviewerOutcomesShapeSet(t *testing.
 	// classified this run" — ReviewerOutcome itself never returns it.
 	accepted := map[string]bool{"": true}
 	for _, s := range shapes {
-		for _, raised := range [][]string{nil, {"correctness"}} {
-			accepted[ReviewerOutcome(s, raised)] = true
+		for _, raisedCount := range []int{0, 1} {
+			accepted[ReviewerOutcome(s, raisedCount)] = true
 		}
 	}
 	if len(accepted) != 9 {

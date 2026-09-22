@@ -2,7 +2,6 @@ package scorecard
 
 import (
 	"encoding/json"
-	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -356,7 +355,7 @@ func TestEmitForReconcile_RoutedOnlyReviewerIsClassifiedFromTheSummary(t *testin
 	// The recorded value is whatever the SHARED classifier says for this status,
 	// asserted against the classifier itself rather than against a literal — so
 	// the two paths cannot drift apart without this failing.
-	assert.Equal(t, fanout.ReviewerOutcome(status, []string{""}), r.Outcome)
+	assert.Equal(t, fanout.ReviewerOutcome(status, 1), r.Outcome)
 	assert.Len(t, eligibleOutcomeRuns([]Record{*r}), 1,
 		"a witnessed phantom-raiser stays scoreable, so the run counts against it")
 }
@@ -447,19 +446,6 @@ func TestEmitForReconcile_HostileFindingsCountDoesNotPanic(t *testing.T) {
 				assert.Equal(t, testOutcomeFindings, bruce.Outcome)
 			}
 		})
-	}
-}
-
-// TestRaisedSlotsFor_IsBoundedRegardlessOfCount pins the allocation itself, so a
-// future edit cannot quietly restore make([]string, a.FindingsCount) while the
-// end-to-end test above keeps passing on a machine with enough memory.
-func TestRaisedSlotsFor_IsBoundedRegardlessOfCount(t *testing.T) {
-	assert.Nil(t, raisedSlotsFor(fanout.AgentStatus{FindingsCount: 0}))
-	assert.Nil(t, raisedSlotsFor(fanout.AgentStatus{FindingsCount: -5}))
-	for _, n := range []int{1, 7, 1 << 20, math.MaxInt} {
-		got := raisedSlotsFor(fanout.AgentStatus{FindingsCount: n})
-		assert.Len(t, got, 1, "count %d must not size the slice", n)
-		assert.NotEmpty(t, got, "non-empty is the only property the classifier reads")
 	}
 }
 

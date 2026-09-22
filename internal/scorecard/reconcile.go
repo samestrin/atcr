@@ -312,38 +312,6 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 	}, opts)
 }
 
-// raisedSlotsFor supplies ReviewerOutcome's `raised` parameter on the reconcile
-// path. The classifier reads only whether the slice is non-empty, so a slice of
-// that length carries everything it needs.
-//
-// The COUNT is the load-bearing part, and it comes from the agent's own status
-// rather than from reconcile.Result. That is AC 02-02 Scenario 0, and it is the
-// parity test's blind spot: feeding the same function from two call sites proves
-// nothing if one of them computes its input differently. The benchmark path
-// reads `raised` from the merged findings.txt written AFTER enforceConstraints,
-// and AgentStatus.FindingsCount is that same post-enforcement, post-grounding
-// number. res.Findings is not — it is reconcile's post-merge output, so a
-// reviewer whose findings all clustered under another reviewer's name is absent
-// from it entirely and would classify CLEAN: "read the diff and found nothing",
-// asserted about a lens that raised several.
-func raisedSlotsFor(a fanout.AgentStatus) []string {
-	if a.FindingsCount <= 0 {
-		return nil
-	}
-	// One sentinel element, never make([]string, a.FindingsCount). FindingsCount
-	// is decoded straight out of sources/pool/summary.json — a file on disk that
-	// the MCP handler will read from a CALLER-SUPPLIED directory — so sizing an
-	// allocation from it hands an attacker the length. A count near math.MaxInt
-	// panics makeslice with "len out of range", and this function sits inside
-	// EmitForReconcile, whose whole contract is that scorecard emission never
-	// fails the caller's reconcile. It would have taken the process down instead.
-	//
-	// Only len(raised) > 0 is ever read, so one element is all the information
-	// the classifier can use. Returning exactly one also keeps the allocation
-	// O(1) per reviewer rather than O(findings).
-	return []string{""}
-}
-
 // outcomeFor classifies one agent's status for the durable record, refusing to
 // classify a status that is not internally coherent.
 //
@@ -358,7 +326,10 @@ func outcomeFor(a fanout.AgentStatus) string {
 	if a.FindingsCount < 0 {
 		return ""
 	}
-	return coerceOutcome(fanout.ReviewerOutcome(a, raisedSlotsFor(a)))
+	// The raised count goes through AS A COUNT: ReviewerOutcome's second parameter
+	// is raisedCount int (2026-09-22, closing the raisedSlotsFor row), so the type
+	// cannot carry fake contents the way the old one-element sentinel slice did.
+	return coerceOutcome(fanout.ReviewerOutcome(a, a.FindingsCount))
 }
 
 // outcomeRank ranks an outcome by the classifier's own precedence

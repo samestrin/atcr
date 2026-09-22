@@ -67,7 +67,7 @@ package fanout
 // the CROSS-VERSION NOTEs on internal/benchmark/outcome.go's OutcomeUngrounded and
 // OutcomeFiltered constants do (cited by name, not line — every insertion into
 // outcome.go's doc blocks would otherwise re-aim a line-number citation).
-func ReviewerOutcome(a AgentStatus, raised []string) string {
+func ReviewerOutcome(a AgentStatus, raisedCount int) string {
 	switch {
 	case a.Status != StatusOK || a.Error != "":
 		return "failed"
@@ -90,7 +90,7 @@ func ReviewerOutcome(a AgentStatus, raised []string) string {
 	// does not resolve, only chooses not to reclassify as incomplete.
 	case a.UnreviewedChunks > 0 || a.Truncated:
 		return "incomplete"
-	case len(raised) > 0:
+	case raisedCount > 0:
 		return "findings"
 	// Below here the reviewer raised nothing that survived. A non-zero grounding
 	// drop count is what separates "found nothing" from "found things the Epic 14.1

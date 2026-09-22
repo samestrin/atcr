@@ -29,25 +29,25 @@ import (
 // merely that both sides are non-empty.
 func TestFanoutOutcomeLiterals_MatchBenchmarkConstants(t *testing.T) {
 	tests := []struct {
-		name   string
-		status fanout.AgentStatus
-		raised []string
-		want   string
+		name        string
+		status      fanout.AgentStatus
+		raisedCount int
+		want        string
 	}{
-		{"failed", fanout.AgentStatus{Status: "error"}, nil, benchmark.OutcomeFailed},
-		{"failed via error string", fanout.AgentStatus{Status: fanout.StatusOK, Error: "timeout"}, nil, benchmark.OutcomeFailed},
-		{"unparseable", fanout.AgentStatus{Status: fanout.StatusOK, UnparseableResponse: true}, nil, benchmark.OutcomeUnparseable},
-		{"truncated", fanout.AgentStatus{Status: fanout.StatusOK, ResponseTruncated: true}, []string{"correctness"}, benchmark.OutcomeTruncated},
-		{"incomplete via unreviewed chunks", fanout.AgentStatus{Status: fanout.StatusOK, UnreviewedChunks: 2}, nil, benchmark.OutcomeIncomplete},
-		{"incomplete via payload truncation", fanout.AgentStatus{Status: fanout.StatusOK, Truncated: true}, nil, benchmark.OutcomeIncomplete},
-		{"findings", fanout.AgentStatus{Status: fanout.StatusOK}, []string{"correctness"}, benchmark.OutcomeFindings},
-		{"ungrounded", fanout.AgentStatus{Status: fanout.StatusOK, DroppedByGrounding: 2}, nil, benchmark.OutcomeUngrounded},
-		{"filtered", fanout.AgentStatus{Status: fanout.StatusOK, DroppedByMinSeverity: 2}, nil, benchmark.OutcomeFiltered},
-		{"clean", fanout.AgentStatus{Status: fanout.StatusOK}, nil, benchmark.OutcomeClean},
+		{"failed", fanout.AgentStatus{Status: "error"}, 0, benchmark.OutcomeFailed},
+		{"failed via error string", fanout.AgentStatus{Status: fanout.StatusOK, Error: "timeout"}, 0, benchmark.OutcomeFailed},
+		{"unparseable", fanout.AgentStatus{Status: fanout.StatusOK, UnparseableResponse: true}, 0, benchmark.OutcomeUnparseable},
+		{"truncated", fanout.AgentStatus{Status: fanout.StatusOK, ResponseTruncated: true}, 1, benchmark.OutcomeTruncated},
+		{"incomplete via unreviewed chunks", fanout.AgentStatus{Status: fanout.StatusOK, UnreviewedChunks: 2}, 0, benchmark.OutcomeIncomplete},
+		{"incomplete via payload truncation", fanout.AgentStatus{Status: fanout.StatusOK, Truncated: true}, 0, benchmark.OutcomeIncomplete},
+		{"findings", fanout.AgentStatus{Status: fanout.StatusOK}, 1, benchmark.OutcomeFindings},
+		{"ungrounded", fanout.AgentStatus{Status: fanout.StatusOK, DroppedByGrounding: 2}, 0, benchmark.OutcomeUngrounded},
+		{"filtered", fanout.AgentStatus{Status: fanout.StatusOK, DroppedByMinSeverity: 2}, 0, benchmark.OutcomeFiltered},
+		{"clean", fanout.AgentStatus{Status: fanout.StatusOK}, 0, benchmark.OutcomeClean},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, fanout.ReviewerOutcome(tc.status, tc.raised))
+			assert.Equal(t, tc.want, fanout.ReviewerOutcome(tc.status, tc.raisedCount))
 		})
 	}
 }
@@ -70,8 +70,8 @@ func TestFanoutReviewerOutcome_AlwaysReturnsAKnownValue(t *testing.T) {
 		{Status: fanout.StatusOK, DroppedByGrounding: 1, DroppedByMinSeverity: 1},
 	}
 	for _, s := range shapes {
-		for _, raised := range [][]string{nil, {"correctness"}} {
-			got := fanout.ReviewerOutcome(s, raised)
+		for _, raisedCount := range []int{0, 1} {
+			got := fanout.ReviewerOutcome(s, raisedCount)
 			assert.True(t, benchmark.ValidOutcome(got),
 				"classifier returned %q, which is outside benchmark's vocabulary", got)
 			assert.NotEqual(t, benchmark.OutcomeUnknown, got,

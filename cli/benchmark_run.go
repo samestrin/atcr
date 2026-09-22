@@ -430,7 +430,7 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 				latency = a.DurationMS
 			}
 
-			outcome := fanout.ReviewerOutcome(a, raised)
+			outcome := fanout.ReviewerOutcome(a, len(raised))
 
 			if err := applyReviewerOutcome(accs, &order, reviewerCaseOutcome{
 				model:         model,
