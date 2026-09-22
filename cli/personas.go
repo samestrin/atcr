@@ -501,7 +501,15 @@ func runPersonaUpgrades(cmd *cobra.Command, dir string, names []string, dryRun b
 	return nil
 }
 
-// installedCommunityNames lists the names of community personas under dir.
+// installedCommunityNames lists the names of community personas under dir that
+// were INSTALLED from the community repo — the ones `personas remove` can act on.
+//
+// A community row can also be a bare <name>.md prompt file an operator dropped
+// in. Remove resolves <name>.yaml and would report "persona is not installed"
+// for every one of those, so `personas remove --all` would fail on a directory
+// that is in a perfectly ordinary state. They are not removable through this
+// command because atcr never installed them; deleting the file is the operator's
+// own call.
 func installedCommunityNames(dir string) ([]string, error) {
 	metas, err := commpersonas.List(dir)
 	if err != nil {
@@ -509,7 +517,7 @@ func installedCommunityNames(dir string) ([]string, error) {
 	}
 	var names []string
 	for _, m := range metas {
-		if m.Source == "community" {
+		if m.Source == "community" && commpersonas.IsCommunityInstalled(dir, m.Name) {
 			names = append(names, m.Name)
 		}
 	}

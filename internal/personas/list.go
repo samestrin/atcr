@@ -380,5 +380,10 @@ func listCommunity(personasDir string) ([]PersonaMeta, error) {
 // A traversal or otherwise invalid name is not installed rather than probed, so
 // the answer never depends on a path outside personasDir.
 func IsCommunityInstalled(personasDir, name string) bool {
-	return false // STUB: wrong answer on purpose, replaced in GREEN
+	dest, err := personaPath(personasDir, name)
+	if err != nil {
+		return false
+	}
+	fi, err := os.Stat(dest)
+	return err == nil && fi.Mode().IsRegular()
 }
