@@ -252,6 +252,20 @@ func FormatRate(rate *float64) string {
 	return fmt.Sprintf("%.1f%%", pct)
 }
 
+// listCommunity returns the community personas under personasDir.
+//
+// ONE RULE FOR WHAT A PERSONA FILE IS, shared with listProject: a <name>.yaml /
+// <name>.yml, or a bare <name>.md. The .md admission is what makes the two
+// on-disk tiers agree — listProject has always taken .md, and this walker used
+// to skip it as if it were a .DS_Store, which made an md-only lens invisible to
+// every view built on ListTiers.
+//
+// A <name>.md co-located with a <name>.yaml is the YAML persona's prompt body,
+// not a second persona: it folds into that row rather than being emitted twice.
+// _base.md is the shared fallback template at any depth and is never a persona,
+// matching listProject. Symlinks are skipped (they may point outside the dir),
+// and a name colliding with a built-in warns and is skipped whichever extension
+// it arrived under.
 func listCommunity(personasDir string) ([]PersonaMeta, error) {
 	if _, err := os.Stat(personasDir); err != nil {
 		if os.IsNotExist(err) {
@@ -261,6 +275,11 @@ func listCommunity(personasDir string) ([]PersonaMeta, error) {
 	}
 	var out []PersonaMeta
 	var warnings []error
+	// yamlNames is every name the YAML pass claimed (lowercased, the same key
+	// ListTiers dedupes on); mdCandidates holds the .md files seen, resolved
+	// against it after the walk.
+	yamlNames := map[string]bool{}
+	var mdCandidates []string
 	walkErr := filepath.WalkDir(personasDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -269,14 +288,32 @@ func listCommunity(personasDir string) ([]PersonaMeta, error) {
 			return nil // skip directories and symlinks (symlinks may point outside the personas dir)
 		}
 		ext := strings.ToLower(filepath.Ext(path))
+		// A bare <name>.md IS a persona here, exactly as it is in listProject.
+		// This tier used to admit only .yaml/.yml and skip .md alongside the
+		// .DS_Store files, so one file shape was a persona in the project dir and
+		// noise in the community dir — which made every md-only lens invisible to
+		// `personas list`, the surface whose whole question is which lenses to keep.
+		//
+		// A .md co-located with a <name>.yaml is that persona's PROMPT BODY, not a
+		// second persona, so it must not produce a second row. The walk therefore
+		// defers .md files to a second pass (below) where the full set of YAML
+		// names is known: WalkDir is lexical, so `archer.md` is visited before
+		// `archer.yaml` and a decision taken inline would be made blind.
+		if ext == ".md" {
+			if rel, relErr := filepath.Rel(personasDir, path); relErr == nil && filepath.Base(path) != "_base.md" {
+				mdCandidates = append(mdCandidates, rel)
+			}
+			return nil
+		}
 		if ext != ".yaml" && ext != ".yml" {
-			return nil // silently skip non-YAML files (.DS_Store, .gitkeep, ...)
+			return nil // silently skip non-persona files (.DS_Store, .gitkeep, ...)
 		}
 		rel, err := filepath.Rel(personasDir, path)
 		if err != nil {
 			return nil
 		}
 		name := filepath.ToSlash(strings.TrimSuffix(rel, filepath.Ext(rel)))
+		yamlNames[strings.ToLower(name)] = true
 		if isBuiltin(name) {
 			warnings = append(warnings, fmt.Errorf("skipping community file %q: name collides with built-in persona %q", rel, name))
 			return nil
@@ -305,6 +342,27 @@ func listCommunity(personasDir string) ([]PersonaMeta, error) {
 	})
 	if walkErr != nil {
 		return out, walkErr
+	}
+	// Second pass: the md-only personas. Appended after the YAML rows in lexical
+	// walk order, so the result stays deterministic. A candidate whose name a
+	// YAML file already claimed is that persona's prompt body and is dropped — the
+	// YAML row keeps its version pin and language tokens, which an md file carries
+	// no way to express. Version "-" marks the rest as unpinned, the same marker a
+	// YAML file with no version field gets.
+	//
+	// The built-in collision check applies here too. Without it the new admission
+	// would open a silent shadowing path that the YAML branch has always been
+	// closed to.
+	for _, rel := range mdCandidates {
+		name := filepath.ToSlash(strings.TrimSuffix(rel, filepath.Ext(rel)))
+		if yamlNames[strings.ToLower(name)] {
+			continue
+		}
+		if isBuiltin(name) {
+			warnings = append(warnings, fmt.Errorf("skipping community file %q: name collides with built-in persona %q", rel, name))
+			continue
+		}
+		out = append(out, PersonaMeta{Name: name, Version: "-", Source: "community"})
 	}
 	return out, errors.Join(warnings...)
 }
