@@ -376,3 +376,64 @@ func TestBackfillSkipSetProseKeysOnRationaleNotSettledness(t *testing.T) {
 		})
 	}
 }
+
+// skillUsageDocPath is the store-policy overview an operator reads before they
+// ever open the catalog. It restates the resolution lifetime, including the
+// --reason gate, so it is a third copy of a contract two other surfaces already
+// publish — and the copy nothing was reading.
+const skillUsageDocPath = "../../docs/skill-usage.md"
+
+// docSentence returns the one sentence beginning at marker, ending at the first
+// ". " or end of line. docPassage is prefix-based and returns a whole line,
+// which is too coarse here: the gate sentence sits inside a long bullet that
+// also, legitimately, names `deferred` as a re-openable status. Asserting over
+// the bullet would make a correct sentence fail for a neighbour's words.
+func docSentence(t *testing.T, doc, marker string) (string, bool) {
+	t.Helper()
+	for _, line := range strings.Split(doc, "\n") {
+		i := strings.Index(line, marker)
+		if i < 0 {
+			continue
+		}
+		rest := line[i:]
+		if j := strings.Index(rest, ". "); j >= 0 {
+			return rest[:j+1], true
+		}
+		return rest, true
+	}
+	return "", false
+}
+
+// TestSkillUsageDoc_ReasonGateNamesOnlyWritableStatuses pins the --reason
+// sentence in the store-policy overview to the statuses `debt resolve` can
+// actually write.
+//
+// The sentence sat directly after a list of the RE-OPENABLE statuses — resolved,
+// deferred, unreproducible, attempts-exhausted — and then said `--reason` is
+// required "for every status except plain resolved". Read in that position it
+// makes `deferred` sound both settable through `debt resolve` and reason-gated.
+// Neither is true: resolveStatuses (cli/debt_resolve.go) does not accept
+// `deferred` at all, because deferral is written by other paths, and
+// cli/debt_exhaustive_test.go's resolveExcluded documents exactly that.
+//
+// The gate itself is correct and generalized (`status != StatusResolved`), so
+// this is a scoping defect in the prose, not a doc-ahead-of-code claim. It is
+// pinned here because the same sentence is published on three surfaces and only
+// two of them were guarded.
+func TestSkillUsageDoc_ReasonGateNamesOnlyWritableStatuses(t *testing.T) {
+	b, err := os.ReadFile(skillUsageDocPath)
+	require.NoError(t, err, "the store-policy overview must be readable from this package")
+
+	sentence, ok := docSentence(t, string(b), "`--reason` is required for")
+	require.True(t, ok, "the overview must publish the --reason gate")
+
+	assert.NotContains(t, sentence, "every status except plain",
+		"the gate must not be stated over ALL statuses: `deferred` is re-openable but is not writable "+
+			"by `debt resolve`, so an unscoped sentence promises a flag combination the binary rejects")
+	for _, status := range []string{"wontfix", "unreproducible", "attempts-exhausted"} {
+		assert.Contains(t, sentence, status,
+			"the gate sentence must name %q, which `debt resolve` writes and which requires --reason", status)
+	}
+	assert.NotContains(t, sentence, "`deferred`",
+		"`deferred` must not be presented as a reason-gated resolve status")
+}
