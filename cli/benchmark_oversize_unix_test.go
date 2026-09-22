@@ -73,6 +73,27 @@ func TestReadRunResultLimited_UnreadableFileFailsAtTheOpenArm(t *testing.T) {
 		"the stat arm passing is what makes this fixture reach the Open arm at all")
 }
 
+// The os.Open arm must not silently no-op under root, where chmod cannot block:
+// the injected open seam stages the stat-passes-open-fails shape in EVERY
+// environment, so the arm keeps coverage in the root containers that skip the
+// permission fixture above.
+func TestReadRunResultLimited_OpenArmFailsEvenUnderRoot(t *testing.T) {
+	orig := osOpen
+	osOpen = func(string) (*os.File, error) { return nil, os.ErrPermission }
+	defer func() { osOpen = orig }()
+
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	require.NoError(t, os.WriteFile(path, []byte("{}"), 0o600))
+
+	_, err := readRunResultLimited(path)
+	require.Error(t, err, "an open failure must surface, not read empty")
+	require.Contains(t, err.Error(), "reading run-result",
+		"the Open arm wraps the failure with the path context, like its siblings")
+	require.ErrorIs(t, err, os.ErrPermission, "the injected open error is wrapped, not replaced")
+	require.NotContains(t, err.Error(), "no such file",
+		"the stat arm passing is what makes this fixture reach the Open arm at all")
+}
+
 func TestReadRunResultLimited_DirectoryAsPathFailsAtTheReadArm(t *testing.T) {
 	_, err := readRunResultLimited(t.TempDir())
 	require.Error(t, err, "a directory is not a readable run-result")
