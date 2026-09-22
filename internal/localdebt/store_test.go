@@ -3146,3 +3146,72 @@ func TestRetainForCompaction_SecondPassCanRetainOneFewer(t *testing.T) {
 	assert.Equal(t, AggregateQualitySignal(pass1), AggregateQualitySignal(pass2),
 		"the collapse must not change the reported outcome or its model")
 }
+
+// TestRetainForCompaction_SettledEffectiveKeepsAnEarlierRationale is the guard on
+// Phase 6 gate finding CRITICAL-1: compaction permanently deleted an operator's
+// only recorded explanation.
+//
+// The settled branch retained the model donor and the effective record and
+// nothing else, on the argument that "the effective record IS the resolution, so
+// there is no rationale to preserve". That held only while every
+// rationale-bearing status was also settled. Story 36.0 split the two apart —
+// `attempts-exhausted` is unsettled but its `--reason` is MANDATORY — and made
+// the losing sequence a designed one-step workflow: the skill calls
+// attempts-exhausted "a checkpoint, not a closure", so closing it afterwards is
+// the expected next action. `--status attempts-exhausted --reason X` followed by
+// `--status wontfix --reason Y` then compaction erased X, which exists nowhere
+// else in the tree.
+func TestRetainForCompaction_SettledEffectiveKeepsAnEarlierRationale(t *testing.T) {
+	for _, closer := range []string{StatusWontfix, StatusUnreproducible, StatusResolved} {
+		t.Run(closer, func(t *testing.T) {
+			id := "id-rationale-" + closer
+			exhausted := mkTerminal(id, "2026-09-01T00:00:00Z", StatusAttemptsExhausted)
+			exhausted.Justification = "three agents could not reproduce the trace"
+			settled := mkTerminal(id, "2026-09-02T00:00:00Z", closer)
+			settled.Justification = "closing: superseded by the rewrite"
+
+			retained := retainForCompaction([]Record{exhausted, settled})
+
+			require.Equal(t, closer, FoldRecords(retained)[0].Status,
+				"precondition: the settled record is the effective one")
+
+			var kept []string
+			for _, r := range retained {
+				kept = append(kept, r.Justification)
+			}
+			assert.Contains(t, kept, exhausted.Justification,
+				"the superseded attempts-exhausted --reason exists nowhere else and must survive compaction")
+			assert.Contains(t, kept, settled.Justification,
+				"the effective record keeps its own rationale")
+		})
+	}
+}
+
+// TestRetainForCompaction_SettledBranchStaysFoldStableAndBounded pins the two
+// properties the added trail entry could break: the effective record must not
+// change hands (the trail is emitted before it, so a tie still goes to eff), and
+// retention must stay bounded per id rather than growing each pass.
+func TestRetainForCompaction_SettledBranchStaysFoldStableAndBounded(t *testing.T) {
+	const id = "id-rationale-stable"
+	exhausted := mkTerminal(id, "2026-09-01T00:00:00Z", StatusAttemptsExhausted)
+	exhausted.Model = "claude-sonnet-4-6"
+	exhausted.Reviewers = []string{"vera"}
+	wontfix := mkTerminal(id, "2026-09-02T00:00:00Z", StatusWontfix)
+	wontfix.Reviewers = []string{"vera"}
+
+	recs := []Record{exhausted, wontfix}
+	pass1 := retainForCompaction(recs)
+	pass2 := retainForCompaction(pass1)
+	pass3 := retainForCompaction(pass2)
+
+	assert.LessOrEqual(t, len(pass1), 3, "retention stays bounded per id")
+	assert.Equal(t, len(pass2), len(pass3), "compaction reaches a fixed point by the second pass")
+
+	require.Len(t, FoldRecords(pass1), 1)
+	assert.Equal(t, StatusWontfix, FoldRecords(pass1)[0].Status,
+		"the trail must not seize the fold from the effective record")
+	assert.Equal(t, StatusWontfix, FoldRecords(pass3)[0].Status,
+		"and must not seize it on a later pass either")
+	assert.Equal(t, AggregateQualitySignal(pass2), AggregateQualitySignal(pass3),
+		"the quality signal is unchanged across passes")
+}

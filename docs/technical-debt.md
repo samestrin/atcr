@@ -256,9 +256,11 @@ and the original id is preserved so the resolution lines up with the finding.
 Folds the append-only store to one effective record per id and rewrites the
 shards atomically, carrying `occurrences` and `first_seen` forward so the
 regression signal survives at O(1) size instead of O(history). The resolution
-trail is kept: when an item was closed and has since regressed, compaction
-retains both the current record and the resolution that closed it, so the
-`--reason` text is never destroyed.
+trail is kept: whenever a superseded record carries a `--reason` the effective
+record does not, compaction retains both, so that text is never destroyed. That
+covers an item that was closed and has since regressed, and an
+`attempts-exhausted` checkpoint later closed for good — the second reason does
+not overwrite the first.
 
 ```bash
 atcr debt compact --dry-run  # reports what a real run would drop; writes nothing

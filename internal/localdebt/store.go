@@ -946,38 +946,20 @@ func foldByID[T foldable](items []T) ([]T, map[string][]T) {
 // sprint 36.0 TD-013; fixing it means changing the fold's tie-break for malformed
 // input, which is a read-path behaviour change for every existing store.
 //
-// A suppressing (wontfix) id never reaches the second half: rule 1 makes the
-// wontfix record itself the effective one, so its justification is retained by
-// the first half.
+// A SETTLED effective record gets the same treatment as any other, and used to
+// get its own shorter branch that kept only the donor and eff. That branch's
+// argument — "the effective record IS the resolution, so there is no rationale
+// to preserve" — was true only while every rationale-bearing status was also
+// settled. Story 36.0 split the two apart, and `attempts-exhausted` superseded
+// by a settled close is a DESIGNED one-step workflow (the skill calls it "a
+// checkpoint, not a closure"), so the shorter branch deleted a mandatory
+// --reason on a path an operator is told to walk. Phase 6 gate finding
+// CRITICAL-1. One branch also means one copy of the precedence rule, which is
+// the property cli/debt_resolve.go's invariant asks for.
 func retainForCompaction(recs []Record) []Record {
 	effective, byID := foldWithGroups(recs)
 	out := make([]Record, 0, len(effective))
 	for _, eff := range effective {
-		if IsSettledStatus(eff.Status) {
-			// The effective record IS the resolution, so there is no rationale to
-			// preserve — but there may still be ATTRIBUTION. AggregateQualitySignal
-			// recovers a missing Model from an earlier same-id terminal record
-			// (qualitysignal.go, foldTerminalByID's donor index), which is how a
-			// wontfix that
-			// outranks an earlier attributed resolution still reports a dismissal.
-			// Dropping that donor makes the whole outcome vanish from the signal —
-			// silently and permanently, and now unattended, since compaction runs
-			// automatically inside the same reconcile that emits the signal.
-			//
-			// ORDER IS LOAD-BEARING: the donor is emitted BEFORE the effective
-			// record. Both are terminal, so they can tie on both timestamp and
-			// ClosedStatusRank, and latestItem breaks a full tie by append order —
-			// last wins. Emitting the donor last would hand it the fold, silently
-			// swapping which record readers see as effective and, on the NEXT
-			// compaction, deleting the displaced one along with the human-typed
-			// --reason only it carried. Writing it first keeps eff the winner and
-			// compaction fold-stable.
-			if donor := modelDonor(byID[eff.ID], eff); donor != nil {
-				out = append(out, *donor)
-			}
-			out = append(out, eff)
-			continue
-		}
 		// RATIONALE-BEARING, not merely closed, on both sides. An effective
 		// `deferred` record is not a resolution — it carries no justification, and
 		// treating it as one would discard an earlier `resolved` record and the
@@ -999,26 +981,42 @@ func retainForCompaction(recs []Record) []Record {
 		// See latestIndex.
 		group := byID[eff.ID]
 
-		// The effective record's own position. Reaching this line means eff did NOT
-		// come from the suppressing rule — wontfix is the only suppressing status
-		// and it is settled, so it took the branch above — which means foldByID
-		// selected it with latestItem over the whole group. latestIndex replays
-		// exactly that choice, so this is eff's index by construction, not a guess.
+		// The effective record's own position. A suppressing (wontfix) record now
+		// reaches this line too, and it does NOT come from latestItem over the
+		// whole group — foldByID's rule 1 picks it from the suppressing records
+		// alone. effectiveIndex replays whichever of the two rules applied, so
+		// this is eff's index by construction, not a guess.
 		effIdx := -1
 		if len(group) > 0 {
-			effIdx = latestIndex(group)
+			effIdx = effectiveIndex(group)
 		}
 
+		// When eff itself bears rationale, a trail entry is owed only for text eff
+		// does NOT already carry. Without that qualifier the five identical
+		// `resolved` appends TestCompact writes would each keep a twin, doubling
+		// retention for the commonest churn there is while preserving nothing.
+		//
+		// This compares Justification, which the rest of this block is at pains
+		// not to do — but the question is different. The index rule exists so
+		// "which record is eff" is never answered by value; this asks "is this
+		// text already retained", and text is the only thing that can answer it.
+		// A twin differing from eff ONLY in Model is not a rationale loss; the
+		// donor selection below is what covers that.
+		effBearsRationale := bearsRationale(eff.Status)
 		var resolutions []Record
 		var resolutionIdx []int
 		for i, r := range group {
 			if i == effIdx {
 				continue // the effective record is not its own trail entry
 			}
-			if bearsRationale(r.Status) {
-				resolutions = append(resolutions, r)
-				resolutionIdx = append(resolutionIdx, i)
+			if !bearsRationale(r.Status) {
+				continue
 			}
+			if effBearsRationale && strings.TrimSpace(r.Justification) == strings.TrimSpace(eff.Justification) {
+				continue // eff already carries this rationale verbatim
+			}
+			resolutions = append(resolutions, r)
+			resolutionIdx = append(resolutionIdx, i)
 		}
 
 		// An UNSETTLED effective record can still produce a quality-signal row:
@@ -1124,9 +1122,9 @@ func retainForCompaction(recs []Record) []Record {
 	return out
 }
 
-// modelDonor returns the terminal record whose Model AggregateQualitySignal would
-// recover for this id, or nil when the effective record already carries one or no
-// donor exists.
+// modelDonorIndex returns the INDEX, within this id's group, of the terminal
+// record whose Model AggregateQualitySignal would recover for the id — or -1
+// when the effective record already carries a Model or no donor exists.
 //
 // Selection matches foldTerminalByID's donor index (qualitysignal.go) exactly —
 // the most recent terminal record with a non-empty Model, last-wins on ties —
@@ -1134,51 +1132,21 @@ func retainForCompaction(recs []Record) []Record {
 // compaction. A different rule here would make the signal depend on whether the
 // store had been compacted yet.
 //
-// The SETTLED branch calls this; the unsettled branch calls modelDonorIndex
-// directly, because it must compare the donor's position against the trail's.
-// The settled branch retains no resolution trail, so a donor there keeps
-// retention at two; the unsettled branch may retain both, which is the one case
-// where an id reaches three — see retainForCompaction's bound note.
+// It returns an index rather than a record because the caller must compare the
+// donor's position against the resolution trail's: see latestIndex for why value
+// identity is not usable inside one id group. A modelDonor wrapper returning the
+// record itself served the old settled-only branch and went with it when the two
+// branches merged.
 //
-// Settled — not merely closed — is the right gate, and not by luck. An id whose
-// effective record is OPEN is filtered out of the quality signal by
-// foldTerminalByID (an unsettled finding is not an outcome). A `deferred` one is
-// admitted by that filter and even has its Model recovered, but
-// AggregateQualitySignal's status switch maps `deferred` — and any non-terminal
-// status — to no counter and no group, so such an id emits no row whatever its
-// attribution and has nothing to lose.
-//
-// "Only a settled effective record can produce a row" WAS the argument here, and
-// Story 36.0 falsified it: `attempts-exhausted` is a counted outcome that is
-// deliberately not settled.
-//
-// The UNSETTLED branch therefore gates its donor call on producesQualitySignal,
-// which is the property that actually matters — can this id emit a row, and so
-// can it lose one. The SETTLED branch calls this unconditionally and still keys
-// its own branch on IsSettledStatus, which remains correct because every settled
-// status is also a counted one; the call is simply a no-op for an id with
-// nothing to lose. Do not "unify" the two by making the settled branch skip on
-// producesQualitySignal without first checking that implication still holds.
-func modelDonor(group []Record, eff Record) *Record {
-	i := modelDonorIndex(group, eff)
-	if i < 0 {
-		return nil
-	}
-	// The donor is a TRAIL entry, not an occurrence — same rule as the resolution
-	// trail: an id's aggregate counters live solely on its effective record, or a
-	// second carrier would let the fold count part of the history twice.
-	donor := group[i]
-	donor.Occurrences = 0
-	donor.FirstSeen = ""
-	donor.CountedThrough = ""
-	return &donor
-}
-
-// modelDonorIndex is modelDonor's selection rule, returning the donor's INDEX in
-// group, or -1 when the effective record already carries a Model or no donor
-// exists. Callers that must compare the donor against another selection from the
-// same group need the index: see latestIndex for why value identity is not
-// usable inside one id group.
+// It is called UNCONDITIONALLY, for every effective status, and the gate that
+// used to stand in front of it is not a safeguard worth restoring. "Only a
+// settled effective record can produce a signal row" WAS the argument for one,
+// and Story 36.0 falsified it — `attempts-exhausted` is a counted outcome that
+// is deliberately not settled. Even producesQualitySignal(eff.Status) is the
+// wrong question: whether the CURRENT effective record emits a row says nothing
+// about whether a FUTURE append will need this id's attribution, and an open
+// item is precisely the one most likely to be closed later. A no-op call for an
+// id with nothing to lose costs one comparison.
 func modelDonorIndex(group []Record, eff Record) int {
 	if strings.TrimSpace(eff.Model) != "" {
 		return -1
@@ -1232,6 +1200,38 @@ func highestRankedTerminalIndex(terminals []Record) int {
 // section for why that is sound and what breaks it.
 func latestItem[T foldable](group []T) T {
 	return group[latestIndex(group)]
+}
+
+// effectiveIndex returns the position, within one id's group, of the record
+// foldByID selects as effective for that id.
+//
+// It exists because retainForCompaction must say "every record EXCEPT the
+// effective one" and foldByID has TWO selection rules, not one. Rule 1 picks a
+// suppressing record from the suppressing records alone, so latestIndex over the
+// whole group is the wrong answer for a wontfix id: it can name a LATER
+// non-suppressing record, which would let the real effective record be retained
+// a second time as its own trail entry while the rationale this retention exists
+// to preserve is dropped.
+//
+// It replays foldByID's rules rather than re-deriving them, and returns an index
+// for the reason latestIndex documents — inside one id group, identity is
+// position, never value.
+func effectiveIndex(group []Record) int {
+	var suppressingIdx []int
+	for i := range group {
+		if IsSuppressingStatus(group[i].Status) {
+			suppressingIdx = append(suppressingIdx, i)
+		}
+	}
+	if len(suppressingIdx) == 0 {
+		return latestIndex(group) // rule 2: recency across the whole group
+	}
+	// Rule 1: among the suppressing records only, by the same latestItem rule.
+	suppressing := make([]Record, 0, len(suppressingIdx))
+	for _, i := range suppressingIdx {
+		suppressing = append(suppressing, group[i])
+	}
+	return suppressingIdx[latestIndex(suppressing)]
 }
 
 // latestIndex is latestItem's selection rule, returning the winner's INDEX in
