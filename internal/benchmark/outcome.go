@@ -154,12 +154,25 @@ const OutcomeUnknownLabel = "unknown"
 // spelling, never a stored one. Accepting it would make a fabricated outcome
 // indistinguishable from genuine absence — the one distinction the enum exists to
 // protect.
-func ValidOutcome(s string) bool {
-	switch s {
-	case OutcomeUnknown, OutcomeFindings, OutcomeClean,
+// AllOutcomes returns every outcome value the vocabulary can legitimately STORE —
+// the eight wire values plus OutcomeUnknown (the empty string). It is the single
+// source ValidOutcome ranges over, so a pin test can derive its count from the
+// shipped vocabulary instead of counting a hand-typed slice literal three lines
+// up — a literal cannot notice a tenth value, which is the only thing the count
+// claims to guard.
+func AllOutcomes() []string {
+	return []string{
+		OutcomeUnknown, OutcomeFindings, OutcomeClean,
 		OutcomeUnparseable, OutcomeTruncated, OutcomeIncomplete, OutcomeUngrounded,
-		OutcomeFiltered, OutcomeFailed:
-		return true
+		OutcomeFiltered, OutcomeFailed,
+	}
+}
+
+func ValidOutcome(s string) bool {
+	for _, v := range AllOutcomes() {
+		if v == s {
+			return true
+		}
 	}
 	return false
 }
