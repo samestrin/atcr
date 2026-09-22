@@ -313,6 +313,13 @@ func raisedSlotsFor(a fanout.AgentStatus) []string {
 // lands on OutcomeClean, which is ELIGIBLE: a crafted file would mint durable,
 // trust-scoring records asserting a successful clean review that never ran.
 // Unknown is the honest answer for an incoherent status, and it is excluded.
+func outcomeFor(a fanout.AgentStatus) string {
+	if a.FindingsCount < 0 {
+		return ""
+	}
+	return coerceOutcome(fanout.ReviewerOutcome(a, raisedSlotsFor(a)))
+}
+
 // outcomeRank ranks an outcome by the classifier's own precedence
 // (internal/fanout/revieweroutcome.go: failed > unparseable > truncated >
 // incomplete > findings > ungrounded > filtered > clean), so two AgentStatus
@@ -342,13 +349,6 @@ func outcomeRank(o string) int {
 	default:
 		return 0
 	}
-}
-
-func outcomeFor(a fanout.AgentStatus) string {
-	if a.FindingsCount < 0 {
-		return ""
-	}
-	return coerceOutcome(fanout.ReviewerOutcome(a, raisedSlotsFor(a)))
 }
 
 // coerceOutcome is the reconcile path's guard on Record.Outcome: a value that is
