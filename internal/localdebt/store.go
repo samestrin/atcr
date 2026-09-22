@@ -122,7 +122,7 @@ func appendLocked(dir string, rec Record) error {
 	// repair pass can rewrite it in place. IsKnownStatus accepts the EMPTY
 	// status, so an open record and a legacy pre-status record pass untouched.
 	if !IsKnownStatus(rec.Status) {
-		return fmt.Errorf("appending localdebt record %q: unknown status %q " +
+		return fmt.Errorf("appending localdebt record %q: unknown status %q "+
 			"(not a localdebt.Status* value; see IsKnownStatus)", rec.ID, rec.Status)
 	}
 	if err := ensureStoreDir(dir); err != nil {
