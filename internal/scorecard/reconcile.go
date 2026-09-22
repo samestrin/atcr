@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/fanout"
@@ -216,6 +217,12 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 	// for any future producer that does not normalise. Reading only the plural
 	// would attribute the motivating route to nobody at all.
 	ambiguous := make([]Finding, 0, len(res.Ambiguous))
+	// Gray-zone pair extraction keeps the CLUSTER structure AmbiguousFindings
+	// flattens away: one canonical pair key per cluster whose distinct reviewers
+	// number exactly TWO (the charge rule's only unambiguous shape). Distinct
+	// reviewers are counted across the WHOLE cluster's findings — two findings
+	// by the same two reviewers are one cluster, one item.
+	grayPairs := make([]string, 0, len(res.Ambiguous))
 	for _, c := range res.Ambiguous {
 		for _, f := range c.Findings {
 			names := trimmedReviewers(f.Reviewers)
@@ -232,6 +239,29 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 				Reviewers: names,
 				Category:  f.Category,
 			})
+		}
+		members := make(map[string]struct{}, 2)
+		for _, f := range c.Findings {
+			names := trimmedReviewers(f.Reviewers)
+			if len(names) == 0 && strings.TrimSpace(f.Reviewer) != "" {
+				names = []string{normalizeReviewerName(f.Reviewer)}
+			}
+			for _, n := range names {
+				if n != "" {
+					members[n] = struct{}{}
+				}
+			}
+		}
+		if len(members) != 2 {
+			continue // singleton or 3+: no canonical pair to charge
+		}
+		pair := make([]string, 0, 2)
+		for m := range members {
+			pair = append(pair, m)
+		}
+		sort.Strings(pair)
+		if key, ok := PairKey(pair[0], pair[1]); ok {
+			grayPairs = append(grayPairs, key)
 		}
 	}
 
@@ -267,6 +297,7 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 		ConsensusLevel:     res.Summary.ConsensusLevel,
 		UnresolvedFindings: unresolved,
 		AmbiguousFindings:  ambiguous,
+		GrayZonePairs:      grayPairs,
 		VerificationPath:   verPath,
 	}, opts)
 }

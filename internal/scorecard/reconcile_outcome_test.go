@@ -482,3 +482,54 @@ func TestEmitForReconcile_NoScorecardDoesNoOutcomeWork(t *testing.T) {
 	_, err = os.Stat(filepath.Join(cfg, "atcr", "scorecard"))
 	assert.True(t, os.IsNotExist(err), "suppressed run must create no store directory")
 }
+
+// TestEmitForReconcile_TwoReviewerGrayZoneClusterChargesItsPair pins the
+// bridge half of the AC 05-01 gray-zone rule: an ambiguous cluster whose
+// distinct reviewers number exactly TWO becomes ONE canonical pair key in
+// EmitInput.GrayZonePairs, which the pair fold charges as one disagreement.
+// Singleton clusters (one reviewer) and 3+-reviewer clusters contribute
+// nothing — the same unattributable rule the severity-split fold applies.
+func TestEmitForReconcile_TwoReviewerGrayZoneClusterChargesItsPair(t *testing.T) {
+	reviewDir := t.TempDir()
+	writePoolSummary(t, reviewDir,
+		fanout.AgentStatus{Agent: "otto", Status: fanout.StatusOK, FindingsCount: 1, Model: "opus"},
+		fanout.AgentStatus{Agent: "sasha", Status: fanout.StatusOK, FindingsCount: 1, Model: "opus"},
+		fanout.AgentStatus{Agent: "bruce", Status: fanout.StatusOK, FindingsCount: 1, Model: "opus"},
+	)
+	res := resWith("otto")
+	res.Ambiguous = []reconcile.AmbiguousCluster{
+		{ID: "gz-pair", Findings: []reconcile.Finding{
+			{File: "a.go", Line: 1, Problem: "p", Reviewer: "otto"},
+			{File: "a.go", Line: 2, Problem: "q", Reviewer: "sasha"},
+		}},
+		// Singleton: contributes nothing.
+		{ID: "gz-single", Findings: []reconcile.Finding{
+			{File: "b.go", Line: 1, Problem: "p", Reviewer: "bruce"},
+		}},
+		// Three distinct reviewers: unattributable, contributes nothing.
+		{ID: "gz-trio", Findings: []reconcile.Finding{
+			{File: "c.go", Line: 1, Problem: "p", Reviewer: "otto"},
+			{File: "c.go", Line: 2, Problem: "q", Reviewer: "sasha"},
+			{File: "c.go", Line: 3, Problem: "r", Reviewer: "bruce"},
+		}},
+	}
+
+	recs := emitAndRead(t, reviewDir, res)
+	byName := map[string]Record{}
+	for _, r := range recs {
+		if r.RecordType == RecordTypeReviewer {
+			byName[r.Reviewer] = r
+		}
+	}
+	otto, ok := byName["otto"]
+	require.True(t, ok)
+	require.NotEmpty(t, otto.PairSignals, "the two-reviewer gray-zone cluster must charge its pair")
+	for _, s := range otto.PairSignals {
+		assert.Equal(t, 1, s.Disagreed, "exactly one gray-zone pair charged, exactly one item")
+		assert.Zero(t, s.Agreed)
+	}
+	bruce, ok := byName["bruce"]
+	require.True(t, ok)
+	assert.Empty(t, bruce.PairSignals,
+		"a reviewer appearing only in singleton/trio clusters is charged nothing")
+}

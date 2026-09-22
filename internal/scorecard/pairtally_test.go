@@ -737,7 +737,7 @@ func TestReviewerPairSignals_ThreeWaySplitIsNotChargedToEveryPair(t *testing.T) 
 	}}
 
 	for _, name := range []string{"bruce", "greta", "otto"} {
-		assert.Nil(t, reviewerPairSignals(name, findings),
+		assert.Nil(t, reviewerPairSignals(name, findings, nil),
 			"%s: a 3+-reviewer split names no pair and must contribute nothing", name)
 	}
 }
@@ -753,7 +753,7 @@ func TestReviewerPairSignals_TwoWaySplitIsAttributable(t *testing.T) {
 		Disagreement: "LOW vs HIGH",
 	}}
 	assert.Equal(t, []PairSignal{{Peer: "greta", Disagreed: 1}},
-		reviewerPairSignals("bruce", findings))
+		reviewerPairSignals("bruce", findings, nil))
 }
 
 func TestReviewerPairSignals_PeerNamesAreNormalizedAndDeduped(t *testing.T) {
@@ -768,7 +768,7 @@ func TestReviewerPairSignals_PeerNamesAreNormalizedAndDeduped(t *testing.T) {
 		Severity:  "HIGH",
 	}}
 	assert.Equal(t, []PairSignal{{Peer: "dax", Agreed: 1}},
-		reviewerPairSignals("Bruce", findings),
+		reviewerPairSignals("Bruce", findings, nil),
 		"one shared finding is one agreement, whatever the cell's whitespace and casing")
 }
 
@@ -935,7 +935,7 @@ func TestReviewerPairSignals_ClusterSizeDiscardIsSymmetric(t *testing.T) {
 	}
 	findings := []Finding{three("a.go", ""), three("b.go", "LOW vs HIGH")}
 
-	assert.Nil(t, reviewerPairSignals("bruce", findings),
+	assert.Nil(t, reviewerPairSignals("bruce", findings, nil),
 		"a cluster that is not exactly a pair must contribute neither an agreement nor a split")
 
 	// The two-reviewer complement still counts both, so the fix narrows the
@@ -945,7 +945,7 @@ func TestReviewerPairSignals_ClusterSizeDiscardIsSymmetric(t *testing.T) {
 		{File: "d.go", Line: 2, Problem: "q", Reviewers: []string{"bruce", "greta"}, Disagreement: "LOW vs HIGH"},
 	}
 	assert.Equal(t, []PairSignal{{Peer: "greta", Agreed: 1, Disagreed: 1}},
-		reviewerPairSignals("bruce", pair))
+		reviewerPairSignals("bruce", pair, nil))
 }
 
 func TestPairTallies_ThinEvidenceIsNeverADropCandidate(t *testing.T) {
@@ -1221,4 +1221,46 @@ func TestPairTallies_OpportunitySetRunsIsInTheSharedChain(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, tallies,
 		"a run the trust chain excludes must not produce pair evidence either")
+}
+
+// TestEmit_GrayZoneClusterChargesOneDisagreementToItsPair pins the AC 05-01
+// gray-zone charge rule (2026-09-22 clarification): each TWO-reviewer ambiguous
+// cluster contributes ONE disagreement evidence item to that pair — cluster-
+// shaped, not per-finding — so two clusters between the same pair charge twice,
+// and a gray-zone item never touches FindingsRaised or CategoriesRaised (the
+// pair surface only).
+func TestEmit_GrayZoneClusterChargesOneDisagreementToItsPair(t *testing.T) {
+	dir := t.TempDir()
+	key, ok := PairKey("otto", "sasha")
+	require.True(t, ok)
+	require.NoError(t, Emit(EmitInput{
+		RunID: pairRunID("gray-zone-charge"),
+		Reviewers: map[string]ReviewerMeta{
+			"otto":  {Model: "m1", Outcome: outcomeFindings},
+			"sasha": {Model: "m1", Outcome: outcomeFindings},
+		},
+		// TWO gray-zone clusters between the same pair: the charge is per
+		// cluster, so the pair's Disagreed is 2, not deduped to 1.
+		GrayZonePairs: []string{key, key},
+	}, EmitOpts{Dir: dir}))
+
+	records, err := ReadSince(dir, 0, time.Now(), ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	byName := map[string]Record{}
+	for _, r := range records {
+		if r.RecordType == RecordTypeReviewer {
+			byName[r.Reviewer] = r
+		}
+	}
+	require.Len(t, byName, 2)
+	otto, sok := byName["otto"]
+	require.True(t, sok)
+	sasha, ook := byName["sasha"]
+	require.True(t, ook)
+	require.Len(t, otto.PairSignals, 1)
+	assert.Equal(t, 2, otto.PairSignals[0].Disagreed, "one disagreement item per gray-zone cluster")
+	assert.Zero(t, otto.PairSignals[0].Agreed, "a gray-zone cluster is never an agreement")
+	require.Len(t, sasha.PairSignals, 1)
+	assert.Equal(t, 2, sasha.PairSignals[0].Disagreed, "the mirrored copy charges the same pair")
+	assert.Zero(t, otto.FindingsRaised, "the pair surface only: gray-zone items move no finding count")
 }

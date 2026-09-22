@@ -498,16 +498,14 @@ func pairTallies(records []Record) map[string]PairTally {
 // == 2 branch below); the 3+ discard is the deliberate design, not a defect
 // waiting for a fix here.
 //
-// WHAT THIS DOES NOT COVER, stated rather than left to be discovered: the
-// gray_zone half of AC 05-01 Scenario 1. A gray-zone pair is two near-duplicate
-// findings DBSCAN left unmerged, so its evidence is the AMBIGUOUS CLUSTER's
-// membership — and EmitInput.AmbiguousFindings is flattened to member findings,
-// losing exactly the cluster structure a pair needs. Recovering it means a new
-// cluster-shaped EmitInput field, and feeding that stream into pair COUNTS
-// would re-open TD-034's asymmetry in a new direction (an ambiguous finding
-// currently moves no count by design). Filed as TD rather than guessed at here.
-// Note the two gaps point the same way: both discard evidence, and the
-// drop-candidate flag is the thing that goes un-raised, never wrongly raised.
+// THE GRAY-ZONE HALF IS COVERED, by a field added for it rather than by this
+// fold's findings walk: EmitInput.GrayZonePairs carries one canonical pair key
+// per TWO-reviewer ambiguous cluster (the bridge derives it from res.Ambiguous,
+// where the cluster structure survives), and reviewerPairSignals charges each
+// key ONE disagreement item. Pair surface only — it never touches a finding
+// count, so TD-034's asymmetry (an ambiguous finding moves no count) holds in
+// the new stream too. Singleton and 3+-reviewer clusters contribute nothing,
+// the same unattributable rule the severity-split fold applies below.
 //
 // Peer names are TRIMMED, LOWER-CASED AND DEDUPED per finding, matching
 // distinctCount's documented reasoning at the same layer (Emit is exported, so
@@ -519,7 +517,7 @@ func pairTallies(records []Record) map[string]PairTally {
 // The result is sorted by peer so two byte-identical runs serialize
 // byte-identically; unsorted, a diff of the store reports Go's map iteration
 // order as churn.
-func reviewerPairSignals(name string, findings []Finding) []PairSignal {
+func reviewerPairSignals(name string, findings []Finding, grayZonePairs []string) []PairSignal {
 	self := normalizeReviewerName(name)
 	if self == "" {
 		return nil
@@ -562,6 +560,32 @@ func reviewerPairSignals(name string, findings []Finding) []PairSignal {
 			}
 			agreed[peer]++
 		}
+	}
+
+	// The gray-zone charge (AC 05-01 Scenario 1's gray_zone half, charge rule
+	// clarified 2026-09-22): each TWO-reviewer ambiguous cluster arrives as one
+	// canonical pair key and contributes exactly ONE disagreement evidence item
+	// to that pair — cluster-shaped, so duplicate keys from distinct clusters
+	// each count. Pair surface only: no finding count, no category, no record
+	// minting happens here or upstream of it.
+	for _, key := range grayZonePairs {
+		a, b, ok := strings.Cut(key, pairKeySep)
+		if !ok {
+			continue
+		}
+		var peer string
+		switch self {
+		case a:
+			peer = b
+		case b:
+			peer = a
+		default:
+			continue
+		}
+		if _, ok := PairKey(self, peer); !ok {
+			continue // blank, self, or delimiter-bearing
+		}
+		disagreed[peer]++
 	}
 
 	if len(agreed)+len(disagreed) == 0 {

@@ -588,7 +588,20 @@ type EmitInput struct {
 	// It is also simply truer to the field's name: a consensus-filtered finding
 	// WAS raised. Only its survival was denied.
 	AmbiguousFindings []Finding
-	VerificationPath  string
+	// GrayZonePairs holds ONE canonical PairKey per gray-zone cluster whose
+	// distinct reviewers number exactly TWO — the only cluster shape with an
+	// unambiguous pair to charge (a singleton has no pair; a 3+-reviewer
+	// cluster has no canonical pair, the same rule the severity-split fold
+	// applies). The charge rule (2026-09-22 clarification, closing the gray_zone
+	// half of AC 05-01 Scenario 1): each entry contributes ONE disagreement
+	// evidence item to that pair, ON THE PAIR SURFACE ONLY — it moves
+	// PairSignals.Disagreed and nothing else, never FindingsRaised,
+	// FindingsCorroborated or CategoriesRaised, so TD-034's asymmetry (an
+	// ambiguous finding moves no count) is preserved in the new stream.
+	// Duplicate keys are legitimate: two distinct gray-zone clusters between the
+	// same pair are two disagreements, not one.
+	GrayZonePairs    []string
+	VerificationPath string
 }
 
 // Emit computes per-reviewer metrics, builds one record per reviewer plus one
@@ -704,7 +717,7 @@ func Emit(in EmitInput, opts EmitOpts) error {
 			// merged set), and the ambiguous stream is documented as
 			// category-only — feeding it here would move a count it is
 			// deliberately kept out of.
-			PairSignals: reviewerPairSignals(name, in.Findings),
+			PairSignals: reviewerPairSignals(name, in.Findings, in.GrayZonePairs),
 			// Stamped unconditionally, including on a run with no pairs at all:
 			// the marker, not the slice, is what records that this run was
 			// measured. See PairEraCurrent.
