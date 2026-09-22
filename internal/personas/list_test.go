@@ -319,3 +319,69 @@ func TestSortScoredPersonas_NeverConsultsTheDetailFields(t *testing.T) {
 // both packages — that test is this literal's authority, named here so a reader
 // of internal/personas is not left holding a bare string with no provenance.
 const reasonOutcomeIneligibleForTest = "outcome-ineligible"
+
+// --- listProject error paths -------------------------------------------------
+
+// TestListProject_MissingDirIsNoRowsNoError pins the documented contract that an
+// absent project personas directory is a normal empty result, not a failure.
+func TestListProject_MissingDirIsNoRowsNoError(t *testing.T) {
+	metas, err := listProject(filepath.Join(t.TempDir(), "never-created"))
+	require.NoError(t, err)
+	assert.Empty(t, metas)
+}
+
+// TestListProject_UnstatableDirIsAnError separates "not there" from "there but
+// unreadable": a projectDir whose parent is a regular file stats as ENOTDIR, and
+// that must surface rather than silently read as an empty persona set.
+func TestListProject_UnstatableDirIsAnError(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "not-a-dir")
+	require.NoError(t, os.WriteFile(file, []byte("x"), 0o644))
+
+	metas, err := listProject(filepath.Join(file, "personas"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "could not read project personas directory")
+	assert.Nil(t, metas)
+}
+
+// TestListProject_WalkErrorPropagates covers the walk callback's error branch: a
+// subdirectory the process cannot open must fail the listing loudly instead of
+// returning a partial roster that looks like the whole thing.
+func TestListProject_WalkErrorPropagates(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permissions")
+	}
+	projectDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "bruce.md"), []byte("# bruce\n"), 0o644))
+	locked := filepath.Join(projectDir, "locked")
+	require.NoError(t, os.Mkdir(locked, 0o755))
+	require.NoError(t, os.Chmod(locked, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	_, err := listProject(projectDir)
+	require.Error(t, err)
+}
+
+// TestListProject_SkipsBaseTemplateAndSymlinks pins the two exclusions the walk
+// makes: _base.md is a shared template at any depth, and a symlink may point
+// outside projectDir so it is never followed.
+func TestListProject_SkipsBaseTemplateAndSymlinks(t *testing.T) {
+	projectDir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.md")
+	require.NoError(t, os.WriteFile(outside, []byte("# outside\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "_base.md"), []byte("# base\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "notes.txt"), []byte("ignored\n"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(projectDir, "team"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "team", "_base.md"), []byte("# nested base\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "team", "vera.md"), []byte("# vera\n"), 0o644))
+	require.NoError(t, os.Symlink(outside, filepath.Join(projectDir, "linked.md")))
+
+	metas, err := listProject(projectDir)
+	require.NoError(t, err)
+
+	var names []string
+	for _, m := range metas {
+		names = append(names, m.Name)
+		assert.Equal(t, "project", m.Source)
+	}
+	assert.ElementsMatch(t, []string{"team/vera"}, names)
+}
