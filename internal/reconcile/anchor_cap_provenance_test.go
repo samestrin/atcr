@@ -30,9 +30,9 @@ const nineAnchorProblem = "`aOne` `bTwo` `cThree` `dFour` `eFive` `fSix` `gSeven
 // anchor is the reviewer least likely to have meant".
 //
 // The RETURNED slice stays lexically sorted. Provenance decides only WHICH
-// anchors survive; extractAnchorSet's documented "deduped and lexically sorted"
-// contract is unchanged, and TestExtractAnchors_Deterministic still passes
-// unmodified.
+// anchors survive; scanProblemAnchors's documented "deduped and lexically
+// sorted" contract (which extractAnchorSet flattens through unchanged) still
+// holds, and TestExtractAnchors_Deterministic still passes unmodified.
 func TestExtractAnchors_CapPrefersDelimitedAnchors(t *testing.T) {
 	got, truncated := extractAnchorSet(nineAnchorProblem)
 
@@ -139,7 +139,7 @@ func TestRunReconcile_CapPrefersDelimitedAnchorEndToEnd(t *testing.T) {
 // provenance order and codepoint order agree and a missing re-sort is invisible.
 // This one is deliberately built so they DISAGREE — the surviving call-shape
 // anchor is lexically FIRST, so a returned slice in provenance order would put it
-// LAST. extractAnchorSet's doc promises "deduped and lexically sorted", and
+// LAST. scanProblemAnchors's doc promises "deduped and lexically sorted", and
 // consumers read the slice; leaking the cap's ranking into it would be a silent
 // contract change.
 func TestExtractAnchors_CapReturnsLexicalOrderAcrossProvenanceClasses(t *testing.T) {
