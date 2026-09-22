@@ -3256,3 +3256,92 @@ func TestAppend_RejectsOffEnumStatusAtTheStoreBoundary(t *testing.T) {
 	openRec.StampID()
 	require.NoError(t, Append(dir, openRec))
 }
+
+// foldIndex is the ONE implementation of the fold's two-rule precedence:
+// foldByID folds by it and retainForCompaction excludes by it, so a change to
+// rule 1 or rule 2 cannot silently diverge between the fold and retention —
+// there is nothing left to diverge. This pins the contract itself over the
+// corpus the duplication defect named: a suppressing record wins over a later
+// open one (rule 1 picks from the suppressing records ALONE, so latestIndex over
+// the whole group is the wrong answer for a wontfix id), recency re-opens a
+// regressed id (rule 2), same-second terminals rank by ClosedStatusRank, and
+// same-second same-status twins are told apart by POSITION — the twin that lost
+// the fold stays distinct instead of being excluded along with the winner, which
+// is what a value-keyed exclusion did.
+func TestFoldIndex_IsTheSingleFoldPrecedence(t *testing.T) {
+	base := func(id, ts, status, model, just string) Record {
+		rec := Record{
+			SchemaVersion: SchemaVersion,
+			ID:            id,
+			RunID:         ts + "-multi-agent",
+			Timestamp:     ts,
+			Severity:      "HIGH",
+			File:          "internal/thing.go",
+			Line:          42,
+			Problem:       "p",
+			Fix:           "f",
+			Category:      "correctness",
+			EstMinutes:    10,
+			Evidence:      "e",
+			Reviewers:     []string{"dax"},
+			Confidence:    "HIGH",
+			Status:        status,
+			Model:         model,
+			Justification: just,
+		}
+		return rec
+	}
+	// The property the single implementation owes both callers: what the fold
+	// selects for an id is exactly what foldIndex points at in that id's group.
+	checkAgrees := func(t *testing.T, group []Record) {
+		t.Helper()
+		require.NotEmpty(t, group)
+		folded := FoldRecords(group)
+		require.Len(t, folded, 1)
+		want := group[foldIndex(group)]
+		assert.Equal(t, want.Timestamp, folded[0].Timestamp)
+		assert.Equal(t, want.Status, folded[0].Status)
+		assert.Equal(t, want.Model, folded[0].Model)
+		assert.Equal(t, want.Justification, folded[0].Justification)
+	}
+
+	t.Run("rule 1: suppressing wins over a later open re-detection", func(t *testing.T) {
+		group := []Record{
+			base("id1", "2026-09-01T00:00:00Z", StatusWontfix, "m1", "reason"),
+			base("id1", "2026-09-02T00:00:00Z", "", "m1", ""),
+		}
+		assert.Equal(t, 0, foldIndex(group),
+			"rule 1 picks from the suppressing records alone; latestIndex over the whole group would name the open record")
+		checkAgrees(t, group)
+	})
+
+	t.Run("rule 2: a re-detection newer than a resolution re-opens the id", func(t *testing.T) {
+		group := []Record{
+			base("id2", "2026-09-01T00:00:00Z", "", "m1", "excerpt"),
+			base("id2", "2026-09-02T00:00:00Z", StatusResolved, "m1", "fixed"),
+			base("id2", "2026-09-03T00:00:00Z", "", "m1", "excerpt"),
+		}
+		assert.Equal(t, 2, foldIndex(group), "recency across the whole group, no suppressing record present")
+		checkAgrees(t, group)
+	})
+
+	t.Run("equal timestamps rank by ClosedStatusRank", func(t *testing.T) {
+		group := []Record{
+			base("id3", "2026-09-01T00:00:00Z", StatusResolved, "m1", "fixed"),
+			base("id3", "2026-09-01T00:00:00Z", StatusWontfix, "m1", "reason"),
+		}
+		assert.Equal(t, 1, foldIndex(group), "wontfix outranks resolved at an equal timestamp")
+		checkAgrees(t, group)
+	})
+
+	t.Run("same-second same-status twins are separated by position, not value", func(t *testing.T) {
+		group := []Record{
+			base("id4", "2026-09-01T00:00:00Z", StatusResolved, "m1", "fixed"),
+			base("id4", "2026-09-01T00:00:00Z", StatusResolved, "m2", "fixed"),
+		}
+		assert.Equal(t, 1, foldIndex(group), "a full tie is append order: last wins")
+		checkAgrees(t, group)
+		assert.Equal(t, "m2", group[foldIndex(group)].Model,
+			"the winner is the LAST twin; the m1 twin remains a distinct record for retention to consider")
+	})
+}

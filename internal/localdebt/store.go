@@ -881,28 +881,48 @@ func foldByID[T foldable](items []T) ([]T, map[string][]T) {
 	var folded []T
 	for _, id := range order {
 		group := byID[id]
-
-		// Rule 1: a suppressing record wins unconditionally. Among several, rank
-		// then recency decides — preserving the read-order independence divergent
-		// terminal records already relied on.
-		var suppressing []T
-		for _, it := range group {
-			if IsSuppressingStatus(it.foldStatus()) {
-				suppressing = append(suppressing, it)
-			}
-		}
-		if len(suppressing) > 0 {
-			folded = append(folded, latestItem(suppressing))
-			continue
-		}
-
-		// Rule 2: recency across open and non-suppressing-terminal records alike,
-		// so a re-detection newer than a resolution re-opens the id.
 		if len(group) > 0 {
-			folded = append(folded, latestItem(group))
+			folded = append(folded, group[foldIndex(group)])
 		}
 	}
 	return folded, byID
+}
+
+// foldIndex returns the position within one id's group that the fold's two-rule
+// precedence selects as effective — THE one implementation of that precedence.
+// foldByID applies it to pick what it folds to, and retainForCompaction applies
+// it to know which record NOT to retain again; one implementation answering both
+// questions is the property cli/debt_resolve.go's invariant asks for: a change
+// to rule 1 or rule 2 cannot silently diverge between the fold and retention,
+// because there is nothing left to diverge.
+//
+// Rule 1: a suppressing record wins unconditionally. Among several, rank then
+// recency decides — preserving the read-order independence divergent terminal
+// records already relied on. Rule 2: otherwise recency across open and
+// non-suppressing-terminal records alike, so a re-detection newer than a
+// resolution re-opens the id.
+//
+// Selection is by INDEX, never by value: inside one id group records are not
+// distinguishable by value (RunID derives from timestamp+status, so two records
+// written in the same second with the same status match on every field a
+// comparison would naturally reach for while differing in Model or
+// Justification). See latestIndex.
+func foldIndex[T foldable](group []T) int {
+	var suppressingIdx []int
+	for i := range group {
+		if IsSuppressingStatus(group[i].foldStatus()) {
+			suppressingIdx = append(suppressingIdx, i)
+		}
+	}
+	if len(suppressingIdx) == 0 {
+		return latestIndex(group) // rule 2: recency across the whole group
+	}
+	// Rule 1: among the suppressing records only, by the same latestItem rule.
+	suppressing := make([]T, 0, len(suppressingIdx))
+	for _, i := range suppressingIdx {
+		suppressing = append(suppressing, group[i])
+	}
+	return suppressingIdx[latestIndex(suppressing)]
 }
 
 // retainForCompaction is what compaction folds to: the effective record for each
@@ -1009,12 +1029,13 @@ func retainForCompaction(recs []Record) []Record {
 
 		// The effective record's own position. A suppressing (wontfix) record now
 		// reaches this line too, and it does NOT come from latestItem over the
-		// whole group — foldByID's rule 1 picks it from the suppressing records
-		// alone. effectiveIndex replays whichever of the two rules applied, so
-		// this is eff's index by construction, not a guess.
+		// whole group — the fold's rule 1 picks it from the suppressing records
+		// alone. foldIndex is the same single implementation foldByID applied to
+		// choose eff, so this is eff's index by construction, not a replay that
+		// can drift from the fold.
 		effIdx := -1
 		if len(group) > 0 {
-			effIdx = effectiveIndex(group)
+			effIdx = foldIndex(group)
 		}
 
 		// When eff itself bears rationale, a trail entry is owed only for text eff
@@ -1226,38 +1247,6 @@ func highestRankedTerminalIndex(terminals []Record) int {
 // section for why that is sound and what breaks it.
 func latestItem[T foldable](group []T) T {
 	return group[latestIndex(group)]
-}
-
-// effectiveIndex returns the position, within one id's group, of the record
-// foldByID selects as effective for that id.
-//
-// It exists because retainForCompaction must say "every record EXCEPT the
-// effective one" and foldByID has TWO selection rules, not one. Rule 1 picks a
-// suppressing record from the suppressing records alone, so latestIndex over the
-// whole group is the wrong answer for a wontfix id: it can name a LATER
-// non-suppressing record, which would let the real effective record be retained
-// a second time as its own trail entry while the rationale this retention exists
-// to preserve is dropped.
-//
-// It replays foldByID's rules rather than re-deriving them, and returns an index
-// for the reason latestIndex documents — inside one id group, identity is
-// position, never value.
-func effectiveIndex(group []Record) int {
-	var suppressingIdx []int
-	for i := range group {
-		if IsSuppressingStatus(group[i].Status) {
-			suppressingIdx = append(suppressingIdx, i)
-		}
-	}
-	if len(suppressingIdx) == 0 {
-		return latestIndex(group) // rule 2: recency across the whole group
-	}
-	// Rule 1: among the suppressing records only, by the same latestItem rule.
-	suppressing := make([]Record, 0, len(suppressingIdx))
-	for _, i := range suppressingIdx {
-		suppressing = append(suppressing, group[i])
-	}
-	return suppressingIdx[latestIndex(suppressing)]
 }
 
 // latestIndex is latestItem's selection rule, returning the winner's INDEX in
