@@ -677,7 +677,15 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 	// only a real guarantee for these two statuses while this branch has no
 	// bypass.
 	storedRationaleStandsIn := status == localdebt.StatusWontfix && isRecordedRationale(orig.Justification)
-	if status != localdebt.StatusResolved && strings.TrimSpace(reason) == "" && !storedRationaleStandsIn {
+	// A TYPED --reason clears the same content bar as a STORED justification
+	// standing in for one. The typed path used to clear only a whitespace check,
+	// so `--reason '(triple backtick)'` stored fence text as the ground-truth
+	// rationale the lens scoring reads back — while the same text arriving via a
+	// stored justification was rejected. isRecordedRationale takes a plain string
+	// and needs no new plumbing, so the fence/placeholder discount applies
+	// symmetrically, and the rejection is the same usage error the empty case gets.
+	typedRationaleUsable := strings.TrimSpace(reason) != "" && isRecordedRationale(reason)
+	if status != localdebt.StatusResolved && !typedRationaleUsable && !storedRationaleStandsIn {
 		return usageError(fmt.Errorf("--status %s requires --reason <justification>", status))
 	}
 
