@@ -149,6 +149,35 @@ func TestEmitForReconcile_CaseFoldedIdentityMintsOneRecord(t *testing.T) {
 		"Record.Reviewer must be the canonical normalized name")
 }
 
+// TestEmitForReconcile_RunIDCannotCollideAcrossSiblingDirectories closes the
+// RunID collision: RunID used to be ReconciledAt + filepath.Base(reviewDir), so
+// two reviews in DIFFERENT repositories whose review directories share a leaf
+// name and land in the same second produced the same id — merging their
+// opportunity-category unions (opportunityUnions keys on RunID, so one broad
+// run permanently widens every lens's remit) and max-collapsing their pair
+// evidence (pairTallies keys runsByPersona and evidence on it). The absolute
+// review-directory path must discriminate.
+func TestEmitForReconcile_RunIDCannotCollideAcrossSiblingDirectories(t *testing.T) {
+	// Two sibling directories with the IDENTICAL basename "review" under
+	// different roots — the shape two side-by-side checkouts produce.
+	reviewA := filepath.Join(t.TempDir(), "review")
+	reviewB := filepath.Join(t.TempDir(), "review")
+	for _, d := range []string{reviewA, reviewB} {
+		require.NoError(t, os.MkdirAll(filepath.Join(d, "reconciled"), 0o755))
+	}
+
+	recsA := emitAndRead(t, reviewA, resWith("bruce"))
+	recsB := emitAndRead(t, reviewB, resWith("bruce"))
+	require.NotEmpty(t, recsA)
+	require.NotEmpty(t, recsB)
+
+	assert.NotEqual(t, recsA[0].RunID, recsB[0].RunID,
+		"same-second runs from same-basename directories in different repos must not share a RunID")
+	// The extended id must still satisfy the store's shape contract.
+	assert.True(t, IsRunID(recsA[0].RunID),
+		"the discriminated RunID must still parse as a run_id (month prefix + T separator)")
+}
+
 // TestEmitForReconcile_RaisedIsTheAgentsPostEnforcementCount closes AC 02-02
 // Scenario 0, the parity test's stated blind spot.
 //
