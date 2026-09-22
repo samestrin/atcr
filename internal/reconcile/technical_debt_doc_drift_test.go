@@ -332,3 +332,47 @@ func TestTechnicalDebtDoc_CompactGuaranteeIsNotAnAbsolute(t *testing.T) {
 	assert.Contains(t, doc, "`wontfix` > `unreproducible` > `attempts-exhausted` > `resolved`",
 		"and must spell the rank that decides which reason survives, in ClosedStatusRank's order")
 }
+
+// TestBackfillSkipSetProseKeysOnRationaleNotSettledness pins both prose surfaces
+// that describe which records `backfill-justifications` declines to scan.
+//
+// The gate is bearsRationale (internal/localdebt/record.go), not IsSettledStatus:
+// Story 36.0 is exactly where those two stopped selecting the same records.
+// `attempts-exhausted` is deliberately NOT settled — it is unfinished work that
+// must stay closeable — yet `--reason` is mandatory for it, so it always carries
+// the operator text the skip exists to protect. Both surfaces still described the
+// skip set as "a resolved or wontfix record is settled", which names two of the
+// four skipped statuses and gives a criterion the code no longer uses. An
+// operator reading either one concludes their unreproducible and
+// attempts-exhausted rationales are in scope for overwrite.
+//
+// Asserted on BOTH sides, the way this file's siblings are: pinning only the
+// catalog catches a doc edit and not a help-text edit, and the help text is what
+// an operator reads at the moment they decide to run the repair.
+func TestBackfillSkipSetProseKeysOnRationaleNotSettledness(t *testing.T) {
+	doc := technicalDebtDoc(t)
+	b, err := os.ReadFile(backfillSourcePath)
+	require.NoError(t, err, "the backfill command source must be readable from this package")
+	help := string(b)
+
+	for _, tc := range []struct {
+		name string
+		text string
+	}{
+		{"published catalog", doc},
+		{"command help text", help},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.NotContains(t, tc.text, "is settled, and its justification may be",
+				"the skip set must not be justified by settledness: attempts-exhausted is skipped and is NOT settled")
+			assert.NotContains(t, tc.text, "record is settled and is never scanned",
+				"same — the criterion the code uses is bearsRationale, not IsSettledStatus")
+			for _, status := range []string{"resolved", "wontfix", "unreproducible", "attempts-exhausted"} {
+				assert.Contains(t, tc.text, status,
+					"the skip set must name every status bearsRationale covers, including %q", status)
+			}
+			assert.Contains(t, tc.text, "cannot be replayed",
+				"and must give the reason the skip exists — the operator text exists nowhere else")
+		})
+	}
+}
