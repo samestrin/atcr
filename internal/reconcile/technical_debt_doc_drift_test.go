@@ -120,15 +120,144 @@ func TestTechnicalDebtDoc_SchemaStatusRowListsEveryStatus(t *testing.T) {
 	}
 }
 
+// statusLifetimeCell returns the trimmed Lifetime column value from a
+// "| `status` | Lifetime | Rationale |" row of the Status lifetimes table.
+func statusLifetimeCell(t *testing.T, row string) string {
+	t.Helper()
+	cells := strings.Split(row, "|")
+	require.GreaterOrEqual(t, len(cells), 3,
+		"a Status lifetimes row must have a Status cell and a Lifetime cell: %q", row)
+	return strings.TrimSpace(cells[2])
+}
+
+// debtStatusPredicateSets derives, straight from record.go's AST, the status
+// value sets IsSuppressingStatus and IsSettledStatus each return true for —
+// the same "read it from the source, not a hand-typed list" idiom
+// closedStatusRankChain and localdebtTerminalStatuses already use. Importing
+// internal/localdebt directly is not an option here: localdebt imports this
+// package (backfill.go), so a test-time import back into it is a cycle.
+func debtStatusPredicateSets(t *testing.T) (suppressing, settled map[string]bool) {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, filepath.Join(localdebtRecordSourceDir, "record.go"), nil, 0)
+	require.NoError(t, err, "parsing record.go")
+
+	constValues := map[string]string{}
+	for _, decl := range f.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for i, ident := range vs.Names {
+				if i >= len(vs.Values) {
+					continue
+				}
+				lit, ok := vs.Values[i].(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					continue
+				}
+				v, err := strconv.Unquote(lit.Value)
+				require.NoError(t, err)
+				constValues[ident.Name] = v
+			}
+		}
+	}
+
+	suppressing = map[string]bool{}
+	settled = map[string]bool{}
+
+	ast.Inspect(f, func(n ast.Node) bool {
+		fn, ok := n.(*ast.FuncDecl)
+		if !ok {
+			return true
+		}
+		switch fn.Name.Name {
+		case "IsSuppressingStatus":
+			ast.Inspect(fn, func(n ast.Node) bool {
+				bin, ok := n.(*ast.BinaryExpr)
+				if !ok || bin.Op != token.EQL {
+					return true
+				}
+				if ident, ok := bin.Y.(*ast.Ident); ok {
+					if v, ok := constValues[ident.Name]; ok {
+						suppressing[v] = true
+					}
+				}
+				return false
+			})
+			return false
+		case "IsSettledStatus":
+			ast.Inspect(fn, func(n ast.Node) bool {
+				cc, ok := n.(*ast.CaseClause)
+				if !ok || len(cc.List) == 0 {
+					return true
+				}
+				returnsTrue := false
+				for _, stmt := range cc.Body {
+					ret, ok := stmt.(*ast.ReturnStmt)
+					if !ok || len(ret.Results) != 1 {
+						continue
+					}
+					if id, ok := ret.Results[0].(*ast.Ident); ok && id.Name == "true" {
+						returnsTrue = true
+					}
+				}
+				if !returnsTrue {
+					return true
+				}
+				for _, expr := range cc.List {
+					if ident, ok := expr.(*ast.Ident); ok {
+						if v, ok := constValues[ident.Name]; ok {
+							settled[v] = true
+						}
+					}
+				}
+				return true
+			})
+			return false
+		}
+		return true
+	})
+
+	require.NotEmpty(t, suppressing, "IsSuppressingStatus's AST shape drifted from this scan")
+	require.NotEmpty(t, settled, "IsSettledStatus's AST shape drifted from this scan")
+	return suppressing, settled
+}
+
 // TestTechnicalDebtDoc_StatusLifetimesTableHasARowPerStatus covers passage 2 of
-// 5: the Status lifetimes table, which must carry one row per terminal status.
+// 5: the Status lifetimes table, which must carry one row per terminal status,
+// and that row's Lifetime column must agree with what internal/localdebt's own
+// suppressing/settled predicates say about that status. Checking only that a
+// row exists would still pass a row whose Lifetime cell said the wrong thing.
 func TestTechnicalDebtDoc_StatusLifetimesTableHasARowPerStatus(t *testing.T) {
 	doc := technicalDebtDoc(t)
+	suppressing, settled := debtStatusPredicateSets(t)
 	for _, status := range localdebtTerminalStatuses(t) {
-		_, ok := docPassage(t, doc, "| `"+status+"` |")
-		assert.True(t, ok,
+		row, ok := docPassage(t, doc, "| `"+status+"` |")
+		require.True(t, ok,
 			"the Status lifetimes table has no row of its own for %q, so an operator "+
 				"cannot learn whether it survives a re-detection", status)
+
+		lifetime := statusLifetimeCell(t, row)
+		switch {
+		case suppressing[status]:
+			assert.Equal(t, "Terminal", lifetime,
+				"%q suppresses further detection, so its Lifetime cell must read "+
+					"\"Terminal\", not %q", status, lifetime)
+		case settled[status]:
+			assert.Equal(t, "Re-openable on re-detection", lifetime,
+				"%q is settled but not suppressing, so its Lifetime cell must read "+
+					"\"Re-openable on re-detection\", not %q", status, lifetime)
+		default:
+			assert.Equal(t, "Re-surfaces on re-detection", lifetime,
+				"%q is neither settled nor suppressing, so its Lifetime cell must read "+
+					"\"Re-surfaces on re-detection\", not %q", status, lifetime)
+		}
 	}
 }
 
