@@ -362,6 +362,11 @@ func newBenchmarkExportCmd() *cobra.Command {
 // so tests can shrink it.
 var maxRunResultBytes int64 = 32 << 20 // 32 MiB
 
+// osOpen is the open seam readRunResultLimited reads through, so tests can stage
+// an os.Open failure in environments where no permission fixture can produce one
+// (chmod does not block root, and root is what CI containers commonly run as).
+var osOpen = os.Open
+
 // errRunResultTooLarge reports a run-result exceeding maxRunResultBytes. Export
 // fails loudly rather than reading an untrusted file unbounded.
 var errRunResultTooLarge = errors.New("run-result exceeds size limit")
@@ -378,7 +383,7 @@ func readRunResultLimited(path string) ([]byte, error) {
 	if fi.Size() > maxRunResultBytes {
 		return nil, fmt.Errorf("%w: %s is %d bytes (limit %d)", errRunResultTooLarge, path, fi.Size(), maxRunResultBytes)
 	}
-	f, err := os.Open(path)
+	f, err := osOpen(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading run-result %s: %w", path, err)
 	}
