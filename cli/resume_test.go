@@ -188,7 +188,10 @@ func seedTrustedReviewer(t *testing.T, reviewer string) {
 	stamp := time.Now().UTC().Format(time.RFC3339)
 	for i := 0; i < scorecard.DefaultTrustMinRuns; i++ {
 		require.NoError(t, scorecard.Append(dir, scorecard.Record{
-			SchemaVersion:        1,
+			// The live constant, not a literal: the sprint bumped the schema to 2 and
+			// this fixture stayed at 1, so the next bump would silently strand the
+			// fixture on a stale shape instead of tracking the vocabulary.
+			SchemaVersion:        scorecard.SchemaVersion,
 			RecordType:           scorecard.RecordTypeReviewer,
 			Outcome:              benchmark.OutcomeFindings,
 			RunID:                fmt.Sprintf("%s-r%02d", stamp, i),
