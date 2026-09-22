@@ -223,7 +223,7 @@ func debtStatusBucket(status string) string {
 	case localdebt.StatusAttemptsExhausted:
 		return localdebt.StatusAttemptsExhausted
 	default:
-		return "open"
+		return statusOpen
 	}
 }
 

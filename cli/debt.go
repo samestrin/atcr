@@ -307,6 +307,23 @@ func newDebtListCmd() *cobra.Command {
 	return cmd
 }
 
+// statusOpen is the CLI's word for the EMPTY on-disk status.
+//
+// It is deliberately NOT a localdebt.Status* constant, and that asymmetry is the
+// point: internal/localdebt spells out the statuses a record can CARRY, and an
+// open record carries "" — the value the reconcile hook writes. localdebt treats
+// "" and "open" distinctly (normalizeStatus never yields "open"), so a
+// localdebt.StatusOpen would name a value the store never stores, and would drag
+// `debt resolve`'s vocabulary into documenting an exclusion for a status that is
+// not a status.
+//
+// What it must not stay is a bare literal repeated across the CLI's own
+// vocabularies: that put the one word `debt add`, `debt list` and add's
+// open-to-empty translation all agree on outside every guard, where a typo in one
+// of them is a runtime mismatch rather than a compile error. Spelled once here,
+// it is the same kind of safety net record.go's constants give their own layer.
+const statusOpen = "open"
+
 // debtListStatuses is the accepted --status enum for `debt list`. It is the six
 // buckets debtStatusBucket renders, NOT debt_add's narrower set: `wontfix`,
 // `unreproducible` and `attempts-exhausted` cannot be FILED by add (each needs
@@ -314,7 +331,7 @@ func newDebtListCmd() *cobra.Command {
 // must stay filterable. A status that renders but cannot be filtered is worse
 // than a hidden one — the operator can see the row and has no way to select it.
 var debtListStatuses = map[string]bool{
-	"open":                            true,
+	statusOpen:                        true,
 	localdebt.StatusDeferred:          true,
 	localdebt.StatusResolved:          true,
 	localdebt.StatusWontfix:           true,
