@@ -22,10 +22,10 @@ const predicateRuleAnchor = "enumerate every branch of that predicate and every 
 // changed range, an EVIDENCE match against changed text, or — for a file present
 // ONLY because context-aware pre-fetching retrieved a snippet of it — a line
 // inside an exact retrieved span (the PrefetchOnly arm,
-// internal/fanout/grounding.go:84-86). That sixth arm is strictly NARROWER than
+// internal/fanout/grounding.go:94-96). That sixth arm is strictly NARROWER than
 // the others rather than an extra allowance: it bypasses the file-level and
 // binary/mode fail-open arms, both of which are justified by the patch having
-// demonstrably touched the file (internal/fanout/grounding.go:66-97).
+// demonstrably touched the file (internal/fanout/grounding.go:97-101).
 //
 // A finding whose only citation is the untouched sibling line clears none of
 // them, so a reviewer that correctly spots the asymmetry and cites the sibling
