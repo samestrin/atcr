@@ -19,7 +19,7 @@ import (
 type PersonaMeta struct {
 	Name     string
 	Version  string
-	Source   string // "built-in" | "community"
+	Source   string // "project" | "community" | "built-in" | "registry"
 	Language []string
 }
 
@@ -186,11 +186,21 @@ func ListTiersWithScores(projectDir, communityDir string, scores map[string]floa
 // sorts the result. Both maps are read with the same strings.ToLower(m.Name) key
 // the rate lookup has always used, so a persona cannot be present in one and
 // missed in the other for a casing reason.
+//
+// The roster is the join's LEFT side, not its universe. A reviewer that has
+// scorecard history but ships no persona file — the registry runs thirteen
+// lenses against nine persona files — would otherwise be looked up, found, and
+// then discarded with no row and no notice. appendRegistryOnly below emits
+// those keys as their own rows, because `personas list --scores` is the audit
+// surface for lens authority and a measured lens it cannot show is the one
+// omission that surface cannot afford.
 func joinScores(metas []PersonaMeta, scores map[string]float64, details map[string]ScoreDetail) []ScoredPersona {
 	scored := make([]ScoredPersona, 0, len(metas))
+	seen := make(map[string]struct{}, len(metas))
 	for _, m := range metas {
 		sp := ScoredPersona{PersonaMeta: m}
 		key := strings.ToLower(m.Name)
+		seen[key] = struct{}{}
 		if rate, ok := scores[key]; ok && !math.IsNaN(rate) {
 			r := rate
 			sp.Rate = &r
@@ -208,7 +218,54 @@ func joinScores(metas []PersonaMeta, scores map[string]float64, details map[stri
 		}
 		scored = append(scored, sp)
 	}
+	scored = appendRegistryOnly(scored, seen, scores, details)
 	sortScoredPersonas(scored)
+	return scored
+}
+
+// appendRegistryOnly emits one row per scored key that no roster persona
+// claimed, so a lens measured by the scorecard is never dropped for lacking a
+// persona file. seen holds the strings.ToLower keys the roster already
+// consumed — the SAME casing convention both lookups use, so a mixed-case
+// roster entry is matched here rather than re-emitted as a phantom lens.
+//
+// It unions BOTH maps rather than reading rates alone: scorecard omits a lens
+// from both or from neither today, but a rates-only tail would silently
+// re-open this hole one map narrower the first time that changes.
+//
+// The row is labeled Source "registry" and Version "-" — the marker a community
+// persona with no declared version already uses. It is deliberately not
+// "built-in" or "community": the lens has no persona file at all, and naming
+// where it does come from is what tells a maintainer to add one (or to repoint
+// the registry) rather than to go hunting for a file that was never there.
+// A NaN rate is dropped to nil for the same reason the roster path drops it,
+// leaving Rate n/a while the row itself still appears.
+func appendRegistryOnly(scored []ScoredPersona, seen map[string]struct{}, scores map[string]float64, details map[string]ScoreDetail) []ScoredPersona {
+	extra := make([]string, 0, len(scores)+len(details))
+	for key := range scores {
+		if _, ok := seen[key]; !ok {
+			seen[key] = struct{}{}
+			extra = append(extra, key)
+		}
+	}
+	for key := range details {
+		if _, ok := seen[key]; !ok {
+			seen[key] = struct{}{}
+			extra = append(extra, key)
+		}
+	}
+	for _, key := range extra {
+		sp := ScoredPersona{PersonaMeta: PersonaMeta{Name: key, Version: "-", Source: "registry"}}
+		if rate, ok := scores[key]; ok && !math.IsNaN(rate) {
+			r := rate
+			sp.Rate = &r
+		}
+		if d, ok := details[key]; ok {
+			detail := d
+			sp.Detail = &detail
+		}
+		scored = append(scored, sp)
+	}
 	return scored
 }
 
