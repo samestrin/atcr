@@ -146,6 +146,14 @@ func explainTrustPriorsSince(dir string, minRuns int, since time.Duration, now t
 		// missing for an I/O reason and call it a scoring decision.
 		return map[string]PersonaScoreDetail{}, nil
 	}
+	return detailsFromRecords(records, minRuns), nil
+}
+
+// detailsFromRecords is explainTrustPriorsSince's post-read body: the
+// link-by-link walk, the per-record disposition notes and the floor, over an
+// already-read record slice. Split out so TrustPriorsAndDetails can feed it the
+// same records the rates fold reads, instead of re-reading the store.
+func detailsFromRecords(records []Record, minRuns int) map[string]PersonaScoreDetail {
 
 	// The chain is walked link by link rather than in one keptForTrust call
 	// because the QUESTION here is which link dropped a record, and a single
@@ -255,7 +263,7 @@ func explainTrustPriorsSince(dir string, minRuns int, since time.Duration, now t
 	// ExplainTrustPriors, so `personas list --scores` was reading the store twice
 	// and evaluating the filter chain three times over a store that is already
 	// thousands of records and has no rotation.
-	return applyExplainFloor(details, opportunitySetRuns(afterEra, unions), minRuns), nil
+	return applyExplainFloor(details, opportunitySetRuns(afterEra, unions), minRuns)
 }
 
 // applyExplainFloor keeps exactly the personas TrustPriors would key, so the two

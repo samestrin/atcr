@@ -598,6 +598,38 @@ func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Tim
 		// store yields.
 		return map[string]float64{}, nil
 	}
+	return ratesFromRecords(records, minRuns, gt, since, now), nil
+}
+
+// TrustPriorsAndDetails is the single-read entry point the --scores surface
+// consumes: ONE ReadSince of the store feeding BOTH the corroboration rates and
+// the explainability details, where calling TrustPriors and ExplainTrustPriors
+// separately reads the whole unrotated store twice and evaluates the filter
+// chain redundantly. Both public faces remain thin wrappers over their own
+// *Since bodies, so a caller using only one surface pays for one read as before.
+//
+// The parity contract — this function's maps equal the two public faces' maps
+// over the same store — is pinned by
+// TestTrustPriorsAndDetails_AgreesWithTheTwoPublicFaces.
+//
+// The nil ground-truth lookup is the same contract TrustPriors itself declares:
+// the combined surface serves the binary-rate CLI path, and a caller with a debt
+// ledger calls TrustPriorsWithGroundTruth instead.
+func TrustPriorsAndDetails(dir string, minRuns int) (map[string]float64, map[string]PersonaScoreDetail, error) {
+	records, err := ReadSince(dir, 0, time.Now(), ReadOpts{Writer: io.Discard})
+	if err != nil {
+		// Fail neutral exactly as each single-read face does on a truncated
+		// store: empty maps, nil error — never priors computed from a partial
+		// read beside details computed from the same partial read under a
+		// different truncation point.
+		return map[string]float64{}, map[string]PersonaScoreDetail{}, nil
+	}
+	return ratesFromRecords(records, minRuns, nil, 0, time.Now()), detailsFromRecords(records, minRuns), nil
+}
+
+// ratesFromRecords is trustPriorsSince's post-read body: the filter chain,
+// the aggregate and the minRuns floor over an already-read record slice.
+func ratesFromRecords(records []Record, minRuns int, gt GroundTruthLookup, since time.Duration, now time.Time) map[string]float64 {
 
 	type tally struct{ runs, corroborated, raised int }
 	byReviewer := map[string]*tally{}
@@ -661,7 +693,7 @@ func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Tim
 		}
 		rates[name] = weightedRate(t.corroborated, t.raised, weights[name], confirmations[name], minRuns)
 	}
-	return rates, nil
+	return rates
 }
 
 // weightedRate is where C18's two halves meet: the ISOLATION half read off the

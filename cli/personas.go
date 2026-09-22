@@ -48,12 +48,11 @@ func loadPersonasScores(_ io.Writer) (personasScoreData, error) {
 	if err != nil {
 		return personasScoreData{}, err
 	}
-	// TrustPriors is best-effort by contract: it never returns a non-nil error.
-	rates, _ := scorecard.TrustPriors(dir, 0)
-	// ExplainTrustPriors is best-effort on the same terms and reads the same
-	// store over the same chain, so its membership matches rates exactly. It is
-	// called IN ADDITION to TrustPriors, never instead of it (D4).
-	details, _ := scorecard.ExplainTrustPriors(dir, 0)
+	// TrustPriorsAndDetails reads the store ONCE and returns both maps, with
+	// each map identical to the corresponding public face over the same store
+	// (pinned scorecard-side). Both faces are best-effort by contract — they
+	// never return a non-nil error — so the combined call keeps that shape.
+	rates, details, _ := scorecard.TrustPriorsAndDetails(dir, 0)
 	return personasScoreData{rates: rates, details: details, path: dir}, nil
 }
 

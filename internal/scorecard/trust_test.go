@@ -2744,3 +2744,38 @@ func TestTrustPriors_ZeroRaisedContributionsCannotBuyTheFloor(t *testing.T) {
 	assert.NotContains(t, rates, "dax",
 		"evidence-free records must not carry a lens over the floor into a published 1.0000 prior")
 }
+
+// TestTrustPriorsAndDetails_AgreesWithTheTwoPublicFaces pins the single-read
+// entry point cli/personas.go consumes: one ReadSince must yield exactly the
+// maps TrustPriors and ExplainTrustPriors produce when each reads the store
+// itself. Divergence here would mean `personas list --scores` renders numbers
+// computed from a different record set than the two public faces document.
+func TestTrustPriorsAndDetails_AgreesWithTheTwoPublicFaces(t *testing.T) {
+	dir := t.TempDir()
+	appendN(t, dir, 4, "Sasha", "opus", 2, 1)
+	appendN(t, dir, 4, "bruce", "opus", 1, 1)
+
+	wantRates, err := TrustPriors(dir, 0)
+	require.NoError(t, err)
+	wantDetails, err := ExplainTrustPriors(dir, 0)
+	require.NoError(t, err)
+
+	gotRates, gotDetails, err := TrustPriorsAndDetails(dir, 0)
+	require.NoError(t, err)
+	assert.Equal(t, wantRates, gotRates,
+		"the combined read must produce TrustPriors' rates exactly")
+	assert.Equal(t, wantDetails, gotDetails,
+		"the combined read must produce ExplainTrustPriors' details exactly")
+}
+
+// TestTrustPriorsAndDetails_MissingStoreIsFailNeutral pins the combined entry
+// point's contract on a missing store: empty maps and nil error, the same
+// fail-neutral posture both public faces document.
+func TestTrustPriorsAndDetails_MissingStoreIsFailNeutral(t *testing.T) {
+	rates, details, err := TrustPriorsAndDetails(filepath.Join(t.TempDir(), "absent"), 0)
+	require.NoError(t, err)
+	require.NotNil(t, rates)
+	require.NotNil(t, details)
+	assert.Empty(t, rates)
+	assert.Empty(t, details)
+}
