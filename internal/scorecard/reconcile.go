@@ -97,6 +97,16 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 			// which the modal value answers faithfully. It would NOT be sound
 			// for a per-reviewer claim about what that lens personally raised,
 			// and nothing may read it as one.
+			//
+			// DEFERRED (2026-09-22 clarification): carrying the per-source
+			// category alongside the modal one is NOT fixable here. Option (a)
+			// threads it through reconcile.Merged — a published-module change
+			// (tag-cut + pin-bump) reserved for TD-039's sprint per C22/D3.
+			// Option (b), passing the pre-merge group to this bridge, is
+			// impossible as stated: reconcile.Merged is struct{Finding} only
+			// (reconcile/merge.go), so the pre-merge group is not retained. No
+			// consumer needs per-source category today; this annotation is the
+			// record of that deferral.
 			Category: m.Category,
 			// Threaded at THIS site ONLY, and the asymmetry with Category just
 			// above is deliberate rather than an oversight. reviewerPairSignals
