@@ -414,8 +414,15 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 			// whole block before the line is reached. A test that makes the path
 			// unreadable up front therefore never gets here and would pin the
 			// wrong line. Do not write one. (Same treatment as the other
-			// unreachable failure arms in this repo:
-			// internal/sandbox/oslevel.go and internal/fanout/reviewdir.go.)
+			// unreachable failure arms in this repo: internal/sandbox/oslevel.go,
+			// and the ErrEmptyRoster arm after fanout.ExecuteReview in
+			// executeRepoStateBenchmarkRun, cli/benchmark_repostate.go, which is
+			// likewise kept defensively and deliberately carries no test.
+			// Both are named by IDENTIFIER, not by line: a convention claim a
+			// reader cannot grep for invites them to add the test this comment
+			// forbids, and a line-numbered one silently re-aims on any edit above
+			// it. internal/fanout/reviewdir.go used to be cited here and carries
+			// no such arm at all — do not restore it.)
 			log.FromContext(ctx).Warn("debate: could not snapshot verification.json before rewriting it", "path", verPath, "err", rerr)
 		} else {
 			artifacts = append(artifacts, atomicwrite.Entry{Path: verPath + debateBakSuffix, Data: prior})
