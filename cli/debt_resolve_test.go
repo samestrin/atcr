@@ -505,6 +505,39 @@ func TestDebtResolve_WontfixRequiresReasonOrJustification(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// A TYPED --reason used to clear only a whitespace check, while a STORED
+// justification standing in for one had to clear isRecordedRationale's
+// fence/placeholder bar — two very different content bars for the same field
+// depending on who wrote it. Reproduced: `--reason '(triple backtick)'` stored
+// fence text as the ground-truth rationale lens scoring reads back. The typed
+// path clears the same bar now.
+func TestDebtResolve_TypedReasonMeetsTheSameContentBar(t *testing.T) {
+	for _, status := range []string{"wontfix", "unreproducible", "attempts-exhausted"} {
+		for name, reason := range map[string]string{
+			"bare fence":       "```\n\n```",
+			"dangling opener":  "```\nsome quoted example text",
+			"placeholder only": reconcile.ElidedQuotePlaceholder,
+			"whitespace only":  "   ",
+		} {
+			t.Run(status+"/"+name, func(t *testing.T) {
+				rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+				dir := writeDebtStore(t, rec)
+				_, err := runDebt(t, "resolve", "--dir", dir, rec.ID, "--status", status, "--reason", reason)
+				require.Error(t, err, "a reason that is nothing but quoted example text is not an audit trail")
+				assert.Equal(t, exitUsage, exitCode(err))
+				assert.Contains(t, err.Error(), "requires --reason")
+			})
+		}
+	}
+
+	// Real prose still passes on every gated status.
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID,
+		"--status", "attempts-exhausted", "--reason", "tried a reindex and a schema diff; both came back clean")
+	require.NoError(t, err, "a typed reason with actual prose must still be accepted")
+}
+
 func TestDebtResolve_ReasonPopulatesJustification(t *testing.T) {
 	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
 	dir := writeDebtStore(t, rec)
