@@ -141,9 +141,13 @@ type ScoreDetail struct {
 // which renders as "n/a" (distinct from a real 0.0 rate).
 //
 // Detail is nil on exactly the personas whose Rate is nil — scorecard keys its
-// priors map and its explainability map identically and omits a below-floor or
-// fully-dropped lens from both, so the two are never half-present. Detail is
-// ADDITIVE to Rate and is never consulted by sortScoredPersonas.
+// priors map and its explainability map identically and omits a lens from both
+// or from neither, so the two are never half-present. Whether a membership floor
+// contributes to that omission is the CALLER's choice of minRuns; `personas list
+// --scores` passes 0, so on that path absence means "no usable history", never
+// "under-sampled". Detail is ADDITIVE to Rate and is never consulted by
+// sortScoredPersonas, which is why a thin sample is marked by the renderer
+// rather than by the ordering.
 type ScoredPersona struct {
 	PersonaMeta
 	Rate   *float64
@@ -192,10 +196,12 @@ func joinScores(metas []PersonaMeta, scores map[string]float64, details map[stri
 			sp.Rate = &r
 		}
 		// Comma-ok, never a bare lookup: a persona absent from the detail map has
-		// no history (or sits below DefaultTrustMinRuns, which scorecard reports
-		// the same way), and the zero-valued struct a bare lookup returns would
-		// render as "0 counted" — "measured, found nothing", the opposite of the
-		// truth. nil Detail is the "no data" marker, matching nil Rate.
+		// no usable history (or, when the CALLER passed a non-zero minRuns, sits
+		// below it — scorecard reports the two the same way, and `personas list
+		// --scores` passes 0 so only the first case arises there). The zero-valued
+		// struct a bare lookup returns would render as "0 counted" — "measured,
+		// found nothing", the opposite of the truth. nil Detail is the "no data"
+		// marker, matching nil Rate.
 		if d, ok := details[key]; ok {
 			detail := d
 			sp.Detail = &detail

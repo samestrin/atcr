@@ -1028,7 +1028,11 @@ func TestFormatScoreDetail_ZeroExclusionsIsDistinctFromNoData(t *testing.T) {
 	measured := formatScoreDetail(&personas.ScoreDetail{Counted: 12})
 	noData := formatScoreDetail(nil)
 
-	assert.Equal(t, "12 counted · 0 excluded", measured)
+	// 12 is under DefaultTrustMinRuns, so the row also carries the provisional
+	// marker. That is additive to the contrast this test is about, and asserting
+	// the WHOLE rendered string keeps it honest: a measured-but-thin sample must
+	// still be visibly distinct from a never-measured one.
+	assert.Equal(t, "12 counted · 0 excluded · provisional (under the 20-case trust floor)", measured)
 	assert.Equal(t, "n/a", noData)
 	assert.NotEqual(t, measured, noData)
 	assert.NotContains(t, noData, "0",
@@ -1077,9 +1081,9 @@ func TestDocs_PersonasInstallMdDocumentsTheCasesColumn(t *testing.T) {
 			scorecard.ReasonOutcomeIneligible:    3,
 		},
 	})
-	require.Equal(t, "12 counted (4 unlabelled) · 3 excluded (outcome-ineligible)", sample,
+	require.Equal(t, "12 counted (4 unlabelled) · 3 excluded (outcome-ineligible) · provisional (under the 20-case trust floor)", sample,
 		"guard on the guard: if the cell format changes, the substrings below are re-derived, not silently relaxed")
-	for _, fragment := range []string{"counted", "unlabelled", "excluded"} {
+	for _, fragment := range []string{"counted", "unlabelled", "excluded", "provisional"} {
 		assert.Contains(t, sample, fragment)
 		assert.Contains(t, doc, fragment,
 			"every word the CASES cell prints must appear in the doc that explains it")

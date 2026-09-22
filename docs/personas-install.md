@@ -88,7 +88,7 @@ Columns: `NAME`, `VERSION` (`built-in` for the built-in personas; the installed 
 atcr personas list --scores
 # NAME             VERSION    SOURCE      LANGUAGE  CORROBORATION  CASES
 # security/owasp   1.2.0      community   -         72.4%          31 counted · 8 excluded (outcome-ineligible)
-# greta            built-in   built-in    -         55.0%          12 counted (3 unlabelled) · 0 excluded
+# greta            built-in   built-in    -         55.0%          12 counted (3 unlabelled) · 0 excluded · provisional (under the 20-case trust floor)
 # sasha            built-in   built-in    -         n/a            n/a
 ```
 
@@ -99,7 +99,8 @@ The rate is the fraction of a persona's findings that other reviewers or the ver
 - `N counted` — the cases the rate actually rests on.
 - `(N unlabelled)` — of those, how many raised findings the scorer could not attribute to a topic. Counted and charged, not excluded.
 - `N excluded (reason)` — cases set aside, with the largest single reason named. The reason is one of `outcome-ineligible` (the reviewer never got a fair attempt: a timeout, a truncated response, an unparseable one) or `category-not-in-opportunity-set` (the case was outside that lens's remit, so its silence is neither credited nor penalised). The excluded figure is always shown, including at `0`.
-- `n/a` — no usable measurement at all, matching the `CORROBORATION` cell. A persona is never shown a fabricated `0 counted`.
+- `provisional (under the N-case trust floor)` — the rate rests on fewer counted cases than atcr's trust floor, so read it as an early indication rather than a measurement. This matters because the table is **sorted by rate alone, with no sample-size term**: a lens at `100.0%` over 3 counted cases sorts above one at `33.3%` over 20, and only this marker says which of the two you are looking at. It is a caveat on the evidence, not a verdict on the lens — a provisional row is not a row to act on yet.
+- `n/a` — no usable measurement at all, matching the `CORROBORATION` cell. A persona is never shown a fabricated `0 counted`. Distinct from `provisional`: `n/a` means nothing was measured, `provisional` means too little was.
 
 `counted + excluded` can be less than a persona's total run count: runs measured at a non-strict consensus level, and runs recorded under a superseded `raised_denominator` definition, are dropped without a reason label. When no scorecard data exists at all, every row shows `n/a` and a footer names the path that was checked:
 

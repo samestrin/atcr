@@ -22,8 +22,12 @@ import (
 type personasScoreData struct {
 	rates map[string]float64
 	// details is the explainability companion from scorecard.ExplainTrustPriors,
-	// keyed identically to rates. scorecard omits a below-floor lens from BOTH
-	// maps, so a persona is never present in one and missing from the other.
+	// keyed identically to rates: a persona is never present in one and missing
+	// from the other. Both are loaded with minRuns=0, so NO membership floor is
+	// applied on this path — a lens is absent from both maps only when it has no
+	// usable history at all, never for being under-sampled. (The floor would omit
+	// from both if it were applied; it is not, which is why formatScoreDetail
+	// marks a thin sample rather than relying on its absence to hide one.)
 	details map[string]scorecard.PersonaScoreDetail
 	path    string
 }
@@ -598,8 +602,10 @@ func toPersonaDetails(in map[string]scorecard.PersonaScoreDetail) map[string]com
 // attribute to a topic.
 //
 // A nil detail renders "n/a", the same marker FormatRate uses for an absent
-// rate, and for the same reason: scorecard omits a below-floor lens from both
-// maps, so "0 counted" would report an unmeasured lens as measured and empty.
+// rate, and for the same reason: scorecard omits a lens with no usable history
+// from both maps, so "0 counted" would report an unmeasured lens as measured and
+// empty. Absence never means "under-sampled" on this path — `--scores` loads
+// with minRuns=0 — which is what the provisional marker below is for.
 func formatScoreDetail(d *commpersonas.ScoreDetail) string {
 	if d == nil {
 		return "n/a"
@@ -617,6 +623,26 @@ func formatScoreDetail(d *commpersonas.ScoreDetail) string {
 	out += fmt.Sprintf(" · %d excluded", d.Excluded)
 	if reason := dominantExclusionReason(d.Reasons); reason != "" {
 		out += fmt.Sprintf(" (%s)", reason)
+	}
+	// A below-floor sample is MARKED, because nothing else on this surface says
+	// so. `--scores` loads with minRuns=0, so DefaultTrustMinRuns never fires and
+	// every lens with any history at all gets a rate; sortScoredPersonas then
+	// ranks strictly by that rate with no sample-size term. On the live store
+	// that puts `mira 100.0% (3 counted)` above `kai 33.3% (20 counted)` — the
+	// ordering inverts the evidence on the one surface whose question is whether
+	// to drop or repoint a lens.
+	//
+	// The marker rides this column rather than changing the sort: ordering by
+	// sample size would mean sortScoredPersonas consulting Detail (its doc block
+	// states it never does) and internal/personas importing internal/scorecard
+	// for the floor — a coupling ScoreDetail exists as a local mirror to avoid.
+	// The caveat printed beside the count is on the same row as the rate it
+	// qualifies, which is where an operator reads it.
+	//
+	// The bound is `<`, not `<=`: a lens AT the floor is exactly what
+	// DefaultTrustMinRuns admits, so marking it would contradict the constant.
+	if d.Counted < scorecard.DefaultTrustMinRuns {
+		out += fmt.Sprintf(" · provisional (under the %d-case trust floor)", scorecard.DefaultTrustMinRuns)
 	}
 	return out
 }
