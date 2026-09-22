@@ -284,13 +284,20 @@ rewrite itself on every append). The manual command remains for on-demand use.
 
 ### `atcr debt backfill-justifications`
 
-Re-derives each **live** record's `justification` from the `review.md` it was
-originally stamped from, and rewrites the ones that changed. Live means `open` or
-`deferred`. A `resolved` or `wontfix` record is settled and is never scanned: its
-justification may be the operator's `--reason` (see `debt resolve`), which exists
-nowhere else in the tree and cannot be replayed from anything. `deferred` is the
-opposite case — it carries a terminal marker but means "not now", so it is still
-closeable debt whose stale excerpt still gates the `wontfix` path.
+Re-derives a record's `justification` from the `review.md` it was originally
+stamped from, and rewrites the ones that changed. A record that **may carry an
+operator-typed `--reason`** — `resolved`, `wontfix`, `unreproducible`,
+`attempts-exhausted` — is never scanned, because that text exists nowhere else in
+the tree and cannot be replayed from anything. Only `open` and `deferred` records
+are scanned.
+
+The skip keys on the **rationale**, not on whether the item is settled, and those
+two stopped selecting the same records. `attempts-exhausted` is deliberately not
+settled — the work is unfinished and the defect presumed real — yet `--reason` is
+mandatory for it (see `debt resolve`), so it always carries exactly the text the
+skip protects. `deferred` is the mirror image: it carries a terminal marker but
+means "not now" and is reason-free, so it stays closeable debt whose stale excerpt
+still gates the `wontfix` path.
 
 It exists because a record's id excludes its justification. `StampID` hashes
 `file\x00line\x00problem`, so a re-detected finding hashes to the same id, the
