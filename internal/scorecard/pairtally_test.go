@@ -495,6 +495,17 @@ func TestMinPairCases_NotNarrowedWithoutRemeasurement(t *testing.T) {
 		"redo the live-store measurement in minPairCases' doc comment before moving this")
 }
 
+func TestPairEraCurrent_NotBumpedWithoutAMixingRule(t *testing.T) {
+	// pairTallies excludes ABOVE-CURRENT PairEra records outright rather than
+	// clamping them. Bumping this literal mixes era-N evidence with era-1
+	// evidence unless the mixing rule at the pairTallies gate is re-decided
+	// first — the same convention unresolvedEraRuns applies to
+	// RaisedDenominator. Mirrors
+	// TestMinPairCases_NotNarrowedWithoutRemeasurement.
+	assert.Equal(t, 1, PairEraCurrent,
+		"decide the era-mixing rule at pairTallies' gate before bumping this")
+}
+
 // ---------------------------------------------------------------------------
 // AC 05-03 — specialist protection
 // ---------------------------------------------------------------------------
