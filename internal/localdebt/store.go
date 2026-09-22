@@ -916,14 +916,21 @@ func foldByID[T foldable](items []T) ([]T, map[string][]T) {
 // meant to bound growth by dropping SUPERSEDED occurrences, not to erase the
 // record that a human once closed this finding and why.
 //
-// Retention is bounded at two records per id in the ordinary case, and at three
-// in one narrow case, so growth stays O(live findings): the effective record, at
-// most one rationale-bearing record, and — whenever the effective record carries
-// no Model — the attribution donor that the quality signal would otherwise lose.
+// Retention is bounded at THREE records per id, so growth stays O(live
+// findings): the effective record, at most one superseded rationale, and — when
+// the effective record carries no model attribution — one donor. Two is the
+// ordinary case and three the narrow one; the last two are distinct records only
+// when the highest-RANKED rationale and the most recent MODEL-carrier are
+// different rows, and collapse to one whenever they coincide.
+//
+// That wording is deliberately identical to doc.go's and to the published bound
+// in docs/technical-debt.md. Three surfaces stating one bound in three different
+// framings ("two, and three in one case" / "three, keeps up to two beyond the
+// effective one" / a doc that named only two of the three) is how a reader came
+// away with a different number depending on which one they opened.
+//
 // The donor is NOT gated on producesQualitySignal(eff.Status); do not add such a
-// gate back, see modelDonorIndex. The last two are distinct records
-// only when the highest-RANKED rationale and the most recent MODEL-carrier are
-// different rows; they collapse to one whenever they coincide.
+// gate back, see modelDonorIndex.
 //
 // It is also fold-stable and idempotent — FoldRecords over {open(t3),
 // resolved(t2)} still selects open(t3), so every reader sees exactly what it saw

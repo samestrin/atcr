@@ -255,10 +255,20 @@ and the original id is preserved so the resolution lines up with the finding.
 
 Folds the append-only store to one effective record per id and rewrites the
 shards atomically, carrying `occurrences` and `first_seen` forward so the
-regression signal survives at O(1) size instead of O(history). The resolution
-trail is kept, and it is exactly one record deep: alongside the effective
-record, compaction retains the highest-ranked superseded record that carries a
-`--reason` of its own. That covers an item closed and since regressed, and an
+regression signal survives at O(1) size instead of O(history).
+
+Retention is bounded at **three records per id**: the effective record, at
+most one superseded rationale, and — when the effective record
+carries no model attribution — one donor. Two of those three are the ordinary case; the donor is
+the narrow one, and it collapses into the rationale record whenever the
+highest-ranked rationale is also the most recent model-carrier. The donor exists
+because a fold can select an effective record with no `model` on it, and the
+attribution the quality signal is scored on would then be deleted by the very
+pass that is meant only to drop superseded duplicates.
+
+The resolution trail is kept, and it is exactly one record deep: alongside the
+effective record, compaction retains the highest-ranked superseded record that
+carries a `--reason` of its own. That covers an item closed and since regressed, and an
 `attempts-exhausted` checkpoint later closed for good — the closing reason does
 not overwrite the checkpoint's. Where **several** superseded records each carry
 a distinct `--reason`, only that highest-ranked one survives: the rank order is

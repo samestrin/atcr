@@ -190,7 +190,11 @@
 // shard. Compact folds each id to its effective record and rewrites the shards
 // atomically, so store size tracks LIVE findings rather than history.
 //
-// Retention is bounded at three records per id, with one documented exception below.
+// Retention is bounded at THREE records per id, with one documented exception below:
+// the effective record, at most one superseded rationale, and — when the effective
+// record carries no model attribution — one donor. Two is the ordinary case and three
+// the narrow one. (That wording is deliberately identical to store.go's and to the
+// published bound in docs/technical-debt.md; see store.go's note on why.)
 // retainForCompaction keeps up to two records beyond the effective one: the resolution
 // TRAIL — the highest-ranked superseded record that bears a rationale, for ANY effective
 // status, and only when its justification is not already the effective record's
