@@ -87,17 +87,12 @@ func TestFanoutReviewerOutcome_AlwaysReturnsAKnownValue(t *testing.T) {
 // this"), and rejecting it here would make the write-time guard coerce a
 // legitimate unknown into... unknown, masking a real bug behind a no-op.
 func TestFanoutValidReviewerOutcome_AgreesWithBenchmarkValidOutcome(t *testing.T) {
-	known := []string{
-		benchmark.OutcomeUnknown,
-		benchmark.OutcomeFindings,
-		benchmark.OutcomeClean,
-		benchmark.OutcomeUnparseable,
-		benchmark.OutcomeTruncated,
-		benchmark.OutcomeIncomplete,
-		benchmark.OutcomeUngrounded,
-		benchmark.OutcomeFiltered,
-		benchmark.OutcomeFailed,
-	}
+	// Derived from the shipped vocabulary, not a hand-typed literal: a Len over a
+	// slice literal declared three lines up is a tautology — it cannot notice a
+	// tenth value. AllOutcomes() makes the count track internal/benchmark, so a
+	// tenth value cannot be added without this site changing (the decision the
+	// message demands).
+	known := benchmark.AllOutcomes()
 	require.Len(t, known, 9, "the vocabulary is nine values; a tenth needs a decision here")
 
 	for _, s := range known {
