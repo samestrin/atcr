@@ -35,17 +35,15 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 	reviewers := map[string]ReviewerMeta{}
 	if ps, err := fanout.ReadPoolSummary(reviewDir); err == nil {
 		for _, a := range ps.Agents {
-			// Trim ONCE and key on the trimmed name, matching NewCloudSyncRecord.
-			// Untrimmed, " bruce" and "bruce" are two distinct trust keys, and a
-			// whitespace-only name would become a reviewer literally called "  ".
-			//
-			// Every OTHER use of a reviewer name below is trimmed the same way,
-			// at the point the name enters this function. That is not tidiness:
-			// reviewerCounts matches Finding.Reviewers against this map key by
-			// exact string, so trimming the key alone silently zeroes a padded
-			// reviewer's FindingsRaised, its corroboration rate and its skeptic
-			// verdicts while the record itself still looks healthy.
-			name := strings.TrimSpace(a.Agent)
+			// Normalize ONCE and key on the canonical name — case-FOLDED as well
+			// as trimmed, via normalizeReviewerName. Untrimmed, " bruce" and
+			// "bruce" are two distinct trust keys; un-folded, "Bruce" and "bruce"
+			// mint TWO reviewer records for one run, so trustPriorsSince sums
+			// t.runs = 2 and one run buys two credits against
+			// DefaultTrustMinRuns. Folding here AND in trimmedReviewers below is
+			// what keeps the map key and Finding.Reviewers equal strings — the
+			// invariant reviewerCounts' exact-string match depends on.
+			name := normalizeReviewerName(a.Agent)
 			if name == "" {
 				continue
 			}
@@ -363,23 +361,28 @@ func coerceOutcome(o string) string {
 }
 
 // trimmedReviewers normalises a finding's reviewer list once, at the point the
-// names enter this package, dropping blanks.
+// names enter this package — trimmed AND case-folded via
+// normalizeReviewerName, the same function the pool-summary loop keys the
+// reviewers map with, dropping blanks.
 //
 // It exists because the map key and Finding.Reviewers MUST be the same string.
 // reviewerCounts matches them with exact-string equality (scorecard.go), so
-// trimming only the key silently zeroes a padded reviewer's FindingsRaised, its
-// corroboration rate and its skeptic verdicts while the record still carries a
-// model, a cost and an outcome and therefore still looks healthy. A padded name
-// is one whitespace typo in a registry agent name away: fanout copies the agent
-// name into the finding verbatim, reconcile's merge strips commas but not
-// spaces, and the stream parser assigns its reviewer column untrimmed.
+// normalising only the key silently zeroes a padded or differently-cased
+// reviewer's FindingsRaised, its corroboration rate and its skeptic verdicts
+// while the record still carries a model, a cost and an outcome and therefore
+// still looks healthy. Folding BOTH sides keeps the match and — the reason the
+// fold moved here — stops "Bruce" (pool summary) and "bruce" (findings cell)
+// from minting two records for one run. A padded or mis-cased name is one
+// registry typo away: fanout copies the agent name into the finding verbatim,
+// reconcile's merge strips commas but not spaces, and the stream parser assigns
+// its reviewer column untrimmed.
 //
 // Returning a fresh slice rather than editing in place keeps res untouched —
 // the caller's reconcile.Result is not this function's to mutate.
 func trimmedReviewers(in []string) []string {
 	out := make([]string, 0, len(in))
 	for _, r := range in {
-		if name := strings.TrimSpace(r); name != "" {
+		if name := normalizeReviewerName(r); name != "" {
 			out = append(out, name)
 		}
 	}

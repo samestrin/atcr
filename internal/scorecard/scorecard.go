@@ -1109,14 +1109,15 @@ func contains(xs []string, s string) bool {
 // Emit is exported, so a caller's reviewer list is untrusted input and this
 // cannot be pushed up to the producer.
 //
-// TWO SITES DELIBERATELY DO NOT USE IT, and both are correct:
+// TWO SITES DELIBERATELY DO NOT USE IT, and one is correct:
 //   - telemetry.go's HashPersonaID spells the same formula by hand because it
 //     is a HASH STABILITY contract — the hashed id must not move if this rule
 //     ever changes, so the two must be free to diverge.
-//   - reconcile.go's trimmedReviewers trims WITHOUT folding case, because
-//     reviewerCounts matches Finding.Reviewers against the EmitInput.Reviewers
-//     map key by exact string equality; folding case at that boundary alone
-//     would break the match rather than fix it.
+//   - (Former exception withdrawn:) reconcile.go's trimmedReviewers USED to
+//     trim without folding case, while the reviewers map key was only trimmed.
+//     Folding one side alone would have broken reviewerCounts' exact-string
+//     match; the fix folds BOTH sides — map key and trimmedReviewers — so the
+//     invariant holds and "Bruce"/"bruce" cannot mint two records for one run.
 func normalizeReviewerName(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
 }
