@@ -198,13 +198,22 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			// reclaim. A scheduled suite losing one case per run accumulates a full
 			// work dir every run; a size on the same line that names the path is what
 			// makes that visible before the volume fills.
-			// An unmeasurable size logs "unknown", never zero: a zero reads as
-			// "nothing retained" on the line the operator watches for growth.
+			// An unmeasurable size OMITS retained_bytes and says so through
+			// retained_bytes_unmeasured=true, never zero and never the string
+			// "unknown": a zero reads as "nothing retained" on the line the operator
+			// watches for growth, and a string retypes a key the doc tells them to
+			// watch numerically. internal/log/log.go:92-94 supports json format, so
+			// under ATCR_LOG_FORMAT=json a polymorphic retained_bytes errors or is
+			// silently dropped by the numeric monitor the size exists to enable —
+			// the same class of failure as the lying zero. Keeping the key monotypic
+			// (a number, or absent) leaves absence to mean "not measured", which is
+			// what an omitted key already means everywhere else here, while the
+			// sibling boolean keeps the unmeasured case VISIBLE rather than inferred.
 			attrs := []any{"path", tmp, "failed_cases", len(caseFailures), "failed_slots", len(slotFailures)}
 			if size, measured := dirSizeBytes(tmp); measured {
 				attrs = append(attrs, "retained_bytes", size)
 			} else {
-				attrs = append(attrs, "retained_bytes", "unknown")
+				attrs = append(attrs, "retained_bytes_unmeasured", true)
 			}
 			log.FromContext(ctx).Warn("benchmark work dir retained after a partial run", attrs...)
 			// Returned to the caller as well as logged. The log line is suppressible —

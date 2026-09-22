@@ -339,6 +339,14 @@ WARN benchmark work dir retained after a partial run path=/tmp/atcr-repo-state-1
 
 Watch `retained_bytes`, and once you have inspected or rescored a run, reclaim it with `rm -rf` on the path from that line. A run that scores every case cleans up after itself, so only partial and failed runs accumulate.
 
+`retained_bytes` is always a number, so you can build a numeric monitor on it — including under `ATCR_LOG_FORMAT=json`, where it is a JSON number. When the size cannot be measured at all (the walk could not read the work dir's root), the key is **omitted** and a boolean says so in its place, rather than the key changing type:
+
+```
+WARN benchmark work dir retained after a partial run path=/tmp/atcr-repo-state-1234 failed_cases=1 retained_bytes_unmeasured=true
+```
+
+The dir is still retained and its path is still on the line; only the size is unknown. Treat `retained_bytes_unmeasured=true` as "go look" — an unmeasurable work dir is the one case where the growth figure cannot warn you.
+
 At export, a recorded failure **explains** a coverage shortfall; it **does not excuse** one. `atcr benchmark export` still rejects a partial run by default, but names the failed case and its reason rather than telling you to re-run cases that never ran:
 
 ```
