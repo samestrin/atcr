@@ -242,17 +242,28 @@ func joinScores(metas []PersonaMeta, scores map[string]float64, details map[stri
 // leaving Rate n/a while the row itself still appears.
 func appendRegistryOnly(scored []ScoredPersona, seen map[string]struct{}, scores map[string]float64, details map[string]ScoreDetail) []ScoredPersona {
 	extra := make([]string, 0, len(scores)+len(details))
-	for key := range scores {
-		if _, ok := seen[key]; !ok {
-			seen[key] = struct{}{}
-			extra = append(extra, key)
+	claim := func(key string) {
+		// A blank key is skipped rather than rendered as a nameless row.
+		// scorecard's normalizeReviewerName trims and lowercases but does NOT
+		// drop the empty result, so a record with a whitespace-only Reviewer
+		// reaches these maps keyed "". The roster join hid that by construction;
+		// the tail would surface it as a persona with no name, which names no
+		// lens a maintainer could act on. Dropping it matches the rule
+		// scorecard.distinctCount already states for the same value.
+		if key == "" {
+			return
 		}
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		extra = append(extra, key)
+	}
+	for key := range scores {
+		claim(key)
 	}
 	for key := range details {
-		if _, ok := seen[key]; !ok {
-			seen[key] = struct{}{}
-			extra = append(extra, key)
-		}
+		claim(key)
 	}
 	for _, key := range extra {
 		sp := ScoredPersona{PersonaMeta: PersonaMeta{Name: key, Version: "-", Source: "registry"}}

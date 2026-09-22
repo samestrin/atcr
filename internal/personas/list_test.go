@@ -543,3 +543,16 @@ func TestJoinScores_RegistryTailIsDeterministic(t *testing.T) {
 			"equal rates tie-break alphabetically, for the tail exactly as for the roster")
 	}
 }
+
+func TestJoinScores_BlankKeyIsNotRenderedAsANamelessLens(t *testing.T) {
+	// scorecard's normalizeReviewerName trims and lowercases but does not drop
+	// the empty result, so a record with a whitespace-only Reviewer keys these
+	// maps "". The roster join hid that by construction; the registry tail must
+	// not surface it as a persona with no name.
+	scored := joinScores(nil,
+		map[string]float64{"": 0.9, "archer": 0.6},
+		map[string]ScoreDetail{"": {Counted: 5}})
+
+	require.Len(t, scored, 1, "the blank key contributes no row")
+	assert.Equal(t, "archer", scored[0].Name)
+}
