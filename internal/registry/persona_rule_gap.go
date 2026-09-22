@@ -43,16 +43,17 @@ import (
 // WHAT THE UNRESOLVED LIST MEANS DEPENDS ON THE AGENT'S ROLE, and this is the part
 // to read before treating an entry as an outage. For an agent listed directly in
 // project.agents or project.serial_agents, an unresolved persona IS a review-time
-// hard failure: those two rosters are the only ones review iterates
-// (internal/fanout/review.go:2758, 2763), and each resolves through the same
-// personaFor call, which returns the error rather than degrading.
+// hard failure: those two rosters are the only ones review iterates — buildSlots'
+// `add` closure is called from its `range cfg.Project.Agents` and
+// `range cfg.Project.SerialAgents` loops in internal/fanout/review.go — and each
+// resolves through the same personaFor call, which returns the error rather than
+// degrading.
 //
 // For a FALLBACK it is not. A fallback never resolves a persona of its own —
-// buildChain seeds it with `fbPrompt := primary.Prompt` (review.go:3394), inheriting
+// buildChain seeds it with `fbPrompt := primary.Prompt`, inheriting
 // the primary's already-rendered text verbatim — so its `persona:` ref is dead at
-// review time and a broken one costs nothing there. On this repo's own registry
-// several fallbacks (the -backup agents, dax-local) sit in this list today while
-// review runs fine. That is still worth reporting: the ref is live for `doctor`, for
+// review time and a broken one costs nothing there. A fallback-only agent can sit
+// in this list while review runs fine. That is still worth reporting: the ref is live for `doctor`, for
 // any future direct promotion of that agent onto a roster, and as a plain
 // configuration error. It just is not the outage the roster case is.
 func PredicateRuleGaps(agentToPersona map[string]string, dirs PersonaDirs) (gaps []string, unresolved []string) {
