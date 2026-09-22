@@ -1077,7 +1077,7 @@ func TestFoldGroundingEnabled_FirstCaseDoesNotAliasTheCallerSummary(t *testing.T
 // fixture, whose reviewer keeps its in-patch calc.py finding and therefore scores
 // `findings`. Every row then failed the `== 0` test and was skipped, so the loop
 // body never executed and the test asserted nothing -- it stayed green with
-// reviewerOutcome's ungrounded arm deleted outright. The tally assertion below is
+// fanout.ReviewerOutcome's ungrounded arm deleted outright. The tally assertion below is
 // the guard against that recurring: it fails on a fixture that produces no
 // ungrounded outcome, rather than passing vacuously over one.
 func TestExecuteRepoStateBenchmarkRun_UngroundedOutcomeOnlyOnAGatedRow(t *testing.T) {

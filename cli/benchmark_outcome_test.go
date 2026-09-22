@@ -293,7 +293,7 @@ func TestReplayCheckpointCase_PreOutcomeCheckpointReplaysAsUnknown(t *testing.T)
 		"absence of a recorded outcome must NEVER be read as a clean review")
 }
 
-// reviewerOutcome's precedence, stated as a table. The signals are not mutually
+// fanout.ReviewerOutcome's precedence, stated as a table. The signals are not mutually
 // exclusive on the wire, so the ordering is a decision that has to be pinned rather
 // than inferred: data-integrity signals outrank volume signals.
 func TestReviewerOutcome_Precedence(t *testing.T) {
@@ -370,7 +370,7 @@ func TestReviewerOutcome_Precedence(t *testing.T) {
 // finish_reason=length marker, via MetaCompleter — the interface a real
 // *llmclient.Client satisfies — so the engine stamps ResponseTruncated onto the
 // AgentStatus exactly as production does. The finding matters: truncated outranks
-// findings in reviewerOutcome's precedence, so this is the case that proves the
+// findings in fanout.ReviewerOutcome's precedence, so this is the case that proves the
 // tally says "truncated" even when the partial response DID raise something.
 type truncatedCompleter struct{}
 
@@ -386,7 +386,7 @@ func (truncatedCompleter) CompleteWithMeta(_ context.Context, _ llmclient.Invoca
 }
 
 // The truncated outcome must travel the WHOLE path — fanout's ResponseTruncated
-// marker → reviewerOutcome → the checkpoint's outcome field → OutcomeTallyKey → the
+// marker → fanout.ReviewerOutcome → the checkpoint's outcome field → OutcomeTallyKey → the
 // reviewer_coverage.outcomes JSON — not just the pure-unit precedence table. It is
 // the outcome most likely to appear on a real long-context run, and the only one
 // whose serialization a unit test cannot see.
@@ -562,5 +562,5 @@ func TestReviewerOutcome_GroundingOutranksMinSeverityWhenBothFire(t *testing.T) 
 	)
 
 	assert.Equal(t, benchmark.OutcomeUngrounded, got,
-		"the gate outranks the floor, and reviewerOutcome's PRECEDENCE doc must say so")
+		"the gate outranks the floor, and fanout.ReviewerOutcome's PRECEDENCE doc must say so")
 }

@@ -266,7 +266,7 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		// grounding_enabled is published verbatim into the public envelope and is the
 		// tag saying which population corroboration_rate was computed over, so it gets
 		// the same untrusted-input treatment as the tally above. The producer
-		// guarantees exactly one implication for free: reviewerOutcome reaches
+		// guarantees exactly one implication for free: fanout.ReviewerOutcome reaches
 		// OutcomeUngrounded only via AgentStatus.DroppedByGrounding > 0, which the gate
 		// cannot produce when it is off. A row claiming both is self-contradictory.
 		//
