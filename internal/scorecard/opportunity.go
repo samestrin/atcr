@@ -48,9 +48,16 @@ package scorecard
 // though invariant IS in all nine remit lists. See nonDiscriminating in
 // remit.go for why each one carries no topic. The filter lives on BOTH sides —
 // here and in opportunitySetRuns' union — deliberately: this function is
-// exported and its acceptance criteria are written against it directly, so a
-// caller reaching it without going through the chain must get the same answer
-// the chain would give.
+// exported and its acceptance criteria are written against it directly.
+//
+// PARITY IS PARTIAL BY DESIGN. The non-discriminating filter agrees on both
+// surfaces, but the chain's DROP is narrower than this predicate's answer: a
+// lens that raised out-of-remit findings answers false here while
+// opportunityDisposition keeps it (dispCounted). That divergence is deliberate
+// — the drop was narrowed to raised-nothing lenses after the
+// trust.go:1087-1101 probe showed the strict rule blacked out path-anchored
+// installs — and opportunityDisposition, not this predicate, is the authority
+// on what the chain actually does.
 //
 // The input slice is read only — never sorted, deduped, or rewritten in place.
 // One case's union is shared across every persona asked about that case, so a
