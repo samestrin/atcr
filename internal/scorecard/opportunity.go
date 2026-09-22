@@ -25,7 +25,10 @@ package scorecard
 //     opportunitySetRuns never hands one to this predicate.
 //   - The persona is unmapped. Routed through RemitCategories' ok == false
 //     branch, so a future caller can distinguish it, but never "in scope for
-//     everything".
+//     everything". ADJUDICATED won't-fix (2026-09-22 clarification): the bool
+//     signature is AC 03-04-pinned and stays; a caller that needs mapped-ness
+//     observability reads opportunityDisposition's dispCounted path in
+//     trust.go, which already counts the case per record.
 //
 // An unrecognised raised value (corrupt store, pre-vocabulary record) is just a
 // string that matches no remit. True of THIS predicate: it is neither an error
