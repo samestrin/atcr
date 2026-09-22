@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -33,9 +34,18 @@ import (
 
 // localdebtStatusConstants returns every Status* constant the localdebt package
 // declares, as const-name -> value, read from the package's own sources.
-func localdebtStatusConstants(t *testing.T) map[string]string {
+func localdebtStatusConstants(t testing.TB) map[string]string {
 	t.Helper()
-	dir := filepath.Join("..", "internal", "localdebt")
+	return scanStatusConstants(t, filepath.Join("..", "internal", "localdebt"))
+}
+
+// scanStatusConstants is the directory-scanning core of localdebtStatusConstants,
+// split out so a fixture directory can drive it: a Status constant whose value is
+// not a plain string literal has no reason to exist in internal/localdebt today,
+// so the loud-failure contract below can only be exercised against synthetic
+// source.
+func scanStatusConstants(t testing.TB, dir string) map[string]string {
+	t.Helper()
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err, "the localdebt package sources must be readable from cli/")
 
@@ -74,6 +84,61 @@ func localdebtStatusConstants(t *testing.T) map[string]string {
 		}
 	}
 	return out
+}
+
+// errorRecorder is a testing.TB whose Errorf is recorded instead of failing the
+// running test, so the loud-failure contract of scanStatusConstants can be
+// asserted on rather than merely observed.
+type errorRecorder struct {
+	testing.TB
+	errors []string
+}
+
+func (e *errorRecorder) Errorf(format string, args ...any) {
+	e.errors = append(e.errors, fmt.Sprintf(format, args...))
+}
+
+// Every Status-prefixed constant the scanner cannot read a plain string literal
+// from — implicit const-block repetition, a computed value, a typed conversion, a
+// non-STRING literal — used to be dropped with a silent `continue`. The guard then
+// covered only the readable constants while the enum carried more, so a new status
+// could ship unaccounted-for with the whole suite green. Each unreadable name must
+// be reported loudly instead.
+func TestScanStatusConstantsErrorsOnUnreadableValues(t *testing.T) {
+	dir := t.TempDir()
+	src := `package localdebt
+
+const (
+	StatusGood = "good"
+	StatusImplicit
+	StatusComputed = statusPrefix + "x"
+	StatusTyped    = Status("x")
+	StatusInt      = 3
+)
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "fixture.go"), []byte(src), 0o600))
+
+	rec := &errorRecorder{TB: t}
+	got := scanStatusConstants(rec, dir)
+	assert.Equal(t, map[string]string{"StatusGood": "good"}, got,
+		"only the plain-string-literal constant is collected")
+	assert.Len(t, rec.errors, 4,
+		"each Status-prefixed constant without a plain string literal is reported, not dropped")
+	for _, name := range []string{"StatusImplicit", "StatusComputed", "StatusTyped", "StatusInt"} {
+		found := false
+		for _, msg := range rec.errors {
+			if strings.Contains(msg, name) {
+				found = true
+			}
+		}
+		assert.True(t, found, "%s must be named in the scanner's report", name)
+	}
+
+	// The real package still scans clean: its constants are all plain literals,
+	// so the loud-failure arms stay dormant there.
+	clean := &errorRecorder{TB: t}
+	_ = scanStatusConstants(clean, filepath.Join("..", "internal", "localdebt"))
+	assert.Empty(t, clean.errors, "the real localdebt package has nothing for the scanner to complain about")
 }
 
 // debtAddExcluded records, per status VALUE, why `debt add` does not accept it.
