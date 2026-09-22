@@ -328,7 +328,7 @@ func appendNAt(t *testing.T, dir string, n int, reviewer, model string, raisedEa
 }
 
 // TestTrustPriors_AllHistoryUnchangedAcrossMonths is the compatibility pin for
-// cli/personas.go:44, which calls TrustPriors(dir, 0) directly and must keep
+// cli/personas.go's loadPersonasScores, which calls TrustPriors(dir, 0) directly and must keep
 // seeing the WHOLE store. A reviewer whose entire history sits years outside any
 // window must still be counted here — TrustPriors is all-history by contract, and
 // epic 35.11 windows only ResolveTrustPriors.

@@ -1149,11 +1149,11 @@ func TestSyncVerificationTruncation_ClearsAStaleWithheldReasonOnTheRuledRecord(t
 // TestSyncVerificationTruncation_IgnoresAPriorItemThatSettledNothing keeps the
 // residue repair's judge honest.
 //
-// debate.go:457 assigns ir.Judge = cast.Judge.Agent BEFORE the ruling runs, so
+// debate.go's runDebate assigns ir.Judge = cast.Judge.Agent BEFORE the ruling runs, so
 // reconciled/debate.json carries a judge on items that applied nothing to
 // findings.json: an `unresolved` outcome (judge_halted, unparseable_ruling) and a
 // gray-zone item, whose decision is cluster-level and never enters the
-// single-finding rulings map (debate.go:218-239). Projecting those back as
+// single-finding rulings map (debate.go's `if oc.apply` guard). Projecting those back as
 // rulings attributes a verdict to an agent that never ruled it — and because
 // internal/verify/pipeline.go:456 reads a non-empty debateJudge as "a judge
 // produced this verdict", the real skeptic's model and durationMs are then
@@ -1174,7 +1174,7 @@ func TestSyncVerificationTruncation_IgnoresAPriorItemThatSettledNothing(t *testi
 				Outcome: OutcomeUnresolved, Reason: "judge_halted",
 				Judge: "greta", Reasoning: "judge halted",
 			},
-			why: "an unresolved item settles nothing — debate.go:218 skips it before the rulings map is touched",
+			why: "an unresolved item settles nothing — debate.go's `if oc.apply` guard skips it before the rulings map is touched",
 		},
 		{
 			name: "gray_zone",
@@ -1183,7 +1183,7 @@ func TestSyncVerificationTruncation_IgnoresAPriorItemThatSettledNothing(t *testi
 				Outcome: OutcomeUphold, ClusterDecision: ClusterSeparate,
 				Judge: "greta", Reasoning: "the two findings are distinct",
 			},
-			why: "a gray-zone ruling is a cluster-level decision — debate.go:220 keeps it out of the per-finding rulings map",
+			why: "a gray-zone ruling is a cluster-level decision — debate.go's `if oc.apply` guard keeps it out of the per-finding rulings map",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

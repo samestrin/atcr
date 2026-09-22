@@ -300,7 +300,7 @@ func TestIsClosedStatus_UnchangedByTheSuppressionSplit(t *testing.T) {
 // 01-02 originally recorded (which put resolved second); it was flipped by
 // sprint-plan.md → Phase 1 Clarifications → C1. The reason is
 // highestRankedTerminalIndex's own justification for being rank-first
-// (store.go:1029-1045): it ranks by how certainly a record carries a
+// (highestRankedTerminalIndex, store.go): it ranks by how certainly a record carries a
 // human-typed --reason. Only wontfix was ever reason-gated, and AC 01-03
 // requires --reason for both new statuses while explicitly leaving resolved
 // ungated — so a reason-less resolved must not outrank a reasoned

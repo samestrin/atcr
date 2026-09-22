@@ -651,12 +651,12 @@ func isPartialWriteResidue(rec map[string]any) bool {
 // would leave internal/verify's carry-forward guard reading the record as
 // verify-owned and lending the superseded skeptic's model to it.
 //
-// The judge alone is NOT enough to admit an item. debate.go:457 assigns
+// The judge alone is NOT enough to admit an item. debate.go's runDebate assigns
 // ir.Judge = cast.Judge.Agent BEFORE the ruling runs, so debate.json also carries
 // a judge on items that applied nothing to findings.json — an `unresolved`
 // outcome (judge_halted, unparseable_ruling) and a gray-zone item, whose decision
 // is cluster-level. This projection therefore mirrors the live map's own
-// admission rule (debate.go:217-249) rather than restating it loosely: an item
+// admission rule (debate.go's `if oc.apply` guard over outcomes) rather than restating it loosely: an item
 // this switch would have skipped never entered `rulings` in the run that produced
 // the file, so it must not enter this reconstruction of it either. Attributing a
 // verdict to a judge that never ruled it is not a cosmetic error —
