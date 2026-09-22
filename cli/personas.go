@@ -559,24 +559,6 @@ func renderScoredList(w io.Writer, scored []commpersonas.ScoredPersona) error {
 	return writeTable(w, "NAME\tVERSION\tSOURCE\tLANGUAGE\tCORROBORATION\tCASES", rows)
 }
 
-// formatScoreDetail renders one lens's explainability record as a SUMMARY cell,
-// never a per-case dump: a thirteen-lens panel each listing every excluded case
-// is unreadable, and the question the column answers — "can I drop or repoint
-// this lens?" — needs the shape of the evidence, not its contents.
-//
-// It names at most ONE exclusion reason, the dominant one by count, because a
-// maintainer acting on this decides between "its hosting is broken" and "it is
-// out of remit here" and the largest bucket is what distinguishes them.
-//
-// TD-032's annotation renders separately and deliberately: those records were
-// COUNTED, so folding them into the excluded figure would report a lens as less
-// measured than it is. "unlabelled" is the operator-facing word for
-// ReasonNoRecognizedCategory — the lens raised findings the scorer could not
-// attribute to a topic.
-//
-// A nil detail renders "n/a", the same marker FormatRate uses for an absent
-// rate, and for the same reason: scorecard omits a below-floor lens from both
-// maps, so "0 counted" would report an unmeasured lens as measured and empty.
 // toPersonaDetails converts scorecard's explainability records into
 // internal/personas' local DTO. cli/ is the layer that imports both, which is
 // why the conversion lives here — see ScoreDetail's own comment for why
@@ -600,6 +582,24 @@ func toPersonaDetails(in map[string]scorecard.PersonaScoreDetail) map[string]com
 	return out
 }
 
+// formatScoreDetail renders one lens's explainability record as a SUMMARY cell,
+// never a per-case dump: a thirteen-lens panel each listing every excluded case
+// is unreadable, and the question the column answers — "can I drop or repoint
+// this lens?" — needs the shape of the evidence, not its contents.
+//
+// It names at most ONE exclusion reason, the dominant one by count, because a
+// maintainer acting on this decides between "its hosting is broken" and "it is
+// out of remit here" and the largest bucket is what distinguishes them.
+//
+// TD-032's annotation renders separately and deliberately: those records were
+// COUNTED, so folding them into the excluded figure would report a lens as less
+// measured than it is. "unlabelled" is the operator-facing word for
+// ReasonNoRecognizedCategory — the lens raised findings the scorer could not
+// attribute to a topic.
+//
+// A nil detail renders "n/a", the same marker FormatRate uses for an absent
+// rate, and for the same reason: scorecard omits a below-floor lens from both
+// maps, so "0 counted" would report an unmeasured lens as measured and empty.
 func formatScoreDetail(d *commpersonas.ScoreDetail) string {
 	if d == nil {
 		return "n/a"
