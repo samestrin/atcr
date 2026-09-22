@@ -925,7 +925,7 @@ func reviewerCounts(name string, findings []Finding) (raised, corroborated int, 
 			credit += 1.0 / float64(n)
 			continue
 		}
-		// n is 0 or 1 here. Zero is reachable — contains() matched on a name that
+		// n is 0 or 1 here. Zero is reachable — participates() matched on a name that
 		// distinctCount then normalised away — and dividing by it would put an
 		// +Inf into a persisted field and from there into reconcile's priors map.
 		// Both cases are the same judgment anyway: nobody corroborated this
