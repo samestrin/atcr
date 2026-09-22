@@ -49,25 +49,76 @@ func scopedOutcome(t *testing.T, dir string, n int, persona, outcome string, rai
 // the cli/ drift test, which is a legal importer of both packages.
 const outcomeTruncatedLiteral = "truncated"
 
-func TestScoreReasons_IsAClosedThreeMemberVocabulary(t *testing.T) {
-	// C24's golden pin. AC 06-05 requires the reason labels be drawn from a
-	// closed, finite set so cli/personas.go's renderer can rely on them; this is
-	// the test that makes growing the set a deliberate act rather than a silent
-	// one. A fourth member must update this test FIRST.
+func TestScoreReasons_IsAClosedFiveMemberVocabulary(t *testing.T) {
+	// C24's golden pin, grown 3→5 by the TD-041 clarification (2026-09-22): the
+	// two exclusion causes the walk could not express — a non-strict consensus
+	// level and a superseded raised-denominator era — join the vocabulary.
+	// AC 06-05 requires the reason labels be drawn from a closed, finite set so
+	// cli/personas.go's renderer can rely on them; this is the test that makes
+	// growing the set a deliberate act rather than a silent one. A sixth member
+	// must update this test FIRST.
 	assert.Equal(t, []string{
 		"outcome-ineligible",
+		"consensus-not-strict",
+		"superseded-era",
 		"category-not-in-opportunity-set",
 		"no-recognized-category",
 	}, ScoreReasons())
 
-	// The split matters as much as the membership: two labels name a DROPPED
-	// record and one names a KEPT one, and a renderer that sums all three into
+	// The split matters as much as the membership: four labels name a DROPPED
+	// record and one names a KEPT one, and a renderer that sums all five into
 	// an "excluded" column reports a lens as less-measured than it is.
 	assert.True(t, ReasonExcludes(ReasonOutcomeIneligible))
+	assert.True(t, ReasonExcludes(ReasonConsensusNotStrict))
+	assert.True(t, ReasonExcludes(ReasonSupersededEra))
 	assert.True(t, ReasonExcludes(ReasonNotInOpportunitySet))
 	assert.False(t, ReasonExcludes(ReasonNoRecognizedCategory),
 		"TD-032's label annotates a record that was kept and charged, not one that was dropped")
 	assert.False(t, ReasonExcludes("not-a-member"))
+}
+
+// TestExplainTrustPriors_NonStrictRunIsAttributed pins the consensus boundary's
+// per-record attribution: a reviewer record whose consensus level is not strict
+// is noted consensus-not-strict, the cause the three-member vocabulary could not
+// name (TD-041).
+func TestExplainTrustPriors_NonStrictRunIsAttributed(t *testing.T) {
+	dir := t.TempDir()
+	// A strict run too: applyExplainFloor keeps exactly the lenses TrustPriors
+	// keys, so a lens whose EVERY record was non-strict has no row at all (the
+	// adjudicated no-row rule) and its note would be unreachable. The boundary
+	// is observable on a lens with mixed history.
+	appendN(t, dir, 2, "sasha", "opus", 1, 1)
+	runID := runIDAt(time.Now(), "nonstrict")
+	rec := reviewer(runID, "sasha", "opus", 1, 0, 0, 0)
+	rec.ConsensusLevel = "off" // not strict: the consensus gate drops it
+	require.NoError(t, Append(dir, rec))
+
+	details, err := ExplainTrustPriors(dir, 0)
+	require.NoError(t, err)
+	d := details["sasha"]
+	require.NotNil(t, d)
+	assert.Equal(t, 1, d.Reasons[ReasonConsensusNotStrict],
+		"a non-strict run must be attributed to the consensus boundary, not vanish unexplained")
+}
+
+// TestExplainTrustPriors_SupersededEraIsAttributed pins the era boundary's
+// per-record attribution: a reviewer record computed under a definition older
+// than the reviewer's newest is noted superseded-era (TD-041).
+func TestExplainTrustPriors_SupersededEraIsAttributed(t *testing.T) {
+	dir := t.TempDir()
+	oldRun := reviewer(runIDAt(time.Now(), "old"), "bruce", "opus", 1, 0, 0, 0)
+	oldRun.RaisedDenominator = 1
+	require.NoError(t, Append(dir, oldRun))
+	newRun := reviewer(runIDAt(time.Now(), "new"), "bruce", "opus", 1, 0, 0, 0)
+	newRun.RaisedDenominator = RaisedDenominatorCurrent
+	require.NoError(t, Append(dir, newRun))
+
+	details, err := ExplainTrustPriors(dir, 0)
+	require.NoError(t, err)
+	d := details["bruce"]
+	require.NotNil(t, d)
+	assert.Equal(t, 1, d.Reasons[ReasonSupersededEra],
+		"the older half of an era-spanning reviewer must be attributed to the era boundary")
 }
 
 func TestExplainTrustPriors_CountsTheCasesBehindALensRate(t *testing.T) {

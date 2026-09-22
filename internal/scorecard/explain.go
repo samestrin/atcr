@@ -5,11 +5,14 @@ import (
 	"time"
 )
 
-// The disposition-reason vocabulary is CLOSED and has exactly three members
-// (sprint 36.0 C24). AC 06-05 pinned it closed so cli/personas.go's renderer can
-// rely on a known, finite label set; it originally enumerated two members and
-// C24 grew it to three for TD-032. The property the AC protects is "closed and
-// finite", not "cardinality two", so the renderer's guarantee is unchanged.
+// The disposition-reason vocabulary is CLOSED and has exactly five members
+// (sprint 36.0 C24; grown 3→5 by the TD-041 clarification of 2026-09-22). AC
+// 06-05 pinned it closed so cli/personas.go's renderer can rely on a known,
+// finite label set; it originally enumerated two members, C24 grew it to three
+// for TD-032, and TD-041 grew it to five for the two exclusion causes the walk
+// could not name — a non-strict consensus level and a superseded era. The
+// property the AC protects is "closed and finite", not any particular
+// cardinality, so the renderer's guarantee is unchanged.
 //
 // READ THE SPLIT BEFORE ADDING A FOURTH. Two of the three name a record that was
 // DROPPED from the trust tally. The third names a record that was KEPT. They
@@ -24,6 +27,22 @@ const (
 	// keeps archer's truncation history and vera's timeout history from
 	// demoting either lens (epic acceptance criterion 2).
 	ReasonOutcomeIneligible = "outcome-ineligible"
+
+	// ReasonConsensusNotStrict: the run's consensus level was not strict, so
+	// strictRuns dropped the record before any eligibility question was asked.
+	// The chain deliberately counts only strict runs (mixing levels lets one
+	// exploratory run durably depress the priors), and TD-041's gap was that a
+	// lens could not SEE that cause — the record simply vanished.
+	ReasonConsensusNotStrict = "consensus-not-strict"
+
+	// ReasonSupersededEra: the record was computed under a raised-denominator
+	// definition older than (or unreadable to) the reviewer's newest, so
+	// unresolvedEraRuns dropped it rather than blend definitions. Above-current
+	// records — a newer atcr's output, a benchmark value, or a corrupt
+	// hand-edit, indistinguishable here — are excluded by the same boundary and
+	// carry this label too: from this binary's point of view their definition
+	// has been superseded either way.
+	ReasonSupersededEra = "superseded-era"
 
 	// ReasonNotInOpportunitySet: the lens raised NOTHING on a run whose category
 	// union was non-empty, discriminating, and entirely outside this lens's
@@ -65,7 +84,13 @@ const (
 // front of it — which is what AC 06-05's "closed vocabulary, not a free-form
 // string" actually requires.
 func ScoreReasons() []string {
-	return []string{ReasonOutcomeIneligible, ReasonNotInOpportunitySet, ReasonNoRecognizedCategory}
+	return []string{
+		ReasonOutcomeIneligible,
+		ReasonConsensusNotStrict,
+		ReasonSupersededEra,
+		ReasonNotInOpportunitySet,
+		ReasonNoRecognizedCategory,
+	}
 }
 
 // ReasonExcludes reports whether a reason label names a record that was DROPPED
@@ -77,7 +102,7 @@ func ScoreReasons() []string {
 // report a lens as less-measured than it is.
 func ReasonExcludes(reason string) bool {
 	switch reason {
-	case ReasonOutcomeIneligible, ReasonNotInOpportunitySet:
+	case ReasonOutcomeIneligible, ReasonConsensusNotStrict, ReasonSupersededEra, ReasonNotInOpportunitySet:
 		return true
 	default:
 		return false
@@ -172,7 +197,13 @@ func detailsFromRecords(records []Record, minRuns int) map[string]PersonaScoreDe
 	unions := opportunityUnions(records)
 	afterStrict := strictRuns(records)
 	afterOutcome := eligibleOutcomeRuns(afterStrict)
-	afterEra := unresolvedEraRuns(mergeRoutedEras(scrubForgedCredit(afterOutcome)))
+	// The chain's era boundary spelled out so the walk can attribute its drops
+	// per record against the SAME input the era link sees: mergeRoutedEras and
+	// scrubForgedCredit rewrite in place and never drop, so postScrub is the
+	// exact population unresolvedEraRuns made its keep/drop decision over.
+	postScrub := mergeRoutedEras(scrubForgedCredit(afterOutcome))
+	afterEra := unresolvedEraRuns(postScrub)
+	newestEra := newestEraByReviewer(postScrub)
 
 	details := map[string]PersonaScoreDetail{}
 	// note records one reason against one persona, creating the Reasons map
@@ -215,15 +246,39 @@ func detailsFromRecords(records []Record, minRuns int) map[string]PersonaScoreDe
 	// Re-asking the predicate has no such failure mode, is cheaper than building
 	// the key set, and is the reason outcomeEligible was extracted at all.
 	//
-	// Records strictRuns already dropped are not in afterStrict and are therefore
-	// never attributed — see PersonaScoreDetail's note on what this surface does
-	// not explain (TD-041).
+	// The consensus boundary, asked PER RECORD through consensusLevelStrict —
+	// the same predicate strictRuns applies. This closes TD-041's first gap: a
+	// non-strict run is now NAMED rather than vanishing unexplained. scrub- and
+	// merge- links cannot drop a record, so every afterOutcome record absent
+	// from afterEra was dropped by the era rule — attributed below through
+	// eraSuperseded, again the chain's own predicate.
+	for _, r := range records {
+		if r.RecordType != RecordTypeReviewer {
+			continue
+		}
+		if !consensusLevelStrict(r) {
+			note(r.Reviewer, ReasonConsensusNotStrict)
+		}
+	}
+
 	for _, r := range afterStrict {
 		if r.RecordType != RecordTypeReviewer {
 			continue
 		}
 		if !outcomeEligible(r) {
 			note(r.Reviewer, ReasonOutcomeIneligible)
+		}
+	}
+
+	// The era boundary, asked per record over postScrub — the exact input the
+	// era link decided over. Closes TD-041's second gap: the older half of an
+	// era-spanning reviewer is named instead of silently absent.
+	for _, r := range postScrub {
+		if r.RecordType != RecordTypeReviewer {
+			continue
+		}
+		if eraSuperseded(r, newestEra) {
+			note(r.Reviewer, ReasonSupersededEra)
 		}
 	}
 

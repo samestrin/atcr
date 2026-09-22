@@ -863,11 +863,20 @@ func mergeRoutedEras(records []Record) []Record {
 func strictRuns(records []Record) []Record {
 	kept := make([]Record, 0, len(records))
 	for _, r := range records {
-		if c, ok := reclib.NormalizeConsensus(r.ConsensusLevel); ok && c == reclib.ConsensusStrict {
+		if consensusLevelStrict(r) {
 			kept = append(kept, r)
 		}
 	}
 	return kept
+}
+
+// consensusLevelStrict is strictRuns' per-record test, extracted so the
+// explainability walk asks the chain's own predicate when attributing a dropped
+// record to the consensus boundary rather than re-spelling the rule (the same
+// single-statement-of-record discipline outcomeEligible was extracted for).
+func consensusLevelStrict(r Record) bool {
+	c, ok := reclib.NormalizeConsensus(r.ConsensusLevel)
+	return ok && c == reclib.ConsensusStrict
 }
 
 // eligibleOutcomeRuns keeps only the runs where the lens actually got a fair
@@ -1346,6 +1355,25 @@ const (
 // written by a newer atcr" and "your filters matched nothing" call for opposite
 // operator actions.
 func unresolvedEraRuns(records []Record) []Record {
+	newest := newestEraByReviewer(records)
+	kept := make([]Record, 0, len(records))
+	for _, r := range records {
+		if r.RecordType != RecordTypeReviewer {
+			kept = append(kept, r) // aggregates pass through untouched
+			continue
+		}
+		if eraSuperseded(r, newest) {
+			continue
+		}
+		kept = append(kept, r)
+	}
+	return kept
+}
+
+// newestEraByReviewer is unresolvedEraRuns' first loop, extracted verbatim so
+// the explainability walk builds the SAME newest-era map the chain's era link
+// uses when attributing a dropped record to the era boundary.
+func newestEraByReviewer(records []Record) map[string]int {
 	// The NEWEST definition each reviewer has any record under. Prefer-current
 	// generalizes to prefer-newest once there are more than two definitions: the
 	// rule was never "has the flag", it was "do not blend", and with three
@@ -1377,26 +1405,25 @@ func unresolvedEraRuns(records []Record) []Record {
 			newest[k] = d
 		}
 	}
-	kept := make([]Record, 0, len(records))
-	for _, r := range records {
-		if r.RecordType != RecordTypeReviewer {
-			kept = append(kept, r) // aggregates pass through untouched
-			continue
-		}
-		if r.RaisedDenominator > RaisedDenominatorCurrent {
-			continue // above-current: excluded, per the first loop
-		}
-		// Keep the record when it is computed under the newest definition its own
-		// reviewer has. A reviewer with only pre-epic history keeps all of it
-		// (its newest IS pre-epic), which is what stops an upgrade from blacking
-		// out an existing store. What is dropped is only the older half of a
-		// reviewer that spans a change — the mix, which is the one combination
-		// measuring neither.
-		if raisedDenominatorOf(r) == newest[normalizeReviewerName(r.Reviewer)] {
-			kept = append(kept, r)
-		}
+	return newest
+}
+
+// eraSuperseded is unresolvedEraRuns' per-record drop test, extracted so the
+// explainability walk attributes an era-boundary drop through the chain's own
+// rule rather than a re-spelled copy. A record whose RaisedDenominator exceeds
+// the current era is superseded too — this binary cannot interpret its
+// definition, which is the same ground the exclusion stands on.
+func eraSuperseded(r Record, newest map[string]int) bool {
+	if r.RaisedDenominator > RaisedDenominatorCurrent {
+		return true
 	}
-	return kept
+	// Keep the record when it is computed under the newest definition its own
+	// reviewer has. A reviewer with only pre-epic history keeps all of it
+	// (its newest IS pre-epic), which is what stops an upgrade from blacking
+	// out an existing store. What is dropped is only the older half of a
+	// reviewer that spans a change — the mix, which is the one combination
+	// measuring neither.
+	return raisedDenominatorOf(r) != newest[normalizeReviewerName(r.Reviewer)]
 }
 
 // ResolveTrustPriors resolves the default scorecard store directory and reads
