@@ -1504,6 +1504,9 @@ func TestDebtResolve_WontfixRejectsADanglingFenceOnlyJustification(t *testing.T)
 // which IS the ground-truth payload — is recorded as the Justification.
 func TestDebtResolve_WritesUnreproducibleWithReason(t *testing.T) {
 	rec := openRec("2026-09-01T10:00:00Z", "HIGH", "internal/x/y.go", 12, "unbounded retry loop")
+	rec.Reviewers = []string{"claude", "greta"}
+	rec.Model = "gpt-5.2"
+	rec.ModelReviewers = []string{"greta"}
 	dir := writeDebtStore(t, rec)
 
 	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID,
@@ -1520,11 +1523,26 @@ func TestDebtResolve_WritesUnreproducibleWithReason(t *testing.T) {
 	require.NotNil(t, written, "an unreproducible record must be appended to the store")
 	assert.Equal(t, "could not reproduce with current repro steps", written.Justification,
 		"the reason text is the ground-truth payload and must be persisted")
+	// Attribution is status-independent: Reviewers/Model are assigned before the
+	// status branch and ModelReviewers rides the rec := orig copy, so a new-status
+	// write must carry them exactly like a resolved write does. Unpinned, an
+	// attribution emptied by a future refactor ships with the suite green and the
+	// lens signal goes silently empty — the failure the story's Data Requirements
+	// section calls out.
+	assert.Equal(t, []string{"claude", "greta"}, written.Reviewers,
+		"the terminal record must carry the open record's reviewer credit")
+	assert.Equal(t, "gpt-5.2", written.Model,
+		"the terminal record must carry the open record's model attribution")
+	assert.Equal(t, []string{"greta"}, written.ModelReviewers,
+		"the terminal record must carry the open record's model-scoped reviewer subset")
 }
 
 // TestDebtResolve_WritesAttemptsExhaustedWithReason locks AC 01-03 Scenario 2.
 func TestDebtResolve_WritesAttemptsExhaustedWithReason(t *testing.T) {
 	rec := openRec("2026-09-01T10:00:00Z", "HIGH", "internal/x/z.go", 20, "missing timeout")
+	rec.Reviewers = []string{"claude", "greta"}
+	rec.Model = "gpt-5.2"
+	rec.ModelReviewers = []string{"greta"}
 	dir := writeDebtStore(t, rec)
 
 	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID,
@@ -1540,6 +1558,13 @@ func TestDebtResolve_WritesAttemptsExhaustedWithReason(t *testing.T) {
 	}
 	require.NotNil(t, written, "an attempts-exhausted record must be appended to the store")
 	assert.Equal(t, "three fix attempts regressed unrelated tests", written.Justification)
+	// Same status-independence pin as the unreproducible write above.
+	assert.Equal(t, []string{"claude", "greta"}, written.Reviewers,
+		"the terminal record must carry the open record's reviewer credit")
+	assert.Equal(t, "gpt-5.2", written.Model,
+		"the terminal record must carry the open record's model attribution")
+	assert.Equal(t, []string{"greta"}, written.ModelReviewers,
+		"the terminal record must carry the open record's model-scoped reviewer subset")
 }
 
 // TestDebtResolve_NewStatusesRequireReason locks AC 01-03 Error Scenario 1. The
