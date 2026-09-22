@@ -49,12 +49,23 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 			if name == "" {
 				continue
 			}
+			outcome := outcomeFor(a)
+			if prev, seen := reviewers[name]; seen && outcomeRank(prev.Outcome) > outcomeRank(outcome) {
+				// A repeated Agent must not let the later, lower-precedence
+				// entry overwrite the earlier one's outcome: a summary that
+				// lists "bruce failed" and then "bruce ok" records bruce as
+				// FAILED, so a crafted file cannot hide a failure behind a
+				// later clean entry. The later entry still supplies the usage
+				// metadata (model, tokens, latency) — only the OUTCOME, the
+				// trust-load-bearing field, takes precedence.
+				outcome = prev.Outcome
+			}
 			reviewers[name] = ReviewerMeta{
 				Model:     a.Model,
 				TokensIn:  a.TokensIn,
 				TokensOut: a.TokensOut,
 				LatencyMS: a.DurationMS,
-				Outcome:   outcomeFor(a),
+				Outcome:   outcome,
 			}
 		}
 	}
@@ -286,6 +297,37 @@ func raisedSlotsFor(a fanout.AgentStatus) []string {
 // lands on OutcomeClean, which is ELIGIBLE: a crafted file would mint durable,
 // trust-scoring records asserting a successful clean review that never ran.
 // Unknown is the honest answer for an incoherent status, and it is excluded.
+// outcomeRank ranks an outcome by the classifier's own precedence
+// (internal/fanout/revieweroutcome.go: failed > unparseable > truncated >
+// incomplete > findings > ungrounded > filtered > clean), so two AgentStatus
+// entries sharing one agent name cannot let the later, lower-precedence entry
+// overwrite the earlier one's outcome. Unknown ("") ranks below everything: it
+// is the unclassifiable value, never a reason to discard a known one. The
+// unlisted values are spelled as literals here for the same import-cycle reason
+// fanout spells them that way; the cli/ parity test pins the agreement.
+func outcomeRank(o string) int {
+	switch o {
+	case "failed":
+		return 8
+	case "unparseable":
+		return 7
+	case "truncated":
+		return 6
+	case "incomplete":
+		return 5
+	case outcomeFindings:
+		return 4
+	case outcomeUngrounded:
+		return 3
+	case outcomeFiltered:
+		return 2
+	case outcomeClean:
+		return 1
+	default:
+		return 0
+	}
+}
+
 func outcomeFor(a fanout.AgentStatus) string {
 	if a.FindingsCount < 0 {
 		return ""
