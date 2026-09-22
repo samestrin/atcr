@@ -297,6 +297,13 @@ func detailsFromRecords(records []Record, minRuns int) map[string]PersonaScoreDe
 // is the quantity TrustPriors compares to minRuns; counting records instead
 // would agree on today's one-record-per-run store and diverge silently the day
 // Aggregate groups differently.
+//
+// ADJUDICATED (2026-09-22 clarification): an ALL-INELIGIBLE lens gets NO row —
+// absence is the report, never a fabricated zero. TD-042 records the display
+// rule ("n/a" for a mapped lens with zero eligible records, never a numeric
+// zero) and C24 closed the disposition-reason vocabulary; inventing a row shape
+// here would reopen a settled decision. The skip below is that decision's
+// implementation.
 func applyExplainFloor(details map[string]PersonaScoreDetail, kept []Record, minRuns int) map[string]PersonaScoreDetail {
 	runs := map[string]int{}
 	for _, row := range Aggregate(kept) {
