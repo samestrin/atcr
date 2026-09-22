@@ -59,15 +59,29 @@ type Result struct {
 // those snapshots remain as-of-verify audit artifacts that may legitimately lag
 // findings.json (see the artifacts group below).
 //
-// The one exception is scoped to the records whose tool_budget_bytes caveat a
-// ruling cleared. On those, and on nothing else, the stage clears the matching
-// entry in verification.json and rewrites the single verdict field that entry
-// describes (with debateJudge/debateReasoning naming who produced it), because
-// the caveat and the verdict describe the SAME recorded outcome and that file is
-// the copy internal/scorecard reads. Every other record's verdict is left at its
-// as-of-verify value. See syncVerificationTruncation for why the correction has
-// to land there rather than on findings.json, and the atomic-group scope note
-// below for the full field list.
+// The exception covers TWO classes of record, not one.
+//
+//  1. CLEARED CAVEAT — a record whose tool_budget_bytes caveat a ruling cleared.
+//     The stage clears the matching entry in verification.json and rewrites the
+//     verdict field that entry describes (with debateJudge/debateReasoning naming
+//     who produced it), because the caveat and the verdict describe the SAME
+//     recorded outcome and that file is the copy internal/scorecard reads. The
+//     isPartialWriteResidue fall-through belongs here: it finishes a drop whose
+//     findings.json half already landed.
+//
+//  2. PRIOR-DEBATE REPAIR — a record a PREVIOUS debate already owns, identified
+//     by a non-empty recordedDebateJudge, whose verdict this ruling superseded.
+//     Its verdict, debateJudge and debateReasoning are rewritten and any standing
+//     modelWithheldReason deleted, so the attribution names the judge the verdict
+//     actually came from. This record's own caveat need not have been cleared —
+//     the branch is gated on the existing judge and runs BEFORE the trippedBudgets
+//     check, so a record with no tool-budget entry at all is in scope. The repair
+//     has a ONE-RUN window: its candidates come from the prior debate.json, which
+//     each run replaces wholesale.
+//
+// Every record outside those two classes is left at its as-of-verify value. See
+// syncVerificationTruncation for why the correction has to land there rather than
+// on findings.json, and the atomic-group scope note below for the full field list.
 //
 // It is the single orchestrator shared by `atcr debate`, `atcr review
 // --verify --debate`, and the atcr_debate MCP tool. repoRoot is the git repo the
@@ -278,10 +292,17 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// pre-rewrite snapshot, which is a group entry published WITH the rewrite
 	// rather than a copy taken before it.
 	//
-	// What that pass rewrites is narrow but not a single field: on the records
-	// whose tool_budget_bytes caveat a ruling dropped it writes trippedBudgets,
-	// verdict, debateJudge and debateReasoning, and deletes any standing
-	// modelWithheldReason. So verification.json's verdicts are point-in-time verify
+	// What that pass rewrites is narrow but is neither a single field nor a single
+	// class of record. On a record whose tool_budget_bytes caveat a ruling dropped
+	// it writes trippedBudgets, verdict, debateJudge and debateReasoning, and
+	// deletes any standing modelWithheldReason. On a record a PRIOR debate owns
+	// (non-empty recordedDebateJudge) whose verdict this ruling superseded, it
+	// rewrites verdict, debateJudge and debateReasoning and deletes
+	// modelWithheldReason — with no caveat of its own required, since that branch
+	// precedes the trippedBudgets check. The two classes are enumerated in this
+	// file's header; see it before narrowing either one.
+	//
+	// So verification.json's verdicts are point-in-time verify
 	// audit artifacts for every OTHER record, but not for a ruled one. summary.json
 	// (verdictCounts) is NOT recomputed here at all and stays point-in-time.
 	// findings.json (with debate.json) is the authoritative post-debate record; any
