@@ -28,7 +28,20 @@ package scorecard
 //     everything".
 //
 // An unrecognised raised value (corrupt store, pre-vocabulary record) is just a
-// string that matches no remit. It is neither an error nor a wildcard.
+// string that matches no remit. True of THIS predicate: it is neither an error
+// nor a wildcard here. It is not true of the chain — in opportunityUnions an
+// unrecognised word counts as discriminating, an ANTI-wildcard that flips a run's
+// union non-empty and drops every silent mapped lens (see trust.go
+// opportunityUnions and its inVocabulary discussion).
+//
+// WHAT THE CHAIN DOES INSTEAD: the gate this predicate is the AC-facing
+// definition of has been deliberately narrowed. opportunityDisposition drops a
+// mapped lens from a run's denominator ONLY when the lens raised NOTHING
+// (FindingsRaised == 0) on a run whose union was discriminating and outside its
+// remit; a lens that raised out-of-remit findings is kept and charged.
+// opportunityDisposition (trust.go) is the authority on that narrowing — this
+// predicate answers the narrower, raised-count-blind question and does not
+// consume it.
 //
 // NON-DISCRIMINATING values are skipped before matching, so `other`,
 // `out-of-scope` and `invariant` never put a lens in remit on their own even
@@ -44,8 +57,9 @@ package scorecard
 // mutation here would corrupt every later persona's answer for the same case.
 //
 // The nested scan is O(remit x raised) with no allocation. remit is bounded by
-// the vocabulary; raisedCategories is bounded by the caller (opportunitySetRuns
-// dedupes its union first, so it is bounded by the vocabulary there too).
+// the vocabulary; raisedCategories is bounded by the caller. (opportunitySetRuns
+// is NOT a caller of this function — no production caller is — so no chain-side
+// dedupe bounds the input here.)
 func InOpportunitySet(persona string, raisedCategories []string) bool {
 	remit, ok := RemitCategories(persona)
 	if !ok {
