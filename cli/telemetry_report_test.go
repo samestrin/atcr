@@ -327,20 +327,36 @@ func TestQualityReport_StripsControlSequences_MDAndJSON(t *testing.T) {
 	}
 }
 
-// TestQualityReportRows_OmitsPairsWithNoDismissalOrConfirmation is the report
-// half of adversarial finding 1.2.A-HIGH-4. Story 36.0's two outcomes create a
-// QualityRow without touching either counter this report has a column for, so
-// such a row would print `| 0 | 0 | 0.0% |` — a reviewer that has never been
-// wrong. The report sorts DESCENDING by dismissal rate (`>` — over-reporting
-// first), so that row would land at the BOTTOM, reading as the WORST performer
-// rather than the unmeasured one — the misreading the exclusion exists to
-// prevent, in the direction the earlier comment got backwards.
-func TestQualityReportRows_OmitsPairsWithNoDismissalOrConfirmation(t *testing.T) {
+// TestQualityReportRows_IncludesUnmeasuredPairsWithTheirCounters supersedes the
+// report half of adversarial finding 1.2.A-HIGH-4 (adjudicated by
+// /clarifications 2026-09-22). The original fix DROPPED 0/0 pairs because the
+// report had columns for dismissed and confirmed only, so `| 0 | 0 | 0.0% |`
+// read as a reviewer that has never been wrong. The local report now carries the
+// unreproducible and attempts-exhausted counters too — 0/0 is a real shape, and
+// with its own columns the row no longer masquerades as flawless: the reader
+// sees WHERE the outcomes went. The sort stays DESCENDING by dismissal rate
+// (`>` — over-reporting first), so a 0/0 pair lands at the bottom by rate, now
+// carrying the counters that explain it. The OUTBOUND payload keeps dropping
+// these pairs (C2, cli/qualitysignal.go) — only this local surface extends.
+func TestQualityReportRows_IncludesUnmeasuredPairsWithTheirCounters(t *testing.T) {
 	rows := qualityReportRows([]localdebt.QualityRow{
 		{Persona: "vera", Model: "m1", UnreproducibleCount: 3},
 		{Persona: "archer", Model: "m1", AttemptsExhaustedCount: 2},
+		{Persona: "kai", Model: "m1", DismissedCount: 1, ConfirmedCount: 3, UnreproducibleCount: 5},
 	})
-	assert.Empty(t, rows, "an unmeasured pair must be absent, not printed as flawless")
+	require.Len(t, rows, 3, "a 0/0 pair is a real shape, not a drop candidate")
+	byName := map[string]qualityReportRow{}
+	for _, r := range rows {
+		byName[r.Persona+"/"+r.Model] = r
+	}
+	assert.Equal(t, 3, byName["vera/m1"].UnreproducibleCount,
+		"the pair's unreproducible outcomes must render in their own column, not vanish")
+	assert.Equal(t, 2, byName["archer/m1"].AttemptsExhaustedCount,
+		"the pair's attempts-exhausted outcomes must render in their own column, not vanish")
+	assert.Zero(t, byName["vera/m1"].DismissedCount)
+	assert.Zero(t, byName["archer/m1"].ConfirmedCount)
+	assert.Equal(t, 5, byName["kai/m1"].UnreproducibleCount,
+		"a pair with BOTH measured and unmeasured outcomes carries both")
 }
 
 // TestQualityReportRows_KeepsPairsThatHaveAMeasuredOutcome is the other
