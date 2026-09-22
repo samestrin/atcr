@@ -281,8 +281,8 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		// duplicateIdentityError names version skew: a row folded across a mix of gated
 		// and ungated cases USED TO AND to false rather than to nil, so this pair is
 		// reachable from a legitimate paid run written by such a build. It is no longer
-		// reachable from a CURRENT one — foldGroundingEnabled
-		// (cli/benchmark_repostate.go:947) requires unanimity and yields nil for a mixed
+		// reachable from a CURRENT one — foldGroundingEnabled in
+		// cli/benchmark_repostate.go requires unanimity and yields nil for a mixed
 		// row — which is why the error text below is past tense and names an upgrade as
 		// the remedy. Reporting only "hand-assembled" would send that operator hunting an
 		// edit nobody made.
