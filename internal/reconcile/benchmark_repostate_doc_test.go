@@ -292,12 +292,21 @@ func TestBenchmarkDoc_RepoStatePartialRunContractMatchesTheCode(t *testing.T) {
 	assert.Contains(t, doc, "retained_bytes",
 		"the doc must name the log field an operator watches the growth on")
 	// The size is emitted through the attrs block since dirSizeBytes learned to
-	// report an unmeasurable walk: measured logs the byte count, unmeasurable logs
-	// "unknown" — never a zero that reads as "nothing retained".
+	// report an unmeasurable walk. `retained_bytes` is MONOTYPIC: it is a number or
+	// it is absent, never the string "unknown". internal/log/log.go supports a json
+	// format, and the doc tells the operator to watch this key for growth — so a
+	// numeric monitor, the very use case the size exists to enable, errors or drops
+	// the record on a string variant. An unmeasurable walk omits the key and says so
+	// through a separate boolean instead, which is still never a zero that reads as
+	// "nothing retained".
 	assert.Contains(t, cli, `"retained_bytes", size`,
 		"the runner must still emit the size field the doc tells the operator to watch")
-	assert.Contains(t, cli, `"retained_bytes", "unknown"`,
-		"an unmeasurable walk must log unknown, not a zero that reads as nothing retained")
+	assert.NotContains(t, cli, `"retained_bytes", "unknown"`,
+		"retained_bytes must stay numeric: a string sentinel breaks the json-format numeric monitor the doc tells the operator to build")
+	assert.Contains(t, cli, `"retained_bytes_unmeasured", true`,
+		"an unmeasurable walk must report itself through a sibling boolean rather than by retyping retained_bytes")
+	assert.Contains(t, doc, "retained_bytes_unmeasured",
+		"the doc must publish the unmeasured shape beside the sample WARN line, not leave the operator to discover it")
 
 	// The export gate is still closed by default on a partial run: a recorded failure
 	// EXPLAINS a shortfall, it does not excuse one.
