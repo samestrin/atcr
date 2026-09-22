@@ -53,9 +53,9 @@ func TestQualityReport_RankedByDismissalRateDescending(t *testing.T) {
 
 	assert.Contains(t, strings.ToLower(out), "dismissal rate", "heading/columns must name the ranking basis")
 
-	iHigh := strings.Index(out, "| alpha | gpt-4 | 9 | 1 | 90.0% |")
-	iMid := strings.Index(out, "| alpha | claude | 1 | 1 | 50.0% |")
-	iLow := strings.Index(out, "| beta | gpt-4 | 1 | 19 | 5.0% |")
+	iHigh := strings.Index(out, "| alpha | gpt-4 | 9 | 1 | 0 | 0 | 90.0% |")
+	iMid := strings.Index(out, "| alpha | claude | 1 | 1 | 0 | 0 | 50.0% |")
+	iLow := strings.Index(out, "| beta | gpt-4 | 1 | 19 | 0 | 0 | 5.0% |")
 	require.GreaterOrEqual(t, iHigh, 0, "high-dismissal row must render with exact cells")
 	require.GreaterOrEqual(t, iMid, 0, "mid-dismissal row must render with exact cells")
 	require.GreaterOrEqual(t, iLow, 0, "low-dismissal row must render with exact cells")
@@ -78,13 +78,13 @@ func TestQualityReport_JSONFormatMatchesMDRankOrder(t *testing.T) {
 	assert.Equal(t, qualityReportRow{Persona: "alpha", Model: "claude", DismissedCount: 1, ConfirmedCount: 1, DismissalRate: 0.5}, got[1])
 	assert.Equal(t, qualityReportRow{Persona: "beta", Model: "gpt-4", DismissedCount: 1, ConfirmedCount: 19, DismissalRate: 0.05}, got[2])
 
-	// The JSON object must expose exactly the five allowlisted keys — no leaked field.
+	// The JSON object must expose exactly the seven allowlisted keys — no leaked field.
 	var raw []map[string]any
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &raw))
 	require.Len(t, raw, 3)
 	for _, m := range raw {
-		assert.Len(t, m, 5, "each row exposes exactly persona, model, dismissed_count, confirmed_count, dismissal_rate")
-		for _, k := range []string{"persona", "model", "dismissed_count", "confirmed_count", "dismissal_rate"} {
+		assert.Len(t, m, 7, "each row exposes exactly persona, model, dismissed_count, confirmed_count, unreproducible_count, attempts_exhausted_count, dismissal_rate")
+		for _, k := range []string{"persona", "model", "dismissed_count", "confirmed_count", "unreproducible_count", "attempts_exhausted_count", "dismissal_rate"} {
 			_, ok := m[k]
 			assert.True(t, ok, "row must carry key %q", k)
 		}
@@ -190,7 +190,7 @@ func TestQualityReport_SubsequentRunWithDataRendersFullTable(t *testing.T) {
 
 	out, err := runQualityReportCmd(t, "--format", "md")
 	require.NoError(t, err)
-	assert.Contains(t, out, "| alpha | gpt-4 | 1 | 1 | 50.0% |", "one dismissed + one confirmed → rate 50%")
+	assert.Contains(t, out, "| alpha | gpt-4 | 1 | 1 | 0 | 0 | 50.0% |", "one dismissed + one confirmed → rate 50%")
 }
 
 // TestQualityReport_MarkdownCellsEscapePipeAndNewline locks the 4.2.A defense-in-
@@ -205,9 +205,9 @@ func TestQualityReport_MarkdownCellsEscapePipeAndNewline(t *testing.T) {
 	require.NoError(t, renderQualityReport(&buf, rows, "md"))
 	out := buf.String()
 
-	// Exactly one data row (5 columns → the row line has 6 pipes from the template
+	// Exactly one data row (7 columns → the row line has 8 pipes from the template
 	// plus the escaped literal rendered as "\|", which is not a column separator).
-	assert.Contains(t, out, `| a\|b | m 1 | 1 | 1 | 50.0% |`, "pipe escaped, newline flattened to a space")
+	assert.Contains(t, out, `| a\|b | m 1 | 1 | 1 | 0 | 0 | 50.0% |`, "pipe escaped, newline flattened to a space")
 	assert.NotContains(t, out, "m\n1", "a raw newline must never reach a table cell")
 }
 
@@ -235,7 +235,7 @@ func TestQualityReport_DirFlagReadsExplicitStoreWithoutChdir(t *testing.T) {
 
 	out, err := runQualityReportCmd(t, "--dir", dir, "--format", "md")
 	require.NoError(t, err)
-	assert.Contains(t, out, "| alpha | gpt-4 | 1 | 1 | 50.0% |",
+	assert.Contains(t, out, "| alpha | gpt-4 | 1 | 1 | 0 | 0 | 50.0% |",
 		"--dir must point the report at the explicit fixture store, not DefaultDir(\".\")")
 }
 
