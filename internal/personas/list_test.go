@@ -446,3 +446,28 @@ func TestListCommunity_BareMarkdownCollidingWithBuiltinIsSkipped(t *testing.T) {
 	require.Error(t, err, "a built-in collision must be reported, not swallowed")
 	assert.Empty(t, got, "the colliding file is skipped rather than shadowing the built-in")
 }
+
+// An md-only community persona is NOT a community-repo install: it has no
+// <name>.yaml, so it carries no resolved lock, no version pin and no manifest.
+//
+// Admitting bare .md into listCommunity made that distinction load-bearing for
+// the first time. Two consumers filter on `Source == "community"` and then
+// assume a YAML behind it — `personas drift` calls LoadLock per row, and
+// `personas remove --all` calls Remove per row — and both fail on a name whose
+// yaml does not exist. IsCommunityInstalled is the one predicate they share, so
+// the assumption is stated in a single place instead of re-derived twice.
+func TestIsCommunityInstalled_DistinguishesYAMLBackedFromBareMarkdown(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "pinned.yaml"), []byte("version: 1.0.0\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "pinned.md"), []byte("# pinned\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "lonely.md"), []byte("# lonely\n"), 0o600))
+
+	assert.True(t, IsCommunityInstalled(dir, "pinned"),
+		"a YAML-backed persona is a community install and has a lock to read")
+	assert.False(t, IsCommunityInstalled(dir, "lonely"),
+		"a bare .md is a local prompt file, not a community install — it has no lock to drift or remove")
+	assert.False(t, IsCommunityInstalled(dir, "absent"),
+		"a name with no file at all is not installed")
+	assert.False(t, IsCommunityInstalled(dir, "../escape"),
+		"a traversal name is refused rather than probed outside the personas directory")
+}

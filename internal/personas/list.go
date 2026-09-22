@@ -366,3 +366,19 @@ func listCommunity(personasDir string) ([]PersonaMeta, error) {
 	}
 	return out, errors.Join(warnings...)
 }
+
+// IsCommunityInstalled reports whether name is a community-repo INSTALL under
+// personasDir — that is, backed by a <name>.yaml.
+//
+// listCommunity admits two file shapes, and only one of them carries a resolved
+// lock: a YAML persona has a version pin and a manifest, while a bare <name>.md
+// is a local prompt file an operator dropped in. Consumers that filter on
+// `Source == "community"` and then reach for the YAML — `personas drift`
+// (LoadLock per row) and `personas remove --all` (Remove per row) — must ask this
+// first, or they report a missing-file error for every md-only lens.
+//
+// A traversal or otherwise invalid name is not installed rather than probed, so
+// the answer never depends on a path outside personasDir.
+func IsCommunityInstalled(personasDir, name string) bool {
+	return false // STUB: wrong answer on purpose, replaced in GREEN
+}
