@@ -138,7 +138,7 @@ func predicateRuleLineUnderFocus(text string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("the lens anchor %q is absent from the ## Focus section — it must be on a "+
-		"bullet there (the shipped built-ins number it 6.), in prose adapted to this persona's "+
+		"bullet there, in prose adapted to this persona's "+
 		"voice, not in another section and not inside a fenced example", predicateRuleAnchor)
 }
 
