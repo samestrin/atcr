@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/reconcile"
 )
@@ -708,7 +709,17 @@ func Emit(in EmitInput, opts EmitOpts) error {
 			FindingsCorroborated:     corroborated,
 			FindingsSolo:             raised - corroborated,
 			FindingsDocShielded:      shielded,
-			Outcome:                  meta.Outcome,
+			// THE WRITE-BOUNDARY OUTCOME GUARD (2026-09-22, closing the
+			// coerceOutcome-placement row): Emit is exported and used to copy
+			// meta.Outcome in unvalidated, so a caller that builds its own
+			// ReviewerMeta — any path other than EmitForReconcile — bypassed
+			// coerceOutcome entirely. The check sits HERE, at the assignment, the
+			// placement reconcile.go's own comment anticipated; it is idempotent
+			// for the reconcile path (outcomeFor already ran it one frame up) and
+			// load-bearing for every other caller. Fail-neutral, same rationale:
+			// unknown is excluded from trust scoring, a garbage value would be
+			// uninterpretable for the whole 180-day window.
+			Outcome: validatedOutcome(meta.Outcome),
 			// in.AmbiguousFindings is a category stream ONLY — it is absent from
 			// every reviewerCounts call above, so it moves no numerator and no
 			// denominator. See the field's comment for the loop it breaks.
@@ -1154,4 +1165,16 @@ func distinctCount(xs []string) int {
 		}
 	}
 	return len(seen)
+}
+
+// validatedOutcome is the write-boundary half of the outcome guard: the value
+// copied into a persisted Record.Outcome must be a vocabulary member or the
+// unknown zero, whatever the caller supplied. It mirrors coerceOutcome's rule at
+// the only assignment that reaches the store, so the two cannot drift apart in
+// effect even though each states its own check.
+func validatedOutcome(o string) string {
+	if !fanout.ValidReviewerOutcome(o) {
+		return ""
+	}
+	return o
 }
