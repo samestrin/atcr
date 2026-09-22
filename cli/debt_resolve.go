@@ -720,6 +720,32 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 	// blanking it.
 	if r := strings.TrimSpace(reason); r != "" {
 		rec.Justification = r
+		// Write-time fold for a REPEATED attempts-exhausted checkpoint. The
+		// effective record is already attempts-exhausted, so this resolve is a
+		// continuation of the SAME checkpoint, not a new finding — and compaction
+		// retains exactly ONE superseded rationale-bearing record per id, so a
+		// second AE record carrying only its own --reason would displace the
+		// first checkpoint's typed rationale at the next compaction, silently.
+		// Carrying the prior reason forward in the NEW record's Justification
+		// means the single trail slot holds the whole AE trail. This is strictly
+		// append-only: the prior record is never rewritten (the TD-004 no-lock
+		// stance), and the whole-record MaxRecordBytes check below still bounds
+		// the grown justification.
+		//
+		// LIMITATION, recorded deliberately: this fold covers the
+		// attempts-exhausted -> attempts-exhausted continuation only. Other
+		// multi-checkpoint sequences (AE -> resolved -> AE, or AE between two
+		// different terminal statuses) still leave more rationale-bearing
+		// records than the one trail slot retains, and compaction drops all but
+		// the highest-ranked one. Universal preservation would be the honest
+		// case for retaining N rationale records per id instead; that decision
+		// belongs to the retention row, not here.
+		if status == localdebt.StatusAttemptsExhausted &&
+			strings.EqualFold(strings.TrimSpace(orig.Status), localdebt.StatusAttemptsExhausted) {
+			if prior := strings.TrimSpace(orig.Justification); prior != "" && prior != r {
+				rec.Justification = prior + "\n\n" + r
+			}
+		}
 	}
 	// Bound the ENCODED record before appending, the same rule `debt add` enforces
 	// (cli/debt_add.go): the resolution copies the finding verbatim and adds the
