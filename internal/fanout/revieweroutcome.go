@@ -64,7 +64,9 @@ package fanout
 // fraction of the input), so one value describes both without lying, whereas publishing
 // a gate-wiped reviewer as "clean" asserts something false. Where reuse is free, take
 // it; where it would falsify the row, pay the skew instead — and say so, which is what
-// the CROSS-VERSION NOTEs on internal/benchmark/outcome.go:88 and :114 do.
+// the CROSS-VERSION NOTEs on internal/benchmark/outcome.go's OutcomeUngrounded and
+// OutcomeFiltered constants do (cited by name, not line — every insertion into
+// outcome.go's doc blocks would otherwise re-aim a line-number citation).
 func ReviewerOutcome(a AgentStatus, raised []string) string {
 	switch {
 	case a.Status != StatusOK || a.Error != "":
