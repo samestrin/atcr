@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -131,17 +132,110 @@ func TestTechnicalDebtDoc_StatusLifetimesTableHasARowPerStatus(t *testing.T) {
 	}
 }
 
+// closedStatusRankChain derives the descending-rank chain of terminal statuses
+// straight from ClosedStatusRank's own switch arms, the same way
+// localdebtTerminalStatuses reads the status set from the AST rather than a
+// hand-typed list — so a re-ranking in the source is what this test pins
+// against, not a copy of today's order.
+func closedStatusRankChain(t *testing.T) string {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, filepath.Join(localdebtRecordSourceDir, "record.go"), nil, 0)
+	require.NoError(t, err, "parsing record.go")
+
+	constValues := map[string]string{}
+	for _, decl := range f.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for i, ident := range vs.Names {
+				if i >= len(vs.Values) {
+					continue
+				}
+				lit, ok := vs.Values[i].(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					continue
+				}
+				v, err := strconv.Unquote(lit.Value)
+				require.NoError(t, err)
+				constValues[ident.Name] = v
+			}
+		}
+	}
+
+	type rankedStatus struct {
+		value string
+		rank  int
+	}
+	var ranked []rankedStatus
+
+	ast.Inspect(f, func(n ast.Node) bool {
+		fn, ok := n.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "ClosedStatusRank" {
+			return true
+		}
+		ast.Inspect(fn, func(n ast.Node) bool {
+			cc, ok := n.(*ast.CaseClause)
+			if !ok || len(cc.List) == 0 {
+				return true
+			}
+			ident, ok := cc.List[0].(*ast.Ident)
+			if !ok {
+				return true
+			}
+			value, ok := constValues[ident.Name]
+			if !ok {
+				return true
+			}
+			for _, stmt := range cc.Body {
+				ret, ok := stmt.(*ast.ReturnStmt)
+				if !ok || len(ret.Results) != 1 {
+					continue
+				}
+				lit, ok := ret.Results[0].(*ast.BasicLit)
+				if !ok || lit.Kind != token.INT {
+					continue
+				}
+				rank, err := strconv.Atoi(lit.Value)
+				require.NoError(t, err)
+				ranked = append(ranked, rankedStatus{value: value, rank: rank})
+			}
+			return false
+		})
+		return false
+	})
+
+	require.NotEmpty(t, ranked,
+		"ClosedStatusRank must have status cases returning an integer literal — an empty "+
+			"result means its shape drifted from this scan and the guard is pinned against nothing")
+
+	sort.Slice(ranked, func(i, j int) bool { return ranked[i].rank > ranked[j].rank })
+
+	parts := make([]string, len(ranked))
+	for i, r := range ranked {
+		parts[i] = "`" + r.value + "`"
+	}
+	return strings.Join(parts, " > ")
+}
+
 // TestTechnicalDebtDoc_PrecedenceSentenceMatchesTheRankChain covers passage 3 of
 // 5, and it is the passage the story flags as most likely to be missed: it is
 // PROSE, not a table row, so a row-oriented drift check passes while the
 // sentence silently contradicts the code.
 //
-// The expected chain is sprint-plan.md → Phase 1 Clarifications → C1's flipped
-// order, which supersedes plan.md's originally-decided one:
-// wontfix > unreproducible > attempts-exhausted > resolved > deferred.
+// The expected chain is read from ClosedStatusRank itself (see
+// closedStatusRankChain) rather than hand-typed, so a re-ranking in the source
+// — such as sprint-plan.md → Phase 1 Clarifications → C1's flip of plan.md's
+// originally-decided order — is what this test pins against.
 func TestTechnicalDebtDoc_PrecedenceSentenceMatchesTheRankChain(t *testing.T) {
 	doc := technicalDebtDoc(t)
-	const wantChain = "`wontfix` > `unreproducible` > `attempts-exhausted` > `resolved` > `deferred`"
+	wantChain := closedStatusRankChain(t)
 
 	assert.Contains(t, doc, wantChain,
 		"the published precedence sentence must spell the full rank chain exactly as "+
