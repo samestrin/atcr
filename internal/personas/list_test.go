@@ -556,3 +556,30 @@ func TestJoinScores_BlankKeyIsNotRenderedAsANamelessLens(t *testing.T) {
 	require.Len(t, scored, 1, "the blank key contributes no row")
 	assert.Equal(t, "archer", scored[0].Name)
 }
+
+func TestListTiersWithScores_FreshInstallStillShowsARegistryOnlyLens(t *testing.T) {
+	// The path `personas list --scores` actually takes. On a fresh install the
+	// community dir is empty, so a registry lens that ships no persona file —
+	// archer and vera are the pair epic 35.16's acceptance criteria are written
+	// about — has scorecard history and no roster row. Before the tail it was
+	// looked up, found, and discarded with no row and no notice.
+	projectDir := t.TempDir()
+	communityDir := t.TempDir()
+
+	scored, err := ListTiersWithScores(projectDir, communityDir,
+		map[string]float64{"archer": 0.6},
+		map[string]ScoreDetail{"archer": {Counted: 221, Excluded: 3}})
+	require.NoError(t, err)
+
+	archer := scoredByName(scored, "archer")
+	require.NotNil(t, archer, "a registry-only lens must reach the rendered table")
+	assert.Equal(t, "registry", archer.Source)
+	assert.Equal(t, "-", archer.Version, "no persona file means no version, the community marker")
+	require.NotNil(t, archer.Rate)
+	assert.InDelta(t, 0.6, *archer.Rate, 1e-9)
+	require.NotNil(t, archer.Detail)
+	assert.Equal(t, 221, archer.Detail.Counted)
+
+	// The built-in roster is unaffected — the tail adds, it never replaces.
+	assert.NotNil(t, scoredByName(scored, "bruce"))
+}
