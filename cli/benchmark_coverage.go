@@ -242,6 +242,19 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 			// cause and the one with a remedy that terminates; re-running under this
 			// build cannot help, since a producer of this version writes only values
 			// this version knows.
+			// An EMPTY key is rejected before the allowlist: ValidOutcome("") is
+			// true — the empty string is OutcomeUnknown's stored wire value — so
+			// the check below would admit {"": 17}, the exact legal-but-awful
+			// shape OutcomeUnknownLabel exists to prevent. No producer version
+			// can emit it: a tally is written through benchmark.OutcomeTallyKey,
+			// which spells the unknown outcome "unknown", so hand-assembly is
+			// the only cause and version skew does not apply.
+			if k == "" {
+				return fmt.Errorf("run-result %s records an empty outcome tally key for %s/%s; "+
+					"a producer writes tally keys through benchmark.OutcomeTallyKey, which spells "+
+					"the unknown outcome %q, so this file is hand-assembled",
+					path, model, persona, benchmark.OutcomeUnknownLabel)
+			}
 			if k != benchmark.OutcomeUnknownLabel && !benchmark.ValidOutcome(k) {
 				return fmt.Errorf("run-result %s records outcome tally key %q for %s/%s, outside the outcome vocabulary "+
 					"this build knows; the file was either written by a NEWER atcr whose vocabulary added the value "+
