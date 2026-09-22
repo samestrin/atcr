@@ -180,17 +180,20 @@ func TestExecuteRepoStateBenchmarkRun_ParsesEveryCaseDiffBeforeAnyCompleterCall(
 // findings are read, so each case's repo must be released when its case
 // completes, not at run end.
 func TestExecuteRepoStateBenchmarkRun_ReleasesEachCaseRepoAfterItsCase(t *testing.T) {
-	// Scoped to dirs created after the test began: failed runs now RETAIN their
-	// work dirs (see the retention test), and those linger in $TMPDIR — counting
-	// them would credit this run with repos it did not create.
-	testStart := time.Now()
 	// A sibling atcr process — a concurrent test binary or a review subagent —
-	// creates its own atcr-repo-state-* dirs in the SHARED os.TempDir(). A foreign
-	// one holding a fresh repo is exactly what such a neighbor looks like mid-run;
-	// this fixture's glob must not count it as this run's leak.
+	// creates its own atcr-repo-state-* dirs in the SHARED os.TempDir(), so this
+	// test gets its own temp namespace the way the spaced-TMPDIR test already does:
+	// the runner's os.MkdirTemp and the fixture's glob both resolve $TMPDIR, so the
+	// foreign dir planted below (under the REAL temp root, captured first) is
+	// invisible to both. Scoped to dirs created after the test began as a second
+	// belt: failed runs now RETAIN their work dirs (see the retention test), and
+	// those linger in $TMPDIR — counting them would credit this run with repos it
+	// did not create.
 	foreign := filepath.Join(os.TempDir(), "atcr-repo-state-foreign")
 	require.NoError(t, os.MkdirAll(filepath.Join(foreign, "repo-9"), 0o755))
 	t.Cleanup(func() { _ = os.RemoveAll(foreign) })
+	t.Setenv("TMPDIR", t.TempDir())
+	testStart := time.Now()
 	suite := writeTwoCaseSuite(t)
 	cc := &repoCountingCompleter{since: testStart}
 
@@ -1554,6 +1557,10 @@ func TestExecuteRepoStateBenchmarkRun_PartialRunReportsTheRetainedSize(t *testin
 // outright, so a regression that stopped reclaiming the dir on every clean run passed
 // the one test named for catching it.
 func TestExecuteRepoStateBenchmarkRun_CleanRunStillCleansUp(t *testing.T) {
+	// Own temp namespace: the fixture globs the SHARED os.TempDir() for
+	// atcr-repo-state-* and picks by mtime, so a concurrent process's work dir
+	// could be mistaken for this run's. Isolate, don't filter.
+	t.Setenv("TMPDIR", t.TempDir())
 	var logs bytes.Buffer
 	cc := &workDirNamingCompleter{since: time.Now()}
 
@@ -1918,6 +1925,9 @@ func (c *prepareFaultingCompleter) Complete(ctx context.Context, inv llmclient.I
 // aborts rather than recording, so nothing reached the record-and-continue arm at all.
 // This drives the arm directly and pins the constant it writes.
 func TestExecuteRepoStateBenchmarkRun_RecordsAPrepareFailureAndContinues(t *testing.T) {
+	// Own temp namespace: the fixture globs the SHARED os.TempDir() and could plant
+	// its blocker file inside a concurrent process's work dir. Isolate, don't filter.
+	t.Setenv("TMPDIR", t.TempDir())
 	suite := writeCaseSuite(t, "first-case", "second-case")
 	cc := &prepareFaultingCompleter{since: time.Now(), caseIndex: 1}
 
@@ -1972,6 +1982,10 @@ func (c *poolWriteFaultingCompleter) Complete(ctx context.Context, inv llmclient
 // ships invisibly, and the arm is the one that decides whether one case's bad luck
 // costs the whole suite.
 func TestExecuteRepoStateBenchmarkRun_RecordsANonSentinelExecuteFailureAndContinues(t *testing.T) {
+	// Own temp namespace: the fixture globs the SHARED os.TempDir() and could plant
+	// its blocking directory inside a concurrent process's work dir. Isolate, don't
+	// filter.
+	t.Setenv("TMPDIR", t.TempDir())
 	suite := writeCaseSuite(t, "first-case", "second-case")
 	cc := &poolWriteFaultingCompleter{since: time.Now(), caseIndex: 1}
 
@@ -1996,6 +2010,10 @@ func TestExecuteRepoStateBenchmarkRun_RecordsANonSentinelExecuteFailureAndContin
 // overlapping them — a default cap would take the abort decision away from the
 // operator, which is why the work-dir arm's comment argues against a general one.
 func TestExecuteRepoStateBenchmarkRun_ConsecutiveFailureCap(t *testing.T) {
+	// Own temp namespace for every subtest: a sibling atcr process creating
+	// atcr-repo-state-* dirs in the SHARED os.TempDir() must not be observable by
+	// (or attributed to) this run. Isolate, don't filter by mtime.
+	t.Setenv("TMPDIR", t.TempDir())
 	t.Run("aborts once the run of consecutive failures reaches the cap", func(t *testing.T) {
 		suite := writeCaseSuite(t, "first-case", "second-case", "third-case", "fourth-case")
 		for _, id := range []string{"first-case", "second-case", "third-case", "fourth-case"} {
@@ -2387,6 +2405,10 @@ func TestExecuteRepoStateBenchmarkRun_WarnsOnMissingFindingsFileAndUnattributedR
 // RUNNER to a work-dir failure, so the reason constant it records was unverified end
 // to end and a wrong one would have shipped invisibly.
 func TestExecuteRepoStateBenchmarkRun_RecordsAWorkDirFailureAndContinues(t *testing.T) {
+	// Own temp namespace: the fixture globs the SHARED os.TempDir() for
+	// atcr-repo-state-* and picks by mtime — a concurrent process's work dir
+	// could be grabbed (and chmod'ed) as this run's. Isolate, don't filter.
+	t.Setenv("TMPDIR", t.TempDir())
 	suite := writeCaseSuite(t, "first-case", "second-case")
 	cc := &workDirFaultingCompleter{since: time.Now(), perCase: 1}
 	t.Cleanup(func() {
