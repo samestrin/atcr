@@ -3345,3 +3345,50 @@ func TestFoldIndex_IsTheSingleFoldPrecedence(t *testing.T) {
 			"the winner is the LAST twin; the m1 twin remains a distinct record for retention to consider")
 	})
 }
+
+// An unorderable timestamp means "recency unknown": the record stays fully live
+// in the fold and the comparison defers to APPEND ORDER — the same rule a full
+// tie already uses. The semantics were decided in Sprint 35.13 (2fd881a8) and
+// are implemented in latestIndex's !orderableTimestamps arm; this pin exists so
+// the decided semantics cannot drift silently. Reject-at-read is explicitly
+// wrong (a corrupt ts must not drop a finding from the backlog), and a separate
+// "sort last" class is an invention the arm's own rationale rejects — the
+// later-appended record wins in BOTH directions below, whichever side is
+// unorderable.
+func TestFold_UnorderableTimestampDefersToAppendOrder(t *testing.T) {
+	rec := func(id, ts string) Record {
+		r := Record{
+			SchemaVersion: SchemaVersion,
+			ID:            id,
+			RunID:         "2026-09-01T00:00:00Z-multi-agent",
+			Timestamp:     ts,
+			Severity:      "HIGH",
+			File:          "internal/thing.go",
+			Line:          42,
+			Problem:       "p",
+			Fix:           "f",
+			Category:      "correctness",
+			EstMinutes:    10,
+			Evidence:      "e",
+			Reviewers:     []string{"dax"},
+			Confidence:    "HIGH",
+		}
+		return r
+	}
+	const valid = "2026-09-01T00:00:00Z"
+	const garbage = "not-a-timestamp"
+
+	t.Run("valid first, garbage appended later: the later record wins", func(t *testing.T) {
+		folded := FoldRecords([]Record{rec("id-a", valid), rec("id-a", garbage)})
+		require.Len(t, folded, 1)
+		assert.Equal(t, garbage, folded[0].Timestamp,
+			"recency unknown defers to append order: the later-appended record is effective")
+	})
+
+	t.Run("garbage first, valid appended later: the later record wins", func(t *testing.T) {
+		folded := FoldRecords([]Record{rec("id-b", garbage), rec("id-b", valid)})
+		require.Len(t, folded, 1)
+		assert.Equal(t, valid, folded[0].Timestamp,
+			"the valid record is effective here because it was appended later — not because it is valid")
+	})
+}
