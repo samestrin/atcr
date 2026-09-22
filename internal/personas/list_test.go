@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	builtins "github.com/samestrin/atcr/personas"
 )
 
 func ratePtr(f float64) *float64 { return &f }
@@ -384,4 +386,63 @@ func TestListProject_SkipsBaseTemplateAndSymlinks(t *testing.T) {
 		assert.Equal(t, "project", m.Source)
 	}
 	assert.ElementsMatch(t, []string{"team/vera"}, names)
+}
+
+// The two on-disk tiers must agree on what a persona file IS.
+//
+// listProject admits <name>.md and labels it Source "project"; listCommunity
+// admitted only .yaml/.yml and silently skipped .md as if it were a .DS_Store.
+// The same file shape was therefore a persona in one directory and noise in the
+// other — and on the live store that hid five real lenses (archer, brad, pace,
+// ronin, vera are md-only in ~/.config/atcr/personas). A lens nothing lists is a
+// lens nobody can audit, drop or repoint.
+//
+// The rule, applied in both walkers: a bare <name>.md IS a persona. A <name>.md
+// co-located with <name>.yaml is the YAML persona's prompt body, not a second
+// persona, so it folds into the YAML row rather than being emitted twice.
+func TestListCommunity_AdmitsBareMarkdownPersonas(t *testing.T) {
+	dir := t.TempDir()
+	// paired: the .md is the yaml persona's prompt body, not its own row
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "paired.yaml"), []byte("version: 2.1.0\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "paired.md"), []byte("# paired\n"), 0o600))
+	// md-only: a persona in its own right
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "lonely.md"), []byte("# lonely\n"), 0o600))
+	// shared base template, at any depth — never a persona, same as listProject
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "_base.md"), []byte("# base\n"), 0o600))
+	// not a persona file at all
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".DS_Store"), []byte("x"), 0o600))
+
+	got, err := listCommunity(dir)
+	require.NoError(t, err)
+
+	byName := map[string]PersonaMeta{}
+	for _, m := range got {
+		_, dup := byName[m.Name]
+		assert.False(t, dup, "%q emitted twice; a co-located .md must fold into the YAML row", m.Name)
+		byName[m.Name] = m
+	}
+
+	require.Contains(t, byName, "lonely", "a bare <name>.md is a community persona, not noise")
+	assert.Equal(t, "-", byName["lonely"].Version, "an md-only persona carries no version pin")
+	assert.Equal(t, "community", byName["lonely"].Source)
+
+	require.Contains(t, byName, "paired")
+	assert.Equal(t, "2.1.0", byName["paired"].Version,
+		"the paired row keeps the YAML's version — the .md folded in, it did not replace it")
+
+	assert.NotContains(t, byName, "_base", "the shared base template is never a persona, in either tier")
+	assert.Len(t, got, 2, "exactly two personas: paired and lonely")
+}
+
+// An md-only community file whose name collides with a built-in must warn and be
+// skipped, exactly as a colliding .yaml already does — otherwise the new
+// admission opens a silent shadowing path the YAML one is closed to.
+func TestListCommunity_BareMarkdownCollidingWithBuiltinIsSkipped(t *testing.T) {
+	dir := t.TempDir()
+	name := builtins.Names()[0]
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name+".md"), []byte("# shadow\n"), 0o600))
+
+	got, err := listCommunity(dir)
+	require.Error(t, err, "a built-in collision must be reported, not swallowed")
+	assert.Empty(t, got, "the colliding file is skipped rather than shadowing the built-in")
 }
