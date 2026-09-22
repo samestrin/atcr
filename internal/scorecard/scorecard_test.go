@@ -591,3 +591,19 @@ func TestReviewerCounts_ZeroDistinctReviewersEarnsTheIsolatedWeightNotInfinity(t
 	assert.False(t, math.IsInf(credit, 0), "a zero distinct-reviewer count must not divide")
 	assert.InDelta(t, 1.0, credit, 1e-9, "nobody corroborated it, so it earns the isolated weight")
 }
+
+func TestReviewerMembership_NormalizedSoTheFoldsCannotDisagree(t *testing.T) {
+	// The emission loop keys reviewers by normalizeReviewerName ("bruce"),
+	// while a stored finding may carry the raw form ("Bruce"). reviewerCounts
+	// and reviewerCategories matched membership with contains() (exact string
+	// compare) while reviewerPairSignals routes through distinctPeers
+	// (normalized) — so one record could carry PairSignals for a reviewer it
+	// also reported as having raised nothing, and that empty category set fed
+	// the opportunity gate as "raised nothing".
+	f := Finding{Reviewers: []string{"Bruce"}, Category: "correctness"}
+	raised, _, _ := reviewerCounts("bruce", []Finding{f})
+	assert.Equal(t, 1, raised, "casing must not hide participation from the counts fold")
+	cats := reviewerCategories("bruce", []Finding{f})
+	assert.NotNil(t, cats, "casing must not hide participation from the categories fold")
+	assert.Contains(t, cats, "correctness")
+}
