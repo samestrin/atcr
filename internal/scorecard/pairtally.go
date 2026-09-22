@@ -490,6 +490,14 @@ func pairTallies(records []Record) map[string]PairTally {
 // agreement either, because the group demonstrably did not agree. Discarding it
 // forgoes data; apportioning it would fabricate a durable number.
 //
+// SCOPE-DENIED (2026-09-22 clarification): threading the pre-merge group's
+// per-reviewer severities (or reconcile.Position) onto scorecard.Finding to
+// recover 3+-reviewer attribution is a published-reconcile-module change,
+// reserved for TD-039's dedicated sprint per C22/D3 — do not widen this file to
+// attempt it. Two-reviewer clusters already attribute exactly (the len(peers)
+// == 2 branch below); the 3+ discard is the deliberate design, not a defect
+// waiting for a fix here.
+//
 // WHAT THIS DOES NOT COVER, stated rather than left to be discovered: the
 // gray_zone half of AC 05-01 Scenario 1. A gray-zone pair is two near-duplicate
 // findings DBSCAN left unmerged, so its evidence is the AMBIGUOUS CLUSTER's
