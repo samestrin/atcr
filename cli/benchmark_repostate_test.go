@@ -1470,7 +1470,9 @@ func (c *workDirNamingCompleter) Complete(ctx context.Context, inv llmclient.Inv
 // directory that IS retained — docs/benchmark.md tells the operator to watch exactly
 // that number for growth before the volume fills, and a zero reads as "nothing
 // retained". dirSizeBytes therefore reports whether the size was measured at all, so
-// the caller can log "unknown" instead of a lying zero. A mid-walk failure still
+// the caller can OMIT retained_bytes and log retained_bytes_unmeasured=true instead of
+// a lying zero — the key stays numeric-or-absent rather than becoming a string, because
+// the doc tells the operator to monitor it numerically. A mid-walk failure still
 // returns the partial total as a signal, and the deferred cleanup stays
 // warn-never-fail either way.
 func TestDirSizeBytesReportsUnmeasuredRootWalk(t *testing.T) {
