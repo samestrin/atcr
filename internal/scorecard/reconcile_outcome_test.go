@@ -3,9 +3,11 @@ package scorecard
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -538,4 +540,27 @@ func TestCoerceOutcome_EmitsMsgOutcomeCoerced(t *testing.T) {
 	var clean bytes.Buffer
 	assert.Equal(t, testOutcomeFindings, coerceOutcome(testOutcomeFindings, &clean))
 	assert.Empty(t, clean.String(), "a valid outcome must not log a coercion")
+}
+
+// TestEmit_RejectsAnInvalidOutcomeAtTheWriteBoundary pins the write-boundary
+// guard: Emit is exported and used to copy meta.Outcome into the record
+// unvalidated, so a caller that builds its own ReviewerMeta — any path other
+// than EmitForReconcile — could persist a value outside the vocabulary. The
+// guard at the Outcome assignment coerces it to unknown, the same fail-neutral
+// result coerceOutcome produces one frame up on the reconcile path.
+func TestEmit_RejectsAnInvalidOutcomeAtTheWriteBoundary(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, Emit(EmitInput{
+		RunID: pairRunID("write-boundary-guard"),
+		Reviewers: map[string]ReviewerMeta{
+			"bruce": {Model: "opus", Outcome: "banana"}, // not a vocabulary member
+		},
+	}, EmitOpts{Dir: dir}))
+
+	recs, err := ReadSince(dir, 0, time.Now(), ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	r := findReviewer(recs, "bruce")
+	require.NotNil(t, r)
+	assert.Equal(t, testOutcomeUnknown, r.Outcome,
+		"a garbage outcome must be coerced to unknown at the write boundary, never persisted raw")
 }
