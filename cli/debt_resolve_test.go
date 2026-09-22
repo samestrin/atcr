@@ -491,6 +491,28 @@ func TestDebtResolve_InvalidStatusIsUsageError(t *testing.T) {
 	assert.NotContains(t, out, `invalid --status "BOGUS"`, "error must not echo user's uppercase input")
 }
 
+// The --status and --reason usage strings went stale once (a hand-written
+// "resolved|wontfix" literal survived the enum growing to four), and the only
+// coverage that caught the drift was docs-only. Pin the cobra usage strings
+// directly: --status must be DERIVED from resolveStatusList(), and --reason must
+// state the gate it enforces, so a vocabulary change fails here rather than
+// shipping a stale help line.
+func TestDebtResolve_FlagUsageStringsTrackTheVocabulary(t *testing.T) {
+	c := newDebtResolveCmd()
+
+	statusUsage := c.Flags().Lookup("status").Usage
+	assert.Equal(t, "terminal status to record for the positional id ("+resolveStatusList()+")", statusUsage,
+		"--status usage must be derived from resolveStatusList(), never retyped")
+	for s := range resolveStatuses {
+		assert.Contains(t, statusUsage, s,
+			"--status usage must name every accepted value, including %q", s)
+	}
+
+	reasonUsage := c.Flags().Lookup("reason").Usage
+	assert.Contains(t, reasonUsage, "Required for every status other than resolved",
+		"--reason usage must state the gate it enforces")
+}
+
 func TestDebtResolve_WontfixRequiresReasonOrJustification(t *testing.T) {
 	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
 	dir := writeDebtStore(t, rec)
