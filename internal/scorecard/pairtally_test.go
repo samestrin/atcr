@@ -1104,13 +1104,11 @@ func seedPennySasha(t *testing.T, dir, label string, taint func(*Record)) {
 // NOT match for the raised count — one finding raised, FindingsRaised 0, pair
 // signals present.
 //
-// That asymmetry is a real defect in its own right and is NOT fixed here: the
-// same mismatch silently drops the reviewer's findings out of both the trust
-// numerator and denominator, so a lens can be un-scored on a run it actually
-// worked. Filed as TD-047. This test pins only the SHAPE, so it keeps passing
-// whichever way TD-047 is closed — and if TD-047 is closed by normalizing
-// reviewerCounts, this test fails and points at the taint that has to change
-// with it.
+// That asymmetry was TD-047, filed against the exact-match contains() in
+// reviewerCounts and reviewerCategories. It is closed now: all three folds
+// route membership through the normalized participates() predicate, so the
+// mixed-case reviewer counts its own finding, attributes its own category, AND
+// carries the pair signal — one consistent identity across the record.
 func TestEmit_WritesPairSignalsOnAZeroRaisedRecord(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, Emit(EmitInput{
@@ -1138,19 +1136,22 @@ func TestEmit_WritesPairSignalsOnAZeroRaisedRecord(t *testing.T) {
 		}
 	}
 	require.NotNil(t, penny, "the emitter must have written a record for the mixed-case reviewer")
-	assert.Zero(t, penny.FindingsRaised,
-		"contains() is an exact match, so the mixed-case reviewer counts none of its own findings")
+	assert.Equal(t, 1, penny.FindingsRaised,
+		"membership is normalized now, so the mixed-case reviewer counts its own finding")
 	assert.NotEmpty(t, penny.PairSignals,
-		"distinctPeers() folds case, so the SAME finding still yields a pair signal — the shape that was called impossible")
+		"distinctPeers() folds case, so the SAME finding still yields a pair signal")
 
-	// And that shape is exactly what the opportunitySetRuns taint needs. The
-	// record must carry no categories of its own, while some other reviewer on
-	// the run supplies the discriminating, out-of-remit union.
-	assert.Empty(t, penny.CategoriesRaised,
-		"the mixed-case reviewer attributes no category either, for the same exact-match reason")
-	assert.Equal(t, dispOutOfRemit,
+	// With identity consistent across the record, the categories fold also
+	// attributes the finding — and the opportunity gate sees the raised,
+	// out-of-remit category rather than an empty set.
+	assert.Equal(t, []string{"performance"}, penny.CategoriesRaised,
+		"the categories fold normalizes membership too")
+	// With TD-047 closed the gate can no longer misread a working lens as
+	// "raised nothing": a record with findings is never dropped for remit, so
+	// the same record the gate used to reject is now counted.
+	assert.Equal(t, dispCounted,
 		opportunityDisposition(*penny, map[string]struct{}{"testing": {}}),
-		"a real emitted record, carrying pair signals, that the opportunity link still rejects")
+		"a real emitted record, carrying findings, that the opportunity gate counts")
 }
 
 // TestPairTallies_MergeRoutedErasIsInTheSharedChain covers the link the taint
