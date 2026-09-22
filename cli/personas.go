@@ -248,7 +248,12 @@ func listPersonasWithScores(cmd *cobra.Command, dir string) error {
 	}
 	switch {
 	case err != nil:
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nScorecard data at %s is unreadable\n", data.path)
+		// The only reachable load error — DefaultDir failing — returns a ZERO
+		// personasScoreData with path == "", so interpolating data.path here
+		// printed "Scorecard data at  is unreadable": a double space and no
+		// location, on the one path where naming the location is the whole point.
+		// Name the underlying error instead.
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nScorecard data location could not be resolved: %v\n", err)
 	case len(data.rates) == 0:
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nNo scorecard data found at %s\n", data.path)
 	}

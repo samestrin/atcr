@@ -376,7 +376,8 @@ func TestPersonasList_ScoresReadErrorDegradesGracefully(t *testing.T) {
 	assert.Contains(t, stdout, "CORROBORATION")
 	assert.Contains(t, stdout, "n/a")
 	assert.Contains(t, stderr, "permission denied")
-	assert.Contains(t, stdout, "Scorecard data at /home/u/.config/atcr/scorecard is unreadable")
+	assert.Contains(t, stdout, "Scorecard data location could not be resolved: permission denied",
+		"the error footer names the underlying error, which is the only reachable shape when data.path is blank")
 }
 
 func TestPersonasList_BaselineDoesNotLoadScores(t *testing.T) {
