@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1089,4 +1090,33 @@ func TestDocs_PersonasInstallMdDocumentsTheCasesColumn(t *testing.T) {
 	assert.Contains(t, doc, formatScoreDetail(nil), "the no-data marker must be documented")
 	assert.Contains(t, doc, "The excluded figure is always shown, including at `0`",
 		"AC 06-04's explicit-zero behaviour must be documented, not only tested")
+}
+
+// A below-floor lens must be MARKED, not silently ranked on its rate alone.
+//
+// `--scores` loads with minRuns=0 (loadPersonasScores), so DefaultTrustMinRuns
+// never fires on the production path and every lens with any history at all gets
+// a rate. sortScoredPersonas then ranks strictly by that rate with no sample-size
+// term, which on the live store puts `mira 100.0% (3 counted, 198 excluded)`
+// FIRST and `kai 33.3% (20 counted, 188 excluded)` last — the ordering inverts
+// the evidence on the one surface whose question is "can I drop or repoint this
+// lens?".
+//
+// The marker rides the CASES column, beside the count it qualifies, so the
+// caveat is on the same row as the rate it applies to. The floor is read from
+// scorecard.DefaultTrustMinRuns rather than retyped: a marker that kept saying
+// "20" after the floor moved would be worse than no marker.
+func TestFormatScoreDetail_MarksBelowFloorSamplesProvisional(t *testing.T) {
+	below := formatScoreDetail(&personas.ScoreDetail{Counted: 3, Excluded: 198})
+	assert.Contains(t, below, "provisional",
+		"a lens measured on fewer cases than the trust floor must say so where its count is rendered")
+	assert.Contains(t, below, strconv.Itoa(scorecard.DefaultTrustMinRuns),
+		"the marker must name the floor it is below, read from the constant rather than retyped")
+
+	at := formatScoreDetail(&personas.ScoreDetail{Counted: scorecard.DefaultTrustMinRuns, Excluded: 1})
+	assert.NotContains(t, at, "provisional",
+		"a sample AT the floor is not provisional — the floor is inclusive, as TrustPriors applies it")
+
+	assert.NotContains(t, formatScoreDetail(nil), "provisional",
+		"n/a is the no-data marker and must stay the only one; an unmeasured lens is not a weakly-measured one")
 }
