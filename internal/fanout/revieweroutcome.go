@@ -75,6 +75,19 @@ func ReviewerOutcome(a AgentStatus, raised []string) string {
 		return "unparseable"
 	case a.ResponseTruncated:
 		return "truncated"
+	// A ledger-shed reviewer — len(a.FilesDropped) > 0 with a.Truncated false —
+	// is deliberately NOT caught by this arm; it falls through toward
+	// findings/ungrounded/filtered/clean instead. status.go's AgentStatus doc
+	// (Truncated answers "was REVIEWABLE content dropped"; FilesDropped is the
+	// one that names a ledger-only shed) and review.go's keepSmallestEntry note
+	// (dropping the exempt ledger while keeping the file "still reads
+	// Truncated=false", a deliberate trade) both treat that pair as a valid
+	// record of a REVIEWABLE-complete run, not a corrupt one: the claim ledger
+	// is exempt from every shed precisely because its absence says nothing
+	// about how much of the reviewable payload the agent actually saw.
+	// budget.go separately calls identical ledger delivery load-bearing for
+	// fairness across reviewers — that is a real, still-open tradeoff this arm
+	// does not resolve, only chooses not to reclassify as incomplete.
 	case a.UnreviewedChunks > 0 || a.Truncated:
 		return "incomplete"
 	case len(raised) > 0:
