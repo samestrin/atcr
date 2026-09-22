@@ -93,16 +93,27 @@ func foldTerminalByID(records []Record) []Record {
 // decision was postponed, which says nothing about whether the finding was real
 // and so is not a quality signal about the reviewer that raised it.
 //
-// This exists as a predicate rather than as a second copy of the switch in
-// AggregateQualitySignal because compaction has to ask the same question.
-// retainForCompaction preserves an id's model attribution only when losing it
-// would delete a signal row, and that test used settledness as a proxy until
-// Story 36.0 made `attempts-exhausted` both unsettled AND counted. A status
-// counted in one place and not the other silently deletes outcomes.
+// This has NO production caller. It is kept purely as the documented vocabulary
+// of counted outcomes — the four terminal statuses a quality-signal row can be
+// built from, spelled once and pinned by
+// TestProducesQualitySignal_MatchesTheAggregationSwitch, which asserts the set
+// against the aggregation switch below directly.
 //
-// Only compaction's UNSETTLED branch consults this. The settled branch keeps
-// gating on IsSettledStatus and calls modelDonor unconditionally, which is
-// still correct because every settled status is also counted — see modelDonor.
+// The caller history matters because two removed call sites left comments that
+// still name this predicate, and both named it for a question it no longer
+// answers:
+//
+//   - retainForCompaction used to consult it as the proxy for "losing this
+//     attribution deletes a signal row", gated on settledness until Story 36.0
+//     made `attempts-exhausted` both unsettled AND counted. The branches have
+//     since merged and the donor is called unconditionally (modelDonorIndex),
+//     with the old gate explicitly retired — "do not add such a gate back"
+//     (store.go, beside the donor call). Retention now asks bearsRationale,
+//     the rationale-certainty question, not the counting question.
+//   - The aggregation switch keeps its arms in step with this predicate by
+//     convention, but nothing consults the predicate at runtime; a status
+//     counted in one and not the other is drift this pin surfaces at the next
+//     test run, not a lost signal row.
 func producesQualitySignal(status string) bool {
 	switch normalizeStatus(status) {
 	case StatusWontfix, StatusResolved, StatusUnreproducible, StatusAttemptsExhausted:
@@ -217,10 +228,13 @@ func AggregateQualitySignal(records []Record) []QualityRow {
 		default:
 			continue // deferred (or any other terminal) is neither a signal nor a group
 		}
-		// Keep the arms above and producesQualitySignal in step. The predicate is
-		// what store.go's compaction consults to decide whether an id's model
-		// attribution still has to be preserved; a status counted here but absent
-		// there loses its donor and the whole outcome vanishes from the signal.
+		// Keep the arms above and producesQualitySignal in step. The predicate has
+		// no production caller: store.go's compaction gates on bearsRationale and
+		// deliberately does NOT consult this predicate ("do not add such a gate
+		// back", beside modelDonorIndex). The pairing is documentation, not a
+		// runtime contract — it keeps the counted-outcome vocabulary spelled once,
+		// and TestProducesQualitySignal_MatchesTheAggregationSwitch surfaces any
+		// drift between the two at the next test run.
 
 		seen := map[string]bool{}
 		// ModelReviewers is the attributable subset for the record's Model. An
