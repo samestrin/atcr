@@ -184,6 +184,13 @@ func TestExecuteRepoStateBenchmarkRun_ReleasesEachCaseRepoAfterItsCase(t *testin
 	// work dirs (see the retention test), and those linger in $TMPDIR — counting
 	// them would credit this run with repos it did not create.
 	testStart := time.Now()
+	// A sibling atcr process — a concurrent test binary or a review subagent —
+	// creates its own atcr-repo-state-* dirs in the SHARED os.TempDir(). A foreign
+	// one holding a fresh repo is exactly what such a neighbor looks like mid-run;
+	// this fixture's glob must not count it as this run's leak.
+	foreign := filepath.Join(os.TempDir(), "atcr-repo-state-foreign")
+	require.NoError(t, os.MkdirAll(filepath.Join(foreign, "repo-9"), 0o755))
+	t.Cleanup(func() { _ = os.RemoveAll(foreign) })
 	suite := writeTwoCaseSuite(t)
 	cc := &repoCountingCompleter{since: testStart}
 
