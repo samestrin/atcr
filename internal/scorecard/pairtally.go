@@ -94,8 +94,8 @@ const PairEraCurrent = 1
 // ~/.config/atcr/scorecard/. That path is wrong — scorecard.DefaultDir() builds
 // on os.UserConfigDir(), which is ~/Library/Application Support on darwin — and
 // the real store holds 2,265 reviewer records across 211 runs. None of them
-// carries a PairEra, because none predates this epic, so the map is empty for
-// ERA reasons rather than for want of a store. The practical difference is that
+// carries a PairEra, because ALL of them predate this epic, so the map is empty
+// for ERA reasons rather than for want of a store. The practical difference is that
 // the existing history can never be re-scored for pairs; only new runs count.
 //
 // IT NOW FLOORS TWO AXES, AND ONLY THE FIRST INHERITS THE ANALOGY. Say that
