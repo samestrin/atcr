@@ -117,7 +117,7 @@ a binary that cannot understand it.
 | `resolved` | Re-openable on re-detection | The same id after a fix implies a regression — the thing most worth surfacing. |
 | `deferred` | Re-surfaces on re-detection | "Not now" is not "never". A deferred item leaves the `debt resolve` worklist while it stands, but stays in `debt list` and the dashboard as live debt, and stays closeable by id. |
 | `unreproducible` | Re-openable on re-detection | Investigated and could not be reproduced. A determination was reached, so the item leaves the live backlog — but re-detection at the same location is evidence the call was wrong, which is the last thing to suppress. Requires a `--reason`. |
-| `attempts-exhausted` | Re-surfaces on re-detection | The fix attempts ran out without a resolution. The defect is presumed real and the work unfinished, so like `deferred` it stays live debt and stays closeable by id. Requires a `--reason`. |
+| `attempts-exhausted` | Re-surfaces on re-detection | The fix attempts ran out without a resolution. The defect is presumed real and the work unfinished, so like `deferred` it stays live debt and stays closeable by id. Like `deferred`, it is excluded from the no-argument `debt resolve` fix worklist while it stands — its row is closed, so the worklist treats it as acted-on — but it remains visible in `debt list` and the dashboard. Requires a `--reason`. |
 
 So `atcr debt list` can show an item as `resolved` today and as open again after
 a later `atcr reconcile` re-detects it. Only `wontfix` is final.
