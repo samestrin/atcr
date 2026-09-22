@@ -1476,6 +1476,28 @@ func TestDirSizeBytesReportsUnmeasuredRootWalk(t *testing.T) {
 	assert.Equal(t, int64(0), size)
 }
 
+// The documented MID-WALK arm — a subdirectory the walk cannot enter — had no
+// coverage: only the readable root and the missing root were pinned, so a regression
+// flipping the partial-total case to measured=false (or to a zero) would pass the
+// suite while misreporting a partially-readable retained dir as "unknown". The
+// contract: a mid-walk failure leaves the partial total and reports measured=true;
+// only an unreadable ROOT reports unmeasured.
+func TestDirSizeBytesPartialTotalOnMidWalkFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("chmod does not block root")
+	}
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.bin"), make([]byte, 128), 0o600))
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "sealed"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sealed", "b.bin"), make([]byte, 64), 0o600))
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(dir, "sealed"), 0o700) })
+	require.NoError(t, os.Chmod(filepath.Join(dir, "sealed"), 0o000))
+
+	size, measured := dirSizeBytes(dir)
+	require.True(t, measured, "a mid-walk failure leaves the partial total and reports measured")
+	assert.Equal(t, int64(128), size, "the readable file is counted; the sealed subtree is skipped")
+}
+
 // Retention on a partial run is unbounded and unconditional ON PURPOSE — the
 // artifacts are the only copy of a paid panel, so a byte cap or a keep-only-the-failed-
 // case policy would destroy exactly what the arm exists to save. That makes growth
