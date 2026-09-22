@@ -346,6 +346,23 @@ func TestPersonasList_ScoresNoDataFooter(t *testing.T) {
 	assert.Contains(t, stdout, "No scorecard data found at /home/u/.config/atcr/scorecard")
 }
 
+// The only reachable load error — DefaultDir failing — returns a ZERO
+// personasScoreData with path == "", so the error footer interpolated an empty
+// path: "Scorecard data at  is unreadable" — a double space and no location, on
+// the one path where naming the location is the whole point. The error branch
+// must name the underlying error instead.
+func TestPersonasList_ScoresLoadErrorNamesTheUnderlyingError(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withPersonasScores(t, personasScoreData{}, errors.New("scorecard dir cannot be resolved"), nil)
+
+	stdout, _, err := executeSplit(t, "personas", "list", "--scores")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "Scorecard data location could not be resolved: scorecard dir cannot be resolved")
+	assert.NotContains(t, stdout, "unreadable",
+		"the empty-path footer must not appear on the path where data.path is blank")
+}
+
 func TestPersonasList_ScoresReadErrorDegradesGracefully(t *testing.T) {
 	srv := personasTestServer(t, map[string]string{})
 	withPersonasEnv(t, srv)
