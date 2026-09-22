@@ -145,8 +145,33 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 		// what makes the rewrite LINE-scoped instead of id-scoped: see
 		// rewriteJustifications.
 		want := map[string]replacement{}
+		// ID gate, built before the fold: an id is skipped if ANY of its records
+		// satisfies bearsRationale, not just the effective one. The effective
+		// record alone is not the right scope: a regressed id folds to its LATEST
+		// open record (open@t1 -> attempts-exhausted@t2 -> open@t3), so a gate on
+		// the effective record does not fire, the id is scanned, and the superseded
+		// rationale-bearing trail line is protected only by the incidental text
+		// inequality in rewriteJustifications. Where the regression record carries
+		// the operator's --reason verbatim (re-detection copies the effective
+		// record) and the replayed excerpt differs, rep.from matches the trail
+		// line's text and the operator's typed reason is replayed over — the exact
+		// irreversible loss this gate exists to prevent. The reason coincides with
+		// the excerpt where an operator typed a dismissal citing it, which is
+		// reachable, not hypothetical.
+		//
+		// Skipping the WHOLE id is the safe over-broad direction: an id whose trail
+		// carries a human-typed rationale keeps its stale excerpts unread — one
+		// unrepaired excerpt is reported as live stale text by the next pass, while
+		// a replayed-over --reason cannot be recovered from anything in the tree.
+		// FoldRecords emits one record per id, so the gate below runs once per id.
+		rationaleIDs := make(map[string]bool)
+		for _, rec := range recs {
+			if bearsRationale(rec.Status) {
+				rationaleIDs[rec.ID] = true
+			}
+		}
 		for _, r := range FoldRecords(recs) {
-			if bearsRationale(r.Status) {
+			if rationaleIDs[r.ID] {
 				// RATIONALE-BEARING, not merely closed — the distinction record.go
 				// draws between the predicates decides both directions here.
 				// `resolved` and `wontfix` are done: a resolved id is settled
@@ -174,15 +199,16 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 				// satisfies. So a wontfix record routinely DOES carry the stale review
 				// excerpt this pass repairs, and skipping it is over-broad.
 				//
-				// The skip stays anyway, and stays per-record inside the fold, so ONE
-				// settled record makes the whole id unreachable. It is the safe
-				// direction: the alternative failure is overwriting a human-typed
-				// rationale in an append-only store, and the line-scoped `cur !=
-				// rep.from` predicate in rewriteJustifications cannot separate the two
-				// here — rep.from IS the settled record's own justification once
-				// FoldRecords makes it effective. What the skip owes instead is
-				// VISIBILITY: counted below, so "0 scanned" is distinguishable from a
-				// scan that was suppressed.
+				// The gate is ID-scoped, not per-record inside the fold: ONE
+				// rationale-bearing record anywhere in the id's trail makes the whole
+				// id unreachable. It is the safe direction: the alternative failure is
+				// overwriting a human-typed rationale in an append-only store, and the
+				// line-scoped `cur != rep.from` predicate in rewriteJustifications
+				// cannot separate the two on its own — rep.from IS the effective
+				// record's justification, so a trail line carrying the same text (a
+				// re-detection that copied the --reason verbatim) matches it. What the
+				// skip owes instead is VISIBILITY: counted below, so "0 scanned" is
+				// distinguishable from a scan that was suppressed.
 				res.SkippedRationaleBearing++
 				continue
 			}

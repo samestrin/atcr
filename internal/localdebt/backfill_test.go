@@ -253,9 +253,12 @@ func TestBackfillJustifications(t *testing.T) {
 	// A store where one id carries a resolution trail: detected, resolved with an
 	// operator --reason, then RE-DETECTED (FoldRecords rule 2 — a non-suppressing
 	// terminal record is displaced by a later open one). The effective record is the
-	// ordinary open one, so the id is in scope for the replay — but the resolved
-	// line's justification is the operator's typed rationale, not a review excerpt.
-	t.Run("rewrites only the lines carrying the stale excerpt, sparing a resolution trail's reason", func(t *testing.T) {
+	// ordinary open one, but the resolved line's justification is the operator's
+	// typed rationale — which exists nowhere else in the tree — so the ID gate
+	// scopes the whole id out of the pass. The line-scoped text inequality used to
+	// spare the reason only INCIDENTALLY (where the reason differs from rep.from);
+	// where they coincide, the replay overwrote it, irreversibly.
+	t.Run("skips an id whose trail carries a resolution's reason, sparing every line on it", func(t *testing.T) {
 		store, reviewRoot := setup(t)
 		const staleText = "- **internal/thing.go:42** the real narrative explaining the defect."
 		const operatorReason = "fixed in PR #900 - hoisted the alloc"
@@ -278,12 +281,23 @@ func TestBackfillJustifications(t *testing.T) {
 		res, err := BackfillJustifications(store, reviewRoot, false)
 		require.NoError(t, err)
 
+		// The resolved@t2 record bears rationale, so the ID gate scopes the whole id
+		// out: its stale excerpts stay unread (the safe over-broad direction), and
+		// the reason is spared STRUCTURALLY, not by a text inequality that breaks
+		// where the reason coincides with rep.from.
+		assert.Equal(t, 1, res.SkippedRationaleBearing,
+			"the id is counted through the same visibility counter as an effective rationale-bearing record")
+		assert.Equal(t, 1, res.Rewritten, "the fixture's own stale excerpt is still repaired — only the rationale-trail id is out of scope")
+		assert.Equal(t, 2, res.Scanned, "the fixture's own two ids; the rationale-trail id never reaches the replay")
+
 		got := shardLines(t, store, "2026-09")
 		require.Len(t, got, 3)
 		assert.Equal(t, operatorReason, got[1]["justification"],
 			"the resolved line's justification is the operator's --reason, which exists nowhere else in the tree")
-		assert.Contains(t, got[0]["justification"], "```", "a line carrying the stale excerpt is repaired")
-		assert.Contains(t, got[2]["justification"], "```", "including the re-detection that copied it")
+		assert.Equal(t, staleText, got[0]["justification"],
+			"the excerpt line stays stale too — an unrepaired excerpt is live stale text the next pass reports, while a replayed-over --reason cannot be recovered")
+		assert.Equal(t, staleText, got[2]["justification"],
+			"including the re-detection that copied it")
 
 		var trail []JustificationChange
 		for _, c := range res.Changes {
@@ -291,14 +305,9 @@ func TestBackfillJustifications(t *testing.T) {
 				trail = append(trail, c)
 			}
 		}
-		require.Len(t, trail, 2,
-			"the counter must report LINES: this id's record count says 1 and understates the write to an append-only store")
-		assert.Equal(t, 3, res.RewrittenLines, "2 lines for this id plus the fixture's own 1")
-		assert.Equal(t, staleText, trail[0].Before)
-		assert.Contains(t, trail[0].After, "```")
-		assert.Equal(t, "2026-09.jsonl", trail[0].Shard)
-		assert.Equal(t, 1, trail[0].Line, "line numbers are 1-based within the shard")
-		assert.Equal(t, 3, trail[1].Line)
+		require.Empty(t, trail,
+			"the whole id is out of the pass's scope, so no change names it")
+		assert.Equal(t, 1, res.RewrittenLines, "the fixture's own stale excerpt only — the rationale-trail id contributes nothing")
 	})
 
 	t.Run("dry run reports the lines it would touch without writing them", func(t *testing.T) {
