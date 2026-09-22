@@ -1057,9 +1057,11 @@ func TestFoldRecords_DivergentTerminalsPreferWontfixEitherOrder(t *testing.T) {
 
 // Compaction must fold a regressed id to its re-opened record WITHOUT destroying
 // the superseded resolution: that record holds the ResolvedAt and the human-typed
-// --reason justification, which exist nowhere else. Retention is bounded at two
-// records per id, and the fold over what survives still yields the same effective
-// record every reader saw before compaction.
+// --reason justification, which exist nowhere else. Retention is bounded at three
+// records per id (the effective record, at most one superseded rationale, and —
+// when the effective record carries no model attribution — one donor), and the
+// fold over what survives still yields the same effective record every reader saw
+// before compaction. This case exercises the ordinary two-record shape.
 func TestCompact_RegressedIDKeepsItsResolutionTrail(t *testing.T) {
 	dir := t.TempDir()
 	resolved := foldRec("a", "2026-07-02T00:00:00Z", "resolved")

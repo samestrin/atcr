@@ -234,7 +234,7 @@
 //     StoreStats reports the same two numbers for any caller that wants them.
 //  2. The store has GROWN materially (50%) past the size the last compaction left
 //     behind, recorded in the .compact-watermark file. This is not belt-and-braces:
-//     because compaction retains up to two records per id, a store's
+//     because compaction retains up to three records per id, a store's
 //     post-compaction floor can sit ABOVE the threshold, and a bare absolute
 //     threshold would then re-fire on every single append forever — taking the
 //     cross-process lock and rewriting every shard to drop nothing. The watermark
