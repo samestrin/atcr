@@ -899,6 +899,20 @@ func outcomeEligible(r Record) bool {
 	}
 }
 
+// pairEraMeasured reports whether a record's PairEra marker was measured under
+// the rule THIS binary implements: stamped (>= 1) and not above the current
+// era. The "< 1" half excludes pre-pair-signal records — their absent slice is
+// not a measured empty set (AC 05-01 Edge Case 3) — and a hand-edited negative
+// marker; the "> PairEraCurrent" half excludes records measured under a future
+// era's rule rather than clamping them into the current one, the same
+// above-current-is-excluded convention unresolvedEraRuns applies to
+// RaisedDenominator. Extracted from pairTallies' inline gate so any second pair
+// reader (a windowed variant, an export filter) reuses the gate instead of
+// re-spelling it.
+func pairEraMeasured(r Record) bool {
+	return r.PairEra >= 1 && r.PairEra <= PairEraCurrent
+}
+
 func eligibleOutcomeRuns(records []Record) []Record {
 	kept := make([]Record, 0, len(records))
 	for _, r := range records {

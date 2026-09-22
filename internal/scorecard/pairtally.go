@@ -75,8 +75,7 @@ type PairSignal struct {
 // this check stops it blending with era-1 evidence. Whoever adds era 2 has to
 // come back here and decide the mixing rule rather than inherit a silent blend.
 //
-// The literal is pinned by TestPairSignals_DoNotBumpTheSchemaVersion, which
-// asserts SchemaVersion is still the literal 2.
+// The literal is pinned by TestPairEraCurrent_NotBumpedWithoutAMixingRule.
 const PairEraCurrent = 1
 
 // minPairCases is the single minimum-eligible-case floor for the WHOLE pair
@@ -386,7 +385,10 @@ func pairTallies(records []Record) map[string]PairTally {
 		// is not a marker this binary ever wrote; reading it as "measured under
 		// the current rule" admits evidence on the strength of a corrupt field.
 		// Record.CreditEra's guard reads the same way, for the same reason.
-		if r.PairEra < 1 || r.PairEra > PairEraCurrent {
+		//
+		// The gate lives in pairEraMeasured (beside outcomeEligible in trust.go)
+		// so a second pair reader reuses it rather than re-spelling it.
+		if !pairEraMeasured(r) {
 			continue
 		}
 		name := normalizeReviewerName(r.Reviewer)
