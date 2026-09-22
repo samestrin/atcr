@@ -25,10 +25,14 @@ const (
 	// demoting either lens (epic acceptance criterion 2).
 	ReasonOutcomeIneligible = "outcome-ineligible"
 
-	// ReasonNotInOpportunitySet: the run's category union was non-empty and
-	// discriminating, and none of its members fell inside this lens's remit, so
-	// opportunitySetRuns dropped the record. This is the label behind "a lens
-	// correctly silent on an out-of-remit case is neither credited nor
+	// ReasonNotInOpportunitySet: the lens raised NOTHING on a run whose category
+	// union was non-empty, discriminating, and entirely outside this lens's
+	// remit, so opportunityDisposition dropped the record. A lens that raised
+	// out-of-remit findings is NOT dropped — the gate narrows to raised-nothing
+	// lenses (trust.go's opportunityDisposition and its raised-count test,
+	// TestOpportunityDisposition_ZeroRaisedContributorIsDropped, are the
+	// authority; keep this label coupled to them). This is the label behind "a
+	// lens correctly silent on an out-of-remit case is neither credited nor
 	// penalised" (epic acceptance criterion 1).
 	ReasonNotInOpportunitySet = "category-not-in-opportunity-set"
 
