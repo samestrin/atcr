@@ -4,9 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -354,15 +360,80 @@ func TestIsSettledStatus_ResolvedAndWontfixOnly(t *testing.T) {
 	assert.False(t, IsSuppressingStatus("deferred"), "...and it does not survive re-detection")
 }
 
+// statusConstantsFromSource derives every Status* constant the package declares
+// from its own .go sources via go/parser — the same derivation
+// cli/debt_exhaustive_test.go's scanStatusConstants performs over this directory.
+// A hand-written literal list drifts the moment a constant is added and the list
+// is not, so the guard silently stops guarding the very next status; deriving
+// from source keeps the exhaustiveness promise in record.go's comment
+// ("adding or renaming a status fails the exhaustiveness test rather than
+// silently ranking 0 in ClosedStatusRank") self-enforcing.
+func statusConstantsFromSource(t testing.TB) map[string]string {
+	t.Helper()
+	entries, err := os.ReadDir(".")
+	require.NoError(t, err, "the package's own sources must be readable")
+
+	out := map[string]string{}
+	fset := token.NewFileSet()
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, name, nil, 0)
+		require.NoError(t, err, "parsing %s", name)
+		for _, decl := range f.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, ident := range vs.Names {
+					if !strings.HasPrefix(ident.Name, "Status") {
+						continue
+					}
+					if i >= len(vs.Values) {
+						t.Errorf("%s: Status-prefixed constant has no explicit value; spell its string value so this guard can read it", ident.Name)
+						continue
+					}
+					lit, ok := vs.Values[i].(*ast.BasicLit)
+					if !ok || lit.Kind != token.STRING {
+						t.Errorf("%s: Status-prefixed constant value is not a string literal; spell it so this guard can read it", ident.Name)
+						continue
+					}
+					val, uerr := strconv.Unquote(lit.Value)
+					require.NoError(t, uerr, "unquoting %s", ident.Name)
+					out[ident.Name] = val
+				}
+			}
+		}
+	}
+	require.NotEmpty(t, out, "the status vocabulary must be discovered from source")
+	return out
+}
+
 // TestStatusConstants_ExhaustiveAcrossPredicates locks the single-source status
 // vocabulary (TD internal/localdebt/record.go:252): the terminal statuses are
 // spelled once as constants and every predicate routes through normalizeStatus,
 // so a status added without updating a predicate fails here instead of silently
 // ranking 0 — indistinguishable from open — in ClosedStatusRank.
+//
+// The terminal set is DERIVED from the package's sources, not hand-listed: a
+// Status* constant added to record.go without updating ClosedStatusRank ranks 0,
+// and this test fails on it by construction rather than never hearing about it.
 func TestStatusConstants_ExhaustiveAcrossPredicates(t *testing.T) {
-	terminal := []string{
-		StatusResolved, StatusDeferred, StatusWontfix,
-		StatusUnreproducible, StatusAttemptsExhausted,
+	consts := statusConstantsFromSource(t)
+	terminal := make([]string, 0, len(consts))
+	for _, name := range slices.Sorted(maps.Keys(consts)) {
+		s := consts[name]
+		assert.NotZero(t, ClosedStatusRank(s),
+			"%s (%q) ranks 0 — indistinguishable from open; add it to ClosedStatusRank's chain and every predicate below", name, s)
+		assert.True(t, IsClosedStatus(s), "%s (%q) must carry a terminal marker", name, s)
+		terminal = append(terminal, s)
 	}
 	for _, s := range terminal {
 		assert.True(t, IsClosedStatus(s), "%q carries a terminal marker", s)
