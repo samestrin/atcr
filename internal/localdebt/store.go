@@ -1730,6 +1730,22 @@ const (
 // watermark turns "above the threshold" into "above the threshold AND materially
 // bigger than last time it was compacted", which is the condition that actually
 // predicts there is something to drop.
+//
+// Why 3/2 survives the THREE-records-per-id bound without a per-bound
+// re-derivation: the watermark is written from StoreStats AFTER the rewrite (a
+// self-referential reset — see the writeCompactWatermark call in Compact), so it
+// always measures the store's actual post-compaction size, whatever that pass
+// retained. That measured size is at or above the retention floor for ANY bound
+// (the floor is B records per id; the watermark counts what is really on disk,
+// including the pass-1 retention surplus retainForCompaction admits to — a
+// non-fixed-point that only ever over-states the floor, which delays a
+// compaction rather than tripping one spuriously). Growth past 1.5x the
+// watermark is therefore append-driven by construction: the floor the previous
+// compaction produced is already inside the number being compared against, so
+// no bound change can turn floor churn into a gate trip. Raising the bound
+// raises the floor and the watermark together and leaves the margin's meaning —
+// half of measured reality — untouched, which is why the ratio is a damping
+// constant and not a derived quantity to re-litigate at the next bound change.
 const (
 	autoCompactGrowthNum = 3
 	autoCompactGrowthDen = 2
