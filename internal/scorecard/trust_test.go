@@ -1265,11 +1265,22 @@ func oppRec(runID, reviewer string, cats []string) Record {
 // The shape is emitter-real, not a probe convenience: EmitForReconcile fills
 // EmitInput.AmbiguousFindings from res.Ambiguous, and Emit routes that stream
 // into reviewerCategories only, never into a reviewerCounts call.
+//
+// Outcome follows the emitter too, and the rule is narrower than it looks. A
+// record that CONTRIBUTED a category keeps outcome "findings" — the agent did
+// produce findings and they were routed — so only the raised-nothing AND
+// attributed-nothing case is stamped clean. outcomeClean requires
+// AgentStatus.FindingsCount <= 0, which is exactly the case that can contribute
+// no ambiguous category either, so clean + zero raised + a non-empty
+// discriminating category set is a combination no emitter can write.
+// opportunityDisposition reads none of this, but a fixture that could not exist
+// is how two defects in this file were already hidden once each.
 func oppRecRaw(runID, reviewer string, raised int, cats []string) Record {
 	r := oppRec(runID, reviewer, []string{"placeholder"})
 	r.CategoriesRaised = cats
 	r.FindingsRaised = raised
-	if raised == 0 {
+	if raised == 0 && len(cats) == 0 {
+		// Genuinely silent: raised nothing and attributed nothing.
 		r.Outcome = outcomeClean
 	}
 	return r

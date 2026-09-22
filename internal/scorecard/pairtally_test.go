@@ -1133,9 +1133,8 @@ func TestEmit_WritesPairSignalsOnAZeroRaisedRecord(t *testing.T) {
 		"distinctPeers() folds case, so the SAME finding still yields a pair signal — the shape that was called impossible")
 
 	// And that shape is exactly what the opportunitySetRuns taint needs. The
-	// record must contribute NOTHING of its own — since the 5.5 gate change a
-	// contributor is never read as silent — while some other reviewer on the run
-	// supplies the discriminating, out-of-remit union.
+	// record must carry no categories of its own, while some other reviewer on
+	// the run supplies the discriminating, out-of-remit union.
 	assert.Empty(t, penny.CategoriesRaised,
 		"the mixed-case reviewer attributes no category either, for the same exact-match reason")
 	assert.Equal(t, dispOutOfRemit,
@@ -1180,10 +1179,10 @@ func TestPairTallies_MergeRoutedErasIsInTheSharedChain(t *testing.T) {
 }
 
 // TestPairTallies_OpportunitySetRunsIsInTheSharedChain covers the other link the
-// taint table cannot express. Since the 5.5 gate change the link drops only a
-// record that raised nothing AND contributed nothing, so the tainted pair has to
-// be silent while a THIRD reviewer supplies the discriminating out-of-remit
-// union — three reviewers on one run, which a two-reviewer taint cannot build.
+// taint table cannot express. The link drops a record whose lens raised nothing
+// on a run where its remit was not in play, so the tainted pair has to be silent
+// while a THIRD reviewer supplies the discriminating out-of-remit union — three
+// reviewers on one run, which a two-reviewer taint cannot build.
 //
 // The zero-raised-with-pair-signals shape is real, not contrived: see
 // TestEmit_WritesPairSignalsOnAZeroRaisedRecord, which constructs it through the

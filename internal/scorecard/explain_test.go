@@ -110,9 +110,8 @@ func TestExplainTrustPriors_NamesTheOpportunityGateAsTheExclusionReason(t *testi
 	scoped(t, dir, 20, "Dax", 1, 1, reclib.CategoryTesting)
 	// A genuinely SILENT dax on a run whose union is purely out of its remit.
 	// The union has to come from ANOTHER reviewer: a clean record carrying its
-	// own categories is a record no emitter writes, and since the 5.5 gate
-	// change a record that contributes to the union is never treated as silent,
-	// so the old single-record shortcut would now assert nothing.
+	// own categories is a record no emitter writes, so the old single-record
+	// shortcut asserted the gate's behaviour on a fixture that cannot occur.
 	for i := 0; i < 4; i++ {
 		runID := runIDAt(time.Now(), fmt.Sprintf("offremit-%03d", i))
 		quiet := reviewer_(runID, "Dax", "m1", 0, 0)
