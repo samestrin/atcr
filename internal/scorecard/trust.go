@@ -1099,6 +1099,19 @@ func opportunityDisposition(r Record, union map[string]struct{}) disposition {
 	// backwards, and 1.00 clears reconcile's trustHighThreshold for blanket
 	// trustExempt.
 	//
+	// WHAT THIS DID NOT CLOSE, and the distinction is the whole of the honest
+	// claim. It closed the LABELLING ASYMMETRY: a phantom under a recognised
+	// out-of-remit word and one under gibberish now score identically. It did
+	// NOT close the 1.00 escape itself on the production strict path, because
+	// the phantom never reaches this function with a raised count at all — it is
+	// routed to res.Ambiguous, which contributes its CATEGORY and no count (see
+	// the contributesToUnion block above and EmitInput.AmbiguousFindings). The
+	// record is now kept rather than dropped, which is correct, but a
+	// zero-raised record moves neither side of the ratio, so the rate is
+	// unchanged. Charging the ambiguous stream is a scoring-semantics change
+	// that also has to answer TD-034's mirror case, and it is filed as TD-048.
+	// Do not read the paragraph above as "the escape is closed".
+	//
 	// WHAT THIS REPEALS, stated plainly rather than left for a reader to infer.
 	// original-requirements.md defines the opportunity set as "a case is in a
 	// lens's denominator only when that lens's remit was in play". After this
@@ -1112,17 +1125,24 @@ func opportunityDisposition(r Record, union map[string]struct{}) disposition {
 	// out-of-lane finding free — a testing lens that files a security bug and is
 	// wrong pays nothing — and it protected only the nine grounded personas,
 	// since the five unmapped ones never reach this branch at all.
-	if r.FindingsRaised > 0 {
-		if !contributesToUnion(r) {
-			// Raised findings the scorer could attribute to no topic. Kept AND
-			// annotated, because the reader needs to know this lens's standing
-			// rests on cases nothing could scope (TD-032).
-			return dispUnscopeable
-		}
-		// Raised findings under a real topic outside its own remit. Kept and
-		// unremarkable — there is no fourth reason label for it, and inventing
-		// one would report an exclusion that did not happen.
+	// CONTRIBUTING TO THE UNION IS ITSELF PROOF THE LENS WAS NOT SILENT, and this
+	// test comes FIRST — ahead of the raised count — because the two can
+	// disagree on the production path. EmitInput.AmbiguousFindings is a
+	// category-only stream: it feeds CategoriesRaised and appears in no
+	// reviewerCounts call, and under strict consensus (the only level TrustPriors
+	// reads) an uncorroborated singleton is routed there unless trustExempt
+	// spares it — which it does not for a lens with no prior yet. So a lens that
+	// demonstrably worked the case arrives with FindingsRaised == 0 and would
+	// read as silent, losing its record for a routing decision rather than for
+	// staying quiet.
+	if contributesToUnion(r) {
 		return dispCounted
+	}
+	if r.FindingsRaised > 0 {
+		// Raised findings the scorer could attribute to no topic. Kept AND
+		// annotated, because the reader needs to know this lens's standing
+		// rests on cases nothing could scope (TD-032).
+		return dispUnscopeable
 	}
 	if intersects(remit, union) {
 		return dispCounted

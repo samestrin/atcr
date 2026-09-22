@@ -1002,17 +1002,33 @@ func TestPairTallies_RunsTheSharedTrustChainNotACopyOfIt(t *testing.T) {
 	// re-inlined copy dropping a link survived the suite — the exact drift the
 	// shared helper exists to prevent, invisible from the pair surface.
 	//
-	// ONE TAINT PER LINK. An earlier version covered only strictRuns and
-	// eligibleOutcomeRuns; mutating the other four links to identity survived
-	// it, including opportunitySetRuns — which keptForTrust's own doc names as
-	// the drift it exists to prevent.
+	// ONE TAINT PER LINK, with one PROVED exception and two links covered by
+	// their own tests below because a uniform taint func cannot express them.
 	//
-	// The opportunitySetRuns taint was briefly DELETED, on the claim that the
-	// link could no longer reject any record this surface can build. That claim
-	// was false and the gate re-review disproved it by construction; the taint is
-	// restored above with FindingsRaised zeroed alongside the categories. Do not
-	// delete it again on a reachability argument without running
-	// TestEmit_WritesPairSignalsOnAZeroRaisedRecord first.
+	// The table here covers strictRuns, eligibleOutcomeRuns and
+	// unresolvedEraRuns. It cannot cover:
+	//
+	//   - scrubForgedCredit — the ONE proved exception. It writes only
+	//     WeightedCredit and CreditEra, and neither pairtally.go nor any link
+	//     downstream of it reads either field, so inlining the chain without it
+	//     changes no pair result. Unobservable from this surface, not merely
+	//     untested.
+	//   - mergeRoutedEras — needs a MIXED-era fixture (era 2 and era 3 records
+	//     for one reviewer), which a taint applied uniformly to every record
+	//     cannot build. See TestPairTallies_MergeRoutedErasIsInTheSharedChain.
+	//   - opportunitySetRuns — needs the tainted pair to contribute NOTHING while
+	//     a THIRD reviewer supplies the union, which a two-reviewer taint cannot
+	//     build either. See TestPairTallies_OpportunitySetRunsIsInTheSharedChain.
+	//
+	// HISTORY, because this guard has been wrong twice. An early version covered
+	// only strictRuns and eligibleOutcomeRuns. The opportunitySetRuns taint was
+	// then DELETED on a false claim that the link could no longer reject any
+	// record this surface can build; a gate re-review disproved that by
+	// construction. The mergeRoutedEras gap was found by the round after that —
+	// witness: a 20-era-3 + 20-era-2 penny/sasha history yields Cases=40 on the
+	// real chain and Cases=20 without the link, half the pair history silently
+	// deleted, whole suite green. Do not remove a case here on a reachability
+	// argument without a failing mutant to back it.
 	//
 	// sasha (security) and penny (performance) are used throughout because both
 	// are MAPPED personas, so the unmapped pass-through cannot rescue them from
@@ -1027,20 +1043,6 @@ func TestPairTallies_RunsTheSharedTrustChainNotACopyOfIt(t *testing.T) {
 		"unparseable run (eligibleOutcomeRuns)": func(r *Record) { r.Outcome = "unparseable" },
 		"above-current denominator (unresolvedEraRuns)": func(r *Record) {
 			r.RaisedDenominator = RaisedDenominatorCurrent + 1
-		},
-		"out-of-remit categories (opportunitySetRuns)": func(r *Record) {
-			// Neither security nor performance is in play on a run whose only
-			// raised category is testing, so both members are dropped.
-			//
-			// FindingsRaised MUST be zeroed with it: since the 5.5 gate change
-			// the link drops only a lens that raised nothing, so a taint that
-			// left the count at 2 would be kept and this subtest would assert
-			// nothing. The pairing of zero raised WITH pair signals is not a
-			// contrived fixture — it is a shape both emitters really write, and
-			// TestEmit_WritesPairSignalsOnAZeroRaisedRecord below constructs it
-			// through Emit rather than asserting it.
-			r.CategoriesRaised = []string{"testing"}
-			r.FindingsRaised = 0
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -1130,10 +1132,83 @@ func TestEmit_WritesPairSignalsOnAZeroRaisedRecord(t *testing.T) {
 	assert.NotEmpty(t, penny.PairSignals,
 		"distinctPeers() folds case, so the SAME finding still yields a pair signal — the shape that was called impossible")
 
-	// And that shape is exactly what the opportunitySetRuns taint needs: zero
-	// raised means the gate can still drop it.
-	penny.CategoriesRaised = []string{"testing"}
+	// And that shape is exactly what the opportunitySetRuns taint needs. The
+	// record must contribute NOTHING of its own — since the 5.5 gate change a
+	// contributor is never read as silent — while some other reviewer on the run
+	// supplies the discriminating, out-of-remit union.
+	assert.Empty(t, penny.CategoriesRaised,
+		"the mixed-case reviewer attributes no category either, for the same exact-match reason")
 	assert.Equal(t, dispOutOfRemit,
 		opportunityDisposition(*penny, map[string]struct{}{"testing": {}}),
 		"a real emitted record, carrying pair signals, that the opportunity link still rejects")
+}
+
+// TestPairTallies_MergeRoutedErasIsInTheSharedChain covers the link the taint
+// table above cannot: mergeRoutedEras needs a reviewer whose records span TWO
+// eras, and the table applies one taint uniformly to every record.
+//
+// The link rewrites era-3 records into their era-2 equivalent so
+// unresolvedEraRuns sees ONE routed era instead of two. Drop it and the era-3
+// half of a reviewer's history is discarded as an older definition, halving the
+// pair evidence on any store that merely spans the 35.16.6.8 upgrade.
+func TestPairTallies_MergeRoutedErasIsInTheSharedChain(t *testing.T) {
+	dir := t.TempDir()
+	era := func(label string, denom int) {
+		for i := 0; i < minPairCases; i++ {
+			runID := pairRunID(fmt.Sprintf("%s-%03d", label, i))
+			for _, pair := range [][2]string{{"sasha", "penny"}, {"penny", "sasha"}} {
+				r := pairReviewer(runID, pair[0], "m1", 2, 2, PairSignal{Peer: pair[1], Agreed: 2})
+				r.RaisedIncludesUnresolved = true
+				r.RaisedDenominator = denom
+				require.NoError(t, Append(dir, r))
+			}
+		}
+	}
+	era("era3", raisedDenominatorRoutedExShield)
+	era("era2", raisedDenominatorAllRouted)
+
+	tallies, err := PairDisagreements(dir)
+	require.NoError(t, err)
+	require.NotEmpty(t, tallies, "the fixture must reach the fold at all")
+
+	var cases int
+	for _, tl := range tallies {
+		cases += tl.Cases
+	}
+	assert.Equal(t, minPairCases*2, cases,
+		"both eras must survive as one; dropping mergeRoutedEras halves this and the rest of the suite stays green")
+}
+
+// TestPairTallies_OpportunitySetRunsIsInTheSharedChain covers the other link the
+// taint table cannot express. Since the 5.5 gate change the link drops only a
+// record that raised nothing AND contributed nothing, so the tainted pair has to
+// be silent while a THIRD reviewer supplies the discriminating out-of-remit
+// union — three reviewers on one run, which a two-reviewer taint cannot build.
+//
+// The zero-raised-with-pair-signals shape is real, not contrived: see
+// TestEmit_WritesPairSignalsOnAZeroRaisedRecord, which constructs it through the
+// production Emit.
+func TestPairTallies_OpportunitySetRunsIsInTheSharedChain(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < minPairCases*2; i++ {
+		runID := pairRunID(fmt.Sprintf("offremit-%03d", i))
+		for _, pair := range [][2]string{{"sasha", "penny"}, {"penny", "sasha"}} {
+			r := pairReviewer(runID, pair[0], "m1", 2, 2, PairSignal{Peer: pair[1], Agreed: 2})
+			// Silent and attributing nothing — the shape the exact-match name
+			// mismatch really produces.
+			r.FindingsRaised = 0
+			r.CategoriesRaised = nil
+			require.NoError(t, Append(dir, r))
+		}
+		// A third lens puts a real, discriminating topic on the run that is in
+		// neither sasha's (security) nor penny's (performance) remit.
+		other := pairReviewer(runID, "dax", "m1", 1, 0)
+		other.CategoriesRaised = []string{"testing"}
+		require.NoError(t, Append(dir, other))
+	}
+
+	tallies, err := PairDisagreements(dir)
+	require.NoError(t, err)
+	assert.Empty(t, tallies,
+		"a run the trust chain excludes must not produce pair evidence either")
 }

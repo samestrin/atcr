@@ -108,10 +108,19 @@ func TestExplainTrustPriors_NamesTheOpportunityGateAsTheExclusionReason(t *testi
 	// never as a weak result.
 	dir := t.TempDir()
 	scoped(t, dir, 20, "Dax", 1, 1, reclib.CategoryTesting)
-	// A clean record on a run whose union is purely out of dax's remit. The
-	// union comes from this same record because it is the only one on that run,
-	// which is enough — opportunityUnions reads CategoriesRaised, not authorship.
-	scopedOutcome(t, dir, 4, "Dax", outcomeClean, 0, reclib.CategoryPerformance)
+	// A genuinely SILENT dax on a run whose union is purely out of its remit.
+	// The union has to come from ANOTHER reviewer: a clean record carrying its
+	// own categories is a record no emitter writes, and since the 5.5 gate
+	// change a record that contributes to the union is never treated as silent,
+	// so the old single-record shortcut would now assert nothing.
+	for i := 0; i < 4; i++ {
+		runID := runIDAt(time.Now(), fmt.Sprintf("offremit-%03d", i))
+		quiet := reviewer_(runID, "Dax", "m1", 0, 0)
+		require.NoError(t, Append(dir, quiet))
+		other := reviewer_(runID, "Pace", "m1", 1, 0)
+		other.CategoriesRaised = []string{reclib.CategoryPerformance}
+		require.NoError(t, Append(dir, other))
+	}
 
 	detail, err := ExplainTrustPriors(dir, 10)
 	require.NoError(t, err)

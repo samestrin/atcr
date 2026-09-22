@@ -467,4 +467,28 @@ func TestDocs_ScorecardMdDocumentsTheRaiserIsNeverDropped(t *testing.T) {
 	// the rendering itself in cli/personas_test.go.
 	assert.Contains(t, flat, "`CASES` column",
 		"the doc names the column an operator reads this on")
+
+	// THE LIMIT OF THE FIX MUST STAY DOCUMENTED. A gate round found that the
+	// 1.00 escape is NOT closed on the production strict path — the phantom is
+	// routed to the ambiguous stream, which carries a category and no count, so
+	// it never reaches the gate with anything to charge. An earlier version of
+	// this doc and of opportunityDisposition's comment both read as though the
+	// escape itself had been closed. That overclaim is the thing most likely to
+	// be restored by a well-meaning edit, so it is pinned.
+	assert.Contains(t, flat, "What the change did NOT close",
+		"the doc must state the limit of the fix, not only the fix")
+	assert.Contains(t, flat, "never reaches this gate with a raised count at all",
+		"the doc must name the ambiguous-stream mechanism that bypasses the charging rule")
+
+	// And the code comment must agree with the doc, since a reader of one rarely
+	// reads the other.
+	src, err := os.ReadFile(filepath.Join(repoRoot(t), "internal", "scorecard", "trust.go"))
+	require.NoError(t, err)
+	fn := string(src)
+	cut := strings.Index(fn, "func opportunityDisposition(")
+	require.Positive(t, cut, "opportunityDisposition not found")
+	end := strings.Index(fn[cut:], "\n}\n")
+	require.Positive(t, end, "opportunityDisposition has no closing brace")
+	assert.Contains(t, fn[cut:cut+end], "WHAT THIS DID NOT CLOSE",
+		"opportunityDisposition must carry the same limit the doc does; a reader of one rarely reads the other")
 }
