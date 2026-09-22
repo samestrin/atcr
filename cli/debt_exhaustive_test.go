@@ -69,11 +69,27 @@ func scanStatusConstants(t testing.TB, dir string) map[string]string {
 					continue
 				}
 				for i, ident := range vs.Names {
-					if !strings.HasPrefix(ident.Name, "Status") || i >= len(vs.Values) {
+					if !strings.HasPrefix(ident.Name, "Status") {
+						continue
+					}
+					// A Status-prefixed constant the scanner cannot read a plain string
+					// literal from used to be dropped with a silent `continue` — three
+					// arms: no explicit value (implicit const-block repetition), a
+					// computed value or typed conversion, and a non-STRING literal. The
+					// guard then covered only the readable constants while the enum
+					// carried more. Fail loudly instead; the fix is to spell the value
+					// as a string literal so the guard can read it.
+					if i >= len(vs.Values) {
+						t.Errorf("%s: Status-prefixed constant has no explicit value (implicit const-block repetition); spell its string value so this guard can read it", ident.Name)
 						continue
 					}
 					lit, ok := vs.Values[i].(*ast.BasicLit)
-					if !ok || lit.Kind != token.STRING {
+					if !ok {
+						t.Errorf("%s: Status-prefixed constant value is not a literal (computed expression or conversion); spell its string value so this guard can read it", ident.Name)
+						continue
+					}
+					if lit.Kind != token.STRING {
+						t.Errorf("%s: Status-prefixed constant value is a non-STRING literal; spell its string value so this guard can read it", ident.Name)
 						continue
 					}
 					v, err := strconv.Unquote(lit.Value)
