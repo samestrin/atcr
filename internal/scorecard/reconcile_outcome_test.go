@@ -123,6 +123,32 @@ func TestEmitForReconcile_RepeatedAgentTakesTheWorstOutcome(t *testing.T) {
 		"order in the summary must not decide which outcome survives a collision")
 }
 
+// TestEmitForReconcile_CaseFoldedIdentityMintsOneRecord closes the entry-point
+// half of the reviewer-identity defect: the pool summary names "Bruce" while
+// the findings cell says "bruce", and the two spellings of one persona must
+// produce ONE reviewer record, not two. Two records double the run's weight in
+// trustPriorsSince — one run buying two credits against DefaultTrustMinRuns —
+// and explain.go reports Counted: 2 for a single run.
+func TestEmitForReconcile_CaseFoldedIdentityMintsOneRecord(t *testing.T) {
+	reviewDir := t.TempDir()
+	writePoolSummary(t, reviewDir,
+		fanout.AgentStatus{Agent: "Bruce", Status: fanout.StatusOK, FindingsCount: 0, Model: "opus"},
+	)
+
+	recs := emitAndRead(t, reviewDir, resWith("bruce"))
+
+	reviewerRecs := make([]Record, 0, 2)
+	for _, r := range recs {
+		if r.RecordType == RecordTypeReviewer {
+			reviewerRecs = append(reviewerRecs, r)
+		}
+	}
+	require.Len(t, reviewerRecs, 1,
+		"one persona spelled two ways is one reviewer, not two trust credits")
+	assert.Equal(t, "bruce", reviewerRecs[0].Reviewer,
+		"Record.Reviewer must be the canonical normalized name")
+}
+
 // TestEmitForReconcile_RaisedIsTheAgentsPostEnforcementCount closes AC 02-02
 // Scenario 0, the parity test's stated blind spot.
 //
