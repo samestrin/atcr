@@ -3217,3 +3217,42 @@ func TestRetainForCompaction_SettledBranchStaysFoldStableAndBounded(t *testing.T
 	assert.Equal(t, AggregateQualitySignal(pass2), AggregateQualitySignal(pass3),
 		"the quality signal is unchanged across passes")
 }
+
+// The store boundary is the one place every writer funnels through (reconcile,
+// debt add, debt resolve, and appendBatch all reach appendLocked), so an off-enum
+// status must be rejected HERE rather than re-guarded in each caller's literal
+// map. An off-enum status ranks 0 in ClosedStatusRank — indistinguishable from
+// open — and debtStatusBucket's default renders it as open: it counts as live
+// backlog and is invisible to every terminal predicate. The kebab spelling is
+// load-bearing: normalizeStatus folds case and whitespace ONLY, so
+// attempts_exhausted (underscore) is not rescued and would persist silently.
+func TestAppend_RejectsOffEnumStatusAtTheStoreBoundary(t *testing.T) {
+	dir := t.TempDir()
+
+	// The spelling trap the write-path inventory named: a status value the CLI
+	// maps cannot rescue, one underscore away from the real constant.
+	bad := sampleRecord("2026-09-01T00:00:00Z-bad000")
+	bad.Status = "attempts_exhausted"
+	bad.StampID()
+	err := Append(dir, bad)
+	require.Error(t, err, "an off-enum status is rejected at the store boundary")
+	assert.Contains(t, err.Error(), "attempts_exhausted", "the error names the offending value")
+
+	// Nothing was persisted — a rejected record must not leave a shard behind.
+	_, statErr := os.Stat(filepath.Join(dir, "2026-09.jsonl"))
+	assert.True(t, os.IsNotExist(statErr),
+		"a rejected append persists nothing: no shard file is created")
+
+	// Every declared enum status still appends...
+	good := sampleRecord("2026-09-01T00:00:00Z-good01")
+	good.Status = StatusAttemptsExhausted
+	good.StampID()
+	require.NoError(t, Append(dir, good))
+
+	// ...as does the EMPTY status — "open" is spelled as "" on disk
+	// (cli/debt.go's statusOpen asymmetry), and legacy open records carry it.
+	openRec := sampleRecord("2026-09-01T00:00:00Z-open1")
+	openRec.Status = ""
+	openRec.StampID()
+	require.NoError(t, Append(dir, openRec))
+}
