@@ -116,8 +116,9 @@ const (
 // regression test follows it. Producers keep their richer surrounding format
 // (path, error); these constants are the stable substrings the tests pin.
 const (
-	MsgMalformedSkip = "skipping malformed record"
-	MsgWriteFailed   = "scorecard: write failed"
+	MsgMalformedSkip  = "skipping malformed record"
+	MsgWriteFailed    = "scorecard: write failed"
+	MsgOutcomeCoerced = "coercing invalid outcome to unknown"
 )
 
 // defaultRole labels per-reviewer records produced from a reconcile run. Every

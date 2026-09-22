@@ -3,6 +3,8 @@ package scorecard
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
+	"io"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -50,7 +52,7 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 			if name == "" {
 				continue
 			}
-			outcome := outcomeFor(a)
+			outcome := outcomeFor(a, opts.Diag)
 			if prev, seen := reviewers[name]; seen && outcomeRank(prev.Outcome) > outcomeRank(outcome) {
 				// A repeated Agent must not let the later, lower-precedence
 				// entry overwrite the earlier one's outcome: a summary that
@@ -322,14 +324,14 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 // lands on OutcomeClean, which is ELIGIBLE: a crafted file would mint durable,
 // trust-scoring records asserting a successful clean review that never ran.
 // Unknown is the honest answer for an incoherent status, and it is excluded.
-func outcomeFor(a fanout.AgentStatus) string {
+func outcomeFor(a fanout.AgentStatus, diag io.Writer) string {
 	if a.FindingsCount < 0 {
 		return ""
 	}
 	// The raised count goes through AS A COUNT: ReviewerOutcome's second parameter
 	// is raisedCount int (2026-09-22, closing the raisedSlotsFor row), so the type
 	// cannot carry fake contents the way the old one-element sentinel slice did.
-	return coerceOutcome(fanout.ReviewerOutcome(a, a.FindingsCount))
+	return coerceOutcome(fanout.ReviewerOutcome(a, a.FindingsCount), diag)
 }
 
 // outcomeRank ranks an outcome by the classifier's own precedence
@@ -372,19 +374,25 @@ func outcomeRank(o string) int {
 // check down into Emit would close that, and is filed as TD rather than done
 // here because it changes behaviour for every Emit caller, not just this one.
 //
-// It is deliberately SILENT and fail-neutral rather than an error return.
-// EmitForReconcile has no error return by contract — scorecard emission never
-// fails the caller's reconcile — so the only two choices here are "write
-// something wrong" and "write unknown". Unknown is right: it is excluded from
-// trust scoring downstream, so a classifier bug costs a lens nothing, whereas a
-// garbage value persisted for the 180-day window could not be interpreted at
-// all.
+// It is FAIL-NEUTRAL rather than an error return, and since 2026-09-22 it is no
+// longer silent: the rejection is written to the injected diag writer as a
+// MsgOutcomeCoerced substring (the MsgMalformedSkip/MsgWriteFailed convention),
+// because a record silently dropped from trust scoring for the 180-day window
+// with no trace anywhere was undebuggable. EmitForReconcile still has no error
+// return by contract — scorecard emission never fails the caller's reconcile —
+// so the only two choices remain "write something wrong" and "write unknown".
+// Unknown is right: it is excluded from trust scoring downstream, so a
+// classifier bug costs a lens nothing, whereas a garbage value persisted for the
+// window could not be interpreted at all.
 //
 // The real classifier cannot return an invalid value (see
 // TestFanoutReviewerOutcome_AlwaysReturnsAKnownValue), so this guards the case
 // where that stops being true, which is exactly when a guard is worth having.
-func coerceOutcome(o string) string {
+func coerceOutcome(o string, diag io.Writer) string {
 	if !fanout.ValidReviewerOutcome(o) {
+		if diag != nil {
+			_, _ = fmt.Fprintf(diag, "scorecard: "+MsgOutcomeCoerced+": %q\n", o)
+		}
 		return ""
 	}
 	return o

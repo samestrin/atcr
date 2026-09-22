@@ -1,6 +1,7 @@
 package scorecard
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -398,10 +399,10 @@ func TestEmitForReconcile_OutOfVocabularyOutcomeIsCoercedToUnknown(t *testing.T)
 	// The guard is expressed as: write the classified value only when it passes
 	// ValidReviewerOutcome, else write unknown. Exercised directly because the
 	// classifier has no seam to make it lie.
-	got := coerceOutcome("banana")
+	got := coerceOutcome("banana", nil)
 	assert.Equal(t, testOutcomeUnknown, got)
-	assert.Equal(t, testOutcomeFiltered, coerceOutcome(testOutcomeFiltered))
-	assert.Equal(t, testOutcomeUnknown, coerceOutcome(testOutcomeUnknown))
+	assert.Equal(t, testOutcomeFiltered, coerceOutcome(testOutcomeFiltered, nil))
+	assert.Equal(t, testOutcomeUnknown, coerceOutcome(testOutcomeUnknown, nil))
 }
 
 // TestEmitForReconcile_HostileFindingsCountDoesNotPanic guards the availability
@@ -518,4 +519,23 @@ func TestEmitForReconcile_TwoReviewerGrayZoneClusterChargesItsPair(t *testing.T)
 	require.True(t, ok)
 	assert.Empty(t, bruce.PairSignals,
 		"a reviewer appearing only in singleton/trio clusters is charged nothing")
+}
+
+// TestCoerceOutcome_EmitsMsgOutcomeCoerced pins the diagnostic the 180-day
+// silent drop now carries: a value coerceOutcome rejects still becomes unknown,
+// but the rejection is written to the injected diag writer as a
+// MsgOutcomeCoerced substring, matching the MsgMalformedSkip/MsgWriteFailed
+// convention so wiring tests can pin the literal.
+func TestCoerceOutcome_EmitsMsgOutcomeCoerced(t *testing.T) {
+	var buf bytes.Buffer
+	got := coerceOutcome("banana", &buf)
+	assert.Equal(t, testOutcomeUnknown, got, "the fail-neutral result is unchanged")
+	assert.Contains(t, buf.String(), MsgOutcomeCoerced,
+		"the silent 180-day drop must leave a trace in the diag channel")
+	assert.Contains(t, buf.String(), "banana", "the rejected value is named so it can be traced")
+
+	// A valid value emits nothing.
+	var clean bytes.Buffer
+	assert.Equal(t, testOutcomeFindings, coerceOutcome(testOutcomeFindings, &clean))
+	assert.Empty(t, clean.String(), "a valid outcome must not log a coercion")
 }
