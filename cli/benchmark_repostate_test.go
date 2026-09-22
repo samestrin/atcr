@@ -1498,6 +1498,25 @@ func TestDirSizeBytesPartialTotalOnMidWalkFailure(t *testing.T) {
 	assert.Equal(t, int64(128), size, "the readable file is counted; the sealed subtree is skipped")
 }
 
+// expectedCategories' dedupe NORMALIZES first (ToLower/TrimSpace) and keeps the
+// FIRST occurrence's raw spelling. It had zero test coverage — no test in the tree
+// referenced it — so a regression to raw-string dedupe (the exact behavior the doc
+// comment calls the bug) passed the whole suite green.
+func TestExpectedCategoriesNormalizesBeforeDeduping(t *testing.T) {
+	c := benchmark.RepoStateCase{
+		ExpectedFindings: []benchmark.ExpectedFinding{
+			{Category: "Correctness"},
+			{Category: "correctness"},
+			{Category: "  CORRECTNESS  "},
+			{Category: "security"},
+		},
+	}
+
+	got := expectedCategories(c)
+	assert.Equal(t, []string{"Correctness", "security"}, got,
+		"case-variant duplicates collapse to ONE entry, spelled as the case wrote it")
+}
+
 // Retention on a partial run is unbounded and unconditional ON PURPOSE — the
 // artifacts are the only copy of a paid panel, so a byte cap or a keep-only-the-failed-
 // case policy would destroy exactly what the arm exists to save. That makes growth
