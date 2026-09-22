@@ -331,6 +331,19 @@ func TestTechnicalDebtDoc_CompactGuaranteeIsNotAnAbsolute(t *testing.T) {
 		"the compact passage must state the one-deep bound explicitly")
 	assert.Contains(t, doc, "`wontfix` > `unreproducible` > `attempts-exhausted` > `resolved`",
 		"and must spell the rank that decides which reason survives, in ClosedStatusRank's order")
+
+	// THE DONOR IS THE THIRD RETAINED RECORD AND THE DOC NEVER NAMED IT.
+	// retainForCompaction keeps up to TWO records beyond the effective one: the
+	// highest-ranked superseded rationale, and — whenever the effective record
+	// carries no Model — the attribution donor the quality signal would otherwise
+	// lose. The published passage described only the first, so it stated a 2-record
+	// bound where the code holds 3, and `grep -i donor docs/technical-debt.md`
+	// returned nothing at all. An operator sizing a store, or reasoning about what
+	// survives a compaction, was reading a bound that is not the one enforced.
+	assert.Contains(t, doc, "donor",
+		"the published retention bound must name the attribution donor, the third record compaction retains")
+	assert.Contains(t, doc, "carries no model attribution",
+		"and must state the condition the donor is retained under, not merely that a third record exists")
 }
 
 // TestBackfillSkipSetProseKeysOnRationaleNotSettledness pins both prose surfaces
