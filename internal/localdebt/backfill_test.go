@@ -961,3 +961,58 @@ func TestBackfillJustifications_ReportsThePartialWriteWhenALaterShardFails(t *te
 	assert.Equal(t, 1, res.RewrittenLines)
 	assert.Contains(t, res.ShardNames, "2026-08.jsonl")
 }
+
+// A regressed id (open@t1 -> attempts-exhausted@t2 -> open@t3) folds to the LATEST
+// open record, so the per-effective-record rationale gate does not fire and the id is
+// scanned. The superseded attempts-exhausted line is then protected only by the text
+// inequality in rewriteJustifications — and where the regression record carries the
+// operator's --reason verbatim (re-detection copies the effective record), the trail
+// line matches rep.from and is replayed over: the operator's typed reason is
+// overwritten with a review excerpt, irreversibly. The gate must be ID-scoped: an id
+// with ANY rationale-bearing record is skipped outright.
+func TestBackfillJustifications_IdGateProtectsRationaleTrailLineOnRegression(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	require.NoError(t, os.MkdirAll(store, 0o750))
+	reviewRoot := filepath.Join(root, "reviews")
+	rd := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+	require.NoError(t, os.MkdirAll(rd, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"), []byte(danglingReview), 0o600))
+
+	const reason = "operator reason"
+	base := `{"schema_version":3,"id":"dddd4444","run_id":"2026-08-01T00:00:00Z-multi-agent",` +
+		`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
+		`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",`
+	writeShard(t, store, "2026-08",
+		// open@t1: the originally stamped review excerpt.
+		base+`"ts":"2026-08-01T00:00:00Z","status":"`+"open"+`",`+
+			`"justification":"- **internal/thing.go:42** the real narrative explaining the defect.",`+
+			`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":8}}`,
+		// attempts-exhausted@t2: the operator's MANDATORY --reason, which exists
+		// nowhere else in the tree.
+		base+`"ts":"2026-08-02T00:00:00Z","status":"`+StatusAttemptsExhausted+`",`+
+			`"justification":"`+reason+`",`+
+			`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":8}}`,
+		// open@t3: the regression record — effective for the fold, and carrying the
+		// reason text verbatim. The replayed excerpt differs from it, so want IS
+		// built, and the trail line's text coincides with rep.from.
+		base+`"ts":"2026-08-03T00:00:00Z","status":"`+"open"+`",`+
+			`"justification":"`+reason+`",`+
+			`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":8}}`)
+
+	res, err := BackfillJustifications(store, reviewRoot, false)
+	require.NoError(t, err)
+
+	assert.Equal(t, 0, res.Scanned,
+		"an id with a rationale-bearing record anywhere in its trail is skipped, not scanned")
+	assert.Equal(t, 1, res.SkippedRationaleBearing,
+		"the id-gate skip is counted through the same visibility counter")
+	assert.Zero(t, res.Rewritten, "the id's lines must never be replayed over")
+
+	got := shardLines(t, store, "2026-08")
+	require.Len(t, got, 3)
+	assert.Equal(t, reason, got[1]["justification"],
+		"the superseded attempts-exhausted line keeps the operator's --reason; only the text inequality protected it before")
+	assert.Equal(t, reason, got[2]["justification"],
+		"the effective open line keeps its stored text too — the whole id is out of the pass's scope")
+}
