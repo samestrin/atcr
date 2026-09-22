@@ -1723,3 +1723,52 @@ func TestDebtResolve_WontfixKeepsItsReasonHatch(t *testing.T) {
 	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID, "--status", localdebt.StatusWontfix)
 	require.NoError(t, err, "wontfix keeps the stored-rationale hatch it was written for")
 }
+
+// A REPEATED attempts-exhausted checkpoint is a continuation of the SAME
+// checkpoint, not a new finding: compaction retains exactly ONE superseded
+// rationale-bearing record per id (store.go's retention bound), so a second
+// AE record appended with only its own --reason would, at the next compaction,
+// displace the first checkpoint's reason entirely — one typed rationale lost
+// per continuation, silently. The write-time fold carries the prior checkpoint
+// reason forward in the NEW record's Justification (append-only: the prior
+// record is never rewritten, per the TD-004 no-lock stance), so the single
+// trail slot holds the whole AE trail.
+func TestDebtResolve_AttemptsExhaustedContinuationCarriesPriorReasonForward(t *testing.T) {
+	rec := openRec("2026-09-01T10:00:00Z", "HIGH", "internal/x/z.go", 20, "missing timeout")
+	rec.Status = localdebt.StatusAttemptsExhausted
+	rec.ResolvedAt = rec.Timestamp
+	rec.Justification = "first checkpoint: reindex regressed unrelated tests"
+	dir := writeDebtStore(t, rec)
+
+	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID,
+		"--status", "attempts-exhausted", "--reason", "second checkpoint: schema diff also failed")
+	require.NoError(t, err)
+
+	// The new record is the AE record appended NOW — strictly later than the
+	// seeded checkpoint's timestamp.
+	recs := readStoreRecords(t, dir)
+	var written *localdebt.Record
+	for i := range recs {
+		if recs[i].ID == rec.ID && recs[i].Status == localdebt.StatusAttemptsExhausted &&
+			recs[i].Timestamp != "2026-09-01T10:00:00Z" {
+			written = &recs[i]
+		}
+	}
+	require.NotNil(t, written, "the continuation checkpoint must be appended")
+
+	assert.Contains(t, written.Justification, "first checkpoint: reindex regressed unrelated tests",
+		"the prior checkpoint's reason is carried forward — compaction's single trail slot must not drop it")
+	assert.Contains(t, written.Justification, "second checkpoint: schema diff also failed",
+		"the new checkpoint's own reason is recorded")
+
+	// Append-only: the SEEDED record's justification is untouched on disk.
+	var seeded *localdebt.Record
+	for i := range recs {
+		if recs[i].ID == rec.ID && recs[i].Timestamp == "2026-09-01T10:00:00Z" {
+			seeded = &recs[i]
+		}
+	}
+	require.NotNil(t, seeded)
+	assert.Equal(t, "first checkpoint: reindex regressed unrelated tests", seeded.Justification,
+		"carry-forward never rewrites the prior record")
+}
