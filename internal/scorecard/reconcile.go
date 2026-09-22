@@ -1,6 +1,8 @@
 package scorecard
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"path/filepath"
 	"strings"
 
@@ -233,7 +235,23 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 		}
 	}
 
-	runID := res.Summary.ReconciledAt + "-" + filepath.Base(reviewDir)
+	// RunID discriminates on the ABSOLUTE review directory, not just its basename:
+	// two repositories checked out side by side produce sibling directories with
+	// the same leaf name, and two runs landing in the same second would otherwise
+	// share an id — opportunityUnions would then MERGE their category sets (the
+	// exact "every lens permanently in-remit after one broad run" failure its
+	// comment warns against) and pairTallies would count the two runs as one Case
+	// with max-collapsed evidence. The hash covers the caller-supplied path —
+	// the identity the run is anchored to; ReconciledAt + basename stay the
+	// leading components so IsRunID/monthFromRunID/runIDTime keep parsing it
+	// unchanged (paths.go's regex tolerates anything after the timestamp).
+	absDir, err := filepath.Abs(reviewDir)
+	if err != nil {
+		absDir = reviewDir
+	}
+	pathHash := sha256.Sum256([]byte(absDir))
+	runID :=
+		res.Summary.ReconciledAt + "-" + filepath.Base(reviewDir) + "-" + hex.EncodeToString(pathHash[:4])
 	verPath := filepath.Join(reviewDir, "reconciled", "verification.json")
 	// Emit is best-effort and logs its own failures; ignore the return so
 	// reconcile never fails on a scorecard write.
