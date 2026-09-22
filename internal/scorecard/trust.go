@@ -181,8 +181,12 @@ type Confirmation struct {
 	AttemptsExhausted int
 }
 
-// GroundTruthLookup returns per-persona confirmation counts keyed by LOWERCASE
-// persona name, matching trustPriorsSince's own key convention.
+// GroundTruthLookup returns per-persona confirmation counts keyed by the
+// trimmed, lower-cased persona name — strings.ToLower(strings.TrimSpace(name)),
+// matching trustPriorsSince's own key convention (normalizeReviewerName). A key
+// miss is fail-neutral, not an error: the persona silently degrades to the
+// binary corroboration rate, so an adapter that lowercases WITHOUT trimming
+// misses every padded persona name with nothing logged.
 //
 // It is a function value rather than a direct internal/localdebt call so the
 // dependency stays one-way and injectable. A nil lookup, an error, or a persona
