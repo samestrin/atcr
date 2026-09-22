@@ -896,8 +896,16 @@ func foldByID[T foldable](items []T) ([]T, map[string][]T) {
 }
 
 // retainForCompaction is what compaction folds to: the effective record for each
-// id, PLUS that id's highest-ranked terminal record whenever the effective record
-// is open.
+// id, PLUS that id's highest-ranked rationale-bearing record — for ANY effective
+// status, not only an open one, and only when that record's justification is not
+// already the effective record's.
+//
+// EXACTLY ONE superseded rationale survives. Where several superseded records
+// each carry a distinct --reason, highestRankedTerminalIndex picks one and the
+// rest are dropped: two `attempts-exhausted` rounds followed by a `wontfix` keep
+// the second round's reason and destroy the first. That is a retention bound
+// doing its job, not an oversight, but it is narrower than "no --reason is ever
+// destroyed" — see TD-051 for the multi-round question.
 //
 // The second half exists because resolution became re-openable. Before that a
 // terminal record always won its fold group, so compaction could keep the fold
@@ -910,9 +918,10 @@ func foldByID[T foldable](items []T) ([]T, map[string][]T) {
 //
 // Retention is bounded at two records per id in the ordinary case, and at three
 // in one narrow case, so growth stays O(live findings): the effective record, at
-// most one terminal record, and — only when the effective record is a COUNTED
-// outcome (producesQualitySignal) carrying no Model — the attribution donor that
-// the quality signal would otherwise lose. The last two are distinct records
+// most one rationale-bearing record, and — whenever the effective record carries
+// no Model — the attribution donor that the quality signal would otherwise lose.
+// The donor is NOT gated on producesQualitySignal(eff.Status); do not add such a
+// gate back, see modelDonorIndex. The last two are distinct records
 // only when the highest-RANKED rationale and the most recent MODEL-carrier are
 // different rows; they collapse to one whenever they coincide.
 //
@@ -1708,8 +1717,8 @@ const (
 // 3/2, i.e. 50%.
 //
 // This is the damping the thresholds alone cannot provide. Compact retains up to
-// TWO records per id (retainForCompaction: the effective record plus the resolution
-// trail when the effective one is open), so a store's post-compaction floor can sit
+// THREE records per id (retainForCompaction: the effective record, the highest-ranked
+// superseded rationale, and the attribution donor), so a store's post-compaction floor can sit
 // above an absolute threshold — and then every single append re-trips it, taking
 // the cross-process lock and rewriting every shard to drop nothing, forever. The
 // watermark turns "above the threshold" into "above the threshold AND materially

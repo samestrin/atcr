@@ -190,15 +190,20 @@
 // shard. Compact folds each id to its effective record and rewrites the shards
 // atomically, so store size tracks LIVE findings rather than history.
 //
-// Retention is bounded at two records per id, with one documented exception below.
-// retainForCompaction keeps a SECOND record for an id in either of two cases: the resolution TRAIL when the effective
-// record is open (preserving the ResolvedAt and the human-typed --reason a
-// regression would otherwise erase), and the model DONOR when the effective record
-// is settled but carries no attribution (preserving the record
-// AggregateQualitySignal recovers a Model from — without it the outcome vanishes
-// from the signal entirely). Both are written with their counters zeroed, and the
-// donor is emitted BEFORE the effective record so a full timestamp/rank tie still
+// Retention is bounded at three records per id, with one documented exception below.
+// retainForCompaction keeps up to two records beyond the effective one: the resolution
+// TRAIL — the highest-ranked superseded record that bears a rationale, for ANY effective
+// status, and only when its justification is not already the effective record's
+// (preserving the ResolvedAt and the human-typed --reason a regression or a later close
+// would otherwise erase) — and the model DONOR whenever the effective record carries no
+// attribution (preserving the record AggregateQualitySignal recovers a Model from —
+// without it the outcome vanishes from the signal entirely). Neither is gated on the
+// effective record's status. Both are written with their counters zeroed, and they are
+// emitted trail-then-donor BEFORE the effective record so a full timestamp/rank tie still
 // folds to the effective one.
+//
+// Only ONE superseded rationale survives per id. Several distinct --reason texts on one
+// id collapse to the highest-ranked; see retainForCompaction and TD-051.
 //
 // The exception: an id ANCHORED to a shard Compact cannot rewrite (one holding a
 // line over maxLineBytes) is not compacted at all — every record of it is written

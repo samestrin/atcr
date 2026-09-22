@@ -310,3 +310,25 @@ func backfillSkippedLabel(t *testing.T) string {
 		"the extracted clause must be literal text, not a format verb, or this guard compares nothing")
 	return found[0]
 }
+
+// TestTechnicalDebtDoc_CompactGuaranteeIsNotAnAbsolute pins the `atcr debt
+// compact` retention guarantee, which has now stated a falsifiable absolute
+// twice in two review rounds.
+//
+// The passage is prose, not a table row, so nothing else in this file touches
+// it. Both wrong versions said some form of "the --reason text is never
+// destroyed"; retainForCompaction keeps exactly ONE superseded rationale per id
+// — the highest-ranked — so several distinct reasons on one id collapse to one.
+// A doc that promises more than the bound delivers is how an operator loses an
+// attempt round and only finds out afterwards.
+func TestTechnicalDebtDoc_CompactGuaranteeIsNotAnAbsolute(t *testing.T) {
+	doc := technicalDebtDoc(t)
+
+	assert.NotContains(t, doc, "never destroyed",
+		"the compact guarantee must not promise that no --reason is ever destroyed; "+
+			"only the highest-ranked superseded rationale is retained")
+	assert.Contains(t, doc, "only that highest-ranked one survives",
+		"the compact passage must state the one-deep bound explicitly")
+	assert.Contains(t, doc, "`wontfix` > `unreproducible` > `attempts-exhausted` > `resolved`",
+		"and must spell the rank that decides which reason survives, in ClosedStatusRank's order")
+}
