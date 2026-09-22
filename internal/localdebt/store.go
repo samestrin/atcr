@@ -115,6 +115,16 @@ func appendLocked(dir string, rec Record) error {
 	if err != nil {
 		return err
 	}
+	// The write gate: an off-enum status must die HERE, before it reaches disk,
+	// because past this point it is indistinguishable from open everywhere it
+	// matters (ClosedStatusRank ranks it 0; debtStatusBucket renders it open;
+	// every terminal predicate misses it) and the store is append-only — no
+	// repair pass can rewrite it in place. IsKnownStatus accepts the EMPTY
+	// status, so an open record and a legacy pre-status record pass untouched.
+	if !IsKnownStatus(rec.Status) {
+		return fmt.Errorf("appending localdebt record %q: unknown status %q " +
+			"(not a localdebt.Status* value; see IsKnownStatus)", rec.ID, rec.Status)
+	}
 	if err := ensureStoreDir(dir); err != nil {
 		return fmt.Errorf("creating localdebt dir: %w", err)
 	}

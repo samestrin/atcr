@@ -454,6 +454,36 @@ func bearsRationale(status string) bool {
 	return IsSettledStatus(status) || normalizeStatus(status) == StatusAttemptsExhausted
 }
 
+// IsKnownStatus reports whether status is a value a Record may carry on disk.
+//
+// This is the store boundary's write gate. Append/appendLocked is the one choke
+// point every writer funnels through — reconcile, `debt add`, `debt resolve`, and
+// appendBatch all reach appendLocked — so validating here lets every writer
+// inherit the check instead of each restating a literal map (the three CLI maps
+// cannot cover a writer that bypasses them, which is how an off-enum status
+// persisted silently). An off-enum status ranks 0 in ClosedStatusRank —
+// indistinguishable from open — and debtStatusBucket's default renders it as
+// open: it counts as live backlog and is invisible to every terminal predicate.
+//
+// The EMPTY status is KNOWN: "open" is spelled as "" on disk (cli/debt.go's
+// statusOpen asymmetry — normalizeStatus never yields "open"), so an open record
+// carries "" and legacy pre-status records read back as "" too.
+//
+// The accepted set is spelled from the same Status* constants the exhaustiveness
+// test walks, so adding or renaming a status fails that test until this switch is
+// updated — the same single-source contract every predicate in this file holds.
+func IsKnownStatus(status string) bool {
+	if normalizeStatus(status) == "" {
+		return true
+	}
+	switch normalizeStatus(status) {
+	case StatusResolved, StatusDeferred, StatusWontfix, StatusUnreproducible, StatusAttemptsExhausted:
+		return true
+	default:
+		return false
+	}
+}
+
 // ClosedStatusRank orders terminal statuses so a deterministic effective status can
 // be chosen when divergent terminal records exist for one id.
 //
