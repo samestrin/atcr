@@ -471,3 +471,75 @@ func TestIsCommunityInstalled_DistinguishesYAMLBackedFromBareMarkdown(t *testing
 	assert.False(t, IsCommunityInstalled(dir, "../escape"),
 		"a traversal name is refused rather than probed outside the personas directory")
 }
+
+func TestJoinScores_RegistryOnlyLensIsNotDroppedSilently(t *testing.T) {
+	// joinScores used to iterate the ROSTER alone, so a reviewer with scorecard
+	// history but no persona file vanished from `personas list --scores` with no
+	// notice. Against the live store that hid five of thirteen measured lenses
+	// (archer, vera, brad, pace, ronin) — 38% of the panel — from the surface
+	// sprint 36.0 makes the audit mechanism for lens authority. A measured lens
+	// the explainability table cannot show is the one outcome it cannot afford.
+	metas := []PersonaMeta{{Name: "dax", Version: "built-in", Source: "built-in"}}
+	scores := map[string]float64{"dax": 0.8, "archer": 0.6}
+	details := map[string]ScoreDetail{
+		"dax":    {Counted: 40},
+		"archer": {Counted: 221, Excluded: 3},
+	}
+
+	scored := joinScores(metas, scores, details)
+
+	archer := scoredByName(scored, "archer")
+	require.NotNil(t, archer, "a lens with history but no roster row must still be rendered")
+	assert.Equal(t, "registry", archer.Source,
+		"a registry-only lens is labeled by where it came from, not by a persona file it has not got")
+	require.NotNil(t, archer.Rate)
+	assert.InDelta(t, 0.6, *archer.Rate, 1e-9)
+	require.NotNil(t, archer.Detail)
+	assert.Equal(t, 221, archer.Detail.Counted)
+	assert.Equal(t, 3, archer.Detail.Excluded)
+
+	// The roster row is untouched by the tail.
+	dax := scoredByName(scored, "dax")
+	require.NotNil(t, dax)
+	assert.Equal(t, "built-in", dax.Source)
+	assert.Len(t, scored, 2, "exactly one row per lens — the tail must not duplicate a roster row")
+}
+
+func TestJoinScores_DetailOnlyLensStillSurfaces(t *testing.T) {
+	// The tail unions BOTH maps. A lens scorecard could explain but not rate
+	// would otherwise be dropped by a rates-only tail, re-opening the same hole
+	// one map narrower.
+	scored := joinScores(nil, nil, map[string]ScoreDetail{"vera": {Counted: 221}})
+
+	require.Len(t, scored, 1)
+	assert.Equal(t, "vera", scored[0].Name)
+	assert.Equal(t, "registry", scored[0].Source)
+	assert.Nil(t, scored[0].Rate, "no rate means n/a, not a fabricated zero")
+	require.NotNil(t, scored[0].Detail)
+	assert.Equal(t, 221, scored[0].Detail.Counted)
+}
+
+func TestJoinScores_RegistryTailIsCaseInsensitiveAgainstTheRoster(t *testing.T) {
+	// The roster is matched by strings.ToLower(m.Name), so the tail must consume
+	// the same key or a mixed-case roster entry would be emitted twice — once as
+	// itself and once as a phantom "registry" lens.
+	scored := joinScores([]PersonaMeta{{Name: "SASHA", Source: "community"}},
+		map[string]float64{"sasha": 0.5}, map[string]ScoreDetail{"sasha": {Counted: 7}})
+
+	require.Len(t, scored, 1, "a mixed-case roster persona must not also appear as a registry-only row")
+	assert.Equal(t, "community", scored[0].Source)
+}
+
+func TestJoinScores_RegistryTailIsDeterministic(t *testing.T) {
+	// Map iteration order is randomized, so the tail must be sorted like every
+	// other row or the table would reorder between two runs with no data change.
+	for i := 0; i < 20; i++ {
+		scored := joinScores(nil,
+			map[string]float64{"vera": 0.5, "archer": 0.5, "ronin": 0.5},
+			nil)
+		require.Len(t, scored, 3)
+		assert.Equal(t, []string{"archer", "ronin", "vera"},
+			[]string{scored[0].Name, scored[1].Name, scored[2].Name},
+			"equal rates tie-break alphabetically, for the tail exactly as for the roster")
+	}
+}
