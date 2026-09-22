@@ -1106,9 +1106,9 @@ func opportunityDisposition(r Record, union map[string]struct{}) disposition {
 	// the phantom never reaches this function with a raised count at all — it is
 	// routed to res.Ambiguous, which contributes its CATEGORY and no count (see
 	// the contributesToUnion block above and EmitInput.AmbiguousFindings). The
-	// record is now kept rather than dropped, which is correct, but a
-	// zero-raised record moves neither side of the ratio, so the rate is
-	// unchanged. Charging the ambiguous stream is a scoring-semantics change
+	// record is dropped, and a later attempt to keep it was reverted for the
+	// reason given at the raised-count test below. Charging the ambiguous stream
+	// is a scoring-semantics change
 	// that also has to answer TD-034's mirror case, and it is filed as TD-048.
 	// Do not read the paragraph above as "the escape is closed".
 	//
@@ -1125,24 +1125,45 @@ func opportunityDisposition(r Record, union map[string]struct{}) disposition {
 	// out-of-lane finding free — a testing lens that files a security bug and is
 	// wrong pays nothing — and it protected only the nine grounded personas,
 	// since the five unmapped ones never reach this branch at all.
-	// CONTRIBUTING TO THE UNION IS ITSELF PROOF THE LENS WAS NOT SILENT, and this
-	// test comes FIRST — ahead of the raised count — because the two can
-	// disagree on the production path. EmitInput.AmbiguousFindings is a
-	// category-only stream: it feeds CategoriesRaised and appears in no
-	// reviewerCounts call, and under strict consensus (the only level TrustPriors
-	// reads) an uncorroborated singleton is routed there unless trustExempt
-	// spares it — which it does not for a lens with no prior yet. So a lens that
-	// demonstrably worked the case arrives with FindingsRaised == 0 and would
-	// read as silent, losing its record for a routing decision rather than for
-	// staying quiet.
-	if contributesToUnion(r) {
-		return dispCounted
-	}
+	// A ZERO-RAISED RECORD IS DROPPED EVEN WHEN IT CONTRIBUTED A TOPIC, and the
+	// reasoning that says otherwise was tried and REVERTED. It is recorded here
+	// because it is persuasive and wrong.
+	//
+	// The argument was: EmitInput.AmbiguousFindings is a category-only stream —
+	// it feeds CategoriesRaised and appears in no reviewerCounts call — and
+	// EmitForReconcile fills it from res.Ambiguous, where the consensus filter
+	// routes an uncorroborated singleton under strict consensus. So a lens that
+	// demonstrably worked the case arrives with FindingsRaised == 0, and
+	// dropping it looks like punishing a lens for a routing decision rather than
+	// for staying quiet. Hoisting this test above the raised count fixes that.
+	//
+	// It does not, and the cost is worse than the complaint. A zero-raised record
+	// carries NO denominator, so keeping it cannot improve the rate it is
+	// supposed to defend — but trustPriorsSince tallies t.runs over every kept
+	// record and compares THAT to minRuns, so keeping it buys PUBLICATION.
+	// Measured: five honest corroborated runs at a floor of twenty publish
+	// nothing; add a hundred zero-raised out-of-lane contributions and the lens
+	// publishes at 1.0000, clearing reconcile's trustHighThreshold for blanket
+	// trustExempt. The dropping order publishes nothing in both cases. So the
+	// "fix" converted a lens with five runs of evidence into a fully-trusted one
+	// on the strength of a hundred records that carry no evidence at all.
+	//
+	// The complaint it answered costs nothing by comparison: a record with no
+	// denominator contributes nothing to the rate whether it is kept or dropped.
+	// Losing it loses no evidence. Whoever re-argues this has to answer the floor,
+	// not the ratio — TestOpportunityDisposition_ZeroRaisedContributorIsDropped
+	// and TestTrustPriors_ZeroRaisedContributionsCannotBuyTheFloor pin both ends.
 	if r.FindingsRaised > 0 {
-		// Raised findings the scorer could attribute to no topic. Kept AND
-		// annotated, because the reader needs to know this lens's standing
-		// rests on cases nothing could scope (TD-032).
-		return dispUnscopeable
+		if !contributesToUnion(r) {
+			// Raised findings the scorer could attribute to no topic. Kept AND
+			// annotated, because the reader needs to know this lens's standing
+			// rests on cases nothing could scope (TD-032).
+			return dispUnscopeable
+		}
+		// Raised findings under a real topic outside its own remit. Kept and
+		// unremarkable — there is no fourth reason label for it, and inventing
+		// one would report an exclusion that did not happen.
+		return dispCounted
 	}
 	if intersects(remit, union) {
 		return dispCounted

@@ -1252,6 +1252,29 @@ func oppRec(runID, reviewer string, cats []string) Record {
 	}
 }
 
+// oppRecRaw builds a record with raised and cats set INDEPENDENTLY, which is the
+// one thing oppRec and oppRecUnlabelled between them cannot do.
+//
+// It exists because that coupling hid a real defect. oppRec derives raised from
+// cats (empty cats means a silent record) and oppRecUnlabelled fixes cats empty,
+// so no fixture in this file could construct a record that raised NOTHING and
+// still contributed a category — and that cell is reachable in production, via
+// the category-only ambiguous stream. A gate round changed the disposition of
+// exactly that cell and the entire package plus cli/ stayed green.
+//
+// The shape is emitter-real, not a probe convenience: EmitForReconcile fills
+// EmitInput.AmbiguousFindings from res.Ambiguous, and Emit routes that stream
+// into reviewerCategories only, never into a reviewerCounts call.
+func oppRecRaw(runID, reviewer string, raised int, cats []string) Record {
+	r := oppRec(runID, reviewer, []string{"placeholder"})
+	r.CategoriesRaised = cats
+	r.FindingsRaised = raised
+	if raised == 0 {
+		r.Outcome = outcomeClean
+	}
+	return r
+}
+
 // oppRecUnlabelled is the case oppRec deliberately cannot express: a lens that
 // RAISED findings whose every CATEGORY the scorer could not use, so the count is
 // non-zero while CategoriesRaised is empty. It is TD-032's subject, and keeping
@@ -2644,4 +2667,69 @@ func TestTrustPriors_OutOfRemitCorroborationAlsoRaisesAPrior(t *testing.T) {
 	assert.InDelta(t, 100.0/120.0, lifted["dax"], 1e-9)
 	assert.Greater(t, lifted["dax"], floor["dax"],
 		"out-of-remit corroboration must raise the prior, symmetrically with out-of-remit phantoms lowering it")
+}
+
+func TestOpportunityDisposition_ZeroRaisedContributorIsDropped(t *testing.T) {
+	// THE CELL NO OTHER FIXTURE IN THIS FILE COULD BUILD, and the reason a gate
+	// round was able to flip it with the whole package green.
+	//
+	// A lens that raised nothing but contributed a discriminating out-of-remit
+	// category — the shape the ambiguous stream really produces — is DROPPED.
+	// Keeping it was tried and reverted: a zero-raised record carries no
+	// denominator, so keeping it cannot improve the rate, but it does add a run
+	// toward the minRuns floor, which buys publication. See
+	// TestTrustPriors_ZeroRaisedContributionsCannotBuyTheFloor for that half.
+	union := map[string]struct{}{"performance": {}}
+
+	assert.Equal(t, dispOutOfRemit,
+		opportunityDisposition(oppRecRaw("r", "sasha", 0, []string{"performance"}), union),
+		"zero raised, contributed an OUT-OF-REMIT topic: dropped")
+	assert.Equal(t, dispCounted,
+		opportunityDisposition(oppRecRaw("r", "penny", 0, []string{"performance"}), union),
+		"zero raised, contributed an IN-REMIT topic: kept, via the remit test")
+	assert.Equal(t, dispOutOfRemit,
+		opportunityDisposition(oppRecRaw("r", "sasha", 0, nil), union),
+		"zero raised, contributed nothing: dropped, unchanged")
+	assert.Equal(t, dispCounted,
+		opportunityDisposition(oppRecRaw("r", "sasha", 2, []string{"performance"}), union),
+		"the boundary: the SAME record with findings is kept")
+}
+
+func TestTrustPriors_ZeroRaisedContributionsCannotBuyTheFloor(t *testing.T) {
+	// The consequence that made the reverted hoist worse than the complaint it
+	// answered. A zero-raised record moves neither side of the ratio, so the
+	// obvious reading is that keeping it is harmless. It is not: trustPriorsSince
+	// tallies t.runs over every KEPT record and compares that to minRuns, so a
+	// hundred evidence-free records can carry a lens over a floor its real
+	// history does not reach — and publish it at a rate computed from five runs.
+	//
+	// 1.0000 is above reconcile's trustHighThreshold (0.7), so the published
+	// value is not merely optimistic, it is blanket trustExempt.
+	dir := t.TempDir()
+	for i := 0; i < 5; i++ {
+		r := reviewer_(runIDAt(time.Now(), fmt.Sprintf("honest-%03d", i)), "Dax", "m1", 1, 1)
+		r.CategoriesRaised = []string{reclib.CategoryTesting}
+		require.NoError(t, Append(dir, r))
+	}
+	rates, err := TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+	require.NotContains(t, rates, "dax", "the control: five runs do not clear a twenty-run floor")
+
+	// A hundred zero-raised out-of-lane contributions, exactly as the ambiguous
+	// stream writes them.
+	for i := 0; i < 100; i++ {
+		runID := runIDAt(time.Now(), fmt.Sprintf("phantom-%03d", i))
+		p := reviewer_(runID, "Dax", "m1", 0, 0)
+		p.CategoriesRaised = []string{reclib.CategorySecurity}
+		require.NoError(t, Append(dir, p))
+		// Another lens keeps the union discriminating and non-empty.
+		other := reviewer_(runID, "Sasha", "m1", 1, 0)
+		other.CategoriesRaised = []string{reclib.CategorySecurity}
+		require.NoError(t, Append(dir, other))
+	}
+
+	rates, err = TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+	assert.NotContains(t, rates, "dax",
+		"evidence-free records must not carry a lens over the floor into a published 1.0000 prior")
 }
