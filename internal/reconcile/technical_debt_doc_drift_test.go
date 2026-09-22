@@ -33,6 +33,7 @@ import (
 
 const technicalDebtDocPath = "../../docs/technical-debt.md"
 const localdebtRecordSourceDir = "../localdebt"
+const cliDebtResolveSourcePath = "../../cli/debt_resolve.go"
 
 // technicalDebtDoc returns the published catalog's contents.
 func technicalDebtDoc(t *testing.T) string {
@@ -390,6 +391,96 @@ func TestTechnicalDebtDoc_ListFlagProseListsEveryFilterValue(t *testing.T) {
 	assert.Contains(t, line, "open", "the open filter value must stay published")
 }
 
+// cliResolveWritableStatuses returns the status VALUEs cli's resolveStatuses
+// map accepts, read from cli/debt_resolve.go's own source rather than a
+// hand-typed literal, for the same reason localdebtTerminalStatuses reads
+// internal/localdebt's source: a literal list drifts the moment cli's enum
+// grows and the list does not.
+//
+// This cannot import the cli package directly: cli/debt_resolve.go itself
+// imports internal/reconcile, so a test-time import back into cli from this
+// package would be a cycle, and resolveStatuses is unexported besides.
+func cliResolveWritableStatuses(t *testing.T) []string {
+	t.Helper()
+
+	constValues := map[string]string{}
+	entries, err := os.ReadDir(localdebtRecordSourceDir)
+	require.NoError(t, err, "the localdebt package sources must be readable from this package")
+	fset := token.NewFileSet()
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, filepath.Join(localdebtRecordSourceDir, name), nil, 0)
+		require.NoError(t, err, "parsing %s", name)
+		for _, decl := range f.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, ident := range vs.Names {
+					if i >= len(vs.Values) {
+						continue
+					}
+					lit, ok := vs.Values[i].(*ast.BasicLit)
+					if !ok || lit.Kind != token.STRING {
+						continue
+					}
+					v, err := strconv.Unquote(lit.Value)
+					require.NoError(t, err)
+					constValues[ident.Name] = v
+				}
+			}
+		}
+	}
+
+	cliFset := token.NewFileSet()
+	cliFile, err := parser.ParseFile(cliFset, cliDebtResolveSourcePath, nil, 0)
+	require.NoError(t, err, "parsing %s", cliDebtResolveSourcePath)
+
+	var out []string
+	ast.Inspect(cliFile, func(n ast.Node) bool {
+		vs, ok := n.(*ast.ValueSpec)
+		if !ok {
+			return true
+		}
+		for i, ident := range vs.Names {
+			if ident.Name != "resolveStatuses" || i >= len(vs.Values) {
+				continue
+			}
+			comp, ok := vs.Values[i].(*ast.CompositeLit)
+			if !ok {
+				continue
+			}
+			for _, elt := range comp.Elts {
+				kv, ok := elt.(*ast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				sel, ok := kv.Key.(*ast.SelectorExpr)
+				if !ok {
+					continue
+				}
+				if v, ok := constValues[sel.Sel.Name]; ok {
+					out = append(out, v)
+				}
+			}
+		}
+		return true
+	})
+
+	require.NotEmpty(t, out,
+		"cli's resolveStatuses declaration shape drifted from this scan — an empty result "+
+			"means the guard is pinned against nothing")
+	return out
+}
+
 // TestTechnicalDebtDoc_ResolveFlagProseListsEveryWritableStatus covers passage 5
 // of 5: the `atcr debt resolve` flag prose. It publishes the writable subset —
 // deferred is excluded, because deferral is written by other paths — and the
@@ -401,7 +492,7 @@ func TestTechnicalDebtDoc_ResolveFlagProseListsEveryWritableStatus(t *testing.T)
 		"the `debt resolve` flag prose must publish its --status values starting with "+
 			"the backticked flag name")
 
-	for _, status := range []string{"resolved", "wontfix", "unreproducible", "attempts-exhausted"} {
+	for _, status := range cliResolveWritableStatuses(t) {
 		assert.Contains(t, line, status,
 			"`debt resolve --status` accepts %q, but the published flag prose omits it", status)
 	}
