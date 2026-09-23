@@ -474,8 +474,8 @@ than growing a third aggregation.
   honest answer — but absence is not neutral (see the bullet above: it switches
   demotion off as well as exemption), and on an existing install this is a
   visible change rather than a silent one.
-- **`scorecard.ResolveTrustPriorsAndUnmeasured()` (epic 35.9; the unmeasured
-  counter added in 36.0)** is the third consumer, and it
+- **`scorecard.ResolveTrustPriorsForReview(reviewDir)` (epic 35.9; the unmeasured
+  counter added in 36.0; keyed on persona + model since 2026-09-23)** is the third consumer, and it
   is the one on the primary path of **every** `atcr review`, `review --resume`,
   `reconcile` and MCP `atcr_reconcile` call — so the outcome-eligibility rule
   above reaches production through here, not only through `personas list
@@ -513,7 +513,7 @@ than growing a third aggregation.
   `atcr reconcile` /
   `atcr review --resume` / `atcr review` (one-shot mode) / MCP
   `atcr_reconcile` call site resolves it — through
-  `ResolveTrustPriorsAndUnmeasured` — and threads the result into
+  `ResolveTrustPriorsForReview` — and threads the result into
   `reconcile.Options.TrustPriors`, which the epic-14.2 consensus filter
   consumes: a singleton from a historically reliable reviewer survives the
   filter without in-run corroboration, and one from a historically unreliable
@@ -523,6 +523,7 @@ than growing a third aggregation.
   `LOW` finding is then sidecarred changes. Under `consensus: off` it reaches
   `findings.json` still carrying `LOW`, which is the only configuration in which
   the demotion is observable end-to-end.
+  **Trust follows the model, not just the persona.** On this reconcile path a persona's prior is computed only from its runs on the model it ran on in the review being reconciled, read from that review's pool summary (`sources/pool/summary.json`). A persona that switched models is absent from the map, which is the neutral baseline, until `DefaultTrustMinRuns` runs accumulate on the new model; its history on the old model does not carry over. A persona is also neutral when its model cannot be known: the review has no pool summary, the summary lists the persona on two different models, or the summary records no model for it. The summary records a model only when the provider reported token usage, so a provider that never reports usage leaves its personas neutral on this path. The unmeasured count on the log line follows the same rule. `atcr personas list --scores` still reports each persona across all its models: it reads `TrustPriors`, not this function, and so does its "In use by reconcile" footer, which therefore does not yet reflect the per-model rule. Two parts of the scoring stay per persona across models: the era decision (a persona's newest `raised_denominator`), which only matters across an era bump, and the ground-truth confirmation half, which is not wired in (TD-039).
   > **Scorecard rates are not comparable across consensus levels.** Reviewer
   > records are computed from the **post-filter** finding set (`res.Findings`)
   > plus the Tier-4-routed set (`res.Unresolved`, which contributes to

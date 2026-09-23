@@ -670,7 +670,9 @@ func TrustPriorsAndDetails(dir string, minRuns int) (map[string]float64, map[str
 // 2026-09-23, option A): a persona that switched models starts from the neutral
 // baseline and is absent from the map until DefaultTrustMinRuns runs accumulate
 // on the new model. A persona missing from models is absent too. A nil map is
-// the persona-only fold every non-reconcile caller keeps.
+// the persona-only fold every non-reconcile caller keeps. Two inputs stay per
+// persona across models: the era decision (newestEraByReviewer), which only
+// matters across an era bump, and gt's confirmations, keyed by persona.
 func ratesFromRecords(records []Record, minRuns int, gt GroundTruthLookup, since time.Duration, now time.Time, models map[string]string) map[string]float64 {
 
 	type tally struct{ runs, corroborated, raised int }
@@ -1550,23 +1552,6 @@ func eraSuperseded(r Record, newest map[string]int) bool {
 	return raisedDenominatorOf(r) != newest[normalizeReviewerName(r.Reviewer)]
 }
 
-// ResolveTrustPriorsAndUnmeasured is the single helper every
-// reconcile.RunReconcile call site (cli/reconcile.go, cli/resume.go,
-// cli/review.go, internal/mcp/handlers.go) uses to attach the reviewer trust
-// prior to reclib.Options.TrustPriors before calling RunReconcile — NOT called
-// from inside internal/reconcile itself, because internal/scorecard already
-// imports internal/reconcile (EmitForReconcile takes a reconcile.Result), so
-// the reverse import would cycle. It is ResolveTrustPriors' windowed read plus
-// the number of reviewers the outcome gate alone keeps out of the map (for the
-// reconcile log line; see resolveTrustPriorsAndUnmeasured).
-func ResolveTrustPriorsAndUnmeasured() (map[string]float64, int) {
-	dir, err := DefaultDir()
-	if err != nil {
-		return nil, 0
-	}
-	return resolveTrustPriorsAndUnmeasured(dir, time.Now(), nil)
-}
-
 // ResolveTrustPriorsForReview is the single helper every
 // reconcile.RunReconcile call site (cli/reconcile.go, cli/resume.go,
 // cli/review.go, internal/mcp/handlers.go) uses to attach the reviewer trust
@@ -1645,9 +1630,10 @@ func resolveTrustPriorsAndUnmeasured(dir string, now time.Time, models map[strin
 // behavior. See defaultTrustWindow for why the window is 180d and what a
 // narrower one would silently break.
 //
-// Since 3f7ad69c the reconcile call sites resolve the priors through
-// ResolveTrustPriorsAndUnmeasured instead — the same windowed read plus an
-// unmeasured-reviewer count for the reconcile log line. This function remains
+// The reconcile call sites resolve the priors through
+// ResolveTrustPriorsForReview instead — the same windowed read, keyed on each
+// persona's current model, plus an unmeasured-reviewer count for the reconcile
+// log line. This function remains
 // for cli/personas.go's in-use read and as the nil-lookup form of
 // ResolveTrustPriorsWithGroundTruth; a TD-039 lookup threaded only through
 // ResolveTrustPriorsWithGroundTruth therefore reaches the personas surface but
@@ -1667,7 +1653,7 @@ func ResolveTrustPriors() map[string]float64 {
 //
 // IT EXISTS SO PHASE 5 IS A CALL-SITE SWAP, not a signature break across four
 // packages. Every production consumer of the priors map resolves it through
-// ResolveTrustPriorsAndUnmeasured — cli/review.go, cli/resume.go,
+// ResolveTrustPriorsForReview — cli/review.go, cli/resume.go,
 // cli/reconcile.go and internal/mcp/handlers.go — which reads via
 // resolveTrustPriorsAndUnmeasured and does NOT pass through this function; a
 // TD-039 wire-in must thread the lookup into that path as well or the swap

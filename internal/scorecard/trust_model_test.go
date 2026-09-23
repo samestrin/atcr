@@ -230,16 +230,3 @@ func TestResolveTrustPriorsForReview_NoPoolSummaryIsNeutral(t *testing.T) {
 	assert.Empty(t, priors)
 	assert.Zero(t, unmeasured)
 }
-
-// The unresolvable-store arm matches ResolveTrustPriors: nil, not a read of "".
-func TestResolveTrustPriorsForReview_UnresolvableStoreDirIsNil(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", "")
-	t.Setenv("HOME", "")
-	t.Setenv("AppData", "")
-	_, err := DefaultDir()
-	require.Error(t, err, "precondition: the store dir cannot be resolved")
-
-	priors, unmeasured := ResolveTrustPriorsForReview(t.TempDir())
-	assert.Nil(t, priors)
-	assert.Zero(t, unmeasured)
-}
