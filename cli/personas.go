@@ -621,6 +621,14 @@ func formatScoreDetail(d *commpersonas.ScoreDetail) string {
 	if n := d.Reasons[scorecard.ReasonNoRecognizedCategory]; n > 0 {
 		out += fmt.Sprintf(" (%d unlabelled)", n)
 	}
+	// The unmapped scope statement renders separately and deliberately, like
+	// TD-032's: those records were COUNTED too, so they belong beside the
+	// counted figure, never in the excluded one (epic acceptance criterion 7 —
+	// the five registry-only lenses must not read as silently different from
+	// the nine grounded ones).
+	if n := d.Reasons[scorecard.ReasonNotOpportunityScoped]; n > 0 {
+		out += " · not opportunity-scoped: no in-repo persona definition"
+	}
 	// The excluded figure is ALWAYS rendered, including at zero, per AC 06-04's
 	// "a persona with zero exclusions renders an explicit 0, distinct from the
 	// n/a no-data case". Omitting the clause would leave a reader deciding
