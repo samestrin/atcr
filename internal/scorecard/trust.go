@@ -897,16 +897,20 @@ func consensusLevelStrict(r Record) bool {
 // every one of them is durably demoted for its wiring.
 //
 // ELIGIBLE: findings, clean, ungrounded, filtered.
-// EXCLUDED: unparseable, truncated, incomplete, failed, unknown.
+// EXCLUDED: unparseable, truncated, incomplete, failed, and the empty string
+// (benchmark.OutcomeUnknown — "unknown" is only its display label, produced by
+// OutcomeTallyKey; ValidReviewerOutcome accepts "" and rejects "unknown", so
+// the excluded set has five members, not the nine this list once implied).
 //
 // ungrounded and filtered sit on the eligible side deliberately, and it is the
 // one genuinely open call here. Neither is a broken attempt: both are downstream
 // of a complete, parseable response whose findings were discarded for cause, so
 // they report on judgment. Revisit once a live store exists to measure against.
 //
-// unknown is excluded rather than inferred. It is the Go zero value, so it means
-// both "written before schema 2" and "nobody classified this"; reading it as
-// clean would credit a full trust rate to runs no one ever observed.
+// The empty string is excluded rather than inferred. It is the Go zero value
+// (benchmark.OutcomeUnknown), so it means both "written before schema 2" and
+// "nobody classified this"; reading it as clean would credit a full trust rate
+// to runs no one ever observed.
 //
 // The membership test is an ALLOWLIST, not a denylist, so a tenth outcome value
 // added to the vocabulary is excluded until somebody decides otherwise — the
