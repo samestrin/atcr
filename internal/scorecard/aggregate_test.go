@@ -1,6 +1,7 @@
 package scorecard
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -255,4 +256,32 @@ func TestApplyFilters_NoMatch(t *testing.T) {
 func TestApplyFilters_InvalidSince(t *testing.T) {
 	_, err := ApplyFilters(nil, FilterOpts{Since: "abc"}, time.Now())
 	require.Error(t, err, "an invalid --since value surfaces as an error")
+}
+
+// TestReviewerNamesCompareCaseInsensitively pins the read side of the rename:
+// EmitForReconcile now stores Record.Reviewer lower-cased, older builds stored
+// the registry spelling verbatim, so one agent named "Bruce" is on disk as both.
+// The leaderboard key, the --persona filter and the export grouping must treat
+// them as one reviewer.
+func TestReviewerNamesCompareCaseInsensitively(t *testing.T) {
+	now := time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC)
+	recs := []Record{
+		reviewer(runIDAt(now.Add(-48*time.Hour), "old"), "Bruce", "opus", 4, 2, 0.1, 100),
+		reviewer(runIDAt(now.Add(-24*time.Hour), "new"), "bruce", "opus", 6, 3, 0.1, 100),
+	}
+
+	filtered, err := ApplyFilters(recs, FilterOpts{Persona: "Bruce"}, now)
+	require.NoError(t, err)
+	assert.Len(t, filtered, 2, "--persona must match both spellings")
+
+	rows := Aggregate(recs)
+	require.Len(t, rows, 1, "one reviewer, one leaderboard row")
+	assert.Equal(t, "bruce", rows[0].Reviewer)
+	assert.Equal(t, 2, rows[0].Runs)
+
+	data, err := ExportSelected(recs, now)
+	require.NoError(t, err)
+	var env ExportEnvelope
+	require.NoError(t, json.Unmarshal(data, &env))
+	assert.Len(t, env.Reviewers, 1, "one reviewer, one exported row")
 }
