@@ -1155,6 +1155,12 @@ func TestDocs_PersonasInstallMdDocumentsTheCasesColumn(t *testing.T) {
 	assert.Contains(t, doc, formatScoreDetail(nil), "the no-data marker must be documented")
 	assert.Contains(t, doc, "The excluded figure is always shown, including at `0`",
 		"AC 06-04's explicit-zero behaviour must be documented, not only tested")
+
+	// The scope footer's window and floor are constants; the doc restates them,
+	// so it is pinned to the constants rather than to its own literals.
+	assert.Contains(t, doc, fmt.Sprintf("last %d days", int(scorecard.DefaultTrustWindow.Hours()/24)))
+	assert.Contains(t, doc, fmt.Sprintf("%d-run floor", scorecard.DefaultTrustMinRuns))
+	assert.Contains(t, doc, "In use by reconcile")
 }
 
 // A below-floor lens must be MARKED, not silently ranked on its rate alone.
