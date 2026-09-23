@@ -1099,7 +1099,30 @@ func retainForCompaction(recs []Record) []Record {
 		// fold; the donor must be emitted last to win the donor slot) and is
 		// deliberately left open — see TD-014 and the skipped reproduction in
 		// compact_append_differential_test.go.
-		donorIdx := modelDonorIndex(group, eff)
+		//
+		// For an OPEN effective record the signal never reads eff's own Model:
+		// the re-detection fallback swaps in the latest closed record (see
+		// latestClosedIdx below) and recovers ITS missing Model. So the donor is
+		// chosen for that record, not for eff.
+		latestClosedIdx := -1
+		if !IsClosedStatus(eff.Status) {
+			var closedIdx []int
+			var closed []Record
+			for i, r := range group {
+				if IsClosedStatus(r.Status) {
+					closedIdx = append(closedIdx, i)
+					closed = append(closed, r)
+				}
+			}
+			if len(closed) > 0 {
+				latestClosedIdx = closedIdx[latestIndex(closed)]
+			}
+		}
+		donorSubject := eff
+		if latestClosedIdx >= 0 {
+			donorSubject = group[latestClosedIdx]
+		}
+		donorIdx := modelDonorIndex(group, donorSubject)
 
 		trailIdx := -1
 		if len(resolutions) > 0 {
@@ -1109,6 +1132,25 @@ func retainForCompaction(recs []Record) []Record {
 		// along and nothing more is owed. Position, not value.
 		if donorIdx >= 0 && donorIdx == trailIdx {
 			donorIdx = -1
+		}
+
+		// An OPEN effective record (a re-detection) reads a different closed
+		// record than the trail does. foldTerminalByID's fallback takes the MOST
+		// RECENT closed record (latestItem) and keeps the id's outcome only when
+		// that record is attempts-exhausted; the trail is chosen by RANK. When the
+		// two differ, retaining only the trail changes what the fallback reads, and
+		// compaction adds or deletes an attempts-exhausted outcome. So keep the
+		// latest closed record too, by the fallback's own rule.
+		//
+		// The fallback's answer is only "is it attempts-exhausted", so the record
+		// matters only when it, or a retained record it would lose to, is
+		// attempts-exhausted. Otherwise it reads "no" either way.
+		isExhausted := func(i int) bool {
+			return i >= 0 && normalizeStatus(group[i].Status) == StatusAttemptsExhausted
+		}
+		if latestClosedIdx == trailIdx || latestClosedIdx == donorIdx ||
+			!(isExhausted(latestClosedIdx) || isExhausted(trailIdx) || isExhausted(donorIdx)) {
+			latestClosedIdx = -1
 		}
 
 		// ORDER IS LOAD-BEARING TWICE OVER, and the two constraints point in
@@ -1148,6 +1190,20 @@ func retainForCompaction(recs []Record) []Record {
 			trail.CountedThrough = ""
 			out = append(out, trail)
 		}
+		// The latest closed record goes AFTER the trail, so it keeps winning a
+		// full tie in the fallback's latestItem (append order, last wins), and
+		// BEFORE the donor. A donor that ties it on timestamp came later in the
+		// original stream (the donor rule is last-wins), so latestIndex could
+		// only have preferred this record on foldPrecedence, which order cannot
+		// change; emitting it after the donor would instead let it take the
+		// donor slot when it also carries a Model.
+		if latestClosedIdx >= 0 {
+			latest := group[latestClosedIdx]
+			latest.Occurrences = 0
+			latest.FirstSeen = ""
+			latest.CountedThrough = ""
+			out = append(out, latest)
+		}
 		if donorIdx >= 0 {
 			donor := group[donorIdx]
 			donor.Occurrences = 0
@@ -1155,10 +1211,11 @@ func retainForCompaction(recs []Record) []Record {
 			donor.CountedThrough = ""
 			out = append(out, donor)
 		}
-		// Retention is bounded at THREE records per id on this branch, not two,
-		// and only when all three are genuinely distinct: the effective record,
-		// the highest-ranked rationale, and — when the effective record is a
-		// counted outcome carrying no Model — the attribution donor. The last two
+		// Retention is bounded at FOUR records per id, and only when all four are
+		// genuinely distinct: the effective record, the highest-ranked rationale,
+		// the latest closed record when the effective record is open (see
+		// latestClosedIdx), and — when the effective record carries no Model — the
+		// attribution donor. The trail and the donor
 		// cannot be collapsed: the trail is chosen by RANK so the human-typed
 		// rationale survives, while the donor is chosen by RECENCY AMONG
 		// MODEL-CARRIERS so the recovered Model matches what the signal read
