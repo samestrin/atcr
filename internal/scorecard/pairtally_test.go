@@ -772,6 +772,34 @@ func TestReviewerPairSignals_PeerNamesAreNormalizedAndDeduped(t *testing.T) {
 		"one shared finding is one agreement, whatever the cell's whitespace and casing")
 }
 
+// TestReviewerPairSignals_ClusterWithoutSelfMintsNothing pins the participation
+// test. Emit calls reviewerPairSignals for every reviewer over ALL findings, so
+// without it a reviewer mints pair signals for clusters it never joined.
+func TestReviewerPairSignals_ClusterWithoutSelfMintsNothing(t *testing.T) {
+	findings := []Finding{{
+		File: "a.go", Line: 1, Problem: "p",
+		Reviewers: []string{"dax", "greta"},
+		Severity:  "HIGH",
+	}}
+	assert.Nil(t, reviewerPairSignals("vera", findings, nil),
+		"vera did not join the dax/greta cluster, so it holds no pair evidence from it")
+}
+
+// TestReviewerPairSignals_MalformedGrayZoneKeysAndBlankSelf covers the
+// gray-zone guards and the blank-self guard. The self-pair key is the one whose
+// removal is observable: without the PairKey check "vera|vera" charges vera a
+// disagreement with itself. The separator-less key and the blank name also
+// land on PairKey's blank rejection when their own guards are removed, so for
+// those two the test pins the outcome, not a unique guard.
+func TestReviewerPairSignals_MalformedGrayZoneKeysAndBlankSelf(t *testing.T) {
+	assert.Nil(t, reviewerPairSignals("vera", nil, []string{"vera"}),
+		"a key with no separator names no pair")
+	assert.Nil(t, reviewerPairSignals("vera", nil, []string{"vera" + pairKeySep + "vera"}),
+		"a self pair is not a pair")
+	assert.Nil(t, reviewerPairSignals("  ", nil, []string{pairKeySep + "dax"}),
+		"a blank reviewer has no pair evidence")
+}
+
 func TestPairTallies_DuplicateRecordsInOneRunDoNotDoubleTheEvidence(t *testing.T) {
 	// A reviewer can hold more than one record for a run (two models), and
 	// Append is a blind append with no (RunID, Reviewer) dedupe. Summing the
