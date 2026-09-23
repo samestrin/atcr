@@ -294,20 +294,7 @@ func PairKey(a, b string) (string, bool) {
 // so a caller can treat the two alike. Do not read a nil error as "the store was
 // readable".
 func PairDisagreements(dir string) (map[string]PairTally, error) {
-	return pairDisagreementsSince(dir, 0, time.Now())
-}
-
-// pairDisagreementsSince is PairDisagreements' body with the read bounded to the
-// month files overlapping [now-since, now], mirroring trustPriorsSince.
-//
-// It exists because ResolveTrustPriors windows its scorecard read to
-// defaultTrustWindow while PairDisagreements reads all history: an
-// explainability surface rendering a weighted rate beside a pair verdict would
-// otherwise show two numbers computed over different populations, which is the
-// same fault GroundTruthLookup's window argument refuses for the ground-truth
-// half. since <= 0 means "no window".
-func pairDisagreementsSince(dir string, since time.Duration, now time.Time) (map[string]PairTally, error) {
-	records, err := ReadSince(dir, since, now, ReadOpts{Writer: io.Discard})
+	records, err := ReadSince(dir, 0, time.Now(), ReadOpts{Writer: io.Discard})
 	if err != nil {
 		return map[string]PairTally{}, nil
 	}

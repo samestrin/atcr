@@ -975,20 +975,15 @@ func TestPairTallies_ThinEvidenceIsNeverADropCandidate(t *testing.T) {
 		"the most independent pair in the store must never be reported as redundant")
 }
 
-func TestPairDisagreementsSince_BoundsTheReadTheSameWayTrustPriorsDoes(t *testing.T) {
-	// An explainability surface rendering a weighted rate beside a pair verdict
-	// must compute both over one population.
+func TestPairDisagreements_ReadsTheWholeStore(t *testing.T) {
+	// PairDisagreements reads all history. A windowed variant returns only when
+	// a surface needs it beside ResolveTrustPriors' window (TD-040).
 	dir := t.TempDir()
 	coEligible(t, dir, minPairCases, "bruce", "dax", 1, 0)
 
-	all, err := pairDisagreementsSince(dir, 0, time.Now())
+	all, err := PairDisagreements(dir)
 	require.NoError(t, err)
 	assert.Contains(t, all, "bruce|dax")
-
-	// A window that ends before the fixture was written selects no month file.
-	none, err := pairDisagreementsSince(dir, time.Hour, time.Now().AddDate(-2, 0, 0))
-	require.NoError(t, err)
-	assert.Empty(t, none, "the window must bound the read, not be ignored")
 }
 
 func TestNormalizeReviewerName_IsTheOneIdentityRuleBothSurfacesUse(t *testing.T) {

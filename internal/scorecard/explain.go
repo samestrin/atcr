@@ -175,14 +175,7 @@ type PersonaScoreDetail struct {
 // Like TrustPriors this is best-effort: a missing or unreadable store yields an
 // empty map and a nil error.
 func ExplainTrustPriors(dir string, minRuns int) (map[string]PersonaScoreDetail, error) {
-	return explainTrustPriorsSince(dir, minRuns, 0, time.Now())
-}
-
-// explainTrustPriorsSince is ExplainTrustPriors' body with the read bounded the
-// way trustPriorsSince bounds its own, so the two surfaces can never disagree
-// about which month files they read.
-func explainTrustPriorsSince(dir string, minRuns int, since time.Duration, now time.Time) (map[string]PersonaScoreDetail, error) {
-	records, err := ReadSince(dir, since, now, ReadOpts{Writer: io.Discard})
+	records, err := ReadSince(dir, 0, time.Now(), ReadOpts{Writer: io.Discard})
 	if err != nil {
 		// Fail neutral on a truncated store, exactly as trustPriorsSince does:
 		// an explanation computed from a partial read would name cases that are
@@ -192,7 +185,7 @@ func explainTrustPriorsSince(dir string, minRuns int, since time.Duration, now t
 	return detailsFromRecords(records, minRuns), nil
 }
 
-// detailsFromRecords is explainTrustPriorsSince's post-read body: the
+// detailsFromRecords is ExplainTrustPriors' post-read body: the
 // link-by-link walk, the per-record disposition notes and the floor, over an
 // already-read record slice. Split out so TrustPriorsAndDetails can feed it the
 // same records the rates fold reads, instead of re-reading the store.

@@ -386,7 +386,7 @@ func TestExplainTrustPriors_CountedExcludesEveryLinkTheChainDrops(t *testing.T) 
 	// 5.2.A review proved was a tautology: it re-spelled the chain expression
 	// inside the test body and compared THAT against keptForTrust, so explain.go
 	// could drop a link and stay green. The mutant that proved it — replacing
-	// strictRuns(records) with records in explainTrustPriorsSince — passed the
+	// strictRuns(records) with records in ExplainTrustPriors' read path — passed the
 	// entire suite.
 	//
 	// This pins the walk against keptForTrust's own output instead, over a store
