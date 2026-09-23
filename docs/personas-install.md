@@ -105,6 +105,8 @@ The rate is the fraction of a persona's findings that other reviewers or the ver
 - `provisional (under the N-case trust floor)` — the rate rests on fewer counted cases than atcr's trust floor, so read it as an early indication rather than a measurement. This matters because the table is **sorted by rate alone, with no sample-size term**: a lens at `100.0%` over 3 counted cases sorts above one at `33.3%` over 20, and only this marker says which of the two you are looking at. It is a caveat on the evidence, not a verdict on the lens — a provisional row is not a row to act on yet.
 - `n/a` — no usable measurement at all, matching the `CORROBORATION` cell. A persona is never shown a fabricated `0 counted`. Distinct from `provisional`: `n/a` means nothing was measured, `provisional` means too little was.
 
+These columns cover a persona's whole run history with no run floor, which is not what reconcile reads: reconcile's trust priors use only the last 180 days and a 20-run floor. A footer under the table says so and names the personas that clear that floor (`In use by reconcile: …`, or `none`), so a rate is never mistaken for one reconcile acts on.
+
 `counted + excluded` can be less than a persona's total run count: a run that was both non-strict AND outcome-ineligible is attributed to the first gate that dropped it, and a record whose raised_denominator exceeds the current era is excluded as `superseded-era`. When no scorecard data exists at all, every row shows `n/a` and a footer names the path that was checked:
 
 ```

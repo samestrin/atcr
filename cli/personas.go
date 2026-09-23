@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -58,7 +59,7 @@ func loadPersonasScores(_ io.Writer) (personasScoreData, error) {
 	// (pinned scorecard-side). Both faces are best-effort by contract — they
 	// never return a non-nil error — so the combined call keeps that shape.
 	rates, details, _ := scorecard.TrustPriorsAndDetails(dir, 0)
-	return personasScoreData{rates: rates, details: details, path: dir}, nil
+	return personasScoreData{rates: rates, details: details, path: dir, inUse: scorecard.ResolveTrustPriors()}, nil
 }
 
 // personasDir resolves the community personas directory. A package var so tests
@@ -264,8 +265,30 @@ func listPersonasWithScores(cmd *cobra.Command, dir string) error {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nScorecard data location could not be resolved: %v\n", err)
 	case len(data.rates) == 0:
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nNo scorecard data found at %s\n", data.path)
+	default:
+		renderScoresScope(cmd.OutOrStdout(), data.inUse)
 	}
 	return nil
+}
+
+// renderScoresScope names the population each figure describes. The columns
+// are loaded with minRuns=0 over all history, while reconcile acts on
+// ResolveTrustPriors — a windowed read under DefaultTrustMinRuns. Without this
+// footer the table reads as the rates reconcile uses, and for a lens under the
+// production floor it describes a decision reconcile never made.
+func renderScoresScope(w io.Writer, inUse map[string]float64) {
+	names := make([]string, 0, len(inUse))
+	for name := range inUse {
+		names = append(names, sanitizeCell(name))
+	}
+	sort.Strings(names)
+	used := "none"
+	if len(names) > 0 {
+		used = strings.Join(names, ", ")
+	}
+	_, _ = fmt.Fprintf(w, "\nCORROBORATION, RAISED and CASES cover all run history with no run floor.\n"+
+		"Reconcile uses only the last %d days with a %d-run floor.\nIn use by reconcile: %s\n",
+		int(scorecard.DefaultTrustWindow.Hours()/24), scorecard.DefaultTrustMinRuns, used)
 }
 
 func newPersonasSearchCmd() *cobra.Command {
