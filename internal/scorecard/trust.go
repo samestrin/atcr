@@ -230,11 +230,46 @@ type GroundTruthLookup func(since time.Duration, now time.Time) (map[string]Conf
 //     per-record filter can shrink a case's evidence (C13), while
 //     opportunitySetRuns runs LAST so the era decision is never made from an
 //     opportunity-shrunk record set.
+//   - scrubForgedCredit before mergeRoutedEras: the last point at which the
+//     honest ceiling is computable.
 //
 // The input slice is never mutated.
 func keptForTrust(records []Record) []Record {
 	unions := opportunityUnions(records)
 	return opportunitySetRuns(unresolvedEraRuns(mergeRoutedEras(scrubForgedCredit(eligibleOutcomeRuns(strictRuns(records))))), unions)
+}
+
+// maxPerFindingCredit is the largest credit any single finding can contribute,
+// across both branches of reviewerCounts.
+//
+// It is max(isolatedFindingWeight, 0.5) and not isolatedFindingWeight, because
+// only the solo branch is scaled by the constant: a corroborated finding
+// contributes 1/distinctCount(Reviewers), which peaks at 0.5 for a pair and is
+// not governed by the constant at all. Reading the constant as the per-finding
+// maximum is correct only while it stays at or above 0.5, and it is documented
+// PROVISIONAL with a named re-measurement trigger — so a later narrowing to,
+// say, 0.4 would make every ceiling derived from it too tight and scrub honest
+// corroborated-heavy records without a word of warning.
+//
+// The honest fix would be to scale both branches by one number. That is a
+// scoring-semantics change rather than a bound fix, so it is not made here;
+// this function makes the bound correct under either choice.
+//
+// IT TAKES THE WEIGHT AS A PARAMETER rather than reading the constant, purely
+// so the floor is testable. Read off the constant directly, the max() is
+// indistinguishable from returning the constant while isolatedFindingWeight
+// stays above 0.5 — a guard no mutation can kill and therefore no guard at all.
+// Its one production caller passes isolatedFindingWeight.
+func maxPerFindingCredit(weight float64) float64 {
+	// corroboratedCreditCeiling is 1/distinctCount(Reviewers) at its maximum,
+	// i.e. a finding raised by exactly two reviewers. That branch of
+	// reviewerCounts is NOT scaled by the weight, so it sets a floor under the
+	// per-finding maximum that the weight cannot lower.
+	const corroboratedCreditCeiling = 0.5
+	if weight > corroboratedCreditCeiling {
+		return weight
+	}
+	return corroboratedCreditCeiling
 }
 
 // scrubForgedCredit un-measures any record whose WeightedCredit is outside what
@@ -312,39 +347,6 @@ func keptForTrust(records []Record) []Record {
 // user-writable JSONL and other binaries and eras write it too.
 //
 // The input slice is never mutated.
-// maxPerFindingCredit is the largest credit any single finding can contribute,
-// across both branches of reviewerCounts.
-//
-// It is max(isolatedFindingWeight, 0.5) and not isolatedFindingWeight, because
-// only the solo branch is scaled by the constant: a corroborated finding
-// contributes 1/distinctCount(Reviewers), which peaks at 0.5 for a pair and is
-// not governed by the constant at all. Reading the constant as the per-finding
-// maximum is correct only while it stays at or above 0.5, and it is documented
-// PROVISIONAL with a named re-measurement trigger — so a later narrowing to,
-// say, 0.4 would make every ceiling derived from it too tight and scrub honest
-// corroborated-heavy records without a word of warning.
-//
-// The honest fix would be to scale both branches by one number. That is a
-// scoring-semantics change rather than a bound fix, so it is not made here;
-// this function makes the bound correct under either choice.
-//
-// IT TAKES THE WEIGHT AS A PARAMETER rather than reading the constant, purely
-// so the floor is testable. Read off the constant directly, the max() is
-// indistinguishable from returning the constant while isolatedFindingWeight
-// stays above 0.5 — a guard no mutation can kill and therefore no guard at all.
-// Its one production caller passes isolatedFindingWeight.
-func maxPerFindingCredit(weight float64) float64 {
-	// corroboratedCreditCeiling is 1/distinctCount(Reviewers) at its maximum,
-	// i.e. a finding raised by exactly two reviewers. That branch of
-	// reviewerCounts is NOT scaled by the weight, so it sets a floor under the
-	// per-finding maximum that the weight cannot lower.
-	const corroboratedCreditCeiling = 0.5
-	if weight > corroboratedCreditCeiling {
-		return weight
-	}
-	return corroboratedCreditCeiling
-}
-
 func scrubForgedCredit(records []Record) []Record {
 	out := make([]Record, len(records))
 	copy(out, records)
@@ -927,6 +929,7 @@ func consensusLevelStrict(r Record) bool {
 // before the failure itself is ever discarded. A single timeout would erase a
 // lens's whole record. strictRuns stays first, preserving the existing
 // cheapest-narrowing-first ordering.
+
 // outcomeEligible reports whether a reviewer record's outcome means the lens got
 // a fair attempt. Extracted for the same reason opportunityDisposition is: it is
 // read by both eligibleOutcomeRuns and ExplainTrustPriors, and two copies of a
