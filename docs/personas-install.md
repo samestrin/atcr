@@ -80,7 +80,7 @@ atcr personas list
 # language/go-fmt  0.3.0      community   go
 ```
 
-Columns: `NAME`, `VERSION` (`built-in` for the built-in personas; the installed manifest version for community personas), `SOURCE` (`built-in` or `community`), and `LANGUAGE` (the persona's declared `language` scope, comma-joined, or `-` when unscoped). If the personas directory is unreadable, `list` prints a warning to stderr and still renders the built-ins (exit 0).
+Columns: `NAME`, `VERSION` (`built-in` for the built-in personas; the installed manifest version for community personas), `SOURCE` (`built-in` or `community`; with `--scores`, also `registry`), and `LANGUAGE` (the persona's declared `language` scope, comma-joined, or `-` when unscoped). If the personas directory is unreadable, `list` prints a warning to stderr and still renders the built-ins (exit 0).
 
 **With corroboration scores.** Add `--scores` to append a `CORROBORATION` column, a `RAISED` column and a `CASES` column:
 
@@ -95,6 +95,8 @@ atcr personas list --scores
 
 The rate is the fraction of a persona's findings that other reviewers or the verify stage corroborated, formatted as `XX.X%`, or `n/a` when there is no run history for that persona.
 
+A lens with scorecard history but no persona file — the registry runs more lenses than ship persona files — appears as its own row with SOURCE `registry` and VERSION `-`. It is not an installable persona; the row exists because `--scores` is the audit surface for lens authority, and a measured lens it cannot show is the one omission that surface cannot afford.
+
 `RAISED` is the rate's denominator: the findings the persona raised across its counted cases. A persona that was measured but raised nothing has no rate to report, so its `CORROBORATION` cell reads `n/a (raised 0)` rather than `0.0%`. A `0.0%` always means the persona raised findings and none were corroborated.
 
 `CASES` is what stops the rate being read on its own, and it is the difference between "this lens is weak" and "this lens is barely measured" — a persona at `0.0%` over ONE counted case is not a persona to drop. It reads:
@@ -102,6 +104,7 @@ The rate is the fraction of a persona's findings that other reviewers or the ver
 - `N counted` — the cases the rate actually rests on.
 - `(N unlabelled)` — of those, how many raised findings the scorer could not attribute to a topic. Counted and charged, not excluded.
 - `N excluded (reason)` — cases set aside, with the largest single reason named. The reason is one of `outcome-ineligible` (the reviewer never got a fair attempt: a timeout, a truncated response, an unparseable one), `consensus-not-strict` (the run's consensus level was not strict, so it never enters a corroboration rate), `superseded-era` (the record was computed under a `raised_denominator` definition older than — or unreadable to — the reviewer's newest), or `category-not-in-opportunity-set` (the case was outside that lens's remit, so its silence is neither credited nor penalised). The excluded figure is always shown, including at `0`.
+- `· not opportunity-scoped: no in-repo persona definition` — an annotation appended to the CASES cell (it excludes nothing) when the lens has no in-repo persona definition to ground a remit against: the opportunity gate answers `dispCounted` for every one of its records without consulting a remit, so the lens is never opportunity-scoped, never judged, and never dropped — the label states the scope decision behind that pass-through rather than marking a problem.
 - `provisional (under the N-case trust floor)` — the rate rests on fewer counted cases than atcr's trust floor, so read it as an early indication rather than a measurement. This matters because the table is **sorted by rate alone, with no sample-size term**: a lens at `100.0%` over 3 counted cases sorts above one at `33.3%` over 20, and only this marker says which of the two you are looking at. It is a caveat on the evidence, not a verdict on the lens — a provisional row is not a row to act on yet.
 - `n/a` — no usable measurement at all, matching the `CORROBORATION` cell. A persona is never shown a fabricated `0 counted`. Distinct from `provisional`: `n/a` means nothing was measured, `provisional` means too little was.
 
