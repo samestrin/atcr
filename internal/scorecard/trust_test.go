@@ -2832,3 +2832,19 @@ func TestOpportunity_AnUnrecognisedCategoryIsNotATopic(t *testing.T) {
 	assert.Contains(t, out, dax,
 		"an empty union means nobody raised a scorable topic — pass the run through un-scoped")
 }
+
+func TestRemitFor_ReturnsTheTableSliceWithoutACopy(t *testing.T) {
+	// opportunityDisposition runs per record in a chain the risk profile calls
+	// performance-critical; RemitCategories' defensive copy per call is the
+	// cost the non-copying accessor removes. The exported API must keep
+	// copying — it crosses a package boundary where the caller could mutate.
+	cats, ok := remitFor("dax")
+	require.True(t, ok)
+	direct := personaRemit["dax"]
+	assert.Equal(t, &direct[0], &cats[0],
+		"remitFor must return the table's own slice, not a defensive copy")
+	pub, ok := RemitCategories("dax")
+	require.True(t, ok)
+	assert.NotEqual(t, &direct[0], &pub[0],
+		"RemitCategories remains the copying exported API")
+}
