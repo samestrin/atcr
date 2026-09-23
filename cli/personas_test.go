@@ -1030,6 +1030,13 @@ func TestFormatScoreDetail_SummaryShapes(t *testing.T) {
 			}},
 			"24 counted (4 unlabelled) · 3 excluded (category-not-in-opportunity-set)",
 		},
+		{
+			"an unmapped lens says why it is never opportunity-scoped, beside the count",
+			&personas.ScoreDetail{Counted: 20, Reasons: map[string]int{
+				scorecard.ReasonNotOpportunityScoped: 20,
+			}},
+			"20 counted · not opportunity-scoped: no in-repo persona definition · 0 excluded",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
