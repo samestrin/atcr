@@ -168,3 +168,78 @@ func TestCurrentModels_UnreadableSummaryIsEmptyNotNil(t *testing.T) {
 	require.NotNil(t, broken)
 	assert.Empty(t, broken)
 }
+
+// isolatedStore points DefaultDir at a fresh temp store and returns it.
+func isolatedStore(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("AppData", home)
+	dir, err := DefaultDir()
+	require.NoError(t, err)
+	return dir
+}
+
+// AC5: the reconcile-path resolver scores each persona against the model its
+// review ran it on.
+func TestResolveTrustPriorsForReview_UsesTheReviewsModels(t *testing.T) {
+	store := isolatedStore(t)
+	for _, r := range modelRuns("hist", "sasha", "m1", DefaultTrustMinRuns, 2, 1) {
+		require.NoError(t, Append(store, r))
+	}
+
+	onOld := t.TempDir()
+	writePoolSummary(t, onOld, fanout.AgentStatus{Agent: "sasha", Model: "m1"})
+	priors, _ := ResolveTrustPriorsForReview(onOld)
+	assert.Contains(t, priors, "sasha", "still on m1: its m1 history counts")
+
+	onNew := t.TempDir()
+	writePoolSummary(t, onNew, fanout.AgentStatus{Agent: "sasha", Model: "m2"})
+	priors, _ = ResolveTrustPriorsForReview(onNew)
+	assert.NotContains(t, priors, "sasha", "switched to m2: neutral until m2 has its own runs")
+}
+
+// AC5: the unmeasured count (the reconcile log line) follows the same
+// current-model rule as the priors it sits beside.
+func TestResolveTrustPriorsForReview_UnmeasuredFollowsTheModelRule(t *testing.T) {
+	store := isolatedStore(t)
+	for _, r := range modelRuns("hist", "sasha", "m1", DefaultTrustMinRuns, 2, 1) {
+		r.Outcome = "" // written before the outcome field: never scored
+		require.NoError(t, Append(store, r))
+	}
+
+	onOld := t.TempDir()
+	writePoolSummary(t, onOld, fanout.AgentStatus{Agent: "sasha", Model: "m1"})
+	_, unmeasured := ResolveTrustPriorsForReview(onOld)
+	assert.Equal(t, 1, unmeasured, "on m1, only the outcome gate keeps sasha out")
+
+	onNew := t.TempDir()
+	writePoolSummary(t, onNew, fanout.AgentStatus{Agent: "sasha", Model: "m2"})
+	_, unmeasured = ResolveTrustPriorsForReview(onNew)
+	assert.Zero(t, unmeasured, "on m2 there is no history to un-measure")
+}
+
+// AC3/AC5: a review with no pool summary gives nobody a prior.
+func TestResolveTrustPriorsForReview_NoPoolSummaryIsNeutral(t *testing.T) {
+	store := isolatedStore(t)
+	for _, r := range modelRuns("hist", "sasha", "m1", DefaultTrustMinRuns, 2, 1) {
+		require.NoError(t, Append(store, r))
+	}
+	priors, unmeasured := ResolveTrustPriorsForReview(t.TempDir())
+	assert.Empty(t, priors)
+	assert.Zero(t, unmeasured)
+}
+
+// The unresolvable-store arm matches ResolveTrustPriors: nil, not a read of "".
+func TestResolveTrustPriorsForReview_UnresolvableStoreDirIsNil(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", "")
+	t.Setenv("AppData", "")
+	_, err := DefaultDir()
+	require.Error(t, err, "precondition: the store dir cannot be resolved")
+
+	priors, unmeasured := ResolveTrustPriorsForReview(t.TempDir())
+	assert.Nil(t, priors)
+	assert.Zero(t, unmeasured)
+}

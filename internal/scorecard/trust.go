@@ -1567,6 +1567,11 @@ func ResolveTrustPriorsAndUnmeasured() (map[string]float64, int) {
 	return resolveTrustPriorsAndUnmeasured(dir, time.Now())
 }
 
+// ResolveTrustPriorsForReview is a stub.
+func ResolveTrustPriorsForReview(reviewDir string) (map[string]float64, int) {
+	return ResolveTrustPriorsAndUnmeasured()
+}
+
 // resolveTrustPriorsAndUnmeasured reads the store once, over ResolveTrustPriors'
 // exact window and floor, and returns the same priors map alongside UNMEASURED:
 // how many reviewers would clear the floor if their outcome-less records counted,
