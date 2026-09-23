@@ -1161,6 +1161,14 @@ func TestDocs_PersonasInstallMdDocumentsTheCasesColumn(t *testing.T) {
 	assert.Contains(t, doc, fmt.Sprintf("last %d days", int(scorecard.DefaultTrustWindow.Hours()/24)))
 	assert.Contains(t, doc, fmt.Sprintf("%d-run floor", scorecard.DefaultTrustMinRuns))
 	assert.Contains(t, doc, "In use by reconcile")
+
+	// The not-opportunity-scoped annotation (176d5286) and the registry SOURCE
+	// value (f48036b9) both render on this surface; the doc must describe both,
+	// or a reader meeting them in the cell has nowhere to turn.
+	assert.Contains(t, doc, "not opportunity-scoped: no in-repo persona definition",
+		"the CASES cell's not-opportunity-scoped annotation must be documented")
+	assert.Contains(t, doc, "`registry`",
+		"the --scores section must name the registry SOURCE value registry-only lenses carry")
 }
 
 // A below-floor lens must be MARKED, not silently ranked on its rate alone.
