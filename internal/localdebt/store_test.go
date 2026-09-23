@@ -3114,6 +3114,43 @@ func TestRetainForCompaction_OrderSatisfiesBothConstraints(t *testing.T) {
 		"the donor must be emitted after the trail so its model wins the recovery")
 }
 
+// TestRetainForCompaction_ReDetectedFallbackIsCompactionInvariant pins the
+// re-detection fallback against compaction. foldTerminalByID recovers a
+// re-detected id's outcome from its MOST RECENT closed record (latestItem),
+// while the trail keeps the HIGHEST-RANKED one; when they differ, retaining only
+// the trail changes which record the fallback reads, so compaction added or
+// deleted an attempts-exhausted outcome.
+func TestRetainForCompaction_ReDetectedFallbackIsCompactionInvariant(t *testing.T) {
+	cases := []struct {
+		name     string
+		statuses []string // one record per day, oldest first; "" is a re-detection
+	}{
+		// unreproducible outranks attempts-exhausted, so the trail was the
+		// unreproducible record and the exhausted row vanished.
+		{"row lost", []string{StatusUnreproducible, "", StatusAttemptsExhausted, ""}},
+		// attempts-exhausted outranks resolved, so the trail was the exhausted
+		// record and a row appeared that the uncompacted stream never produced.
+		{"row fabricated", []string{"", StatusAttemptsExhausted, StatusResolved, ""}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			id := "id-redetect-" + tc.name
+			var recs []Record
+			for i, s := range tc.statuses {
+				r := mkTerminal(id, fmt.Sprintf("2026-09-0%dT00:00:00Z", i+1), s)
+				r.Model = "m1"
+				r.Reviewers = []string{"vera"}
+				recs = append(recs, r)
+			}
+
+			before := AggregateQualitySignal(recs)
+			after := AggregateQualitySignal(retainForCompaction(recs))
+			assert.Equal(t, before, after,
+				"the re-detection fallback must read the same closed record before and after compaction")
+		})
+	}
+}
+
 // recordNames renders a retained set as sorted per-record names, so two sets can
 // be compared by membership rather than by slice order.
 func recordNames(recs []Record) []string {
