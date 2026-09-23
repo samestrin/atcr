@@ -100,21 +100,25 @@ func TestRatesFromRecords_NilModelsSumsAcrossModels(t *testing.T) {
 	assert.InDelta(t, 0.75, rates["sasha"], 1e-9)
 }
 
-// AC4: another persona's model switch cannot move this persona's rate. The two
-// share runs, so the per-run opportunity union is exercised.
+// AC4: another persona's model switch cannot move this persona's result. The
+// opportunity union is per run and built from every reviewer on it, so the
+// model filter must run after it. greta is quiet on 5 runs where bruce raised
+// security, which is outside greta's remit, so those 5 are dropped and greta
+// sits at 19 runs, under the floor. Filtering first would hide bruce's
+// old-model records once he switches, empty the union, count greta's quiet
+// runs, and lift her to 24.
 func TestRatesFromRecords_OtherPersonaSwitchDoesNotMoveThisRate(t *testing.T) {
-	var recs []Record
-	for i := 0; i < DefaultTrustMinRuns; i++ {
+	recs := modelRuns("own", "greta", "m1", DefaultTrustMinRuns-1, 2, 1)
+	for i := 0; i < 5; i++ {
 		run := runIDAt(time.Now(), fmt.Sprintf("shared-%03d", i))
-		g := reviewer_(run, "greta", "m1", 2, 1)
+		quiet := reviewer_(run, "greta", "m1", 0, 0)
 		b := reviewer_(run, "bruce", "old", 3, 1)
 		b.CategoriesRaised = []string{"security"}
-		recs = append(recs, g, b)
+		recs = append(recs, quiet, b)
 	}
 
 	base := ratesForModels(recs, map[string]string{"greta": "m1", "bruce": "old"})
 	switched := ratesForModels(recs, map[string]string{"greta": "m1", "bruce": "new"})
-	require.Contains(t, base, "greta")
-	assert.Equal(t, base["greta"], switched["greta"])
-	assert.NotContains(t, switched, "bruce")
+	assert.NotContains(t, base, "greta", "precondition: greta's out-of-remit quiet runs are dropped")
+	assert.NotContains(t, switched, "greta", "bruce switching models must not re-admit greta's out-of-remit runs")
 }
