@@ -34,7 +34,7 @@ func newLeaderboardCmd() *cobra.Command {
 	}
 	cmd.Flags().String("since", "30d", `time window: Nd (days), Nw (weeks), Nm (months); "all" disables the window`)
 	cmd.Flags().String("model", "", "filter to a model id (substring, case-insensitive)")
-	cmd.Flags().String("persona", "", "filter to an exact reviewer/persona name")
+	cmd.Flags().String("persona", "", "filter to one reviewer/persona name (whole name, case-insensitive)")
 	// The version is named here, not only in the docs, because the bump was made for
 	// a BENCHMARK-side change (coverage in the suite envelope) and board acceptance
 	// of the new number is an unverified coordination item. A production submitter
