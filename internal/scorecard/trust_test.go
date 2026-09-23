@@ -2779,3 +2779,20 @@ func TestTrustPriorsAndDetails_MissingStoreIsFailNeutral(t *testing.T) {
 	assert.Empty(t, rates)
 	assert.Empty(t, details)
 }
+
+func TestScrubForgedCredit_LeavesAnAboveCurrentEraRecordUntouched(t *testing.T) {
+	// An above-current era record was measured under a rule this binary does
+	// not implement, so the CURRENT era's credit bound does not apply to it —
+	// judging it against the current bound and zeroing it rewrites a record
+	// whose honest ceiling is not computable here. Every sibling era gate
+	// (unresolvedEraRuns, weightedCreditByPersona, pairTallies) excludes
+	// above-current records rather than clamping them.
+	above := reviewer_("run-a", "Dax", "m1", 2, 1)
+	above.WeightedCredit = 5.0
+	above.CreditEra = CreditEraCurrent + 1
+	in := []Record{above}
+	before := append([]Record{}, in...)
+	out := scrubForgedCredit(in)
+	assert.Equal(t, before, out,
+		"an above-current record's bound is not computable here — leave it untouched")
+}
