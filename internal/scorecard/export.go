@@ -430,7 +430,9 @@ func ExportSelectedCached(filtered []Record, exportedAt time.Time, cache ScrubCa
 		// Scrub once, at ingestion: keying and storage use the scrubbed identity,
 		// so finalize() never re-scrubs and two records that scrub to the same
 		// identity merge into one group.
-		persona := cache.Scrub(r.Reviewer)
+		// Normalized before scrubbing, so the two spellings one agent has on
+		// disk (pre- and post-lower-casing builds) publish as one row.
+		persona := cache.Scrub(normalizeReviewerName(r.Reviewer))
 		model := cache.Scrub(r.Model)
 		k := key{persona, model}
 		a, ok := groups[k]

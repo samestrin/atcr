@@ -91,7 +91,10 @@ func ApplyFilters(records []Record, opts FilterOpts, now time.Time) ([]Record, e
 		if opts.Model != "" && !strings.Contains(strings.ToLower(r.Model), strings.ToLower(opts.Model)) {
 			continue
 		}
-		if opts.Persona != "" && r.Reviewer != opts.Persona {
+		// Persona compares NORMALIZED names: EmitForReconcile stores Reviewer
+		// lower-cased, older builds stored the registry spelling verbatim, and
+		// `--persona Bruce` must find both.
+		if opts.Persona != "" && normalizeReviewerName(r.Reviewer) != normalizeReviewerName(opts.Persona) {
 			continue
 		}
 		if hasSince {
@@ -119,10 +122,14 @@ func Aggregate(records []Record) []LeaderboardRow {
 		if r.RecordType != RecordTypeReviewer {
 			continue
 		}
-		k := key{r.Reviewer, r.Model}
+		// Keyed on the normalized name, for the same reason as ApplyFilters'
+		// Persona match: one agent must not split into two rows across the
+		// build that started lower-casing Record.Reviewer.
+		name := normalizeReviewerName(r.Reviewer)
+		k := key{name, r.Model}
 		row, ok := groups[k]
 		if !ok {
-			row = &LeaderboardRow{Reviewer: r.Reviewer, Model: r.Model}
+			row = &LeaderboardRow{Reviewer: name, Model: r.Model}
 			groups[k] = row
 			order = append(order, k)
 		}
