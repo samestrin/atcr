@@ -782,7 +782,7 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// ReadManifestPartial is only needed by the out-of-process `atcr reconcile`
 	// path that runs after the fact against the on-disk summary.json.
 	if threshold != "" || verifyFlag || debateFlag || autoFix {
-		trustPriors, unmeasured := scorecard.ResolveTrustPriorsAndUnmeasured()
+		trustPriors, unmeasured := scorecard.ResolveTrustPriorsForReview(result.Dir)
 		rec, rerr := reconcile.RunReconcile(ctx, result.Dir, nil, reclib.Options{
 			ReconciledAt: time.Now(),
 			Partial:      result.Summary.Partial,

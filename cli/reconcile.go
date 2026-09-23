@@ -236,7 +236,7 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 		validationRoot = storeRoot
 	}
 
-	trustPriors, unmeasured := scorecard.ResolveTrustPriorsAndUnmeasured()
+	trustPriors, unmeasured := scorecard.ResolveTrustPriorsForReview(reviewDir)
 	res, err := reconcile.RunReconcile(cmd.Context(), reviewDir, sources, reclib.Options{
 		ReconciledAt: time.Now(),
 		Partial:      fanout.ReadManifestPartial(reviewDir),

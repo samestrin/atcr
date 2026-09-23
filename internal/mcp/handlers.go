@@ -413,7 +413,7 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		validationRoot = storeRoot
 	}
 
-	trustPriors, unmeasured := scorecard.ResolveTrustPriorsAndUnmeasured()
+	trustPriors, unmeasured := scorecard.ResolveTrustPriorsForReview(dir)
 	res, err := reconcile.RunReconcile(ctx, dir, nil, reclib.Options{
 		ReconciledAt: time.Now(),
 		Partial:      fanout.ReadManifestPartial(dir),

@@ -390,7 +390,7 @@ func resumeReconcile(ctx context.Context, cmd *cobra.Command, dir, consensusLeve
 	// scope). It reconciles and persists like `atcr reconcile` does, so leaving
 	// Consensus unresolved here would silently ignore a configured level. The
 	// level was validated up front in runResume, so this cannot fail late.
-	trustPriors, unmeasured := scorecard.ResolveTrustPriorsAndUnmeasured()
+	trustPriors, unmeasured := scorecard.ResolveTrustPriorsForReview(dir)
 	rec, err := reconcile.RunReconcile(ctx, dir, nil, reclib.Options{
 		ReconciledAt: time.Now(),
 		Partial:      fanout.ReadManifestPartial(dir),
