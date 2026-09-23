@@ -107,7 +107,7 @@ The rate is the fraction of a persona's findings that other reviewers or the ver
 
 These columns cover a persona's whole run history with no run floor, which is not what reconcile reads: reconcile's trust priors use only the last 180 days and a 20-run floor. A footer under the table says so and names the personas that clear that floor (`In use by reconcile: …`, or `none`), so a rate is never mistaken for one reconcile acts on.
 
-`counted + excluded` can be less than a persona's total run count: a run that was both non-strict AND outcome-ineligible is attributed to the first gate that dropped it, and a record whose raised_denominator exceeds the current era is excluded as `superseded-era`. When no scorecard data exists at all, every row shows `n/a` and a footer names the path that was checked:
+`counted + excluded` equals the persona's total reviewer-record count: since a0afc166 every record lands in exactly one bucket — counted, or excluded under the first gate that dropped it (a run that is both non-strict AND outcome-ineligible is attributed to the consensus gate; a record whose raised_denominator exceeds the current era is excluded as `superseded-era`) — so no record is double-removed and none silently missing. When no scorecard data exists at all, every row shows `n/a` and a footer names the path that was checked:
 
 ```
 No scorecard data found at <path>
