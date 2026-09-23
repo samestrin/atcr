@@ -852,6 +852,17 @@ func Emit(in EmitInput, opts EmitOpts) error {
 //     from the anti-laundering property, filed as TD-036. The code here is
 //     correct against its AC; only the old rationale was.
 //
+//     DECIDED (clarification 2026-09-22): the category set is a CHARGE MIRROR
+//     per AC 03-02 Edge Case 2 — it tracks the chargeable split exactly, and
+//     CASE EVIDENCE (passing both unresolved splits) is the rejected
+//     alternative. The mirror's consequence for the fold: the folded record's
+//     charge provably exceeds what its category set can vouch for, so the
+//     opportunity gate must never treat that set as complete evidence for an
+//     out-of-remit drop. Delivering that needs the shielded findings' categories
+//     on the record — data a persisted count cannot carry — which is the
+//     provenance work epic 35.16.11.3 owns (its task 7 rider). Do not narrow
+//     one side without the other here; that is how the two drifted apart.
+//
 //   - The result is SORTED, not map-ordered. Two byte-identical runs must
 //     serialize byte-identically, or a diff of the store reports churn that is
 //     really just Go's map iteration.
