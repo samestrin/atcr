@@ -73,7 +73,10 @@ func TestEmitForReconcile_PopulatesOutcomePerReviewer(t *testing.T) {
 		// Read the diff, found nothing, nothing went wrong: clean.
 		fanout.AgentStatus{Agent: "vera", Status: fanout.StatusOK, FindingsCount: 0, Model: "opus"},
 		// The epic's motivating case: a LiteLLM timeout is not a judgment.
-		fanout.AgentStatus{Agent: "kai", Status: "error", Error: "context deadline exceeded", Model: "kimi"},
+		// fanout stamps StatusTimeout on a deadline miss (status.go); it never
+		// writes "error" — that literal exercised the same classifier arm
+		// (a.Status != StatusOK → failed) through an emitter-impossible value.
+		fanout.AgentStatus{Agent: "kai", Status: fanout.StatusTimeout, Error: "context deadline exceeded", Model: "kimi"},
 	)
 
 	recs := emitAndRead(t, reviewDir, resWith("bruce"))
@@ -104,12 +107,12 @@ func TestEmitForReconcile_RepeatedAgentTakesTheWorstOutcome(t *testing.T) {
 	reviewDir := t.TempDir()
 	writePoolSummary(t, reviewDir,
 		// Failure first, clean second: clean must not win.
-		fanout.AgentStatus{Agent: "bruce", Status: "error", Error: "boom", Model: "opus"},
+		fanout.AgentStatus{Agent: "bruce", Status: fanout.StatusFailed, Error: "boom", Model: "opus"},
 		fanout.AgentStatus{Agent: "bruce", Status: fanout.StatusOK, FindingsCount: 0, Model: "opus"},
 		// Reverse order for vera: the worse outcome must win regardless of
 		// which entry came later.
 		fanout.AgentStatus{Agent: "vera", Status: fanout.StatusOK, FindingsCount: 0, Model: "opus"},
-		fanout.AgentStatus{Agent: "vera", Status: "error", Error: "boom", Model: "opus"},
+		fanout.AgentStatus{Agent: "vera", Status: fanout.StatusFailed, Error: "boom", Model: "opus"},
 	)
 
 	recs := emitAndRead(t, reviewDir, resWith("bruce"))
@@ -374,7 +377,7 @@ func TestEmitForReconcile_BlankAgentNameIsNotRecorded(t *testing.T) {
 	reviewDir := t.TempDir()
 	writePoolSummary(t, reviewDir,
 		fanout.AgentStatus{Agent: "", Status: fanout.StatusOK},
-		fanout.AgentStatus{Agent: "   ", Status: "error", Error: "boom"},
+		fanout.AgentStatus{Agent: "   ", Status: fanout.StatusFailed, Error: "boom"},
 		fanout.AgentStatus{Agent: " bruce ", Status: fanout.StatusOK, FindingsCount: 1, Model: "opus"},
 	)
 
