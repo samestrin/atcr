@@ -2875,3 +2875,30 @@ func TestRemitFor_ReturnsTheTableSliceWithoutACopy(t *testing.T) {
 	assert.NotEqual(t, reflect.ValueOf(direct).Pointer(), reflect.ValueOf(pub).Pointer(),
 		"RemitCategories remains the copying exported API")
 }
+
+// Records written before Record.Outcome existed carry none, and the outcome gate
+// drops them. After an upgrade that silently empties the priors map for lenses
+// whose history is mostly pre-outcome. The count names that loss so a reconcile
+// log line can show it; it never changes the priors themselves.
+func TestResolveTrustPriorsAndUnmeasured_CountsLensesOnlyTheOutcomeGateDrops(t *testing.T) {
+	dir := t.TempDir()
+	appendN(t, dir, DefaultTrustMinRuns, "Pace", "m1", 1, 1) // stamped outcome: in the map
+	for i := 0; i < DefaultTrustMinRuns; i++ {
+		r := reviewer_(runIDAt(time.Now(), fmt.Sprintf("legacy-%03d", i)), "Dax", "m1", 1, 1)
+		r.Outcome = ""
+		require.NoError(t, Append(dir, r))
+	}
+	for i := 0; i < DefaultTrustMinRuns-1; i++ { // below the floor either way: not counted
+		r := reviewer_(runIDAt(time.Now(), fmt.Sprintf("thin-%03d", i)), "Mira", "m1", 1, 1)
+		r.Outcome = ""
+		require.NoError(t, Append(dir, r))
+	}
+
+	priors, unmeasured := resolveTrustPriorsAndUnmeasured(dir, time.Now())
+	want, err := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, time.Now(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, want, priors, "the priors must be exactly what ResolveTrustPriors returns")
+	assert.Contains(t, priors, "pace")
+	assert.NotContains(t, priors, "dax")
+	assert.Equal(t, 1, unmeasured, "dax clears the floor except for its missing outcomes; mira never would")
+}

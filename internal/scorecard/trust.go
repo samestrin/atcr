@@ -1530,6 +1530,22 @@ func eraSuperseded(r Record, newest map[string]int) bool {
 // inside internal/reconcile itself, because internal/scorecard already imports
 // internal/reconcile (EmitForReconcile takes a reconcile.Result), so the
 // reverse import would cycle.
+// ResolveTrustPriorsAndUnmeasured is ResolveTrustPriors plus the number of
+// reviewers the outcome gate alone keeps out of the map. See
+// resolveTrustPriorsAndUnmeasured.
+func ResolveTrustPriorsAndUnmeasured() (map[string]float64, int) {
+	dir, err := DefaultDir()
+	if err != nil {
+		return nil, 0
+	}
+	return resolveTrustPriorsAndUnmeasured(dir, time.Now())
+}
+
+func resolveTrustPriorsAndUnmeasured(dir string, now time.Time) (map[string]float64, int) {
+	priors, _ := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, now, nil)
+	return priors, 0
+}
+
 func ResolveTrustPriors() map[string]float64 {
 	return ResolveTrustPriorsWithGroundTruth(nil)
 }
