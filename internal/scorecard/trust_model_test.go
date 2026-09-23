@@ -144,6 +144,7 @@ func TestCurrentModels_UnknownModelIsLeftOut(t *testing.T) {
 		fanout.AgentStatus{Agent: "bruce", Model: ""},   // no model recorded
 		fanout.AgentStatus{Agent: "greta", Model: "m1"}, // listed twice,
 		fanout.AgentStatus{Agent: "Greta", Model: "m2"}, // on two models
+		fanout.AgentStatus{Agent: "greta", Model: "m1"}, // a third entry cannot settle it
 		fanout.AgentStatus{Agent: "dax", Model: "m3"},   // listed twice,
 		fanout.AgentStatus{Agent: "dax", Model: "M3"},   // on one model
 		fanout.AgentStatus{Agent: "  ", Model: "m4"},    // no persona
