@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -2841,10 +2842,10 @@ func TestRemitFor_ReturnsTheTableSliceWithoutACopy(t *testing.T) {
 	cats, ok := remitFor("dax")
 	require.True(t, ok)
 	direct := personaRemit["dax"]
-	assert.Equal(t, &direct[0], &cats[0],
+	assert.Equal(t, reflect.ValueOf(direct).Pointer(), reflect.ValueOf(cats).Pointer(),
 		"remitFor must return the table's own slice, not a defensive copy")
 	pub, ok := RemitCategories("dax")
 	require.True(t, ok)
-	assert.NotEqual(t, &direct[0], &pub[0],
+	assert.NotEqual(t, reflect.ValueOf(direct).Pointer(), reflect.ValueOf(pub).Pointer(),
 		"RemitCategories remains the copying exported API")
 }

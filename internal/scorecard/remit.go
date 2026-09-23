@@ -196,6 +196,17 @@ func RemitCategories(persona string) ([]string, bool) {
 	return out, true
 }
 
+// remitFor is the non-copying half of RemitCategories for in-package chain
+// callers: it returns the table's own slice, read-only by convention inside
+// the package. opportunityDisposition runs per record in a filter chain the
+// risk profile calls performance-critical, and RemitCategories' defensive copy
+// per call was the cost of that discipline; the exported API keeps copying
+// because it crosses a package boundary where the caller could mutate.
+func remitFor(persona string) ([]string, bool) {
+	cats, ok := personaRemit[normalizeReviewerName(persona)]
+	return cats, ok
+}
+
 // vocabulary is the closed CATEGORY set, built once from the published module.
 // A map rather than a repeated linear scan of reclib.Categories(): the set is
 // consulted per finding per reviewer per run over the whole store.

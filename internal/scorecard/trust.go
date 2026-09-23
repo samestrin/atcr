@@ -1160,7 +1160,12 @@ func opportunityDisposition(r Record, union map[string]struct{}) disposition {
 	// never opportunity-scoped at all, so answering dispUnscopeable for one would
 	// have ExplainTrustPriors render "(N unlabelled)" against a lens the gate
 	// never judged — a reason the chain did not act on.
-	remit, mapped := RemitCategories(r.Reviewer)
+	// Non-copying accessor: the defensive copy per record was the cost the
+	// risk profile calls out, and the unmapped-first ordering above is why the
+	// lookup cannot simply move below the raised-count branch — an unmapped
+	// lens that raised unattributable findings must answer dispCounted, never
+	// dispUnscopeable.
+	remit, mapped := remitFor(r.Reviewer)
 	if !mapped {
 		return dispCounted
 	}
