@@ -2391,22 +2391,27 @@ func TestTrustPriors_RecordSurvivesAModelRepoint(t *testing.T) {
 	dir := t.TempDir()
 	// Ten runs under the retired model, ten under its replacement. Neither half
 	// clears the floor of twenty alone; the persona does only if they sum.
+	// ASYMMETRIC halves (AC 06-02 DoD): an averaging implementation computes
+	// (0.75 + 10/60)/2 = 0.4583 here, while the summing implementation this
+	// surface specifies computes 40/100 = 0.40 — the assertion can tell them
+	// apart. A symmetric (4,3)/(4,3) split could not: both give 0.75.
 	appendN(t, dir, 10, "Greta", "qwen3.6-plus", 4, 3)
-	appendN(t, dir, 10, "Greta", "qwen3.7-plus", 4, 3)
+	appendN(t, dir, 10, "Greta", "qwen3.7-plus", 6, 1)
 
 	rates, err := TrustPriors(dir, DefaultTrustMinRuns)
 	require.NoError(t, err)
 	require.Contains(t, rates, "greta",
 		"a persona's twenty runs must clear the floor as one record, not as two ten-run model records")
-	assert.InDelta(t, 0.75, rates["greta"], 1e-9,
-		"the repoint must not move the rate: 60 corroborated of 80 raised, whichever model ran them")
+	assert.InDelta(t, 0.40, rates["greta"], 1e-9,
+		"the repoint must SUM the two models' evidence: 40 corroborated of 100 raised, whichever model ran them")
 
 	// The same persona under a THIRD, never-before-seen model still reads as one
 	// record rather than resetting to a cold start.
 	appendN(t, dir, 5, "Greta", "kimi-k3", 4, 3)
 	rates, err = TrustPriors(dir, DefaultTrustMinRuns)
 	require.NoError(t, err)
-	assert.InDelta(t, 0.75, rates["greta"], 1e-9)
+	// 55 corroborated of 120 raised (40 + 15 over 100 + 20).
+	assert.InDelta(t, 55.0/120.0, rates["greta"], 1e-9)
 }
 
 func TestTrustPriors_CasingOfAModelRepointNeverSplitsAPersona(t *testing.T) {
@@ -2415,14 +2420,16 @@ func TestTrustPriors_CasingOfAModelRepointNeverSplitsAPersona(t *testing.T) {
 	// text), so a persona re-registered as "GRETA" must land on the same key.
 	// This is the mutation normalizeReviewerName exists to survive.
 	dir := t.TempDir()
+	// ASYMMETRIC halves, same reason as the model-repoint test above: an
+	// averaging implementation reads (0.75 + 10/60)/2, summing reads 0.40.
 	appendN(t, dir, 10, "Greta", "m1", 4, 3)
-	appendN(t, dir, 10, "GRETA", "m2", 4, 3)
+	appendN(t, dir, 10, "GRETA", "m2", 6, 1)
 
 	rates, err := TrustPriors(dir, DefaultTrustMinRuns)
 	require.NoError(t, err)
 	require.Len(t, rates, 1, "one persona, one key — casing must not fork the record")
 	require.Contains(t, rates, "greta")
-	assert.InDelta(t, 0.75, rates["greta"], 1e-9)
+	assert.InDelta(t, 0.40, rates["greta"], 1e-9)
 }
 
 func TestTrustPriors_NewLensIsOmittedNotStarvedAtZero(t *testing.T) {
