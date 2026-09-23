@@ -256,6 +256,48 @@ func TestAggregateQualitySignal_ReopenedIDContributesNoRow(t *testing.T) {
 		"once the id re-opens it is unsettled again and emits no row until it closes")
 }
 
+// Re-detecting an attempts-exhausted id CONFIRMS the outcome: the finding is
+// still broken, which is what attempts-exhausted says. So its row survives the
+// fresh open record. Re-detecting an unreproducible id is the opposite — evidence
+// the call was wrong — so that id stays dropped until it settles again.
+func TestAggregateQualitySignal_RedetectionKeepsAttemptsExhaustedButNotUnreproducible(t *testing.T) {
+	rec := func(id, ts, status string) Record {
+		return Record{ID: id, RunID: id + ts, Timestamp: ts,
+			Reviewers: []string{"claude"}, Model: "claude-sonnet-4-6", Status: status}
+	}
+
+	rows := AggregateQualitySignal([]Record{
+		rec("ae", "2026-07-01T00:00:00Z", ""),
+		rec("ae", "2026-07-02T00:00:00Z", StatusAttemptsExhausted),
+		rec("ae", "2026-07-03T00:00:00Z", ""),
+	})
+	require.Len(t, rows, 1, "a re-detected attempts-exhausted id keeps its row")
+	assert.Equal(t, 1, rows[0].AttemptsExhaustedCount)
+	assert.Equal(t, 1, rows[0].TerminalOutcomes)
+
+	assert.Empty(t, AggregateQualitySignal([]Record{
+		rec("ur", "2026-07-01T00:00:00Z", ""),
+		rec("ur", "2026-07-02T00:00:00Z", StatusUnreproducible),
+		rec("ur", "2026-07-03T00:00:00Z", ""),
+	}), "a re-detected unreproducible id is dropped: re-detection contradicts it")
+}
+
+// The fallback reads the id's LATEST superseded outcome, not its highest-ranked
+// one. attempts-exhausted outranks resolved, but when resolved came later the
+// re-detection is a regression of that fix, and an older exhausted marker must
+// not be resurrected as the id's outcome.
+func TestAggregateQualitySignal_RedetectionFallbackUsesTheLatestOutcome(t *testing.T) {
+	rec := func(ts, status string) Record {
+		return Record{ID: "lt", RunID: ts, Timestamp: ts,
+			Reviewers: []string{"claude"}, Model: "claude-sonnet-4-6", Status: status}
+	}
+	assert.Empty(t, AggregateQualitySignal([]Record{
+		rec("2026-07-01T00:00:00Z", StatusAttemptsExhausted),
+		rec("2026-07-02T00:00:00Z", StatusResolved),
+		rec("2026-07-03T00:00:00Z", ""),
+	}))
+}
+
 // A wontfix id is never re-opened, so its dismissal row survives a later
 // re-detection.
 func TestAggregateQualitySignal_WontfixRowSurvivesRedetection(t *testing.T) {
