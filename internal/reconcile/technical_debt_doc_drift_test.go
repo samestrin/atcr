@@ -511,6 +511,14 @@ func TestTechnicalDebtDoc_ReasonGateProseIsGeneralized(t *testing.T) {
 		"the published --reason gate must no longer read as wontfix-only")
 	assert.Contains(t, doc, "Every status other than `resolved` requires a",
 		"the published --reason gate must state the generalized rule the code enforces")
+	// The generalized rule has one exception the code enforces
+	// (cli/debt_resolve.go's storedRationaleStandsIn): a wontfix whose open
+	// record already carries a recorded justification stands in for a typed
+	// --reason. A doc that omits the carve-out makes the CLI look stricter
+	// than it is, and an operator relying on the documented gate types a
+	// redundant reason forever.
+	assert.Contains(t, doc, "recorded justification",
+		"the wontfix stored-rationale carve-out must be documented beside the generalized rule")
 }
 
 // skillResolveDocPath is the agent-facing resolve route. It is the PRODUCER
@@ -552,6 +560,14 @@ func TestSkillResolveDocStatesTheGeneralizedReasonRule(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(b), "`--reason` is required for every status except",
 		"the route must state the generalized --reason rule, not only the wontfix case")
+	// The route must also carry the wontfix stored-rationale carve-out the code
+	// enforces (its own wontfix bullet already describes it — the blanket rule
+	// contradicted the bullet), and the attempts-exhausted worklist note
+	// docs/technical-debt.md's status table states.
+	assert.Contains(t, string(b), "or a recorded justification",
+		"the blanket rule must carry the wontfix stored-rationale carve-out")
+	assert.Contains(t, string(b), "leaves the no-argument `debt resolve` worklist",
+		"the attempts-exhausted bullet must note it leaves the no-argument worklist while it stands")
 }
 
 // backfillSourcePath is the command whose printed summary the catalog quotes as
