@@ -261,9 +261,12 @@ Folds the append-only store to one effective record per id and rewrites the
 shards atomically, carrying `occurrences` and `first_seen` forward so the
 regression signal survives at O(1) size instead of O(history).
 
-Retention is bounded at **three records per id**: the effective record, at
-most one superseded rationale, and — when the effective record
-carries no model attribution — one donor. Two of those three are the ordinary case; the donor is
+Retention is bounded at **four records per id**: the effective record, at
+most one superseded rationale, — when the effective record
+carries no model attribution — one donor, and — when the effective record is a
+re-detection and `attempts-exhausted` is in play — the latest closed record, so
+the re-detection keeps reporting the same outcome after compaction. Two of those
+four are the ordinary case; the donor is
 the narrow one, and it collapses into the rationale record whenever the
 highest-ranked rationale is also the most recent model-carrier. The donor exists
 because a fold can select an effective record with no `model` on it, and the

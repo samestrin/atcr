@@ -170,10 +170,18 @@ func TestCompactThenAppend_RetentionBoundStillHolds(t *testing.T) {
 			rec(StatusAttemptsExhausted, "m4", "2026-09-04T00:00:00Z"),
 			rec("" /* open */, "", "2026-09-05T00:00:00Z"),
 		},
+		// The four-record case: rationale trail, the re-detection's latest
+		// closed record, that record's model donor, and the effective record.
+		{
+			rec(StatusUnreproducible, "m1", "2026-09-01T00:00:00Z"),
+			rec(StatusResolved, "m2", "2026-09-02T00:00:00Z"),
+			rec(StatusAttemptsExhausted, "", "2026-09-03T00:00:00Z"),
+			rec("" /* open */, "", "2026-09-04T00:00:00Z"),
+		},
 	} {
 		retained := retainForCompaction(group)
-		require.LessOrEqual(t, len(retained), 3,
-			"compaction must retain at most 3 records per id; got %d", len(retained))
+		require.LessOrEqual(t, len(retained), 4,
+			"compaction must retain at most 4 records per id; got %d", len(retained))
 	}
 }
 

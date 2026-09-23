@@ -947,10 +947,12 @@ func foldIndex[T foldable](group []T) int {
 // meant to bound growth by dropping SUPERSEDED occurrences, not to erase the
 // record that a human once closed this finding and why.
 //
-// Retention is bounded at THREE records per id, so growth stays O(live
-// findings): the effective record, at most one superseded rationale, and — when
-// the effective record carries no model attribution — one donor. Two is the
-// ordinary case and three the narrow one; the last two are distinct records only
+// Retention is bounded at FOUR records per id, so growth stays O(live
+// findings): the effective record, at most one superseded rationale, — when the
+// effective record carries no model attribution — one donor, and — when the
+// effective record is a re-detection and attempts-exhausted is in play — the
+// latest closed record. Two is the ordinary case and three or four the narrow
+// ones; the rationale and the donor are distinct records only
 // when the highest-RANKED rationale and the most recent MODEL-carrier are
 // different rows, and collapse to one whenever they coincide.
 //
@@ -1781,8 +1783,8 @@ const (
 // 3/2, i.e. 50%.
 //
 // This is the damping the thresholds alone cannot provide. Compact retains up to
-// THREE records per id (retainForCompaction: the effective record, the highest-ranked
-// superseded rationale, and the attribution donor), so a store's post-compaction floor can sit
+// FOUR records per id (retainForCompaction: the effective record, the highest-ranked
+// superseded rationale, the attribution donor, and a re-detection's latest closed record), so a store's post-compaction floor can sit
 // above an absolute threshold — and then every single append re-trips it, taking
 // the cross-process lock and rewriting every shard to drop nothing, forever. The
 // watermark turns "above the threshold" into "above the threshold AND materially

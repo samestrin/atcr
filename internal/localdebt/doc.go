@@ -190,10 +190,11 @@
 // shard. Compact folds each id to its effective record and rewrites the shards
 // atomically, so store size tracks LIVE findings rather than history.
 //
-// Retention is bounded at THREE records per id, with one documented exception below:
-// the effective record, at most one superseded rationale, and — when the effective
-// record carries no model attribution — one donor. Two is the ordinary case and three
-// the narrow one. (That wording is deliberately identical to store.go's and to the
+// Retention is bounded at FOUR records per id, with one documented exception below:
+// the effective record, at most one superseded rationale, — when the effective
+// record carries no model attribution — one donor, and — when the effective record
+// is a re-detection and attempts-exhausted is in play — the latest closed record.
+// Two is the ordinary case and three or four the narrow ones. (That wording is deliberately identical to store.go's and to the
 // published bound in docs/technical-debt.md; see store.go's note on why.)
 // retainForCompaction keeps up to two records beyond the effective one: the resolution
 // TRAIL — the highest-ranked superseded record that bears a rationale, for ANY effective
@@ -204,7 +205,9 @@
 // without it the outcome vanishes from the signal entirely). Neither is gated on the
 // effective record's status. Both are written with their counters zeroed, and they are
 // emitted trail-then-donor BEFORE the effective record so a full timestamp/rank tie still
-// folds to the effective one.
+// folds to the effective one. A re-detected id also keeps its latest closed record
+// (emitted between trail and donor) when the re-detection fallback in
+// foldTerminalByID would otherwise read a different record; see retainForCompaction.
 //
 // Only ONE superseded rationale survives per id. Several distinct --reason texts on one
 // id collapse to the highest-ranked; see retainForCompaction and TD-051.
@@ -234,7 +237,7 @@
 //     StoreStats reports the same two numbers for any caller that wants them.
 //  2. The store has GROWN materially (50%) past the size the last compaction left
 //     behind, recorded in the .compact-watermark file. This is not belt-and-braces:
-//     because compaction retains up to three records per id, a store's
+//     because compaction retains up to four records per id, a store's
 //     post-compaction floor can sit ABOVE the threshold, and a bare absolute
 //     threshold would then re-fire on every single append forever — taking the
 //     cross-process lock and rewriting every shard to drop nothing. The watermark
