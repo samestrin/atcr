@@ -2751,6 +2751,25 @@ func TestFoldRecords_EqualTimestampDivergentNewStatuses(t *testing.T) {
 	}
 }
 
+// TestFoldRecords_EqualTimestampSettledCloseBeatsUnsettledMarker pins the fold's
+// tie-break criterion apart from ClosedStatusRank's retention criterion.
+// attempts-exhausted → resolved is the designed one-step close, and RFC3339 has
+// second granularity, so a same-second close must settle the item: the fold's
+// rule is "a settled close outranks an unsettled marker", not "the record most
+// certain to carry a rationale".
+func TestFoldRecords_EqualTimestampSettledCloseBeatsUnsettledMarker(t *testing.T) {
+	const ts = "2026-09-01T00:00:00Z"
+	exhausted := mkTerminal("id-close", ts, StatusAttemptsExhausted)
+	resolved := mkTerminal("id-close", ts, StatusResolved)
+
+	for _, recs := range [][]Record{{exhausted, resolved}, {resolved, exhausted}} {
+		folded := FoldRecords(recs)
+		require.Len(t, folded, 1)
+		assert.Equal(t, StatusResolved, folded[0].Status,
+			"a same-second resolve of an attempts-exhausted checkpoint must close it")
+	}
+}
+
 // TestFoldRecords_DistinctTimestampsAreDecidedByRecencyNotRank is the companion
 // AC 01-02 Edge Case 1 demands: it documents which key actually governs the read
 // path. attempts-exhausted ranks BELOW unreproducible, yet the later
