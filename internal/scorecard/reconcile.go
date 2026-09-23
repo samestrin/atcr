@@ -444,7 +444,34 @@ func trimmedReviewers(in []string) []string {
 }
 
 // currentModels maps each persona in a review's pool summary to the model it ran
-// on. Stub.
+// on in that review: the model its trust prior is scored against (see
+// ratesFromRecords). Keys are normalized persona names; values are trimmed.
+//
+// A persona is left OUT, and so stays neutral, when its model cannot be known:
+// no model recorded, or two different models for one persona. The result is
+// never nil — nil means "no model filter" to ratesFromRecords, and an unreadable
+// summary must not silently restore the persona-only fold.
 func currentModels(reviewDir string) map[string]string {
-	return nil
+	out := map[string]string{}
+	ps, err := fanout.ReadPoolSummary(reviewDir)
+	if err != nil {
+		return out
+	}
+	conflicted := map[string]bool{}
+	for _, a := range ps.Agents {
+		name := normalizeReviewerName(a.Agent)
+		model := strings.TrimSpace(a.Model)
+		if name == "" || model == "" || conflicted[name] {
+			continue
+		}
+		if prev, seen := out[name]; seen && !strings.EqualFold(prev, model) {
+			delete(out, name)
+			conflicted[name] = true
+			continue
+		}
+		if _, seen := out[name]; !seen {
+			out[name] = model
+		}
+	}
+	return out
 }
