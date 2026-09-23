@@ -31,6 +31,10 @@ type personasScoreData struct {
 	// marks a thin sample rather than relying on its absence to hide one.)
 	details map[string]scorecard.PersonaScoreDetail
 	path    string
+	// inUse is the priors map reconcile actually acts on (ResolveTrustPriors:
+	// windowed, floored). Only its keys are read — they name the lenses that
+	// clear the production floor, which the all-history columns cannot show.
+	inUse map[string]float64
 }
 
 // personasScores loads corroboration rates from the scorecard store. A package

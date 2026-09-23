@@ -104,6 +104,10 @@ const DefaultTrustMinRuns = 20
 // with them and pass at any value.
 const defaultTrustWindow = 180 * 24 * time.Hour
 
+// DefaultTrustWindow exports defaultTrustWindow for a surface that must name
+// the window ResolveTrustPriors reads, rather than restating 180 days.
+const DefaultTrustWindow = defaultTrustWindow
+
 // isolatedFindingWeight is the credit a finding earns when exactly one lens
 // raised it. Every other finding earns 1/distinctCount(Reviewers), so this is
 // the top of that curve.

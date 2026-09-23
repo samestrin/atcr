@@ -880,6 +880,39 @@ func TestPersonasList_ScoresRendersTheExplainabilitySummary(t *testing.T) {
 	assert.Contains(t, stdout, "5 excluded (outcome-ineligible)")
 }
 
+// The columns read all history with no floor; reconcile reads a window with a
+// floor. Two populations under two floors, so the surface must say which one
+// each figure describes and which lenses reconcile actually acts on.
+func TestPersonasList_ScoresFooterNamesTheScopeAndTheLensesReconcileUses(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withPersonasScores(t, personasScoreData{
+		rates: map[string]float64{"sasha": 0.72, "penny": 0.5},
+		inUse: map[string]float64{"sasha": 0.7},
+		path:  "/tmp/sc",
+	}, nil, nil)
+
+	stdout, _, err := executeSplit(t, "personas", "list", "--scores")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "all run history with no run floor")
+	assert.Contains(t, stdout, fmt.Sprintf("last %d days with a %d-run floor",
+		int(scorecard.DefaultTrustWindow.Hours()/24), scorecard.DefaultTrustMinRuns))
+	assert.Contains(t, stdout, "In use by reconcile: sasha\n")
+}
+
+func TestPersonasList_ScoresFooterSaysNoneWhenNoLensClearsTheProductionFloor(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withPersonasScores(t, personasScoreData{
+		rates: map[string]float64{"sasha": 0.72},
+		path:  "/tmp/sc",
+	}, nil, nil)
+
+	stdout, _, err := executeSplit(t, "personas", "list", "--scores")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "In use by reconcile: none\n")
+}
+
 func TestPersonasList_ScoresSummaryIsNotAPerCaseDump(t *testing.T) {
 	// The bound task 5.3 exists to hold. Three reason labels on one persona must
 	// still render as ONE line naming the dominant reason, never one line per
