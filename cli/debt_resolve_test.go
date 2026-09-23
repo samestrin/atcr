@@ -1772,3 +1772,44 @@ func TestDebtResolve_AttemptsExhaustedContinuationCarriesPriorReasonForward(t *t
 	assert.Equal(t, "first checkpoint: reindex regressed unrelated tests", seeded.Justification,
 		"carry-forward never rewrites the prior record")
 }
+
+// TestDebtResolve_NewStatusesReachAggregateQualitySignal closes AC 01-04: an
+// end-to-end thread from a real `debt resolve --status unreproducible` or
+// attempts-exhausted CLI write through to AggregateQualitySignal. The
+// resolved-status thread already had one (modeled below); the two new statuses
+// did not, so nothing pinned that a CLI write actually lands in the
+// ground-truth counters rather than only in the store.
+func TestDebtResolve_NewStatusesReachAggregateQualitySignal(t *testing.T) {
+	for _, tc := range []struct {
+		status string
+		reason string
+		field  func(row localdebt.QualityRow) int
+	}{
+		{"unreproducible", "could not reproduce with current repro steps",
+			func(row localdebt.QualityRow) int { return row.UnreproducibleCount }},
+		{"attempts-exhausted", "three fix attempts regressed unrelated tests",
+			func(row localdebt.QualityRow) int { return row.AttemptsExhaustedCount }},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			rec := openRec("2026-09-01T10:00:00Z-a", "HIGH", "internal/x/y.go", 12, "unbounded retry loop")
+			rec.Reviewers = []string{"bruce"}
+			rec.Model = "gpt-5.2"
+			dir := writeDebtStore(t, rec)
+
+			out, err := runDebt(t, "resolve", "--dir", dir, rec.ID, "--status", tc.status, "--reason", tc.reason)
+			require.NoError(t, err, "%s resolve must succeed with a reason: %s", tc.status, out)
+
+			recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+			require.NoError(t, err)
+
+			rows := localdebt.AggregateQualitySignal(recs)
+			require.Len(t, rows, 1, "exactly one (persona, model) bucket must be produced")
+			assert.Equal(t, "bruce", rows[0].Persona)
+			assert.Equal(t, "gpt-5.2", rows[0].Model)
+			assert.Equal(t, 1, tc.field(rows[0]),
+				"the CLI-written %s outcome must reach AggregateQualitySignal's ground-truth counter", tc.status)
+			assert.Zero(t, rows[0].ConfirmedCount, "the new status must not leak into a neighboring counter")
+			assert.Zero(t, rows[0].DismissedCount, "the new status must not leak into a neighboring counter")
+		})
+	}
+}
