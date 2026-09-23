@@ -567,3 +567,24 @@ func TestEmit_RejectsAnInvalidOutcomeAtTheWriteBoundary(t *testing.T) {
 	assert.Equal(t, testOutcomeUnknown, r.Outcome,
 		"a garbage outcome must be coerced to unknown at the write boundary, never persisted raw")
 }
+
+// TestOutcomeRank_FollowsTheDocumentedPrecedence pins every arm of outcomeRank
+// against the classifier's precedence. A misspelled literal ranks 0 and lets a
+// later, lower-precedence entry overwrite a repeated agent's outcome, so each
+// value must rank strictly above the next and every known value above an
+// unknown one. Literals, not benchmark constants: scorecard cannot import
+// benchmark (cycle); the cli/ parity test pins the spellings.
+func TestOutcomeRank_FollowsTheDocumentedPrecedence(t *testing.T) {
+	precedence := []string{
+		"failed", "unparseable", "truncated", "incomplete",
+		"findings", "ungrounded", "filtered", "clean",
+	}
+	for i := 1; i < len(precedence); i++ {
+		assert.Greater(t, outcomeRank(precedence[i-1]), outcomeRank(precedence[i]),
+			"%s must outrank %s", precedence[i-1], precedence[i])
+	}
+	for _, unknown := range []string{"", "not-an-outcome"} {
+		assert.Greater(t, outcomeRank("clean"), outcomeRank(unknown),
+			"%q must rank below every known outcome", unknown)
+	}
+}
