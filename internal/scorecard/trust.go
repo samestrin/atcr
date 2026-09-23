@@ -1541,9 +1541,43 @@ func ResolveTrustPriorsAndUnmeasured() (map[string]float64, int) {
 	return resolveTrustPriorsAndUnmeasured(dir, time.Now())
 }
 
+// resolveTrustPriorsAndUnmeasured reads the store once, over ResolveTrustPriors'
+// exact window and floor, and returns the same priors map alongside UNMEASURED:
+// how many reviewers would clear the floor if their outcome-less records counted,
+// but are absent from the map.
+//
+// Record.Outcome is new in sprint 36.0 and eligibleOutcomeRuns drops every
+// record without one, so on upgrade most lenses lose their prior (and with it
+// trust exemption and demotion) until about DefaultTrustMinRuns new runs
+// accumulate. Nothing reported that. This count exists only for the reconcile
+// log line: the counterfactual stamps a stand-in outcome on outcome-less
+// records to measure the loss, and it NEVER feeds the returned priors — the
+// outcome gate itself is correct and stays as it is.
 func resolveTrustPriorsAndUnmeasured(dir string, now time.Time) (map[string]float64, int) {
-	priors, _ := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, now, nil)
-	return priors, 0
+	records, err := ReadSince(dir, defaultTrustWindow, now, ReadOpts{Writer: io.Discard})
+	if err != nil {
+		// Fail neutral exactly as trustPriorsSince does on a truncated store.
+		return map[string]float64{}, 0
+	}
+	priors := ratesFromRecords(records, DefaultTrustMinRuns, nil, defaultTrustWindow, now)
+
+	counterfactual := make([]Record, len(records))
+	for i, r := range records {
+		if r.RecordType == RecordTypeReviewer && r.Outcome == "" {
+			r.Outcome = outcomeClean
+			if r.FindingsRaised > 0 {
+				r.Outcome = outcomeFindings
+			}
+		}
+		counterfactual[i] = r
+	}
+	unmeasured := 0
+	for name := range ratesFromRecords(counterfactual, DefaultTrustMinRuns, nil, defaultTrustWindow, now) {
+		if _, ok := priors[name]; !ok {
+			unmeasured++
+		}
+	}
+	return priors, unmeasured
 }
 
 func ResolveTrustPriors() map[string]float64 {

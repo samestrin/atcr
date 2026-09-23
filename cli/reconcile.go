@@ -236,11 +236,12 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 		validationRoot = storeRoot
 	}
 
+	trustPriors, unmeasured := scorecard.ResolveTrustPriorsAndUnmeasured()
 	res, err := reconcile.RunReconcile(cmd.Context(), reviewDir, sources, reclib.Options{
 		ReconciledAt: time.Now(),
 		Partial:      fanout.ReadManifestPartial(reviewDir),
 		Root:         validationRoot, // validate finding paths against the store's root (TD-024)
-		TrustPriors:  scorecard.ResolveTrustPriors(),
+		TrustPriors:  trustPriors,
 		Consensus:    consensusLevel, // epic 35.9.1: strict (default) | lenient | off
 	})
 	if err != nil {
@@ -267,7 +268,7 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	// map and loses trust exemption/demotion. Nothing else surfaces that: the
 	// scorecard read discards its diagnostics and `atcr personas list --scores`
 	// still reads all history. A drop in this count between runs is the signal.
-	logger.Info("trust priors resolved", "reviewers", res.Summary.TrustPriorsResolved)
+	logger.Info("trust priors resolved", "reviewers", res.Summary.TrustPriorsResolved, "unmeasured_outcome", unmeasured)
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s) from %d source(s) -> %s\n",
 		res.Summary.TotalFindings, len(res.Summary.SourcesScanned),

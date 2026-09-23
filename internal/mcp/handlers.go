@@ -413,6 +413,7 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		validationRoot = storeRoot
 	}
 
+	trustPriors, unmeasured := scorecard.ResolveTrustPriorsAndUnmeasured()
 	res, err := reconcile.RunReconcile(ctx, dir, nil, reclib.Options{
 		ReconciledAt: time.Now(),
 		Partial:      fanout.ReadManifestPartial(dir),
@@ -425,7 +426,7 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		// reviewed repo itself, so validation and AST grouping run against the
 		// right tree (TD-019).
 		Root:        validationRoot,
-		TrustPriors: scorecard.ResolveTrustPriors(),
+		TrustPriors: trustPriors,
 		Consensus:   consensusLevel, // epic 35.9.1: strict (default) | lenient | off
 	})
 	if err != nil {
@@ -436,7 +437,7 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 	// store read (epic 35.11), so a reviewer with no runs inside the window drops
 	// out of the map and silently loses trust exemption/demotion. A drop in this
 	// count between runs is the only observable trace without an all-history read.
-	e.logger().Info("trust priors resolved", "reviewers", res.Summary.TrustPriorsResolved)
+	e.logger().Info("trust priors resolved", "reviewers", res.Summary.TrustPriorsResolved, "unmeasured_outcome", unmeasured)
 
 	// Emit the per-run scorecard (Epic 3.3) via the same shared bridge the CLI
 	// reconcile uses, so MCP-driven and CLI-driven reconciles produce identical

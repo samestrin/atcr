@@ -390,11 +390,12 @@ func resumeReconcile(ctx context.Context, cmd *cobra.Command, dir, consensusLeve
 	// scope). It reconciles and persists like `atcr reconcile` does, so leaving
 	// Consensus unresolved here would silently ignore a configured level. The
 	// level was validated up front in runResume, so this cannot fail late.
+	trustPriors, unmeasured := scorecard.ResolveTrustPriorsAndUnmeasured()
 	rec, err := reconcile.RunReconcile(ctx, dir, nil, reclib.Options{
 		ReconciledAt: time.Now(),
 		Partial:      fanout.ReadManifestPartial(dir),
 		Root:         ".", // repo root = CWD; validate finding file paths (Epic 5.0)
-		TrustPriors:  scorecard.ResolveTrustPriors(),
+		TrustPriors:  trustPriors,
 		Consensus:    consensusLevel,
 	})
 	if err != nil {
@@ -405,7 +406,7 @@ func resumeReconcile(ctx context.Context, cmd *cobra.Command, dir, consensusLeve
 	// out of the map and silently loses trust exemption/demotion. A drop in this
 	// count between runs is the signal. Logged (not printed) so the --axi
 	// stdout contract is untouched.
-	log.FromContext(ctx).Info("trust priors resolved", "reviewers", rec.Summary.TrustPriorsResolved)
+	log.FromContext(ctx).Info("trust priors resolved", "reviewers", rec.Summary.TrustPriorsResolved, "unmeasured_outcome", unmeasured)
 	// Mirrors the `atcr reconcile` line: a resumed reconcile routes to the
 	// unresolved sidecar exactly like a fresh one, so the count is just as visible.
 	// Carries the state alongside the count, exactly as `atcr reconcile` does:

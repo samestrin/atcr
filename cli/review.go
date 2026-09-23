@@ -782,11 +782,12 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// ReadManifestPartial is only needed by the out-of-process `atcr reconcile`
 	// path that runs after the fact against the on-disk summary.json.
 	if threshold != "" || verifyFlag || debateFlag || autoFix {
+		trustPriors, unmeasured := scorecard.ResolveTrustPriorsAndUnmeasured()
 		rec, rerr := reconcile.RunReconcile(ctx, result.Dir, nil, reclib.Options{
 			ReconciledAt: time.Now(),
 			Partial:      result.Summary.Partial,
 			Root:         ".", // repo root = CWD; validate finding file paths (Epic 5.0)
-			TrustPriors:  scorecard.ResolveTrustPriors(),
+			TrustPriors:  trustPriors,
 			Consensus:    consensusLevel,
 		})
 		if rerr != nil {
@@ -797,7 +798,7 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		// drops out of the map and silently loses trust exemption/demotion. A drop
 		// in this count between runs is the signal. Logged (not printed) so the
 		// --axi stdout contract is untouched.
-		log.FromContext(ctx).Info("trust priors resolved", "reviewers", rec.Summary.TrustPriorsResolved)
+		log.FromContext(ctx).Info("trust priors resolved", "reviewers", rec.Summary.TrustPriorsResolved, "unmeasured_outcome", unmeasured)
 		// Mirrors the `atcr reconcile` line: the Tier 4 routing count must be as
 		// visible on this primary CI invocation as on the standalone command.
 		// Carries the state alongside the count, exactly as `atcr reconcile` does:
