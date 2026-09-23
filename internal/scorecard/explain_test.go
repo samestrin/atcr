@@ -183,6 +183,30 @@ func TestExplainTrustPriors_NamesTheOpportunityGateAsTheExclusionReason(t *testi
 	assert.Equal(t, 4, detail["dax"].Reasons[ReasonNotInOpportunitySet])
 }
 
+// TestExplainTrustPriors_PreEraMappedRecordCountsUnannotated pins the pre-era
+// branch: a record written before CategoriesRaised existed cannot be judged on
+// its absence, so a mapped lens's silent v1 record on an out-of-remit run is
+// counted with no reason, where the same record at v2 would be excluded.
+func TestExplainTrustPriors_PreEraMappedRecordCountsUnannotated(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < 4; i++ {
+		runID := runIDAt(time.Now(), fmt.Sprintf("preera-%03d", i))
+		quiet := reviewer_(runID, "Dax", "m1", 0, 0)
+		quiet.SchemaVersion = categoriesRaisedSinceSchema - 1
+		require.NoError(t, Append(dir, quiet))
+		other := reviewer_(runID, "Pace", "m1", 1, 0)
+		other.CategoriesRaised = []string{reclib.CategoryPerformance}
+		require.NoError(t, Append(dir, other))
+	}
+
+	detail, err := ExplainTrustPriors(dir, 0)
+	require.NoError(t, err)
+	require.Contains(t, detail, "dax")
+	assert.Equal(t, 4, detail["dax"].Counted)
+	assert.Zero(t, detail["dax"].Excluded)
+	assert.Empty(t, detail["dax"].Reasons, "a pre-era record counts unannotated")
+}
+
 func TestExplainTrustPriors_ExcludedEqualsTheExcludingReasonsOnly(t *testing.T) {
 	// The invariant PersonaScoreDetail.Excluded documents. Both a real exclusion
 	// and a TD-032 annotation are present, so a fold that naively sums every
