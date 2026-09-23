@@ -28,6 +28,15 @@ import (
 // is nil today for that same reason: an empty store strands nobody. Tracked as
 // TD-025 — re-measure the floor against in-remit run counts once a real store
 // exists, and record the measurement here the way the one above is recorded.
+//
+// MEASURED (2026-09-22, read-only, through the production keptForTrust walk —
+// ExplainTrustPriors's per-lens Counted over scorecard.DefaultDir()): 11 lenses,
+// in-remit runs brad 20, greta 20, kai 20, otto 19, dax 15, archer 11, vera 11,
+// bruce 6, pace 6, ronin 5, mira 3. Only 3 of 11 lenses clear a floor of 20
+// today (three exactly at it), and the narrowest (mira, 3) sits 17 runs short —
+// the stranding hazard is LIVE, not hypothetical. The floor is left at 20:
+// changing it now would invent a constant the epic forbids, and the re-measured
+// derivation this note awaits needs era-marked runs to accumulate (TD-025).
 const DefaultTrustMinRuns = 20
 
 // defaultTrustWindow bounds the reconcile-side trust-prior read (epic 35.11).
