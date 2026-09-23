@@ -1509,30 +1509,15 @@ func eraSuperseded(r Record, newest map[string]int) bool {
 	return raisedDenominatorOf(r) != newest[normalizeReviewerName(r.Reviewer)]
 }
 
-// ResolveTrustPriors resolves the default scorecard store directory and reads
-// the priors from it at DefaultTrustMinRuns, degrading to a nil map on any
-// failure (an unresolvable user config dir, or the read's own best-effort
-// "missing/unreadable store" case) — never an error, never a blocker for the
-// caller (epic 35.9 AC5).
-//
-// Unlike TrustPriors, this read is WINDOWED to defaultTrustWindow (epic 35.11):
-// epic 35.9 put it on the primary path of every review and reconcile, so its
-// cost is unconditional and grows with the store, which has no rotation. The two
-// differ deliberately — TrustPriors serves cli/personas.go, which reports on the
-// whole store, while this serves reconcile, which needs a bounded read of recent
-// behavior. See defaultTrustWindow for why the window is 180d and what a
-// narrower one would silently break.
-//
-// This is the single helper every reconcile.RunReconcile
-// call site (cli/reconcile.go, cli/resume.go, cli/review.go,
-// internal/mcp/handlers.go) uses to attach the reviewer trust prior to
-// reclib.Options.TrustPriors before calling RunReconcile — NOT called from
-// inside internal/reconcile itself, because internal/scorecard already imports
-// internal/reconcile (EmitForReconcile takes a reconcile.Result), so the
-// reverse import would cycle.
-// ResolveTrustPriorsAndUnmeasured is ResolveTrustPriors plus the number of
-// reviewers the outcome gate alone keeps out of the map. See
-// resolveTrustPriorsAndUnmeasured.
+// ResolveTrustPriorsAndUnmeasured is the single helper every
+// reconcile.RunReconcile call site (cli/reconcile.go, cli/resume.go,
+// cli/review.go, internal/mcp/handlers.go) uses to attach the reviewer trust
+// prior to reclib.Options.TrustPriors before calling RunReconcile — NOT called
+// from inside internal/reconcile itself, because internal/scorecard already
+// imports internal/reconcile (EmitForReconcile takes a reconcile.Result), so
+// the reverse import would cycle. It is ResolveTrustPriors' windowed read plus
+// the number of reviewers the outcome gate alone keeps out of the map (for the
+// reconcile log line; see resolveTrustPriorsAndUnmeasured).
 func ResolveTrustPriorsAndUnmeasured() (map[string]float64, int) {
 	dir, err := DefaultDir()
 	if err != nil {
@@ -1580,6 +1565,28 @@ func resolveTrustPriorsAndUnmeasured(dir string, now time.Time) (map[string]floa
 	return priors, unmeasured
 }
 
+// ResolveTrustPriors resolves the default scorecard store directory and reads
+// the priors from it at DefaultTrustMinRuns, degrading to a nil map on any
+// failure (an unresolvable user config dir, or the read's own best-effort
+// "missing/unreadable store" case) — never an error, never a blocker for the
+// caller (epic 35.9 AC5).
+//
+// Unlike TrustPriors, this read is WINDOWED to defaultTrustWindow (epic 35.11):
+// epic 35.9 put it on the primary path of every review and reconcile, so its
+// cost is unconditional and grows with the store, which has no rotation. The two
+// differ deliberately — TrustPriors serves cli/personas.go, which reports on the
+// whole store, while this serves reconcile, which needs a bounded read of recent
+// behavior. See defaultTrustWindow for why the window is 180d and what a
+// narrower one would silently break.
+//
+// Since 3f7ad69c the reconcile call sites resolve the priors through
+// ResolveTrustPriorsAndUnmeasured instead — the same windowed read plus an
+// unmeasured-reviewer count for the reconcile log line. This function remains
+// for cli/personas.go's in-use read and as the nil-lookup form of
+// ResolveTrustPriorsWithGroundTruth; a TD-039 lookup threaded only through
+// ResolveTrustPriorsWithGroundTruth therefore reaches the personas surface but
+// NOT the production reconcile path, which reads via
+// resolveTrustPriorsAndUnmeasured.
 func ResolveTrustPriors() map[string]float64 {
 	return ResolveTrustPriorsWithGroundTruth(nil)
 }
@@ -1593,11 +1600,14 @@ func ResolveTrustPriors() map[string]float64 {
 // window to the lookup.
 //
 // IT EXISTS SO PHASE 5 IS A CALL-SITE SWAP, not a signature break across four
-// packages. Every production consumer of the priors map calls the no-argument
-// ResolveTrustPriors — cli/review.go, cli/resume.go, cli/reconcile.go and
-// internal/mcp/handlers.go — and the only seam shipped before this one hung off
-// TrustPriors, which is all-history and used solely by cli/personas.go. Without
-// this function the wire-in could not be built on the exported API at all.
+// packages. Every production consumer of the priors map resolves it through
+// ResolveTrustPriorsAndUnmeasured — cli/review.go, cli/resume.go,
+// cli/reconcile.go and internal/mcp/handlers.go — which reads via
+// resolveTrustPriorsAndUnmeasured and does NOT pass through this function; a
+// TD-039 wire-in must thread the lookup into that path as well or the swap
+// reaches only the cli/personas.go surface (ResolveTrustPriors' delegation
+// here). Without this function the wire-in could not be built on the exported
+// API at all.
 //
 // THE SAME DO-NOT-WIRE WARNING APPLIES HERE and is the more urgent of the two,
 // because this is the function the production path calls: the weighted rate is

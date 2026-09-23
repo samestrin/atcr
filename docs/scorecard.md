@@ -474,11 +474,16 @@ than growing a third aggregation.
   honest answer — but absence is not neutral (see the bullet above: it switches
   demotion off as well as exemption), and on an existing install this is a
   visible change rather than a silent one.
-- **`scorecard.ResolveTrustPriors()` (epic 35.9)** is the third consumer, and it
+- **`scorecard.ResolveTrustPriorsAndUnmeasured()` (epic 35.9; the unmeasured
+  counter added in 36.0)** is the third consumer, and it
   is the one on the primary path of **every** `atcr review`, `review --resume`,
   `reconcile` and MCP `atcr_reconcile` call — so the outcome-eligibility rule
   above reaches production through here, not only through `personas list
-  --scores`. On an upgrade to `schema_version` 2 every stored record is still v1
+  --scores`. (It is `ResolveTrustPriors`' windowed read plus a count of the
+  reviewers the outcome gate alone keeps out of the map, reported on the
+  reconcile log line; `ResolveTrustPriors` itself remains as the
+  `personas list --scores` in-use read and the nil-lookup form of
+  `ResolveTrustPriorsWithGroundTruth`.) On an upgrade to `schema_version` 2 every stored record is still v1
   and therefore unclassified, so the priors map is empty until each reviewer
   accumulates `DefaultTrustMinRuns` strict runs under the new schema. Both
   consensus-filter behaviours go dark for that period: a high-trust singleton
@@ -507,7 +512,8 @@ than growing a third aggregation.
   `atcr personas list --scores` keeps reporting on the whole store. Every
   `atcr reconcile` /
   `atcr review --resume` / `atcr review` (one-shot mode) / MCP
-  `atcr_reconcile` call site resolves it and threads the result into
+  `atcr_reconcile` call site resolves it — through
+  `ResolveTrustPriorsAndUnmeasured` — and threads the result into
   `reconcile.Options.TrustPriors`, which the epic-14.2 consensus filter
   consumes: a singleton from a historically reliable reviewer survives the
   filter without in-run corroboration, and one from a historically unreliable
