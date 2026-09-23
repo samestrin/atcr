@@ -1378,6 +1378,12 @@ func TestSummarizeCaseFailureReasons(t *testing.T) {
 			failures: []benchmark.CaseFailure{{CaseID: "c1", Reason: benchmark.CaseFailureMaterialize}},
 			want:     "materialize x1",
 		},
+		{
+			// The no-scorable-case error still has to read at zero failures.
+			name:     "no failures says so rather than rendering nothing",
+			failures: nil,
+			want:     "no failure was recorded",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.want, summarizeCaseFailureReasons(tc.failures))
