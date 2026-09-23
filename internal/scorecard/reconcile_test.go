@@ -535,6 +535,46 @@ func TestEmitForReconcile_AmbiguousNeverMintsAReviewerRecord(t *testing.T) {
 	require.NotNil(t, findReviewer(recs, "bruce"))
 }
 
+// TestEmitForReconcile_ReviewerLessAmbiguousFindingContributesNothing: an
+// ambiguous finding naming no reviewer (neither Reviewers nor Reviewer) cannot
+// be attributed, so no record gains its category and no record is minted.
+func TestEmitForReconcile_ReviewerLessAmbiguousFindingContributesNothing(t *testing.T) {
+	reviewDir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	res := reconcile.Result{
+		Findings: []reconcile.Merged{
+			{Finding: reconcile.Finding{File: "a.go", Line: 1, Problem: "p1", Category: "correctness", Reviewers: []string{"bruce"}}},
+		},
+		Ambiguous: []reconcile.AmbiguousCluster{
+			{Findings: []reconcile.Finding{
+				{File: "b.go", Line: 9, Problem: "nobody's", Category: "security", Reviewer: "  "},
+			}},
+		},
+		Summary: reconcile.Summary{ReconciledAt: "2026-06-14T10:00:00Z"},
+	}
+	EmitForReconcile(reviewDir, res, EmitOpts{})
+
+	cfg, err := os.UserConfigDir()
+	require.NoError(t, err)
+	recs, err := ReadRecords(filepath.Join(cfg, "atcr", "scorecard", "2026-06.jsonl"), ReadOpts{})
+	require.NoError(t, err)
+
+	reviewers := 0
+	for _, r := range recs {
+		if r.RecordType == RecordTypeReviewer {
+			reviewers++
+		}
+	}
+	assert.Equal(t, 1, reviewers, "a reviewer-less finding mints no record")
+	bruce := findReviewer(recs, "bruce")
+	require.NotNil(t, bruce)
+	assert.Equal(t, []string{"correctness"}, bruce.CategoriesRaised,
+		"a reviewer-less finding lends its category to nobody")
+}
+
 // TestEmitForReconcile_CategoriesRaisedIsDedupedAndSorted is AC 03-02 Happy Path
 // Scenario 2. Sorted output is asserted deliberately: the field is persisted for
 // 180 days and compared across records, so a map-iteration-ordered slice would
