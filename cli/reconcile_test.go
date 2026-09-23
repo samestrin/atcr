@@ -924,6 +924,7 @@ func TestReconcileCmd_AppliesScorecardTrustPrior(t *testing.T) {
 
 	seedTrustedReviewer(t, "trusted")
 	fixtureReview(t, "r", trustPanelSources())
+	writeSeedPool(t, filepath.Join(".atcr", "reviews", "r"), "trusted", "stranger", "third")
 
 	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
 
@@ -1330,6 +1331,7 @@ func TestReconcileCmd_ConsensusLenientKeepsMediumSingletons(t *testing.T) {
 	isolate(t)
 	seedUntrustedReviewer(t, "stranger") // owns bar.go in trustPanelSources
 	fixtureReview(t, "r", trustPanelSources())
+	writeSeedPool(t, filepath.Join(".atcr", "reviews", "r"), "trusted", "stranger", "third")
 
 	require.Equal(t, 0, execCmd(t, "reconcile", "--consensus", "lenient", "r"))
 

@@ -448,7 +448,9 @@ func trustPanelFixture(t *testing.T, root string) string {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"),
 		[]byte(`{"base":"aaa","head":"bbb","roster":["trusted","stranger","third"],"partial":false}`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", "summary.json"),
-		[]byte(`{"total":3,"succeeded":3,"failed":0,"partial":false,"total_findings":3}`), 0o644))
+		// Agents on model "m", the model seedTrustedReviewer writes history on:
+		// trust priors are scored against the model each persona runs on now.
+		[]byte(`{"agents":[{"agent":"trusted","model":"m","status":"ok","findings_count":1},{"agent":"stranger","model":"m","status":"ok","findings_count":1},{"agent":"third","model":"m","status":"ok","findings_count":1}],"total":3,"succeeded":3,"failed":0,"partial":false,"total_findings":3}`), 0o644))
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "latest"), []byte(id+"\n"), 0o644))
 	return id
@@ -925,7 +927,8 @@ func consensusPanelFixture(t *testing.T, root string) string {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"),
 		[]byte(`{"base":"aaa","head":"bbb","roster":["greta","bruce"],"partial":false}`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", "summary.json"),
-		[]byte(`{"total":2,"succeeded":2,"failed":0,"partial":false,"total_findings":2}`), 0o644))
+		// Agents on model "m", the model the seed helpers write history on.
+		[]byte(`{"agents":[{"agent":"greta","model":"m","status":"ok","findings_count":1},{"agent":"bruce","model":"m","status":"ok","findings_count":1}],"total":2,"succeeded":2,"failed":0,"partial":false,"total_findings":2}`), 0o644))
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "latest"), []byte(id+"\n"), 0o644))
 	return id

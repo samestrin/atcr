@@ -177,6 +177,14 @@ func execResume(t *testing.T, args ...string) (int, string) {
 // review trust-prior wiring tests.
 func seedTrustedReviewer(t *testing.T, reviewer string) {
 	t.Helper()
+	seedTrustedReviewerOn(t, reviewer, "m")
+}
+
+// seedTrustedReviewerOn is seedTrustedReviewer on a chosen model. Trust priors
+// are scored against the model a persona runs on in the review being
+// reconciled, so a fixture's history must be on that model to count.
+func seedTrustedReviewerOn(t *testing.T, reviewer, model string) {
+	t.Helper()
 	dir, err := scorecard.DefaultDir()
 	require.NoError(t, err)
 	// The run_id timestamp decides which month file the record lands in, and
@@ -196,7 +204,7 @@ func seedTrustedReviewer(t *testing.T, reviewer string) {
 			Outcome:              benchmark.OutcomeFindings,
 			RunID:                fmt.Sprintf("%s-r%02d", stamp, i),
 			Reviewer:             reviewer,
-			Model:                "m",
+			Model:                model,
 			Role:                 "reviewer",
 			FindingsRaised:       1,
 			FindingsCorroborated: 1,
@@ -209,6 +217,22 @@ func seedTrustedReviewer(t *testing.T, reviewer string) {
 // consensus filter drops unless a scorecard trust prior exempts the reviewer.
 // Nothing is severity- or category-exempt, so survival is attributable solely to
 // the trust prior.
+// writeSeedPool writes a review's pool summary placing each reviewer on model
+// "m", the model the seed helpers write history on. fixtureReview cannot write
+// it: it prepends a findings header to every file.
+func writeSeedPool(t *testing.T, reviewDir string, reviewers ...string) {
+	t.Helper()
+	agents := make([]fanout.AgentStatus, 0, len(reviewers))
+	for _, r := range reviewers {
+		agents = append(agents, fanout.AgentStatus{Agent: r, Model: "m", Status: fanout.StatusOK, FindingsCount: 1})
+	}
+	b, err := json.Marshal(fanout.PoolSummary{Agents: agents, Total: len(agents), Succeeded: len(agents)})
+	require.NoError(t, err)
+	pool := filepath.Join(reviewDir, "sources", "pool")
+	require.NoError(t, os.MkdirAll(pool, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pool, "summary.json"), b, 0o644))
+}
+
 func trustPanelSources() map[string]string {
 	return map[string]string{
 		"sources/a/findings.txt": "MEDIUM|foo.go:10|possible nil deref on this path|Guard it|correctness|10|ev|trusted\n",
@@ -263,6 +287,7 @@ func TestResumeReconcile_AppliesScorecardTrustPrior(t *testing.T) {
 	isolate(t)
 	seedTrustedReviewer(t, "trusted")
 	fixtureReview(t, "r", trustPanelSources())
+	writeSeedPool(t, filepath.Join(".atcr", "reviews", "r"), "trusted", "stranger", "third")
 
 	cmd := &cobra.Command{}
 	cmd.SetOut(io.Discard)
