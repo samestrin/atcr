@@ -2796,3 +2796,18 @@ func TestScrubForgedCredit_LeavesAnAboveCurrentEraRecordUntouched(t *testing.T) 
 	assert.Equal(t, before, out,
 		"an above-current record's bound is not computable here — leave it untouched")
 }
+
+func TestOpportunityUnions_AnAboveCurrentDenominatorRecordContributesNoTopic(t *testing.T) {
+	// unresolvedEraRuns excludes a record whose RaisedDenominator exceeds
+	// RaisedDenominatorCurrent because it was computed under a definition this
+	// binary does not implement. The union loop must apply the same exclusion:
+	// a record this binary refuses to score must not decide which OTHER lenses
+	// get scored on that run — one discriminating category from such a record
+	// flips the union non-empty and deletes every silent out-of-remit lens's
+	// record from the denominator.
+	r := oppRec("run-1", "sasha", []string{"security"})
+	r.RaisedDenominator = RaisedDenominatorCurrent + 1
+	unions := opportunityUnions([]Record{r})
+	assert.NotContains(t, unions, "run-1",
+		"an era-uninterpretable record must not contribute topic evidence")
+}
