@@ -343,7 +343,10 @@ func TestDocs_ScorecardMdDocumentsThePairSurface(t *testing.T) {
 		// on severity" full stop, which is false for any cluster of 3+ — and
 		// this drift test was pinning the false claim in place.
 		"**A split is only counted when the cluster held exactly two reviewers.**",
-		"`gray_zone` disagreements are likewise not counted",
+		// Since b6a9e0e2 a TWO-reviewer gray-zone cluster charges its pair one
+		// disagreement (pair surface only); the earlier pin said gray_zone
+		// disagreements are never counted, which pinned the drift in place.
+		"A two-reviewer **gray-zone** ambiguous cluster, by contrast, has an unambiguous pair",
 		// Both thresholds are provisional, and that warning has to reach a
 		// READER of the doc rather than living only in Go comments.
 		"The pair surface's two thresholds are provisional and unmeasured.",
