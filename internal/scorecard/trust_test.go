@@ -2932,3 +2932,23 @@ func TestWeightedRate_UnmeasurableConfirmationFallsBackToBinary(t *testing.T) {
 		assert.InDelta(t, binary, weightedRate(3, 10, w, c, 0), 1e-9, name)
 	}
 }
+
+// TestOpportunitySetRuns_KeepsWhatItCannotJudge pins the keep-unjudged guard:
+// an aggregate record and a pre-v2 record carry no per-lens remit evidence, so
+// both survive even on a run whose union is wholly out of the lens's remit,
+// while the same silent lens at v2 is dropped there.
+func TestOpportunitySetRuns_KeepsWhatItCannotJudge(t *testing.T) {
+	run := runIDAt(time.Now(), "offremit")
+	union := map[string]map[string]struct{}{run: {reclib.CategoryPerformance: {}}}
+
+	current := reviewer_(run, "Dax", "m1", 0, 0)
+	preEra := reviewer_(run, "Dax", "m1", 0, 0)
+	preEra.SchemaVersion = categoriesRaisedSinceSchema - 1
+	agg := reviewer_(run, "Dax", "m1", 0, 0)
+	agg.RecordType = RecordTypeAggregate
+
+	require.Empty(t, opportunitySetRuns([]Record{current}, union),
+		"precondition: a silent v2 lens on an out-of-remit run is dropped")
+	assert.Len(t, opportunitySetRuns([]Record{preEra}, union), 1, "a pre-v2 record is never judged")
+	assert.Len(t, opportunitySetRuns([]Record{agg}, union), 1, "an aggregate record is never judged")
+}
