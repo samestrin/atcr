@@ -595,9 +595,10 @@ func readAllPreserving(dir string, opts ReadOpts) (shardRead, error) {
 //     later re-detection can displace it.
 //  2. Otherwise the effective record is the latest by timestamp across open and
 //     non-suppressing-terminal records alike. An equal timestamp is broken by
-//     ClosedStatusRank (a terminal record outranks an open one, so a resolution
-//     appended in the same second as the finding still closes it), and a full
-//     tie by append order (last wins).
+//     foldPrecedence (a terminal record outranks an open one and a settled
+//     close outranks an unsettled marker, so a resolution appended in the same
+//     second as the finding or checkpoint still closes it), and a full tie by
+//     append order (last wins).
 //
 // Rule 2 is what makes a resolved-or-deferred id RE-OPEN when it is detected
 // again: the fresh open record is newer than the resolution, so it wins. That is
@@ -1114,7 +1115,7 @@ func retainForCompaction(recs []Record) []Record {
 		// opposite directions. Emitting trail, then donor, then eff satisfies both.
 		//
 		// 1. eff LAST, so it wins its own fold. Every retained record for this id
-		//    can tie eff on both timestamp and ClosedStatusRank, and latestItem
+		//    can tie eff on both timestamp and foldPrecedence, and latestItem
 		//    breaks a full tie by APPEND ORDER, last wins; an unorderable
 		//    timestamp (which the read path tolerates) hands the win to the later
 		//    record outright. Anything emitted after eff can therefore seize the
@@ -1238,7 +1239,7 @@ func highestRankedTerminalIndex(terminals []Record) int {
 }
 
 // latestItem picks the effective item from a non-empty fold group: the latest
-// timestamp wins; an equal timestamp is broken by ClosedStatusRank so a terminal
+// timestamp wins; an equal timestamp is broken by foldPrecedence so a terminal
 // record outranks an open one (rank 0), and a full tie by append order (the last
 // wins). Recency first, rank only as a tiebreak — the inverse of
 // highestRankedTerminalIndex.
@@ -1271,9 +1272,9 @@ func latestIndex[T foldable](group []T) int {
 			best = i
 		case it.foldTimestamp() > cur.foldTimestamp():
 			best = i
-		case it.foldTimestamp() == cur.foldTimestamp() && ClosedStatusRank(it.foldStatus()) > ClosedStatusRank(cur.foldStatus()):
+		case it.foldTimestamp() == cur.foldTimestamp() && foldPrecedence(it.foldStatus()) > foldPrecedence(cur.foldStatus()):
 			best = i
-		case it.foldTimestamp() == cur.foldTimestamp() && ClosedStatusRank(it.foldStatus()) == ClosedStatusRank(cur.foldStatus()):
+		case it.foldTimestamp() == cur.foldTimestamp() && foldPrecedence(it.foldStatus()) == foldPrecedence(cur.foldStatus()):
 			best = i // full tie: append order, last wins
 		}
 	}

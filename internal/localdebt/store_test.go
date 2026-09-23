@@ -2734,7 +2734,7 @@ func mkTerminal(id, ts, status string) Record {
 }
 
 // TestFoldRecords_EqualTimestampDivergentNewStatuses locks AC 01-02 Edge Case 1.
-// latestItem is RECENCY-first, so ClosedStatusRank decides only on an exact
+// latestItem is RECENCY-first, so foldPrecedence decides only on an exact
 // timestamp tie — which is why the fixture pins equal timestamps. unreproducible
 // outranks attempts-exhausted: a completed determination beats unfinished work.
 func TestFoldRecords_EqualTimestampDivergentNewStatuses(t *testing.T) {

@@ -505,6 +505,9 @@ func IsKnownStatus(status string) bool {
 // This supersedes the order first recorded in the 36.0 plan (which placed
 // resolved second); see sprint-plan.md → Phase 1 Clarifications → C1.
 //
+// The fold's same-timestamp tie-break does NOT use this chain directly: its
+// criterion is settledness first, so it goes through foldPrecedence.
+//
 // The integers are internal and never persisted: every call site compares two
 // ranks relatively, so a sixth status can renumber the chain freely.
 func ClosedStatusRank(status string) int {
@@ -522,6 +525,23 @@ func ClosedStatusRank(status string) int {
 	default:
 		return 0
 	}
+}
+
+// foldPrecedence is the fold's equal-timestamp tie-break, kept apart from
+// ClosedStatusRank because the two answer different questions. ClosedStatusRank
+// ranks by rationale certainty, which is right for retention
+// (highestRankedTerminalIndex) but wrong for the fold, whose criterion is "a
+// resolution appended in the same second as the finding still closes it". Under
+// the rationale chain attempts-exhausted outranks resolved, so a same-second
+// close of that checkpoint would lose the fold and leave the item live.
+//
+// A settled status therefore outranks every unsettled one; within each half
+// ClosedStatusRank still decides, so open stays lowest.
+func foldPrecedence(status string) int {
+	if IsSettledStatus(status) {
+		return 10 + ClosedStatusRank(status)
+	}
+	return ClosedStatusRank(status)
 }
 
 // HigherClosedStatus returns whichever of the two terminal statuses ranks higher.

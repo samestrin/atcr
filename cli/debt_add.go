@@ -238,7 +238,7 @@ func runDebtAdd(cmd *cobra.Command, _ []string) error {
 // id of an existing record. When that id already carries a terminal status the
 // fold can keep the OLD record — always for `wontfix`, which survives
 // re-detection by design, and on a same-second timestamp tie where
-// ClosedStatusRank lets the terminal record win. Both cases printed
+// the fold's foldPrecedence lets the terminal record win. Both cases printed
 // "Added <id>" and exited 0 while every reader still showed the terminal status:
 // a silent no-op wearing a success message.
 //
