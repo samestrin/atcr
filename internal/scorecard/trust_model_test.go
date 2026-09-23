@@ -2,9 +2,12 @@ package scorecard
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -121,4 +124,46 @@ func TestRatesFromRecords_OtherPersonaSwitchDoesNotMoveThisRate(t *testing.T) {
 	switched := ratesForModels(recs, map[string]string{"greta": "m1", "bruce": "new"})
 	assert.NotContains(t, base, "greta", "precondition: greta's out-of-remit quiet runs are dropped")
 	assert.NotContains(t, switched, "greta", "bruce switching models must not re-admit greta's out-of-remit runs")
+}
+
+// AC3: currentModels reads the model each persona ran on from the review's pool
+// summary, keyed on the normalized persona name.
+func TestCurrentModels_ReadsThePoolSummary(t *testing.T) {
+	dir := t.TempDir()
+	writePoolSummary(t, dir,
+		fanout.AgentStatus{Agent: "Bruce", Model: "kimi-k3"},
+		fanout.AgentStatus{Agent: " greta ", Model: " qwen3.8-max "},
+	)
+	assert.Equal(t, map[string]string{"bruce": "kimi-k3", "greta": "qwen3.8-max"}, currentModels(dir))
+}
+
+// AC3: a persona whose model cannot be known is left out, so it stays neutral.
+func TestCurrentModels_UnknownModelIsLeftOut(t *testing.T) {
+	dir := t.TempDir()
+	writePoolSummary(t, dir,
+		fanout.AgentStatus{Agent: "bruce", Model: ""},   // no model recorded
+		fanout.AgentStatus{Agent: "greta", Model: "m1"}, // listed twice,
+		fanout.AgentStatus{Agent: "Greta", Model: "m2"}, // on two models
+		fanout.AgentStatus{Agent: "dax", Model: "m3"},   // listed twice,
+		fanout.AgentStatus{Agent: "dax", Model: "M3"},   // on one model
+		fanout.AgentStatus{Agent: "  ", Model: "m4"},    // no persona
+	)
+	assert.Equal(t, map[string]string{"dax": "m3"}, currentModels(dir))
+}
+
+// AC3: no readable pool summary means no persona's model is known. The result
+// is an empty, non-nil map: nil would mean "no filter" and restore the
+// persona-only fold.
+func TestCurrentModels_UnreadableSummaryIsEmptyNotNil(t *testing.T) {
+	missing := currentModels(t.TempDir())
+	require.NotNil(t, missing)
+	assert.Empty(t, missing)
+
+	dir := t.TempDir()
+	pool := filepath.Join(dir, "sources", "pool")
+	require.NoError(t, os.MkdirAll(pool, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pool, "summary.json"), []byte("{not json"), 0o644))
+	broken := currentModels(dir)
+	require.NotNil(t, broken)
+	assert.Empty(t, broken)
 }

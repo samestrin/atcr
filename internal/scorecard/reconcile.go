@@ -442,3 +442,9 @@ func trimmedReviewers(in []string) []string {
 	}
 	return out
 }
+
+// currentModels maps each persona in a review's pool summary to the model it ran
+// on. Stub.
+func currentModels(reviewDir string) map[string]string {
+	return nil
+}
