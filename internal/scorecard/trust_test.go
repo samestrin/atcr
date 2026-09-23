@@ -100,6 +100,23 @@ func TestTrustPriors_EmptyStoreYieldsEmptyMapNoError(t *testing.T) {
 
 // --- ResolveTrustPriors (epic 35.9 T2 wiring) ---
 
+// TestResolveTrustPriorsAndUnmeasured_UnresolvableStoreDirIsNil covers the
+// DefaultDir error arm: with no HOME, XDG_CONFIG_HOME or AppData the config dir
+// cannot be resolved, and the reconcile path gets no priors and no unmeasured
+// count - nil, the same answer ResolveTrustPriors gives, not a read of "".
+func TestResolveTrustPriorsAndUnmeasured_UnresolvableStoreDirIsNil(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", "")
+	t.Setenv("AppData", "")
+	_, err := DefaultDir()
+	require.Error(t, err, "precondition: the store dir cannot be resolved")
+
+	priors, unmeasured := ResolveTrustPriorsAndUnmeasured()
+	assert.Nil(t, priors)
+	assert.Zero(t, unmeasured)
+	assert.Nil(t, ResolveTrustPriors(), "both resolvers agree on an unresolvable dir")
+}
+
 func TestResolveTrustPriors_MissingStoreDegradesToEmptyMap(t *testing.T) {
 	// No atcr/scorecard store under a fresh HOME (AC5): degrades to an empty
 	// map, never an error, never a blocked caller.
