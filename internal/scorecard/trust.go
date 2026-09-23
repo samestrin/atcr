@@ -632,7 +632,7 @@ func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Tim
 		// store yields.
 		return map[string]float64{}, nil
 	}
-	return ratesFromRecords(records, minRuns, gt, since, now), nil
+	return ratesFromRecords(records, minRuns, gt, since, now, nil), nil
 }
 
 // TrustPriorsAndDetails is the single-read entry point the --scores surface
@@ -658,12 +658,12 @@ func TrustPriorsAndDetails(dir string, minRuns int) (map[string]float64, map[str
 		// different truncation point.
 		return map[string]float64{}, map[string]PersonaScoreDetail{}, nil
 	}
-	return ratesFromRecords(records, minRuns, nil, 0, time.Now()), detailsFromRecords(records, minRuns), nil
+	return ratesFromRecords(records, minRuns, nil, 0, time.Now(), nil), detailsFromRecords(records, minRuns), nil
 }
 
 // ratesFromRecords is trustPriorsSince's post-read body: the filter chain,
 // the aggregate and the minRuns floor over an already-read record slice.
-func ratesFromRecords(records []Record, minRuns int, gt GroundTruthLookup, since time.Duration, now time.Time) map[string]float64 {
+func ratesFromRecords(records []Record, minRuns int, gt GroundTruthLookup, since time.Duration, now time.Time, models map[string]string) map[string]float64 {
 
 	type tally struct{ runs, corroborated, raised int }
 	byReviewer := map[string]*tally{}
@@ -1554,7 +1554,7 @@ func resolveTrustPriorsAndUnmeasured(dir string, now time.Time) (map[string]floa
 		// Fail neutral exactly as trustPriorsSince does on a truncated store.
 		return map[string]float64{}, 0
 	}
-	priors := ratesFromRecords(records, DefaultTrustMinRuns, nil, defaultTrustWindow, now)
+	priors := ratesFromRecords(records, DefaultTrustMinRuns, nil, defaultTrustWindow, now, nil)
 
 	counterfactual := make([]Record, len(records))
 	for i, r := range records {
@@ -1567,7 +1567,7 @@ func resolveTrustPriorsAndUnmeasured(dir string, now time.Time) (map[string]floa
 		counterfactual[i] = r
 	}
 	unmeasured := 0
-	for name := range ratesFromRecords(counterfactual, DefaultTrustMinRuns, nil, defaultTrustWindow, now) {
+	for name := range ratesFromRecords(counterfactual, DefaultTrustMinRuns, nil, defaultTrustWindow, now, nil) {
 		if _, ok := priors[name]; !ok {
 			unmeasured++
 		}
