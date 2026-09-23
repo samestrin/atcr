@@ -866,7 +866,7 @@ func TestPersonasList_ScoresRendersTheExplainabilitySummary(t *testing.T) {
 	withPersonasScores(t, personasScoreData{
 		rates: map[string]float64{"sasha": 0.72},
 		details: map[string]scorecard.PersonaScoreDetail{
-			"sasha": {Counted: 20, Excluded: 5, Reasons: map[string]int{
+			"sasha": {Counted: 20, Excluded: 5, Raised: 25, Reasons: map[string]int{
 				scorecard.ReasonOutcomeIneligible: 5,
 			}},
 		},

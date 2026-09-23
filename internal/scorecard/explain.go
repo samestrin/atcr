@@ -240,10 +240,11 @@ func detailsFromRecords(records []Record, minRuns int) map[string]PersonaScoreDe
 		}
 		details[key] = d
 	}
-	count := func(reviewer string) {
-		key := normalizeReviewerName(reviewer)
+	count := func(r Record) {
+		key := normalizeReviewerName(r.Reviewer)
 		d := details[key]
 		d.Counted++
+		d.Raised += r.FindingsRaised
 		details[key] = d
 	}
 
@@ -315,13 +316,13 @@ func detailsFromRecords(records []Record, minRuns int) map[string]PersonaScoreDe
 		// the five registry-only lenses silently different from the mapped nine.
 		if _, mapped := remitFor(r.Reviewer); !mapped {
 			note(r.Reviewer, ReasonNotOpportunityScoped)
-			count(r.Reviewer)
+			count(r)
 			continue
 		}
 		if r.SchemaVersion < categoriesRaisedSinceSchema {
 			// Pre-era: carries no CategoriesRaised, so it is never judged on the
 			// absence. It counts, unexplained and unannotated.
-			count(r.Reviewer)
+			count(r)
 			continue
 		}
 		switch opportunityDisposition(r, unions[r.RunID]) {
@@ -329,9 +330,9 @@ func detailsFromRecords(records []Record, minRuns int) map[string]PersonaScoreDe
 			note(r.Reviewer, ReasonNotInOpportunitySet)
 		case dispUnscopeable:
 			note(r.Reviewer, ReasonNoRecognizedCategory)
-			count(r.Reviewer)
+			count(r)
 		default:
-			count(r.Reviewer)
+			count(r)
 		}
 	}
 

@@ -82,17 +82,20 @@ atcr personas list
 
 Columns: `NAME`, `VERSION` (`built-in` for the built-in personas; the installed manifest version for community personas), `SOURCE` (`built-in` or `community`), and `LANGUAGE` (the persona's declared `language` scope, comma-joined, or `-` when unscoped). If the personas directory is unreadable, `list` prints a warning to stderr and still renders the built-ins (exit 0).
 
-**With corroboration scores.** Add `--scores` to append a `CORROBORATION` column and a `CASES` column:
+**With corroboration scores.** Add `--scores` to append a `CORROBORATION` column, a `RAISED` column and a `CASES` column:
 
 ```bash
 atcr personas list --scores
-# NAME             VERSION    SOURCE      LANGUAGE  CORROBORATION  CASES
-# security/owasp   1.2.0      community   -         72.4%          31 counted · 8 excluded (outcome-ineligible)
-# greta            built-in   built-in    -         55.0%          12 counted (3 unlabelled) · 0 excluded · provisional (under the 20-case trust floor)
-# sasha            built-in   built-in    -         n/a            n/a
+# NAME             VERSION    SOURCE      LANGUAGE  CORROBORATION   RAISED  CASES
+# security/owasp   1.2.0      community   -         72.4%           58      31 counted · 8 excluded (outcome-ineligible)
+# greta            built-in   built-in    -         55.0%           20      12 counted (3 unlabelled) · 0 excluded · provisional (under the 20-case trust floor)
+# mira             built-in   built-in    -         n/a (raised 0)  0       24 counted · 0 excluded
+# sasha            built-in   built-in    -         n/a             n/a     n/a
 ```
 
 The rate is the fraction of a persona's findings that other reviewers or the verify stage corroborated, formatted as `XX.X%`, or `n/a` when there is no run history for that persona.
+
+`RAISED` is the rate's denominator: the findings the persona raised across its counted cases. A persona that was measured but raised nothing has no rate to report, so its `CORROBORATION` cell reads `n/a (raised 0)` rather than `0.0%`. A `0.0%` always means the persona raised findings and none were corroborated.
 
 `CASES` is what stops the rate being read on its own, and it is the difference between "this lens is weak" and "this lens is barely measured" — a persona at `0.0%` over ONE counted case is not a persona to drop. It reads:
 

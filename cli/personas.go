@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -557,17 +558,37 @@ func renderPersonaList(w io.Writer, metas []commpersonas.PersonaMeta) error {
 	return writeTable(w, "NAME\tVERSION\tSOURCE\tLANGUAGE", rows)
 }
 
-// renderScoredList writes the Name/Version/Source/Language/Corroboration table,
-// rendering each persona's rate as "XX.X%" or "n/a".
+// renderScoredList writes the Name/Version/Source/Language/Corroboration/Raised/
+// Cases table, rendering each persona's rate as "XX.X%" or "n/a".
 func renderScoredList(w io.Writer, scored []commpersonas.ScoredPersona) error {
 	rows := make([]string, len(scored))
 	for i, s := range scored {
-		rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s",
+		rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s",
 			sanitizeCell(s.Name), sanitizeCell(s.Version), sanitizeCell(s.Source),
-			sanitizeCell(formatLanguages(s.Language)), commpersonas.FormatRate(s.Rate),
-			formatScoreDetail(s.Detail))
+			sanitizeCell(formatLanguages(s.Language)), formatCorroboration(s.Rate, s.Detail),
+			formatRaised(s.Detail), formatScoreDetail(s.Detail))
 	}
-	return writeTable(w, "NAME\tVERSION\tSOURCE\tLANGUAGE\tCORROBORATION\tCASES", rows)
+	return writeTable(w, "NAME\tVERSION\tSOURCE\tLANGUAGE\tCORROBORATION\tRAISED\tCASES", rows)
+}
+
+// formatCorroboration renders the rate, except for a lens that raised nothing.
+// ratio returns 0 for a zero denominator, so that lens's rate is 0 — the same
+// value as a lens that raised many findings and had none corroborated. Opposite
+// facts, opposite actions; the zero-denominator case must not print 0.0%.
+func formatCorroboration(rate *float64, d *commpersonas.ScoreDetail) string {
+	if rate != nil && d != nil && d.Raised == 0 {
+		return "n/a (raised 0)"
+	}
+	return commpersonas.FormatRate(rate)
+}
+
+// formatRaised renders the rate's denominator, or "n/a" when there is no
+// measurement — the same no-data marker the neighbouring cells use.
+func formatRaised(d *commpersonas.ScoreDetail) string {
+	if d == nil {
+		return "n/a"
+	}
+	return strconv.Itoa(d.Raised)
 }
 
 // toPersonaDetails converts scorecard's explainability records into
@@ -588,7 +609,7 @@ func toPersonaDetails(in map[string]scorecard.PersonaScoreDetail) map[string]com
 		for k, v := range d.Reasons {
 			reasons[k] = v
 		}
-		out[name] = commpersonas.ScoreDetail{Counted: d.Counted, Excluded: d.Excluded, Reasons: reasons}
+		out[name] = commpersonas.ScoreDetail{Counted: d.Counted, Excluded: d.Excluded, Reasons: reasons, Raised: d.Raised}
 	}
 	return out
 }
