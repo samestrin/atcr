@@ -1018,7 +1018,12 @@ func opportunityUnions(records []Record) map[string]map[string]struct{} {
 			continue
 		}
 		for _, c := range r.CategoriesRaised {
-			if !discriminating(c) {
+			// Allowlist over THIS binary's own vocabulary, not a bare denylist: a
+			// stored word the vocabulary does not know (a newer pin wrote it;
+			// reclib/ is separately versioned) degrades the run toward the
+			// documented refuse-to-guess pass-through instead of acting as an
+			// anti-wildcard that decides which other lenses get scored.
+			if !inVocabulary(c) || !discriminating(c) {
 				continue
 			}
 			if seenByRun[r.RunID] == nil {
@@ -1262,7 +1267,10 @@ func opportunityDisposition(r Record, union map[string]struct{}) disposition {
 // of the two to reach by accident.
 func contributesToUnion(r Record) bool {
 	for _, c := range r.CategoriesRaised {
-		if discriminating(c) {
+		// Same allowlist opportunityUnions applies: out-of-vocabulary AND
+		// non-discriminating words both fail, so the two sites cannot disagree
+		// about what a record contributed.
+		if inVocabulary(c) && discriminating(c) {
 			return true
 		}
 	}
