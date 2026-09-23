@@ -1288,3 +1288,55 @@ func TestEmit_GrayZoneClusterChargesOneDisagreementToItsPair(t *testing.T) {
 	assert.Equal(t, 2, sasha.PairSignals[0].Disagreed, "the mirrored copy charges the same pair")
 	assert.Zero(t, otto.FindingsRaised, "the pair surface only: gray-zone items move no finding count")
 }
+
+// TestPairTallies_SkipsNonReviewerBlankAndSelfSignals covers pairTallies'
+// three skips together: an aggregate record carrying a reviewer's name and pair
+// signals, a record with a blank reviewer, and a self/blank peer signal. None
+// may add evidence, cases or a key; only the real bruce/greta pair remains.
+func TestPairTallies_SkipsNonReviewerBlankAndSelfSignals(t *testing.T) {
+	run := pairRunID("skips")
+	bruce := pairReviewer(run, "bruce", "m1", 1, 1,
+		PairSignal{Peer: "greta", Agreed: 1},
+		PairSignal{Peer: "bruce", Disagreed: 3}, // self
+		PairSignal{Peer: "  ", Disagreed: 4})    // blank
+	greta := pairReviewer(run, "greta", "m1", 1, 1, PairSignal{Peer: "bruce", Agreed: 1})
+
+	agg := pairReviewer(run, "bruce", "m1", 9, 0, PairSignal{Peer: "greta", Disagreed: 5})
+	agg.RecordType = RecordTypeAggregate
+	blank := pairReviewer(run, "  ", "m1", 1, 0, PairSignal{Peer: "greta", Disagreed: 7})
+
+	want := pairTallies([]Record{bruce, greta})
+	require.Len(t, want, 1, "precondition: the clean pair is tallied")
+
+	got := pairTallies([]Record{bruce, greta, agg, blank})
+	assert.Equal(t, want, got, "aggregate, blank-reviewer and self/blank-peer signals add nothing")
+}
+
+// TestPairDisagreements_UnreadableStoreIsFailNeutral covers the read-error arm:
+// a store with one unreadable month file yields an empty map and a nil error,
+// never a tally built from the months that did read.
+func TestPairDisagreements_UnreadableStoreIsFailNeutral(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("chmod 0o000 does not block reads when running as root")
+	}
+	dir := t.TempDir()
+	coEligible(t, dir, 3, "bruce", "greta", 1, 0) // this month: stays readable
+	older := time.Now().AddDate(0, -2, 0)
+	require.NoError(t, Append(dir, pairReviewer(runIDAt(older, "old"), "bruce", "m1", 1, 1)))
+	locked := filepath.Join(dir, older.UTC().Format("2006-01")+".jsonl")
+	require.NoError(t, os.Chmod(locked, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o600) })
+	require.NotEmpty(t, pairTallies(mustReadReadable(t, dir)), "precondition: the readable month alone yields a tally")
+
+	got, err := PairDisagreements(dir)
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+// mustReadReadable reads every month file that opens, ignoring the error for
+// the ones that do not, so a test can show what a partial read would tally.
+func mustReadReadable(t *testing.T, dir string) []Record {
+	t.Helper()
+	recs, _ := ReadSince(dir, 0, time.Now(), ReadOpts{Writer: io.Discard})
+	return recs
+}
