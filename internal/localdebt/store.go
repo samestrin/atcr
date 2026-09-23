@@ -1151,7 +1151,7 @@ func retainForCompaction(recs []Record) []Record {
 			return i >= 0 && normalizeStatus(group[i].Status) == StatusAttemptsExhausted
 		}
 		if latestClosedIdx == trailIdx || latestClosedIdx == donorIdx ||
-			!(isExhausted(latestClosedIdx) || isExhausted(trailIdx) || isExhausted(donorIdx)) {
+			(!isExhausted(latestClosedIdx) && !isExhausted(trailIdx) && !isExhausted(donorIdx)) {
 			latestClosedIdx = -1
 		}
 
