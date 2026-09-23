@@ -351,7 +351,12 @@ func scrubForgedCredit(records []Record) []Record {
 	out := make([]Record, len(records))
 	copy(out, records)
 	for i := range out {
-		if out[i].RecordType != RecordTypeReviewer || out[i].CreditEra == 0 {
+		// An above-current era record is left untouched, not scrubbed: it was
+		// measured under a rule this binary does not implement, so the current
+		// era's credit bound is not computable for it. Matching
+		// weightedCreditByPersona's own exclusion — an era this binary cannot
+		// interpret is skipped, never clamped to the current era's rule.
+		if out[i].RecordType != RecordTypeReviewer || out[i].CreditEra < 1 || out[i].CreditEra > CreditEraCurrent {
 			continue
 		}
 		bound := float64(out[i].FindingsRaised-out[i].FindingsRouted) * maxPerFindingCredit(isolatedFindingWeight)
