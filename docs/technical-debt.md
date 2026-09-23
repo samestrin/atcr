@@ -129,7 +129,9 @@ after the first. When divergent terminal records exist for one id, precedence is
 That order ranks by how certainly a record carries a human-typed `--reason`,
 because the rationale text exists nowhere else in the store and precedence
 decides which record survives compaction. `--reason` is mandatory for every
-status except `resolved`, which is why the three mandatory ones sit above it.
+status except `resolved` — or a recorded justification, in the one case the code
+allows (`wontfix` accepts a justification already recorded on the open record in
+place of a typed `--reason`) — which is why the three mandatory ones sit above it.
 
 ## Commands
 
@@ -242,7 +244,9 @@ atcr debt resolve <id> --status attempts-exhausted --reason "three attempts regr
 
 Flags: `--store`, `--json`, `--severity`, `--max`,
 `--status` (`resolved|wontfix|unreproducible|attempts-exhausted`), `--reason`. The id is positional.
-Every status other than `resolved` requires a `--reason`: a dismissal, a
+Every status other than `resolved` requires a `--reason` (or, for `wontfix`
+only, a justification already recorded on the open record — the one stand-in the
+CLI accepts): a dismissal, a
 not-reproducible determination and an exhausted attempt budget are each a
 judgement whose rationale exists nowhere else, while a fix explains itself in the
 diff. That rationale is also what makes the technical-debt lifecycle usable as

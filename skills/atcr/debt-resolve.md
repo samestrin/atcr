@@ -58,9 +58,14 @@ file read and never a direct engine call, consistent with the dispatcher contrac
 - `atcr debt resolve <id> --status attempts-exhausted --reason "<what was tried, why it stopped>"` —
   record that the fix attempts ran out without a resolution. The defect is presumed
   real and the work unfinished, so the item **stays** in the live backlog and stays
-  closeable by id; this is a checkpoint, not a closure.
+  closeable by id; this is a checkpoint, not a closure. Like `deferred`, it
+  leaves the no-argument `debt resolve` worklist while it stands — its row is
+  closed, so the worklist treats it as acted-on — but it remains visible in
+  `debt list` and the dashboard.
 
-**`--reason` is required for every status except plain `resolved`,** and for these
+**`--reason` is required for every status except plain `resolved` — or a recorded justification
+(in the single case the code allows it: a `wontfix` whose open record already
+carries one — see the wontfix bullet above),** and for these
 two it is the entire point. The text is the only durable record of what was tried,
 and atcr reads these outcomes as ground truth when scoring which review lenses
 produce real findings — a finding that was fixed, one that was never reproducible
