@@ -2121,3 +2121,36 @@ func TestReview_OneShotPersistsLocalDebt(t *testing.T) {
 	assert.NotEmpty(t, readLocalDebtRecords(t),
 		"the one-shot review's inline reconcile must persist its findings to the local debt store")
 }
+
+// TestRunReconcile_TrustPriorFollowsTheReviewsModel pins AC5 at the command
+// level: `atcr reconcile` resolves trust priors against the model each persona
+// ran on in THIS review (its pool summary), so a persona whose history is on
+// another model is neutral.
+func TestRunReconcile_TrustPriorFollowsTheReviewsModel(t *testing.T) {
+	for _, tc := range []struct {
+		model string
+		want  string
+	}{
+		{"m1", "reviewers=1"},
+		{"m2", "reviewers=0"},
+	} {
+		t.Run(tc.model, func(t *testing.T) {
+			isolate(t)
+			for i := 0; i < scorecard.DefaultTrustMinRuns; i++ {
+				runID := time.Now().UTC().Format(time.RFC3339) + fmt.Sprintf("-hist-%03d", i)
+				storeRecord(t, reviewerRec(runID, "sasha", "m1", 2, 1))
+			}
+			fixtureReview(t, "r", map[string]string{
+				"sources/host/findings.txt": "LOW|a.go:1|x|f|style|1|ev|host\n",
+			})
+			pool := filepath.Join(".atcr", "reviews", "r", "sources", "pool")
+			require.NoError(t, os.MkdirAll(pool, 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(pool, "summary.json"),
+				[]byte(`{"agents":[{"agent":"sasha","model":"`+tc.model+`","status":"ok"}],"total":1}`), 0o644))
+
+			var logBuf, errBuf bytes.Buffer
+			runReconcileWithLogger(t, &logBuf, &errBuf, "r")
+			assert.Regexp(t, `trust priors resolved.*`+tc.want, logBuf.String())
+		})
+	}
+}
