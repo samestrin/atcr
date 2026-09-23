@@ -63,7 +63,19 @@ func loadPersonasScores(_ io.Writer) (personasScoreData, error) {
 	// (pinned scorecard-side). Both faces are best-effort by contract — they
 	// never return a non-nil error — so the combined call keeps that shape.
 	rates, details, _ := scorecard.TrustPriorsAndDetails(dir, 0)
-	return personasScoreData{rates: rates, details: details, path: dir, inUse: scorecard.ResolveTrustPriors()}, nil
+	data := personasScoreData{rates: rates, details: details, path: dir, inUse: scorecard.ResolveTrustPriors()}
+	// Only an empty rates map needs the count, so only that path pays the
+	// second read. A read error leaves it at zero: the "no data" footer.
+	if len(rates) == 0 {
+		if recs, err := scorecard.ReadSince(dir, 0, time.Now(), scorecard.ReadOpts{Writer: io.Discard}); err == nil {
+			for _, r := range recs {
+				if r.RecordType == scorecard.RecordTypeReviewer {
+					data.records++
+				}
+			}
+		}
+	}
+	return data, nil
 }
 
 // personasDir resolves the community personas directory. A package var so tests
@@ -267,6 +279,13 @@ func listPersonasWithScores(cmd *cobra.Command, dir string) error {
 		// location, on the one path where naming the location is the whole point.
 		// Name the underlying error instead.
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nScorecard data location could not be resolved: %v\n", err)
+	case len(data.rates) == 0 && data.records > 0:
+		// Not an empty store: every record was excluded from scoring (records
+		// written before the outcome field, failed runs, non-strict runs, or
+		// out-of-remit cases). The remedy is more scored runs, not a store fix.
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nScorecard store at %s holds %d reviewer record(s), but every one was excluded from scoring\n"+
+			"(records from before this build carry no outcome and are never scored). New reconcile runs will be scored.\n",
+			data.path, data.records)
 	case len(data.rates) == 0:
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nNo scorecard data found at %s\n", data.path)
 	default:

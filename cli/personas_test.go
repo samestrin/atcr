@@ -368,6 +368,20 @@ func TestPersonasList_ScoresAllExcludedIsNotNoData(t *testing.T) {
 	assert.Contains(t, stdout, "excluded from scoring")
 }
 
+// loadPersonasScores counts the reviewer records it could not score, which is
+// what the all-excluded footer above is fed from.
+func TestLoadPersonasScores_CountsRecordsWhenNoneIsScored(t *testing.T) {
+	isolate(t)
+	rec := reviewerRec("2026-06-14T10:00:00Z-abc", "bruce", "opus", 3, 1)
+	rec.Outcome = "" // written before the outcome field: never scored
+	storeRecord(t, rec)
+
+	data, err := loadPersonasScores(io.Discard)
+	require.NoError(t, err)
+	assert.Empty(t, data.rates)
+	assert.Equal(t, 1, data.records)
+}
+
 // The only reachable load error — DefaultDir failing — returns a ZERO
 // personasScoreData with path == "", so the error footer interpolated an empty
 // path: "Scorecard data at  is unreadable" — a double space and no location, on

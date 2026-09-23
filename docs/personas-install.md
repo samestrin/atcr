@@ -116,6 +116,8 @@ These columns cover a persona's whole run history with no run floor, which is no
 No scorecard data found at <path>
 ```
 
+When the store holds reviewer records but every one was excluded from scoring (for example, all of them were written before the outcome field existed), the footer says that instead, with the record count, so a full store is never reported as an empty one. New reconcile runs are scored.
+
 ### `atcr personas search <keyword>`
 
 Fetches the registry's `index.json` and lists entries whose name, description, provider, or model matches the keyword:
