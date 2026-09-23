@@ -1159,27 +1159,35 @@ const (
 // categoriesRaisedSinceSchema; a pre-era record carries no CategoriesRaised at
 // all and must never be judged as out-of-remit for the absence.
 func opportunityDisposition(r Record, union map[string]struct{}) disposition {
-	if len(union) == 0 {
-		// Nobody on the run contributed a discriminating topic, so there is no
-		// evidence about anyone's remit. Refuse to guess.
-		return dispCounted
-	}
 	// Resolved once per record and reused, rather than calling RemitCategories
 	// here and letting InOpportunitySet call it again — every call allocates a
 	// defensive copy.
 	//
-	// THE UNMAPPED CHECK COMES FIRST, ahead of the raised-count test below. The
-	// five registry-only lenses (vera, pace, brad, archer, ronin per C11) are
-	// never opportunity-scoped at all, so answering dispUnscopeable for one would
-	// have ExplainTrustPriors render "(N unlabelled)" against a lens the gate
-	// never judged — a reason the chain did not act on.
-	// Non-copying accessor: the defensive copy per record was the cost the
-	// risk profile calls out, and the unmapped-first ordering above is why the
-	// lookup cannot simply move below the raised-count branch — an unmapped
-	// lens that raised unattributable findings must answer dispCounted, never
-	// dispUnscopeable.
+	// THE UNMAPPED CHECK COMES FIRST — ahead of the empty-union branch and the
+	// raised-count test below. The five registry-only lenses (vera, pace, brad,
+	// archer, ronin per C11) are never opportunity-scoped at all, so answering
+	// dispUnscopeable for one would have ExplainTrustPriors render
+	// "(N unlabelled)" against a lens the gate never judged — a reason the
+	// chain did not act on. The unmapped-first ordering is also why the lookup
+	// cannot sit below the empty-union branch: an unmapped lens that raised
+	// unattributable findings must answer dispCounted, never dispUnscopeable,
+	// on an empty union too.
 	remit, mapped := remitFor(r.Reviewer)
 	if !mapped {
+		return dispCounted
+	}
+	if len(union) == 0 {
+		// Nobody on the run contributed a discriminating topic, so there is no
+		// evidence about anyone's remit. Refuse to guess — but for a lens that
+		// demonstrably RAISED, refuse OUT LOUD (Q11 re-scope, 2026-09-22): the
+		// record is kept and annotated as unlabelled, so the null case ("nobody
+		// raised anything" vs "every category fell outside the vocabulary" vs
+		// "all non-discriminating") is measurable from the explain surface
+		// instead of inferred. The tally is untouched: opportunitySetRuns keeps
+		// everything that is not dispOutOfRemit, so the prior is identical.
+		if r.FindingsRaised > 0 {
+			return dispUnscopeable
+		}
 		return dispCounted
 	}
 	// THE GATE DROPS ONLY A LENS THAT RAISED NOTHING. A record with findings is

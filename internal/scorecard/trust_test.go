@@ -2556,6 +2556,25 @@ func TestOpportunityDisposition_IsTheOnePredicateBothSurfacesRead(t *testing.T) 
 		"an empty union means nobody had scopeable evidence — refuse to guess")
 }
 
+// TestOpportunityDisposition_EmptyUnionRaiserIsKeptAndAnnotated is the Q11
+// re-scope (2026-09-22): the empty-union branch refused to guess for the TALLY
+// but also stayed SILENT for the EXPLANATION, so a mapped lens that raised
+// findings on a run nobody could scope passed through un-annotated — the
+// null case ("nobody raised anything" vs "every category fell outside the
+// vocabulary" vs "all non-discriminating") stayed unmeasurable from the
+// surface. The re-scope keeps the tally identical (dispUnscopeable is kept by
+// opportunitySetRuns, so the prior is unchanged) and moves only the
+// annotation: raised>0 on an empty union is exactly dispUnscopeable's meaning
+// ("raised findings, contributed nothing to the union"), so the branch returns
+// it for a mapped lens. Genuine silence (zero-raised, the pin above) and the
+// unmapped lenses (invariant preserved) still answer dispCounted.
+func TestOpportunityDisposition_EmptyUnionRaiserIsKeptAndAnnotated(t *testing.T) {
+	assert.Equal(t, dispUnscopeable, opportunityDisposition(oppRecUnlabelled("r", "dax", 2), nil),
+		"a mapped lens that RAISED findings on an unscopeable run is kept AND annotated — the null case must be measurable")
+	assert.Equal(t, dispCounted, opportunityDisposition(oppRecUnlabelled("r", "vera", 2), nil),
+		"the unmapped invariant survives the re-scope: vera is never opportunity-scoped, never annotated as unlabelled")
+}
+
 // TestOpportunitySetRuns_ARaiserIsNeverDroppedForBeingOutOfItsOwnRemit REVERSES
 // a property this file previously pinned as intended, and the reversal is
 // recorded here rather than slipped in.
