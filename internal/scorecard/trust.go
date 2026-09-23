@@ -29,6 +29,16 @@ import (
 // TD-025 — re-measure the floor against in-remit run counts once a real store
 // exists, and record the measurement here the way the one above is recorded.
 //
+// CLOSE GATE (clarified 2026-09-23): the re-measurement is sufficient to act on
+// only when EVERY scored lens holds >=20 outcome-eligible in-remit runs AND the
+// core lenses hold >=40 (2x the floor — the 2026-07-29 convergence claim was
+// observed over 100+ run histories, so convergence past the floor must be
+// checkable, not just reachable). The panel-wide condition is the point: absence
+// from the priors map is not neutral, so a threshold only the generalists clear
+// would re-create the stranding this measurement exists to retire. As of
+// 2026-09-23 the outcome-eligible subset is 3-21 runs/lens — neither bar is met;
+// this is a wait-for-data gate, not a fix.
+//
 // MEASURED (2026-09-22, read-only, through the production keptForTrust walk —
 // ExplainTrustPriors's per-lens Counted over scorecard.DefaultDir()): 11 lenses,
 // in-remit runs brad 20, greta 20, kai 20, otto 19, dax 15, archer 11, vera 11,
