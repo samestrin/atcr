@@ -2,6 +2,7 @@ package scorecard
 
 import (
 	"io"
+	"strings"
 	"time"
 
 	reclib "github.com/samestrin/atcr/reconcile"
@@ -663,6 +664,13 @@ func TrustPriorsAndDetails(dir string, minRuns int) (map[string]float64, map[str
 
 // ratesFromRecords is trustPriorsSince's post-read body: the filter chain,
 // the aggregate and the minRuns floor over an already-read record slice.
+//
+// models, when non-nil, maps each persona to the model it runs on NOW, and the
+// fold then counts only that persona's runs on that model (owner ruling
+// 2026-09-23, option A): a persona that switched models starts from the neutral
+// baseline and is absent from the map until DefaultTrustMinRuns runs accumulate
+// on the new model. A persona missing from models is absent too. A nil map is
+// the persona-only fold every non-reconcile caller keeps.
 func ratesFromRecords(records []Record, minRuns int, gt GroundTruthLookup, since time.Duration, now time.Time, models map[string]string) map[string]float64 {
 
 	type tally struct{ runs, corroborated, raised int }
@@ -682,6 +690,10 @@ func ratesFromRecords(records []Record, minRuns int, gt GroundTruthLookup, since
 	// shrink a case's evidence; the filter runs LAST so the era decision is never
 	// made from an opportunity-shrunk record set.
 	kept := keptForTrust(records)
+	// The model filter runs AFTER the chain, never before it: opportunityUnions
+	// reads every record of a run, so filtering first would let one persona's
+	// model switch shrink another persona's opportunity set.
+	kept = currentModelRuns(kept, models)
 	// The weighted fold reads the SAME filtered slice Aggregate does, not the raw
 	// records: a run the eligibility or opportunity gate just excluded must not
 	// re-enter through the weighted numerator. It is a second pass rather than a
@@ -728,6 +740,25 @@ func ratesFromRecords(records []Record, minRuns int, gt GroundTruthLookup, since
 		rates[name] = weightedRate(t.corroborated, t.raised, weights[name], confirmations[name], minRuns)
 	}
 	return rates
+}
+
+// currentModelRuns keeps the records each persona wrote on its current model
+// (see ratesFromRecords). A nil models map keeps everything. Models compare
+// case-insensitively and trimmed, because a registry binding and a provider
+// response need not agree on a spelling.
+func currentModelRuns(records []Record, models map[string]string) []Record {
+	if models == nil {
+		return records
+	}
+	out := make([]Record, 0, len(records))
+	for _, r := range records {
+		want, ok := models[normalizeReviewerName(r.Reviewer)]
+		if !ok || !strings.EqualFold(strings.TrimSpace(r.Model), strings.TrimSpace(want)) {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 // weightedRate is where C18's two halves meet: the ISOLATION half read off the
