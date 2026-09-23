@@ -1564,12 +1564,32 @@ func ResolveTrustPriorsAndUnmeasured() (map[string]float64, int) {
 	if err != nil {
 		return nil, 0
 	}
-	return resolveTrustPriorsAndUnmeasured(dir, time.Now())
+	return resolveTrustPriorsAndUnmeasured(dir, time.Now(), nil)
 }
 
-// ResolveTrustPriorsForReview is a stub.
+// ResolveTrustPriorsForReview is the single helper every
+// reconcile.RunReconcile call site (cli/reconcile.go, cli/resume.go,
+// cli/review.go, internal/mcp/handlers.go) uses to attach the reviewer trust
+// prior to reclib.Options.TrustPriors before calling RunReconcile — NOT called
+// from inside internal/reconcile itself, because internal/scorecard already
+// imports internal/reconcile (EmitForReconcile takes a reconcile.Result), so
+// the reverse import would cycle. It is ResolveTrustPriors' windowed read plus
+// the number of reviewers the outcome gate alone keeps out of the map (for the
+// reconcile log line; see resolveTrustPriorsAndUnmeasured).
+//
+// Priors are keyed on persona AND the model the persona runs on in THIS review,
+// read from reviewDir's pool summary (currentModels; owner ruling 2026-09-23,
+// option A). A persona that switched models is neutral until
+// DefaultTrustMinRuns runs accumulate on the new model; a persona the pool
+// summary does not place on one model is neutral. The returned map is still
+// keyed by persona name alone, which is all reconcile's lookup needs: within
+// one review a persona runs on exactly one model.
 func ResolveTrustPriorsForReview(reviewDir string) (map[string]float64, int) {
-	return ResolveTrustPriorsAndUnmeasured()
+	dir, err := DefaultDir()
+	if err != nil {
+		return nil, 0
+	}
+	return resolveTrustPriorsAndUnmeasured(dir, time.Now(), currentModels(reviewDir))
 }
 
 // resolveTrustPriorsAndUnmeasured reads the store once, over ResolveTrustPriors'
@@ -1584,13 +1604,13 @@ func ResolveTrustPriorsForReview(reviewDir string) (map[string]float64, int) {
 // log line: the counterfactual stamps a stand-in outcome on outcome-less
 // records to measure the loss, and it NEVER feeds the returned priors — the
 // outcome gate itself is correct and stays as it is.
-func resolveTrustPriorsAndUnmeasured(dir string, now time.Time) (map[string]float64, int) {
+func resolveTrustPriorsAndUnmeasured(dir string, now time.Time, models map[string]string) (map[string]float64, int) {
 	records, err := ReadSince(dir, defaultTrustWindow, now, ReadOpts{Writer: io.Discard})
 	if err != nil {
 		// Fail neutral exactly as trustPriorsSince does on a truncated store.
 		return map[string]float64{}, 0
 	}
-	priors := ratesFromRecords(records, DefaultTrustMinRuns, nil, defaultTrustWindow, now, nil)
+	priors := ratesFromRecords(records, DefaultTrustMinRuns, nil, defaultTrustWindow, now, models)
 
 	counterfactual := make([]Record, len(records))
 	for i, r := range records {
@@ -1603,7 +1623,7 @@ func resolveTrustPriorsAndUnmeasured(dir string, now time.Time) (map[string]floa
 		counterfactual[i] = r
 	}
 	unmeasured := 0
-	for name := range ratesFromRecords(counterfactual, DefaultTrustMinRuns, nil, defaultTrustWindow, now, nil) {
+	for name := range ratesFromRecords(counterfactual, DefaultTrustMinRuns, nil, defaultTrustWindow, now, models) {
 		if _, ok := priors[name]; !ok {
 			unmeasured++
 		}

@@ -2926,7 +2926,7 @@ func TestResolveTrustPriorsAndUnmeasured_CountsLensesOnlyTheOutcomeGateDrops(t *
 		require.NoError(t, Append(dir, r))
 	}
 
-	priors, unmeasured := resolveTrustPriorsAndUnmeasured(dir, time.Now())
+	priors, unmeasured := resolveTrustPriorsAndUnmeasured(dir, time.Now(), nil)
 	want, err := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, time.Now(), nil)
 	require.NoError(t, err)
 	assert.Equal(t, want, priors, "the priors must be exactly what ResolveTrustPriors returns")
