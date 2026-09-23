@@ -348,6 +348,26 @@ func TestPersonasList_ScoresNoDataFooter(t *testing.T) {
 	assert.Contains(t, stdout, "No scorecard data found at /home/u/.config/atcr/scorecard")
 }
 
+// A store full of records that the scoring chain excluded (every one predates
+// the outcome field, say) is not an empty store, and saying "No scorecard data
+// found" there sends the reader looking for a missing store instead of waiting
+// for scored runs.
+func TestPersonasList_ScoresAllExcludedIsNotNoData(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withPersonasScores(t, personasScoreData{
+		rates:   map[string]float64{},
+		path:    "/home/u/.config/atcr/scorecard",
+		records: 7,
+	}, nil, nil)
+
+	stdout, _, err := executeSplit(t, "personas", "list", "--scores")
+	require.NoError(t, err)
+	assert.NotContains(t, stdout, "No scorecard data found")
+	assert.Contains(t, stdout, "holds 7 reviewer record(s)")
+	assert.Contains(t, stdout, "excluded from scoring")
+}
+
 // The only reachable load error — DefaultDir failing — returns a ZERO
 // personasScoreData with path == "", so the error footer interpolated an empty
 // path: "Scorecard data at  is unreadable" — a double space and no location, on

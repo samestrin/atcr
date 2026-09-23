@@ -36,6 +36,10 @@ type personasScoreData struct {
 	// windowed, floored). Only its keys are read — they name the lenses that
 	// clear the production floor, which the all-history columns cannot show.
 	inUse map[string]float64
+	// records is the number of reviewer records in the store, counted only
+	// when rates is empty, so the footer can tell an empty store from one whose
+	// every record the scoring chain excluded.
+	records int
 }
 
 // personasScores loads corroboration rates from the scorecard store. A package
