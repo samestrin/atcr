@@ -18,11 +18,16 @@ import (
 // tie (see FoldRecords) — and then keeps only the ids whose effective record is
 // terminal, because an unsettled finding is not yet a quality signal.
 //
-// Since resolution became re-openable, "not terminal" covers two cases, and both
-// are correctly excluded: an id that never closed, and an id that closed and then
-// REGRESSED. A regressed id folds to its newer open record, so it contributes
-// neither a confirmation nor a dismissal until it is settled again. Only a
-// wontfix id is immune, because only wontfix survives re-detection.
+// Since resolution became re-openable, "not terminal" covers two cases: an id
+// that never closed, and an id that closed and then was RE-DETECTED. The first is
+// always excluded. A re-detected id folds to its newer open record and is
+// excluded too, with one exception: when its latest superseded terminal record
+// is attempts-exhausted, that record is kept. Re-detection confirms
+// attempts-exhausted (the finding is still broken, which is what the status
+// says), while it contradicts resolved and unreproducible, so dropping it would
+// erase a still-true outcome and trend AttemptsExhaustedCount to zero by
+// construction. wontfix never reaches this path: it survives re-detection in the
+// fold itself.
 //
 // The fold is O(n): FoldRecords does a single keyed pass, the donor index below
 // adds one more linear pass, and the filter's recovery is an O(1) map lookup —
@@ -38,7 +43,13 @@ func foldTerminalByID(records []Record) []Record {
 	donorTS := map[string]string{}
 	donorModel := map[string]string{}
 	donorModelReviewers := map[string][]string{}
+	// Per-id terminal records, so a re-detected id can fall back to its latest
+	// superseded outcome through the fold's own recency rule (latestItem).
+	terminalsByID := map[string][]Record{}
 	for _, r := range records {
+		if IsClosedStatus(r.Status) {
+			terminalsByID[r.ID] = append(terminalsByID[r.ID], r)
+		}
 		if !IsClosedStatus(r.Status) || strings.TrimSpace(r.Model) == "" {
 			continue
 		}
@@ -59,7 +70,15 @@ func foldTerminalByID(records []Record) []Record {
 	terminal := make([]Record, 0, len(effective))
 	for _, r := range effective {
 		if !IsClosedStatus(r.Status) {
-			continue
+			prior, ok := terminalsByID[r.ID]
+			if !ok {
+				continue
+			}
+			latest := latestItem(prior)
+			if normalizeStatus(latest.Status) != StatusAttemptsExhausted {
+				continue
+			}
+			r = latest
 		}
 		// The effective terminal record can be an attribution-less one even when an
 		// earlier same-id terminal carried a real Model — a wontfix that outranks an
@@ -67,8 +86,7 @@ func foldTerminalByID(records []Record) []Record {
 		// excludes an empty Model, so without this the whole finding — a genuine
 		// outcome that DID have model attribution — would be silently dropped.
 		// Recover the model from the most recent same-id terminal that carries one
-		// before excluding. (Unreachable for a regressed id: that folds to an open
-		// record and is filtered out above.)
+		// before excluding.
 		if strings.TrimSpace(r.Model) == "" {
 			r.Model = donorModel[r.ID]
 			if r.Model != "" {
@@ -170,6 +188,12 @@ type QualityRow struct {
 	// confirmation and no exhausted attempt. That is the correct answer to "what
 	// happened in the end", and the wrong answer to "how often did this
 	// reviewer's findings resist a fix" — do not use these as the latter.
+	//
+	// A re-detection (a fresh open record after a terminal one) is part of that
+	// fold state too. It drops the id's outcome when the latest terminal record
+	// was resolved or unreproducible, because re-detection contradicts both. It
+	// KEEPS an attempts-exhausted outcome, because re-detection confirms it —
+	// see foldTerminalByID.
 	TerminalOutcomes int
 }
 
