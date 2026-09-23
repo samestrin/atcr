@@ -2710,3 +2710,14 @@ func TestWarnCaseFailures_CapsTheSlotList(t *testing.T) {
 	assert.Contains(t, out, "25 reviewer slot(s)",
 		"and the scale line still carries the true total")
 }
+
+// TestRetainedSizeAttrs_UnmeasuredRootIsFlaggedNotZero covers both arms of the
+// retained-dir size attributes: a measured root logs a number, an unreadable one
+// logs the unmeasured flag and never a zero.
+func TestRetainedSizeAttrs_UnmeasuredRootIsFlaggedNotZero(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "f"), []byte("abcd"), 0o644))
+	assert.Equal(t, []any{"retained_bytes", int64(4)}, retainedSizeAttrs(dir))
+	assert.Equal(t, []any{"retained_bytes_unmeasured", true},
+		retainedSizeAttrs(filepath.Join(dir, "missing")))
+}

@@ -210,11 +210,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			// what an omitted key already means everywhere else here, while the
 			// sibling boolean keeps the unmeasured case VISIBLE rather than inferred.
 			attrs := []any{"path", tmp, "failed_cases", len(caseFailures), "failed_slots", len(slotFailures)}
-			if size, measured := dirSizeBytes(tmp); measured {
-				attrs = append(attrs, "retained_bytes", size)
-			} else {
-				attrs = append(attrs, "retained_bytes_unmeasured", true)
-			}
+			attrs = append(attrs, retainedSizeAttrs(tmp)...)
 			log.FromContext(ctx).Warn("benchmark work dir retained after a partial run", attrs...)
 			// Returned to the caller as well as logged. The log line is suppressible —
 			// ATCR_LOG_LEVEL=error is a legal setting and drops Warn entirely — and the
@@ -625,12 +621,10 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		// was a branch no test could reach (the empty case list is rejected at load
 		// and an all-roster failure aborts per case), and an untestable arm is dead
 		// weight the file carries for nothing. The folded message still reads at
-		// zero failures — the tally renders as "no failure was recorded" — so the
-		// guard keeps preventing the empty artifact whatever future path reaches it.
+		// zero failures — summarizeCaseFailureReasons renders "no failure was
+		// recorded" — so the guard keeps preventing the empty artifact whatever
+		// future path reaches it.
 		reasons := summarizeCaseFailureReasons(caseFailures)
-		if reasons == "" {
-			reasons = "no failure was recorded"
-		}
 		return nil, "", fmt.Errorf("no case could be scored: %d of %d case(s) failed (%s); "+
 			"re-running is the remedy only if the cause was transient",
 			len(caseFailures), len(m.Cases), reasons)
@@ -828,6 +822,11 @@ var (
 // that point and is published nowhere else on this path, since the run returns no
 // run-result.
 func summarizeCaseFailureReasons(failures []benchmark.CaseFailure) string {
+	// Zero failures still has to read as a reason: the no-scorable-case error
+	// interpolates this, and an empty "()" would say nothing.
+	if len(failures) == 0 {
+		return "no failure was recorded"
+	}
 	tally := map[string]int{}
 	for _, f := range failures {
 		tally[f.Reason]++
@@ -842,6 +841,16 @@ func summarizeCaseFailureReasons(failures []benchmark.CaseFailure) string {
 		parts = append(parts, fmt.Sprintf("%s x%d", r, tally[r]))
 	}
 	return strings.Join(parts, ", ")
+}
+
+// retainedSizeAttrs is the size half of the retained-work-dir log line: a
+// numeric retained_bytes when the size was measured, else
+// retained_bytes_unmeasured=true, so the key stays monotypic (see the caller).
+func retainedSizeAttrs(root string) []any {
+	if size, measured := dirSizeBytes(root); measured {
+		return []any{"retained_bytes", size}
+	}
+	return []any{"retained_bytes_unmeasured", true}
 }
 
 // dirSizeBytes totals the regular-file bytes under root, best-effort, and reports
