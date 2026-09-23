@@ -1,6 +1,8 @@
 package scorecard
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -162,7 +164,67 @@ func TestRemitCategories_TableIsGroundedInTheEmbeddedPersonaFiles(t *testing.T) 
 		require.NoError(t, err, "persona %q must ship an in-repo definition to be grounded against", p)
 		assert.Contains(t, string(body), "## Focus",
 			"persona %q's file must carry the ## Focus list its remit is grounded in", p)
+
+		// The grounding is HASHED, not merely present: the compiled-in remit
+		// table cites each persona's ## Focus list as its source, and until now
+		// a content edit to that list failed no test — the table's grounding
+		// was one-way. The pin is HEADING-SCOPED (from the ## Focus heading to
+		// the next ## heading) so a same-net-count rewording cannot slip past a
+		// bare line-count check. A drift here does not make the table WRONG —
+		// it makes it UNVERIFIED. Re-derive this persona's remit from the new
+		// Focus text, update the hash, and cite the new lines in remit.go.
+		want, ok := personaFocusHashes[p]
+		require.True(t, ok, "persona %q must carry a pinned Focus hash — add one computed from personas/%s.md", p, p)
+		got := personaFocusHash(body)
+		assert.Equal(t, want, got,
+			"personas/%s.md's ## Focus block changed — RE-DERIVE THIS PERSONA'S REMIT "+
+				"(internal/scorecard/remit.go's personaRemit entry is grounded in that list), "+
+				"then update personaFocusHashes and the entry's line citation", p)
 	}
+}
+
+// personaFocusHashes pins the SHA-256 (first 16 hex chars) of each in-repo
+// persona's ## Focus block, heading-scoped. Computed from personas/<name>.md
+// at pin time by TestRemitCategories_TableIsGroundedInTheEmbeddedPersonaFiles,
+// which fails with "re-derive this persona's remit" when the block drifts —
+// the answer to the grounding being one-way and unguarded.
+var personaFocusHashes = map[string]string{
+	"bruce":  "004fc16561276ab3",
+	"dax":    "d34a7f6c1e2f578f",
+	"greta":  "4133c3b9fcbf44cb",
+	"ingrid": "6e38fad4b8f6b217",
+	"kai":    "2eb148e3f3142dc2",
+	"mira":   "47af4070e9280ff4",
+	"otto":   "aafbb92a8d8c3a52",
+	"penny":  "0aa54d5004998028",
+	"sasha":  "3c8682aa976e0f00",
+}
+
+// personaFocusHash returns the heading-scoped hash of a persona file's ## Focus
+// block: everything from the line after the "## Focus" heading to the next
+// "## " heading (or EOF), trimmed. Returns "" when no Focus heading exists —
+// the Contains assertion above reports that separately.
+func personaFocusHash(body []byte) string {
+	lines := strings.Split(string(body), "\n")
+	start := -1
+	for i, l := range lines {
+		if strings.TrimSpace(l) == "## Focus" {
+			start = i + 1
+			break
+		}
+	}
+	if start < 0 {
+		return ""
+	}
+	end := len(lines)
+	for j := start; j < len(lines); j++ {
+		if strings.HasPrefix(lines[j], "## ") {
+			end = j
+			break
+		}
+	}
+	sum := sha256.Sum256([]byte(strings.TrimSpace(strings.Join(lines[start:end], "\n"))))
+	return hex.EncodeToString(sum[:])[:16]
 }
 
 // TestRemitCategories_GoldenTable pins every entry exactly.

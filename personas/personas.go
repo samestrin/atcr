@@ -21,6 +21,13 @@ var names = []string{"bruce", "greta", "kai", "mira", "dax", "sasha", "penny", "
 
 // expectedEmbeddedFiles returns the set of .md files that must be present in the
 // embedded persona directory: one per registered persona plus the shared base.
+//
+// POINTER: internal/scorecard's compiled-in personaRemit table is grounded in
+// these files' ## Focus blocks (lines 7-13 of each), cited per entry in
+// internal/scorecard/remit.go and hash-pinned by
+// TestRemitCategories_TableIsGroundedInTheEmbeddedPersonaFiles — an edit to a
+// Focus block fails that test with "re-derive this persona's remit". Re-derive
+// the remit and update the pin in the same change.
 func expectedEmbeddedFiles() map[string]struct{} {
 	want := make(map[string]struct{}, len(names)+1)
 	for _, n := range names {
