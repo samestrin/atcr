@@ -134,6 +134,7 @@ type ScoreDetail struct {
 	Counted  int
 	Excluded int
 	Reasons  map[string]int
+	Raised   int
 }
 
 // ScoredPersona is one row of `personas list --scores`: a persona joined with

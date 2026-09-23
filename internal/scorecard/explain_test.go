@@ -460,6 +460,26 @@ func TestExplainTrustPriors_CountedExcludesEveryLinkTheChainDrops(t *testing.T) 
 	assert.Equal(t, 2, detail["dax"].Reasons[ReasonNotInOpportunitySet])
 }
 
+// Raised is the rate's denominator, so it must sum FindingsRaised over exactly
+// the records Counted covers: a dropped record's findings are not in the rate.
+func TestExplainTrustPriors_RaisedSumsOnlyTheCountedRecords(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < 3; i++ {
+		r := reviewer_(runIDAt(time.Now(), fmt.Sprintf("kept-%03d", i)), "Dax", "m1", 2, 1)
+		r.CategoriesRaised = []string{reclib.CategoryTesting}
+		require.NoError(t, Append(dir, r))
+	}
+	lenient := reviewer_(runIDAt(time.Now(), "lenient"), "Dax", "m1", 7, 0)
+	lenient.CategoriesRaised = []string{reclib.CategoryTesting}
+	lenient.ConsensusLevel = reclib.ConsensusOff
+	require.NoError(t, Append(dir, lenient))
+
+	detail, err := ExplainTrustPriors(dir, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 3, detail["dax"].Counted)
+	assert.Equal(t, 6, detail["dax"].Raised, "the non-strict record's 7 findings never reach the rate")
+}
+
 func TestExplainTrustPriors_MembershipMatchesTrustPriorsWithNoFloor(t *testing.T) {
 	// The 5.2.A review's first HIGH, and it was reachable on the ONLY production
 	// call: cli/personas.go asks for ExplainTrustPriors(dir, 0). A persona whose

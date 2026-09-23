@@ -153,6 +153,12 @@ type PersonaScoreDetail struct {
 	// present at zero, matching TrustPriors' own absence-not-zero convention, so
 	// a renderer can tell "never happened" from "measured zero".
 	Reasons map[string]int
+
+	// Raised is the sum of FindingsRaised over the Counted records: the rate's
+	// denominator. ratio returns 0 for a zero denominator, so without it a lens
+	// that raised nothing renders the same 0.0% as one that raised many findings
+	// and had none corroborated.
+	Raised int
 }
 
 // ExplainTrustPriors reads the same store TrustPriors reads, over the same

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -1022,6 +1023,33 @@ func TestPersonasScoreDetailLabels_MatchScorecardsVocabulary(t *testing.T) {
 	assert.Contains(t, scorecard.ScoreReasons(), scorecard.ReasonOutcomeIneligible)
 }
 
+// A lens that raised nothing and a lens whose every finding went uncorroborated
+// both have rate 0 (ratio returns 0 for a zero denominator). They are opposite
+// facts, so the row must carry the denominator and must not print 0.0% for the
+// lens that was never wrong because it never spoke.
+func TestRenderScoredList_ZeroRaisedIsNotAZeroRate(t *testing.T) {
+	zero := 0.0
+	scored := []personas.ScoredPersona{
+		{PersonaMeta: personas.PersonaMeta{Name: "quiet", Version: "built-in", Source: "built-in"},
+			Rate: &zero, Detail: &personas.ScoreDetail{Counted: 50}},
+		{PersonaMeta: personas.PersonaMeta{Name: "missed", Version: "built-in", Source: "built-in"},
+			Rate: &zero, Detail: &personas.ScoreDetail{Counted: 50, Raised: 100}},
+		{PersonaMeta: personas.PersonaMeta{Name: "unmeasured", Version: "built-in", Source: "built-in"}},
+	}
+	var out bytes.Buffer
+	require.NoError(t, renderScoredList(&out, scored))
+
+	rows := map[string][]string{}
+	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n")[1:] {
+		f := strings.Split(regexp.MustCompile(`\s{2,}`).ReplaceAllString(line, "\t"), "\t")
+		rows[f[0]] = f
+	}
+	assert.Equal(t, []string{"n/a (raised 0)", "0"}, rows["quiet"][4:6])
+	assert.Equal(t, []string{"0.0%", "100"}, rows["missed"][4:6])
+	assert.Equal(t, []string{"n/a", "n/a"}, rows["unmeasured"][4:6],
+		"no data renders n/a in both cells, never a measured zero")
+}
+
 func TestFormatScoreDetail_ZeroExclusionsIsDistinctFromNoData(t *testing.T) {
 	// AC 06-04's explicit-zero requirement, stated as the contrast it is about:
 	// "measured, excluded nothing" and "never measured" must not look alike.
@@ -1054,7 +1082,7 @@ func TestDocs_PersonasInstallMdDocumentsTheCasesColumn(t *testing.T) {
 	var table bytes.Buffer
 	require.NoError(t, renderScoredList(&table, nil))
 	header := strings.Fields(strings.SplitN(table.String(), "\n", 2)[0])
-	require.Equal(t, []string{"NAME", "VERSION", "SOURCE", "LANGUAGE", "CORROBORATION", "CASES"}, header)
+	require.Equal(t, []string{"NAME", "VERSION", "SOURCE", "LANGUAGE", "CORROBORATION", "RAISED", "CASES"}, header)
 	for _, col := range header {
 		assert.Contains(t, doc, col, "docs/personas-install.md must name every --scores column")
 	}
