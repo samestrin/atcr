@@ -3151,6 +3151,27 @@ func TestRetainForCompaction_ReDetectedFallbackIsCompactionInvariant(t *testing.
 	}
 }
 
+// TestRetainForCompaction_ReDetectedFallbackKeepsItsModelDonor covers the donor
+// half of the same fallback: the re-detection carries a Model of its own, so a
+// donor chosen for the effective record was never kept, while the fallback's
+// model-less attempts-exhausted record needed one.
+func TestRetainForCompaction_ReDetectedFallbackKeepsItsModelDonor(t *testing.T) {
+	const id = "id-redetect-donor"
+	attributed := mkTerminal(id, "2026-09-01T00:00:00Z", StatusAttemptsExhausted)
+	attributed.Model = "m2"
+	attributed.Reviewers = []string{"vera"}
+	bare := mkTerminal(id, "2026-09-02T00:00:00Z", StatusAttemptsExhausted)
+	bare.Reviewers = []string{"vera"}
+	redetected := mkTerminal(id, "2026-09-03T00:00:00Z", "")
+	redetected.Model = "m2"
+	redetected.Reviewers = []string{"vera"}
+
+	recs := []Record{attributed, bare, redetected}
+	before := AggregateQualitySignal(recs)
+	require.Len(t, before, 1, "precondition: the fallback reports the exhausted outcome")
+	assert.Equal(t, before, AggregateQualitySignal(retainForCompaction(recs)))
+}
+
 // recordNames renders a retained set as sorted per-record names, so two sets can
 // be compared by membership rather than by slice order.
 func recordNames(recs []Record) []string {
