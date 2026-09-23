@@ -2917,3 +2917,18 @@ func TestResolveTrustPriorsAndUnmeasured_CountsLensesOnlyTheOutcomeGateDrops(t *
 	assert.NotContains(t, priors, "dax")
 	assert.Equal(t, 1, unmeasured, "dax clears the floor except for its missing outcomes; mira never would")
 }
+
+// TestWeightedRate_UnmeasurableConfirmationFallsBackToBinary pins the !ok arm
+// after confirmationFactor: a confirmation below minConfirmationOutcomes, or one
+// carrying a negative count, is not a measurement, so the weighted branch must
+// return the binary rate rather than multiply the credit by a zero factor.
+func TestWeightedRate_UnmeasurableConfirmationFallsBackToBinary(t *testing.T) {
+	w := weightedTally{credit: 5, raised: 10, runs: DefaultTrustMinRuns}
+	binary := ratio(3, 10)
+	for name, c := range map[string]Confirmation{
+		"below the outcome floor": {Dismissed: minConfirmationOutcomes - 1},
+		"negative count":          {Confirmed: -1, Dismissed: minConfirmationOutcomes + 5},
+	} {
+		assert.InDelta(t, binary, weightedRate(3, 10, w, c, 0), 1e-9, name)
+	}
+}
