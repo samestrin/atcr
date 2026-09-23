@@ -5,6 +5,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -106,4 +107,22 @@ func TestFanoutValidReviewerOutcome_AgreesWithBenchmarkValidOutcome(t *testing.T
 		assert.False(t, fanout.ValidReviewerOutcome(s),
 			"fanout accepts %q, which benchmark rejects — the literals have drifted", s)
 	}
+}
+
+// TestScorecardEligibleOutcomes_MatchBenchmarkConstants closes the gap the
+// header above describes: scorecard's four trust-side eligibility literals were
+// unexported, so this file — the one place both spellings can be compared —
+// could not pin them, and scorecard's own comment said exactly that. They are
+// now exported through scorecard.EligibleOutcomes(), so the direct pin exists
+// and a renamed benchmark.Outcome* VALUE (or a drifted scorecard literal)
+// fails here instead of silently splitting trust-side eligibility from the
+// vocabulary it claims to speak.
+func TestScorecardEligibleOutcomes_MatchBenchmarkConstants(t *testing.T) {
+	assert.Equal(t, []string{
+		benchmark.OutcomeFindings,
+		benchmark.OutcomeClean,
+		benchmark.OutcomeUngrounded,
+		benchmark.OutcomeFiltered,
+	}, scorecard.EligibleOutcomes(),
+		"scorecard's trust-side eligibility allowlist must stay value-identical to benchmark's four eligible outcomes")
 }

@@ -1312,18 +1312,31 @@ func intersects(remit []string, union map[string]struct{}) bool {
 // internal/benchmark imports this package and importing it back would close a
 // cycle. internal/benchmark/outcome.go stays the vocabulary's single definition.
 //
-// These four are NOT covered by cli/fanout_outcome_parity_test.go — they are
-// unexported, so that test cannot see them. They are pinned only indirectly, by
-// this package's independently-written test literals and by
-// TestEmitForReconcile_OutOfVocabularyOutcomeIsCoercedToUnknown. Filed as TD:
-// the durable fix is an exported vocabulary slice in internal/benchmark that
-// every site iterates.
+// These four are exported for pinning through EligibleOutcomes() below (the
+// constants themselves stay unexported — exporting the strings directly would
+// invite ad-hoc spelling at call sites), so cli/fanout_outcome_parity_test.go
+// can compare them against benchmark's constants directly. They remain pinned
+// in-package by the independently-written test literals and by
+// TestEmitForReconcile_OutOfVocabularyOutcomeIsCoercedToUnknown. The durable
+// fix — an exported vocabulary slice in internal/benchmark that every site
+// iterates — stays barred by the import cycle adjudicated in C5/C6.
 const (
 	outcomeFindings   = "findings"
 	outcomeClean      = "clean"
 	outcomeUngrounded = "ungrounded"
 	outcomeFiltered   = "filtered"
 )
+
+// EligibleOutcomes returns the four outcome values eligibleOutcomeRuns accepts,
+// in benchmark vocabulary order (findings, clean, ungrounded, filtered). It
+// exists so cli — the one package that may import both sides of the C5/C6
+// import cycle — can pin these literals against internal/benchmark's constants
+// directly (TestScorecardEligibleOutcomes_MatchBenchmarkConstants) instead of
+// relying on the transitive pin chain. A new eligible outcome grows this slice
+// and the parity test together.
+func EligibleOutcomes() []string {
+	return []string{outcomeFindings, outcomeClean, outcomeUngrounded, outcomeFiltered}
+}
 
 // unresolvedEraRuns keeps the records of ONE FindingsRaised definition, never a
 // mix of both.
