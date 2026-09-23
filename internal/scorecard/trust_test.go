@@ -1610,6 +1610,21 @@ func TestOpportunity_SchemaGateIsPinnedToTheIntroducingVersionNotTheMovingOne(t 
 // TestTrustPriors_EraIsDecidedBeforeTheOpportunityFilter pins the OTHER end of
 // the split link: the filter half must run AFTER unresolvedEraRuns.
 //
+// FIXTURE PROVENANCE — synthetic, deliberately. The era-1 records below carry
+// SchemaVersion 2, an Outcome and CategoriesRaised alongside the era-1
+// discriminator (RaisedDenominator 0 / RaisedIncludesUnresolved false) — a
+// combination Emit can never write, because it always stamps
+// RaisedDenominatorCurrent and RaisedIncludesUnresolved on every record, and a
+// genuine era-1 record predates categories_raised (schema 2) and Outcome
+// (v2) entirely. This is a future-era stand-in, not an emitter-shaped record:
+// the ordering under test lives in unresolvedEraRuns and opportunitySetRuns,
+// which read the era discriminator and the category set independently of the
+// schema/outcome fields, so the synthetic combination exercises the real link
+// order without asserting anything about the impossible fields themselves. If
+// a future era bump makes the combination real (era N records judged under a
+// newer schema), this comment is the marker to update, and the test's premise
+// becomes emitter-real rather than synthetic.
+//
 // sasha here has a high-scoring era-1 history (in remit, routed phantoms
 // EXCLUDED from the denominator) and a current-era history that is out of remit.
 // unresolvedEraRuns must see both and pick era 3 as sasha's newest definition,
