@@ -1007,7 +1007,14 @@ func eligibleOutcomeRuns(records []Record) []Record {
 func opportunityUnions(records []Record) map[string]map[string]struct{} {
 	seenByRun := map[string]map[string]struct{}{}
 	for _, r := range records {
-		if r.RecordType != RecordTypeReviewer || r.SchemaVersion < categoriesRaisedSinceSchema {
+		// An era-uninterpretable record may NOT contribute topic evidence —
+		// decided here deliberately, matching unresolvedEraRuns' exclusion. A
+		// record whose RaisedDenominator exceeds RaisedDenominatorCurrent was
+		// computed under a definition this binary does not implement, so this
+		// binary refuses to score it; letting its category word still flip a
+		// run's union non-empty would let an unscorable record decide which
+		// OTHER lenses get scored on that run.
+		if r.RecordType != RecordTypeReviewer || r.SchemaVersion < categoriesRaisedSinceSchema || r.RaisedDenominator > RaisedDenominatorCurrent {
 			continue
 		}
 		for _, c := range r.CategoriesRaised {
