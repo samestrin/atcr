@@ -251,9 +251,9 @@ func detailsFromRecords(records []Record, minRuns int) map[string]PersonaScoreDe
 	// only candidate — Record carries no unique id, and C15 refused to add one),
 	// so when one run holds two records for a reviewer and only one is eligible,
 	// the ineligible one's key is still present among the survivors and its
-	// exclusion is never noted. Not hypothetical: reconcile.go derives a run id
-	// as ReconciledAt + "-" + the review directory's basename, so two reconciles
-	// of one directory inside the same second collide.
+	// exclusion is never noted. Not hypothetical: RunIDForReviewDir derives a run
+	// id from ReconciledAt and the review directory alone, so two reconciles of
+	// one directory inside the same second collide.
 	//
 	// Re-asking the predicate has no such failure mode, is cheaper than building
 	// the key set, and is the reason outcomeEligible was extracted at all.

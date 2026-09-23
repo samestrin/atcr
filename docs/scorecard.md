@@ -64,7 +64,7 @@ carries neither and is read as "not measured", never as a measured zero.
 |-------|------|----------|-------------|
 | `schema_version` | int | always | Record schema version. Currently `2`. |
 | `record_type` | string | always | `"reviewer"` for a per-reviewer row, `"aggregate"` for the run summary. Aggregate rows leave `reviewer`/`model`/`role` empty; consumers key on `record_type`. |
-| `run_id` | string | always | `<RFC3339 reconciled_at>-<review-dir base>`, e.g. `2026-06-14T10:00:00Z-abc123`. Uniquely identifies the run and selects the month file. |
+| `run_id` | string | always | `<RFC3339 reconciled_at>-<review-dir base>-<8 hex chars of sha256(absolute review dir)>`, e.g. `2026-06-14T10:00:00Z-abc123-1f2e3d4c`; runs reconciled before the hash was added carry the bare `<reconciled_at>-<review-dir base>` form, which `atcr scorecard <review-dir>` still finds. Uniquely identifies the run and selects the month file. |
 | `reviewer` | string | always (empty on aggregate) | Reviewer/persona name (e.g. `bruce`). |
 | `model` | string | always (empty on aggregate) | Model id the reviewer ran on (e.g. `claude-sonnet-4-6`). |
 | `role` | string | always (empty on aggregate) | Pipeline role. Constant `"reviewer"` for reconcile-derived records. |

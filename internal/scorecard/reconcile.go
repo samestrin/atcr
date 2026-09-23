@@ -277,23 +277,7 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 		}
 	}
 
-	// RunID discriminates on the ABSOLUTE review directory, not just its basename:
-	// two repositories checked out side by side produce sibling directories with
-	// the same leaf name, and two runs landing in the same second would otherwise
-	// share an id — opportunityUnions would then MERGE their category sets (the
-	// exact "every lens permanently in-remit after one broad run" failure its
-	// comment warns against) and pairTallies would count the two runs as one Case
-	// with max-collapsed evidence. The hash covers the caller-supplied path —
-	// the identity the run is anchored to; ReconciledAt + basename stay the
-	// leading components so IsRunID/monthFromRunID/runIDTime keep parsing it
-	// unchanged (paths.go's regex tolerates anything after the timestamp).
-	absDir, err := filepath.Abs(reviewDir)
-	if err != nil {
-		absDir = reviewDir
-	}
-	pathHash := sha256.Sum256([]byte(absDir))
-	runID :=
-		res.Summary.ReconciledAt + "-" + filepath.Base(reviewDir) + "-" + hex.EncodeToString(pathHash[:4])
+	runID := RunIDForReviewDir(res.Summary.ReconciledAt, reviewDir)
 	verPath := filepath.Join(reviewDir, "reconciled", "verification.json")
 	// Emit is best-effort and logs its own failures; ignore the return so
 	// reconcile never fails on a scorecard write.
@@ -312,6 +296,33 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 		GrayZonePairs:      grayPairs,
 		VerificationPath:   verPath,
 	}, opts)
+}
+
+// RunIDForReviewDir is the run id EmitForReconcile writes for a review
+// directory. It is the ONE place that id is built, so `atcr scorecard
+// <review-dir>` looks up exactly what reconcile wrote.
+//
+// It discriminates on the ABSOLUTE review directory, not just its basename:
+// two repositories checked out side by side produce sibling directories with
+// the same leaf name, and two runs landing in the same second would otherwise
+// share an id — opportunityUnions would then MERGE their category sets (the
+// exact "every lens permanently in-remit after one broad run" failure its
+// comment warns against) and pairTallies would count the two runs as one Case
+// with max-collapsed evidence. The hash covers the caller-supplied path —
+// the identity the run is anchored to; ReconciledAt + basename stay the
+// leading components so IsRunID/monthFromRunID/runIDTime keep parsing it
+// unchanged (paths.go's regex tolerates anything after the timestamp).
+//
+// Runs reconciled before the hash was added carry the bare
+// ReconciledAt-basename form; a reader that must find those looks that form up
+// as a fallback.
+func RunIDForReviewDir(reconciledAt, reviewDir string) string {
+	absDir, err := filepath.Abs(reviewDir)
+	if err != nil {
+		absDir = reviewDir
+	}
+	pathHash := sha256.Sum256([]byte(absDir))
+	return reconciledAt + "-" + filepath.Base(reviewDir) + "-" + hex.EncodeToString(pathHash[:4])
 }
 
 // outcomeFor classifies one agent's status for the durable record, refusing to
