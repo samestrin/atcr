@@ -2811,3 +2811,24 @@ func TestOpportunityUnions_AnAboveCurrentDenominatorRecordContributesNoTopic(t *
 	assert.NotContains(t, unions, "run-1",
 		"an era-uninterpretable record must not contribute topic evidence")
 }
+
+func TestOpportunity_AnUnrecognisedCategoryIsNotATopic(t *testing.T) {
+	// A stored categories_raised value this binary does not recognise (a newer
+	// pin wrote it; reclib/ is separately versioned) must not count as a
+	// discriminating topic. Under the bare denylist test it flipped the run's
+	// union from empty to non-empty, matched no entry in personaRemit, and
+	// dropped every mapped lens that raised nothing on that run — the exact
+	// blackout TestPersonaRemit_EveryDiscriminatingCategoryHasALens exists to
+	// prevent, reached from outside the vocabulary the test can see.
+	junk := oppRec("run-1", "sasha", []string{"reclib-word-this-pin-never-had"})
+	unions := opportunityUnions([]Record{junk})
+	assert.NotContains(t, unions, "run-1",
+		"an out-of-vocabulary word is not topic evidence — the union stays empty")
+
+	// Chain level: the silent mapped lens on that run must take the documented
+	// refuse-to-guess pass-through, not be deleted from the denominator.
+	dax := oppRec("run-1", "dax", nil)
+	out := opportunitySetRuns([]Record{junk, dax}, unions)
+	assert.Contains(t, out, dax,
+		"an empty union means nobody raised a scorable topic — pass the run through un-scoped")
+}
