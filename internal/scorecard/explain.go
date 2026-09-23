@@ -73,6 +73,17 @@ const (
 	// out-of-scope — see nonDiscriminating). Naming only the first would leave a
 	// phantom-raiser that labels everything `invariant` with the same free pass.
 	ReasonNoRecognizedCategory = "no-recognized-category"
+
+	// ReasonNotOpportunityScoped: the lens has no in-repo persona definition
+	// (vera, pace, brad, archer, ronin per sprint-plan C9/C11), so
+	// opportunityDisposition answers dispCounted for every one of its records
+	// without ever consulting a remit — the lens is never opportunity-scoped,
+	// never judged, and never dropped. The record is KEPT and annotated: this
+	// label states the scope decision behind that pass-through (epic acceptance
+	// criterion 7) instead of leaving the five lenses silently different from
+	// the nine grounded ones. It is not an exclusion and must never join
+	// ReasonExcludes — the chain did not drop anything.
+	ReasonNotOpportunityScoped = "not opportunity-scoped: no in-repo persona definition"
 )
 
 // ScoreReasons returns the closed disposition-reason vocabulary, in a stable
@@ -90,6 +101,7 @@ func ScoreReasons() []string {
 		ReasonSupersededEra,
 		ReasonNotInOpportunitySet,
 		ReasonNoRecognizedCategory,
+		ReasonNotOpportunityScoped,
 	}
 }
 
@@ -288,6 +300,16 @@ func detailsFromRecords(records []Record, minRuns int) map[string]PersonaScoreDe
 	// TD-032's annotation.
 	for _, r := range afterEra {
 		if r.RecordType != RecordTypeReviewer {
+			continue
+		}
+		// The unmapped statement comes FIRST, ahead of the era check: an
+		// unmapped lens is never opportunity-scoped regardless of which schema
+		// era its records were written under, and the annotation exists so the
+		// explanation says so (epic acceptance criterion 7) rather than leaving
+		// the five registry-only lenses silently different from the mapped nine.
+		if _, mapped := remitFor(r.Reviewer); !mapped {
+			note(r.Reviewer, ReasonNotOpportunityScoped)
+			count(r.Reviewer)
 			continue
 		}
 		if r.SchemaVersion < categoriesRaisedSinceSchema {

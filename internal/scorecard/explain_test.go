@@ -49,24 +49,25 @@ func scopedOutcome(t *testing.T, dir string, n int, persona, outcome string, rai
 // the cli/ drift test, which is a legal importer of both packages.
 const outcomeTruncatedLiteral = "truncated"
 
-func TestScoreReasons_IsAClosedFiveMemberVocabulary(t *testing.T) {
-	// C24's golden pin, grown 3→5 by the TD-041 clarification (2026-09-22): the
-	// two exclusion causes the walk could not express — a non-strict consensus
-	// level and a superseded raised-denominator era — join the vocabulary.
-	// AC 06-05 requires the reason labels be drawn from a closed, finite set so
-	// cli/personas.go's renderer can rely on them; this is the test that makes
-	// growing the set a deliberate act rather than a silent one. A sixth member
-	// must update this test FIRST.
+func TestScoreReasons_IsAClosedSixMemberVocabulary(t *testing.T) {
+	// C24's golden pin, grown 3→5 by the TD-041 clarification (2026-09-22) and
+	// 5→6 by the record.go:476 TD row (epic acceptance criterion 7): the
+	// not-opportunity-scoped statement the five registry-only lenses' records
+	// needed. AC 06-05 requires the reason labels be drawn from a closed,
+	// finite set so cli/personas.go's renderer can rely on them; this is the
+	// test that makes growing the set a deliberate act rather than a silent
+	// one. A seventh member must update this test FIRST.
 	assert.Equal(t, []string{
 		"outcome-ineligible",
 		"consensus-not-strict",
 		"superseded-era",
 		"category-not-in-opportunity-set",
 		"no-recognized-category",
+		"not opportunity-scoped: no in-repo persona definition",
 	}, ScoreReasons())
 
 	// The split matters as much as the membership: four labels name a DROPPED
-	// record and one names a KEPT one, and a renderer that sums all five into
+	// record and two name KEPT ones, and a renderer that sums all six into
 	// an "excluded" column reports a lens as less-measured than it is.
 	assert.True(t, ReasonExcludes(ReasonOutcomeIneligible))
 	assert.True(t, ReasonExcludes(ReasonConsensusNotStrict))
@@ -74,6 +75,8 @@ func TestScoreReasons_IsAClosedFiveMemberVocabulary(t *testing.T) {
 	assert.True(t, ReasonExcludes(ReasonNotInOpportunitySet))
 	assert.False(t, ReasonExcludes(ReasonNoRecognizedCategory),
 		"TD-032's label annotates a record that was kept and charged, not one that was dropped")
+	assert.False(t, ReasonExcludes(ReasonNotOpportunityScoped),
+		"the unmapped statement annotates a kept record — a scope decision, not a drop")
 	assert.False(t, ReasonExcludes("not-a-member"))
 }
 
@@ -550,7 +553,11 @@ func TestExplainTrustPriors_UnmappedLensIsNeverAnnotatedUnlabelled(t *testing.T)
 	assert.Equal(t, 20, detail["vera"].Counted)
 	assert.Zero(t, detail["vera"].Reasons[ReasonNoRecognizedCategory],
 		"a lens the opportunity gate never judges must carry no opportunity-flavoured reason")
-	assert.Empty(t, detail["vera"].Reasons)
+	// Grown from Empty by the record.go:476 TD row (epic AC 7): vera now
+	// carries exactly ONE reason — the scope statement saying WHY the gate
+	// never judges it — and no judgment-flavoured label.
+	assert.Equal(t, map[string]int{ReasonNotOpportunityScoped: 20}, detail["vera"].Reasons,
+		"the unmapped lens must state its scope status and carry nothing else")
 }
 
 func TestExplainTrustPriors_ReasonsMapIsNotAliasedToTheInternalFold(t *testing.T) {
@@ -567,4 +574,34 @@ func TestExplainTrustPriors_ReasonsMapIsNotAliasedToTheInternalFold(t *testing.T
 	second, err := ExplainTrustPriors(dir, 10)
 	require.NoError(t, err)
 	assert.Equal(t, 3, second["dax"].Reasons[ReasonOutcomeIneligible])
+}
+
+func TestExplainTrustPriors_UnmappedLensSaysWhyItIsNeverOpportunityScoped(t *testing.T) {
+	// Epic acceptance criterion 7, via the record.go:476 TD row: the five
+	// registry-only lenses are never opportunity-scoped (C9/C11), and until now
+	// the explain surface left them silently different — vera's Reasons map was
+	// empty while dax's named its opportunity dispositions. The per-lens
+	// explanation is the place that must say WHY.
+	dir := t.TempDir()
+	for i := 0; i < 20; i++ {
+		runID := runIDAt(time.Now(), fmt.Sprintf("vo-%03d", i))
+		vera := reviewer_(runID, "Vera", "m1", 2, 1)
+		vera.CategoriesRaised = []string{reclib.CategoryTesting}
+		require.NoError(t, Append(dir, vera))
+		dax := reviewer_(runID, "Dax", "m1", 1, 1)
+		dax.CategoriesRaised = []string{reclib.CategoryTesting}
+		require.NoError(t, Append(dir, dax))
+	}
+
+	detail, err := ExplainTrustPriors(dir, 10)
+	require.NoError(t, err)
+	require.Contains(t, detail, "vera")
+	assert.Equal(t, 20, detail["vera"].Counted,
+		"unmapped means not scoped, never dropped — the count must be untouched")
+	assert.Equal(t, 20, detail["vera"].Reasons[ReasonNotOpportunityScoped],
+		"the per-lens explanation must state that the lens is not opportunity-scoped and why")
+	assert.Zero(t, detail["dax"].Reasons[ReasonNotOpportunityScoped],
+		"a mapped lens is opportunity-scoped and must not carry the unmapped annotation")
+	assert.False(t, ReasonExcludes(ReasonNotOpportunityScoped),
+		"the label describes a scope decision, not a drop — it must never inflate Excluded")
 }
