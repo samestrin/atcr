@@ -81,7 +81,7 @@ func TestAXIDocs_LegacyPipeFallback(t *testing.T) {
 	notice := mustMatch(t, readRepoFile(t, "../../cli/axi.go"), `const legacyPipeDeprecation = "([^"]+)"`, "legacyPipeDeprecation constant")
 	require.Contains(t, readRepoFile(t, "../../cli/review.go"), `Bool("legacy-pipe"`, "review registers --legacy-pipe")
 	require.Contains(t, readRepoFile(t, "../../cli/main.go"), `Bool("legacy-pipe"`, "the root command registers --legacy-pipe")
-	require.Contains(t, readRepoFile(t, "../../cli/axi.go"), `os.Getenv("ATCR_LEGACY_PIPE")`, "cli reads ATCR_LEGACY_PIPE")
+	require.Contains(t, readRepoFile(t, "../../cli/axi.go"), `os.LookupEnv("ATCR_LEGACY_PIPE")`, "cli reads ATCR_LEGACY_PIPE")
 	for name, doc := range axiDocs(t) {
 		for _, want := range []string{"--format " + format, "--legacy-pipe", "ATCR_LEGACY_PIPE=1", notice} {
 			require.Containsf(t, doc, want, "%s must document %q", name, want)
