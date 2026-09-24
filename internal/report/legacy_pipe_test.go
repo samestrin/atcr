@@ -119,3 +119,14 @@ func TestLegacyPipe_HeadersArePipeDelimited(t *testing.T) {
 		assert.Regexpf(t, `^[a-z_]+\[\d+\|\]\{`, first, "%s: legacy header must declare the pipe delimiter", tc.name)
 	}
 }
+
+// TestFormatPipe_IsValidAndRendersLegacy pins `pipe` as a CLI format whose base
+// Render output equals the frozen legacy findings encoder.
+func TestFormatPipe_IsValidAndRendersLegacy(t *testing.T) {
+	assert.True(t, ValidFormat(FormatPipe))
+	assert.Contains(t, FormatList(), FormatPipe)
+	var got, want bytes.Buffer
+	require.NoError(t, Render(&got, sample(), FormatPipe))
+	require.NoError(t, renderPipeAXI(&want, sample()))
+	assert.Equal(t, want.String(), got.String())
+}
