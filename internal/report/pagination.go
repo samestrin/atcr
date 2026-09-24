@@ -16,11 +16,14 @@ import (
 // N-1 findings, not N — the knob bounds physical lines, not data rows.
 const AXIMaxLinesDefault = 500
 
-// PaginateAXI applies the deterministic line cap to an already-rendered AXI
-// payload. It treats rendered as opaque text (Story 1's renderer has already
-// stripped ANSI/control bytes) and caps it to at most maxLines physical lines.
+// PaginateAXI applies the deterministic line cap to an already-rendered legacy
+// pipe AXI payload (RenderPipeAXIPaginated). The standard TOON path caps rows
+// before encoding instead (RenderAXIPaginated), so a byte cut can never leave a
+// header N a stock decoder would reject. It treats rendered as opaque text (the
+// renderer has already stripped ANSI/control bytes) and caps it to at most
+// maxLines physical lines.
 //
-// renderAXI emits exactly one physical line per finding (a row never spans
+// renderPipeAXI emits exactly one physical line per finding (a row never spans
 // lines — see axiRow), so a physical-line cap is a row-boundary cap: the cut
 // point always falls between whole rows and no row is split mid-line (AC 03-01
 // Edge Case 4). The boundary is inclusive — a payload of exactly maxLines lines
@@ -30,7 +33,7 @@ const AXIMaxLinesDefault = 500
 // true pre-truncation element count. That true total is what the array header's
 // N already declares; it survives capping because the header is line 1 and is
 // never dropped (AC 03-02). The returned total is derived from the pre-truncation
-// physical row count, which equals the header's N by construction (renderAXI
+// physical row count, which equals the header's N by construction (renderPipeAXI
 // emits exactly one line per finding) — it is a convenience for callers/tests,
 // the header N remains the authoritative on-wire count. The cap is a single O(n)
 // pass with no re-parsing or backtracking, and is a bounded,
@@ -49,14 +52,14 @@ func PaginateAXI(rendered []byte, maxLines int) (out []byte, truncated bool, tot
 		maxLines = AXIMaxLinesDefault
 	}
 	// SplitAfter keeps the terminating \n on each piece, so re-joining is exact
-	// and the byte-for-byte passthrough below is guaranteed. renderAXI always
+	// and the byte-for-byte passthrough below is guaranteed. renderPipeAXI always
 	// \n-terminates, leaving a trailing empty segment we drop.
 	lines := bytes.SplitAfter(rendered, []byte("\n"))
 	if n := len(lines); n > 0 && len(lines[n-1]) == 0 {
 		lines = lines[:n-1]
 	}
 	// The array header is line 1; every remaining physical line is one data row
-	// (renderAXI's contract), so the pre-truncation row count is the true total.
+	// (renderPipeAXI's contract), so the pre-truncation row count is the true total.
 	total = len(lines) - 1
 	if total < 0 {
 		total = 0
