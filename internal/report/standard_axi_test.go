@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	reclib "github.com/samestrin/atcr/reconcile"
+
 	"github.com/samestrin/atcr/internal/reconcile"
 )
 
@@ -136,5 +138,50 @@ func TestRenderAXIPaginated_NonPositiveMaxLinesClampsToDefault(t *testing.T) {
 		assert.Len(t, doc.Findings, 2, "maxLines=%d must clamp to the default cap", maxLines)
 		assert.False(t, doc.Truncated)
 		assert.Equal(t, 2, doc.Total)
+	}
+}
+
+// TestAXIRowKeysMatchColumnHeader pins that the standard encoder's column set —
+// the literal keys axiRow builds — equals axiColumns.header() for EVERY
+// combination of the optional signal flags. The two are independent literals
+// (header() serves the legacy pipe encoder; axiRow serves the standard path), so
+// only this equality keeps a rename in one place from silently desyncing
+// --format axi and --format pipe.
+func TestAXIRowKeysMatchColumnHeader(t *testing.T) {
+	blocks := []struct {
+		name string
+		on   func(f *reconcile.JSONFinding)
+	}{
+		{"disagreement", func(f *reconcile.JSONFinding) { f.Disagreement = "d" }},
+		{"verification", func(f *reconcile.JSONFinding) { f.Verification = &reclib.Verification{Verdict: "v"} }},
+		{"evidence", func(f *reconcile.JSONFinding) { f.EvidenceExec = &reconcile.EvidenceExec{Command: "c"} }},
+		{"fix_warning", func(f *reconcile.JSONFinding) { f.FixWarning = "w" }},
+		{"fix_review", func(f *reconcile.JSONFinding) { f.FixReview = "r" }},
+	}
+	base := reconcile.JSONFinding{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Fix: "f",
+		Category: "c", EstMinutes: 1, Reviewers: []string{"greta"}, Confidence: "HIGH",
+	}
+	for mask := 0; mask < 1<<len(blocks); mask++ {
+		f := base
+		for i, b := range blocks {
+			if mask&(1<<i) != 0 {
+				b.on(&f)
+			}
+		}
+		findings := []reconcile.JSONFinding{f}
+		var out bytes.Buffer
+		require.NoError(t, renderAXI(&out, findings))
+		header := strings.SplitN(out.String(), "\n", 2)[0]
+		open := strings.Index(header, "{")
+		close_ := strings.LastIndex(header, "}")
+		require.Greaterf(t, open, -1, "mask=%d: encoded header %q has no column block", mask, header)
+		require.Greaterf(t, close_, open, "mask=%d: encoded header %q malformed", mask, header)
+		var got []string
+		for _, col := range strings.Split(header[open+1:close_], ",") {
+			got = append(got, strings.Trim(strings.TrimSpace(col), `"`))
+		}
+		assert.Equalf(t, axiColumnsFor(findings).header(), got,
+			"mask=%d: standard row keys diverge from axiColumns.header()", mask)
 	}
 }

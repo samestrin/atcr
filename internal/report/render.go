@@ -120,8 +120,10 @@ func renderJSON(w io.Writer, findings []reconcile.JSONFinding) error {
 // axiColumns records which optional per-finding signals a payload declares. A
 // column appears only when at least one finding carries the signal, so a plain
 // findings list stays at the 9-column width — the same omitempty discipline the
-// JSON contract uses. Shared by the standard and legacy pipe encoders so the two
-// can never disagree on the column set.
+// JSON contract uses. Shared by the standard and legacy pipe encoders — though
+// only these boolean flags are shared: the column names/order are duplicated in
+// header() (legacy) and axiRow's literal keys (standard), an equality pinned by
+// TestAXIRowKeysMatchColumnHeader rather than guaranteed by construction.
 type axiColumns struct {
 	disagreement, verification, evidence, fixWarning, fixReview bool
 }
