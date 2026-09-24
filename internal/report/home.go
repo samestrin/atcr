@@ -26,7 +26,7 @@ var homeViewAXIHeader = []string{"exec_path", "description", "review_id", "revie
 // fields are strings; an empty review_id encodes as a quoted "" so a consumer
 // reads it back as an empty string, not null.
 func RenderHomeViewAXI(w io.Writer, s HomeViewAXI) error {
-	doc, err := singleRowAXI("home", homeViewAXIHeader, []any{s.ExecPath, s.Description, s.ReviewID, s.ReviewStatus})
+	doc, err := homeViewAXIDoc(s)
 	if err != nil {
 		return err
 	}

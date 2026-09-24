@@ -52,7 +52,13 @@ func encodeAXI(w io.Writer, v any) error {
 // findings encode as the TOON empty-array form findings[0]: (AC 01-01 Edge
 // Case 1), never a human "No findings." sentence.
 func renderAXI(w io.Writer, findings []reconcile.JSONFinding) error {
-	return encodeAXI(w, axiFindingsPayload{Findings: axiRows(findings)})
+	return encodeAXI(w, axiFindingsDoc(findings))
+}
+
+// axiFindingsDoc builds the unpaginated findings document renderAXI encodes.
+// Split out so tests can run goaxi.Check over the exact value that is emitted.
+func axiFindingsDoc(findings []reconcile.JSONFinding) axiFindingsPayload {
+	return axiFindingsPayload{Findings: axiRows(findings)}
 }
 
 // axiRows builds one ordered TOON row per finding. The slice is never nil, so an
@@ -140,10 +146,16 @@ func singleRowAXI(name string, header []string, values []any) (toon.Object, erro
 	return toon.NewObject(toon.Field{Key: name, Value: []toon.Object{toon.NewObject(fields...)}}), nil
 }
 
-// Compiling stubs for the RED step.
-func axiFindingsDoc(findings []reconcile.JSONFinding) axiFindingsPayload { return axiFindingsPayload{} }
-func axiPaginatedDoc(findings []reconcile.JSONFinding, maxLines int) axiPaginatedPayload {
-	return axiPaginatedPayload{}
+// reviewSummaryAXIDoc builds the one-row review_summary document. Identity
+// fields are strings; counts are bare TOON integers.
+func reviewSummaryAXIDoc(s ReviewSummaryAXI) (toon.Object, error) {
+	return singleRowAXI("review_summary", reviewSummaryAXIHeader, []any{
+		s.ID, s.Dir, s.AgentsSucceeded, s.AgentsTotal, s.AgentsFailed, s.AgentsTimedOut,
+		s.APICalls, s.FindingsTotal, s.FindingsCritical, s.FindingsHigh, s.FindingsMedium, s.FindingsLow,
+	})
 }
-func reviewSummaryAXIDoc(s ReviewSummaryAXI) (toon.Object, error) { return toon.Object{}, nil }
-func homeViewAXIDoc(s HomeViewAXI) (toon.Object, error)           { return toon.Object{}, nil }
+
+// homeViewAXIDoc builds the one-row home document. All four fields are strings.
+func homeViewAXIDoc(s HomeViewAXI) (toon.Object, error) {
+	return singleRowAXI("home", homeViewAXIHeader, []any{s.ExecPath, s.Description, s.ReviewID, s.ReviewStatus})
+}

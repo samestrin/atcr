@@ -99,6 +99,13 @@ func PaginateAXI(rendered []byte, maxLines int) (out []byte, truncated bool, tot
 // RenderPipeAXIPaginated; base Render(FormatAXI) stays the uncapped schema
 // encoder with no total/truncated keys.
 func RenderAXIPaginated(w io.Writer, findings []reconcile.JSONFinding, maxLines int) error {
+	return encodeAXI(w, axiPaginatedDoc(findings, maxLines))
+}
+
+// axiPaginatedDoc caps findings to maxLines-1 rows (the header is line 1) and
+// builds the paginated document. Split out so tests can run goaxi.Check over the
+// exact value that is emitted.
+func axiPaginatedDoc(findings []reconcile.JSONFinding, maxLines int) axiPaginatedPayload {
 	if maxLines < 1 {
 		maxLines = AXIMaxLinesDefault
 	}
@@ -107,11 +114,11 @@ func RenderAXIPaginated(w io.Writer, findings []reconcile.JSONFinding, maxLines 
 	if limit := maxLines - 1; total > limit {
 		emitted = findings[:limit]
 	}
-	return encodeAXI(w, axiPaginatedPayload{
+	return axiPaginatedPayload{
 		// Columns are derived from the emitted rows, so a column whose only carrier
 		// was cut is not declared as all-empty.
 		Findings:  axiRows(emitted),
 		Total:     total,
 		Truncated: len(emitted) < total,
-	})
+	}
 }

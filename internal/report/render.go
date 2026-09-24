@@ -201,13 +201,9 @@ var reviewSummaryAXIHeader = []string{
 // (review_summary[1]{...}:) through the same go-axi encoder as the findings
 // payload, so it carries the same no-ANSI / no-Markdown structural guarantee and
 // stays byte-identical between `atcr review --axi` and `atcr resume --axi` for
-// equivalent data (AC 01-03/01-04). Identity fields are strings; counts are
-// bare TOON integers.
+// equivalent data (AC 01-03/01-04).
 func RenderReviewSummaryAXI(w io.Writer, s ReviewSummaryAXI) error {
-	doc, err := singleRowAXI("review_summary", reviewSummaryAXIHeader, []any{
-		s.ID, s.Dir, s.AgentsSucceeded, s.AgentsTotal, s.AgentsFailed, s.AgentsTimedOut,
-		s.APICalls, s.FindingsTotal, s.FindingsCritical, s.FindingsHigh, s.FindingsMedium, s.FindingsLow,
-	})
+	doc, err := reviewSummaryAXIDoc(s)
 	if err != nil {
 		return err
 	}
