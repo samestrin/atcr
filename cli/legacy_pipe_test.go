@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -42,6 +43,30 @@ func TestLegacyPipeNoticeNamesTrigger(t *testing.T) {
 	require.Equal(t, 0, code)
 	assert.Contains(t, stderr, "(enabled by ATCR_LEGACY_PIPE")
 	assert.NotContains(t, stdout, "deprecated")
+}
+
+// TestAxiImpliesLegacyPipeFlag walks the whole command tree and asserts every
+// command that registers --axi also registers --legacy-pipe — the invariant the
+// root PersistentPreRunE's GetBool("legacy-pipe") depends on (TD:
+// cli/main.go:444, UNDER_ENGINEERING). A future command that adds --axi without
+// the legacy flag would make that GetBool discard a lookup error and silently
+// read false.
+func TestAxiImpliesLegacyPipeFlag(t *testing.T) {
+	found := 0
+	var visit func(c *cobra.Command)
+	visit = func(c *cobra.Command) {
+		if c.Flags().Lookup("axi") != nil {
+			found++
+			if c.Flags().Lookup("legacy-pipe") == nil {
+				t.Errorf("command %q registers --axi but not --legacy-pipe", c.Name())
+			}
+		}
+		for _, sub := range c.Commands() {
+			visit(sub)
+		}
+	}
+	visit(NewRootCmd())
+	require.Greater(t, found, 0, "no --axi commands found — the walk is broken")
 }
 
 // TestLegacyPipeReportAsymmetryDocumented pins the intentional surface
