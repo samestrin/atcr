@@ -393,6 +393,18 @@ func TestMergeResultGroup_ModelIsTheModalServingModel(t *testing.T) {
 		}
 		assert.Equal(t, "backup-model", mergeResultGroup(g, nil).Model)
 	})
+	t.Run("the window and reservation move with the model", func(t *testing.T) {
+		g := []Result{
+			{Agent: "reviewer", Status: StatusOK, Model: "backup-model", ResolvedWindow: 32768, ReservedOutputTokens: 4096, ResolvedMaxTokens: 4096},
+			{Agent: "reviewer", Status: StatusOK, Model: "primary-model", ResolvedWindow: 200000, ReservedOutputTokens: 8192, ResolvedMaxTokens: 16384},
+			{Agent: "reviewer", Status: StatusOK, Model: "primary-model", ResolvedWindow: 200000, ReservedOutputTokens: 8192, ResolvedMaxTokens: 16384},
+		}
+		out := mergeResultGroup(g, nil)
+		assert.Equal(t, "primary-model", out.Model)
+		assert.Equal(t, 200000, out.ResolvedWindow)
+		assert.Equal(t, 8192, out.ReservedOutputTokens)
+		assert.Equal(t, 16384, out.ResolvedMaxTokens)
+	})
 	t.Run("no successful chunk keeps chunk 0's model", func(t *testing.T) {
 		g := []Result{
 			{Agent: "reviewer", Status: StatusFailed, Model: "primary-model"},
