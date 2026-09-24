@@ -175,8 +175,8 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		MaxParallel:        DefaultMaxParallel,
 		CacheMaxBytes:      DefaultCacheMaxBytes,
 		MaxSprintPlanBytes: DefaultMaxSprintPlanBytes,
-		MaxClaimBytes:      claimBytesPtr(DefaultMaxClaimBytes),
-		MaxPrefetchBytes:   claimBytesPtr(DefaultMaxPrefetchBytes),
+		MaxClaimBytes:      byteCeilingPtr(DefaultMaxClaimBytes),
+		MaxPrefetchBytes:   byteCeilingPtr(DefaultMaxPrefetchBytes),
 		MaxRetries:         DefaultMaxRetries,
 		InitialBackoffMs:   DefaultInitialBackoffMs,
 	}
@@ -209,13 +209,13 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		// exactly like MaxSprintPlanBytes. A pointer means an explicit 0 (disabled)
 		// survives rather than being read as "unset".
 		if reg.MaxClaimBytes != nil {
-			s.MaxClaimBytes = claimBytesPtr(*reg.MaxClaimBytes)
+			s.MaxClaimBytes = byteCeilingPtr(*reg.MaxClaimBytes)
 		}
 		// MaxPrefetchBytes (Epic 35.16.8) sits at the registry and project tiers
 		// only, exactly like MaxClaimBytes. A pointer means an explicit 0 (disabled)
 		// survives rather than being read as "unset".
 		if reg.MaxPrefetchBytes != nil {
-			s.MaxPrefetchBytes = claimBytesPtr(*reg.MaxPrefetchBytes)
+			s.MaxPrefetchBytes = byteCeilingPtr(*reg.MaxPrefetchBytes)
 		}
 		// Retry tunables live only at the registry (global) tier and the agent
 		// tier (Epic 4.6) — the project tier intentionally does not carry them,
@@ -251,10 +251,10 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 			s.MaxSprintPlanBytes = *proj.MaxSprintPlanBytes
 		}
 		if proj.MaxClaimBytes != nil {
-			s.MaxClaimBytes = claimBytesPtr(*proj.MaxClaimBytes)
+			s.MaxClaimBytes = byteCeilingPtr(*proj.MaxClaimBytes)
 		}
 		if proj.MaxPrefetchBytes != nil {
-			s.MaxPrefetchBytes = claimBytesPtr(*proj.MaxPrefetchBytes)
+			s.MaxPrefetchBytes = byteCeilingPtr(*proj.MaxPrefetchBytes)
 		}
 		if v := strings.TrimSpace(proj.ReviewStrategy); v != "" {
 			s.ReviewStrategy = v
@@ -420,14 +420,12 @@ func deref(p *string) string {
 	return strings.TrimSpace(*p)
 }
 
-// claimBytesPtr returns a pointer to v. Despite the name it is generic, and
-// serves every pointer-valued byte ceiling in this file: Settings.MaxClaimBytes
-// and Settings.MaxPrefetchBytes are both pointers so an explicit 0 (the feature
-// disabled) stays distinguishable from an unresolved field. It takes the address
-// of its own parameter copy, so it snapshots rather than aliasing the caller's
-// pointer. Grepping this name to find the claim-ledger plumbing will therefore
-// also return pre-fetch hits.
-func claimBytesPtr(v int64) *int64 { return &v }
+// byteCeilingPtr returns a pointer to v. It serves every pointer-valued byte
+// ceiling in this file: Settings.MaxClaimBytes and Settings.MaxPrefetchBytes are
+// both pointers so an explicit 0 (the feature disabled) stays distinguishable
+// from an unresolved field. It takes the address of its own parameter copy, so
+// it snapshots rather than aliasing the caller's pointer.
+func byteCeilingPtr(v int64) *int64 { return &v }
 
 // ResolvedMaxClaimBytes returns the effective claim-ledger byte ceiling: the
 // embedded default when nothing resolved the field, otherwise the resolved
