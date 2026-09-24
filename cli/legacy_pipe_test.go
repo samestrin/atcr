@@ -67,6 +67,20 @@ func TestReportCmd_LegacyPipeEnvLeavesNonAXIAlone(t *testing.T) {
 	assert.NotContains(t, stderr, "deprecated")
 }
 
+// TestLegacyPipeEnvBadValueWarns pins that an unparseable ATCR_LEGACY_PIPE
+// value warns on stderr and fails open to standard TOON, mirroring
+// axiMaxLinesFromEnv's unrecognized-value warning (TD: cli/axi.go:47).
+func TestLegacyPipeEnvBadValueWarns(t *testing.T) {
+	isolate(t)
+	fixtureReconciled(t, "r", manyFindingsJSON(t, 3))
+	t.Setenv("ATCR_LEGACY_PIPE", "yes")
+	code, stdout, stderr := execCmdSplit(t, "report", "--format", "axi", "r")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, "findings[3]{", "unparseable value fails open to standard TOON")
+	assert.NotContains(t, stdout, "findings[3|]{")
+	assert.Contains(t, stderr, `unrecognized ATCR_LEGACY_PIPE value "yes"`)
+}
+
 // TestReportCmd_AXIDefaultIsStandardWithoutWarning pins the default: standard
 // TOON on stdout and no deprecation notice.
 func TestReportCmd_AXIDefaultIsStandardWithoutWarning(t *testing.T) {
