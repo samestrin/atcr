@@ -13,8 +13,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"unicode"
 	"unicode/utf8"
+
+	goaxi "github.com/samestrin/go-axi"
 
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/stream"
@@ -109,102 +110,73 @@ func renderJSON(w io.Writer, findings []reconcile.JSONFinding) error {
 	return err
 }
 
-// axiDelim is the TOON tabular-array delimiter for the axi payload: the pipe,
-// chosen so a row is visually and structurally adjacent to the existing
-// atcr-findings/v1 SEVERITY|FILE:LINE|... grammar rather than fragmenting the
-// machine-format surface (AC 01-01 Edge Case 2; toon-format-reference.md).
+// axiDelim is the TOON tabular-array delimiter for the axi payload.
 const axiDelim = '|'
+
+// axiColumns records which optional per-finding signals a payload declares. A
+// column appears only when at least one finding carries the signal, so a plain
+// findings list stays at the 9-column width — the same omitempty discipline the
+// JSON contract uses. Shared by the standard and legacy pipe encoders so the two
+// can never disagree on the column set.
+type axiColumns struct {
+	disagreement, verification, evidence, fixWarning, fixReview bool
+}
+
+// axiColumnsFor scans findings for the optional signals.
+func axiColumnsFor(findings []reconcile.JSONFinding) axiColumns {
+	var c axiColumns
+	for _, f := range findings {
+		c.disagreement = c.disagreement || f.Disagreement != ""
+		c.verification = c.verification || f.Verification != nil
+		c.evidence = c.evidence || f.EvidenceExec != nil
+		c.fixWarning = c.fixWarning || f.FixWarning != ""
+		c.fixReview = c.fixReview || f.FixReview != ""
+	}
+	return c
+}
+
+// header returns the ordered column names: the base 9 columns mirroring the
+// atcr-findings/v1 reconciled contract, then the additive disagreement,
+// verification.*, evidence_exec.*, fix_warning and fix_review columns.
+func (c axiColumns) header() []string {
+	h := []string{"severity", "file:line", "problem", "fix", "category", "est_minutes", "evidence", "reviewers", "confidence"}
+	if c.disagreement {
+		h = append(h, "disagreement")
+	}
+	if c.verification {
+		h = append(h, "verification.verdict", "verification.skeptic", "verification.notes", "verification.challenge_survived")
+	}
+	if c.evidence {
+		h = append(h, "evidence_exec.command", "evidence_exec.exit_code", "evidence_exec.output_excerpt")
+	}
+	if c.fixWarning {
+		h = append(h, "fix_warning")
+	}
+	if c.fixReview {
+		h = append(h, "fix_review")
+	}
+	return h
+}
 
 // renderAXI re-encodes findings as a TOON (Token-Optimized Object Notation)
 // tabular array — the token-dense machine payload for the agent-experience
-// (--axi) mode. The base columns mirror the atcr-findings/v1 reconciled 9-column
-// contract (SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|
-// REVIEWERS|CONFIDENCE) field-for-field, so the axi payload is a re-encoding of
-// the same machine contract a --format json consumer sees, not a new schema.
-//
-// The array header declares its element count (findings[N|]{...}:) and the pipe
-// delimiter. Free-text fields are quoted per TOON's must-quote rules (toonQuote);
-// only the five valid TOON escapes (\\ \" \n \r \t) are ever emitted and every
-// other control byte (ANSI \x1b, U+2028/U+2029, …) is stripped, so a raw escape
-// sequence can never ride the payload — the structural half of the axi no-ANSI
-// guarantee (AC 01-01 Security).
-//
-// axi.md design-tension resolutions (AC 01-02 Scenario 3):
-//   - Principle 2 ("3–4 default fields") is deliberately NOT applied — the full
-//     9-column field set is retained because pipe-delimited TOON rows are already
-//     token-lean, and dropping columns would make axi a lossy subset of the JSON
-//     contract rather than a faithful re-encoding.
-//   - Principle 4 ("pre-computed aggregates") is honored via the array header's
-//     declared true total N (independent of emitted row count once Story 3's
-//     pagination caps it) plus the run metadata carried on the review path
-//     (AC 01-03) — not a separate aggregation pass here.
-//
-// The optional per-finding signals — a severity Disagreement annotation and the
-// Verification / EvidenceExec blocks — are surfaced as additive columns
-// (disagreement, verification.*, evidence_exec.*) only when at least one finding
-// carries them, so a plain findings list stays at the 9-column width and
-// byte-identical to the pre-verification form — the same omitempty discipline the
-// JSON contract uses. When present, findings lacking a signal get empty cells so
-// every row keeps the header's declared width. This keeps the axi payload a
-// superset — never a lossy subset — of the JSON form.
+// (--axi) mode.
 func renderAXI(w io.Writer, findings []reconcile.JSONFinding) error {
 	var b bytes.Buffer
 	if len(findings) == 0 {
-		// TOON empty-array form: a well-formed payload for a zero-findings review,
-		// not an error or a human "No findings." sentence (AC 01-01 Edge Case 1).
 		b.WriteString("findings[0]:\n")
 		_, err := w.Write(b.Bytes())
 		return err
 	}
-	hasDisagreement, hasVerification, hasEvidence := false, false, false
-	hasFixWarning, hasFixReview := false, false
-	for _, f := range findings {
-		if f.Disagreement != "" {
-			hasDisagreement = true
-		}
-		if f.Verification != nil {
-			hasVerification = true
-		}
-		if f.EvidenceExec != nil {
-			hasEvidence = true
-		}
-		if f.FixWarning != "" {
-			hasFixWarning = true
-		}
-		if f.FixReview != "" {
-			hasFixReview = true
-		}
-	}
-	header := []string{"severity", "file:line", "problem", "fix", "category", "est_minutes", "evidence", "reviewers", "confidence"}
-	if hasDisagreement {
-		header = append(header, "disagreement")
-	}
-	if hasVerification {
-		header = append(header, "verification.verdict", "verification.skeptic", "verification.notes", "verification.challenge_survived")
-	}
-	if hasEvidence {
-		header = append(header, "evidence_exec.command", "evidence_exec.exit_code", "evidence_exec.output_excerpt")
-	}
-	// fix_warning / fix_review follow the same has-any discipline (Epic 35.3): the
-	// payload is documented as a superset of the JSON form, so an agent consuming
-	// --axi must see the same warning and NEEDS_REVIEW signals --format json carries.
-	if hasFixWarning {
-		header = append(header, "fix_warning")
-	}
-	if hasFixReview {
-		header = append(header, "fix_review")
-	}
+	cols := axiColumnsFor(findings)
+	header := cols.header()
 	quotedHeader := make([]string, len(header))
 	for i, h := range header {
 		quotedHeader[i] = toonQuote(h)
 	}
 	fmt.Fprintf(&b, "findings[%d%c]{%s}:\n", len(findings), axiDelim, strings.Join(quotedHeader, string(axiDelim)))
 	for _, f := range findings {
-		row := axiRow(f, hasDisagreement, hasVerification, hasEvidence, hasFixWarning, hasFixReview)
-		// Defensive invariant (AC 01-02 Error Scenario 1): a row must carry exactly
-		// as many columns as the header declares. A mismatch is an internal encoder
-		// bug, never user input — fail deterministically rather than emit a
-		// structurally malformed payload a consumer would misalign.
+		row := axiRow(f, cols)
 		if len(row) != len(header) {
 			return fmt.Errorf("axi encoder: row has %d columns, header declares %d", len(row), len(header))
 		}
@@ -216,23 +188,7 @@ func renderAXI(w io.Writer, findings []reconcile.JSONFinding) error {
 	return err
 }
 
-// axiRow encodes one finding into a TOON row: the base 9 columns mirroring the
-// atcr-findings/v1 reconciled column order, plus the additive disagreement,
-// verification.*, evidence_exec.*, fix_warning and fix_review columns when the
-// payload declares them.
-// FILE:LINE is one combined column (as in v1); est_minutes, exit_code and
-// challenge_survived are emitted as bare numbers/booleans; every free-text field
-// is routed through toonQuote. A finding missing a declared signal contributes
-// empty cells (an empty exit_code cell, never a misleading 0) so the row keeps the
-// header width.
-//
-// In a mixed payload (only some findings carry a declared block) the typed
-// additive columns are loosely typed per cell: verification.challenge_survived
-// and evidence_exec.exit_code emit a bare bool/int where the block is present
-// but a quoted empty string ("") where it is absent, so one column carries both
-// shapes across rows. A consumer decoding the payload must tolerate the mixed
-// present/absent form rather than assume a strict per-column type.
-func axiRow(f reconcile.JSONFinding, hasDisagreement, hasVerification, hasEvidence, hasFixWarning, hasFixReview bool) []string {
+func axiRow(f reconcile.JSONFinding, cols axiColumns) []string {
 	row := []string{
 		axiText(f.Severity),
 		axiText(fmt.Sprintf("%s:%d", f.File, f.Line)),
@@ -244,47 +200,37 @@ func axiRow(f reconcile.JSONFinding, hasDisagreement, hasVerification, hasEviden
 		axiText(strings.Join(f.Reviewers, ",")),
 		axiText(f.Confidence),
 	}
-	if hasDisagreement {
+	if cols.disagreement {
 		row = append(row, axiText(f.Disagreement))
 	}
-	if hasVerification {
+	if cols.verification {
 		if f.Verification != nil {
-			// challenge_survived is emitted as a bare TOON boolean; an absent block
-			// gets an empty cell (distinct from a real false) so the additive block
-			// stays a faithful superset of the JSON verification object.
 			row = append(row, axiText(f.Verification.Verdict), axiText(f.Verification.Skeptic),
 				axiText(f.Verification.Notes), strconv.FormatBool(f.Verification.ChallengeSurvived))
 		} else {
 			row = append(row, axiText(""), axiText(""), axiText(""), axiText(""))
 		}
 	}
-	if hasEvidence {
+	if cols.evidence {
 		if f.EvidenceExec != nil {
 			row = append(row, axiText(f.EvidenceExec.Command), strconv.Itoa(f.EvidenceExec.ExitCode), axiText(f.EvidenceExec.OutputExcerpt))
 		} else {
 			row = append(row, axiText(""), axiText(""), axiText(""))
 		}
 	}
-	if hasFixWarning {
+	if cols.fixWarning {
 		row = append(row, axiText(f.FixWarning))
 	}
-	if hasFixReview {
+	if cols.fixReview {
 		row = append(row, axiText(f.FixReview))
 	}
 	return row
 }
 
-// axiText is toonQuote with a per-cell rune cap (maxTextLen, the same bound the
-// md/checklist views apply via escTrunc). A findings row is one physical AXI line
-// that the line-count pagination (PaginateAXI) never trims, so without a per-cell
-// cap a single reviewer-controlled free-text field (LLM-generated, potentially
-// adversarial) could render as one multi-megabyte line and blow an agent
-// consumer's context budget. Truncation happens before quoting so the cap bounds
-// the actual field content; the payload is intentionally no longer length-faithful
-// for over-cap fields — the byte-safety bound takes precedence over verbatim
-// re-encoding, matching the human views. Well-sized fields (< maxTextLen runes,
-// including the whole report.axi golden) pass through byte-for-byte.
-func axiText(s string) string { return toonQuote(truncate(s, maxTextLen)) }
+// axiText caps a free-text cell at maxTextLen runes, then cleans it with go-axi
+// so control bytes are stripped by the shared sanitizer rather than a
+// hand-rolled one.
+func axiText(s string) string { return toonQuote(goaxi.SanitizeString(truncate(s, maxTextLen))) }
 
 // ReviewSummaryAXI is the run-level metadata carried by the --axi review/resume
 // summary payload: review identity plus per-attempt agent counts and a findings
@@ -364,115 +310,12 @@ func RenderReviewSummaryAXI(w io.Writer, s ReviewSummaryAXI) error {
 	return err
 }
 
-// toonQuote returns s formatted per TOON's must-quote rules. A string is quoted
-// (with the five valid TOON escapes applied, all other control bytes stripped)
-// when it is empty, has leading/trailing whitespace, equals a reserved token
-// (true/false/null), looks like a number, equals or starts with '-', contains a
-// TOON special character (: " \ [ ] { }), contains a control character, or
-// contains the active delimiter. Otherwise it is returned verbatim — unicode and
-// emoji are safe unquoted.
+// toonQuote quotes s when TOON requires it; the caller has already sanitized s.
 func toonQuote(s string) string {
-	if toonMustQuote(s) {
-		return toonEscape(s)
+	if pipeMustQuote(s) {
+		return pipeQuote(s)
 	}
 	return s
-}
-
-// toonMustQuote reports whether s must be quoted under the axi delimiter, per the
-// full TOON must-quote set (toon-format-reference.md). Quoting a value that
-// equals a reserved token, looks like a number, or starts with '-' is what keeps
-// the axi payload a faithful re-encoding of the findings: without it a conforming
-// TOON parser would read a string field back as a bool/null/number and break the
-// round-trip contract renderAXI promises.
-func toonMustQuote(s string) bool {
-	if s == "" {
-		return true
-	}
-	if strings.TrimSpace(s) != s {
-		return true
-	}
-	// Reserved tokens (case-sensitive) and number-like strings would be read back
-	// as a non-string type unless quoted.
-	switch s {
-	case "true", "false", "null":
-		return true
-	}
-	if strings.HasPrefix(s, "-") { // equals or starts with '-'
-		return true
-	}
-	if looksLikeNumber(s) {
-		return true
-	}
-	if strings.ContainsRune(s, axiDelim) {
-		return true
-	}
-	// TOON special characters that force quoting regardless of the delimiter.
-	if strings.ContainsAny(s, ":\"\\[]{}") {
-		return true
-	}
-	// Any control character (newline/CR/tab and the escape-less ones like \x1b)
-	// forces quoting; toonEscape then escapes the representable ones and strips
-	// the rest. U+2028/U+2029 are separators, not Unicode "control", so are
-	// checked explicitly (mirroring cmd/atcr sanitizeDisplay).
-	if strings.IndexFunc(s, isTOONControl) >= 0 {
-		return true
-	}
-	// Invalid UTF-8 (e.g. a lone raw C1 byte such as 8-bit CSI 0x9b or OSC 0x9d)
-	// must force quoting so toonEscape runs and replaces the raw byte with U+FFFD.
-	// The IndexFunc scan above cannot catch it: range/IndexFunc decode the raw byte
-	// to U+FFFD, for which isTOONControl is false, so an unquoted field would be
-	// returned verbatim by toonQuote and the raw C1 byte would reach stdout —
-	// breaking renderAXI's no-raw-control-byte guarantee. This self-enforces the
-	// invariant rather than relying on the upstream json.Marshal round-trip to have
-	// normalized invalid UTF-8 first.
-	if !utf8.ValidString(s) {
-		return true
-	}
-	return false
-}
-
-// looksLikeNumber reports whether s would be parsed as a number by a conforming
-// TOON reader (e.g. "42", "-3.14", "1e-6", "05"), in which case a string field
-// holding that value must be quoted to survive the round-trip.
-func looksLikeNumber(s string) bool {
-	_, err := strconv.ParseFloat(s, 64)
-	return err == nil
-}
-
-// isTOONControl reports whether r is a control/separator character that TOON
-// cannot carry as a raw byte.
-func isTOONControl(r rune) bool {
-	return unicode.IsControl(r) || r == '\u2028' || r == '\u2029'
-}
-
-// toonEscape returns s wrapped in double quotes with the five valid TOON escape
-// sequences applied (\\ \" \n \r \t). TOON defines no \x/\u escape, so any other
-// control byte (e.g. a raw ANSI \x1b) is dropped rather than smuggled through as
-// a raw byte — this is what makes the payload structurally escape-free.
-func toonEscape(s string) string {
-	var b strings.Builder
-	b.WriteByte('"')
-	for _, r := range s {
-		switch r {
-		case '\\':
-			b.WriteString(`\\`)
-		case '"':
-			b.WriteString(`\"`)
-		case '\n':
-			b.WriteString(`\n`)
-		case '\r':
-			b.WriteString(`\r`)
-		case '\t':
-			b.WriteString(`\t`)
-		default:
-			if isTOONControl(r) {
-				continue // no valid TOON escape → strip, never emit a raw control byte
-			}
-			b.WriteRune(r)
-		}
-	}
-	b.WriteByte('"')
-	return b.String()
 }
 
 // renderMarkdown writes a human report: a severity x confidence summary grid then
