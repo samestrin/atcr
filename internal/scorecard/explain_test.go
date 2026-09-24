@@ -3,6 +3,8 @@ package scorecard
 import (
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -693,4 +695,26 @@ func TestExplainTrustPriors_UnmappedLensSaysWhyItIsNeverOpportunityScoped(t *tes
 		"a mapped lens is opportunity-scoped and must not carry the unmapped annotation")
 	assert.False(t, ReasonExcludes(ReasonNotOpportunityScoped),
 		"the label describes a scope decision, not a drop — it must never inflate Excluded")
+}
+
+// TestExplainTrustPriors_UnreadableStoreIsFailNeutral covers the read-error
+// return: a store with one unreadable month file yields an empty map and a nil
+// error, never details built from the months that did read.
+func TestExplainTrustPriors_UnreadableStoreIsFailNeutral(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("chmod 0o000 does not block reads when running as root")
+	}
+	dir := t.TempDir()
+	scoped(t, dir, 3, "Dax", 1, 1, reclib.CategoryTesting) // this month: readable
+	older := time.Now().AddDate(0, -2, 0)
+	require.NoError(t, Append(dir, reviewer_(runIDAt(older, "old"), "Dax", "m1", 1, 1)))
+	locked := filepath.Join(dir, older.UTC().Format("2006-01")+".jsonl")
+	require.NoError(t, os.Chmod(locked, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o600) })
+	partial, _ := ReadSince(dir, 0, time.Now(), ReadOpts{Writer: io.Discard})
+	require.NotEmpty(t, detailsFromRecords(partial, 0), "precondition: the readable month alone yields details")
+
+	got, err := ExplainTrustPriors(dir, 0)
+	require.NoError(t, err)
+	assert.Empty(t, got)
 }
