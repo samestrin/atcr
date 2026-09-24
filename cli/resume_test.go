@@ -296,7 +296,7 @@ func TestResumeReconcile_AppliesScorecardTrustPrior(t *testing.T) {
 
 	// reclib.ConsensusStrict is what runResume resolves for an unconfigured
 	// project, so this exercises the unchanged default path.
-	_, err := resumeReconcile(context.Background(), cmd, dir, reclib.ConsensusStrict)
+	_, _, err := resumeReconcile(context.Background(), cmd, dir, reclib.ConsensusStrict)
 	require.NoError(t, err)
 
 	files := reconciledFiles(t, dir)
