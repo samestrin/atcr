@@ -354,6 +354,37 @@ func TestMergeResultGroup_FallbackModelModal(t *testing.T) {
 	assert.NotContains(t, merged.FallbackModel, ",", "composite FallbackModel breaks F5 collapse")
 }
 
+// TestMergeResultGroup_ModelFollowsTheServingModels pins the merged Model to the
+// models that actually served the chunks, not chunk 0's. When chunk 0 failed over
+// to a backup and later chunks ran on the primary, inheriting g[0].Model recorded
+// the backup's model for the whole persona, so its trust prior was scored against
+// the wrong model's history. Disagreeing chunks record no model (neutral), the
+// same conflict rule scorecard's modelsFromAgents applies across pool agents.
+func TestMergeResultGroup_ModelFollowsTheServingModels(t *testing.T) {
+	t.Run("chunks disagree records no model", func(t *testing.T) {
+		g := []Result{
+			{Agent: "reviewer", Status: StatusOK, Model: "backup-model", FallbackUsed: true, FallbackModel: "backup-model"},
+			{Agent: "reviewer", Status: StatusOK, Model: "primary-model"},
+			{Agent: "reviewer", Status: StatusOK, Model: "primary-model"},
+		}
+		assert.Empty(t, mergeResultGroup(g, nil).Model)
+	})
+	t.Run("chunks agree keeps the model", func(t *testing.T) {
+		g := []Result{
+			{Agent: "reviewer", Status: StatusOK, Model: "primary-model"},
+			{Agent: "reviewer", Status: StatusOK, Model: "Primary-Model"},
+		}
+		assert.Equal(t, "primary-model", mergeResultGroup(g, nil).Model)
+	})
+	t.Run("a chunk with no model does not conflict", func(t *testing.T) {
+		g := []Result{
+			{Agent: "reviewer", Status: StatusTimeout},
+			{Agent: "reviewer", Status: StatusOK, Model: "primary-model"},
+		}
+		assert.Equal(t, "primary-model", mergeResultGroup(g, nil).Model)
+	})
+}
+
 func TestMergeResultGroup_AggregatesResponseTruncated(t *testing.T) {
 	t.Run("later chunk truncated is preserved", func(t *testing.T) {
 		g := []Result{
