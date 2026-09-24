@@ -262,3 +262,23 @@ func TestRenderAXI_MixedPayloadDecodesWithTypedPointers(t *testing.T) {
 	require.NotNil(t, doc.Findings[1].ExitCode)
 	assert.Equal(t, 0, *doc.Findings[1].ExitCode)
 }
+
+// TestAXIText_SanitizesBeforeTruncating pins the cell-preparation order for the
+// standard path: go-axi's sanitizer runs BEFORE the 500-rune cap. Truncating
+// first turns invalid UTF-8 into U+FFFD on over-cap fields only (short fields
+// have it stripped — inconsistent with AC4), and lets control bytes eat the
+// cap so a 450-rune field padded with ANSI bytes is cut with "..." even though
+// the cleaned text fits (contradicts AC2).
+func TestAXIText_SanitizesBeforeTruncating(t *testing.T) {
+	// Over-cap field with an invalid byte: the byte is stripped, no U+FFFD.
+	over := strings.Repeat("a", 501) + "\xff"
+	got := axiText(over)
+	assert.NotContains(t, got, "\uFFFD", "invalid UTF-8 must be stripped, not replaced, on over-cap fields too")
+	assert.Equal(t, strings.Repeat("a", 499)+"...", got, "cap applies to the sanitized text")
+
+	// 450 clean runes padded with 60 ESC bytes: sanitized length fits, no cut.
+	padded := strings.Repeat("b", 450) + strings.Repeat("\x1b", 60)
+	got2 := axiText(padded)
+	assert.Equal(t, strings.Repeat("b", 450), got2, "control bytes must not count toward the cap")
+	assert.NotContains(t, got2, "...", "a field whose sanitized text fits must not be truncated")
+}
