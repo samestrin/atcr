@@ -185,3 +185,22 @@ func TestAXIRowKeysMatchColumnHeader(t *testing.T) {
 			"mask=%d: standard row keys diverge from axiColumns.header()", mask)
 	}
 }
+
+// TestRenderAXI_SanitizationScope pins the EXACT sanitization guarantee go-axi
+// v0.3 provides, so the encodeAXI doc comment cannot overstate it and a go-axi
+// bump that tightens or loosens the behavior is a visible diff: single control
+// bytes (ESC, C1), U+2028/U+2029 and invalid UTF-8 are stripped, but Unicode Cf
+// format characters (U+202E bidi override, U+200B zero-width space) pass through
+// raw and a stripped escape leaves its CSI parameter text ("[31m") as residue.
+func TestRenderAXI_SanitizationScope(t *testing.T) {
+	in := "\x1b[31mred\x1b[0m \u202Ebidi\u202C \u200bzw"
+	var b bytes.Buffer
+	require.NoError(t, renderAXI(&b, []reconcile.JSONFinding{
+		{Severity: "LOW", File: "a.go", Line: 1, Problem: in, Category: "c", Confidence: "LOW"},
+	}))
+	out := b.String()
+	assert.NotContains(t, out, "\x1b", "raw ESC bytes are stripped")
+	assert.Contains(t, out, "[31mred[0m", "CSI parameter text survives as residue (sequences are not consumed as units)")
+	assert.Contains(t, out, "\u202E", "U+202E bidi-override format char passes through")
+	assert.Contains(t, out, "\u200b", "U+200B zero-width space passes through")
+}
