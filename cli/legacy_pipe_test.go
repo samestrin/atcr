@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -41,6 +42,26 @@ func TestLegacyPipeNoticeNamesTrigger(t *testing.T) {
 	require.Equal(t, 0, code)
 	assert.Contains(t, stderr, "(enabled by ATCR_LEGACY_PIPE")
 	assert.NotContains(t, stdout, "deprecated")
+}
+
+// TestLegacyPipeReportAsymmetryDocumented pins the intentional surface
+// asymmetry: report has no --legacy-pipe flag (its legacy surface is
+// --format pipe), so the flag is an unknown-flag usage error there, and the
+// root flag help names the report path (TD: cli/legacy_pipe_test.go:65).
+func TestLegacyPipeReportAsymmetryDocumented(t *testing.T) {
+	isolate(t)
+	fixtureReconciled(t, "r", manyFindingsJSON(t, 3))
+	code, _, _ := execCmdSplit(t, "report", "--legacy-pipe", "r")
+	require.Equal(t, 2, code, "report rejects --legacy-pipe as an unknown flag (exit 2)")
+
+	root := NewRootCmd()
+	root.SetArgs([]string{"--help"})
+	var help bytes.Buffer
+	root.SetOut(&help)
+	root.SetErr(&help)
+	require.NoError(t, root.Execute())
+	assert.Contains(t, help.String(), "report uses --format pipe",
+		"flag help must document the report asymmetry")
 }
 
 // TestReportCmd_FormatPipeEmitsLegacyWithDeprecation is AC3: `--format pipe`
