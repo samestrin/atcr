@@ -37,6 +37,25 @@ func legacyPipeEdgeFindings() []reconcile.JSONFinding {
 	}
 }
 
+// legacyPipeTextCapFindings builds findings whose cells sit exactly at and one
+// rune over the shared maxTextLen cap (500), including a multibyte over-cap
+// cell. Freezing these bytes pins the legacy per-cell cap: a change to the
+// shared maxTextLen (or truncate) silently rewrites these cells and fails the
+// golden, where no existing golden had a cell long enough to notice.
+func legacyPipeTextCapFindings() []reconcile.JSONFinding {
+	exact500 := strings.Repeat("a", 500)
+	over501 := strings.Repeat("b", 500) + "!" // 501 runes
+	multi500 := strings.Repeat("\u00e9", 500) // 500 runes, 1000 bytes
+	return []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "cap.go", Line: 1,
+			Problem: exact500, Fix: over501, Category: "cap", EstMinutes: 1,
+			Reviewers: []string{"greta"}, Confidence: "HIGH"},
+		{Severity: "LOW", File: "cap.go", Line: 2,
+			Problem: multi500, Category: "cap", EstMinutes: 1,
+			Reviewers: []string{"otto"}, Confidence: "LOW"},
+	}
+}
+
 var legacyPipeGoldenCases = []struct {
 	name   string
 	golden string
@@ -44,6 +63,7 @@ var legacyPipeGoldenCases = []struct {
 }{
 	{"findings_plain", "findings_plain.axi", func(w io.Writer) error { return renderPipeAXI(w, sample()) }},
 	{"findings_edge", "findings_edge.axi", func(w io.Writer) error { return renderPipeAXI(w, legacyPipeEdgeFindings()) }},
+	{"findings_textcap", "findings_textcap.axi", func(w io.Writer) error { return renderPipeAXI(w, legacyPipeTextCapFindings()) }},
 	{"findings_empty", "findings_empty.axi", func(w io.Writer) error { return renderPipeAXI(w, nil) }},
 	{"paginated_under", "paginated_under.axi", func(w io.Writer) error {
 		return RenderPipeAXIPaginated(w, sample(), AXIMaxLinesDefault)
