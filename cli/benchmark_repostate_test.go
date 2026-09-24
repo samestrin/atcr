@@ -2765,3 +2765,22 @@ func TestDirSizeBytes_StopsAtTheWalkLimit(t *testing.T) {
 	assert.True(t, measured)
 	assert.Equal(t, int64(10), size)
 }
+
+// The retention line's failed_slots is the slot count the run-result reports,
+// with the reviewer count beside it under its own key: otto failing both cases
+// is 2 slots from 1 reviewer (atcr review 2026-09-23, benchmark_repostate.go:201).
+func TestExecuteRepoStateBenchmarkRun_RetentionLineCountsFailedSlots(t *testing.T) {
+	suite := writeCaseSuite(t, "first-case", "second-case")
+	var logs bytes.Buffer
+
+	rr, retained, err := executeRepoStateBenchmarkRun(logCapturingContext(t, &logs),
+		benchCfg([3]string{"greta", "m-greta", "greta"}, [3]string{"otto", "m-otto", "otto"}),
+		oneAgentFailingCompleter{agent: "otto"}, suite, time.Unix(0, 0).UTC(), 0)
+	releaseRetainedWorkDir(t, retained)
+	require.NoError(t, err)
+	require.Len(t, rr.SlotFailures, 2)
+
+	assert.Contains(t, logs.String(), "failed_slots=2")
+	assert.Contains(t, logs.String(), "failed_reviewers=1")
+	assert.Regexp(t, `retained_dirs=[1-9]`, logs.String())
+}
