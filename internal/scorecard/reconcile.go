@@ -362,30 +362,17 @@ func outcomeFor(a fanout.AgentStatus, diag io.Writer) string {
 // incomplete > findings > ungrounded > filtered > clean), so two AgentStatus
 // entries sharing one agent name cannot let the later, lower-precedence entry
 // overwrite the earlier one's outcome. Unknown ("") ranks below everything: it
-// is the unclassifiable value, never a reason to discard a known one. The
-// unlisted values are spelled as literals here for the same import-cycle reason
-// fanout spells them that way; the cli/ parity test pins the agreement.
+// is the unclassifiable value, never a reason to discard a known one. The order
+// is read from fanout.ReviewerOutcomePrecedence rather than re-spelled here, so
+// a new classifier outcome cannot silently rank 0.
 func outcomeRank(o string) int {
-	switch o {
-	case "failed":
-		return 8
-	case "unparseable":
-		return 7
-	case "truncated":
-		return 6
-	case "incomplete":
-		return 5
-	case outcomeFindings:
-		return 4
-	case outcomeUngrounded:
-		return 3
-	case outcomeFiltered:
-		return 2
-	case outcomeClean:
-		return 1
-	default:
-		return 0
+	precedence := fanout.ReviewerOutcomePrecedence()
+	for i, p := range precedence {
+		if p == o {
+			return len(precedence) - i
+		}
 	}
+	return 0
 }
 
 // coerceOutcome is the reconcile path's guard on Record.Outcome: a value that is

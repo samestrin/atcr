@@ -130,8 +130,16 @@ func ReviewerOutcome(a AgentStatus, raisedCount int) string {
 	}
 }
 
-// ReviewerOutcomePrecedence is a stub.
-func ReviewerOutcomePrecedence() []string { return nil }
+// ReviewerOutcomePrecedence returns ReviewerOutcome's precedence, highest first
+// — the order of its switch, stated once as data so a consumer that must rank
+// two outcomes (scorecard's repeated-agent dedup) derives the rank instead of
+// re-spelling the order. It excludes OutcomeUnknown (""), which ranks below
+// every value. Pinned to the vocabulary by
+// TestReviewerOutcomePrecedence_CoversTheVocabulary. Returns a fresh slice.
+func ReviewerOutcomePrecedence() []string {
+	return []string{"failed", "unparseable", "truncated", "incomplete",
+		"findings", "ungrounded", "filtered", "clean"}
+}
 
 // ValidReviewerOutcome reports whether s is a member of the outcome vocabulary,
 // including the empty string — OutcomeUnknown is a legitimate STORED value
