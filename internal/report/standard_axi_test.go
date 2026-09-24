@@ -274,7 +274,7 @@ func TestAXIText_SanitizesBeforeTruncating(t *testing.T) {
 	over := strings.Repeat("a", 501) + "\xff"
 	got := axiText(over)
 	assert.NotContains(t, got, "\uFFFD", "invalid UTF-8 must be stripped, not replaced, on over-cap fields too")
-	assert.Equal(t, strings.Repeat("a", 499)+"...", got, "cap applies to the sanitized text")
+	assert.Equal(t, strings.Repeat("a", 497)+"...", got, "cap applies to the sanitized text (497 runes + ellipsis = 500)")
 
 	// 450 clean runes padded with 60 ESC bytes: sanitized length fits, no cut.
 	padded := strings.Repeat("b", 450) + strings.Repeat("\x1b", 60)

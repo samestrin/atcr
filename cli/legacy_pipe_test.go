@@ -1,12 +1,24 @@
 package cli
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// nonEmptyLines splits s into trimmed, non-empty lines.
+func nonEmptyLines(s string) []string {
+	var out []string
+	for _, line := range strings.Split(s, "\n") {
+		if t := strings.TrimSpace(line); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
 
 // wantPipeDeprecation is the stderr notice every legacy pipe route emits.
 // Each route appends " (enabled by <trigger>)" before the newline, so the
@@ -215,6 +227,31 @@ func TestResume_LegacyPipePayloadShapeMatchesReview(t *testing.T) {
 
 	assert.Equal(t, reviewHeader, resumeHeader,
 		"legacy-pipe review and resume must emit the identical run-summary payload header")
+}
+
+// TestLegacyPipeNoticeHonorsLogFormatJSON pins the NDJSON contract: under
+// --log-format json, every stderr line parses as a JSON object — the pipe
+// deprecation notice must ride the structured logger, not raw fmt.Fprintln
+// (TD: cli/main.go:447).
+func TestLegacyPipeNoticeHonorsLogFormatJSON(t *testing.T) {
+	isolate(t)
+	fixtureReconciled(t, "r", manyFindingsJSON(t, 3))
+	t.Setenv("ATCR_LEGACY_PIPE", "1")
+	code, _, stderr := execCmdSplit(t, "--log-format", "json", "report", "--format", "axi", "r")
+	require.Equal(t, 0, code)
+	lines := nonEmptyLines(stderr)
+	require.NotEmpty(t, lines, "deprecation notice must reach stderr")
+	found := false
+	for _, line := range lines {
+		v := map[string]any{}
+		require.NoError(t, json.Unmarshal([]byte(line), &v),
+			"stderr line must be valid NDJSON under --log-format json: %q", line)
+		msg, _ := v["msg"].(string)
+		if strings.Contains(msg, "pipe-delimited AXI output is deprecated") {
+			found = true
+		}
+	}
+	assert.True(t, found, "deprecation notice must ride the structured logger in json mode")
 }
 
 // TestReviewCmd_LegacyPipeEmitsPipeSummary covers `review --axi --legacy-pipe`:

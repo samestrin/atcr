@@ -146,8 +146,11 @@ func axiRow(f reconcile.JSONFinding, cols axiColumns) toon.Object {
 // per-cell cap one reviewer-controlled field could render as a multi-megabyte
 // line and blow an agent consumer's context budget. Over-cap fields are
 // intentionally not length-faithful; fields of at most maxTextLen runes pass
-// through verbatim (AC2). Sanitizing is left to goaxi.Encode.
-func axiText(s string) string { return truncate(s, maxTextLen) }
+// through verbatim (AC2). The go-axi sanitizer runs BEFORE the cap so the bound
+// applies to the emitted text: invalid UTF-8 is stripped (never turned into
+// U+FFFD by the []rune conversion an over-cap field would hit) and control
+// bytes do not eat the cap (a field whose sanitized text fits is not cut).
+func axiText(s string) string { return truncate(goaxi.SanitizeString(s), maxTextLen) }
 
 // singleRowAXI builds a one-row standard TOON array named name. header is the
 // single source of the column order, so a header/value width mismatch is an
