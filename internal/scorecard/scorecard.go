@@ -1166,10 +1166,10 @@ func participates(f Finding, name string) bool {
 //   - telemetry.go's HashPersonaID spells the same formula by hand because it
 //     is a HASH STABILITY contract — the hashed id must not move if this rule
 //     ever changes, so the two must be free to diverge.
-//   - (Former exception withdrawn:) reconcile.go's trimmedReviewers USED to
+//   - (Former exception withdrawn:) reconcile.go's normalizedReviewers USED to
 //     trim without folding case, while the reviewers map key was only trimmed.
 //     Folding one side alone would have broken reviewerCounts' exact-string
-//     match; the fix folds BOTH sides — map key and trimmedReviewers — so the
+//     match; the fix folds BOTH sides — map key and normalizedReviewers — so the
 //     invariant holds and "Bruce"/"bruce" cannot mint two records for one run.
 func normalizeReviewerName(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
@@ -1179,7 +1179,7 @@ func distinctCount(xs []string) int {
 	seen := make(map[string]bool, len(xs))
 	for _, x := range xs {
 		// TrimSpace, not just != "": a whitespace-only name is dropped
-		// everywhere else (EmitForReconcile's trimmedReviewers, the pool loop,
+		// everywhere else (EmitForReconcile's normalizedReviewers, the pool loop,
 		// NewCloudSyncRecord), so counting one here would let a reviewer that
 		// leaves no record of its own act as a distinct corroborator.
 		if name := normalizeReviewerName(x); name != "" {

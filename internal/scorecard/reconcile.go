@@ -49,7 +49,7 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 			// "bruce" are two distinct trust keys; un-folded, "Bruce" and "bruce"
 			// mint TWO reviewer records for one run, so trustPriorsSince sums
 			// t.runs = 2 and one run buys two credits against
-			// DefaultTrustMinRuns. Folding here AND in trimmedReviewers below is
+			// DefaultTrustMinRuns. Folding here AND in normalizedReviewers below is
 			// what keeps the map key and Finding.Reviewers equal strings — the
 			// invariant reviewerCounts' exact-string match depends on.
 			name := normalizeReviewerName(a.Agent)
@@ -81,7 +81,7 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 	// usage metadata.
 	findings := make([]Finding, 0, len(res.Findings))
 	for _, m := range res.Findings {
-		names := trimmedReviewers(m.Reviewers)
+		names := normalizedReviewers(m.Reviewers)
 		findings = append(findings, Finding{
 			File:      m.File,
 			Line:      m.Line,
@@ -165,7 +165,7 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 	// a run that produced nothing but phantoms.
 	unresolved := make([]Finding, 0, len(res.Unresolved))
 	for _, u := range res.Unresolved {
-		names := trimmedReviewers(u.Reviewers)
+		names := normalizedReviewers(u.Reviewers)
 		unresolved = append(unresolved, Finding{
 			File:      u.File,
 			Line:      u.Line,
@@ -241,10 +241,7 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 	grayPairs := make([]string, 0, len(res.Ambiguous))
 	for _, c := range res.Ambiguous {
 		for _, f := range c.Findings {
-			names := trimmedReviewers(f.Reviewers)
-			if len(names) == 0 && strings.TrimSpace(f.Reviewer) != "" {
-				names = []string{strings.TrimSpace(f.Reviewer)}
-			}
+			names := findingReviewers(f)
 			if len(names) == 0 {
 				continue
 			}
@@ -258,10 +255,7 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 		}
 		members := make(map[string]struct{}, 2)
 		for _, f := range c.Findings {
-			names := trimmedReviewers(f.Reviewers)
-			if len(names) == 0 && strings.TrimSpace(f.Reviewer) != "" {
-				names = []string{normalizeReviewerName(f.Reviewer)}
-			}
+			names := findingReviewers(f)
 			for _, n := range names {
 				if n != "" {
 					members[n] = struct{}{}
@@ -427,7 +421,18 @@ func coerceOutcome(o string, diag io.Writer) string {
 	return o
 }
 
-// trimmedReviewers normalises a finding's reviewer list once, at the point the
+// findingReviewers is an ambiguous finding's reviewers, normalized: the plural
+// Reviewers when present, else the singular per-source Reviewer. Both go
+// through normalizedReviewers, so the category stream and the gray-zone pair
+// keys name a reviewer exactly as the reviewers map does.
+func findingReviewers(f reconcile.Finding) []string {
+	if names := normalizedReviewers(f.Reviewers); len(names) > 0 {
+		return names
+	}
+	return normalizedReviewers([]string{f.Reviewer})
+}
+
+// normalizedReviewers normalises a finding's reviewer list once, at the point the
 // names enter this package — trimmed AND case-folded via
 // normalizeReviewerName, the same function the pool-summary loop keys the
 // reviewers map with, dropping blanks.
@@ -446,7 +451,7 @@ func coerceOutcome(o string, diag io.Writer) string {
 //
 // Returning a fresh slice rather than editing in place keeps res untouched —
 // the caller's reconcile.Result is not this function's to mutate.
-func trimmedReviewers(in []string) []string {
+func normalizedReviewers(in []string) []string {
 	out := make([]string, 0, len(in))
 	for _, r := range in {
 		if name := normalizeReviewerName(r); name != "" {

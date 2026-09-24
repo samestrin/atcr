@@ -315,7 +315,7 @@ func TestEmitForReconcile_PaddedReviewerNameKeepsItsCounts(t *testing.T) {
 	assert.InDelta(t, 0.5, bruce.CorroborationRate, 1e-9)
 	assert.Equal(t, "opus", bruce.Model)
 
-	// trimmedReviewers must return a FRESH slice, never trim in place. res is
+	// normalizedReviewers must return a FRESH slice, never trim in place. res is
 	// not this package's to mutate and it is consumed after this call: the CLI
 	// hands the same Result to persistLocalDebt, and internal/localdebt reads
 	// f.Reviewers off it. An in-place trim would silently rewrite localdebt
@@ -603,4 +603,37 @@ func TestRunIDForReviewDir_AbsFailureHashesTheGivenPath(t *testing.T) {
 	sum := sha256.Sum256([]byte("rel/review"))
 	assert.Equal(t, "2026-06-14T10:00:00Z-review-"+hex.EncodeToString(sum[:4]),
 		RunIDForReviewDir("2026-06-14T10:00:00Z", "rel/review"))
+}
+
+// TestEmitForReconcile_AmbiguousSingularReviewerIsFolded: a mis-cased, padded
+// singular Reviewer on an ambiguous finding is normalized exactly as the
+// reviewers map and the pair keys are, so its category and its gray-zone pair
+// land on the one record for that persona (atcr review 2026-09-23,
+// reconcile.go:246).
+func TestEmitForReconcile_AmbiguousSingularReviewerIsFolded(t *testing.T) {
+	reviewDir := t.TempDir()
+	writePoolSummary(t, reviewDir,
+		fanout.AgentStatus{Agent: "otto", Status: fanout.StatusOK, FindingsCount: 1, Model: "opus"},
+		fanout.AgentStatus{Agent: "sasha", Status: fanout.StatusOK, FindingsCount: 1, Model: "opus"},
+	)
+	res := resWith("otto")
+	res.Ambiguous = []reconcile.AmbiguousCluster{
+		{ID: "gz", Findings: []reconcile.Finding{
+			{File: "a.go", Line: 1, Problem: "p", Category: "security", Reviewer: " Otto "},
+			{File: "a.go", Line: 2, Problem: "q", Reviewer: "SASHA"},
+		}},
+	}
+
+	recs := emitAndRead(t, reviewDir, res)
+	otto := findReviewer(recs, "otto")
+	require.NotNil(t, otto)
+	assert.Contains(t, otto.CategoriesRaised, "security")
+	assert.Equal(t, []PairSignal{{Peer: "sasha", Disagreed: 1}}, otto.PairSignals)
+	reviewers := 0
+	for _, r := range recs {
+		if r.RecordType == RecordTypeReviewer {
+			reviewers++
+		}
+	}
+	assert.Equal(t, 2, reviewers, "no record is minted for a spelling variant")
 }
