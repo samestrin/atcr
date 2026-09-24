@@ -24,7 +24,7 @@ const AXIMaxLinesDefault = 500
 // maxLines physical lines.
 //
 // renderPipeAXI emits exactly one physical line per finding (a row never spans
-// lines — see axiRow), so a physical-line cap is a row-boundary cap: the cut
+// lines — see pipeRow), so a physical-line cap is a row-boundary cap: the cut
 // point always falls between whole rows and no row is split mid-line (AC 03-01
 // Edge Case 4). The boundary is inclusive — a payload of exactly maxLines lines
 // is NOT truncated (Edge Case 1).
