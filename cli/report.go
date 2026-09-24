@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/samestrin/atcr/internal/debate"
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -28,10 +29,22 @@ func newReportCmd() *cobra.Command {
 		Args:  usageArgs(cobra.MaximumNArgs(1)),
 		RunE:  runReport,
 	}
-	cmd.Flags().String("format", "md", "output format: "+report.Formats())
+	cmd.Flags().String("format", "md", "output format: "+formatHelp())
 	cmd.Flags().String("output", "", "write to a file instead of stdout")
 	cmd.Flags().Bool("disagreements", false, "render the disagreement radar: a ranked view of the highest-tension spots (severity splits, solo findings, gray-zone clusters) instead of the standard report")
 	return cmd
+}
+
+// formatHelp is report.Formats() with the legacy pipe format marked deprecated,
+// so --help does not advertise it on equal footing while the fallback exists.
+func formatHelp() string {
+	formats := report.FormatList()
+	for i, f := range formats {
+		if f == report.FormatPipe {
+			formats[i] = f + " (deprecated)"
+		}
+	}
+	return strings.Join(formats, ", ")
 }
 
 func runReport(cmd *cobra.Command, args []string) error {
