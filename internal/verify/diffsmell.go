@@ -855,7 +855,8 @@ func truncateRunes(s string, n int) string {
 // smellFlatten collapses CR/LF to spaces and drops every other control
 // character, so the text is safe both to interpolate into a single prompt line
 // and to write to a terminal. Mirrors sanitizeDeclineReason's flattening and
-// internal/report/legacy_pipe.go's pipeUnsafeRune stripping.
+// the rule go-axi's SanitizeString applies to --axi output: drop every
+// unicode.IsControl rune plus U+2028/U+2029.
 //
 // The escape bytes are the point: a Smell's Evidence is a verbatim added line and
 // its File comes verbatim from `+++ b/<anything>`, so without this an added line
