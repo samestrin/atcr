@@ -2,6 +2,8 @@ package cli
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -52,8 +54,27 @@ func TestReportCmd_FormatPipeEmitsLegacyWithDeprecation(t *testing.T) {
 	assert.Contains(t, stdout, "findings[3|]{", "legacy pipe header")
 	assert.Contains(t, stdout, "truncated: false\n")
 	assert.NotContains(t, stdout, "total:", "the legacy path keeps its frozen shape")
-	assert.Contains(t, stderr, wantPipeDeprecation)
+	assert.Equal(t, 1, strings.Count(stderr, wantPipeDeprecation),
+		"exactly one deprecation notice per invocation")
 	assert.NotContains(t, stdout, "deprecated")
+}
+
+// TestReportCmd_FormatPipeOutputFile pins --output routing for the legacy pipe
+// format: the payload lands in the file, stdout stays empty, and exactly one
+// deprecation notice reaches stderr (TD: cli/main.go:449 — a duplicated notice
+// must not pass a Contains-only assertion).
+func TestReportCmd_FormatPipeOutputFile(t *testing.T) {
+	isolate(t)
+	fixtureReconciled(t, "r", manyFindingsJSON(t, 3))
+	out := filepath.Join(t.TempDir(), "pipe.txt")
+	code, stdout, stderr := execCmdSplit(t, "report", "--format", "pipe", "--output", out, "r")
+	require.Equal(t, 0, code)
+	assert.Empty(t, stdout, "with --output the payload must not reach stdout")
+	data, err := os.ReadFile(out)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "findings[3|]{", "legacy pipe header lands in the output file")
+	assert.Equal(t, 1, strings.Count(stderr, wantPipeDeprecation),
+		"exactly one deprecation notice per invocation")
 }
 
 // TestReportCmd_LegacyPipeEnvReroutesAXI is clarification 1: ATCR_LEGACY_PIPE=1
@@ -65,7 +86,8 @@ func TestReportCmd_LegacyPipeEnvReroutesAXI(t *testing.T) {
 	code, stdout, stderr := execCmdSplit(t, "report", "--format", "axi", "r")
 	require.Equal(t, 0, code)
 	assert.Contains(t, stdout, "findings[3|]{")
-	assert.Contains(t, stderr, wantPipeDeprecation)
+	assert.Equal(t, 1, strings.Count(stderr, wantPipeDeprecation),
+		"exactly one deprecation notice per invocation")
 }
 
 // TestReportCmd_LegacyPipeEnvLeavesNonAXIAlone pins that the env switch touches
@@ -111,13 +133,15 @@ func TestRootCmd_HomeLegacyPipe(t *testing.T) {
 	code, stdout, stderr := execCmdSplit(t, "--axi", "--legacy-pipe")
 	require.Equal(t, 0, code)
 	assert.Contains(t, stdout, "home[1|]{", "--legacy-pipe emits the pipe home payload")
-	assert.Contains(t, stderr, wantPipeDeprecation)
+	assert.Equal(t, 1, strings.Count(stderr, wantPipeDeprecation),
+		"exactly one deprecation notice per invocation")
 
 	t.Setenv("ATCR_LEGACY_PIPE", "1")
 	code, stdout, stderr = execCmdSplit(t, "--axi")
 	require.Equal(t, 0, code)
 	assert.Contains(t, stdout, "home[1|]{", "ATCR_LEGACY_PIPE=1 emits the pipe home payload")
-	assert.Contains(t, stderr, wantPipeDeprecation)
+	assert.Equal(t, 1, strings.Count(stderr, wantPipeDeprecation),
+		"exactly one deprecation notice per invocation")
 
 	t.Setenv("ATCR_LEGACY_PIPE", "")
 	code, stdout, stderr = execCmdSplit(t, "--axi")
@@ -267,6 +291,7 @@ func TestReviewCmd_LegacyPipeEmitsPipeSummary(t *testing.T) {
 	code, stdout, stderr := execCmdSplit(t, "review", "--axi", "--legacy-pipe", "--base", "HEAD^")
 	require.Equal(t, 0, code, "legacy pipe does not change the exit code")
 	assert.Contains(t, stdout, "review_summary[1|]{")
-	assert.Contains(t, stderr, wantPipeDeprecation)
+	assert.Equal(t, 1, strings.Count(stderr, wantPipeDeprecation),
+		"exactly one deprecation notice per invocation")
 	assert.NotContains(t, stdout, "deprecated")
 }
