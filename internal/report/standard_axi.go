@@ -38,8 +38,18 @@ type axiPaginatedPayload struct {
 // fault precedes any byte) and pinned by TestEncodeAXI_WritesNothingOnFailure;
 // its typed failures (*KeyCollisionError, *CycleError) are wrapped with %w so
 // callers can still reach them via errors.As.
+//
+// The encode is goaxi.EncodeChecked, not bare Encode: a value whose encoding
+// silently loses data (a TextMarshaler field toon-go drops, e.g.) fails loudly
+// here at runtime instead of emitting a lossy payload that still parses.
+// EncodeChecked writes nothing unless the verdict is OK, so the all-or-nothing
+// guarantee above holds on the guard path too (pinned by
+// TestEncodeAXI_FailsLoudlyOnLossyValue). The ~14% encode cost is a ratified
+// tradeoff (2026-09-24): this is a cold admin-output path, and the test-only
+// Check guard (axi_verdict_test.go) cannot see a payload shape added after it
+// was written.
 func encodeAXI(w io.Writer, v any) error {
-	if err := goaxi.Encode(w, v); err != nil {
+	if _, err := goaxi.EncodeChecked(w, v); err != nil {
 		return fmt.Errorf("axi encoder: %w", err)
 	}
 	return nil
