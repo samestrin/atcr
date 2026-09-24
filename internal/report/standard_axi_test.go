@@ -339,3 +339,22 @@ func TestStandardAXI_Goldens(t *testing.T) {
 		})
 	}
 }
+
+// axiLossyCell is a TextMarshaler type: toon-go ignores it, silently dropping
+// the VALUE while still emitting the KEY — the exact silent-loss shape the
+// runtime guard exists to catch (ratified 2026-09-24: switch encodeAXI to
+// goaxi.EncodeChecked; ~14% encode cost accepted on a cold admin path).
+type axiLossyCell struct{ V string }
+
+func (c axiLossyCell) MarshalText() ([]byte, error) { return []byte(c.V), nil }
+
+// TestEncodeAXI_FailsLoudlyOnLossyValue pins the runtime guard: a value whose
+// encoding silently loses data (a TextMarshaler field toon-go drops) must make
+// encodeAXI fail loudly and write NOTHING, not emit a lossy payload that parses.
+func TestEncodeAXI_FailsLoudlyOnLossyValue(t *testing.T) {
+	dirty := map[string]any{"note": axiLossyCell{V: "dropped"}}
+	var b bytes.Buffer
+	err := encodeAXI(&b, dirty)
+	require.Error(t, err, "a lossy value must fail the encode at runtime, not silently drop the cell")
+	assert.Empty(t, b.String(), "a failed encode must leave the writer untouched")
+}
