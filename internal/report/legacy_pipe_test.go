@@ -160,6 +160,19 @@ func TestLegacyPipe_InvalidUTF8RendersReplacementChar(t *testing.T) {
 	assert.NotContains(t, b.String(), "\xff")
 }
 
+// TestLegacyPipe_ControlOnlyCellIsQuoted pins the control-rune quote rule on its
+// own: a cell whose ONLY special content is a control byte or newline (no `:`,
+// quotes, brackets or delimiter to trip an earlier rule) must still be quoted,
+// so the escape pass runs and no raw ESC or line break reaches stdout.
+func TestLegacyPipe_ControlOnlyCellIsQuoted(t *testing.T) {
+	var b bytes.Buffer
+	f := reconcile.JSONFinding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x\x1by\nz", Fix: "ok", Category: "c"}
+	require.NoError(t, renderPipeAXI(&b, []reconcile.JSONFinding{f}))
+	assert.Contains(t, b.String(), `"xy\nz"`)
+	assert.NotContains(t, b.String(), "\x1b")
+	assert.Equal(t, 2, strings.Count(b.String(), "\n"), "one header line and one row line")
+}
+
 // TestLegacyPipe_HeadersArePipeDelimited pins the legacy header shape on every
 // payload: the `|` delimiter marker inside the declared count.
 func TestLegacyPipe_HeadersArePipeDelimited(t *testing.T) {
