@@ -89,9 +89,11 @@ func axiRows(findings []reconcile.JSONFinding) []toon.Object {
 
 // axiRow encodes one finding. est_minutes, exit_code and challenge_survived are
 // typed numbers/booleans; every free-text field is capped by axiText. In a mixed
-// payload (only some findings carry a declared block) an absent block gets
-// empty-string cells — never a misleading 0 or false — so a consumer must
-// tolerate the mixed present/absent form in those columns.
+// payload (only some findings carry a declared block) an absent block encodes
+// as null — TOON's absence form — so a stock typed decoder with pointer fields
+// accepts the whole document; "" in a typed column would make toon.Unmarshal
+// reject the payload ("cannot assign string to int"). The legacy pipe path
+// keeps its quoted empty-string cells, which are frozen bytes.
 func axiRow(f reconcile.JSONFinding, cols axiColumns) toon.Object {
 	fields := []toon.Field{
 		{Key: "severity", Value: axiText(f.Severity)},
@@ -109,7 +111,7 @@ func axiRow(f reconcile.JSONFinding, cols axiColumns) toon.Object {
 	}
 	if cols.verification {
 		var verdict, skeptic, notes string
-		var survived any = ""
+		var survived any = nil
 		if v := f.Verification; v != nil {
 			verdict, skeptic, notes, survived = v.Verdict, v.Skeptic, v.Notes, v.ChallengeSurvived
 		}
@@ -121,7 +123,7 @@ func axiRow(f reconcile.JSONFinding, cols axiColumns) toon.Object {
 	}
 	if cols.evidence {
 		var command, excerpt string
-		var exitCode any = ""
+		var exitCode any = nil
 		if e := f.EvidenceExec; e != nil {
 			command, excerpt, exitCode = e.Command, e.OutputExcerpt, e.ExitCode
 		}
