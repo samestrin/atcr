@@ -446,9 +446,9 @@ func NewRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 				legacy := legacyFlag || legacyEnv
 				if axi && legacy {
 					if legacyFlag {
-						warnLegacyPipe(cmd.ErrOrStderr(), "--legacy-pipe")
+						warnLegacyPipe(cmd.Context(), "--legacy-pipe")
 					} else {
-						warnLegacyPipe(cmd.ErrOrStderr(), "ATCR_LEGACY_PIPE")
+						warnLegacyPipe(cmd.Context(), "ATCR_LEGACY_PIPE")
 					}
 				}
 				cmd.SetContext(newLegacyPipeContext(cmd.Context(), legacy))
