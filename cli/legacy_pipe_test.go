@@ -10,6 +10,22 @@ import (
 // wantPipeDeprecation is the exact stderr notice every legacy pipe route emits.
 const wantPipeDeprecation = "warning: pipe-delimited AXI output is deprecated and will be removed in a future release; migrate to standard TOON.\n"
 
+// TestLegacyPipeNoticeNamesTrigger pins that the deprecation notice says HOW
+// legacy pipe was enabled, so an env-switch user can turn it off without
+// reading the source (TD: cli/axi.go:34).
+func TestLegacyPipeNoticeNamesTrigger(t *testing.T) {
+	code, stdout, stderr := execCmdSplit(t, "--axi", "--legacy-pipe")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stderr, "(enabled by --legacy-pipe")
+	assert.NotContains(t, stdout, "deprecated")
+
+	t.Setenv("ATCR_LEGACY_PIPE", "1")
+	code, stdout, stderr = execCmdSplit(t, "--axi")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stderr, "(enabled by ATCR_LEGACY_PIPE")
+	assert.NotContains(t, stdout, "deprecated")
+}
+
 // TestReportCmd_FormatPipeEmitsLegacyWithDeprecation is AC3: `--format pipe`
 // routes to the legacy pipe encoder (paginated, with the old header-N contract)
 // and warns on stderr, never on stdout.
