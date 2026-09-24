@@ -191,8 +191,9 @@
 // atomically, so store size tracks LIVE findings rather than history.
 //
 // Retention is bounded at FOUR records per id, with one documented exception below:
-// the effective record, at most one superseded rationale, — when the effective
-// record carries no model attribution — one donor, and — when the effective record
+// the effective record, at most one superseded rationale, one donor — the most
+// recent record that carries model attribution, when it is not already one of the
+// others — and — when the effective record
 // is a re-detection and attempts-exhausted is in play — the latest closed record.
 // Two is the ordinary case and three or four the narrow ones. (That wording is deliberately identical to store.go's and to the
 // published bound in docs/technical-debt.md; see store.go's note on why.)
@@ -200,9 +201,10 @@
 // TRAIL — the highest-ranked superseded record that bears a rationale, for ANY effective
 // status, and only when its justification is not already the effective record's
 // (preserving the ResolvedAt and the human-typed --reason a regression or a later close
-// would otherwise erase) — and the model DONOR whenever the effective record carries no
-// attribution (preserving the record AggregateQualitySignal recovers a Model from —
-// without it the outcome vanishes from the signal entirely). Neither is gated on the
+// would otherwise erase) — and the model DONOR, the most recent model-carrier, whenever it
+// is not already retained (preserving the record AggregateQualitySignal recovers a Model
+// from — without it the outcome vanishes from the signal, or a later model-less append is
+// credited to an older model). Neither is gated on the
 // effective record's status. Both are written with their counters zeroed, and they are
 // emitted trail-then-donor BEFORE the effective record so a full timestamp/rank tie still
 // folds to the effective one. A re-detected id also keeps its latest closed record

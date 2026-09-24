@@ -664,15 +664,15 @@ func TestTechnicalDebtDoc_CompactGuaranteeIsNotAnAbsolute(t *testing.T) {
 
 	// THE DONOR IS THE THIRD RETAINED RECORD AND THE DOC NEVER NAMED IT.
 	// retainForCompaction keeps up to TWO records beyond the effective one: the
-	// highest-ranked superseded rationale, and — whenever the effective record
-	// carries no Model — the attribution donor the quality signal would otherwise
-	// lose. The published passage described only the first, so it stated a 2-record
+	// highest-ranked superseded rationale, and the attribution donor (the most
+	// recent model-carrier) the quality signal would otherwise lose. Since
+	// 2026-09-24 the donor is kept even when the effective record carries a Model. The published passage described only the first, so it stated a 2-record
 	// bound where the code holds 3, and `grep -i donor docs/technical-debt.md`
 	// returned nothing at all. An operator sizing a store, or reasoning about what
 	// survives a compaction, was reading a bound that is not the one enforced.
 	assert.Contains(t, doc, "donor",
 		"the published retention bound must name the attribution donor, the third record compaction retains")
-	assert.Contains(t, doc, "carries no model attribution",
+	assert.Contains(t, doc, "the most recent record that carries\nmodel attribution",
 		"and must state the condition the donor is retained under, not merely that a third record exists")
 }
 
