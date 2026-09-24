@@ -139,3 +139,11 @@ func singleRowAXI(name string, header []string, values []any) (toon.Object, erro
 	}
 	return toon.NewObject(toon.Field{Key: name, Value: []toon.Object{toon.NewObject(fields...)}}), nil
 }
+
+// Compiling stubs for the RED step.
+func axiFindingsDoc(findings []reconcile.JSONFinding) axiFindingsPayload { return axiFindingsPayload{} }
+func axiPaginatedDoc(findings []reconcile.JSONFinding, maxLines int) axiPaginatedPayload {
+	return axiPaginatedPayload{}
+}
+func reviewSummaryAXIDoc(s ReviewSummaryAXI) (toon.Object, error) { return toon.Object{}, nil }
+func homeViewAXIDoc(s HomeViewAXI) (toon.Object, error)           { return toon.Object{}, nil }
