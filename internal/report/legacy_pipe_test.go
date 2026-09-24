@@ -184,3 +184,30 @@ func TestFormatPipe_IsValidAndRendersLegacy(t *testing.T) {
 	require.NoError(t, renderPipeAXI(&want, sample()))
 	assert.Equal(t, want.String(), got.String())
 }
+
+// TestRenderPipeAXIPaginated_CapsRowsBeforeEncoding pins that the legacy
+// paginated path encodes only the rows it will emit (TD legacy_pipe.go:115): a
+// cap of 3 over 5000 findings must not pay per-row encoding for the 4998 rows
+// that are cut, while the bytes stay identical to the frozen
+// render-everything-then-PaginateAXI shape (true total and full column set in
+// the header, even when the only column carrier is a cut row).
+func TestRenderPipeAXIPaginated_CapsRowsBeforeEncoding(t *testing.T) {
+	many := make([]reconcile.JSONFinding, 5000)
+	for i := range many {
+		many[i] = reconcile.JSONFinding{Severity: "LOW", File: "a.go", Line: i, Problem: "problem text", Fix: "fix text", Confidence: "LOW"}
+	}
+	many[len(many)-1].Disagreement = "only carrier is cut"
+
+	for _, maxLines := range []int{0, 1, 2, 3, 5001, 5002} {
+		var full, got bytes.Buffer
+		require.NoError(t, renderPipeAXI(&full, many))
+		want, truncated, _ := PaginateAXI(full.Bytes(), maxLines)
+		require.NoError(t, RenderPipeAXIPaginated(&got, many, maxLines))
+		assert.Equalf(t, string(want)+"truncated: "+map[bool]string{true: "true", false: "false"}[truncated]+"\n", got.String(), "maxLines=%d", maxLines)
+	}
+
+	allocs := testing.AllocsPerRun(3, func() {
+		_ = RenderPipeAXIPaginated(io.Discard, many, 3)
+	})
+	assert.Less(t, allocs, 200.0, "cut rows must not be encoded")
+}
