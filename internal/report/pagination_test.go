@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	reclib "github.com/samestrin/atcr/reconcile"
+
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,6 +31,34 @@ func synthAXI(rows int) []byte {
 // always terminates every line, so this equals the emitted line count).
 func physLines(p []byte) int {
 	return bytes.Count(p, []byte("\n"))
+}
+
+// TestAXIPaginatedDoc_HeaderSchemaCapIndependent pins that the declared column
+// set of a paginated standard payload does not depend on ATCR_AXI_MAX_LINES: a
+// column whose only carrier row was cut must still be declared in the header,
+// computed from the FULL findings slice — otherwise two invocations of the same
+// review dir at different caps return different wire schemas and a consumer that
+// caches the header mis-keys every row.
+func TestAXIPaginatedDoc_HeaderSchemaCapIndependent(t *testing.T) {
+	carrier := reconcile.JSONFinding{
+		Severity: "LOW", File: "carrier.go", Line: 2, Problem: "p", Fix: "f",
+		Category: "c", EstMinutes: 1, Confidence: "LOW",
+		Verification: &reclib.Verification{Verdict: "confirmed", ChallengeSurvived: true},
+		EvidenceExec: &reconcile.EvidenceExec{Command: "true", ExitCode: 0},
+		FixWarning:   "w", FixReview: "r",
+	}
+	plain := reconcile.JSONFinding{Severity: "HIGH", File: "plain.go", Line: 1, Problem: "p", Category: "c", EstMinutes: 1}
+
+	for _, cap := range []int{2, 3, AXIMaxLinesDefault} {
+		var b bytes.Buffer
+		require.NoError(t, RenderAXIPaginated(&b, []reconcile.JSONFinding{plain, carrier}, cap))
+		header := strings.SplitN(b.String(), "\n", 2)[0]
+		for _, col := range []string{"verification.verdict", "verification.challenge_survived",
+			"evidence_exec.exit_code", "fix_warning", "fix_review"} {
+			assert.Containsf(t, header, col,
+				"cap=%d: header must declare %s even when its only carrier row was cut", cap, col)
+		}
+	}
 }
 
 // TestPaginateAXI_UnderCapPassThrough is AC 03-01 Scenario 1: a payload under the
