@@ -34,6 +34,14 @@ const pipeDelim = '|'
 // fix_warning and fix_review columns appear only when at least one finding
 // carries them, with empty cells for findings that lack the signal.
 func renderPipeAXI(w io.Writer, findings []reconcile.JSONFinding) error {
+	return renderPipeAXIRows(w, findings, len(findings))
+}
+
+// renderPipeAXIRows is renderPipeAXI emitting only the first limit rows. The
+// header still declares len(findings) and the column set of every finding, so
+// the output is byte-identical to cutting renderPipeAXI's output after limit
+// rows — without encoding the rows that would be cut.
+func renderPipeAXIRows(w io.Writer, findings []reconcile.JSONFinding, limit int) error {
 	var b bytes.Buffer
 	if len(findings) == 0 {
 		b.WriteString("findings[0]:\n")
@@ -47,7 +55,7 @@ func renderPipeAXI(w io.Writer, findings []reconcile.JSONFinding) error {
 		quotedHeader[i] = pipeQuote(h)
 	}
 	fmt.Fprintf(&b, "findings[%d%c]{%s}:\n", len(findings), pipeDelim, strings.Join(quotedHeader, string(pipeDelim)))
-	for _, f := range findings {
+	for _, f := range findings[:min(limit, len(findings))] {
 		row := pipeRow(f, cols)
 		// A row must carry exactly as many columns as the header declares; a
 		// mismatch is an internal encoder bug, so fail rather than emit a
@@ -109,19 +117,24 @@ func pipeRow(f reconcile.JSONFinding, cols axiColumns) []string {
 func pipeText(s string) string { return pipeQuote(truncate(s, maxTextLen)) }
 
 // RenderPipeAXIPaginated is the legacy analogue of RenderAXIPaginated. It keeps
-// the pre-migration contract: the rendered payload is line-capped by PaginateAXI,
-// so when truncated the header still declares the true total N while fewer rows
-// are present, followed by a `truncated: <bool>` line.
+// the pre-migration contract: the payload is line-capped as PaginateAXI would
+// cap it (header inclusive, a non-positive maxLines clamps to
+// AXIMaxLinesDefault), so when truncated the header still declares the true
+// total N while fewer rows are present, followed by a `truncated: <bool>` line.
+// Rows are capped before encoding, so the cut rows are never rendered.
 func RenderPipeAXIPaginated(w io.Writer, findings []reconcile.JSONFinding, maxLines int) error {
+	if maxLines < 1 {
+		maxLines = AXIMaxLinesDefault
+	}
+	limit := maxLines - 1
 	var buf bytes.Buffer
-	if err := renderPipeAXI(&buf, findings); err != nil {
+	if err := renderPipeAXIRows(&buf, findings, limit); err != nil {
 		return err
 	}
-	out, truncated, _ := PaginateAXI(buf.Bytes(), maxLines)
-	if _, err := w.Write(out); err != nil {
+	if _, err := w.Write(buf.Bytes()); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintf(w, "truncated: %t\n", truncated)
+	_, err := fmt.Fprintf(w, "truncated: %t\n", len(findings) > limit)
 	return err
 }
 

@@ -19,7 +19,9 @@ import (
 const AXIMaxLinesDefault = 500
 
 // PaginateAXI applies the deterministic line cap to an already-rendered legacy
-// pipe AXI payload (RenderPipeAXIPaginated). The standard TOON path caps rows
+// pipe AXI payload. It is the reference cut RenderPipeAXIPaginated reproduces
+// without rendering the cut rows (pinned equal by
+// TestRenderPipeAXIPaginated_CapsRowsBeforeEncoding). The standard TOON path caps rows
 // before encoding instead (RenderAXIPaginated), so a byte cut can never leave a
 // header N a stock decoder would reject. It treats rendered as opaque text (the
 // renderer has already stripped ANSI/control bytes) and caps it to at most
