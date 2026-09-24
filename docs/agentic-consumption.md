@@ -168,8 +168,7 @@ none.
 A large PR can produce a findings list big enough to blow an agent's context
 window. `atcr report --format axi` therefore caps its payload deterministically:
 
-- **Default cap: 500 physical lines** — the array header plus up to 499 finding
-  rows (the cap counts total physical lines, header inclusive).
+- **Default cap: 500 lines of array** — the array header plus up to 499 finding rows (header inclusive). The closing `total:` and `truncated:` lines are not counted, so a capped payload is at most 502 physical lines.
 - **Override:** set `ATCR_AXI_MAX_LINES` to a positive integer to raise or lower
   the cap. A blank, non-numeric, zero, or negative value is ignored — the cap
   fails open to 500 and a single warning is written to **stderr** (never stdout,
