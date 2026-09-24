@@ -492,7 +492,7 @@ func NewRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 	// context (newAXIContext), so runHome reads it via axiFromContext — the same
 	// context-propagation plumbing review/resume already reuse (Epic 31.0).
 	root.Flags().Bool("axi", false, "emit the home view as a token-dense, ANSI/Markdown-free TOON payload on stdout for agent consumption (Agent eXperience Interface)")
-	root.Flags().Bool("legacy-pipe", false, "with --axi, emit the deprecated pipe-delimited payload instead of standard TOON (also ATCR_LEGACY_PIPE=1)")
+	root.Flags().Bool("legacy-pipe", false, "with --axi, emit the deprecated pipe-delimited payload instead of standard TOON (also ATCR_LEGACY_PIPE=1; report uses --format pipe instead)")
 
 	// Flag-parse errors (unknown flags, bad values, violated flag groups)
 	// are usage errors: exit 2.
