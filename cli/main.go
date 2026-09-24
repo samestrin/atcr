@@ -442,7 +442,7 @@ func NewRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 				// the notice is written here, once per invocation, and only when
 				// AXI output is actually requested.
 				legacyFlag, _ := cmd.Flags().GetBool("legacy-pipe")
-				legacyEnv := legacyPipeFromEnv()
+				legacyEnv := legacyPipeFromEnv(cmd.ErrOrStderr())
 				legacy := legacyFlag || legacyEnv
 				if axi && legacy {
 					if legacyFlag {

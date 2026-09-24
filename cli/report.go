@@ -115,7 +115,7 @@ func runReport(cmd *cobra.Command, args []string) error {
 		if err := report.RenderMarkdownWithContested(&buf, findings, df, cr); err != nil {
 			return usageError(err)
 		}
-	case format == report.FormatPipe || (format == report.FormatAXI && legacyPipeFromEnv()):
+	case format == report.FormatPipe || (format == report.FormatAXI && legacyPipeFromEnv(cmd.ErrOrStderr())):
 		// The deprecated legacy pipe encoder: `--format pipe`, or `--format axi`
 		// under the global ATCR_LEGACY_PIPE switch. Same pagination knob and exit
 		// class as the standard AXI branch below; the notice goes to stderr so

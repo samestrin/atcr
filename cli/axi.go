@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 )
 
 // axiContextKey is the unexported context key under which the --axi output mode
@@ -44,9 +45,20 @@ func warnLegacyPipe(w io.Writer, trigger string) {
 // legacyPipeFromEnv reports whether ATCR_LEGACY_PIPE requests the legacy pipe
 // encoder. It is a global switch over every AXI surface (report --format axi,
 // review --axi, bare atcr --axi); non-AXI output ignores it. Any value
-// strconv.ParseBool accepts as true enables it; anything else is off.
-func legacyPipeFromEnv() bool {
-	on, _ := strconv.ParseBool(os.Getenv("ATCR_LEGACY_PIPE"))
+// strconv.ParseBool accepts as true enables it; anything else is off. An
+// unparseable non-empty value warns on stderr and fails open to standard TOON,
+// so a typo is visible rather than silently ignored (matching
+// axiMaxLinesFromEnv).
+func legacyPipeFromEnv(w io.Writer) bool {
+	raw, ok := os.LookupEnv("ATCR_LEGACY_PIPE")
+	if !ok || strings.TrimSpace(raw) == "" {
+		return false
+	}
+	on, err := strconv.ParseBool(raw)
+	if err != nil {
+		_, _ = fmt.Fprintf(w, "warning: unrecognized ATCR_LEGACY_PIPE value %q; standard TOON output is in effect\n", raw)
+		return false
+	}
 	return on
 }
 
