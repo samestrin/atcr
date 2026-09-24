@@ -102,7 +102,7 @@ func renderHomeView(w io.Writer, execPath, description string, st homeState) err
 	// sanitizeDisplay strips terminal control bytes (ESC/C0/C1, line separators)
 	// from the executable path — an attacker-controlled install path could otherwise
 	// smuggle ANSI escapes to the terminal. This mirrors the control-byte safety the
-	// AXI renderer already enforces via toonQuote, keeping the two renderers in parity.
+	// AXI renderer already enforces via go-axi's sanitizer, keeping the two renderers in parity.
 	if _, err := fmt.Fprintln(w, sanitizeDisplay(relHome(execPath))); err != nil {
 		return err
 	}

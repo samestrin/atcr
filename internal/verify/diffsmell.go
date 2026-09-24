@@ -855,7 +855,7 @@ func truncateRunes(s string, n int) string {
 // smellFlatten collapses CR/LF to spaces and drops every other control
 // character, so the text is safe both to interpolate into a single prompt line
 // and to write to a terminal. Mirrors sanitizeDeclineReason's flattening and
-// internal/report/render.go's isTOONControl stripping.
+// internal/report/legacy_pipe.go's pipeUnsafeRune stripping.
 //
 // The escape bytes are the point: a Smell's Evidence is a verbatim added line and
 // its File comes verbatim from `+++ b/<anything>`, so without this an added line

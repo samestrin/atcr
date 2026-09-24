@@ -30,8 +30,9 @@ func manyFindingsJSON(t *testing.T, n int) string {
 }
 
 // TestReportCmd_AXITruncatesAtEnvCap is AC 03-04 Scenario 2 / AC 03-01: report
-// --axi honors ATCR_AXI_MAX_LINES, capping the payload content while the header N
-// preserves the true total and the truncated flag is emitted.
+// --axi honors ATCR_AXI_MAX_LINES, capping the payload content; the header N
+// counts the emitted rows while `total` carries the true count and the truncated
+// flag is emitted.
 func TestReportCmd_AXITruncatesAtEnvCap(t *testing.T) {
 	isolate(t)
 	fixtureReconciled(t, "r", manyFindingsJSON(t, 20))
@@ -39,8 +40,9 @@ func TestReportCmd_AXITruncatesAtEnvCap(t *testing.T) {
 	code, out := execCmdCapture(t, "report", "--format", "axi", "r")
 	require.Equal(t, 0, code)
 	assert.Contains(t, out, "truncated: true", "over-cap report --axi flags truncation")
-	assert.Contains(t, out, "findings[20|]{", "header declares the true total (20), not the capped row count")
-	content := strings.TrimSuffix(out, "truncated: true\n")
+	assert.Contains(t, out, "findings[4]{", "header declares the emitted rows (cap 5 minus the header line)")
+	assert.Contains(t, out, "\ntotal: 20\n", "total declares the true count (20)")
+	content := strings.TrimSuffix(out, "total: 20\ntruncated: true\n")
 	assert.Equal(t, 5, strings.Count(content, "\n"), "content capped to exactly the env cap (5 physical lines)")
 }
 
@@ -52,7 +54,8 @@ func TestReportCmd_AXIUnderCapNotTruncated(t *testing.T) {
 	code, out := execCmdCapture(t, "report", "--format", "axi", "r")
 	require.Equal(t, 0, code)
 	assert.Contains(t, out, "truncated: false", "under the default cap, report --axi is not truncated")
-	assert.Contains(t, out, "findings[20|]{", "header declares the true total")
+	assert.Contains(t, out, "findings[20]{", "uncut, header declares the full row count")
+	assert.Contains(t, out, "\ntotal: 20\n", "total is present even when uncut")
 }
 
 // TestReportCmd_AXIUsesSharedPaginationWrapper is AC 03-04 Error Scenario 1 /

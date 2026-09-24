@@ -14,7 +14,7 @@ import (
 
 // AC 04-02: a pinning/regression test guaranteeing NO ANSI/OSC escape sequence
 // ever reaches --axi stdout. It is the runtime backstop to renderAXI's structural
-// guarantee (toonEscape drops every control byte but the five valid TOON escapes):
+// guarantee (go-axi's sanitizer drops every control byte but the five valid TOON escapes):
 // the TOON/JSON payload is escape-free by construction, and this test fails loudly
 // if a future change ever regresses that. Styled after
 // TestDriftLine_StripsControlChars / TestRenderPersonaSearch_StripsControlChars for
@@ -25,8 +25,8 @@ import (
 // OSC (\x1b]), DCS, APC, and charset sequence — and the 8-bit C1 controls
 // (U+0080–U+009F), which include the single-byte CSI (U+009B) and OSC (U+009D)
 // forms a terminal honors identically. This mirrors exactly what renderAXI's
-// toonEscape strips (unicode.IsControl covers 0x00–0x1f and 0x7f–0x9f), so a
-// regression that bypassed toonEscape and leaked EITHER an ESC OR a C1 control
+// go-axi sanitizer strips (unicode.IsControl covers 0x00–0x1f and 0x7f–0x9f), so a
+// regression that bypassed the sanitizer and leaked EITHER an ESC OR a C1 control
 // introducer is caught — not just the two 7-bit CSI/OSC forms the AC names as its
 // baseline (AC 04-02 Edge Case 2). The C1 arm matches DECODED runes (U+0080–U+009F),
 // which is the only form the payload can carry: renderAXI re-encodes every field via
@@ -95,7 +95,7 @@ func TestAXIEscapeDetector_FlagsC1Introducers(t *testing.T) {
 // finding whose free-text fields were crafted (e.g. by a compromised persona/
 // catalog entry) to carry raw CSI/OSC escapes must not smuggle those bytes,
 // unescaped, into the --axi findings payload. Rendered through the real FormatAXI
-// encoder, the escape bytes are stripped by toonEscape (TOON defines no \x/\u
+// encoder, the escape bytes are stripped by go-axi's sanitizer (TOON defines no \x/\u
 // escape), so no raw escape rides the machine-consumed payload — while the
 // surrounding legitimate text survives.
 func TestAXIRender_CraftedFindingFieldEscapeStripped(t *testing.T) {
@@ -128,7 +128,7 @@ func TestAXIRender_CraftedFindingFieldEscapeStripped(t *testing.T) {
 // RenderReviewSummaryAXI run-summary payload (not the findings table
 // TestAXIRender_CraftedFindingFieldEscapeStripped covers). Its free-text ID/Dir
 // fields flow onto stdout, so a crafted escape smuggled into them must be stripped
-// by the same shared toonQuote encoder — closing the gap between the findings-path
+// by the same shared go-axi encoder — closing the gap between the findings-path
 // proof and the summary path (AC 04-02 Edge Case 1 on the emitted path).
 func TestAXIRenderReviewSummary_CraftedFieldEscapeStripped(t *testing.T) {
 	var buf bytes.Buffer

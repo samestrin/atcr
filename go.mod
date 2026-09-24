@@ -16,8 +16,6 @@ require (
 require (
 	github.com/cli/safeexec v1.0.0 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
-	github.com/samestrin/go-axi v0.3.1 // indirect
-	github.com/toon-format/toon-go v0.0.0-20251202084852-7ca0e27c4e8c // indirect
 )
 
 require (
@@ -39,5 +37,7 @@ require (
 
 require (
 	github.com/samestrin/atcr/reconcile v0.8.0
+	github.com/samestrin/go-axi v0.3.1
+	github.com/toon-format/toon-go v0.0.0-20251202084852-7ca0e27c4e8c
 	golang.org/x/text v0.23.0
 )

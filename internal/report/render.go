@@ -15,8 +15,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	goaxi "github.com/samestrin/go-axi"
-
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/stream"
 )
@@ -110,9 +108,6 @@ func renderJSON(w io.Writer, findings []reconcile.JSONFinding) error {
 	return err
 }
 
-// axiDelim is the TOON tabular-array delimiter for the axi payload.
-const axiDelim = '|'
-
 // axiColumns records which optional per-finding signals a payload declares. A
 // column appears only when at least one finding carries the signal, so a plain
 // findings list stays at the 9-column width — the same omitempty discipline the
@@ -158,88 +153,14 @@ func (c axiColumns) header() []string {
 	return h
 }
 
-// renderAXI re-encodes findings as a TOON (Token-Optimized Object Notation)
-// tabular array — the token-dense machine payload for the agent-experience
-// (--axi) mode.
-func renderAXI(w io.Writer, findings []reconcile.JSONFinding) error {
-	var b bytes.Buffer
-	if len(findings) == 0 {
-		b.WriteString("findings[0]:\n")
-		_, err := w.Write(b.Bytes())
-		return err
-	}
-	cols := axiColumnsFor(findings)
-	header := cols.header()
-	quotedHeader := make([]string, len(header))
-	for i, h := range header {
-		quotedHeader[i] = toonQuote(h)
-	}
-	fmt.Fprintf(&b, "findings[%d%c]{%s}:\n", len(findings), axiDelim, strings.Join(quotedHeader, string(axiDelim)))
-	for _, f := range findings {
-		row := axiRow(f, cols)
-		if len(row) != len(header) {
-			return fmt.Errorf("axi encoder: row has %d columns, header declares %d", len(row), len(header))
-		}
-		b.WriteString("  ")
-		b.WriteString(strings.Join(row, string(axiDelim)))
-		b.WriteByte('\n')
-	}
-	_, err := w.Write(b.Bytes())
-	return err
-}
-
-func axiRow(f reconcile.JSONFinding, cols axiColumns) []string {
-	row := []string{
-		axiText(f.Severity),
-		axiText(fmt.Sprintf("%s:%d", f.File, f.Line)),
-		axiText(f.Problem),
-		axiText(f.Fix),
-		axiText(f.Category),
-		strconv.Itoa(f.EstMinutes),
-		axiText(f.Evidence),
-		axiText(strings.Join(f.Reviewers, ",")),
-		axiText(f.Confidence),
-	}
-	if cols.disagreement {
-		row = append(row, axiText(f.Disagreement))
-	}
-	if cols.verification {
-		if f.Verification != nil {
-			row = append(row, axiText(f.Verification.Verdict), axiText(f.Verification.Skeptic),
-				axiText(f.Verification.Notes), strconv.FormatBool(f.Verification.ChallengeSurvived))
-		} else {
-			row = append(row, axiText(""), axiText(""), axiText(""), axiText(""))
-		}
-	}
-	if cols.evidence {
-		if f.EvidenceExec != nil {
-			row = append(row, axiText(f.EvidenceExec.Command), strconv.Itoa(f.EvidenceExec.ExitCode), axiText(f.EvidenceExec.OutputExcerpt))
-		} else {
-			row = append(row, axiText(""), axiText(""), axiText(""))
-		}
-	}
-	if cols.fixWarning {
-		row = append(row, axiText(f.FixWarning))
-	}
-	if cols.fixReview {
-		row = append(row, axiText(f.FixReview))
-	}
-	return row
-}
-
-// axiText caps a free-text cell at maxTextLen runes, then cleans it with go-axi
-// so control bytes are stripped by the shared sanitizer rather than a
-// hand-rolled one.
-func axiText(s string) string { return toonQuote(goaxi.SanitizeString(truncate(s, maxTextLen))) }
-
 // ReviewSummaryAXI is the run-level metadata carried by the --axi review/resume
 // summary payload: review identity plus per-attempt agent counts and a findings
 // total — the token-dense analogue of the human end-of-review summary block
 // (cli/review_summary.go). It is deliberately distinct from the findings
 // table renderAXI emits: a bare `atcr review --axi` runs no reconcile stage, so it
 // has a run summary but no findings list. The two payloads share this package's one
-// TOON encoder (toonQuote/axiDelim) rather than a second, divergent serializer
-// (AC 01-03; sprint-design Architecture).
+// TOON encoder (encodeAXI) rather than a second, divergent serializer (AC 01-03;
+// sprint-design Architecture).
 type ReviewSummaryAXI struct {
 	ID              string
 	Dir             string
@@ -267,55 +188,21 @@ var reviewSummaryAXIHeader = []string{
 	"findings_critical", "findings_high", "findings_medium", "findings_low",
 }
 
-// RenderReviewSummaryAXI writes s as a single-row TOON tabular array
-// (review_summary[1|]{...}:) reusing the axi findings encoder's pipe delimiter,
-// must-quote rules and control-byte stripping (toonQuote), so the review-summary
-// payload carries the same no-ANSI / no-Markdown structural guarantee as
-// renderAXI and stays byte-identical between `atcr review --axi` and
-// `atcr resume --axi` for equivalent data (AC 01-03/01-04). Free-text identity
-// fields are quoted; counts are emitted as bare TOON integers.
+// RenderReviewSummaryAXI writes s as a single-row standard TOON tabular array
+// (review_summary[1]{...}:) through the same go-axi encoder as the findings
+// payload, so it carries the same no-ANSI / no-Markdown structural guarantee and
+// stays byte-identical between `atcr review --axi` and `atcr resume --axi` for
+// equivalent data (AC 01-03/01-04). Identity fields are strings; counts are
+// bare TOON integers.
 func RenderReviewSummaryAXI(w io.Writer, s ReviewSummaryAXI) error {
-	var b bytes.Buffer
-	quotedHeader := make([]string, len(reviewSummaryAXIHeader))
-	for i, h := range reviewSummaryAXIHeader {
-		quotedHeader[i] = toonQuote(h)
+	doc, err := singleRowAXI("review_summary", reviewSummaryAXIHeader, []any{
+		s.ID, s.Dir, s.AgentsSucceeded, s.AgentsTotal, s.AgentsFailed, s.AgentsTimedOut,
+		s.APICalls, s.FindingsTotal, s.FindingsCritical, s.FindingsHigh, s.FindingsMedium, s.FindingsLow,
+	})
+	if err != nil {
+		return err
 	}
-	fmt.Fprintf(&b, "review_summary[1%c]{%s}:\n", axiDelim, strings.Join(quotedHeader, string(axiDelim)))
-	row := []string{
-		toonQuote(s.ID),
-		toonQuote(s.Dir),
-		strconv.FormatInt(s.AgentsSucceeded, 10),
-		strconv.FormatInt(s.AgentsTotal, 10),
-		strconv.FormatInt(s.AgentsFailed, 10),
-		strconv.FormatInt(s.AgentsTimedOut, 10),
-		strconv.FormatInt(s.APICalls, 10),
-		strconv.FormatInt(s.FindingsTotal, 10),
-		strconv.FormatInt(s.FindingsCritical, 10),
-		strconv.FormatInt(s.FindingsHigh, 10),
-		strconv.FormatInt(s.FindingsMedium, 10),
-		strconv.FormatInt(s.FindingsLow, 10),
-	}
-	// Same defensive width invariant renderAXI enforces for findings: the row must
-	// carry exactly as many columns as reviewSummaryAXIHeader declares. It cannot
-	// trip on valid input (both are fixed at 8), but it fails deterministically if a
-	// future edit adds a header column without a matching row cell (or vice versa)
-	// rather than silently emitting a misaligned payload.
-	if len(row) != len(reviewSummaryAXIHeader) {
-		return fmt.Errorf("axi encoder: review summary row has %d columns, header declares %d", len(row), len(reviewSummaryAXIHeader))
-	}
-	b.WriteString("  ")
-	b.WriteString(strings.Join(row, string(axiDelim)))
-	b.WriteByte('\n')
-	_, err := w.Write(b.Bytes())
-	return err
-}
-
-// toonQuote quotes s when TOON requires it; the caller has already sanitized s.
-func toonQuote(s string) string {
-	if pipeMustQuote(s) {
-		return pipeQuote(s)
-	}
-	return s
+	return encodeAXI(w, doc)
 }
 
 // renderMarkdown writes a human report: a severity x confidence summary grid then

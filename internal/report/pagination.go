@@ -2,7 +2,6 @@ package report
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -70,50 +69,46 @@ func PaginateAXI(rendered []byte, maxLines int) (out []byte, truncated bool, tot
 	return bytes.Join(lines[:maxLines], nil), true, total
 }
 
-// RenderAXIPaginated is the single shared --axi emission entry point used by the
-// CLI (AC 03-04): it renders findings via the FormatAXI encoder, applies the
-// maxLines line cap (PaginateAXI), and writes the capped payload followed by a
-// `truncated: <bool>` metadata line. Both `atcr report --axi` and any findings
-// path of `atcr review --axi` call this rather than reimplementing truncation,
-// so the two commands can never diverge in cap behavior.
+// RenderAXIPaginated is the single shared --axi findings emission entry point
+// used by the CLI (AC 03-04): both `atcr report --format axi` and any findings
+// path of `atcr review --axi` call it rather than reimplementing truncation, so
+// the two commands can never diverge in cap behavior.
 //
-// The `truncated` field is emitted in every payload (AC 03-02): it is the
-// "required closing structure" AC 03-01 Scenario 2 permits beyond the maxLines
-// content cap, so the content line count stays exactly maxLines when truncated.
-// The array header's declared N (the true, pre-truncation total) is preserved by
-// PaginateAXI, so a consumer reads the true count from the header and the capped
-// state from `truncated`.
+// The cap is applied to ROWS, before encoding — never by cutting the encoded
+// bytes. maxLines stays header-inclusive (the array header is line 1, so at most
+// maxLines-1 rows are emitted) and a non-positive maxLines clamps to
+// AXIMaxLinesDefault, mirroring PaginateAXI. Standard TOON escapes newlines
+// inside strings, so every row is still exactly one physical line.
 //
-// CONSUMER CONTRACT: when truncated, this payload is intentionally NOT
-// length-round-trippable — the header declares N (the true total) while fewer
-// than N rows are physically present, and the `truncated` flag is an out-of-band
-// sibling line, not an array row. This is mandated by AC 03-02 Edge Case 1 (the
-// header must reflect the true count, not the emitted row count). A consumer must
-// read `truncated` and the header N as authoritative rather than length-checking
-// the array against its physical rows.
+// CONSUMER CONTRACT (AC8, amending Sprint 31.0 AC 03-02 Edge Case 1): the array
+// header declares N = rows actually emitted, so a truncated payload still
+// round-trips through a stock TOON decoder. The true pre-truncation count rides
+// the sibling `total: <int>` key and the capped state rides `truncated: <bool>`;
+// both keys are present in EVERY payload, cut or uncut. The two closing lines
+// are required structure beyond the maxLines content cap.
 //
 // The `truncated` field NAME matches internal/fanout/status.go's Truncated bool
 // (json:"truncated") but the SEMANTICS differ: status.go marks byte-budget INPUT
-// truncation (reviewer payload files dropped), whereas this marks OUTPUT row-count
-// capping of the rendered findings — the shared name is a naming precedent, not a
-// shared signal. It is also emitted as a bare TOON boolean, not a JSON quoted key.
+// truncation, whereas this marks OUTPUT row-count capping — the shared name is a
+// naming precedent, not a shared signal.
 //
-// This deliberately does NOT alter the base Render(FormatAXI)/renderAXI output or
-// the report.axi golden — the un-paginated encoder remains the schema fixture;
-// pagination + the truncated flag are the CLI dispatch step wired here.
+// The legacy pipe path keeps the old contract (header N = true total) via
+// RenderPipeAXIPaginated; base Render(FormatAXI) stays the uncapped schema
+// encoder with no total/truncated keys.
 func RenderAXIPaginated(w io.Writer, findings []reconcile.JSONFinding, maxLines int) error {
-	var buf bytes.Buffer
-	if err := renderAXI(&buf, findings); err != nil {
-		return err
+	if maxLines < 1 {
+		maxLines = AXIMaxLinesDefault
 	}
-	// PaginateAXI's third return (the true total) is intentionally discarded here:
-	// it is already emitted on the wire as the array header's N, which is the
-	// authoritative count for consumers. It remains a return value per the
-	// pagination contract and is asserted directly by the unit tests.
-	out, truncated, _ := PaginateAXI(buf.Bytes(), maxLines)
-	if _, err := w.Write(out); err != nil {
-		return err
+	total := len(findings)
+	emitted := findings
+	if limit := maxLines - 1; total > limit {
+		emitted = findings[:limit]
 	}
-	_, err := fmt.Fprintf(w, "truncated: %t\n", truncated)
-	return err
+	return encodeAXI(w, axiPaginatedPayload{
+		// Columns are derived from the emitted rows, so a column whose only carrier
+		// was cut is not declared as all-empty.
+		Findings:  axiRows(emitted),
+		Total:     total,
+		Truncated: len(emitted) < total,
+	})
 }
