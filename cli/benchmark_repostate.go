@@ -843,6 +843,15 @@ func summarizeCaseFailureReasons(failures []benchmark.CaseFailure) string {
 	return strings.Join(parts, ", ")
 }
 
+// failedSlotCount is a stub.
+func failedSlotCount(m map[reviewerKey][]benchmark.SlotFailure) int { return len(m) }
+
+// retainedDirCount is a stub.
+func retainedDirCount(workDir string) int { return 0 }
+
+// retainedWalkLimit caps the entries dirSizeBytes visits.
+var retainedWalkLimit = 0
+
 // retainedSizeAttrs is the size half of the retained-work-dir log line: a
 // numeric retained_bytes when the size was measured, else
 // retained_bytes_unmeasured=true, so the key stays monotypic (see the caller).

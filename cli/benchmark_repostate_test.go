@@ -2721,3 +2721,47 @@ func TestRetainedSizeAttrs_UnmeasuredRootIsFlaggedNotZero(t *testing.T) {
 	assert.Equal(t, []any{"retained_bytes_unmeasured", true},
 		retainedSizeAttrs(filepath.Join(dir, "missing")))
 }
+
+// failed_slots counts failed slots, not the reviewers they belong to: one dead
+// provider on a 3-case suite is 3 unmeasured slots (atcr review 2026-09-23,
+// benchmark_repostate.go:201).
+func TestFailedSlotCount_SumsSlotsAcrossReviewers(t *testing.T) {
+	m := map[reviewerKey][]benchmark.SlotFailure{
+		{}:               {{CaseID: "c1"}, {CaseID: "c2"}, {CaseID: "c3"}},
+		{persona: "dax"}: {{CaseID: "c1"}},
+	}
+	assert.Equal(t, 4, failedSlotCount(m))
+	assert.Zero(t, failedSlotCount(nil))
+}
+
+// retained_dirs counts every retained work dir beside this one, by name only,
+// so accumulation across runs is visible without walking any of them (atcr
+// review 2026-09-23, benchmark_repostate.go:213).
+func TestRetainedDirCount_CountsSiblingWorkDirsByName(t *testing.T) {
+	parent := t.TempDir()
+	for _, d := range []string{"atcr-repo-state-1", "atcr-repo-state-2", "atcr-repo-state-3", "unrelated"} {
+		require.NoError(t, os.Mkdir(filepath.Join(parent, d), 0o755))
+	}
+	assert.Equal(t, 3, retainedDirCount(filepath.Join(parent, "atcr-repo-state-2")))
+}
+
+// The size walk is bounded: past retainedWalkLimit entries it stops and reports
+// unmeasured rather than blocking exit on a huge tree (atcr review 2026-09-23,
+// benchmark_repostate.go:870).
+func TestDirSizeBytes_StopsAtTheWalkLimit(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < 5; i++ {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, fmt.Sprintf("f%d", i)), []byte("ab"), 0o644))
+	}
+	orig := retainedWalkLimit
+	t.Cleanup(func() { retainedWalkLimit = orig })
+
+	retainedWalkLimit = 3
+	_, measured := dirSizeBytes(dir)
+	assert.False(t, measured, "a walk cut short by the limit is not a measurement")
+
+	retainedWalkLimit = 100
+	size, measured := dirSizeBytes(dir)
+	assert.True(t, measured)
+	assert.Equal(t, int64(10), size)
+}
