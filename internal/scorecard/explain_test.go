@@ -207,6 +207,51 @@ func TestExplainTrustPriors_PreEraMappedRecordCountsUnannotated(t *testing.T) {
 	assert.Empty(t, detail["dax"].Reasons, "a pre-era record counts unannotated")
 }
 
+// TestExplainTrustPriors_AggregateRecordsAreNeverExplained pins the four
+// RecordType skips in detailsFromRecords. Each aggregate below is shaped to
+// trip exactly one gate's note if it were read as a reviewer record, and it
+// carries dax's name so a leak is visible on dax's own detail.
+func TestExplainTrustPriors_AggregateRecordsAreNeverExplained(t *testing.T) {
+	seed := func(dir string) {
+		scoped(t, dir, 20, "Dax", 1, 1, reclib.CategoryTesting)
+	}
+	agg := func(base string) Record {
+		r := reviewer_(runIDAt(time.Now(), base), "Dax", "m1", 1, 0)
+		r.RecordType = RecordTypeAggregate
+		return r
+	}
+
+	baseDir := t.TempDir()
+	seed(baseDir)
+	want, err := ExplainTrustPriors(baseDir, 0)
+	require.NoError(t, err)
+	require.Contains(t, want, "dax")
+
+	dir := t.TempDir()
+	seed(dir)
+	nonStrict := agg("agg-nonstrict")
+	nonStrict.ConsensusLevel = "off" // consensus gate
+	ineligible := agg("agg-failed")
+	ineligible.Outcome = "failed" // outcome gate
+	futureEra := agg("agg-era")
+	futureEra.RaisedDenominator = RaisedDenominatorCurrent + 1 // era gate
+	outOfRemit := agg("agg-remit")
+	outOfRemit.FindingsRaised = 0
+	outOfRemit.Outcome = outcomeClean
+	other := reviewer_(outOfRemit.RunID, "Pace", "m1", 1, 0)
+	other.CategoriesRaised = []string{reclib.CategoryPerformance} // opportunity gate
+	blank := agg("agg-blank")
+	blank.Reviewer = ""
+	for _, r := range []Record{nonStrict, ineligible, futureEra, outOfRemit, other, blank} {
+		require.NoError(t, Append(dir, r))
+	}
+
+	got, err := ExplainTrustPriors(dir, 0)
+	require.NoError(t, err)
+	assert.Equal(t, want["dax"], got["dax"], "aggregate records add no count, exclusion or reason")
+	assert.NotContains(t, got, "", "an aggregate is never explained under a blank reviewer")
+}
+
 func TestExplainTrustPriors_ExcludedEqualsTheExcludingReasonsOnly(t *testing.T) {
 	// The invariant PersonaScoreDetail.Excluded documents. Both a real exclusion
 	// and a TD-032 annotation are present, so a fold that naively sums every
