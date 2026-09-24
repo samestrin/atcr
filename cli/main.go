@@ -461,8 +461,15 @@ func NewRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 				}
 				// The flag or ATCR_LEGACY_PIPE selects the deprecated pipe encoder;
 				// the notice is written here, once per invocation, and only when
-				// AXI output is actually requested.
-				if axi && legacy {
+				// AXI output is actually requested. --dry-run is skipped: it
+				// short-circuits to the quality-signal preview in runReview before any
+				// pipe renderer is selected, so the notice would describe output that
+				// never happens (TD: cli/review.go:283).
+				dryRun := false
+				if f := cmd.Flags().Lookup("dry-run"); f != nil {
+					dryRun, _ = cmd.Flags().GetBool("dry-run")
+				}
+				if axi && legacy && !dryRun {
 					if legacyFlag {
 						warnLegacyPipe(cmd.Context(), "--legacy-pipe")
 					} else {
