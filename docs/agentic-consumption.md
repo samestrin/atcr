@@ -248,11 +248,7 @@ case $status in
       ATCR_AXI_MAX_LINES=20000 atcr report --format axi > findings.toon 2> report.log
     fi
 
-    # 4. Decode the finding rows with a standard TOON decoder — the payload is
-    #    spec-compliant TOON, so any off-the-shelf decoder reads it (in Go:
-    #    goaxi.DecodeTabular). Free-text cells can hold commas, pipes, and escaped
-    #    newlines, so never split rows with a bare shell split.
-    your-agent-fixer --findings findings.toon  # placeholder: the agent's fixer
+    # 4. Hand findings.toon to your fixer (see the note below the example).
     ;;
   2)
     echo "usage/config error: fix the invocation, do not retry as-is (see review.log)" >&2
@@ -270,6 +266,8 @@ case $status in
     ;;
 esac
 ```
+
+Step 4 is yours to fill in: pass `findings.toon` to whatever your agent uses to act on findings. Decode the rows with a standard TOON decoder. The payload is spec-compliant TOON, so any off-the-shelf decoder reads it (in Go: `goaxi.DecodeTabular`). Free-text cells can hold commas, pipes, and escaped newlines, so never split rows with a bare shell split.
 
 Two invariants the example relies on, both guaranteed by AXI mode: `review.log`
 and `report.log` capture *all* diagnostics because stderr is the only diagnostic
