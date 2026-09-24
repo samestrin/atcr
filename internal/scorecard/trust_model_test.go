@@ -230,3 +230,47 @@ func TestResolveTrustPriorsForReview_NoPoolSummaryIsNeutral(t *testing.T) {
 	assert.Empty(t, priors)
 	assert.Zero(t, unmeasured)
 }
+
+// A pool summary listing one persona on two models leaves the stored record's
+// Model empty, the same answer currentModels gives the trust path, so the
+// record cannot claim a model the trust path refused to resolve (atcr review
+// 2026-09-23, reconcile.go:43).
+func TestEmitForReconcile_ConflictingModelsStoreNoModel(t *testing.T) {
+	reviewDir := t.TempDir()
+	writePoolSummary(t, reviewDir,
+		fanout.AgentStatus{Agent: "bruce", Status: fanout.StatusOK, FindingsCount: 1, Model: "m1"},
+		fanout.AgentStatus{Agent: "bruce", Status: fanout.StatusOK, FindingsCount: 1, Model: "m2"},
+		fanout.AgentStatus{Agent: "greta", Status: fanout.StatusOK, FindingsCount: 1, Model: " m3 "},
+	)
+	recs := emitAndRead(t, reviewDir, resWith("bruce", "greta"))
+
+	bruce := findReviewer(recs, "bruce")
+	require.NotNil(t, bruce)
+	assert.Empty(t, bruce.Model, "two models for one persona: the run's model is unknown")
+	greta := findReviewer(recs, "greta")
+	require.NotNil(t, greta)
+	assert.Equal(t, "m3", greta.Model, "stored exactly as the trust path reads it")
+}
+
+// A record with no model (a review with no pool summary, or a conflicting one)
+// never counts toward any persona's prior on the reconcile path, so a review
+// folder written without a pool summary cannot mint durable trust (atcr review
+// 2026-09-23, reconcile.go:148).
+func TestRatesFromRecords_ModelLessRecordsNeverCount(t *testing.T) {
+	recs := modelRuns("a", "sasha", "", DefaultTrustMinRuns, 2, 2)
+	assert.NotContains(t, ratesForModels(recs, map[string]string{"sasha": "m1"}), "sasha")
+}
+
+// The same review directory reached through a symlink is one run: the id must
+// not depend on the spelling of the path (atcr review 2026-09-23,
+// reconcile.go:326; on macOS /tmp is a symlink to /private/tmp).
+func TestRunIDForReviewDir_SymlinkedPathIsTheSameRun(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "review")
+	require.NoError(t, os.MkdirAll(real, 0o755))
+	link := filepath.Join(root, "link")
+	require.NoError(t, os.Symlink(real, link))
+
+	assert.Equal(t, RunIDForReviewDir("2026-06-14T10:00:00Z", real),
+		RunIDForReviewDir("2026-06-14T10:00:00Z", filepath.Join(link)))
+}
