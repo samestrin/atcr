@@ -69,6 +69,11 @@ func Formats() string {
 
 // Render writes findings to w in the given format. An unknown format is an error
 // (the caller validates first; this is the defensive backstop).
+//
+// FormatPipe is deprecated and Render emits no notice for it: the deprecation
+// warning is the caller's job, because only the caller knows its output sinks.
+// The CLI (cli/report.go) writes it to stderr; any other caller selecting
+// FormatPipe must surface its own notice.
 func Render(w io.Writer, findings []reconcile.JSONFinding, format string) error {
 	switch format {
 	case FormatMarkdown:
