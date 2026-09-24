@@ -193,6 +193,28 @@ func TestCompactThenAppend_RetentionBoundStillHolds(t *testing.T) {
 	}
 }
 
+// TestCompactThenAppend_EffectiveDonorIsNotRetainedTwice pins the donorIdx ==
+// effIdx dedupe: when the effective record is itself the newest model-carrier,
+// it is the donor too, and must be emitted once (as eff), not again as a zeroed
+// donor copy ahead of it.
+func TestCompactThenAppend_EffectiveDonorIsNotRetainedTwice(t *testing.T) {
+	const id = "abc123"
+	for _, group := range [][]Record{
+		{diffRecord(id, StatusResolved, "m1", "2026-09-01T00:00:00Z"), diffRecord(id, StatusWontfix, "m2", "2026-09-02T00:00:00Z")},
+		{diffRecord(id, StatusWontfix, "m1", "2026-09-01T00:00:00Z"), diffRecord(id, StatusResolved, "m2", "2026-09-02T00:00:00Z")},
+		{diffRecord(id, StatusUnreproducible, "m1", "2026-09-01T00:00:00Z"), diffRecord(id, StatusDeferred, "m2", "2026-09-02T00:00:00Z")},
+	} {
+		eff := group[len(group)-1]
+		seen := 0
+		for _, r := range retainForCompaction(group) {
+			if r.Timestamp == eff.Timestamp {
+				seen++
+			}
+		}
+		assert.Equalf(t, 1, seen, "effective record %s@%s must be retained exactly once", eff.Status, eff.Timestamp)
+	}
+}
+
 func TestCompactThenAppend_CompactionStaysIdempotent(t *testing.T) {
 	// Widening retention must not make compaction oscillate: compacting an
 	// already-compacted group has to be a no-op, or `debt list` shows a
