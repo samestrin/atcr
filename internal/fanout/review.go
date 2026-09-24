@@ -1687,8 +1687,8 @@ func capScopeConstraintForBudget(block string, budget int64, maxSprintPlanBytes 
 
 // capChunks bounds a baseline chunk set to at most max chunks by coalescing the
 // tail (chunks[max-1:]) into a single final chunk — the same ceiling behavior
-// chunkDiff applies to diff chunking (the maxChunksPerAgent seal conjunct,
-// chunker.go:196). It never drops a file: the coalesced final chunk
+// chunkDiff applies to diff chunking (the maxChunksPerAgent seal conjunct in
+// chunkDiff's bin-packing loop). It never drops a file: the coalesced final chunk
 // may exceed a single model window, but the alternative — an unbounded
 // slot/goroutine/provider-call count for a huge repository — is the exact
 // cost/DoS vector maxChunksPerAgent exists to prevent (AC 06-01 ES2). A set
@@ -1945,7 +1945,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		//
 		//   Per-chunk fallback chain (AC 06-01 EC1): each of this persona's chunk-
 		//     slots resolves its fallback chain independently via buildChain(name,
-		//     primary) (review.go:934) so a fallback reviews the SAME chunk as the
+		//     primary) so a fallback reviews the SAME chunk as the
 		//     primary it substitutes for — never a different chunk. buildChain is
 		//     reused verbatim; it already attaches identical chains for the bulk and
 		//     chunked paths.
@@ -1961,7 +1961,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		//     cfg.Registry.Agents aborts the whole review before any chunk dispatch
 		//     with `agent "<name>" not found in registry`, matching diff-mode.
 		//
-		//   maxChunksPerAgent cap (AC 06-01 ES2): the chunker.go:165 cap (64) carries
+		//   maxChunksPerAgent cap (AC 06-01 ES2): the maxChunksPerAgent cap (64) carries
 		//     over unmodified — PartitionByBudget's chunk count is deterministically
 		//     bounded (task 1.1 note), and the (persona × chunk) slot count per
 		//     persona is capped consistently rather than spawning unbounded slots.
@@ -1971,9 +1971,9 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		//   Collapse reuse — ZERO modification (AC 06-02 HP1/HP2, EC1-EC4, ES1):
 		//     baseline (persona × chunk) Result values flow through the SAME
 		//     unconditional `results = mergeChunkResults(results, serialAgents)` call
-		//     (review.go:656) that diff-mode already runs — no new call site.
-		//     mergeChunkResults / mergeResultGroup (chunker.go:219 / :284) and
-		//     writePool (artifacts.go:106) need NO changes for baseline provenance:
+		//     (in runEngine) that diff-mode already runs — no new call site.
+		//     mergeChunkResults / mergeResultGroup (chunker.go) and
+		//     writePool (artifacts.go) need NO changes for baseline provenance:
 		//     same-name results collapse to exactly personaCount source dirs (not
 		//     C × P), findings union across chunks, any-chunk-succeeded => Status OK,
 		//     FallbackUsed/FallbackModel union+modal, token/telemetry accumulate, and
@@ -2001,7 +2001,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				if err != nil {
 					return err
 				}
-				// Bound the slot count at maxChunksPerAgent (chunker.go:165) the same way
+				// Bound the slot count at maxChunksPerAgent the same way
 				// chunkDiff does: coalesce the tail into the final chunk so the fan-out never
 				// spawns an unbounded slot/goroutine/provider-call count while every file is
 				// still delivered whole (AC 06-01 ES2 — capped, never dropped).
@@ -2307,8 +2307,8 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					// band ml < deliveredLines <= ml + prefixLines, where chunkDiff still
 					// bin-packs on the unsubtracted countLines and an empty chunk admits
 					// an oversized first segment by construction — the `cur.Len() > 0`
-					// conjunct at chunker.go:196, whose rationale is stated at
-					// chunker.go:190-192.
+					// conjunct in chunkDiff's bin-packing loop, whose rationale is stated
+					// in the comment directly above it.
 					deliveredLines := countLines(ct)
 					// The MESSAGE is file-attributed: the pre-first-marker preamble is —
 					// on a range payload — the claim ledger, which splitDiffFiles glues
@@ -2332,8 +2332,8 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 						// A MULTI-file chunk can only exceed ml at the maxChunksPerAgent
 						// ceiling: normal packing seals a chunk before it overflows, so the
 						// sole way many files land in one over-budget chunk is chunkDiff's
-						// coalesce-into-final-chunk cap (the maxChunksPerAgent seal conjunct,
-						// chunker.go:196). Flag it pre-dispatch with distinct "ceiling"
+						// coalesce-into-final-chunk cap (the maxChunksPerAgent seal conjunct in
+						// chunkDiff's bin-packing loop). Flag it pre-dispatch with distinct "ceiling"
 						// wording so the broken "each chunk fits the window" invariant is not
 						// silent; if the oversized call then fails it is additionally counted
 						// in UnreviewedChunks post-dispatch.
