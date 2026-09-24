@@ -596,9 +596,9 @@ func TestOutcomeRank_FollowsTheDocumentedPrecedence(t *testing.T) {
 // the absolute path cannot be resolved, the id still hashes the path it was
 // given rather than failing or hashing an empty string.
 func TestRunIDForReviewDir_AbsFailureHashesTheGivenPath(t *testing.T) {
-	orig := absPath
-	t.Cleanup(func() { absPath = orig })
-	absPath = func(string) (string, error) { return "", errors.New("getwd failed") }
+	orig := runIDAbsPath
+	t.Cleanup(func() { runIDAbsPath = orig })
+	runIDAbsPath = func(string) (string, error) { return "", errors.New("getwd failed") }
 
 	sum := sha256.Sum256([]byte("rel/review"))
 	assert.Equal(t, "2026-06-14T10:00:00Z-review-"+hex.EncodeToString(sum[:4]),
