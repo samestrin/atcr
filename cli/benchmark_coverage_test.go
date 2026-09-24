@@ -170,6 +170,13 @@ func TestCheckCoverage_RejectsMalformedOutcomeTallies(t *testing.T) {
 			outcomes: map[string]int{"fabricated": 1},
 			wants:    []string{"outside the outcome vocabulary", "version skew", "hand-assembled"},
 		},
+		"empty tally key": { // sums to 1: the sum check passes it
+			// ValidOutcome("") is TRUE — the empty string is OutcomeUnknown's stored
+			// wire value — so the allowlist alone admits {"": 17}, the exact
+			// legal-but-awful shape OutcomeUnknownLabel exists to prevent.
+			outcomes: map[string]int{"": 1},
+			wants:    []string{"empty outcome tally key", "hand-assembled"},
+		},
 	} {
 		err := checkCoverage(io.Discard, base(tc.outcomes), "rr.json", false)
 		require.Error(t, err, name)

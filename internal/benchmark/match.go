@@ -122,44 +122,7 @@ func MatchFindings(expected []ExpectedFinding, reported []ReportedFinding, lm Di
 	}
 
 	sort.Slice(candidates, func(i, j int) bool {
-		a, b := candidates[i], candidates[j]
-		if a.midDistance != b.midDistance {
-			return a.midDistance < b.midDistance
-		}
-		if a.expID != b.expID {
-			return a.expID < b.expID
-		}
-		// Below here the two candidates name the SAME expectation at the same
-		// distance, so they differ only in which report settles it. The remaining
-		// keys make that choice deterministic; they cannot change the match SET,
-		// because two reports tied this far are interchangeable for scoring.
-		//
-		// THE FINAL repIdx TIE-BREAK IS NOT OBSERVABLE THROUGH THE RETURN VALUE, and
-		// that is a property of FindingMatch rather than an oversight to fix with a
-		// test. Candidates tied through repLine share an expID, hence an expIdx, so
-		// they compete for ONE expectation; FindingMatch carries only Expected and
-		// Matched, never the report that settled it; and the losing reports stay
-		// available and — being at the same file and line — are interchangeable
-		// candidates everywhere else. Replacing this line with `return false` leaves
-		// ./internal/benchmark/... green for that reason, so a test claiming to pin it
-		// would be asserting something no caller can see.
-		//
-		// It is kept because the sort is sort.Slice, NOT sort.SliceStable: without a
-		// total order the candidate SLICE order is arbitrary between runs. Nothing
-		// downstream reads that order today, which is exactly why the mutation is
-		// silent — but a future consumer that does (an artifact naming which report
-		// settled each expectation is the obvious one) would inherit reproducibility
-		// for free rather than discovering it was never there.
-		//
-		// Order-independence of the RESULT is the claim that is testable, and it is
-		// pinned in match_test.go in both declaration orders.
-		if a.repFile != b.repFile {
-			return a.repFile < b.repFile
-		}
-		if a.repLine != b.repLine {
-			return a.repLine < b.repLine
-		}
-		return a.repIdx < b.repIdx
+		return candidateLess(candidates[i], candidates[j])
 	})
 
 	usedReport := make([]bool, len(reported))
@@ -171,6 +134,48 @@ func MatchFindings(expected []ExpectedFinding, reported []ReportedFinding, lm Di
 		usedReport[c.repIdx] = true
 	}
 	return out
+}
+
+// candidateLess is the total order MatchFindings sorts its candidates by. It is a
+// named function rather than an inline closure so the key sequence is reachable from
+// an in-package test: the last key is invisible through MatchFindings' return value
+// (see below), so the comparator itself is the only level at which it can be pinned.
+func candidateLess(a, b candidate) bool {
+	if a.midDistance != b.midDistance {
+		return a.midDistance < b.midDistance
+	}
+	if a.expID != b.expID {
+		return a.expID < b.expID
+	}
+	// Below here the two candidates name the SAME expectation at the same distance,
+	// so they differ only in which report settles it. The remaining keys make that
+	// choice deterministic; they cannot change the match SET, because two reports
+	// tied this far are interchangeable for scoring.
+	//
+	// THE FINAL repIdx TIE-BREAK IS NOT OBSERVABLE THROUGH MatchFindings' RETURN
+	// VALUE, and that is a property of FindingMatch rather than an oversight.
+	// Candidates tied through repLine share an expID, hence an expIdx, so they
+	// compete for ONE expectation; FindingMatch carries only Expected and Matched,
+	// never the report that settled it; and the losing reports stay available and —
+	// being at the same file and line — are interchangeable candidates everywhere
+	// else. Dropping the key therefore leaves every MatchFindings test green.
+	//
+	// It is kept because the sort is sort.Slice, NOT sort.SliceStable: without a
+	// total order the candidate SLICE order is arbitrary between runs. Nothing
+	// downstream reads that order today, which is exactly why the mutation is silent
+	// through the return value — but a future consumer that does (an artifact naming
+	// which report settled each expectation is the obvious one) would inherit
+	// reproducibility for free rather than discovering it was never there.
+	//
+	// That is what this function's own test pins directly, in both argument orders.
+	// Order-independence of the RESULT is pinned separately in match_test.go.
+	if a.repFile != b.repFile {
+		return a.repFile < b.repFile
+	}
+	if a.repLine != b.repLine {
+		return a.repLine < b.repLine
+	}
+	return a.repIdx < b.repIdx
 }
 
 // pathMatches reports whether a reviewer's cited path names the expectation's

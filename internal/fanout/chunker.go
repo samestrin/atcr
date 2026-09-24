@@ -93,7 +93,7 @@ func countLines(s string) int {
 // the full argument.
 //
 // The ledger is uncounted in the byte budget on the ORDINARY shed
-// (internal/payload's unexported newClaimLedgerEntry, claims.go:716, sets
+// (internal/payload's unexported newClaimLedgerEntry, in claims.go, sets
 // Size 0) — it is engine-rendered framing, not reviewable diff content. The
 // fallback re-fit is the exception: it re-sizes every entry to len(Body)
 // (review.go:3810-3814), and a ledger LARGER THAN that budget then sheds like

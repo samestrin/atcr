@@ -230,6 +230,13 @@ const (
 	withheldVerdictShifted = "verdict_shifted"
 	// withheldPriorUnreadable: reconciled/verification.json could not be parsed, so
 	// no prior metadata was available to carry for any finding in the run.
+	//
+	// It describes the run that ORIGINATED the marker, not necessarily the run that
+	// re-emitted the record. The carry-forward branch in pipeline.go copies the
+	// reason alongside the values it explains, so a run whose verification.json
+	// parsed cleanly can still publish this reason — carried from an earlier run
+	// that could not read one. Nothing consumes the value, so the distinction is
+	// about reading the artifact, not about behaviour.
 	withheldPriorUnreadable = "prior_unreadable"
 )
 

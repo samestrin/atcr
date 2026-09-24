@@ -13,7 +13,9 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 
+	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/reconcile"
 )
@@ -21,7 +23,86 @@ import (
 // SchemaVersion is the scorecard record schema version. It is emitted as an
 // integer on every record so Epic 10.0's public submission format can evolve
 // independently; a future change increments this and old records stay readable.
-const SchemaVersion = 1
+//
+// Version 2 (sprint 36.0) is the store's FIRST-EVER bump. It DECLARES three
+// additive fields together, in one increment rather than three:
+//   - Record.Outcome — why this reviewer's counts look the way they do.
+//     Written today.
+//   - Record.CategoriesRaised — the distinct categories its findings raised.
+//     Written today.
+//   - Finding.Category — the per-finding value that fold reads. Threaded today.
+//
+// All three were declared by this single increment even though the latter two
+// only started being WRITTEN a phase later: the schema changes ONCE for this
+// body of work, so the follow-on phase added behaviour rather than another era.
+//
+// THAT LEAVES A V2 SUB-ERA, and it is worth knowing about: v2 records written
+// before the threading landed omit both fields. Nothing discriminates them from
+// a v2 record that measured an empty set, because omitempty makes the two
+// byte-identical. They are not mis-scored — the opportunity link passes through
+// any run whose union holds no discriminating category, which is exactly what
+// such a record contributes — but the protection comes from that pass-through,
+// not from an era marker. Do not add one retroactively; there is nothing in the
+// bytes to key it on.
+//
+// All three are omitempty with era-safe absent meaning, so no migration shim is
+// needed. That is a DECISION, not an omission: the read gate at store.go
+// reserves this spot for "an explicit migration shim... when one appears", and
+// this is the first bump to reach it. Both directions were checked, and only one
+// of them is safe by construction:
+//
+//   - BACKWARD (old records, new binary) — safe. The gate skips records whose
+//     version is STRICTLY GREATER than this constant, with no lower bound, so
+//     every v1 record still decodes. Its absent fields read as "not measured"
+//     and are excluded from trust scoring rather than inferred.
+//   - FORWARD (new records, old binary) — a silent population change. Any atcr
+//     build still compiled at SchemaVersion = 1 skips EVERY v2 record and
+//     computes TrustPriors from the pre-bump subset alone, warning on stderr but
+//     returning a normal map. A stale install, or a CI image lagging a local
+//     build, therefore produces quietly different trust priors rather than an
+//     error. No code change is available for that; it is recorded here so it is
+//     not rediscovered as a surprise.
+//
+// Rollout note: excluding unclassified (v1) records from trust scoring is what
+// trust.go's own era comments call blacking out an existing history. A fresh
+// install has nothing to strand — the store is created on first reconcile — but
+// an EXISTING store does, for roughly DefaultTrustMinRuns strict runs per lens.
+//
+// Absent from the priors map is not punitive (it is never read as a zero rate:
+// reconcile/consensus.go's trustExempt and demoteByTrust both gate on the
+// comma-ok), but it is NOT "neutral" either, and the difference is the thing to
+// understand. Absence disables BOTH directions: a high-trust lens stops being
+// exempted from the consensus filter, and a low-trust phantom-raiser stops being
+// demoted to LOW. The second is a LOOSENING, visible in findings.json
+// confidence. unresolvedEraRuns says the same thing about its own era gap.
+//
+// (Do not call this the 1/N baseline. 1/N is the per-run PageRank uniform
+// authority in reconcile/pagerank.go — a different mechanism. Trust priors have
+// no baseline value at all; they have presence or absence.)
+const SchemaVersion = 2
+
+// categoriesRaisedSinceSchema is the schema version that INTRODUCED
+// Record.CategoriesRaised. The opportunity-set link gates on this, never on
+// SchemaVersion itself.
+//
+// The difference is the whole point and it is a landmine, not a style choice.
+// SchemaVersion MOVES — and the fact that it has NOT moved for Phase 4a is a
+// decision, not an accident. TD-030 originally put a v3 bump on that phase's
+// table; C15 closed it the other way, with an additive omitempty field plus its
+// own era marker (Record.PairEra), exactly as D8 closes WeightedCredit. The
+// "schema changes ONCE for this body of work" sentence above therefore still
+// holds. A future field may yet move the constant, which is the point below. A
+// guard written as `r.SchemaVersion < SchemaVersion` reads "pre-schema-2" only
+// while the constant happens to be 2; the day it becomes 3, every v2 record —
+// each carrying a genuinely MEASURED category set — is silently reclassified as
+// unmeasured, the runs lose their category evidence, and opportunity scoping
+// switches itself off for the entire back-catalogue. No test would catch it,
+// because a test that builds its fixture with `SchemaVersion: SchemaVersion`
+// moves with the constant.
+//
+// So: one named constant per field era, pinned by a test that hardcodes the
+// literal 2. A later field gets its own constant; it does not reuse this one.
+const categoriesRaisedSinceSchema = 2
 
 // Record type discriminators (AC 01-05): one "reviewer" record per participating
 // reviewer plus one "aggregate" record summarizing the whole run.
@@ -36,8 +117,9 @@ const (
 // regression test follows it. Producers keep their richer surrounding format
 // (path, error); these constants are the stable substrings the tests pin.
 const (
-	MsgMalformedSkip = "skipping malformed record"
-	MsgWriteFailed   = "scorecard: write failed"
+	MsgMalformedSkip  = "skipping malformed record"
+	MsgWriteFailed    = "scorecard: write failed"
+	MsgOutcomeCoerced = "coercing invalid outcome to unknown"
 )
 
 // defaultRole labels per-reviewer records produced from a reconcile run. Every
@@ -119,6 +201,136 @@ type Record struct {
 	// omitempty: a zero is not a version, and a record written before this field
 	// existed must serialize as it always did.
 	RaisedDenominator int `json:"raised_denominator,omitempty"`
+
+	// Outcome records WHY this reviewer's counts look the way they do: it is the
+	// nine-value vocabulary defined in internal/benchmark/outcome.go, carrying
+	// the distinction that file's header exists for — a reviewer that read the
+	// diff and correctly found nothing, one that emitted prose no parser could
+	// use, and one whose call failed outright all report zero findings and
+	// otherwise score identically.
+	//
+	// It is what lets trustPriorsSince score only the runs a lens got a fair
+	// attempt at (see eligibleOutcomeRuns), so an infrastructure fault —
+	// a LiteLLM timeout, a silently capped prompt, a billing-cap auth failure —
+	// never durably demotes a lens for its hosting rather than its judgment.
+	//
+	// The VALUE is a plain string, not a benchmark.Outcome* constant, and that
+	// is forced rather than chosen: internal/benchmark imports this package, so
+	// importing it back would close a cycle. internal/fanout is the safe leaf
+	// that owns the classifier (fanout.ReviewerOutcome) and its validator
+	// (fanout.ValidReviewerOutcome); a drift test in cli/ — a legal importer of
+	// both — pins those literals to internal/benchmark's constants.
+	//
+	// omitempty: absent means benchmark.OutcomeUnknown (""), which is what every
+	// record written before schema 2 reads as. Absent is NOT inferred as clean —
+	// that would assert "reviewed successfully and found nothing" about a run
+	// nobody classified — it is excluded from the trust tally instead.
+	Outcome string `json:"outcome,omitempty"`
+	// CategoriesRaised holds the distinct reconcile.Categories() values attached
+	// to the findings this reviewer participated in. The field was declared by
+	// the v2 bump so the schema changes once; it is WRITTEN on every reviewer
+	// record this emitter produces.
+	//
+	// Three streams feed it, and the third is not obvious: the surviving
+	// findings, the Tier-4-routed ones, and EmitInput.AmbiguousFindings — the
+	// clusters reconcile set aside. See that field's comment for the starvation
+	// loop the third one breaks. The ambiguous stream contributes categories
+	// only; it touches no count.
+	//
+	// READ THE WORDING CAREFULLY, because the obvious reading is wrong and the
+	// Phase 2 gate caught it: these are NOT per-reviewer categories. The only
+	// Category reachable where the record is built is reconcile.Merged.Category,
+	// which Merge sets to ModalCategory(group) — the cluster's modal value. In a
+	// cluster where one lens raised `security` and two raised `performance`, the
+	// merged category is `performance` and the first lens's own category is
+	// unrecoverable from res.Findings. The cluster-modal meaning is therefore
+	// ADOPTED EXPLICITLY, which is sound for the only consumer — opportunity-set
+	// membership asks "was this topic in play on the case", which the modal value
+	// answers faithfully. Nothing may read it as a per-reviewer claim. Filed as
+	// TD-022.
+	//
+	// It is the per-record input to opportunity-set scoping: a lens
+	// will be scored on a case only when some reviewer raised a category inside
+	// that lens's remit, so a specialist that is correctly silent on an
+	// out-of-remit diff is neither credited nor penalised.
+	//
+	// omitempty: absent means "not measured" (a pre-schema-2 record), which is
+	// excluded rather than read as either in-remit or out-of-remit.
+	CategoriesRaised []string `json:"categories_raised,omitempty"`
+
+	// PairSignals records how this reviewer related to each co-reviewer it
+	// shared a finding with on this run: agreed on the defect, or split on its
+	// severity. It is the durable half of the penny test — "if the two never
+	// disagree, drop one" — and it exists because nothing else on this record
+	// carries co-reviewer identity at all (TD-030). See PairSignal.
+	//
+	// omitempty: absent means the run produced no pair. PairEra, not this
+	// field, is what says the run was MEASURED.
+	PairSignals []PairSignal `json:"pair_signals,omitempty"`
+	// PairEra is the pair-signal measurement era marker (C15, closing TD-030
+	// the way D8 closes WeightedCredit). It is stamped on every reviewer record
+	// this emitter writes, including one with no pairs, because an absent
+	// PairSignals is byte-identical on a measured-empty run and a pre-4a record
+	// — and scoring the pre-4a back-catalogue as "these lenses never
+	// co-occurred" is the drop-candidate verdict applied to the whole store.
+	//
+	// This is an ADDITIVE omitempty field plus an era marker, so it does NOT
+	// increment SchemaVersion. See PairEraCurrent.
+	PairEra int `json:"pair_era,omitempty"`
+
+	// WeightedCredit is the ISOLATION half of the disagreement-weighted credit
+	// (D8, C18): the sum, over the findings this reviewer participated in, of
+	// 1/distinctCount(Reviewers). A finding raised alone contributes the full
+	// isolatedFindingWeight; one raised alongside four others contributes 0.2.
+	//
+	// It is a NEW field rather than a redefinition of FindingsCorroborated,
+	// which is a persisted int with consumers past trust priors (Aggregate, the
+	// export/leaderboard path) and would truncate every partial credit to
+	// nothing. FindingsRaised, FindingsCorroborated and FindingsSolo keep their
+	// existing integer meanings, so no non-trust consumer changes.
+	//
+	// THE GROUND-TRUTH HALF IS NOT IN THIS NUMBER, and that split is C18's
+	// decision rather than an omission. At emit time a finding has just been
+	// raised and has no TD status yet, so "did it prove real" cannot be known
+	// here; at read time the per-finding reviewer count no longer exists
+	// (scorecard.Finding is never persisted). The isolation half is therefore
+	// persisted here and the confirmation half applied per persona in the trust
+	// fold. See C19 for what that costs.
+	//
+	// omitempty: absent is indistinguishable from a measured 0.0, so CreditEra —
+	// not this field — is what says the record was measured.
+	WeightedCredit float64 `json:"weighted_credit,omitempty"`
+	// FindingsRouted counts the chargeable Tier-4-routed findings inside
+	// FindingsRaised — the phantoms that charge the denominator and can never
+	// earn credit (a routed finding cites a file the patch does not contain, so
+	// paying isolation credit for one would pay MOST for the most fabricated).
+	//
+	// It exists ONLY to make the credit ceiling computable at read time, and it
+	// is the counterpart to FindingsDocShielded rather than a duplicate of it:
+	// a doc-shielded finding is counted INSTEAD of being counted in
+	// FindingsRaised, a chargeable routed one is counted INSIDE it. Without this
+	// field the widest honest ceiling is FindingsRaised, which is loose by
+	// exactly the routed count — and that gap is widest for the reviewers
+	// carrying the most fabrication evidence. See scrubForgedCredit.
+	//
+	// omitempty: absent means zero routed findings, which is not ambiguous here
+	// the way an absent WeightedCredit is. This field and CreditEra are written
+	// together by this emitter, so any record carrying the era also carries a
+	// true routed count — nonzero when there were routed findings, elided when
+	// there were none, and zero is then the correct value rather than an unknown
+	// one. That holds because both fields ship in the same unreleased change; a
+	// LATER binary that stamps the era without this count would have to bump
+	// CreditEraCurrent rather than rely on the same argument.
+	FindingsRouted int `json:"findings_routed,omitempty"`
+	// CreditEra is the weighted-credit measurement era marker (D8), stamped
+	// unconditionally on every reviewer record this emitter writes for exactly
+	// the reason PairEra is: a pre-weighting record and a genuinely-zero one
+	// serialize identically, and averaging the pre-weighting back-catalogue in
+	// as measured zeroes would drive every lens's weighted rate toward zero.
+	//
+	// This is an ADDITIVE omitempty field plus an era marker, so it does NOT
+	// increment SchemaVersion. See CreditEraCurrent.
+	CreditEra int `json:"credit_era,omitempty"`
 
 	FindingsVerified    *int     `json:"findings_verified,omitempty"`
 	FindingsRefuted     *int     `json:"findings_refuted,omitempty"`
@@ -216,6 +428,43 @@ type Finding struct {
 	// reconcile.JSONFinding.UnresolvedReason. Empty means the ordinary no-match:
 	// the anchors appear nowhere in the tracked tree.
 	UnresolvedReason string
+	// Category carries the finding's reconcile.Categories() value verbatim from
+	// reconcile.Finding.Category, for Emit to fold into Record.CategoriesRaised —
+	// this struct is never persisted, so that fold is where the value becomes
+	// durable. EmitForReconcile threads it at all three construction sites
+	// (res.Findings, res.Unresolved, res.Ambiguous).
+	//
+	// Carried verbatim, judged in Emit: reviewerCategories applies the
+	// reconcile.Categories() vocabulary gate, so the construction sites cannot
+	// disagree with each other about which values are durable.
+	Category string
+	// Severity and Disagreement carry reconcile.Finding's own values verbatim,
+	// threaded at the EmitForReconcile construction sites exactly as Category
+	// was. This struct is never persisted, so both are free: no schema change,
+	// no store migration, no era marker (C16).
+	//
+	// DISAGREEMENT IS THE LOAD-BEARING ONE, and it is the only one read today.
+	// reviewerPairSignals keys entirely off Disagreement; nothing in this
+	// package reads Severity. It is threaded anyway, and kept, because the two
+	// arrive from the same reconcile.Finding at the same construction sites and
+	// splitting them would make a future consumer re-open the seam — but a
+	// reader should not infer from its presence that a per-reviewer severity is
+	// available. An earlier version of this comment claimed the pair signal
+	// needs both; it does not.
+	// reconcile.Merge sets Severity to the cluster MAX, so a merged finding's
+	// severity cannot by itself reveal that its members disagreed; Merge
+	// records that fact separately, in Disagreement ("<lo> vs <hi>"), and
+	// BuildDisagreements keys KindSeveritySplit off exactly that field.
+	// Carrying Severity alone would let Emit see the outcome of a split and
+	// never the split.
+	//
+	// Same cluster-modal caveat as Category, and for the same reason: after a
+	// merge the per-reviewer severities are unrecoverable (reconcile.Position
+	// says so in its own comment, which is why Positions is populated only for
+	// gray-zone clusters). These are the CLUSTER's values. Nothing may read
+	// them as a per-reviewer claim.
+	Severity     string
+	Disagreement string
 }
 
 // ReviewerMeta carries the per-reviewer identity/usage sourced from the fan-out's
@@ -228,6 +477,33 @@ type ReviewerMeta struct {
 	TokensIn  int
 	TokensOut int
 	LatencyMS int64
+	// Outcome is this reviewer's classified run outcome, stamped onto
+	// Record.Outcome by Emit. It rides ReviewerMeta because that is already the
+	// carrier between EmitForReconcile (which holds the fanout.AgentStatus the
+	// classification is derived from) and Emit (which builds the Record), so no
+	// new parameter or parallel map is introduced.
+	//
+	// Three sources produce a non-empty value, and they agree by construction
+	// because all three describe what the reviewer actually did:
+	//   - outcomeFor, applied to an AgentStatus from this run's pool summary.
+	//     This is the witnessed case and it WINS when it exists, so a reviewer
+	//     recorded as failed stays failed even if res.Findings also names it.
+	//   - outcomeFindings, for a reviewer with no AgentStatus that is named on
+	//     a finding which survived reconcile. Being named there means it raised
+	//     one, which is exactly what the shared classifier means by findings.
+	//   - outcomeFindings again, for a reviewer reached only through
+	//     res.Unresolved: the Tier 4 check routed its findings, which is why
+	//     they are not in res.Findings. The phantom is charged through
+	//     FindingsRaised, not through this field.
+	//
+	// The zero value survives in exactly two cases: an AgentStatus that is not
+	// internally coherent (see outcomeFor), and a direct Emit caller that does
+	// not populate the field.
+	//
+	// It is benchmark.OutcomeUnknown (""), which excludes the record from trust
+	// scoring and from nothing else — the record is still written and still
+	// carries its counts, its rate and its leaderboard row.
+	Outcome string
 }
 
 // EmitOpts controls emission side-effects. NoScorecard suppresses all I/O (the
@@ -294,7 +570,40 @@ type EmitInput struct {
 	// not corroboration, and treating it as such would restore the same inflation
 	// through a narrower door.
 	UnresolvedFindings []Finding
-	VerificationPath   string
+	// AmbiguousFindings holds reconcile.Result.Ambiguous flattened to its member
+	// findings. It feeds Record.CategoriesRaised and NOTHING ELSE — never
+	// FindingsRaised, never FindingsCorroborated, and it never mints a reviewer
+	// record for a name that has none. It is evidence about the CASE, not a count
+	// against a lens.
+	//
+	// IT CLOSES A FEEDBACK LOOP, which is why it is worth a field. Under strict
+	// consensus, reconcile routes an uncorroborated singleton into Ambiguous
+	// unless trustExempt spares it — and trustExempt is OFF for exactly the lenses
+	// with no prior yet. So a new or narrow lens's solo finding is filtered out of
+	// res.Findings, its category never reaches CategoriesRaised, the run reads
+	// out-of-remit, the opportunity filter deletes the record, its run count stays
+	// under DefaultTrustMinRuns, and it never earns the prior that would have
+	// spared the finding. The lens is starved by the very filter its missing prior
+	// caused — against AC 1 and AC 6 both. Reading Ambiguous for categories breaks
+	// the cycle without giving a filtered finding any scoring credit.
+	//
+	// It is also simply truer to the field's name: a consensus-filtered finding
+	// WAS raised. Only its survival was denied.
+	AmbiguousFindings []Finding
+	// GrayZonePairs holds ONE canonical PairKey per gray-zone cluster whose
+	// distinct reviewers number exactly TWO — the only cluster shape with an
+	// unambiguous pair to charge (a singleton has no pair; a 3+-reviewer
+	// cluster has no canonical pair, the same rule the severity-split fold
+	// applies). The charge rule (2026-09-22 clarification, closing the gray_zone
+	// half of AC 05-01 Scenario 1): each entry contributes ONE disagreement
+	// evidence item to that pair, ON THE PAIR SURFACE ONLY — it moves
+	// PairSignals.Disagreed and nothing else, never FindingsRaised,
+	// FindingsCorroborated or CategoriesRaised, so TD-034's asymmetry (an
+	// ambiguous finding moves no count) is preserved in the new stream.
+	// Duplicate keys are legitimate: two distinct gray-zone clusters between the
+	// same pair are two disagreements, not one.
+	GrayZonePairs    []string
+	VerificationPath string
 }
 
 // Emit computes per-reviewer metrics, builds one record per reviewer plus one
@@ -371,11 +680,16 @@ func Emit(in EmitInput, opts EmitOpts) error {
 
 	for _, name := range names {
 		meta := in.Reviewers[name]
-		raised, corroborated := reviewerCounts(name, in.Findings)
+		// credit comes from in.Findings ONLY, and the two calls below deliberately
+		// discard theirs. A routed phantom cites a file the patch does not
+		// contain, so paying credit for one would pay MOST for a phantom nobody
+		// else raised — isolation credit for a finding whose isolation is the
+		// evidence against it. Both still charge the denominator.
+		raised, corroborated, credit := reviewerCounts(name, in.Findings)
 		// Routed phantoms add to the denominator only — see UnresolvedFindings.
-		routedRaised, _ := reviewerCounts(name, chargeableUnresolved)
+		routedRaised, _, _ := reviewerCounts(name, chargeableUnresolved)
 		raised += routedRaised
-		shielded, _ := reviewerCounts(name, docShielded)
+		shielded, _, _ := reviewerCounts(name, docShielded)
 		rec := Record{
 			SchemaVersion: SchemaVersion,
 			// Stamped unconditionally, not only when UnresolvedFindings is
@@ -395,11 +709,45 @@ func Emit(in EmitInput, opts EmitOpts) error {
 			FindingsCorroborated:     corroborated,
 			FindingsSolo:             raised - corroborated,
 			FindingsDocShielded:      shielded,
-			CorroborationRate:        ratio(corroborated, raised),
-			CostUSD:                  llmclient.ComputeCostUSD(meta.Model, meta.TokensIn, meta.TokensOut),
-			TokensIn:                 meta.TokensIn,
-			TokensOut:                meta.TokensOut,
-			LatencyMS:                meta.LatencyMS,
+			// THE WRITE-BOUNDARY OUTCOME GUARD (2026-09-22, closing the
+			// coerceOutcome-placement row): Emit is exported and used to copy
+			// meta.Outcome in unvalidated, so a caller that builds its own
+			// ReviewerMeta — any path other than EmitForReconcile — bypassed
+			// coerceOutcome entirely. The check sits HERE, at the assignment, the
+			// placement reconcile.go's own comment anticipated; it is idempotent
+			// for the reconcile path (outcomeFor already ran it one frame up) and
+			// load-bearing for every other caller. Fail-neutral, same rationale:
+			// unknown is excluded from trust scoring, a garbage value would be
+			// uninterpretable for the whole 180-day window.
+			Outcome: validatedOutcome(meta.Outcome),
+			// in.AmbiguousFindings is a category stream ONLY — it is absent from
+			// every reviewerCounts call above, so it moves no numerator and no
+			// denominator. See the field's comment for the loop it breaks.
+			CategoriesRaised: reviewerCategories(name, in.Findings, chargeableUnresolved, in.AmbiguousFindings),
+			// Pair signals come from in.Findings ONLY. A routed phantom has no
+			// co-reviewer to relate to (routing is what removed it from the
+			// merged set), and the ambiguous stream is documented as
+			// category-only — feeding it here would move a count it is
+			// deliberately kept out of.
+			PairSignals: reviewerPairSignals(name, in.Findings, in.GrayZonePairs),
+			// Stamped unconditionally, including on a run with no pairs at all:
+			// the marker, not the slice, is what records that this run was
+			// measured. See PairEraCurrent.
+			PairEra: PairEraCurrent,
+			// Stamped unconditionally alongside the value, including when the
+			// value is 0.0 — see CreditEraCurrent for why the marker rather than
+			// the value is what records that this run was measured.
+			WeightedCredit: credit,
+			// Stamped beside the credit and the era, never independently: the
+			// read-time ceiling is computed from it, and a record carrying the
+			// era without it would be bounded too loosely. See FindingsRouted.
+			FindingsRouted:    routedRaised,
+			CreditEra:         CreditEraCurrent,
+			CorroborationRate: ratio(corroborated, raised),
+			CostUSD:           llmclient.ComputeCostUSD(meta.Model, meta.TokensIn, meta.TokensOut),
+			TokensIn:          meta.TokensIn,
+			TokensOut:         meta.TokensOut,
+			LatencyMS:         meta.LatencyMS,
 		}
 		if hasVerification {
 			v, r := verified[name], refuted[name]
@@ -467,24 +815,154 @@ func Emit(in EmitInput, opts EmitOpts) error {
 	return firstErr
 }
 
+// reviewerCategories returns the distinct CATEGORY values the findings name
+// raised, deduped and sorted, across every stream passed in.
+//
+// It is the durable half of opportunity-set scoping: the per-finding Category
+// lives on Finding, which is never persisted, so this fold is where the value
+// becomes readable 180 days from now.
+//
+// Three rules, each of which has a way of going wrong quietly:
+//
+//   - The VOCABULARY GATE is here, not at the wire boundary. A value that is not
+//     a literal reclib.Categories() member is dropped from the SET while the
+//     finding itself still counts toward FindingsRaised. Dropping the finding
+//     too would let a reviewer shrink its own denominator by emitting a junk
+//     category. Failing the emit outright would breach EmitForReconcile's
+//     contract that scorecard emission never fails the caller's reconcile. So it
+//     fails NEUTRAL — recorded as absent, never trusted into the opportunity
+//     gate — matching coerceOutcome's stance on the same path.
+//
+//   - DOC-SHIELDED findings never reach here, because the caller passes the
+//     chargeable split rather than in.UnresolvedFindings. That matches the
+//     carve-out Record.FindingsRaised applies, and it is what AC 03-02 Edge Case
+//     2 requires: a shielded finding in the category set would put its reviewer
+//     in-remit on a case that record deliberately did not charge it for.
+//
+//     DO NOT read that as "the two carve-outs agree everywhere" — an earlier
+//     version of this comment did, and it was wrong about the only denominator
+//     this field feeds. mergeRoutedEras folds FindingsDocShielded BACK into
+//     FindingsRaised before the opportunity link runs, precisely so a reviewer
+//     cannot launder phantoms out of its prior by anchoring them on doc-named
+//     tokens. So in the trust tally the shielded finding IS charged while its
+//     category is still withheld, and a lens whose only in-remit evidence on a
+//     run was doc-shielded contributes nothing to that run's union — its record,
+//     re-folded charge and all, is then dropped whenever another reviewer raised
+//     a discriminating out-of-remit category. That is a real residual escape
+//     from the anti-laundering property, filed as TD-036. The code here is
+//     correct against its AC; only the old rationale was.
+//
+//     DECIDED (clarification 2026-09-22): the category set is a CHARGE MIRROR
+//     per AC 03-02 Edge Case 2 — it tracks the chargeable split exactly, and
+//     CASE EVIDENCE (passing both unresolved splits) is the rejected
+//     alternative. The mirror's consequence for the fold: the folded record's
+//     charge provably exceeds what its category set can vouch for, so the
+//     opportunity gate must never treat that set as complete evidence for an
+//     out-of-remit drop. Delivering that needs the shielded findings' categories
+//     on the record — data a persisted count cannot carry — which is the
+//     provenance work epic 35.16.11.3 owns (its task 7 rider). Do not narrow
+//     one side without the other here; that is how the two drifted apart.
+//
+//   - The result is SORTED, not map-ordered. Two byte-identical runs must
+//     serialize byte-identically, or a diff of the store reports churn that is
+//     really just Go's map iteration.
+//
+// An empty result returns nil, so omitempty omits the key entirely and a
+// measured-empty record is byte-identical to a pre-schema-2 one.
+//
+// BE PRECISE ABOUT WHAT RESOLVES THAT COLLISION, because the obvious answer is
+// wrong. opportunitySetRuns' SchemaVersion guard separates v1 from v2 and
+// nothing else — and this branch shipped SchemaVersion 2 one phase EARLY, with
+// CategoriesRaised declared and never written, so there is a v2 era whose empty
+// set is unmeasured and which no discriminator distinguishes. What actually
+// protects those records is the same guard that protects a genuinely clean run:
+// a run with no discriminating category is passed through un-scoped rather than
+// judged. That is a behavioural safety net, not an era marker, and it would stop
+// covering them if that pass-through were ever narrowed.
+func reviewerCategories(name string, streams ...[]Finding) []string {
+	seen := map[string]struct{}{}
+	for _, findings := range streams {
+		for _, f := range findings {
+			if !participates(f, name) {
+				continue
+			}
+			if !inVocabulary(f.Category) {
+				continue
+			}
+			seen[f.Category] = struct{}{}
+		}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(seen))
+	for c := range seen {
+		out = append(out, c)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // reviewerCounts returns how many findings name raised and how many of those were
 // corroborated (the finding carried 2+ distinct reviewers). Solo is the
 // difference, computed by the caller. The O(reviewers x findings) scan (one pass
 // per reviewer, recomputing distinctCount per match) is intentional: emission is
 // a once-per-reconcile, best-effort path over a handful of reviewers and a
 // diff-bounded finding set, so a single-pass precompute buys no observable speed.
-func reviewerCounts(name string, findings []Finding) (raised, corroborated int) {
+// credit is the THIRD return value and it is a new quantity, not a restatement
+// of corroborated: the disagreement-weighted credit this reviewer earned, summed
+// over the same findings. Per-finding it is 1/distinctCount(Reviewers), so a
+// finding nobody else raised is worth a full point and one the whole panel
+// raised is worth a fraction of one — the inverse of what `corroborated` counts,
+// which is the point (see the epic's "credit disagreement, not agreement").
+//
+// It GROWS the signature rather than changing the meaning of the second return
+// value, per D8. FindingsCorroborated is a persisted int with consumers past
+// trust priors, and a fractional credit summed into it would truncate to
+// nothing.
+//
+// ONLY the confirmed-real half is missing from this number, and deliberately
+// (C18): at emit time no finding has a TD status yet. The trust fold applies
+// that factor per persona at read time.
+func reviewerCounts(name string, findings []Finding) (raised, corroborated int, credit float64) {
 	for _, f := range findings {
-		if !contains(f.Reviewers, name) {
+		if !participates(f, name) {
 			continue
 		}
 		raised++
-		if distinctCount(f.Reviewers) >= 2 {
+		n := distinctCount(f.Reviewers)
+		if n >= 2 {
 			corroborated++
+			credit += 1.0 / float64(n)
+			continue
 		}
+		// n is 0 or 1 here. Zero is reachable — participates() matched on a name that
+		// distinctCount then normalised away — and dividing by it would put an
+		// +Inf into a persisted field and from there into reconcile's priors map.
+		// Both cases are the same judgment anyway: nobody corroborated this
+		// finding, so it earns the isolated weight.
+		credit += isolatedFindingWeight
 	}
-	return raised, corroborated
+	return raised, corroborated, credit
 }
+
+// CreditEraCurrent is the weighted-credit measurement era this binary writes.
+//
+// It exists for the same reason PairEraCurrent does and is stamped the same way:
+// unconditionally, on every reviewer record this emitter writes, including one
+// that earned 0.0. An absent weighted_credit key is byte-identical on a
+// pre-weighting record and on a genuinely-zero one, and reading the whole
+// pre-weighting back-catalogue as measured zeroes would drag every lens's
+// weighted rate toward zero on upgrade — the blackout strictRuns and
+// unresolvedEraRuns both refuse to cause.
+//
+// ABOVE-CURRENT IS EXCLUDED, not clamped, exactly as PairEra and
+// RaisedDenominator handle it: a record stamped era 2 was measured under a rule
+// this binary does not implement, and it still carries schema_version 2, so
+// nothing but this check stops it blending with era-1 evidence.
+//
+// See Record.CreditEra.
+const CreditEraCurrent = 1
 
 // verdictTallies reads VerificationPath and attributes each finding's skeptic
 // verdict to the reviewers that raised that finding (matched by file+line+problem
@@ -650,14 +1128,81 @@ func contains(xs []string, s string) bool {
 	return false
 }
 
+// participates reports whether a finding names the given reviewer, comparing
+// both sides through normalizeReviewerName so the counts fold (reviewerCounts)
+// and the category fold (reviewerCategories) agree with the pair fold
+// (distinctPeers) about identity: a finding stored as "Bruce" is participation
+// for the map key "bruce" in all three, not only in the pair fold. Empty on
+// both sides still matches (the zero-distinct edge reviewerCounts defends
+// against stays reachable); only case and surrounding whitespace stop mattering.
+func participates(f Finding, name string) bool {
+	n := normalizeReviewerName(name)
+	for _, x := range f.Reviewers {
+		if normalizeReviewerName(x) == n {
+			return true
+		}
+	}
+	return false
+}
+
 // distinctCount counts distinct non-empty reviewer names in a finding's reviewer
 // list (the list is deduped upstream, but the emitter does not rely on that).
+// normalizeReviewerName is the ONE identity rule for a reviewer name read out of
+// a findings cell: trimmed and lower-cased, empty when nothing is left.
+//
+// It exists because two helpers over the same slice had drifted apart.
+// distinctCount trimmed but did not fold case, while distinctPeers did both, so
+// Reviewers: ["Bruce","bruce"] counted as TWO distinct corroborators on the
+// credit path — a lens corroborating itself, and a persisted one — while the
+// pair path correctly saw one lens and rejected the self-pair. Every consumer
+// past that point looks the name up case-insensitively (trustPriorsSince lowers
+// its key, reconcile/consensus.go lowers its lookup), so folding case here is
+// what makes the counting agree with the reading.
+//
+// Emit is exported, so a caller's reviewer list is untrusted input and this
+// cannot be pushed up to the producer.
+//
+// TWO SITES DELIBERATELY DO NOT USE IT, and one is correct:
+//   - telemetry.go's HashPersonaID spells the same formula by hand because it
+//     is a HASH STABILITY contract — the hashed id must not move if this rule
+//     ever changes, so the two must be free to diverge.
+//   - (Former exception withdrawn:) reconcile.go's normalizedReviewers USED to
+//     trim without folding case, while the reviewers map key was only trimmed.
+//     Folding one side alone would have broken reviewerCounts' exact-string
+//     match; the fix folds BOTH sides — map key and normalizedReviewers — so the
+//     invariant holds and "Bruce"/"bruce" cannot mint two records for one run.
+func normalizeReviewerName(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
+}
+
 func distinctCount(xs []string) int {
 	seen := make(map[string]bool, len(xs))
 	for _, x := range xs {
-		if x != "" {
-			seen[x] = true
+		// TrimSpace, not just != "": a whitespace-only name is dropped
+		// everywhere else (EmitForReconcile's normalizedReviewers, the pool loop,
+		// NewCloudSyncRecord), so counting one here would let a reviewer that
+		// leaves no record of its own act as a distinct corroborator.
+		if name := normalizeReviewerName(x); name != "" {
+			// Key on the NORMALIZED name — trimmed and lower-cased. Filtering
+			// on the normalized value while keying on the raw one would let
+			// " bruce", "bruce" and "Bruce" count as three distinct
+			// corroborators of the same finding: a reviewer corroborating
+			// itself. Unreachable through EmitForReconcile, which pre-trims
+			// (but does not lower-case), and Emit is exported anyway.
+			seen[name] = true
 		}
 	}
 	return len(seen)
+}
+
+// validatedOutcome is the write-boundary half of the outcome guard: the value
+// copied into a persisted Record.Outcome must be a vocabulary member or the
+// unknown zero, whatever the caller supplied. It mirrors coerceOutcome's rule at
+// the only assignment that reaches the store, so the two cannot drift apart in
+// effect even though each states its own check.
+func validatedOutcome(o string) string {
+	if !fanout.ValidReviewerOutcome(o) {
+		return ""
+	}
+	return o
 }

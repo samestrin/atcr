@@ -52,19 +52,36 @@ type Result struct {
 // three-turn debate per item through the Epic 2.0 tool loop, and integrates the
 // judge rulings: it re-emits findings.json with the settled verdicts/severities,
 // writes reconciled/debate.json, records "debate" in the manifest stages, and
-// writes per-item transcripts under debate/. It deliberately does NOT re-emit the
-// verify-stage snapshots summary.json (verdictCounts) or verification.json's
-// VERDICTS: after debate, findings.json together with debate.json is the
-// authoritative record of settled verdicts/severities, while those snapshots
-// remain as-of-verify audit artifacts that may legitimately lag findings.json
-// (see the artifacts group below).
+// writes per-item transcripts under debate/. It deliberately does NOT re-emit
+// summary.json (verdictCounts), and it re-emits verification.json's verdicts on
+// one narrow class of record only: after debate, findings.json together with
+// debate.json is the authoritative record of settled verdicts/severities, while
+// those snapshots remain as-of-verify audit artifacts that may legitimately lag
+// findings.json (see the artifacts group below).
 //
-// The one exception is a fact, not a verdict: when a ruling clears a finding's
-// truncation caveat it also clears the matching tool_budget_bytes entry in
-// verification.json, because that entry describes how the SAME recorded verdict
-// was reached and is the copy internal/scorecard reads. See
-// syncVerificationTruncation for why the correction has to land there rather
-// than on findings.json.
+// The exception covers TWO classes of record, not one.
+//
+//  1. CLEARED CAVEAT — a record whose tool_budget_bytes caveat a ruling cleared.
+//     The stage clears the matching entry in verification.json and rewrites the
+//     verdict field that entry describes (with debateJudge/debateReasoning naming
+//     who produced it), because the caveat and the verdict describe the SAME
+//     recorded outcome and that file is the copy internal/scorecard reads. The
+//     isPartialWriteResidue fall-through belongs here: it finishes a drop whose
+//     findings.json half already landed.
+//
+//  2. PRIOR-DEBATE REPAIR — a record a PREVIOUS debate already owns, identified
+//     by a non-empty recordedDebateJudge, whose verdict this ruling superseded.
+//     Its verdict, debateJudge and debateReasoning are rewritten and any standing
+//     modelWithheldReason deleted, so the attribution names the judge the verdict
+//     actually came from. This record's own caveat need not have been cleared —
+//     the branch is gated on the existing judge and runs BEFORE the trippedBudgets
+//     check, so a record with no tool-budget entry at all is in scope. The repair
+//     has a ONE-RUN window: its candidates come from the prior debate.json, which
+//     each run replaces wholesale.
+//
+// Every record outside those two classes is left at its as-of-verify value. See
+// syncVerificationTruncation for why the correction has to land there rather than
+// on findings.json, and the atomic-group scope note below for the full field list.
 //
 // It is the single orchestrator shared by `atcr debate`, `atcr review
 // --verify --debate`, and the atcr_debate MCP tool. repoRoot is the git repo the
@@ -270,13 +287,27 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// (e.g. findings.json updated but manifest.json or debate.json missing).
 	//
 	// Scope note: the atomic group is debate.json + findings.json + manifest.json,
-	// plus verification.json ONLY when a ruling invalidated a truncation caveat it
-	// records (syncVerificationTruncation — one entry, on ruled findings only).
-	// The verify-stage snapshots are otherwise NOT recomputed here: summary.json
-	// (verdictCounts) and verification.json's verdicts are point-in-time verify
-	// audit artifacts. findings.json (with debate.json) is the
-	// authoritative post-debate record; any consumer needing settled verdict counts
-	// must derive them from findings.json, not from the now-stale summary.json.
+	// plus TWO further entries when syncVerificationTruncation has a correction to
+	// publish — verification.json itself and its verification.json.debate.bak
+	// pre-rewrite snapshot, which is a group entry published WITH the rewrite
+	// rather than a copy taken before it.
+	//
+	// What that pass rewrites is narrow but is neither a single field nor a single
+	// class of record. On a record whose tool_budget_bytes caveat a ruling dropped
+	// it writes trippedBudgets, verdict, debateJudge and debateReasoning, and
+	// deletes any standing modelWithheldReason. On a record a PRIOR debate owns
+	// (non-empty recordedDebateJudge) whose verdict this ruling superseded, it
+	// rewrites verdict, debateJudge and debateReasoning and deletes
+	// modelWithheldReason — with no caveat of its own required, since that branch
+	// precedes the trippedBudgets check. The two classes are enumerated in this
+	// file's header; see it before narrowing either one.
+	//
+	// So verification.json's verdicts are point-in-time verify
+	// audit artifacts for every OTHER record, but not for a ruled one. summary.json
+	// (verdictCounts) is NOT recomputed here at all and stays point-in-time.
+	// findings.json (with debate.json) is the authoritative post-debate record; any
+	// consumer needing settled verdict counts must derive them from findings.json,
+	// not from the now-stale summary.json.
 	debatePath, debateBytes, err := computeDebateBytes(reviewDir, DebateFile{
 		SchemaVersion: DebateSchemaVersion,
 		Items:         items,
@@ -376,6 +407,22 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		// current file yields no snapshot rather than a lost correction, which is
 		// the same outcome the copy-based version produced.
 		if prior, rerr := os.ReadFile(verPath); rerr != nil {
+			// DELIBERATELY UNCOVERED, and not reachable from a test.
+			// syncVerificationTruncation reads this SAME file earlier in the same
+			// run (emit.go:431-434) and returns ("", nil, nil) when that read
+			// fails, so an unreadable verPath leaves verBytes nil and skips this
+			// whole block before the line is reached. A test that makes the path
+			// unreadable up front therefore never gets here and would pin the
+			// wrong line. Do not write one. (Same treatment as the other
+			// unreachable failure arms in this repo: internal/sandbox/oslevel.go,
+			// and the ErrEmptyRoster arm after fanout.ExecuteReview in
+			// executeRepoStateBenchmarkRun, cli/benchmark_repostate.go, which is
+			// likewise kept defensively and deliberately carries no test.
+			// Both are named by IDENTIFIER, not by line: a convention claim a
+			// reader cannot grep for invites them to add the test this comment
+			// forbids, and a line-numbered one silently re-aims on any edit above
+			// it. internal/fanout/reviewdir.go used to be cited here and carries
+			// no such arm at all — do not restore it.)
 			log.FromContext(ctx).Warn("debate: could not snapshot verification.json before rewriting it", "path", verPath, "err", rerr)
 		} else {
 			artifacts = append(artifacts, atomicwrite.Entry{Path: verPath + debateBakSuffix, Data: prior})

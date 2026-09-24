@@ -29,10 +29,18 @@ import (
 //     put prose there — the one-off-bucket explosion the sentinel prevents.
 //   - Age comes from the record's RFC3339 Timestamp rather than a shard date.
 //
-// One thing was added: wontfix. It has no counterpart in the .planning/-scoped
-// store this was ported from, but it is a first-class terminal status here
-// (Epic 24.0). Folding it into Open or Resolved would misreport the backlog, so
-// it gets its own counter and column and is excluded from the live backlog.
+// Three statuses were added over time that have no counterpart in the
+// .planning/-scoped store this was ported from: wontfix (Epic 24.0), then
+// unreproducible and attempts-exhausted (Story 36.0). Each is a first-class
+// terminal status here, and folding any of them into Open or Resolved would
+// misreport the backlog, so each gets its own counter and its own column.
+//
+// They do NOT all leave the live backlog. Liveness is decided by debtIsLive,
+// which delegates to localdebt.IsSettledStatus — wontfix and unreproducible are
+// settled and excluded; attempts-exhausted is unfinished work and stays. Never
+// re-derive the live set as a sum of statuses believed to be live: that is
+// precisely what drifted when attempts-exhausted arrived, printing "no
+// unresolved items" on a page that listed the item elsewhere. Use summary.Live.
 
 // debtLocation renders a record's position as the "file:line" a human reads and
 // copies. Line 0 means "no line recorded" (a free-text or file-scoped finding),
@@ -111,12 +119,17 @@ func wordCount(s string) int {
 type debtSeverityCount struct {
 	Severity                          string
 	Open, Deferred, Resolved, Wontfix int
+	// Unreproducible and AttemptsExhausted complete the six presentation
+	// buckets. Total must stay an exact sum across every counter here.
+	Unreproducible, AttemptsExhausted int
 	Total                             int
 }
 
-// debtComponentCount is the live (open+deferred) item count for one component.
-// Settled items are excluded: By Component is the dashboard's prioritization
-// rollup, so it shares the live-backlog scope of By Age and Top Priority.
+// debtComponentCount is the live item count for one component — live meaning
+// exactly what debtIsLive admits, never a re-derived sum of statuses believed to
+// be live. Settled items are excluded: By Component is the dashboard's
+// prioritization rollup, so it shares the live-backlog scope of By Age and Top
+// Priority.
 type debtComponentCount struct {
 	Component string
 	Total     int
@@ -134,10 +147,23 @@ type debtAgeBucket struct {
 type debtSummary struct {
 	Total                             int
 	Open, Deferred, Resolved, Wontfix int
-	BySeverity                        []debtSeverityCount
-	ByComponent                       []debtComponentCount
-	ByAge                             []debtAgeBucket
-	Top                               []localdebt.Record
+	// This counter list repeats debtSeverityCount's verbatim. Both must grow
+	// together: a fix pass that stops at the first match leaves the other
+	// under-counting, with Total silently failing to equal its parts.
+	Unreproducible, AttemptsExhausted int
+	// Live is the count of items debtIsLive admits — i.e. still work to do.
+	// It is counted through that one predicate rather than re-derived as a sum
+	// of the statuses believed to be live, because a re-derived sum drifts the
+	// moment a status is added: `attempts-exhausted` is unsettled and therefore
+	// live, and an `Open+Deferred` sum silently omitted it.
+	//
+	// It is NOT len(Top): Top is capped at topN and is empty when topN is 0,
+	// which is "suppressed", not "nothing to show".
+	Live        int
+	BySeverity  []debtSeverityCount
+	ByComponent []debtComponentCount
+	ByAge       []debtAgeBucket
+	Top         []localdebt.Record
 }
 
 // debtSeverityOrder is the canonical most-severe-first ordering for presentation.
@@ -175,20 +201,29 @@ var debtAgeBands = []struct {
 	{">90d", -1},
 }
 
-// debtStatusBucket classifies a record into one of the four presentation
+// debtStatusBucket classifies a record into one of the six presentation
 // buckets. The store's canonical open record carries an empty status, so an
 // unrecognized or absent status is open — the same "treat anything else as open"
 // rule the ported code used, extended to cover the empty spelling.
+//
+// Every KNOWN terminal status must have its own arm. The `default` is for
+// genuine garbage (a hand-edited record, a schema skew), not for a status the
+// enum declares: a closed item rendering as live backlog corrupts the dashboard
+// and the filter in the same silent way, and nothing on screen says so.
 func debtStatusBucket(status string) string {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "resolved":
-		return "resolved"
-	case "deferred":
-		return "deferred"
-	case "wontfix":
-		return "wontfix"
+	case localdebt.StatusResolved:
+		return localdebt.StatusResolved
+	case localdebt.StatusDeferred:
+		return localdebt.StatusDeferred
+	case localdebt.StatusWontfix:
+		return localdebt.StatusWontfix
+	case localdebt.StatusUnreproducible:
+		return localdebt.StatusUnreproducible
+	case localdebt.StatusAttemptsExhausted:
+		return localdebt.StatusAttemptsExhausted
 	default:
-		return "open"
+		return statusOpen
 	}
 }
 
@@ -226,8 +261,10 @@ func debtBandLabel(days int) string {
 }
 
 // summarizeDebt aggregates recs into a debtSummary. ByComponent, age buckets,
-// and Top cover only live (open+deferred) items — resolved and dismissed debt
-// is not part of the backlog. Top is ordered most-severe first, then oldest
+// and Top cover only items debtIsLive admits — settled debt is not part of the
+// backlog. That set is open, deferred and attempts-exhausted today; do not
+// re-derive it as a status sum here or at any consumer, which is the drift the
+// Live counter exists to end. Top is ordered most-severe first, then oldest
 // first, capped at topN.
 //
 // A ZERO `now` means "no clock supplied" and yields a nil ByAge rather than a
@@ -254,12 +291,16 @@ func summarizeDebt(recs []localdebt.Record, now time.Time, topN int) debtSummary
 	for _, r := range recs {
 		bucket := debtStatusBucket(r.Status)
 		switch bucket {
-		case "resolved":
+		case localdebt.StatusResolved:
 			s.Resolved++
-		case "deferred":
+		case localdebt.StatusDeferred:
 			s.Deferred++
-		case "wontfix":
+		case localdebt.StatusWontfix:
 			s.Wontfix++
+		case localdebt.StatusUnreproducible:
+			s.Unreproducible++
+		case localdebt.StatusAttemptsExhausted:
+			s.AttemptsExhausted++
 		default:
 			s.Open++
 		}
@@ -285,17 +326,22 @@ func summarizeDebt(recs []localdebt.Record, now time.Time, topN int) debtSummary
 		}
 		sc.Total++
 		switch bucket {
-		case "resolved":
+		case localdebt.StatusResolved:
 			sc.Resolved++
-		case "deferred":
+		case localdebt.StatusDeferred:
 			sc.Deferred++
-		case "wontfix":
+		case localdebt.StatusWontfix:
 			sc.Wontfix++
+		case localdebt.StatusUnreproducible:
+			sc.Unreproducible++
+		case localdebt.StatusAttemptsExhausted:
+			sc.AttemptsExhausted++
 		default:
 			sc.Open++
 		}
 
 		if debtIsLive(r) {
+			s.Live++
 			compCount[debtComponent(r.File)]++
 			// No clock, no age profile. The only production caller passes a zero
 			// `now`, against which every age is negative and clamps to 0, so the
@@ -378,15 +424,21 @@ func renderDebtDashboard(recs []localdebt.Record, topN int) string {
 	b.WriteString("# Technical Debt Dashboard\n\n")
 	b.WriteString(dashboardGeneratedMarker + "\n\n")
 
-	fmt.Fprintf(&b, "**Total:** %d  |  **Open:** %d  |  **Deferred:** %d  |  **Resolved:** %d  |  **Wontfix:** %d\n\n",
-		sum.Total, sum.Open, sum.Deferred, sum.Resolved, sum.Wontfix)
+	fmt.Fprintf(&b, "**Total:** %d  |  **Open:** %d  |  **Deferred:** %d  |  **Resolved:** %d  |  **Wontfix:** %d  |  **Unreproducible:** %d  |  **Attempts-exhausted:** %d\n\n",
+		sum.Total, sum.Open, sum.Deferred, sum.Resolved, sum.Wontfix, sum.Unreproducible, sum.AttemptsExhausted)
 
-	// By severity.
+	// By severity. Every counter on debtSeverityCount gets a column: the header
+	// above is a sum over the same set, so a status counted in the struct but
+	// missing from this table prints a By Severity table that does not add up to
+	// the header — with nothing on screen to explain the gap. That is the same
+	// defect the (unknown) severity row exists to prevent, arriving by status
+	// rather than by severity.
 	b.WriteString("## By Severity\n\n")
-	b.WriteString("| Severity | Open | Deferred | Resolved | Wontfix | Total |\n")
-	b.WriteString("|----------|------|----------|----------|---------|-------|\n")
+	b.WriteString("| Severity | Open | Deferred | Resolved | Wontfix | Unreproducible | Attempts-exhausted | Total |\n")
+	b.WriteString("|----------|------|----------|----------|---------|----------------|--------------------|-------|\n")
 	for _, c := range sum.BySeverity {
-		fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %d |\n", c.Severity, c.Open, c.Deferred, c.Resolved, c.Wontfix, c.Total)
+		fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %d | %d | %d |\n",
+			c.Severity, c.Open, c.Deferred, c.Resolved, c.Wontfix, c.Unreproducible, c.AttemptsExhausted, c.Total)
 	}
 	b.WriteString("\n")
 
@@ -418,7 +470,18 @@ func renderDebtDashboard(recs []localdebt.Record, topN int) string {
 
 	// Top priority — most-severe, then oldest, live items.
 	b.WriteString("## Top Priority\n\n")
-	hasBacklog := sum.Open+sum.Deferred > 0
+	// Ask the one predicate, not a hand-maintained sum of the statuses believed
+	// to be live. summarizeDebt counts Live through debtIsLive, which delegates
+	// to localdebt.IsSettledStatus — the same gate that built ByComponent, the
+	// month histogram and Top — so the four can never disagree, and a seventh
+	// live status is included the moment the predicate says so.
+	//
+	// The re-derived `Open+Deferred` sum this replaces drifted the moment
+	// `attempts-exhausted` arrived: it is unsettled and therefore live, so it
+	// reached the other three views while this branch still printed "no
+	// unresolved items" — omitting real backlog from the one list an operator
+	// actually works from, on a page that simultaneously showed it elsewhere.
+	hasBacklog := sum.Live > 0
 	if !hasBacklog {
 		b.WriteString("_No unresolved items._\n")
 	} else if topN <= 0 {

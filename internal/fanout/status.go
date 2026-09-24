@@ -291,6 +291,13 @@ func EnsureReviewComplete(reviewDir, id string) error {
 // participated. Truncated/FilesDropped record byte-budget truncation and are
 // never silent (AC 06-03): when an agent's payload was truncated, Truncated is
 // true and FilesDropped lists the dropped paths.
+//
+// The two are not locked together. Truncated answers "was REVIEWABLE content
+// dropped", so a ledger-only drop — the claim ledger shed while every reviewable
+// file survived — publishes truncated:false alongside a files_dropped entry
+// naming the ledger. That pair is a valid record, not a corrupt one; consumers
+// that mean "the review lost coverage" must gate on Truncated, and consumers
+// that mean "something was shed" must read FilesDropped.
 type AgentStatus struct {
 	Agent         string   `json:"agent"`
 	Status        string   `json:"status"`

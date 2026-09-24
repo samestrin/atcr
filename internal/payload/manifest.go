@@ -117,10 +117,22 @@ type Manifest struct {
 	// Its absence and its zero value therefore mean different things, which is the
 	// whole point: absent = "this run had no range to read claims from", present
 	// with Failed = "the read errored and the review ran without a ledger",
-	// present with Present=false and Claims=0 = "the branch's commits asserted
-	// nothing". Those three were previously indistinguishable in every persisted
-	// artifact, so a transient git failure silently looked like a claim-free
-	// branch.
+	// present with Disabled = "the operator set max_claim_bytes: 0", and present
+	// with Present=false, Claims=0 and neither flag = "the branch's commits
+	// asserted nothing". Those were previously indistinguishable in every
+	// persisted artifact, so a transient git failure silently looked like a
+	// claim-free branch. Disabled is the case most easily misread: it also
+	// carries Present=false and Claims=0, so a reader checking only those two
+	// concludes the branch asserted nothing. ClaimLedgerStatus' own doc is the
+	// authority; this enumeration must not fall behind it.
+	//
+	// On a RESUME this record describes the LAST preparation for the range, not
+	// necessarily what every completed agent received: ExecuteResume overwrites it
+	// whenever the resumed preparation had a range (internal/fanout/resume.go:589),
+	// deliberately, so the record cannot assert a ledger the resumed agents never
+	// saw. The cost is the mirror case — a partial resume under max_claim_bytes: 0
+	// publishes Disabled for a run whose already-completed agents did adjudicate
+	// claims.
 	ClaimLedger *ClaimLedgerStatus `json:"claim_ledger,omitempty"`
 
 	// Prefetch records what the context-aware pre-fetch pass produced for this

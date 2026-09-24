@@ -69,6 +69,22 @@ func TestDebtAdd_FlagMode(t *testing.T) {
 	assert.Empty(t, r.Status, "the canonical on-disk spelling of open is the empty status")
 }
 
+// TestDebtAdd_EmptyStatusIsStoredAsOpen covers the empty-status default: the
+// flag defaults to open, so this is reached by an explicit blank --status, which
+// must file the item open rather than be rejected as an invalid status.
+func TestDebtAdd_EmptyStatusIsStoredAsOpen(t *testing.T) {
+	dir := emptyDebtStore(t)
+	_, err := runDebt(t, "add", "--dir", dir, "--status", "",
+		"--severity", "HIGH", "--file", "internal/x/y.go:12",
+		"--problem", "boom", "--fix", "guard it", "--category", "correctness",
+	)
+	require.NoError(t, err)
+
+	recs := readDebtStore(t, dir)
+	require.Len(t, recs, 1)
+	assert.Empty(t, recs[0].Status, "open is spelled as the empty status on disk")
+}
+
 // The synthetic run_id must satisfy monthFromRunID so the append lands in a real
 // month shard rather than failing outright.
 func TestDebtAdd_LandsInTheRunIDMonthShard(t *testing.T) {

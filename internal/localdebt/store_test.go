@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -1056,9 +1057,12 @@ func TestFoldRecords_DivergentTerminalsPreferWontfixEitherOrder(t *testing.T) {
 
 // Compaction must fold a regressed id to its re-opened record WITHOUT destroying
 // the superseded resolution: that record holds the ResolvedAt and the human-typed
-// --reason justification, which exist nowhere else. Retention is bounded at two
-// records per id, and the fold over what survives still yields the same effective
-// record every reader saw before compaction.
+// --reason justification, which exist nowhere else. Retention is bounded at four
+// records per id (the effective record, at most one superseded rationale, — when
+// the effective record carries no model attribution — one donor, and a
+// re-detection's latest closed record), and the
+// fold over what survives still yields the same effective record every reader saw
+// before compaction. This case exercises the ordinary two-record shape.
 func TestCompact_RegressedIDKeepsItsResolutionTrail(t *testing.T) {
 	dir := t.TempDir()
 	resolved := foldRec("a", "2026-07-02T00:00:00Z", "resolved")
@@ -2294,7 +2298,7 @@ func TestCompact_PreservesQualitySignalModelRecovery(t *testing.T) {
 		return AggregateQualitySignal(recs)
 	}
 	want := signal()
-	require.Equal(t, []QualityRow{{Persona: "bruce", Model: "claude-x", DismissedCount: 1}}, want,
+	require.Equal(t, []QualityRow{{Persona: "bruce", Model: "claude-x", DismissedCount: 1, TerminalOutcomes: 1}}, want,
 		"before compaction the model is recovered from the earlier resolution")
 
 	for i := 1; i <= 3; i++ {
@@ -2547,7 +2551,7 @@ func TestCompact_DeferredEffectiveRecordEmitsNoSignalEitherWay(t *testing.T) {
 	dismissed.Status = "wontfix"
 	require.NoError(t, Append(dir, dismissed))
 	want := signal()
-	require.Equal(t, []QualityRow{{Persona: "bruce", Model: "claude-x", DismissedCount: 1}}, want)
+	require.Equal(t, []QualityRow{{Persona: "bruce", Model: "claude-x", DismissedCount: 1, TerminalOutcomes: 1}}, want)
 	for i := 1; i <= 3; i++ {
 		_, err := Compact(dir, ReadOpts{Writer: io.Discard})
 		require.NoError(t, err)
@@ -2708,4 +2712,761 @@ func BenchmarkAppendBatch500(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+// --- Sprint 36.0 Story 01 / AC 01-02: the five-term rank chain's real effects ---
+
+// mkTerminal builds a terminal record for one id at a chosen timestamp. The id
+// is set directly rather than stamped, because these tests are about which
+// record for a GIVEN id wins, not about id derivation.
+func mkTerminal(id, ts, status string) Record {
+	return Record{
+		SchemaVersion: SchemaVersion,
+		ID:            id,
+		RunID:         ts + "-" + status,
+		Timestamp:     ts,
+		Severity:      "HIGH",
+		File:          "internal/x/y.go",
+		Line:          12,
+		Problem:       "unbounded retry loop",
+		Status:        status,
+		Justification: "recorded rationale",
+	}
+}
+
+// TestFoldRecords_EqualTimestampDivergentNewStatuses locks AC 01-02 Edge Case 1.
+// latestItem is RECENCY-first, so foldPrecedence decides only on an exact
+// timestamp tie — which is why the fixture pins equal timestamps. unreproducible
+// outranks attempts-exhausted: a completed determination beats unfinished work.
+func TestFoldRecords_EqualTimestampDivergentNewStatuses(t *testing.T) {
+	const ts = "2026-09-01T00:00:00Z"
+	exhausted := mkTerminal("id-eq", ts, StatusAttemptsExhausted)
+	unrepro := mkTerminal("id-eq", ts, StatusUnreproducible)
+
+	// Assert in both append orders so the result is precedence, not read order.
+	for _, recs := range [][]Record{{exhausted, unrepro}, {unrepro, exhausted}} {
+		folded := FoldRecords(recs)
+		require.Len(t, folded, 1)
+		assert.Equal(t, StatusUnreproducible, folded[0].Status,
+			"on an exact timestamp tie, rank decides and unreproducible outranks attempts-exhausted")
+	}
+}
+
+// TestFoldRecords_EqualTimestampSettledCloseBeatsUnsettledMarker pins the fold's
+// tie-break criterion apart from ClosedStatusRank's retention criterion.
+// attempts-exhausted → resolved is the designed one-step close, and RFC3339 has
+// second granularity, so a same-second close must settle the item: the fold's
+// rule is "a settled close outranks an unsettled marker", not "the record most
+// certain to carry a rationale".
+func TestFoldRecords_EqualTimestampSettledCloseBeatsUnsettledMarker(t *testing.T) {
+	const ts = "2026-09-01T00:00:00Z"
+	exhausted := mkTerminal("id-close", ts, StatusAttemptsExhausted)
+	resolved := mkTerminal("id-close", ts, StatusResolved)
+
+	for _, recs := range [][]Record{{exhausted, resolved}, {resolved, exhausted}} {
+		folded := FoldRecords(recs)
+		require.Len(t, folded, 1)
+		assert.Equal(t, StatusResolved, folded[0].Status,
+			"a same-second resolve of an attempts-exhausted checkpoint must close it")
+	}
+}
+
+// TestFoldRecords_DistinctTimestampsAreDecidedByRecencyNotRank is the companion
+// AC 01-02 Edge Case 1 demands: it documents which key actually governs the read
+// path. attempts-exhausted ranks BELOW unreproducible, yet the later
+// attempts-exhausted record still wins, because latestItem is recency-first.
+func TestFoldRecords_DistinctTimestampsAreDecidedByRecencyNotRank(t *testing.T) {
+	unrepro := mkTerminal("id-recency", "2026-09-01T00:00:00Z", StatusUnreproducible)
+	exhausted := mkTerminal("id-recency", "2026-09-02T00:00:00Z", StatusAttemptsExhausted)
+
+	folded := FoldRecords([]Record{unrepro, exhausted})
+	require.Len(t, folded, 1)
+	assert.Equal(t, StatusAttemptsExhausted, folded[0].Status,
+		"the later record wins outright on the read path; rank is not consulted")
+}
+
+// TestRetainForCompaction_ReasonedNewStatusOutranksResolved locks AC 01-02 Edge
+// Case 1b under sprint-plan.md → Phase 1 Clarifications → C1.
+//
+// This is the path where the rank chain genuinely changes behaviour for records
+// that already exist: highestRankedTerminalIndex is RANK-first, and it justifies that
+// ordering by how certainly a record carries a human-typed --reason. Only
+// wontfix was ever reason-gated and AC 01-03 leaves resolved ungated, so a
+// reason-less resolved must NOT displace a reasoned unreproducible in the
+// retained trail. Under the originally-planned chain (resolved above both new
+// statuses) this test fails, which is exactly why C1 flipped it.
+func TestRetainForCompaction_ReasonedNewStatusOutranksResolved(t *testing.T) {
+	open := Record{
+		SchemaVersion: SchemaVersion, ID: "id-retain",
+		RunID: "2026-09-03T00:00:00Z-open", Timestamp: "2026-09-03T00:00:00Z",
+		Severity: "HIGH", File: "internal/x/y.go", Line: 12,
+		Problem: "unbounded retry loop", Status: "",
+	}
+	resolved := mkTerminal("id-retain", "2026-09-01T00:00:00Z", StatusResolved)
+	unrepro := mkTerminal("id-retain", "2026-09-02T00:00:00Z", StatusUnreproducible)
+
+	retained := retainForCompaction([]Record{resolved, unrepro, open})
+
+	var terminals []string
+	var sawOpen bool
+	for _, r := range retained {
+		if IsClosedStatus(r.Status) {
+			terminals = append(terminals, r.Status)
+			continue
+		}
+		sawOpen = true
+	}
+	assert.True(t, sawOpen, "the effective open record is always retained")
+	require.Len(t, terminals, 1, "retention is bounded at one terminal per id")
+	assert.Equal(t, StatusUnreproducible, terminals[0],
+		"the reasoned unreproducible must be retained over the earlier reason-less resolved")
+}
+
+// TestRetainForCompaction_AttemptsExhaustedAlsoOutranksResolved covers the
+// second half of C1: attempts-exhausted is equally reason-gated by AC 01-03, so
+// it too must survive against an earlier resolved.
+func TestRetainForCompaction_AttemptsExhaustedAlsoOutranksResolved(t *testing.T) {
+	open := Record{
+		SchemaVersion: SchemaVersion, ID: "id-retain-2",
+		RunID: "2026-09-03T00:00:00Z-open", Timestamp: "2026-09-03T00:00:00Z",
+		Severity: "HIGH", File: "internal/x/y.go", Line: 12,
+		Problem: "unbounded retry loop", Status: "",
+	}
+	resolved := mkTerminal("id-retain-2", "2026-09-01T00:00:00Z", StatusResolved)
+	exhausted := mkTerminal("id-retain-2", "2026-09-02T00:00:00Z", StatusAttemptsExhausted)
+
+	retained := retainForCompaction([]Record{resolved, exhausted, open})
+
+	var terminals []string
+	for _, r := range retained {
+		if IsClosedStatus(r.Status) {
+			terminals = append(terminals, r.Status)
+		}
+	}
+	require.Len(t, terminals, 1, "retention is bounded at one terminal per id")
+	assert.Equal(t, StatusAttemptsExhausted, terminals[0],
+		"the reasoned attempts-exhausted must be retained over the earlier reason-less resolved")
+}
+
+// TestRetainForCompaction_UnsettledCountedStatusKeepsItsModelDonor is the guard
+// on phase-gate finding HIGH-1: compaction silently deleted a quality-signal row.
+//
+// modelDonor ran only on the settled branch, because "settled" and "produces a
+// signal row" selected the same records until Story 36.0. `attempts-exhausted`
+// is a counted outcome that is deliberately NOT settled, so an id whose
+// effective record is attempts-exhausted with no Model lost its attribution
+// donor at compaction — and with it the whole outcome, since
+// AggregateQualitySignal excludes an empty Model. Compaction runs automatically
+// inside reconcile, so the loss was silent, unattended and permanent.
+func TestRetainForCompaction_UnsettledCountedStatusKeepsItsModelDonor(t *testing.T) {
+	const id = "id-donor"
+	// An earlier attributed resolution is the only record carrying a Model.
+	resolved := mkTerminal(id, "2026-09-01T00:00:00Z", StatusResolved)
+	resolved.Model = "claude-sonnet-4-6"
+	resolved.Reviewers = []string{"vera"}
+	// The effective record: later, counted, unsettled, and attribution-less.
+	exhausted := mkTerminal(id, "2026-09-02T00:00:00Z", StatusAttemptsExhausted)
+	exhausted.Reviewers = []string{"vera"}
+
+	recs := []Record{resolved, exhausted}
+
+	before := AggregateQualitySignal(recs)
+	require.Len(t, before, 1, "precondition: the outcome is reported before compaction")
+	assert.Equal(t, 1, before[0].AttemptsExhaustedCount)
+
+	after := AggregateQualitySignal(retainForCompaction(recs))
+	require.Len(t, after, 1, "compaction must not delete the row")
+	assert.Equal(t, before[0].Model, after[0].Model, "the recovered model must be unchanged")
+	assert.Equal(t, before[0].AttemptsExhaustedCount, after[0].AttemptsExhaustedCount)
+}
+
+// TestRetainForCompaction_IsIdempotentForUnsettledCountedStatus locks the
+// property the added donor could most easily break: a second Compact must retain
+// the same set and the fold must still select the same effective record.
+func TestRetainForCompaction_IsIdempotentForUnsettledCountedStatus(t *testing.T) {
+	const id = "id-donor-idem"
+	resolved := mkTerminal(id, "2026-09-01T00:00:00Z", StatusResolved)
+	resolved.Model = "claude-sonnet-4-6"
+	resolved.Reviewers = []string{"vera"}
+	unrepro := mkTerminal(id, "2026-09-02T00:00:00Z", StatusUnreproducible)
+	unrepro.Reviewers = []string{"vera"}
+	exhausted := mkTerminal(id, "2026-09-03T00:00:00Z", StatusAttemptsExhausted)
+	exhausted.Reviewers = []string{"vera"}
+
+	pass1 := retainForCompaction([]Record{resolved, unrepro, exhausted})
+	pass2 := retainForCompaction(pass1)
+
+	assert.Len(t, pass1, len(pass2), "a second compaction must retain the same count")
+	assert.LessOrEqual(t, len(pass1), 3, "retention stays bounded per id")
+
+	eff1 := FoldRecords(pass1)
+	eff2 := FoldRecords(pass2)
+	require.Len(t, eff1, 1)
+	require.Len(t, eff2, 1)
+	assert.Equal(t, eff1[0].Status, eff2[0].Status, "the effective record must not oscillate")
+	assert.Equal(t, StatusAttemptsExhausted, eff1[0].Status,
+		"the latest record stays effective across compaction (fold-stable)")
+
+	// And the signal survives both passes unchanged.
+	assert.Equal(t, AggregateQualitySignal(pass1), AggregateQualitySignal(pass2))
+}
+
+// TestProducesQualitySignal_MatchesTheAggregationSwitch pins the predicate to
+// the switch it exists to mirror. A status counted in one and not the other is
+// the exact drift that deleted outcomes at compaction.
+func TestProducesQualitySignal_MatchesTheAggregationSwitch(t *testing.T) {
+	for _, s := range []string{StatusWontfix, StatusResolved, StatusUnreproducible, StatusAttemptsExhausted} {
+		assert.True(t, producesQualitySignal(s), "%q is a counted outcome", s)
+		rows := AggregateQualitySignal([]Record{{
+			ID: "x-" + s, RunID: "r", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"p"}, Model: "m", Status: s,
+		}})
+		assert.Len(t, rows, 1, "%q must actually produce a row", s)
+	}
+	for _, s := range []string{StatusDeferred, "", "open", "bogus"} {
+		assert.False(t, producesQualitySignal(s), "%q is not a counted outcome", s)
+		rows := AggregateQualitySignal([]Record{{
+			ID: "y-" + s, RunID: "r", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"p"}, Model: "m", Status: s,
+		}})
+		assert.Empty(t, rows, "%q must produce no row", s)
+	}
+}
+
+// --- Gate re-review: the donor fix's own defects -----------------------------
+
+// TestRetainForCompaction_TwinRecordsDoNotDedupeEachOther is the guard on
+// gate-re-review HIGH-1. The first donor fix deduped the donor against the trail
+// by the value triple RunID+Timestamp+Status. That key cannot be unique inside
+// one id group: markDebtResolved derives RunID as timestamp+"-"+status, so two
+// records written in the same second with the same status match on all three
+// while differing in exactly the field that matters — Model. The attributed
+// donor was deduped away against its model-less twin and the signal row went to
+// zero.
+func TestRetainForCompaction_TwinRecordsDoNotDedupeEachOther(t *testing.T) {
+	const id, ts = "id-twins", "2026-09-01T00:00:00Z"
+	// Two unreproducible twins at the same second: identical RunID/Timestamp/
+	// Status, different Model. Only one carries the attribution.
+	attributed := mkTerminal(id, ts, StatusUnreproducible)
+	attributed.Model = "claude-sonnet-4-6"
+	attributed.Reviewers = []string{"vera"}
+	bare := mkTerminal(id, ts, StatusUnreproducible)
+	bare.Reviewers = []string{"vera"}
+	// A later effective record that is counted and carries no Model.
+	eff := mkTerminal(id, "2026-09-02T00:00:00Z", StatusAttemptsExhausted)
+	eff.Reviewers = []string{"vera"}
+
+	recs := []Record{attributed, bare, eff}
+
+	before := AggregateQualitySignal(recs)
+	require.Len(t, before, 1, "precondition: the outcome is reported before compaction")
+
+	after := AggregateQualitySignal(retainForCompaction(recs))
+	require.Len(t, after, 1, "compaction must not delete the row via a twin collision")
+	assert.Equal(t, before[0].Model, after[0].Model)
+	assert.Equal(t, before[0].AttemptsExhaustedCount, after[0].AttemptsExhaustedCount)
+}
+
+// TestRetainForCompaction_TrailEntriesNeverSeizeTheFold is the guard on
+// gate-re-review HIGH-2. The first fix appended the donor AFTER the effective
+// record, breaking the package's stated order invariant. latestItem breaks a
+// full timestamp/rank tie by append order (last wins) and hands the win outright
+// when either timestamp is unorderable — a state the read path tolerates — so a
+// trailing donor could seize the fold and silently flip the id's effective
+// status, changing debt list, debtIsLive, resolve-closability and the reported
+// outcome.
+func TestRetainForCompaction_TrailEntriesNeverSeizeTheFold(t *testing.T) {
+	cases := []struct {
+		name     string
+		donorTS  string
+		donorSta string
+	}{
+		// Unorderable timestamp: latestItem gives the later-appended record the
+		// win outright, with no comparison at all.
+		{"unorderable donor timestamp", "", StatusDeferred},
+		// Full tie on both timestamp and rank: broken by append order.
+		{"full timestamp and rank tie", "2026-09-02T00:00:00Z", StatusAttemptsExhausted},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			const id = "id-order"
+			donor := mkTerminal(id, tc.donorTS, tc.donorSta)
+			donor.Model = "claude-sonnet-4-6"
+			donor.Reviewers = []string{"vera"}
+			eff := mkTerminal(id, "2026-09-02T00:00:00Z", StatusAttemptsExhausted)
+			eff.Reviewers = []string{"vera"}
+
+			recs := []Record{donor, eff}
+			wantStatus := FoldRecords(recs)[0].Status
+
+			folded := FoldRecords(retainForCompaction(recs))
+			require.Len(t, folded, 1)
+			assert.Equal(t, wantStatus, folded[0].Status,
+				"a retained trail entry must never displace the effective record")
+		})
+	}
+}
+
+// TestRetainForCompaction_IsAFixedPoint asserts the convergence the package doc
+// actually claims, which is weaker than it once was and deliberately so: the
+// retained SET is stable from the SECOND pass, not the first.
+//
+// The earlier version of this test asserted set equality between pass 1 and
+// pass 2 and passed only because its fixture dodged the collapse case. That is
+// the strengthening the doc now explicitly forbids ("measurably false"), so the
+// assertion is moved to pass 2 vs pass 3 and a fixture that DOES collapse is
+// pinned below, rather than left to luck.
+func TestRetainForCompaction_IsAFixedPoint(t *testing.T) {
+	const id = "id-fixed"
+	resolved := mkTerminal(id, "2026-09-01T00:00:00Z", StatusResolved)
+	resolved.Model = "claude-sonnet-4-6"
+	resolved.Reviewers = []string{"vera"}
+	unrepro := mkTerminal(id, "2026-09-02T00:00:00Z", StatusUnreproducible)
+	unrepro.Reviewers = []string{"vera"}
+	exhausted := mkTerminal(id, "2026-09-03T00:00:00Z", StatusAttemptsExhausted)
+	exhausted.Reviewers = []string{"vera"}
+
+	pass1 := retainForCompaction([]Record{resolved, unrepro, exhausted})
+	pass2 := retainForCompaction(pass1)
+	pass3 := retainForCompaction(pass2)
+
+	assert.Equal(t, recordNames(pass2), recordNames(pass3),
+		"the retained set must be stable from the second pass onward")
+	assert.LessOrEqual(t, len(pass1), 3, "retention stays bounded per id")
+	assert.Equal(t, AggregateQualitySignal(pass1), AggregateQualitySignal(pass2),
+		"the signal must be identical across compactions")
+
+	// Full value equality is reached at pass 2, not pass 1, and the one field
+	// that moves is CountedThrough: aggregateCounters stamps it on the effective
+	// record the first time that record is folded as a carrier. That is the
+	// mechanism which makes Occurrences idempotent (it records the boundary
+	// already accounted for), so it converging on the next pass is the counter
+	// working, not drift — Occurrences itself is stable from pass 1. Pin the
+	// convergence so a real instability cannot hide behind this known one.
+	assert.Equal(t, pass2, pass3, "compaction reaches a true fixed point by the second pass")
+	assert.Equal(t, pass1[len(pass1)-1].Occurrences, pass2[len(pass2)-1].Occurrences,
+		"the occurrence count itself is stable from the first pass")
+}
+
+// TestRetainForCompaction_RecoveredModelIsCompactionInvariant is the guard on
+// gate-pass-3 HIGH: the outcome must be credited to the SAME model before and
+// after compaction, which is modelDonor's own stated guarantee and the property
+// Phase 4's per-(persona, model) lens score depends on.
+//
+// It broke when the donor was emitted BEFORE the trail. foldTerminalByID's donor
+// index keeps the latest model-carrier with `>=` — last-wins on a timestamp tie —
+// so a trail that also carries a Model and ties the donor overwrote it, and the
+// signal silently switched models. Wrong attribution is worse than a missing row:
+// a missing row is visibly absent, a wrong one is believed.
+func TestRetainForCompaction_RecoveredModelIsCompactionInvariant(t *testing.T) {
+	const id = "id-model-invariant"
+	// Two model-carrying terminals tied on timestamp, different models. Their
+	// order in the stream is what decides the recovery, so compaction must not
+	// reorder them relative to each other.
+	unrepro := mkTerminal(id, "2026-09-01T00:00:00Z", StatusUnreproducible)
+	unrepro.Model = "m1"
+	unrepro.Reviewers = []string{"vera"}
+	resolved := mkTerminal(id, "2026-09-01T00:00:00Z", StatusResolved)
+	resolved.Model = "m2"
+	resolved.Reviewers = []string{"vera"}
+	// A later counted effective record with no Model, so a donor is needed.
+	eff := mkTerminal(id, "2026-09-02T00:00:00Z", StatusAttemptsExhausted)
+	eff.Reviewers = []string{"vera"}
+
+	recs := []Record{unrepro, resolved, eff}
+
+	before := AggregateQualitySignal(recs)
+	require.Len(t, before, 1)
+	after := AggregateQualitySignal(retainForCompaction(recs))
+	require.Len(t, after, 1, "the row must survive compaction")
+
+	assert.Equal(t, before[0].Model, after[0].Model,
+		"the recovered model must not depend on whether the store has been compacted")
+	assert.Equal(t, before[0].AttemptsExhaustedCount, after[0].AttemptsExhaustedCount)
+}
+
+// TestRetainForCompaction_OrderSatisfiesBothConstraints pins the two opposing
+// ordering requirements together, so a future edit cannot satisfy one by
+// breaking the other: eff must stay effective (it is emitted last) AND the
+// donor's model must win the recovery (it is emitted after the trail).
+func TestRetainForCompaction_OrderSatisfiesBothConstraints(t *testing.T) {
+	const id = "id-both-order"
+	trail := mkTerminal(id, "2026-09-01T00:00:00Z", StatusUnreproducible)
+	trail.Model = "m-trail"
+	trail.Reviewers = []string{"vera"}
+	donor := mkTerminal(id, "2026-09-01T00:00:00Z", StatusResolved)
+	donor.Model = "m-donor"
+	donor.Reviewers = []string{"vera"}
+	eff := mkTerminal(id, "2026-09-02T00:00:00Z", StatusAttemptsExhausted)
+	eff.Reviewers = []string{"vera"}
+
+	recs := []Record{trail, donor, eff}
+	retained := retainForCompaction(recs)
+
+	// Constraint 1: eff still wins its own fold.
+	folded := FoldRecords(retained)
+	require.Len(t, folded, 1)
+	assert.Equal(t, StatusAttemptsExhausted, folded[0].Status,
+		"the effective record must be emitted last so it wins its own group")
+
+	// Constraint 2: the model recovery is unchanged by compaction.
+	assert.Equal(t, AggregateQualitySignal(recs)[0].Model,
+		AggregateQualitySignal(retained)[0].Model,
+		"the donor must be emitted after the trail so its model wins the recovery")
+}
+
+// TestRetainForCompaction_ReDetectedFallbackIsCompactionInvariant pins the
+// re-detection fallback against compaction. foldTerminalByID recovers a
+// re-detected id's outcome from its MOST RECENT closed record (latestItem),
+// while the trail keeps the HIGHEST-RANKED one; when they differ, retaining only
+// the trail changes which record the fallback reads, so compaction added or
+// deleted an attempts-exhausted outcome.
+func TestRetainForCompaction_ReDetectedFallbackIsCompactionInvariant(t *testing.T) {
+	cases := []struct {
+		name     string
+		statuses []string // one record per day, oldest first; "" is a re-detection
+	}{
+		// unreproducible outranks attempts-exhausted, so the trail was the
+		// unreproducible record and the exhausted row vanished.
+		{"row lost", []string{StatusUnreproducible, "", StatusAttemptsExhausted, ""}},
+		// attempts-exhausted outranks resolved, so the trail was the exhausted
+		// record and a row appeared that the uncompacted stream never produced.
+		{"row fabricated", []string{"", StatusAttemptsExhausted, StatusResolved, ""}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			id := "id-redetect-" + tc.name
+			var recs []Record
+			for i, s := range tc.statuses {
+				r := mkTerminal(id, fmt.Sprintf("2026-09-0%dT00:00:00Z", i+1), s)
+				r.Model = "m1"
+				r.Reviewers = []string{"vera"}
+				recs = append(recs, r)
+			}
+
+			before := AggregateQualitySignal(recs)
+			after := AggregateQualitySignal(retainForCompaction(recs))
+			assert.Equal(t, before, after,
+				"the re-detection fallback must read the same closed record before and after compaction")
+		})
+	}
+}
+
+// TestRetainForCompaction_ReDetectedFallbackKeepsItsModelDonor covers the donor
+// half of the same fallback: the re-detection carries a Model of its own, so a
+// donor chosen for the effective record was never kept, while the fallback's
+// model-less attempts-exhausted record needed one.
+func TestRetainForCompaction_ReDetectedFallbackKeepsItsModelDonor(t *testing.T) {
+	const id = "id-redetect-donor"
+	attributed := mkTerminal(id, "2026-09-01T00:00:00Z", StatusAttemptsExhausted)
+	attributed.Model = "m2"
+	attributed.Reviewers = []string{"vera"}
+	bare := mkTerminal(id, "2026-09-02T00:00:00Z", StatusAttemptsExhausted)
+	bare.Reviewers = []string{"vera"}
+	redetected := mkTerminal(id, "2026-09-03T00:00:00Z", "")
+	redetected.Model = "m2"
+	redetected.Reviewers = []string{"vera"}
+
+	recs := []Record{attributed, bare, redetected}
+	before := AggregateQualitySignal(recs)
+	require.Len(t, before, 1, "precondition: the fallback reports the exhausted outcome")
+	assert.Equal(t, before, AggregateQualitySignal(retainForCompaction(recs)))
+}
+
+// recordNames renders a retained set as sorted per-record names, so two sets can
+// be compared by membership rather than by slice order.
+func recordNames(recs []Record) []string {
+	out := make([]string, 0, len(recs))
+	for _, r := range recs {
+		out = append(out, r.RunID+"|"+r.Status+"|"+r.Model)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// TestRetainForCompaction_SecondPassCanRetainOneFewer pins the collapse the doc
+// warns about, so "set stable from pass 2" is anchored on a fixture that
+// actually exercises it rather than on one that happens to avoid it.
+//
+// Mechanism: pass 1 keeps the donor and the trail as distinct records; in pass
+// 1's OUTPUT order the donor then wins the trail's rank/timestamp tie, so the
+// two collapse into one slot at pass 2.
+func TestRetainForCompaction_SecondPassCanRetainOneFewer(t *testing.T) {
+	const id, ts = "id-collapse", "2026-09-01T00:00:00Z"
+	attributed := mkTerminal(id, ts, StatusAttemptsExhausted)
+	attributed.Model = "m1"
+	attributed.Justification = "REASON-A"
+	attributed.Reviewers = []string{"vera"}
+	bare := mkTerminal(id, ts, StatusAttemptsExhausted)
+	bare.Justification = "REASON-B"
+	bare.Reviewers = []string{"vera"}
+	eff := mkTerminal(id, "2026-09-02T00:00:00Z", StatusAttemptsExhausted)
+	eff.Reviewers = []string{"vera"}
+
+	pass1 := retainForCompaction([]Record{attributed, bare, eff})
+	pass2 := retainForCompaction(pass1)
+	pass3 := retainForCompaction(pass2)
+
+	assert.Less(t, len(pass2), len(pass1),
+		"this fixture must actually collapse, or it is not pinning the documented case")
+	assert.Equal(t, recordNames(pass2), recordNames(pass3),
+		"having collapsed once, the set is stable from pass 2")
+
+	// The record that disappears is the TRAIL slot occupant, and it carries a
+	// rationale. That is a real, documented cost of the second pass, not a
+	// bookkeeping detail — pin it so the doc and the behaviour cannot drift.
+	var pass2Reasons []string
+	for _, r := range pass2 {
+		pass2Reasons = append(pass2Reasons, r.Justification)
+	}
+	assert.NotContains(t, pass2Reasons, "REASON-B",
+		"documented cost: the second compaction drops the trail occupant's rationale")
+
+	// The signal, at least, is unaffected: attribution survives the collapse.
+	assert.Equal(t, AggregateQualitySignal(pass1), AggregateQualitySignal(pass2),
+		"the collapse must not change the reported outcome or its model")
+}
+
+// TestRetainForCompaction_SettledEffectiveKeepsAnEarlierRationale is the guard on
+// Phase 6 gate finding CRITICAL-1: compaction permanently deleted an operator's
+// only recorded explanation.
+//
+// The settled branch retained the model donor and the effective record and
+// nothing else, on the argument that "the effective record IS the resolution, so
+// there is no rationale to preserve". That held only while every
+// rationale-bearing status was also settled. Story 36.0 split the two apart —
+// `attempts-exhausted` is unsettled but its `--reason` is MANDATORY — and made
+// the losing sequence a designed one-step workflow: the skill calls
+// attempts-exhausted "a checkpoint, not a closure", so closing it afterwards is
+// the expected next action. `--status attempts-exhausted --reason X` followed by
+// `--status wontfix --reason Y` then compaction erased X, which exists nowhere
+// else in the tree.
+func TestRetainForCompaction_SettledEffectiveKeepsAnEarlierRationale(t *testing.T) {
+	for _, closer := range []string{StatusWontfix, StatusUnreproducible, StatusResolved} {
+		t.Run(closer, func(t *testing.T) {
+			id := "id-rationale-" + closer
+			exhausted := mkTerminal(id, "2026-09-01T00:00:00Z", StatusAttemptsExhausted)
+			exhausted.Justification = "three agents could not reproduce the trace"
+			settled := mkTerminal(id, "2026-09-02T00:00:00Z", closer)
+			settled.Justification = "closing: superseded by the rewrite"
+
+			retained := retainForCompaction([]Record{exhausted, settled})
+
+			require.Equal(t, closer, FoldRecords(retained)[0].Status,
+				"precondition: the settled record is the effective one")
+
+			var kept []string
+			for _, r := range retained {
+				kept = append(kept, r.Justification)
+			}
+			assert.Contains(t, kept, exhausted.Justification,
+				"the superseded attempts-exhausted --reason exists nowhere else and must survive compaction")
+			assert.Contains(t, kept, settled.Justification,
+				"the effective record keeps its own rationale")
+		})
+	}
+}
+
+// TestRetainForCompaction_SettledBranchStaysFoldStableAndBounded pins the two
+// properties the added trail entry could break: the effective record must not
+// change hands (the trail is emitted before it, so a tie still goes to eff), and
+// retention must stay bounded per id rather than growing each pass.
+func TestRetainForCompaction_SettledBranchStaysFoldStableAndBounded(t *testing.T) {
+	const id = "id-rationale-stable"
+	exhausted := mkTerminal(id, "2026-09-01T00:00:00Z", StatusAttemptsExhausted)
+	exhausted.Model = "claude-sonnet-4-6"
+	exhausted.Reviewers = []string{"vera"}
+	wontfix := mkTerminal(id, "2026-09-02T00:00:00Z", StatusWontfix)
+	wontfix.Reviewers = []string{"vera"}
+
+	recs := []Record{exhausted, wontfix}
+	pass1 := retainForCompaction(recs)
+	pass2 := retainForCompaction(pass1)
+	pass3 := retainForCompaction(pass2)
+
+	assert.LessOrEqual(t, len(pass1), 3, "retention stays bounded per id")
+	assert.Equal(t, len(pass2), len(pass3), "compaction reaches a fixed point by the second pass")
+
+	require.Len(t, FoldRecords(pass1), 1)
+	assert.Equal(t, StatusWontfix, FoldRecords(pass1)[0].Status,
+		"the trail must not seize the fold from the effective record")
+	assert.Equal(t, StatusWontfix, FoldRecords(pass3)[0].Status,
+		"and must not seize it on a later pass either")
+	assert.Equal(t, AggregateQualitySignal(pass2), AggregateQualitySignal(pass3),
+		"the quality signal is unchanged across passes")
+}
+
+// The store boundary is the one place every writer funnels through (reconcile,
+// debt add, debt resolve, and appendBatch all reach appendLocked), so an off-enum
+// status must be rejected HERE rather than re-guarded in each caller's literal
+// map. An off-enum status ranks 0 in ClosedStatusRank — indistinguishable from
+// open — and debtStatusBucket's default renders it as open: it counts as live
+// backlog and is invisible to every terminal predicate. The kebab spelling is
+// load-bearing: normalizeStatus folds case and whitespace ONLY, so
+// attempts_exhausted (underscore) is not rescued and would persist silently.
+func TestAppend_RejectsOffEnumStatusAtTheStoreBoundary(t *testing.T) {
+	dir := t.TempDir()
+
+	// The spelling trap the write-path inventory named: a status value the CLI
+	// maps cannot rescue, one underscore away from the real constant.
+	bad := sampleRecord("2026-09-01T00:00:00Z-bad000")
+	bad.Status = "attempts_exhausted"
+	bad.StampID()
+	err := Append(dir, bad)
+	require.Error(t, err, "an off-enum status is rejected at the store boundary")
+	assert.Contains(t, err.Error(), "attempts_exhausted", "the error names the offending value")
+
+	// Nothing was persisted — a rejected record must not leave a shard behind.
+	_, statErr := os.Stat(filepath.Join(dir, "2026-09.jsonl"))
+	assert.True(t, os.IsNotExist(statErr),
+		"a rejected append persists nothing: no shard file is created")
+
+	// Every declared enum status still appends...
+	good := sampleRecord("2026-09-01T00:00:00Z-good01")
+	good.Status = StatusAttemptsExhausted
+	good.StampID()
+	require.NoError(t, Append(dir, good))
+
+	// ...as does the EMPTY status — "open" is spelled as "" on disk
+	// (cli/debt.go's statusOpen asymmetry), and legacy open records carry it.
+	openRec := sampleRecord("2026-09-01T00:00:00Z-open1")
+	openRec.Status = ""
+	openRec.StampID()
+	require.NoError(t, Append(dir, openRec))
+}
+
+// foldIndex is the ONE implementation of the fold's two-rule precedence:
+// foldByID folds by it and retainForCompaction excludes by it, so a change to
+// rule 1 or rule 2 cannot silently diverge between the fold and retention —
+// there is nothing left to diverge. This pins the contract itself over the
+// corpus the duplication defect named: a suppressing record wins over a later
+// open one (rule 1 picks from the suppressing records ALONE, so latestIndex over
+// the whole group is the wrong answer for a wontfix id), recency re-opens a
+// regressed id (rule 2), same-second terminals rank by ClosedStatusRank, and
+// same-second same-status twins are told apart by POSITION — the twin that lost
+// the fold stays distinct instead of being excluded along with the winner, which
+// is what a value-keyed exclusion did.
+func TestFoldIndex_IsTheSingleFoldPrecedence(t *testing.T) {
+	base := func(id, ts, status, model, just string) Record {
+		rec := Record{
+			SchemaVersion: SchemaVersion,
+			ID:            id,
+			RunID:         ts + "-multi-agent",
+			Timestamp:     ts,
+			Severity:      "HIGH",
+			File:          "internal/thing.go",
+			Line:          42,
+			Problem:       "p",
+			Fix:           "f",
+			Category:      "correctness",
+			EstMinutes:    10,
+			Evidence:      "e",
+			Reviewers:     []string{"dax"},
+			Confidence:    "HIGH",
+			Status:        status,
+			Model:         model,
+			Justification: just,
+		}
+		return rec
+	}
+	// The property the single implementation owes both callers: what the fold
+	// selects for an id is exactly what foldIndex points at in that id's group.
+	checkAgrees := func(t *testing.T, group []Record) {
+		t.Helper()
+		require.NotEmpty(t, group)
+		folded := FoldRecords(group)
+		require.Len(t, folded, 1)
+		want := group[foldIndex(group)]
+		assert.Equal(t, want.Timestamp, folded[0].Timestamp)
+		assert.Equal(t, want.Status, folded[0].Status)
+		assert.Equal(t, want.Model, folded[0].Model)
+		assert.Equal(t, want.Justification, folded[0].Justification)
+	}
+
+	t.Run("rule 1: suppressing wins over a later open re-detection", func(t *testing.T) {
+		group := []Record{
+			base("id1", "2026-09-01T00:00:00Z", StatusWontfix, "m1", "reason"),
+			base("id1", "2026-09-02T00:00:00Z", "", "m1", ""),
+		}
+		assert.Equal(t, 0, foldIndex(group),
+			"rule 1 picks from the suppressing records alone; latestIndex over the whole group would name the open record")
+		checkAgrees(t, group)
+	})
+
+	t.Run("rule 2: a re-detection newer than a resolution re-opens the id", func(t *testing.T) {
+		group := []Record{
+			base("id2", "2026-09-01T00:00:00Z", "", "m1", "excerpt"),
+			base("id2", "2026-09-02T00:00:00Z", StatusResolved, "m1", "fixed"),
+			base("id2", "2026-09-03T00:00:00Z", "", "m1", "excerpt"),
+		}
+		assert.Equal(t, 2, foldIndex(group), "recency across the whole group, no suppressing record present")
+		checkAgrees(t, group)
+	})
+
+	t.Run("equal timestamps rank by ClosedStatusRank", func(t *testing.T) {
+		group := []Record{
+			base("id3", "2026-09-01T00:00:00Z", StatusResolved, "m1", "fixed"),
+			base("id3", "2026-09-01T00:00:00Z", StatusWontfix, "m1", "reason"),
+		}
+		assert.Equal(t, 1, foldIndex(group), "wontfix outranks resolved at an equal timestamp")
+		checkAgrees(t, group)
+	})
+
+	t.Run("same-second same-status twins are separated by position, not value", func(t *testing.T) {
+		group := []Record{
+			base("id4", "2026-09-01T00:00:00Z", StatusResolved, "m1", "fixed"),
+			base("id4", "2026-09-01T00:00:00Z", StatusResolved, "m2", "fixed"),
+		}
+		assert.Equal(t, 1, foldIndex(group), "a full tie is append order: last wins")
+		checkAgrees(t, group)
+		assert.Equal(t, "m2", group[foldIndex(group)].Model,
+			"the winner is the LAST twin; the m1 twin remains a distinct record for retention to consider")
+	})
+}
+
+// An unorderable timestamp means "recency unknown": the record stays fully live
+// in the fold and the comparison defers to APPEND ORDER — the same rule a full
+// tie already uses. The semantics were decided in Sprint 35.13 (2fd881a8) and
+// are implemented in latestIndex's !orderableTimestamps arm; this pin exists so
+// the decided semantics cannot drift silently. Reject-at-read is explicitly
+// wrong (a corrupt ts must not drop a finding from the backlog), and a separate
+// "sort last" class is an invention the arm's own rationale rejects — the
+// later-appended record wins in BOTH directions below, whichever side is
+// unorderable.
+func TestFold_UnorderableTimestampDefersToAppendOrder(t *testing.T) {
+	rec := func(id, ts string) Record {
+		r := Record{
+			SchemaVersion: SchemaVersion,
+			ID:            id,
+			RunID:         "2026-09-01T00:00:00Z-multi-agent",
+			Timestamp:     ts,
+			Severity:      "HIGH",
+			File:          "internal/thing.go",
+			Line:          42,
+			Problem:       "p",
+			Fix:           "f",
+			Category:      "correctness",
+			EstMinutes:    10,
+			Evidence:      "e",
+			Reviewers:     []string{"dax"},
+			Confidence:    "HIGH",
+		}
+		return r
+	}
+	const valid = "2026-09-01T00:00:00Z"
+	const garbage = "not-a-timestamp"
+
+	t.Run("valid first, garbage appended later: the later record wins", func(t *testing.T) {
+		folded := FoldRecords([]Record{rec("id-a", valid), rec("id-a", garbage)})
+		require.Len(t, folded, 1)
+		assert.Equal(t, garbage, folded[0].Timestamp,
+			"recency unknown defers to append order: the later-appended record is effective")
+	})
+
+	t.Run("garbage first, valid appended later: the later record wins", func(t *testing.T) {
+		folded := FoldRecords([]Record{rec("id-b", garbage), rec("id-b", valid)})
+		require.Len(t, folded, 1)
+		assert.Equal(t, valid, folded[0].Timestamp,
+			"the valid record is effective here because it was appended later — not because it is valid")
+	})
 }

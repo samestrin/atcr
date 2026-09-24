@@ -33,6 +33,19 @@ import (
 // assigns each agent ("m-<agent>"); an unknown model yields no findings.
 func perAgentMockProvider(t *testing.T, byModel map[string]string) *httptest.Server {
 	t.Helper()
+	return perAgentMock(t, byModel, false)
+}
+
+// perAgentMockProviderWithUsage is perAgentMockProvider reporting token usage,
+// as real providers do. The pool summary records an agent's model only when
+// usage is reported, and trust priors are scored against that model.
+func perAgentMockProviderWithUsage(t *testing.T, byModel map[string]string) *httptest.Server {
+	t.Helper()
+	return perAgentMock(t, byModel, true)
+}
+
+func perAgentMock(t *testing.T, byModel map[string]string, usage bool) *httptest.Server {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		var req struct {
@@ -42,6 +55,9 @@ func perAgentMockProvider(t *testing.T, byModel map[string]string) *httptest.Ser
 		resp := map[string]any{"choices": []map[string]any{
 			{"message": map[string]string{"role": "assistant", "content": byModel[req.Model]}},
 		}}
+		if usage {
+			resp["usage"] = map[string]int{"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+		}
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	t.Cleanup(srv.Close)
@@ -96,9 +112,11 @@ func TestReviewCmd_OneShotAppliesScorecardTrustPrior(t *testing.T) {
 	isolate(t)
 	t.Setenv(testReviewKeyEnv, "secret")
 	initGitRepoWithWideChange(t)
-	seedTrustedReviewer(t, "trusted")
+	// History on the model liveReviewConfig binds "trusted" to: trust priors
+	// are scored against the model a persona runs on in this review.
+	seedTrustedReviewerOn(t, "trusted", "m-trusted")
 
-	srv := perAgentMockProvider(t, map[string]string{
+	srv := perAgentMockProviderWithUsage(t, map[string]string{
 		"m-trusted":  "MEDIUM|wide.go:10|possible nil deref on this path|Guard it|correctness|10|ev",
 		"m-stranger": "MEDIUM|wide.go:30|unused import lingers in this file|Drop it|style|10|ev",
 		"m-third":    "MEDIUM|wide.go:50|request body is not validated|Validate it|correctness|10|ev",

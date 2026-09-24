@@ -291,8 +291,22 @@ func TestBenchmarkDoc_RepoStatePartialRunContractMatchesTheCode(t *testing.T) {
 		"the doc must state that retained work dirs accumulate rather than being capped")
 	assert.Contains(t, doc, "retained_bytes",
 		"the doc must name the log field an operator watches the growth on")
-	assert.Contains(t, cli, `"retained_bytes", dirSizeBytes(tmp)`,
+	// The size is emitted through the attrs block since dirSizeBytes learned to
+	// report an unmeasurable walk. `retained_bytes` is MONOTYPIC: it is a number or
+	// it is absent, never the string "unknown". internal/log/log.go supports a json
+	// format, and the doc tells the operator to watch this key for growth — so a
+	// numeric monitor, the very use case the size exists to enable, errors or drops
+	// the record on a string variant. An unmeasurable walk omits the key and says so
+	// through a separate boolean instead, which is still never a zero that reads as
+	// "nothing retained".
+	assert.Contains(t, cli, `"retained_bytes", size`,
 		"the runner must still emit the size field the doc tells the operator to watch")
+	assert.NotContains(t, cli, `"retained_bytes", "unknown"`,
+		"retained_bytes must stay numeric: a string sentinel breaks the json-format numeric monitor the doc tells the operator to build")
+	assert.Contains(t, cli, `"retained_bytes_unmeasured", true`,
+		"an unmeasurable walk must report itself through a sibling boolean rather than by retyping retained_bytes")
+	assert.Contains(t, doc, "retained_bytes_unmeasured",
+		"the doc must publish the unmeasured shape beside the sample WARN line, not leave the operator to discover it")
 
 	// The export gate is still closed by default on a partial run: a recorded failure
 	// EXPLAINS a shortfall, it does not excuse one.
@@ -302,6 +316,52 @@ func TestBenchmarkDoc_RepoStatePartialRunContractMatchesTheCode(t *testing.T) {
 		"the doc must say a recorded failure explains but does not waive the coverage gate")
 	assert.Contains(t, coverage, "re-run the missing or unmeasured cases",
 		"the gate must still reject a short run-result by default")
+}
+
+// docs/benchmark.md's --allow-partial-coverage paragraph used to claim "Nothing in
+// the submission distinguishes any of the three" — the full-suite row, the
+// slot-short row, and the all-slots-lost row. That is false: the all-slots-lost row
+// is the only shape pairing corroboration_rate 0 with runs 0 and an empty
+// "case_ids": [], because runs is never omitted and a covered set is always an
+// array rather than null. A board that consults the covered set can tell "shown
+// nothing" from "shown the suite and matched nothing" with no schema change —
+// which is the resolution technical debt row internal/benchmark/score.go:110 was
+// closed under: keep the 0.00 encoding, document the discriminator, change no wire
+// shape. The guard pins all three halves, so neither side can silently retreat:
+// the doc must keep stating the discriminator (and must not reinstate the false
+// sentence), and the two code facts that make it TRUE must hold — runs published
+// unconditionally, and the always-an-array contract enforced in MarshalJSON, whose
+// comment declares itself "the SOLE owner" of that contract.
+func TestBenchmarkDoc_AllSlotsLostRowIsDistinguishableInTheSubmission(t *testing.T) {
+	doc := readRepoFile(t, "../../docs/benchmark.md")
+	runResult := readRepoFile(t, "../../internal/benchmark/benchmark.go")
+	export := readRepoFile(t, "../../internal/scorecard/export.go")
+
+	assert.NotContains(t, doc, "Nothing in the submission distinguishes any of the three",
+		"the doc must not claim the submission distinguishes nothing — runs 0 plus an "+
+			"empty case_ids array does distinguish the all-slots-lost row")
+	assert.Contains(t, doc, "the only shape that pairs",
+		"the doc must state that the all-slots-lost row is identifiable by its runs/case_ids shape")
+	assert.Contains(t, doc, "`runs: 0`",
+		"the doc must name runs 0 as one half of the discriminator")
+
+	// The code facts the doc's claim rests on. The exact tag string pins the
+	// encoding decision: `json:"runs"` matches only while the field is published
+	// unconditionally — adding omitempty or making it a pointer changes the tag and
+	// fails here, which is exactly the wire-shape retreat this row resolved against.
+	assert.Contains(t, export, `json:"runs"`,
+		"PublicRecord.Runs must stay unconditionally published — it is half the "+
+			"discriminator the doc promises")
+	assert.Contains(t, export, `json:"corroboration_rate"`,
+		"CorroborationRate must keep the plain-float64 encoding — the exact tag fails "+
+			"under an omitempty or pointer retreat, which the row's resolution rejected")
+	// The always-an-array contract: MarshalJSON's nil arm is its sole owner per its
+	// own comment, so the two lines below are the enforcement, not decoration.
+	assert.Contains(t, runResult, "if c.CaseIDs == nil {",
+		"SubmissionCoverage.MarshalJSON must keep the nil→empty-array arm the "+
+			"discriminator's case_ids half rests on")
+	assert.Contains(t, runResult, "c.CaseIDs = []string{}",
+		"SubmissionCoverage.MarshalJSON must still substitute the empty array for nil")
 }
 
 // The doc's prose enumerates the failure stages, and the export gate names four
@@ -417,6 +477,21 @@ func TestBenchmarkDoc_AbortTaxonomyPartitionsIdenticallyEverywhere(t *testing.T)
 	// is the cheapest possible way for the two copies to fork again.
 	assert.Contains(t, changelog, "Nine failure classes still abort the whole run",
 		"the CHANGELOG's count must match the abort table's row count")
+
+	// The consecutive-failure abort returns an error and writes NO run-result —
+	// cli/benchmark.go returns before json.MarshalIndent — so the already-recorded
+	// case failures survive only in the abort error's per-reason tally and the
+	// per-case warn logs. The row used to promise they "stay in case_failures[]",
+	// which is unwritable on this path; a reader counting on that promise would
+	// look for an array that does not exist. Pin both directions: the corrected
+	// claim must be present, and the false promise must stay gone.
+	assert.Contains(t, doc, "The run-result is not written on an abort",
+		"the consecutive-abort row must state that no run-result is written, so the "+
+			"recorded failures' only survivors are the error tally and the logs")
+	assert.NotContains(t, doc, "the cases already recorded stay in `case_failures[]`",
+		"the abort row must not promise a case_failures[] array the abort path never writes")
+	assert.Contains(t, cli, "summarizeCaseFailureReasons(caseFailures)",
+		"the abort error must still carry the per-reason tally of the already-recorded failures")
 }
 
 // Every abort site in the runner's PAID region — the per-case loop onward, where
@@ -443,15 +518,17 @@ func TestBenchmarkDoc_EveryAbortSiteMapsToADeclaredClass(t *testing.T) {
 	// fmt.Errorf("<fragment>` appears in the source) to the abortClasses entry name
 	// that classifies it.
 	mapped := map[string]string{
-		"benchmark run cancelled after ":                             "cancellation",
-		"benchmark run aborted: ":                                    "--max-consecutive-case-failures abort",
-		"creating case work dir for ":                                "host-level work-dir fault",
-		"preparing case ":                                            "empty roster",
-		"executing case ":                                            "total-roster failure",
-		"scored twice under realized identity":                       "scored-twice / identity collision",
-		"no case could be scored: all ":                              "nothing scored",
-		"no case could be scored: the run produced no reviewer rows": "nothing scored",
-		"distinct reviewer identities":                               "scored-twice / identity collision",
+		"benchmark run cancelled after ":       "cancellation",
+		"benchmark run aborted: ":              "--max-consecutive-case-failures abort",
+		"creating case work dir for ":          "host-level work-dir fault",
+		"preparing case ":                      "empty roster",
+		"executing case ":                      "total-roster failure",
+		"scored twice under realized identity": "scored-twice / identity collision",
+		// The all-failed abort and the no-rows fallback were folded into one return
+		// (the fallback was a branch no test could reach); the folded message carries
+		// the tally and still classifies as "nothing scored".
+		"no case could be scored: %d of %d case(s) failed": "nothing scored",
+		"distinct reviewer identities":                     "scored-twice / identity collision",
 	}
 	// Sites the taxonomy deliberately does not classify: both fire BEFORE the
 	// first paid case, so there is no work to discard and no run taxonomy to join —

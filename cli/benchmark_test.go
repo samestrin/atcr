@@ -381,6 +381,71 @@ func TestCaseFailureExitGate(t *testing.T) {
 	}
 }
 
+// A slot failure IS an infrastructure failure (internal/benchmark/slot_failure.go):
+// one reviewer lost one case the rest of the panel scored. --fail-on-case-failure
+// and --max-case-failures promise a non-zero exit when a case was lost to an
+// infrastructure failure, so caseFailureExitGate must fold slot failures into its
+// trigger — otherwise a run that lost reviewer SLOTS exits 0, and the coverage gate
+// (checkCoverage) then hard-rejects the very run-result the CI step just accepted.
+func TestCaseFailureExitGateCountsSlotFailures(t *testing.T) {
+	run := func(caseFailures, slotFailures int) *benchmark.RunResult {
+		rr := &benchmark.RunResult{}
+		for i := 1; i <= 10; i++ {
+			rr.SuiteCaseIDs = append(rr.SuiteCaseIDs, "case-"+strconv.Itoa(i))
+		}
+		for i := 0; i < caseFailures; i++ {
+			rr.CaseFailures = append(rr.CaseFailures,
+				benchmark.CaseFailure{CaseID: "case-" + strconv.Itoa(i+1), Reason: benchmark.CaseFailurePrepare})
+		}
+		for i := 0; i < slotFailures; i++ {
+			rr.SlotFailures = append(rr.SlotFailures,
+				benchmark.SlotFailure{Model: "m-primary", Persona: "brad", CaseID: "case-01", Reason: benchmark.SlotFailureCall})
+		}
+		return rr
+	}
+
+	for _, tc := range []struct {
+		name         string
+		caseFailures int
+		slotFailures int
+		failOnAny    bool
+		maxFail      int
+		wantErr      bool
+	}{
+		{"default tolerates a slot failure", 0, 1, false, -1, false},
+		{"fail-on-case-failure rejects a slot-only run", 0, 1, true, -1, true},
+		{"max-case-failures 0 rejects a slot-only run", 0, 1, false, 0, true},
+		{"combined counts drive the threshold over", 1, 2, false, 2, true},
+		{"combined counts drive the threshold at", 1, 1, false, 2, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := caseFailureExitGate(run(tc.caseFailures, tc.slotFailures), tc.failOnAny, tc.maxFail)
+			if !tc.wantErr {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "run-result was still written",
+				"the gate changes the exit code, not the artifact")
+		})
+	}
+}
+
+// The consecutive-failure brake counts WHOLE-CASE failures only — recordCaseFailure
+// is its only increment site (cli/benchmark_repostate.go), and a reviewer slot lost
+// to a provider outage is recorded on the slot-failure channel instead. The help used
+// to promise the brake "stops a systemically broken provider — one bad key", but a
+// bad key on ONE of N agents produces slot failures, not case failures, so the brake
+// never fires for that scenario. The help must state the whole-case-only scope so the
+// documented contract matches the implemented one.
+func TestBenchmarkRunCmd_ConsecutiveFailureBrakeDeclaresWholeCaseScope(t *testing.T) {
+	cmd := newBenchmarkRunCmd()
+	f := cmd.Flags().Lookup("max-consecutive-case-failures")
+	require.NotNil(t, f, "benchmark run exposes a --max-consecutive-case-failures flag")
+	require.Contains(t, f.Usage, "whole-case failures only",
+		"the brake counts recordCaseFailure's whole-case failures only; the help must say so rather than promising it stops a one-of-N dead provider")
+}
+
 // Export reads an operator-supplied run-result that every coverage gate then walks
 // again, so its size multiplies through the whole path. The read is capped the way
 // loadCheckpoint's is, and the rejection is loud rather than an unbounded read.

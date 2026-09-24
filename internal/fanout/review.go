@@ -1439,8 +1439,12 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 	// Context pre-fetch byte ceiling (Epic 35.16.8, max_prefetch_bytes). Threaded
 	// for the same reason as the claim ledger: the Context Definitions section is
 	// likewise uncounted on the ordinary shed, so this setting is the only operator
-	// control over its size — and 0 is the escape hatch that stops repository source from
-	// OUTSIDE the diff reaching a provider at all. This is the single
+	// control over its size ON THE PATH THAT ALWAYS SHIPS IT — and 0 is the escape
+	// hatch that stops repository source from OUTSIDE the diff reaching a provider at
+	// all. The fallback re-fit is the exception in both cases: it re-sizes every entry
+	// to its dispatched bytes and funds the exempt set cumulatively against the budget
+	// (internal/payload/budget.go:173-179), so a tight per-agent window can drop
+	// either section. Context carries the LOWER exempt rank, so it goes first. This is the single
 	// option-construction chokepoint, so the resume path (resume.go) inherits it
 	// without its own threading.
 	opts = append(opts, payload.WithMaxPrefetchBytes(cfg.Settings.ResolvedMaxPrefetchBytes()))
@@ -1484,8 +1488,12 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 		//
 		// ReviewableCount, not len(kept): the engine prepends up to TWO synthetic
 		// sections here — the claim ledger and the Context Definitions block — and
-		// counting them reports more files than the range changed, in the manifest
-		// and in the persona-visible {{.FileCount}}. Epic 35.16.7 recorded that
+		// counting them reports more files than the range changed. FileCount has
+		// exactly two consumers, both in this file: the persona-visible
+		// {{.FileCount}} (:2978) and the chunked no-op warning gated on
+		// FileCount > 1 (:2149). It reaches no manifest field — payload.Manifest has
+		// no file count at all, and PerFilePayload is derived independently from
+		// perFileModes. Epic 35.16.7 recorded that
 		// inflation as an accepted consequence only because it was forbidden from
 		// editing this package; pre-fetching would have doubled it, so it is
 		// corrected here instead. The per-agent re-derivations in buildSlots
@@ -1679,8 +1687,8 @@ func capScopeConstraintForBudget(block string, budget int64, maxSprintPlanBytes 
 
 // capChunks bounds a baseline chunk set to at most max chunks by coalescing the
 // tail (chunks[max-1:]) into a single final chunk — the same ceiling behavior
-// chunkDiff applies to diff chunking (the maxChunksPerAgent seal conjunct,
-// chunker.go:195). It never drops a file: the coalesced final chunk
+// chunkDiff applies to diff chunking (the maxChunksPerAgent seal conjunct in
+// chunkDiff's bin-packing loop). It never drops a file: the coalesced final chunk
 // may exceed a single model window, but the alternative — an unbounded
 // slot/goroutine/provider-call count for a huge repository — is the exact
 // cost/DoS vector maxChunksPerAgent exists to prevent (AC 06-01 ES2). A set
@@ -1937,7 +1945,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		//
 		//   Per-chunk fallback chain (AC 06-01 EC1): each of this persona's chunk-
 		//     slots resolves its fallback chain independently via buildChain(name,
-		//     primary) (review.go:934) so a fallback reviews the SAME chunk as the
+		//     primary) so a fallback reviews the SAME chunk as the
 		//     primary it substitutes for — never a different chunk. buildChain is
 		//     reused verbatim; it already attaches identical chains for the bulk and
 		//     chunked paths.
@@ -1953,7 +1961,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		//     cfg.Registry.Agents aborts the whole review before any chunk dispatch
 		//     with `agent "<name>" not found in registry`, matching diff-mode.
 		//
-		//   maxChunksPerAgent cap (AC 06-01 ES2): the chunker.go:164 cap (64) carries
+		//   maxChunksPerAgent cap (AC 06-01 ES2): the maxChunksPerAgent cap (64) carries
 		//     over unmodified — PartitionByBudget's chunk count is deterministically
 		//     bounded (task 1.1 note), and the (persona × chunk) slot count per
 		//     persona is capped consistently rather than spawning unbounded slots.
@@ -1963,9 +1971,9 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		//   Collapse reuse — ZERO modification (AC 06-02 HP1/HP2, EC1-EC4, ES1):
 		//     baseline (persona × chunk) Result values flow through the SAME
 		//     unconditional `results = mergeChunkResults(results, serialAgents)` call
-		//     (review.go:656) that diff-mode already runs — no new call site.
-		//     mergeChunkResults / mergeResultGroup (chunker.go:219 / :284) and
-		//     writePool (artifacts.go:106) need NO changes for baseline provenance:
+		//     (in runEngine) that diff-mode already runs — no new call site.
+		//     mergeChunkResults / mergeResultGroup (chunker.go) and
+		//     writePool (artifacts.go) need NO changes for baseline provenance:
 		//     same-name results collapse to exactly personaCount source dirs (not
 		//     C × P), findings union across chunks, any-chunk-succeeded => Status OK,
 		//     FallbackUsed/FallbackModel union+modal, token/telemetry accumulate, and
@@ -1993,7 +2001,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				if err != nil {
 					return err
 				}
-				// Bound the slot count at maxChunksPerAgent (chunker.go:164) the same way
+				// Bound the slot count at maxChunksPerAgent the same way
 				// chunkDiff does: coalesce the tail into the final chunk so the fan-out never
 				// spawns an unbounded slot/goroutine/provider-call count while every file is
 				// still delivered whole (AC 06-01 ES2 — capped, never dropped).
@@ -2299,8 +2307,8 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					// band ml < deliveredLines <= ml + prefixLines, where chunkDiff still
 					// bin-packs on the unsubtracted countLines and an empty chunk admits
 					// an oversized first segment by construction — the `cur.Len() > 0`
-					// conjunct at chunker.go:195, whose rationale is stated at
-					// chunker.go:189-191.
+					// conjunct in chunkDiff's bin-packing loop, whose rationale is stated
+					// in the comment directly above it.
 					deliveredLines := countLines(ct)
 					// The MESSAGE is file-attributed: the pre-first-marker preamble is —
 					// on a range payload — the claim ledger, which splitDiffFiles glues
@@ -2324,8 +2332,8 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 						// A MULTI-file chunk can only exceed ml at the maxChunksPerAgent
 						// ceiling: normal packing seals a chunk before it overflows, so the
 						// sole way many files land in one over-budget chunk is chunkDiff's
-						// coalesce-into-final-chunk cap (the maxChunksPerAgent seal conjunct,
-						// chunker.go:195). Flag it pre-dispatch with distinct "ceiling"
+						// coalesce-into-final-chunk cap (the maxChunksPerAgent seal conjunct in
+						// chunkDiff's bin-packing loop). Flag it pre-dispatch with distinct "ceiling"
 						// wording so the broken "each chunk fits the window" invariant is not
 						// silent; if the oversized call then fails it is additionally counted
 						// in UnreviewedChunks post-dispatch.
@@ -3183,14 +3191,24 @@ func inheritedPayloadFits(primary Agent, budget int64) bool {
 		total += int64(len(ref.Body))
 	}
 	if measured == 0 {
-		// UNREACHABLE, and left in deliberately. Reaching it would need EVERY
-		// section to be unattributable, but a combined (diff --cc) section still
-		// carries +++/--- lines that diffSectionPath resolves, and a header-only
-		// section resolves through headPathFromGitHeader
-		// (internal/payload/ingest.go:344-357) — so a non-empty CodeContext always
-		// has at least one measurable path. That is why this arm is uncovered: it
-		// cannot be reached, not because a test was skipped. Do NOT close the gap
-		// with a test that fakes reachability — the arm is defensive only.
+		// Unreachable FROM THE GIT-RANGE RENDER PATH, which is why it is uncovered
+		// today. Reaching it needs EVERY section to be unattributable, and a payload
+		// the range builder rendered cannot manage that: a combined (diff --cc)
+		// section still carries +++/--- lines diffSectionPath resolves, and a
+		// header-only section resolves through headPathFromGitHeader
+		// (internal/payload/ingest.go:344-357).
+		//
+		// That guarantee is a property of the PRODUCER, not of the type. CodeContext
+		// is built by codeContextFor (:2928) from whatever payload text the slot was
+		// handed, and on the ingestion path that text is supplied rather than
+		// rendered. renderedSectionPath returns "" for either diffSectionPath error —
+		// an unresolvable header, or the traversal-safety rejection — and
+		// internal/payload/rendered.go treats that as "a body with no path rather
+		// than a dropped body", so a supplied payload whose only marked section has a
+		// hostile or headerless section yields a non-empty CodeContext measuring
+		// nothing. A test driving THAT path is legitimate and welcome; what would not
+		// be is one hand-building a CodeContext the renderer cannot produce, since
+		// that pins the arm without exercising anything real.
 		//
 		// Nothing measurable: "may not fit", never "fits" — the same bias the
 		// empty-CodeContext arm above takes, and for the same reason.
@@ -3841,8 +3859,16 @@ func refitFallbackPayload(cfg *ReviewConfig, refit fallbackRefit, fbBudget int64
 	// Nothing shed: either the entries measurably fit this budget after all (the
 	// overflow was detected off an UNMEASURABLE CodeContext, which reads as "may
 	// not fit" by design), or the slot is a single file that cannot be made any
-	// smaller. Re-rendering would produce the same payload, so report no re-fit and
-	// let the caller keep the honest overflow record.
+	// smaller. There is no smaller REVIEWABLE payload to send, so report no re-fit
+	// and let the caller keep the honest overflow record.
+	//
+	// "No smaller reviewable payload", not "the same payload": Truncated is
+	// derived from the REVIEWABLE count, so a slot holding [ledger, one smaller
+	// file] that reached keepSmallestEntry via the AllDropped reroute above keeps
+	// the file, drops the exempt ledger and still reads Truncated=false. Re-fitting
+	// it WOULD produce strictly fewer bytes. Declining anyway is the deliberate
+	// trade — ledger delivery over byte reduction — not an assertion that the
+	// payload cannot shrink.
 	if !trunc.Truncated {
 		return refitPayload{}, false, nil
 	}
@@ -4073,9 +4099,18 @@ func resolveMaxTokens(ac registry.AgentConfig, override int) int {
 
 // maxTokensFor is resolveMaxTokens bound to this run's settings — the form every
 // call site in the review path uses, so the CLI tier can never be applied at some
-// sites and forgotten at others. The cap it returns feeds BOTH the Invocation and
-// the sizing reservation; those must be the same number, or an agent is sized for
-// one output budget and then asked for another.
+// sites and forgotten at others. In THIS lane the cap it returns feeds BOTH the
+// Invocation and the sizing reservation; those must be the same number, or an
+// agent is sized for one output budget and then asked for another.
+//
+// That coupling is the review lane's, not a repo-wide invariant. The skeptic lane
+// splits the two deliberately: internal/verify/reservedOutputTokens reserves the
+// built-in default for an agent that declares no cap, while buildSkepticAgent
+// forwards the declaration verbatim (a nil stays nil) so the provider's own
+// default applies on the wire — reserving conservatively costs tool budget,
+// sending a built-in cap would change what the model is allowed to say. See
+// internal/verify/invoke.go's reservedOutputTokens for that argument; it is not a
+// bug to "fix" by making this sentence true everywhere.
 // cfg is dereferenced unconditionally: all three callers (buildSlots, renderAgent,
 // buildFallbackAgent) read cfg.Registry or cfg.Settings before reaching here, so a nil
 // would already have panicked upstream. The nil guard that used to sit here was an

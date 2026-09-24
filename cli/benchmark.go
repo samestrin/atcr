@@ -163,7 +163,7 @@ func newBenchmarkRunCmd() *cobra.Command {
 	cmd.Flags().String("checkpoint", "", "opt-in: path to a run checkpoint file (atomically replaces the target; a symlink at the path is replaced, not followed). Each scored case is durably recorded here before the next begins; re-running the same suite resumes from the first unscored case instead of restarting (and re-paying for) the whole run. The path must not be shared across concurrent benchmark run invocations. Empty = no checkpointing (default).")
 	cmd.Flags().Bool("fail-on-case-failure", false, "opt-in (repo-state-v1 only): exit non-zero when ANY case was lost to an infrastructure failure. Off by default, because a partial run is a real measurement of the cases that did run and the run-result records which ones did not — but a CI step gating on the exit code cannot see that, so this restores the all-or-nothing contract for callers that need it. Use --max-case-failures for a threshold instead of a floor of one. Inert on standard-v1, whose runner never populates case_failures.")
 	cmd.Flags().Int("max-case-failures", -1, "opt-in (repo-state-v1 only): exit non-zero once MORE than this many cases were lost to infrastructure failures. -1 (default) means no ceiling. 0 is equivalent to --fail-on-case-failure. Set it to tolerate the occasional flaky provider while still failing a systemically broken run. Inert on standard-v1, whose runner never populates case_failures.")
-	cmd.Flags().Int("max-consecutive-case-failures", 0, "opt-in (repo-state-v1 only): ABORT the run once this many cases have failed back to back, instead of paying for the rest of the suite. 0 (default) disables it. A scored case resets the count, so this stops a systemically broken provider — one bad key, a payload-size rejection — rather than the occasional flaky case. Unlike --fail-on-case-failure and --max-case-failures, which judge a run that has already been paid for in full, this one stops the bill mid-run.")
+	cmd.Flags().Int("max-consecutive-case-failures", 0, "opt-in (repo-state-v1 only): ABORT the run once this many cases have failed back to back, instead of paying for the rest of the suite. 0 (default) disables it. A scored case resets the count, so this stops a systemically broken provider — one bad key, a payload-size rejection — rather than the occasional flaky case. The brake counts whole-case failures only: a reviewer slot lost to a provider outage is recorded in slot_failures and does not advance it, so a run that lost one of N reviewers to a dead provider is stopped by --max-case-failures, not by this flag. Unlike --fail-on-case-failure and --max-case-failures, which judge a run that has already been paid for in full, this one stops the bill mid-run.")
 	_ = cmd.MarkFlagRequired("suite-path")
 	return cmd
 }
@@ -302,18 +302,24 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 // a systemically broken run. Both are evaluated, so passing both means either can
 // fail the run.
 func caseFailureExitGate(rr *benchmark.RunResult, failOnAny bool, maxFailures int) error {
-	if rr == nil || len(rr.CaseFailures) == 0 {
+	// A slot failure IS an infrastructure failure (internal/benchmark/slot_failure.go):
+	// one reviewer lost one case the rest of the panel scored. Both flags' help
+	// promises a non-zero exit when a case was lost to an infrastructure failure, so
+	// slot failures fold into the same trigger — otherwise a run that lost reviewer
+	// SLOTS exits 0 and checkCoverage then hard-rejects the same run-result the CI
+	// step just accepted.
+	if rr == nil || (len(rr.CaseFailures) == 0 && len(rr.SlotFailures) == 0) {
 		return nil
 	}
-	failed, suite := len(rr.CaseFailures), len(rr.SuiteCaseIDs)
+	failed, suite := len(rr.CaseFailures)+len(rr.SlotFailures), len(rr.SuiteCaseIDs)
 	if failOnAny {
-		return fmt.Errorf("%d of %d case(s) were lost to infrastructure failures and --fail-on-case-failure is set; "+
-			"the run-result was still written and records which cases are missing", failed, suite)
+		return fmt.Errorf("%d infrastructure failure(s) (%d lost case(s), %d lost reviewer slot(s)) on a %d-case suite and --fail-on-case-failure is set; "+
+			"the run-result was still written and records which cases are missing", failed, len(rr.CaseFailures), len(rr.SlotFailures), suite)
 	}
 	if maxFailures >= 0 && failed > maxFailures {
-		return fmt.Errorf("%d of %d case(s) were lost to infrastructure failures, more than the %d allowed by "+
+		return fmt.Errorf("%d infrastructure failure(s) (%d lost case(s), %d lost reviewer slot(s)) on a %d-case suite, more than the %d allowed by "+
 			"--max-case-failures; the run-result was still written and records which cases are missing",
-			failed, suite, maxFailures)
+			failed, len(rr.CaseFailures), len(rr.SlotFailures), suite, maxFailures)
 	}
 	return nil
 }
@@ -356,6 +362,11 @@ func newBenchmarkExportCmd() *cobra.Command {
 // so tests can shrink it.
 var maxRunResultBytes int64 = 32 << 20 // 32 MiB
 
+// osOpen is the open seam readRunResultLimited reads through, so tests can stage
+// an os.Open failure in environments where no permission fixture can produce one
+// (chmod does not block root, and root is what CI containers commonly run as).
+var osOpen = os.Open
+
 // errRunResultTooLarge reports a run-result exceeding maxRunResultBytes. Export
 // fails loudly rather than reading an untrusted file unbounded.
 var errRunResultTooLarge = errors.New("run-result exceeds size limit")
@@ -372,7 +383,7 @@ func readRunResultLimited(path string) ([]byte, error) {
 	if fi.Size() > maxRunResultBytes {
 		return nil, fmt.Errorf("%w: %s is %d bytes (limit %d)", errRunResultTooLarge, path, fi.Size(), maxRunResultBytes)
 	}
-	f, err := os.Open(path)
+	f, err := osOpen(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading run-result %s: %w", path, err)
 	}

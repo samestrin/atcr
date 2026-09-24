@@ -296,7 +296,7 @@ func newDebtListCmd() *cobra.Command {
 	}
 	addDebtStoreFlag(cmd)
 	cmd.Flags().String("severity", "", "filter by severity (exact, case-insensitive: CRITICAL|HIGH|MEDIUM|LOW)")
-	cmd.Flags().String("status", "", "filter by status (exact: open|deferred|resolved|wontfix)")
+	cmd.Flags().String("status", "", "filter by status (exact: "+debtListStatusList()+")")
 	cmd.Flags().String("category", "", "filter by category (substring match)")
 	cmd.Flags().String("component", "", "filter by component (path prefix, e.g. internal/autofix)")
 	cmd.Flags().String("origin", "", "filter by origin (exact: review|manual)")
@@ -307,11 +307,49 @@ func newDebtListCmd() *cobra.Command {
 	return cmd
 }
 
-// debtListStatuses is the accepted --status enum for `debt list`. It is the four
-// buckets debtStatusBucket renders, NOT debt_add's narrower set: `wontfix` cannot
-// be FILED by add (dismissing needs resolve's --reason) but a dismissed item is
-// still viewable, so it must stay filterable.
-var debtListStatuses = map[string]bool{"open": true, "deferred": true, "resolved": true, "wontfix": true}
+// statusOpen is the CLI's word for the EMPTY on-disk status.
+//
+// It is deliberately NOT a localdebt.Status* constant, and that asymmetry is the
+// point: internal/localdebt spells out the statuses a record can CARRY, and an
+// open record carries "" — the value the reconcile hook writes. localdebt treats
+// "" and "open" distinctly (normalizeStatus never yields "open"), so a
+// localdebt.StatusOpen would name a value the store never stores, and would drag
+// `debt resolve`'s vocabulary into documenting an exclusion for a status that is
+// not a status.
+//
+// What it must not stay is a bare literal repeated across the CLI's own
+// vocabularies: that put the one word `debt add`, `debt list` and add's
+// open-to-empty translation all agree on outside every guard, where a typo in one
+// of them is a runtime mismatch rather than a compile error. Spelled once here,
+// it is the same kind of safety net record.go's constants give their own layer.
+const statusOpen = "open"
+
+// debtListStatuses is the accepted --status enum for `debt list`. It is the six
+// buckets debtStatusBucket renders, NOT debt_add's narrower set: `wontfix`,
+// `unreproducible` and `attempts-exhausted` cannot be FILED by add (each needs
+// resolve's --reason) but a closed item is still viewable, so every one of them
+// must stay filterable. A status that renders but cannot be filtered is worse
+// than a hidden one — the operator can see the row and has no way to select it.
+var debtListStatuses = map[string]bool{
+	statusOpen:                        true,
+	localdebt.StatusDeferred:          true,
+	localdebt.StatusResolved:          true,
+	localdebt.StatusWontfix:           true,
+	localdebt.StatusUnreproducible:    true,
+	localdebt.StatusAttemptsExhausted: true,
+}
+
+// debtListStatusList renders the accepted filter values for an error message,
+// derived from the map rather than retyped, for the reason resolveStatusList
+// gives: the retyped literal is what went stale when the enum grew.
+func debtListStatusList() string {
+	out := make([]string, 0, len(debtListStatuses))
+	for s := range debtListStatuses {
+		out = append(out, s)
+	}
+	sort.Strings(out)
+	return strings.Join(out, "|")
+}
 
 // validateDebtListFilters rejects an unrecognized --severity or --status.
 //
@@ -328,7 +366,7 @@ func validateDebtListFilters(cmd *cobra.Command) error {
 		return usageError(fmt.Errorf("invalid --severity %q: expected CRITICAL|HIGH|MEDIUM|LOW", mustFlag(cmd, "severity")))
 	}
 	if st := strings.ToLower(strings.TrimSpace(mustFlag(cmd, "status"))); st != "" && !debtListStatuses[st] {
-		return usageError(fmt.Errorf("invalid --status %q: expected open|deferred|resolved|wontfix", mustFlag(cmd, "status")))
+		return usageError(fmt.Errorf("invalid --status %q: expected %s", mustFlag(cmd, "status"), debtListStatusList()))
 	}
 	if o := strings.ToLower(strings.TrimSpace(mustFlag(cmd, "origin"))); o != "" &&
 		o != localdebt.OriginReview && o != localdebt.OriginManual {
@@ -401,7 +439,7 @@ func mustFlag(cmd *cobra.Command, name string) string {
 // excluded from the record schema by the atcr<->cadence seam.
 type debtFilter struct {
 	Severity  string // exact, case-insensitive (CRITICAL|HIGH|MEDIUM|LOW)
-	Status    string // exact (open|deferred|resolved|wontfix); "open" matches an empty status
+	Status    string // exact (see debtListStatuses); "open" matches an empty status
 	Category  string // substring, case-insensitive
 	Component string // path-prefix match against the record's File
 	Origin    string // exact, case-insensitive (review|manual); matches the EFFECTIVE origin

@@ -108,10 +108,15 @@ func opensSection(line string) bool {
 // and the filing anchor buried in a fenced ## Output Format example satisfied
 // both checks, splitting a rule whose whole point is that the lens is
 // unreportable without the filing mechanic attached to it. Resolving the rule
-// line within the ## Focus span and requiring both anchors ON IT enforces what
-// the failure messages have always promised ("as a numbered bullet under
-// ## Focus") and keeps the rule outside the {{if .ToolsEnabled}} block, which
-// opens two sections later — so single-shot agents still receive it.
+// line within the ## Focus span and requiring both anchors ON IT is what fixed
+// that, and it keeps the rule outside the {{if .ToolsEnabled}} block, which opens
+// two sections later — so single-shot agents still receive it.
+//
+// WHAT IT DOES NOT CHECK: that the line is NUMBERED. The span and the two anchors
+// are the whole predicate; a rule on an unnumbered line under ## Focus passes. The
+// shipped built-ins all number it `6.` and docs/personas-authoring.md tells authors
+// to, but that is an authoring convention this guard does not enforce, so neither
+// this comment nor the error below claims it does.
 func predicateRuleLineUnderFocus(text string) (string, error) {
 	lines := strings.Split(text, "\n")
 	start := -1
@@ -132,9 +137,30 @@ func predicateRuleLineUnderFocus(text string) (string, error) {
 			return line, nil
 		}
 	}
-	return "", fmt.Errorf("the lens anchor %q is absent from the ## Focus section — it must be a "+
-		"numbered bullet there, in prose adapted to this persona's voice, not in another "+
-		"section and not inside a fenced example", predicateRuleAnchor)
+	return "", fmt.Errorf("the lens anchor %q is absent from the ## Focus section — it must be on a "+
+		"bullet there, in prose adapted to this persona's "+
+		"voice, not in another section and not inside a fenced example", predicateRuleAnchor)
+}
+
+// TestPredicateRuleLineUnderFocus_MessageClaimsOnlyWhatItChecks pins the "WHAT IT
+// DOES NOT CHECK" paragraph above against the failure message below it. The guard
+// resolves the rule line by span plus anchor and never inspects numbering, so an
+// unnumbered bullet under ## Focus is a PASS — the first assertion states that
+// directly. The second is the one that drifted: the message named the built-ins'
+// `6.` inside the sentence stating the requirement, so an author reading only the
+// failure would take numbering for an enforced invariant and hunt for a violation
+// the predicate cannot see. A message may describe the requirement it enforces;
+// this one must not describe a convention it does not.
+func TestPredicateRuleLineUnderFocus_MessageClaimsOnlyWhatItChecks(t *testing.T) {
+	unnumbered := "## Focus\n\n- " + predicateRuleAnchor + ", then " + predicateFilingAnchor + ".\n"
+	line, err := predicateRuleLineUnderFocus(unnumbered)
+	require.NoError(t, err, "an unnumbered bullet under ## Focus must resolve — the guard checks span and anchor, never numbering")
+	assert.Contains(t, line, predicateRuleAnchor)
+
+	_, missErr := predicateRuleLineUnderFocus("## Focus\n\n- nothing relevant here.\n")
+	require.Error(t, missErr)
+	assert.NotContains(t, missErr.Error(), "number it",
+		"the failure message must not cite the built-ins' numbering convention: the predicate does not check it, so naming it here sends the author after a violation the guard cannot see")
 }
 
 // TestEveryBuiltinPersona_PredicateRuleStaysInItsOwnVoice pins the heterogeneity

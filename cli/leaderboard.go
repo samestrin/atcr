@@ -34,7 +34,7 @@ func newLeaderboardCmd() *cobra.Command {
 	}
 	cmd.Flags().String("since", "30d", `time window: Nd (days), Nw (weeks), Nm (months); "all" disables the window`)
 	cmd.Flags().String("model", "", "filter to a model id (substring, case-insensitive)")
-	cmd.Flags().String("persona", "", "filter to an exact reviewer/persona name")
+	cmd.Flags().String("persona", "", "filter to one reviewer/persona name (whole name, case-insensitive)")
 	// The version is named here, not only in the docs, because the bump was made for
 	// a BENCHMARK-side change (coverage in the suite envelope) and board acceptance
 	// of the new number is an unverified coordination item. A production submitter
@@ -207,6 +207,12 @@ func runLeaderboard(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("no records match filters (window: %s). Try a wider --since or removing --model/--persona", windowClause)
 	}
 
+	// This call deliberately aggregates RAW history: no unresolvedEraRuns era pass,
+	// the one PublishedSet and TrustPriors both apply. That is product intent,
+	// documented in docs/scorecard.md — the local leaderboard "reports what actually
+	// happened across all runs", while export and trust must never blend two
+	// raised_denominator definitions. Do not "fix" the asymmetry by wrapping this
+	// call.
 	return renderLeaderboard(out, scorecard.Aggregate(filtered))
 }
 
@@ -215,12 +221,9 @@ func runLeaderboard(cmd *cobra.Command, _ []string) error {
 // findings (undefined). The table is buffered and written once so a flush error
 // cannot emit a half table; the single write's error is propagated.
 //
-// The table deliberately aggregates RAW history: it calls scorecard.Aggregate
-// without the unresolvedEraRuns era pass that PublishedSet and TrustPriors
-// apply. That is product intent, documented in docs/scorecard.md — the local
-// leaderboard "reports what actually happened across all runs", while export
-// and trust must never blend two raised_denominator definitions. Do not "fix"
-// the asymmetry by wrapping this call.
+// The rows it is handed are RAW history — aggregated without the unresolvedEraRuns
+// era pass that PublishedSet and TrustPriors apply. That asymmetry is product
+// intent and is argued at the caller's scorecard.Aggregate call in runLeaderboard.
 func renderLeaderboard(w io.Writer, rows []scorecard.LeaderboardRow) error {
 	// RAISED stopped counting doc-shield-routed findings (epic 35.16.6.5), so
 	// without this column a row reading RAISED 6 / CORR 100% is indistinguishable
@@ -302,18 +305,24 @@ func runLeaderboardExportAt(cmd *cobra.Command, records []scorecard.Record, filt
 	if err != nil {
 		return err
 	}
-	// Only two errors can reach here now that the selection is made above:
-	// ErrNoExportRecords and ErrNoCurrentEraRecords. ExportSelected applies no --since
-	// window of its own, so a bad --since can no longer reach it. (It DOES drop any
+	// ErrNoExportRecords is the ONLY error this call site can observe, now that the
+	// selection is made above. ExportSelected applies no --since window of its own,
+	// so a bad --since can no longer reach it; what it does do is drop any
 	// non-reviewer record it is handed — its own published-shape invariant — which
-	// produces ErrNoExportRecords; a selection left empty by the era pass produces
-	// ErrNoCurrentEraRecords, which names the store rather than the filters.) Both
-	// carry their own actionable text and main() maps them to exit 1, so they are
-	// returned as-is rather than re-wrapped.
+	// produces ErrNoExportRecords. It carries its own actionable text and main()
+	// maps it to exit 1, so it is returned as-is rather than re-wrapped.
+	//
+	// Its sibling ErrNoCurrentEraRecords is NOT reachable from here. PublishedSet
+	// already ran the same era pass and excluded every above-current record, so
+	// ExportSelected's own pass can only come out empty when its input was empty —
+	// and an empty input is caught first as ErrNoExportRecords. That error exists
+	// for a direct embedder of ExportSelected that skipped PublishedSet.
 	// The guard above already scrubbed every identity it inspected; handing the memo
 	// over means ExportSelected does not re-derive them. scrubField is a fixed-point
-	// loop over 7 compiled regexes, so the second pass was roughly 28 regex executions
-	// per field per record across the whole unrotated store.
+	// loop over 7 compiled regexes that breaks on the first unchanged pass, so the
+	// second pass cost 7 regex executions per field per record for an identity needing
+	// no scrubbing and 14 for one that changes once — across the whole unrotated store.
+	// (Up to 56 under the scrubPasses cap, which no current rule reaches.)
 	data, err := scorecard.ExportSelectedCached(selected, now, scrubs)
 	if err != nil {
 		return err

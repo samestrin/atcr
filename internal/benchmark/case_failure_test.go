@@ -128,7 +128,8 @@ func TestCaseFailureReasonsDoNotCollideWithOutcomes(t *testing.T) {
 // also an outcome; this test walks the OUTCOME vocabulary and asks whether any of
 // its values would be accepted as a failure reason. The two directions are not
 // equivalent: the existing direction routes through ValidOutcome, so an Outcome*
-// constant added WITHOUT a matching arm in ValidOutcome's switch could share a
+// constant added WITHOUT a place in ValidOutcome's vocabulary (AllOutcomes, which
+// it ranges over) could share a
 // spelling with a CaseFailure* value and no existing assertion would notice. This
 // test asks ValidCaseFailureReason directly, so a colliding spelling fails here
 // regardless of whether the outcome side admits it.

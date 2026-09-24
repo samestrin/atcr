@@ -42,7 +42,7 @@ func runScorecard(cmd *cobra.Command, args []string) error {
 		return usageError(errors.New("requires a run_id or path argument"))
 	}
 
-	runID, err := resolveScorecardRunID(arg)
+	runID, legacyRunID, err := resolveScorecardRunID(arg)
 	if err != nil {
 		return err // already exit-coded by the resolver
 	}
@@ -60,11 +60,15 @@ func runScorecard(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to read scorecard store: %w", err)
 	}
 
-	reviewers := make([]scorecard.Record, 0, len(recs))
-	for _, r := range recs {
-		if r.RecordType == scorecard.RecordTypeReviewer {
-			reviewers = append(reviewers, r)
+	reviewers := reviewerRecords(recs)
+	// A run reconciled before the run id gained its path hash is stored under
+	// the bare ReconciledAt-basename form; look that up before reporting none.
+	if len(reviewers) == 0 && legacyRunID != "" {
+		recs, err = scorecard.FindByRunID(dir, legacyRunID, scorecard.ReadOpts{Writer: cmd.ErrOrStderr()})
+		if err != nil {
+			return fmt.Errorf("failed to read scorecard store: %w", err)
 		}
+		reviewers = reviewerRecords(recs)
 	}
 	if len(reviewers) == 0 {
 		// No matching records is a real failure (exit 1), not a usage error.
@@ -74,28 +78,40 @@ func runScorecard(cmd *cobra.Command, args []string) error {
 	return renderScorecard(cmd.OutOrStdout(), reviewers)
 }
 
+// reviewerRecords keeps only the per-reviewer records of one run.
+func reviewerRecords(recs []scorecard.Record) []scorecard.Record {
+	reviewers := make([]scorecard.Record, 0, len(recs))
+	for _, r := range recs {
+		if r.RecordType == scorecard.RecordTypeReviewer {
+			reviewers = append(reviewers, r)
+		}
+	}
+	return reviewers
+}
+
 // resolveScorecardRunID maps the id-or-path argument to a run_id. A path (mirrors
 // the anchorDir contract: absolute, contains a separator, or ".") is resolved
 // through its reconciled/summary.json; a bare argument must already be a
 // well-formed run_id, so a typo fails fast as a usage error rather than a silent
-// empty table.
-func resolveScorecardRunID(arg string) (string, error) {
+// empty table. legacyRunID is non-empty only for a path: the id the same run
+// carried before the path hash was added, for the caller to fall back to.
+func resolveScorecardRunID(arg string) (runID, legacyRunID string, err error) {
 	if looksLikePath(arg) {
-		runID, err := runIDFromReviewDir(arg)
+		runID, legacyRunID, err := runIDFromReviewDir(arg)
 		// A slash-bearing arg that is also a well-formed run_id is ambiguous:
 		// looksLikePath sent it down the review-dir branch, but if that resolution
 		// fails, retry it as a run_id rather than surfacing the confusing "no
 		// reconciled/summary.json" error. A real review-dir path is never run_id
 		// shaped, so this never masks a genuine path-resolution failure.
 		if err != nil && scorecard.IsRunID(arg) {
-			return arg, nil
+			return arg, "", nil
 		}
-		return runID, err
+		return runID, legacyRunID, err
 	}
 	if !scorecard.IsRunID(arg) {
-		return "", usageError(fmt.Errorf("invalid run_id %q: expected a timestamp-prefixed id like 2026-06-14T10:00:00Z-abc123, or a review directory path", arg))
+		return "", "", usageError(fmt.Errorf("invalid run_id %q: expected a timestamp-prefixed id like 2026-06-14T10:00:00Z-abc123, or a review directory path", arg))
 	}
-	return arg, nil
+	return arg, "", nil
 }
 
 // looksLikePath reports whether arg is an explicit filesystem path rather than a
@@ -105,8 +121,9 @@ func looksLikePath(arg string) bool {
 }
 
 // runIDFromReviewDir reconstructs the run_id the emitter wrote for a review
-// directory: reconciled_at (from reconciled/summary.json) + "-" + base(dir),
-// matching scorecard.EmitForReconcile. A missing summary.json is a usage error
+// directory from reconciled_at (in reconciled/summary.json) through
+// scorecard.RunIDForReviewDir, the helper EmitForReconcile itself uses, plus the
+// pre-hash reconciled_at + "-" + base(dir) form as a legacy fallback. A missing summary.json is a usage error
 // (exit 2, "run reconcile first"); a present-but-unreadable/corrupt one is a real
 // failure (exit 1). Error messages echo the user-provided path, not the resolved
 // absolute path, so no internal path leaks. An arbitrary review-dir path is
@@ -114,13 +131,13 @@ func looksLikePath(arg string) bool {
 // permissions (mirroring anchorDir's verbatim-path contract), so there is no
 // trusted root to confine the read to and reaching any user-readable file grants
 // no escalation; no bounds check is enforced.
-func runIDFromReviewDir(arg string) (string, error) {
+func runIDFromReviewDir(arg string) (runID, legacyRunID string, err error) {
 	clean := filepath.Clean(arg)
 	summaryPath := filepath.Join(clean, "reconciled", "summary.json")
 	data, err := os.ReadFile(summaryPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", usageError(fmt.Errorf("no reconciled/summary.json in %s: run 'atcr reconcile' first", arg))
+			return "", "", usageError(fmt.Errorf("no reconciled/summary.json in %s: run 'atcr reconcile' first", arg))
 		}
 		// Strip the PathError wrapper (which carries the resolved absolute path)
 		// so only the OS reason is exposed to the user.
@@ -128,18 +145,18 @@ func runIDFromReviewDir(arg string) (string, error) {
 		if inner := errors.Unwrap(err); inner != nil {
 			sanitized = inner
 		}
-		return "", fmt.Errorf("failed to read summary.json in %s: %s", arg, sanitized)
+		return "", "", fmt.Errorf("failed to read summary.json in %s: %s", arg, sanitized)
 	}
 	var s struct {
 		ReconciledAt string `json:"reconciled_at"`
 	}
 	if err := json.Unmarshal(data, &s); err != nil {
-		return "", fmt.Errorf("failed to parse summary.json in %s: %w", arg, err)
+		return "", "", fmt.Errorf("failed to parse summary.json in %s: %w", arg, err)
 	}
 	if s.ReconciledAt == "" {
-		return "", fmt.Errorf("summary.json in %s has no reconciled_at timestamp", arg)
+		return "", "", fmt.Errorf("summary.json in %s has no reconciled_at timestamp", arg)
 	}
-	return s.ReconciledAt + "-" + filepath.Base(clean), nil
+	return scorecard.RunIDForReviewDir(s.ReconciledAt, clean), s.ReconciledAt + "-" + filepath.Base(clean), nil
 }
 
 // renderScorecard writes the per-reviewer table to w via text/tabwriter. The

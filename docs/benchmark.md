@@ -313,7 +313,7 @@ A slot failure has two visible consequences, and both are deliberate:
 - **The work dir is retained**, exactly as for a case failure. The review dirs hold each slot's `status.json`, which is the only record of why the slot died.
 - **`benchmark export` rejects the run by default**, because that reviewer's row is short of the suite. The shortfall is labelled `unshown` rather than `missing` or `unmeasured`, and re-running will not help it — the case ran and the rest of the panel scored it, so what needs investigating is that one provider.
 
-Under `--allow-partial-coverage` the row publishes, and the warning says what you are publishing: a slot-short row's `corroboration_rate` is averaged over only the cases that reviewer was shown, so it is **not penalised** for the ones it missed and will read higher than a row scored over the full suite. Nothing in the submission distinguishes the two.
+Under `--allow-partial-coverage` the row publishes, and the warning says what you are publishing: a slot-short row's `corroboration_rate` is averaged over only the cases that reviewer was shown, so it is **not penalised** for the ones it missed and is **not comparable** to a row scored over the full suite. It reads higher where the reviewer was shown some cases. Where it lost *every* slot it reads `0.00` — the floor, not an inflated figure — because the scorer has no case to average over. The rate alone cannot tell that row from one that was shown the whole suite and matched nothing, but the submission itself can: the all-slots-lost row is the only shape that pairs `corroboration_rate: 0` with `runs: 0` and an empty `"case_ids": []` — `runs` counts the cases the row scored and is always published, and a covered set is always an array rather than null (both pinned under the coverage-row properties above) — so a board that consults the covered set can distinguish the two without any schema change. What no consumer does today is consult it: rank on the rate alone and the two rows still read identically.
 
 These failures still abort the whole run, and none of them is transient:
 
@@ -325,19 +325,27 @@ These failures still abort the whole run, and none of them is transient:
 | The **scored-twice identity guard** (two reviewer lanes realizing one `(model, persona)` both scoring the same case), and the post-scrub **identity-collision guard**. | Configuration or code bugs, not bad luck. Continuing would publish a knowingly double-counted score, or two rows under one public identity. |
 | **Cancellation** (SIGINT/SIGTERM). | An operator interrupt is a decision, not a fault. An interrupted run must not become a publishable artifact whose missing cases look like infrastructure failures. |
 | **Nothing scored at all.** | Nothing was measured, so there is no partial result to salvage. |
-| The **`--max-consecutive-case-failures` abort** (the run stops once that many consecutive cases have failed back to back). | A deliberate operator cost brake, not a transient outage: the remaining cases were never run, so there is no bill to stop and no per-case fault to record — the cases already recorded stay in `case_failures[]`. |
+| The **`--max-consecutive-case-failures` abort** (the run stops once that many consecutive cases have failed back to back). | A deliberate operator cost brake, not a transient outage: the remaining cases were never run, so there is no bill to stop and no per-case fault to record. The run-result is not written on an abort — the already-recorded failures survive only in the abort error's per-reason tally and the per-case warn logs, not in `case_failures[]`. |
 | A **host-level work-dir fault** (`ENOSPC`, `EDQUOT`, `EMFILE`/`ENFILE`, or `EROFS` while creating a case's work directory). | A property of the host, not of the case: every remaining case repeats the identical failing syscall, so recording each as its own bad luck writes one entry per case and still exits 0 while the host stays broken. |
 | The **realized-identity printability guard** (a provider's usage payload supplied a model identity whose runes cannot survive publication). | Publishing would emit a public identity no consumer can join against, and a re-run on this tier re-pays the whole panel — so the guard fails the run before payment rather than letting export reject the finished artifact. |
 
-When any case fails, the **work dir is retained** and its path is logged, exactly as it is on a hard failure — the successful cases' raw transcripts, `findings.txt` and `summary.json` survive for inspection or manual rescoring.
+When any case fails — or any single reviewer **slot** fails (one reviewer missing one case the rest of the panel scored) — the **work dir is retained** and its path is logged, exactly as it is on a hard failure: the whole panel's raw transcripts, `findings.txt` and `summary.json` survive for inspection or manual rescoring. A slot failure retains the WHOLE run, not just the case that lost the slot: the failed slot's `status.json` lives inside that case's review directory, and the retained artifacts are kept together rather than partially reclaimed. On a large panel a single routine provider timeout — not an exceptional event on quota-limited primaries — is therefore enough to leave a full work dir behind.
 
-**That retention is unbounded, and reclaiming it is yours to do.** Nothing prunes, caps or expires a retained work dir, deliberately: it holds the only copy of a panel you already paid for, so the run will not delete it on your behalf. The trade is that a scheduled suite losing one case per run leaves one full work dir behind per run. The partial-run warning reports the size alongside the path so the growth is visible before the volume is:
+**That retention is unbounded, and reclaiming it is yours to do.** Nothing prunes, caps or expires a retained work dir, deliberately: it holds the only copy of a panel you already paid for, so the run will not delete it on your behalf. The trade is that a scheduled suite losing one case per run — or one slot per run, which on a large roster is the more common trigger — leaves one full work dir behind per run. The partial-run warning reports the size alongside the path so the growth is visible before the volume is:
 
 ```
-WARN benchmark work dir retained after a partial run path=/tmp/atcr-repo-state-1234 failed_cases=1 retained_bytes=41231882
+WARN benchmark work dir retained after a partial run path=/tmp/atcr-repo-state-1234 failed_cases=1 failed_slots=0 failed_reviewers=0 retained_dirs=3 retained_bytes=41231882
 ```
 
-Watch `retained_bytes`, and once you have inspected or rescored a run, reclaim it with `rm -rf` on the path from that line. A run that scores every case cleans up after itself, so only partial and failed runs accumulate.
+Watch `retained_bytes`, and once you have inspected or rescored a run, reclaim it with `rm -rf` on the path from that line. `retained_dirs` counts every retained `atcr-repo-state-*` work dir in the same temp directory, this one included, so growth across runs is visible on one line; it matches by name and reads no sizes. `failed_slots` is the number of failed reviewer slots (one reviewer failing 200 cases is 200), and `failed_reviewers` is how many reviewers those slots belong to. A run that scores every case cleans up after itself, so only partial and failed runs accumulate.
+
+`retained_bytes` is always a number, so you can build a numeric monitor on it — including under `ATCR_LOG_FORMAT=json`, where it is a JSON number. When the size cannot be measured (the walk could not read the work dir's root, or the tree holds more than 200,000 entries, where the walk stops rather than delay exit), the key is **omitted** and a boolean says so in its place, rather than the key changing type:
+
+```
+WARN benchmark work dir retained after a partial run path=/tmp/atcr-repo-state-1234 failed_cases=1 failed_slots=0 failed_reviewers=0 retained_dirs=3 retained_bytes_unmeasured=true
+```
+
+The dir is still retained and its path is still on the line; only the size is unknown. Treat `retained_bytes_unmeasured=true` as "go look" — an unmeasurable work dir is the one case where the growth figure cannot warn you.
 
 At export, a recorded failure **explains** a coverage shortfall; it **does not excuse** one. `atcr benchmark export` still rejects a partial run by default, but names the failed case and its reason rather than telling you to re-run cases that never ran:
 
@@ -428,6 +436,18 @@ scored against a shrunken denominator
 With `--suite-path`, a run-result recording no coverage at all is an **error** rather
 than an unmeasured warning: there is nothing to anchor, and the flag must not read as
 a check that silently did nothing.
+
+**Anchoring loads the whole manifest, size cap included.** A `repo-state-v1` suite is
+anchored through the same loader `benchmark run` and `benchmark verify` use, so each
+case's `change.diff` is subject to the same 10 MiB per-file cap even though anchoring
+itself consults only the identity pair and the case ids. A suite carrying one case
+whose diff exceeds the cap therefore cannot be anchored: export fails with that cap
+error ("diff … is N bytes, exceeding the …-byte cap"), which names the case and is
+diagnosable as a suite-size problem, not a corrupted run-result. Dropping the flag to
+get past it is the documented escape, but it downgrades the gate to the weaker
+internal-consistency check — make that trade deliberately, not as a workaround. (The
+bundled suite's largest diff is two orders of magnitude under the cap; this matters
+only for hand-built suites with very large case diffs.)
 
 The output envelope is **distinct from the production `leaderboard --export`** by
 its `source`, `suite`, and `suite_version` fields — that is what lets the public

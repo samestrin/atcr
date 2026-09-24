@@ -114,6 +114,20 @@ func TestModelsCheck_NoCommunityPersonas_NothingToCheck(t *testing.T) {
 	assert.Contains(t, out, "nothing to check")
 }
 
+// TestModelsCheck_BareMarkdownPersonaIsNotALockCandidate: a community row that
+// is only a <name>.md prompt has no <name>.yaml and so no lock. It must be
+// neither checked (no "missing file" error every run) nor counted.
+func TestModelsCheck_BareMarkdownPersonaIsNotALockCandidate(t *testing.T) {
+	dir := withEmptyPersonasDir(t)
+	withCatalogSnapshot(t, driftFixtureCatalog)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "scribe.md"), []byte("You review prose.\n"), 0o644))
+
+	out, stderr, err := executeSplit(t, "models", "check")
+	require.NoError(t, err)
+	assert.Empty(t, stderr, "a lock-less lens is not read, so no load error")
+	assert.Contains(t, out, "nothing to check", "a lock-less lens is not counted as checked")
+}
+
 func TestModelsCheck_MultiCondition_OneLinePerCondition(t *testing.T) {
 	dir := withEmptyPersonasDir(t)
 	// gene's lock is both deprecated AND behind a newer stable member.

@@ -452,6 +452,44 @@ func TestLoadRepoState_RejectsAnOversizedDiffBeforeReadingIt(t *testing.T) {
 	assert.Contains(t, err.Error(), "exceed", "the error must say the cap was exceeded")
 }
 
+// A MISSING change.diff never reaches loadRepoStateCase's os.Stat arm: checkFiles
+// runs first and its Lstat of the declared diff path fails with "case %q diff file".
+// That arm had no test — every fixture wrote the file — so an error-message or
+// arm-ordering change here would have shipped unexercised. (The os.Stat arm at the
+// cap itself is reachable only through a checkFiles-to-stat TOCTOU race and the
+// os.ReadFile arm only through a permission denial; the latter is pinned by the
+// test that follows.)
+func TestLoadRepoState_MissingDiffFailsAtLoad(t *testing.T) {
+	dir := writeRepoStateSuite(t, validCaseJSON)
+	require.NoError(t, os.Remove(filepath.Join(dir, "good-case", "change.diff")))
+
+	_, err := LoadRepoState(dir)
+	require.Error(t, err, "a case whose change.diff does not exist must fail at load, not silently skip the diff")
+	assert.Contains(t, err.Error(), "good-case", "the error must name the offending case")
+	assert.Contains(t, err.Error(), "diff file", "checkFiles' Lstat arm wraps the failure")
+	assert.Contains(t, err.Error(), "no such file", "the error must carry the lstat cause")
+}
+
+// A diff file that exists but cannot be READ gets past checkFiles' Lstat (which
+// needs no read permission) and past the size-cap Stat, and dies in the
+// os.ReadFile arm below the cap — "case %q: reading diff %s". No fixture made that
+// arm fire, so the wrapping that names the case and the diff path was unpinned.
+func TestLoadRepoState_UnreadableDiffFailsAtTheReadArm(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: permission bits do not constrain root, so the read cannot be made to fail")
+	}
+	dir := writeRepoStateSuite(t, validCaseJSON)
+	diffPath := filepath.Join(dir, "good-case", "change.diff")
+	require.NoError(t, os.Chmod(diffPath, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(diffPath, 0o600) })
+
+	_, err := LoadRepoState(dir)
+	require.Error(t, err, "an unreadable diff must fail at load")
+	assert.Contains(t, err.Error(), "good-case", "the error must name the offending case")
+	assert.Contains(t, err.Error(), "change.diff", "the error must name the unreadable file")
+	assert.Contains(t, err.Error(), "reading diff", "the read arm's wrapping must reach the operator")
+}
+
 // The case-directory symlink guard must not fail OPEN: a non-nil Lstat error used
 // to silently SKIP the AC7 check — the one place a discarded syscall error
 // disabled a security control rather than merely losing a diagnostic. A case dir

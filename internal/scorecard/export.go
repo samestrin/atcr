@@ -352,9 +352,12 @@ func ExportSelected(filtered []Record, exportedAt time.Time) ([]byte, error) {
 //
 // It exists because the export path scrubs each identity twice: once in the caller's
 // publishability guard (cli/leaderboard.go) and again here when the group key is built.
-// scrubField is a fixed-point loop of up to 8 iterations, each running 7 compiled
-// regexes, so that is roughly 28 regex executions per field per record — over the whole
-// unrotated store, since the export path forces window 0.
+// scrubField is a fixed-point loop over 7 compiled regexes that BREAKS on the first
+// pass that changes nothing, so one call costs 7 executions for a value needing no
+// scrubbing and 14 for one that changes once. Doubled over the two sites that is
+// 14-28 regex executions per field per record — over the whole unrotated store, since
+// the export path forces window 0. The scrubPasses cap of 8 bounds the pathological
+// case at 56 per call, 112 over both sites; no current rule reaches it.
 //
 // Keyed on the VALUE, deliberately, rather than threading an index-aligned parallel
 // slice of pre-scrubbed identities from the caller. ExportSelectedCached runs
@@ -427,7 +430,9 @@ func ExportSelectedCached(filtered []Record, exportedAt time.Time, cache ScrubCa
 		// Scrub once, at ingestion: keying and storage use the scrubbed identity,
 		// so finalize() never re-scrubs and two records that scrub to the same
 		// identity merge into one group.
-		persona := cache.Scrub(r.Reviewer)
+		// Normalized before scrubbing, so the two spellings one agent has on
+		// disk (pre- and post-lower-casing builds) publish as one row.
+		persona := cache.Scrub(normalizeReviewerName(r.Reviewer))
 		model := cache.Scrub(r.Model)
 		k := key{persona, model}
 		a, ok := groups[k]

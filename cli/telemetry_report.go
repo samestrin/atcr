@@ -20,23 +20,30 @@ import (
 // renders reconciled findings) and never modifies or aliases it.
 
 // qualityReportRow is one rendered row: an aggregated per-(persona, model) pair
-// with its computed dismissal rate. Its five fields are the whole allowlist the
+// with its computed dismissal rate. Its seven fields are the whole allowlist the
 // report exposes in either format — persona and model identifiers plus content-free
-// counts and the derived rate.
+// counts and the derived rate. The unreproducible/attempts-exhausted counters are
+// content-free too (adjudicated by /clarifications 2026-09-22): the LOCAL report
+// renders them so a pair whose only outcomes are unmeasured-on-this-axis no longer
+// masquerades as flawless — the reader sees where the outcomes went. The OUTBOUND
+// payload keeps dropping those pairs (C2, qualitysignal.go) — only this local
+// surface extends.
 type qualityReportRow struct {
-	Persona        string  `json:"persona"`
-	Model          string  `json:"model"`
-	DismissedCount int     `json:"dismissed_count"`
-	ConfirmedCount int     `json:"confirmed_count"`
-	DismissalRate  float64 `json:"dismissal_rate"`
+	Persona                string  `json:"persona"`
+	Model                  string  `json:"model"`
+	DismissedCount         int     `json:"dismissed_count"`
+	ConfirmedCount         int     `json:"confirmed_count"`
+	UnreproducibleCount    int     `json:"unreproducible_count"`
+	AttemptsExhaustedCount int     `json:"attempts_exhausted_count"`
+	DismissalRate          float64 `json:"dismissal_rate"`
 }
 
 const qualityReportHeading = "# Prompt Quality Signal\n\n" +
 	"Persona+model reviewer prompts ranked by dismissal rate (descending): the prompts " +
 	"whose findings maintainers most often dismiss (wontfix) surface first as over-reporting " +
 	"candidates; the best-calibrated prompts (lowest dismissal / highest confirmation) sit at " +
-	"the bottom. Derived only from local dismissed/confirmed counters — no code, file paths, " +
-	"or finding text.\n\n"
+	"the bottom. Derived only from local content-free outcome counters (dismissed, confirmed, " +
+	"unreproducible, attempts-exhausted) — no code, file paths, or finding text.\n\n"
 
 const qualityReportNoData = "No quality-signal data yet. Dismissed/confirmed counters accrue " +
 	"as findings are resolved or dismissed (see `atcr debt resolve`).\n"
@@ -122,12 +129,22 @@ func renderQualityReport(w io.Writer, rows []localdebt.QualityRow, format string
 func qualityReportRows(rows []localdebt.QualityRow) []qualityReportRow {
 	out := make([]qualityReportRow, 0, len(rows))
 	for _, r := range rows {
+		// NO 0/0 exclusion here, deliberately — and unlike buildQualitySignalPayload
+		// (C2, qualitysignal.go), which keeps dropping these pairs. The outbound
+		// payload has no columns for unreproducible/attempts-exhausted, so a pair
+		// whose only outcomes are unmeasured-on-this-axis would print
+		// `| 0 | 0 | 0.0% |` and read as a reviewer that has never been wrong.
+		// This LOCAL report carries those counters as columns, so the same pair
+		// now renders `| 0 | 0 | 3 | 0 | 0.0% |` and the reader sees where the
+		// outcomes went (adjudicated by /clarifications 2026-09-22).
 		out = append(out, qualityReportRow{
-			Persona:        cell(r.Persona),
-			Model:          cell(r.Model),
-			DismissedCount: r.DismissedCount,
-			ConfirmedCount: r.ConfirmedCount,
-			DismissalRate:  dismissalRate(r.DismissedCount, r.ConfirmedCount),
+			Persona:                cell(r.Persona),
+			Model:                  cell(r.Model),
+			DismissedCount:         r.DismissedCount,
+			ConfirmedCount:         r.ConfirmedCount,
+			UnreproducibleCount:    r.UnreproducibleCount,
+			AttemptsExhaustedCount: r.AttemptsExhaustedCount,
+			DismissalRate:          dismissalRate(r.DismissedCount, r.ConfirmedCount),
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -142,10 +159,13 @@ func qualityReportRows(rows []localdebt.QualityRow) []qualityReportRow {
 	return out
 }
 
-// dismissalRate is dismissed / (dismissed + confirmed). Every emitted QualityRow has
-// at least one terminal outcome (Story 1 AC 01-01), so the denominator is non-zero
-// in practice; the zero guard is defensive — a 0/0 pair renders 0.0, never a NaN or
-// a divide-by-zero panic (AC 04-01 EC1).
+// dismissalRate is dismissed / (dismissed + confirmed). A QualityRow no longer
+// guarantees a non-zero denominator: Story 36.0 added the `unreproducible` and
+// `attempts-exhausted` outcomes, which create a row without touching either of
+// these two counters, so a 0/0 pair is a real shape. qualityReportRows no longer
+// filters those pairs — the local report renders their counters in their own
+// columns — so the zero-denominator arm below is the LIVE path for such rows,
+// rendering 0.0% beside columns that say where the outcomes went.
 func dismissalRate(dismissed, confirmed int) float64 {
 	total := dismissed + confirmed
 	if total == 0 {
@@ -162,12 +182,12 @@ func renderQualityReportMarkdown(w io.Writer, rows []qualityReportRow) error {
 		_, err := io.WriteString(w, b.String())
 		return err
 	}
-	b.WriteString("| Persona | Model | Dismissed | Confirmed | Dismissal Rate |\n")
-	b.WriteString("| --- | --- | --- | --- | --- |\n")
+	b.WriteString("| Persona | Model | Dismissed | Confirmed | Unreproducible | Attempts Exhausted | Dismissal Rate |\n")
+	b.WriteString("| --- | --- | --- | --- | --- | --- | --- |\n")
 	for _, r := range rows {
-		fmt.Fprintf(&b, "| %s | %s | %d | %d | %.1f%% |\n",
+		fmt.Fprintf(&b, "| %s | %s | %d | %d | %d | %d | %.1f%% |\n",
 			escapeMarkdownCell(r.Persona), escapeMarkdownCell(r.Model),
-			r.DismissedCount, r.ConfirmedCount, r.DismissalRate*100)
+			r.DismissedCount, r.ConfirmedCount, r.UnreproducibleCount, r.AttemptsExhaustedCount, r.DismissalRate*100)
 	}
 	_, err := io.WriteString(w, b.String())
 	return err

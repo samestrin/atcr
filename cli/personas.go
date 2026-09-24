@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -21,7 +23,23 @@ import (
 // path checked. An empty rates map drives the "no data" footer.
 type personasScoreData struct {
 	rates map[string]float64
-	path  string
+	// details is the explainability companion from scorecard.ExplainTrustPriors,
+	// keyed identically to rates: a persona is never present in one and missing
+	// from the other. Both are loaded with minRuns=0, so NO membership floor is
+	// applied on this path — a lens is absent from both maps only when it has no
+	// usable history at all, never for being under-sampled. (The floor would omit
+	// from both if it were applied; it is not, which is why formatScoreDetail
+	// marks a thin sample rather than relying on its absence to hide one.)
+	details map[string]scorecard.PersonaScoreDetail
+	path    string
+	// inUse is the priors map reconcile actually acts on (ResolveTrustPriors:
+	// windowed, floored). Only its keys are read — they name the lenses that
+	// clear the production floor, which the all-history columns cannot show.
+	inUse map[string]float64
+	// records is the number of reviewer records in the store, counted only
+	// when rates is empty, so the footer can tell an empty store from one whose
+	// every record the scoring chain excluded.
+	records int
 }
 
 // personasScores loads corroboration rates from the scorecard store. A package
@@ -40,9 +58,24 @@ func loadPersonasScores(_ io.Writer) (personasScoreData, error) {
 	if err != nil {
 		return personasScoreData{}, err
 	}
-	// TrustPriors is best-effort by contract: it never returns a non-nil error.
-	rates, _ := scorecard.TrustPriors(dir, 0)
-	return personasScoreData{rates: rates, path: dir}, nil
+	// TrustPriorsAndDetails reads the store ONCE and returns both maps, with
+	// each map identical to the corresponding public face over the same store
+	// (pinned scorecard-side). Both faces are best-effort by contract — they
+	// never return a non-nil error — so the combined call keeps that shape.
+	rates, details, _ := scorecard.TrustPriorsAndDetails(dir, 0)
+	data := personasScoreData{rates: rates, details: details, path: dir, inUse: scorecard.ResolveTrustPriors()}
+	// Only an empty rates map needs the count, so only that path pays the
+	// second read. A read error leaves it at zero: the "no data" footer.
+	if len(rates) == 0 {
+		if recs, err := scorecard.ReadSince(dir, 0, time.Now(), scorecard.ReadOpts{Writer: io.Discard}); err == nil {
+			for _, r := range recs {
+				if r.RecordType == scorecard.RecordTypeReviewer {
+					data.records++
+				}
+			}
+		}
+	}
+	return data, nil
 }
 
 // personasDir resolves the community personas directory. A package var so tests
@@ -231,7 +264,7 @@ func listPersonasWithScores(cmd *cobra.Command, dir string) error {
 	// Use the same three-tier resolver ordering as the plain list so the Source
 	// column is consistent and project overrides shadow community/built-ins.
 	projectDir := filepath.Join(".atcr", "personas")
-	scored, listErr := commpersonas.ListTiersWithScores(projectDir, dir, data.rates)
+	scored, listErr := commpersonas.ListTiersWithScores(projectDir, dir, data.rates, toPersonaDetails(data.details))
 	if listErr != nil {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", listErr)
 	}
@@ -240,11 +273,45 @@ func listPersonasWithScores(cmd *cobra.Command, dir string) error {
 	}
 	switch {
 	case err != nil:
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nScorecard data at %s is unreadable\n", data.path)
+		// The only reachable load error — DefaultDir failing — returns a ZERO
+		// personasScoreData with path == "", so interpolating data.path here
+		// printed "Scorecard data at  is unreadable": a double space and no
+		// location, on the one path where naming the location is the whole point.
+		// Name the underlying error instead.
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nScorecard data location could not be resolved: %v\n", err)
+	case len(data.rates) == 0 && data.records > 0:
+		// Not an empty store: every record was excluded from scoring (records
+		// written before the outcome field, failed runs, non-strict runs, or
+		// out-of-remit cases). The remedy is more scored runs, not a store fix.
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nScorecard store at %s holds %d reviewer record(s), but every one was excluded from scoring\n"+
+			"(records from before this build carry no outcome and are never scored). New reconcile runs will be scored.\n",
+			data.path, data.records)
 	case len(data.rates) == 0:
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nNo scorecard data found at %s\n", data.path)
+	default:
+		renderScoresScope(cmd.OutOrStdout(), data.inUse)
 	}
 	return nil
+}
+
+// renderScoresScope names the population each figure describes. The columns
+// are loaded with minRuns=0 over all history, while reconcile acts on
+// ResolveTrustPriors — a windowed read under DefaultTrustMinRuns. Without this
+// footer the table reads as the rates reconcile uses, and for a lens under the
+// production floor it describes a decision reconcile never made.
+func renderScoresScope(w io.Writer, inUse map[string]float64) {
+	names := make([]string, 0, len(inUse))
+	for name := range inUse {
+		names = append(names, sanitizeCell(name))
+	}
+	sort.Strings(names)
+	used := "none"
+	if len(names) > 0 {
+		used = strings.Join(names, ", ")
+	}
+	_, _ = fmt.Fprintf(w, "\nCORROBORATION, RAISED and CASES cover all run history with no run floor.\n"+
+		"Reconcile uses only the last %d days with a %d-run floor.\nIn use by reconcile: %s\n",
+		int(scorecard.DefaultTrustWindow.Hours()/24), scorecard.DefaultTrustMinRuns, used)
 }
 
 func newPersonasSearchCmd() *cobra.Command {
@@ -484,7 +551,15 @@ func runPersonaUpgrades(cmd *cobra.Command, dir string, names []string, dryRun b
 	return nil
 }
 
-// installedCommunityNames lists the names of community personas under dir.
+// installedCommunityNames lists the names of community personas under dir that
+// were INSTALLED from the community repo — the ones `personas remove` can act on.
+//
+// A community row can also be a bare <name>.md prompt file an operator dropped
+// in. Remove resolves <name>.yaml and would report "persona is not installed"
+// for every one of those, so `personas remove --all` would fail on a directory
+// that is in a perfectly ordinary state. They are not removable through this
+// command because atcr never installed them; deleting the file is the operator's
+// own call.
 func installedCommunityNames(dir string) ([]string, error) {
 	metas, err := commpersonas.List(dir)
 	if err != nil {
@@ -492,7 +567,7 @@ func installedCommunityNames(dir string) ([]string, error) {
 	}
 	var names []string
 	for _, m := range metas {
-		if m.Source == "community" {
+		if m.Source == "community" && commpersonas.IsCommunityInstalled(dir, m.Name) {
 			names = append(names, m.Name)
 		}
 	}
@@ -533,16 +608,150 @@ func renderPersonaList(w io.Writer, metas []commpersonas.PersonaMeta) error {
 	return writeTable(w, "NAME\tVERSION\tSOURCE\tLANGUAGE", rows)
 }
 
-// renderScoredList writes the Name/Version/Source/Language/Corroboration table,
-// rendering each persona's rate as "XX.X%" or "n/a".
+// renderScoredList writes the Name/Version/Source/Language/Corroboration/Raised/
+// Cases table, rendering each persona's rate as "XX.X%" or "n/a".
 func renderScoredList(w io.Writer, scored []commpersonas.ScoredPersona) error {
 	rows := make([]string, len(scored))
 	for i, s := range scored {
-		rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s\t%s",
+		rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s",
 			sanitizeCell(s.Name), sanitizeCell(s.Version), sanitizeCell(s.Source),
-			sanitizeCell(formatLanguages(s.Language)), commpersonas.FormatRate(s.Rate))
+			sanitizeCell(formatLanguages(s.Language)), formatCorroboration(s.Rate, s.Detail),
+			formatRaised(s.Detail), formatScoreDetail(s.Detail))
 	}
-	return writeTable(w, "NAME\tVERSION\tSOURCE\tLANGUAGE\tCORROBORATION", rows)
+	return writeTable(w, "NAME\tVERSION\tSOURCE\tLANGUAGE\tCORROBORATION\tRAISED\tCASES", rows)
+}
+
+// formatCorroboration renders the rate, except for a lens that raised nothing.
+// ratio returns 0 for a zero denominator, so that lens's rate is 0 — the same
+// value as a lens that raised many findings and had none corroborated. Opposite
+// facts, opposite actions; the zero-denominator case must not print 0.0%.
+func formatCorroboration(rate *float64, d *commpersonas.ScoreDetail) string {
+	if rate != nil && d != nil && d.Raised == 0 {
+		return "n/a (raised 0)"
+	}
+	return commpersonas.FormatRate(rate)
+}
+
+// formatRaised renders the rate's denominator, or "n/a" when there is no
+// measurement — the same no-data marker the neighbouring cells use.
+func formatRaised(d *commpersonas.ScoreDetail) string {
+	if d == nil {
+		return "n/a"
+	}
+	return strconv.Itoa(d.Raised)
+}
+
+// toPersonaDetails converts scorecard's explainability records into
+// internal/personas' local DTO. cli/ is the layer that imports both, which is
+// why the conversion lives here — see ScoreDetail's own comment for why
+// internal/personas must not import internal/scorecard (the import allowlist in
+// internal/boundaries_test.go, and the direction it protects).
+//
+// The Reasons map is copied rather than aliased: the two layers must not share a
+// mutable header across a package boundary.
+func toPersonaDetails(in map[string]scorecard.PersonaScoreDetail) map[string]commpersonas.ScoreDetail {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]commpersonas.ScoreDetail, len(in))
+	for name, d := range in {
+		reasons := make(map[string]int, len(d.Reasons))
+		for k, v := range d.Reasons {
+			reasons[k] = v
+		}
+		out[name] = commpersonas.ScoreDetail{Counted: d.Counted, Excluded: d.Excluded, Reasons: reasons, Raised: d.Raised}
+	}
+	return out
+}
+
+// formatScoreDetail renders one lens's explainability record as a SUMMARY cell,
+// never a per-case dump: a thirteen-lens panel each listing every excluded case
+// is unreadable, and the question the column answers — "can I drop or repoint
+// this lens?" — needs the shape of the evidence, not its contents.
+//
+// It names at most ONE exclusion reason, the dominant one by count, because a
+// maintainer acting on this decides between "its hosting is broken" and "it is
+// out of remit here" and the largest bucket is what distinguishes them.
+//
+// TD-032's annotation renders separately and deliberately: those records were
+// COUNTED, so folding them into the excluded figure would report a lens as less
+// measured than it is. "unlabelled" is the operator-facing word for
+// ReasonNoRecognizedCategory — the lens raised findings the scorer could not
+// attribute to a topic.
+//
+// A nil detail renders "n/a", the same marker FormatRate uses for an absent
+// rate, and for the same reason: scorecard omits a lens with no usable history
+// from both maps, so "0 counted" would report an unmeasured lens as measured and
+// empty. Absence never means "under-sampled" on this path — `--scores` loads
+// with minRuns=0 — which is what the provisional marker below is for.
+func formatScoreDetail(d *commpersonas.ScoreDetail) string {
+	if d == nil {
+		return "n/a"
+	}
+	out := fmt.Sprintf("%d counted", d.Counted)
+	if n := d.Reasons[scorecard.ReasonNoRecognizedCategory]; n > 0 {
+		out += fmt.Sprintf(" (%d unlabelled)", n)
+	}
+	// The unmapped scope statement renders separately and deliberately, like
+	// TD-032's: those records were COUNTED too, so they belong beside the
+	// counted figure, never in the excluded one (epic acceptance criterion 7 —
+	// the five registry-only lenses must not read as silently different from
+	// the nine grounded ones).
+	if n := d.Reasons[scorecard.ReasonNotOpportunityScoped]; n > 0 {
+		out += " · not opportunity-scoped: no in-repo persona definition"
+	}
+	// The excluded figure is ALWAYS rendered, including at zero, per AC 06-04's
+	// "a persona with zero exclusions renders an explicit 0, distinct from the
+	// n/a no-data case". Omitting the clause would leave a reader deciding
+	// between "the gate ran and excluded nothing" and "this column just does not
+	// say" — and those carry opposite weight when the question is whether to keep
+	// a lens. "n/a" (nil detail) remains the only no-data marker.
+	out += fmt.Sprintf(" · %d excluded", d.Excluded)
+	if reason := dominantExclusionReason(d.Reasons); reason != "" {
+		out += fmt.Sprintf(" (%s)", reason)
+	}
+	// A below-floor sample is MARKED, because nothing else on this surface says
+	// so. `--scores` loads with minRuns=0, so DefaultTrustMinRuns never fires and
+	// every lens with any history at all gets a rate; sortScoredPersonas then
+	// ranks strictly by that rate with no sample-size term. On the live store
+	// that puts `mira 100.0% (3 counted)` above `kai 33.3% (20 counted)` — the
+	// ordering inverts the evidence on the one surface whose question is whether
+	// to drop or repoint a lens.
+	//
+	// The marker rides this column rather than changing the sort: ordering by
+	// sample size would mean sortScoredPersonas consulting Detail (its doc block
+	// states it never does) and internal/personas importing internal/scorecard
+	// for the floor — a coupling ScoreDetail exists as a local mirror to avoid.
+	// The caveat printed beside the count is on the same row as the rate it
+	// qualifies, which is where an operator reads it.
+	//
+	// The bound is `<`, not `<=`: a lens AT the floor is exactly what
+	// DefaultTrustMinRuns admits, so marking it would contradict the constant.
+	if d.Counted < scorecard.DefaultTrustMinRuns {
+		out += fmt.Sprintf(" · provisional (under the %d-case trust floor)", scorecard.DefaultTrustMinRuns)
+	}
+	return out
+}
+
+// dominantExclusionReason returns the excluding reason with the most records, or
+// "" when none fired.
+//
+// Ties break on ScoreReasons() order rather than on map iteration, and that is a
+// correctness requirement rather than tidiness: Go randomises map iteration, so
+// a tie resolved by "whichever key came out first" renders differently between
+// two runs over identical data. A maintainer comparing today's table against
+// yesterday's would read that as the panel changing.
+func dominantExclusionReason(reasons map[string]int) string {
+	best, bestN := "", 0
+	for _, reason := range scorecard.ScoreReasons() {
+		if !scorecard.ReasonExcludes(reason) {
+			continue
+		}
+		if n := reasons[reason]; n > bestN {
+			best, bestN = reason, n
+		}
+	}
+	return best
 }
 
 // renderPersonaSearch writes the Name/Version/Provider/Model/Description table of

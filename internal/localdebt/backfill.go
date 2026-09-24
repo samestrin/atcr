@@ -14,10 +14,11 @@ import (
 )
 
 // BackfillResult reports one backfill pass. Four non-Scanned counters — Rewritten,
-// Unchanged, Unresolved, Ambiguous — partition the scanned set. SkippedSettled sits
-// OUTSIDE that partition: a settled record is suppressed before Scanned++ runs, so the
+// Unchanged, Unresolved, Ambiguous — partition the scanned set.
+// SkippedRationaleBearing sits
+// OUTSIDE that partition: a suppressed record is skipped before Scanned++ runs, so the
 // printed "N scanned ... M skipped" does not mean the skipped are among the scanned
-// (10 ids with 4 settled print "6 scanned ... 4 skipped", and the four partition
+// (10 ids with 4 suppressed print "6 scanned ... 4 skipped", and the four partition
 // counters sum to 6, not 10). The three partition counters that are not Rewritten
 // each mean something the operator may want to act on separately — a pruned review
 // tree (Unresolved), a repo holding several reviews that anchor the same finding
@@ -38,11 +39,17 @@ type BackfillResult struct {
 	Unresolved int
 	Ambiguous  int // several surviving candidates disagreed, so none was written
 
-	// SkippedSettled counts effective records the fold filter suppressed because the
-	// id is settled. Without it the suppression is invisible: a store whose ids are
-	// all settled reports "0 scanned, 0 rewritten", which reads identically to a
-	// store that needs no repair.
-	SkippedSettled int
+	// SkippedRationaleBearing counts effective records the fold filter suppressed
+	// because the record may hold an operator-typed rationale this pass must not
+	// overwrite (bearsRationale: resolved, wontfix, unreproducible,
+	// attempts-exhausted). Without it the suppression is invisible: a store whose
+	// ids are all suppressed reports "0 scanned, 0 rewritten", which reads
+	// identically to a store that needs no repair.
+	//
+	// It was SkippedSettled until Story 36.0, and the rename is not cosmetic:
+	// `attempts-exhausted` is suppressed here and is NOT settled, so the old name
+	// described the wrong set on the one command that rewrites the store in place.
+	SkippedRationaleBearing int
 
 	// RewrittenLines counts the SHARD LINES the pass wrote, which Rewritten does
 	// not: one id can carry several lines (a re-detection after a resolution
@@ -70,11 +77,15 @@ type BackfillResult struct {
 	// when the rewrite was computed.
 	//
 	// It is populated on every pass that completed its locked listing — including a
-	// pass with nothing to rewrite — and is nil only when the store directory does
-	// not exist (the "no backlog yet" state ReadAll already tolerates) or the pass
-	// failed before it could list. "Shards present but none needing repair" and "no
-	// shards" are therefore distinguishable, and the field's meaning does not
-	// depend on Changes being non-empty.
+	// pass with nothing to rewrite — and is nil in three cases: the store directory
+	// does not exist (the "no backlog yet" state ReadAll already tolerates), the
+	// directory exists but holds no shard file at all (shardFileNames appends to a
+	// nil slice, so an empty result IS nil), or the pass failed before it could
+	// list. Do not read nil as "the pass did not run". "Shards present but none
+	// needing repair" and "no shards" are still distinguishable — the first yields
+	// a non-empty set — and the field's meaning does not depend on Changes being
+	// non-empty. No consumer separates nil from empty today: both readers
+	// short-circuit on an empty change set.
 	ShardNames []string
 }
 
@@ -134,10 +145,35 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 		// what makes the rewrite LINE-scoped instead of id-scoped: see
 		// rewriteJustifications.
 		want := map[string]replacement{}
+		// ID gate, built before the fold: an id is skipped if ANY of its records
+		// satisfies bearsRationale, not just the effective one. The effective
+		// record alone is not the right scope: a regressed id folds to its LATEST
+		// open record (open@t1 -> attempts-exhausted@t2 -> open@t3), so a gate on
+		// the effective record does not fire, the id is scanned, and the superseded
+		// rationale-bearing trail line is protected only by the incidental text
+		// inequality in rewriteJustifications. Where the regression record carries
+		// the operator's --reason verbatim (re-detection copies the effective
+		// record) and the replayed excerpt differs, rep.from matches the trail
+		// line's text and the operator's typed reason is replayed over — the exact
+		// irreversible loss this gate exists to prevent. The reason coincides with
+		// the excerpt where an operator typed a dismissal citing it, which is
+		// reachable, not hypothetical.
+		//
+		// Skipping the WHOLE id is the safe over-broad direction: an id whose trail
+		// carries a human-typed rationale keeps its stale excerpts unread — one
+		// unrepaired excerpt is reported as live stale text by the next pass, while
+		// a replayed-over --reason cannot be recovered from anything in the tree.
+		// FoldRecords emits one record per id, so the gate below runs once per id.
+		rationaleIDs := make(map[string]bool)
+		for _, rec := range recs {
+			if bearsRationale(rec.Status) {
+				rationaleIDs[rec.ID] = true
+			}
+		}
 		for _, r := range FoldRecords(recs) {
-			if IsSettledStatus(r.Status) {
-				// SETTLED, not merely closed — the distinction record.go draws
-				// between the two predicates decides both directions here.
+			if rationaleIDs[r.ID] {
+				// RATIONALE-BEARING, not merely closed — the distinction record.go
+				// draws between the predicates decides both directions here.
 				// `resolved` and `wontfix` are done: a resolved id is settled
 				// history whose excerpt gates nothing, and a wontfix id's
 				// justification MAY be the operator's --reason rather than a review
@@ -147,6 +183,15 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 				// closeable debt whose stale excerpt is exactly what this pass exists
 				// to repair, so it must NOT be skipped.
 				//
+				// The gate reads bearsRationale rather than IsSettledStatus because
+				// Story 36.0 split the two apart. `attempts-exhausted` is UNSETTLED
+				// (it stays closeable, like deferred) but its `--reason` is
+				// MANDATORY, so unlike deferred it always holds operator-typed text
+				// that exists nowhere else. Gating on settledness would replay a
+				// review excerpt straight over it. That is the same irreversible loss
+				// the wontfix skip exists to prevent, arriving by the one route the
+				// old proxy could not see — and here it is DOES, not MAY.
+				//
 				// MAY, not DOES: --reason is OPTIONAL for wontfix. cli/debt_resolve.go
 				// permits an empty --reason whenever isRecordedRationale holds of the
 				// justification already stored, and an empty reason preserves that
@@ -154,16 +199,17 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 				// satisfies. So a wontfix record routinely DOES carry the stale review
 				// excerpt this pass repairs, and skipping it is over-broad.
 				//
-				// The skip stays anyway, and stays per-record inside the fold, so ONE
-				// settled record makes the whole id unreachable. It is the safe
-				// direction: the alternative failure is overwriting a human-typed
-				// rationale in an append-only store, and the line-scoped `cur !=
-				// rep.from` predicate in rewriteJustifications cannot separate the two
-				// here — rep.from IS the settled record's own justification once
-				// FoldRecords makes it effective. What the skip owes instead is
-				// VISIBILITY: counted below, so "0 scanned" is distinguishable from a
-				// scan that was suppressed.
-				res.SkippedSettled++
+				// The gate is ID-scoped, not per-record inside the fold: ONE
+				// rationale-bearing record anywhere in the id's trail makes the whole
+				// id unreachable. It is the safe direction: the alternative failure is
+				// overwriting a human-typed rationale in an append-only store, and the
+				// line-scoped `cur != rep.from` predicate in rewriteJustifications
+				// cannot separate the two on its own — rep.from IS the effective
+				// record's justification, so a trail line carrying the same text (a
+				// re-detection that copied the --reason verbatim) matches it. What the
+				// skip owes instead is VISIBILITY: counted below, so "0 scanned" is
+				// distinguishable from a scan that was suppressed.
+				res.SkippedRationaleBearing++
 				continue
 			}
 			sr := r.SourceReport
@@ -237,7 +283,7 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 		// take away from a half-completed rewrite of an append-only store.
 		//
 		// Only the fields describing WORK DONE survive. The scan counters (Scanned,
-		// Rewritten, Unresolved, Ambiguous, Unchanged, SkippedSettled) describe a pass
+		// Rewritten, Unresolved, Ambiguous, Unchanged, SkippedRationaleBearing) describe a pass
 		// that completed, and this one did not, so carrying them would report a
 		// partition of a scan whose writes were never finished.
 		return BackfillResult{

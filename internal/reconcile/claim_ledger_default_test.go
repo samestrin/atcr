@@ -33,8 +33,9 @@ func TestClaimLedgerDefault_RegistryAndPayloadAgree(t *testing.T) {
 // load-bearing claims are the default value and the meaning of 0. A doc that
 // says "disabled" while the code treats 0 as unlimited would invite an operator
 // to switch the feature off and get an unbounded read instead — the failure
-// direction that matters here, since the ledger's bytes are exempt from every
-// byte budget.
+// direction that matters here, since the ledger's bytes are uncounted on the
+// ordinary shed (the fallback re-fit, which re-sizes every entry to its dispatched
+// bytes, is the one path that does count them).
 func TestClaimLedgerDefault_DocumentedInRegistryDoc(t *testing.T) {
 	doc := readRepoFile(t, "../../docs/registry.md")
 	if !strings.Contains(doc, "`max_claim_bytes`") {

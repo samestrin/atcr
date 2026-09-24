@@ -293,15 +293,15 @@ func TestReplayCheckpointCase_PreOutcomeCheckpointReplaysAsUnknown(t *testing.T)
 		"absence of a recorded outcome must NEVER be read as a clean review")
 }
 
-// reviewerOutcome's precedence, stated as a table. The signals are not mutually
+// fanout.ReviewerOutcome's precedence, stated as a table. The signals are not mutually
 // exclusive on the wire, so the ordering is a decision that has to be pinned rather
 // than inferred: data-integrity signals outrank volume signals.
 func TestReviewerOutcome_Precedence(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		status fanout.AgentStatus
-		raised []string
-		want   string
+		name        string
+		status      fanout.AgentStatus
+		raisedCount int
+		want        string
 	}{
 		{name: "failed status", status: fanout.AgentStatus{Status: fanout.StatusFailed}, want: benchmark.OutcomeFailed},
 		{
@@ -320,10 +320,10 @@ func TestReviewerOutcome_Precedence(t *testing.T) {
 			want:   benchmark.OutcomeUnparseable,
 		},
 		{
-			name:   "truncated outranks findings",
-			status: fanout.AgentStatus{Status: fanout.StatusOK, ResponseTruncated: true},
-			raised: []string{"correctness"},
-			want:   benchmark.OutcomeTruncated,
+			name:        "truncated outranks findings",
+			status:      fanout.AgentStatus{Status: fanout.StatusOK, ResponseTruncated: true},
+			raisedCount: 1,
+			want:        benchmark.OutcomeTruncated,
 		},
 		{
 			name:   "unreviewed chunks with nothing raised is NOT clean",
@@ -331,10 +331,10 @@ func TestReviewerOutcome_Precedence(t *testing.T) {
 			want:   benchmark.OutcomeIncomplete,
 		},
 		{
-			name:   "incomplete outranks findings",
-			status: fanout.AgentStatus{Status: fanout.StatusOK, UnreviewedChunks: 3},
-			raised: []string{"correctness"},
-			want:   benchmark.OutcomeIncomplete,
+			name:        "incomplete outranks findings",
+			status:      fanout.AgentStatus{Status: fanout.StatusOK, UnreviewedChunks: 3},
+			raisedCount: 1,
+			want:        benchmark.OutcomeIncomplete,
 		},
 		{
 			name:   "payload truncation with nothing raised is NOT clean",
@@ -342,10 +342,10 @@ func TestReviewerOutcome_Precedence(t *testing.T) {
 			want:   benchmark.OutcomeIncomplete,
 		},
 		{
-			name:   "payload truncation outranks findings",
-			status: fanout.AgentStatus{Status: fanout.StatusOK, Truncated: true, FilesDropped: []string{"a.go"}},
-			raised: []string{"correctness"},
-			want:   benchmark.OutcomeIncomplete,
+			name:        "payload truncation outranks findings",
+			status:      fanout.AgentStatus{Status: fanout.StatusOK, Truncated: true, FilesDropped: []string{"a.go"}},
+			raisedCount: 1,
+			want:        benchmark.OutcomeIncomplete,
 		},
 		{
 			name:   "response truncation outranks payload truncation",
@@ -353,15 +353,15 @@ func TestReviewerOutcome_Precedence(t *testing.T) {
 			want:   benchmark.OutcomeTruncated,
 		},
 		{
-			name:   "findings",
-			status: fanout.AgentStatus{Status: fanout.StatusOK},
-			raised: []string{"correctness"},
-			want:   benchmark.OutcomeFindings,
+			name:        "findings",
+			status:      fanout.AgentStatus{Status: fanout.StatusOK},
+			raisedCount: 1,
+			want:        benchmark.OutcomeFindings,
 		},
 		{name: "clean", status: fanout.AgentStatus{Status: fanout.StatusOK}, want: benchmark.OutcomeClean},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, reviewerOutcome(tc.status, tc.raised))
+			assert.Equal(t, tc.want, fanout.ReviewerOutcome(tc.status, tc.raisedCount))
 		})
 	}
 }
@@ -370,7 +370,7 @@ func TestReviewerOutcome_Precedence(t *testing.T) {
 // finish_reason=length marker, via MetaCompleter — the interface a real
 // *llmclient.Client satisfies — so the engine stamps ResponseTruncated onto the
 // AgentStatus exactly as production does. The finding matters: truncated outranks
-// findings in reviewerOutcome's precedence, so this is the case that proves the
+// findings in fanout.ReviewerOutcome's precedence, so this is the case that proves the
 // tally says "truncated" even when the partial response DID raise something.
 type truncatedCompleter struct{}
 
@@ -386,7 +386,7 @@ func (truncatedCompleter) CompleteWithMeta(_ context.Context, _ llmclient.Invoca
 }
 
 // The truncated outcome must travel the WHOLE path — fanout's ResponseTruncated
-// marker → reviewerOutcome → the checkpoint's outcome field → OutcomeTallyKey → the
+// marker → fanout.ReviewerOutcome → the checkpoint's outcome field → OutcomeTallyKey → the
 // reviewer_coverage.outcomes JSON — not just the pure-unit precedence table. It is
 // the outcome most likely to appear on a real long-context run, and the only one
 // whose serialization a unit test cannot see.
@@ -440,7 +440,7 @@ func TestApplyReviewerOutcome_TalliesFallbackSeparatelyFromOutcome(t *testing.T)
 // successfully and emitted the NO FINDINGS sentinel" about a reviewer that had in
 // fact raised findings.
 func TestReviewerOutcome_AllFindingsDroppedByGroundingIsNotClean(t *testing.T) {
-	got := reviewerOutcome(fanout.AgentStatus{Status: fanout.StatusOK, DroppedByGrounding: 2}, nil)
+	got := fanout.ReviewerOutcome(fanout.AgentStatus{Status: fanout.StatusOK, DroppedByGrounding: 2}, 0)
 
 	assert.Equal(t, benchmark.OutcomeUngrounded, got)
 	assert.NotEqual(t, benchmark.OutcomeClean, got,
@@ -451,9 +451,9 @@ func TestReviewerOutcome_AllFindingsDroppedByGroundingIsNotClean(t *testing.T) {
 // one reviewed successfully and has findings to show for it. Only a TOTAL wipe is
 // the ungrounded outcome.
 func TestReviewerOutcome_PartialGroundingDropsStillCountAsFindings(t *testing.T) {
-	got := reviewerOutcome(
+	got := fanout.ReviewerOutcome(
 		fanout.AgentStatus{Status: fanout.StatusOK, DroppedByGrounding: 3},
-		[]string{"correctness"},
+		1,
 	)
 
 	assert.Equal(t, benchmark.OutcomeFindings, got)
@@ -485,7 +485,7 @@ func TestReviewerOutcome_GroundingDropsYieldToDataIntegritySignals(t *testing.T)
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, reviewerOutcome(tc.status, nil))
+			assert.Equal(t, tc.want, fanout.ReviewerOutcome(tc.status, 0))
 		})
 	}
 }
@@ -496,7 +496,7 @@ func TestReviewerOutcome_GroundingDropsYieldToDataIntegritySignals(t *testing.T)
 // row's outcome tally.
 func TestReviewerOutcome_StandardTierIsUnaffected(t *testing.T) {
 	assert.Equal(t, benchmark.OutcomeClean,
-		reviewerOutcome(fanout.AgentStatus{Status: fanout.StatusOK}, nil))
+		fanout.ReviewerOutcome(fanout.AgentStatus{Status: fanout.StatusOK}, 0))
 }
 
 // The min_severity floor is the grounding gate's sibling and was left short: both
@@ -506,7 +506,7 @@ func TestReviewerOutcome_StandardTierIsUnaffected(t *testing.T) {
 // reachable on BOTH tiers — any registry agent can set min_severity — so it is the
 // wider of the two holes.
 func TestReviewerOutcome_AllFindingsDroppedByMinSeverityIsNotClean(t *testing.T) {
-	got := reviewerOutcome(fanout.AgentStatus{Status: fanout.StatusOK, DroppedByMinSeverity: 2}, nil)
+	got := fanout.ReviewerOutcome(fanout.AgentStatus{Status: fanout.StatusOK, DroppedByMinSeverity: 2}, 0)
 
 	assert.Equal(t, benchmark.OutcomeFiltered, got)
 	assert.NotEqual(t, benchmark.OutcomeClean, got,
@@ -517,16 +517,16 @@ func TestReviewerOutcome_AllFindingsDroppedByMinSeverityIsNotClean(t *testing.T)
 // every data-integrity signal outranks both. Only a TOTAL wipe is filtered.
 func TestReviewerOutcome_MinSeverityDropsYieldLikeGroundingDrops(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		status fanout.AgentStatus
-		raised []string
-		want   string
+		name        string
+		status      fanout.AgentStatus
+		raisedCount int
+		want        string
 	}{
 		{
-			name:   "a surviving finding outranks the drop count",
-			status: fanout.AgentStatus{Status: fanout.StatusOK, DroppedByMinSeverity: 3},
-			raised: []string{"correctness"},
-			want:   benchmark.OutcomeFindings,
+			name:        "a surviving finding outranks the drop count",
+			status:      fanout.AgentStatus{Status: fanout.StatusOK, DroppedByMinSeverity: 3},
+			raisedCount: 1,
+			want:        benchmark.OutcomeFindings,
 		},
 		{
 			name:   "failed outranks filtered",
@@ -545,7 +545,7 @@ func TestReviewerOutcome_MinSeverityDropsYieldLikeGroundingDrops(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, reviewerOutcome(tc.status, tc.raised))
+			assert.Equal(t, tc.want, fanout.ReviewerOutcome(tc.status, tc.raisedCount))
 		})
 	}
 }
@@ -556,11 +556,11 @@ func TestReviewerOutcome_MinSeverityDropsYieldLikeGroundingDrops(t *testing.T) {
 // code the patch contains", which is the measurement the repo-state tier exists for,
 // whereas the severity floor is an operator preference applied to whatever survived.
 func TestReviewerOutcome_GroundingOutranksMinSeverityWhenBothFire(t *testing.T) {
-	got := reviewerOutcome(
+	got := fanout.ReviewerOutcome(
 		fanout.AgentStatus{Status: fanout.StatusOK, DroppedByGrounding: 1, DroppedByMinSeverity: 1},
-		nil,
+		0,
 	)
 
 	assert.Equal(t, benchmark.OutcomeUngrounded, got,
-		"the gate outranks the floor, and reviewerOutcome's PRECEDENCE doc must say so")
+		"the gate outranks the floor, and fanout.ReviewerOutcome's PRECEDENCE doc must say so")
 }

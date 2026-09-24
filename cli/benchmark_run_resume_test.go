@@ -162,6 +162,62 @@ func TestExecuteBenchmarkRun_FullResumeIsZeroCostAndIdentical(t *testing.T) {
 	assert.Equal(t, string(jBaseline), string(j2), "resumed run is byte-identical to uninterrupted (AC3)")
 }
 
+// A checkpoint written by the binary BEFORE grounding_enabled shipped carries no
+// grounding_enabled key, so entry.GroundingEnabled decodes nil for every replayed
+// case — and nil ABSORBS through foldGroundingEnabled, poisoning the whole row to
+// unmeasured even when the freshly-executed cases recorded false. The checkpoint
+// contract (cli/benchmark_checkpoint.go) is byte-identical-resume only for
+// checkpoints THIS binary wrote; a legacy entry made no gate observation at all, so
+// it must not participate in the fold — the row should read what was actually
+// observed, exactly as the same suite run fresh would publish it.
+func TestExecuteBenchmarkRun_LegacyCheckpointEntryDoesNotPoisonGroundingFold(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "ckpt.json")
+
+	// Fresh baseline: the suite run uninterrupted publishes grounding_enabled=false.
+	baseline, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, "")
+	require.NoError(t, err)
+	require.NotEmpty(t, baseline.Coverage)
+	require.NotNil(t, baseline.Coverage[0].GroundingEnabled)
+
+	// Run once WITH a checkpoint, then downgrade the file to the legacy shape: keep
+	// only the first case's entry and strip the grounding keys, exactly as a
+	// checkpoint written before the tag shipped looks on disk.
+	_, err = executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, path)
+	require.NoError(t, err)
+
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(raw, &doc))
+	cases, ok := doc["cases"].([]any)
+	require.True(t, ok, "checkpoint carries a cases array")
+	require.GreaterOrEqual(t, len(cases), 2, "the fixture suite has two cases")
+	doc["cases"] = cases[:1]
+	for _, c := range doc["cases"].([]any) {
+		cm, ok := c.(map[string]any)
+		require.True(t, ok)
+		delete(cm, "grounding_enabled")
+		delete(cm, "grounding_observed")
+	}
+	legacy, err := json.Marshal(doc)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, legacy, 0o600))
+
+	// Resume: case 0 replays from the legacy entry, case 1 executes fresh and
+	// records false. The row must publish that observation instead of the nil the
+	// legacy entry used to absorb in with.
+	second := &countingCompleter{}
+	rr2, err := executeBenchmarkRun(context.Background(), cfg, second, suiteValidPath, gen, path)
+	require.NoError(t, err)
+	require.Len(t, rr2.Coverage, 1)
+	require.NotNil(t, rr2.Coverage[0].GroundingEnabled,
+		"the freshly-executed case recorded the gate state; a legacy entry with no observation must not poison the row to unmeasured")
+	assert.Equal(t, *baseline.Coverage[0].GroundingEnabled, *rr2.Coverage[0].GroundingEnabled,
+		"the mixed legacy+fresh resume publishes the same gate state the fresh run does")
+}
+
 // AC2 + AC3 (partial): a run that completed only case 0 before failing resumes by
 // replaying case 0 (zero calls for it) and executing only case 1, yielding a result
 // identical to an uninterrupted run.

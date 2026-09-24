@@ -282,7 +282,7 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 			// Reached on either of two readings the set cannot answer from.
 			//
 			// problemTruncated: the set searched is not a faithful reading of what
-			// the PROBLEM named — see extractAnchorSet's doc for the losses the
+			// the PROBLEM named — see anchorScan.truncated's doc for the losses the
 			// flag covers, of which the anchor cap is only one. Whichever loss it
 			// was, the one anchor that would have matched may be among what was
 			// not faithfully recovered, and a partial search cannot produce a

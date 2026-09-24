@@ -1,6 +1,8 @@
 package personas
 
 import (
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -76,4 +78,57 @@ func TestCarriesPredicateRule_AcceptsAnchorsOutsideFocus(t *testing.T) {
 		"precondition: this prompt has no ## Focus section at all")
 	assert.True(t, CarriesPredicateRule(text),
 		"the tier-agnostic predicate must not require the built-ins' section layout")
+}
+
+// predicateFilingAnchor's doc block explains the grounding gate by citing exact
+// line ranges in a file this package does not own, and those ranges are the first
+// thing an unrelated edit to internal/fanout/grounding.go invalidates. A stale
+// citation is worse than none: it sends a reader to a neighbouring arm and lets
+// them conclude the narrowing works differently than it does.
+//
+// Resolve each arm by its source line and require the doc to name the span it
+// actually occupies. Asserted against the file on disk rather than a copy, so the
+// guard cannot itself go stale.
+func TestPredicateFilingAnchorDoc_CitesTheRealGroundingArms(t *testing.T) {
+	grounding, err := os.ReadFile("../internal/fanout/grounding.go")
+	if err != nil {
+		t.Fatalf("read grounding source: %v", err)
+	}
+	doc, err := os.ReadFile("predicate_rule.go")
+	if err != nil {
+		t.Fatalf("read predicate_rule.go: %v", err)
+	}
+
+	// lineOf returns the 1-based line carrying the only occurrence of want.
+	lineOf := func(want string) int {
+		t.Helper()
+		found := 0
+		for i, line := range strings.Split(string(grounding), "\n") {
+			if strings.TrimSpace(line) == want {
+				if found != 0 {
+					t.Fatalf("grounding.go: %q is not unique (lines %d and %d) — the citation cannot be resolved", want, found, i+1)
+				}
+				found = i + 1
+			}
+		}
+		if found == 0 {
+			t.Fatalf("grounding.go: no line %q — the arm the doc describes has moved or been renamed", want)
+		}
+		return found
+	}
+
+	// The PrefetchOnly arm: condition through its return.
+	prefetch := lineOf("if fc.PrefetchOnly {")
+	// The two permissive arms the doc says PrefetchOnly bypasses: the binary/mode
+	// fail-open and the file-level citation, cited as one contiguous span.
+	binaryMode := lineOf("if len(fc.Ranges) == 0 && len(fc.ChangedText) == 0 {")
+	fileLevel := lineOf("if f.Line <= 0 {")
+
+	prefetchCite := fmt.Sprintf("internal/fanout/grounding.go:%d-%d", prefetch, prefetch+2)
+	bypassedCite := fmt.Sprintf("internal/fanout/grounding.go:%d-%d", binaryMode, fileLevel+1)
+
+	assert.Contains(t, string(doc), prefetchCite,
+		"the doc must cite the PrefetchOnly arm where it actually sits")
+	assert.Contains(t, string(doc), bypassedCite,
+		"the doc must cite the two bypassed arms where they actually sit, not a range that excludes them")
 }

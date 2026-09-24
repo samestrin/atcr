@@ -3,11 +3,14 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +38,47 @@ func TestLoadPersonasScores_RealStoreSumsAcrossModelsAndCase(t *testing.T) {
 	assert.InDelta(t, 0.4, data.rates["sasha"], 1e-9)
 	assert.Contains(t, data.rates, "penny", "minRuns=0 at this call site must keep a single-run reviewer")
 	assert.InDelta(t, 0.0, data.rates["penny"], 1e-9)
+}
+
+// TestLoadPersonasScores_PreV2StoreRendersNoScores pins the one operator-visible
+// regression sprint 36.0 phase 2 introduces, so it is a decision on the record
+// rather than a surprise in the field.
+//
+// `atcr personas list --scores` calls TrustPriors(dir, 0) — it opts out of the
+// DefaultTrustMinRuns floor, which used to mean "show every reviewer with any
+// history at all". It does NOT opt out of the outcome-eligibility filter, and
+// every record written before schema 2 carries no outcome. So on an existing
+// install the table renders all-n/a with the "no data" footer until fresh runs
+// accumulate, even though the store is full and perfectly readable.
+//
+// That is intended: a rate computed from runs nobody classified is not a
+// measurement, and absent-means-neutral is the same contract the floor already
+// had. It is pinned here because the alternative — discovering it from a user —
+// is much worse, and because a future change that quietly re-admits unclassified
+// records should have to delete this test to do it.
+func TestLoadPersonasScores_PreV2StoreRendersNoScores(t *testing.T) {
+	isolate(t)
+	for i := 0; i < scorecard.DefaultTrustMinRuns*2; i++ {
+		rec := reviewerRec(
+			fmt.Sprintf("%s-v1%02d", time.Now().UTC().Format(time.RFC3339), i),
+			"sasha", "opus", 4, 2)
+		rec.SchemaVersion = 1
+		rec.Outcome = "" // exactly how a pre-sprint-36.0 record reads back
+		storeRecord(t, rec)
+	}
+
+	data, err := loadPersonasScores(io.Discard)
+	require.NoError(t, err, "a readable pre-v2 store is not an error")
+	assert.Empty(t, data.rates,
+		"unclassified history yields no rate; absent is neutral, not punitive")
+
+	// The same store DOES still read — this is exclusion, not a broken read.
+	dir, err := scorecard.DefaultDir()
+	require.NoError(t, err)
+	recs, err := scorecard.ReadAll(dir, scorecard.ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.Len(t, recs, scorecard.DefaultTrustMinRuns*2,
+		"every record is readable; only trust scoring declines to count them")
 }
 
 // TestLoadPersonasScores_EmptyStoreYieldsEmptyMapNoError locks the AC4
@@ -304,6 +348,57 @@ func TestPersonasList_ScoresNoDataFooter(t *testing.T) {
 	assert.Contains(t, stdout, "No scorecard data found at /home/u/.config/atcr/scorecard")
 }
 
+// A store full of records that the scoring chain excluded (every one predates
+// the outcome field, say) is not an empty store, and saying "No scorecard data
+// found" there sends the reader looking for a missing store instead of waiting
+// for scored runs.
+func TestPersonasList_ScoresAllExcludedIsNotNoData(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withPersonasScores(t, personasScoreData{
+		rates:   map[string]float64{},
+		path:    "/home/u/.config/atcr/scorecard",
+		records: 7,
+	}, nil, nil)
+
+	stdout, _, err := executeSplit(t, "personas", "list", "--scores")
+	require.NoError(t, err)
+	assert.NotContains(t, stdout, "No scorecard data found")
+	assert.Contains(t, stdout, "holds 7 reviewer record(s)")
+	assert.Contains(t, stdout, "excluded from scoring")
+}
+
+// loadPersonasScores counts the reviewer records it could not score, which is
+// what the all-excluded footer above is fed from.
+func TestLoadPersonasScores_CountsRecordsWhenNoneIsScored(t *testing.T) {
+	isolate(t)
+	rec := reviewerRec("2026-06-14T10:00:00Z-abc", "bruce", "opus", 3, 1)
+	rec.Outcome = "" // written before the outcome field: never scored
+	storeRecord(t, rec)
+
+	data, err := loadPersonasScores(io.Discard)
+	require.NoError(t, err)
+	assert.Empty(t, data.rates)
+	assert.Equal(t, 1, data.records)
+}
+
+// The only reachable load error — DefaultDir failing — returns a ZERO
+// personasScoreData with path == "", so the error footer interpolated an empty
+// path: "Scorecard data at  is unreadable" — a double space and no location, on
+// the one path where naming the location is the whole point. The error branch
+// must name the underlying error instead.
+func TestPersonasList_ScoresLoadErrorNamesTheUnderlyingError(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withPersonasScores(t, personasScoreData{}, errors.New("scorecard dir cannot be resolved"), nil)
+
+	stdout, _, err := executeSplit(t, "personas", "list", "--scores")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "Scorecard data location could not be resolved: scorecard dir cannot be resolved")
+	assert.NotContains(t, stdout, "unreadable",
+		"the empty-path footer must not appear on the path where data.path is blank")
+}
+
 func TestPersonasList_ScoresReadErrorDegradesGracefully(t *testing.T) {
 	srv := personasTestServer(t, map[string]string{})
 	withPersonasEnv(t, srv)
@@ -317,7 +412,8 @@ func TestPersonasList_ScoresReadErrorDegradesGracefully(t *testing.T) {
 	assert.Contains(t, stdout, "CORROBORATION")
 	assert.Contains(t, stdout, "n/a")
 	assert.Contains(t, stderr, "permission denied")
-	assert.Contains(t, stdout, "Scorecard data at /home/u/.config/atcr/scorecard is unreadable")
+	assert.Contains(t, stdout, "Scorecard data location could not be resolved: permission denied",
+		"the error footer names the underlying error, which is the only reachable shape when data.path is blank")
 }
 
 func TestPersonasList_BaselineDoesNotLoadScores(t *testing.T) {
@@ -790,4 +886,357 @@ func TestPersonasTest_ZeroCasesWarn(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, stderr, "WARN")
 	assert.NotContains(t, stdout, "PASS")
+}
+
+// --- AC 06-04: the explainability summary column ----------------------------
+
+func TestPersonasList_ScoresRendersTheExplainabilitySummary(t *testing.T) {
+	// AC 06-04. The maintainer's question is "can I drop or repoint this lens?",
+	// so the column has to say how many cases the rate rests on and how many were
+	// set aside — a rate alone cannot distinguish a lens measured over forty
+	// cases from one measured over two.
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withPersonasScores(t, personasScoreData{
+		rates: map[string]float64{"sasha": 0.72},
+		details: map[string]scorecard.PersonaScoreDetail{
+			"sasha": {Counted: 20, Excluded: 5, Raised: 25, Reasons: map[string]int{
+				scorecard.ReasonOutcomeIneligible: 5,
+			}},
+		},
+		path: "/tmp/sc",
+	}, nil, nil)
+
+	stdout, _, err := executeSplit(t, "personas", "list", "--scores")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "CASES")
+	assert.Regexp(t, `sasha\s.*72\.0%\s.*20 counted`, stdout)
+	assert.Contains(t, stdout, "5 excluded (outcome-ineligible)")
+}
+
+// The columns read all history with no floor; reconcile reads a window with a
+// floor. Two populations under two floors, so the surface must say which one
+// each figure describes and which lenses reconcile actually acts on.
+func TestPersonasList_ScoresFooterNamesTheScopeAndTheLensesReconcileUses(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withPersonasScores(t, personasScoreData{
+		rates: map[string]float64{"sasha": 0.72, "penny": 0.5},
+		inUse: map[string]float64{"sasha": 0.7},
+		path:  "/tmp/sc",
+	}, nil, nil)
+
+	stdout, _, err := executeSplit(t, "personas", "list", "--scores")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "all run history with no run floor")
+	assert.Contains(t, stdout, fmt.Sprintf("last %d days with a %d-run floor",
+		int(scorecard.DefaultTrustWindow.Hours()/24), scorecard.DefaultTrustMinRuns))
+	assert.Contains(t, stdout, "In use by reconcile: sasha\n")
+}
+
+func TestPersonasList_ScoresFooterSaysNoneWhenNoLensClearsTheProductionFloor(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withPersonasScores(t, personasScoreData{
+		rates: map[string]float64{"sasha": 0.72},
+		path:  "/tmp/sc",
+	}, nil, nil)
+
+	stdout, _, err := executeSplit(t, "personas", "list", "--scores")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "In use by reconcile: none\n")
+}
+
+func TestPersonasList_ScoresSummaryIsNotAPerCaseDump(t *testing.T) {
+	// The bound task 5.3 exists to hold. Three reason labels on one persona must
+	// still render as ONE line naming the dominant reason, never one line per
+	// reason or per case — a thirteen-lens panel would be unreadable.
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withPersonasScores(t, personasScoreData{
+		rates: map[string]float64{"sasha": 0.5},
+		details: map[string]scorecard.PersonaScoreDetail{
+			"sasha": {Counted: 10, Excluded: 9, Reasons: map[string]int{
+				scorecard.ReasonOutcomeIneligible:    2,
+				scorecard.ReasonNotInOpportunitySet:  7,
+				scorecard.ReasonNoRecognizedCategory: 3,
+			}},
+		},
+		path: "/tmp/sc",
+	}, nil, nil)
+
+	stdout, _, err := executeSplit(t, "personas", "list", "--scores")
+	require.NoError(t, err)
+
+	sashaLines := 0
+	for _, line := range strings.Split(stdout, "\n") {
+		if strings.Contains(line, "sasha") {
+			sashaLines++
+		}
+	}
+	assert.Equal(t, 1, sashaLines, "one persona renders on exactly one row")
+	assert.Contains(t, stdout, "9 excluded (category-not-in-opportunity-set)",
+		"the dominant exclusion reason is named; the others are summarised away")
+}
+
+func TestPersonasList_ScoresRendersNoDataRatherThanAFabricatedZero(t *testing.T) {
+	// AC 06-05 Edge Cases 1/2 at the render layer. A persona below
+	// DefaultTrustMinRuns is absent from BOTH scorecard maps, and the table must
+	// say so rather than printing "0 counted", which reads as "measured, found
+	// nothing" — the opposite of the truth.
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withPersonasScores(t, personasScoreData{
+		rates:   map[string]float64{},
+		details: map[string]scorecard.PersonaScoreDetail{},
+		path:    "/tmp/sc",
+	}, nil, nil)
+
+	stdout, _, err := executeSplit(t, "personas", "list", "--scores")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "CASES")
+	assert.NotContains(t, stdout, "0 counted",
+		"an unmeasured lens must render n/a, never a fabricated zero-case summary")
+}
+
+func TestFormatScoreDetail_SummaryShapes(t *testing.T) {
+	// The renderer's own contract, table-driven so each shape is named.
+	tests := []struct {
+		name   string
+		detail *personas.ScoreDetail
+		want   string
+	}{
+		{"no data at all", nil, "n/a"},
+		{"zero exclusions renders an explicit 0, not an omitted clause (AC 06-04)", &personas.ScoreDetail{Counted: 20}, "20 counted · 0 excluded"},
+		{
+			"one exclusion reason",
+			&personas.ScoreDetail{Counted: 20, Excluded: 5, Reasons: map[string]int{
+				scorecard.ReasonOutcomeIneligible: 5,
+			}},
+			"20 counted · 5 excluded (outcome-ineligible)",
+		},
+		{
+			"TD-032's annotation is not an exclusion",
+			&personas.ScoreDetail{Counted: 24, Reasons: map[string]int{
+				scorecard.ReasonNoRecognizedCategory: 4,
+			}},
+			"24 counted (4 unlabelled) · 0 excluded",
+		},
+		{
+			"annotation and exclusion together",
+			&personas.ScoreDetail{Counted: 24, Excluded: 3, Reasons: map[string]int{
+				scorecard.ReasonNoRecognizedCategory: 4,
+				scorecard.ReasonNotInOpportunitySet:  3,
+			}},
+			"24 counted (4 unlabelled) · 3 excluded (category-not-in-opportunity-set)",
+		},
+		{
+			"an unmapped lens says why it is never opportunity-scoped, beside the count",
+			&personas.ScoreDetail{Counted: 20, Reasons: map[string]int{
+				scorecard.ReasonNotOpportunityScoped: 20,
+			}},
+			"20 counted · not opportunity-scoped: no in-repo persona definition · 0 excluded",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, formatScoreDetail(tt.detail))
+		})
+	}
+}
+
+func TestFormatScoreDetail_TiedReasonsAreDeterministic(t *testing.T) {
+	// Two reasons at the same count must not render differently between runs —
+	// Go's map iteration order is randomised, so the tie-break has to be the
+	// ScoreReasons() vocabulary order rather than whichever key came out first.
+	d := &personas.ScoreDetail{Counted: 5, Excluded: 4, Reasons: map[string]int{
+		scorecard.ReasonOutcomeIneligible:   2,
+		scorecard.ReasonNotInOpportunitySet: 2,
+	}}
+	first := formatScoreDetail(d)
+	for i := 0; i < 50; i++ {
+		assert.Equal(t, first, formatScoreDetail(d))
+	}
+	assert.Contains(t, first, "(outcome-ineligible)",
+		"a tie resolves to the earlier member of ScoreReasons()")
+}
+
+func TestToPersonaDetails_ConvertsWithoutAliasingOrLosingLabels(t *testing.T) {
+	// cli/ is the one layer that imports BOTH internal/personas and
+	// internal/scorecard, so this is where the duplicated DTO is proven
+	// equivalent. internal/personas must not import internal/scorecard (its
+	// allowlist in internal/boundaries_test.go), which is why the conversion
+	// exists at all.
+	in := map[string]scorecard.PersonaScoreDetail{
+		"dax": {Counted: 20, Excluded: 5, Reasons: map[string]int{
+			scorecard.ReasonOutcomeIneligible:    5,
+			scorecard.ReasonNoRecognizedCategory: 2,
+		}},
+	}
+	out := toPersonaDetails(in)
+
+	require.Contains(t, out, "dax")
+	assert.Equal(t, 20, out["dax"].Counted)
+	assert.Equal(t, 5, out["dax"].Excluded)
+	assert.Equal(t, 5, out["dax"].Reasons[scorecard.ReasonOutcomeIneligible])
+	assert.Equal(t, 2, out["dax"].Reasons[scorecard.ReasonNoRecognizedCategory])
+
+	// No aliasing across the boundary.
+	out["dax"].Reasons[scorecard.ReasonOutcomeIneligible] = 999
+	assert.Equal(t, 5, in["dax"].Reasons[scorecard.ReasonOutcomeIneligible])
+
+	assert.Nil(t, toPersonaDetails(nil), "a nil map converts to nil, not an empty map")
+}
+
+func TestPersonasScoreDetailLabels_MatchScorecardsVocabulary(t *testing.T) {
+	// internal/personas/list_test.go spells "outcome-ineligible" as a literal
+	// because it cannot import internal/scorecard. This is the pin that keeps
+	// that literal honest — it fails here, in a package that legally sees both,
+	// rather than letting the two drift silently.
+	assert.Equal(t, "outcome-ineligible", scorecard.ReasonOutcomeIneligible)
+	assert.Contains(t, scorecard.ScoreReasons(), scorecard.ReasonOutcomeIneligible)
+}
+
+// A lens that raised nothing and a lens whose every finding went uncorroborated
+// both have rate 0 (ratio returns 0 for a zero denominator). They are opposite
+// facts, so the row must carry the denominator and must not print 0.0% for the
+// lens that was never wrong because it never spoke.
+func TestRenderScoredList_ZeroRaisedIsNotAZeroRate(t *testing.T) {
+	zero := 0.0
+	scored := []personas.ScoredPersona{
+		{PersonaMeta: personas.PersonaMeta{Name: "quiet", Version: "built-in", Source: "built-in"},
+			Rate: &zero, Detail: &personas.ScoreDetail{Counted: 50}},
+		{PersonaMeta: personas.PersonaMeta{Name: "missed", Version: "built-in", Source: "built-in"},
+			Rate: &zero, Detail: &personas.ScoreDetail{Counted: 50, Raised: 100}},
+		{PersonaMeta: personas.PersonaMeta{Name: "unmeasured", Version: "built-in", Source: "built-in"}},
+	}
+	var out bytes.Buffer
+	require.NoError(t, renderScoredList(&out, scored))
+
+	rows := map[string][]string{}
+	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n")[1:] {
+		f := strings.Split(regexp.MustCompile(`\s{2,}`).ReplaceAllString(line, "\t"), "\t")
+		rows[f[0]] = f
+	}
+	assert.Equal(t, []string{"n/a (raised 0)", "0"}, rows["quiet"][4:6])
+	assert.Equal(t, []string{"0.0%", "100"}, rows["missed"][4:6])
+	assert.Equal(t, []string{"n/a", "n/a"}, rows["unmeasured"][4:6],
+		"no data renders n/a in both cells, never a measured zero")
+}
+
+func TestFormatScoreDetail_ZeroExclusionsIsDistinctFromNoData(t *testing.T) {
+	// AC 06-04's explicit-zero requirement, stated as the contrast it is about:
+	// "measured, excluded nothing" and "never measured" must not look alike.
+	measured := formatScoreDetail(&personas.ScoreDetail{Counted: 12})
+	noData := formatScoreDetail(nil)
+
+	// 12 is under DefaultTrustMinRuns, so the row also carries the provisional
+	// marker. That is additive to the contrast this test is about, and asserting
+	// the WHOLE rendered string keeps it honest: a measured-but-thin sample must
+	// still be visibly distinct from a never-measured one.
+	assert.Equal(t, "12 counted · 0 excluded · provisional (under the 20-case trust floor)", measured)
+	assert.Equal(t, "n/a", noData)
+	assert.NotEqual(t, measured, noData)
+	assert.NotContains(t, noData, "0",
+		"the no-data marker must never render a count, or it reads as a measured zero")
+}
+
+func TestDocs_PersonasInstallMdDocumentsTheCasesColumn(t *testing.T) {
+	// The Phase 5 gate caught docs/personas-install.md still publishing the
+	// pre-Phase-5 five-column table while docs/scorecard.md described six — two
+	// published docs disagreeing with each other, with no test reading either.
+	// This is that test. It lives in cli/ because renderScoredList and
+	// formatScoreDetail are here, so the doc is pinned against the RENDERER
+	// rather than against prose.
+	raw, err := os.ReadFile(filepath.Join("..", "docs", "personas-install.md"))
+	require.NoError(t, err)
+	doc := string(raw)
+
+	// The header the renderer emits must be the header the doc shows.
+	var table bytes.Buffer
+	require.NoError(t, renderScoredList(&table, nil))
+	header := strings.Fields(strings.SplitN(table.String(), "\n", 2)[0])
+	require.Equal(t, []string{"NAME", "VERSION", "SOURCE", "LANGUAGE", "CORROBORATION", "RAISED", "CASES"}, header)
+	for _, col := range header {
+		assert.Contains(t, doc, col, "docs/personas-install.md must name every --scores column")
+	}
+
+	// Every reason label a reader can meet in the cell must be documented, and
+	// the source of truth for the list is scorecard's closed vocabulary — not a
+	// hand-kept copy here — so a fourth member fails this test automatically.
+	for _, reason := range scorecard.ScoreReasons() {
+		if !scorecard.ReasonExcludes(reason) {
+			continue // annotations render as the word "unlabelled", asserted below
+		}
+		assert.Contains(t, doc, "`"+reason+"`",
+			"docs/personas-install.md must name every exclusion reason the CASES cell can print")
+	}
+
+	// The exact strings the renderer produces, DERIVED from the renderer rather
+	// than re-typed here — a doc pin that hard-codes its own expectation only
+	// proves the doc agrees with the test.
+	sample := formatScoreDetail(&personas.ScoreDetail{
+		Counted:  12,
+		Excluded: 3,
+		Reasons: map[string]int{
+			scorecard.ReasonNoRecognizedCategory: 4,
+			scorecard.ReasonOutcomeIneligible:    3,
+		},
+	})
+	require.Equal(t, "12 counted (4 unlabelled) · 3 excluded (outcome-ineligible) · provisional (under the 20-case trust floor)", sample,
+		"guard on the guard: if the cell format changes, the substrings below are re-derived, not silently relaxed")
+	for _, fragment := range []string{"counted", "unlabelled", "excluded", "provisional"} {
+		assert.Contains(t, sample, fragment)
+		assert.Contains(t, doc, fragment,
+			"every word the CASES cell prints must appear in the doc that explains it")
+	}
+	// The cell's SHAPE, not just its words: the doc shows a worked example, so a
+	// renderer change that reorders or re-punctuates the cell fails here.
+	assert.Contains(t, doc, "· ", "the doc's worked example must use the renderer's separator")
+	assert.Contains(t, doc, formatScoreDetail(nil), "the no-data marker must be documented")
+	assert.Contains(t, doc, "The excluded figure is always shown, including at `0`",
+		"AC 06-04's explicit-zero behaviour must be documented, not only tested")
+
+	// The scope footer's window and floor are constants; the doc restates them,
+	// so it is pinned to the constants rather than to its own literals.
+	assert.Contains(t, doc, fmt.Sprintf("last %d days", int(scorecard.DefaultTrustWindow.Hours()/24)))
+	assert.Contains(t, doc, fmt.Sprintf("%d-run floor", scorecard.DefaultTrustMinRuns))
+	assert.Contains(t, doc, "In use by reconcile")
+
+	// The not-opportunity-scoped annotation (176d5286) and the registry SOURCE
+	// value (f48036b9) both render on this surface; the doc must describe both,
+	// or a reader meeting them in the cell has nowhere to turn.
+	assert.Contains(t, doc, "not opportunity-scoped: no in-repo persona definition",
+		"the CASES cell's not-opportunity-scoped annotation must be documented")
+	assert.Contains(t, doc, "`registry`",
+		"the --scores section must name the registry SOURCE value registry-only lenses carry")
+}
+
+// A below-floor lens must be MARKED, not silently ranked on its rate alone.
+//
+// `--scores` loads with minRuns=0 (loadPersonasScores), so DefaultTrustMinRuns
+// never fires on the production path and every lens with any history at all gets
+// a rate. sortScoredPersonas then ranks strictly by that rate with no sample-size
+// term, which on the live store puts `mira 100.0% (3 counted, 198 excluded)`
+// FIRST and `kai 33.3% (20 counted, 188 excluded)` last — the ordering inverts
+// the evidence on the one surface whose question is "can I drop or repoint this
+// lens?".
+//
+// The marker rides the CASES column, beside the count it qualifies, so the
+// caveat is on the same row as the rate it applies to. The floor is read from
+// scorecard.DefaultTrustMinRuns rather than retyped: a marker that kept saying
+// "20" after the floor moved would be worse than no marker.
+func TestFormatScoreDetail_MarksBelowFloorSamplesProvisional(t *testing.T) {
+	below := formatScoreDetail(&personas.ScoreDetail{Counted: 3, Excluded: 198})
+	assert.Contains(t, below, "provisional",
+		"a lens measured on fewer cases than the trust floor must say so where its count is rendered")
+	assert.Contains(t, below, strconv.Itoa(scorecard.DefaultTrustMinRuns),
+		"the marker must name the floor it is below, read from the constant rather than retyped")
+
+	at := formatScoreDetail(&personas.ScoreDetail{Counted: scorecard.DefaultTrustMinRuns, Excluded: 1})
+	assert.NotContains(t, at, "provisional",
+		"a sample AT the floor is not provisional — the floor is inclusive, as TrustPriors applies it")
+
+	assert.NotContains(t, formatScoreDetail(nil), "provisional",
+		"n/a is the no-data marker and must stay the only one; an unmeasured lens is not a weakly-measured one")
 }

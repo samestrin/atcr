@@ -7,6 +7,8 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -97,6 +99,23 @@ func TestTrustPriors_EmptyStoreYieldsEmptyMapNoError(t *testing.T) {
 }
 
 // --- ResolveTrustPriors (epic 35.9 T2 wiring) ---
+
+// TestResolveTrustPriorsForReview_UnresolvableStoreDirIsNil covers the
+// DefaultDir error arm: with no HOME, XDG_CONFIG_HOME or AppData the config dir
+// cannot be resolved, and the reconcile path gets no priors and no unmeasured
+// count - nil, the same answer ResolveTrustPriors gives, not a read of "".
+func TestResolveTrustPriorsForReview_UnresolvableStoreDirIsNil(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", "")
+	t.Setenv("AppData", "")
+	_, err := DefaultDir()
+	require.Error(t, err, "precondition: the store dir cannot be resolved")
+
+	priors, unmeasured := ResolveTrustPriorsForReview(t.TempDir())
+	assert.Nil(t, priors)
+	assert.Zero(t, unmeasured)
+	assert.Nil(t, ResolveTrustPriors(), "both resolvers agree on an unresolvable dir")
+}
 
 func TestResolveTrustPriors_MissingStoreDegradesToEmptyMap(t *testing.T) {
 	// No atcr/scorecard store under a fresh HOME (AC5): degrades to an empty
@@ -196,6 +215,7 @@ func TestTrustPriors_IgnoresNonStrictRuns(t *testing.T) {
 		require.NoError(t, Append(dir, Record{
 			SchemaVersion:        SchemaVersion,
 			RecordType:           RecordTypeReviewer,
+			Outcome:              outcomeFindings,
 			RunID:                fmt.Sprintf("2026-07-01T00:00:00Z-s%02d", i),
 			Reviewer:             "bruce",
 			Model:                "m",
@@ -211,6 +231,7 @@ func TestTrustPriors_IgnoresNonStrictRuns(t *testing.T) {
 		require.NoError(t, Append(dir, Record{
 			SchemaVersion:        SchemaVersion,
 			RecordType:           RecordTypeReviewer,
+			Outcome:              outcomeFindings,
 			RunID:                fmt.Sprintf("2026-07-02T00:00:00Z-o%02d", i),
 			Reviewer:             "bruce",
 			Model:                "m",
@@ -238,6 +259,7 @@ func TestTrustPriors_EmptyConsensusLevelCountsAsStrict(t *testing.T) {
 		require.NoError(t, Append(dir, Record{
 			SchemaVersion: SchemaVersion,
 			RecordType:    RecordTypeReviewer,
+			Outcome:       outcomeFindings,
 			RunID:         fmt.Sprintf("2026-06-01T00:00:00Z-l%02d", i),
 			Reviewer:      "greta",
 			Model:         "m",
@@ -264,6 +286,7 @@ func TestTrustPriors_AllNonStrictYieldsNoPrior(t *testing.T) {
 		require.NoError(t, Append(dir, Record{
 			SchemaVersion:        SchemaVersion,
 			RecordType:           RecordTypeReviewer,
+			Outcome:              outcomeFindings,
 			RunID:                fmt.Sprintf("2026-07-03T00:00:00Z-n%02d", i),
 			Reviewer:             "robin",
 			Model:                "m",
@@ -293,6 +316,7 @@ func TestTrustPriors_UnrecognizedConsensusLevelExcluded(t *testing.T) {
 		require.NoError(t, Append(dir, Record{
 			SchemaVersion:        SchemaVersion,
 			RecordType:           RecordTypeReviewer,
+			Outcome:              outcomeFindings,
 			RunID:                fmt.Sprintf("2026-07-04T00:00:00Z-x%02d", i),
 			Reviewer:             "alfred",
 			Model:                "m",
@@ -322,7 +346,7 @@ func appendNAt(t *testing.T, dir string, n int, reviewer, model string, raisedEa
 }
 
 // TestTrustPriors_AllHistoryUnchangedAcrossMonths is the compatibility pin for
-// cli/personas.go:44, which calls TrustPriors(dir, 0) directly and must keep
+// cli/personas.go's loadPersonasScores, which calls TrustPriors(dir, 0) directly and must keep
 // seeing the WHOLE store. A reviewer whose entire history sits years outside any
 // window must still be counted here — TrustPriors is all-history by contract, and
 // epic 35.11 windows only ResolveTrustPriors.
@@ -348,7 +372,7 @@ func TestTrustPriorsSince_ExcludesMonthsOutsideTheWindow(t *testing.T) {
 	appendNAt(t, dir, 4, "Ancient", "opus", 1, 1, now.AddDate(-2, 0, 0))
 	appendNAt(t, dir, 4, "Recent", "opus", 1, 1, now.AddDate(0, 0, -1))
 
-	rates, err := trustPriorsSince(dir, 0, defaultTrustWindow, now)
+	rates, err := trustPriorsSince(dir, 0, defaultTrustWindow, now, nil)
 	require.NoError(t, err)
 	assert.NotContains(t, rates, "ancient", "a reviewer whose only runs predate the window is absent")
 	assert.Contains(t, rates, "recent")
@@ -376,12 +400,12 @@ func TestTrustPriorsSince_StrictRunsFloorIgnoresLenientRunsInsideTheWindow(t *te
 		require.NoError(t, Append(dir, rec))
 	}
 
-	rates, err := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, now)
+	rates, err := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, now, nil)
 	require.NoError(t, err)
 	assert.NotContains(t, rates, "lenny",
 		"only 5 strict runs inside the window — lenient runs must not top the floor up to DefaultTrustMinRuns")
 
-	rates, err = trustPriorsSince(dir, 5, defaultTrustWindow, now)
+	rates, err = trustPriorsSince(dir, 5, defaultTrustWindow, now, nil)
 	require.NoError(t, err)
 	assert.Contains(t, rates, "lenny", "at minRuns=5 the 5 strict runs clear the floor")
 }
@@ -403,7 +427,7 @@ func TestTrustPriorsSince_WindowCanPushAReviewerBelowMinRuns(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, allHistory, "fading", "30 strict runs over all history clears the floor")
 
-	windowed, err := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, now)
+	windowed, err := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, now, nil)
 	require.NoError(t, err)
 	assert.NotContains(t, windowed, "fading",
 		"only 5 strict runs inside the window — below DefaultTrustMinRuns, so the windowed read drops the reviewer")
@@ -418,7 +442,7 @@ func TestTrustPriorsSince_NoWindowMatchesTrustPriors(t *testing.T) {
 	appendNAt(t, dir, 4, "Ancient", "opus", 3, 1, now.AddDate(-2, 0, 0))
 	appendNAt(t, dir, 4, "Recent", "sonnet", 2, 2, now.AddDate(0, 0, -1))
 
-	windowed, err := trustPriorsSince(dir, 0, 0, now)
+	windowed, err := trustPriorsSince(dir, 0, 0, now, nil)
 	require.NoError(t, err)
 	all, err := TrustPriors(dir, 0)
 	require.NoError(t, err)
@@ -516,7 +540,7 @@ func TestDefaultTrustWindow_IsGenerousEnoughForTheMinRunsFloor(t *testing.T) {
 		appendNAt(t, dir, 1, "Steady", "opus", 1, 1, at)
 	}
 
-	rates, err := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, now)
+	rates, err := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, now, nil)
 	require.NoError(t, err)
 	assert.Contains(t, rates, "steady",
 		"a reviewer holding 20 strict runs spread across defaultTrustWindow must clear the floor — if this fails, the window and the floor have drifted apart and both need re-measuring (epic 35.11 AC3)")
@@ -613,6 +637,7 @@ func TestTrustPriors_IgnoresPreUnresolvedDenominatorRuns(t *testing.T) {
 		require.NoError(t, Append(dir, Record{
 			SchemaVersion:        SchemaVersion,
 			RecordType:           RecordTypeReviewer,
+			Outcome:              outcomeFindings,
 			RunID:                fmt.Sprintf("2026-07-01T00:00:00Z-old%02d", i),
 			Reviewer:             "bruce",
 			Model:                "m",
@@ -626,6 +651,7 @@ func TestTrustPriors_IgnoresPreUnresolvedDenominatorRuns(t *testing.T) {
 		require.NoError(t, Append(dir, Record{
 			SchemaVersion:            SchemaVersion,
 			RecordType:               RecordTypeReviewer,
+			Outcome:                  outcomeFindings,
 			RunID:                    fmt.Sprintf("2026-07-02T00:00:00Z-new%02d", i),
 			Reviewer:                 "bruce",
 			Model:                    "m",
@@ -657,6 +683,7 @@ func TestTrustPriors_PreUnresolvedOnlyHistoryStillCounts(t *testing.T) {
 		require.NoError(t, Append(dir, Record{
 			SchemaVersion:        SchemaVersion,
 			RecordType:           RecordTypeReviewer,
+			Outcome:              outcomeFindings,
 			RunID:                fmt.Sprintf("2026-07-01T00:00:00Z-old%02d", i),
 			Reviewer:             "bruce",
 			Model:                "m",
@@ -696,6 +723,7 @@ func TestTrustPriors_EraFilterIsPerReviewerNotGlobal(t *testing.T) {
 		require.NoError(t, Append(dir, Record{
 			SchemaVersion:        SchemaVersion,
 			RecordType:           RecordTypeReviewer,
+			Outcome:              outcomeFindings,
 			RunID:                fmt.Sprintf("2026-07-01T00:00:00Z-bruce%02d", i),
 			Reviewer:             "bruce",
 			Model:                "m",
@@ -709,6 +737,7 @@ func TestTrustPriors_EraFilterIsPerReviewerNotGlobal(t *testing.T) {
 		require.NoError(t, Append(dir, Record{
 			SchemaVersion:            SchemaVersion,
 			RecordType:               RecordTypeReviewer,
+			Outcome:                  outcomeFindings,
 			RunID:                    fmt.Sprintf("2026-07-02T00:00:00Z-greta%02d", i),
 			Reviewer:                 "greta",
 			Model:                    "m",
@@ -742,6 +771,7 @@ func TestTrustPriors_PerReviewerPreferCurrentStillExcludesTheMix(t *testing.T) {
 		require.NoError(t, Append(dir, Record{
 			SchemaVersion:        SchemaVersion,
 			RecordType:           RecordTypeReviewer,
+			Outcome:              outcomeFindings,
 			RunID:                fmt.Sprintf("2026-07-01T00:00:00Z-old%02d", i),
 			Reviewer:             "bruce",
 			Model:                "m",
@@ -754,6 +784,7 @@ func TestTrustPriors_PerReviewerPreferCurrentStillExcludesTheMix(t *testing.T) {
 		require.NoError(t, Append(dir, Record{
 			SchemaVersion:            SchemaVersion,
 			RecordType:               RecordTypeReviewer,
+			Outcome:                  outcomeFindings,
 			RunID:                    fmt.Sprintf("2026-07-02T00:00:00Z-new%02d", i),
 			Reviewer:                 "bruce",
 			Model:                    "m",
@@ -768,6 +799,7 @@ func TestTrustPriors_PerReviewerPreferCurrentStillExcludesTheMix(t *testing.T) {
 		require.NoError(t, Append(dir, Record{
 			SchemaVersion:        SchemaVersion,
 			RecordType:           RecordTypeReviewer,
+			Outcome:              outcomeFindings,
 			RunID:                fmt.Sprintf("2026-07-01T00:00:00Z-carol%02d", i),
 			Reviewer:             "carol",
 			Model:                "m",
@@ -805,7 +837,7 @@ func TestUnresolvedEraRuns_SkipsAggregateRecords(t *testing.T) {
 		FindingsRaised:           9,
 	}
 	emptyNameEra1 := Record{
-		SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+		SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer, Outcome: outcomeFindings,
 		RunID: "2026-09-02T00:00:00Z-anon", Reviewer: "", Model: "m",
 		FindingsRaised: 2, // no era markers: definition 1
 	}
@@ -838,7 +870,7 @@ func TestUnresolvedEraRuns_SkipsAggregateRecords(t *testing.T) {
 func TestUnresolvedEraRuns_ExcludesAboveCurrentDenominators(t *testing.T) {
 	mk := func(runID string, denom int) Record {
 		return Record{
-			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer, Outcome: outcomeFindings,
 			RunID: runID, Reviewer: "bruce", Model: "m",
 			RaisedIncludesUnresolved: true, RaisedDenominator: denom,
 			FindingsRaised: 2, FindingsCorroborated: 1,
@@ -881,7 +913,7 @@ func TestUnresolvedEraRuns_ExcludesAboveCurrentDenominators(t *testing.T) {
 	t.Run("an above-current record does not delete the reviewer's pre-epic history", func(t *testing.T) {
 		preEpic := func(runID string) Record {
 			return Record{
-				SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+				SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer, Outcome: outcomeFindings,
 				RunID: runID, Reviewer: "bruce", Model: "m",
 				// No era markers at all: definition 1 (pre-epic).
 				FindingsRaised: 2, FindingsCorroborated: 1,
@@ -915,7 +947,7 @@ func TestTrustPriors_ShieldedCountsDiscountTheRate(t *testing.T) {
 	dir := t.TempDir()
 	for i := 0; i < DefaultTrustMinRuns; i++ {
 		require.NoError(t, Append(dir, Record{
-			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer, Outcome: outcomeFindings,
 			RunID:    fmt.Sprintf("2026-09-01T00:00:00Z-sh%02d", i),
 			Reviewer: "gamer", Model: "m",
 			ConsensusLevel:           reclib.ConsensusStrict,
@@ -955,7 +987,7 @@ func TestTrustPriors_RoutedErasAreOneWindow(t *testing.T) {
 	// window. On its own this is DefaultTrustMinRuns-1 runs — under the floor.
 	for i := 0; i < DefaultTrustMinRuns-1; i++ {
 		require.NoError(t, Append(dir, Record{
-			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer, Outcome: outcomeFindings,
 			RunID:    fmt.Sprintf("2026-08-01T00:00:00Z-era2-%02d", i),
 			Reviewer: "bruce", Model: "m",
 			ConsensusLevel:           reclib.ConsensusStrict,
@@ -968,7 +1000,7 @@ func TestTrustPriors_RoutedErasAreOneWindow(t *testing.T) {
 	// 3 chargeable + 1 shielded is the same finding set an era-2 record would
 	// have reported as FindingsRaised: 4.
 	require.NoError(t, Append(dir, Record{
-		SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+		SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer, Outcome: outcomeFindings,
 		RunID:    "2026-08-20T00:00:00Z-era3-00",
 		Reviewer: "bruce", Model: "m",
 		ConsensusLevel:           reclib.ConsensusStrict,
@@ -999,7 +1031,7 @@ func TestTrustPriors_PreEpicStillSplitsFromRoutedEras(t *testing.T) {
 	// A flattering pre-epic half...
 	for i := 0; i < DefaultTrustMinRuns; i++ {
 		require.NoError(t, Append(dir, Record{
-			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer, Outcome: outcomeFindings,
 			RunID:    fmt.Sprintf("2026-07-01T00:00:00Z-pre%02d", i),
 			Reviewer: "bruce", Model: "m",
 			ConsensusLevel:       reclib.ConsensusStrict,
@@ -1010,7 +1042,7 @@ func TestTrustPriors_PreEpicStillSplitsFromRoutedEras(t *testing.T) {
 	// ...and an era-3 half that is the only thing the priors may measure.
 	for i := 0; i < DefaultTrustMinRuns; i++ {
 		require.NoError(t, Append(dir, Record{
-			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer, Outcome: outcomeFindings,
 			RunID:    fmt.Sprintf("2026-08-01T00:00:00Z-cur%02d", i),
 			Reviewer: "bruce", Model: "m",
 			ConsensusLevel:           reclib.ConsensusStrict,
@@ -1044,7 +1076,8 @@ func TestTrustPriors_PreEpicStillSplitsFromRoutedEras(t *testing.T) {
 func TestMergeRoutedEras_PinsEveryElementOfItsGuard(t *testing.T) {
 	t.Run("a current-era reviewer record is rewritten whole", func(t *testing.T) {
 		in := []Record{{
-			RecordType: RecordTypeReviewer, Reviewer: "bruce",
+			RecordType: RecordTypeReviewer,
+			Outcome:    outcomeFindings, Reviewer: "bruce",
 			RaisedDenominator:   RaisedDenominatorCurrent,
 			FindingsRaised:      3,
 			FindingsDocShielded: 1,
@@ -1074,7 +1107,8 @@ func TestMergeRoutedEras_PinsEveryElementOfItsGuard(t *testing.T) {
 		// finding was routed, so it is uncorroborated by construction and belongs
 		// in solo — the same disjoint partition the fold's equivalence rests on.
 		in := []Record{{
-			RecordType: RecordTypeReviewer, Reviewer: "bruce",
+			RecordType: RecordTypeReviewer,
+			Outcome:    outcomeFindings, Reviewer: "bruce",
 			RaisedDenominator:    RaisedDenominatorCurrent,
 			FindingsRaised:       3,
 			FindingsCorroborated: 2,
@@ -1094,7 +1128,8 @@ func TestMergeRoutedEras_PinsEveryElementOfItsGuard(t *testing.T) {
 
 	t.Run("an above-current record is left alone", func(t *testing.T) {
 		in := []Record{{
-			RecordType: RecordTypeReviewer, Reviewer: "bruce",
+			RecordType: RecordTypeReviewer,
+			Outcome:    outcomeFindings, Reviewer: "bruce",
 			RaisedDenominator:   RaisedDenominatorCurrent + 1,
 			FindingsRaised:      7,
 			FindingsDocShielded: 2,
@@ -1128,7 +1163,8 @@ func TestMergeRoutedEras_PinsEveryElementOfItsGuard(t *testing.T) {
 
 	t.Run("the caller's slice is never mutated", func(t *testing.T) {
 		in := []Record{{
-			RecordType: RecordTypeReviewer, Reviewer: "bruce",
+			RecordType: RecordTypeReviewer,
+			Outcome:    outcomeFindings, Reviewer: "bruce",
 			RaisedDenominator:   RaisedDenominatorCurrent,
 			FindingsRaised:      3,
 			FindingsDocShielded: 1,
@@ -1158,7 +1194,7 @@ func TestTrustPriors_AboveCurrentRecordsNeverReachThePrior(t *testing.T) {
 
 	for i := 0; i < DefaultTrustMinRuns; i++ {
 		require.NoError(t, Append(dir, Record{
-			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer, Outcome: outcomeFindings,
 			RunID:    fmt.Sprintf("2026-08-01T00:00:00Z-cur%02d", i),
 			Reviewer: "bruce", Model: "m",
 			ConsensusLevel:           reclib.ConsensusStrict,
@@ -1171,7 +1207,7 @@ func TestTrustPriors_AboveCurrentRecordsNeverReachThePrior(t *testing.T) {
 	// One record from a NEWER atcr, under a definition this binary does not
 	// implement. A hand-edit or a benchmark-stamped denominator reads the same.
 	require.NoError(t, Append(dir, Record{
-		SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+		SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer, Outcome: outcomeFindings,
 		RunID:    "2026-08-20T00:00:00Z-future",
 		Reviewer: "bruce", Model: "m",
 		ConsensusLevel:           reclib.ConsensusStrict,
@@ -1187,4 +1223,1749 @@ func TestTrustPriors_AboveCurrentRecordsNeverReachThePrior(t *testing.T) {
 	require.Contains(t, priors, "bruce")
 	assert.InDelta(t, 0.5, priors["bruce"], 0.0001,
 		"the above-current record must be excluded outright — 0.357 is what its 100 raised buys if it is normalised into era 2")
+}
+
+// --- Phase 3 (Story 03): the opportunity-set filter-chain link --------------
+//
+// opportunitySetRuns is its own func([]Record) []Record sibling link, not a
+// condition inside the tally loop, per the sprint's Implementation Standards.
+
+// opportunityFilter composes the split opportunity link exactly the way
+// trustPriorsSince does — union from the records handed in, then filter — so a
+// direct-call test exercises the shipped composition rather than a shape only
+// the test knows how to build.
+func opportunityFilter(records []Record) []Record {
+	return opportunitySetRuns(records, opportunityUnions(records))
+}
+
+// oppRec builds a schema-2 reviewer record for the opportunity-link tests.
+// oppRec builds one reviewer record for the opportunity-set tests. Every call
+// site that passes nil cats means "a SILENT lens", so a nil cats must produce a
+// record that actually IS silent: zero raised and outcome clean.
+//
+// It used to stamp FindingsRaised: 1 unconditionally, which made its "silent"
+// fixture a record no emitter could write — a reviewer that raised a finding
+// always carries that finding's category unless the word was outside
+// reclib.Categories(), and reviewerCategories drops only the word, never the
+// count. Nothing read FindingsRaised in this gate, so the inconsistency was
+// invisible until TD-032's fix made it the discriminator between "silent, out of
+// remit" and "raised findings nobody could attribute". The same rule already
+// governs the sibling helper: reviewer() picks outcome clean for a zero-raised
+// fixture "or the helper produces a record no emitter could ever write".
+func oppRec(runID, reviewer string, cats []string) Record {
+	raised, outcome := 1, outcomeFindings
+	if len(cats) == 0 {
+		raised, outcome = 0, outcomeClean
+	}
+	return Record{
+		SchemaVersion:            SchemaVersion,
+		RecordType:               RecordTypeReviewer,
+		RunID:                    runID,
+		Reviewer:                 reviewer,
+		Outcome:                  outcome,
+		CategoriesRaised:         cats,
+		RaisedIncludesUnresolved: true,
+		RaisedDenominator:        RaisedDenominatorCurrent,
+		FindingsRaised:           raised,
+	}
+}
+
+// oppRecRaw builds a record with raised and cats set INDEPENDENTLY, which is the
+// one thing oppRec and oppRecUnlabelled between them cannot do.
+//
+// It exists because that coupling hid a real defect. oppRec derives raised from
+// cats (empty cats means a silent record) and oppRecUnlabelled fixes cats empty,
+// so no fixture in this file could construct a record that raised NOTHING and
+// still contributed a category — and that cell is reachable in production, via
+// the category-only ambiguous stream. A gate round changed the disposition of
+// exactly that cell and the entire package plus cli/ stayed green.
+//
+// The shape is emitter-real, not a probe convenience: EmitForReconcile fills
+// EmitInput.AmbiguousFindings from res.Ambiguous, and Emit routes that stream
+// into reviewerCategories only, never into a reviewerCounts call.
+//
+// Outcome follows the emitter too, and the rule is narrower than it looks. A
+// record that CONTRIBUTED a category keeps outcome "findings" — the agent did
+// produce findings and they were routed — so only the raised-nothing AND
+// attributed-nothing case is stamped clean. outcomeClean requires
+// AgentStatus.FindingsCount <= 0, which is exactly the case that can contribute
+// no ambiguous category either, so clean + zero raised + a non-empty
+// discriminating category set is a combination no emitter can write.
+// opportunityDisposition reads none of this, but a fixture that could not exist
+// is how two defects in this file were already hidden once each.
+func oppRecRaw(runID, reviewer string, raised int, cats []string) Record {
+	r := oppRec(runID, reviewer, []string{"placeholder"})
+	r.CategoriesRaised = cats
+	r.FindingsRaised = raised
+	if raised == 0 && len(cats) == 0 {
+		// Genuinely silent: raised nothing and attributed nothing.
+		r.Outcome = outcomeClean
+	}
+	return r
+}
+
+// oppRecUnlabelled is the case oppRec deliberately cannot express: a lens that
+// RAISED findings whose every CATEGORY the scorer could not use, so the count is
+// non-zero while CategoriesRaised is empty. It is TD-032's subject, and keeping
+// it a separate helper stops a future edit from quietly reintroducing the
+// inconsistent fixture oppRec's comment describes.
+func oppRecUnlabelled(runID, reviewer string, raised int) Record {
+	r := oppRec(runID, reviewer, []string{"placeholder"})
+	r.CategoriesRaised = nil
+	r.FindingsRaised = raised
+	return r
+}
+
+// TestOpportunitySetRuns_DropsOutOfRemitRecords is the epic's headline property
+// expressed on the chain: a mapped lens whose remit no reviewer touched on that
+// run leaves the denominator entirely.
+func TestOpportunitySetRuns_DropsOutOfRemitRecords(t *testing.T) {
+	in := []Record{
+		oppRec("run-1", "sasha", nil),                     // silent security lens
+		oppRec("run-1", "penny", []string{"performance"}), // raised the only category
+	}
+	out := opportunityFilter(in)
+
+	names := map[string]bool{}
+	for _, r := range out {
+		names[r.Reviewer] = true
+	}
+	assert.True(t, names["penny"], "performance was in play, so penny is scored")
+	assert.False(t, names["sasha"], "no security category was raised by anyone, so sasha is not scored")
+}
+
+// TestOpportunitySetRuns_KeepsASilentLensWhenItsRemitWasInPlay proves membership
+// is a property of the CASE, not of what the lens itself said. A security lens
+// that stayed silent while another reviewer raised `security` IS scored — that
+// silence is a judgement, and scoring it is the whole point of the denominator.
+func TestOpportunitySetRuns_KeepsASilentLensWhenItsRemitWasInPlay(t *testing.T) {
+	in := []Record{
+		oppRec("run-1", "sasha", nil),
+		// bruce RAISED security even though security is not in bruce's own
+		// remit: CategoriesRaised records what a lens said, not what it is
+		// scored on. correctness is what puts bruce itself in remit here.
+		oppRec("run-1", "bruce", []string{"security", "correctness"}),
+	}
+	out := opportunityFilter(in)
+
+	names := map[string]bool{}
+	for _, r := range out {
+		names[r.Reviewer] = true
+	}
+	assert.True(t, names["sasha"], "sasha's remit was in play via bruce's finding")
+	assert.True(t, names["bruce"], "bruce's remit covers security too")
+}
+
+// TestOpportunitySetRuns_UnionIsPerRunNotGlobal pins the grouping key. Unioning
+// across the whole store instead of per RunID would make every lens in-remit
+// forever after one broad run.
+func TestOpportunitySetRuns_UnionIsPerRunNotGlobal(t *testing.T) {
+	in := []Record{
+		oppRec("run-1", "bruce", []string{"security"}),
+		oppRec("run-2", "sasha", nil),
+		oppRec("run-2", "penny", []string{"performance"}),
+	}
+	out := opportunityFilter(in)
+
+	for _, r := range out {
+		assert.False(t, r.RunID == "run-2" && r.Reviewer == "sasha",
+			"run-1's security category must not make sasha in-remit on run-2")
+	}
+}
+
+// TestOpportunitySetRuns_UnmappedPersonaPassesThroughUntouched is the
+// no-silent-regression guard for C11. vera and the four other registry-only
+// lenses have no remit under Option A; dropping their records would remove trust
+// scoring for five of thirteen lenses as a side effect of this link. Unmapped
+// means "not opportunity-scoped", not "deleted".
+func TestOpportunitySetRuns_UnmappedPersonaPassesThroughUntouched(t *testing.T) {
+	in := []Record{
+		oppRec("run-1", "vera", nil),
+		oppRec("run-1", "penny", []string{"performance"}),
+	}
+	out := opportunityFilter(in)
+
+	names := map[string]bool{}
+	for _, r := range out {
+		names[r.Reviewer] = true
+	}
+	assert.True(t, names["vera"],
+		"an unmapped lens keeps the behaviour it had before this link existed")
+}
+
+// TestOpportunitySetRuns_AggregatesPassThroughUntouched matches the documented
+// precedent of eligibleOutcomeRuns and unresolvedEraRuns. An aggregate is not a
+// reviewer and carries no remit.
+func TestOpportunitySetRuns_AggregatesPassThroughUntouched(t *testing.T) {
+	agg := Record{SchemaVersion: SchemaVersion, RecordType: RecordTypeAggregate, RunID: "run-1"}
+	out := opportunityFilter([]Record{agg, oppRec("run-1", "sasha", nil)})
+
+	found := false
+	for _, r := range out {
+		if r.RecordType == RecordTypeAggregate {
+			found = true
+		}
+	}
+	assert.True(t, found, "aggregates are never judged on a property they do not carry")
+}
+
+// TestOpportunitySetRuns_UnmeasuredRecordsAreNotJudgedAsOutOfRemit is the era
+// discipline Phase 2 applied to an empty Outcome, applied here to an absent
+// category set. A pre-schema-2 record has no categories because nothing measured
+// them — reading that as "out-of-remit for everyone" would silently shrink every
+// persona's denominator across the whole back-catalogue.
+func TestOpportunitySetRuns_UnmeasuredRecordsAreNotJudgedAsOutOfRemit(t *testing.T) {
+	old := oppRec("run-old", "sasha", nil)
+	old.SchemaVersion = 1
+
+	out := opportunityFilter([]Record{old})
+	require.Len(t, out, 1, "an unmeasured record passes through rather than being judged")
+	assert.Equal(t, 1, out[0].SchemaVersion)
+}
+
+// TestOpportunitySetRuns_DoesNotMutateItsInput matches every sibling link's
+// documented contract: callers hand in records read from the store.
+func TestOpportunitySetRuns_DoesNotMutateItsInput(t *testing.T) {
+	in := []Record{
+		oppRec("run-1", "sasha", nil),
+		oppRec("run-1", "penny", []string{"performance"}),
+	}
+	// DEEP copy. append([]Record{}, in...) copies the structs but shares every
+	// CategoriesRaised backing array, so an in-place sort or dedupe inside the
+	// link would mutate both sides and this assertion would still pass — the
+	// guard would report exactly nothing.
+	before := make([]Record, len(in))
+	for i, r := range in {
+		before[i] = r
+		before[i].CategoriesRaised = append([]string(nil), r.CategoriesRaised...)
+	}
+	opportunityFilter(in)
+	assert.Equal(t, before, in, "the input slice is never rewritten")
+}
+
+// TestTrustPriors_OutOfRemitRunNeverReachesThePrior is the end-to-end proof that
+// the link is actually wired into trustPriorsSince, not merely defined. Without
+// the wiring every assertion above passes and the feature ships inert.
+func TestTrustPriors_OutOfRemitRunNeverReachesThePrior(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	month := filepath.Join(dir, now.Format("2006-01")+".jsonl")
+
+	var lines []string
+	for i := 0; i < 3; i++ {
+		runID := fmt.Sprintf("run-%d", i)
+		// Only performance is ever raised, so sasha is out-of-remit on every run.
+		for _, r := range []Record{
+			oppRec(runID, "sasha", nil),
+			oppRec(runID, "penny", []string{"performance"}),
+		} {
+			r.RunID = runID
+			b, err := json.Marshal(r)
+			require.NoError(t, err)
+			lines = append(lines, string(b))
+		}
+	}
+	require.NoError(t, os.WriteFile(month, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
+
+	priors, err := trustPriorsSince(dir, 1, 180*24*time.Hour, now, nil)
+	require.NoError(t, err)
+	assert.NotContains(t, priors, "sasha",
+		"every one of sasha's runs was out-of-remit, so it earns no durable prior")
+	assert.Contains(t, priors, "penny")
+}
+
+// TestOpportunitySetRuns_ControlOnlyUnionBlacksOutNobody is the regression guard
+// for the worst bug this link can have.
+//
+// `other` and `out-of-scope` are full reclib.Categories() members, so they clear
+// the vocabulary gate and make a run's union NON-empty — but neither names a
+// topic, so neither matches any remit. Judged, such a run deletes every MAPPED
+// lens's record while the unmapped ones keep theirs: a wrong durable score that
+// favours precisely the lenses with no remit. ModalCategory returns out-of-scope
+// for any cluster whose findings are all out of scope, so this is reachable
+// without a single reviewer typing the word.
+func TestOpportunitySetRuns_ControlOnlyUnionBlacksOutNobody(t *testing.T) {
+	for _, control := range []string{reclib.CategoryOther, reclib.CategoryOutOfScope, reclib.CategoryInvariant} {
+		in := []Record{
+			oppRec("run-1", "sasha", []string{control}),
+			oppRec("run-1", "penny", []string{control}),
+			oppRec("run-1", "dax", nil),
+		}
+		out := opportunityFilter(in)
+		assert.Len(t, out, len(in),
+			"a union of only %q carries no topic, so every lens must pass through un-scoped", control)
+	}
+}
+
+// TestOpportunitySetRuns_ControlValuesDoNotMaskARealTopic is the other half of
+// the guard above: the exclusion must drop the control values from the union,
+// not abandon the whole run the moment one appears.
+func TestOpportunitySetRuns_ControlValuesDoNotMaskARealTopic(t *testing.T) {
+	in := []Record{
+		oppRec("run-1", "sasha", []string{reclib.CategoryOther, "security"}),
+		oppRec("run-1", "penny", nil),
+	}
+	out := opportunityFilter(in)
+
+	names := map[string]bool{}
+	for _, r := range out {
+		names[r.Reviewer] = true
+	}
+	assert.True(t, names["sasha"], "security is still a real topic alongside the control value")
+	assert.False(t, names["penny"], "no performance-flavoured category was raised")
+}
+
+// TestOpportunitySetRuns_UnionSeesReviewersTheOutcomeGateWillDrop pins the chain
+// ORDER, which is the difference between scoring a case and scoring a filtered
+// view of it.
+//
+// A truncated reviewer is excluded from trust scoring by eligibleOutcomeRuns —
+// it did not get a fair attempt — but it can still have raised findings whose
+// categories were recorded, and those categories are evidence about WHAT THE
+// CASE WAS. Run this link after the outcome gate and that evidence is gone, so a
+// specialist is dropped from a run where its remit demonstrably was in play.
+func TestOpportunitySetRuns_UnionSeesReviewersTheOutcomeGateWillDrop(t *testing.T) {
+	truncated := oppRec("run-1", "archer", []string{"security"})
+	truncated.Outcome = "truncated"
+
+	in := []Record{truncated, oppRec("run-1", "sasha", nil)}
+	out := opportunityFilter(in)
+
+	names := map[string]bool{}
+	for _, r := range out {
+		names[r.Reviewer] = true
+	}
+	assert.True(t, names["sasha"],
+		"the truncated reviewer's category is still evidence the case was a security case")
+}
+
+// TestTrustPriors_OpportunityUnionIsTakenBeforeTheOutcomeGate pins the CHAIN
+// COMPOSITION, which no direct call to opportunitySetRuns can reach.
+//
+// The only reviewer that raises a security category on this run is truncated,
+// so eligibleOutcomeRuns will drop its record. If the opportunity link runs
+// AFTER that gate it never sees the category, sasha looks out-of-remit, and
+// sasha earns no prior — the specialist is punished for another lens's hosting
+// failure. Composed the other way round, sasha keeps its runs.
+func TestTrustPriors_OpportunityUnionIsTakenBeforeTheOutcomeGate(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	month := filepath.Join(dir, now.Format("2006-01")+".jsonl")
+
+	var lines []string
+	for i := 0; i < 3; i++ {
+		runID := fmt.Sprintf("run-%d", i)
+		// The truncated lens is the ONLY source of a security category.
+		truncated := oppRec(runID, "archer", []string{"security"})
+		truncated.Outcome = "truncated"
+		// penny keeps the post-gate union NON-empty, which is what makes this
+		// test bite: without it the run would fall into the "no discriminating
+		// category" pass-through and sasha would survive either composition,
+		// proving nothing about the order.
+		penny := oppRec(runID, "penny", []string{"performance"})
+		sasha := oppRec(runID, "sasha", nil)
+		sasha.Outcome = outcomeClean
+		sasha.FindingsRaised = 1
+		sasha.FindingsCorroborated = 1
+		for _, r := range []Record{truncated, penny, sasha} {
+			b, err := json.Marshal(r)
+			require.NoError(t, err)
+			lines = append(lines, string(b))
+		}
+	}
+	require.NoError(t, os.WriteFile(month, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
+
+	priors, err := trustPriorsSince(dir, 1, 180*24*time.Hour, now, nil)
+	require.NoError(t, err)
+	assert.Contains(t, priors, "sasha",
+		"the truncated lens's category still proves this was a security case, so sasha was in remit")
+	assert.NotContains(t, priors, "archer",
+		"the truncated record itself is still excluded by the outcome gate")
+	assert.Contains(t, priors, "penny", "penny's own remit was in play on every run")
+}
+
+// TestOpportunity_SchemaGateIsPinnedToTheIntroducingVersionNotTheMovingOne is
+// the guard a `SchemaVersion: SchemaVersion` fixture can never be.
+//
+// Both halves of the opportunity link skip records below
+// categoriesRaisedSinceSchema. Written as `< SchemaVersion` instead, the guard
+// is correct only while that constant happens to equal 2 — and TD-030 already
+// puts a v3 bump on Phase 4a's table. On that bump every v2 record, each
+// carrying a genuinely measured category set, would be reclassified as
+// unmeasured: the union would lose its evidence and every v2 record would pass
+// through unjudged, switching opportunity scoping off for the whole
+// back-catalogue. Every other test in this file builds fixtures with
+// `SchemaVersion: SchemaVersion`, so they move with the constant and stay green
+// through exactly that regression.
+//
+// The literal 2 below is therefore deliberate. Do not "tidy" it into the
+// constant; that deletes the only thing this test asserts.
+func TestOpportunity_SchemaGateIsPinnedToTheIntroducingVersionNotTheMovingOne(t *testing.T) {
+	assert.Equal(t, 2, categoriesRaisedSinceSchema,
+		"CategoriesRaised was introduced at schema 2; a later field gets its own constant rather than moving this one")
+
+	// A v2 record with a measured category set, built at the LITERAL version.
+	measured := oppRec("run-1", "sasha", []string{"security"})
+	measured.SchemaVersion = 2
+	other := oppRec("run-1", "penny", []string{"performance"})
+	other.SchemaVersion = 2
+
+	unions := opportunityUnions([]Record{measured, other})
+	require.Contains(t, unions, "run-1",
+		"a literal-v2 record must still contribute its categories to the union")
+	assert.Contains(t, unions["run-1"], "security")
+
+	// And it must still be JUDGED: dax's remit is untouched by this run, so it
+	// is dropped. A record treated as unmeasured would pass through instead.
+	dax := oppRec("run-1", "dax", nil)
+	dax.SchemaVersion = 2
+	out := opportunitySetRuns([]Record{dax}, unions)
+	assert.Empty(t, out,
+		"a literal-v2 record must be judged, not passed through as unmeasured")
+}
+
+// TestTrustPriors_EraIsDecidedBeforeTheOpportunityFilter pins the OTHER end of
+// the split link: the filter half must run AFTER unresolvedEraRuns.
+//
+// FIXTURE PROVENANCE — synthetic, deliberately. The era-1 records below carry
+// SchemaVersion 2, an Outcome and CategoriesRaised alongside the era-1
+// discriminator (RaisedDenominator 0 / RaisedIncludesUnresolved false) — a
+// combination Emit can never write, because it always stamps
+// RaisedDenominatorCurrent and RaisedIncludesUnresolved on every record, and a
+// genuine era-1 record predates categories_raised (schema 2) and Outcome
+// (v2) entirely. This is a future-era stand-in, not an emitter-shaped record:
+// the ordering under test lives in unresolvedEraRuns and opportunitySetRuns,
+// which read the era discriminator and the category set independently of the
+// schema/outcome fields, so the synthetic combination exercises the real link
+// order without asserting anything about the impossible fields themselves. If
+// a future era bump makes the combination real (era N records judged under a
+// newer schema), this comment is the marker to update, and the test's premise
+// becomes emitter-real rather than synthetic.
+//
+// sasha here has a high-scoring era-1 history (in remit, routed phantoms
+// EXCLUDED from the denominator) and a current-era history that is out of remit.
+// unresolvedEraRuns must see both and pick era 3 as sasha's newest definition,
+// dropping the era-1 half; the opportunity filter then drops what is left,
+// leaving sasha with no scoreable runs and therefore ABSENT.
+//
+// Compose it the other way round — opportunity filter first — and the era-3
+// records are gone before the era pass runs, so era 1 becomes sasha's "newest"
+// definition and its flattering pre-epic rate is published under the current
+// one. That is a cross-era blend arrived at through a side door, and it can flip
+// a phantom-raising lens from demoted to exempt.
+func TestTrustPriors_EraIsDecidedBeforeTheOpportunityFilter(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	month := filepath.Join(dir, now.Format("2006-01")+".jsonl")
+
+	var lines []string
+	write := func(r Record) {
+		b, err := json.Marshal(r)
+		require.NoError(t, err)
+		lines = append(lines, string(b))
+	}
+	for i := 0; i < 3; i++ {
+		// Era 1: in remit (a security category is raised on the run) and perfect.
+		runID := fmt.Sprintf("old-%d", i)
+		old := oppRec(runID, "sasha", []string{"security"})
+		old.RaisedIncludesUnresolved = false
+		old.RaisedDenominator = 0 // absent discriminator == era 1
+		old.FindingsRaised, old.FindingsCorroborated = 4, 4
+		write(old)
+
+		// Era 3 (current): out of remit — penny raises the run's only category.
+		runID = fmt.Sprintf("new-%d", i)
+		write(oppRec(runID, "penny", []string{"performance"}))
+		write(oppRec(runID, "sasha", nil))
+	}
+	require.NoError(t, os.WriteFile(month, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
+
+	priors, err := trustPriorsSince(dir, 1, 180*24*time.Hour, now, nil)
+	require.NoError(t, err)
+	assert.NotContains(t, priors, "sasha",
+		"sasha's newest era is the current one and every current-era run was out of remit, so it has no scoreable history; a present entry here means the era was decided from an opportunity-shrunk record set")
+	assert.Contains(t, priors, "penny", "penny's remit was in play on the current-era runs")
+}
+
+// TestTrustPriors_OpportunityUnionSurvivesANonStrictRecord pins that the union
+// is taken from the RAW records, upstream of strictRuns as well as of the
+// outcome gate.
+//
+// strictRuns is a PER-RECORD filter: one record with an unrecognized
+// consensus_level — a hand-edit, or a row from a future atcr — is dropped on its
+// own. If the union were taken downstream of it, that single dropped record
+// would delete its category from the case, and a specialist is then judged
+// out-of-remit on a run where its remit demonstrably was in play. That is the
+// identical hazard the outcome-gate ordering above exists to refuse.
+func TestTrustPriors_OpportunityUnionSurvivesANonStrictRecord(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	month := filepath.Join(dir, now.Format("2006-01")+".jsonl")
+
+	var lines []string
+	for i := 0; i < 3; i++ {
+		runID := fmt.Sprintf("run-%d", i)
+		// The ONLY source of a security category on this run is a record
+		// strictRuns will drop for its unrecognized consensus level.
+		nonStrict := oppRec(runID, "archer", []string{"security"})
+		nonStrict.ConsensusLevel = "not-a-consensus-level"
+		// Keeps the post-strictRuns union non-empty, so the run cannot fall into
+		// the no-discriminating-category pass-through and pass by accident.
+		penny := oppRec(runID, "penny", []string{"performance"})
+		sasha := oppRec(runID, "sasha", nil)
+		sasha.Outcome = outcomeClean
+		sasha.FindingsRaised, sasha.FindingsCorroborated = 1, 1
+		for _, r := range []Record{nonStrict, penny, sasha} {
+			b, err := json.Marshal(r)
+			require.NoError(t, err)
+			lines = append(lines, string(b))
+		}
+	}
+	require.NoError(t, os.WriteFile(month, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
+
+	priors, err := trustPriorsSince(dir, 1, 180*24*time.Hour, now, nil)
+	require.NoError(t, err)
+	assert.Contains(t, priors, "sasha",
+		"the non-strict record's category is still evidence this was a security case, so sasha was in remit")
+	assert.NotContains(t, priors, "archer",
+		"the non-strict record itself is still excluded by strictRuns")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4b — C18's read-time ground-truth half
+// ---------------------------------------------------------------------------
+
+// weighted seeds n runs for persona, each raising raisedEach findings of which
+// corroboratedEach carried a co-reviewer, and carrying creditEach weighted
+// credit under the CURRENT credit era — i.e. what the post-4.5 emitter writes.
+func weighted(t *testing.T, dir string, n int, persona string, raisedEach, corroboratedEach int, creditEach float64) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		rec := reviewer_(runIDAt(time.Now(), fmt.Sprintf("w-%s-%03d", persona, i)), persona, "m1", raisedEach, corroboratedEach)
+		rec.WeightedCredit = creditEach
+		rec.CreditEra = CreditEraCurrent
+		require.NoError(t, Append(dir, rec))
+	}
+}
+
+// allConfirmed is a ground-truth lookup that reports every named persona as
+// fully confirmed, so a test can isolate the ISOLATION half of the split from
+// the confirmation half. The count clears minConfirmationOutcomes, since a row
+// below that floor is deliberately read as "no ground truth".
+func allConfirmed(personas ...string) GroundTruthLookup {
+	return func(time.Duration, time.Time) (map[string]Confirmation, error) {
+		out := map[string]Confirmation{}
+		for _, p := range personas {
+			out[strings.ToLower(p)] = Confirmation{Confirmed: minConfirmationOutcomes}
+		}
+		return out, nil
+	}
+}
+
+func TestTrustPriorsWithGroundTruth_SoloConfirmedBeatsCorroborated(t *testing.T) {
+	// AC 04-01 Scenarios 1-2, end to end. Both lenses raise exactly one finding
+	// per run over the same number of runs. "lone" raises it alone (credit 1.0,
+	// corroborated 0); "herd" always raises alongside one other lens (credit 0.5,
+	// corroborated 1). Under the OLD binary rate the ranking is exactly inverted,
+	// which is the failure this sprint exists to fix.
+	dir := t.TempDir()
+	weighted(t, dir, 20, "Lone", 1, 0, 1.0)
+	weighted(t, dir, 20, "Herd", 1, 1, 0.5)
+
+	rates, err := TrustPriorsWithGroundTruth(dir, 10, allConfirmed("lone", "herd"))
+	require.NoError(t, err)
+
+	assert.InDelta(t, 1.0, rates["lone"], 1e-9)
+	assert.InDelta(t, 0.5, rates["herd"], 1e-9)
+	assert.Greater(t, rates["lone"], rates["herd"],
+		"an isolated finding that proved real must outrank one four others also raised")
+}
+
+func TestTrustPriorsWithGroundTruth_ConfirmationRateScalesTheCredit(t *testing.T) {
+	// The read-time half. Identical scorecard evidence, different TD outcomes:
+	// three of "shaky"'s findings resolved and one was closed wontfix, so only
+	// three quarters of its isolation credit is earned.
+	dir := t.TempDir()
+	weighted(t, dir, 20, "Shaky", 1, 0, 1.0)
+
+	gt := func(time.Duration, time.Time) (map[string]Confirmation, error) {
+		return map[string]Confirmation{"shaky": {Confirmed: 30, Dismissed: 10}}, nil
+	}
+	rates, err := TrustPriorsWithGroundTruth(dir, 10, gt)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.75, rates["shaky"], 1e-9)
+}
+
+func TestTrustPriorsWithGroundTruth_CountsEveryNonConfirmedOutcomeAgainstTheLens(t *testing.T) {
+	// The epic's own reading of the TD lifecycle: resolved means the finding was
+	// real; wontfix, unreproducible and attempts-exhausted each mean it probably
+	// was not. All three sit in the denominator, which is why Story 01 had to add
+	// the last two to the enum before this phase could use them.
+	dir := t.TempDir()
+	weighted(t, dir, 20, "Mixed", 1, 0, 1.0)
+
+	gt := func(time.Duration, time.Time) (map[string]Confirmation, error) {
+		return map[string]Confirmation{"mixed": {
+			Confirmed: 5, Dismissed: 5, Unreproducible: 5, AttemptsExhausted: 5,
+		}}, nil
+	}
+	rates, err := TrustPriorsWithGroundTruth(dir, 10, gt)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.25, rates["mixed"], 1e-9)
+}
+
+func TestTrustPriorsWithGroundTruth_PreWeightingRecordsAreExcludedNotAveraged(t *testing.T) {
+	// AC 04-01 Scenario 3, second clause. Ten pre-weighting runs carry no credit
+	// era and no credit; twenty post-weighting runs each earned a full 1.0.
+	// Blended, the rate would be 20/30; excluded, it is 1.0. The wrong answer is
+	// the SILENT one, which is why the era marker exists.
+	dir := t.TempDir()
+	appendN(t, dir, 10, "Elder", "m1", 1, 1) // no CreditEra: pre-weighting
+	weighted(t, dir, 20, "Elder", 1, 0, 1.0)
+
+	rates, err := TrustPriorsWithGroundTruth(dir, 10, allConfirmed("elder"))
+	require.NoError(t, err)
+	assert.InDelta(t, 1.0, rates["elder"], 1e-9,
+		"a pre-weighting record must be excluded from the weighted rate, not counted as a measured zero")
+}
+
+func TestTrustPriorsWithGroundTruth_AllPreWeightingHistoryDegradesToBinary(t *testing.T) {
+	// The rollout case. A store written entirely before this phase has no
+	// weighted denominator at all, so the weighted rate is undefined rather than
+	// zero — and publishing zero would demote every lens in the panel on upgrade,
+	// the exact blackout strictRuns and unresolvedEraRuns refuse to cause.
+	dir := t.TempDir()
+	appendN(t, dir, 20, "Elder", "m1", 4, 3)
+
+	rates, err := TrustPriorsWithGroundTruth(dir, 10, allConfirmed("elder"))
+	require.NoError(t, err)
+	assert.InDelta(t, 3.0/4.0, rates["elder"], 1e-9,
+		"with no measured credit the rate must fall back to the pre-existing binary one")
+}
+
+func TestTrustPriorsWithGroundTruth_MissingSignalDegradesToBinaryNeverInflates(t *testing.T) {
+	// AC 04-01 Error Scenario 1, and its security clause: a missing or broken
+	// ground-truth signal must degrade TOWARD the prior behaviour, never toward
+	// an unearned boost. "Lone" has a binary rate of 0.0 and a weighted rate of
+	// 1.0, so every degraded path here is asserted against the LOWER number.
+	dir := t.TempDir()
+	weighted(t, dir, 20, "Lone", 1, 0, 1.0)
+
+	for name, gt := range map[string]GroundTruthLookup{
+		"nil lookup": nil,
+		"lookup error": func(time.Duration, time.Time) (map[string]Confirmation, error) {
+			return nil, fmt.Errorf("debt store unreadable")
+		},
+		// A truncated store read can plausibly return BOTH a populated map and an
+		// error. A partial ledger is not a smaller true answer — it is a ratio
+		// over a subset nobody chose — so the map must be discarded with the
+		// error rather than used.
+		"lookup error carrying a partial map": func(time.Duration, time.Time) (map[string]Confirmation, error) {
+			return map[string]Confirmation{"lone": {Confirmed: 40}}, fmt.Errorf("truncated month file")
+		},
+		"empty map": func(time.Duration, time.Time) (map[string]Confirmation, error) {
+			return map[string]Confirmation{}, nil
+		},
+		"persona absent from the map": func(time.Duration, time.Time) (map[string]Confirmation, error) {
+			return map[string]Confirmation{"someone-else": {Confirmed: 40}}, nil
+		},
+		"row with no counted outcomes": func(time.Duration, time.Time) (map[string]Confirmation, error) {
+			return map[string]Confirmation{"lone": {}}, nil
+		},
+		// Below minConfirmationOutcomes. One resolved row is not a measurement,
+		// and letting it through would hand this lens a factor of 1.0.
+		"row below the outcome floor": func(time.Duration, time.Time) (map[string]Confirmation, error) {
+			return map[string]Confirmation{"lone": {Confirmed: minConfirmationOutcomes - 1}}, nil
+		},
+		// The total is POSITIVE, so the total check cannot catch this one. Left
+		// unguarded it yields factor -0.5 and a negative prior.
+		"negative count inside a positive total": func(time.Duration, time.Time) (map[string]Confirmation, error) {
+			return map[string]Confirmation{"lone": {Confirmed: -5, Dismissed: 30}}, nil
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rates, err := TrustPriorsWithGroundTruth(dir, 10, gt)
+			require.NoError(t, err)
+			assert.InDelta(t, 0.0, rates["lone"], 1e-9,
+				"a missing or malformed signal must never inflate a score")
+		})
+	}
+}
+
+func TestTrustPriorsWithGroundTruth_GeneralistDoesNotOutrankSpecialists(t *testing.T) {
+	// AC 04-02, epic acceptance criterion 3. bruce is pure overlap: every finding
+	// he raises is one a specialist also raised, and he raises nothing of his own.
+	// Each specialist additionally holds one finding it raised alone.
+	//
+	// Under the binary rate bruce scores a perfect 1.00 and every specialist 0.50,
+	// which is the backwards ranking the epic names. Weighted, bruce earns 0.5 per
+	// finding and the specialists 1.5 across two.
+	//
+	// vera, pace, brad, archer and ronin have no in-repo persona file, so per C11
+	// they are unmapped for opportunity scoping; that is irrelevant here because
+	// these fixtures carry no CategoriesRaised and the union is therefore empty
+	// for every run. The full roster is used anyway, per AC 04-02's requirement
+	// that the fixture not be a toy 2-reviewer case.
+	specialists := []string{"greta", "kai", "mira", "dax", "pace", "penny", "vera", "brad", "archer", "otto", "sasha"}
+	dir := t.TempDir()
+	for _, s := range specialists {
+		for i := 0; i < 20; i++ {
+			runID := runIDAt(time.Now(), fmt.Sprintf("panel-%s-%03d", s, i))
+			// The specialist: one shared finding (0.5) plus one solo (1.0).
+			spec := pairReviewer(runID, s, "m1", 2, 1, PairSignal{Peer: "bruce", Agreed: 1})
+			spec.WeightedCredit = 1.5
+			spec.CreditEra = CreditEraCurrent
+			// bruce: the shared finding only.
+			gen := pairReviewer(runID, "bruce", "m2", 1, 1, PairSignal{Peer: s, Agreed: 1})
+			gen.WeightedCredit = 0.5
+			gen.CreditEra = CreditEraCurrent
+			require.NoError(t, Append(dir, spec))
+			require.NoError(t, Append(dir, gen))
+		}
+	}
+	// AC 04-02 Edge Case 1: ronin only ever co-raises with bruce and holds no solo
+	// finding, so it is deliberately EXCLUDED from the "ranks above" assertion —
+	// isolation credit alone must not lift a lens that earned none.
+	for i := 0; i < 20; i++ {
+		runID := runIDAt(time.Now(), fmt.Sprintf("panel-ronin-%03d", i))
+		ronin := pairReviewer(runID, "ronin", "m1", 1, 1, PairSignal{Peer: "bruce", Agreed: 1})
+		ronin.WeightedCredit = 0.5
+		ronin.CreditEra = CreditEraCurrent
+		gen := pairReviewer(runID, "bruce", "m2", 1, 1, PairSignal{Peer: "ronin", Agreed: 1})
+		gen.WeightedCredit = 0.5
+		gen.CreditEra = CreditEraCurrent
+		require.NoError(t, Append(dir, ronin))
+		require.NoError(t, Append(dir, gen))
+	}
+
+	rates, err := TrustPriorsWithGroundTruth(dir, DefaultTrustMinRuns, allConfirmed(append(specialists, "bruce", "ronin")...))
+	require.NoError(t, err)
+
+	require.Contains(t, rates, "bruce")
+	for _, s := range specialists {
+		require.Contains(t, rates, s)
+		assert.Greater(t, rates[s], rates["bruce"],
+			"specialist %s must outrank the generalist, which earns its volume purely by overlapping", s)
+	}
+	assert.InDelta(t, rates["bruce"], rates["ronin"], 1e-9,
+		"a specialist with no solo findings earns no isolation credit and must not be lifted above the generalist")
+}
+
+func TestPairDisagreements_ExposeTheRatesBehindTheWeightedRanking(t *testing.T) {
+	// AC 04-05. Story 4 CONSUMES Story 5's surface rather than rebuilding it
+	// (D2), so the per-pair rate behind the ranking above has to be independently
+	// queryable from the same store — not buried inside one opaque score.
+	dir := t.TempDir()
+	coEligible(t, dir, minPairCases, "bruce", "dax", 4, 0)
+
+	pairs, err := PairDisagreements(dir)
+	require.NoError(t, err)
+
+	key, ok := PairKey("bruce", "dax")
+	require.True(t, ok)
+	tally, ok := pairs[key]
+	require.True(t, ok, "a pair that co-occurred must be queryable")
+	assert.InDelta(t, 0.0, tally.DisagreementRate(), 1e-9)
+	assert.True(t, tally.Sufficient, "minPairCases co-eligible runs clears the floor")
+	assert.True(t, tally.DropCandidate, "a pair that never splits is the penny test's drop candidate")
+
+	// Edge Case 1: a pair that never co-occurred is ABSENT, never a spurious rate.
+	missing, ok := PairKey("bruce", "sasha")
+	require.True(t, ok)
+	assert.NotContains(t, pairs, missing)
+}
+
+func TestTrustPriorsWithGroundTruth_ZeroRaisedReviewerStaysRateZero(t *testing.T) {
+	// AC 04-01 Edge Case 3: the existing zero-denominator convention is untouched
+	// by the weighting — no divide-by-zero, no panic, no NaN reaching the map
+	// reconcile reads.
+	dir := t.TempDir()
+	weighted(t, dir, 20, "Quiet", 0, 0, 0.0)
+
+	rates, err := TrustPriorsWithGroundTruth(dir, 10, allConfirmed("quiet"))
+	require.NoError(t, err)
+	require.Contains(t, rates, "quiet")
+	assert.False(t, math.IsNaN(rates["quiet"]), "a zero denominator must not produce NaN")
+	assert.InDelta(t, 0.0, rates["quiet"], 1e-9)
+}
+
+func TestTrustPriors_ContractIsUnchangedByTheWeighting(t *testing.T) {
+	// AC 04-04 Scenarios 1 and 3. TrustPriors itself supplies no ground truth, so
+	// its numbers and its map[string]float64 shape are exactly what they were —
+	// reconcile/consensus.go's trustExempt and demoteByTrust need no call-site
+	// change.
+	dir := t.TempDir()
+	weighted(t, dir, 20, "Lone", 1, 0, 1.0)
+
+	var want map[string]float64
+	got, err := TrustPriors(dir, 10)
+	require.NoError(t, err)
+	want = got // compile-time proof the return type is still map[string]float64
+	require.Contains(t, want, "lone")
+	assert.InDelta(t, 0.0, want["lone"], 1e-9,
+		"without an injected lookup TrustPriors must return the pre-existing binary rate")
+}
+
+func TestWeightedCreditByPersona_ExcludesUnmarkedRecordsAndNeverMutatesItsInput(t *testing.T) {
+	// AC 04-04 Scenario 2: the new stage follows the existing chain links'
+	// convention — pure, non-mutating, independently testable.
+	records := []Record{
+		func() Record {
+			r := reviewer_("run-a", "Dax", "m1", 2, 0)
+			r.WeightedCredit = 2.0
+			r.CreditEra = CreditEraCurrent
+			return r
+		}(),
+		reviewer_("run-b", "Dax", "m1", 5, 4), // pre-weighting: no era, no credit
+		func() Record {
+			r := reviewer_("run-c", "Dax", "m1", 1, 0)
+			r.WeightedCredit = 1.0
+			r.CreditEra = CreditEraCurrent + 1 // above current: measured under a rule this binary does not implement
+			return r
+		}(),
+	}
+	before := append([]Record{}, records...)
+
+	got := weightedCreditByPersona(records)
+	require.Contains(t, got, "dax")
+	assert.InDelta(t, 2.0, got["dax"].credit, 1e-9)
+	assert.Equal(t, 2, got["dax"].raised,
+		"only the era-marked record contributes to the weighted denominator")
+	assert.Equal(t, before, records, "the stage must not mutate its input slice")
+}
+
+func TestMergeRoutedEras_PreservesTheWeightedCreditFields(t *testing.T) {
+	// mergeRoutedEras rewrites a record to normalise its denominator era. The
+	// weighting fields are on the same struct and must ride through untouched, or
+	// the fold above would read a rewritten record as pre-weighting.
+	r := reviewer_("run-a", "Dax", "m1", 3, 2)
+	r.RaisedDenominator = raisedDenominatorRoutedExShield
+	r.FindingsDocShielded = 1
+	r.WeightedCredit = 1.25
+	r.CreditEra = CreditEraCurrent
+
+	out := mergeRoutedEras([]Record{r})
+	require.Len(t, out, 1)
+	assert.InDelta(t, 1.25, out[0].WeightedCredit, 1e-9)
+	assert.Equal(t, CreditEraCurrent, out[0].CreditEra)
+}
+
+func TestIsolatedFindingWeight_NotNarrowedWithoutRemeasurement(t *testing.T) {
+	// AC 04-03 Error Scenario 1, mirroring
+	// TestDefaultTrustWindow_NotNarrowedWithoutRemeasurement and
+	// TestMinPairCases_NotNarrowedWithoutRemeasurement.
+	//
+	// The literal is deliberate: derived from the constant, this test would
+	// contract with it and pass at any value.
+	assert.InDelta(t, 1.0, isolatedFindingWeight, 1e-9,
+		"isolatedFindingWeight is PROVISIONAL and its value is not evidence-backed. "+
+			"Moving it requires a fresh measurement against the localdebt ground-truth "+
+			"ledger, recorded in the constant's doc comment the way DefaultTrustMinRuns' "+
+			"and defaultTrustWindow's are. Update this literal in the same commit.")
+}
+
+// ---------------------------------------------------------------------------
+// 4.6 — guards the 4.5.A adversarial pass found unpinned
+// ---------------------------------------------------------------------------
+
+func TestTrustPriorsWithGroundTruth_WeightedFloorCountsOnlyEraMarkedRuns(t *testing.T) {
+	// The floor has to be applied to the sample the NUMBER came from. Nineteen
+	// pre-weighting runs plus one measured run clears a twenty-run floor on the
+	// caller's own tally while the weighted rate is computed from that single
+	// run — and one perfect run scores 1.0, which clears reconcile's exemption
+	// threshold outright. This is the ordinary state of the store on first
+	// upgrade, not a contrived one.
+	dir := t.TempDir()
+	appendN(t, dir, 19, "Fresh", "m1", 4, 0) // pre-weighting: binary rate 0.0
+	weighted(t, dir, 1, "Fresh", 1, 0, 1.0)  // the single measured run
+
+	rates, err := TrustPriorsWithGroundTruth(dir, 20, allConfirmed("fresh"))
+	require.NoError(t, err)
+	require.Contains(t, rates, "fresh")
+	assert.InDelta(t, 0.0, rates["fresh"], 1e-9,
+		"one era-marked run must not satisfy a twenty-run floor and buy a maximal prior")
+}
+
+func TestTrustPriorsWithGroundTruth_IneligibleRunsDoNotReEnterThroughTheNumerator(t *testing.T) {
+	// The weighted fold reads the FILTERED slice. Read off the raw records
+	// instead, a single exploratory `--consensus off` reconcile would durably
+	// move the prior every later strict run consults — the anti-gaming boundary
+	// strictRuns exists to hold.
+	dir := t.TempDir()
+	weighted(t, dir, 20, "Gamed", 1, 0, 0.0) // measured, earned nothing
+
+	// The credit stays INSIDE the per-finding bound weightedCreditByPersona
+	// enforces. An out-of-bound value would be dropped by that guard instead, and
+	// the test would pass while proving nothing about the filter chain.
+	lenient := reviewer_(runIDAt(time.Now(), "lenient-run"), "Gamed", "m1", 20, 0)
+	lenient.ConsensusLevel = "off"
+	lenient.WeightedCredit = 20.0
+	lenient.CreditEra = CreditEraCurrent
+	require.NoError(t, Append(dir, lenient))
+
+	rates, err := TrustPriorsWithGroundTruth(dir, 10, allConfirmed("gamed"))
+	require.NoError(t, err)
+	assert.InDelta(t, 0.0, rates["gamed"], 1e-9,
+		"a non-strict run must not contribute to the weighted numerator")
+}
+
+func TestWeightedCreditByPersona_DropsCreditThatNoEmitterCouldHaveWritten(t *testing.T) {
+	// The store is plain user-writable JSONL. Credit above raised x
+	// isolatedFindingWeight, or below zero, was not written by this emitter — and
+	// left in, a hand-edited weighted_credit of 50 becomes a prior of 50.0, which
+	// clears every threshold reconcile has.
+	withCredit := func(runID string, raised int, credit float64, era int) Record {
+		r := reviewer_(runID, "Dax", "m1", raised, 0)
+		r.WeightedCredit = credit
+		r.CreditEra = era
+		return r
+	}
+	// The CEILING moved to scrubForgedCredit, which runs earlier in the chain
+	// where FindingsDocShielded is still separate — see
+	// TestScrubForgedCredit_UnMeasuresRatherThanDropsAndKeepsHonestRecords and
+	// TestTrustPriors_ForgedCreditCannotReachThePriorThroughTheEraMerge. What
+	// stays here are the two checks that need no pre-merge knowledge.
+	for name, tc := range map[string]Record{
+		"negative credit":     withCredit("run-neg", 4, -5.0, CreditEraCurrent),
+		"negative era marker": withCredit("run-era", 4, 4.0, -7),
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.NotContains(t, weightedCreditByPersona([]Record{tc}), "dax",
+				"a record this emitter could not have written must not reach the tally")
+		})
+	}
+
+	// The bound is inclusive, so an all-solo record at exactly the maximum stays.
+	kept := weightedCreditByPersona([]Record{withCredit("run-max", 4, 4.0, CreditEraCurrent)})
+	require.Contains(t, kept, "dax")
+	assert.InDelta(t, 4.0, kept["dax"].credit, 1e-9)
+}
+
+func TestWeightedCreditByPersona_IgnoresNonReviewerRecords(t *testing.T) {
+	// An aggregate row carries no Reviewer, so today it would only pollute the
+	// "" key — benign by accident of another file rather than by anything this
+	// function asserts.
+	agg := Record{
+		SchemaVersion:  SchemaVersion,
+		RecordType:     RecordTypeAggregate,
+		Reviewer:       "Dax",
+		FindingsRaised: 4,
+		WeightedCredit: 4.0,
+		CreditEra:      CreditEraCurrent,
+	}
+	assert.Empty(t, weightedCreditByPersona([]Record{agg}),
+		"only reviewer records carry a per-lens weighted credit")
+}
+
+func TestConfirmationFactor_RejectsANegativeCountInsideAPositiveTotal(t *testing.T) {
+	// The total check cannot catch this: -5 + 30 is 30. Unguarded it yields
+	// factor -0.1667 and a NEGATIVE prior in the map reconcile reads.
+	_, ok := confirmationFactor(Confirmation{Confirmed: -5, Dismissed: 30})
+	assert.False(t, ok, "a negative count must read as no ground truth, never as a negative factor")
+}
+
+func TestMinConfirmationOutcomes_NotNarrowedWithoutRemeasurement(t *testing.T) {
+	// The literal is deliberate, matching TestMinPairCases_NotNarrowedWithoutRemeasurement.
+	assert.Equal(t, 20, minConfirmationOutcomes,
+		"minConfirmationOutcomes is PROVISIONAL and borrowed from DefaultTrustMinRuns. "+
+			"Moving it requires a fresh measurement against the localdebt ground-truth "+
+			"ledger, recorded in the constant's doc comment. Update this literal in the same commit.")
+}
+
+func TestGroundTruthLookup_ReceivesTheSameWindowTheRecordReadUsed(t *testing.T) {
+	// ResolveTrustPriors bounds the scorecard read to defaultTrustWindow. An
+	// un-windowed lookup would scale that 180-day isolation credit by an all-time
+	// confirmation ratio — two different populations multiplied as though they
+	// were the same one.
+	dir := t.TempDir()
+	weighted(t, dir, 20, "Lone", 1, 0, 1.0)
+
+	var gotSince time.Duration
+	var gotNow time.Time
+	gt := func(since time.Duration, now time.Time) (map[string]Confirmation, error) {
+		gotSince, gotNow = since, now
+		return map[string]Confirmation{"lone": {Confirmed: 40}}, nil
+	}
+	now := time.Now()
+	_, err := trustPriorsSince(dir, 10, defaultTrustWindow, now, gt)
+	require.NoError(t, err)
+
+	assert.Equal(t, defaultTrustWindow, gotSince)
+	assert.Equal(t, now, gotNow)
+}
+
+func TestKeptForTrust_IsTheSameChainBothSurfacesRun(t *testing.T) {
+	// The chain used to be spelled out verbatim in trust.go and pairtally.go.
+	// A sixth link added to one would silently not reach the other, re-admitting
+	// through the pair surface every run the trust gates had just excluded.
+	records := []Record{
+		reviewer_("run-a", "Dax", "m1", 2, 1),
+		func() Record { r := reviewer_("run-b", "Dax", "m1", 2, 1); r.ConsensusLevel = "off"; return r }(),
+		func() Record { r := reviewer_("run-c", "Greta", "m1", 2, 1); r.Outcome = "truncated"; return r }(),
+	}
+	before := append([]Record{}, records...)
+
+	kept := keptForTrust(records)
+	require.Len(t, kept, 1, "the lenient run and the truncated run must both be gone")
+	assert.Equal(t, "run-a", kept[0].RunID)
+	assert.Equal(t, before, records, "the chain must not mutate its input")
+}
+
+func TestTrustPriorsWithGroundTruth_WeightedFloorHoldsEvenWithNoCallerFloor(t *testing.T) {
+	// cli/personas.go calls TrustPriors(dir, 0) deliberately, to render every
+	// persona it has any history for. On that path a `minRuns > 0 &&` guard is
+	// switched off entirely, and one era-marked run would publish a full
+	// weighted rate.
+	dir := t.TempDir()
+	weighted(t, dir, 1, "Solo", 1, 0, 1.0)
+
+	rates, err := TrustPriorsWithGroundTruth(dir, 0, allConfirmed("solo"))
+	require.NoError(t, err)
+	require.Contains(t, rates, "solo")
+	assert.InDelta(t, 0.0, rates["solo"], 1e-9,
+		"one measured run must not publish a weighted rate even when the caller asked for no floor")
+}
+
+func TestTrustPriors_ForgedCreditCannotReachThePriorThroughTheEraMerge(t *testing.T) {
+	// THIS TEST RUNS THE WHOLE CHAIN ON PURPOSE. An earlier version called
+	// weightedCreditByPersona directly with a hand-built record, which skipped
+	// mergeRoutedEras — and the merge is precisely what defeated the bound it
+	// was asserting. It passed while the gap was open end to end.
+	//
+	// The forgery: 2 raised findings plus 3 doc-shielded ones (pre-merge those
+	// are separate, so the honest emit-time ceiling is 2.0), with a hand-edited
+	// credit of 5.0. After the merge the record reads raised=5, shielded=0, so a
+	// bound taken THERE is 5.0 and the forgery passes — publishing a maximal
+	// prior of 1.0 for a lens whose binary rate is 0.0. Asked before the merge,
+	// the same bound is 2.0 and the forgery is scrubbed.
+	dir := t.TempDir()
+	for i := 0; i < DefaultTrustMinRuns; i++ {
+		r := reviewer_(runIDAt(time.Now(), fmt.Sprintf("forged-%03d", i)), "Forger", "m1", 2, 0)
+		r.RaisedDenominator = raisedDenominatorRoutedExShield
+		r.FindingsDocShielded = 3
+		r.WeightedCredit = 5.0
+		r.CreditEra = CreditEraCurrent
+		require.NoError(t, Append(dir, r))
+	}
+
+	rates, err := TrustPriorsWithGroundTruth(dir, DefaultTrustMinRuns, allConfirmed("forger"))
+	require.NoError(t, err)
+	require.Contains(t, rates, "forger")
+	assert.InDelta(t, 0.0, rates["forger"], 1e-9,
+		"forged credit must be un-measured, leaving the pre-existing binary rate")
+}
+
+func TestScrubForgedCredit_UnMeasuresRatherThanDropsAndKeepsHonestRecords(t *testing.T) {
+	// The scrub must not become a second attack surface: a forged float may not
+	// delete a real run from the trust denominator, only from the weighted one.
+	forged := reviewer_("run-a", "Dax", "m1", 2, 1)
+	forged.FindingsDocShielded = 3
+	forged.WeightedCredit = 5.0
+	forged.CreditEra = CreditEraCurrent
+
+	// Exactly at the honest ceiling, WITH a large shielded count beside it.
+	// Pre-merge a doc-shielded finding is counted INSTEAD of being counted in
+	// FindingsRaised, so all 4 raised could have earned credit and this record
+	// must survive. An earlier version of the bound subtracted the shielded
+	// count here and would have scrubbed it.
+	honest := reviewer_("run-b", "Dax", "m1", 4, 0)
+	honest.FindingsDocShielded = 3
+	honest.WeightedCredit = 4.0
+	honest.CreditEra = CreditEraCurrent
+
+	negative := reviewer_("run-c", "Dax", "m1", 4, 0)
+	negative.WeightedCredit = -1.0
+	negative.CreditEra = CreditEraCurrent
+
+	in := []Record{forged, honest, negative}
+	before := append([]Record{}, in...)
+	out := scrubForgedCredit(in)
+
+	require.Len(t, out, 3, "a forged record is un-measured, never dropped")
+	assert.Equal(t, 2, out[0].FindingsRaised, "the binary counters must be untouched")
+	assert.Equal(t, 1, out[0].FindingsCorroborated)
+	assert.Zero(t, out[0].CreditEra, "the forged record reads as pre-weighting")
+	assert.Zero(t, out[0].WeightedCredit)
+
+	assert.Equal(t, CreditEraCurrent, out[1].CreditEra,
+		"a record exactly at the ceiling, with shielded findings beside it, stays measured")
+	assert.InDelta(t, 4.0, out[1].WeightedCredit, 1e-9)
+
+	assert.Zero(t, out[2].CreditEra, "negative credit is impossible at any era")
+	assert.Equal(t, before, in, "the link must not mutate its input")
+}
+
+func TestResolveTrustPriorsWithGroundTruth_KeepsResolveTrustPriorsBehaviourOnNil(t *testing.T) {
+	// The seam Phase 5 needs is additive: passing nil must be byte-identical to
+	// the no-argument entry point every production caller already uses.
+	//
+	// THE STORE IS SEEDED. An earlier version pointed HOME at an empty temp dir,
+	// so both sides read nothing and the test compared two empty maps — it could
+	// not see a divergent floor or window and a mutation that changed the floor
+	// survived it.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AppData", home)
+	dir, err := DefaultDir()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	appendN(t, dir, DefaultTrustMinRuns+5, "Sasha", "m1", 4, 3)
+	// BELOW the floor, so a divergent floor changes the KEY SET and not merely a
+	// rate. Without this second persona a mutation swapping DefaultTrustMinRuns
+	// for 1 survives, since both floors admit Sasha at the same rate.
+	appendN(t, dir, 2, "Quiet", "m1", 4, 1)
+
+	got := ResolveTrustPriorsWithGroundTruth(nil)
+	require.Contains(t, got, "sasha", "the fixture must actually reach the store")
+	assert.InDelta(t, 3.0/4.0, got["sasha"], 1e-9)
+	assert.NotContains(t, got, "quiet", "the DefaultTrustMinRuns floor must still apply")
+	assert.Equal(t, ResolveTrustPriors(), got)
+}
+
+func TestTrustPriors_RoutedPhantomsCannotBeLaunderedIntoWeightedCredit(t *testing.T) {
+	// THE SECOND DOOR. FindingsRaised counts chargeable Tier-4-routed phantoms,
+	// and credit is emitted only from the real findings — so a bound of
+	// FindingsRaised alone is loose by exactly the routed count, and that gap is
+	// WIDEST for the reviewer carrying the most fabrication evidence. One real
+	// finding plus three phantoms bounds at 4.0 against an honest ceiling of 1.0.
+	dir := t.TempDir()
+	for i := 0; i < DefaultTrustMinRuns; i++ {
+		r := reviewer_(runIDAt(time.Now(), fmt.Sprintf("laundered-%03d", i)), "Ghost", "m1", 4, 0)
+		r.FindingsRouted = 3 // of the 4 raised, 3 were phantoms
+		r.WeightedCredit = 4.0
+		r.CreditEra = CreditEraCurrent
+		require.NoError(t, Append(dir, r))
+	}
+
+	rates, err := TrustPriorsWithGroundTruth(dir, DefaultTrustMinRuns, allConfirmed("ghost"))
+	require.NoError(t, err)
+	require.Contains(t, rates, "ghost")
+	assert.InDelta(t, 0.0, rates["ghost"], 1e-9,
+		"credit above the non-routed ceiling must be un-measured, leaving the binary rate")
+}
+
+func TestEmit_StampsTheRoutedCountBesideTheCredit(t *testing.T) {
+	// The read-time ceiling is computed from FindingsRouted, so a record that
+	// carries the era must carry the count too or it is bounded too loosely.
+	dir := t.TempDir()
+	in := EmitInput{
+		RunID:     pairRunID("r-routed-count"),
+		Reviewers: map[string]ReviewerMeta{"dax": {Model: "m1", Outcome: outcomeFindings}},
+		Findings: []Finding{
+			{File: "a.go", Line: 1, Problem: "real", Reviewers: []string{"dax"}},
+		},
+		UnresolvedFindings: []Finding{
+			{File: "g1.go", Line: 1, Problem: "phantom", Reviewers: []string{"dax"}},
+			{File: "g2.go", Line: 2, Problem: "phantom", Reviewers: []string{"dax"}},
+		},
+	}
+	require.NoError(t, Emit(in, EmitOpts{Dir: dir}))
+
+	got := reviewerRecordsByName(t, dir)["dax"]
+	assert.Equal(t, 3, got.FindingsRaised)
+	assert.Equal(t, 2, got.FindingsRouted, "the routed count must be persisted, not recomputed")
+	assert.InDelta(t, 1.0, got.WeightedCredit, 1e-9)
+
+	// The emitted record must sit exactly AT its own ceiling, not above it —
+	// this is the invariant scrubForgedCredit relies on.
+	bound := float64(got.FindingsRaised-got.FindingsRouted) * maxPerFindingCredit(isolatedFindingWeight)
+	assert.LessOrEqual(t, got.WeightedCredit, bound)
+}
+
+func TestMaxPerFindingCredit_CoversTheCorroboratedBranchToo(t *testing.T) {
+	// reviewerCounts scales ONLY the solo branch by isolatedFindingWeight; a
+	// corroborated finding contributes 1/distinctCount, up to 0.5 for a pair. A
+	// ceiling derived from the constant alone is therefore too tight the moment
+	// the constant is re-measured below 0.5 — and it would scrub honest
+	// corroborated-heavy records silently.
+	// The floor is exercised at hypothetical weights, because at the constant's
+	// current 1.0 the max() is indistinguishable from returning the weight — a
+	// guard no mutation could kill, and therefore no guard at all.
+	for name, tc := range map[string]struct{ weight, want float64 }{
+		"weight above the floor": {1.0, 1.0},
+		"weight at the floor":    {0.5, 0.5},
+		"weight below the floor": {0.4, 0.5},
+		"weight far below":       {0.05, 0.5},
+		"weight well above":      {2.0, 2.0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.InDelta(t, tc.want, maxPerFindingCredit(tc.weight), 1e-9)
+		})
+	}
+	assert.GreaterOrEqual(t, maxPerFindingCredit(isolatedFindingWeight), isolatedFindingWeight,
+		"the solo branch is governed by the constant")
+
+	// Two findings, each corroborated by exactly one peer: credit 1.0 over 2
+	// raised, which is 0.5 per finding — the corroborated branch's maximum.
+	_, corroborated, credit := reviewerCounts("dax", []Finding{
+		{Reviewers: []string{"dax", "bruce"}},
+		{Reviewers: []string{"dax", "greta"}},
+	})
+	require.Equal(t, 2, corroborated)
+	assert.InDelta(t, 1.0, credit, 1e-9)
+	assert.LessOrEqual(t, credit, 2*maxPerFindingCredit(isolatedFindingWeight),
+		"an honest record must never exceed its own ceiling")
+}
+
+// --- Phase 5 (Story 06) regression guards and TD-032 pin ---
+
+func TestTrustPriors_RecordSurvivesAModelRepoint(t *testing.T) {
+	// AC 06-02 and epic acceptance criterion 5. The registry churn this guards
+	// against is real and recurring — qwen3.6-plus -> qwen3.7-plus,
+	// nemotron-3-ultra-550b pulled, mellum2 deprecated — and a persona repointed
+	// at a new model must keep the standing it earned under the old one.
+	//
+	// It is pinned against the ACTUAL trustPriorsSince loop and its
+	// normalizeReviewerName(row.Reviewer) key, not a hand-built equivalent: the
+	// property depends on Aggregate grouping by (Reviewer, Model) and the loop
+	// summing those rows under one persona key, so a mock of the loop would
+	// assert the mock rather than the behaviour.
+	dir := t.TempDir()
+	// Ten runs under the retired model, ten under its replacement. Neither half
+	// clears the floor of twenty alone; the persona does only if they sum.
+	// ASYMMETRIC halves (AC 06-02 DoD): an averaging implementation computes
+	// (0.75 + 10/60)/2 = 0.4583 here, while the summing implementation this
+	// surface specifies computes 40/100 = 0.40 — the assertion can tell them
+	// apart. A symmetric (4,3)/(4,3) split could not: both give 0.75.
+	appendN(t, dir, 10, "Greta", "qwen3.6-plus", 4, 3)
+	appendN(t, dir, 10, "Greta", "qwen3.7-plus", 6, 1)
+
+	rates, err := TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+	require.Contains(t, rates, "greta",
+		"a persona's twenty runs must clear the floor as one record, not as two ten-run model records")
+	assert.InDelta(t, 0.40, rates["greta"], 1e-9,
+		"the repoint must SUM the two models' evidence: 40 corroborated of 100 raised, whichever model ran them")
+
+	// The same persona under a THIRD, never-before-seen model still reads as one
+	// record rather than resetting to a cold start.
+	appendN(t, dir, 5, "Greta", "kimi-k3", 4, 3)
+	rates, err = TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+	// 55 corroborated of 120 raised (40 + 15 over 100 + 20).
+	assert.InDelta(t, 55.0/120.0, rates["greta"], 1e-9)
+}
+
+func TestTrustPriors_CasingOfAModelRepointNeverSplitsAPersona(t *testing.T) {
+	// The half of AC 06-02 that a same-casing fixture cannot catch. The store
+	// carries the panel's original casing (registry.yaml agent names are free
+	// text), so a persona re-registered as "GRETA" must land on the same key.
+	// This is the mutation normalizeReviewerName exists to survive.
+	dir := t.TempDir()
+	// ASYMMETRIC halves, same reason as the model-repoint test above: an
+	// averaging implementation reads (0.75 + 10/60)/2, summing reads 0.40.
+	appendN(t, dir, 10, "Greta", "m1", 4, 3)
+	appendN(t, dir, 10, "GRETA", "m2", 6, 1)
+
+	rates, err := TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+	require.Len(t, rates, 1, "one persona, one key — casing must not fork the record")
+	require.Contains(t, rates, "greta")
+	assert.InDelta(t, 0.40, rates["greta"], 1e-9)
+}
+
+func TestTrustPriors_NewLensIsOmittedNotStarvedAtZero(t *testing.T) {
+	// AC 06-03 and epic acceptance criterion 6. The cold-start death spiral this
+	// prevents: a lens with no record must not be down-weighted into never being
+	// dispatched, or it can never earn one.
+	//
+	// The mechanism is ABSENCE, not a floor value. reconcile/consensus.go does a
+	// plain map lookup in both consumers (trustExempt returns false on !ok,
+	// demoteByTrust returns m unchanged on !ok), so an absent lens reverts to the
+	// neutral baseline. A present-at-zero lens would instead sit at or below
+	// trustLowThreshold and be demoted to ConfLow on every singleton — the exact
+	// starvation the criterion forbids. The reconcile half of this is pinned by
+	// reconcile/trust_test.go's TestTrustPriors_AbsentReviewerNoOp.
+	dir := t.TempDir()
+	appendN(t, dir, 25, "Bruce", "m1", 4, 4)
+	appendN(t, dir, 3, "Newlens", "m1", 2, 0)
+
+	rates, err := TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+
+	rate, present := rates["newlens"]
+	assert.False(t, present,
+		"a below-floor lens must be ABSENT, never present at a punitive zero")
+	assert.Zero(t, rate, "the comma-ok zero value is what an absent lookup yields in reconcile")
+	require.Contains(t, rates, "bruce", "a lens that cleared the floor is unaffected")
+
+	// The map handed to reconcile is exactly this one, so the absence travels.
+	var opts reclib.Options
+	opts.TrustPriors = rates
+	_, exempt := opts.TrustPriors["newlens"]
+	assert.False(t, exempt)
+}
+
+func TestTrustPriors_JunkLabelledRaiserIsStillChargedForItsFindings(t *testing.T) {
+	// TD-032's pinning test, on the RATE rather than on the explainability
+	// surface — the escape it closes is a scoring escape, so the proof has to be
+	// a number demoteByTrust would read.
+	//
+	// The lens raises three findings per junk run and none of them is
+	// corroborated. Before the fix its record was deleted from the tally (its
+	// unreadable labels put it out of every remit), so those uncorroborated
+	// findings never reached the denominator and bad labelling was
+	// self-exculpating. After the fix the rate must FALL.
+	dir := t.TempDir()
+	clean := t.TempDir()
+
+	seed := func(d string, withJunk bool) {
+		for i := 0; i < 20; i++ {
+			rec := reviewer_(runIDAt(time.Now(), fmt.Sprintf("good-%03d", i)), "Dax", "m1", 1, 1)
+			rec.CategoriesRaised = []string{reclib.CategoryTesting}
+			require.NoError(t, Append(d, rec))
+		}
+		if !withJunk {
+			return
+		}
+		for i := 0; i < 10; i++ {
+			runID := runIDAt(time.Now(), fmt.Sprintf("junk-%03d", i))
+			// CategoriesRaised empty, matching what reviewerCategories writes for
+			// a reviewer whose every CATEGORY was outside reclib.Categories().
+			junk := reviewer_(runID, "Dax", "m1", 3, 0)
+			require.NoError(t, Append(d, junk))
+			other := reviewer_(runID, "Pace", "m1", 1, 0)
+			other.CategoriesRaised = []string{reclib.CategoryPerformance}
+			require.NoError(t, Append(d, other))
+		}
+	}
+	seed(dir, true)
+	seed(clean, false)
+
+	withJunk, err := TrustPriors(dir, 10)
+	require.NoError(t, err)
+	without, err := TrustPriors(clean, 10)
+	require.NoError(t, err)
+
+	assert.InDelta(t, 1.0, without["dax"], 1e-9, "the control: twenty corroborated of twenty raised")
+	assert.Less(t, withJunk["dax"], without["dax"],
+		"thirty uncorroborated findings under unreadable labels must lower the rate, not vanish from it")
+	// 20 corroborated of (20 + 30) raised.
+	assert.InDelta(t, 20.0/50.0, withJunk["dax"], 1e-9)
+}
+
+// TestOpportunitySetRuns_UnscopeableRaiserIsKeptWhileSilentLensIsDropped is
+// TD-032's fix and its boundary in one assertion pair, at the filter level.
+//
+// Both lenses contribute nothing to the run's union and both are out of remit
+// for the only topic raised. They must be treated DIFFERENTLY, and the
+// difference is the only thing separating a closed escape from a broken
+// guarantee: the one that RAISED findings is charged (else bad labelling
+// exculpates a phantom-raiser), the one that stayed SILENT is dropped (else a
+// specialist is penalised for correct silence, breaking epic AC 1).
+func TestOpportunitySetRuns_UnscopeableRaiserIsKeptWhileSilentLensIsDropped(t *testing.T) {
+	in := []Record{
+		oppRec("run-1", "penny", []string{"performance"}), // the only topic in play
+		oppRec("run-1", "sasha", nil),                     // silent, out of remit
+		oppRecUnlabelled("run-1", "dax", 3),               // raised 3, none attributable
+	}
+	out := opportunityFilter(in)
+
+	names := map[string]bool{}
+	for _, r := range out {
+		names[r.Reviewer] = true
+	}
+	assert.True(t, names["penny"], "performance was in play")
+	assert.False(t, names["sasha"],
+		"a lens that raised NOTHING on an out-of-remit run is correctly silent and leaves the denominator")
+	assert.True(t, names["dax"],
+		"a lens that RAISED findings the scorer could not attribute must stay chargeable (TD-032)")
+}
+
+func TestOpportunityDisposition_IsTheOnePredicateBothSurfacesRead(t *testing.T) {
+	// The extraction's whole justification. opportunitySetRuns and
+	// ExplainTrustPriors must not each carry their own copy of this rule, or the
+	// explanation names a reason the chain never acted on — a divergence no test
+	// of either surface alone can see.
+	union := map[string]struct{}{"performance": {}}
+
+	assert.Equal(t, dispCounted, opportunityDisposition(oppRec("r", "penny", []string{"performance"}), union))
+	assert.Equal(t, dispOutOfRemit, opportunityDisposition(oppRec("r", "sasha", nil), union))
+	assert.Equal(t, dispUnscopeable, opportunityDisposition(oppRecUnlabelled("r", "dax", 2), union))
+	assert.Equal(t, dispCounted, opportunityDisposition(oppRec("r", "vera", nil), union),
+		"an unmapped registry-only lens is never opportunity-scoped (C11)")
+	assert.Equal(t, dispCounted, opportunityDisposition(oppRec("r", "sasha", nil), nil),
+		"an empty union means nobody had scopeable evidence — refuse to guess")
+}
+
+// TestOpportunityDisposition_EmptyUnionRaiserIsKeptAndAnnotated is the Q11
+// re-scope (2026-09-22): the empty-union branch refused to guess for the TALLY
+// but also stayed SILENT for the EXPLANATION, so a mapped lens that raised
+// findings on a run nobody could scope passed through un-annotated — the
+// null case ("nobody raised anything" vs "every category fell outside the
+// vocabulary" vs "all non-discriminating") stayed unmeasurable from the
+// surface. The re-scope keeps the tally identical (dispUnscopeable is kept by
+// opportunitySetRuns, so the prior is unchanged) and moves only the
+// annotation: raised>0 on an empty union is exactly dispUnscopeable's meaning
+// ("raised findings, contributed nothing to the union"), so the branch returns
+// it for a mapped lens. Genuine silence (zero-raised, the pin above) and the
+// unmapped lenses (invariant preserved) still answer dispCounted.
+func TestOpportunityDisposition_EmptyUnionRaiserIsKeptAndAnnotated(t *testing.T) {
+	assert.Equal(t, dispUnscopeable, opportunityDisposition(oppRecUnlabelled("r", "dax", 2), nil),
+		"a mapped lens that RAISED findings on an unscopeable run is kept AND annotated — the null case must be measurable")
+	assert.Equal(t, dispCounted, opportunityDisposition(oppRecUnlabelled("r", "vera", 2), nil),
+		"the unmapped invariant survives the re-scope: vera is never opportunity-scoped, never annotated as unlabelled")
+}
+
+// TestOpportunitySetRuns_ARaiserIsNeverDroppedForBeingOutOfItsOwnRemit REVERSES
+// a property this file previously pinned as intended, and the reversal is
+// recorded here rather than slipped in.
+//
+// The old test — TestOpportunitySetRuns_DropsAnOutOfRemitLensThatDidRaiseFindings,
+// added in task 5.3 to close a coverage hole the 5.2.A review found by mutation —
+// asserted the opposite: that a mapped lens raising a discriminating
+// out-of-its-own-remit category leaves the denominator. That was the shipped
+// behaviour and it was wrong, proved by probe at the 5.5 phase gate. dax's remit
+// is testing and error-handling. Against a 20-run honest baseline scoring 1.00,
+// 20 further runs of five uncorroborated findings each labelled `security` left
+// dax at 1.00 — a hundred phantoms charged nothing — while the same phantoms
+// under an unrecognised word dropped dax to 0.17. Labelling a phantom CORRECTLY
+// was more exculpating than labelling it as gibberish.
+//
+// The mutation coverage the old test bought is NOT lost; it moves. The mutant it
+// killed (`if r.FindingsRaised > 0 { return dispCounted }` at the top of
+// opportunityDisposition) is now close to the intended behaviour, so the guard
+// that matters is the opposite one: that a SILENT lens is still dropped. That is
+// asserted below and in
+// TestOpportunitySetRuns_UnscopeableRaiserIsKeptWhileSilentLensIsDropped.
+func TestOpportunitySetRuns_ARaiserIsNeverDroppedForBeingOutOfItsOwnRemit(t *testing.T) {
+	in := []Record{
+		oppRec("run-1", "penny", []string{"performance"}),
+		// sasha's remit is security. performance is a real, discriminating
+		// vocabulary word outside it — the exact shape that used to buy a free
+		// pass for every finding on the record.
+		oppRec("run-1", "sasha", []string{"performance"}),
+		// And the silent lens on the same run, which must STILL be dropped:
+		// that is the guarantee epic acceptance criterion 1 actually makes, and
+		// the boundary this change must not cross.
+		oppRec("run-1", "dax", nil),
+	}
+	out := opportunityFilter(in)
+
+	names := map[string]bool{}
+	for _, r := range out {
+		names[r.Reviewer] = true
+	}
+	assert.True(t, names["penny"], "performance is penny's remit")
+	assert.True(t, names["sasha"],
+		"a lens that RAISED findings is not silent; it stays accountable for them even out of remit")
+	assert.False(t, names["dax"],
+		"a lens that raised NOTHING on an out-of-remit run is correctly silent and still leaves the denominator")
+
+	assert.Equal(t, dispCounted,
+		opportunityDisposition(oppRec("run-1", "sasha", []string{"performance"}),
+			map[string]struct{}{"performance": {}}),
+		"an out-of-remit RAISER is counted, not annotated: no exclusion happened and no reason label applies")
+}
+
+func TestTrustPriors_OutOfRemitPhantomsAreChargedNotForgiven(t *testing.T) {
+	// The phase-gate probe, turned into a permanent guard, on the RATE rather
+	// than the filter — the escape it closes ended at reconcile's trustExempt,
+	// so the proof has to be a number demoteByTrust would read.
+	//
+	// Both stores give dax the same 20 honest, fully-corroborated runs. One adds
+	// 20 runs of five uncorroborated findings each, labelled `security`: real
+	// vocabulary, discriminating, outside dax's remit. Before this change those
+	// records were dropped and dax stayed at a perfect 1.00, clearing
+	// reconcile's trustHighThreshold of 0.7 for blanket exemption.
+	seed := func(t *testing.T, withPhantoms bool) string {
+		t.Helper()
+		dir := t.TempDir()
+		for i := 0; i < 20; i++ {
+			runID := runIDAt(time.Now(), fmt.Sprintf("honest-%03d", i))
+			r := reviewer_(runID, "Dax", "m1", 1, 1)
+			r.CategoriesRaised = []string{reclib.CategoryTesting}
+			require.NoError(t, Append(dir, r))
+		}
+		if !withPhantoms {
+			return dir
+		}
+		for i := 0; i < 20; i++ {
+			runID := runIDAt(time.Now(), fmt.Sprintf("phantom-%03d", i))
+			p := reviewer_(runID, "Dax", "m1", 5, 0)
+			p.CategoriesRaised = []string{reclib.CategorySecurity}
+			require.NoError(t, Append(dir, p))
+		}
+		return dir
+	}
+
+	clean, err := TrustPriors(seed(t, false), 10)
+	require.NoError(t, err)
+	assert.InDelta(t, 1.0, clean["dax"], 1e-9, "the control: twenty corroborated of twenty raised")
+
+	withPhantoms, err := TrustPriors(seed(t, true), 10)
+	require.NoError(t, err)
+	// 20 corroborated of (20 + 100) raised.
+	assert.InDelta(t, 20.0/120.0, withPhantoms["dax"], 1e-9,
+		"a hundred uncorroborated out-of-remit findings must reach the denominator")
+	assert.Less(t, withPhantoms["dax"], 0.3,
+		"and must drop the lens below reconcile's trustHighThreshold, not leave it exempt at 1.00")
+}
+
+func TestTrustPriors_OutOfRemitCorroborationAlsoRaisesAPrior(t *testing.T) {
+	// The OTHER half of the 5.5 narrowing, which the change's first telling
+	// described only in the charging direction. Keeping an out-of-remit raiser
+	// puts it in the NUMERATOR as well as the denominator, so out-of-remit work
+	// that the panel agreed with now lifts a prior where it used to be dropped.
+	//
+	// That is the honest consequence of the rule and not a leak to patch: a lens
+	// cannot be accountable for its out-of-lane mistakes and unrewarded for its
+	// out-of-lane hits by the same gate. It is pinned here because a reader who
+	// met only the phantom probe would expect this direction to be impossible.
+	dir := t.TempDir()
+	// Twenty in-remit runs, none corroborated: the floor case, rate 0.0.
+	for i := 0; i < 20; i++ {
+		r := reviewer_(runIDAt(time.Now(), fmt.Sprintf("inremit-%03d", i)), "Dax", "m1", 1, 0)
+		r.CategoriesRaised = []string{reclib.CategoryTesting}
+		require.NoError(t, Append(dir, r))
+	}
+	floor, err := TrustPriors(dir, 10)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.0, floor["dax"], 1e-9,
+		"the control: twenty raised, none corroborated")
+
+	// Twenty more runs of five CORROBORATED findings each, all labelled
+	// security — real vocabulary, outside dax's remit.
+	for i := 0; i < 20; i++ {
+		r := reviewer_(runIDAt(time.Now(), fmt.Sprintf("outremit-%03d", i)), "Dax", "m1", 5, 5)
+		r.CategoriesRaised = []string{reclib.CategorySecurity}
+		require.NoError(t, Append(dir, r))
+	}
+	lifted, err := TrustPriors(dir, 10)
+	require.NoError(t, err)
+	// 100 corroborated of 120 raised.
+	assert.InDelta(t, 100.0/120.0, lifted["dax"], 1e-9)
+	assert.Greater(t, lifted["dax"], floor["dax"],
+		"out-of-remit corroboration must raise the prior, symmetrically with out-of-remit phantoms lowering it")
+}
+
+func TestOpportunityDisposition_ZeroRaisedContributorIsDropped(t *testing.T) {
+	// THE CELL NO OTHER FIXTURE IN THIS FILE COULD BUILD, and the reason a gate
+	// round was able to flip it with the whole package green.
+	//
+	// A lens that raised nothing but contributed a discriminating out-of-remit
+	// category — the shape the ambiguous stream really produces — is DROPPED.
+	// Keeping it was tried and reverted: a zero-raised record carries no
+	// denominator, so keeping it cannot improve the rate, but it does add a run
+	// toward the minRuns floor, which buys publication. See
+	// TestTrustPriors_ZeroRaisedContributionsCannotBuyTheFloor for that half.
+	union := map[string]struct{}{"performance": {}}
+
+	assert.Equal(t, dispOutOfRemit,
+		opportunityDisposition(oppRecRaw("r", "sasha", 0, []string{"performance"}), union),
+		"zero raised, contributed an OUT-OF-REMIT topic: dropped")
+	assert.Equal(t, dispCounted,
+		opportunityDisposition(oppRecRaw("r", "penny", 0, []string{"performance"}), union),
+		"zero raised, contributed an IN-REMIT topic: kept, via the remit test")
+	assert.Equal(t, dispOutOfRemit,
+		opportunityDisposition(oppRecRaw("r", "sasha", 0, nil), union),
+		"zero raised, contributed nothing: dropped, unchanged")
+	assert.Equal(t, dispCounted,
+		opportunityDisposition(oppRecRaw("r", "sasha", 2, []string{"performance"}), union),
+		"the boundary: the SAME record with findings is kept")
+}
+
+func TestTrustPriors_ZeroRaisedContributionsCannotBuyTheFloor(t *testing.T) {
+	// The consequence that made the reverted hoist worse than the complaint it
+	// answered. A zero-raised record moves neither side of the ratio, so the
+	// obvious reading is that keeping it is harmless. It is not: trustPriorsSince
+	// tallies t.runs over every KEPT record and compares that to minRuns, so a
+	// hundred evidence-free records can carry a lens over a floor its real
+	// history does not reach — and publish it at a rate computed from five runs.
+	//
+	// 1.0000 is above reconcile's trustHighThreshold (0.7), so the published
+	// value is not merely optimistic, it is blanket trustExempt.
+	dir := t.TempDir()
+	for i := 0; i < 5; i++ {
+		r := reviewer_(runIDAt(time.Now(), fmt.Sprintf("honest-%03d", i)), "Dax", "m1", 1, 1)
+		r.CategoriesRaised = []string{reclib.CategoryTesting}
+		require.NoError(t, Append(dir, r))
+	}
+	rates, err := TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+	require.NotContains(t, rates, "dax", "the control: five runs do not clear a twenty-run floor")
+
+	// A hundred zero-raised out-of-lane contributions, exactly as the ambiguous
+	// stream writes them.
+	for i := 0; i < 100; i++ {
+		runID := runIDAt(time.Now(), fmt.Sprintf("phantom-%03d", i))
+		p := reviewer_(runID, "Dax", "m1", 0, 0)
+		p.CategoriesRaised = []string{reclib.CategorySecurity}
+		require.NoError(t, Append(dir, p))
+		// Another lens keeps the union discriminating and non-empty.
+		other := reviewer_(runID, "Sasha", "m1", 1, 0)
+		other.CategoriesRaised = []string{reclib.CategorySecurity}
+		require.NoError(t, Append(dir, other))
+	}
+
+	rates, err = TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+	assert.NotContains(t, rates, "dax",
+		"evidence-free records must not carry a lens over the floor into a published 1.0000 prior")
+}
+
+// TestTrustPriorsAndDetails_AgreesWithTheTwoPublicFaces pins the single-read
+// entry point cli/personas.go consumes: one ReadSince must yield exactly the
+// maps TrustPriors and ExplainTrustPriors produce when each reads the store
+// itself. Divergence here would mean `personas list --scores` renders numbers
+// computed from a different record set than the two public faces document.
+func TestTrustPriorsAndDetails_AgreesWithTheTwoPublicFaces(t *testing.T) {
+	dir := t.TempDir()
+	appendN(t, dir, 4, "Sasha", "opus", 2, 1)
+	appendN(t, dir, 4, "bruce", "opus", 1, 1)
+
+	wantRates, err := TrustPriors(dir, 0)
+	require.NoError(t, err)
+	wantDetails, err := ExplainTrustPriors(dir, 0)
+	require.NoError(t, err)
+
+	gotRates, gotDetails, err := TrustPriorsAndDetails(dir, 0)
+	require.NoError(t, err)
+	assert.Equal(t, wantRates, gotRates,
+		"the combined read must produce TrustPriors' rates exactly")
+	assert.Equal(t, wantDetails, gotDetails,
+		"the combined read must produce ExplainTrustPriors' details exactly")
+}
+
+// TestTrustPriorsAndDetails_MissingStoreIsFailNeutral pins the combined entry
+// point's contract on a missing store: empty maps and nil error, the same
+// fail-neutral posture both public faces document.
+func TestTrustPriorsAndDetails_MissingStoreIsFailNeutral(t *testing.T) {
+	rates, details, err := TrustPriorsAndDetails(filepath.Join(t.TempDir(), "absent"), 0)
+	require.NoError(t, err)
+	require.NotNil(t, rates)
+	require.NotNil(t, details)
+	assert.Empty(t, rates)
+	assert.Empty(t, details)
+}
+
+func TestScrubForgedCredit_LeavesAnAboveCurrentEraRecordUntouched(t *testing.T) {
+	// An above-current era record was measured under a rule this binary does
+	// not implement, so the CURRENT era's credit bound does not apply to it —
+	// judging it against the current bound and zeroing it rewrites a record
+	// whose honest ceiling is not computable here. Every sibling era gate
+	// (unresolvedEraRuns, weightedCreditByPersona, pairTallies) excludes
+	// above-current records rather than clamping them.
+	above := reviewer_("run-a", "Dax", "m1", 2, 1)
+	above.WeightedCredit = 5.0
+	above.CreditEra = CreditEraCurrent + 1
+	in := []Record{above}
+	before := append([]Record{}, in...)
+	out := scrubForgedCredit(in)
+	assert.Equal(t, before, out,
+		"an above-current record's bound is not computable here — leave it untouched")
+}
+
+func TestOpportunityUnions_AnAboveCurrentDenominatorRecordContributesNoTopic(t *testing.T) {
+	// unresolvedEraRuns excludes a record whose RaisedDenominator exceeds
+	// RaisedDenominatorCurrent because it was computed under a definition this
+	// binary does not implement. The union loop must apply the same exclusion:
+	// a record this binary refuses to score must not decide which OTHER lenses
+	// get scored on that run — one discriminating category from such a record
+	// flips the union non-empty and deletes every silent out-of-remit lens's
+	// record from the denominator.
+	r := oppRec("run-1", "sasha", []string{"security"})
+	r.RaisedDenominator = RaisedDenominatorCurrent + 1
+	unions := opportunityUnions([]Record{r})
+	assert.NotContains(t, unions, "run-1",
+		"an era-uninterpretable record must not contribute topic evidence")
+}
+
+func TestOpportunity_AnUnrecognisedCategoryIsNotATopic(t *testing.T) {
+	// A stored categories_raised value this binary does not recognise (a newer
+	// pin wrote it; reclib/ is separately versioned) must not count as a
+	// discriminating topic. Under the bare denylist test it flipped the run's
+	// union from empty to non-empty, matched no entry in personaRemit, and
+	// dropped every mapped lens that raised nothing on that run — the exact
+	// blackout TestPersonaRemit_EveryDiscriminatingCategoryHasALens exists to
+	// prevent, reached from outside the vocabulary the test can see.
+	junk := oppRec("run-1", "sasha", []string{"reclib-word-this-pin-never-had"})
+	unions := opportunityUnions([]Record{junk})
+	assert.NotContains(t, unions, "run-1",
+		"an out-of-vocabulary word is not topic evidence — the union stays empty")
+
+	// Chain level: the silent mapped lens on that run must take the documented
+	// refuse-to-guess pass-through, not be deleted from the denominator.
+	dax := oppRec("run-1", "dax", nil)
+	out := opportunitySetRuns([]Record{junk, dax}, unions)
+	assert.Contains(t, out, dax,
+		"an empty union means nobody raised a scorable topic — pass the run through un-scoped")
+}
+
+func TestRemitFor_ReturnsTheTableSliceWithoutACopy(t *testing.T) {
+	// opportunityDisposition runs per record in a chain the risk profile calls
+	// performance-critical; RemitCategories' defensive copy per call is the
+	// cost the non-copying accessor removes. The exported API must keep
+	// copying — it crosses a package boundary where the caller could mutate.
+	cats, ok := remitFor("dax")
+	require.True(t, ok)
+	direct := personaRemit["dax"]
+	assert.Equal(t, reflect.ValueOf(direct).Pointer(), reflect.ValueOf(cats).Pointer(),
+		"remitFor must return the table's own slice, not a defensive copy")
+	pub, ok := RemitCategories("dax")
+	require.True(t, ok)
+	assert.NotEqual(t, reflect.ValueOf(direct).Pointer(), reflect.ValueOf(pub).Pointer(),
+		"RemitCategories remains the copying exported API")
+}
+
+// Records written before Record.Outcome existed carry none, and the outcome gate
+// drops them. After an upgrade that silently empties the priors map for lenses
+// whose history is mostly pre-outcome. The count names that loss so a reconcile
+// log line can show it; it never changes the priors themselves.
+func TestResolveTrustPriorsAndUnmeasured_CountsLensesOnlyTheOutcomeGateDrops(t *testing.T) {
+	dir := t.TempDir()
+	appendN(t, dir, DefaultTrustMinRuns, "Pace", "m1", 1, 1) // stamped outcome: in the map
+	for i := 0; i < DefaultTrustMinRuns; i++ {
+		r := reviewer_(runIDAt(time.Now(), fmt.Sprintf("legacy-%03d", i)), "Dax", "m1", 1, 1)
+		r.Outcome = ""
+		require.NoError(t, Append(dir, r))
+	}
+	for i := 0; i < DefaultTrustMinRuns-1; i++ { // below the floor either way: not counted
+		r := reviewer_(runIDAt(time.Now(), fmt.Sprintf("thin-%03d", i)), "Mira", "m1", 1, 1)
+		r.Outcome = ""
+		require.NoError(t, Append(dir, r))
+	}
+
+	priors, unmeasured := resolveTrustPriorsAndUnmeasured(dir, time.Now(), nil)
+	want, err := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, time.Now(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, want, priors, "the priors must be exactly what ResolveTrustPriors returns")
+	assert.Contains(t, priors, "pace")
+	assert.NotContains(t, priors, "dax")
+	assert.Equal(t, 1, unmeasured, "dax clears the floor except for its missing outcomes; mira never would")
+}
+
+// TestWeightedRate_UnmeasurableConfirmationFallsBackToBinary pins the !ok arm
+// after confirmationFactor: a confirmation below minConfirmationOutcomes, or one
+// carrying a negative count, is not a measurement, so the weighted branch must
+// return the binary rate rather than multiply the credit by a zero factor.
+func TestWeightedRate_UnmeasurableConfirmationFallsBackToBinary(t *testing.T) {
+	w := weightedTally{credit: 5, raised: 10, runs: DefaultTrustMinRuns}
+	binary := ratio(3, 10)
+	for name, c := range map[string]Confirmation{
+		"below the outcome floor": {Dismissed: minConfirmationOutcomes - 1},
+		"negative count":          {Confirmed: -1, Dismissed: minConfirmationOutcomes + 5},
+	} {
+		assert.InDelta(t, binary, weightedRate(3, 10, w, c, 0), 1e-9, name)
+	}
+}
+
+// TestOpportunitySetRuns_KeepsWhatItCannotJudge pins the keep-unjudged guard:
+// an aggregate record and a pre-v2 record carry no per-lens remit evidence, so
+// both survive even on a run whose union is wholly out of the lens's remit,
+// while the same silent lens at v2 is dropped there.
+func TestOpportunitySetRuns_KeepsWhatItCannotJudge(t *testing.T) {
+	run := runIDAt(time.Now(), "offremit")
+	union := map[string]map[string]struct{}{run: {reclib.CategoryPerformance: {}}}
+
+	current := reviewer_(run, "Dax", "m1", 0, 0)
+	preEra := reviewer_(run, "Dax", "m1", 0, 0)
+	preEra.SchemaVersion = categoriesRaisedSinceSchema - 1
+	agg := reviewer_(run, "Dax", "m1", 0, 0)
+	agg.RecordType = RecordTypeAggregate
+
+	require.Empty(t, opportunitySetRuns([]Record{current}, union),
+		"precondition: a silent v2 lens on an out-of-remit run is dropped")
+	assert.Len(t, opportunitySetRuns([]Record{preEra}, union), 1, "a pre-v2 record is never judged")
+	assert.Len(t, opportunitySetRuns([]Record{agg}, union), 1, "an aggregate record is never judged")
 }

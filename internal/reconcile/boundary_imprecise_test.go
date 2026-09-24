@@ -25,7 +25,7 @@ import (
 //
 // `truncated` is deliberately NOT asserted true here. That flag feeds the
 // no-match direction, and this epic changes only the PathSuggestion direction;
-// extractAnchorSet's doc records the false reading as accepted for this shape.
+// scanProblemAnchors's doc records the false reading as accepted for this shape.
 func TestScanAnchors_BoundaryTruncatedCallAnchorIsImprecise(t *testing.T) {
 	cases := []struct {
 		name          string

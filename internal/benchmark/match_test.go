@@ -381,3 +381,55 @@ func TestMatchFindings_NoExpectationsOrNoReports(t *testing.T) {
 	require.Len(t, got, 1)
 	assert.False(t, got[0].Matched)
 }
+
+// The candidate sort's final key, repIdx, is the one MatchFindings' return value
+// cannot show: two candidates tied this far compete for one expectation, and
+// FindingMatch records only Expected and Matched, never which report settled it.
+// Dropping the key therefore leaves every MatchFindings test above green — the
+// mutation is silent through the public surface, which is exactly why the order has
+// to be pinned here, against the comparator itself.
+//
+// It matters because the sort is sort.Slice, NOT sort.SliceStable: without a total
+// order the candidate slice order is arbitrary between runs, so a future consumer
+// that reads it (an artifact naming which report settled each expectation is the
+// obvious one) would not be reproducible.
+//
+// Asserted in BOTH argument orders. A single order also passes when the comparator
+// answers false unconditionally, which is the precise mutation being guarded.
+func TestCandidateLess_RepIdxIsTheFinalTieBreak(t *testing.T) {
+	// Identical on every earlier key — midDistance, expID, repFile, repLine — so the
+	// comparator can only separate these two on repIdx.
+	lo := candidate{expIdx: 0, repIdx: 1, midDistance: 4, expID: "e1", repFile: "pkg/a.go", repLine: 10}
+	hi := candidate{expIdx: 0, repIdx: 7, midDistance: 4, expID: "e1", repFile: "pkg/a.go", repLine: 10}
+
+	if !candidateLess(lo, hi) {
+		t.Fatalf("candidate with the lower repIdx must sort first: candidateLess(repIdx=%d, repIdx=%d) = false", lo.repIdx, hi.repIdx)
+	}
+	if candidateLess(hi, lo) {
+		t.Fatalf("candidate with the higher repIdx must not sort first: candidateLess(repIdx=%d, repIdx=%d) = true", hi.repIdx, lo.repIdx)
+	}
+	if candidateLess(lo, lo) {
+		t.Fatal("a candidate must not sort before itself: the comparator has to be a strict weak ordering")
+	}
+}
+
+// The earlier keys still outrank repIdx. Without this, a comparator that returned
+// `a.repIdx < b.repIdx` first would satisfy the test above while silently reordering
+// the keys that DO change the match set.
+func TestCandidateLess_EarlierKeysOutrankRepIdx(t *testing.T) {
+	base := candidate{expIdx: 0, repIdx: 9, midDistance: 4, expID: "e1", repFile: "pkg/a.go", repLine: 10}
+
+	for _, tc := range []struct {
+		key   string
+		worse candidate
+	}{
+		{"midDistance", func() candidate { c := base; c.repIdx = 0; c.midDistance = 5; return c }()},
+		{"expID", func() candidate { c := base; c.repIdx = 0; c.expID = "e2"; return c }()},
+		{"repFile", func() candidate { c := base; c.repIdx = 0; c.repFile = "pkg/b.go"; return c }()},
+		{"repLine", func() candidate { c := base; c.repIdx = 0; c.repLine = 11; return c }()},
+	} {
+		if !candidateLess(base, tc.worse) {
+			t.Errorf("%s must be compared before repIdx: the candidate winning on %s has the higher repIdx and must still sort first", tc.key, tc.key)
+		}
+	}
+}

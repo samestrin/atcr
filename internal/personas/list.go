@@ -19,7 +19,7 @@ import (
 type PersonaMeta struct {
 	Name     string
 	Version  string
-	Source   string // "built-in" | "community"
+	Source   string // "project" | "community" | "built-in" | "registry"
 	Language []string
 }
 
@@ -116,45 +116,168 @@ func listProject(projectDir string) ([]PersonaMeta, error) {
 	return out, walkErr
 }
 
+// ScoreDetail is the explainability companion for one persona: how many cases
+// its rate rests on, how many were excluded, and the reason labels behind both.
+//
+// IT IS A LOCAL STRUCT, NOT internal/scorecard's PersonaScoreDetail, and the
+// duplication is deliberate. internal/boundaries_test.go allowlists this
+// package's imports as {registry, payload, gitexec}; importing internal/scorecard
+// to borrow one DTO would put the ROSTER package downstream of the review-outcome
+// LEDGER, which is backwards and forecloses the reverse edge structurally. The
+// sibling field is the precedent: Rate is a *float64 carrying a
+// scorecard-computed number without this package knowing scorecard exists.
+//
+// The caller converts. cli/personas.go imports both and does it in one loop.
+// Reasons' KEYS are still scorecard's closed vocabulary (scorecard.ScoreReasons);
+// this type copies no label constant, so the vocabulary has exactly one home.
+type ScoreDetail struct {
+	Counted  int
+	Excluded int
+	Reasons  map[string]int
+	Raised   int
+}
+
 // ScoredPersona is one row of `personas list --scores`: a persona joined with
 // its corroboration rate. Rate is nil when the persona has no scorecard data,
 // which renders as "n/a" (distinct from a real 0.0 rate).
+//
+// Detail is nil on exactly the personas whose Rate is nil — scorecard keys its
+// priors map and its explainability map identically and omits a lens from both
+// or from neither, so the two are never half-present. Whether a membership floor
+// contributes to that omission is the CALLER's choice of minRuns; `personas list
+// --scores` passes 0, so on that path absence means "no usable history", never
+// "under-sampled". Detail is ADDITIVE to Rate and is never consulted by
+// sortScoredPersonas, which is why a thin sample is marked by the renderer
+// rather than by the ordering.
 type ScoredPersona struct {
 	PersonaMeta
-	Rate *float64
+	Rate   *float64
+	Detail *ScoreDetail
 }
 
 // ListWithScores returns the personas from List joined with corroboration rates
 // from scores (keyed by lowercase persona name, as built by the caller from
-// scorecard.Aggregate). The result is sorted by rate descending, then n/a rows
-// alphabetically after all numeric rows. A directory walk error is returned
-// alongside the rows gathered so far, mirroring List.
-func ListWithScores(personasDir string, scores map[string]float64) ([]ScoredPersona, error) {
+// scorecard.Aggregate) and with the explainability detail from details (keyed
+// the same way, as built by scorecard.ExplainTrustPriors). The result is sorted
+// by rate descending, then n/a rows alphabetically after all numeric rows. A
+// directory walk error is returned alongside the rows gathered so far,
+// mirroring List.
+//
+// details is a SECOND parameter rather than a widening of scores (sprint 36.0
+// D4): the rate path and the explainability path stay independently testable,
+// and scorecard.TrustPriors keeps its map[string]float64 shape for
+// reconcile/consensus.go. A nil details map is legal and yields nil Detail on
+// every row.
+func ListWithScores(personasDir string, scores map[string]float64, details map[string]ScoreDetail) ([]ScoredPersona, error) {
 	metas, err := List(personasDir)
-	return joinScores(metas, scores), err
+	return joinScores(metas, scores, details), err
 }
 
 // ListTiersWithScores returns the personas from ListTiers joined with
-// corroboration rates from scores. It mirrors ListWithScores but sources the
-// persona set from the three resolver tiers (project > community > built-in)
-// so the --scores table agrees with the plain list on the Source column.
-func ListTiersWithScores(projectDir, communityDir string, scores map[string]float64) ([]ScoredPersona, error) {
+// corroboration rates from scores and explainability detail from details. It
+// mirrors ListWithScores but sources the persona set from the three resolver
+// tiers (project > community > built-in) so the --scores table agrees with the
+// plain list on the Source column.
+func ListTiersWithScores(projectDir, communityDir string, scores map[string]float64, details map[string]ScoreDetail) ([]ScoredPersona, error) {
 	metas, err := ListTiers(projectDir, communityDir)
-	return joinScores(metas, scores), err
+	return joinScores(metas, scores, details), err
 }
 
-// joinScores attaches corroboration rates to metas and sorts the result.
-func joinScores(metas []PersonaMeta, scores map[string]float64) []ScoredPersona {
+// joinScores attaches corroboration rates and explainability detail to metas and
+// sorts the result. Both maps are read with the same strings.ToLower(m.Name) key
+// the rate lookup has always used, so a persona cannot be present in one and
+// missed in the other for a casing reason.
+//
+// The roster is the join's LEFT side, not its universe. A reviewer that has
+// scorecard history but ships no persona file — the registry runs thirteen
+// lenses against nine persona files — would otherwise be looked up, found, and
+// then discarded with no row and no notice. appendRegistryOnly below emits
+// those keys as their own rows, because `personas list --scores` is the audit
+// surface for lens authority and a measured lens it cannot show is the one
+// omission that surface cannot afford.
+func joinScores(metas []PersonaMeta, scores map[string]float64, details map[string]ScoreDetail) []ScoredPersona {
 	scored := make([]ScoredPersona, 0, len(metas))
+	seen := make(map[string]struct{}, len(metas))
 	for _, m := range metas {
 		sp := ScoredPersona{PersonaMeta: m}
-		if rate, ok := scores[strings.ToLower(m.Name)]; ok && !math.IsNaN(rate) {
+		key := strings.ToLower(m.Name)
+		seen[key] = struct{}{}
+		if rate, ok := scores[key]; ok && !math.IsNaN(rate) {
 			r := rate
 			sp.Rate = &r
 		}
+		// Comma-ok, never a bare lookup: a persona absent from the detail map has
+		// no usable history (or, when the CALLER passed a non-zero minRuns, sits
+		// below it — scorecard reports the two the same way, and `personas list
+		// --scores` passes 0 so only the first case arises there). The zero-valued
+		// struct a bare lookup returns would render as "0 counted" — "measured,
+		// found nothing", the opposite of the truth. nil Detail is the "no data"
+		// marker, matching nil Rate.
+		if d, ok := details[key]; ok {
+			detail := d
+			sp.Detail = &detail
+		}
 		scored = append(scored, sp)
 	}
+	scored = appendRegistryOnly(scored, seen, scores, details)
 	sortScoredPersonas(scored)
+	return scored
+}
+
+// appendRegistryOnly emits one row per scored key that no roster persona
+// claimed, so a lens measured by the scorecard is never dropped for lacking a
+// persona file. seen holds the strings.ToLower keys the roster already
+// consumed — the SAME casing convention both lookups use, so a mixed-case
+// roster entry is matched here rather than re-emitted as a phantom lens.
+//
+// It unions BOTH maps rather than reading rates alone: scorecard omits a lens
+// from both or from neither today, but a rates-only tail would silently
+// re-open this hole one map narrower the first time that changes.
+//
+// The row is labeled Source "registry" and Version "-" — the marker a community
+// persona with no declared version already uses. It is deliberately not
+// "built-in" or "community": the lens has no persona file at all, and naming
+// where it does come from is what tells a maintainer to add one (or to repoint
+// the registry) rather than to go hunting for a file that was never there.
+// A NaN rate is dropped to nil for the same reason the roster path drops it,
+// leaving Rate n/a while the row itself still appears.
+func appendRegistryOnly(scored []ScoredPersona, seen map[string]struct{}, scores map[string]float64, details map[string]ScoreDetail) []ScoredPersona {
+	extra := make([]string, 0, len(scores)+len(details))
+	claim := func(key string) {
+		// A blank key is skipped rather than rendered as a nameless row.
+		// scorecard's normalizeReviewerName trims and lowercases but does NOT
+		// drop the empty result, so a record with a whitespace-only Reviewer
+		// reaches these maps keyed "". The roster join hid that by construction;
+		// the tail would surface it as a persona with no name, which names no
+		// lens a maintainer could act on. Dropping it matches the rule
+		// scorecard.distinctCount already states for the same value.
+		if key == "" {
+			return
+		}
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		extra = append(extra, key)
+	}
+	for key := range scores {
+		claim(key)
+	}
+	for key := range details {
+		claim(key)
+	}
+	for _, key := range extra {
+		sp := ScoredPersona{PersonaMeta: PersonaMeta{Name: key, Version: "-", Source: "registry"}}
+		if rate, ok := scores[key]; ok && !math.IsNaN(rate) {
+			r := rate
+			sp.Rate = &r
+		}
+		if d, ok := details[key]; ok {
+			detail := d
+			sp.Detail = &detail
+		}
+		scored = append(scored, sp)
+	}
 	return scored
 }
 
@@ -198,6 +321,20 @@ func FormatRate(rate *float64) string {
 	return fmt.Sprintf("%.1f%%", pct)
 }
 
+// listCommunity returns the community personas under personasDir.
+//
+// ONE RULE FOR WHAT A PERSONA FILE IS, shared with listProject: a <name>.yaml /
+// <name>.yml, or a bare <name>.md. The .md admission is what makes the two
+// on-disk tiers agree — listProject has always taken .md, and this walker used
+// to skip it as if it were a .DS_Store, which made an md-only lens invisible to
+// every view built on ListTiers.
+//
+// A <name>.md co-located with a <name>.yaml is the YAML persona's prompt body,
+// not a second persona: it folds into that row rather than being emitted twice.
+// _base.md is the shared fallback template at any depth and is never a persona,
+// matching listProject. Symlinks are skipped (they may point outside the dir),
+// and a name colliding with a built-in warns and is skipped whichever extension
+// it arrived under.
 func listCommunity(personasDir string) ([]PersonaMeta, error) {
 	if _, err := os.Stat(personasDir); err != nil {
 		if os.IsNotExist(err) {
@@ -207,6 +344,11 @@ func listCommunity(personasDir string) ([]PersonaMeta, error) {
 	}
 	var out []PersonaMeta
 	var warnings []error
+	// yamlNames is every name the YAML pass claimed (lowercased, the same key
+	// ListTiers dedupes on); mdCandidates holds the .md files seen, resolved
+	// against it after the walk.
+	yamlNames := map[string]bool{}
+	var mdCandidates []string
 	walkErr := filepath.WalkDir(personasDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -215,14 +357,32 @@ func listCommunity(personasDir string) ([]PersonaMeta, error) {
 			return nil // skip directories and symlinks (symlinks may point outside the personas dir)
 		}
 		ext := strings.ToLower(filepath.Ext(path))
+		// A bare <name>.md IS a persona here, exactly as it is in listProject.
+		// This tier used to admit only .yaml/.yml and skip .md alongside the
+		// .DS_Store files, so one file shape was a persona in the project dir and
+		// noise in the community dir — which made every md-only lens invisible to
+		// `personas list`, the surface whose whole question is which lenses to keep.
+		//
+		// A .md co-located with a <name>.yaml is that persona's PROMPT BODY, not a
+		// second persona, so it must not produce a second row. The walk therefore
+		// defers .md files to a second pass (below) where the full set of YAML
+		// names is known: WalkDir is lexical, so `archer.md` is visited before
+		// `archer.yaml` and a decision taken inline would be made blind.
+		if ext == ".md" {
+			if rel, relErr := filepath.Rel(personasDir, path); relErr == nil && filepath.Base(path) != "_base.md" {
+				mdCandidates = append(mdCandidates, rel)
+			}
+			return nil
+		}
 		if ext != ".yaml" && ext != ".yml" {
-			return nil // silently skip non-YAML files (.DS_Store, .gitkeep, ...)
+			return nil // silently skip non-persona files (.DS_Store, .gitkeep, ...)
 		}
 		rel, err := filepath.Rel(personasDir, path)
 		if err != nil {
 			return nil
 		}
 		name := filepath.ToSlash(strings.TrimSuffix(rel, filepath.Ext(rel)))
+		yamlNames[strings.ToLower(name)] = true
 		if isBuiltin(name) {
 			warnings = append(warnings, fmt.Errorf("skipping community file %q: name collides with built-in persona %q", rel, name))
 			return nil
@@ -252,5 +412,47 @@ func listCommunity(personasDir string) ([]PersonaMeta, error) {
 	if walkErr != nil {
 		return out, walkErr
 	}
+	// Second pass: the md-only personas. Appended after the YAML rows in lexical
+	// walk order, so the result stays deterministic. A candidate whose name a
+	// YAML file already claimed is that persona's prompt body and is dropped — the
+	// YAML row keeps its version pin and language tokens, which an md file carries
+	// no way to express. Version "-" marks the rest as unpinned, the same marker a
+	// YAML file with no version field gets.
+	//
+	// The built-in collision check applies here too. Without it the new admission
+	// would open a silent shadowing path that the YAML branch has always been
+	// closed to.
+	for _, rel := range mdCandidates {
+		name := filepath.ToSlash(strings.TrimSuffix(rel, filepath.Ext(rel)))
+		if yamlNames[strings.ToLower(name)] {
+			continue
+		}
+		if isBuiltin(name) {
+			warnings = append(warnings, fmt.Errorf("skipping community file %q: name collides with built-in persona %q", rel, name))
+			continue
+		}
+		out = append(out, PersonaMeta{Name: name, Version: "-", Source: "community"})
+	}
 	return out, errors.Join(warnings...)
+}
+
+// IsCommunityInstalled reports whether name is a community-repo INSTALL under
+// personasDir — that is, backed by a <name>.yaml.
+//
+// listCommunity admits two file shapes, and only one of them carries a resolved
+// lock: a YAML persona has a version pin and a manifest, while a bare <name>.md
+// is a local prompt file an operator dropped in. Consumers that filter on
+// `Source == "community"` and then reach for the YAML — `personas drift`
+// (LoadLock per row) and `personas remove --all` (Remove per row) — must ask this
+// first, or they report a missing-file error for every md-only lens.
+//
+// A traversal or otherwise invalid name is not installed rather than probed, so
+// the answer never depends on a path outside personasDir.
+func IsCommunityInstalled(personasDir, name string) bool {
+	dest, err := personaPath(personasDir, name)
+	if err != nil {
+		return false
+	}
+	fi, err := os.Stat(dest)
+	return err == nil && fi.Mode().IsRegular()
 }

@@ -53,9 +53,9 @@ func TestQualityReport_RankedByDismissalRateDescending(t *testing.T) {
 
 	assert.Contains(t, strings.ToLower(out), "dismissal rate", "heading/columns must name the ranking basis")
 
-	iHigh := strings.Index(out, "| alpha | gpt-4 | 9 | 1 | 90.0% |")
-	iMid := strings.Index(out, "| alpha | claude | 1 | 1 | 50.0% |")
-	iLow := strings.Index(out, "| beta | gpt-4 | 1 | 19 | 5.0% |")
+	iHigh := strings.Index(out, "| alpha | gpt-4 | 9 | 1 | 0 | 0 | 90.0% |")
+	iMid := strings.Index(out, "| alpha | claude | 1 | 1 | 0 | 0 | 50.0% |")
+	iLow := strings.Index(out, "| beta | gpt-4 | 1 | 19 | 0 | 0 | 5.0% |")
 	require.GreaterOrEqual(t, iHigh, 0, "high-dismissal row must render with exact cells")
 	require.GreaterOrEqual(t, iMid, 0, "mid-dismissal row must render with exact cells")
 	require.GreaterOrEqual(t, iLow, 0, "low-dismissal row must render with exact cells")
@@ -78,13 +78,13 @@ func TestQualityReport_JSONFormatMatchesMDRankOrder(t *testing.T) {
 	assert.Equal(t, qualityReportRow{Persona: "alpha", Model: "claude", DismissedCount: 1, ConfirmedCount: 1, DismissalRate: 0.5}, got[1])
 	assert.Equal(t, qualityReportRow{Persona: "beta", Model: "gpt-4", DismissedCount: 1, ConfirmedCount: 19, DismissalRate: 0.05}, got[2])
 
-	// The JSON object must expose exactly the five allowlisted keys — no leaked field.
+	// The JSON object must expose exactly the seven allowlisted keys — no leaked field.
 	var raw []map[string]any
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &raw))
 	require.Len(t, raw, 3)
 	for _, m := range raw {
-		assert.Len(t, m, 5, "each row exposes exactly persona, model, dismissed_count, confirmed_count, dismissal_rate")
-		for _, k := range []string{"persona", "model", "dismissed_count", "confirmed_count", "dismissal_rate"} {
+		assert.Len(t, m, 7, "each row exposes exactly persona, model, dismissed_count, confirmed_count, unreproducible_count, attempts_exhausted_count, dismissal_rate")
+		for _, k := range []string{"persona", "model", "dismissed_count", "confirmed_count", "unreproducible_count", "attempts_exhausted_count", "dismissal_rate"} {
 			_, ok := m[k]
 			assert.True(t, ok, "row must carry key %q", k)
 		}
@@ -190,7 +190,7 @@ func TestQualityReport_SubsequentRunWithDataRendersFullTable(t *testing.T) {
 
 	out, err := runQualityReportCmd(t, "--format", "md")
 	require.NoError(t, err)
-	assert.Contains(t, out, "| alpha | gpt-4 | 1 | 1 | 50.0% |", "one dismissed + one confirmed → rate 50%")
+	assert.Contains(t, out, "| alpha | gpt-4 | 1 | 1 | 0 | 0 | 50.0% |", "one dismissed + one confirmed → rate 50%")
 }
 
 // TestQualityReport_MarkdownCellsEscapePipeAndNewline locks the 4.2.A defense-in-
@@ -205,9 +205,9 @@ func TestQualityReport_MarkdownCellsEscapePipeAndNewline(t *testing.T) {
 	require.NoError(t, renderQualityReport(&buf, rows, "md"))
 	out := buf.String()
 
-	// Exactly one data row (5 columns → the row line has 6 pipes from the template
+	// Exactly one data row (7 columns → the row line has 8 pipes from the template
 	// plus the escaped literal rendered as "\|", which is not a column separator).
-	assert.Contains(t, out, `| a\|b | m 1 | 1 | 1 | 50.0% |`, "pipe escaped, newline flattened to a space")
+	assert.Contains(t, out, `| a\|b | m 1 | 1 | 1 | 0 | 0 | 50.0% |`, "pipe escaped, newline flattened to a space")
 	assert.NotContains(t, out, "m\n1", "a raw newline must never reach a table cell")
 }
 
@@ -235,7 +235,7 @@ func TestQualityReport_DirFlagReadsExplicitStoreWithoutChdir(t *testing.T) {
 
 	out, err := runQualityReportCmd(t, "--dir", dir, "--format", "md")
 	require.NoError(t, err)
-	assert.Contains(t, out, "| alpha | gpt-4 | 1 | 1 | 50.0% |",
+	assert.Contains(t, out, "| alpha | gpt-4 | 1 | 1 | 0 | 0 | 50.0% |",
 		"--dir must point the report at the explicit fixture store, not DefaultDir(\".\")")
 }
 
@@ -325,4 +325,50 @@ func TestQualityReport_StripsControlSequences_MDAndJSON(t *testing.T) {
 		}
 		assert.Contains(t, out, "bruce", "the printable portion of the persona must survive sanitization")
 	}
+}
+
+// TestQualityReportRows_IncludesUnmeasuredPairsWithTheirCounters supersedes the
+// report half of adversarial finding 1.2.A-HIGH-4 (adjudicated by
+// /clarifications 2026-09-22). The original fix DROPPED 0/0 pairs because the
+// report had columns for dismissed and confirmed only, so `| 0 | 0 | 0.0% |`
+// read as a reviewer that has never been wrong. The local report now carries the
+// unreproducible and attempts-exhausted counters too — 0/0 is a real shape, and
+// with its own columns the row no longer masquerades as flawless: the reader
+// sees WHERE the outcomes went. The sort stays DESCENDING by dismissal rate
+// (`>` — over-reporting first), so a 0/0 pair lands at the bottom by rate, now
+// carrying the counters that explain it. The OUTBOUND payload keeps dropping
+// these pairs (C2, cli/qualitysignal.go) — only this local surface extends.
+func TestQualityReportRows_IncludesUnmeasuredPairsWithTheirCounters(t *testing.T) {
+	rows := qualityReportRows([]localdebt.QualityRow{
+		{Persona: "vera", Model: "m1", UnreproducibleCount: 3},
+		{Persona: "archer", Model: "m1", AttemptsExhaustedCount: 2},
+		{Persona: "kai", Model: "m1", DismissedCount: 1, ConfirmedCount: 3, UnreproducibleCount: 5},
+	})
+	require.Len(t, rows, 3, "a 0/0 pair is a real shape, not a drop candidate")
+	byName := map[string]qualityReportRow{}
+	for _, r := range rows {
+		byName[r.Persona+"/"+r.Model] = r
+	}
+	assert.Equal(t, 3, byName["vera/m1"].UnreproducibleCount,
+		"the pair's unreproducible outcomes must render in their own column, not vanish")
+	assert.Equal(t, 2, byName["archer/m1"].AttemptsExhaustedCount,
+		"the pair's attempts-exhausted outcomes must render in their own column, not vanish")
+	assert.Zero(t, byName["vera/m1"].DismissedCount)
+	assert.Zero(t, byName["archer/m1"].ConfirmedCount)
+	assert.Equal(t, 5, byName["kai/m1"].UnreproducibleCount,
+		"a pair with BOTH measured and unmeasured outcomes carries both")
+}
+
+// TestQualityReportRows_KeepsPairsThatHaveAMeasuredOutcome is the other
+// direction: the filter keys on the two reportable counters, not on the presence
+// of a new status beside them.
+func TestQualityReportRows_KeepsPairsThatHaveAMeasuredOutcome(t *testing.T) {
+	rows := qualityReportRows([]localdebt.QualityRow{
+		{Persona: "bruce", Model: "m1", DismissedCount: 1, ConfirmedCount: 3, UnreproducibleCount: 5},
+	})
+	require.Len(t, rows, 1)
+	assert.Equal(t, 1, rows[0].DismissedCount)
+	assert.Equal(t, 3, rows[0].ConfirmedCount)
+	assert.InDelta(t, 0.25, rows[0].DismissalRate, 0.0001,
+		"the new outcomes must not enter the dismissal-rate denominator")
 }

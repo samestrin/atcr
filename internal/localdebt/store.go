@@ -115,6 +115,16 @@ func appendLocked(dir string, rec Record) error {
 	if err != nil {
 		return err
 	}
+	// The write gate: an off-enum status must die HERE, before it reaches disk,
+	// because past this point it is indistinguishable from open everywhere it
+	// matters (ClosedStatusRank ranks it 0; debtStatusBucket renders it open;
+	// every terminal predicate misses it) and the store is append-only — no
+	// repair pass can rewrite it in place. IsKnownStatus accepts the EMPTY
+	// status, so an open record and a legacy pre-status record pass untouched.
+	if !IsKnownStatus(rec.Status) {
+		return fmt.Errorf("appending localdebt record %q: unknown status %q "+
+			"(not a localdebt.Status* value; see IsKnownStatus)", rec.ID, rec.Status)
+	}
 	if err := ensureStoreDir(dir); err != nil {
 		return fmt.Errorf("creating localdebt dir: %w", err)
 	}
@@ -585,9 +595,10 @@ func readAllPreserving(dir string, opts ReadOpts) (shardRead, error) {
 //     later re-detection can displace it.
 //  2. Otherwise the effective record is the latest by timestamp across open and
 //     non-suppressing-terminal records alike. An equal timestamp is broken by
-//     ClosedStatusRank (a terminal record outranks an open one, so a resolution
-//     appended in the same second as the finding still closes it), and a full
-//     tie by append order (last wins).
+//     foldPrecedence (a terminal record outranks an open one and a settled
+//     close outranks an unsettled marker, so a resolution appended in the same
+//     second as the finding or checkpoint still closes it), and a full tie by
+//     append order (last wins).
 //
 // Rule 2 is what makes a resolved-or-deferred id RE-OPEN when it is detected
 // again: the fresh open record is newer than the resolution, so it wins. That is
@@ -871,33 +882,61 @@ func foldByID[T foldable](items []T) ([]T, map[string][]T) {
 	var folded []T
 	for _, id := range order {
 		group := byID[id]
-
-		// Rule 1: a suppressing record wins unconditionally. Among several, rank
-		// then recency decides — preserving the read-order independence divergent
-		// terminal records already relied on.
-		var suppressing []T
-		for _, it := range group {
-			if IsSuppressingStatus(it.foldStatus()) {
-				suppressing = append(suppressing, it)
-			}
-		}
-		if len(suppressing) > 0 {
-			folded = append(folded, latestItem(suppressing))
-			continue
-		}
-
-		// Rule 2: recency across open and non-suppressing-terminal records alike,
-		// so a re-detection newer than a resolution re-opens the id.
 		if len(group) > 0 {
-			folded = append(folded, latestItem(group))
+			folded = append(folded, group[foldIndex(group)])
 		}
 	}
 	return folded, byID
 }
 
+// foldIndex returns the position within one id's group that the fold's two-rule
+// precedence selects as effective — THE one implementation of that precedence.
+// foldByID applies it to pick what it folds to, and retainForCompaction applies
+// it to know which record NOT to retain again; one implementation answering both
+// questions is the property cli/debt_resolve.go's invariant asks for: a change
+// to rule 1 or rule 2 cannot silently diverge between the fold and retention,
+// because there is nothing left to diverge.
+//
+// Rule 1: a suppressing record wins unconditionally. Among several, rank then
+// recency decides — preserving the read-order independence divergent terminal
+// records already relied on. Rule 2: otherwise recency across open and
+// non-suppressing-terminal records alike, so a re-detection newer than a
+// resolution re-opens the id.
+//
+// Selection is by INDEX, never by value: inside one id group records are not
+// distinguishable by value (RunID derives from timestamp+status, so two records
+// written in the same second with the same status match on every field a
+// comparison would naturally reach for while differing in Model or
+// Justification). See latestIndex.
+func foldIndex[T foldable](group []T) int {
+	var suppressingIdx []int
+	for i := range group {
+		if IsSuppressingStatus(group[i].foldStatus()) {
+			suppressingIdx = append(suppressingIdx, i)
+		}
+	}
+	if len(suppressingIdx) == 0 {
+		return latestIndex(group) // rule 2: recency across the whole group
+	}
+	// Rule 1: among the suppressing records only, by the same latestItem rule.
+	suppressing := make([]T, 0, len(suppressingIdx))
+	for _, i := range suppressingIdx {
+		suppressing = append(suppressing, group[i])
+	}
+	return suppressingIdx[latestIndex(suppressing)]
+}
+
 // retainForCompaction is what compaction folds to: the effective record for each
-// id, PLUS that id's highest-ranked terminal record whenever the effective record
-// is open.
+// id, PLUS that id's highest-ranked rationale-bearing record — for ANY effective
+// status, not only an open one, and only when that record's justification is not
+// already the effective record's.
+//
+// EXACTLY ONE superseded rationale survives. Where several superseded records
+// each carry a distinct --reason, highestRankedTerminalIndex picks one and the
+// rest are dropped: two `attempts-exhausted` rounds followed by a `wontfix` keep
+// the second round's reason and destroy the first. That is a retention bound
+// doing its job, not an oversight, but it is narrower than "no --reason is ever
+// destroyed" — see TD-051 for the multi-round question.
 //
 // The second half exists because resolution became re-openable. Before that a
 // terminal record always won its fold group, so compaction could keep the fold
@@ -908,81 +947,291 @@ func foldByID[T foldable](items []T) ([]T, map[string][]T) {
 // meant to bound growth by dropping SUPERSEDED occurrences, not to erase the
 // record that a human once closed this finding and why.
 //
-// Retention is bounded at two records per id, so growth stays O(live findings):
-// the effective record, and at most one terminal record. It is also fold-stable
-// and idempotent — FoldRecords over {open(t3), resolved(t2)} still selects
-// open(t3), so every reader sees exactly what it saw before compaction, and a
-// second Compact retains the same pair.
+// Retention is bounded at FOUR records per id, so growth stays O(live
+// findings): the effective record, at most one superseded rationale, — when the
+// effective record carries no model attribution — one donor, and — when the
+// effective record is a re-detection and attempts-exhausted is in play — the
+// latest closed record. Two is the ordinary case and three or four the narrow
+// ones; the rationale and the donor are distinct records only
+// when the highest-RANKED rationale and the most recent MODEL-carrier are
+// different rows, and collapse to one whenever they coincide.
 //
-// A suppressing (wontfix) id never reaches the second half: rule 1 makes the
-// wontfix record itself the effective one, so its justification is retained by
-// the first half.
+// That wording is deliberately identical to doc.go's and to the published bound
+// in docs/technical-debt.md. Three surfaces stating one bound in three different
+// framings ("two, and three in one case" / "three, keeps up to two beyond the
+// effective one" / a doc that named only two of the three) is how a reader came
+// away with a different number depending on which one they opened.
+//
+// The donor is NOT gated on producesQualitySignal(eff.Status); do not add such a
+// gate back, see modelDonorIndex.
+//
+// It is also fold-stable and idempotent — FoldRecords over {open(t3),
+// resolved(t2)} still selects open(t3), so every reader sees exactly what it saw
+// before compaction.
+//
+// Convergence is at the SECOND pass, not the first, and the claim is deliberately
+// stated that weakly. Two things move between pass 1 and pass 2: aggregateCounters
+// stamps CountedThrough on the effective record the first time it is folded as a
+// carrier (Occurrences itself is stable from pass 1), and a donor retained as a
+// distinct record in pass 1 can collapse into the trail slot in pass 2, because
+// pass 1's OUTPUT ORDER can hand it the trail's rank/timestamp tie. So pass 2 can
+// retain one fewer record than pass 1. From pass 2 the output is a true fixed
+// point. Do not strengthen this to "the same records from the first pass" — that
+// is measurably false.
+//
+// Fold stability assumes WELL-FORMED RFC3339 timestamps, and the caveat is
+// stronger than "the effective record may move". A timestamp that cannot be
+// ordered makes latestIndex's precedence non-transitive, so dropping any record
+// — which compaction does by design — can change the sequential maximum. Measured
+// over 200k random malformed-mix corpora: the effective record moves in ~1.8% of
+// ids, the reported outcome changes in ~1.5%, and in ~0.5% compaction FABRICATES
+// a quality-signal row for an id that produced none before. Row creation is the
+// one a reader will not infer from "may move", so it is named here.
+//
+// No in-repo writer can produce such a record — every one stamps
+// time.Now().UTC().Format(time.RFC3339) — so this needs a hand-edited, imported
+// or third-party store. The emit order below is nonetheless the best of the six
+// possible permutations on this input too, by an order of magnitude. Tracked as
+// sprint 36.0 TD-013; fixing it means changing the fold's tie-break for malformed
+// input, which is a read-path behaviour change for every existing store.
+//
+// A SETTLED effective record gets the same treatment as any other, and used to
+// get its own shorter branch that kept only the donor and eff. That branch's
+// argument — "the effective record IS the resolution, so there is no rationale
+// to preserve" — was true only while every rationale-bearing status was also
+// settled. Story 36.0 split the two apart, and `attempts-exhausted` superseded
+// by a settled close is a DESIGNED one-step workflow (the skill calls it "a
+// checkpoint, not a closure"), so the shorter branch deleted a mandatory
+// --reason on a path an operator is told to walk. Phase 6 gate finding
+// CRITICAL-1. One branch also means one copy of the precedence rule, which is
+// the property cli/debt_resolve.go's invariant asks for.
 func retainForCompaction(recs []Record) []Record {
 	effective, byID := foldWithGroups(recs)
 	out := make([]Record, 0, len(effective))
 	for _, eff := range effective {
-		if IsSettledStatus(eff.Status) {
-			// The effective record IS the resolution, so there is no rationale to
-			// preserve — but there may still be ATTRIBUTION. AggregateQualitySignal
-			// recovers a missing Model from an earlier same-id terminal record
-			// (qualitysignal.go, foldTerminalByID's donor index), which is how a
-			// wontfix that
-			// outranks an earlier attributed resolution still reports a dismissal.
-			// Dropping that donor makes the whole outcome vanish from the signal —
-			// silently and permanently, and now unattended, since compaction runs
-			// automatically inside the same reconcile that emits the signal.
-			//
-			// ORDER IS LOAD-BEARING: the donor is emitted BEFORE the effective
-			// record. Both are terminal, so they can tie on both timestamp and
-			// ClosedStatusRank, and latestItem breaks a full tie by append order —
-			// last wins. Emitting the donor last would hand it the fold, silently
-			// swapping which record readers see as effective and, on the NEXT
-			// compaction, deleting the displaced one along with the human-typed
-			// --reason only it carried. Writing it first keeps eff the winner and
-			// compaction fold-stable.
-			if donor := modelDonor(byID[eff.ID], eff); donor != nil {
-				out = append(out, *donor)
-			}
-			out = append(out, eff)
-			continue
+		// RATIONALE-BEARING, not merely closed, on both sides. An effective
+		// `deferred` record is not a resolution — it carries no justification, and
+		// treating it as one would discard an earlier `resolved` record and the
+		// --reason text only that record holds.
+		//
+		// The gate reads bearsRationale rather than IsSettledStatus because Story
+		// 36.0 split those two apart: `attempts-exhausted` is unsettled (it stays
+		// closeable) but its `--reason` is mandatory, so it is precisely the kind of
+		// record this trail exists to preserve. See bearsRationale in record.go.
+		//
+		// EVERYTHING BELOW SELECTS BY INDEX, never by value. Records inside one id
+		// group are not distinguishable by value: markDebtResolved derives RunID
+		// from timestamp+status, so two records written in the same second with the
+		// same status match on every field a comparison would naturally use while
+		// differing in exactly the fields that matter here — Model and
+		// Justification. A value-keyed exclusion therefore dropped the twin along
+		// with the record it meant to exclude, deleting an attribution (the signal
+		// row vanishes) or a rationale (the only copy of why a human closed it).
+		// See latestIndex.
+		group := byID[eff.ID]
+
+		// The effective record's own position. A suppressing (wontfix) record now
+		// reaches this line too, and it does NOT come from latestItem over the
+		// whole group — the fold's rule 1 picks it from the suppressing records
+		// alone. foldIndex is the same single implementation foldByID applied to
+		// choose eff, so this is eff's index by construction, not a replay that
+		// can drift from the fold.
+		effIdx := -1
+		if len(group) > 0 {
+			effIdx = foldIndex(group)
 		}
-		out = append(out, eff)
-		// SETTLED, not merely closed, on both sides. An effective `deferred` record
-		// is not a resolution — it carries no justification, and treating it as one
-		// would discard an earlier `resolved` record and the --reason text only that
-		// record holds. Selecting only settled candidates also excludes the effective
-		// record from its own trail without an identity comparison, since a record
-		// that reached this line is by definition not settled.
+
+		// When eff itself bears rationale, a trail entry is owed only for text eff
+		// does NOT already carry. Without that qualifier the five identical
+		// `resolved` appends TestCompact writes would each keep a twin, doubling
+		// retention for the commonest churn there is while preserving nothing.
+		//
+		// This compares Justification, which the rest of this block is at pains
+		// not to do — but the question is different. The index rule exists so
+		// "which record is eff" is never answered by value; this asks "is this
+		// text already retained", and text is the only thing that can answer it.
+		// A twin differing from eff ONLY in Model is not a rationale loss; the
+		// donor selection below is what covers that.
+		effBearsRationale := bearsRationale(eff.Status)
 		var resolutions []Record
-		for _, r := range byID[eff.ID] {
-			if IsSettledStatus(r.Status) {
-				resolutions = append(resolutions, r)
+		var resolutionIdx []int
+		for i, r := range group {
+			if i == effIdx {
+				continue // the effective record is not its own trail entry
+			}
+			if !bearsRationale(r.Status) {
+				continue
+			}
+			if effBearsRationale && strings.TrimSpace(r.Justification) == strings.TrimSpace(eff.Justification) {
+				continue // eff already carries this rationale verbatim
+			}
+			resolutions = append(resolutions, r)
+			resolutionIdx = append(resolutionIdx, i)
+		}
+
+		// An UNSETTLED effective record can still produce a quality-signal row:
+		// `attempts-exhausted` is deliberately not settled (it stays closeable)
+		// yet it is a counted outcome. If it carries no Model, the signal
+		// recovers one from an earlier same-id terminal record — so dropping
+		// that donor here deletes the whole outcome from the signal, silently
+		// and permanently, inside the reconcile that emits the signal.
+		//
+		// THE DONOR IS RETAINED UNCONDITIONALLY, and the gate that used to stand
+		// here is TD-014's unsettled-branch defect rather than a safeguard.
+		//
+		// It asked producesQualitySignal(eff.Status), which is false for an OPEN
+		// or `deferred` effective record — so the donor was dropped for the whole
+		// interval an item sat open, and a later model-less terminal record then
+		// had nothing to recover its attribution from. Measured on the
+		// pre-fix code: {deferred@T1 m1, resolved@T2 m="", open@T3} plus a later
+		// resolved@T4 m="" yields row {vera, m1} uncompacted and [] compacted.
+		// The whole outcome vanishes from the ground-truth signal, silently and
+		// permanently, inside the same reconcile that emits it.
+		//
+		// The gate was asking the wrong question. Whether the CURRENT effective
+		// record produces a signal says nothing about whether a FUTURE append
+		// will need this id's attribution — and an open item is precisely the one
+		// most likely to be closed later. Retention has to serve the append that
+		// has not happened yet.
+		//
+		// This does NOT close TD-014's other half. modelDonorIndex still returns
+		// -1 when eff already carries a Model, so a newer, higher-precedence
+		// donor is still deleted on the settled branch. That half is blocked on a
+		// genuine tie-break conflict (eff must be emitted last to win its own
+		// fold; the donor must be emitted last to win the donor slot) and is
+		// deliberately left open — see TD-014 and the skipped reproduction in
+		// compact_append_differential_test.go.
+		//
+		// For an OPEN effective record the signal never reads eff's own Model:
+		// the re-detection fallback swaps in the latest closed record (see
+		// latestClosedIdx below) and recovers ITS missing Model. So the donor is
+		// chosen for that record, not for eff.
+		latestClosedIdx := -1
+		if !IsClosedStatus(eff.Status) {
+			var closedIdx []int
+			var closed []Record
+			for i, r := range group {
+				if IsClosedStatus(r.Status) {
+					closedIdx = append(closedIdx, i)
+					closed = append(closed, r)
+				}
+			}
+			if len(closed) > 0 {
+				latestClosedIdx = closedIdx[latestIndex(closed)]
 			}
 		}
+		donorSubject := eff
+		if latestClosedIdx >= 0 {
+			donorSubject = group[latestClosedIdx]
+		}
+		donorIdx := modelDonorIndex(group, donorSubject)
+
+		trailIdx := -1
 		if len(resolutions) > 0 {
-			trail := highestRankedTerminal(resolutions)
-			// The retained record is a TRAIL entry, not an occurrence: the id's
-			// aggregate counters live solely on the effective record. Zeroing them
-			// keeps compaction idempotent — a carrier accounts for every detection up
-			// to its own timestamp, so a second carrier in the same group would let
-			// the fold count part of that history twice (aggregateCounters).
-			//
-			// Zeroing FirstSeen is safe because the aggregation skips empty values
-			// rather than comparing them: "" sorts before every RFC3339 value, so a
-			// naive minimum across the retained pair would return it and lose the
-			// first sighting. The effective record still carries the real value.
+			trailIdx = resolutionIdx[highestRankedTerminalIndex(resolutions)]
+		}
+		// The trail may already BE the donor, in which case the attribution rides
+		// along and nothing more is owed. Position, not value.
+		if donorIdx >= 0 && donorIdx == trailIdx {
+			donorIdx = -1
+		}
+
+		// An OPEN effective record (a re-detection) reads a different closed
+		// record than the trail does. foldTerminalByID's fallback takes the MOST
+		// RECENT closed record (latestItem) and keeps the id's outcome only when
+		// that record is attempts-exhausted; the trail is chosen by RANK. When the
+		// two differ, retaining only the trail changes what the fallback reads, and
+		// compaction adds or deletes an attempts-exhausted outcome. So keep the
+		// latest closed record too, by the fallback's own rule.
+		//
+		// The fallback's answer is only "is it attempts-exhausted", so the record
+		// matters only when it, or a retained record it would lose to, is
+		// attempts-exhausted. Otherwise it reads "no" either way.
+		isExhausted := func(i int) bool {
+			return i >= 0 && normalizeStatus(group[i].Status) == StatusAttemptsExhausted
+		}
+		if latestClosedIdx == trailIdx || latestClosedIdx == donorIdx ||
+			(!isExhausted(latestClosedIdx) && !isExhausted(trailIdx) && !isExhausted(donorIdx)) {
+			latestClosedIdx = -1
+		}
+
+		// ORDER IS LOAD-BEARING TWICE OVER, and the two constraints point in
+		// opposite directions. Emitting trail, then donor, then eff satisfies both.
+		//
+		// 1. eff LAST, so it wins its own fold. Every retained record for this id
+		//    can tie eff on both timestamp and foldPrecedence, and latestItem
+		//    breaks a full tie by APPEND ORDER, last wins; an unorderable
+		//    timestamp (which the read path tolerates) hands the win to the later
+		//    record outright. Anything emitted after eff can therefore seize the
+		//    fold and become the effective record — flipping a live
+		//    `attempts-exhausted` item to `deferred`, changing what `debt list`
+		//    shows, whether debtIsLive counts it, whether `debt resolve` will touch
+		//    it, and which outcome the signal reports.
+		//
+		// 2. donor AFTER trail, so the donor's Model wins the recovery.
+		//    foldTerminalByID's donor index (qualitysignal.go) keeps the latest
+		//    model-carrier with `>=`, i.e. LAST-WINS on a timestamp tie. When the
+		//    trail also carries a Model and ties the donor on timestamp, emitting
+		//    the donor first lets the trail overwrite it, and the outcome is
+		//    credited to the WRONG model after compaction — falsifying modelDonor's
+		//    own guarantee that the recovery returns the same model before and
+		//    after. Phase 4's durable lens score keys on (persona, model), so a
+		//    silent misattribution there is worse than a missing row.
+		//
+		// The two are compatible only in this order. Do not "simplify" by moving
+		// the donor next to its comment or by grouping the two trail writes.
+		if trailIdx >= 0 {
+			trail := group[trailIdx]
+			// A trail entry is not an occurrence: the id's aggregate counters live
+			// solely on the effective record, or a second carrier would let the fold
+			// count part of the history twice (aggregateCounters). Zeroing FirstSeen
+			// is safe because the aggregation skips empty values rather than
+			// comparing them.
 			trail.Occurrences = 0
 			trail.FirstSeen = ""
 			trail.CountedThrough = ""
 			out = append(out, trail)
 		}
+		// The latest closed record goes AFTER the trail, so it keeps winning a
+		// full tie in the fallback's latestItem (append order, last wins), and
+		// BEFORE the donor. A donor that ties it on timestamp came later in the
+		// original stream (the donor rule is last-wins), so latestIndex could
+		// only have preferred this record on foldPrecedence, which order cannot
+		// change; emitting it after the donor would instead let it take the
+		// donor slot when it also carries a Model.
+		if latestClosedIdx >= 0 {
+			latest := group[latestClosedIdx]
+			latest.Occurrences = 0
+			latest.FirstSeen = ""
+			latest.CountedThrough = ""
+			out = append(out, latest)
+		}
+		if donorIdx >= 0 {
+			donor := group[donorIdx]
+			donor.Occurrences = 0
+			donor.FirstSeen = ""
+			donor.CountedThrough = ""
+			out = append(out, donor)
+		}
+		// Retention is bounded at FOUR records per id, and only when all four are
+		// genuinely distinct: the effective record, the highest-ranked rationale,
+		// the latest closed record when the effective record is open (see
+		// latestClosedIdx), and — when the effective record carries no Model — the
+		// attribution donor. The trail and the donor
+		// cannot be collapsed: the trail is chosen by RANK so the human-typed
+		// rationale survives, while the donor is chosen by RECENCY AMONG
+		// MODEL-CARRIERS so the recovered Model matches what the signal read
+		// before compaction. Picking one record for both jobs would silently
+		// sacrifice whichever property lost the tie. Growth stays O(1) per live
+		// finding, which is what the bound exists to protect.
+		out = append(out, eff)
 	}
 	return out
 }
 
-// modelDonor returns the terminal record whose Model AggregateQualitySignal would
-// recover for this id, or nil when the effective record already carries one or no
-// donor exists.
+// modelDonorIndex returns the INDEX, within this id's group, of the terminal
+// record whose Model AggregateQualitySignal would recover for the id — or -1
+// when the effective record already carries a Model or no donor exists.
 //
 // Selection matches foldTerminalByID's donor index (qualitysignal.go) exactly —
 // the most recent terminal record with a non-empty Model, last-wins on ties —
@@ -990,83 +1239,102 @@ func retainForCompaction(recs []Record) []Record {
 // compaction. A different rule here would make the signal depend on whether the
 // store had been compacted yet.
 //
-// Retention stays bounded at two records per id: this branch is reached only when
-// the effective record is settled, which is exactly the branch that retains no
-// resolution trail.
+// It returns an index rather than a record because the caller must compare the
+// donor's position against the resolution trail's: see latestIndex for why value
+// identity is not usable inside one id group. A modelDonor wrapper returning the
+// record itself served the old settled-only branch and went with it when the two
+// branches merged.
 //
-// Settled — not merely closed — is the right gate, and not by luck. An id whose
-// effective record is OPEN is filtered out of the quality signal by
-// foldTerminalByID (an unsettled finding is not an outcome). A `deferred` one is
-// admitted by that filter and even has its Model recovered, but
-// AggregateQualitySignal's status switch maps anything that is neither wontfix nor
-// resolved to no counter and no group, so it emits no row whatever its attribution.
-// Only a settled effective record can produce a row, so only it can lose one.
-func modelDonor(group []Record, eff Record) *Record {
+// It is called UNCONDITIONALLY, for every effective status, and the gate that
+// used to stand in front of it is not a safeguard worth restoring. "Only a
+// settled effective record can produce a signal row" WAS the argument for one,
+// and Story 36.0 falsified it — `attempts-exhausted` is a counted outcome that
+// is deliberately not settled. Even producesQualitySignal(eff.Status) is the
+// wrong question: whether the CURRENT effective record emits a row says nothing
+// about whether a FUTURE append will need this id's attribution, and an open
+// item is precisely the one most likely to be closed later. A no-op call for an
+// id with nothing to lose costs one comparison.
+func modelDonorIndex(group []Record, eff Record) int {
 	if strings.TrimSpace(eff.Model) != "" {
-		return nil
+		return -1
 	}
-	var best *Record
+	best := -1
 	for i := range group {
 		r := group[i]
 		if !IsClosedStatus(r.Status) || strings.TrimSpace(r.Model) == "" {
 			continue
 		}
-		if best == nil || r.Timestamp >= best.Timestamp {
-			// The donor is a TRAIL entry, not an occurrence — same rule as the
-			// resolution trail below: an id's aggregate counters live solely on its
-			// effective record, or a second carrier would let the fold count part of
-			// the history twice.
-			r.Occurrences = 0
-			r.FirstSeen = ""
-			r.CountedThrough = ""
-			donor := r
-			best = &donor
+		if best < 0 || r.Timestamp >= group[best].Timestamp {
+			best = i
 		}
 	}
 	return best
 }
 
-// highestRankedTerminal picks which terminal record to retain for an id whose
+// highestRankedTerminalIndex picks which terminal record to retain for an id whose
 // effective record is open: rank first, recency only as a tiebreak — the inverse
 // of latestRecord's ordering, and deliberately so. The point of retention is the
 // resolution trail, and a `resolved` record can carry a human-typed --reason
 // while a `deferred` one cannot (nothing writes a justification with it), so a
 // later deferral must not displace an earlier resolution and its rationale.
-func highestRankedTerminal(terminals []Record) Record {
-	best := terminals[0]
-	for _, r := range terminals[1:] {
+//
+// ClosedStatusRank is that criterion made explicit, and Story 36.0 extended it
+// rather than bolting two statuses onto the end. `unreproducible` and
+// `attempts-exhausted` both REQUIRE --reason where `resolved` does not, so they
+// rank above it: the record most certain to carry a rationale wins the retention
+// slot. See ClosedStatusRank's own comment for the full chain.
+func highestRankedTerminalIndex(terminals []Record) int {
+	best := 0
+	for i := 1; i < len(terminals); i++ {
+		r, cur := terminals[i], terminals[best]
 		switch {
-		case ClosedStatusRank(r.Status) > ClosedStatusRank(best.Status):
-			best = r
-		case ClosedStatusRank(r.Status) == ClosedStatusRank(best.Status) && r.Timestamp >= best.Timestamp:
-			best = r
+		case ClosedStatusRank(r.Status) > ClosedStatusRank(cur.Status):
+			best = i
+		case ClosedStatusRank(r.Status) == ClosedStatusRank(cur.Status) && r.Timestamp >= cur.Timestamp:
+			best = i
 		}
 	}
 	return best
 }
 
 // latestItem picks the effective item from a non-empty fold group: the latest
-// timestamp wins; an equal timestamp is broken by ClosedStatusRank so a terminal
+// timestamp wins; an equal timestamp is broken by foldPrecedence so a terminal
 // record outranks an open one (rank 0), and a full tie by append order (the last
 // wins). Recency first, rank only as a tiebreak — the inverse of
-// highestRankedTerminal.
+// highestRankedTerminalIndex.
 //
 // Timestamps are compared as strings; see FoldRecords' "Timestamp comparison"
 // section for why that is sound and what breaks it.
 func latestItem[T foldable](group []T) T {
-	best := group[0]
-	for _, it := range group[1:] {
+	return group[latestIndex(group)]
+}
+
+// latestIndex is latestItem's selection rule, returning the winner's INDEX in
+// group rather than a copy of it.
+//
+// The index is what callers need when they must then say "every record EXCEPT
+// the one that won". A copy cannot answer that: records in one id group are not
+// distinguishable by value, because RunID is derived from timestamp+status
+// (markDebtResolved stamps it as ts+"-"+status), so two records written in the
+// same second with the same status are identical on every field a comparison
+// would naturally reach for while differing in Model or Justification. Excluding
+// "the effective record" by value therefore excluded its twin as well, silently
+// dropping the twin's rationale or attribution. Identity here is position.
+func latestIndex[T foldable](group []T) int {
+	best := 0
+	for i := 1; i < len(group); i++ {
+		it, cur := group[i], group[best]
 		switch {
-		case !orderableTimestamps(it.foldTimestamp(), best.foldTimestamp()):
+		case !orderableTimestamps(it.foldTimestamp(), cur.foldTimestamp()):
 			// One side's timestamp cannot be ordered, so there is nothing to compare
 			// and append order decides — the same rule a full tie already uses.
-			best = it
-		case it.foldTimestamp() > best.foldTimestamp():
-			best = it
-		case it.foldTimestamp() == best.foldTimestamp() && ClosedStatusRank(it.foldStatus()) > ClosedStatusRank(best.foldStatus()):
-			best = it
-		case it.foldTimestamp() == best.foldTimestamp() && ClosedStatusRank(it.foldStatus()) == ClosedStatusRank(best.foldStatus()):
-			best = it // full tie: append order, last wins
+			best = i
+		case it.foldTimestamp() > cur.foldTimestamp():
+			best = i
+		case it.foldTimestamp() == cur.foldTimestamp() && foldPrecedence(it.foldStatus()) > foldPrecedence(cur.foldStatus()):
+			best = i
+		case it.foldTimestamp() == cur.foldTimestamp() && foldPrecedence(it.foldStatus()) == foldPrecedence(cur.foldStatus()):
+			best = i // full tie: append order, last wins
 		}
 	}
 	return best
@@ -1515,13 +1783,29 @@ const (
 // 3/2, i.e. 50%.
 //
 // This is the damping the thresholds alone cannot provide. Compact retains up to
-// TWO records per id (retainForCompaction: the effective record plus the resolution
-// trail when the effective one is open), so a store's post-compaction floor can sit
+// FOUR records per id (retainForCompaction: the effective record, the highest-ranked
+// superseded rationale, the attribution donor, and a re-detection's latest closed record), so a store's post-compaction floor can sit
 // above an absolute threshold — and then every single append re-trips it, taking
 // the cross-process lock and rewriting every shard to drop nothing, forever. The
 // watermark turns "above the threshold" into "above the threshold AND materially
 // bigger than last time it was compacted", which is the condition that actually
 // predicts there is something to drop.
+//
+// Why 3/2 survives the THREE-records-per-id bound without a per-bound
+// re-derivation: the watermark is written from StoreStats AFTER the rewrite (a
+// self-referential reset — see the writeCompactWatermark call in Compact), so it
+// always measures the store's actual post-compaction size, whatever that pass
+// retained. That measured size is at or above the retention floor for ANY bound
+// (the floor is B records per id; the watermark counts what is really on disk,
+// including the pass-1 retention surplus retainForCompaction admits to — a
+// non-fixed-point that only ever over-states the floor, which delays a
+// compaction rather than tripping one spuriously). Growth past 1.5x the
+// watermark is therefore append-driven by construction: the floor the previous
+// compaction produced is already inside the number being compared against, so
+// no bound change can turn floor churn into a gate trip. Raising the bound
+// raises the floor and the watermark together and leaves the margin's meaning —
+// half of measured reality — untouched, which is why the ratio is a damping
+// constant and not a derived quantity to re-litigate at the next bound change.
 const (
 	autoCompactGrowthNum = 3
 	autoCompactGrowthDen = 2

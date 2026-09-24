@@ -297,7 +297,7 @@ const budgetToolBytes = "tool_budget_bytes"
 //
 // Every budget voids the verdict EXCEPT a tool-bytes trip against a ceiling this
 // lane DERIVED from the agent's declared context window. That exception exists
-// because the derived ceiling is not an operator's instruction: in the shipped
+// because the derived ceiling is not an operator's instruction: on a real local
 // roster every agent declares context_window_tokens and none declares
 // tool_budget_bytes, so before the clamp the engine enforced nothing here and a
 // skeptic could read as much as it liked. Treating the derived ceiling as a
@@ -327,8 +327,13 @@ func tripsVoidTheVerdict(tripped []string, derivedBudget bool) bool {
 // function calling degrades to single-shot in the engine rather than failing every
 // call — mirroring fanout.renderAgent. Per-finding budgets are forwarded from the
 // AgentConfig; a nil budget pointer becomes 0, which the engine reads as "use the
-// default" (MaxTurns→10), "unlimited" (ToolBudgetBytes→0), or "parent deadline
-// only" (TimeoutSecs→0). The provider's BaseURL/APIKeyEnv are threaded onto the
+// default" (MaxTurns→10) or "parent deadline only" (TimeoutSecs→0).
+// ToolBudgetBytes is the exception and is NOT forwarded that way: it goes through
+// skepticToolBudget, which clamps it — a 0 included — to the ceiling derived from
+// a declared context_window_tokens, and floors it at one byte for a window with
+// no input room. So in this lane a nil pointer yields an unlimited budget only
+// when the agent declares no usable window; otherwise the skeptic is bounded.
+// The provider's BaseURL/APIKeyEnv are threaded onto the
 // Invocation so llmclient.Chat can route the call (without them a production
 // skeptic would hit an empty endpoint with no key).
 //
@@ -654,9 +659,10 @@ func skepticToolBudget(c registry.AgentConfig) (budget int64, derived bool) {
 // lane may then cap it to fit a small window) —
 // which is what
 // skepticToolBudget's doc has always CLAIMED ("exactly one definition") and did
-// not deliver. Reserving derefInt(c.MaxTokens) meant reserving ZERO for the 23 of
-// 29 window-declaring roster agents that declare no cap, i.e. exactly the case
-// where the reservation matters most: with no declaration, buildSkepticAgent
+// not deliver. Reserving derefInt(c.MaxTokens) meant reserving ZERO for every
+// window-declaring agent that declares no cap — the majority of a real roster,
+// and exactly the case where the reservation matters most: with no declaration,
+// buildSkepticAgent
 // forwards a nil MaxTokens and llmclient omits the field, so the PROVIDER applies
 // its own non-zero default. Reserving nothing against an unknown-but-positive
 // output budget is the one reading of the window that cannot be right.

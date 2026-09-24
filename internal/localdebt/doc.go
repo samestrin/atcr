@@ -151,12 +151,32 @@
 //	                                         terminal rule used to silence.
 //	deferred   Re-surfaces on re-detection   "Not now" is not "never".
 //
-// Three predicates express this, and `deferred` is the status that separates
-// them. IsClosedStatus classifies a RECORD as terminal (all three statuses);
-// IsSettledStatus asks whether the ITEM is done (resolved|wontfix), which gates
-// closability and the live-backlog count — a deferred item carries a terminal
-// marker but is still work, so it must stay closeable; IsSuppressingStatus
-// decides whether a terminal state outlives a re-detection (wontfix only).
+//	unreproducible      Re-opens on           Investigated, could not be
+//	                    re-detection          reproduced. A determination was
+//	                                          reached, so the item is done — but
+//	                                          re-detection is evidence the call
+//	                                          was wrong, so it never suppresses.
+//	attempts-exhausted  Re-surfaces on        Fix attempts ran out. The defect is
+//	                    re-detection          presumed real and the work
+//	                                          unfinished, so it stays live and
+//	                                          closeable, like deferred.
+//
+// Four predicates express this, and no single status separates them all.
+// IsClosedStatus classifies a RECORD as terminal (every status above);
+// IsSettledStatus asks whether the ITEM is done (resolved|wontfix|
+// unreproducible), which gates closability and the live-backlog count — a
+// deferred or attempts-exhausted item carries a terminal marker but is still
+// work, so it must stay closeable; IsSuppressingStatus decides whether a
+// terminal state outlives a re-detection (wontfix only); bearsRationale
+// (unexported) asks whether the RECORD may hold operator-typed text that exists
+// nowhere else, which gates compaction retention and justification backfill.
+//
+// The fourth exists because Story 36.0 pulled "is the item done?" apart from
+// "does the record carry a rationale?". Until then the two selected the same
+// records and IsSettledStatus served as a proxy for both. `attempts-exhausted`
+// is the counterexample: unsettled, yet `--reason` is mandatory for it, so a
+// settledness-gated maintenance pass would delete or overwrite the only copy of
+// why a human closed the finding.
 // FoldRecords implements the table: a
 // suppressing record wins unconditionally, otherwise the effective record is the
 // latest by timestamp, so a re-detection appended after a resolution is the
@@ -170,15 +190,27 @@
 // shard. Compact folds each id to its effective record and rewrites the shards
 // atomically, so store size tracks LIVE findings rather than history.
 //
-// Retention is bounded at two records per id, with one documented exception below.
-// retainForCompaction keeps a SECOND record for an id in either of two cases: the resolution TRAIL when the effective
-// record is open (preserving the ResolvedAt and the human-typed --reason a
-// regression would otherwise erase), and the model DONOR when the effective record
-// is settled but carries no attribution (preserving the record
-// AggregateQualitySignal recovers a Model from — without it the outcome vanishes
-// from the signal entirely). Both are written with their counters zeroed, and the
-// donor is emitted BEFORE the effective record so a full timestamp/rank tie still
-// folds to the effective one.
+// Retention is bounded at FOUR records per id, with one documented exception below:
+// the effective record, at most one superseded rationale, — when the effective
+// record carries no model attribution — one donor, and — when the effective record
+// is a re-detection and attempts-exhausted is in play — the latest closed record.
+// Two is the ordinary case and three or four the narrow ones. (That wording is deliberately identical to store.go's and to the
+// published bound in docs/technical-debt.md; see store.go's note on why.)
+// retainForCompaction keeps up to two records beyond the effective one: the resolution
+// TRAIL — the highest-ranked superseded record that bears a rationale, for ANY effective
+// status, and only when its justification is not already the effective record's
+// (preserving the ResolvedAt and the human-typed --reason a regression or a later close
+// would otherwise erase) — and the model DONOR whenever the effective record carries no
+// attribution (preserving the record AggregateQualitySignal recovers a Model from —
+// without it the outcome vanishes from the signal entirely). Neither is gated on the
+// effective record's status. Both are written with their counters zeroed, and they are
+// emitted trail-then-donor BEFORE the effective record so a full timestamp/rank tie still
+// folds to the effective one. A re-detected id also keeps its latest closed record
+// (emitted between trail and donor) when the re-detection fallback in
+// foldTerminalByID would otherwise read a different record; see retainForCompaction.
+//
+// Only ONE superseded rationale survives per id. Several distinct --reason texts on one
+// id collapse to the highest-ranked; see retainForCompaction and TD-051.
 //
 // The exception: an id ANCHORED to a shard Compact cannot rewrite (one holding a
 // line over maxLineBytes) is not compacted at all — every record of it is written
@@ -205,7 +237,7 @@
 //     StoreStats reports the same two numbers for any caller that wants them.
 //  2. The store has GROWN materially (50%) past the size the last compaction left
 //     behind, recorded in the .compact-watermark file. This is not belt-and-braces:
-//     because compaction retains up to two records per id, a store's
+//     because compaction retains up to four records per id, a store's
 //     post-compaction floor can sit ABOVE the threshold, and a bare absolute
 //     threshold would then re-fire on every single append forever — taking the
 //     cross-process lock and rewriting every shard to drop nothing. The watermark
@@ -262,7 +294,8 @@
 // Exactly one live writer: `atcr debt add --status deferred` (cli/debt_add.go),
 // which files a manual record with that status. It is new — T2 created it when it
 // rewired `add` onto this store. `atcr debt resolve` cannot write `deferred`
-// (resolveStatuses admits resolved|wontfix only), and persistLocalDebt writes an
+// (resolveStatuses admits resolved|wontfix|unreproducible|attempts-exhausted
+// only — Story 36.0 widened it, still excluding `deferred`), and persistLocalDebt writes an
 // empty status (open). The historical `deferred` writers lived in the
 // .planning/-scoped store — internal/tdmigrate's Item.Status and
 // internal/debt's aggregate classification — and both packages were deleted by

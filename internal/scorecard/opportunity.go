@@ -1,0 +1,89 @@
+package scorecard
+
+// InOpportunitySet reports whether a case is an opportunity for persona —
+// whether that lens's remit topic was in play at all.
+//
+// raisedCategories is the union of the categories ANY reviewer raised on that
+// case, which the caller assembles from the sibling Record.CategoriesRaised
+// values sharing a RunID. Membership is deliberately independent of whether
+// persona itself appears among the case's reviewers or raised anything: that is
+// the entire point. A security lens that stayed silent while another reviewer
+// raised `security` WAS presented with a security question and chose not to
+// answer, which is a judgement worth scoring. The same lens on a pure style
+// cleanup was never asked, and scoring it there is what a raw frequency count
+// gets backwards.
+//
+// Three cases all answer false, and they are different situations that happen to
+// share an answer:
+//
+//   - The persona is mapped but none of its remit categories were raised. The
+//     lens was correctly silent on an out-of-remit case; it must not enter that
+//     case into its denominator.
+//   - No category was raised at all (a fully clean case). Out-of-remit for
+//     everyone by construction. NOTE this is the MEASURED-empty case only — an
+//     unmeasured pre-schema-2 record presents identically here, which is why
+//     opportunitySetRuns never hands one to this predicate.
+//   - The persona is unmapped. Routed through RemitCategories' ok == false
+//     branch, so a future caller can distinguish it, but never "in scope for
+//     everything". ADJUDICATED won't-fix (2026-09-22 clarification): the bool
+//     signature is AC 03-04-pinned and stays; a caller that needs mapped-ness
+//     observability reads opportunityDisposition's dispCounted path in
+//     trust.go, which already counts the case per record.
+//
+// An unrecognised raised value (corrupt store, pre-vocabulary record) is just a
+// string that matches no remit. True of THIS predicate: it is neither an error
+// nor a wildcard here. It is not true of the chain — in opportunityUnions an
+// unrecognised word counts as discriminating, an ANTI-wildcard that flips a run's
+// union non-empty and drops every silent mapped lens (see trust.go
+// opportunityUnions and its inVocabulary discussion).
+//
+// WHAT THE CHAIN DOES INSTEAD: the gate this predicate is the AC-facing
+// definition of has been deliberately narrowed. opportunityDisposition drops a
+// mapped lens from a run's denominator ONLY when the lens raised NOTHING
+// (FindingsRaised == 0) on a run whose union was discriminating and outside its
+// remit; a lens that raised out-of-remit findings is kept and charged.
+// opportunityDisposition (trust.go) is the authority on that narrowing — this
+// predicate answers the narrower, raised-count-blind question and does not
+// consume it.
+//
+// NON-DISCRIMINATING values are skipped before matching, so `other`,
+// `out-of-scope` and `invariant` never put a lens in remit on their own even
+// though invariant IS in all nine remit lists. See nonDiscriminating in
+// remit.go for why each one carries no topic. The filter lives on BOTH sides —
+// here and in opportunitySetRuns' union — deliberately: this function is
+// exported and its acceptance criteria are written against it directly.
+//
+// PARITY IS PARTIAL BY DESIGN. The non-discriminating filter agrees on both
+// surfaces, but the chain's DROP is narrower than this predicate's answer: a
+// lens that raised out-of-remit findings answers false here while
+// opportunityDisposition keeps it (dispCounted). That divergence is deliberate
+// — the drop was narrowed to raised-nothing lenses after the
+// trust.go:1087-1101 probe showed the strict rule blacked out path-anchored
+// installs — and opportunityDisposition, not this predicate, is the authority
+// on what the chain actually does.
+//
+// The input slice is read only — never sorted, deduped, or rewritten in place.
+// One case's union is shared across every persona asked about that case, so a
+// mutation here would corrupt every later persona's answer for the same case.
+//
+// The nested scan is O(remit x raised) with no allocation. remit is bounded by
+// the vocabulary; raisedCategories is bounded by the caller. (opportunitySetRuns
+// is NOT a caller of this function — no production caller is — so no chain-side
+// dedupe bounds the input here.)
+func InOpportunitySet(persona string, raisedCategories []string) bool {
+	remit, ok := RemitCategories(persona)
+	if !ok {
+		return false
+	}
+	for _, want := range remit {
+		if !discriminating(want) {
+			continue
+		}
+		for _, got := range raisedCategories {
+			if got == want {
+				return true
+			}
+		}
+	}
+	return false
+}
