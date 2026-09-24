@@ -258,6 +258,17 @@ func TestReportCmd_HelpMentionsSarif(t *testing.T) {
 		"report command Short description must list sarif")
 }
 
+// TestReportCmd_HelpMarksPipeDeprecated asserts the --format help text flags
+// the legacy pipe format as deprecated while the fallback exists, so a user
+// reading `atcr report --help` is not steered onto an encoder slated for removal.
+func TestReportCmd_HelpMarksPipeDeprecated(t *testing.T) {
+	usage := newReportCmd().Flags().Lookup("format").Usage
+	assert.Contains(t, usage, report.FormatPipe+" (deprecated)", "--format help must mark pipe deprecated")
+	for _, f := range report.FormatList() {
+		assert.Containsf(t, usage, f, "--format help must still list %q", f)
+	}
+}
+
 // TestReportCmd_SarifMatchesRender asserts `atcr report --format=sarif` output is
 // byte-identical to calling report.Render(..., FormatSarif) directly — the CLI
 // layer adds no formatting divergence (AC 01-04 Scenario 2).
