@@ -1,3 +1,26 @@
+## [35.24.0] - 2026-09-23
+
+*Sprint 36.0 — durable lens authority scoring.*
+
+### Added
+
+- `ExplainTrustPriors()` function providing explainable trust scoring with per-lens tallies (counted cases, excluded cases, exclusion reasons).
+- Trust prior resolution per model via `ResolveTrustPriorsForReview()`, keying ratings on the review's pool-summary model configuration.
+- Outcome precedence ordering (`ReviewerOutcomePrecedence`) exported from fanout, eliminating duplicate vocabulary definitions.
+- Persisted outcome field on scorecard records, tracking reviewer lens eligibility state (clean, truncated, incomplete, unparseable, unknown).
+
+### Changed
+
+- Trust scoring now accounts for outcome eligibility state: a truncated or timeouts-out reviewer that raised findings is not penalized for silent cases that were never shown to it.
+- Per-model trust scoring on each reconcile path, reading personas' models from pool-summary configuration rather than deriving from runtime agents.
+- Repository state path now uses the per-model trust scoring for consistent multi-model panel evaluation.
+- Retention line reports now correctly counts failed slots (not reviewers), reports retained directories by name, and bounds the size walk at 200,000 entries.
+
+### Fixed
+
+- Model attribution on reviewer records is now preserved through store compaction and append operations.
+- Per-finding reviewers on ambiguous reconcile paths are normalized consistently (trimmed and case-folded).
+
 ## [35.23.0] - 2026-09-17
 
 *Epic 35.16.10.1 — repo-state partial-failure outcomes.*
