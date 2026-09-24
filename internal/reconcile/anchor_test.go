@@ -1371,3 +1371,17 @@ func TestScanAnchors_CleanConjunctReachableInText(t *testing.T) {
 		"the only anchor sharing the silence subject is a GLUED reading of it; "+
 			"a mis-reading is not a clean citation and may not retract the loss")
 }
+
+// filterImprecise must consider only tokens with a RECORDED imprecision. A token
+// absent from s.imprecise used to reach keep() as the zero anchorImprecision, so
+// the loop agreed with the empty-imprecise fast path only because both current
+// predicates happen to reject 0 (TD internal/reconcile/anchor.go:512).
+func TestFilterImprecise_SkipsTokensWithNoRecordedImprecision(t *testing.T) {
+	scan := anchorScan{
+		anchors:   []string{"cleanCall", "gluedCall"},
+		imprecise: map[string]anchorImprecision{"gluedCall": impreciseGlued},
+	}
+	all := func(anchorImprecision) bool { return true }
+	assert.Equal(t, []string{"gluedCall"}, scan.filterImprecise(all),
+		"a precise anchor is never an imprecise-filter result, whatever the predicate accepts")
+}
