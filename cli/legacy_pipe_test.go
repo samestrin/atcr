@@ -156,17 +156,17 @@ func TestRootCmd_HomeLegacyPipe(t *testing.T) {
 // The env switch is NOT rejected — ATCR_LEGACY_PIPE is documented as a global
 // switch over AXI surfaces, and non-AXI output ignores it.
 func TestRootCmd_LegacyPipeWithoutAXIIsUsageError(t *testing.T) {
-	code, _, stderr := execCmdSplit(t, "--legacy-pipe")
+	code, out := execCmdCapture(t, "--legacy-pipe")
 	require.Equal(t, 2, code, "--legacy-pipe without --axi must be a usage error")
-	assert.Contains(t, stderr, "--legacy-pipe requires --axi")
+	require.Contains(t, out, "--legacy-pipe requires --axi")
 
-	code, _, stderr = execCmdSplit(t, "review", "--legacy-pipe")
+	code, out = execCmdCapture(t, "review", "--legacy-pipe")
 	require.Equal(t, 2, code, "review --legacy-pipe without --axi must be a usage error")
-	assert.Contains(t, stderr, "--legacy-pipe requires --axi")
+	require.Contains(t, out, "--legacy-pipe requires --axi")
 
 	// The env switch alone stays silent and non-fatal on non-AXI output.
 	t.Setenv("ATCR_LEGACY_PIPE", "1")
-	code, _, stderr = execCmdSplit(t, "--axi=false")
+	code, _, stderr := execCmdSplit(t, "--axi=false")
 	require.Equal(t, 0, code, "env switch without AXI output must not fail")
 	assert.NotContains(t, stderr, "deprecated")
 }

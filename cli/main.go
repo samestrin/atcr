@@ -437,6 +437,13 @@ func NewRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 			if cmd.Flags().Lookup("axi") != nil {
 				axi, _ := cmd.Flags().GetBool("axi")
 				cmd.SetContext(newAXIContext(cmd.Context(), axi))
+				// Fail-closed like --exec requires --verify: an explicit --legacy-pipe
+				// without --axi is inert, so a legacy consumer who forgets --axi gets a
+				// diagnostic instead of silence. The ATCR_LEGACY_PIPE env switch is NOT
+				// rejected — it is a documented global switch that non-AXI output ignores.
+				if legacyFlag, _ := cmd.Flags().GetBool("legacy-pipe"); legacyFlag && !axi {
+					return usageError(errors.New("--legacy-pipe requires --axi"))
+				}
 				// Every command that registers --axi also registers --legacy-pipe.
 				// The flag or ATCR_LEGACY_PIPE selects the deprecated pipe encoder;
 				// the notice is written here, once per invocation, and only when
