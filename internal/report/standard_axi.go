@@ -51,6 +51,15 @@ func encodeAXI(w io.Writer, v any) error {
 // so the dynamic column set keeps its fixed order under goaxi.Encode. Zero
 // findings encode as the TOON empty-array form findings[0]: (AC 01-01 Edge
 // Case 1), never a human "No findings." sentence.
+//
+// axi.md design-tension resolutions (AC 01-02 Scenario 3):
+//   - Principle 2 ("3–4 default fields") is deliberately NOT applied — the full
+//     9-column field set is retained because tabular TOON rows are already
+//     token-lean, and dropping columns would make axi a lossy subset of the JSON
+//     contract rather than a faithful re-encoding.
+//   - Principle 4 ("pre-computed aggregates") is honored via the array header's
+//     count, the paginated payload's `total` key, and the run metadata carried on
+//     the review path (AC 01-03) — not a separate aggregation pass here.
 func renderAXI(w io.Writer, findings []reconcile.JSONFinding) error {
 	return encodeAXI(w, axiFindingsDoc(findings))
 }
