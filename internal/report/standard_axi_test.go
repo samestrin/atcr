@@ -126,3 +126,15 @@ func TestEncodeAXI_SanitizeErrorsSurfaceViaErrorsAs(t *testing.T) {
 	var ce *goaxi.CycleError
 	require.ErrorAs(t, err, &ce)
 }
+
+// TestRenderAXIPaginated_NonPositiveMaxLinesClampsToDefault mirrors PaginateAXI's
+// clamp on the standard path: a non-positive cap behaves as AXIMaxLinesDefault,
+// so the header line is never the only thing emitted.
+func TestRenderAXIPaginated_NonPositiveMaxLinesClampsToDefault(t *testing.T) {
+	for _, maxLines := range []int{0, -3} {
+		doc := axiPaginatedDoc(sample(), maxLines)
+		assert.Len(t, doc.Findings, 2, "maxLines=%d must clamp to the default cap", maxLines)
+		assert.False(t, doc.Truncated)
+		assert.Equal(t, 2, doc.Total)
+	}
+}
