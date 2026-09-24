@@ -241,7 +241,7 @@ func pipeMustQuote(s string) bool {
 // carry as a raw byte. U+2028/U+2029 are separators, not Unicode "control", so
 // they are named explicitly.
 func pipeUnsafeRune(r rune) bool {
-	return unicode.IsControl(r) || r == ' ' || r == ' '
+	return unicode.IsControl(r) || r == '\u2028' || r == '\u2029'
 }
 
 // looksLikeNumber reports whether s would be parsed as a number by a conforming

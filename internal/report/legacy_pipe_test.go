@@ -26,7 +26,7 @@ func legacyPipeEdgeFindings() []reconcile.JSONFinding {
 		{Severity: "HIGH", File: "cmd/a|b.go", Line: 3,
 			Problem:  "a || b and x | y: \"quoted\" \\ back\nnext\ttab\rcr",
 			Fix:      "use regexp `foo|bar` [x]{y}",
-			Category: "true", EstMinutes: 30, Evidence: "\x1b[31mred\x1b[0m sep ",
+			Category: "true", EstMinutes: 30, Evidence: "\x1b[31mred\x1b[0m\u2028sep\u2029",
 			Reviewers: []string{"greta", "otto"}, Confidence: "42",
 			Disagreement: "LOW vs HIGH",
 			Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "null", Notes: " padded ", ChallengeSurvived: true},
