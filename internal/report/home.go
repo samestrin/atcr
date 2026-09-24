@@ -5,9 +5,10 @@ import "io"
 // HomeViewAXI is the token-dense analogue of the human home view (axi.md
 // Principle 8, "Content First"): the executable path, atcr's one-line
 // description, and the current review identity/status. It carries no findings
-// list, so — exactly like ReviewSummaryAXI — it is a single-row TOON payload
-// sharing this package's one TOON encoder (encodeAXI) rather than a second,
-// divergent serializer.
+// list, so — exactly like ReviewSummaryAXI — it is a single-row payload encoded
+// by the standard TOON path via this package's one shared encoder (encodeAXI)
+// and by the deprecated fallback via RenderHomeViewPipe, rather than by a
+// second, divergent serializer.
 type HomeViewAXI struct {
 	ExecPath     string
 	Description  string
@@ -17,7 +18,8 @@ type HomeViewAXI struct {
 
 // homeViewAXIHeader is the fixed column order of the home-view payload. Kept as
 // one slice so the header line and the row are guaranteed the same width and
-// order — the same defensive invariant renderAXI/RenderReviewSummaryAXI enforce.
+// order — the same defensive invariant singleRowAXI (standard) and
+// writePipeSingleRow (legacy) enforce.
 var homeViewAXIHeader = []string{"exec_path", "description", "review_id", "review_status"}
 
 // RenderHomeViewAXI writes s as a single-row standard TOON tabular array
