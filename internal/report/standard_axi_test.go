@@ -9,6 +9,7 @@ import (
 	goaxi "github.com/samestrin/go-axi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	toon "github.com/toon-format/toon-go"
 
 	reclib "github.com/samestrin/atcr/reconcile"
 
@@ -222,4 +223,42 @@ func TestEncodeAXI_WritesNothingOnFailure(t *testing.T) {
 	assert.Empty(t, b.String(), "a failed encode must leave the writer untouched")
 	var kce *goaxi.KeyCollisionError
 	assert.ErrorAs(t, err, &kce)
+}
+
+// TestRenderAXI_MixedPayloadDecodesWithTypedPointers pins AC1 for the common
+// mixed case: when only some findings carry a verification/evidence block, the
+// absent cells must encode as null (not ""), so a stock typed decoder with
+// pointer fields accepts the whole document. "" in a bool/int column makes
+// toon.Unmarshal reject the payload outright ("cannot assign string to int").
+func TestRenderAXI_MixedPayloadDecodesWithTypedPointers(t *testing.T) {
+	carrier := reconcile.JSONFinding{
+		Severity: "LOW", File: "carrier.go", Line: 2, Problem: "p", Fix: "f",
+		Category: "c", EstMinutes: 1, Confidence: "LOW",
+		Verification: &reclib.Verification{Verdict: "confirmed", ChallengeSurvived: true},
+		EvidenceExec: &reconcile.EvidenceExec{Command: "true", ExitCode: 0},
+	}
+	plain := reconcile.JSONFinding{
+		Severity: "HIGH", File: "plain.go", Line: 1, Problem: "p", Fix: "f",
+		Category: "c", EstMinutes: 2, Confidence: "HIGH",
+	}
+	var b bytes.Buffer
+	require.NoError(t, RenderAXIPaginated(&b, []reconcile.JSONFinding{plain, carrier}, AXIMaxLinesDefault))
+
+	type row struct {
+		ChallengeSurvived *bool `toon:"verification.challenge_survived"`
+		ExitCode          *int  `toon:"evidence_exec.exit_code"`
+	}
+	var doc struct {
+		Findings  []row `toon:"findings"`
+		Total     int   `toon:"total"`
+		Truncated bool  `toon:"truncated"`
+	}
+	require.NoErrorf(t, toon.Unmarshal(b.Bytes(), &doc), "stock typed decoder must accept a mixed payload")
+	require.Len(t, doc.Findings, 2)
+	assert.Nil(t, doc.Findings[0].ChallengeSurvived, "absent block decodes as null, not a value")
+	assert.Nil(t, doc.Findings[0].ExitCode, "absent block decodes as null, not a value")
+	require.NotNil(t, doc.Findings[1].ChallengeSurvived)
+	assert.True(t, *doc.Findings[1].ChallengeSurvived)
+	require.NotNil(t, doc.Findings[1].ExitCode)
+	assert.Equal(t, 0, *doc.Findings[1].ExitCode)
 }
