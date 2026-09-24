@@ -434,6 +434,21 @@ func NewRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 			// so review.go/resume.go read it via axiFromContext rather than re-parsing
 			// the flag at each stdout call site (AC 01-04). The flag lives only on
 			// `atcr review`; the Lookup guard leaves every other command unaffected.
+			// Resolve the legacy-pipe choice ONCE, at this single flag-parse point,
+			// for every command that can consume it: AXI surfaces (flag or env) and
+			// report's --format pipe (env). Non-consuming commands skip the env read
+			// so an invalid ATCR_LEGACY_PIPE value does not warn on unrelated surfaces.
+			// Consumers read the resolved choice via legacyPipeFromContext — report
+			// included — so the resolution rule lives in exactly one place.
+			legacyFlag := false
+			legacy := false
+			if cmd.Flags().Lookup("axi") != nil || cmd.Name() == "report" {
+				if cmd.Flags().Lookup("legacy-pipe") != nil {
+					legacyFlag, _ = cmd.Flags().GetBool("legacy-pipe")
+				}
+				legacy = legacyFlag || legacyPipeFromEnv(cmd.ErrOrStderr())
+			}
+			cmd.SetContext(newLegacyPipeContext(cmd.Context(), legacy))
 			if cmd.Flags().Lookup("axi") != nil {
 				axi, _ := cmd.Flags().GetBool("axi")
 				cmd.SetContext(newAXIContext(cmd.Context(), axi))
@@ -441,16 +456,12 @@ func NewRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 				// without --axi is inert, so a legacy consumer who forgets --axi gets a
 				// diagnostic instead of silence. The ATCR_LEGACY_PIPE env switch is NOT
 				// rejected — it is a documented global switch that non-AXI output ignores.
-				if legacyFlag, _ := cmd.Flags().GetBool("legacy-pipe"); legacyFlag && !axi {
+				if legacyFlag && !axi {
 					return usageError(errors.New("--legacy-pipe requires --axi"))
 				}
-				// Every command that registers --axi also registers --legacy-pipe.
 				// The flag or ATCR_LEGACY_PIPE selects the deprecated pipe encoder;
 				// the notice is written here, once per invocation, and only when
 				// AXI output is actually requested.
-				legacyFlag, _ := cmd.Flags().GetBool("legacy-pipe")
-				legacyEnv := legacyPipeFromEnv(cmd.ErrOrStderr())
-				legacy := legacyFlag || legacyEnv
 				if axi && legacy {
 					if legacyFlag {
 						warnLegacyPipe(cmd.Context(), "--legacy-pipe")
@@ -458,7 +469,6 @@ func NewRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 						warnLegacyPipe(cmd.Context(), "ATCR_LEGACY_PIPE")
 					}
 				}
-				cmd.SetContext(newLegacyPipeContext(cmd.Context(), legacy))
 			}
 			return nil
 		},
