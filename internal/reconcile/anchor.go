@@ -498,8 +498,10 @@ func scanFixAnchors(text string) ([]string, anchorScan) {
 
 // filterImprecise is the one walk both imprecise-filtering consumers share: it
 // collects the scan's anchors whose recorded imprecision kind the predicate
-// accepts, in the already-sorted anchor order. The empty-imprecise fast path is
-// shared too — it is behaviourally identical to falling through the loop, so
+// accepts, in the already-sorted anchor order. A token with no recorded
+// imprecision is skipped rather than handed to keep as the zero kind. The
+// empty-imprecise fast path is shared too — it is behaviourally identical to
+// falling through the loop, so
 // both callers keep one nil-guard policy. Callers keep their OWN arm guards
 // (capped/unaccounted): those differ deliberately between the PROBLEM and FIX
 // sides and are documented at each consumer.
@@ -509,7 +511,7 @@ func (s anchorScan) filterImprecise(keep func(anchorImprecision) bool) []string 
 	}
 	var out []string
 	for _, tok := range s.anchors {
-		if keep(s.imprecise[tok]) {
+		if kind, ok := s.imprecise[tok]; ok && keep(kind) {
 			out = append(out, tok)
 		}
 	}
