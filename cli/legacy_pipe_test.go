@@ -7,8 +7,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// wantPipeDeprecation is the exact stderr notice every legacy pipe route emits.
-const wantPipeDeprecation = "warning: pipe-delimited AXI output is deprecated and will be removed in a future release; migrate to standard TOON.\n"
+// wantPipeDeprecation is the stderr notice every legacy pipe route emits.
+// Each route appends " (enabled by <trigger>)" before the newline, so the
+// constant pins only the shared prefix.
+const wantPipeDeprecation = "warning: pipe-delimited AXI output is deprecated and will be removed in a future release; migrate to standard TOON."
 
 // TestLegacyPipeNoticeNamesTrigger pins that the deprecation notice says HOW
 // legacy pipe was enabled, so an env-switch user can turn it off without

@@ -33,10 +33,12 @@ func axiFromContext(ctx context.Context) bool {
 // stdout stays payload-only, so the notice never corrupts what an agent parses.
 const legacyPipeDeprecation = "warning: pipe-delimited AXI output is deprecated and will be removed in a future release; migrate to standard TOON."
 
-// warnLegacyPipe writes the deprecation notice. Write errors are ignored: a
-// broken stderr must not fail a run whose payload is on stdout.
-func warnLegacyPipe(w io.Writer) {
-	_, _ = fmt.Fprintln(w, legacyPipeDeprecation)
+// warnLegacyPipe writes the deprecation notice. trigger names the switch that
+// selected legacy pipe ("--legacy-pipe", "ATCR_LEGACY_PIPE", "--format pipe"),
+// so the user can tell how to turn it off. Write errors are ignored: a broken
+// stderr must not fail a run whose payload is on stdout.
+func warnLegacyPipe(w io.Writer, trigger string) {
+	_, _ = fmt.Fprintf(w, "%s (enabled by %s)\n", legacyPipeDeprecation, trigger)
 }
 
 // legacyPipeFromEnv reports whether ATCR_LEGACY_PIPE requests the legacy pipe

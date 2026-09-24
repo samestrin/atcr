@@ -441,10 +441,15 @@ func NewRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 				// The flag or ATCR_LEGACY_PIPE selects the deprecated pipe encoder;
 				// the notice is written here, once per invocation, and only when
 				// AXI output is actually requested.
-				legacy, _ := cmd.Flags().GetBool("legacy-pipe")
-				legacy = legacy || legacyPipeFromEnv()
+				legacyFlag, _ := cmd.Flags().GetBool("legacy-pipe")
+				legacyEnv := legacyPipeFromEnv()
+				legacy := legacyFlag || legacyEnv
 				if axi && legacy {
-					warnLegacyPipe(cmd.ErrOrStderr())
+					if legacyFlag {
+						warnLegacyPipe(cmd.ErrOrStderr(), "--legacy-pipe")
+					} else {
+						warnLegacyPipe(cmd.ErrOrStderr(), "ATCR_LEGACY_PIPE")
+					}
 				}
 				cmd.SetContext(newLegacyPipeContext(cmd.Context(), legacy))
 			}

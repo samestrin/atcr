@@ -120,7 +120,11 @@ func runReport(cmd *cobra.Command, args []string) error {
 		// under the global ATCR_LEGACY_PIPE switch. Same pagination knob and exit
 		// class as the standard AXI branch below; the notice goes to stderr so
 		// stdout stays payload-only.
-		warnLegacyPipe(cmd.ErrOrStderr())
+		if format == report.FormatPipe {
+			warnLegacyPipe(cmd.ErrOrStderr(), "--format pipe")
+		} else {
+			warnLegacyPipe(cmd.ErrOrStderr(), "ATCR_LEGACY_PIPE")
+		}
 		if err := report.RenderPipeAXIPaginated(&buf, findings, axiMaxLinesFromEnv(cmd.ErrOrStderr())); err != nil {
 			return fmt.Errorf("axi output rendering failed: %w", err)
 		}
