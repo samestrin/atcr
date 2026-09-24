@@ -291,6 +291,21 @@ func TestLegacyPipeNoticeHonorsLogFormatJSON(t *testing.T) {
 	assert.True(t, found, "deprecation notice must ride the structured logger in json mode")
 }
 
+// TestReviewCmd_LegacyPipeDryRunNoNotice pins that --dry-run --axi
+// --legacy-pipe exits 0 WITHOUT the deprecation notice: dry-run short-circuits
+// to the quality-signal JSON preview and no pipe payload is ever produced, so
+// the notice would describe output that never happens (TD: cli/review.go:283).
+func TestReviewCmd_LegacyPipeDryRunNoNotice(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	code, stdout, stderr := execCmdSplit(t, "review", "--dry-run", "--axi", "--legacy-pipe", "--base", "HEAD^")
+	require.Equal(t, 0, code)
+	assert.NotContains(t, stderr, "deprecated",
+		"dry-run produces no pipe payload, so the deprecation notice must not fire")
+	assert.NotEmpty(t, stdout, "dry-run still renders its quality-signal preview")
+}
+
 // TestReviewCmd_LegacyPipeEmitsPipeSummary covers `review --axi --legacy-pipe`:
 // the run summary uses the pipe encoder, the notice goes to stderr, and the exit
 // code is unchanged (AC6).
