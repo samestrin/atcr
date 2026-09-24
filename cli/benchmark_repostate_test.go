@@ -1286,6 +1286,32 @@ func TestExecuteRepoStateBenchmarkRun_EveryCaseFailingIsAnError(t *testing.T) {
 	assert.Nil(t, rr)
 }
 
+// The FAILED arm retains the same unbounded work dir as the partial arm, so its
+// Warn line carries the same growth figures. It once logged only the path, leaving
+// the monitor blind on the arm that fires on every error return.
+func TestExecuteRepoStateBenchmarkRun_FailedRunReportsTheRetainedSize(t *testing.T) {
+	suite := writeCaseSuite(t, "first-case", "second-case")
+	faultMaterialization(t, suite, "first-case")
+	faultMaterialization(t, suite, "second-case")
+	var logs bytes.Buffer
+
+	_, _, err := executeRepoStateBenchmarkRun(logCapturingContext(t, &logs),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC(), 0)
+	releaseRetainedWorkDirFromError(t, err)
+	require.Error(t, err)
+
+	var line string
+	for _, l := range strings.Split(logs.String(), "\n") {
+		if strings.Contains(l, "benchmark work dir retained after a failed run") {
+			line = l
+		}
+	}
+	require.NotEmpty(t, line, "the failed arm logs its retention line")
+	for _, want := range []string{"failed_cases=2", "failed_slots=", "failed_reviewers=", "retained_dirs=", "retained_bytes"} {
+		assert.Contains(t, line, want, "the failed-run line reports %s like the partial-run line", want)
+	}
+}
+
 // The zero-scored guard used to carry TWO returns: an all-cases-failed message and
 // a fallback for a shape no test can reach (an empty accumulator with no recorded
 // failure — the empty case list is rejected at load, and an all-roster failure
