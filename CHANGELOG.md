@@ -1,3 +1,23 @@
+## [35.25.0] - 2026-09-23
+
+*Epic 35.16.11.1 — standard toon output migration.*
+
+`--axi` output is now canonical, specification-compliant TOON encoded by `go-axi` v0.3.1, readable by any off-the-shelf TOON decoder. The old pipe-delimited form stays available as a deprecated fallback.
+
+### Added
+
+- `atcr report --format pipe`, `--legacy-pipe` on `atcr review` and bare `atcr`, and `ATCR_LEGACY_PIPE=1` (a global switch over every AXI surface) route AXI output through the legacy pipe encoder. Each legacy route writes one deprecation notice to stderr; stdout stays payload-only and exit codes are unchanged.
+- A `total: <int>` line on every paginated `report --format axi` payload, carrying the true pre-truncation finding count beside `truncated: <bool>`.
+- `goaxi.Check` assertions on every AXI payload (lossless, and tabular plus token-efficient when non-empty), and doc-vs-code drift tests pinning the AXI docs to the go-axi pin, the emitted header, and the fallback flags.
+
+### Changed
+
+- `atcr report --format axi`, `atcr review --axi` and `atcr --axi` emit standard comma-delimited TOON (`findings[N]{...}:`) instead of the pipe variant (`findings[N|]{...}:`). Code fields carrying `|`, `||`, quotes, or newlines now survive a stock decode verbatim (fields of at most 500 runes).
+- On the standard path, a truncated findings payload's header `N` now equals the rows emitted, so it still decodes; the true count moved to the `total` line. The legacy pipe path keeps its old contract byte-for-byte.
+- Control-byte stripping on the standard path now uses go-axi's sanitizer (invalid UTF-8 is dropped); the hand-rolled `toonQuote`/`toonEscape`/`isTOONControl` encoder is gone. The legacy path keeps its own helper, which still writes U+FFFD for invalid UTF-8.
+
+*Shipped via /execute-epic (epic 35.16.11.1)*
+
 ## [35.24.0] - 2026-09-23
 
 *Sprint 36.0 — durable lens authority scoring.*
