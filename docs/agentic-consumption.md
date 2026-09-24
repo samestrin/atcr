@@ -29,6 +29,27 @@ boolean `--axi` flag, while `report` selects AXI through its existing
 agent reads to consume the findings themselves — `review --axi` deliberately
 emits only a compact run summary, not the findings.
 
+### Standard TOON and the legacy pipe fallback
+
+Every AXI payload is canonical, specification-compliant TOON, encoded by [`go-axi` v0.3.1](https://github.com/samestrin/go-axi) (the version pinned in atcr's `go.mod`): comma-delimited tabular arrays, strict TOON quoting, and only the five valid escapes (`\\ \" \n \r \t`). Any off-the-shelf TOON decoder reads it with no custom delimiter option. Code in `problem`, `fix`, or `evidence` that carries `|`, `||`, quotes, or newlines survives verbatim, for fields of at most 500 runes (longer free-text fields are capped).
+
+Before this, atcr emitted a custom pipe-delimited variant (`findings[N|]{a|b}:`). That encoding is deprecated but still available for consumers that have not migrated yet:
+
+| Surface | Legacy pipe opt-in |
+|---------|--------------------|
+| `atcr report` | `--format pipe` |
+| `atcr review --axi`, `atcr review --resume <id> --axi` | `--legacy-pipe` |
+| `atcr --axi` | `--legacy-pipe` |
+| every AXI surface above, including `report --format axi` | `ATCR_LEGACY_PIPE=1` |
+
+`ATCR_LEGACY_PIPE=1` is a global switch over the AXI surface only; non-AXI formats ignore it. Every legacy route writes one notice to stderr (never stdout), and the exit code does not change:
+
+```
+warning: pipe-delimited AXI output is deprecated and will be removed in a future release; migrate to standard TOON.
+```
+
+The legacy path keeps its old bytes exactly, including its old pagination contract (header `N` is the true total, no `total:` line). It will be removed in a future release.
+
 ```bash
 # Kick off a review and capture the run summary (metadata) as a clean payload.
 atcr review --axi > run.toon 2> review.log
@@ -69,8 +90,8 @@ single-row TOON array — the executable path (home-relativized with `~`), atcr'
 one-line description, and the current review's id and status:
 
 ```
-home[1|]{exec_path|description|review_id|review_status}:
-  ~/go/bin/atcr|Agent Team Code Review — a review panel, not a reviewer|2026-07-18_main|completed
+home[1]{exec_path,description,review_id,review_status}:
+  ~/go/bin/atcr,"Agent Team Code Review — a review panel, not a reviewer",2026-07-18_main,completed
 ```
 
 When no review has run yet, `review_id` is a quoted empty string (`""`) and
@@ -83,13 +104,11 @@ on a first run with no `.atcr/latest` pointer.
 human-oriented stdout line and emit a single-row TOON array describing the run:
 
 ```
-review_summary[1|]{id|dir|agents_succeeded|agents_total|agents_failed|agents_timed_out|api_calls|findings_total}:
-  2026-07-18_main|.atcr/reviews/2026-07-18_main|3|3|0|0|9|2
+review_summary[1]{id,dir,agents_succeeded,agents_total,agents_failed,agents_timed_out,api_calls,findings_total,findings_critical,findings_high,findings_medium,findings_low}:
+  2026-07-18_main,.atcr/reviews/2026-07-18_main,3,3,0,0,9,2,0,1,1,0
 ```
 
-The header names the pipe (`|`) delimiter and the fixed column order; the single
-data row carries the run id, the review directory, and six bare-integer counts —
-the last, `findings_total`, being the raw pre-reconcile fan-out count. To act on the reconciled
+The header declares the fixed column order with the standard comma delimiter; the single data row carries the run id, the review directory, and ten bare-integer counts. `findings_total` is the raw pre-reconcile fan-out count, and the four `findings_<severity>` columns break it down by severity. To act on the reconciled
 findings, read `atcr report --format axi` against the same review directory —
 `findings_total` is a fan-out metric, not the deduplicated reconciled count. One
 exception: a `review --resume <id> --axi` run that finds nothing pending (the
@@ -98,21 +117,17 @@ just-reconciled total instead of a fan-out count.
 
 ### The `report --format axi` findings payload
 
-`atcr report --format axi` emits the reconciled findings as a TOON tabular array
-whose header declares the pipe delimiter and the nine-column
-[`atcr-findings/v1`](findings-format.md) field set, followed by a `truncated`
-metadata line (see [Pagination and truncation](#pagination-and-truncation)):
+`atcr report --format axi` emits the reconciled findings as a standard TOON tabular array whose header declares the nine-column [`atcr-findings/v1`](findings-format.md) field set, followed by `total` and `truncated` metadata lines (see [Pagination and truncation](#pagination-and-truncation)):
 
 ```
-findings[2|]{severity|"file:line"|problem|fix|category|est_minutes|evidence|reviewers|confidence}:
-  CRITICAL|"auth.go:42"|token never expires|check expiry|security|15|expiresAt unread|greta,host|HIGH
-  LOW|"util.go:7"|unused var|""|style|0|""|otto|MEDIUM
+findings[2]{severity,"file:line",problem,fix,category,est_minutes,evidence,reviewers,confidence}:
+  CRITICAL,"auth.go:42",token never expires,check expiry,security,15,expiresAt unread,"greta,host",HIGH
+  LOW,"util.go:7",unused var,"",style,0,"",otto,MEDIUM
+total: 2
 truncated: false
 ```
 
-Free-text fields are quoted only when TOON requires it (empty string, embedded
-delimiter/special character, number- or reserved-token-looking value); integer
-columns are emitted as bare TOON integers. The stdout bytes are guaranteed free
+Free-text fields are quoted only when TOON requires it (empty string, embedded delimiter or special character, number- or reserved-token-looking value); integer columns are emitted as bare TOON integers. The stdout bytes are guaranteed free
 of ANSI/OSC escape sequences and Markdown syntax — it is TOON only.
 
 ## Exit codes
@@ -159,17 +174,9 @@ window. `atcr report --format axi` therefore caps its payload deterministically:
   the cap. A blank, non-numeric, zero, or negative value is ignored — the cap
   fails open to 500 and a single warning is written to **stderr** (never stdout,
   never a nonzero exit).
-- **Signal:** every AXI findings payload ends with a `truncated: <bool>` line.
-  When findings exceed the cap, the array is cut on a whole-row boundary, extra
-  rows are dropped, and `truncated: true` is emitted.
+- **Signal:** every AXI findings payload ends with a `total: <int>` line and a `truncated: <bool>` line, cut or uncut. When findings exceed the cap, rows past the cap are dropped before encoding and `truncated: true` is emitted.
 
-The array header's declared count `N` (`findings[N|]{...}`) is always the **true,
-pre-truncation total**, even when fewer than `N` rows are physically present. A
-consumer must therefore read `truncated` and the header `N` as authoritative
-rather than counting the rows it received. When `truncated` is `true`, treat the
-payload as partial: re-invoke with a higher `ATCR_AXI_MAX_LINES` to retrieve the
-full set, or record the result as incomplete — do not assume you have every
-finding.
+The array header's declared count `N` (`findings[N]{...}`) always equals the rows actually present, so a truncated payload still decodes with any stock TOON decoder. The **true, pre-truncation total** is on the `total` line. When `truncated` is `true`, treat the payload as partial: re-invoke with a higher `ATCR_AXI_MAX_LINES` to retrieve the full set, or record the result as incomplete — do not assume you have every finding. (The deprecated legacy pipe path keeps its old contract: header `N` is the true total and there is no `total` line.)
 
 ```bash
 # Raise the cap for a large review before consuming the full findings set.
@@ -182,7 +189,7 @@ The entire value of AXI mode for an orchestrator is that a redirect produces a
 byte-clean file. Under `--axi`:
 
 - **stdout carries only the payload** — the `review_summary`/`findings` TOON and
-  its `truncated` line, with zero ANSI/OSC escapes and zero Markdown. `atcr
+  its `total` and `truncated` lines, with zero ANSI/OSC escapes and zero Markdown. `atcr
   review --axi > run.toon` and `atcr report --format axi > findings.toon` yield
   parseable files with nothing else mixed in.
 - **stderr carries only diagnostics** — progress, warnings, and all structured
@@ -235,21 +242,18 @@ case $status in
     fi
 
     # 3. Trust the payload only after checking the truncation flag. If truncated,
-    #    the array header's N is the TRUE total but not every row is present —
-    #    re-run with a higher cap rather than assuming the list is complete.
+    #    the header's N counts only the rows present and `total:` holds the true
+    #    count — re-run with a higher cap rather than assuming the list is complete.
     if grep -qx 'truncated: true' findings.toon; then
       echo "findings truncated; re-running with a higher cap" >&2
       ATCR_AXI_MAX_LINES=20000 atcr report --format axi > findings.toon 2> report.log
     fi
 
-    # 4. Iterate the finding rows. Data rows are pipe-delimited and indented; the
-    #    header (findings[N|]{...}:) and the trailing truncated: line are skipped.
-    #    Free-text cells follow TOON quoting rules — a production consumer should
-    #    parse with a TOON library rather than a bare split.
-    grep -E '^  [A-Z]+\|' findings.toon | while IFS='|' read -r severity file_line problem fix _rest; do
-      printf 'FIX %s at %s: %s\n' "${severity#  }" "$file_line" "$fix"
-      # ... hand each finding to the agent's fixer here ...
-    done
+    # 4. Decode the finding rows with a standard TOON decoder — the payload is
+    #    spec-compliant TOON, so any off-the-shelf decoder reads it (in Go:
+    #    goaxi.DecodeTabular). Free-text cells can hold commas, pipes, and escaped
+    #    newlines, so never split rows with a bare shell split.
+    your-agent-fixer --findings findings.toon  # placeholder: the agent's fixer
     ;;
   2)
     echo "usage/config error: fix the invocation, do not retry as-is (see review.log)" >&2
