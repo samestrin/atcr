@@ -39,6 +39,10 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 
 	reviewers := map[string]ReviewerMeta{}
 	if ps, err := fanout.ReadPoolSummary(reviewDir); err == nil {
+		// The stored Model is the one the trust path reads (modelsFromAgents):
+		// a persona listed on two models stores none, so a record can never
+		// claim a model that ResolveTrustPriorsForReview refused to resolve.
+		models := modelsFromAgents(ps.Agents)
 		for _, a := range ps.Agents {
 			// Normalize ONCE and key on the canonical name — case-FOLDED as well
 			// as trimmed, via normalizeReviewerName. Untrimmed, " bruce" and
@@ -64,7 +68,7 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 				outcome = prev.Outcome
 			}
 			reviewers[name] = ReviewerMeta{
-				Model:     a.Model,
+				Model:     models[name],
 				TokensIn:  a.TokensIn,
 				TokensOut: a.TokensOut,
 				LatencyMS: a.DurationMS,
@@ -326,8 +330,17 @@ func RunIDForReviewDir(reconciledAt, reviewDir string) string {
 	if err != nil {
 		absDir = reviewDir
 	}
+	// Resolve symlinks so one directory reached by two spellings is one run
+	// (on macOS /tmp is a symlink to /private/tmp). A path that cannot be
+	// resolved keeps its absolute form. Case is not folded: whether two
+	// spellings name one directory depends on the filesystem, not the path.
+	if resolved, err := filepath.EvalSymlinks(absDir); err == nil {
+		absDir = resolved
+	}
 	pathHash := sha256.Sum256([]byte(absDir))
-	return reconciledAt + "-" + filepath.Base(reviewDir) + "-" + hex.EncodeToString(pathHash[:4])
+	// The leaf name comes from the resolved path too, so a symlinked leaf or a
+	// "." argument names the directory itself rather than the spelling used.
+	return reconciledAt + "-" + filepath.Base(absDir) + "-" + hex.EncodeToString(pathHash[:4])
 }
 
 // outcomeFor classifies one agent's status for the durable record, refusing to
@@ -452,13 +465,20 @@ func trimmedReviewers(in []string) []string {
 // never nil — nil means "no model filter" to ratesFromRecords, and an unreadable
 // summary must not silently restore the persona-only fold.
 func currentModels(reviewDir string) map[string]string {
-	out := map[string]string{}
 	ps, err := fanout.ReadPoolSummary(reviewDir)
 	if err != nil {
-		return out
+		return map[string]string{}
 	}
+	return modelsFromAgents(ps.Agents)
+}
+
+// modelsFromAgents is currentModels over an already-read agent list, shared
+// with EmitForReconcile so the model a record stores and the model the trust
+// path scores it against come from one rule.
+func modelsFromAgents(agents []fanout.AgentStatus) map[string]string {
+	out := map[string]string{}
 	conflicted := map[string]bool{}
-	for _, a := range ps.Agents {
+	for _, a := range agents {
 		name := normalizeReviewerName(a.Agent)
 		model := strings.TrimSpace(a.Model)
 		if name == "" || model == "" || conflicted[name] {
