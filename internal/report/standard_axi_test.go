@@ -204,3 +204,22 @@ func TestRenderAXI_SanitizationScope(t *testing.T) {
 	assert.Contains(t, out, "\u202E", "U+202E bidi-override format char passes through")
 	assert.Contains(t, out, "\u200b", "U+200B zero-width space passes through")
 }
+
+// TestEncodeAXI_WritesNothingOnFailure pins the "writes nothing on failure"
+// claim the encodeAXI doc makes about go-axi: a failing encode must leave the
+// caller's writer untouched, so an orchestrator reading stdout before branching
+// on the exit code gets nothing rather than a partial, unparseable payload.
+// goaxi.Encode is Sanitize → full toon.Marshal → one writeLine, so marshal
+// faults happen before any byte is written; this test makes that structural
+// guarantee visible if a go-axi bump ever changes it.
+func TestEncodeAXI_WritesNothingOnFailure(t *testing.T) {
+	// Two map keys that sanitize to the same string force goaxi's
+	// KeyCollisionError — a post-sanitize encode fault.
+	dirty := map[string]any{"na\x1bme": 1, "name": 2}
+	var b bytes.Buffer
+	err := encodeAXI(&b, dirty)
+	require.Error(t, err)
+	assert.Empty(t, b.String(), "a failed encode must leave the writer untouched")
+	var kce *goaxi.KeyCollisionError
+	assert.ErrorAs(t, err, &kce)
+}
