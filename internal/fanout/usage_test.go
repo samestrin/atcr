@@ -65,15 +65,17 @@ func TestStatusFor_PersistsUsageWhenPresent(t *testing.T) {
 }
 
 func TestStatusFor_OmitsUsageWhenZero(t *testing.T) {
-	// A zero-usage result keeps status.json byte-identical to the pre-3.3 shape:
-	// the omitempty fields must be absent from the serialized JSON.
+	// A zero-usage result omits the token fields, but still records the model: a
+	// provider that never reports usage would otherwise leave its personas with
+	// no model in the pool summary and permanently neutral on the per-model trust
+	// path.
 	st := statusFor(Result{Agent: "bruce", Status: StatusOK, Model: "m"}, findingsResult{})
-	assert.Empty(t, st.Model, "model not recorded without usage")
+	assert.Equal(t, "m", st.Model, "model recorded without usage")
 	data, err := json.Marshal(st)
 	require.NoError(t, err)
 	var m map[string]any
 	require.NoError(t, json.Unmarshal(data, &m))
-	assert.NotContains(t, m, "model")
+	assert.Contains(t, m, "model")
 	assert.NotContains(t, m, "tokens_in")
 	assert.NotContains(t, m, "tokens_out")
 }
