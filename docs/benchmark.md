@@ -334,15 +334,15 @@ When any case fails — or any single reviewer **slot** fails (one reviewer miss
 **That retention is unbounded, and reclaiming it is yours to do.** Nothing prunes, caps or expires a retained work dir, deliberately: it holds the only copy of a panel you already paid for, so the run will not delete it on your behalf. The trade is that a scheduled suite losing one case per run — or one slot per run, which on a large roster is the more common trigger — leaves one full work dir behind per run. The partial-run warning reports the size alongside the path so the growth is visible before the volume is:
 
 ```
-WARN benchmark work dir retained after a partial run path=/tmp/atcr-repo-state-1234 failed_cases=1 retained_bytes=41231882
+WARN benchmark work dir retained after a partial run path=/tmp/atcr-repo-state-1234 failed_cases=1 failed_slots=0 failed_reviewers=0 retained_dirs=3 retained_bytes=41231882
 ```
 
-Watch `retained_bytes`, and once you have inspected or rescored a run, reclaim it with `rm -rf` on the path from that line. A run that scores every case cleans up after itself, so only partial and failed runs accumulate.
+Watch `retained_bytes`, and once you have inspected or rescored a run, reclaim it with `rm -rf` on the path from that line. `retained_dirs` counts every retained `atcr-repo-state-*` work dir in the same temp directory, this one included, so growth across runs is visible on one line; it matches by name and reads no sizes. `failed_slots` is the number of failed reviewer slots (one reviewer failing 200 cases is 200), and `failed_reviewers` is how many reviewers those slots belong to. A run that scores every case cleans up after itself, so only partial and failed runs accumulate.
 
-`retained_bytes` is always a number, so you can build a numeric monitor on it — including under `ATCR_LOG_FORMAT=json`, where it is a JSON number. When the size cannot be measured at all (the walk could not read the work dir's root), the key is **omitted** and a boolean says so in its place, rather than the key changing type:
+`retained_bytes` is always a number, so you can build a numeric monitor on it — including under `ATCR_LOG_FORMAT=json`, where it is a JSON number. When the size cannot be measured (the walk could not read the work dir's root, or the tree holds more than 200,000 entries, where the walk stops rather than delay exit), the key is **omitted** and a boolean says so in its place, rather than the key changing type:
 
 ```
-WARN benchmark work dir retained after a partial run path=/tmp/atcr-repo-state-1234 failed_cases=1 retained_bytes_unmeasured=true
+WARN benchmark work dir retained after a partial run path=/tmp/atcr-repo-state-1234 failed_cases=1 failed_slots=0 failed_reviewers=0 retained_dirs=3 retained_bytes_unmeasured=true
 ```
 
 The dir is still retained and its path is still on the line; only the size is unknown. Treat `retained_bytes_unmeasured=true` as "go look" — an unmeasurable work dir is the one case where the growth figure cannot warn you.

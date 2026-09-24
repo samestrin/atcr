@@ -209,7 +209,9 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			// (a number, or absent) leaves absence to mean "not measured", which is
 			// what an omitted key already means everywhere else here, while the
 			// sibling boolean keeps the unmeasured case VISIBLE rather than inferred.
-			attrs := []any{"path", tmp, "failed_cases", len(caseFailures), "failed_slots", len(slotFailures)}
+			attrs := []any{"path", tmp, "failed_cases", len(caseFailures),
+				"failed_slots", failedSlotCount(slotFailures), "failed_reviewers", len(slotFailures),
+				"retained_dirs", retainedDirCount(tmp)}
 			attrs = append(attrs, retainedSizeAttrs(tmp)...)
 			log.FromContext(ctx).Warn("benchmark work dir retained after a partial run", attrs...)
 			// Returned to the caller as well as logged. The log line is suppressible —
@@ -843,14 +845,36 @@ func summarizeCaseFailureReasons(failures []benchmark.CaseFailure) string {
 	return strings.Join(parts, ", ")
 }
 
-// failedSlotCount is a stub.
-func failedSlotCount(m map[reviewerKey][]benchmark.SlotFailure) int { return len(m) }
+// failedSlotCount is the number of failed reviewer SLOTS: the map is keyed by
+// reviewer and each value lists that reviewer's failed cases, so len(m) would
+// count reviewers — one dead provider on a 200-case suite is 200 slots, not 1.
+func failedSlotCount(m map[reviewerKey][]benchmark.SlotFailure) int {
+	n := 0
+	for _, v := range m {
+		n += len(v)
+	}
+	return n
+}
 
-// retainedDirCount is a stub.
-func retainedDirCount(workDir string) int { return 0 }
+// retainedDirCount is how many retained repo-state work dirs sit beside
+// workDir, this one included: every earlier partial or failed run left one, and
+// nothing reclaims them (see the retention arm). It matches by NAME ONLY and
+// walks nothing, so reporting accumulation costs one directory read. A glob
+// error reads as 0 rather than failing the cleanup it decorates.
+func retainedDirCount(workDir string) int {
+	matches, err := filepath.Glob(filepath.Join(filepath.Dir(workDir), "atcr-repo-state-*"))
+	if err != nil {
+		return 0
+	}
+	return len(matches)
+}
 
-// retainedWalkLimit caps the entries dirSizeBytes visits.
-var retainedWalkLimit = 0
+// retainedWalkLimit caps the entries dirSizeBytes visits. The walk runs inside
+// the deferred cleanup of a run that already failed, possibly on a host out of
+// space or file handles, so a panel-sized tree must not block exit to decorate a
+// log line. Past the limit the size reads as unmeasured. A package var so a test
+// can lower it.
+var retainedWalkLimit = 200_000
 
 // retainedSizeAttrs is the size half of the retained-work-dir log line: a
 // numeric retained_bytes when the size was measured, else
@@ -876,7 +900,14 @@ func retainedSizeAttrs(root string) []any {
 func dirSizeBytes(root string) (int64, bool) {
 	var total int64
 	rootErr := error(nil)
+	visited := 0
+	overLimit := false
 	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		visited++
+		if visited > retainedWalkLimit {
+			overLimit = true
+			return filepath.SkipAll
+		}
 		if err != nil {
 			if path == root {
 				rootErr = err
@@ -891,7 +922,7 @@ func dirSizeBytes(root string) (int64, bool) {
 		}
 		return nil
 	})
-	return total, rootErr == nil
+	return total, rootErr == nil && !overLimit
 }
 
 // maxNamedFailedCases bounds the per-case list in warnCaseFailures, matching
