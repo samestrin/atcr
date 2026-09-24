@@ -130,6 +130,9 @@ func ReviewerOutcome(a AgentStatus, raisedCount int) string {
 	}
 }
 
+// ReviewerOutcomePrecedence is a stub.
+func ReviewerOutcomePrecedence() []string { return nil }
+
 // ValidReviewerOutcome reports whether s is a member of the outcome vocabulary,
 // including the empty string — OutcomeUnknown is a legitimate STORED value
 // meaning "nobody classified this run", distinct from a corrupt one.

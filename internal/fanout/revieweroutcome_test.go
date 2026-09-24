@@ -49,3 +49,28 @@ func TestValidReviewerOutcome_AcceptsExactlyReviewerOutcomesShapeSet(t *testing.
 		}
 	}
 }
+
+// TestReviewerOutcomePrecedence_CoversTheVocabulary pins the exported order to
+// the vocabulary: every non-empty value ValidReviewerOutcome accepts appears
+// exactly once, so a new outcome cannot be added to the classifier without a
+// rank, where it would silently rank below "clean" in scorecard's dedup.
+func TestReviewerOutcomePrecedence_CoversTheVocabulary(t *testing.T) {
+	want := []string{"failed", "unparseable", "truncated", "incomplete",
+		"findings", "ungrounded", "filtered", "clean"}
+	got := ReviewerOutcomePrecedence()
+	if len(got) != len(want) {
+		t.Fatalf("ReviewerOutcomePrecedence() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("ReviewerOutcomePrecedence() = %v, want %v (ReviewerOutcome's switch order)", got, want)
+		}
+		if !ValidReviewerOutcome(got[i]) {
+			t.Errorf("%q is ranked but not in the vocabulary", got[i])
+		}
+	}
+	got[0] = "mutated"
+	if ReviewerOutcomePrecedence()[0] != "failed" {
+		t.Error("callers must get a copy, not the package's slice")
+	}
+}
