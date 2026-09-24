@@ -289,6 +289,10 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// immediately after the --dry-run short-circuit; the auto-fix guard below and
 	// every later write site consult axiMode rather than re-reading the context.
 	axiMode := axiFromContext(cmd.Context())
+	// Snapshot the resolved legacy-pipe choice once, like axiMode, so the
+	// summary renderer reads one local rather than re-reading the wrapped
+	// context at each call site (TD: cli/review_summary.go:103).
+	legacyMode := legacyPipeFromContext(cmd.Context())
 
 	// --axi and --auto-fix are mutually exclusive (exit 2): --auto-fix drives an
 	// interactive write-back/PR flow whose stdout handoff (orchestrateAutoFix) is not
@@ -658,7 +662,7 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 			// undeliverable either way, but the compliance record is not). The fault
 			// stays unwrapped → exitFailure (1), never a usageError (AC 02-02 Error
 			// Scenario 3).
-			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), legacyPipeFromContext(ctx), result.ID, result.Dir, summaryDelta); werr != nil {
+			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), legacyMode, result.ID, result.Dir, summaryDelta); werr != nil {
 				axiWerr = fmt.Errorf("axi output rendering failed: %w", werr)
 			}
 		} else {

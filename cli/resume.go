@@ -53,6 +53,9 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	// for the shared token-dense payload, read from the same context value review.go
 	// uses so review/resume stay in lockstep with one flag parse (AC 01-04).
 	axiMode := axiFromContext(ctx)
+	// Snapshot the resolved legacy-pipe choice once, like axiMode (TD:
+	// cli/review_summary.go:103).
+	legacyMode := legacyPipeFromContext(ctx)
 
 	// --resume targets an existing review; --id and --output-dir only make sense
 	// when creating a new one, so reject the combination up front (exit 2).
@@ -252,7 +255,7 @@ func runResume(cmd *cobra.Command, anchor string) error {
 			// payload carries the already-complete agent set (all succeeded) and the
 			// just-reconciled findings, broken down by severity so an agent gating on
 			// severity from the payload sees the real counts (TD: cli/resume.go:254).
-			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), legacyPipeFromContext(ctx), prep.ID, dir, summarySnapshot{
+			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), legacyMode, prep.ID, dir, summarySnapshot{
 				agentsSucceeded:    int64(len(info.Completed)),
 				agentsTotal:        int64(len(info.Completed)),
 				findingsTotal:      int64(reconciledTotal),
@@ -307,7 +310,7 @@ func runResume(cmd *cobra.Command, anchor string) error {
 			// and surfaced only after the history/audit ledgers are written below, so
 			// a closed pipe cannot cost the run its compliance record; the fault
 			// stays unwrapped → exitFailure (1) (AC 02-02 Error Scenario 3).
-			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), legacyPipeFromContext(ctx), result.ID, result.Dir, summaryDelta); werr != nil {
+			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), legacyMode, result.ID, result.Dir, summaryDelta); werr != nil {
 				axiWerr = fmt.Errorf("axi output rendering failed: %w", werr)
 			}
 		} else {
