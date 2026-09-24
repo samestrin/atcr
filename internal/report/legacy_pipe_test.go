@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"flag"
+
 	reclib "github.com/samestrin/atcr/reconcile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -56,6 +58,18 @@ func legacyPipeTextCapFindings() []reconcile.JSONFinding {
 	}
 }
 
+// updateLegacy is the ONLY flag that may rewrite the frozen legacy goldens:
+// `go test ./internal/report -update-legacy` after a deliberate legacy change,
+// then review the diff. The package-wide -update flag deliberately ignores the
+// legacy cases so refreshing a standard golden can never silently discard the
+// reference captured from main.
+var updateLegacy = flag.Bool("update-legacy", false, "regenerate the frozen legacy_pipe goldens (deliberate legacy change only)")
+
+// legacyGoldenWriteMode reports whether TestLegacyPipe_Goldens should rewrite
+// the golden files (true) or compare against them (false). Keyed exclusively on
+// -update-legacy — never on the package-wide -update.
+func legacyGoldenWriteMode() bool { return *updateLegacy }
+
 var legacyPipeGoldenCases = []struct {
 	name   string
 	golden string
@@ -93,23 +107,43 @@ var legacyPipeGoldenCases = []struct {
 	}},
 }
 
+// TestLegacyPipe_GoldensUnaffectedByPackageUpdate pins that the package-wide
+// -update flag can no longer regenerate the frozen legacy goldens: refreshing a
+// standard golden must never overwrite the reference captured from main. Only
+// the dedicated -update-legacy flag may rewrite them.
+func TestLegacyPipe_GoldensUnaffectedByPackageUpdate(t *testing.T) {
+	defer func(u, l bool) { *update, *updateLegacy = u, l }(*update, *updateLegacy)
+
+	*update, *updateLegacy = true, false
+	assert.Falsef(t, legacyGoldenWriteMode(),
+		"package -update must not regenerate legacy goldens (use -update-legacy)")
+
+	*update, *updateLegacy = false, true
+	assert.Truef(t, legacyGoldenWriteMode(),
+		"-update-legacy must regenerate legacy goldens")
+
+	*update, *updateLegacy = false, false
+	assert.Falsef(t, legacyGoldenWriteMode(), "no flag set — compare mode")
+}
+
 // TestLegacyPipe_Goldens freezes the legacy pipe-delimited AXI output byte-for-byte
 // across findings, pagination, review-summary and home payloads. The legacy path is
 // the deprecated fallback for consumers not yet on standard TOON, so its bytes must
-// never change. Regenerate with `-update` only for a deliberate legacy change.
+// never change. Regenerate with `-update-legacy` only for a deliberate legacy
+// change — the package-wide -update flag does not touch these files.
 func TestLegacyPipe_Goldens(t *testing.T) {
 	for _, tc := range legacyPipeGoldenCases {
 		t.Run(tc.name, func(t *testing.T) {
 			var b bytes.Buffer
 			require.NoError(t, tc.render(&b))
 			path := filepath.Join("testdata", "legacy_pipe", tc.golden)
-			if *update {
+			if legacyGoldenWriteMode() {
 				require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 				require.NoError(t, os.WriteFile(path, b.Bytes(), 0o644))
 				return
 			}
 			want, err := os.ReadFile(path)
-			require.NoErrorf(t, err, "missing golden %s — run: go test ./internal/report -update", path)
+			require.NoErrorf(t, err, "missing golden %s — run: go test ./internal/report -update-legacy", path)
 			assert.Equalf(t, string(want), b.String(), "legacy pipe output drifted from golden %s", path)
 		})
 	}
