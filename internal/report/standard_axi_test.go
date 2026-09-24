@@ -3,6 +3,8 @@ package report
 import (
 	"bytes"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -281,4 +283,59 @@ func TestAXIText_SanitizesBeforeTruncating(t *testing.T) {
 	got2 := axiText(padded)
 	assert.Equal(t, strings.Repeat("b", 450), got2, "control bytes must not count toward the cap")
 	assert.NotContains(t, got2, "...", "a field whose sanitized text fits must not be truncated")
+}
+
+// standardAXIGoldenCases mirrors the legacy_pipe golden set for the standard
+// TOON path: only findings_plain (report.axi) and home had byte-exact goldens,
+// so a go-axi/toon-go bump could shift edge, paginated and review_summary bytes
+// unnoticed as long as they still decoded.
+var standardAXIGoldenCases = []struct {
+	name   string
+	golden string
+	render func(w io.Writer) error
+}{
+	{"findings_edge", "findings_edge.axi", func(w io.Writer) error { return renderAXI(w, legacyPipeEdgeFindings()) }},
+	{"findings_empty", "findings_empty.axi", func(w io.Writer) error { return renderAXI(w, nil) }},
+	{"paginated_under", "paginated_under.axi", func(w io.Writer) error {
+		return RenderAXIPaginated(w, sample(), AXIMaxLinesDefault)
+	}},
+	{"paginated_truncated", "paginated_truncated.axi", func(w io.Writer) error {
+		many := make([]reconcile.JSONFinding, 5)
+		for i := range many {
+			many[i] = reconcile.JSONFinding{Severity: "LOW", File: "a.go", Line: i, Problem: "p", Confidence: "LOW"}
+		}
+		return RenderAXIPaginated(w, many, 3)
+	}},
+	{"paginated_empty", "paginated_empty.axi", func(w io.Writer) error {
+		return RenderAXIPaginated(w, nil, AXIMaxLinesDefault)
+	}},
+	{"review_summary", "review_summary.axi", func(w io.Writer) error {
+		return RenderReviewSummaryAXI(w, ReviewSummaryAXI{
+			ID: "2026-06-10_x", Dir: "/tmp/a|b \x1b[1m", AgentsSucceeded: 3, AgentsTotal: 4,
+			AgentsFailed: 1, APICalls: 12, FindingsTotal: 7, FindingsCritical: 1, FindingsHigh: 2,
+			FindingsMedium: 3, FindingsLow: 1,
+		})
+	}},
+}
+
+// TestStandardAXI_Goldens freezes the standard TOON payloads byte-for-byte,
+// mirroring TestLegacyPipe_Goldens. Unlike the legacy goldens these MAY be
+// regenerated with the package-wide -update flag — they pin current renderer
+// output, not a reference captured from a frozen fallback.
+func TestStandardAXI_Goldens(t *testing.T) {
+	for _, tc := range standardAXIGoldenCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var b bytes.Buffer
+			require.NoError(t, tc.render(&b))
+			path := filepath.Join("testdata", "standard", tc.golden)
+			if *update {
+				require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+				require.NoError(t, os.WriteFile(path, b.Bytes(), 0o644))
+				return
+			}
+			want, err := os.ReadFile(path)
+			require.NoErrorf(t, err, "missing golden %s — run: go test ./internal/report -update", path)
+			assert.Equalf(t, string(want), b.String(), "standard AXI output drifted from golden %s", path)
+		})
+	}
 }
