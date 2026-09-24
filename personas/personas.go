@@ -23,7 +23,8 @@ var names = []string{"bruce", "greta", "kai", "mira", "dax", "sasha", "penny", "
 // embedded persona directory: one per registered persona plus the shared base.
 //
 // POINTER: internal/scorecard's compiled-in personaRemit table is grounded in
-// these files' ## Focus blocks (lines 7-13 of each), cited per entry in
+// these files' ## Focus blocks (cited by heading, not line numbers, so a
+// formatting edit cannot stale the pointer), cited per entry in
 // internal/scorecard/remit.go and hash-pinned by
 // TestRemitCategories_TableIsGroundedInTheEmbeddedPersonaFiles — an edit to a
 // Focus block fails that test with "re-derive this persona's remit". Re-derive
