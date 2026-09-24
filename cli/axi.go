@@ -1,6 +1,12 @@
 package cli
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"strconv"
+)
 
 // axiContextKey is the unexported context key under which the --axi output mode
 // travels from the root PersistentPreRunE (the single flag-parse point) to every
@@ -20,5 +26,41 @@ func newAXIContext(ctx context.Context, enabled bool) context.Context {
 // command path (and any command that never registered the flag) is unaffected.
 func axiFromContext(ctx context.Context) bool {
 	v, _ := ctx.Value(axiContextKey{}).(bool)
+	return v
+}
+
+// legacyPipeDeprecation is the stderr notice every legacy pipe AXI route emits.
+// stdout stays payload-only, so the notice never corrupts what an agent parses.
+const legacyPipeDeprecation = "warning: pipe-delimited AXI output is deprecated and will be removed in a future release; migrate to standard TOON."
+
+// warnLegacyPipe writes the deprecation notice. Write errors are ignored: a
+// broken stderr must not fail a run whose payload is on stdout.
+func warnLegacyPipe(w io.Writer) {
+	_, _ = fmt.Fprintln(w, legacyPipeDeprecation)
+}
+
+// legacyPipeFromEnv reports whether ATCR_LEGACY_PIPE requests the legacy pipe
+// encoder. It is a global switch over every AXI surface (report --format axi,
+// review --axi, bare atcr --axi); non-AXI output ignores it. Any value
+// strconv.ParseBool accepts as true enables it; anything else is off.
+func legacyPipeFromEnv() bool {
+	on, _ := strconv.ParseBool(os.Getenv("ATCR_LEGACY_PIPE"))
+	return on
+}
+
+// legacyPipeContextKey carries the resolved legacy-pipe choice (--legacy-pipe or
+// ATCR_LEGACY_PIPE) alongside the --axi mode, through the same single
+// flag-parse point.
+type legacyPipeContextKey struct{}
+
+// newLegacyPipeContext returns ctx carrying the resolved legacy-pipe choice.
+func newLegacyPipeContext(ctx context.Context, enabled bool) context.Context {
+	return context.WithValue(ctx, legacyPipeContextKey{}, enabled)
+}
+
+// legacyPipeFromContext reports whether --axi output should use the legacy pipe
+// encoder. It falls back to false when the value is absent.
+func legacyPipeFromContext(ctx context.Context) bool {
+	v, _ := ctx.Value(legacyPipeContextKey{}).(bool)
 	return v
 }

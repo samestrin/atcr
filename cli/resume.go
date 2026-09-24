@@ -251,7 +251,7 @@ func runResume(cmd *cobra.Command, anchor string) error {
 			// This path runs no fan-out, so there is no metrics delta to report: the
 			// payload carries the already-complete agent set (all succeeded) and the
 			// just-reconciled findings total.
-			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), prep.ID, dir, summarySnapshot{
+			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), legacyPipeFromContext(ctx), prep.ID, dir, summarySnapshot{
 				agentsSucceeded: int64(len(info.Completed)),
 				agentsTotal:     int64(len(info.Completed)),
 				findingsTotal:   int64(reconciledTotal),
@@ -305,7 +305,7 @@ func runResume(cmd *cobra.Command, anchor string) error {
 			// and surfaced only after the history/audit ledgers are written below, so
 			// a closed pipe cannot cost the run its compliance record; the fault
 			// stays unwrapped → exitFailure (1) (AC 02-02 Error Scenario 3).
-			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), result.ID, result.Dir, summaryDelta); werr != nil {
+			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), legacyPipeFromContext(ctx), result.ID, result.Dir, summaryDelta); werr != nil {
 				axiWerr = fmt.Errorf("axi output rendering failed: %w", werr)
 			}
 		} else {

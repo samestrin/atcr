@@ -437,6 +437,16 @@ func NewRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 			if cmd.Flags().Lookup("axi") != nil {
 				axi, _ := cmd.Flags().GetBool("axi")
 				cmd.SetContext(newAXIContext(cmd.Context(), axi))
+				// Every command that registers --axi also registers --legacy-pipe.
+				// The flag or ATCR_LEGACY_PIPE selects the deprecated pipe encoder;
+				// the notice is written here, once per invocation, and only when
+				// AXI output is actually requested.
+				legacy, _ := cmd.Flags().GetBool("legacy-pipe")
+				legacy = legacy || legacyPipeFromEnv()
+				if axi && legacy {
+					warnLegacyPipe(cmd.ErrOrStderr())
+				}
+				cmd.SetContext(newLegacyPipeContext(cmd.Context(), legacy))
 			}
 			return nil
 		},
@@ -457,6 +467,7 @@ func NewRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 	// context (newAXIContext), so runHome reads it via axiFromContext — the same
 	// context-propagation plumbing review/resume already reuse (Epic 31.0).
 	root.Flags().Bool("axi", false, "emit the home view as a token-dense, ANSI/Markdown-free TOON payload on stdout for agent consumption (Agent eXperience Interface)")
+	root.Flags().Bool("legacy-pipe", false, "with --axi, emit the deprecated pipe-delimited payload instead of standard TOON (also ATCR_LEGACY_PIPE=1)")
 
 	// Flag-parse errors (unknown flags, bad values, violated flag groups)
 	// are usage errors: exit 2.

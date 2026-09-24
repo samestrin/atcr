@@ -28,9 +28,6 @@ import (
 // SEVERITY|FILE:LINE|... grammar.
 const pipeDelim = '|'
 
-// FormatPipe is a compiling stub for the RED step.
-const FormatPipe = ""
-
 // renderPipeAXI re-encodes findings as the legacy pipe-delimited TOON tabular
 // array. The base columns mirror the atcr-findings/v1 reconciled 9-column
 // contract; the optional disagreement, verification.*, evidence_exec.*,

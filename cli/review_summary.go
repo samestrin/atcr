@@ -97,8 +97,15 @@ func writeReviewSummary(w io.Writer, m summarySnapshot, elapsed time.Duration) {
 // share one TOON serializer. Elapsed is intentionally omitted — the AC enumerates
 // id/dir/agent-counts/findings-counts, and dropping the wall-clock value keeps the
 // payload deterministic for a given run.
-func writeReviewSummaryAXI(w io.Writer, id, dir string, m summarySnapshot) error {
-	return report.RenderReviewSummaryAXI(w, report.ReviewSummaryAXI{
+//
+// legacyPipe selects the deprecated pipe-delimited encoder (--legacy-pipe /
+// ATCR_LEGACY_PIPE); the deprecation notice is written once at flag-parse time.
+func writeReviewSummaryAXI(w io.Writer, legacyPipe bool, id, dir string, m summarySnapshot) error {
+	render := report.RenderReviewSummaryAXI
+	if legacyPipe {
+		render = report.RenderReviewSummaryPipe
+	}
+	return render(w, report.ReviewSummaryAXI{
 		ID:              id,
 		Dir:             dir,
 		AgentsSucceeded: m.agentsSucceeded,

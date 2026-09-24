@@ -32,6 +32,10 @@ const (
 	// MCP atcr_report enum (AC 01-05, Phase 2): surfacing a token-frugal format
 	// through the token-heavy MCP JSON-RPC envelope would be self-defeating.
 	FormatAXI = "axi"
+	// FormatPipe is the deprecated legacy pipe-delimited AXI encoding
+	// (findings[N|]{...}:), kept as a temporary fallback for consumers not yet on
+	// standard TOON. Like FormatAXI it is CLI-only: the MCP allow list excludes it.
+	FormatPipe = "pipe"
 )
 
 // maxTextLen bounds PROBLEM/FIX/EVIDENCE in the md and checklist views; the json
@@ -41,7 +45,7 @@ const maxTextLen = 500
 // ValidFormat reports whether s names a supported format.
 func ValidFormat(s string) bool {
 	switch s {
-	case FormatMarkdown, FormatJSON, FormatChecklist, FormatSarif, FormatAXI:
+	case FormatMarkdown, FormatJSON, FormatChecklist, FormatSarif, FormatAXI, FormatPipe:
 		return true
 	default:
 		return false
@@ -51,11 +55,11 @@ func ValidFormat(s string) bool {
 // FormatList returns the supported output formats as a slice. It is the single
 // source of truth for human-readable listings and CLI --format validation. The
 // MCP schema enum is a separate explicit allow list (internal/mcp
-// mcpAllowedFormats) that excludes FormatAXI (AC 01-05): axi is a CLI-only
-// format, and any future CLI-only format added here stays off the MCP surface
+// mcpAllowedFormats) that excludes FormatAXI and FormatPipe (AC 01-05): both are
+// CLI-only formats, and any future CLI-only format added here stays off the MCP surface
 // unless deliberately opted in there.
 func FormatList() []string {
-	return []string{FormatMarkdown, FormatJSON, FormatChecklist, FormatSarif, FormatAXI}
+	return []string{FormatMarkdown, FormatJSON, FormatChecklist, FormatSarif, FormatAXI, FormatPipe}
 }
 
 // Formats lists the supported formats for error messages.
@@ -89,6 +93,11 @@ func Render(w io.Writer, findings []reconcile.JSONFinding, format string) error 
 		// Phase 3 element 4). Capping here instead would silently truncate any
 		// Render(FormatAXI) caller with no signal (3.5.A adversarial finding).
 		return renderAXI(w, findings)
+	case FormatPipe:
+		// The legacy pipe encoder, uncapped — the same schema-fixture role
+		// Render(FormatAXI) plays for the standard path. The CLI paginates via
+		// RenderPipeAXIPaginated.
+		return renderPipeAXI(w, findings)
 	default:
 		return fmt.Errorf("unknown format %q: supported formats are %s", format, Formats())
 	}

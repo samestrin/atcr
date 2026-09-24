@@ -162,7 +162,11 @@ func runHome(cmd *cobra.Command) error {
 		case st.unavailable:
 			reviewID, status = st.reviewID, "unavailable"
 		}
-		return report.RenderHomeViewAXI(cmd.OutOrStdout(), report.HomeViewAXI{
+		render := report.RenderHomeViewAXI
+		if legacyPipeFromContext(ctx) {
+			render = report.RenderHomeViewPipe
+		}
+		return render(cmd.OutOrStdout(), report.HomeViewAXI{
 			ExecPath:     relHome(execPath),
 			Description:  cmd.Short,
 			ReviewID:     reviewID,

@@ -58,7 +58,7 @@ func TestWriteReviewSummaryAXIIncludesSeverityBreakdown(t *testing.T) {
 	snap := snapshotSummaryMetrics(reg).sub(snapshotSummaryMetrics(metrics.NewRegistry()))
 
 	var buf bytes.Buffer
-	if err := writeReviewSummaryAXI(&buf, "2026-07-18_ax", "review/2026-07-18_ax", snap); err != nil {
+	if err := writeReviewSummaryAXI(&buf, false, "2026-07-18_ax", "review/2026-07-18_ax", snap); err != nil {
 		t.Fatalf("writeReviewSummaryAXI: %v", err)
 	}
 	out := buf.String()
