@@ -27,11 +27,15 @@ func newDebtBackfillCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "backfill-justifications",
 		Short: "Replay stored justifications from their source review.md (one-off repair)",
-		Long: "atcr debt backfill-justifications re-derives each LIVE record's justification\n" +
-			"from the review.md it was originally stamped from, and rewrites the ones that\n" +
-			"changed. Live means open or deferred: a resolved or wontfix record is settled,\n" +
-			"and its justification may be the operator's --reason rather than a review\n" +
-			"excerpt, which nothing can replay.\n\n" +
+		Long: "atcr debt backfill-justifications re-derives a record's justification from the\n" +
+			"review.md it was originally stamped from, and rewrites the ones that changed.\n" +
+			"A record that MAY carry an operator-typed --reason — resolved, wontfix,\n" +
+			"unreproducible, attempts-exhausted — is never scanned, because that text\n" +
+			"exists nowhere else and cannot be replayed. Only open and deferred records\n" +
+			"are scanned. The skip keys on the rationale, not on whether the item is\n" +
+			"settled: attempts-exhausted is unfinished work rather than a settled\n" +
+			"determination, yet --reason is mandatory for it, so it always carries exactly\n" +
+			"the text this skip protects.\n\n" +
 			"It exists because a record's id excludes its justification: a re-detected\n" +
 			"finding hashes to the same id and is deduped away, so an improvement to the\n" +
 			"extractor reaches only records persisted after it. Excerpts already in the\n" +
@@ -92,9 +96,9 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 	// 0 rewritten" — byte-identical to a store that needs no repair. Naming the
 	// suppression is what lets an operator tell those apart.
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-		"%s%d scanned, %d rewritten (%d %s), %d unchanged, %d unresolved (no review.md yielded the excerpt), %d ambiguous (candidates disagreed), %d skipped (settled: resolved or wontfix)\n",
+		"%s%d scanned, %d rewritten (%d %s), %d unchanged, %d unresolved (no review.md yielded the excerpt), %d ambiguous (candidates disagreed), %d skipped (carries a rationale: resolved, wontfix, unreproducible or attempts-exhausted)\n",
 		prefix, res.Scanned, res.Rewritten, res.RewrittenLines, pluralLines(res.RewrittenLines),
-		res.Unchanged, res.Unresolved, res.Ambiguous, res.SkippedSettled)
+		res.Unchanged, res.Unresolved, res.Ambiguous, res.SkippedRationaleBearing)
 
 	// A dry run shows the text, not just the count. It is documented as the step to
 	// run FIRST on the one subcommand that rewrites the store in place, and a bare

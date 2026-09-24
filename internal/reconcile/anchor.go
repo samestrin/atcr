@@ -30,10 +30,47 @@ const maxAnchorsPerFinding = 8
 // PathSuggestion — the exact failure Tier 1-3 were tuned to avoid.
 const minAnchorLen = 3
 
-// extractAnchorSet is the Tier 4 (Epic 35.16.6.5 T1) deterministic anchor
-// extractor: given ONE body of finding prose it returns the identifier-shaped
-// tokens that text appears to be talking about, which the repo-wide symbol index
-// (T2) is then searched for.
+// extractAnchorSet is a TEST-ONLY wrapper over scanProblemAnchors, kept so
+// existing tests can call a plain (anchors, truncated) pair without carrying
+// an anchorScan around. Production never calls it — validate.go calls
+// scanProblemAnchors directly and derives the flag from anchorScan.truncated()
+// — so scanProblemAnchors's doc below is the package's real anchor-extraction
+// contract; this function only flattens what that scan returns. The return
+// values are byte-identical to scanProblemAnchors's.
+func extractAnchorSet(text string) (anchors []string, truncated bool) {
+	anchors, s := scanProblemAnchors(text)
+	return anchors, s.truncated()
+}
+
+// truncated is the flat flag extractAnchorSet returns, as ONE definition. Both
+// the wrapper and validate.go need it, and spelling `capped || lostSpan` twice
+// is how the two would drift when a third loss is added.
+func (s anchorScan) truncated() bool {
+	return s.capped || s.lostSpan
+}
+
+// scanProblemAnchors is the Tier 4 (Epic 35.16.6.5 T1) deterministic anchor
+// extractor and the package's real anchor-extraction contract: production
+// (validate.go) calls this directly, and extractAnchorSet above is only a
+// TEST-ONLY flattening wrapper over it. Given ONE body of finding prose it
+// returns the identifier-shaped tokens that text appears to be talking about
+// (which the repo-wide symbol index, T2, is then searched for) plus the
+// scan's fidelity-loss detail preserved in anchorScan — the PROBLEM-side
+// sibling of scanFixAnchors.
+//
+// The PROBLEM set is never narrowed — a glued member may still be the
+// subject, and dropping it would manufacture the no-match verdict this tier
+// exists to withhold — so the anchors it returns are exactly the same slice
+// extractAnchorSet flattens out. That stands unchanged after 35.16.6.8.2: the
+// members barred from SOURCING a suggestion travel as a separate list
+// (boundaryCutAnchors) precisely so the set itself stays whole for the
+// presence check and the no-match arm. Barring is not narrowing. What the
+// scan carries that the flat flag cannot is `unaccounted`: a loss with NO
+// member to point at, whose name is unknowable. locate() refuses when two
+// precise anchors DISAGREE, so its verdict rests on the set being COMPLETE as
+// well as faithful, and a silenced span is exactly the member whose answer is
+// unknown. validate.go must therefore be able to tell that loss apart from
+// the cap, which `truncated` folds it in with.
 //
 // PROBLEM and FIX are extracted SEPARATELY and are not interchangeable. A FIX
 // routinely names a construct the reviewer wants CREATED ("extract the retry
@@ -109,34 +146,6 @@ const minAnchorLen = 3
 //
 // The returned slice is deduped and lexically sorted; nil when nothing
 // qualifies.
-func extractAnchorSet(text string) (anchors []string, truncated bool) {
-	anchors, s := scanProblemAnchors(text)
-	return anchors, s.truncated()
-}
-
-// truncated is the flat flag extractAnchorSet returns, as ONE definition. Both
-// the wrapper and validate.go need it, and spelling `capped || lostSpan` twice
-// is how the two would drift when a third loss is added.
-func (s anchorScan) truncated() bool {
-	return s.capped || s.lostSpan
-}
-
-// scanProblemAnchors is extractAnchorSet with the scan's fidelity-loss detail
-// preserved, the PROBLEM-side sibling of scanFixAnchors.
-//
-// The PROBLEM set is never narrowed — a glued member may still be the subject,
-// and dropping it would manufacture the no-match verdict this tier exists to
-// withhold — so the anchors it returns are exactly extractAnchorSet's. That
-// stands unchanged after 35.16.6.8.2: the members barred from SOURCING a
-// suggestion travel as a separate list (boundaryCutAnchors) precisely so the set
-// itself stays whole for the presence check and the no-match arm. Barring is not
-// narrowing. What the
-// scan carries that the flat flag cannot is `unaccounted`: a loss with NO member
-// to point at, whose name is unknowable. locate() refuses when two precise
-// anchors DISAGREE, so its verdict rests on the set being COMPLETE as well as
-// faithful, and a silenced span is exactly the member whose answer is unknown.
-// validate.go must therefore be able to tell that loss apart from the cap, which
-// `truncated` folds it in with.
 func scanProblemAnchors(text string) ([]string, anchorScan) {
 	s := scanAnchors(text)
 	return s.anchors, s
@@ -172,7 +181,7 @@ const (
 //
 // `truncated` is deliberately ONE flag on the SET, and stays that way: the
 // no-match direction reads it and must get exactly one condition right (see
-// extractAnchorSet's doc). This struct does not add a second flag beside it —
+// scanProblemAnchors's doc). This struct does not add a second flag beside it —
 // it records WHICH anchors a fidelity loss touched, which is a different
 // question and the only one a per-anchor repair can be built on.
 type anchorScan struct {
@@ -203,7 +212,7 @@ type anchorScan struct {
 	// mapped to WHICH loss produced it. Every token in it may be an unfaithful
 	// reading of what the reviewer wrote; every member of anchors NOT in it is
 	// faithful WITH RESPECT TO THE LOSSES THIS SCAN DETECTS. The
-	// mixed-no-underscore Latin-tail reading disclosed at extractAnchorSet's doc
+	// mixed-no-underscore Latin-tail reading disclosed at scanProblemAnchors's doc
 	// IS one of those losses since 35.16.6.8.2 — recorded here even though it is
 	// deliberately absent from `truncated`, which is exactly the asymmetry this
 	// set exists to express. It is keyed on what the scan recorded, not on the
@@ -335,7 +344,7 @@ func scanAnchors(text string) anchorScan {
 		out, scan.capped = out[:maxAnchorsPerFinding], true
 	}
 	// Sorted AFTER the cap, not before it, so the returned slice keeps
-	// extractAnchorSet's documented "deduped and lexically sorted" contract while
+	// scanProblemAnchors's documented "deduped and lexically sorted" contract while
 	// the selection above is free to order by something else. Reversing the two
 	// would leak provenance order into every consumer that reads the slice.
 	sort.Strings(out)
@@ -487,6 +496,26 @@ func scanFixAnchors(text string) ([]string, anchorScan) {
 	return out, s
 }
 
+// filterImprecise is the one walk both imprecise-filtering consumers share: it
+// collects the scan's anchors whose recorded imprecision kind the predicate
+// accepts, in the already-sorted anchor order. The empty-imprecise fast path is
+// shared too — it is behaviourally identical to falling through the loop, so
+// both callers keep one nil-guard policy. Callers keep their OWN arm guards
+// (capped/unaccounted): those differ deliberately between the PROBLEM and FIX
+// sides and are documented at each consumer.
+func (s anchorScan) filterImprecise(keep func(anchorImprecision) bool) []string {
+	if len(s.imprecise) == 0 {
+		return nil
+	}
+	var out []string
+	for _, tok := range s.anchors {
+		if keep(s.imprecise[tok]) {
+			out = append(out, tok)
+		}
+	}
+	return out
+}
+
 // boundaryCutAnchors returns the members of the scan's anchor set that are a
 // PROPER SUFFIX of what the reviewer wrote — the tail a spaceless-script word
 // boundary cut a call name down to, with no clean span in the same text vouching
@@ -510,26 +539,6 @@ func scanFixAnchors(text string) ([]string, anchorScan) {
 // abandoned — it is the evidence the no-match verdict rests on — so its
 // boundary-cut members are always meaningful, and withholding them on a capped
 // set would hand resolve a set it believes is fully faithful.
-// filterImprecise is the one walk both imprecise-filtering consumers share: it
-// collects the scan's anchors whose recorded imprecision kind the predicate
-// accepts, in the already-sorted anchor order. The empty-imprecise fast path is
-// shared too — it is behaviourally identical to falling through the loop, so
-// both callers keep one nil-guard policy. Callers keep their OWN arm guards
-// (capped/unaccounted): those differ deliberately between the PROBLEM and FIX
-// sides and are documented at each consumer.
-func (s anchorScan) filterImprecise(keep func(anchorImprecision) bool) []string {
-	if len(s.imprecise) == 0 {
-		return nil
-	}
-	var out []string
-	for _, tok := range s.anchors {
-		if keep(s.imprecise[tok]) {
-			out = append(out, tok)
-		}
-	}
-	return out
-}
-
 func (s anchorScan) boundaryCutAnchors() []string {
 	return s.filterImprecise(func(kind anchorImprecision) bool {
 		return kind&impreciseBoundaryCut != 0
@@ -758,7 +767,7 @@ func collectCallAnchors(text string, seen, clean map[string]struct{}, impreciseI
 		// fires, atBoundary stays false, and `_解析` is recorded with the set
 		// reported faithful. Accepted, not fixed: closing it means widening the
 		// boundary rule, which the epic's scope rules out. Also disclosed at
-		// extractAnchorSet's doc.
+		// scanProblemAnchors's doc.
 		anchor := recordedAnchorForm(text[start:i])
 		if atBoundary && leadsWithUnderscore(anchor) {
 			// Silence is a LOSS only when something could have been lost. A
@@ -801,8 +810,11 @@ func collectCallAnchors(text string, seen, clean map[string]struct{}, impreciseI
 			// rejects on the '.' — disabling the guard for every qualified
 			// spelling of the very shape it was added for. The declared name
 			// the break destroyed is the trailing segment `設定_a`, so this
-			// branch and the fragment branch above now ask their question of
-			// the same reduction rather than of two different strings.
+			// branch and the fragment branch above now agree on the QUALIFIER
+			// STRIP — the one reduction that was making them disagree. They
+			// still differ on the NFC fold: the fragment branch goes through
+			// recordedAnchorForm, this one applies trailingSegment alone. That
+			// asymmetry is deliberate, for the reason the next paragraph gives.
 			//
 			// The qualifier strip ONLY, deliberately not recordedAnchorForm:
 			// this branch asks whether something COULD have qualified, and the
@@ -972,7 +984,7 @@ func collectCallAnchors(text string, seen, clean map[string]struct{}, impreciseI
 		// scanAnchors' reconciliation loop.
 		//
 		// It does NOT set lostSpan, so `truncated` still reads false for this
-		// shape. That is deliberate and is stated at extractAnchorSet's doc: the
+		// shape. That is deliberate and is stated at scanProblemAnchors's doc: the
 		// no-match direction is unchanged by this marking, only the suggestion
 		// direction. Setting it would make tier4NoMatch unreachable for every
 		// finding whose prose runs spaceless prose into a call, which is a
@@ -1266,11 +1278,17 @@ func isQualifiedIdentRune(r rune) bool {
 // nothing" on whatever co-cited ASCII anchor happened to miss.
 //
 // Combining marks (Mn and Mc) are admitted at non-initial positions for the
-// same reason: a macOS- or git-normalised file spells café as e + U+0301, and
-// Devanagari names carry vowel signs (नाम is न + ा + म), so a mark-rejecting
-// filter drops the name of a declaration the grammar (isDeclNameRune,
-// symbolindex.go) admits — the two must agree, or a grammar-admitted
-// declaration never reaches presentInSource. Admission here is only the SHAPE
+// same reason: an editor or input method can emit the decomposed form, so the
+// same declaration reaches the index spelling café as e + U+0301 or as the
+// precomposed rune, and Devanagari names carry vowel signs (नाम is न + ा + म).
+// A mark-rejecting filter drops the name of a declaration the grammar
+// (isDeclNameRune, symbolindex.go) admits — the two SHOULD agree, because a
+// grammar-admitted declaration the harvest rejects never reaches
+// presentInSource. They do not agree completely: the harvest still rejects an
+// Nl- or Pc-bearing name and a LEADING Other_ID_Start mark, and splits on `$`.
+// Those are accepted residuals, enumerated with their reasoning at
+// isDeclNameRune's doc (symbolindex.go) — the misfire direction is safe (a real
+// name moves to absent, never a fabricated one to present). Admission here is only the SHAPE
 // half, though: a caseless-script name still carries no identifier signal
 // (hasIdentifierSignal), so it reaches present from the harvest but anchors a
 // finding only when it also carries an underscore. Me (enclosing marks) stays

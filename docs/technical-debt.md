@@ -96,7 +96,7 @@ rather than a fabricated value that `resolve` could not match.
 | `model` | string | Model that produced the finding |
 | `justification` | string | Why it was resolved/dismissed (`--reason`) |
 | `source_report` | object | Report the finding came from: `{"path": …, "line": …, "section": …}` (`line`/`section` omitted when unset) |
-| `status` | string | Empty (open), `deferred`, `resolved`, or `wontfix` |
+| `status` | string | Empty (open), `deferred`, `resolved`, `wontfix`, `unreproducible`, or `attempts-exhausted` |
 | `resolved_at` | string | Timestamp of the terminal record |
 | `origin` | string | **v3** — `review` or `manual` |
 | `occurrences` | int | **v3** — times this id has been seen; carried through compaction |
@@ -116,13 +116,22 @@ a binary that cannot understand it.
 | `wontfix` | Terminal | Suppression is the feature; a false positive is stable at a stable location, so its id is stable and permanent dismissal works. Requires a `--reason`. |
 | `resolved` | Re-openable on re-detection | The same id after a fix implies a regression — the thing most worth surfacing. |
 | `deferred` | Re-surfaces on re-detection | "Not now" is not "never". A deferred item leaves the `debt resolve` worklist while it stands, but stays in `debt list` and the dashboard as live debt, and stays closeable by id. |
+| `unreproducible` | Re-openable on re-detection | Investigated and could not be reproduced. A determination was reached, so the item leaves the live backlog — but re-detection at the same location is evidence the call was wrong, which is the last thing to suppress. Requires a `--reason`. |
+| `attempts-exhausted` | Re-surfaces on re-detection | The fix attempts ran out without a resolution. The defect is presumed real and the work unfinished, so like `deferred` it stays live debt and stays closeable by id. Like `deferred`, it is excluded from the no-argument `debt resolve` fix worklist while it stands — its row is closed, so the worklist treats it as acted-on — but it remains visible in `debt list` and the dashboard. Requires a `--reason`. |
 
 So `atcr debt list` can show an item as `resolved` today and as open again after
 a later `atcr reconcile` re-detects it. Only `wontfix` is final.
 
 `occurrences` is the regression count for an id: `occurrences - 1` re-detections
 after the first. When divergent terminal records exist for one id, precedence is
-`wontfix` > `resolved` > `deferred`.
+`wontfix` > `unreproducible` > `attempts-exhausted` > `resolved` > `deferred`.
+
+That order ranks by how certainly a record carries a human-typed `--reason`,
+because the rationale text exists nowhere else in the store and precedence
+decides which record survives compaction. `--reason` is mandatory for every
+status except `resolved` — or a recorded justification, in the one case the code
+allows (`wontfix` accepts a justification already recorded on the open record in
+place of a typed `--reason`) — which is why the three mandatory ones sit above it.
 
 ## Commands
 
@@ -150,7 +159,7 @@ atcr debt list --json                           # the same selection, as JSON
 ```
 
 Flags: `--store`, `--severity` (exact, case-insensitive), `--status` (exact:
-`open|deferred|resolved|wontfix`),
+`open|deferred|resolved|wontfix|unreproducible|attempts-exhausted`),
 `--category` (substring), `--component` (path prefix, e.g. `internal/autofix`),
 `--origin` (exact: `review|manual`), `--sort` (`severity|age|est|file`), `--json`.
 
@@ -229,11 +238,19 @@ atcr debt resolve                              # open items, most severe first
 atcr debt resolve --json --max 5               # the same, as JSON, capped
 atcr debt resolve <id>                         # mark it fixed
 atcr debt resolve <id> --status wontfix --reason "accepted pattern"
+atcr debt resolve <id> --status unreproducible --reason "no repro on current main"
+atcr debt resolve <id> --status attempts-exhausted --reason "three attempts regressed unrelated tests"
 ```
 
 Flags: `--store`, `--json`, `--severity`, `--max`,
-`--status` (`resolved|wontfix`), `--reason`. The id is positional. `--status wontfix` requires a
-`--reason` — it is a permanent dismissal, so the rationale is recorded with it.
+`--status` (`resolved|wontfix|unreproducible|attempts-exhausted`), `--reason`. The id is positional.
+Every status other than `resolved` requires a `--reason` (or, for `wontfix`
+only, a justification already recorded on the open record — the one stand-in the
+CLI accepts): a dismissal, a
+not-reproducible determination and an exhausted attempt budget are each a
+judgement whose rationale exists nowhere else, while a fix explains itself in the
+diff. That rationale is also what makes the technical-debt lifecycle usable as
+ground truth when scoring which review lenses produce real findings.
 
 Resolution is append-only: a terminal record is appended, never edited in place,
 and the original id is preserved so the resolution lines up with the finding.
@@ -242,10 +259,30 @@ and the original id is preserved so the resolution lines up with the finding.
 
 Folds the append-only store to one effective record per id and rewrites the
 shards atomically, carrying `occurrences` and `first_seen` forward so the
-regression signal survives at O(1) size instead of O(history). The resolution
-trail is kept: when an item was closed and has since regressed, compaction
-retains both the current record and the resolution that closed it, so the
-`--reason` text is never destroyed.
+regression signal survives at O(1) size instead of O(history).
+
+Retention is bounded at **four records per id**: the effective record, at
+most one superseded rationale, — when the effective record
+carries no model attribution — one donor, and — when the effective record is a
+re-detection and `attempts-exhausted` is in play — the latest closed record, so
+the re-detection keeps reporting the same outcome after compaction. Two of those
+four are the ordinary case; the donor is
+the narrow one, and it collapses into the rationale record whenever the
+highest-ranked rationale is also the most recent model-carrier. The donor exists
+because a fold can select an effective record with no `model` on it, and the
+attribution the quality signal is scored on would then be deleted by the very
+pass that is meant only to drop superseded duplicates.
+
+The resolution trail is kept, and it is exactly one record deep: alongside the
+effective record, compaction retains the highest-ranked superseded record that
+carries a `--reason` of its own. That covers an item closed and since regressed, and an
+`attempts-exhausted` checkpoint later closed for good — the closing reason does
+not overwrite the checkpoint's. Where **several** superseded records each carry
+a distinct `--reason`, only that highest-ranked one survives: the rank order is
+`wontfix` > `unreproducible` > `attempts-exhausted` > `resolved`, so two
+`attempts-exhausted` rounds followed by a `wontfix` keep the second round's
+reason and drop the first. Record anything you need to keep across several
+attempt rounds outside the store.
 
 ```bash
 atcr debt compact --dry-run  # reports what a real run would drop; writes nothing
@@ -264,13 +301,20 @@ rewrite itself on every append). The manual command remains for on-demand use.
 
 ### `atcr debt backfill-justifications`
 
-Re-derives each **live** record's `justification` from the `review.md` it was
-originally stamped from, and rewrites the ones that changed. Live means `open` or
-`deferred`. A `resolved` or `wontfix` record is settled and is never scanned: its
-justification may be the operator's `--reason` (see `debt resolve`), which exists
-nowhere else in the tree and cannot be replayed from anything. `deferred` is the
-opposite case — it carries a terminal marker but means "not now", so it is still
-closeable debt whose stale excerpt still gates the `wontfix` path.
+Re-derives a record's `justification` from the `review.md` it was originally
+stamped from, and rewrites the ones that changed. A record that **may carry an
+operator-typed `--reason`** — `resolved`, `wontfix`, `unreproducible`,
+`attempts-exhausted` — is never scanned, because that text exists nowhere else in
+the tree and cannot be replayed from anything. Only `open` and `deferred` records
+are scanned.
+
+The skip keys on the **rationale**, not on whether the item is settled, and those
+two stopped selecting the same records. `attempts-exhausted` is deliberately not
+settled — the work is unfinished and the defect presumed real — yet `--reason` is
+mandatory for it (see `debt resolve`), so it always carries exactly the text the
+skip protects. `deferred` is the mirror image: it carries a terminal marker but
+means "not now" and is reason-free, so it stays closeable debt whose stale excerpt
+still gates the `wontfix` path.
 
 It exists because a record's id excludes its justification. `StampID` hashes
 `file\x00line\x00problem`, so a re-detected finding hashes to the same id, the
@@ -303,7 +347,7 @@ that line alone. The run reports both counts, e.g. `3 rewritten (5 lines)`, and
 
 ```console
 $ atcr debt backfill-justifications --dry-run
-dry run: 1 scanned, 1 rewritten (1 line), 0 unchanged, 0 unresolved (no review.md yielded the excerpt), 0 ambiguous (candidates disagreed), 0 skipped (settled: resolved or wontfix)
+dry run: 1 scanned, 1 rewritten (1 line), 0 unchanged, 0 unresolved (no review.md yielded the excerpt), 0 ambiguous (candidates disagreed), 0 skipped (carries a rationale: resolved, wontfix, unreproducible or attempts-exhausted)
   2026-08.jsonl:1 "aaaa1111"
     before: "- **internal/thing.go:42** the real narrative explaining the defect."
     after:  "```\n- **internal/thing.go:42** the real narrative explaining the defect."

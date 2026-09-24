@@ -180,9 +180,19 @@ func TestExecuteRepoStateBenchmarkRun_ParsesEveryCaseDiffBeforeAnyCompleterCall(
 // findings are read, so each case's repo must be released when its case
 // completes, not at run end.
 func TestExecuteRepoStateBenchmarkRun_ReleasesEachCaseRepoAfterItsCase(t *testing.T) {
-	// Scoped to dirs created after the test began: failed runs now RETAIN their
-	// work dirs (see the retention test), and those linger in $TMPDIR — counting
-	// them would credit this run with repos it did not create.
+	// A sibling atcr process — a concurrent test binary or a review subagent —
+	// creates its own atcr-repo-state-* dirs in the SHARED os.TempDir(), so this
+	// test gets its own temp namespace the way the spaced-TMPDIR test already does:
+	// the runner's os.MkdirTemp and the fixture's glob both resolve $TMPDIR, so the
+	// foreign dir planted below (under the REAL temp root, captured first) is
+	// invisible to both. Scoped to dirs created after the test began as a second
+	// belt: failed runs now RETAIN their work dirs (see the retention test), and
+	// those linger in $TMPDIR — counting them would credit this run with repos it
+	// did not create.
+	foreign := filepath.Join(os.TempDir(), "atcr-repo-state-foreign")
+	require.NoError(t, os.MkdirAll(filepath.Join(foreign, "repo-9"), 0o755))
+	t.Cleanup(func() { _ = os.RemoveAll(foreign) })
+	t.Setenv("TMPDIR", t.TempDir())
 	testStart := time.Now()
 	suite := writeTwoCaseSuite(t)
 	cc := &repoCountingCompleter{since: testStart}
@@ -1077,7 +1087,7 @@ func TestFoldGroundingEnabled_FirstCaseDoesNotAliasTheCallerSummary(t *testing.T
 // fixture, whose reviewer keeps its in-patch calc.py finding and therefore scores
 // `findings`. Every row then failed the `== 0` test and was skipped, so the loop
 // body never executed and the test asserted nothing -- it stayed green with
-// reviewerOutcome's ungrounded arm deleted outright. The tally assertion below is
+// fanout.ReviewerOutcome's ungrounded arm deleted outright. The tally assertion below is
 // the guard against that recurring: it fails on a fixture that produces no
 // ungrounded outcome, rather than passing vacuously over one.
 func TestExecuteRepoStateBenchmarkRun_UngroundedOutcomeOnlyOnAGatedRow(t *testing.T) {
@@ -1276,6 +1286,68 @@ func TestExecuteRepoStateBenchmarkRun_EveryCaseFailingIsAnError(t *testing.T) {
 	assert.Nil(t, rr)
 }
 
+// The zero-scored guard used to carry TWO returns: an all-cases-failed message and
+// a fallback for a shape no test can reach (an empty accumulator with no recorded
+// failure — the empty case list is rejected at load, and an all-roster failure
+// aborts per case). The untested fallback is folded into the one return, so the
+// single message carries the failure tally and stays legible at zero failures too —
+// the file no longer carries a branch nothing can execute.
+func TestExecuteRepoStateBenchmarkRun_ZeroScoredErrorCarriesTheTally(t *testing.T) {
+	suite := writeCaseSuite(t, "first-case", "second-case")
+	faultMaterialization(t, suite, "first-case")
+	faultMaterialization(t, suite, "second-case")
+
+	rr, _, err := executeRepoStateBenchmarkRun(context.Background(),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC(), 0)
+	releaseRetainedWorkDirFromError(t, err)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no case could be scored")
+	assert.Contains(t, err.Error(), "2 of 2 case(s) failed",
+		"the folded message reports the tally, not a separate all-failed phrasing")
+	assert.Nil(t, rr)
+}
+
+// publicSlotFailures silently dropped a slot failure whose key was absent from
+// scrubOf — a silent drop inside the channel built to end silent drops. The shape is
+// unreachable through the runner (every key in slotFailures is registered into order
+// before the skip fires, and scrubOf is built from order), but an unreachable case
+// must not quietly become a silent one: the skip warns, naming the key and the
+// failures it is dropping, while still never emitting an untranslated identity.
+func TestPublicSlotFailuresWarnsOnAnUntranslatableKey(t *testing.T) {
+	var logs bytes.Buffer
+	key := reviewerKey{model: "m-greta", persona: "greta"}
+	out := publicSlotFailures(logCapturingContext(t, &logs),
+		map[reviewerKey][]benchmark.SlotFailure{
+			key: {{CaseID: "case-01", Reason: benchmark.SlotFailureCall}},
+		},
+		[]reviewerKey{key},
+		map[reviewerKey]reviewerKey{}) // scrubOf deliberately lacks the key
+
+	assert.Nil(t, out, "an untranslated identity is never emitted raw")
+	assert.Contains(t, logs.String(), "slot failure dropped",
+		"the skip must warn rather than discard silently")
+}
+
+// The signature change that gave executeRepoStateBenchmarkRun its (rr, workDir, err)
+// shape rewrote four error-propagation returns whose only coverage was the
+// validators' own direct tests — the propagation THROUGH the runner was unpinned. A
+// pre-flight rejection must reach the caller as an error with an EMPTY retained work
+// dir: the rejection fires before the work dir is even created, so the deferred
+// cleanup has nothing to retain and no path to name.
+func TestExecuteRepoStateBenchmarkRun_PreFlightRejectionRetainsNothing(t *testing.T) {
+	// scrubEmail rewrites "case@01" to the empty string, so the publishable-identity
+	// pre-flight rejects the suite before any completer call or work dir exists.
+	suite := writeCaseSuite(t, "case@01")
+
+	rr, retained, err := executeRepoStateBenchmarkRun(context.Background(),
+		benchCfg([3]string{"greta", "m-greta", "greta"}), stubLocatedCompleter{}, suite, time.Unix(0, 0).UTC(), 0)
+
+	require.Error(t, err, "the pre-flight rejection reaches the caller, not just the validator's own test")
+	assert.Nil(t, rr)
+	assert.Empty(t, retained, "a run rejected before the work dir exists retains nothing")
+}
+
 // The all-cases-failed diagnostic used to name ONE reason — whichever happened to be
 // last. On a mixed systemic failure that is an arbitrary pick out of N, and the same
 // sentence then tells the operator a re-run helps "only if the cause was transient"
@@ -1305,6 +1377,12 @@ func TestSummarizeCaseFailureReasons(t *testing.T) {
 			name:     "a single reason still reads as a tally",
 			failures: []benchmark.CaseFailure{{CaseID: "c1", Reason: benchmark.CaseFailureMaterialize}},
 			want:     "materialize x1",
+		},
+		{
+			// The no-scorable-case error still has to read at zero failures.
+			name:     "no failures says so rather than rendering nothing",
+			failures: nil,
+			want:     "no failure was recorded",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1394,6 +1472,69 @@ func (c *workDirNamingCompleter) Complete(ctx context.Context, inv llmclient.Inv
 	return stubLocatedCompleter{}.Complete(ctx, inv)
 }
 
+// A walk that cannot even read the ROOT used to log retained_bytes=0 for a
+// directory that IS retained — docs/benchmark.md tells the operator to watch exactly
+// that number for growth before the volume fills, and a zero reads as "nothing
+// retained". dirSizeBytes therefore reports whether the size was measured at all, so
+// the caller can OMIT retained_bytes and log retained_bytes_unmeasured=true instead of
+// a lying zero — the key stays numeric-or-absent rather than becoming a string, because
+// the doc tells the operator to monitor it numerically. A mid-walk failure still
+// returns the partial total as a signal, and the deferred cleanup stays
+// warn-never-fail either way.
+func TestDirSizeBytesReportsUnmeasuredRootWalk(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.bin"), make([]byte, 128), 0o600))
+
+	size, measured := dirSizeBytes(dir)
+	require.True(t, measured, "a readable root measures fine")
+	assert.Equal(t, int64(128), size)
+
+	size, measured = dirSizeBytes(filepath.Join(dir, "missing"))
+	assert.False(t, measured, "a walk that cannot read the root measures nothing — the caller must log unknown, not zero")
+	assert.Equal(t, int64(0), size)
+}
+
+// The documented MID-WALK arm — a subdirectory the walk cannot enter — had no
+// coverage: only the readable root and the missing root were pinned, so a regression
+// flipping the partial-total case to measured=false (or to a zero) would pass the
+// suite while misreporting a partially-readable retained dir as "unknown". The
+// contract: a mid-walk failure leaves the partial total and reports measured=true;
+// only an unreadable ROOT reports unmeasured.
+func TestDirSizeBytesPartialTotalOnMidWalkFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("chmod does not block root")
+	}
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.bin"), make([]byte, 128), 0o600))
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "sealed"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sealed", "b.bin"), make([]byte, 64), 0o600))
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(dir, "sealed"), 0o700) })
+	require.NoError(t, os.Chmod(filepath.Join(dir, "sealed"), 0o000))
+
+	size, measured := dirSizeBytes(dir)
+	require.True(t, measured, "a mid-walk failure leaves the partial total and reports measured")
+	assert.Equal(t, int64(128), size, "the readable file is counted; the sealed subtree is skipped")
+}
+
+// expectedCategories' dedupe NORMALIZES first (ToLower/TrimSpace) and keeps the
+// FIRST occurrence's raw spelling. It had zero test coverage — no test in the tree
+// referenced it — so a regression to raw-string dedupe (the exact behavior the doc
+// comment calls the bug) passed the whole suite green.
+func TestExpectedCategoriesNormalizesBeforeDeduping(t *testing.T) {
+	c := benchmark.RepoStateCase{
+		ExpectedFindings: []benchmark.ExpectedFinding{
+			{Category: "Correctness"},
+			{Category: "correctness"},
+			{Category: "  CORRECTNESS  "},
+			{Category: "security"},
+		},
+	}
+
+	got := expectedCategories(c)
+	assert.Equal(t, []string{"Correctness", "security"}, got,
+		"case-variant duplicates collapse to ONE entry, spelled as the case wrote it")
+}
+
 // Retention on a partial run is unbounded and unconditional ON PURPOSE — the
 // artifacts are the only copy of a paid panel, so a byte cap or a keep-only-the-failed-
 // case policy would destroy exactly what the arm exists to save. That makes growth
@@ -1424,6 +1565,10 @@ func TestExecuteRepoStateBenchmarkRun_PartialRunReportsTheRetainedSize(t *testin
 // outright, so a regression that stopped reclaiming the dir on every clean run passed
 // the one test named for catching it.
 func TestExecuteRepoStateBenchmarkRun_CleanRunStillCleansUp(t *testing.T) {
+	// Own temp namespace: the fixture globs the SHARED os.TempDir() for
+	// atcr-repo-state-* and picks by mtime, so a concurrent process's work dir
+	// could be mistaken for this run's. Isolate, don't filter.
+	t.Setenv("TMPDIR", t.TempDir())
 	var logs bytes.Buffer
 	cc := &workDirNamingCompleter{since: time.Now()}
 
@@ -1788,6 +1933,9 @@ func (c *prepareFaultingCompleter) Complete(ctx context.Context, inv llmclient.I
 // aborts rather than recording, so nothing reached the record-and-continue arm at all.
 // This drives the arm directly and pins the constant it writes.
 func TestExecuteRepoStateBenchmarkRun_RecordsAPrepareFailureAndContinues(t *testing.T) {
+	// Own temp namespace: the fixture globs the SHARED os.TempDir() and could plant
+	// its blocker file inside a concurrent process's work dir. Isolate, don't filter.
+	t.Setenv("TMPDIR", t.TempDir())
 	suite := writeCaseSuite(t, "first-case", "second-case")
 	cc := &prepareFaultingCompleter{since: time.Now(), caseIndex: 1}
 
@@ -1842,6 +1990,10 @@ func (c *poolWriteFaultingCompleter) Complete(ctx context.Context, inv llmclient
 // ships invisibly, and the arm is the one that decides whether one case's bad luck
 // costs the whole suite.
 func TestExecuteRepoStateBenchmarkRun_RecordsANonSentinelExecuteFailureAndContinues(t *testing.T) {
+	// Own temp namespace: the fixture globs the SHARED os.TempDir() and could plant
+	// its blocking directory inside a concurrent process's work dir. Isolate, don't
+	// filter.
+	t.Setenv("TMPDIR", t.TempDir())
 	suite := writeCaseSuite(t, "first-case", "second-case")
 	cc := &poolWriteFaultingCompleter{since: time.Now(), caseIndex: 1}
 
@@ -1866,6 +2018,10 @@ func TestExecuteRepoStateBenchmarkRun_RecordsANonSentinelExecuteFailureAndContin
 // overlapping them — a default cap would take the abort decision away from the
 // operator, which is why the work-dir arm's comment argues against a general one.
 func TestExecuteRepoStateBenchmarkRun_ConsecutiveFailureCap(t *testing.T) {
+	// Own temp namespace for every subtest: a sibling atcr process creating
+	// atcr-repo-state-* dirs in the SHARED os.TempDir() must not be observable by
+	// (or attributed to) this run. Isolate, don't filter by mtime.
+	t.Setenv("TMPDIR", t.TempDir())
 	t.Run("aborts once the run of consecutive failures reaches the cap", func(t *testing.T) {
 		suite := writeCaseSuite(t, "first-case", "second-case", "third-case", "fourth-case")
 		for _, id := range []string{"first-case", "second-case", "third-case", "fourth-case"} {
@@ -1932,8 +2088,13 @@ func (c oneAgentFailingCompleter) Complete(ctx context.Context, inv llmclient.In
 // against nothing — charging that reviewer full recall-0 for a case it never saw,
 // which is the one conflation this tier's contract forbids.
 //
-// The failed slot is still VISIBLE: its outcome tally records the failure. It is the
-// SCORE it must not enter.
+// Score, covered set and outcome tally are skipped TOGETHER, which is what the second
+// half of this test pins. Leaving the failure in the tally while omitting it from the
+// covered set would break the runs == len(case_ids) == sum(outcomes) tamper check and
+// make every run with a failed slot read as malformed at export.
+//
+// The failed slot is still VISIBLE, just on its own axis: benchmark.SlotFailure records
+// the cause, which is what keeps the three-way skip from being silent.
 func TestExecuteRepoStateBenchmarkRun_AFailedSlotIsUnmeasuredNotMissed(t *testing.T) {
 	suite := writeCaseSuite(t, "first-case", "second-case")
 
@@ -2252,6 +2413,10 @@ func TestExecuteRepoStateBenchmarkRun_WarnsOnMissingFindingsFileAndUnattributedR
 // RUNNER to a work-dir failure, so the reason constant it records was unverified end
 // to end and a wrong one would have shipped invisibly.
 func TestExecuteRepoStateBenchmarkRun_RecordsAWorkDirFailureAndContinues(t *testing.T) {
+	// Own temp namespace: the fixture globs the SHARED os.TempDir() for
+	// atcr-repo-state-* and picks by mtime — a concurrent process's work dir
+	// could be grabbed (and chmod'ed) as this run's. Isolate, don't filter.
+	t.Setenv("TMPDIR", t.TempDir())
 	suite := writeCaseSuite(t, "first-case", "second-case")
 	cc := &workDirFaultingCompleter{since: time.Now(), perCase: 1}
 	t.Cleanup(func() {
@@ -2544,4 +2709,78 @@ func TestWarnCaseFailures_CapsTheSlotList(t *testing.T) {
 		"the overflow count carries the rest")
 	assert.Contains(t, out, "25 reviewer slot(s)",
 		"and the scale line still carries the true total")
+}
+
+// TestRetainedSizeAttrs_UnmeasuredRootIsFlaggedNotZero covers both arms of the
+// retained-dir size attributes: a measured root logs a number, an unreadable one
+// logs the unmeasured flag and never a zero.
+func TestRetainedSizeAttrs_UnmeasuredRootIsFlaggedNotZero(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "f"), []byte("abcd"), 0o644))
+	assert.Equal(t, []any{"retained_bytes", int64(4)}, retainedSizeAttrs(dir))
+	assert.Equal(t, []any{"retained_bytes_unmeasured", true},
+		retainedSizeAttrs(filepath.Join(dir, "missing")))
+}
+
+// failed_slots counts failed slots, not the reviewers they belong to: one dead
+// provider on a 3-case suite is 3 unmeasured slots (atcr review 2026-09-23,
+// benchmark_repostate.go:201).
+func TestFailedSlotCount_SumsSlotsAcrossReviewers(t *testing.T) {
+	m := map[reviewerKey][]benchmark.SlotFailure{
+		{}:               {{CaseID: "c1"}, {CaseID: "c2"}, {CaseID: "c3"}},
+		{persona: "dax"}: {{CaseID: "c1"}},
+	}
+	assert.Equal(t, 4, failedSlotCount(m))
+	assert.Zero(t, failedSlotCount(nil))
+}
+
+// retained_dirs counts every retained work dir beside this one, by name only,
+// so accumulation across runs is visible without walking any of them (atcr
+// review 2026-09-23, benchmark_repostate.go:213).
+func TestRetainedDirCount_CountsSiblingWorkDirsByName(t *testing.T) {
+	parent := t.TempDir()
+	for _, d := range []string{"atcr-repo-state-1", "atcr-repo-state-2", "atcr-repo-state-3", "unrelated"} {
+		require.NoError(t, os.Mkdir(filepath.Join(parent, d), 0o755))
+	}
+	assert.Equal(t, 3, retainedDirCount(filepath.Join(parent, "atcr-repo-state-2")))
+}
+
+// The size walk is bounded: past retainedWalkLimit entries it stops and reports
+// unmeasured rather than blocking exit on a huge tree (atcr review 2026-09-23,
+// benchmark_repostate.go:870).
+func TestDirSizeBytes_StopsAtTheWalkLimit(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < 5; i++ {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, fmt.Sprintf("f%d", i)), []byte("ab"), 0o644))
+	}
+	orig := retainedWalkLimit
+	t.Cleanup(func() { retainedWalkLimit = orig })
+
+	retainedWalkLimit = 3
+	_, measured := dirSizeBytes(dir)
+	assert.False(t, measured, "a walk cut short by the limit is not a measurement")
+
+	retainedWalkLimit = 100
+	size, measured := dirSizeBytes(dir)
+	assert.True(t, measured)
+	assert.Equal(t, int64(10), size)
+}
+
+// The retention line's failed_slots is the slot count the run-result reports,
+// with the reviewer count beside it under its own key: otto failing both cases
+// is 2 slots from 1 reviewer (atcr review 2026-09-23, benchmark_repostate.go:201).
+func TestExecuteRepoStateBenchmarkRun_RetentionLineCountsFailedSlots(t *testing.T) {
+	suite := writeCaseSuite(t, "first-case", "second-case")
+	var logs bytes.Buffer
+
+	rr, retained, err := executeRepoStateBenchmarkRun(logCapturingContext(t, &logs),
+		benchCfg([3]string{"greta", "m-greta", "greta"}, [3]string{"otto", "m-otto", "otto"}),
+		oneAgentFailingCompleter{agent: "otto"}, suite, time.Unix(0, 0).UTC(), 0)
+	releaseRetainedWorkDir(t, retained)
+	require.NoError(t, err)
+	require.Len(t, rr.SlotFailures, 2)
+
+	assert.Contains(t, logs.String(), "failed_slots=2")
+	assert.Contains(t, logs.String(), "failed_reviewers=1")
+	assert.Regexp(t, `retained_dirs=[1-9]`, logs.String())
 }

@@ -222,8 +222,21 @@ func validateCheckpointIntegrity(cp *runCheckpoint) error {
 		}
 		seen[c.Index] = struct{}{}
 		for j, r := range c.Reviewers {
+			// Named causes and a terminating remedy, matching the sibling tally
+			// rejection at cli/benchmark_coverage.go:246. The vocabulary GROWS, and
+			// "filtered" is the first added value REACHABLE on a checkpointed run —
+			// grounding is repo-state-only and checkRepoStateFlags refuses --checkpoint
+			// there, so OutcomeUngrounded could never reach a checkpoint at all, while
+			// any registry agent on either tier can set min_severity. Version skew is
+			// therefore the likelier cause of this branch than a hand-edited file, and
+			// it is the one with an exit: the only other way out of a "corrupt"
+			// checkpoint is deleting a file holding every already-paid case.
 			if !benchmark.ValidOutcome(r.Outcome) {
-				return fmt.Errorf("%w: case %d reviewer %d has out-of-vocabulary outcome %q", errCheckpointCorrupt, i, j, r.Outcome)
+				return fmt.Errorf("%w: case %d reviewer %d records outcome %q, outside the outcome vocabulary this "+
+					"build knows; the checkpoint was either written by a NEWER atcr whose vocabulary added the value "+
+					"(version skew — upgrade atcr and resume with that build, which keeps the paid cases) or "+
+					"hand-edited, since a producer of this version writes only benchmark.Outcome* values",
+					errCheckpointCorrupt, i, j, r.Outcome)
 			}
 		}
 	}

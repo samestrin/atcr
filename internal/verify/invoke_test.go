@@ -495,10 +495,11 @@ func TestBuildSkepticAgent_ProvenanceDescribesTheEnforcedBudget(t *testing.T) {
 // the window-derived tool budget must not cross: it may TRUNCATE what a skeptic
 // reads, but it may not VOID what the skeptic concluded.
 //
-// The clamp gave every window-declaring roster agent a positive tool ceiling
-// where derefInt64 previously returned 0 (unlimited) — 29 of 29 agents in the
-// shipped registry declare context_window_tokens and none declares
-// tool_budget_bytes. Under invoke.go's collapse, ANY tripped budget rewrites the
+// The clamp gave every window-declaring agent a positive tool ceiling where
+// derefInt64 previously returned 0 (unlimited). This repo ships no registry, so
+// the shape is drawn from a real local roster: every agent in it declares
+// context_window_tokens and none declares tool_budget_bytes, which is the
+// configuration this boundary has to hold for. Under invoke.go's collapse, ANY tripped budget rewrites the
 // model's answer to "unverifiable", and reconcile/gate.go excludes only
 // "refuted" from the CI gate. So a skeptic that reads a few large files and
 // correctly refutes a false-positive HIGH finding would newly BLOCK the gate —
@@ -680,8 +681,8 @@ func TestInvokeSkeptic_TripsOnFixedAndCumulativeOverruns(t *testing.T) {
 // payload.DefaultOutputTokens (fanout.resolveMaxTokens FLOORS at it); this lane
 // passed derefInt(c.MaxTokens), which is 0 when nothing is declared.
 //
-// The undeclared case is the DOMINANT one — 23 of the 29 window-declaring roster
-// agents declare no max_tokens — and it is also the case where reserving nothing
+// The undeclared case is the DOMINANT one — most window-declaring agents on a
+// real roster declare no max_tokens — and it is also the case where reserving nothing
 // is least defensible: when the declaration is nil the lane forwards nil to
 // llmclient.Invocation.MaxTokens, which omits the field so the PROVIDER's own
 // default applies. The ceiling then reserves zero output tokens while the

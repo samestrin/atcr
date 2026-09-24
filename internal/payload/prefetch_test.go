@@ -911,8 +911,12 @@ func TestParseGrepHits_StopsAtTheAbsoluteHitCap(t *testing.T) {
 
 	got := parseGrepHits(strings.Join(lines, "\n"), "", symbols, nil, nil, maxPrefetchSitesPerSymbol, maxPrefetchHits)
 
+	// Derived, not a literal: the count is 40 * maxPrefetchSitesPerSymbol, and
+	// spelling it out is how this message came to say 120 after that constant was
+	// raised from 3 to 6.
 	require.Len(t, got, maxPrefetchHits,
-		"120 individually admissible sites across 40 symbols must clamp to the absolute hit ceiling")
+		"%d individually admissible sites across 40 symbols must clamp to the absolute hit ceiling",
+		40*maxPrefetchSitesPerSymbol)
 }
 
 func TestParseGrepHits_GlobalCapIsSharedRoundRobinAcrossSymbols(t *testing.T) {

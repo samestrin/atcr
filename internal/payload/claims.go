@@ -14,13 +14,16 @@ import (
 // would let it displace the diff it is supposed to be checked against.
 // A maxBytes <= 0 means unlimited.
 //
-// 8 KiB, not the 64 KiB a sprint plan gets, because these bytes are UNCOUNTED.
-// The ledger entry carries Size 0 and is exempt from every shed, so its text
-// rides outside payload_byte_budget AND outside each model's per-agent budget —
-// the budget arithmetic cannot see it. A cap here is therefore the only thing
-// bounding how far a long branch history can push a narrow-window agent past
-// its context limit. 8 KiB is roughly 80 claims, more than any real branch
-// asserts, and small enough that even a 32k-token window absorbs it.
+// 8 KiB, not the 64 KiB a sprint plan gets, because these bytes are UNCOUNTED ON
+// THE ORDINARY SHED. The ledger entry carries Size 0, so its text rides outside
+// payload_byte_budget and outside each model's per-agent budget — the ordinary
+// budget arithmetic cannot see it, on_overflow=fail included. The exception is the
+// fallback re-fit, which re-sizes every entry to the bytes it will actually dispatch
+// and so counts the ledger like any other entry. A cap here is therefore the only
+// thing bounding how far a long branch history can push a narrow-window agent past
+// its context limit on the path that does not re-fit. 8 KiB is roughly 80 claims,
+// more than any real branch asserts, and small enough that even a 32k-token window
+// absorbs it.
 const DefaultMaxClaimBytes int64 = 8 * 1024
 
 // DefaultMaxClaimCommits bounds how many commits the ledger read walks at all.
@@ -637,57 +640,73 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 // which is the only place any of them could be fixed). They are recorded here
 // rather than only in planning notes, because here is where they are created:
 //
-//  1. Changed-file count is inflated by one. The review layer derives it as
-//     len(kept) in buildPayloads — the RANGE path, the only one that prepends
-//     the ledger (internal/fanout/review.go:1279) — and carries it as
-//     mp.FileCount into the manifest and the persona-visible {{.FileCount}},
-//     so both report one more file than the range changed. That count is
-//     re-derived on buildSlots' smallest-entry and re-pack arms
-//     (internal/fanout/review.go:2390, :2451), where the inflation instead
-//     becomes "1 file reported, possibly zero delivered" — consequence #3's
-//     shape. The other len(kept)
-//     sites (buildRepoPayloads, PrepareReviewFromDiff) never call
-//     withClaimLedger and are not on this path.
+//  1. Changed-file count WAS inflated by one; it no longer is. buildPayloads
+//     derived mp.FileCount as len(kept) on the RANGE path — the only one that
+//     prepends the ledger — so the count included the synthetic entry. Epic
+//     35.16.8 changed every derivation to payload.ReviewableCount, which skips
+//     shed-exempt entries, once pre-fetching made it a second synthetic section
+//     and would have doubled the error. buildSlots' smallest-entry and re-pack
+//     arms apply the same rule, so the count agrees everywhere it is read.
+//     FileCount has exactly two consumers, and NEITHER is the manifest:
+//     payload.Manifest carries no file-count field, and PerFilePayload is derived
+//     independently from perFileModes. The real readers are the persona-visible
+//     {{.FileCount}} template value and the chunked no-op warning gated on
+//     FileCount > 1. The other len(kept) sites (buildRepoPayloads,
+//     PrepareReviewFromDiff) never call withClaimLedger and are not on this path.
 //  2. A review_strategy=chunked run delivers the ledger to the FIRST chunk
 //     only. chunkDiff splits payload TEXT on column-0 diff markers, and the
 //     ledger sits above the first of them. (This is also why the strategy's
 //     no-op warning, gated on FileCount > 1, can now fire for a single-file
 //     files-mode payload where it previously stayed silent.)
 //  3. An agent whose declared window drives its effective budget to 0 takes an
-//     arm that ships exactly one entry, chosen by keepSmallestEntry
-//     (internal/fanout/review.go:3676-3678) on len(Body) — which may be the ledger,
-//     leaving that reviewer claims and no code. The section's NOT-IN-PAYLOAD
-//     verdict exists so that reviewer reports nothing rather than a full sheet
-//     of false UNSUPPORTED findings.
+//     arm that ships exactly one entry, chosen by keepSmallestEntry on len(Body)
+//     — which may be a SYNTHETIC one, leaving that reviewer no code. Since Epic
+//     35.16.8 there are two ways that lands: the ledger alone (claims and no
+//     code) or the Context Definitions block alone (retrieved context and no
+//     code). The section's NOT-IN-PAYLOAD verdict exists so a reviewer holding
+//     the first reports nothing rather than a full sheet of false UNSUPPORTED
+//     findings; the second has no equivalent verdict, because context asserts
+//     nothing to be checked against.
 //  4. The sentinel can reach a published artifact. droppedPathsExcept
-//     (internal/fanout/review.go:2882) builds its dropped list from every entry
+//     (internal/fanout/review.go:3124) builds its dropped list from every entry
 //     but the kept one, so "<claims>" can appear in Truncation.FilesDropped and
 //     from there in status.json's files_dropped, alongside real repository
 //     paths.
-//  5. The ledger is absent from the model-invocation audit record.
-//     EntriesFromRenderedPayload (the Epic 35.0 audit seam) reconstructs what a
-//     reviewer actually saw from the flat prompt text, and markedEntryStarts
-//     deliberately discards everything before the first column-0 marker
-//     (internal/payload/rendered.go:85-87). The ledger sits entirely above that
-//     marker, so up to ~10.6 KiB of verdict-shaping instruction text is missing
-//     from every audit record: an auditor reconstructing why a reviewer returned
-//     a finding sees the code and not the instructions that shaped it. Closing it
-//     means having EntriesFromRenderedPayload surface the pre-marker prefix as an
-//     unattributed entry, which is a change to the audit seam rather than to this
-//     file.
+//  5. The ledger sits ABOVE the first column-0 marker, so every consumer that
+//     reconstructs or measures a payload by splitting on those markers has to
+//     decide what to do with the prefix, and they do not all decide the same
+//     thing.
+//     EntriesFromRenderedPayload (the Epic 35.0 audit seam) now surfaces it as
+//     an unattributed entry with an empty Path (splitMarkedEntries,
+//     internal/payload/rendered.go:83-86), so the audit record is complete —
+//     this consequence USED to be "the ledger is absent from the audit record"
+//     and no longer is. The remaining consumers are in internal/fanout:
+//     entriesFromPrimary (internal/fanout/review.go:3236) rebuilds the inherited
+//     entries and inheritedPayloadFits (internal/fanout/review.go:3175) sums
+//     them to decide whether the AC4 overflow gate fires. Both deliberately
+//     measure only the bytes the byte budget governs, and the ledger is exempt
+//     from that budget, so the gate under-measures a fallback's real dispatched
+//     payload by the ledger's size — in the direction that SUPPRESSES the
+//     warning. That is by design and bounded: DefaultMaxClaimBytes caps the
+//     under-measurement at 8 KiB.
 //  6. An on_overflow=truncate FALLBACK whose budget cannot fund BOTH the ledger
 //     and a reviewable file re-fits WITHOUT the ledger — whenever some
 //     reviewable file with a NON-EMPTY body is smaller than the ledger. The
 //     re-fit re-sizes
-//     every entry to len(Body)
-//     (internal/fanout/review.go:3810-3814) before shedding, which turns the
-//     bounded exemption in ApplyByteBudget — shedExempt AND clampSize(Size) <=
-//     budget — into a real comparison for the one entry that carries Size 0 on
-//     every other path. A zero-byte reviewable entry changes neither side of
-//     that: it sorts LAST under the largest-first order (budget.go:117-121)
+//     every entry to len(Body) before shedding, which turns the exemption in
+//     ApplyByteBudget into a real comparison for entries that carry Size 0 on
+//     every other path. That exemption is CUMULATIVE OVER THE FUNDED SET, not a
+//     per-entry bound: the funding loop (budget.go:175-181) walks the exempt
+//     entries in descending exemptRank and keeps each only while the RUNNING
+//     total still fits the budget. With one exempt entry it reduces exactly to
+//     the old `clampSize(Size) <= budget`; with two — the ledger at rank 1 and
+//     the Context Definitions block at rank 0 — the block is the one that loses
+//     funding first, and the ledger can be unfunded by its own size alone.
+//     A zero-byte reviewable entry changes neither side of
+//     that: it sorts LAST under the largest-first order (budget.go:115-118)
 //     and the shed loop breaks once used <= budget, so it is never shed and
 //     never trips AllDropped, and keepSmallestEntry skips empty bodies
-//     (internal/fanout/review.go:3673-3675) so it cannot win the reroute — a
+//     (internal/fanout/review.go:3691-3693) so it cannot win the reroute — a
 //     0-byte py.typed beside a 10 KB file leaves the ledger in place with no
 //     code funded. The bound and the reroute are two stages of one pass, not
 //     two independent drop routes, and the ledger's absence has one terminal
@@ -697,7 +716,7 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 //     bound, but that alone never leaves it absent — the emptied payload
 //     trips AllDropped and the reroute brings the ledger BACK when no smaller
 //     non-empty file exists (budget 50, ledger 100, one 200-byte file: both
-//     shed, then keepSmallestEntry (internal/fanout/review.go:3666-3682)
+//     shed, then keepSmallestEntry (internal/fanout/review.go:3684-3710)
 //     returns the ledger itself). When every reviewable file is LARGER, the
 //     same branch keeps the ledger and sheds all the
 //     code — consequence #3's shape reached by a different route. That backup
@@ -713,14 +732,19 @@ const ClaimLedgerPath = "<claims>"
 // unforgeable: ClaimLedgerPath is a legal filename everywhere but Windows, so a
 // path-keyed exemption could be claimed by a real file in a reviewed repository.
 // Size 0 keeps the entry out of byte-budget accounting on the ordinary path,
-// where the exemption's `clampSize(Size) <= budget` bound is satisfied by every
-// budget. The fallback re-fit re-sizes the entry to len(Body), so there the
-// bound becomes real: this package's contract is exactly budget >= the
-// ledger's dispatched size — shedExempt AND clampSize(Size) <= budget,
-// evaluated on the ledger alone (budget.go:129-158, the only place the
-// exemption is checked). Funding a reviewable file is NOT part of that
+// where the exemption's bound is satisfied by every budget. The fallback re-fit
+// re-sizes the entry to len(Body), so there the bound becomes real — and it is a
+// bound on the funded exempt SET, not on this entry alone: budget.go:175-181
+// funds the exempt entries in descending exemptRank while their RUNNING total
+// fits the budget. So this package's contract is budget >= the dispatched size of
+// every exempt section funded at or above the ledger's rank. With the ledger as
+// the only exempt entry that is exactly budget >= the ledger's own dispatched
+// size, which is what it used to say; with the Context Definitions block also
+// present (rank 0, below the ledger's 1) the block is unfunded first, so the
+// ledger's own condition is unchanged by its presence.
+// Funding a reviewable file is NOT part of that
 // contract — it is downstream: internal/fanout's AllDropped reroute to
-// keepSmallestEntry (internal/fanout/review.go:3666-3682) can displace the
+// keepSmallestEntry (internal/fanout/review.go:3684-3710) can displace the
 // ledger afterwards, but only while some reviewable file with a non-empty
 // body is smaller than the ledger, since that reroute keeps the smallest
 // ENTRY and will keep the ledger itself when every file is larger (accepted

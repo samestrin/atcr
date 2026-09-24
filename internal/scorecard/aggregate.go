@@ -30,8 +30,15 @@ type LeaderboardRow struct {
 	FindingsRaised       int
 	FindingsCorroborated int
 	// FindingsDocShielded sums the doc-shield carve-out counts. The leaderboard
-	// does not render it; TrustPriors reads it to keep shielded routings inside
-	// the trust rate's denominator.
+	// renders it CONDITIONALLY, as a DOC-SHIELDED column, only when some reviewer
+	// has a non-zero count.
+	//
+	// TrustPriors does NOT read this field. mergeRoutedEras folds it into
+	// FindingsRaised and zeroes it before Aggregate sums anything, so the trust
+	// denominator receives these routings through FindingsRaised — which is why
+	// the tally must not also charge them here. Adding them back would
+	// double-count; deleting the fold would silently drop the anti-gaming
+	// property.
 	FindingsDocShielded    int
 	CorroborationRate      float64
 	TotalCostUSD           float64
@@ -84,7 +91,10 @@ func ApplyFilters(records []Record, opts FilterOpts, now time.Time) ([]Record, e
 		if opts.Model != "" && !strings.Contains(strings.ToLower(r.Model), strings.ToLower(opts.Model)) {
 			continue
 		}
-		if opts.Persona != "" && r.Reviewer != opts.Persona {
+		// Persona compares NORMALIZED names: EmitForReconcile stores Reviewer
+		// lower-cased, older builds stored the registry spelling verbatim, and
+		// `--persona Bruce` must find both.
+		if opts.Persona != "" && normalizeReviewerName(r.Reviewer) != normalizeReviewerName(opts.Persona) {
 			continue
 		}
 		if hasSince {
@@ -112,10 +122,14 @@ func Aggregate(records []Record) []LeaderboardRow {
 		if r.RecordType != RecordTypeReviewer {
 			continue
 		}
-		k := key{r.Reviewer, r.Model}
+		// Keyed on the normalized name, for the same reason as ApplyFilters'
+		// Persona match: one agent must not split into two rows across the
+		// build that started lower-casing Record.Reviewer.
+		name := normalizeReviewerName(r.Reviewer)
+		k := key{name, r.Model}
 		row, ok := groups[k]
 		if !ok {
-			row = &LeaderboardRow{Reviewer: r.Reviewer, Model: r.Model}
+			row = &LeaderboardRow{Reviewer: name, Model: r.Model}
 			groups[k] = row
 			order = append(order, k)
 		}

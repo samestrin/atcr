@@ -193,3 +193,25 @@ func TestGroundFindings_EvidenceFloorCountsRunesNotBytes(t *testing.T) {
 		t.Fatalf("multibyte evidence: kept=%d dropped=%d, want kept=0 dropped=1", len(out), dropped)
 	}
 }
+
+func TestGroundFindings_ExemptsOutOfScopeOnPrefetchOnlyFile(t *testing.T) {
+	// The CATEGORY out-of-scope exemption in isGrounded returns true before the
+	// changed map is consulted at all, so it applies even to a file the patch
+	// never touched (PrefetchOnly) and even with no line number (Line 0) — the
+	// narrower PrefetchOnly rule (line must fall inside a retrieved span) never
+	// gets a chance to run for this category. This is pre-existing, deliberate
+	// behavior (see the comment on isGrounded), bounded downstream by the
+	// reconciler segregating and never promoting out-of-scope findings.
+	changed := payload.ChangedLines{
+		"README.md": {
+			Ranges:       []payload.LineRange{{Start: 10, End: 12}},
+			ChangedText:  []string{"some retrieved snippet line"},
+			PrefetchOnly: true,
+		},
+	}
+	in := []stream.Finding{{File: "README.md", Line: 0, Category: "out-of-scope", Evidence: "pre-existing"}}
+	out, dropped := groundFindings(in, changed)
+	if len(out) != 1 || dropped != 0 {
+		t.Fatalf("out-of-scope on prefetch-only file: kept=%d dropped=%d, want kept=1 dropped=0", len(out), dropped)
+	}
+}

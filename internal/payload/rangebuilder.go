@@ -386,9 +386,18 @@ func (b *RangeBuilder) claimLedger() string {
 // TestRangeBuilder_BlocksModeGroundingReusesZeroContext). The residual +1
 // --unified=0 subprocess returns only when escalation is disabled, pinned by
 // TestRangeBuilder_BlocksModeGroundingSpawnsOneDiffWithoutEscalation.
-// (validateRange + --name-status stay elided either way.) Mirrors the
-// package-level BuildChangedLines; the fail-open contract (a git error
-// disables the grounding gate) lives at the fan-out caller.
+// (validateRange + --name-status stay elided either way.) The fail-open
+// contract (a git error disables the grounding gate) lives at the fan-out
+// caller.
+//
+// It does NOT mirror the package-level BuildChangedLines. Both share the
+// changedLines core, but only this method widens the map with the rendered
+// pre-fetch spans (withPrefetchedSpans below); the standalone function returns
+// the patch's changed lines alone, so it grounds the same range under a
+// strictly narrower rule and would drop every finding on a retrieved file.
+// computeGroundingData picks between the two at runtime, and the standalone
+// arm is defensive — every git-range path passes a builder — so the divergence
+// is a future trap rather than a live one.
 func (b *RangeBuilder) BuildChangedLines() (ChangedLines, error) {
 	if !b.inUse.CompareAndSwap(0, 1) {
 		panic("payload.RangeBuilder used concurrently: it is not safe for concurrent use")

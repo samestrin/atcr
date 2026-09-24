@@ -128,6 +128,18 @@ func buildQualitySignalPayload(root string) ([]telemetry.QualitySignal, error) {
 	groups := map[key]*telemetry.QualitySignal{}
 	order := []key{}
 	for _, r := range rows {
+		// A row carrying only the Story 36.0 outcomes (unreproducible /
+		// attempts-exhausted) has no dismissal or confirmation to report, and
+		// this payload's four allowlisted fields have no place to put one. Emit
+		// it and the wire gains an all-zero entry for a pair that previously
+		// produced none — a reviewer that looks perfectly calibrated because its
+		// only measured outcomes are invisible here. Skip it instead: the
+		// outbound payload stays exactly the shape and population it had before
+		// the two statuses existed, which is the deliberate scope boundary.
+		// Extending the payload to carry them is a separate, explicit decision.
+		if r.DismissedCount+r.ConfirmedCount == 0 {
+			continue
+		}
 		qs := telemetry.NewQualitySignal(r.Persona, r.Model, r.DismissedCount, r.ConfirmedCount)
 		if qs.PersonaIDHash == "" {
 			continue // empty/whitespace-only canonical persona

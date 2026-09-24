@@ -263,7 +263,7 @@ func TestExtractAnchors_UnterminatedDelimiter(t *testing.T) {
 
 // mergeAnchorsForTest is the pre-split extraction shape, retained ONLY so the
 // original T1 extraction table keeps exercising the tokenizer against both
-// fields at once. Production no longer merges the two: see extractAnchorSet's
+// fields at once. Production no longer merges the two: see scanProblemAnchors's
 // doc for why a FIX anchor may never be no-match evidence.
 func mergeAnchorsForTest(problem, fix string) []string {
 	seen := map[string]struct{}{}
@@ -587,7 +587,7 @@ func TestExtractAnchors_SnakeCaseSpacelessNameSurvivesBoundary(t *testing.T) {
 // `!problemTruncated`, and a REAL finding is routed to the unresolved sidecar —
 // gate.go deletes it and scorecard.go durably charges the reviewer a phantom.
 //
-// The mechanism is the `truncated` contract at extractAnchorSet's doc: a caller
+// The mechanism is the `truncated` contract at scanProblemAnchors's doc: a caller
 // may never reach a no-match verdict on a set that is a PREFIX of what the text
 // named. Before this test the cap at anchor.go:84-87 was the ONLY thing that could
 // set that flag, and the call scan had acquired two more ways to lose fidelity:

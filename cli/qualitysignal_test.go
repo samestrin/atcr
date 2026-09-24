@@ -685,3 +685,42 @@ func TestPreview_GoldenRoundTrip(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildQualitySignalPayload_NewStatusOnlyPairIsNotOnTheWire is the guard on
+// adversarial finding 1.2.A-HIGH-4, and it is the test that holds sprint-plan
+// Clarification C2 ("the outbound payload is not extended") to its word.
+//
+// Story 36.0's two statuses create a QualityRow without touching DismissedCount
+// or ConfirmedCount. The payload's four allowlisted fields have nowhere to put
+// them, so emitting the row ships an all-zero entry for a (persona, model) pair
+// that previously produced none — a reviewer that reads as perfectly calibrated
+// precisely because its only measured outcomes are invisible on this wire. The
+// payload must stay exactly the population it had before the statuses existed.
+func TestBuildQualitySignalPayload_NewStatusOnlyPairIsNotOnTheWire(t *testing.T) {
+	isolate(t)
+	seedQualityRecord(t, "vera", "claude-sonnet-4-6", "unreproducible", "a.go")
+	seedQualityRecord(t, "archer", "gpt-5", "attempts-exhausted", "b.go")
+
+	payload, err := buildQualitySignalPayload(".")
+	require.NoError(t, err)
+	assert.Empty(t, payload,
+		"a pair whose only outcomes are the new statuses must not appear on the wire at all")
+}
+
+// TestBuildQualitySignalPayload_MixedPairKeepsItsRealCounts is the other
+// direction: the skip is keyed on having no dismissal/confirmation, not on the
+// presence of a new status. A pair with both must still report the old counters
+// at their true values, unchanged by the new outcomes sitting beside them.
+func TestBuildQualitySignalPayload_MixedPairKeepsItsRealCounts(t *testing.T) {
+	isolate(t)
+	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
+	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "resolved", "b.go")
+	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "unreproducible", "c.go")
+
+	payload, err := buildQualitySignalPayload(".")
+	require.NoError(t, err)
+	require.Len(t, payload, 1)
+	assert.Equal(t, 1, payload[0].DismissedCount)
+	assert.Equal(t, 1, payload[0].ConfirmedCount,
+		"the unreproducible outcome must not inflate or deflate either wire counter")
+}

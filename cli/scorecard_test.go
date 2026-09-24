@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/samestrin/atcr/internal/benchmark"
+	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/scorecard"
 )
 
@@ -23,9 +25,14 @@ func storeRecord(t *testing.T, rec scorecard.Record) {
 	require.NoError(t, scorecard.Append(dir, rec))
 }
 
+// reviewerRec is the cli-side stand-in for a record the emitter wrote. Outcome
+// is stamped for the reason sprint 36.0 added the field: trustPriorsSince scores
+// only runs the lens got a fair attempt at, so a record carrying no outcome is
+// excluded and any trust-rate assertion built on one silently measures nothing.
 func reviewerRec(runID, reviewer, model string, raised, corroborated int) scorecard.Record {
 	return scorecard.Record{
 		SchemaVersion:        scorecard.SchemaVersion,
+		Outcome:              benchmark.OutcomeFindings,
 		RecordType:           scorecard.RecordTypeReviewer,
 		RunID:                runID,
 		Reviewer:             reviewer,
@@ -106,6 +113,30 @@ func TestScorecardCmd_ResolveByPath(t *testing.T) {
 
 	runID := "2026-06-14T10:00:00Z-2026-06-14_abc"
 	storeRecord(t, reviewerRec(runID, "bruce", "claude-sonnet-4-6", 12, 7))
+
+	code, out := execCmdCapture(t, "scorecard", reviewDir)
+	require.Equal(t, 0, code, out)
+	require.Contains(t, out, "bruce")
+}
+
+// TestScorecardCmd_ResolveByPathFindsWhatReconcileWrote closes the round trip
+// the path form exists for: EmitForReconcile appends a path hash to the run id,
+// so a CLI that rebuilds only ReconciledAt-basename finds no records for any run
+// this build reconciled. The record is written by the real emitter, not by a
+// hand-built id, so the two sides cannot agree by accident.
+func TestScorecardCmd_ResolveByPathFindsWhatReconcileWrote(t *testing.T) {
+	isolate(t)
+	reviewDir := filepath.Join(".atcr", "reviews", "2026-06-14_emit")
+	require.NoError(t, os.MkdirAll(filepath.Join(reviewDir, "reconciled"), 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(reviewDir, "reconciled", "summary.json"),
+		[]byte(`{"reconciled_at":"2026-06-14T10:00:00Z"}`), 0o644))
+
+	scorecard.EmitForReconcile(reviewDir, reconcile.Result{
+		Findings: []reconcile.Merged{{Finding: reconcile.Finding{
+			File: "a.go", Line: 1, Problem: "p", Reviewers: []string{"bruce"}}}},
+		Summary: reconcile.Summary{ReconciledAt: "2026-06-14T10:00:00Z"},
+	}, scorecard.EmitOpts{})
 
 	code, out := execCmdCapture(t, "scorecard", reviewDir)
 	require.Equal(t, 0, code, out)

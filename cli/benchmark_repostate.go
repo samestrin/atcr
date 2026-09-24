@@ -127,14 +127,20 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		return nil, "", err
 	}
 
-	// Every case's diff is parsed BEFORE the first paid completer call. The parse
-	// used to run inside the per-case loop, so case N's malformed hunk header
-	// surfaced only after cases 1..N-1 had driven the whole reviewer panel — the
-	// exact fail-late shape LoadRepoState's eager-load contract names one level up
-	// ("a defective case fails at load, where the remedy is free, instead of
-	// part-way through a paid panel run"). Folding it into LoadRepoState itself
-	// would also put it behind `benchmark verify`; that is internal/benchmark's
-	// file, so this pre-flight is the in-runner guarantee.
+	// This loop builds the LINE MAPS the per-case scoring below needs. It is not the
+	// parse gate, and reading it as one is the mistake to avoid: LoadRepoState already
+	// parsed every case's diff at load (internal/benchmark/repostate.go:268), so a
+	// malformed hunk header failed above, before this function reached its first paid
+	// completer call. That guarantee lives in the loader deliberately — it is where
+	// `benchmark verify` and `benchmark export --suite-path` inherit it too, which a
+	// runner-only pre-flight could never give them.
+	//
+	// So this is a SECOND parse of the same bytes, and it is redundant only in the
+	// narrow sense that its error arm is unreachable in practice. The loader does not
+	// cache the map (its doc says why: no consumer outside this runner), so the work is
+	// the price of not widening RepoStateCase's public surface for one caller. The err
+	// check stays regardless — an unreachable arm that returns is cheaper than one that
+	// panics if the two parses ever diverge.
 	lineMaps := make([]benchmark.DiffLineMap, len(m.Cases))
 	for i := range m.Cases {
 		lm, err := loadCaseDiffLineMap(m.Cases[i])
@@ -192,9 +198,22 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			// reclaim. A scheduled suite losing one case per run accumulates a full
 			// work dir every run; a size on the same line that names the path is what
 			// makes that visible before the volume fills.
-			log.FromContext(ctx).Warn("benchmark work dir retained after a partial run",
-				"path", tmp, "failed_cases", len(caseFailures), "failed_slots", len(slotFailures),
-				"retained_bytes", dirSizeBytes(tmp))
+			// An unmeasurable size OMITS retained_bytes and says so through
+			// retained_bytes_unmeasured=true, never zero and never the string
+			// "unknown": a zero reads as "nothing retained" on the line the operator
+			// watches for growth, and a string retypes a key the doc tells them to
+			// watch numerically. internal/log/log.go:92-94 supports json format, so
+			// under ATCR_LOG_FORMAT=json a polymorphic retained_bytes errors or is
+			// silently dropped by the numeric monitor the size exists to enable —
+			// the same class of failure as the lying zero. Keeping the key monotypic
+			// (a number, or absent) leaves absence to mean "not measured", which is
+			// what an omitted key already means everywhere else here, while the
+			// sibling boolean keeps the unmeasured case VISIBLE rather than inferred.
+			attrs := []any{"path", tmp, "failed_cases", len(caseFailures),
+				"failed_slots", failedSlotCount(slotFailures), "failed_reviewers", len(slotFailures),
+				"retained_dirs", retainedDirCount(tmp)}
+			attrs = append(attrs, retainedSizeAttrs(tmp)...)
+			log.FromContext(ctx).Warn("benchmark work dir retained after a partial run", attrs...)
 			// Returned to the caller as well as logged. The log line is suppressible —
 			// ATCR_LOG_LEVEL=error is a legal setting and drops Warn entirely — and the
 			// partial arm has no error to wrap the path into the way the failure arm
@@ -500,6 +519,16 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			// scored, and the surviving reviewers did score this one. Keyed by the
 			// PRE-SCRUB identity here and mapped through scrubOf at emit, so the
 			// published record joins to the coverage row it explains.
+			//
+			// The predicate tests Status only, NOT a.Error beside it — deliberately,
+			// unlike ReviewerOutcome's failed arm (internal/fanout/revieweroutcome.go),
+			// which reads Status != StatusOK || a.Error != "". No live fanout producer
+			// emits StatusOK with a non-empty Error, so the pair is latent; and a skip
+			// that fired on it would need a slot-failure REASON for an OK status, which
+			// the vocabulary has no entry for (SlotFailureReasonForStatus documents that
+			// an OK slot is never skipped). If a producer of that pair ever appears, the
+			// predicate here and that reason mapping must move together — unify both
+			// sides in the same change, never this one alone.
 			if a.Status != fanout.StatusOK {
 				slotFailures[key] = append(slotFailures[key], benchmark.SlotFailure{
 					CaseID: c.ID,
@@ -537,7 +566,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			})
 
 			acc[key].caseIDs = append(acc[key].caseIDs, c.ID)
-			acc[key].outcomes[benchmark.OutcomeTallyKey(reviewerOutcome(a, categorical[a.Agent]))]++
+			acc[key].outcomes[benchmark.OutcomeTallyKey(fanout.ReviewerOutcome(a, len(categorical[a.Agent])))]++
 			if a.FallbackUsed {
 				acc[key].fallbackCases++
 			}
@@ -590,12 +619,17 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 	// inside a single case's review call and cannot see a suite-wide outcome; this
 	// one is reachable only now that a case failure stops aborting.
 	if len(order) == 0 {
-		if len(caseFailures) > 0 {
-			return nil, "", fmt.Errorf("no case could be scored: all %d case(s) failed (%s); "+
-				"re-running is the remedy only if the cause was transient",
-				len(caseFailures), summarizeCaseFailureReasons(caseFailures))
-		}
-		return nil, "", fmt.Errorf("no case could be scored: the run produced no reviewer rows over %d case(s)", len(m.Cases))
+		// One return, not two: the fallback that named a no-rows-no-failures shape
+		// was a branch no test could reach (the empty case list is rejected at load
+		// and an all-roster failure aborts per case), and an untestable arm is dead
+		// weight the file carries for nothing. The folded message still reads at
+		// zero failures — summarizeCaseFailureReasons renders "no failure was
+		// recorded" — so the guard keeps preventing the empty artifact whatever
+		// future path reaches it.
+		reasons := summarizeCaseFailureReasons(caseFailures)
+		return nil, "", fmt.Errorf("no case could be scored: %d of %d case(s) failed (%s); "+
+			"re-running is the remedy only if the cause was transient",
+			len(caseFailures), len(m.Cases), reasons)
 	}
 
 	// The post-scrub identity collision guard buildRunResult carries: scrubField
@@ -692,7 +726,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		Vocabulary:          benchmark.PerReviewerVocabulary(catScores),
 		PositionalRecall:    benchmark.ScorePositional(posScores),
 		CaseFailures:        caseFailures,
-		SlotFailures:        publicSlotFailures(slotFailures, order, scrubOf),
+		SlotFailures:        publicSlotFailures(ctx, slotFailures, order, scrubOf),
 		// retainedWorkDir is set by the deferred cleanup above, which runs after this
 		// return and is the only place that knows whether the dir survived.
 	}, "", nil
@@ -715,8 +749,10 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 // that is a reviewer whose every slot failed on every case before the identity was
 // registered, which the loop's registration order rules out — but emitting an
 // untranslated identity would be worse than emitting nothing, since it would look
-// joinable and not be.
-func publicSlotFailures(byKey map[reviewerKey][]benchmark.SlotFailure, order []reviewerKey, scrubOf map[reviewerKey]reviewerKey) []benchmark.SlotFailure {
+// joinable and not be. The skip is WARNED, not silent: this is the channel built to
+// end silent drops, and an unreachable case becoming a silent one would repeat the
+// exact failure the channel exists to prevent.
+func publicSlotFailures(ctx context.Context, byKey map[reviewerKey][]benchmark.SlotFailure, order []reviewerKey, scrubOf map[reviewerKey]reviewerKey) []benchmark.SlotFailure {
 	if len(byKey) == 0 {
 		return nil
 	}
@@ -724,6 +760,8 @@ func publicSlotFailures(byKey map[reviewerKey][]benchmark.SlotFailure, order []r
 	for _, k := range order {
 		id, ok := scrubOf[k]
 		if !ok {
+			log.FromContext(ctx).Warn("slot failure dropped: identity missing from the scrub map",
+				"model", k.model, "persona", k.persona, "slot_failures", len(byKey[k]))
 			continue
 		}
 		for _, sf := range byKey[k] {
@@ -786,6 +824,11 @@ var (
 // that point and is published nowhere else on this path, since the run returns no
 // run-result.
 func summarizeCaseFailureReasons(failures []benchmark.CaseFailure) string {
+	// Zero failures still has to read as a reason: the no-scorable-case error
+	// interpolates this, and an empty "()" would say nothing.
+	if len(failures) == 0 {
+		return "no failure was recorded"
+	}
 	tally := map[string]int{}
 	for _, f := range failures {
 		tally[f.Reason]++
@@ -802,17 +845,76 @@ func summarizeCaseFailureReasons(failures []benchmark.CaseFailure) string {
 	return strings.Join(parts, ", ")
 }
 
-// dirSizeBytes totals the regular-file bytes under root, best-effort.
+// failedSlotCount is the number of failed reviewer SLOTS: the map is keyed by
+// reviewer and each value lists that reviewer's failed cases, so len(m) would
+// count reviewers — one dead provider on a 200-case suite is 200 slots, not 1.
+func failedSlotCount(m map[reviewerKey][]benchmark.SlotFailure) int {
+	n := 0
+	for _, v := range m {
+		n += len(v)
+	}
+	return n
+}
+
+// retainedDirCount is how many retained repo-state work dirs sit beside
+// workDir, this one included: every earlier partial or failed run left one, and
+// nothing reclaims them (see the retention arm). It matches by NAME ONLY and
+// walks nothing, so reporting accumulation costs one directory read. A glob
+// error reads as 0 rather than failing the cleanup it decorates.
+func retainedDirCount(workDir string) int {
+	matches, err := filepath.Glob(filepath.Join(filepath.Dir(workDir), "atcr-repo-state-*"))
+	if err != nil {
+		return 0
+	}
+	return len(matches)
+}
+
+// retainedWalkLimit caps the entries dirSizeBytes visits. The walk runs inside
+// the deferred cleanup of a run that already failed, possibly on a host out of
+// space or file handles, so a panel-sized tree must not block exit to decorate a
+// log line. Past the limit the size reads as unmeasured. A package var so a test
+// can lower it.
+var retainedWalkLimit = 200_000
+
+// retainedSizeAttrs is the size half of the retained-work-dir log line: a
+// numeric retained_bytes when the size was measured, else
+// retained_bytes_unmeasured=true, so the key stays monotypic (see the caller).
+func retainedSizeAttrs(root string) []any {
+	if size, measured := dirSizeBytes(root); measured {
+		return []any{"retained_bytes", size}
+	}
+	return []any{"retained_bytes_unmeasured", true}
+}
+
+// dirSizeBytes totals the regular-file bytes under root, best-effort, and reports
+// whether the total was measured at all.
 //
 // Reported beside the retained path so unbounded retention is VISIBLE rather than
-// merely documented. Errors are swallowed on purpose: this runs inside a deferred
-// cleanup whose whole contract is warn-never-fail, and a run must not change its
-// outcome because a size could not be measured. A partial total is still a signal;
-// zero is the honest answer when nothing could be walked.
-func dirSizeBytes(root string) int64 {
+// merely documented. It is still warn-never-fail — this runs inside a deferred
+// cleanup, and a run must not change its outcome because a size could not be
+// measured — but a walk that cannot even read the ROOT is reported as unmeasured
+// rather than as zero: the caller logs "unknown" for it, because the doc tells the
+// operator to watch exactly this number for growth, and a zero reads as "nothing
+// retained", hiding the very growth the warning exists to surface. A mid-walk
+// failure leaves the partial total, which is still a signal, and reports measured.
+func dirSizeBytes(root string) (int64, bool) {
 	var total int64
-	_ = filepath.WalkDir(root, func(_ string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+	rootErr := error(nil)
+	visited := 0
+	overLimit := false
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		visited++
+		if visited > retainedWalkLimit {
+			overLimit = true
+			return filepath.SkipAll
+		}
+		if err != nil {
+			if path == root {
+				rootErr = err
+			}
+			return nil
+		}
+		if d.IsDir() {
 			return nil
 		}
 		if info, ierr := d.Info(); ierr == nil {
@@ -820,7 +922,7 @@ func dirSizeBytes(root string) int64 {
 		}
 		return nil
 	})
-	return total
+	return total, rootErr == nil && !overLimit
 }
 
 // maxNamedFailedCases bounds the per-case list in warnCaseFailures, matching
@@ -921,6 +1023,20 @@ type repoStateAcc struct {
 // over different populations. The row states which via
 // benchmark.ReviewerCoverage.GroundingEnabled rather than adjusting the rate, so
 // nothing already published changes value.
+func expectedCategories(c benchmark.RepoStateCase) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(c.ExpectedFindings))
+	for _, f := range c.ExpectedFindings {
+		n := strings.ToLower(strings.TrimSpace(f.Category))
+		if seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, f.Category)
+	}
+	return out
+}
+
 // foldGroundingEnabled combines one case's grounding-gate state into a reviewer
 // row's running tag. first marks the row's opening case, where there is no prior
 // value to fold against.
@@ -966,20 +1082,6 @@ func foldGroundingEnabled(prior, caseState *bool, first bool) *bool {
 	// storage with a PoolSummary the caller still holds.
 	agreed := *prior
 	return &agreed
-}
-
-func expectedCategories(c benchmark.RepoStateCase) []string {
-	seen := map[string]bool{}
-	out := make([]string, 0, len(c.ExpectedFindings))
-	for _, f := range c.ExpectedFindings {
-		n := strings.ToLower(strings.TrimSpace(f.Category))
-		if seen[n] {
-			continue
-		}
-		seen[n] = true
-		out = append(out, f.Category)
-	}
-	return out
 }
 
 // loadCaseDiffLineMap reads and parses a case's own diff, which is what makes

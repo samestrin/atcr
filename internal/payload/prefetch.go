@@ -249,11 +249,24 @@ func extractChangedSymbols(src string, ranges []LineRange, root astgroup.Node, i
 	// Pass 1 — the declarations the diff actually touched. EnclosingSymbolName
 	// walks up past anonymous control-flow blocks, so an edit inside an `if` arm
 	// resolves to the function that contains it rather than to the `if`.
+	// This pass is bounded on TWO axes, and the guard below checks both. scanned
+	// caps the changed LINES walked, which is what bounds the astgroup tree walks
+	// a very large diff can cost; maxChangedSymbols caps the symbols COLLECTED,
+	// which is what bounds the `git grep` pattern set downstream. A file can hit
+	// either without the other — a thousand edited lines inside one function
+	// exhausts the first and collects one symbol; a thousand one-line edits to
+	// distinct declarations exhausts the second on far fewer lines.
 	scanned := 0
-	// Labeled break, NOT return: exhausting the declaration pass's line budget
-	// must not skip the AC6 cue pass below. Returning here made the mock half of
-	// the feature vanish on exactly the large changed test files it was written
-	// for — the budget is spent walking declarations, and the cue scan never ran.
+	// The label exits BOTH loops. A bare `break` would leave only this range and
+	// let the outer loop start the next one, which does not stop anything — the
+	// budget is a per-FILE total, not per-range.
+	//
+	// And a labeled break, NOT return: exhausting the declaration pass's line
+	// budget must not skip the AC6 cue pass below. Returning here made the mock
+	// half of the feature vanish on exactly the large changed test files it was
+	// written for — the budget is spent walking declarations, and the cue scan
+	// never ran. That is also why pass 2 carries its own counter rather than
+	// sharing this one.
 declPass:
 	for _, r := range ranges {
 		for line := r.Start; line <= r.End; line++ {
@@ -768,6 +781,14 @@ func grepPatterns(symbols []changedSymbol) []string {
 
 // validGrepSymbol reports whether name is a plain identifier safe to pass as a
 // fixed-string search pattern.
+//
+// "valid" here is a SAFETY test, not a taste one, and the two rejections that
+// matter are argv-shaped rather than identifier-shaped: a name beginning with `-`
+// would be read by git as a flag, and one containing a glob, a space or a shell
+// metacharacter would change what is searched. Restricting to identifier runes
+// rejects both by construction. The caller (grepPatterns) states the full
+// rationale; it is repeated here because this is the function a reader lands on
+// when asking whether a new call site may pass unvalidated input.
 //
 // The length floor counts RUNES, not bytes: "é" is two bytes but one character,
 // and the floor is about how much a pattern matches, not how it is encoded.
@@ -1642,13 +1663,15 @@ const PrefetchContextPath = "<context>"
 // payload_byte_budget.
 //
 // The accepted consequences of carrying a synthetic section as a FileEntry are
-// enumerated on ClaimLedgerPath and apply here too — with one PARTIALLY
-// mitigated: buildPayloads derives its reported file count from ReviewableCount
-// rather than len(kept), so a second synthetic entry does not inflate the count
-// the manifest and the persona-visible {{.FileCount}} report for the range. The
-// PER-AGENT re-derivations in internal/fanout's buildSlots still count synthetic
-// entries and remain inflated; that half is tracked as technical debt rather
-// than fixed here.
+// enumerated on ClaimLedgerPath and apply here too — with one MITIGATED:
+// buildPayloads derives its reported file count from ReviewableCount rather than
+// len(kept), so a second synthetic entry does not inflate the count FileCount's
+// two consumers report — the persona-visible {{.FileCount}} and the chunked no-op
+// warning gated on FileCount > 1. (No manifest field reads it; Manifest carries no
+// file count.) The per-agent
+// re-derivations in internal/fanout's buildSlots now apply the same rule — the
+// zero-budget keepSmallestEntry arm was the last holdout — so every reader of
+// FileCount agrees. See internal/fanout/review.go:1485-1494.
 func newPrefetchEntry(section string) FileEntry {
 	// exemptRank 0 is BELOW the claim ledger's 1, stated explicitly rather than
 	// left to the zero value: when a budget cannot fund both synthetic sections,

@@ -47,6 +47,12 @@ type ChangedLines map[string]FileChange
 // grounds under the same filtering as the payload it is grounding — otherwise a
 // --no-ignore review whose grounding took this path would silently drop every
 // finding on an ignored file (the file absent from the changed-lines map).
+//
+// It returns the patch's changed lines ALONE. RangeBuilder.BuildChangedLines
+// additionally widens the map with the rendered pre-fetch spans, so this
+// standalone path grounds the same range under a strictly narrower rule and
+// drops every finding on a retrieved file. The two are not interchangeable;
+// prefer the builder method wherever a RangeBuilder is available.
 func BuildChangedLines(ctx context.Context, repo, base, head string, opts ...RangeOption) (ChangedLines, error) {
 	g := newGitRunner(ctx, repo)
 	for _, o := range opts {

@@ -15,18 +15,22 @@ to enable it; pass `--no-scorecard` to suppress it for a single run.
 
 ---
 
-## Record Schema (v1)
+## Record Schema (v2)
 
 Each reconcile run appends one **reviewer** record per participating reviewer plus
 one **aggregate** record summarizing the whole run. Records are JSON objects, one
-per line (JSONL). `schema_version` is `1` on every record; a future schema change
+per line (JSONL). `schema_version` is `2` on every record atcr writes today; a schema change
 increments it and leaves old records readable (see [Schema versioning](#schema-versioning)).
+Version `2` added `outcome` and `categories_raised`, both optional — a `1` record
+carries neither and is read as "not measured", never as a measured zero.
+
+`pair_signals` and `pair_era` arrived later, **still at version `2`**. They are additive and optional, so they do not change how any existing record decodes, and a bump would have reclassified every genuinely measured v2 record as unmeasured. `pair_era` is what marks a record as measured for that field; see its row below.
 
 ### Example (per-reviewer record)
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "record_type": "reviewer",
   "run_id": "2026-06-14T10:00:00Z-abc123",
   "reviewer": "bruce",
@@ -40,6 +44,14 @@ increments it and leaves old records readable (see [Schema versioning](#schema-v
   "tokens_in": 14200,
   "tokens_out": 4000,
   "latency_ms": 9100,
+  "outcome": "findings",
+  "pair_signals": [
+    { "peer": "greta", "agreed": 4, "disagreed": 1 }
+  ],
+  "pair_era": 1,
+  "weighted_credit": 7.5,
+  "findings_routed": 1,
+  "credit_era": 1,
   "findings_verified": 4,
   "findings_refuted": 1,
   "survived_skeptic_rate": 0.8
@@ -50,9 +62,9 @@ increments it and leaves old records readable (see [Schema versioning](#schema-v
 
 | Field | Type | Presence | Description |
 |-------|------|----------|-------------|
-| `schema_version` | int | always | Record schema version. Currently `1`. |
+| `schema_version` | int | always | Record schema version. Currently `2`. |
 | `record_type` | string | always | `"reviewer"` for a per-reviewer row, `"aggregate"` for the run summary. Aggregate rows leave `reviewer`/`model`/`role` empty; consumers key on `record_type`. |
-| `run_id` | string | always | `<RFC3339 reconciled_at>-<review-dir base>`, e.g. `2026-06-14T10:00:00Z-abc123`. Uniquely identifies the run and selects the month file. |
+| `run_id` | string | always | `<RFC3339 reconciled_at>-<review-dir base>-<8 hex chars of sha256(absolute review dir)>`, e.g. `2026-06-14T10:00:00Z-abc123-1f2e3d4c`; runs reconciled before the hash was added carry the bare `<reconciled_at>-<review-dir base>` form, which `atcr scorecard <review-dir>` still finds. Uniquely identifies the run and selects the month file. |
 | `reviewer` | string | always (empty on aggregate) | Reviewer/persona name (e.g. `bruce`). |
 | `model` | string | always (empty on aggregate) | Model id the reviewer ran on (e.g. `claude-sonnet-4-6`). |
 | `role` | string | always (empty on aggregate) | Pipeline role. Constant `"reviewer"` for reconcile-derived records. |
@@ -70,6 +82,18 @@ increments it and leaves old records readable (see [Schema versioning](#schema-v
 | `survived_skeptic_rate` | float | conditional | `findings_verified / (findings_verified + findings_refuted)`. Present only when `findings_verified + findings_refuted > 0` — a *stricter* condition than the two counts above, which are present whenever verification ran. When verification ran but nothing countable survived (every verdict truncated, or this reviewer's findings drew none) the two counts still ship as `0` and this key is omitted: `0/0` would publish `0.0`, which is indistinguishable from a reviewer whose findings were all refuted. Read the three keys individually, not as a set. |
 | `raised_includes_unresolved` | bool | conditional | Superseded but retained. `true` when `findings_raised` counts the Tier-4-routed findings (every record written from Epic 35.16.6.5 onward); omitted on records written before it. The denominator has since changed meaning a second time (the 35.16.6.8 `doc_shield` carve-out), which a bool cannot express — `raised_denominator` below is the era discriminator a new reader should use. This field stays because existing readers and stores depend on it, and because `true` is still exactly right about the one thing it claims: routed findings are in the denominator. |
 | `raised_denominator` | int | conditional | Which definition of `findings_raised` produced this record: `1` = routed findings excluded (everything before 35.16.6.5; never stamped — it is what an absent discriminator means), `2` = routed findings included (35.16.6.5, stamped as `raised_includes_unresolved: true` before this field existed), `3` = routed findings included EXCEPT the doc-shielded ones (35.16.6.8, the current definition; those are counted in `findings_doc_shielded`). Omitted on records that predate the discriminator — their era is read from `raised_includes_unresolved` instead. `TrustPriors` splits eras on this value (see `unresolvedEraRuns`), so a rate is never averaged across two definitions. |
+| `outcome` | string | conditional | WHY this record's counts look the way they do, from the nine-value vocabulary in `internal/benchmark/outcome.go`: `findings`, `clean`, `unparseable`, `truncated`, `incomplete`, `ungrounded`, `filtered`, `failed`, or absent (unknown). It exists because a reviewer that read the diff and correctly found nothing, one that emitted prose no parser could use, and one whose call failed outright all record zero findings and would otherwise score identically. `TrustPriors` counts a record only when its outcome is `findings`, `clean`, `ungrounded` or `filtered` — see the eligibility rule below. Omitted when unknown. Two things read as unknown: every pre-v2 record, and a v2 record whose `AgentStatus` was not internally coherent. A reviewer with no `AgentStatus` at all — a path-anchored review with no pool summary — is NOT unknown: it is recorded as `findings`, because being named on a finding that survived reconcile is exactly what that value means. |
+| `categories_raised` | array of string | conditional | The distinct `CATEGORY` values attached to the findings this reviewer participated in, drawn from the closed vocabulary in `reconcile/category.go`. Declared by the v2 bump and **populated since schema 2**. Three streams feed it: the surviving findings, the Tier-4-routed ones (**same exception as `findings_raised`:** a routed finding whose `unresolved_reason` is `doc_shield` is excluded), and the clusters reconcile set aside as ambiguous — the third because a consensus-filtered singleton *was raised*, and reading only the survivors would starve a lens whose missing trust prior is the reason its finding was filtered. The ambiguous stream contributes **categories only**: it moves no count and never mints a reviewer record. Values are deduped, sorted, and validated against `reconcile.Categories()` before they are written; an unrecognized value is dropped rather than persisted. The meaning is **not a per-reviewer claim** — it answers "was this topic in play on the case". Provenance is mixed and worth knowing when reading a stored record: entries from the surviving and Tier-4-routed streams carry `Merge`'s cluster-**modal** category, while the ambiguous stream's DBSCAN-noise and gray-zone-pair routes carry the individual reviewer's own **raw** word, so one finding can contribute both. Omitted when absent, which means "not measured" rather than "measured empty". |
+| `pair_signals` | array of object | conditional | How this reviewer related to each **co-reviewer it shared a finding with** on this run. Each entry is `{ "peer": <reviewer>, "agreed": <int>, "disagreed": <int> }`, with `peer` already lower-cased and trimmed. `agreed` counts merged findings the two both raised. `disagreed` counts findings the two **split on severity** — the split `reconcile.Merge` records in the finding's `disagreement` field (`"<lo> vs <hi>"`), which is what the disagreement radar calls a `severity_split`. **A split is only counted when the cluster held exactly two reviewers.** `disagreement` is a property of the whole group, so on a three-reviewer cluster it says the group spanned more than one severity and *not* who sat on which side — and after a merge the per-reviewer severities are unrecoverable. Such a finding therefore contributes **nothing**: not a disagreement, because nobody can say between whom, and not an agreement either, because the group demonstrably did not agree. Discarding it forgoes data; apportioning it would fabricate a durable number. A two-reviewer **gray-zone** ambiguous cluster, by contrast, has an unambiguous pair: each such cluster arrives as one canonical pair key and charges that pair exactly ONE disagreement — on the **pair surface only** (it moves no finding count, the same asymmetry the ambiguous stream keeps everywhere else). Singleton and 3+-reviewer ambiguous clusters contribute nothing, the same unattributable rule the severity-split fold applies. The remaining gap still points one way: evidence is discarded, so the drop-candidate flag goes **un-raised**, never wrongly raised. Counts are **findings, not runs**. Entries are sorted by peer so two byte-identical runs serialize byte-identically. A finding raised alone produces no entry, and a lens that was silent produces none either: silence is **not** recorded as tacit agreement, because a zero-disagreement entry is indistinguishable from "never disagrees" — which is the drop-candidate verdict. Sourced from the surviving findings plus the two-reviewer gray-zone charge; the Tier-4-routed stream contributes nothing here. Omitted when the run produced no pair. |
+| `pair_era` | int | conditional | The measurement era for `pair_signals`, currently `1`. It is stamped on **every** reviewer record atcr writes, including a run that produced no pair at all, and that is the whole point: an absent `pair_signals` is byte-identical on a run that genuinely had no co-reviewer and on a record written before the field existed. Without this marker the entire pre-existing store would read as "these lenses never co-occurred", which is the drop-candidate verdict applied to every pair in it. Presence of `pair_era`, not of `pair_signals`, is what says the record was measured; a record without it is excluded from the pair tally rather than folded in as a measured zero. Omitted on a record written before the field existed. |
+| `weighted_credit` | float | conditional | The **disagreement-weighted** credit this reviewer earned on the run: the sum, over the findings it participated in, of `1 / <distinct reviewers on that finding>`. A finding nobody else raised is worth a full point; one the whole panel raised is worth a fraction of one. It is the inverse of what `findings_corroborated` counts, and deliberately so — a lens that finds what others missed is the reason a heterogeneous panel is worth running, and a raw agreement count rewards the generalist that overlaps everyone. It is a **separate** field rather than a redefinition of `findings_corroborated`, which is an int whose other consumers (the aggregate rows, the leaderboard export) keep their existing meaning. Routed and doc-shielded findings earn **no** credit: crediting a phantom would pay most for one nobody else raised. They still charge a denominator, but not the same one — a routed finding charges `findings_raised` directly, while a doc-shielded finding is counted only in `findings_doc_shielded` and reaches the trust denominator later, when the era merge folds it back in. **This is only half the score.** Whether a finding turned out to be REAL is not knowable at emit time, so the confirmation half is applied per persona when the score is read, from the local-debt ledger. Omitted when zero. |
+| `findings_routed` | int | conditional | How many of `findings_raised` were **chargeable Tier-4-routed** findings — phantoms that charge the denominator and can never earn `weighted_credit`. It is the counterpart to `findings_doc_shielded` rather than a duplicate: a doc-shielded finding is counted **instead of** being counted in `findings_raised`, a chargeable routed one is counted **inside** it. Without this count the honest credit ceiling is not recoverable when the record is read back, and the resulting bound is loose by exactly the routed count — widest for the reviewers carrying the most fabrication evidence, which is the wrong direction. Omitted when zero, which here genuinely means zero: it is written together with `credit_era` on every record, so a record carrying the era carries a true count. |
+| `credit_era` | int | conditional | The measurement era for `weighted_credit`, currently `1`. Stamped on **every** reviewer record atcr writes, including one that earned `0.0`, for the same reason `pair_era` is: an absent `weighted_credit` is byte-identical on a genuinely-zero run and on a record written before the field existed, and reading the whole pre-existing store as measured zeroes would drag every lens toward zero on upgrade. Presence of `credit_era`, not of `weighted_credit`, is what says the record was measured; a record without it is excluded from **both** sides of the weighted rate rather than averaged in. Omitted on a record written before the field existed. |
+
+
+> **The weighted-credit score is not wired into review yet, and its own constants are provisional and unmeasured.** `weighted_credit` is written to every record, but the trust priors reconcile consumes are still the plain `corroboration_rate`. The weighted rate sits on a different scale from that rate, and reconcile's exemption and demotion thresholds were calibrated against the old one — switching the input without re-deriving them would demote much of the panel. Both the isolated-finding weight and the minimum number of closed debt outcomes needed before a confirmation rate is trusted carry a dated note and a named re-measurement trigger in `internal/scorecard/trust.go`. Treat any weighted number as provisional until that measurement exists.
+
+> **The pair surface's two thresholds are provisional and unmeasured.** The sufficiency floor (`20` co-eligible cases) and the drop-candidate threshold (`0.05`) were set by analogy and by argument, not from a live store — there was none to measure when they were written. Both carry a dated note and a named re-measurement trigger in `internal/scorecard/pairtally.go`. Read a "drop candidate" verdict as a prompt to look, never as a measured finding, until that measurement exists.
 
 **Conditional verification fields.** `findings_verified`, `findings_refuted`, and
 `survived_skeptic_rate` are included only when the run had a readable, well-formed
@@ -184,7 +208,7 @@ Flags:
 |------|---------|---------|
 | `--since` | `30d` | Time window. `Nd` (days), `Nw` (weeks), `Nm` (30-day months). `N` is a positive integer. |
 | `--model` | _(all)_ | Model id filter (case-insensitive substring, matching `personas search --model`; a full exact id always matches). |
-| `--persona` | _(all)_ | Exact-match reviewer/persona filter. |
+| `--persona` | _(all)_ | Reviewer/persona filter: the whole name, compared case-insensitively (`Bruce` and `bruce` are one reviewer). |
 | `--export` | off | Emit anonymized public JSON instead of the table (see below). |
 | `--output` | _(stdout)_ | With `--export`: write JSON to this file (`0600`) instead of stdout. |
 
@@ -393,12 +417,82 @@ than growing a third aggregation.
 - **Best-effort against the store.** A missing, empty, or unreadable store
   directory yields an empty map and a nil error — this is a read-only,
   never-fails resolver; it does not create the store or write to it.
+- **Outcome eligibility.** A record counts toward a reviewer's rate only when its
+  `outcome` is on the counted side of this split:
+  - **Counted:** `findings`, `clean`, `ungrounded`, `filtered`.
+  - **Excluded:** `unparseable`, `truncated`, `incomplete`, `failed`, and
+    absent/unknown.
+
+  The excluded ones mean the lens did not get a fair attempt, and a durable score
+  has to measure judgment rather than hosting. The panel's real history is the
+  argument — a lens that hung on a proxy timeout, one whose host silently capped
+  prompts at 16,384 tokens while answering HTTP 200, and one auth-failed on a
+  billing cap would all have been demoted for their wiring. `ungrounded` and
+  `filtered` are counted deliberately: both follow a complete, parseable response
+  whose findings were discarded for cause, which is a judgment result. The test
+  is an allowlist, so a
+  future tenth outcome value is excluded until someone decides otherwise. A
+  reviewer left with zero eligible runs is ABSENT from the map, never present at
+  `0.0` — never a punitive score for a broken proxy.
+- **Opportunity-set scoping.** A record is dropped only when its lens **raised nothing** on a run that was not an *opportunity* for it — that is, when no reviewer on the run raised a `categories_raised` value inside that lens's remit. A lens that raised findings is kept whatever its categories say; see the fifth class below, which is where that rule is stated in full and where the narrower rule it replaced is explained. A narrow lens is supposed to be silent most of the time, so scoring it against the full corpus makes it look like a lens that never contributes while a generalist accumulates standing by being in scope everywhere. Removing out-of-remit runs from the denominator is what makes the two rates comparable. Six kinds of record survive the opportunity gate. The most ordinary is a silent lens whose remit WAS in play — the gate working as intended, and not enumerated below. Of the remaining five, FOUR are never judged, and pass through untouched because nothing on the run says whether the lens's remit was in play; the fifth IS judged, on a different question, and is described after them. The four: aggregates; pre-schema-2 records (their category set is unmeasured, not empty); the registry-only lenses with no in-repo definition to ground a remit against; and any run that contributed no *discriminating* category at all. That last class has three routes, and they are indistinguishable in the store: nobody raised anything; every raised value fell outside the closed vocabulary and was dropped at the write gate (the likeliest one in practice — `reconcile/category.go` records a dry run where 72.3% of findings used a word the scorer did not recognise); or every raised value was non-discriminating, meaning `other`, `out-of-scope` or `invariant`, which carry no topic. Judging any of the three would un-score a whole panel for a labelling failure.
+
+  The fifth is not a pass-through at all and is listed here because it used to be one. **A record that RAISED findings is never dropped by this gate**, whatever its categories say. It is judged — on the raised count, not on the remit — and kept. When it contributed no discriminating category of its own it is additionally annotated as *unlabelled*, which `personas list --scores` reports in its `CASES` column; when it contributed a real topic outside its own remit it is simply counted.
+
+  That rule replaced a narrower one, and the replacement is worth understanding because it repeals something this document previously stated. The narrower rule dropped any out-of-remit record, silent or not, and it made mislabelling profitable: a lens whose phantom findings carried a *recognised* word outside its remit had the whole record removed from its denominator, while the same phantoms under an unrecognised word were charged in full — because an unrecognised word is stripped at write time and the record then read as unlabelled. Measured on a worked example, a lens with twenty honest runs and a hundred uncorroborated out-of-remit phantoms scored a perfect 1.00, clearing the threshold at which reconcile exempts a lens from the consensus filter entirely; the same phantoms under a junk word scored it 0.17. Correct labelling was more exculpating than gibberish.
+
+  **What that costs is a real narrowing of the opportunity-set rule and not a free fix.** "A case is in a lens's denominator only when that lens's remit was in play" now holds for SILENT lenses only. The guarantee the panel actually needs is the narrower one — a lens *correctly silent* on an out-of-remit case is neither credited nor penalised — and a lens that raised a hundred findings on that case was not silent. It made a judgment call and is accountable for it. The change also removed an asymmetry: the five registry-only lenses with no in-repo remit never reached the drop branch at all, so the old rule protected the nine grounded personas and no others.
+
+  **What the change did NOT close, stated here because the paragraph above reads as though it did.** It closed the *labelling asymmetry*: a phantom under a recognised out-of-remit word and one under an unrecognised word now score identically. It did NOT close the 1.00 escape itself on the production path, and the reason is a different mechanism. Under strict consensus — the only level trust priors read — an uncorroborated singleton is routed to the ambiguous stream unless the lens is already trust-exempt. The routing happens in reconcile and is carried into the scorecard by the reconcile bridge, not by the record writer itself; the stream contributes its CATEGORY and no count. So the out-of-lane phantom never reaches this gate with a raised count at all: it arrives at zero, is not charged, and the lens keeps its rate. Keeping that record instead of dropping it was tried and reverted, and the reason is worth stating because it is the opposite of intuitive. A zero-raised record is on neither side of the ratio, so keeping it looks free — but the minimum-run floor counts records, not findings, so a hundred evidence-free records will carry a lens over a floor its real history does not reach and publish a rate computed from a handful of runs. Measured: five honest runs publish nothing; the same five plus a hundred zero-raised out-of-lane contributions publish at 1.00, which is above the threshold at which reconcile exempts a lens from the consensus filter entirely. Charging the ambiguous stream is a scoring change that must answer the mirror case too, where an in-remit ambiguous category buys opportunity-set membership at no denominator cost; both directions are tracked together and neither is resolved.
+
+  **The narrowing cuts both ways, and the second direction is easy to miss.** Keeping an out-of-remit raiser puts its findings in the *numerator* as well as the denominator, so out-of-lane work the panel agreed with now RAISES a lens's rate where it used to be dropped from the calculation entirely. A lens cannot be held accountable for its out-of-lane mistakes and left unrewarded for its out-of-lane hits by the same gate. Expect a lens that ranges outside its remit to move further in both directions than it did before.
+
+  **This reduces the run count the `minRuns` floor sees**, and that floor was measured against unfiltered strict runs; the re-measurement is tracked as a known limit beside `DefaultTrustMinRuns` in `internal/scorecard/trust.go`.
+- **The filter is scoped to `TrustPriors`, exactly as `strictRuns` and
+  `unresolvedEraRuns` are.** `leaderboard --export` and `PublishedSet` do NOT
+  apply it: the leaderboard reports what actually happened across all runs, so a
+  `failed` or `truncated` row still contributes to the exported
+  `corroboration_rate` and `findings_raised_avg`. The trust prior is a
+  behavioural measurement, and only that one is gated.
+- **Absent is not the same as neutral.** An absent key is never read as a rate of
+  `0.0` — `trustExempt` and `demoteByTrust` both gate on the comma-ok — but its
+  absence switches BOTH of them off. A high-trust lens stops being exempted from
+  the consensus filter, and a low-trust phantom-raiser stops being demoted to
+  `LOW`. That second direction is a LOOSENING, visible in `findings.json`
+  confidence. (This is not the `1/N` baseline, which is the per-run PageRank
+  uniform authority — a different mechanism entirely.)
 - `DefaultTrustMinRuns` is the conservative default floor (`20`) for a caller
   that does not pick its own `minRuns`. `atcr personas list --scores` calls
   `TrustPriors(dir, 0)` explicitly instead — that table is meant to show every
-  reviewer with any history at all, so it opts out of the default floor rather
-  than inheriting it.
-- **`scorecard.ResolveTrustPriors()` (epic 35.9)** is the third consumer —
+  reviewer with any SCOREABLE history, so it opts out of the default floor rather
+  than inheriting it. **It does not opt out of the eligibility filter**, and the
+  difference is visible on an upgrade: a store written before `schema_version` 2
+  has no `outcome` on any record, so every reviewer in it is excluded and the
+  table renders all-`n/a` with the "no data" footer until fresh runs accumulate.
+  A reviewer recovered from the findings of a pool-summary-less review is NOT
+  affected — it records `findings` and scores normally.
+  A rate computed from unclassified runs is not a measurement, so absence is the
+  honest answer — but absence is not neutral (see the bullet above: it switches
+  demotion off as well as exemption), and on an existing install this is a
+  visible change rather than a silent one.
+- **`scorecard.ResolveTrustPriorsForReview(reviewDir)` (epic 35.9; the unmeasured
+  counter added in 36.0; keyed on persona + model since 2026-09-23)** is the third consumer, and it
+  is the one on the primary path of **every** `atcr review`, `review --resume`,
+  `reconcile` and MCP `atcr_reconcile` call — so the outcome-eligibility rule
+  above reaches production through here, not only through `personas list
+  --scores`. (It is `ResolveTrustPriors`' windowed read plus a count of the
+  reviewers the outcome gate alone keeps out of the map, reported on the
+  reconcile log line; `ResolveTrustPriors` itself remains as the
+  `personas list --scores` in-use read and the nil-lookup form of
+  `ResolveTrustPriorsWithGroundTruth`.) On an upgrade to `schema_version` 2 every stored record is still v1
+  and therefore unclassified, so the priors map is empty until each reviewer
+  accumulates `DefaultTrustMinRuns` strict runs under the new schema. Both
+  consensus-filter behaviours go dark for that period: a high-trust singleton
+  stops being exempted, and a low-trust phantom-raiser stops being demoted to
+  `LOW` — the second being a loosening that shows up in `findings.json`
+  confidence. This is a one-time upgrade cost and it recovers as new records
+  accumulate — every reconcile writes v2 records, including a path-anchored
+  one with no pool summary. It is
+  documented because it is otherwise invisible. Mechanically, it is
   `DefaultDir()` plus a read at `DefaultTrustMinRuns` in one best-effort call,
   degrading to a nil map on any failure (an unresolvable config dir, a
   missing/unreadable store) rather than erroring. Unlike `TrustPriors`, that
@@ -411,13 +505,15 @@ than growing a third aggregation.
   effective retention is 180 days plus however far into that month the cutoff
   falls — up to roughly 210 days, i.e. as many as 7 month files. Two
   consequences: a reviewer with no runs in any month file overlapping the last
-  180 days falls back to the neutral "no history" state
-  (absent from the map — the same state a brand-new reviewer occupies), and
+  180 days falls back to the "no history" state (absent from the map — the same
+  state a brand-new reviewer occupies, and not a neutral one: it disables
+  demotion as well as exemption), and
   `TrustPriors(dir, minRuns)` itself is **unchanged and still all-history**, so
   `atcr personas list --scores` keeps reporting on the whole store. Every
   `atcr reconcile` /
   `atcr review --resume` / `atcr review` (one-shot mode) / MCP
-  `atcr_reconcile` call site resolves it and threads the result into
+  `atcr_reconcile` call site resolves it — through
+  `ResolveTrustPriorsForReview` — and threads the result into
   `reconcile.Options.TrustPriors`, which the epic-14.2 consensus filter
   consumes: a singleton from a historically reliable reviewer survives the
   filter without in-run corroboration, and one from a historically unreliable
@@ -427,6 +523,7 @@ than growing a third aggregation.
   `LOW` finding is then sidecarred changes. Under `consensus: off` it reaches
   `findings.json` still carrying `LOW`, which is the only configuration in which
   the demotion is observable end-to-end.
+  **Trust follows the model, not just the persona.** On this reconcile path a persona's prior is computed only from its runs on the model it ran on in the review being reconciled, read from that review's pool summary (`sources/pool/summary.json`). A persona that switched models is absent from the map, which is the neutral baseline, until `DefaultTrustMinRuns` runs accumulate on the new model; its history on the old model does not carry over. A persona is also neutral when its model cannot be known: the review has no pool summary, the summary lists the persona on two different models, or the summary records no model for it. The summary records a model only when the provider reported token usage, so a provider that never reports usage leaves its personas neutral on this path. The unmeasured count on the log line follows the same rule. `atcr personas list --scores` still reports each persona across all its models: it reads `TrustPriors`, not this function, and so does its "In use by reconcile" footer, which therefore does not yet reflect the per-model rule. Two parts of the scoring stay per persona across models: the era decision (a persona's newest `raised_denominator`), which only matters across an era bump, and the ground-truth confirmation half, which is not wired in (TD-039).
   > **Scorecard rates are not comparable across consensus levels.** Reviewer
   > records are computed from the **post-filter** finding set (`res.Findings`)
   > plus the Tier-4-routed set (`res.Unresolved`, which contributes to
@@ -569,6 +666,16 @@ the surface, the less can leak.
 > reads it as "off" would compare it against a genuinely ungated row as though the two
 > measured the same population.
 >
+> **One carve-out supersedes the rule above for benchmark `standard-v1` rows.** The
+> tag is recent: a submission produced before it existed carries no tag at all. On
+> `repo-state-v1` that absence is genuinely unmeasured. On `standard-v1` it is not —
+> that tier's gate has never been live; its range-less path fails open today exactly
+> as it did before the tag existed — so a tag-less `standard-v1` row measures the
+> same ungated population as one tagged `false`. When comparing across the upgrade
+> boundary, treat an absent tag on a `standard-v1` benchmark row as equivalent to
+> `false`; the unmeasured reading applies only to `repo-state-v1` rows and to
+> production rows.
+>
 > Case ids are producer-controlled and routinely encode repository identity: the
 > bundled importer derives them as `<owner>-<repo>-pr-<number>`, so
 > `standard-v1` ids read like `bluewave-labs-checkmate-pr-2883`. Exporting a
@@ -618,7 +725,7 @@ guarantee, and the auth exit code — in **[docs/telemetry.md](telemetry.md)**.
 
 There are **two independent version numbers**:
 
-- `schema_version` (`1`) is stamped on every **stored** record (the local JSONL
+- `schema_version` (`2`) is stamped on every **stored** record (the local JSONL
   store).
 - `submission_schema` (`2`) is stamped on every **public submission** envelope
   (`leaderboard --export` and `benchmark export`).

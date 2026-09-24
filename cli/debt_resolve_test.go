@@ -491,6 +491,28 @@ func TestDebtResolve_InvalidStatusIsUsageError(t *testing.T) {
 	assert.NotContains(t, out, `invalid --status "BOGUS"`, "error must not echo user's uppercase input")
 }
 
+// The --status and --reason usage strings went stale once (a hand-written
+// "resolved|wontfix" literal survived the enum growing to four), and the only
+// coverage that caught the drift was docs-only. Pin the cobra usage strings
+// directly: --status must be DERIVED from resolveStatusList(), and --reason must
+// state the gate it enforces, so a vocabulary change fails here rather than
+// shipping a stale help line.
+func TestDebtResolve_FlagUsageStringsTrackTheVocabulary(t *testing.T) {
+	c := newDebtResolveCmd()
+
+	statusUsage := c.Flags().Lookup("status").Usage
+	assert.Equal(t, "terminal status to record for the positional id ("+resolveStatusList()+")", statusUsage,
+		"--status usage must be derived from resolveStatusList(), never retyped")
+	for s := range resolveStatuses {
+		assert.Contains(t, statusUsage, s,
+			"--status usage must name every accepted value, including %q", s)
+	}
+
+	reasonUsage := c.Flags().Lookup("reason").Usage
+	assert.Contains(t, reasonUsage, "Required for every status other than resolved",
+		"--reason usage must state the gate it enforces")
+}
+
 func TestDebtResolve_WontfixRequiresReasonOrJustification(t *testing.T) {
 	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
 	dir := writeDebtStore(t, rec)
@@ -503,6 +525,39 @@ func TestDebtResolve_WontfixRequiresReasonOrJustification(t *testing.T) {
 	// wontfix with a --reason is allowed.
 	_, err = runDebt(t, "resolve", "--dir", dir, rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
 	require.NoError(t, err)
+}
+
+// A TYPED --reason used to clear only a whitespace check, while a STORED
+// justification standing in for one had to clear isRecordedRationale's
+// fence/placeholder bar — two very different content bars for the same field
+// depending on who wrote it. Reproduced: `--reason '(triple backtick)'` stored
+// fence text as the ground-truth rationale lens scoring reads back. The typed
+// path clears the same bar now.
+func TestDebtResolve_TypedReasonMeetsTheSameContentBar(t *testing.T) {
+	for _, status := range []string{"wontfix", "unreproducible", "attempts-exhausted"} {
+		for name, reason := range map[string]string{
+			"bare fence":       "```\n\n```",
+			"dangling opener":  "```\nsome quoted example text",
+			"placeholder only": reconcile.ElidedQuotePlaceholder,
+			"whitespace only":  "   ",
+		} {
+			t.Run(status+"/"+name, func(t *testing.T) {
+				rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+				dir := writeDebtStore(t, rec)
+				_, err := runDebt(t, "resolve", "--dir", dir, rec.ID, "--status", status, "--reason", reason)
+				require.Error(t, err, "a reason that is nothing but quoted example text is not an audit trail")
+				assert.Equal(t, exitUsage, exitCode(err))
+				assert.Contains(t, err.Error(), "requires --reason")
+			})
+		}
+	}
+
+	// Real prose still passes on every gated status.
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID,
+		"--status", "attempts-exhausted", "--reason", "tried a reindex and a schema diff; both came back clean")
+	require.NoError(t, err, "a typed reason with actual prose must still be accepted")
 }
 
 func TestDebtResolve_ReasonPopulatesJustification(t *testing.T) {
@@ -1462,4 +1517,299 @@ func TestDebtResolve_WontfixRejectsADanglingFenceOnlyJustification(t *testing.T)
 
 	_, err = runDebt(t, "resolve", "--dir", dir3, rec3.ID, "--status", "wontfix")
 	require.NoError(t, err, "reviewer prose beside a quote is still a rationale")
+}
+
+// --- Sprint 36.0 Story 01 / AC 01-03: the two new terminal statuses ----------
+
+// TestDebtResolve_WritesUnreproducibleWithReason locks AC 01-03 Scenario 1: the
+// status is writable end to end through the real CLI path and the reason text —
+// which IS the ground-truth payload — is recorded as the Justification.
+func TestDebtResolve_WritesUnreproducibleWithReason(t *testing.T) {
+	rec := openRec("2026-09-01T10:00:00Z", "HIGH", "internal/x/y.go", 12, "unbounded retry loop")
+	rec.Reviewers = []string{"claude", "greta"}
+	rec.Model = "gpt-5.2"
+	rec.ModelReviewers = []string{"greta"}
+	dir := writeDebtStore(t, rec)
+
+	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID,
+		"--status", "unreproducible", "--reason", "could not reproduce with current repro steps")
+	require.NoError(t, err)
+
+	recs := readStoreRecords(t, dir)
+	var written *localdebt.Record
+	for i := range recs {
+		if recs[i].ID == rec.ID && recs[i].Status == localdebt.StatusUnreproducible {
+			written = &recs[i]
+		}
+	}
+	require.NotNil(t, written, "an unreproducible record must be appended to the store")
+	assert.Equal(t, "could not reproduce with current repro steps", written.Justification,
+		"the reason text is the ground-truth payload and must be persisted")
+	// Attribution is status-independent: Reviewers/Model are assigned before the
+	// status branch and ModelReviewers rides the rec := orig copy, so a new-status
+	// write must carry them exactly like a resolved write does. Unpinned, an
+	// attribution emptied by a future refactor ships with the suite green and the
+	// lens signal goes silently empty — the failure the story's Data Requirements
+	// section calls out.
+	assert.Equal(t, []string{"claude", "greta"}, written.Reviewers,
+		"the terminal record must carry the open record's reviewer credit")
+	assert.Equal(t, "gpt-5.2", written.Model,
+		"the terminal record must carry the open record's model attribution")
+	assert.Equal(t, []string{"greta"}, written.ModelReviewers,
+		"the terminal record must carry the open record's model-scoped reviewer subset")
+}
+
+// TestDebtResolve_WritesAttemptsExhaustedWithReason locks AC 01-03 Scenario 2.
+func TestDebtResolve_WritesAttemptsExhaustedWithReason(t *testing.T) {
+	rec := openRec("2026-09-01T10:00:00Z", "HIGH", "internal/x/z.go", 20, "missing timeout")
+	rec.Reviewers = []string{"claude", "greta"}
+	rec.Model = "gpt-5.2"
+	rec.ModelReviewers = []string{"greta"}
+	dir := writeDebtStore(t, rec)
+
+	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID,
+		"--status", "attempts-exhausted", "--reason", "three fix attempts regressed unrelated tests")
+	require.NoError(t, err)
+
+	recs := readStoreRecords(t, dir)
+	var written *localdebt.Record
+	for i := range recs {
+		if recs[i].ID == rec.ID && recs[i].Status == localdebt.StatusAttemptsExhausted {
+			written = &recs[i]
+		}
+	}
+	require.NotNil(t, written, "an attempts-exhausted record must be appended to the store")
+	assert.Equal(t, "three fix attempts regressed unrelated tests", written.Justification)
+	// Same status-independence pin as the unreproducible write above.
+	assert.Equal(t, []string{"claude", "greta"}, written.Reviewers,
+		"the terminal record must carry the open record's reviewer credit")
+	assert.Equal(t, "gpt-5.2", written.Model,
+		"the terminal record must carry the open record's model attribution")
+	assert.Equal(t, []string{"greta"}, written.ModelReviewers,
+		"the terminal record must carry the open record's model-scoped reviewer subset")
+}
+
+// TestDebtResolve_NewStatusesRequireReason locks AC 01-03 Error Scenario 1. The
+// gate must NAME the offending status, matching the specificity the wontfix
+// error already had.
+func TestDebtResolve_NewStatusesRequireReason(t *testing.T) {
+	for _, status := range []string{"unreproducible", "attempts-exhausted"} {
+		t.Run(status, func(t *testing.T) {
+			rec := openRec("2026-09-01T10:00:00Z", "HIGH", "internal/x/y.go", 12, "unbounded retry loop")
+			dir := writeDebtStore(t, rec)
+
+			_, err := runDebt(t, "resolve", "--dir", dir, rec.ID, "--status", status)
+			require.Error(t, err, "%s without --reason must be a usage error", status)
+			// Assert on err.Error() ALONE, never on the captured output: cobra
+			// prints its usage block on a usage error, and that block lists the
+			// --reason flag. Folding the output in would let the pre-Story
+			// "invalid --status" rejection satisfy both assertions and this test
+			// would pass green against code that never grew the gate at all.
+			assert.NotContains(t, err.Error(), "invalid --status",
+				"%s must be a VALID resolve status by now; a rejection here means the "+
+					"vocabulary was not extended and the reason gate is untested", status)
+			assert.Contains(t, err.Error(), status,
+				"the error must name the offending status, not just say 'a reason is required'")
+			assert.Contains(t, err.Error(), "--reason",
+				"the error must name the flag the operator has to supply")
+		})
+	}
+}
+
+// TestDebtResolve_ResolvedStillNeedsNoReason is the regression guard on the
+// widened gate: AC 01-03 widens it to every NON-resolved status, so the plain
+// `debt resolve <id>` path must stay reason-free.
+func TestDebtResolve_ResolvedStillNeedsNoReason(t *testing.T) {
+	rec := openRec("2026-09-01T10:00:00Z", "HIGH", "internal/x/y.go", 12, "unbounded retry loop")
+	dir := writeDebtStore(t, rec)
+
+	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID)
+	require.NoError(t, err, "marking an item fixed must not require --reason")
+}
+
+// TestDebtResolve_ReasonGateIsGenericNotEnumerated locks AC 01-03 Edge Case 3:
+// the gate is expressed as "status != resolved", so a future sixth status
+// inherits it with no edit at the gate itself. Asserted structurally — every
+// non-resolved member of resolveStatuses is gated — rather than by reading the
+// source, so the property survives a refactor of the condition's spelling.
+func TestDebtResolve_ReasonGateIsGenericNotEnumerated(t *testing.T) {
+	for status := range resolveStatuses {
+		if status == localdebt.StatusResolved {
+			continue
+		}
+		rec := openRec("2026-09-01T10:00:00Z", "HIGH", "internal/x/y.go", 12, "unbounded retry loop")
+		dir := writeDebtStore(t, rec)
+
+		_, err := runDebt(t, "resolve", "--dir", dir, rec.ID, "--status", status)
+		require.Error(t, err, "every non-resolved status in resolveStatuses must require --reason, including %q", status)
+	}
+}
+
+// TestDebtList_FiltersOnNewStatuses locks AC 01-03 Scenario 3.
+func TestDebtList_FiltersOnNewStatuses(t *testing.T) {
+	unrepro := openRec("2026-09-01T10:00:00Z", "HIGH", "internal/x/a.go", 1, "a")
+	unrepro.Status = localdebt.StatusUnreproducible
+	exhausted := openRec("2026-09-01T11:00:00Z", "HIGH", "internal/x/b.go", 2, "b")
+	exhausted.Status = localdebt.StatusAttemptsExhausted
+	dir := writeDebtStore(t, unrepro, exhausted)
+
+	out, err := runDebt(t, "list", "--dir", dir, "--status", "unreproducible")
+	require.NoError(t, err, "`debt list --status unreproducible` must be accepted")
+	assert.Contains(t, out, "internal/x/a.go")
+	assert.NotContains(t, out, "internal/x/b.go")
+
+	out, err = runDebt(t, "list", "--dir", dir, "--status", "attempts-exhausted")
+	require.NoError(t, err, "`debt list --status attempts-exhausted` must be accepted")
+	assert.Contains(t, out, "internal/x/b.go")
+	assert.NotContains(t, out, "internal/x/a.go")
+}
+
+// TestDebtAdd_StillRejectsNewStatuses locks AC 01-03 Edge Case 1: debt add stays
+// at three values. It collects no --reason, and the reason IS the ground-truth
+// payload, so filing straight into a reasoned terminal status is not offered.
+func TestDebtAdd_StillRejectsNewStatuses(t *testing.T) {
+	for _, status := range []string{"unreproducible", "attempts-exhausted", "wontfix"} {
+		t.Run(status, func(t *testing.T) {
+			dir := t.TempDir()
+			_, err := runDebt(t, "add", "--dir", dir,
+				"--severity", "HIGH", "--file", "internal/x/y.go", "--line", "12",
+				"--problem", "p", "--fix", "f", "--status", status)
+			require.Error(t, err, "debt add must reject --status %q", status)
+		})
+	}
+}
+
+// TestDebtResolve_NewStatusesIgnoreTheWontfixReasonHatch is the guard on
+// adversarial finding 1.2.A-HIGH-3. isRecordedRationale lets a `wontfix` close
+// without --reason when a usable rationale is already stored. That hatch must
+// NOT extend to the two Story 36.0 statuses: reconcile enriches ordinary
+// findings with a Justification, so an unscoped hatch would let an operator
+// close an item as attempts-exhausted with zero input and persist the
+// REVIEWER's own finding text as the operator's attempt trail — a fabricated,
+// circular ground-truth signal rather than a missing one.
+func TestDebtResolve_NewStatusesIgnoreTheWontfixReasonHatch(t *testing.T) {
+	// A justification shaped like reconcile's enrichment: reviewer prose, which
+	// isRecordedRationale accepts.
+	const enriched = "The reviewer noted the nil check is missing before the deref, " +
+		"which would panic on an empty pool summary."
+
+	for _, status := range []string{localdebt.StatusUnreproducible, localdebt.StatusAttemptsExhausted} {
+		t.Run(status, func(t *testing.T) {
+			rec := openRec("2026-09-01T10:00:00Z", "HIGH", "internal/x/y.go", 12, "unbounded retry loop")
+			rec.Justification = enriched
+			dir := writeDebtStore(t, rec)
+
+			_, err := runDebt(t, "resolve", "--dir", dir, rec.ID, "--status", status)
+			require.Error(t, err,
+				"a stored reviewer excerpt must not stand in for the operator's --reason on %s", status)
+			assert.Contains(t, err.Error(), "--reason")
+
+			// And the store must be untouched: no terminal record appended.
+			for _, r := range readStoreRecords(t, dir) {
+				assert.NotEqual(t, status, r.Status,
+					"the rejected close must not have written a %s record", status)
+			}
+		})
+	}
+}
+
+// TestDebtResolve_WontfixKeepsItsReasonHatch is the other half: scoping the
+// hatch must not remove it from the status it was written for.
+func TestDebtResolve_WontfixKeepsItsReasonHatch(t *testing.T) {
+	rec := openRec("2026-09-01T10:00:00Z", "HIGH", "internal/x/y.go", 12, "unbounded retry loop")
+	rec.Justification = "The reviewer noted this is an accepted pattern in this package."
+	dir := writeDebtStore(t, rec)
+
+	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID, "--status", localdebt.StatusWontfix)
+	require.NoError(t, err, "wontfix keeps the stored-rationale hatch it was written for")
+}
+
+// A REPEATED attempts-exhausted checkpoint is a continuation of the SAME
+// checkpoint, not a new finding: compaction retains exactly ONE superseded
+// rationale-bearing record per id (store.go's retention bound), so a second
+// AE record appended with only its own --reason would, at the next compaction,
+// displace the first checkpoint's reason entirely — one typed rationale lost
+// per continuation, silently. The write-time fold carries the prior checkpoint
+// reason forward in the NEW record's Justification (append-only: the prior
+// record is never rewritten, per the TD-004 no-lock stance), so the single
+// trail slot holds the whole AE trail.
+func TestDebtResolve_AttemptsExhaustedContinuationCarriesPriorReasonForward(t *testing.T) {
+	rec := openRec("2026-09-01T10:00:00Z", "HIGH", "internal/x/z.go", 20, "missing timeout")
+	rec.Status = localdebt.StatusAttemptsExhausted
+	rec.ResolvedAt = rec.Timestamp
+	rec.Justification = "first checkpoint: reindex regressed unrelated tests"
+	dir := writeDebtStore(t, rec)
+
+	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID,
+		"--status", "attempts-exhausted", "--reason", "second checkpoint: schema diff also failed")
+	require.NoError(t, err)
+
+	// The new record is the AE record appended NOW — strictly later than the
+	// seeded checkpoint's timestamp.
+	recs := readStoreRecords(t, dir)
+	var written *localdebt.Record
+	for i := range recs {
+		if recs[i].ID == rec.ID && recs[i].Status == localdebt.StatusAttemptsExhausted &&
+			recs[i].Timestamp != "2026-09-01T10:00:00Z" {
+			written = &recs[i]
+		}
+	}
+	require.NotNil(t, written, "the continuation checkpoint must be appended")
+
+	assert.Contains(t, written.Justification, "first checkpoint: reindex regressed unrelated tests",
+		"the prior checkpoint's reason is carried forward — compaction's single trail slot must not drop it")
+	assert.Contains(t, written.Justification, "second checkpoint: schema diff also failed",
+		"the new checkpoint's own reason is recorded")
+
+	// Append-only: the SEEDED record's justification is untouched on disk.
+	var seeded *localdebt.Record
+	for i := range recs {
+		if recs[i].ID == rec.ID && recs[i].Timestamp == "2026-09-01T10:00:00Z" {
+			seeded = &recs[i]
+		}
+	}
+	require.NotNil(t, seeded)
+	assert.Equal(t, "first checkpoint: reindex regressed unrelated tests", seeded.Justification,
+		"carry-forward never rewrites the prior record")
+}
+
+// TestDebtResolve_NewStatusesReachAggregateQualitySignal closes AC 01-04: an
+// end-to-end thread from a real `debt resolve --status unreproducible` or
+// attempts-exhausted CLI write through to AggregateQualitySignal. The
+// resolved-status thread already had one (modeled below); the two new statuses
+// did not, so nothing pinned that a CLI write actually lands in the
+// ground-truth counters rather than only in the store.
+func TestDebtResolve_NewStatusesReachAggregateQualitySignal(t *testing.T) {
+	for _, tc := range []struct {
+		status string
+		reason string
+		field  func(row localdebt.QualityRow) int
+	}{
+		{"unreproducible", "could not reproduce with current repro steps",
+			func(row localdebt.QualityRow) int { return row.UnreproducibleCount }},
+		{"attempts-exhausted", "three fix attempts regressed unrelated tests",
+			func(row localdebt.QualityRow) int { return row.AttemptsExhaustedCount }},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			rec := openRec("2026-09-01T10:00:00Z-a", "HIGH", "internal/x/y.go", 12, "unbounded retry loop")
+			rec.Reviewers = []string{"bruce"}
+			rec.Model = "gpt-5.2"
+			dir := writeDebtStore(t, rec)
+
+			out, err := runDebt(t, "resolve", "--dir", dir, rec.ID, "--status", tc.status, "--reason", tc.reason)
+			require.NoError(t, err, "%s resolve must succeed with a reason: %s", tc.status, out)
+
+			recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+			require.NoError(t, err)
+
+			rows := localdebt.AggregateQualitySignal(recs)
+			require.Len(t, rows, 1, "exactly one (persona, model) bucket must be produced")
+			assert.Equal(t, "bruce", rows[0].Persona)
+			assert.Equal(t, "gpt-5.2", rows[0].Model)
+			assert.Equal(t, 1, tc.field(rows[0]),
+				"the CLI-written %s outcome must reach AggregateQualitySignal's ground-truth counter", tc.status)
+			assert.Zero(t, rows[0].ConfirmedCount, "the new status must not leak into a neighboring counter")
+			assert.Zero(t, rows[0].DismissedCount, "the new status must not leak into a neighboring counter")
+		})
+	}
 }

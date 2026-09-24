@@ -448,3 +448,180 @@ func TestDebtMonthHistogram_MalformedTimestampGoesToUnknown(t *testing.T) {
 	require.Len(t, got, 1)
 	assert.Equal(t, "unknown", got[0].month)
 }
+
+// --- Sprint 36.0 Story 01 / AC 01-04: the two new terminal statuses ----------
+
+// TestDebtStatusBucket_NewStatusesNeverFoldToOpen locks AC 01-04 Scenario 1: the
+// `default -> "open"` arm must be unreachable by a KNOWN terminal status. Before
+// this story a hand-written unreproducible record rendered as live backlog.
+func TestDebtStatusBucket_NewStatusesNeverFoldToOpen(t *testing.T) {
+	for _, s := range []string{
+		localdebt.StatusUnreproducible, localdebt.StatusAttemptsExhausted,
+		" UNREPRODUCIBLE ", " Attempts-Exhausted ",
+	} {
+		got := debtStatusBucket(s)
+		assert.NotEqual(t, "open", got, "%q must not render as open", s)
+	}
+	assert.Equal(t, "unreproducible", debtStatusBucket(localdebt.StatusUnreproducible))
+	assert.Equal(t, "attempts-exhausted", debtStatusBucket(localdebt.StatusAttemptsExhausted))
+}
+
+// TestDebtStatusBucket_GarbageStillFallsBackToOpen locks AC 01-04 Error Scenario
+// 1: the catch-all is preserved for genuinely unrecognized input. "Unreachable
+// by a known terminal status" is not "unreachable".
+func TestDebtStatusBucket_GarbageStillFallsBackToOpen(t *testing.T) {
+	for _, s := range []string{"", "bogus", "attempts_exhausted", "attempts exhausted"} {
+		assert.Equal(t, "open", debtStatusBucket(s), "%q is not a known terminal status", s)
+	}
+}
+
+// debtAllStatusRecords is a store touching every one of the six presentation
+// buckets exactly once, at one severity so the per-severity breakdown mirrors
+// the top-level tally.
+func debtAllStatusRecords() []localdebt.Record {
+	return []localdebt.Record{
+		mkDebtRecord("", "HIGH", "a/a.go", 1, "2026-07-01"),
+		mkDebtRecord(localdebt.StatusDeferred, "HIGH", "a/b.go", 2, "2026-07-01"),
+		mkDebtRecord(localdebt.StatusResolved, "HIGH", "a/c.go", 3, "2026-07-01"),
+		mkDebtRecord(localdebt.StatusWontfix, "HIGH", "a/d.go", 4, "2026-07-01"),
+		mkDebtRecord(localdebt.StatusUnreproducible, "HIGH", "a/e.go", 5, "2026-07-01"),
+		mkDebtRecord(localdebt.StatusAttemptsExhausted, "HIGH", "a/f.go", 6, "2026-07-01"),
+	}
+}
+
+// TestSummarizeDebt_CountsNewStatusesInBothTallies locks AC 01-04 Scenario 2.
+// debtSeverityCount and debtSummary declare a verbatim-identical counter field
+// list, so a fix pass that stops at the first match leaves the per-severity
+// breakdown under-counting — this asserts both.
+func TestSummarizeDebt_CountsNewStatusesInBothTallies(t *testing.T) {
+	s := summarizeDebt(debtAllStatusRecords(), debtRefNow, 10)
+
+	assert.Equal(t, 1, s.Open)
+	assert.Equal(t, 1, s.Deferred)
+	assert.Equal(t, 1, s.Resolved)
+	assert.Equal(t, 1, s.Wontfix)
+	assert.Equal(t, 1, s.Unreproducible, "the top-level tally counts unreproducible")
+	assert.Equal(t, 1, s.AttemptsExhausted, "the top-level tally counts attempts-exhausted")
+
+	var high *debtSeverityCount
+	for i := range s.BySeverity {
+		if s.BySeverity[i].Severity == "HIGH" {
+			high = &s.BySeverity[i]
+		}
+	}
+	require.NotNil(t, high, "the HIGH severity row must exist")
+	assert.Equal(t, 1, high.Unreproducible, "the per-severity breakdown counts unreproducible too")
+	assert.Equal(t, 1, high.AttemptsExhausted, "the per-severity breakdown counts attempts-exhausted too")
+}
+
+// TestSummarizeDebt_TotalIsAnExactSumWithNewCounters locks AC 01-04 Edge Case 3:
+// no record is double-counted or dropped once the two counters exist.
+func TestSummarizeDebt_TotalIsAnExactSumWithNewCounters(t *testing.T) {
+	s := summarizeDebt(debtAllStatusRecords(), debtRefNow, 10)
+	sum := s.Open + s.Deferred + s.Resolved + s.Wontfix + s.Unreproducible + s.AttemptsExhausted
+	assert.Equal(t, s.Total, sum, "Total must equal the sum across every status counter")
+
+	var high *debtSeverityCount
+	for i := range s.BySeverity {
+		if s.BySeverity[i].Severity == "HIGH" {
+			high = &s.BySeverity[i]
+		}
+	}
+	require.NotNil(t, high)
+	sevSum := high.Open + high.Deferred + high.Resolved + high.Wontfix + high.Unreproducible + high.AttemptsExhausted
+	assert.Equal(t, high.Total, sevSum, "the per-severity Total must also be an exact sum")
+}
+
+// TestDebtIsLive_NewStatusesSplitOnSettledness locks the dashboard half of AC
+// 01-01: debtIsLive delegates to IsSettledStatus, so the predicate split gives
+// the dashboard its answer for free. unreproducible reached a determination and
+// leaves the live backlog; attempts-exhausted is unfinished work and stays.
+func TestDebtIsLive_NewStatusesSplitOnSettledness(t *testing.T) {
+	unrepro := mkDebtRecord(localdebt.StatusUnreproducible, "HIGH", "a/e.go", 5, "2026-07-01")
+	exhausted := mkDebtRecord(localdebt.StatusAttemptsExhausted, "HIGH", "a/f.go", 6, "2026-07-01")
+
+	assert.False(t, debtIsLive(unrepro), "a reached determination is not live work")
+	assert.True(t, debtIsLive(exhausted), "out of attempts is still work to do")
+}
+
+// --- Adversarial 1.2.A HIGH fixes -------------------------------------------
+
+// TestRenderDebtDashboard_HeaderAndBySeverityCountNewStatuses is the guard on
+// finding 1.2.A-HIGH-1. The two counters were added to both tally structs but
+// not to the render, so a store of only new-status records printed
+// `Total: 2 | Open: 0 | ... | Wontfix: 0` with a By Severity row summing to
+// zero — a table that does not add up to its own header, with nothing on screen
+// to explain the gap.
+func TestRenderDebtDashboard_HeaderAndBySeverityCountNewStatuses(t *testing.T) {
+	out := renderDebtDashboard([]localdebt.Record{
+		mkDebtRecord(localdebt.StatusUnreproducible, "HIGH", "internal/x/a.go", 1, "2026-07-01"),
+		mkDebtRecord(localdebt.StatusAttemptsExhausted, "HIGH", "internal/x/b.go", 2, "2026-07-01"),
+	}, 5)
+
+	assert.Contains(t, out, "**Unreproducible:** 1", "the header must account for unreproducible")
+	assert.Contains(t, out, "**Attempts-exhausted:** 1", "the header must account for attempts-exhausted")
+	assert.Contains(t, out, "| Unreproducible |", "By Severity needs a column per counter")
+	assert.Contains(t, out, "| Attempts-exhausted |", "By Severity needs a column per counter")
+	// The HIGH row must add up: 0 open, 0 deferred, 0 resolved, 0 wontfix,
+	// 1 unreproducible, 1 attempts-exhausted, total 2.
+	assert.Contains(t, out, "| HIGH | 0 | 0 | 0 | 0 | 1 | 1 | 2 |",
+		"the By Severity row must sum to its own Total")
+}
+
+// TestRenderDebtDashboard_AttemptsExhaustedIsRealBacklog is the guard on finding
+// 1.2.A-HIGH-2. attempts-exhausted is unsettled, so debtIsLive admits it and it
+// reaches By Component and the month histogram. The Top Priority branch used a
+// re-derived Open+Deferred sum and printed "no unresolved items" on the same
+// page — omitting real backlog from the one list an operator works from.
+func TestRenderDebtDashboard_AttemptsExhaustedIsRealBacklog(t *testing.T) {
+	out := renderDebtDashboard([]localdebt.Record{
+		mkDebtRecord(localdebt.StatusAttemptsExhausted, "HIGH", "internal/x/b.go", 2, "2026-07-01"),
+	}, 5)
+
+	assert.NotContains(t, out, "_No unresolved items._\n",
+		"an attempts-exhausted item is live backlog and must reach Top Priority")
+	assert.Contains(t, out, "internal/x/b.go", "the live item must appear in the top list")
+}
+
+// TestRenderDebtDashboard_SettledOnlyStoreStillReportsNoBacklog is the other
+// direction: unreproducible IS settled, so a store of only settled records must
+// still say there is nothing to work on.
+func TestRenderDebtDashboard_SettledOnlyStoreStillReportsNoBacklog(t *testing.T) {
+	out := renderDebtDashboard([]localdebt.Record{
+		mkDebtRecord(localdebt.StatusUnreproducible, "HIGH", "internal/x/a.go", 1, "2026-07-01"),
+		mkDebtRecord(localdebt.StatusResolved, "HIGH", "internal/x/c.go", 3, "2026-07-01"),
+	}, 5)
+	assert.Contains(t, out, "_No unresolved items._", "settled items are not backlog")
+}
+
+// TestSummarizeDebt_LiveIsCountedThroughTheOnePredicate pins the replacement for
+// the re-derived Open+Deferred sum. Live must agree with debtIsLive for every
+// status, so a future status cannot drift the two apart again.
+func TestSummarizeDebt_LiveIsCountedThroughTheOnePredicate(t *testing.T) {
+	recs := debtAllStatusRecords()
+	s := summarizeDebt(recs, debtRefNow, 10)
+
+	var want int
+	for _, r := range recs {
+		if debtIsLive(r) {
+			want++
+		}
+	}
+	assert.Equal(t, want, s.Live, "Live must equal the debtIsLive count exactly")
+	// open + deferred + attempts-exhausted are live; resolved, wontfix and
+	// unreproducible are settled.
+	assert.Equal(t, 3, s.Live)
+}
+
+// TestSummarizeDebt_LiveIsNotLenTop guards the trap in the obvious fix: Top is
+// capped at topN and is empty when topN is 0, which means "suppressed", not
+// "nothing to show". Live must be independent of the cap.
+func TestSummarizeDebt_LiveIsNotLenTop(t *testing.T) {
+	s := summarizeDebt(debtAllStatusRecords(), debtRefNow, 0)
+	assert.Empty(t, s.Top, "topN 0 suppresses the list")
+	assert.Equal(t, 3, s.Live, "...but the backlog is still there")
+
+	out := renderDebtDashboard(debtAllStatusRecords(), 0)
+	assert.Contains(t, out, "_(top list suppressed)_",
+		"a suppressed list must not be reported as an empty backlog")
+}

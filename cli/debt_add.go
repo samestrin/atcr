@@ -43,7 +43,33 @@ var debtStdinIsTTY = func(in io.Reader) bool {
 // with no recorded rationale, and — since resolve then treats the id as settled —
 // no way to attach one afterwards. Filing a finding and dismissing it are also
 // not the same act.
-var debtAddStatuses = map[string]bool{"open": true, "deferred": true, "resolved": true}
+//
+// `unreproducible` and `attempts-exhausted` are excluded for the same reason,
+// and the reason is stronger for them than it is for wontfix. `debt resolve`
+// makes `--reason` MANDATORY for both (wontfix's can be satisfied by an already
+// stored rationale), because for these two the text IS the payload: an
+// unreproducible finding's value as a ground-truth signal is entirely in what
+// was tried and what happened, and this command collects no `--reason` at all.
+// Admitting them here would let an operator file a closed, evidence-free outcome
+// straight into the store and quietly poison the signal the status exists to
+// produce. `add` files findings; `resolve` closes them.
+//
+// The narrowing is deliberate, so it is pinned: cli/debt_exhaustive_test.go
+// requires every localdebt.Status* constant to be accepted here or named in a
+// documented-exclusion list, which is what turns this comment into a guard
+// rather than a note.
+//
+// `open` is the one key here that is NOT a localdebt.Status* constant, because it
+// is not a status a record carries: an open record carries the EMPTY status, and
+// statusOpen (cli/debt.go) is the CLI's word for it. Spelling it through that
+// constant rather than as a bare literal is what keeps this map out of the
+// worst-of-both-styles state — every key is now a named value, and the two that
+// come from localdebt are visibly the two the store actually stores.
+var debtAddStatuses = map[string]bool{
+	statusOpen:               true,
+	localdebt.StatusDeferred: true,
+	localdebt.StatusResolved: true,
+}
 
 // wizardDefaults seeds the interactive prompts with values already supplied as
 // flags, so partial flag input carries into the wizard instead of being
@@ -72,7 +98,7 @@ func newDebtAddCmd() *cobra.Command {
 	// backtick-quoted span as the flag's VALUE PLACEHOLDER, so `debt resolve
 	// --status wontfix --reason` rendered in --help as if --status took four
 	// arguments.
-	cmd.Flags().String("status", "open", "status: open|deferred|resolved (dismiss a false positive with 'debt resolve --status wontfix --reason')")
+	cmd.Flags().String("status", statusOpen, "status: open|deferred|resolved (dismiss a false positive with 'debt resolve --status wontfix --reason')")
 	cmd.Flags().String("severity", "", "severity: CRITICAL|HIGH|MEDIUM|LOW (required in flag mode)")
 	cmd.Flags().String("file", "", "file:line location (required in flag mode)")
 	cmd.Flags().String("problem", "", "problem description (required in flag mode)")
@@ -212,7 +238,7 @@ func runDebtAdd(cmd *cobra.Command, _ []string) error {
 // id of an existing record. When that id already carries a terminal status the
 // fold can keep the OLD record — always for `wontfix`, which survives
 // re-detection by design, and on a same-second timestamp tie where
-// ClosedStatusRank lets the terminal record win. Both cases printed
+// the fold's foldPrecedence lets the terminal record win. Both cases printed
 // "Added <id>" and exited 0 while every reader still showed the terminal status:
 // a silent no-op wearing a success message.
 //
@@ -272,7 +298,7 @@ func finalizeDebtRecord(rec *localdebt.Record) error {
 	}
 	status := normalizeStatus(rec.Status)
 	if status == "" {
-		status = "open"
+		status = statusOpen
 	}
 	if !debtAddStatuses[status] {
 		return usageError(fmt.Errorf("invalid status %q: expected open|deferred|resolved (use `debt resolve --status wontfix --reason <why>` to dismiss a finding)", rec.Status))
@@ -280,7 +306,7 @@ func finalizeDebtRecord(rec *localdebt.Record) error {
 	// "open" is spelled as the EMPTY status on disk — the same value the
 	// reconcile hook writes — so one finding never folds against two spellings of
 	// the same state.
-	if status == "open" {
+	if status == statusOpen {
 		status = ""
 	}
 	rec.Status = status

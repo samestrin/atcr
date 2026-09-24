@@ -214,6 +214,14 @@ func runModelsCheck(cmd *cobra.Command, args []string) error {
 		if filter != "" && !strings.EqualFold(m.Name, filter) {
 			continue
 		}
+		// A community row can be a bare <name>.md prompt file rather than a
+		// community-repo install. It has no <name>.yaml, so no resolved lock, so
+		// nothing to drift — LoadLock below would report a missing file for it on
+		// every run. Not counted in `checked` either: the figure means "locks
+		// compared", and a lens that has no lock was never a candidate.
+		if !commpersonas.IsCommunityInstalled(dir, m.Name) {
+			continue
+		}
 		checked++
 		lock, err := commpersonas.LoadLock(dir, m.Name)
 		if err != nil {

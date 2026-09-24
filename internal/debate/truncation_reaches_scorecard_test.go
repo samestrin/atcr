@@ -211,8 +211,9 @@ func overturnedRulingOnA() map[FindingKey]ruleApply {
 //
 // Clearing tool_budget_bytes takes the finding out of the score's truncated
 // exclusion and puts it back into survived_skeptic_rate. The verdict it is then
-// counted under comes from the SAME file — and runDebate deliberately never
-// rewrites it (debate.go's atomic-group scope note). So on an OVERTURN the sync
+// counted under comes from the SAME file — which runDebate rewrites ONLY on the
+// records this sync touches (debate.go's atomic-group scope note), leaving every
+// other record at its as-of-verify verdict. So on an OVERTURN the sync
 // used to restore a finding to the ratio under the pre-debate verdict: the judge
 // refuted it, and the score credited the reviewer for a confirm.
 //
@@ -1148,13 +1149,13 @@ func TestSyncVerificationTruncation_ClearsAStaleWithheldReasonOnTheRuledRecord(t
 // TestSyncVerificationTruncation_IgnoresAPriorItemThatSettledNothing keeps the
 // residue repair's judge honest.
 //
-// debate.go:457 assigns ir.Judge = cast.Judge.Agent BEFORE the ruling runs, so
+// debate.go's runDebate assigns ir.Judge = cast.Judge.Agent BEFORE the ruling runs, so
 // reconciled/debate.json carries a judge on items that applied nothing to
 // findings.json: an `unresolved` outcome (judge_halted, unparseable_ruling) and a
 // gray-zone item, whose decision is cluster-level and never enters the
-// single-finding rulings map (debate.go:218-239). Projecting those back as
+// single-finding rulings map (debate.go's `if oc.apply` guard). Projecting those back as
 // rulings attributes a verdict to an agent that never ruled it — and because
-// internal/verify/pipeline.go:434 reads a non-empty debateJudge as "a judge
+// internal/verify/pipeline.go:456 reads a non-empty debateJudge as "a judge
 // produced this verdict", the real skeptic's model and durationMs are then
 // withheld on every later re-verify.
 //
@@ -1173,7 +1174,7 @@ func TestSyncVerificationTruncation_IgnoresAPriorItemThatSettledNothing(t *testi
 				Outcome: OutcomeUnresolved, Reason: "judge_halted",
 				Judge: "greta", Reasoning: "judge halted",
 			},
-			why: "an unresolved item settles nothing — debate.go:218 skips it before the rulings map is touched",
+			why: "an unresolved item settles nothing — debate.go's `if oc.apply` guard skips it before the rulings map is touched",
 		},
 		{
 			name: "gray_zone",
@@ -1182,7 +1183,7 @@ func TestSyncVerificationTruncation_IgnoresAPriorItemThatSettledNothing(t *testi
 				Outcome: OutcomeUphold, ClusterDecision: ClusterSeparate,
 				Judge: "greta", Reasoning: "the two findings are distinct",
 			},
-			why: "a gray-zone ruling is a cluster-level decision — debate.go:220 keeps it out of the per-finding rulings map",
+			why: "a gray-zone ruling is a cluster-level decision — debate.go's `if oc.apply` guard keeps it out of the per-finding rulings map",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

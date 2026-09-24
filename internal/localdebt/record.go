@@ -49,6 +49,38 @@ import (
 // forward-incompat-skip model safe to downgrade into, and it is a prerequisite for
 // T5's automatic compaction, which removes the "a human chose to run compact" step
 // that used to bound the exposure.
+//
+// # Status-value evolution (a widening this version counter does NOT cover)
+//
+// The bumps above all added FIELDS. Story 36.0 did something this counter cannot
+// express: it widened the accepted VALUE DOMAIN of an existing field, adding
+// `unreproducible` and `attempts-exhausted` to `status` without a bump — correctly,
+// since the wire shape is unchanged and a bump would have made every new record
+// invisible to a v3 reader that can decode it perfectly well.
+//
+// The accepted exposure is therefore NOT invisibility but MISCLASSIFICATION. A
+// pre-36.0 binary decodes such a record and answers `false` to IsClosedStatus,
+// so it reports a closed finding as open. That is a read-side misreport, and it
+// self-corrects the moment the binary is updated.
+//
+// Two paths are worse than a misreport and are worth naming, because between
+// them they are why bearsRationale is value-based rather than version-based.
+// Neither can be prevented from here: an older binary's gates are compiled into
+// that binary. A tree running mixed atcr versions over one store should run the
+// newer one.
+//
+//  1. AUTOMATIC, and therefore the likelier of the two. MaybeCompact runs inside
+//     PersistForReconcile on every `atcr reconcile`, and a pre-36.0
+//     retainForCompaction gated its rationale trail on IsSettledStatus. That
+//     gate does not admit `attempts-exhausted`, so such a record is not retained
+//     at all — the mandatory `--reason` is DELETED, not merely overwritten — and
+//     the same gate re-opens the donor loss that costs the id its quality-signal
+//     row. No human chose to run anything.
+//
+//  2. MANUAL. `atcr debt backfill-justifications` rewrites shard lines in place
+//     and skips records that may hold operator-typed text. An older binary's
+//     skip gate does not know `attempts-exhausted`, so it replays a review
+//     excerpt over that record's `--reason`.
 const SchemaVersion = 3
 
 // Diagnostic message substrings emitted on the read path, exported so tests assert
@@ -78,6 +110,22 @@ const (
 	// StatusWontfix marks a finding dismissed as a false positive; it is the
 	// only status that survives re-detection (see IsSuppressingStatus).
 	StatusWontfix = "wontfix"
+	// StatusUnreproducible marks a finding that was investigated and could not be
+	// reproduced. It is SETTLED (a determination was reached) but does NOT
+	// suppress: a later re-detection of the same id is evidence the finding was
+	// real after all, which is the last thing to silence.
+	StatusUnreproducible = "unreproducible"
+	// StatusAttemptsExhausted marks a finding whose fix attempts ran out without a
+	// resolution. It is NOT settled — it is unfinished work, so like deferred it
+	// must stay closeable, and it does not suppress a re-detection.
+	//
+	// The kebab spelling is deliberate and load-bearing. It follows the CATEGORY
+	// vocabulary (error-handling, api-contract), which is this repo's convention
+	// for any value a user types, prints and reads in published docs; snake_case
+	// appears only on machine-only artifact fields. normalizeStatus folds case and
+	// whitespace ONLY, so attempts_exhausted is not rescued — always reference the
+	// constant rather than writing the literal.
+	StatusAttemptsExhausted = "attempts-exhausted"
 )
 
 // normalizeStatus is the ONE normalization applied before any status
@@ -299,14 +347,16 @@ func effectiveOrigin(origin string) string {
 }
 
 // IsClosedStatus reports whether a record CARRIES a terminal status marker:
-// resolved, deferred, or wontfix. It classifies the record, not the id — a
+// resolved, deferred, wontfix, unreproducible, or attempts-exhausted. It
+// classifies the record, not the id — a
 // terminal record does not mean the finding is closed forever, because a later
 // re-detection can supersede it (see IsSuppressingStatus and FoldRecords). Ask
 // this question of the record you are looking at; ask whether an ITEM is closed
 // of the record FoldRecords selected for its id.
 func IsClosedStatus(status string) bool {
 	switch normalizeStatus(status) {
-	case StatusResolved, StatusDeferred, StatusWontfix:
+	case StatusResolved, StatusDeferred, StatusWontfix,
+		StatusUnreproducible, StatusAttemptsExhausted:
 		return true
 	default:
 		return false
@@ -334,6 +384,14 @@ func IsClosedStatus(status string) bool {
 // location with stable text, so its id is stable and permanent suppression is
 // the entire point of the flag (Epic 24.0). `deferred` means "not now", which is
 // not "never".
+//
+// `unreproducible` and `attempts-exhausted` are false for the same structural
+// reason as `resolved`, from opposite directions. A finding that could not be
+// reproduced, re-detected at the same file/line with the same problem text, is
+// evidence the original call was wrong — the last thing to silence. A finding
+// whose fix attempts ran out is by definition still broken, so re-detection is
+// the expected outcome rather than noise. Both therefore leave this function
+// unchanged; only wontfix returns true, and that is the whole vocabulary.
 func IsSuppressingStatus(status string) bool {
 	return normalizeStatus(status) == StatusWontfix
 }
@@ -350,12 +408,76 @@ func IsSuppressingStatus(status string) bool {
 // item permanently unactionable — refused by `debt resolve` as already closed,
 // while every other view still showed it as outstanding work.
 //
+// The two Story 36.0 statuses split on exactly this question, which is why they
+// could not both take the same answer. `unreproducible` is a DETERMINATION —
+// someone investigated and concluded there is nothing to fix — so the item needs
+// no further action and is settled. `attempts-exhausted` is the opposite: the
+// work is unfinished and the defect presumed real, so it is live debt that must
+// stay closeable, exactly like `deferred`. The dashboard inherits both answers
+// for free, because debtIsLive delegates here (cli/debt_aggregate.go).
+//
 // Use IsSettledStatus for "is this item done?", IsClosedStatus for "does this
 // record carry a terminal marker?", and IsSuppressingStatus for "does this
 // terminal state survive re-detection?".
 func IsSettledStatus(status string) bool {
 	switch normalizeStatus(status) {
-	case StatusResolved, StatusWontfix:
+	case StatusResolved, StatusWontfix, StatusUnreproducible:
+		return true
+	default:
+		return false
+	}
+}
+
+// bearsRationale reports whether a record MAY hold an operator-typed rationale
+// that exists nowhere else in the tree, and so must never be discarded or
+// overwritten by a maintenance pass.
+//
+// It is not a fourth answer to "is this item done?" — it answers a different
+// question, about the record's CONTENT rather than the item's state, and Story
+// 36.0 is where those two stopped coinciding. Until then, "settled" and "carries
+// a --reason" selected the same records, so two call sites (retainForCompaction's
+// trail candidates and BackfillJustifications' skip gate) used IsSettledStatus
+// as a proxy and said so in their comments: `deferred` was excluded because it
+// "carries no justification".
+//
+// `attempts-exhausted` breaks the proxy. It is deliberately NOT settled — it is
+// unfinished work that must stay closeable — yet cli/debt_resolve.go's gate makes
+// `--reason` MANDATORY for it, so it always carries exactly the text those two
+// call sites exist to protect. Gating them on settledness would delete an
+// operator's only recorded explanation at the next compaction, which is the
+// precise loss Story 36.0's ground-truth signal is built on.
+//
+// `resolved` and `wontfix` qualify through IsSettledStatus and keep their
+// existing treatment; `deferred` is the one status that is neither settled nor
+// reason-gated, and stays excluded from both call sites exactly as before.
+func bearsRationale(status string) bool {
+	return IsSettledStatus(status) || normalizeStatus(status) == StatusAttemptsExhausted
+}
+
+// IsKnownStatus reports whether status is a value a Record may carry on disk.
+//
+// This is the store boundary's write gate. Append/appendLocked is the one choke
+// point every writer funnels through — reconcile, `debt add`, `debt resolve`, and
+// appendBatch all reach appendLocked — so validating here lets every writer
+// inherit the check instead of each restating a literal map (the three CLI maps
+// cannot cover a writer that bypasses them, which is how an off-enum status
+// persisted silently). An off-enum status ranks 0 in ClosedStatusRank —
+// indistinguishable from open — and debtStatusBucket's default renders it as
+// open: it counts as live backlog and is invisible to every terminal predicate.
+//
+// The EMPTY status is KNOWN: "open" is spelled as "" on disk (cli/debt.go's
+// statusOpen asymmetry — normalizeStatus never yields "open"), so an open record
+// carries "" and legacy pre-status records read back as "" too.
+//
+// The accepted set is spelled from the same Status* constants the exhaustiveness
+// test walks, so adding or renaming a status fails that test until this switch is
+// updated — the same single-source contract every predicate in this file holds.
+func IsKnownStatus(status string) bool {
+	if normalizeStatus(status) == "" {
+		return true
+	}
+	switch normalizeStatus(status) {
+	case StatusResolved, StatusDeferred, StatusWontfix, StatusUnreproducible, StatusAttemptsExhausted:
 		return true
 	default:
 		return false
@@ -364,9 +486,37 @@ func IsSettledStatus(status string) bool {
 
 // ClosedStatusRank orders terminal statuses so a deterministic effective status can
 // be chosen when divergent terminal records exist for one id.
+//
+// The chain is wontfix > unreproducible > attempts-exhausted > resolved >
+// deferred, and it ranks by HOW CERTAINLY A RECORD CARRIES A HUMAN-TYPED
+// RATIONALE. That is not an aesthetic ordering — it is the criterion
+// highestRankedTerminalIndex (store.go) already states for being rank-first: the
+// point of retention is the resolution trail, and the justification text exists
+// nowhere else in the tree, so the record most likely to carry one must win.
+//
+// Applied honestly, that criterion puts the two Story 36.0 statuses ABOVE
+// resolved rather than below it. `--reason` is mandatory for wontfix,
+// unreproducible and attempts-exhausted, and optional for resolved
+// (cli/debt_resolve.go's gate is "every status other than resolved"). A
+// reason-less resolved outranking a reasoned unreproducible would let the
+// earlier, emptier record displace the later, explained one at compaction —
+// silently deleting the only copy of why a human closed the finding.
+//
+// This supersedes the order first recorded in the 36.0 plan (which placed
+// resolved second); see sprint-plan.md → Phase 1 Clarifications → C1.
+//
+// The fold's same-timestamp tie-break does NOT use this chain directly: its
+// criterion is settledness first, so it goes through foldPrecedence.
+//
+// The integers are internal and never persisted: every call site compares two
+// ranks relatively, so a sixth status can renumber the chain freely.
 func ClosedStatusRank(status string) int {
 	switch normalizeStatus(status) {
 	case StatusWontfix:
+		return 5
+	case StatusUnreproducible:
+		return 4
+	case StatusAttemptsExhausted:
 		return 3
 	case StatusResolved:
 		return 2
@@ -375,6 +525,23 @@ func ClosedStatusRank(status string) int {
 	default:
 		return 0
 	}
+}
+
+// foldPrecedence is the fold's equal-timestamp tie-break, kept apart from
+// ClosedStatusRank because the two answer different questions. ClosedStatusRank
+// ranks by rationale certainty, which is right for retention
+// (highestRankedTerminalIndex) but wrong for the fold, whose criterion is "a
+// resolution appended in the same second as the finding still closes it". Under
+// the rationale chain attempts-exhausted outranks resolved, so a same-second
+// close of that checkpoint would lose the fold and leave the item live.
+//
+// A settled status therefore outranks every unsettled one; within each half
+// ClosedStatusRank still decides, so open stays lowest.
+func foldPrecedence(status string) int {
+	if IsSettledStatus(status) {
+		return 10 + ClosedStatusRank(status)
+	}
+	return ClosedStatusRank(status)
 }
 
 // HigherClosedStatus returns whichever of the two terminal statuses ranks higher.

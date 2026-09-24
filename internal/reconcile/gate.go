@@ -127,10 +127,18 @@ func CountFailingJSON(findings []JSONFinding, threshold string, requireVerified 
 	return n
 }
 
-// ValidateRequireVerified checks whether the verify stage has run for reviewDir.
-// Returns a non-nil error when the stage has not run — the caller surfaces this
-// as a warning (TD-004): --require-verified gates only on VERIFIED findings, so
-// a gate over a review where verify never ran trivially passes everything.
+// ValidateRequireVerified warns when --require-verified would trivially pass
+// because verification produced nothing to gate on. It returns a non-nil error
+// in two cases: the verify stage never ran, or it ran and every verdict it
+// produced was unverifiable (allUnverifiableCollapse). The error text names
+// which one, because the remedy differs — "run atcr verify" only fixes the
+// first. The caller surfaces it as a warning (TD-004).
+//
+// It does NOT warn on every run with zero verified findings. A verification
+// that refuted every finding, or refuted some and could not verify the rest,
+// also leaves the gate nothing to count and passes silently. That is left
+// silent on purpose: a refuted verdict is a real result of the verify stage,
+// so the run is not a broken verification the way an all-unverifiable one is.
 // Best-effort: any read error is treated as "not run".
 func ValidateRequireVerified(reviewDir string) error {
 	verPath := filepath.Join(reviewDir, "reconciled", "verification.json")

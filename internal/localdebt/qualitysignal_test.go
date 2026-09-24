@@ -115,7 +115,7 @@ func TestAggregateQualitySignal_SinglePersonaModelMixedStatuses(t *testing.T) {
 		term("c", "security-reviewer", "claude-sonnet-4-6", "resolved"),
 	}
 	got := AggregateQualitySignal(recs)
-	want := []QualityRow{{Persona: "security-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 2, ConfirmedCount: 1}}
+	want := []QualityRow{{Persona: "security-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 2, ConfirmedCount: 1, TerminalOutcomes: 3}}
 	assert.Equal(t, want, got)
 }
 
@@ -130,9 +130,9 @@ func TestAggregateQualitySignal_MultiplePersonasAndModels(t *testing.T) {
 	}
 	got := AggregateQualitySignal(recs)
 	want := []QualityRow{
-		{Persona: "perf-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1, ConfirmedCount: 0},
-		{Persona: "security-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1, ConfirmedCount: 0},
-		{Persona: "security-reviewer", Model: "gpt-5.1", DismissedCount: 0, ConfirmedCount: 1},
+		{Persona: "perf-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1, ConfirmedCount: 0, TerminalOutcomes: 1},
+		{Persona: "security-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1, ConfirmedCount: 0, TerminalOutcomes: 1},
+		{Persona: "security-reviewer", Model: "gpt-5.1", DismissedCount: 0, ConfirmedCount: 1, TerminalOutcomes: 1},
 	}
 	assert.Equal(t, want, got, "rows sorted persona asc, then model asc")
 }
@@ -173,7 +173,7 @@ func TestAggregateQualitySignal_ExcludesEmptyModelRecords(t *testing.T) {
 		term("b", "security-reviewer", "claude-sonnet-4-6", "wontfix"), // kept
 	}
 	got := AggregateQualitySignal(recs)
-	want := []QualityRow{{Persona: "security-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1}}
+	want := []QualityRow{{Persona: "security-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1, TerminalOutcomes: 1}}
 	assert.Equal(t, want, got, "empty-model records are excluded, never an empty-model bucket")
 }
 
@@ -188,7 +188,7 @@ func TestAggregateQualitySignal_WhitespaceModelAndPersonaExcluded(t *testing.T) 
 			Reviewers: []string{"  ", "security-reviewer"}, Model: "m", Status: "wontfix"},
 	}
 	got := AggregateQualitySignal(recs)
-	want := []QualityRow{{Persona: "security-reviewer", Model: "m", DismissedCount: 1}}
+	want := []QualityRow{{Persona: "security-reviewer", Model: "m", DismissedCount: 1, TerminalOutcomes: 1}}
 	assert.Equal(t, want, got, "whitespace model excluded; whitespace persona skipped")
 }
 
@@ -200,8 +200,8 @@ func TestAggregateQualitySignal_MultiReviewerAttributesToEveryPersona(t *testing
 		Reviewers: []string{"security-reviewer", "perf-reviewer"}, Model: "claude-sonnet-4-6", Status: "wontfix"}}
 	got := AggregateQualitySignal(recs)
 	want := []QualityRow{
-		{Persona: "perf-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1},
-		{Persona: "security-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1},
+		{Persona: "perf-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1, TerminalOutcomes: 1},
+		{Persona: "security-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1, TerminalOutcomes: 1},
 	}
 	assert.Equal(t, want, got, "both listed personas receive the increment")
 }
@@ -222,7 +222,7 @@ func TestAggregateQualitySignal_DuplicateReviewerEntryDedupedPerRecord(t *testin
 	recs := []Record{{ID: "a", RunID: "a", Timestamp: "2026-07-01T00:00:00Z",
 		Reviewers: []string{"security-reviewer", "", "security-reviewer"}, Model: "m", Status: "wontfix"}}
 	got := AggregateQualitySignal(recs)
-	want := []QualityRow{{Persona: "security-reviewer", Model: "m", DismissedCount: 1}}
+	want := []QualityRow{{Persona: "security-reviewer", Model: "m", DismissedCount: 1, TerminalOutcomes: 1}}
 	assert.Equal(t, want, got, "duplicate reviewer counts once, empty entry skipped")
 }
 
@@ -254,6 +254,48 @@ func TestAggregateQualitySignal_ReopenedIDContributesNoRow(t *testing.T) {
 		"a settled resolution still emits its confirmed row")
 	assert.Empty(t, AggregateQualitySignal([]Record{open, resolved, regressed}),
 		"once the id re-opens it is unsettled again and emits no row until it closes")
+}
+
+// Re-detecting an attempts-exhausted id CONFIRMS the outcome: the finding is
+// still broken, which is what attempts-exhausted says. So its row survives the
+// fresh open record. Re-detecting an unreproducible id is the opposite — evidence
+// the call was wrong — so that id stays dropped until it settles again.
+func TestAggregateQualitySignal_RedetectionKeepsAttemptsExhaustedButNotUnreproducible(t *testing.T) {
+	rec := func(id, ts, status string) Record {
+		return Record{ID: id, RunID: id + ts, Timestamp: ts,
+			Reviewers: []string{"claude"}, Model: "claude-sonnet-4-6", Status: status}
+	}
+
+	rows := AggregateQualitySignal([]Record{
+		rec("ae", "2026-07-01T00:00:00Z", ""),
+		rec("ae", "2026-07-02T00:00:00Z", StatusAttemptsExhausted),
+		rec("ae", "2026-07-03T00:00:00Z", ""),
+	})
+	require.Len(t, rows, 1, "a re-detected attempts-exhausted id keeps its row")
+	assert.Equal(t, 1, rows[0].AttemptsExhaustedCount)
+	assert.Equal(t, 1, rows[0].TerminalOutcomes)
+
+	assert.Empty(t, AggregateQualitySignal([]Record{
+		rec("ur", "2026-07-01T00:00:00Z", ""),
+		rec("ur", "2026-07-02T00:00:00Z", StatusUnreproducible),
+		rec("ur", "2026-07-03T00:00:00Z", ""),
+	}), "a re-detected unreproducible id is dropped: re-detection contradicts it")
+}
+
+// The fallback reads the id's LATEST superseded outcome, not its highest-ranked
+// one. attempts-exhausted outranks resolved, but when resolved came later the
+// re-detection is a regression of that fix, and an older exhausted marker must
+// not be resurrected as the id's outcome.
+func TestAggregateQualitySignal_RedetectionFallbackUsesTheLatestOutcome(t *testing.T) {
+	rec := func(ts, status string) Record {
+		return Record{ID: "lt", RunID: ts, Timestamp: ts,
+			Reviewers: []string{"claude"}, Model: "claude-sonnet-4-6", Status: status}
+	}
+	assert.Empty(t, AggregateQualitySignal([]Record{
+		rec("2026-07-01T00:00:00Z", StatusAttemptsExhausted),
+		rec("2026-07-02T00:00:00Z", StatusResolved),
+		rec("2026-07-03T00:00:00Z", ""),
+	}))
 }
 
 // A wontfix id is never re-opened, so its dismissal row survives a later
@@ -306,7 +348,7 @@ func TestAggregateQualitySignal_PrefersModelReviewersOverFullList(t *testing.T) 
 		Model:     "claude-sonnet-4-6", ModelReviewers: []string{"security-reviewer"}, Status: "wontfix"}}
 
 	got := AggregateQualitySignal(recs)
-	want := []QualityRow{{Persona: "security-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1}}
+	want := []QualityRow{{Persona: "security-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1, TerminalOutcomes: 1}}
 	assert.Equal(t, want, got, "only the model-attributable subset is credited; the full list is not")
 }
 
@@ -323,7 +365,141 @@ func TestAggregateQualitySignal_GraftedModelCreditsDonorSubsetOnly(t *testing.T)
 		Reviewers: []string{"security-reviewer", "style-reviewer"}, Status: "wontfix"}
 
 	got := AggregateQualitySignal([]Record{donor, effective})
-	want := []QualityRow{{Persona: "security-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1}}
+	want := []QualityRow{{Persona: "security-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1, TerminalOutcomes: 1}}
 	assert.Equal(t, want, got,
 		"style-reviewer never ran on the donor's model and must receive no per-model credit from the graft")
+}
+
+// --- Sprint 36.0 Story 01 / AC 01-04: the two new terminal outcomes ----------
+
+// TestAggregateQualitySignal_CountsNewTerminalStatusesAsTheirOwnSignal locks AC
+// 01-04 Scenario 3: unreproducible and attempts-exhausted each get their own
+// counter. They are NOT folded into ConfirmedCount or DismissedCount — the whole
+// point of the ground-truth signal is that "was fixed", "was never real" and
+// "could not be fixed" are three different facts — and they are NOT dropped the
+// way deferred is.
+func TestAggregateQualitySignal_CountsNewTerminalStatusesAsTheirOwnSignal(t *testing.T) {
+	recs := []Record{
+		{ID: "a", RunID: "r1", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"vera"}, Model: "m1", Status: StatusUnreproducible},
+		{ID: "b", RunID: "r2", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"vera"}, Model: "m1", Status: StatusAttemptsExhausted},
+		{ID: "c", RunID: "r3", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"vera"}, Model: "m1", Status: StatusResolved},
+		{ID: "d", RunID: "r4", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"vera"}, Model: "m1", Status: StatusWontfix},
+	}
+
+	rows := AggregateQualitySignal(recs)
+	require.Len(t, rows, 1, "one (persona, model) pair yields one row")
+	row := rows[0]
+
+	assert.Equal(t, 1, row.ConfirmedCount, "resolved stays the confirmed counter")
+	assert.Equal(t, 1, row.DismissedCount, "wontfix stays the dismissed counter")
+	assert.Equal(t, 1, row.UnreproducibleCount, "unreproducible is its own signal")
+	assert.Equal(t, 1, row.AttemptsExhaustedCount, "attempts-exhausted is its own signal")
+}
+
+// TestAggregateQualitySignal_NewStatusAloneStillEmitsARow locks the half of AC
+// 01-04 that a merged-counter implementation would pass by accident: a pair
+// whose ONLY outcome is a new status must still produce a row. deferred creates
+// no group (qualitysignal.go's default arm), so the new statuses must not take
+// that same arm.
+func TestAggregateQualitySignal_NewStatusAloneStillEmitsARow(t *testing.T) {
+	rows := AggregateQualitySignal([]Record{
+		{ID: "a", RunID: "r1", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"archer"}, Model: "m1", Status: StatusUnreproducible},
+	})
+	require.Len(t, rows, 1, "an unreproducible-only pair must still emit a row")
+	assert.Equal(t, 1, rows[0].UnreproducibleCount)
+	assert.Zero(t, rows[0].ConfirmedCount)
+	assert.Zero(t, rows[0].DismissedCount)
+}
+
+// TestAggregateQualitySignal_DeferredStillCreatesNoGroup is the regression guard
+// for the existing rule the new statuses must NOT inherit: deferred is still
+// neither a signal nor a group.
+func TestAggregateQualitySignal_DeferredStillCreatesNoGroup(t *testing.T) {
+	rows := AggregateQualitySignal([]Record{
+		{ID: "a", RunID: "r1", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"otto"}, Model: "m1", Status: StatusDeferred},
+	})
+	assert.Empty(t, rows, "a deferred-only pair emits no row, unchanged by Story 01")
+}
+
+// TestAggregateQualitySignal_NewStatusWithoutModelIsExcluded locks AC 01-04 Edge
+// Case 2: the attribution-incomplete exclusion applies to the new statuses
+// exactly as it already does to resolved and wontfix.
+func TestAggregateQualitySignal_NewStatusWithoutModelIsExcluded(t *testing.T) {
+	rows := AggregateQualitySignal([]Record{
+		{ID: "a", RunID: "r1", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"vera"}, Model: "", Status: StatusUnreproducible},
+		{ID: "b", RunID: "r2", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"vera"}, Model: "   ", Status: StatusAttemptsExhausted},
+	})
+	assert.Empty(t, rows, "attribution-incomplete records contribute to no group")
+}
+
+// TestAggregateQualitySignal_AttemptsExhaustedThenResolvedCountsOnce locks AC
+// 01-04 Edge Case 1. The later resolved wins because FoldRecords is
+// recency-first (latestItem), NOT because attempts-exhausted is re-resolvable
+// and NOT because of ClosedStatusRank — hence the strictly later timestamp on
+// the second record.
+func TestAggregateQualitySignal_AttemptsExhaustedThenResolvedCountsOnce(t *testing.T) {
+	rows := AggregateQualitySignal([]Record{
+		{ID: "a", RunID: "r1", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"dax"}, Model: "m1", Status: StatusAttemptsExhausted},
+		{ID: "a", RunID: "r2", Timestamp: "2026-09-02T00:00:00Z",
+			Reviewers: []string{"dax"}, Model: "m1", Status: StatusResolved},
+	})
+	require.Len(t, rows, 1)
+	assert.Equal(t, 1, rows[0].ConfirmedCount, "only the final resolved outcome counts")
+	assert.Zero(t, rows[0].AttemptsExhaustedCount, "the superseded earlier outcome is not double-counted")
+}
+
+// TestAggregateQualitySignal_TerminalOutcomesIsTheSampleSize is the guard on
+// phase-gate finding HIGH-2. Phase 4 derives a weight from these counters and
+// must know whether the sample is big enough to mean anything — a bare int
+// cannot distinguish a measured zero from an unmeasured axis.
+func TestAggregateQualitySignal_TerminalOutcomesIsTheSampleSize(t *testing.T) {
+	rows := AggregateQualitySignal([]Record{
+		{ID: "a", RunID: "r1", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"vera"}, Model: "m1", Status: StatusResolved},
+		{ID: "b", RunID: "r2", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"vera"}, Model: "m1", Status: StatusWontfix},
+		{ID: "c", RunID: "r3", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"vera"}, Model: "m1", Status: StatusUnreproducible},
+		// deferred is terminal but not counted: it must not inflate the sample.
+		{ID: "d", RunID: "r4", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"vera"}, Model: "m1", Status: StatusDeferred},
+	})
+	require.Len(t, rows, 1)
+	assert.Equal(t, 3, rows[0].TerminalOutcomes, "deferred is not a measured outcome")
+	assert.Zero(t, rows[0].AttemptsExhaustedCount,
+		"this axis is zero, and TerminalOutcomes is what says the zero was measured")
+}
+
+// TestAggregateQualitySignal_TerminalOutcomesEqualsTheCounterSum pins the
+// invariant across every emitted row, so a fifth counted outcome added without
+// incrementing the denominator fails here rather than silently skewing a Phase 4
+// ratio.
+func TestAggregateQualitySignal_TerminalOutcomesEqualsTheCounterSum(t *testing.T) {
+	recs := []Record{}
+	for i, s := range []string{
+		StatusResolved, StatusWontfix, StatusUnreproducible, StatusAttemptsExhausted,
+		StatusResolved, StatusDeferred,
+	} {
+		recs = append(recs, Record{
+			ID: fmt.Sprintf("id-%d", i), RunID: "r", Timestamp: "2026-09-01T00:00:00Z",
+			Reviewers: []string{"dax", "vera"}, Model: "m1", Status: s,
+		})
+	}
+	rows := AggregateQualitySignal(recs)
+	require.NotEmpty(t, rows)
+	for _, r := range rows {
+		sum := r.DismissedCount + r.ConfirmedCount + r.UnreproducibleCount + r.AttemptsExhaustedCount
+		assert.Equal(t, sum, r.TerminalOutcomes,
+			"TerminalOutcomes must equal the sum of the counted axes for %s/%s", r.Persona, r.Model)
+		assert.NotZero(t, r.TerminalOutcomes, "an emitted row always has at least one measured outcome")
+	}
 }

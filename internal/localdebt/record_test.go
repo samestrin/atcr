@@ -4,9 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -280,22 +286,52 @@ func TestIsSuppressingStatus_OnlyWontfix(t *testing.T) {
 // — the fold, the quality signal, and the resolve guard all need "is this record
 // terminal?" independently of whether that state survives re-detection.
 func TestIsClosedStatus_UnchangedByTheSuppressionSplit(t *testing.T) {
-	for _, s := range []string{"resolved", "deferred", "wontfix", "RESOLVED", " deferred "} {
+	for _, s := range []string{
+		"resolved", "deferred", "wontfix", "RESOLVED", " deferred ",
+		"unreproducible", "attempts-exhausted", " UNREPRODUCIBLE ", " Attempts-Exhausted ",
+	} {
 		assert.True(t, IsClosedStatus(s), "%q is terminal", s)
 	}
-	for _, s := range []string{"open", "", "bogus"} {
+	for _, s := range []string{"open", "", "bogus", "attempts_exhausted", "attempts exhausted"} {
 		assert.False(t, IsClosedStatus(s), "%q is not terminal", s)
 	}
 }
 
-// The rank order is unchanged: it still picks deterministically among DIVERGENT
-// terminal records, which is a different question from suppression.
-func TestClosedStatusRank_UnchangedByTheSuppressionSplit(t *testing.T) {
-	assert.Greater(t, ClosedStatusRank("wontfix"), ClosedStatusRank("resolved"))
+// TestClosedStatusRank_FiveTermChain pins the full five-way precedence used to
+// pick among DIVERGENT terminal records for one id, which is a different
+// question from suppression.
+//
+// The chain is wontfix > unreproducible > attempts-exhausted > resolved >
+// deferred. That ordering is NOT the one plan.md → Phase 1 Decisions and AC
+// 01-02 originally recorded (which put resolved second); it was flipped by
+// sprint-plan.md → Phase 1 Clarifications → C1. The reason is
+// highestRankedTerminalIndex's own justification for being rank-first
+// (highestRankedTerminalIndex, store.go): it ranks by how certainly a record carries a
+// human-typed --reason. Only wontfix was ever reason-gated, and AC 01-03
+// requires --reason for both new statuses while explicitly leaving resolved
+// ungated — so a reason-less resolved must not outrank a reasoned
+// unreproducible and bury it at compaction.
+//
+// Only RELATIVE order is asserted, never a literal rank integer, so a sixth
+// status can renumber the chain without rewriting this test.
+func TestClosedStatusRank_FiveTermChain(t *testing.T) {
+	assert.Greater(t, ClosedStatusRank("wontfix"), ClosedStatusRank("unreproducible"))
+	assert.Greater(t, ClosedStatusRank("unreproducible"), ClosedStatusRank("attempts-exhausted"))
+	assert.Greater(t, ClosedStatusRank("attempts-exhausted"), ClosedStatusRank("resolved"))
 	assert.Greater(t, ClosedStatusRank("resolved"), ClosedStatusRank("deferred"))
 	assert.Greater(t, ClosedStatusRank("deferred"), ClosedStatusRank("bogus"))
+
+	// The two relations the pre-existing guard asserted still hold under the
+	// flipped chain, so C1 weakens nothing that was already pinned.
+	assert.Greater(t, ClosedStatusRank("wontfix"), ClosedStatusRank("resolved"))
+
 	assert.Equal(t, "wontfix", HigherClosedStatus("resolved", "wontfix"))
 	assert.Equal(t, "wontfix", HigherClosedStatus("wontfix", "resolved"))
+	// A reasoned new status outranks resolved in both argument orders — the
+	// exact displacement C1 exists to prevent.
+	assert.Equal(t, "unreproducible", HigherClosedStatus("resolved", "unreproducible"))
+	assert.Equal(t, "unreproducible", HigherClosedStatus("unreproducible", "resolved"))
+	assert.Equal(t, "attempts-exhausted", HigherClosedStatus("resolved", "attempts-exhausted"))
 }
 
 // IsSettledStatus is the third predicate: it answers "is this item DONE?", which
@@ -303,10 +339,19 @@ func TestClosedStatusRank_UnchangedByTheSuppressionSplit(t *testing.T) {
 // deferred item permanently unactionable — refused as already closed while every
 // other view still showed it as outstanding work.
 func TestIsSettledStatus_ResolvedAndWontfixOnly(t *testing.T) {
-	for _, s := range []string{"resolved", "wontfix", "RESOLVED", " wontfix "} {
+	for _, s := range []string{
+		"resolved", "wontfix", "RESOLVED", " wontfix ",
+		// unreproducible reached a determination, so the item is done.
+		"unreproducible", " UNREPRODUCIBLE ",
+	} {
 		assert.True(t, IsSettledStatus(s), "%q is settled", s)
 	}
-	for _, s := range []string{"deferred", "DEFERRED", "open", "", "bogus"} {
+	for _, s := range []string{
+		"deferred", "DEFERRED", "open", "", "bogus",
+		// attempts-exhausted is unfinished work, so it must stay re-resolvable
+		// exactly like deferred (AC 01-01 Edge Case 2).
+		"attempts-exhausted", " Attempts-Exhausted ",
+	} {
 		assert.False(t, IsSettledStatus(s), "%q is not settled", s)
 	}
 	// The three predicates differ on exactly one status, and that is the point.
@@ -315,13 +360,81 @@ func TestIsSettledStatus_ResolvedAndWontfixOnly(t *testing.T) {
 	assert.False(t, IsSuppressingStatus("deferred"), "...and it does not survive re-detection")
 }
 
+// statusConstantsFromSource derives every Status* constant the package declares
+// from its own .go sources via go/parser — the same derivation
+// cli/debt_exhaustive_test.go's scanStatusConstants performs over this directory.
+// A hand-written literal list drifts the moment a constant is added and the list
+// is not, so the guard silently stops guarding the very next status; deriving
+// from source keeps the exhaustiveness promise in record.go's comment
+// ("adding or renaming a status fails the exhaustiveness test rather than
+// silently ranking 0 in ClosedStatusRank") self-enforcing.
+func statusConstantsFromSource(t testing.TB) map[string]string {
+	t.Helper()
+	entries, err := os.ReadDir(".")
+	require.NoError(t, err, "the package's own sources must be readable")
+
+	out := map[string]string{}
+	fset := token.NewFileSet()
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, name, nil, 0)
+		require.NoError(t, err, "parsing %s", name)
+		for _, decl := range f.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, ident := range vs.Names {
+					if !strings.HasPrefix(ident.Name, "Status") {
+						continue
+					}
+					if i >= len(vs.Values) {
+						t.Errorf("%s: Status-prefixed constant has no explicit value; spell its string value so this guard can read it", ident.Name)
+						continue
+					}
+					lit, ok := vs.Values[i].(*ast.BasicLit)
+					if !ok || lit.Kind != token.STRING {
+						t.Errorf("%s: Status-prefixed constant value is not a string literal; spell it so this guard can read it", ident.Name)
+						continue
+					}
+					val, uerr := strconv.Unquote(lit.Value)
+					require.NoError(t, uerr, "unquoting %s", ident.Name)
+					out[ident.Name] = val
+				}
+			}
+		}
+	}
+	require.NotEmpty(t, out, "the status vocabulary must be discovered from source")
+	return out
+}
+
 // TestStatusConstants_ExhaustiveAcrossPredicates locks the single-source status
 // vocabulary (TD internal/localdebt/record.go:252): the terminal statuses are
 // spelled once as constants and every predicate routes through normalizeStatus,
 // so a status added without updating a predicate fails here instead of silently
 // ranking 0 — indistinguishable from open — in ClosedStatusRank.
+//
+// The terminal set is DERIVED from the package's sources, not hand-listed: a
+// Status* constant added to record.go without updating ClosedStatusRank ranks 0,
+// and this test fails on it by construction rather than never hearing about it.
 func TestStatusConstants_ExhaustiveAcrossPredicates(t *testing.T) {
-	terminal := []string{StatusResolved, StatusDeferred, StatusWontfix}
+	consts := statusConstantsFromSource(t)
+	terminal := make([]string, 0, len(consts))
+	for _, name := range slices.Sorted(maps.Keys(consts)) {
+		s := consts[name]
+		assert.NotZero(t, ClosedStatusRank(s),
+			"%s (%q) ranks 0 — indistinguishable from open; add it to ClosedStatusRank's chain and every predicate below", name, s)
+		assert.True(t, IsClosedStatus(s), "%s (%q) must carry a terminal marker", name, s)
+		terminal = append(terminal, s)
+	}
 	for _, s := range terminal {
 		assert.True(t, IsClosedStatus(s), "%q carries a terminal marker", s)
 		assert.NotZero(t, ClosedStatusRank(s), "%q must rank above open", s)
@@ -329,9 +442,40 @@ func TestStatusConstants_ExhaustiveAcrossPredicates(t *testing.T) {
 	assert.True(t, IsSettledStatus(StatusResolved))
 	assert.True(t, IsSettledStatus(StatusWontfix))
 	assert.False(t, IsSettledStatus(StatusDeferred), "not-now is not done")
+	// A determination was reached, so the item needs no further action.
+	assert.True(t, IsSettledStatus(StatusUnreproducible), "a determination is done")
+	// Unfinished work: it must stay closeable, exactly like deferred.
+	assert.False(t, IsSettledStatus(StatusAttemptsExhausted), "out of attempts is not done")
+
 	assert.True(t, IsSuppressingStatus(StatusWontfix))
 	assert.False(t, IsSuppressingStatus(StatusResolved))
 	assert.False(t, IsSuppressingStatus(StatusDeferred))
+	// A re-detection after either new status is evidence the finding was real —
+	// the last thing to suppress.
+	assert.False(t, IsSuppressingStatus(StatusUnreproducible))
+	assert.False(t, IsSuppressingStatus(StatusAttemptsExhausted))
+
+	// bearsRationale is the fourth routing decision every status must answer.
+	// It is about the record's CONTENT, not the item's state, and it is the one
+	// place where deferred and attempts-exhausted part company despite both
+	// being unsettled: only the latter's --reason is mandatory.
+	assert.True(t, bearsRationale(StatusResolved))
+	assert.True(t, bearsRationale(StatusWontfix))
+	assert.True(t, bearsRationale(StatusUnreproducible))
+	assert.True(t, bearsRationale(StatusAttemptsExhausted), "its --reason is mandatory")
+	assert.False(t, bearsRationale(StatusDeferred), "deferral records no rationale")
+	for _, s := range terminal {
+		shout := " " + strings.ToUpper(s) + " "
+		assert.Equal(t, bearsRationale(s), bearsRationale(shout), "%q", shout)
+	}
+	for _, s := range []string{"", "open", "bogus"} {
+		assert.False(t, bearsRationale(s), "%q holds no rationale", s)
+	}
+
+	// The kebab spelling is load-bearing: normalizeStatus folds case and
+	// whitespace only, so a separator variant is never rescued.
+	assert.Equal(t, "unreproducible", StatusUnreproducible)
+	assert.Equal(t, "attempts-exhausted", StatusAttemptsExhausted)
 
 	// One shared normalization: case/whitespace variants behave identically.
 	for _, s := range terminal {

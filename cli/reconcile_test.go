@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/samestrin/atcr/internal/localdebt"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
@@ -923,6 +924,7 @@ func TestReconcileCmd_AppliesScorecardTrustPrior(t *testing.T) {
 
 	seedTrustedReviewer(t, "trusted")
 	fixtureReview(t, "r", trustPanelSources())
+	writeSeedPool(t, filepath.Join(".atcr", "reviews", "r"), "trusted", "stranger", "third")
 
 	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
 
@@ -1307,6 +1309,7 @@ func seedUntrustedReviewer(t *testing.T, reviewer string) {
 		require.NoError(t, scorecard.Append(dir, scorecard.Record{
 			SchemaVersion:        1,
 			RecordType:           scorecard.RecordTypeReviewer,
+			Outcome:              benchmark.OutcomeFindings,
 			RunID:                fmt.Sprintf("%s-u%02d", stamp, i),
 			Reviewer:             reviewer,
 			Model:                "m",
@@ -1328,6 +1331,7 @@ func TestReconcileCmd_ConsensusLenientKeepsMediumSingletons(t *testing.T) {
 	isolate(t)
 	seedUntrustedReviewer(t, "stranger") // owns bar.go in trustPanelSources
 	fixtureReview(t, "r", trustPanelSources())
+	writeSeedPool(t, filepath.Join(".atcr", "reviews", "r"), "trusted", "stranger", "third")
 
 	require.Equal(t, 0, execCmd(t, "reconcile", "--consensus", "lenient", "r"))
 
@@ -2118,4 +2122,37 @@ func TestReview_OneShotPersistsLocalDebt(t *testing.T) {
 
 	assert.NotEmpty(t, readLocalDebtRecords(t),
 		"the one-shot review's inline reconcile must persist its findings to the local debt store")
+}
+
+// TestRunReconcile_TrustPriorFollowsTheReviewsModel pins AC5 at the command
+// level: `atcr reconcile` resolves trust priors against the model each persona
+// ran on in THIS review (its pool summary), so a persona whose history is on
+// another model is neutral.
+func TestRunReconcile_TrustPriorFollowsTheReviewsModel(t *testing.T) {
+	for _, tc := range []struct {
+		model string
+		want  string
+	}{
+		{"m1", "reviewers=1"},
+		{"m2", "reviewers=0"},
+	} {
+		t.Run(tc.model, func(t *testing.T) {
+			isolate(t)
+			for i := 0; i < scorecard.DefaultTrustMinRuns; i++ {
+				runID := time.Now().UTC().Format(time.RFC3339) + fmt.Sprintf("-hist-%03d", i)
+				storeRecord(t, reviewerRec(runID, "sasha", "m1", 2, 1))
+			}
+			fixtureReview(t, "r", map[string]string{
+				"sources/host/findings.txt": "LOW|a.go:1|x|f|style|1|ev|host\n",
+			})
+			pool := filepath.Join(".atcr", "reviews", "r", "sources", "pool")
+			require.NoError(t, os.MkdirAll(pool, 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(pool, "summary.json"),
+				[]byte(`{"agents":[{"agent":"sasha","model":"`+tc.model+`","status":"ok"}],"total":1}`), 0o644))
+
+			var logBuf, errBuf bytes.Buffer
+			runReconcileWithLogger(t, &logBuf, &errBuf, "r")
+			assert.Regexp(t, `trust priors resolved.*`+tc.want, logBuf.String())
+		})
+	}
 }

@@ -115,12 +115,38 @@ var defaultDebtResolveDir = localdebt.DefaultDir(".")
 // elsewhere in cli/debt.go.
 var resolveSeverities = map[string]bool{"CRITICAL": true, "HIGH": true, "MEDIUM": true, "LOW": true}
 
-// resolveStatuses is the validated --status enum for a mark action. Both values are
+// resolveStatuses is the validated --status enum for a mark action. Every value is
 // terminal (isClosedStatus folds them out): "resolved" means the code was actually
 // fixed; "wontfix" (Epic 24.0) dismisses a false-positive/accepted pattern so agents
-// stop re-surfacing it. "deferred" is intentionally excluded — it is written by other
-// paths, not by an explicit resolve.
-var resolveStatuses = map[string]bool{"resolved": true, "wontfix": true}
+// stop re-surfacing it; "unreproducible" records that the finding was investigated
+// and could not be reproduced; "attempts-exhausted" records that the fix attempts ran
+// out without a resolution. "deferred" is intentionally excluded — it is written by
+// other paths, not by an explicit resolve.
+//
+// The last two are Story 36.0's ground-truth outcomes. They exist because
+// "confirmed real and fixed", "was never real" and "real but unfixed" are three
+// different facts about the reviewer that raised the finding, and a store that
+// recorded only the first could not tell them apart. The `--reason` text is that
+// signal's payload, which is why the gate below requires it for both.
+var resolveStatuses = map[string]bool{
+	localdebt.StatusResolved:          true,
+	localdebt.StatusWontfix:           true,
+	localdebt.StatusUnreproducible:    true,
+	localdebt.StatusAttemptsExhausted: true,
+}
+
+// resolveStatusList renders the accepted values for an error message, derived
+// from the map rather than retyped. A hand-written "resolved|wontfix" literal is
+// exactly what went stale when this enum grew: the value was accepted while the
+// rejection message still named two.
+func resolveStatusList() string {
+	out := make([]string, 0, len(resolveStatuses))
+	for s := range resolveStatuses {
+		out = append(out, s)
+	}
+	sort.Strings(out)
+	return strings.Join(out, "|")
+}
 
 // newDebtResolveCmd builds `atcr debt resolve [id]`: the .atcr/-scoped resolver surface
 // the debt-resolve skill route shells out to. It lists open items from the local TD
@@ -145,8 +171,8 @@ func newDebtResolveCmd() *cobra.Command {
 	cmd.Flags().Bool("json", false, "emit the selected items as a JSON array")
 	cmd.Flags().String("severity", "", "filter by severity (exact, case-insensitive: CRITICAL|HIGH|MEDIUM|LOW)")
 	cmd.Flags().Int("max", 10, "action cap: how many items are selected to act on (0 = no cap). Distinct from debt dashboard --top, which is a ranked-display cutoff over a full aggregation — and where 0 suppresses the list rather than removing the cap")
-	cmd.Flags().String("status", "resolved", "terminal status to record for the positional id (resolved|wontfix)")
-	cmd.Flags().String("reason", "", "justification recorded on the resolution record; replaces any existing justification (e.g. why a finding is wontfix)")
+	cmd.Flags().String("status", "resolved", "terminal status to record for the positional id ("+resolveStatusList()+")")
+	cmd.Flags().String("reason", "", "justification recorded on the resolution record; replaces any existing justification. Required for every status other than resolved")
 	// The retired flags fail with guidance, not a bare pflag "unknown flag":
 	// --resolve <id> stuttered against the subcommand name and is now the
 	// positional form; --list duplicated `atcr debt list`.
@@ -210,7 +236,7 @@ func runDebtResolve(cmd *cobra.Command, args []string) error {
 		}
 		status := strings.ToLower(strings.TrimSpace(mustFlag(cmd, "status")))
 		if !resolveStatuses[status] {
-			return usageError(fmt.Errorf("invalid --status %q: expected resolved|wontfix", status))
+			return usageError(fmt.Errorf("invalid --status %q: expected %s", status, resolveStatusList()))
 		}
 		return markDebtResolved(cmd, dir, id, status, mustFlag(cmd, "reason"))
 	}
@@ -625,8 +651,42 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 		return fmt.Errorf("id %q has no file location and cannot be resolved; it must be corrected in the store", id)
 	}
 	orig := *effective
-	if status == "wontfix" && strings.TrimSpace(reason) == "" && !isRecordedRationale(orig.Justification) {
-		return usageError(fmt.Errorf("--status wontfix requires --reason <justification>"))
+	// Every status other than `resolved` requires a rationale. The condition is
+	// written against StatusResolved rather than as a list of the statuses that
+	// DO need one, so a sixth status inherits the gate the moment it joins
+	// resolveStatuses — with no edit here, which is where the old wontfix-only
+	// literal would have silently let one through.
+	//
+	// `resolved` is the exception because the fix itself is the explanation and
+	// the diff records it. For every other status the text is the only evidence
+	// that survives: it is what makes the TD lifecycle usable as ground truth
+	// for lens scoring rather than just a state flag.
+	//
+	// The isRecordedRationale escape hatch is scoped to `wontfix`, which is the
+	// status it was written for (see its doc block). Letting it satisfy the two
+	// Story 36.0 statuses would defeat the gate in the COMMON case, not an edge
+	// one: reconcile enriches ordinary findings with a Justification, so an
+	// operator could close an item as `attempts-exhausted` with no input at all
+	// and the reviewer's own finding text would be persisted and later read back
+	// as the operator's attempt trail. That is worse than an empty signal — it
+	// is a fabricated one, and it is circular, since the ground-truth record
+	// would then be quoting the very reviewer it is meant to score.
+	//
+	// The scoping is also what makes ClosedStatusRank's ordering rationale true:
+	// that chain ranks by certainty of carrying a human-typed --reason, which is
+	// only a real guarantee for these two statuses while this branch has no
+	// bypass.
+	storedRationaleStandsIn := status == localdebt.StatusWontfix && isRecordedRationale(orig.Justification)
+	// A TYPED --reason clears the same content bar as a STORED justification
+	// standing in for one. The typed path used to clear only a whitespace check,
+	// so `--reason '(triple backtick)'` stored fence text as the ground-truth
+	// rationale the lens scoring reads back — while the same text arriving via a
+	// stored justification was rejected. isRecordedRationale takes a plain string
+	// and needs no new plumbing, so the fence/placeholder discount applies
+	// symmetrically, and the rejection is the same usage error the empty case gets.
+	typedRationaleUsable := strings.TrimSpace(reason) != "" && isRecordedRationale(reason)
+	if status != localdebt.StatusResolved && !typedRationaleUsable && !storedRationaleStandsIn {
+		return usageError(fmt.Errorf("--status %s requires --reason <justification>", status))
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -660,6 +720,32 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 	// blanking it.
 	if r := strings.TrimSpace(reason); r != "" {
 		rec.Justification = r
+		// Write-time fold for a REPEATED attempts-exhausted checkpoint. The
+		// effective record is already attempts-exhausted, so this resolve is a
+		// continuation of the SAME checkpoint, not a new finding — and compaction
+		// retains exactly ONE superseded rationale-bearing record per id, so a
+		// second AE record carrying only its own --reason would displace the
+		// first checkpoint's typed rationale at the next compaction, silently.
+		// Carrying the prior reason forward in the NEW record's Justification
+		// means the single trail slot holds the whole AE trail. This is strictly
+		// append-only: the prior record is never rewritten (the TD-004 no-lock
+		// stance), and the whole-record MaxRecordBytes check below still bounds
+		// the grown justification.
+		//
+		// LIMITATION, recorded deliberately: this fold covers the
+		// attempts-exhausted -> attempts-exhausted continuation only. Other
+		// multi-checkpoint sequences (AE -> resolved -> AE, or AE between two
+		// different terminal statuses) still leave more rationale-bearing
+		// records than the one trail slot retains, and compaction drops all but
+		// the highest-ranked one. Universal preservation would be the honest
+		// case for retaining N rationale records per id instead; that decision
+		// belongs to the retention row, not here.
+		if status == localdebt.StatusAttemptsExhausted &&
+			strings.EqualFold(strings.TrimSpace(orig.Status), localdebt.StatusAttemptsExhausted) {
+			if prior := strings.TrimSpace(orig.Justification); prior != "" && prior != r {
+				rec.Justification = prior + "\n\n" + r
+			}
+		}
 	}
 	// Bound the ENCODED record before appending, the same rule `debt add` enforces
 	// (cli/debt_add.go): the resolution copies the finding verbatim and adds the
