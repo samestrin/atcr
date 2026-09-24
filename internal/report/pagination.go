@@ -5,6 +5,8 @@ import (
 	"io"
 
 	"github.com/samestrin/atcr/internal/reconcile"
+
+	toon "github.com/toon-format/toon-go"
 )
 
 // AXIMaxLinesDefault is the default physical-line cap applied to an --axi
@@ -114,10 +116,19 @@ func axiPaginatedDoc(findings []reconcile.JSONFinding, maxLines int) axiPaginate
 	if limit := maxLines - 1; total > limit {
 		emitted = findings[:limit]
 	}
+	// Columns are derived from the FULL findings slice, not the emitted rows, so
+	// the declared schema is cap-independent: a column whose only carrier row was
+	// cut is still declared (with null/empty cells on the emitted rows). Deriving
+	// from the emitted rows would make the wire schema a function of
+	// ATCR_AXI_MAX_LINES — two invocations of the same review dir at different
+	// caps would return different column sets.
+	cols := axiColumnsFor(findings)
+	rows := make([]toon.Object, 0, len(emitted))
+	for _, f := range emitted {
+		rows = append(rows, axiRow(f, cols))
+	}
 	return axiPaginatedPayload{
-		// Columns are derived from the emitted rows, so a column whose only carrier
-		// was cut is not declared as all-empty.
-		Findings:  axiRows(emitted),
+		Findings:  rows,
 		Total:     total,
 		Truncated: len(emitted) < total,
 	}
