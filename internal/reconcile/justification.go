@@ -855,6 +855,10 @@ func jsonFenceBounds(lines []string) (open, close []bool) {
 			continue
 		}
 		switch {
+		case inJSON && isJSONFenceOpener(l):
+			// The parser reads this as the next chunk's opener closing a cut-off
+			// block (stream/parser.go ParseModelOutput): one line, both roles.
+			close[i], open[i] = true, true
 		case inFence:
 			close[i] = inJSON
 			inFence, inJSON = false, false

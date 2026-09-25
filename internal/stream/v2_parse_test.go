@@ -66,6 +66,7 @@ func TestParseModelOutput_TruncationRecovery(t *testing.T) {
 		{"cut right after a complete object", "```json\n[" + objA + ",\n" + objB, []Finding{findA, findB}},
 		{"cut after the trailing comma", "```json\n[" + objA + ",", []Finding{findA}},
 		{"truncated first block, clean second block", "```json\n[" + objA + ",\n" + cut + "\n```\n" + jsonBlock("["+objB+"]"), []Finding{findA, findB}},
+		{"a cut-off block is closed by the next chunk's opener", "```json\n[" + objA + ",\n" + cut + "\nChunk two prose.\n" + jsonBlock("["+objC+"]"), []Finding{findA, findC}},
 		{"unterminated fence with a closed array", "```json\n[" + objA + "]\n", []Finding{findA}},
 		{"braces and brackets inside strings are not structure", "```json\n[" + `{"severity":"LOW","file_line":"d.go:1","problem":"}] {[ \"}\"","fix":"","category":"","est_minutes":1,"evidence":""}` + ",\n" + cut, []Finding{{Severity: "LOW", File: "d.go", Line: 1, Problem: `}] {[ "}"`, EstMinutes: 1}}},
 		{"interior syntax error keeps the elements before it", jsonBlock("[" + objA + ",\n" + `{"severity":"LOW","file_line":"x.go:1",}` + ",\n" + objB + "]"), []Finding{findA}},
@@ -126,6 +127,14 @@ func TestParseModelOutput_UnfencedArrayFallback(t *testing.T) {
 	// block exists, a bare array elsewhere is prose.
 	withFence := "[" + objC + "]\n" + jsonBlock("["+objB+"]")
 	assert.Equal(t, []Finding{findB}, ParseModelOutput([]byte(withFence)))
+
+	// Recovering a cut-off bare array stops at the next fence: a quoted example
+	// below it is never read as a finding.
+	quoted := "[" + objA + ",\n\nExample format:\n```text\n" + objC + "\n```\n"
+	assert.Equal(t, []Finding{findA}, ParseModelOutput([]byte(quoted)))
+
+	// Unclosed "[" lines are bounded, not quadratic: this must stay fast.
+	assert.Empty(t, ParseModelOutput([]byte(strings.Repeat("[\n", 20000))))
 
 	// A bare array quoted inside a non-json fence is an example.
 	assert.Empty(t, ParseModelOutput([]byte("```\n["+objA+"]\n```\n")))

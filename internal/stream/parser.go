@@ -155,9 +155,10 @@ func ParseModelOutput(data []byte) []Finding {
 
 	var out []Finding
 	inFence, inJSON := false, false
+	bareAttempts := 0
 	jsonStart := 0 // byte offset of the current ```json block's first content line
 	offset := 0    // byte offset of the current line
-	for _, raw := range lines {
+	for i, raw := range lines {
 		lineStart := offset
 		offset += len(raw) + 1
 		line := strings.TrimRight(raw, "\r")
@@ -172,8 +173,12 @@ func ParseModelOutput(data []byte) []Finding {
 		if isFenceMarker(line) {
 			switch {
 			case inJSON:
+				// A "```json" line here is the NEXT chunk's opener, not this block's
+				// closer: a chunk cut off inside its block never wrote a closer, and
+				// reading the opener as one would turn the next chunk's array into
+				// prose. It closes this block and opens the next.
 				out = append(out, decodeJSONFindings(text[jsonStart:lineStart])...)
-				inJSON = false
+				inJSON, jsonStart = isJSONFence(line), offset
 			case inFence:
 				inFence = false
 			case isJSONFence(line):
@@ -186,10 +191,14 @@ func ParseModelOutput(data []byte) []Finding {
 		if inJSON || inFence {
 			continue
 		}
-		if tryBareArray && strings.HasPrefix(strings.TrimSpace(line), "[") {
+		if tryBareArray && bareAttempts < maxBareArrayAttempts && strings.HasPrefix(strings.TrimSpace(line), "[") {
 			// Only the first array that yields a finding is taken; a prose line like
-			// "[x](y)" decodes to nothing and is passed over.
-			if found := decodeJSONFindings(text[lineStart:]); len(found) > 0 {
+			// "[x](y)" decodes to nothing and is passed over. The candidate ends at
+			// the next fence marker, so recovering a cut-off array never reaches into
+			// a quoted example below it, and the attempts are capped because each
+			// one can scan to the end of Content.
+			bareAttempts++
+			if found := decodeJSONFindings(text[lineStart:nextFenceOffset(lines, i, lineStart, len(text))]); len(found) > 0 {
 				out = append(out, found...)
 				tryBareArray = false
 				continue

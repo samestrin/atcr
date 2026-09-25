@@ -129,6 +129,17 @@ func TestExtractSection_JSONFenceIsOneRecordBlock(t *testing.T) {
 	assert.Empty(t, inside)
 }
 
+// A chunk cut off inside its ```json block never writes a closer, so the next
+// chunk's "```json" opener closes it. The parser reads two blocks there, and the
+// bounds must say the same: that line both closes the first and opens the second.
+func TestJSONFenceBounds_NextOpenerClosesACutOffBlock(t *testing.T) {
+	lines := []string{"```json", `[{"severity":"HIGH","file_line":"a.go:1"},`, "```json", `[{"severity":"LOW","file_line":"c.go:3"}]`, "```"}
+	open, close := jsonFenceBounds(lines)
+	assert.Equal(t, []bool{true, false, true, false, false}, open)
+	assert.Equal(t, []bool{false, false, true, false, true}, close)
+	assert.Len(t, stream.ParseModelOutput([]byte(strings.Join(lines, "\n"))), 2)
+}
+
 // The three shapes below were MEASURED truncating real justifications. Each asserts
 // the whole block survives — a partial excerpt is indistinguishable from a reviewer
 // who wrote one sentence, because no truncation marker is emitted. FENCED shapes

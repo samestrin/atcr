@@ -210,6 +210,24 @@ func isJSONFence(line string) bool {
 	return strings.EqualFold(strings.TrimSpace(strings.TrimLeft(t, "`")), "json")
 }
 
+// maxBareArrayAttempts bounds how many "["-led lines ParseModelOutput tries as
+// an unfenced array. Model output is untrusted, and each attempt can scan to the
+// end of Content, so an unbounded count is quadratic.
+const maxBareArrayAttempts = 16
+
+// nextFenceOffset returns the byte offset of the first fence marker line after
+// line i (which starts at offset start), or end, the length of Content.
+func nextFenceOffset(lines []string, i, start, end int) int {
+	off := start
+	for j := i; j < len(lines); j++ {
+		if j > i && isFenceMarker(strings.TrimRight(lines[j], "\r")) {
+			return off
+		}
+		off += len(lines[j]) + 1
+	}
+	return min(off, end)
+}
+
 // hasJSONFence reports whether Content opens any ```json block, using the same
 // fence toggle as ParseModelOutput, so a "```json" line that closes some other
 // fence does not count.
