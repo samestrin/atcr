@@ -7,6 +7,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -126,11 +127,26 @@ func TestWriteSourceV2_AdversarialRoundTrip(t *testing.T) {
 }
 
 // TestWriteSourceV2_SanitizeBoundary pins go-axi's sanitizer as the ONLY
-// rewrite on the v2 path: an ESC byte is stripped, nothing else is touched.
+// rewrite on the v2 path: each stripped class is removed, nothing else is
+// touched.
 func TestWriteSourceV2_SanitizeBoundary(t *testing.T) {
-	doc := decodeV2(t, writeV2(t, []Finding{{Severity: "LOW", File: "a.go", Line: 1, Problem: "a\x1bb | c"}}))
-	require.Len(t, doc.Rows, 1)
-	assert.Equal(t, "ab | c", doc.Rows[0]["problem"])
+	cases := []struct{ name, in, want string }{
+		{"ESC", "a\x1bb | c", "ab | c"},
+		{"NUL", "a\x00b", "ab"},
+		{"form feed and vertical tab", "a\fb\vc", "abc"},
+		{"DEL", "a\x7fb", "ab"},
+		{"C1 control", "a\u0085b", "ab"},
+		{"line and paragraph separators", "a\u2028b\u2029c", "abc"},
+		{"invalid UTF-8", "a\xffb", "ab"},
+		{"tab, LF, and CR are kept", "a\tb\nc\r\nd", "a\tb\nc\r\nd"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			doc := decodeV2(t, writeV2(t, []Finding{{Severity: "LOW", File: "a.go", Line: 1, Problem: c.in}}))
+			require.Len(t, doc.Rows, 1)
+			assert.Equal(t, c.want, doc.Rows[0]["problem"])
+		})
+	}
 }
 
 func TestWriteSourceV2_TruncatedBody(t *testing.T) {
@@ -187,6 +203,32 @@ type envelopeRow struct {
 	EstMinutes int    `json:"est_minutes"`
 	Evidence   string `json:"evidence"`
 	Reviewer   string `json:"reviewer"`
+}
+
+// The fixtures above restate v2Row's tags by hand; if v2Row changes, they must
+// follow or the fallback test checks a stale shape.
+func TestV2Fixtures_MatchV2RowTags(t *testing.T) {
+	tags := func(v any) []string {
+		var out []string
+		rt := reflect.TypeOf(v)
+		for i := 0; i < rt.NumField(); i++ {
+			f := rt.Field(i)
+			if f.Name == "Extra" {
+				continue
+			}
+			out = append(out, f.Name+" "+string(f.Tag))
+		}
+		return out
+	}
+	want := tags(v2Row{})
+	assert.Equal(t, want, tags(lossyRow{}))
+
+	var jsonOnly []string
+	for _, s := range want {
+		name, tag, _ := strings.Cut(s, " ")
+		jsonOnly = append(jsonOnly, name+" "+tag[strings.Index(tag, "json:"):])
+	}
+	assert.Equal(t, jsonOnly, tags(envelopeRow{}))
 }
 
 func TestEncodeV2_FallsBackToJSONEnvelope(t *testing.T) {
@@ -266,8 +308,15 @@ func TestV2_IsolatedFromV1Writer(t *testing.T) {
 
 	// Identifiers only, so a comment naming the helpers is not a violation.
 	ast.Inspect(f, func(n ast.Node) bool {
-		if id, ok := n.(*ast.Ident); ok && (id.Name == "escapeField" || id.Name == "fieldReplacer") {
+		id, ok := n.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		switch id.Name {
+		case "escapeField", "fieldReplacer":
 			t.Errorf("internal/stream/v2.go must not reference escapeField/fieldReplacer (v1-only lossy helpers)")
+		case "write", "WriteSource", "WriteReconciled":
+			t.Errorf("internal/stream/v2.go must not call the v1 writer %s, which escapes every field", id.Name)
 		}
 		return true
 	})

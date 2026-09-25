@@ -13,7 +13,9 @@ import (
 //
 // v2 lives in its own file, apart from the v1 pipe writer, so retiring v1 later
 // is mostly a delete. Nothing here may call escapeField or fieldReplacer: v2
-// writes every field exactly as it was produced.
+// substitutes nothing, so '|', quotes, and line breaks survive. The one rewrite
+// is go-axi's sanitizer, which runs on both paths and strips control bytes
+// (other than tab, LF, CR), U+2028/U+2029, and invalid UTF-8.
 const VersionV2 = "# atcr-findings/v2"
 
 // v2Row is one per-source finding in the v2 body. The json tags equal the toon
