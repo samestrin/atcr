@@ -2,7 +2,9 @@ package reconcile
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -87,7 +89,7 @@ func Discover(sourcesDir string, allow []string) ([]Source, error) {
 				src.SkippedFiles = append(src.SkippedFiles, f)
 				continue
 			}
-			res, perr := stream.ParseSource(data)
+			res, perr := stream.ParseFindingsFile(f, data)
 			if perr != nil {
 				fmt.Fprintf(os.Stderr, "warning: skipping %s: %v\n", f, perr)
 				src.SkippedFiles = append(src.SkippedFiles, f)
@@ -191,8 +193,12 @@ func leafFindingsFiles(root string) ([]string, error) {
 		if serr != nil {
 			// The file vanished (or became unreadable) since the walk. Keep the
 			// leaf so Discover's read fails on it and records it in SkippedFiles,
-			// as it did before selection existed.
-			f = filepath.Join(d, findingsFileName)
+			// as it did before selection existed. Name the .toon unless it is
+			// known absent, so a failed .toon never turns into a .txt read.
+			f = filepath.Join(d, findingsToonFileName)
+			if errors.Is(serr, fs.ErrNotExist) {
+				f = filepath.Join(d, findingsFileName)
+			}
 		}
 		leaves = append(leaves, f)
 	}

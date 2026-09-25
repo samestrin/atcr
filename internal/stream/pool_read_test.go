@@ -144,3 +144,30 @@ func TestFindingsParseError_MessageIsTheParserError(t *testing.T) {
 	assert.Equal(t, want.Error(), err.Error())
 	assert.True(t, errors.Is(err, ErrMissingHeader), "the wrapper unwraps to the parser's sentinel")
 }
+
+// A findings.toon carrying a v1 header is a v2 writer bug. It is a parse error,
+// not a quiet lossy read (AC 07-02).
+func TestParseFindingsFile_ToonMustBeV2(t *testing.T) {
+	v1 := []byte(v1Of(t, []Finding{poolLossless}))
+	_, err := ParseFindingsFile(filepath.Join("d", "findings.toon"), v1)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrUnknownVersion), "got %v", err)
+
+	res, err := ParseFindingsFile(filepath.Join("d", "findings.txt"), v1)
+	require.NoError(t, err, "a v1 findings.txt parses as today")
+	assert.Len(t, res.Findings, 1)
+
+	padded := strings.Replace(v2Of(t, nil), VersionV2, "\n  "+VersionV2+"  ", 1)
+	res, err = ParseFindingsFile(filepath.Join("d", "findings.toon"), []byte(padded))
+	require.NoError(t, err, "blank lines and padding around the header are allowed, as in ParseSource")
+	assert.Empty(t, res.Findings)
+}
+
+func TestReadPoolFindings_V1HeaderInToonIsParseError(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "findings.toon", v1Of(t, []Finding{poolLossless}))
+	writeFile(t, dir, "findings.txt", v1Of(t, []Finding{poolLossless}))
+	_, err := ReadPoolFindings(dir)
+	var pe *FindingsParseError
+	require.True(t, errors.As(err, &pe), "got %v", err)
+}

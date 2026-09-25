@@ -333,5 +333,18 @@ func TestDiscover_UnselectableLeafRecordedInSkippedFiles(t *testing.T) {
 	require.NoError(t, err)
 	pool, ok := sourceByName(sources, "pool")
 	require.True(t, ok, "the source must still be reported, not silently dropped")
-	assert.Equal(t, []string{filepath.Join(leafDir, "findings.txt")}, pool.SkippedFiles)
+	// The .toon probe failed with a permission error, not "absent", so the
+	// skipped path names the .toon: a failed .toon never becomes a .txt read.
+	assert.Equal(t, []string{filepath.Join(leafDir, "findings.toon")}, pool.SkippedFiles)
+}
+
+func TestDiscover_V1HeaderInToonIsSkipped(t *testing.T) {
+	dir := t.TempDir()
+	writeFindings(t, dir, "pool/raw/agent/greta/findings.toon", "LOW|b.go:2|p|f|style|1|e|greta\n")
+	sources, err := Discover(dir, nil)
+	require.NoError(t, err)
+	pool, ok := sourceByName(sources, "pool")
+	require.True(t, ok)
+	assert.Empty(t, pool.Findings)
+	assert.Len(t, pool.SkippedFiles, 1)
 }

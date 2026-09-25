@@ -750,7 +750,7 @@ func RebuildPool(ctx context.Context, poolDir string, roster []string) (Summary,
 			}
 			continue
 		}
-		pr, perr := stream.ParseSource(fdata)
+		pr, perr := stream.ParseFindingsFile(fpath, fdata)
 		if perr != nil {
 			// The findings.txt exists but does not parse: silently dropping it
 			// would let the resumed aggregate diverge from the original run

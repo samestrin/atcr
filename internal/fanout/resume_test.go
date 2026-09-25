@@ -873,3 +873,11 @@ func TestRebuildPool_UnreadableToonContributesNothing(t *testing.T) {
 
 	assert.Empty(t, rebuiltPool(t, poolDir, []string{"alpha"}), "the .txt sibling is never read as a substitute")
 }
+
+func TestRebuildPool_V1HeaderInToonFailsOKAgent(t *testing.T) {
+	poolDir := filepath.Join(t.TempDir(), "sources", "pool")
+	v1 := v1Bytes(t, []stream.Finding{txtFinding})
+	seedAgentDir(t, poolDir, "alpha", StatusOK, v1, v1)
+	_, _, err := RebuildPool(context.Background(), poolDir, []string{"alpha"})
+	require.Error(t, err)
+}

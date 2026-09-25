@@ -388,7 +388,7 @@ func (e *FindingsParseError) Error() string { return e.Err.Error() }
 func (e *FindingsParseError) Unwrap() error { return e.Err }
 
 // ReadPoolFindings reads the findings in dir through SelectFindingsFile and
-// ParseSource, which routes on the file's own version header. It returns the
+// ParseFindingsFile, which routes on the file's own version header. It returns the
 // selection error when neither file exists (errors.Is(err, fs.ErrNotExist)),
 // the OS error when the selected file cannot be read, and a
 // *FindingsParseError when it does not parse. It never falls back to
@@ -402,9 +402,31 @@ func ReadPoolFindings(dir string) (ParseResult, error) {
 	if err != nil {
 		return ParseResult{}, err
 	}
-	res, err := ParseSource(data)
+	res, err := ParseFindingsFile(path, data)
 	if err != nil {
 		return ParseResult{}, &FindingsParseError{Path: path, Err: err}
 	}
 	return res, nil
+}
+
+// ParseFindingsFile parses the findings file SelectFindingsFile returned. It is
+// ParseSource plus one rule: a findings.toon must carry the v2 header. A v1
+// header there means the v2 writer produced lossy bytes, so it is an error
+// rather than a clean read of damaged data.
+func ParseFindingsFile(path string, data []byte) (ParseResult, error) {
+	if filepath.Base(path) == findingsFileV2 {
+		if first := firstNonBlankLine(data); first != VersionV2 {
+			return ParseResult{}, fmt.Errorf("%w: %s header is %q (want %q)", ErrUnknownVersion, findingsFileV2, first, VersionV2)
+		}
+	}
+	return ParseSource(data)
+}
+
+func firstNonBlankLine(data []byte) string {
+	for _, line := range strings.Split(string(data), "\n") {
+		if t := strings.TrimSpace(line); t != "" {
+			return t
+		}
+	}
+	return ""
 }

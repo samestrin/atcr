@@ -42,7 +42,7 @@ func RecordReview(histPath, reviewDir string, ts time.Time) (int, error) {
 		fmt.Fprintf(os.Stderr, "atcr: warning: history: skipped %d malformed pool row(s); they will not appear in the trend ledger\n", len(res.Skipped))
 	}
 
-	// The pool findings.txt is the concatenation of every reviewer's rows, so a
+	// The pool findings file is the concatenation of every reviewer's rows, so a
 	// finding caught by N reviewers appears N times. Dedupe by id within this run
 	// so the ledger holds one record per distinct finding per run ("one JSON
 	// record per finding", per the plan) and the severity table is not inflated
