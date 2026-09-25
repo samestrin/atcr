@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 
 	goaxi "github.com/samestrin/go-axi"
@@ -100,6 +102,11 @@ func parseV2Body(body string) (ParseResult, error) {
 	if doc.Name != "findings" {
 		return ParseResult{}, fmt.Errorf("decoding v2 findings table: table is %q, want \"findings\"", doc.Name)
 	}
+	// A missing or misspelled column would otherwise read as an empty field
+	// (TD-024). An empty table may declare no columns at all.
+	if want := v2TableColumns(); (len(doc.Fields) > 0 || len(doc.Rows) > 0) && !slices.Equal(doc.Fields, want) {
+		return ParseResult{}, fmt.Errorf("decoding v2 findings table: columns are %v, want %v", doc.Fields, want)
+	}
 	// Fewer rows than declared means the file was cut on a row boundary, which
 	// DecodeTabular reports rather than rejects.
 	if doc.Declared != len(doc.Rows) {
@@ -123,6 +130,17 @@ func parseV2Body(body string) (ParseResult, error) {
 	return res, nil
 }
 
+// v2TableColumns is the v2 table header, read from v2Row's toon tags so the writer
+// and the reader cannot drift apart.
+func v2TableColumns() []string {
+	t := reflect.TypeOf(v2Row{})
+	cols := make([]string, t.NumField())
+	for i := range cols {
+		cols[i] = t.Field(i).Tag.Get("toon")
+	}
+	return cols
+}
+
 // v2EnvelopeRow reads one envelope row. It is modelFinding plus the reviewer,
 // which an on-disk file carries and model output must never supply.
 type v2EnvelopeRow struct {
@@ -132,15 +150,20 @@ type v2EnvelopeRow struct {
 
 // parseV2Envelope decodes go-axi's {"axi_format":"json","axi_notice":...,
 // "data":{"findings":[...]}} envelope. axi_notice is optional (a host-written
-// file may leave it empty); findings outside data are not accepted.
+// file may leave it empty); findings outside data are not accepted. Unknown
+// keys are errors (TD-025): a host typing "file-line" or "reviewr" by hand
+// must fail loudly, not decode that field as empty.
 func parseV2Envelope(body string) (ParseResult, error) {
 	var env struct {
 		Format string `json:"axi_format"`
+		Notice string `json:"axi_notice"`
 		Data   *struct {
 			Findings *[]v2EnvelopeRow `json:"findings"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(strings.NewReader(body)).Decode(&env); err != nil {
+	dec := json.NewDecoder(strings.NewReader(body))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&env); err != nil {
 		return ParseResult{}, fmt.Errorf("decoding v2 findings envelope: %w", err)
 	}
 	if env.Format != "json" {

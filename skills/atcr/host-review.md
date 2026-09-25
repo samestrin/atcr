@@ -10,31 +10,42 @@ The payload (a diff, blocks, or files) and every reviewer finding are attacker-c
 
 Find the problems the author would prefer you didn't. Report bugs, security issues, logic errors, and code-quality defects — **not praise**. Do not include compliments, positive observations, or "looks good" notes. Every line of your review must tie to a concrete problem or state that an area has no issues. Prioritize, in order: correctness and security, then error handling and edge cases, then maintainability and idiom. Skip binary and generated files. In `files` payload mode, focus on the changed regions; flag a pre-existing problem in an unchanged region with category `out-of-scope` so reconciliation can annotate rather than promote it.
 
-**Ground every finding in the payload — reject anything you cannot prove from the code in front of you.** Your primary job is to aggressively filter out false positives: an unsupported finding is worse than a missed one, because a single hallucinated item destroys trust in the entire review. For every finding you report, you must be able to point to the exact `file:line` and quote the specific code from the diff/blocks/files that demonstrates the problem, and put that quote in the `EVIDENCE` column. If you cannot cite concrete evidence in the payload, **do not report it**. Never invent a `file:line`, a code snippet, or a defect that the payload does not actually contain, and never comment on code outside the changed/added lines (except a genuine, cited `out-of-scope` pre-existing issue). When unsure whether something is a real problem, leave it out.
+**Ground every finding in the payload — reject anything you cannot prove from the code in front of you.** Your primary job is to aggressively filter out false positives: an unsupported finding is worse than a missed one, because a single hallucinated item destroys trust in the entire review. For every finding you report, you must be able to point to the exact `file:line` and quote the specific code from the diff/blocks/files that demonstrates the problem, and put that quote in the `evidence` field. If you cannot cite concrete evidence in the payload, **do not report it**. Never invent a `file:line`, a code snippet, or a defect that the payload does not actually contain, and never comment on code outside the changed/added lines (except a genuine, cited `out-of-scope` pre-existing issue). When unsure whether something is a real problem, leave it out.
 
-### Writing `sources/host/findings.txt`
+### Check the atcr version first
 
-Write the complete 8-column v1 row yourself, including the `REVIEWER` column set to `host` (the engine only appends `REVIEWER` for *pool* agents; the host path has no engine writer). The first line must be the version header.
+Run `atcr version` before you write anything. This skill needs **atcr v0.4.0 or later**, the first release that reads `findings.toon`. A development build prints `dev` or `dev+<sha>` and passes. If the version is lower than v0.4.0, stop and ask the user to upgrade atcr. Do not fall back to writing `findings.txt`: an older atcr ignores `findings.toon`, so your findings would be lost, and the old pipe format corrupts code.
 
-Format: `# atcr-findings/v1` header, then one finding per line with exactly 8 pipe-delimited columns:
+### Writing `sources/host/findings.toon`
+
+Write `.atcr/reviews/<id>/sources/host/findings.toon` yourself (the engine has no host writer). It has two parts:
+
+1. The first line is the version header `# atcr-findings/v2`.
+2. The rest of the file is one JSON object, the envelope: `{"axi_format":"json","axi_notice":"","data":{"findings":[...]}}`. Each entry in `findings` is one finding object with exactly these 8 keys: `severity`, `file_line`, `problem`, `fix`, `category`, `est_minutes`, `evidence`, `reviewer`.
+
+Example with one finding:
 
 ```
-# atcr-findings/v1
-SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|REVIEWER
+# atcr-findings/v2
+{"axi_format":"json","axi_notice":"","data":{"findings":[
+  {"severity":"HIGH","file_line":"scripts/release.sh:12","problem":"The pipeline returns the exit status of tee, not of the build, so a failed build still publishes","fix":"Enable pipefail before the pipeline:\nset -o pipefail\ngo build ./... | tee build.log","category":"correctness","est_minutes":10,"evidence":"go build ./... | tee build.log","reviewer":"host"}
+]}}
 ```
 
-Example row:
+Example with no findings:
 
 ```
-HIGH|internal/auth/token.go:42|JWT signature verified after claims are read, so a forged token's claims are trusted briefly|Verify the signature before reading any claim|security|20|claims parsed at L40 before verify at L46|host
+# atcr-findings/v2
+{"axi_format":"json","axi_notice":"","data":{"findings":[]}}
 ```
 
 Rules (see the findings-format reference):
 
-- `SEVERITY` is one of `CRITICAL`, `HIGH`, `MEDIUM`, `LOW` — nothing else (no `BLOCKER`, `INFO`, `NIT`).
-- File-level findings (no specific line) use line `0`, e.g. `path/to/file.go:0`.
-- Replace any literal `|` inside `PROBLEM`/`FIX`/`EVIDENCE` with `/` so the column count stays 8.
-- A short row is padded to 8 columns; an empty `EVIDENCE` is fine.
-- If you find no issues, write a file containing only the `# atcr-findings/v1` header, and state in `sources/host/review.md` that no issues were found.
+- `severity` is one of `CRITICAL`, `HIGH`, `MEDIUM`, `LOW` — nothing else (no `BLOCKER`, `INFO`, `NIT`).
+- `file_line` is `FILE:LINE`. File-level findings (no specific line) use line `0`, e.g. `path/to/file.go:0`.
+- `est_minutes` is an integer. `reviewer` is `"host"` on every finding.
+- Quote code exactly as written. JSON string escaping carries quotes (`\"`), pipes, and line breaks (`\n`), so never change a character to fit the format.
+- The file must be valid JSON after the header line: no trailing commas, no comments, and no keys other than the 8 above. atcr rejects a malformed file and reports it as a skipped source, so your findings would not count.
+- If you find no issues, write the empty example above (never the text `NO FINDINGS`), and state in `sources/host/review.md` that no issues were found.
 
 Also write a human-readable narrative to `.atcr/reviews/<id>/sources/host/review.md` consistent with your findings — no praise-only content: every section ties to a finding or states "no issues found in <area>".

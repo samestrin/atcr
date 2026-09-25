@@ -348,3 +348,82 @@ func TestDiscover_V1HeaderInToonIsSkipped(t *testing.T) {
 	assert.Empty(t, pool.Findings)
 	assert.Len(t, pool.SkippedFiles, 1)
 }
+
+// writeRaw writes body verbatim, with no header added: host-written v2 files
+// carry their own header.
+func writeRaw(t *testing.T, sourcesDir, relPath, body string) {
+	t.Helper()
+	full := filepath.Join(sourcesDir, relPath)
+	require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o755))
+	require.NoError(t, os.WriteFile(full, []byte(body), 0o644))
+}
+
+// hostEnvelope is a findings.toon as skills/atcr/host-review.md instructs a
+// host to write it: the v2 header, then go-axi's JSON envelope.
+func hostEnvelope(findings string) string {
+	return stream.VersionV2 + "\n" + `{"axi_format":"json","axi_notice":"","data":{"findings":[` + findings + `]}}` + "\n"
+}
+
+const hostFinding = `{"severity":"HIGH","file_line":"scripts/release.sh:12","problem":"p","fix":"set -o pipefail\ngo build ./... | tee build.log","category":"correctness","est_minutes":10,"evidence":"go build ./... | tee build.log","reviewer":"host"}`
+
+var hostWant = stream.Finding{Severity: "HIGH", File: "scripts/release.sh", Line: 12, Problem: "p", Fix: "set -o pipefail\ngo build ./... | tee build.log", Category: "correctness", EstMinutes: 10, Evidence: "go build ./... | tee build.log", Reviewer: "host"}
+
+// AC 08-03 Scenarios 1-2: a host-written findings.toon is discovered and
+// attributed to host, beside a dual-written pool.
+func TestDiscover_HostWrittenToonBesidePool(t *testing.T) {
+	dir := t.TempDir()
+	writeRaw(t, dir, "host/findings.toon", hostEnvelope(hostFinding))
+	writeToon(t, dir, "pool/raw/agent/greta/findings.toon", []stream.Finding{lossless})
+	writeFindings(t, dir, "pool/raw/agent/greta/findings.txt", "LOW|b.go:2|from txt|f|style|1|e|greta\n")
+
+	sources, err := Discover(dir, nil)
+	require.NoError(t, err)
+	host, ok := sourceByName(sources, "host")
+	require.True(t, ok)
+	assert.Equal(t, []stream.Finding{hostWant}, host.Findings)
+	pool, _ := sourceByName(sources, "pool")
+	assert.Equal(t, []stream.Finding{lossless}, pool.Findings)
+}
+
+// AC 08-03 Scenario 4: a host directory with both files reads only the .toon.
+func TestDiscover_HostToonPreferredOverTxt(t *testing.T) {
+	dir := t.TempDir()
+	writeRaw(t, dir, "host/findings.toon", hostEnvelope(hostFinding))
+	writeFindings(t, dir, "host/findings.txt", "LOW|old.go:1|stale|f|style|1|e|host\n")
+
+	sources, err := Discover(dir, nil)
+	require.NoError(t, err)
+	host, _ := sourceByName(sources, "host")
+	assert.Equal(t, []stream.Finding{hostWant}, host.Findings)
+}
+
+// AC 08-03 Scenario 5: an empty host envelope is a present source with zero
+// findings, not a missing one.
+func TestDiscover_EmptyHostEnvelopeIsPresentSource(t *testing.T) {
+	dir := t.TempDir()
+	writeRaw(t, dir, "host/findings.toon", hostEnvelope(""))
+
+	sources, err := Discover(dir, nil)
+	require.NoError(t, err)
+	host, ok := sourceByName(sources, "host")
+	require.True(t, ok, "an empty host file is still a source")
+	assert.Empty(t, host.Findings)
+	assert.Empty(t, host.SkippedFiles)
+}
+
+// AC 08-03 Error Scenario 1: malformed host JSON lands in SkippedFiles and the
+// other sources still reconcile.
+func TestDiscover_MalformedHostEnvelopeIsSkipped(t *testing.T) {
+	dir := t.TempDir()
+	writeRaw(t, dir, "host/findings.toon", hostEnvelope(hostFinding+","))
+	writeToon(t, dir, "pool/raw/agent/greta/findings.toon", []stream.Finding{lossless})
+
+	sources, err := Discover(dir, nil)
+	require.NoError(t, err)
+	host, ok := sourceByName(sources, "host")
+	require.True(t, ok)
+	assert.Empty(t, host.Findings)
+	assert.Equal(t, []string{filepath.Join(dir, "host", "findings.toon")}, host.SkippedFiles)
+	pool, _ := sourceByName(sources, "pool")
+	assert.Equal(t, []stream.Finding{lossless}, pool.Findings)
+}

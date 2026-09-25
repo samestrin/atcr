@@ -179,7 +179,9 @@ func (x textish) MarshalText() ([]byte, error) { return []byte(x.s), nil }
 
 // lossyRow is the real v2 row's columns plus one field TOON cannot carry. The
 // columns are restated, not embedded: go-axi v0.3.1 does not sanitize fields
-// reached through an unexported embedded struct (TD-012).
+// reached through an unexported embedded struct (TD-012). Extra is kept out of
+// the JSON envelope so the fallback carries exactly v2Row's eight keys, as a
+// real fallback would; the strict envelope reader rejects any other key.
 type lossyRow struct {
 	Severity   string `toon:"severity" json:"severity"`
 	FileLine   string `toon:"file_line" json:"file_line"`
@@ -189,7 +191,7 @@ type lossyRow struct {
 	EstMinutes int    `toon:"est_minutes" json:"est_minutes"`
 	Evidence   string `toon:"evidence" json:"evidence"`
 	Reviewer   string `toon:"reviewer" json:"reviewer"`
-	Extra      any    `toon:"extra" json:"extra"`
+	Extra      any    `toon:"extra" json:"-"`
 }
 
 type lossyPayload struct {

@@ -234,6 +234,13 @@ func TestParseSource_V2Errors(t *testing.T) {
 		{"empty body", ""},
 		{"wrong table name", "rows[1]{severity,file_line}:\n  HIGH,\"a.go:1\""},
 		{"fewer rows than declared", "findings[2]{severity,file_line}:\n  HIGH,\"a.go:1\""},
+		// TD-024: a table must carry exactly the eight v2 columns.
+		{"missing columns", "findings[1]{severity,file_line}:\n  HIGH,\"a.go:1\""},
+		{"misspelled column", "findings[1]{severity,file_line,problem,fix,category,est_minutes,evidence,reviewr}:\n  HIGH,\"a.go:1\",p,f,c,1,e,r"},
+		// TD-025: a host-written envelope with a typo key fails instead of
+		// decoding that field as empty.
+		{"unknown row key", `{"axi_format":"json","axi_notice":"","data":{"findings":[{"severity":"HIGH","file-line":"a.go:1","reviewer":"host"}]}}`},
+		{"unknown envelope key", `{"axi_format":"json","axi_notice":"","extra":1,"data":{"findings":[]}}`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
