@@ -92,8 +92,10 @@ func TestExecuteBenchmarkRun_DistinguishesZeroFindingOutcomes(t *testing.T) {
 }
 
 // Prose that merely SOUNDS like a clean review is not one. `stream.IsNoFindings`
-// matches the literal sentinel (case- and whitespace-insensitively) and nothing else,
-// so "No findings." — a sentence, not the token — is unparseable output.
+// matches the sentinel and the small slips a model makes around it (case,
+// whitespace, a trailing '.', ':' or '!', a code fence, an empty JSON array) and
+// nothing else, so "No findings were identified in this diff." — a sentence, not
+// the token — is unparseable output.
 //
 // This is the distinction the whole vocabulary rests on, and it is easy to get
 // backwards: a reviewer that ignored the prompt contract and wrote its own sentence
@@ -109,7 +111,7 @@ func TestExecuteBenchmarkRun_NearMissProseIsNotACleanReview(t *testing.T) {
 
 	cov := coverageFor(t, rr, "m-nearly", "nearly")
 	assert.Equal(t, 2, cov.Outcomes[benchmark.OutcomeUnparseable],
-		`"No findings." is a sentence, not the sentinel — it is unparseable output`)
+		`"No findings were identified in this diff." is a sentence, not the sentinel — it is unparseable output`)
 	assert.Zero(t, cov.Outcomes[benchmark.OutcomeClean],
 		"crediting it as a clean review would let a reviewer that ignored the contract publish as if it followed it")
 }

@@ -123,10 +123,10 @@ func TestParseModelOutput_UnfencedArrayFallback(t *testing.T) {
 	// A cut-off bare array recovers the same way a fenced one does.
 	assert.Equal(t, []Finding{findA}, ParseModelOutput([]byte("["+objA+",\n"+objB[:20])))
 
-	// The fallback is only for a model that forgot the fence: once any ```json
-	// block exists, a bare array elsewhere is prose.
+	// A chunked review can mix a chunk that forgot the fence with one that did
+	// not; both are read, in Content order (TD-016, live run 2026-09-25).
 	withFence := "[" + objC + "]\n" + jsonBlock("["+objB+"]")
-	assert.Equal(t, []Finding{findB}, ParseModelOutput([]byte(withFence)))
+	assert.Equal(t, []Finding{findC, findB}, ParseModelOutput([]byte(withFence)))
 
 	// Recovering a cut-off bare array stops at the next fence: a quoted example
 	// below it is never read as a finding.
@@ -138,6 +138,52 @@ func TestParseModelOutput_UnfencedArrayFallback(t *testing.T) {
 
 	// A bare array quoted inside a non-json fence is an example.
 	assert.Empty(t, ParseModelOutput([]byte("```\n["+objA+"]\n```\n")))
+}
+
+// The shapes a model slips into, and the only one a json_object response
+// format allows, read like the fenced array (TD-022; vera, live run 2026-09-25).
+func TestParseModelOutput_ObjectShapes(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+		want    []Finding
+	}{
+		{"wrapper in a fence", jsonBlock(`{"findings":[` + objA + "," + objB + `]}`), []Finding{findA, findB}},
+		{"bare wrapper", `{"findings":[` + objA + `]}`, []Finding{findA}},
+		{"bare single object", objA, []Finding{findA}},
+		{"pretty-printed single object", "{\n" + objA[1:len(objA)-1] + "\n}", []Finding{findA}},
+		{"single object in a fence", jsonBlock(objA), []Finding{findA}},
+		{"bare object chunk beside a fenced chunk", objA + "\n" + jsonBlock("["+objB+"]"), []Finding{findA, findB}},
+		{"cut-off wrapper keeps complete objects", `{"findings":[` + objA + "," + objB[:20], []Finding{findA}},
+		{"an array is not re-read object by object", "[\n" + objA + ",\n" + objB + "\n]", []Finding{findA, findB}},
+		{"empty wrapper", `{"findings":[]}`, nil},
+		{"object with no severity is prose", `{"note":"hello"}`, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, ParseModelOutput([]byte(c.content)))
+		})
+	}
+}
+
+// Every clean shape a model slipped into on the live panel, and the ones a
+// json_object response format produces, count as a clean review; anything
+// with other text does not.
+func TestIsNoFindings_AcceptsCleanSlips(t *testing.T) {
+	for _, in := range []string{
+		"NO FINDINGS:\nNO FINDINGS",                     // greta, run 3
+		"```json\n[\n]\n```\n```json\nNO FINDINGS\n```", // greta, run 1
+		"NO FINDINGS.", "NO FINDINGS!", "[]", " [ ] ", `{"findings":[]}`,
+		"```\nNO FINDINGS\n```", "NO FINDINGS\n\nNO FINDINGS",
+	} {
+		assert.True(t, IsNoFindings(in), "%q is a clean review", in)
+	}
+	for _, in := range []string{
+		"NO FINDINGS HERE", "NO FINDINGSX", "[]x", "[1]", `{"findings":[{}]}`, `{"findings":[],"x":1}`,
+		"No findings are present; all claims are verified.", "NO FINDINGS\nbut see line 3", "```json\n```", "{}",
+	} {
+		assert.False(t, IsNoFindings(in), "%q must not count as clean", in)
+	}
 }
 
 func TestParseModelOutput_MixedJSONAndPipeRowsInContentOrder(t *testing.T) {

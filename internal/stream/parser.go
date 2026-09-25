@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // Version is the required first non-blank line of every findings file. Unknown
@@ -24,12 +25,38 @@ const Version = "# atcr-findings/v1"
 // sentinel provides. Every persona prompt instructs it.
 const NoFindingsSentinel = "NO FINDINGS"
 
-// IsNoFindings reports whether a reviewer response is the explicit clean-review
-// sentinel. Matching is case-insensitive and ignores surrounding whitespace —
-// the sentinel is a model-produced token, so exact-byte matching would turn a
-// trailing newline into a spurious anomaly.
+// IsNoFindings reports whether a reviewer response says "clean" and nothing
+// else. The sentinel is model-produced, so the shapes a model slips into are
+// accepted too: any case, surrounding whitespace, trailing '.', ':' or '!', a
+// code fence around it, and an empty JSON array or {"findings":[]} (the clean
+// reply under a json_object response format). A response may repeat these, as
+// a chunked review does, but must hold nothing else: any other text means the
+// model said something no parser read, which is exactly what this check must
+// not call clean.
 func IsNoFindings(content string) bool {
-	return strings.EqualFold(strings.TrimSpace(content), NoFindingsSentinel)
+	var kept []string
+	for _, l := range strings.Split(content, "\n") {
+		if !isFenceMarker(strings.TrimRight(l, "\r")) {
+			kept = append(kept, l)
+		}
+	}
+	s := strings.TrimSpace(strings.Join(kept, "\n"))
+	seen := false
+	for s != "" {
+		if n := len(NoFindingsSentinel); len(s) >= n && strings.EqualFold(s[:n], NoFindingsSentinel) {
+			s = strings.TrimLeft(s[n:], ".:!")
+		} else if n := emptyFindingsValue(s); n > 0 {
+			s = s[n:]
+		} else {
+			return false
+		}
+		if s != "" && !unicode.IsSpace(rune(s[0])) {
+			return false // "NO FINDINGSX", "[]x"
+		}
+		s = strings.TrimSpace(s)
+		seen = true
+	}
+	return seen
 }
 
 // versionPrefix matches any atcr-findings version header so a wrong version can
@@ -142,8 +169,10 @@ const ModelColumns = 7 // SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EV
 //     persona prompts ask for. A chunked review joins several chunk outputs, so
 //     every such block is read and the findings are unioned. A cut-off block
 //     keeps every complete object and drops only the partial one (see
-//     decodeJSONFindings). Only when Content has no ```json fence at all is a
-//     bare, unfenced array tried, for a model that forgot the fence.
+//     decodeJSONValue). A bare, unfenced value outside any fence is read too,
+//     for a model (or one chunk) that forgot the fence. A value may also be a
+//     {"findings":[...]} wrapper or one finding object, the shapes a model
+//     slips into and the only shape a json_object response format allows.
 //   - A legacy 7-column pipe row, for custom personas that have not migrated:
 //     exactly the 7 persona columns (SEVERITY..EVIDENCE). An 8th-or-later field
 //     is folded into EVIDENCE, never dropped. Non-severity-prefixed lines,
@@ -151,11 +180,10 @@ const ModelColumns = 7 // SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EV
 func ParseModelOutput(data []byte) []Finding {
 	text := string(data)
 	lines := strings.Split(text, "\n")
-	tryBareArray := !hasJSONFence(lines)
-
 	var out []Finding
 	inFence, inJSON := false, false
 	bareAttempts := 0
+	bareEnd := 0   // byte offset just past the last bare value read
 	jsonStart := 0 // byte offset of the current ```json block's first content line
 	offset := 0    // byte offset of the current line
 	for i, raw := range lines {
@@ -191,16 +219,18 @@ func ParseModelOutput(data []byte) []Finding {
 		if inJSON || inFence {
 			continue
 		}
-		if tryBareArray && bareAttempts < maxBareArrayAttempts && strings.HasPrefix(strings.TrimSpace(line), "[") {
-			// Only the first array that yields a finding is taken; a prose line like
-			// "[x](y)" decodes to nothing and is passed over. The candidate ends at
-			// the next fence marker, so recovering a cut-off array never reaches into
-			// a quoted example below it, and the attempts are capped because each
-			// one can scan to the end of Content.
+		if lineStart < bareEnd {
+			continue // inside a bare value already read
+		}
+		if t := strings.TrimSpace(line); bareAttempts < maxBareAttempts && (strings.HasPrefix(t, "[") || strings.HasPrefix(t, "{")) {
+			// A prose line like "[x](y)" decodes to nothing and is passed over. The
+			// candidate ends at the next fence marker, so recovering a cut-off value
+			// never reaches into a quoted example below it, and the attempts are
+			// capped because each one can scan to the next fence.
 			bareAttempts++
-			if found := decodeJSONFindings(text[lineStart:nextFenceOffset(lines, i, lineStart, len(text))]); len(found) > 0 {
+			if found, n := decodeJSONValue(text[lineStart:nextFenceOffset(lines, i, lineStart, len(text))]); len(found) > 0 {
 				out = append(out, found...)
-				tryBareArray = false
+				bareEnd = lineStart + n
 				continue
 			}
 		}

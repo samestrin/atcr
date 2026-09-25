@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -241,10 +242,10 @@ func isJSONFence(line string) bool {
 	return strings.EqualFold(strings.TrimSpace(strings.TrimLeft(t, "`")), "json")
 }
 
-// maxBareArrayAttempts bounds how many "["-led lines ParseModelOutput tries as
-// an unfenced array. Model output is untrusted, and each attempt can scan to the
-// end of Content, so an unbounded count is quadratic.
-const maxBareArrayAttempts = 16
+// maxBareAttempts bounds how many "["- or "{"-led lines ParseModelOutput tries
+// as an unfenced value. Model output is untrusted, and each attempt can scan to
+// the next fence, so an unbounded count is quadratic.
+const maxBareAttempts = 16
 
 // nextFenceOffset returns the byte offset of the first fence marker line after
 // line i (which starts at offset start), or end, the length of Content.
@@ -259,38 +260,54 @@ func nextFenceOffset(lines []string, i, start, end int) int {
 	return min(off, end)
 }
 
-// hasJSONFence reports whether Content opens any ```json block, using the same
-// fence toggle as ParseModelOutput, so a "```json" line that closes some other
-// fence does not count.
-func hasJSONFence(lines []string) bool {
-	inFence := false
-	for _, raw := range lines {
-		line := strings.TrimRight(raw, "\r")
-		if !isFenceMarker(line) {
-			continue
-		}
-		if !inFence && isJSONFence(line) {
-			return true
-		}
-		inFence = !inFence
-	}
-	return false
+// decodeJSONFindings reads the JSON value at the start of a ```json block.
+func decodeJSONFindings(text string) []Finding {
+	found, _ := decodeJSONValue(text)
+	return found
 }
 
-// decodeJSONFindings reads the JSON array at the start of text (after
-// whitespace) and returns its valid finding objects. Text after the array is
-// ignored. When the array does not decode — the response was cut off, or an
-// element is malformed — it keeps every complete element before the damage and
-// drops the rest (recoverElements). Objects with an unknown severity or no
-// location are dropped, as the pipe path drops degenerate rows.
-func decodeJSONFindings(text string) []Finding {
-	text = strings.TrimLeft(text, " \t\r\n")
-	if !strings.HasPrefix(text, "[") {
-		return nil
-	}
+// findingsWrapperRe matches the opening of a {"findings":[...]} wrapper, so a
+// cut-off wrapper can still recover the complete objects inside it.
+var findingsWrapperRe = regexp.MustCompile(`^\{\s*"findings"\s*:\s*\[`)
+
+// decodeJSONValue reads the JSON value at the start of text (after whitespace)
+// and returns its valid finding objects plus the bytes it consumed. The value is
+// an array of finding objects, a {"findings":[...]} wrapper, or one finding
+// object. When it does not decode — the response was cut off, or an element is
+// malformed — it keeps every complete element before the damage and drops the
+// rest (recoverElements), and consumes all of text. Objects with an unknown
+// severity or no location are dropped, as the pipe path drops degenerate rows.
+func decodeJSONValue(text string) ([]Finding, int) {
+	body := strings.TrimLeft(text, " \t\r\n")
+	lead := len(text) - len(body)
+	consumed := len(text)
 	var elems []json.RawMessage
-	if err := json.NewDecoder(strings.NewReader(text)).Decode(&elems); err != nil {
-		elems = recoverElements(text)
+	switch {
+	case strings.HasPrefix(body, "["):
+		dec := json.NewDecoder(strings.NewReader(body))
+		if err := dec.Decode(&elems); err != nil {
+			elems = recoverElements(body)
+		} else {
+			consumed = lead + int(dec.InputOffset())
+		}
+	case strings.HasPrefix(body, "{"):
+		dec := json.NewDecoder(strings.NewReader(body))
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err == nil {
+			consumed = lead + int(dec.InputOffset())
+			var wrap struct {
+				Findings *[]json.RawMessage `json:"findings"`
+			}
+			if json.Unmarshal(raw, &wrap) == nil && wrap.Findings != nil {
+				elems = *wrap.Findings
+			} else {
+				elems = []json.RawMessage{raw}
+			}
+		} else if loc := findingsWrapperRe.FindStringIndex(body); loc != nil {
+			elems = recoverElements(body[loc[1]-1:])
+		}
+	default:
+		return nil, 0
 	}
 	var out []Finding
 	for _, e := range elems {
@@ -315,7 +332,34 @@ func decodeJSONFindings(text string) []Finding {
 			Evidence:   m.Evidence,
 		})
 	}
-	return out
+	return out, consumed
+}
+
+// emptyFindingsValue returns the length of the empty JSON array or
+// {"findings":[]} at the start of s, or 0 when s starts with anything else.
+func emptyFindingsValue(s string) int {
+	if !strings.HasPrefix(s, "[") && !strings.HasPrefix(s, "{") {
+		return 0
+	}
+	dec := json.NewDecoder(strings.NewReader(s))
+	var v any
+	if dec.Decode(&v) != nil {
+		return 0
+	}
+	switch t := v.(type) {
+	case []any:
+		if len(t) != 0 {
+			return 0
+		}
+	case map[string]any:
+		f, ok := t["findings"].([]any)
+		if len(t) != 1 || !ok || len(f) != 0 {
+			return 0
+		}
+	default:
+		return 0
+	}
+	return int(dec.InputOffset())
 }
 
 // recoverElements splits a damaged JSON array (text starts with '[') into its
