@@ -70,7 +70,8 @@ func TestParser_MissingHeader(t *testing.T) {
 }
 
 func TestParser_UnknownVersion(t *testing.T) {
-	data := "# atcr-findings/v2\nCRITICAL|a.go:1|p|f|c|5|e|bruce\n"
+	// v3, not v2: v2 is a supported header (see v2_parse_test.go).
+	data := "# atcr-findings/v3\nCRITICAL|a.go:1|p|f|c|5|e|bruce\n"
 	_, err := ParseSource([]byte(data))
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnknownVersion)

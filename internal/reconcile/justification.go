@@ -552,6 +552,13 @@ func extractSection(lines []string, idx int) (text, section string) {
 	headingAt := func(j int) bool { return !released[j] && isHeadingLine(lines[j]) }
 	itemAt := func(j int) bool { return !released[j] && isItemStart(lines[j]) }
 	recordAt := func(j int) bool { return !strict[j] && isFindingRecordStart(lines[j]) }
+	// A ```json block is the model's findings output, so it is ONE record block,
+	// opener through closer: the prose on either side belongs to different
+	// findings and must not be joined across it. Pipe-shaped text inside it bounds
+	// nothing (recordAt reads strict, which masks it). An anchor inside the block
+	// yields a placeholder-only excerpt, which the caller already treats as "no
+	// narrative" and passes over for a prose anchor.
+	jsonOpen, jsonClose := jsonFenceBounds(lines)
 
 	for j := idx; j >= 0; j-- {
 		if released[j] {
@@ -568,8 +575,8 @@ func extractSection(lines []string, idx int) (text, section string) {
 	// a continuation line, absorb the list-item marker line above it so the finding
 	// headline is included in the excerpt.
 	start := idx
-	for start > 0 && !headingAt(start) && !itemAt(start) && !recordAt(start) {
-		if strings.TrimSpace(lines[start-1]) == "" || headingAt(start-1) {
+	for start > 0 && !headingAt(start) && !itemAt(start) && !recordAt(start) && !jsonOpen[start] {
+		if strings.TrimSpace(lines[start-1]) == "" || headingAt(start-1) || jsonClose[start-1] {
 			break
 		}
 		// A finding record begins its OWN block and is never absorbed — unlike a list
@@ -587,8 +594,8 @@ func extractSection(lines []string, idx int) (text, section string) {
 	}
 	// Walk down until the next line starts a new item/section/record or is blank.
 	end := idx
-	for end < len(lines)-1 {
-		if strings.TrimSpace(lines[end+1]) == "" || headingAt(end+1) || itemAt(end+1) || recordAt(end+1) {
+	for end < len(lines)-1 && !jsonClose[end] {
+		if strings.TrimSpace(lines[end+1]) == "" || headingAt(end+1) || itemAt(end+1) || recordAt(end+1) || jsonOpen[end+1] {
 			break
 		}
 		end++
@@ -738,8 +745,8 @@ var recordRe = regexp.MustCompile(`^(CRITICAL|HIGH|MEDIUM|LOW)\|`)
 // whose id excludes it, so the first reconcile is the only one that can be right.
 //
 // Hence all three of the parser's conditions, not just the first:
-//   - column-0 anchored, uppercase, pipe adjacent (recordRe, mirroring parser.go:162);
-//   - at least three fields with a non-empty location (mirroring parser.go:168, which
+//   - column-0 anchored, uppercase, pipe adjacent (recordRe, mirroring parser.go:201);
+//   - at least three fields with a non-empty location (mirroring parser.go:207, which
 //     drops degenerate severity-prefixed noise like a bare "HIGH|").
 //
 // An EARLIER revision keyed on SeverityRank/NormalizeSeverity after trimming, and
@@ -756,7 +763,7 @@ func isFindingRecordStart(s string) bool {
 }
 
 // fenceMask reports, per line, whether it sits INSIDE a fenced code block, in TWO
-// views. strict matches the toggle-then-continue order in stream/parser.go:152-158
+// views. strict matches the toggle-then-continue order in stream/parser.go:172-186
 // byte-for-byte: fence markers are OUTSIDE, and an UNTERMINATED fence masks to EOF,
 // exactly as the parser's bare `inFence = !inFence` skips every line below a
 // dangling opener. released is identical except that the run below a dangling
@@ -835,8 +842,46 @@ func fenceMask(lines []string) (strict, released, balanced []bool) {
 	return strict, released, balanced
 }
 
+// jsonFenceBounds marks the opener and closer of every ```json block, using the
+// same toggle as fenceMask (and the producing parser, stream/parser.go:172-186):
+// a "```json" line that closes some other fence opens nothing. A dangling
+// opener has no closer; the parser reads to EOF.
+func jsonFenceBounds(lines []string) (open, close []bool) {
+	open = make([]bool, len(lines))
+	close = make([]bool, len(lines))
+	inFence, inJSON := false, false
+	for i, l := range lines {
+		if !isFenceMarker(l) {
+			continue
+		}
+		switch {
+		case inFence:
+			close[i] = inJSON
+			inFence, inJSON = false, false
+		case isJSONFenceOpener(l):
+			open[i] = true
+			inFence, inJSON = true, true
+		default:
+			inFence = true
+		}
+	}
+	return open, close
+}
+
+// isJSONFenceOpener mirrors internal/stream's isJSONFence (v2.go:205): a fence
+// marker whose info string is "json" in any case. Restated rather than imported
+// because it is unexported there; TestIsJSONFenceOpener_AgreesWithTheProducing
+// Parser pins the two together against stream.ParseModelOutput itself.
+func isJSONFenceOpener(line string) bool {
+	t := strings.TrimLeft(strings.TrimRight(line, "\r"), " \t")
+	if !strings.HasPrefix(t, "```") {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(strings.TrimLeft(t, "`")), "json")
+}
+
 // isFenceMarker reports whether a line opens or closes a fenced block: its first
-// non-space content is a run of >=3 backticks. Mirrors stream/parser.go:194.
+// non-space content is a run of >=3 backticks. Mirrors stream/parser.go:239.
 func isFenceMarker(line string) bool {
 	return strings.HasPrefix(strings.TrimLeft(line, " \t"), "```")
 }

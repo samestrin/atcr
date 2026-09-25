@@ -129,13 +129,13 @@ func TestGolden_HeaderErrors(t *testing.T) {
 	_, err := ParseSource([]byte("HIGH|a.go:1|p|f|c|1|e|r\n"))
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrMissingHeader))
-	assert.Equal(t, `missing version header: first line must be "# atcr-findings/v1"`, err.Error())
 
 	// v99, not v2: a v2 header gets its own decoder later in this sprint.
+	// Only the sentinel is frozen here, not the message text: once v2 is a
+	// valid header, the wording names both versions (TD-009, decided 2026-09-24).
 	_, err = ParseReconciled([]byte("# atcr-findings/v99\n"))
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrUnknownVersion))
-	assert.Equal(t, `unknown findings version: "# atcr-findings/v99" (want "# atcr-findings/v1")`, err.Error())
 }
 
 // The writer emits only the header and canonical finding rows, so each

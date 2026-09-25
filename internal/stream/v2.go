@@ -1,8 +1,11 @@
 package stream
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	goaxi "github.com/samestrin/go-axi"
 )
@@ -73,4 +76,244 @@ func encodeV2(w io.Writer, payload any) error {
 		return fmt.Errorf("encoding v2 findings: %w", err)
 	}
 	return nil
+}
+
+// envelopePrefix is how a v2 body announces go-axi's JSON envelope. Readers
+// route on this literal, never on a bare leading '{' or '[': several TOON
+// shapes begin with '['.
+const envelopePrefix = `{"axi_format`
+
+// parseV2Body decodes the body under a "# atcr-findings/v2" header. Unlike
+// ParseModelOutput it recovers nothing: this file is written by atcr or by the
+// host skill, so any deviation is an error, never a partial or empty result.
+func parseV2Body(body string) (ParseResult, error) {
+	if strings.HasPrefix(strings.TrimLeft(body, " \t\r\n"), envelopePrefix) {
+		return parseV2Envelope(body)
+	}
+	doc, err := goaxi.DecodeTabular(strings.NewReader(body))
+	if err != nil {
+		return ParseResult{}, fmt.Errorf("decoding v2 findings table: %w", err)
+	}
+	if doc.Name != "findings" {
+		return ParseResult{}, fmt.Errorf("decoding v2 findings table: table is %q, want \"findings\"", doc.Name)
+	}
+	// Fewer rows than declared means the file was cut on a row boundary, which
+	// DecodeTabular reports rather than rejects.
+	if doc.Declared != len(doc.Rows) {
+		return ParseResult{}, fmt.Errorf("decoding v2 findings table: header declares %d row(s), found %d", doc.Declared, len(doc.Rows))
+	}
+	res := ParseResult{Findings: make([]Finding, 0, len(doc.Rows))}
+	for _, r := range doc.Rows {
+		file, line := splitFileLine(r["file_line"])
+		res.Findings = append(res.Findings, Finding{
+			Severity:   r["severity"],
+			File:       file,
+			Line:       line,
+			Problem:    r["problem"],
+			Fix:        r["fix"],
+			Category:   r["category"],
+			EstMinutes: atoiOrZero(r["est_minutes"]),
+			Evidence:   r["evidence"],
+			Reviewer:   r["reviewer"],
+		})
+	}
+	return res, nil
+}
+
+// v2EnvelopeRow reads one envelope row. It is modelFinding plus the reviewer,
+// which an on-disk file carries and model output must never supply.
+type v2EnvelopeRow struct {
+	modelFinding
+	Reviewer string `json:"reviewer"`
+}
+
+// parseV2Envelope decodes go-axi's {"axi_format":"json","axi_notice":...,
+// "data":{"findings":[...]}} envelope. axi_notice is optional (a host-written
+// file may leave it empty); findings outside data are not accepted.
+func parseV2Envelope(body string) (ParseResult, error) {
+	var env struct {
+		Format string `json:"axi_format"`
+		Data   *struct {
+			Findings *[]v2EnvelopeRow `json:"findings"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(strings.NewReader(body)).Decode(&env); err != nil {
+		return ParseResult{}, fmt.Errorf("decoding v2 findings envelope: %w", err)
+	}
+	if env.Format != "json" {
+		return ParseResult{}, fmt.Errorf("decoding v2 findings envelope: axi_format is %q, want \"json\"", env.Format)
+	}
+	if env.Data == nil || env.Data.Findings == nil {
+		return ParseResult{}, errors.New("decoding v2 findings envelope: missing data.findings")
+	}
+	rows := *env.Data.Findings
+	res := ParseResult{Findings: make([]Finding, 0, len(rows))}
+	for _, r := range rows {
+		file, line := splitFileLine(r.FileLine)
+		res.Findings = append(res.Findings, Finding{
+			Severity:   r.Severity,
+			File:       file,
+			Line:       line,
+			Problem:    r.Problem,
+			Fix:        r.Fix,
+			Category:   r.Category,
+			EstMinutes: int(r.EstMinutes),
+			Evidence:   r.Evidence,
+			Reviewer:   r.Reviewer,
+		})
+	}
+	return res, nil
+}
+
+// modelFinding is one finding object a reviewer model emits. It has no
+// reviewer field on purpose: encoding/json drops unknown keys, so a
+// model-supplied "reviewer" can never reach Finding.Reviewer (TD-016).
+type modelFinding struct {
+	Severity   string  `json:"severity"`
+	FileLine   string  `json:"file_line"`
+	Problem    string  `json:"problem"`
+	Fix        string  `json:"fix"`
+	Category   string  `json:"category"`
+	EstMinutes flexInt `json:"est_minutes"`
+	Evidence   string  `json:"evidence"`
+}
+
+// flexInt is EST_MINUTES as a model writes it: a number, a numeric string, or
+// junk. Like atoiOrZero it is best-effort and never fails the finding.
+type flexInt int
+
+func (n *flexInt) UnmarshalJSON(b []byte) error {
+	var num json.Number
+	if json.Unmarshal(b, &num) == nil {
+		if i, err := num.Int64(); err == nil {
+			*n = flexInt(i)
+		} else if f, err := num.Float64(); err == nil {
+			*n = flexInt(int(f))
+		}
+		return nil
+	}
+	var s string
+	if json.Unmarshal(b, &s) == nil {
+		*n = flexInt(atoiOrZero(s))
+	}
+	return nil
+}
+
+// isJSONFence reports whether a fence marker line opens a ```json block: its
+// info string, after the backticks, is "json" in any case.
+// internal/reconcile's isJSONFenceOpener restates this rule and is pinned to it.
+func isJSONFence(line string) bool {
+	t := strings.TrimLeft(line, " \t")
+	if !strings.HasPrefix(t, "```") {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(strings.TrimLeft(t, "`")), "json")
+}
+
+// hasJSONFence reports whether Content opens any ```json block, using the same
+// fence toggle as ParseModelOutput, so a "```json" line that closes some other
+// fence does not count.
+func hasJSONFence(lines []string) bool {
+	inFence := false
+	for _, raw := range lines {
+		line := strings.TrimRight(raw, "\r")
+		if !isFenceMarker(line) {
+			continue
+		}
+		if !inFence && isJSONFence(line) {
+			return true
+		}
+		inFence = !inFence
+	}
+	return false
+}
+
+// decodeJSONFindings reads the JSON array at the start of text (after
+// whitespace) and returns its valid finding objects. Text after the array is
+// ignored. When the array does not decode — the response was cut off, or an
+// element is malformed — it keeps every complete element before the damage and
+// drops the rest (recoverElements). Objects with an unknown severity or no
+// location are dropped, as the pipe path drops degenerate rows.
+func decodeJSONFindings(text string) []Finding {
+	text = strings.TrimLeft(text, " \t\r\n")
+	if !strings.HasPrefix(text, "[") {
+		return nil
+	}
+	var elems []json.RawMessage
+	if err := json.NewDecoder(strings.NewReader(text)).Decode(&elems); err != nil {
+		elems = recoverElements(text)
+	}
+	var out []Finding
+	for _, e := range elems {
+		var m modelFinding
+		if json.Unmarshal(e, &m) != nil {
+			continue // valid JSON, wrong shape (e.g. a number where text belongs)
+		}
+		sev := NormalizeSeverity(m.Severity)
+		loc := strings.TrimSpace(m.FileLine)
+		if _, ok := SeverityRank[sev]; !ok || loc == "" {
+			continue
+		}
+		file, line := splitFileLine(loc)
+		out = append(out, Finding{
+			Severity:   sev,
+			File:       file,
+			Line:       line,
+			Problem:    m.Problem,
+			Fix:        m.Fix,
+			Category:   m.Category,
+			EstMinutes: int(m.EstMinutes),
+			Evidence:   m.Evidence,
+		})
+	}
+	return out
+}
+
+// recoverElements splits a damaged JSON array (text starts with '[') into its
+// complete object/array elements by tracking bracket depth outside string
+// literals, so a '}' or ']' inside a string is never read as structure. It stops
+// at the first element that is not valid JSON, because the depth count after a
+// malformed element cannot be trusted, and at the array's closing bracket. A
+// cut-off final element never closes, so it is never returned.
+func recoverElements(text string) []json.RawMessage {
+	var out []json.RawMessage
+	depth, elemStart := 0, -1
+	inStr, esc := false, false
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		if inStr {
+			switch {
+			case esc:
+				esc = false
+			case c == '\\':
+				esc = true
+			case c == '"':
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '{', '[':
+			depth++
+			if depth == 2 {
+				elemStart = i
+			}
+		case '}', ']':
+			depth--
+			if depth == 1 && elemStart >= 0 {
+				elem := text[elemStart : i+1]
+				if !json.Valid([]byte(elem)) {
+					return out
+				}
+				out = append(out, json.RawMessage(elem))
+				elemStart = -1
+			}
+			if depth <= 0 {
+				return out
+			}
+		}
+	}
+	return out
 }

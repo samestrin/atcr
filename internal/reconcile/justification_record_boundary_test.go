@@ -68,6 +68,67 @@ func TestIsFindingRecordStart_AgreesWithTheProducingParser(t *testing.T) {
 	}
 }
 
+// A JSON finding means nothing on one line — it needs its fence and array — so the
+// line-level oracle above cannot pin it. This is the BLOCK-level oracle: each case
+// is one fence holding a valid findings array, varied only in its opener. The
+// parser reads findings out of it iff it treats the opener as a ```json block, and
+// isJSONFenceOpener must say exactly the same, or extractSection bounds a block the
+// parser never read (or misses one it did).
+//
+// A real ```json block leads every case. That switches off the parser's bare-array
+// fallback (tried only when Content has no ```json fence), which would otherwise
+// read the array under a non-fence opener like "~~~json" and blur the question
+// this test asks.
+func TestIsJSONFenceOpener_AgreesWithTheProducingParser(t *testing.T) {
+	const body = `[{"severity":"HIGH","file_line":"a.go:10","problem":"p","fix":"f","category":"c","est_minutes":1,"evidence":"HIGH|x.go:1|pipe-shaped|text"}]`
+	for _, opener := range []string{
+		"```json", "```JSON", "  ```json", "````json", "``` json", "```json  ",
+		"```", "```text", "```jsonc", "```js", "~~~json", "json",
+	} {
+		t.Run(opener, func(t *testing.T) {
+			const lead = "```json\n" + `[{"severity":"LOW","file_line":"lead.go:1"}]` + "\n```\n"
+			block := lead + opener + "\n" + body + "\n```\n"
+			n := len(stream.ParseModelOutput([]byte(block)))
+			require.Contains(t, []int{1, 2}, n, "the leading block always parses")
+			parserSaysJSON := n == 2
+			assert.Equal(t, parserSaysJSON, isJSONFenceOpener(opener),
+				"opener %q: stream.ParseModelOutput and isJSONFenceOpener must agree on "+
+					"whether this fence is a JSON findings block", opener)
+		})
+	}
+}
+
+// A ```json block is ONE record block: the reviewer's prose on either side of it
+// belongs to different findings, and a pipe-shaped string inside it bounds
+// nothing. Before this, the walk crossed the fence and stamped the prose BELOW
+// it onto the finding anchored ABOVE it.
+func TestExtractSection_JSONFenceIsOneRecordBlock(t *testing.T) {
+	doc := "## Findings\n" +
+		"The token check at `internal/auth/token.go:42` is missing entirely.\n" +
+		"```json\n" +
+		`[{"severity":"HIGH","file_line":"internal/auth/token.go:42","problem":"p","fix":"f","category":"security","est_minutes":5,"evidence":"e"},` + "\n" +
+		`{"severity":"LOW","file_line":"internal/cli/run.go:7","problem":"q","fix":"g","category":"style","est_minutes":1,"evidence":"e"}]` + "\n" +
+		"```\n" +
+		"The retry loop at `internal/cli/run.go:7` never backs off."
+	lines := strings.Split(doc, "\n")
+
+	above, section := extractSection(lines, 1)
+	assert.Equal(t, "Findings", section)
+	assert.Contains(t, above, "token check")
+	assert.NotContains(t, above, "retry loop", "prose below the JSON block belongs to another finding")
+	assert.NotContains(t, above, ElidedQuotePlaceholder, "the JSON block is its own record, not part of the prose above")
+
+	below, _ := extractSection(lines, 6)
+	assert.Contains(t, below, "retry loop")
+	assert.NotContains(t, below, "token check", "prose above the JSON block belongs to another finding")
+	assert.NotContains(t, below, ElidedQuotePlaceholder, "the JSON block is its own record, not part of the prose below")
+
+	// An anchor INSIDE the block is pure quoted data, so it yields no narrative and
+	// matchNarrative moves on to a prose anchor.
+	inside, _ := extractSection(lines, 3)
+	assert.Empty(t, inside)
+}
+
 // The three shapes below were MEASURED truncating real justifications. Each asserts
 // the whole block survives — a partial excerpt is indistinguishable from a reviewer
 // who wrote one sentence, because no truncation marker is emitted. FENCED shapes
@@ -193,7 +254,7 @@ func TestFenceMask_MarksOnlyContentBetweenMarkers(t *testing.T) {
 }
 
 // isFenceMarker trims leading spaces and tabs before looking for the backtick run,
-// mirroring stream/parser.go:194 exactly. An INDENTED fence is the ordinary shape a model
+// mirroring stream/parser.go:239 exactly. An INDENTED fence is the ordinary shape a model
 // emits when it quotes an example inside a numbered list or a nested bullet, so this is
 // the common case rather than an exotic one.
 //
@@ -222,7 +283,7 @@ func TestFenceMask_RecognizesAnIndentedFence(t *testing.T) {
 
 			assert.False(t, mask[1], "the opening marker is not itself inside the fence")
 			assert.True(t, mask[2],
-				"an indented fence still opens a fenced block — parser.go:194 trims the same "+
+				"an indented fence still opens a fenced block — parser.go:239 trims the same "+
 					"leading space/tab run before testing for the backticks")
 			assert.False(t, mask[3], "the closing marker is not inside the fence")
 			assert.False(t, mask[4], "prose after the fence is not inside it")
@@ -318,7 +379,7 @@ func TestExtractSection_UnterminatedFenceAboveAFindingsList(t *testing.T) {
 }
 
 // A record-shaped line in the tail of an UNTERMINATED fence is a boundary to nothing.
-// The producing parser's bare inFence toggle (stream/parser.go:152-157) skips every
+// The producing parser's bare inFence toggle (stream/parser.go:172-186) skips every
 // line below the dangling opener, so the line was never emitted as a record — yet the
 // released mask let recordAt read it as one, and extractSection ended the narrative on
 // a line the parser never saw. That loss is permanent: localdebt persists

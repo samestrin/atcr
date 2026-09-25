@@ -131,16 +131,35 @@ type ParseResult struct {
 const ModelColumns = 7 // SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
 
 // ParseModelOutput extracts findings from a model's raw review text. Unlike
-// ParseSource it requires no version header — models emit finding rows inline
-// among prose — and it reads exactly the 7 persona columns (SEVERITY..EVIDENCE).
-// Any 8th-or-later field a model emits is dropped, so a model can never
-// self-attribute a REVIEWER: the engine sets Finding.Reviewer from the agent
-// name afterward (TD-016). Non-severity-prefixed lines, blanks, and comments are
-// skipped; short rows are padded. The returned findings have an empty Reviewer.
+// ParseSource it requires no version header — models emit findings inline among
+// prose — and it never lets a model self-attribute a REVIEWER: the engine sets
+// Finding.Reviewer from the agent name afterward (TD-016). The returned findings
+// have an empty Reviewer.
+//
+// Two shapes are read, in Content order, in one forward pass:
+//
+//   - A fenced ```json block holding an array of finding objects — the shape
+//     persona prompts ask for. A chunked review joins several chunk outputs, so
+//     every such block is read and the findings are unioned. A cut-off block
+//     keeps every complete object and drops only the partial one (see
+//     decodeJSONFindings). Only when Content has no ```json fence at all is a
+//     bare, unfenced array tried, for a model that forgot the fence.
+//   - A legacy 7-column pipe row, for custom personas that have not migrated:
+//     exactly the 7 persona columns (SEVERITY..EVIDENCE). An 8th-or-later field
+//     is folded into EVIDENCE, never dropped. Non-severity-prefixed lines,
+//     blanks, and comments are skipped; short rows are padded.
 func ParseModelOutput(data []byte) []Finding {
+	text := string(data)
+	lines := strings.Split(text, "\n")
+	tryBareArray := !hasJSONFence(lines)
+
 	var out []Finding
-	inFence := false
-	for _, raw := range strings.Split(string(data), "\n") {
+	inFence, inJSON := false, false
+	jsonStart := 0 // byte offset of the current ```json block's first content line
+	offset := 0    // byte offset of the current line
+	for _, raw := range lines {
+		lineStart := offset
+		offset += len(raw) + 1
 		line := strings.TrimRight(raw, "\r")
 		// A markdown code fence toggles "inside a fenced block" state. Rows a model
 		// quotes inside a fence — e.g. a sample findings table it shows while
@@ -149,12 +168,32 @@ func ParseModelOutput(data []byte) []Finding {
 		// the count with rows whose cited files do not exist. Skip everything between
 		// fences. Mirrors internal/verify/syntaxguard's fence handling; a fence
 		// marker is a line whose first non-space content is a run of >=3 backticks.
+		// The one exception is a ```json fence: that is the output itself.
 		if isFenceMarker(line) {
-			inFence = !inFence
+			switch {
+			case inJSON:
+				out = append(out, decodeJSONFindings(text[jsonStart:lineStart])...)
+				inJSON = false
+			case inFence:
+				inFence = false
+			case isJSONFence(line):
+				inJSON, jsonStart = true, offset
+			default:
+				inFence = true
+			}
 			continue
 		}
-		if inFence {
+		if inJSON || inFence {
 			continue
+		}
+		if tryBareArray && strings.HasPrefix(strings.TrimSpace(line), "[") {
+			// Only the first array that yields a finding is taken; a prose line like
+			// "[x](y)" decodes to nothing and is passed over.
+			if found := decodeJSONFindings(text[lineStart:]); len(found) > 0 {
+				out = append(out, found...)
+				tryBareArray = false
+				continue
+			}
 		}
 		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -184,6 +223,11 @@ func ParseModelOutput(data []byte) []Finding {
 		}
 		out = append(out, fieldsToFinding(fields, PerSourceColumns))
 	}
+	// An unterminated ```json fence runs to the end of Content: a response cut off
+	// mid-block still contributes its complete findings.
+	if inJSON {
+		out = append(out, decodeJSONFindings(text[min(jsonStart, len(text)):])...)
+	}
 	return out
 }
 
@@ -195,7 +239,8 @@ func isFenceMarker(line string) bool {
 	return strings.HasPrefix(strings.TrimLeft(line, " \t"), "```")
 }
 
-// ParseSource parses a per-source (8-column) findings file.
+// ParseSource parses a per-source findings file: a v1 8-column pipe stream, or
+// a v2 document (TOON table or go-axi JSON envelope), chosen by the header.
 func ParseSource(data []byte) (ParseResult, error) {
 	return parse(data, PerSourceColumns)
 }
@@ -215,7 +260,8 @@ func parse(data []byte, cols int) (ParseResult, error) {
 	var res ParseResult
 	headerSeen := false
 
-	for i, raw := range strings.Split(string(data), "\n") {
+	lines := strings.Split(string(data), "\n")
+	for i, raw := range lines {
 		line := strings.TrimRight(raw, "\r")
 		if strings.TrimSpace(line) == "" {
 			continue
@@ -225,10 +271,12 @@ func parse(data []byte, cols int) (ParseResult, error) {
 			case strings.TrimSpace(line) == Version:
 				headerSeen = true
 				continue
+			case strings.TrimSpace(line) == VersionV2 && cols == PerSourceColumns:
+				return parseV2Body(strings.Join(lines[i+1:], "\n"))
 			case strings.HasPrefix(line, versionPrefix) && versionTokenRe.MatchString(strings.TrimSpace(strings.TrimPrefix(line, versionPrefix))):
-				return res, fmt.Errorf("%w: %q (want %q)", ErrUnknownVersion, strings.TrimSpace(line), Version)
+				return res, fmt.Errorf("%w: %q (want %s)", ErrUnknownVersion, strings.TrimSpace(line), wantHeaders(cols))
 			default:
-				return res, fmt.Errorf("%w: first line must be %q", ErrMissingHeader, Version)
+				return res, fmt.Errorf("%w: first line must be %s", ErrMissingHeader, wantHeaders(cols))
 			}
 		}
 		if strings.HasPrefix(line, "#") {
@@ -258,9 +306,18 @@ func parse(data []byte, cols int) (ParseResult, error) {
 	}
 
 	if !headerSeen {
-		return res, fmt.Errorf("%w: first line must be %q", ErrMissingHeader, Version)
+		return res, fmt.Errorf("%w: first line must be %s", ErrMissingHeader, wantHeaders(cols))
 	}
 	return res, nil
+}
+
+// wantHeaders names the headers a parser accepts, for error messages. Only the
+// per-source shape has a v2 form.
+func wantHeaders(cols int) string {
+	if cols == PerSourceColumns {
+		return fmt.Sprintf("%q or %q", Version, VersionV2)
+	}
+	return fmt.Sprintf("%q", Version)
 }
 
 // fieldsToFinding maps a padded column slice to a Finding. cols selects the
