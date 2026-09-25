@@ -236,11 +236,23 @@ func adversarialCases() []struct {
 		{"combined", Finding{Evidence: "| `a | b` | \"it's\" |\n|---|---|\n| x |= y | `(p|q)` |"}},
 		{"empty_fields", Finding{}},
 		{"long_field", Finding{Evidence: long}},
+		{"identity_fields", Finding{File: `dir with, "odd" name:v2/a b.go`, Category: "a|b, \"c\"", Reviewer: "r|1, \"x\""}},
 	}
 }
 
+// withIdentity fills the fields a case leaves empty, so a case may set File,
+// Category, or Reviewer to adversarial text of its own.
 func withIdentity(f Finding) Finding {
-	f.Severity, f.File, f.Line, f.Category, f.EstMinutes, f.Reviewer = "HIGH", "pkg/a.go", 42, "correctness", 15, "bruce"
+	f.Severity, f.Line, f.EstMinutes = "HIGH", 42, 15
+	if f.File == "" {
+		f.File = "pkg/a.go"
+	}
+	if f.Category == "" {
+		f.Category = "correctness"
+	}
+	if f.Reviewer == "" {
+		f.Reviewer = "bruce"
+	}
 	return f
 }
 
@@ -273,8 +285,7 @@ func TestV2RoundTrip_AdversarialInputs(t *testing.T) {
 
 			res, err := ParseSource([]byte(b.String()))
 			require.NoError(t, err)
-			require.Len(t, res.Findings, 2)
-			assert.Equal(t, in, res.Findings[0])
+			assert.Equal(t, []Finding{in, {Severity: "LOW", File: "b.go", Line: 1, Reviewer: "bruce"}}, res.Findings)
 		})
 	}
 }
@@ -300,7 +311,7 @@ func TestParseModelOutput_AdversarialJSON(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			in := withIdentity(c.f)
 			obj, err := json.Marshal([]map[string]any{{
-				"severity": in.Severity, "file_line": "pkg/a.go:42", "problem": in.Problem, "fix": in.Fix,
+				"severity": in.Severity, "file_line": in.File + ":42", "problem": in.Problem, "fix": in.Fix,
 				"category": in.Category, "est_minutes": in.EstMinutes, "evidence": in.Evidence,
 			}})
 			require.NoError(t, err)

@@ -4,7 +4,7 @@ The findings stream is atcr's public contract: a pipe-delimited, machine-parseab
 
 Two shapes share one grammar: **per-source** (8 columns, written by each reviewer source) and **reconciled** (9 columns, written by `atcr reconcile`).
 
-A second, lossless per-source format, `# atcr-findings/v2` (`findings.toon`), is written beside every per-source `findings.txt`. It is described in [v2 lossless stream](#v2-lossless-stream-findingstoon) at the end of this document; everything before that section is the v1 contract.
+A second, lossless per-source format, `# atcr-findings/v2` (`findings.toon`), is written beside every per-source `findings.txt` atcr writes. It is described in [v2 lossless stream](#v2-lossless-stream-findingstoon) at the end of this document; everything before that section is the v1 contract.
 
 ## Version header
 
@@ -249,7 +249,7 @@ The version header is in force from day one. **Evolution is additive-only within
 
 ## v2 lossless stream (`findings.toon`)
 
-v1 cannot carry some text. Its writer replaces `|` with `/` and line breaks with a space, so a bitwise OR, a regex alternation, a shell pipeline, or a multiline diff is changed on the way to disk. v2 changes nothing: every `|`, quote, backslash, comma, colon, `\n`, and `\r\n` survives, in fields of any length.
+v1 cannot carry some text. Its writer replaces `|` with `/` and line breaks with a space, so a bitwise OR, a regex alternation, a shell pipeline, or a multiline diff is changed on the way to disk. v2 changes nothing: every `|`, quote, backslash, comma, colon, `\n`, and `\r\n` survives, with no per-field length cap.
 
 v2 is a per-source format only. There is no reconciled v2 shape: `reconciled/findings.txt` stays v1, and atcr's reconciled reader rejects a v2 header.
 
@@ -291,12 +291,12 @@ With no findings the body is `findings[0]:`.
 
 - **Routing:** a reader picks the envelope when the body, after leading whitespace, starts with the literal `{"axi_format`. It never routes on a bare `{` or `[`, because several TOON shapes start with `[`.
 - **Required:** `axi_format` must be `"json"`, and the findings must be at `data.findings` (an empty array is a clean review). `axi_notice` is optional.
-- **Keys:** every finding object must carry all 8 keys, spelled exactly in lower case. A missing or misspelled key is an error, never an empty field. Any other key, at any level, is ignored (see [v2 evolution](#v2-evolution)).
+- **Keys:** every finding object must carry all 8 keys, spelled exactly in lower case. A missing or misspelled key is an error, never an empty field, and so is an extra key that differs from one of the 8 only in case. Any other key, at any level, is ignored (see [v2 evolution](#v2-evolution)). The reader checks keys, not values: a `null` or wrong-typed value reads as empty text or 0, and `severity` is not checked against the four levels.
 - **Nothing after it:** a second envelope, prose, or a code fence after the envelope is an error.
 
 ### What survives
 
-v2 round-trips any text byte for byte, with one exception. `EncodeOrJSON` runs go-axi's sanitizer on both encodings, which strips control bytes other than tab, LF, and CR, ANSI escape sequences, `U+2028`/`U+2029`, and invalid UTF-8. v2 has no length cap. The 500-rune cap in [AXI TOON encoding](#axi-toon-encoding-atcr-report---format-axi) belongs to `atcr report --format axi` only.
+v2 round-trips any text byte for byte, with one exception. `EncodeOrJSON` runs go-axi's sanitizer on both encodings, which strips control bytes other than tab, LF, and CR, ANSI escape sequences, `U+2028`/`U+2029`, and invalid UTF-8. v2 has no per-field rune cap. The limits are on size: go-axi reads a TOON row of at most 8 MiB, and the pool rebuild in `atcr review --resume` reads a findings file of at most 32 MiB. The 500-rune cap in [AXI TOON encoding](#axi-toon-encoding-atcr-report---format-axi) belongs to `atcr report --format axi` only.
 
 **Not the same as `--format axi`.** Both use TOON through go-axi, but they are separate surfaces. The v2 stream (`internal/stream`) is a per-source findings file on disk with a `file_line` column and a single `reviewer`. The `--format axi` report is a rendering of the reconciled findings for agents, with `file:line`, `reviewers`, and `confidence` columns. Do not parse one with rules written for the other.
 
@@ -335,4 +335,4 @@ v2 follows the same rule as v1: evolution is additive-only within a major versio
 
 ### v1 deprecation policy
 
-v1 is still written and is not deprecated for removal yet. atcr writes `findings.txt` beside every `findings.toon`, byte-identical to its pre-v2 output, so an existing v1 consumer needs no change. A new consumer should read `findings.toon`. These consumers still read v1 only and are the next to migrate: `llm_support_td_dedupe`, the `/reconcile-code-review` skill, and `internal/report/legacy_pipe.go`. v1 stays until they have moved.
+v1 is still written and is not deprecated for removal yet. atcr writes `findings.txt` beside every `findings.toon` it writes, byte-identical to its pre-v2 output, so an existing v1 consumer needs no change. A new consumer should read `findings.toon`. These consumers still read v1 only and are the next to migrate: `llm_support_td_dedupe`, the `/reconcile-code-review` skill, and `internal/report/legacy_pipe.go`. v1 stays until they have moved.

@@ -82,7 +82,7 @@ Three streams are available. Two are pipe-delimited and begin with a `# atcr-fin
 | Stream | Columns | Use when |
 |--------|---------|----------|
 | `sources/pool/findings.txt` | 8: `SEVERITY\|FILE:LINE\|PROBLEM\|FIX\|CATEGORY\|EST_MINUTES\|EVIDENCE\|REVIEWER` | You want to merge atcr's **per-reviewer** findings alongside other sources and recompute REVIEWERS-union + CONFIDENCE yourself. The 8-column shape is the common per-source contract. |
-| `sources/pool/findings.toon` | 8, as a TOON table: `severity,file_line,problem,fix,category,est_minutes,evidence,reviewer` | The preferred stream for a new consumer that wants per-reviewer findings: the same rows as the 8-column pool stream, with no field rewritten. |
+| `sources/pool/findings.toon` | 8, as a TOON table (or the go-axi JSON envelope; see [findings-format.md](findings-format.md#json-envelope)): `severity,file_line,problem,fix,category,est_minutes,evidence,reviewer` | The preferred stream for a new consumer that wants per-reviewer findings: the same rows as the 8-column pool stream, with no field rewritten. |
 | `reconciled/findings.txt` | 9: `…\|REVIEWERS\|CONFIDENCE` | You want atcr's already-collapsed, confidence-scored result and will not re-merge across other sources. |
 
 Most pipeline integrations consume the **8-column pool stream**: it preserves

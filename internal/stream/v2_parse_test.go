@@ -296,6 +296,7 @@ func TestParseSource_V2Errors(t *testing.T) {
 		{"misspelled row key", `{"axi_format":"json","axi_notice":"","data":{"findings":[{"severity":"HIGH","file-line":"a.go:1","problem":"p","fix":"f","category":"c","est_minutes":1,"evidence":"e","reviewer":"host"}]}}`},
 		{"row missing a key", `{"axi_format":"json","axi_notice":"","data":{"findings":[{"severity":"HIGH","file_line":"a.go:1","problem":"p","fix":"f","category":"c","est_minutes":1,"evidence":"e"}]}}`},
 		{"row key in the wrong case", `{"axi_format":"json","axi_notice":"","data":{"findings":[{"Severity":"HIGH","file_line":"a.go:1","problem":"p","fix":"f","category":"c","est_minutes":1,"evidence":"e","reviewer":"host"}]}}`},
+		{"case-variant duplicate overwrites a key", `{"axi_format":"json","axi_notice":"","data":{"findings":[{"severity":"LOW","file_line":"a.go:1","problem":"p","fix":"f","category":"c","est_minutes":1,"evidence":"e","reviewer":"host","SEVERITY":"CRITICAL","Reviewer":"bruce"}]}}`},
 		{"row is not an object", `{"axi_format":"json","axi_notice":"","data":{"findings":[1]}}`},
 		{"trailing envelope", `{"axi_format":"json","axi_notice":"","data":{"findings":[]}}{"axi_format":"json","axi_notice":"","data":{"findings":[]}}`},
 		{"trailing prose", `{"axi_format":"json","axi_notice":"","data":{"findings":[]}}` + "\nthanks"},

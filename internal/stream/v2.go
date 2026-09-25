@@ -208,15 +208,25 @@ func parseV2Envelope(body string) (ParseResult, error) {
 
 // decodeV2EnvelopeRow decodes one envelope row after checking that it carries
 // every v2 key. encoding/json matches keys case-insensitively and reads a
-// missing key as empty, so the exact-key check comes first.
+// missing key as empty, so the exact-key check comes first. An extra key that
+// differs from a v2 key only in case is an error, not an additive field: the
+// struct decode would read it into that field and could overwrite the real one.
 func decodeV2EnvelopeRow(raw json.RawMessage) (v2EnvelopeRow, error) {
 	var keys map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &keys); err != nil {
 		return v2EnvelopeRow{}, err
 	}
-	for _, k := range v2TableColumns() {
+	cols := v2TableColumns()
+	for _, k := range cols {
 		if _, ok := keys[k]; !ok {
 			return v2EnvelopeRow{}, fmt.Errorf("missing key %q", k)
+		}
+	}
+	for k := range keys {
+		for _, c := range cols {
+			if k != c && strings.EqualFold(k, c) {
+				return v2EnvelopeRow{}, fmt.Errorf("key %q differs from %q only in case", k, c)
+			}
 		}
 	}
 	var r v2EnvelopeRow
