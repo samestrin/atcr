@@ -166,6 +166,11 @@ func parseV2Envelope(body string) (ParseResult, error) {
 	if err := dec.Decode(&env); err != nil {
 		return ParseResult{}, fmt.Errorf("decoding v2 findings envelope: %w", err)
 	}
+	// Anything after the envelope (a second envelope, prose, a copied code
+	// fence) is a deviation, not something to ignore.
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return ParseResult{}, errors.New("decoding v2 findings envelope: unexpected data after the envelope")
+	}
 	if env.Format != "json" {
 		return ParseResult{}, fmt.Errorf("decoding v2 findings envelope: axi_format is %q, want \"json\"", env.Format)
 	}

@@ -240,6 +240,9 @@ func TestParseSource_V2Errors(t *testing.T) {
 		// TD-025: a host-written envelope with a typo key fails instead of
 		// decoding that field as empty.
 		{"unknown row key", `{"axi_format":"json","axi_notice":"","data":{"findings":[{"severity":"HIGH","file-line":"a.go:1","reviewer":"host"}]}}`},
+		{"trailing envelope", `{"axi_format":"json","axi_notice":"","data":{"findings":[]}}{"axi_format":"json","axi_notice":"","data":{"findings":[]}}`},
+		{"trailing prose", `{"axi_format":"json","axi_notice":"","data":{"findings":[]}}` + "\nthanks"},
+		{"trailing fence", `{"axi_format":"json","axi_notice":"","data":{"findings":[]}}` + "\n```"},
 		{"unknown envelope key", `{"axi_format":"json","axi_notice":"","extra":1,"data":{"findings":[]}}`},
 	}
 	for _, c := range cases {

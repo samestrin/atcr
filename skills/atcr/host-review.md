@@ -14,7 +14,13 @@ Find the problems the author would prefer you didn't. Report bugs, security issu
 
 ### Check the atcr version first
 
-Run `atcr version` before you write anything. This skill needs **atcr v0.4.0 or later**, the first release that reads `findings.toon`. A development build prints `dev` or `dev+<sha>` and passes. If the version is lower than v0.4.0, stop and ask the user to upgrade atcr. Do not fall back to writing `findings.txt`: an older atcr ignores `findings.toon`, so your findings would be lost, and the old pipe format corrupts code.
+Run `atcr version` before you write anything. It prints one line, `atcr version <v>`. This skill needs **atcr v0.4.0 or later**, the first release that reads `findings.toon`. Read `<v>` like this:
+
+- A release `v0.4.0` or later passes, and so does a pre-release of it such as `v0.4.0-rc1`.
+- A source or `go install ...@<branch>` build passes: it prints `dev`, `dev+<sha>`, or a Go pseudo-version such as `v0.3.1-0.20260925140713-97c0c76b4cde` (optionally ending in `+dirty`). A pseudo-version always has a 14-digit timestamp and a 12-character commit hash after the base version.
+- Any other release lower than v0.4.0 (for example `v0.3.0`) fails.
+
+If it fails, stop and ask the user to upgrade atcr. Do not fall back to writing `findings.txt`: an older atcr ignores `findings.toon`, so your findings would be lost, and the old pipe format corrupts code.
 
 ### Writing `sources/host/findings.toon`
 
@@ -45,7 +51,7 @@ Rules (see the findings-format reference):
 - `file_line` is `FILE:LINE`. File-level findings (no specific line) use line `0`, e.g. `path/to/file.go:0`.
 - `est_minutes` is an integer. `reviewer` is `"host"` on every finding.
 - Quote code exactly as written. JSON string escaping carries quotes (`\"`), pipes, and line breaks (`\n`), so never change a character to fit the format.
-- The file must be valid JSON after the header line: no trailing commas, no comments, and no keys other than the 8 above. atcr rejects a malformed file and reports it as a skipped source, so your findings would not count.
+- The file must be valid UTF-8 (no byte-order mark) and valid JSON after the header line: no trailing commas, no comments, no code fence, nothing after the closing `}`, and no keys other than the 8 above. atcr rejects a malformed file and reports it as a skipped source, so your findings would not count.
 - If you find no issues, write the empty example above (never the text `NO FINDINGS`), and state in `sources/host/review.md` that no issues were found.
 
 Also write a human-readable narrative to `.atcr/reviews/<id>/sources/host/review.md` consistent with your findings — no praise-only content: every section ties to a finding or states "no issues found in <area>".
