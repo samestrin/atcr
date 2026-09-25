@@ -104,9 +104,14 @@ func parseV2Body(body string) (ParseResult, error) {
 		return ParseResult{}, fmt.Errorf("decoding v2 findings table: table is %q, want \"findings\"", doc.Name)
 	}
 	// A missing or misspelled column would otherwise read as an empty field
-	// (TD-024). An empty table may declare no columns at all.
-	if want := v2TableColumns(); (len(doc.Fields) > 0 || len(doc.Rows) > 0) && !slices.Equal(doc.Fields, want) {
-		return ParseResult{}, fmt.Errorf("decoding v2 findings table: columns are %v, want %v", doc.Fields, want)
+	// (TD-024). Extra columns, in any position, are a newer atcr's additive
+	// fields and are ignored (TD-044). An empty table may declare no columns.
+	if len(doc.Fields) > 0 || len(doc.Rows) > 0 {
+		for _, col := range v2TableColumns() {
+			if !slices.Contains(doc.Fields, col) {
+				return ParseResult{}, fmt.Errorf("decoding v2 findings table: missing column %q (columns are %v)", col, doc.Fields)
+			}
+		}
 	}
 	// Fewer rows than declared means the file was cut on a row boundary, which
 	// DecodeTabular reports rather than rejects.
@@ -151,19 +156,19 @@ type v2EnvelopeRow struct {
 
 // parseV2Envelope decodes go-axi's {"axi_format":"json","axi_notice":...,
 // "data":{"findings":[...]}} envelope. axi_notice is optional (a host-written
-// file may leave it empty); findings outside data are not accepted. Unknown
-// keys are errors (TD-025): a host typing "file-line" or "reviewr" by hand
-// must fail loudly, not decode that field as empty.
+// file may leave it empty); findings outside data are not accepted. Every row
+// must carry the eight v2 keys, spelled exactly (TD-025): a host typing
+// "file-line" or "reviewr" by hand must fail loudly, not decode that field as
+// empty. Other keys are a newer atcr's additive fields and are ignored (TD-044).
 func parseV2Envelope(body string) (ParseResult, error) {
 	var env struct {
 		Format string `json:"axi_format"`
 		Notice string `json:"axi_notice"`
 		Data   *struct {
-			Findings *[]v2EnvelopeRow `json:"findings"`
+			Findings *[]json.RawMessage `json:"findings"`
 		} `json:"data"`
 	}
 	dec := json.NewDecoder(strings.NewReader(body))
-	dec.DisallowUnknownFields()
 	if err := dec.Decode(&env); err != nil {
 		return ParseResult{}, fmt.Errorf("decoding v2 findings envelope: %w", err)
 	}
@@ -180,7 +185,11 @@ func parseV2Envelope(body string) (ParseResult, error) {
 	}
 	rows := *env.Data.Findings
 	res := ParseResult{Findings: make([]Finding, 0, len(rows))}
-	for _, r := range rows {
+	for i, raw := range rows {
+		r, err := decodeV2EnvelopeRow(raw)
+		if err != nil {
+			return ParseResult{}, fmt.Errorf("decoding v2 findings envelope: finding %d: %w", i, err)
+		}
 		file, line := splitFileLine(r.FileLine)
 		res.Findings = append(res.Findings, Finding{
 			Severity:   r.Severity,
@@ -195,6 +204,26 @@ func parseV2Envelope(body string) (ParseResult, error) {
 		})
 	}
 	return res, nil
+}
+
+// decodeV2EnvelopeRow decodes one envelope row after checking that it carries
+// every v2 key. encoding/json matches keys case-insensitively and reads a
+// missing key as empty, so the exact-key check comes first.
+func decodeV2EnvelopeRow(raw json.RawMessage) (v2EnvelopeRow, error) {
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &keys); err != nil {
+		return v2EnvelopeRow{}, err
+	}
+	for _, k := range v2TableColumns() {
+		if _, ok := keys[k]; !ok {
+			return v2EnvelopeRow{}, fmt.Errorf("missing key %q", k)
+		}
+	}
+	var r v2EnvelopeRow
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return v2EnvelopeRow{}, err
+	}
+	return r, nil
 }
 
 // modelFinding is one finding object a reviewer model emits. It has no

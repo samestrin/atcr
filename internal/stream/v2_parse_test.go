@@ -287,22 +287,48 @@ func TestParseSource_V2Errors(t *testing.T) {
 		{"empty body", ""},
 		{"wrong table name", "rows[1]{severity,file_line}:\n  HIGH,\"a.go:1\""},
 		{"fewer rows than declared", "findings[2]{severity,file_line}:\n  HIGH,\"a.go:1\""},
-		// TD-024: a table must carry exactly the eight v2 columns.
+		// TD-024/TD-044: a table must carry all eight v2 columns. A misspelled
+		// one fails because the real column is then missing.
 		{"missing columns", "findings[1]{severity,file_line}:\n  HIGH,\"a.go:1\""},
 		{"misspelled column", "findings[1]{severity,file_line,problem,fix,category,est_minutes,evidence,reviewr}:\n  HIGH,\"a.go:1\",p,f,c,1,e,r"},
-		// TD-025: a host-written envelope with a typo key fails instead of
-		// decoding that field as empty.
-		{"unknown row key", `{"axi_format":"json","axi_notice":"","data":{"findings":[{"severity":"HIGH","file-line":"a.go:1","reviewer":"host"}]}}`},
+		// TD-025/TD-044: a host-written envelope with a typo key fails instead
+		// of decoding that field as empty, because the real key is missing.
+		{"misspelled row key", `{"axi_format":"json","axi_notice":"","data":{"findings":[{"severity":"HIGH","file-line":"a.go:1","problem":"p","fix":"f","category":"c","est_minutes":1,"evidence":"e","reviewer":"host"}]}}`},
+		{"row missing a key", `{"axi_format":"json","axi_notice":"","data":{"findings":[{"severity":"HIGH","file_line":"a.go:1","problem":"p","fix":"f","category":"c","est_minutes":1,"evidence":"e"}]}}`},
+		{"row key in the wrong case", `{"axi_format":"json","axi_notice":"","data":{"findings":[{"Severity":"HIGH","file_line":"a.go:1","problem":"p","fix":"f","category":"c","est_minutes":1,"evidence":"e","reviewer":"host"}]}}`},
+		{"row is not an object", `{"axi_format":"json","axi_notice":"","data":{"findings":[1]}}`},
 		{"trailing envelope", `{"axi_format":"json","axi_notice":"","data":{"findings":[]}}{"axi_format":"json","axi_notice":"","data":{"findings":[]}}`},
 		{"trailing prose", `{"axi_format":"json","axi_notice":"","data":{"findings":[]}}` + "\nthanks"},
 		{"trailing fence", `{"axi_format":"json","axi_notice":"","data":{"findings":[]}}` + "\n```"},
-		{"unknown envelope key", `{"axi_format":"json","axi_notice":"","extra":1,"data":{"findings":[]}}`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			res, err := ParseSource([]byte(VersionV2 + "\n" + c.body + "\n"))
 			assert.Error(t, err)
 			assert.Empty(t, res.Findings)
+		})
+	}
+}
+
+// TD-044: v2 evolves additively, like v1. A reader requires the eight known
+// columns or keys and ignores any others, so a newer atcr can add a field and
+// an older atcr still reads the file.
+func TestParseSource_V2ToleratesAdditiveFields(t *testing.T) {
+	want := []Finding{{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Fix: "f", Category: "c", EstMinutes: 2, Evidence: "e", Reviewer: "r"}}
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"extra table column", "findings[1]{severity,file_line,problem,fix,category,est_minutes,evidence,reviewer,confidence}:\n  HIGH,\"a.go:1\",p,f,c,2,e,r,0.9"},
+		{"extra column first, known columns reordered", "findings[1]{confidence,reviewer,evidence,est_minutes,category,fix,problem,file_line,severity}:\n  0.9,r,e,2,c,f,p,\"a.go:1\",HIGH"},
+		{"extra row key", `{"axi_format":"json","axi_notice":"","data":{"findings":[{"severity":"HIGH","file_line":"a.go:1","problem":"p","fix":"f","category":"c","est_minutes":2,"evidence":"e","reviewer":"r","confidence":{"score":0.9}}]}}`},
+		{"extra envelope and data keys", `{"axi_format":"json","axi_notice":"","extra":1,"data":{"schema":2,"findings":[{"severity":"HIGH","file_line":"a.go:1","problem":"p","fix":"f","category":"c","est_minutes":2,"evidence":"e","reviewer":"r"}]}}`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			res, err := ParseSource([]byte(VersionV2 + "\n" + c.body + "\n"))
+			require.NoError(t, err)
+			assert.Equal(t, want, res.Findings)
 		})
 	}
 }
