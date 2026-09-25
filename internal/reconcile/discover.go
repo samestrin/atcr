@@ -74,7 +74,7 @@ func Discover(sourcesDir string, allow []string) ([]Source, error) {
 		}
 		if len(leaves) == 0 {
 			if allowSet[e.Name()] {
-				fmt.Fprintf(os.Stderr, "warning: requested source %q has no findings.txt\n", e.Name())
+				fmt.Fprintf(os.Stderr, "warning: requested source %q has no findings.toon or findings.txt\n", e.Name())
 			}
 			continue // a child with no findings.txt anywhere is not a source
 		}
@@ -193,11 +193,12 @@ func leafFindingsFiles(root string) ([]string, error) {
 		if serr != nil {
 			// The file vanished (or became unreadable) since the walk. Keep the
 			// leaf so Discover's read fails on it and records it in SkippedFiles,
-			// as it did before selection existed. Name the .toon unless it is
-			// known absent, so a failed .toon never turns into a .txt read.
-			f = filepath.Join(d, findingsToonFileName)
-			if errors.Is(serr, fs.ErrNotExist) {
-				f = filepath.Join(d, findingsFileName)
+			// as it did before selection existed. Name the .toon only when its own
+			// probe failed, so a failed .toon never turns into a .txt read and a
+			// non-regular .toon is never opened.
+			f = filepath.Join(d, findingsFileName)
+			if _, lerr := os.Lstat(filepath.Join(d, findingsToonFileName)); lerr != nil && !errors.Is(lerr, fs.ErrNotExist) {
+				f = filepath.Join(d, findingsToonFileName)
 			}
 		}
 		leaves = append(leaves, f)
