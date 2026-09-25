@@ -1,6 +1,9 @@
 package stream
 
 import (
+	"encoding/json"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -210,4 +213,109 @@ func TestIsNoFindings_MatchesTheSentinelTolerantly(t *testing.T) {
 func TestParseModelOutput_TreatsTheSentinelAsZeroFindings(t *testing.T) {
 	assert.Empty(t, ParseModelOutput([]byte(NoFindingsSentinel)),
 		"the sentinel declares a clean review; it must never parse as a finding")
+}
+
+// adversarialCases are the six content classes the v1 pipe format corrupted
+// (AC 06-03), plus combined, empty, and long fields. None carries a byte
+// go-axi's sanitizer strips, so every case must come back unchanged.
+func adversarialCases() []struct {
+	name string
+	f    Finding
+} {
+	long := strings.Repeat("x | y ‖ \"q\" 'r'\n", 200) // 2,800 runes: v2 has no rune cap
+	return []struct {
+		name string
+		f    Finding
+	}{
+		{"bash_pipe", Finding{Problem: "cmd1 | cmd2 | grep foo", Fix: "set -o pipefail; cmd1 | cmd2", Evidence: "ps aux | awk '{print $2}' | xargs kill"}},
+		{"regex_alternation", Finding{Problem: "(foo|bar)+ matches too much", Fix: `^(?:GET|POST)\s+/api/(v1|v2)$`, Evidence: `re := regexp.MustCompile("a|b|\\|")`}},
+		{"markdown_table", Finding{Problem: "table breaks", Fix: "| a | b |\n|---|---|\n| 1 | 2 |", Evidence: "| col | x \\| y |\n|:--|--:|"}},
+		{"bitwise_or", Finding{Problem: "os.O_CREATE | os.O_WRONLY drops O_TRUNC", Fix: "flags := os.O_RDWR | os.O_CREATE | os.O_TRUNC", Evidence: "mask |= 1 << 3 || fallback"}},
+		{"multiline_diff", Finding{Problem: "diff", Fix: "-old line\n+new line\n context", Evidence: "@@ -1,2 +1,2 @@\r\n-a | b\r\n+a || b\r\n"}},
+		{"quotes", Finding{Problem: `it's "quoted"`, Fix: `fmt.Printf("%q", 'x')`, Evidence: `"" '' \" \' "'"`}},
+		{"combined", Finding{Evidence: "| `a | b` | \"it's\" |\n|---|---|\n| x |= y | `(p|q)` |"}},
+		{"empty_fields", Finding{}},
+		{"long_field", Finding{Evidence: long}},
+	}
+}
+
+func withIdentity(f Finding) Finding {
+	f.Severity, f.File, f.Line, f.Category, f.EstMinutes, f.Reviewer = "HIGH", "pkg/a.go", 42, "correctness", 15, "bruce"
+	return f
+}
+
+// TestV2RoundTrip_AdversarialInputs writes each case with the v2 writer and
+// reads it back through ParseSource, the on-disk read path, on both encodings:
+// the TOON table and the {"axi_format":"json",...} envelope (forced by one
+// extra row TOON cannot carry). AC 06-03 Scenario 3 (a reconciled round trip)
+// has no target: there is no reconciled v2 shape, and ParseReconciled rejects
+// v2 (TestParseReconciled_RejectsV2).
+func TestV2RoundTrip_AdversarialInputs(t *testing.T) {
+	for _, c := range adversarialCases() {
+		in := withIdentity(c.f)
+		t.Run(c.name+"/toon", func(t *testing.T) {
+			var b strings.Builder
+			require.NoError(t, WriteSourceV2(&b, []Finding{in}))
+			require.False(t, strings.HasPrefix(v2Body(t, b.String()), envelopePrefix), "case must take the TOON path")
+
+			res, err := ParseSource([]byte(b.String()))
+			require.NoError(t, err)
+			assert.Equal(t, []Finding{in}, res.Findings)
+			assert.Empty(t, res.Skipped)
+		})
+		t.Run(c.name+"/envelope", func(t *testing.T) {
+			var b strings.Builder
+			require.NoError(t, encodeV2(&b, lossyPayload{Findings: []lossyRow{
+				toLossyRow(in, nil),
+				toLossyRow(Finding{Severity: "LOW", File: "b.go", Line: 1, Reviewer: "bruce"}, textish{"t"}),
+			}}))
+			require.True(t, strings.HasPrefix(v2Body(t, b.String()), envelopePrefix), "case must take the envelope path")
+
+			res, err := ParseSource([]byte(b.String()))
+			require.NoError(t, err)
+			require.Len(t, res.Findings, 2)
+			assert.Equal(t, in, res.Findings[0])
+		})
+	}
+}
+
+// TestV2RoundTrip_SanitizedByteIsStripped pins the one rewrite on the v2
+// path (AC 06-03 Edge Case 4): go-axi strips an ESC byte, and only that byte.
+func TestV2RoundTrip_SanitizedByteIsStripped(t *testing.T) {
+	in := withIdentity(Finding{Evidence: "a | b\x1b[31mred\x1b[0m"})
+	var b strings.Builder
+	require.NoError(t, WriteSourceV2(&b, []Finding{in}))
+	res, err := ParseSource([]byte(b.String()))
+	require.NoError(t, err)
+	want := in
+	want.Evidence = "a | b[31mred[0m"
+	assert.Equal(t, []Finding{want}, res.Findings)
+}
+
+// TestParseModelOutput_AdversarialJSON feeds the same cases as a reviewer
+// model's fenced JSON array. Model output never carries the reviewer (TD-016),
+// so Reviewer is expected empty.
+func TestParseModelOutput_AdversarialJSON(t *testing.T) {
+	for _, c := range adversarialCases() {
+		t.Run(c.name, func(t *testing.T) {
+			in := withIdentity(c.f)
+			obj, err := json.Marshal([]map[string]any{{
+				"severity": in.Severity, "file_line": "pkg/a.go:42", "problem": in.Problem, "fix": in.Fix,
+				"category": in.Category, "est_minutes": in.EstMinutes, "evidence": in.Evidence,
+			}})
+			require.NoError(t, err)
+
+			got := ParseModelOutput([]byte("Review done.\n\n```json\n" + string(obj) + "\n```\n"))
+			want := in
+			want.Reviewer = ""
+			assert.Equal(t, []Finding{want}, got)
+		})
+	}
+}
+
+func toLossyRow(f Finding, extra any) lossyRow {
+	return lossyRow{
+		Severity: f.Severity, FileLine: f.File + ":" + strconv.Itoa(f.Line), Problem: f.Problem, Fix: f.Fix,
+		Category: f.Category, EstMinutes: f.EstMinutes, Evidence: f.Evidence, Reviewer: f.Reviewer, Extra: extra,
+	}
 }

@@ -72,7 +72,7 @@ Every new persona — built-in **or** community — is named with a **human firs
 
 The prompt is what the persona actually *says* to the model. Built-in personas live as Markdown templates in `personas/` (for example `personas/bruce.md`, `personas/sasha.md`); a community persona's `persona:` field names its prompt. Mirror the canonical structure exactly — the same section headings and the same template variables:
 
-```markdown
+````markdown
 # {{.AgentName}} — <one-line lens description>
 
 ## Role
@@ -98,21 +98,33 @@ the exact file and line numbers you actually read; never invent context.
 - LOW: <hardening or clarity, limited blast radius>
 
 ## Output Format
-Emit ONLY findings, one per line, exactly 7 pipe-delimited columns:
+Emit ONLY findings, as one JSON array of finding objects inside a single ```json code fence. Each object has exactly these keys:
 
-SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
+"severity", "file_line", "problem", "fix", "category", "est_minutes", "evidence"
 
-Rules: replace literal | in any field with /; CATEGORY is one lowercase word;
-EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If
-nothing is wrong, emit exactly: NO FINDINGS
+Rules:
+- severity is one of CRITICAL, HIGH, MEDIUM, LOW
+- file_line is FILE:LINE and must be a real, exact location copied from the diff — never approximate, guess, or invent it
+- category is one lowercase word
+- est_minutes is an integer estimate to fix
+- evidence quotes or paraphrases the code that proves the problem
+- Quote code exactly as written: JSON string escaping carries quotes, pipes, and newlines, so never alter a character to fit the format
+- No prose and no headers outside the ```json fence; if there are no findings, send no code fence, no JSON block, and no empty array; reply with exactly this line and nothing else: NO FINDINGS
+
+Example:
+```json
+[
+  {"severity": "HIGH", "file_line": "src/auth.go:42", "problem": "<what is wrong>", "fix": "<how to fix it>", "category": "<category>", "est_minutes": 15, "evidence": "<the code that proves it>"}
+]
+```
 
 ## Payload
 Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mode: {{.PayloadMode}}.
 
 {{.Payload}}
-```
+````
 
-> **The Rules line is not the whole CATEGORY contract.** "One lowercase word" is
+> **The Rules list is not the whole CATEGORY contract.** "One lowercase word" is
 > the *shape*; the permitted words are a closed vocabulary that reaches the model
 > through `{{.ScopeRule}}` in the `## Scope` section above, whose authority is
 > `reconcile.Categories()`. The rendered member list lives in
@@ -122,14 +134,14 @@ Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mo
 > boundary is stated in the "separate published module" paragraph). Do **not**
 > restate or narrow that list inside your own prompt — a persona-local list is
 > exactly the drift the injection exists to prevent, and it goes stale the moment
-> the vocabulary changes. Keep the Rules line as written and let
+> the vocabulary changes. Keep the category rule as written and let
 > `{{.ScopeRule}}` carry the enumeration.
 
 **Required template variables** (the renderer fails if a referenced variable is missing, and the fixture test fails if any `{{ }}` action is left unrendered): `{{.AgentName}}`, `{{.ScopeRule}}`, `{{.FileCount}}`, `{{.BaseRef}}`, `{{.HeadRef}}`, `{{.PayloadMode}}`, `{{.Payload}}`. The `{{if .ToolsEnabled}}…{{end}}` block is optional but recommended — it is included only for tool-using agents.
 
-**Do not tell your persona to stay silent when it finds nothing.** A clean review must be a positive signal — the literal token `NO FINDINGS` (`stream.NoFindingsSentinel`), case-insensitive and whitespace-tolerant. An empty response is treated as a dead call: the engine fails the slot over to its backup and, if there is none, fails the slot. That gate exists because a provider returning a null completion without setting `finish_reason=length` is otherwise recorded as a clean review — indistinguishable from a real one on a leaderboard. A persona that instructs silence will therefore report failures on exactly the reviews it handled correctly.
+**Do not tell your persona to stay silent when it finds nothing.** A clean review must be a positive signal — the literal token `NO FINDINGS` (`stream.NoFindingsSentinel`). The parser tolerates the ways models slip around it (any case, surrounding whitespace, a trailing `.`, `:` or `!`, a code fence around it, or an empty JSON array), but the prompt should ask for the bare line. An empty response is treated as a dead call: the engine fails the slot over to its backup and, if there is none, fails the slot. That gate exists because a provider returning a null completion without setting `finish_reason=length` is otherwise recorded as a clean review — indistinguishable from a real one on a leaderboard. A persona that instructs silence will therefore report failures on exactly the reviews it handled correctly.
 
-**Mandatory sections:** a `## Role` declaration and a `## Output Format` block with the exact 7-column pipe-delimited contract above. Keep the column format byte-for-byte — the reconciler parses it.
+**Mandatory sections:** a `## Role` declaration and a `## Output Format` block with the JSON output contract above: one fenced `json` array of objects with exactly the 7 keys shown, and no `reviewer` key (the engine sets the reviewer from the agent name). Keep the key names byte-for-byte — atcr's parser reads them. A custom persona that still asks for the legacy 7-column pipe rows (`SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE`) is still parsed as a fallback, but pipe rows cannot safely carry a literal `|` or a line break, so new personas use JSON. See [findings-format.md → What reviewer models emit](findings-format.md#what-reviewer-models-emit).
 
 **Persona text is a scored surface.** Editing a shipped persona's prompt breaks benchmark comparability — runs from before and after your change are not directly comparable on the existing suite (see [benchmark.md](benchmark.md)).
 
@@ -200,7 +212,7 @@ Before submitting your persona, confirm every item:
 
 - [ ] **Persona YAML** has both required fields (`provider`, `model`) and validates — `go test ./...` is green, or `atcr personas install <slug>` succeeds against your registry.
 - [ ] **`language` scope** (if present) is in canonical form (no leading dot, lowercased, e.g. `["go", "ts"]`); omit it entirely for a generalist persona.
-- [ ] **Prompt template** mirrors the canonical structure: `## Role`, `## Focus`, `## Scope` (`{{.ScopeRule}}`), `## Severity Rubric`, the exact 7-column `## Output Format` contract, and `## Payload` (`{{.Payload}}`).
+- [ ] **Prompt template** mirrors the canonical structure: `## Role`, `## Focus`, `## Scope` (`{{.ScopeRule}}`), `## Severity Rubric`, the `## Output Format` JSON contract (7 keys, no `reviewer`), and `## Payload` (`{{.Payload}}`).
 - [ ] **Predicate-exhaustiveness rule** (built-in personas only) appears as a numbered bullet under `## Focus`, carrying BOTH anchor phrases verbatim — `enumerate every branch of that predicate and every field it is contracted to cover` and `file it on the edited branch's changed line` — with the surrounding prose in your persona's own voice, and opening on the edit trigger so the rule stays scoped to the diff. Test-enforced: both anchor phrases on ONE line inside the `## Focus` section (`TestEveryBuiltinPersona_CarriesThePredicateExhaustivenessRule` — it resolves the rule line within the `## Focus` span, so an anchor parked in `## Output Format` or a fenced example fails), the same same-line placement in the RENDERED prompt with `ToolsEnabled` both ways (`TestPredicateExhaustivenessRule_RendersWithToolsEitherWay`), and own-voice prose (`TestEveryBuiltinPersona_PredicateRuleStaysInItsOwnVoice`, which fails two byte-identical bullets). Bullet numbering and the edit-trigger opening remain review conventions checked by hand at PR time, not by the suite.
 - [ ] **Required template variables** are all present and the template renders with no leftover `{{ }}` actions.
 - [ ] **Category word** for the persona's target class appears in the prompt template itself. For a **community submission**, that word **should also be a member of `reconcile.Categories()`** — a word outside the closed vocabulary is never offered to the model by `{{.ScopeRule}}`, so a persona whose worked example emits one is asking the model to contradict its own prompt. If your target class has no member that fits, propose one against `reconcile/category.go` rather than inventing a persona-local word. **Not currently enforced, and the shipped built-ins are a standing exception:** `sasha` is bound to `injection`, `penny` to `n+1`, and `ingrid` to `error` (`personas/personas_test.go`), none of which is a member — the nearest members are `input-validation`, `performance`, and `error-handling`. The worked examples earlier in this document use those same non-member words for that reason. Reconciling the built-ins with the taxonomy belongs to the parse-boundary canonicalization work, not to your submission.

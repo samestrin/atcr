@@ -55,8 +55,9 @@ ${OUT_DIR}/
   payload/                       # what the reviewers saw
   sources/
     pool/
-      raw/agent/<agent>/         # per-agent review.md, findings.txt, status.json
+      raw/agent/<agent>/         # per-agent review.md, findings.txt, findings.toon, status.json
       findings.txt               # merged pool stream — 8 columns, REVIEWER per row
+      findings.toon              # the same findings, lossless v2 (atcr-findings/v2)
       summary.json               # per-agent tallies + run status
   reconciled/
     findings.txt                 # reconciled stream — 9 columns (REVIEWERS + CONFIDENCE)
@@ -72,15 +73,16 @@ A backend caller typically verifies these four files exist before consuming:
 `sources/pool/findings.txt`, `sources/pool/summary.json`,
 `reconciled/findings.txt`, `reconciled/summary.json`.
 
+The v1 files stay the verified minimum while atcr writes both formats; `sources/pool/findings.toon` is optional for a backend caller.
+
 ## Which findings format to consume
 
-Two pipe-delimited streams are available; both begin with a
-`# atcr-findings/v1` version header (comment lines are skipped by parsers).
-See [findings-format.md](findings-format.md) for the full column spec.
+Three streams are available. Two are pipe-delimited and begin with a `# atcr-findings/v1` version header (comment lines are skipped by parsers). The third, `sources/pool/findings.toon`, holds the same per-source findings as `sources/pool/findings.txt` in the lossless `# atcr-findings/v2` format, where `|`, quotes, and line breaks survive unchanged. See [findings-format.md](findings-format.md) for the full column spec of both versions.
 
 | Stream | Columns | Use when |
 |--------|---------|----------|
 | `sources/pool/findings.txt` | 8: `SEVERITY\|FILE:LINE\|PROBLEM\|FIX\|CATEGORY\|EST_MINUTES\|EVIDENCE\|REVIEWER` | You want to merge atcr's **per-reviewer** findings alongside other sources and recompute REVIEWERS-union + CONFIDENCE yourself. The 8-column shape is the common per-source contract. |
+| `sources/pool/findings.toon` | 8, as a TOON table: `severity,file_line,problem,fix,category,est_minutes,evidence,reviewer` | The preferred stream for a new consumer that wants per-reviewer findings: the same rows as the 8-column pool stream, with no field rewritten. |
 | `reconciled/findings.txt` | 9: `…\|REVIEWERS\|CONFIDENCE` | You want atcr's already-collapsed, confidence-scored result and will not re-merge across other sources. |
 
 Most pipeline integrations consume the **8-column pool stream**: it preserves
@@ -88,6 +90,8 @@ atcr's individual reviewer attribution (the `REVIEWER` column carries the agent
 name, e.g. `bruce`), so a downstream reconciler can cluster atcr's reviewers
 together with other sources and compute confidence across the whole set rather
 than ingesting atcr's pre-collapsed blob.
+
+`findings.txt` is still written byte-identical to its output before v2 existed, so an existing consumer needs no change. A new consumer should read `sources/pool/findings.toon`. atcr's own readers already do: `atcr history`, the audit capture, and `atcr benchmark` read `findings.toon` first and fall back to `findings.txt` only when no `findings.toon` exists. A skill-driven review also has a host source at `sources/host/findings.toon`, written by the host agent (not by atcr's pool writer), and has no `findings.txt` there.
 
 ## summary.json fields
 
