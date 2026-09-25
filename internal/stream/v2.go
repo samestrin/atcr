@@ -317,6 +317,9 @@ func decodeJSONValue(text string) ([]Finding, int) {
 		}
 		sev := NormalizeSeverity(m.Severity)
 		loc := strings.TrimSpace(m.FileLine)
+		if loc == "" {
+			loc = splitLocation(e)
+		}
 		if _, ok := SeverityRank[sev]; !ok || loc == "" {
 			continue
 		}
@@ -333,6 +336,20 @@ func decodeJSONValue(text string) ([]Finding, int) {
 		})
 	}
 	return out, consumed
+}
+
+// splitLocation reads a location a model split into "file" and "line" keys
+// instead of file_line (vera, live run 2026-09-25) and returns it as FILE:LINE.
+// It is model-output only: the on-disk envelope keeps its strict key set.
+func splitLocation(e json.RawMessage) string {
+	var alt struct {
+		File string  `json:"file"`
+		Line flexInt `json:"line"`
+	}
+	if json.Unmarshal(e, &alt) != nil || strings.TrimSpace(alt.File) == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s:%d", strings.TrimSpace(alt.File), int(alt.Line))
 }
 
 // emptyFindingsValue returns the length of the empty JSON array or

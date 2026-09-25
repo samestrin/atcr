@@ -158,6 +158,11 @@ func TestParseModelOutput_ObjectShapes(t *testing.T) {
 		{"an array is not re-read object by object", "[\n" + objA + ",\n" + objB + "\n]", []Finding{findA, findB}},
 		{"empty wrapper", `{"findings":[]}`, nil},
 		{"object with no severity is prose", `{"note":"hello"}`, nil},
+		{"split file and line keys", `[{"severity":"HIGH","file":"a.go","line":"7","problem":"p","fix":"f","category":"c","est_minutes":1,"evidence":"e"}]`,
+			[]Finding{{Severity: "HIGH", File: "a.go", Line: 7, Problem: "p", Fix: "f", Category: "c", EstMinutes: 1, Evidence: "e"}}},
+		{"file_line wins over split keys", `[{"severity":"HIGH","file_line":"b.go:2","file":"a.go","line":7}]`,
+			[]Finding{{Severity: "HIGH", File: "b.go", Line: 2}}},
+		{"split keys without a file are dropped", `[{"severity":"HIGH","line":7}]`, nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
