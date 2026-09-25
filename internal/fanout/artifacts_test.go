@@ -370,7 +370,12 @@ func TestWriteFindings_DualWritesTxtAndToon(t *testing.T) {
 
 	txt, err := os.ReadFile(filepath.Join(dir, findingsFile))
 	require.NoError(t, err)
-	assert.Equal(t, v1Bytes(t, dualWriteFindings), txt, "findings.txt must stay byte-identical v1")
+	// Literal bytes captured from main's writer before this change, so the
+	// check does not compare stream.WriteSource with itself.
+	const wantV1 = "# atcr-findings/v1\n" +
+		"HIGH|flags.go:7|mode is O_CREATE / O_WRONLY|use a / b|correctness|5|line one     line two|greta\n" +
+		"LOW|x.go:1|plain|plain fix|style|1|ev|kai\n"
+	assert.Equal(t, wantV1, string(txt), "findings.txt must stay byte-identical v1")
 
 	assert.Equal(t, dualWriteFindings, parseFile(t, filepath.Join(dir, findingsToonFile)),
 		"findings.toon must carry every field losslessly")

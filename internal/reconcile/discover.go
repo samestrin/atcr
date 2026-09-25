@@ -189,9 +189,10 @@ func leafFindingsFiles(root string) ([]string, error) {
 		}
 		f, serr := stream.SelectFindingsFile(d)
 		if serr != nil {
-			// The file vanished (or became unreadable) since the walk.
-			fmt.Fprintf(os.Stderr, "warning: skipping %s: %v\n", d, serr)
-			continue
+			// The file vanished (or became unreadable) since the walk. Keep the
+			// leaf so Discover's read fails on it and records it in SkippedFiles,
+			// as it did before selection existed.
+			f = filepath.Join(d, findingsFileName)
 		}
 		leaves = append(leaves, f)
 	}

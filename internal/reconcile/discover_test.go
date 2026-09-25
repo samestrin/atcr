@@ -314,3 +314,24 @@ func TestDiscover_TxtOnlyHostBesideDualWrittenPool(t *testing.T) {
 	pool, _ := sourceByName(sources, "pool")
 	assert.Equal(t, []stream.Finding{lossless}, pool.Findings)
 }
+
+// A leaf whose file cannot be selected after the walk still reaches
+// SkippedFiles, so summary.json's skipped_sources reports it.
+func TestDiscover_UnselectableLeafRecordedInSkippedFiles(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	dir := t.TempDir()
+	writeFindings(t, dir, "pool/raw/agent/greta/findings.txt", "LOW|b.go:2|p|f|style|1|e|greta\n")
+	leafDir := filepath.Join(dir, "pool", "raw", "agent", "greta")
+	// Search permission off: the walk still lists the entry, but Lstat/Stat
+	// inside the directory fail, so selection errors.
+	require.NoError(t, os.Chmod(leafDir, 0o600))
+	t.Cleanup(func() { _ = os.Chmod(leafDir, 0o755) })
+
+	sources, err := Discover(dir, nil)
+	require.NoError(t, err)
+	pool, ok := sourceByName(sources, "pool")
+	require.True(t, ok, "the source must still be reported, not silently dropped")
+	assert.Equal(t, []string{filepath.Join(leafDir, "findings.txt")}, pool.SkippedFiles)
+}

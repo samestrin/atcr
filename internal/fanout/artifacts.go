@@ -385,7 +385,7 @@ func writeAgentArtifacts(poolDir, dir string, r Result, fr findingsResult) error
 		return fmt.Errorf("writing review.md for '%s': %w", r.Agent, err)
 	}
 	if err := writeFindings(filepath.Join(agentDir, findingsFile), fr.Findings); err != nil {
-		return fmt.Errorf("writing findings.txt for '%s': %w", r.Agent, err)
+		return fmt.Errorf("writing findings for '%s': %w", r.Agent, err)
 	}
 	st := statusFor(r, fr)
 	return WriteStatus(filepath.Join(agentDir, statusFile), &st)
