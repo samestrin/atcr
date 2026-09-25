@@ -2,7 +2,9 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -919,20 +921,16 @@ func replayCheckpointCase(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKe
 	return nil
 }
 
-// readCaseFindings parses the merged pool findings.txt for one review and groups
+// readCaseFindings parses the merged pool findings for one review (findings.toon,
+// else findings.txt; see stream.ReadPoolFindings) and groups
 // each finding's category by its REVIEWER (the agent name the engine stamped,
 // never a model-supplied value). A pool with no findings yields an empty map.
 func readCaseFindings(reviewDir string) (map[string][]string, error) {
-	path := filepath.Join(reviewDir, "sources", "pool", "findings.txt")
-	data, err := os.ReadFile(path)
+	parsed, err := stream.ReadPoolFindings(filepath.Join(reviewDir, "sources", "pool"))
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return map[string][]string{}, nil
 		}
-		return nil, err
-	}
-	parsed, err := stream.ParseSource(data)
-	if err != nil {
 		return nil, err
 	}
 	out := make(map[string][]string, len(parsed.Findings))

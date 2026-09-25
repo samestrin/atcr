@@ -375,3 +375,36 @@ func SelectFindingsFile(dir string) (string, error) {
 	}
 	return txt, nil
 }
+
+// FindingsParseError reports that the selected findings file was read but did
+// not parse. Its message is the parser's own, so a caller that wraps it keeps
+// its existing text; errors.As tells it apart from a read error.
+type FindingsParseError struct {
+	Path string
+	Err  error
+}
+
+func (e *FindingsParseError) Error() string { return e.Err.Error() }
+func (e *FindingsParseError) Unwrap() error { return e.Err }
+
+// ReadPoolFindings reads the findings in dir through SelectFindingsFile and
+// ParseSource, which routes on the file's own version header. It returns the
+// selection error when neither file exists (errors.Is(err, fs.ErrNotExist)),
+// the OS error when the selected file cannot be read, and a
+// *FindingsParseError when it does not parse. It never falls back to
+// findings.txt after selecting findings.toon.
+func ReadPoolFindings(dir string) (ParseResult, error) {
+	path, err := SelectFindingsFile(dir)
+	if err != nil {
+		return ParseResult{}, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ParseResult{}, err
+	}
+	res, err := ParseSource(data)
+	if err != nil {
+		return ParseResult{}, &FindingsParseError{Path: path, Err: err}
+	}
+	return res, nil
+}

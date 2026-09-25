@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -1175,10 +1176,9 @@ func readCaseFindingsLocated(reviewDir string, agents map[string]bool) (located 
 	located = map[string][]benchmark.ReportedFinding{}
 	categorical = map[string][]string{}
 
-	path := filepath.Join(reviewDir, "sources", "pool", "findings.txt")
-	data, rerr := os.ReadFile(path)
+	parsed, rerr := stream.ReadPoolFindings(filepath.Join(reviewDir, "sources", "pool"))
 	if rerr != nil {
-		if os.IsNotExist(rerr) {
+		if errors.Is(rerr, fs.ErrNotExist) {
 			// A missing findings file means the review produced NOTHING — but a
 			// caller reading only the returned maps cannot distinguish that from
 			// reviewers that wrote nothing. Surfaced as a flag so the runner can
@@ -1187,10 +1187,6 @@ func readCaseFindingsLocated(reviewDir string, agents map[string]bool) (located 
 			return located, categorical, 0, true, nil
 		}
 		return nil, nil, 0, false, rerr
-	}
-	parsed, perr := stream.ParseSource(data)
-	if perr != nil {
-		return nil, nil, 0, false, perr
 	}
 	for _, f := range parsed.Findings {
 		located[f.Reviewer] = append(located[f.Reviewer], benchmark.ReportedFinding{
