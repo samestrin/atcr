@@ -46,7 +46,7 @@ Rules:
 - est_minutes is an integer estimate to fix
 - evidence quotes or paraphrases the code that proves the problem
 - Quote code exactly as written: JSON string escaping carries quotes, pipes, and newlines, so never alter a character to fit the format
-- No prose and no headers outside the ```json fence; if there are no findings, your whole reply is the plain line NO FINDINGS: no code fence around it, no JSON block, and never an empty array (an empty array is read as a failed review)
+- No prose and no headers outside the ```json fence; if there are no findings, send no code fence, no JSON block, and no empty array (an empty array is read as a failed review); reply with exactly this line and nothing else: NO FINDINGS
 
 Example:
 ```json
