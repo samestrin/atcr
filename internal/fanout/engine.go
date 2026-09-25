@@ -838,10 +838,10 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 		// dead call.
 		//
 		// This overrides the prompt contract's "if there are no findings, emit
-		// nothing" (personas/_base.md:48): a clean review must now be positively
-		// signalled rather than inferred from silence, because silence is also
-		// what a failed call looks like. See the TD row filed alongside this
-		// change for the prompt-side follow-up.
+		// nothing" (now the NO FINDINGS rule, personas/_base.md:49): a clean
+		// review must now be positively signalled rather than inferred from
+		// silence, because silence is also what a failed call looks like. See
+		// the TD row filed alongside this change for the prompt-side follow-up.
 		//
 		// Scoped deliberately to EMPTY content. The adjacent shape — content
 		// present, nothing parseable — is left alone: routing that through

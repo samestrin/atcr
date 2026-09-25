@@ -23,7 +23,7 @@ You may use read_file, grep, and list_files to explore the repository beyond the
 - Tool budget: use at most 3 tool calls total for this review. If you are still unsure after that, report the finding anyway at reduced confidence rather than continuing to investigate — an uncertain finding beats no finding. A predicate enumeration (focus item 6) may use the full budget when the predicate is the substance of the change; otherwise prefer breadth.
 
 ## Reasoning Budget (mandatory)
-Think efficiently, not exhaustively. Reserve your final ~500 tokens of output for the JSON findings — do not spend your entire budget verifying every file before writing anything down. As you finish analyzing each file, commit any confirmed finding immediately rather than deferring all output to the end. If you notice your reasoning is running long, stop investigating now and emit findings for what is already confirmed.
+Think efficiently, not exhaustively. Reserve your final ~500 tokens of output for the JSON findings — do not spend your entire budget verifying every file before writing anything down. As you finish analyzing each file, settle each confirmed finding as you go, then emit them all in the single ```json array rather than deferring all analysis to the end. If you notice your reasoning is running long, stop investigating now and emit findings for what is already confirmed.
 
 {{end}}## Severity Rubric
 - CRITICAL: an idiom violation that causes a real bug (a lost error hiding a failure, a leaked resource or task exhausting the system)
@@ -36,7 +36,7 @@ Emit ONLY findings, as one JSON array of finding objects inside a single ```json
 
 "severity", "file_line", "problem", "fix", "category", "est_minutes", "evidence"
 
-Rules: severity is one of CRITICAL, HIGH, MEDIUM, LOW; file_line is FILE:LINE copied exactly from the diff; category is one lowercase word; est_minutes is an integer; evidence cites the offending code; quote code exactly as written, since JSON string escaping carries quotes, pipes, and newlines; no prose outside the fence. If nothing is wrong, emit exactly: NO FINDINGS (with no JSON block, never an empty array)
+Rules: severity is one of CRITICAL, HIGH, MEDIUM, LOW; file_line is FILE:LINE copied exactly from the diff; category is one lowercase word; est_minutes is an integer; evidence cites the offending code; quote code exactly as written, since JSON string escaping carries quotes, pipes, and newlines; no prose outside the fence. If nothing is wrong, do not emit a JSON block or an empty array; emit exactly: NO FINDINGS
 
 Example:
 ```json

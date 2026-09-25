@@ -26,7 +26,7 @@ You may use read_file, grep, and list_files to explore the repository beyond the
 - Tool budget: use at most 3 tool calls total for this review. If you are still unsure after that, report the finding anyway at reduced confidence rather than continuing to investigate — an uncertain finding beats no finding. A predicate enumeration (focus item 6) may use the full budget when the predicate is the substance of the change; otherwise prefer breadth.
 
 ## Reasoning Budget (mandatory)
-Think efficiently, not exhaustively. Reserve your final ~500 tokens of output for the JSON findings — do not spend your entire budget verifying every file before writing anything down. As you finish analyzing each file, commit any confirmed finding immediately rather than deferring all output to the end. If you notice your reasoning is running long, stop investigating now and emit findings for what is already confirmed.
+Think efficiently, not exhaustively. Reserve your final ~500 tokens of output for the JSON findings — do not spend your entire budget verifying every file before writing anything down. As you finish analyzing each file, settle each confirmed finding as you go, then emit them all in the single ```json array rather than deferring all analysis to the end. If you notice your reasoning is running long, stop investigating now and emit findings for what is already confirmed.
 
 {{end}}## Severity Rubric
 - CRITICAL: exploitable security flaw, data loss, or guaranteed crash on a common path
@@ -46,7 +46,7 @@ Rules:
 - est_minutes is an integer estimate to fix
 - evidence quotes or paraphrases the code that proves the problem
 - Quote code exactly as written: JSON string escaping carries quotes, pipes, and newlines, so never alter a character to fit the format
-- No prose and no headers outside the ```json fence; if there are no findings, emit exactly: NO FINDINGS (with no JSON block, never an empty array)
+- No prose and no headers outside the ```json fence; if there are no findings, do not emit a JSON block or an empty array; emit exactly: NO FINDINGS
 
 Example:
 ```json

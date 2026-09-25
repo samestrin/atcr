@@ -2,6 +2,7 @@ package personas
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
@@ -223,6 +224,10 @@ func TestPersonaExamples_UseVocabularyCategories(t *testing.T) {
 		"expected at least one worked example per prompt — the fence scan found too few")
 }
 
+// pipeSwapRe catches a reworded pipe-to-slash rule ("replace | with /",
+// "swap | for /") that the literal ban list would miss.
+var pipeSwapRe = regexp.MustCompile(`(?i)\|\s*(with|for|to|by|into)\s*/`)
+
 // TestPersonas_NoPipeContract is the Go form of the AC 01-05 sweep: no embedded
 // prompt may still tell a model to replace | with / or to emit pipe-delimited
 // columns. Either one corrupts code a finding quotes (bitwise OR, type unions,
@@ -231,9 +236,10 @@ func TestPersonas_NoPipeContract(t *testing.T) {
 	prompts := allPrompts(t)
 	require.Len(t, prompts, 1+len(Names())+len(CommunityNames()))
 	for file, text := range prompts {
-		for _, banned := range []string{"literal |", "pipe-delimited"} {
+		for _, banned := range []string{"literal |", "pipe-delimited", "SEVERITY|FILE:LINE"} {
 			require.NotContainsf(t, text, banned, "%s still carries the pipe contract (%q)", file, banned)
 		}
+		require.NotRegexpf(t, pipeSwapRe, text, "%s still tells the model to swap | for /", file)
 	}
 }
 
@@ -260,6 +266,11 @@ func TestPersonas_OutputFormatIsUniformJSON(t *testing.T) {
 			require.Equalf(t, ex["category"], got[i].Category, "%s example %d category", file, i+1)
 			require.Equalf(t, ex["problem"], got[i].Problem, "%s example %d problem", file, i+1)
 			require.Equalf(t, ex["evidence"], got[i].Evidence, "%s example %d evidence", file, i+1)
+			require.Equalf(t, ex["fix"], got[i].Fix, "%s example %d fix", file, i+1)
+			require.Equalf(t, ex["file_line"], fmt.Sprintf("%s:%d", got[i].File, got[i].Line), "%s example %d file_line", file, i+1)
+			est, ok := ex["est_minutes"].(float64)
+			require.Truef(t, ok, "%s example %d: est_minutes must be a JSON number", file, i+1)
+			require.Equalf(t, int(est), got[i].EstMinutes, "%s example %d est_minutes", file, i+1)
 			require.Emptyf(t, got[i].Reviewer, "%s example %d: model output never carries a reviewer", file, i+1)
 		}
 	}

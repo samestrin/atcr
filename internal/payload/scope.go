@@ -69,7 +69,7 @@ const (
 // has no second literal copy anywhere in the tree.
 //
 // One literal list does survive, and it is reachable — do not read AC3 as saying
-// otherwise. personas/_base.md:44 names six categories in its CATEGORY rule, and
+// otherwise. personas/_base.md:45 names six categories in its CATEGORY rule, and
 // _base.md is the persona-resolution fallback (internal/registry/persona.go
 // levels 4-5) for any rostered agent with no persona file of its own. _base.md
 // also carries {{.ScopeRule}}, at line 14 — so an agent resolved that way reads
