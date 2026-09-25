@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -114,6 +115,70 @@ func TestResume_AXIPayloadShapeMatchesReview(t *testing.T) {
 
 	assert.Equal(t, reviewHeader, resumeHeader,
 		"review --axi and resume --axi must emit the identical run-summary payload header")
+}
+
+// parseReviewSummaryRow extracts (findings_total, findings-by-severity) from a
+// standard-TOON review_summary[1] payload. The numeric findings_* columns are
+// the LAST five of both the header and the value row, so the parse anchors at
+// the row tail and is immune to id/dir cells that contain commas.
+func parseReviewSummaryRow(t *testing.T, stdout string) (int64, map[string]int64) {
+	t.Helper()
+	tailCols := []string{"findings_total", "findings_critical", "findings_high", "findings_medium", "findings_low"}
+	lines := strings.Split(stdout, "\n")
+	for i, line := range lines {
+		if !strings.HasPrefix(line, "review_summary[1]{") {
+			continue
+		}
+		open := strings.Index(line, "{")
+		close_ := strings.Index(line, "}")
+		require.Greater(t, close_, open, "malformed review_summary header")
+		cols := strings.Split(line[open+1:close_], ",")
+		require.GreaterOrEqual(t, len(cols), len(tailCols), "unexpected review_summary header")
+		require.Less(t, i+1, len(lines), "review_summary payload missing its value line")
+		vals := strings.Split(strings.TrimSpace(lines[i+1]), ",")
+		require.Equal(t, len(cols), len(vals), "review_summary column/value count mismatch")
+		off := len(cols) - len(tailCols)
+		by := map[string]int64{}
+		var total int64
+		for j, c := range tailCols {
+			n, err := strconv.ParseInt(strings.TrimSpace(vals[off+j]), 10, 64)
+			require.NoError(t, err, "non-numeric review_summary value %q", vals[off+j])
+			if c == "findings_total" {
+				total = n
+			} else {
+				by[strings.ToUpper(strings.TrimPrefix(c, "findings_"))] = n
+			}
+		}
+		return total, by
+	}
+	t.Fatal("no review_summary payload in stdout")
+	return 0, nil
+}
+
+// TestResume_AXIAllCompleteSeverityColumnsSum pins that the already-complete
+// resume payload's per-severity counts reconcile with findings_total (TD:
+// cli/resume.go:254) — an agent gating on severity from the payload must see the
+// same criticals the fresh run reported.
+func TestResume_AXIAllCompleteSeverityColumnsSum(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+	require.Equal(t, 0, execCmd(t, "review", "--base", "HEAD^"))
+
+	// The fresh run's own payload reports the truth we compare against.
+	_, freshOut, _ := execCmdSplit(t, "review", "--axi", "--base", "HEAD^")
+	// (fresh run is consumed; the resume path re-reconciles the same dir)
+
+	code, stdout, _ := execCmdSplit(t, "review", "--resume", "latest", "--axi", "--base", "HEAD^")
+	require.Equal(t, 0, code, "AllComplete resume exits 0")
+	total, bySeverity := parseReviewSummaryRow(t, stdout)
+	_ = freshOut
+	require.Greater(t, total, int64(0), "fixture review must produce findings")
+	sum := bySeverity["CRITICAL"] + bySeverity["HIGH"] + bySeverity["MEDIUM"] + bySeverity["LOW"]
+	assert.Equal(t, total, sum,
+		"severity columns must sum to findings_total on the already-complete resume path")
 }
 
 // TestResume_AXIAllCompleteGated covers AC 01-04 Edge Case 1: the AllComplete

@@ -1,0 +1,3 @@
+findings[2]{severity,"file:line",problem,fix,category,est_minutes,evidence,reviewers,confidence,disagreement,verification.verdict,verification.skeptic,verification.notes,verification.challenge_survived,evidence_exec.command,evidence_exec.exit_code,evidence_exec.output_excerpt,fix_warning,fix_review}:
+  HIGH,"cmd/a|b.go:3","a || b and x | y: \"quoted\" \\ back\nnext\ttab\rcr","use regexp `foo|bar` [x]{y}","true",30,"[31mred[0msep","greta,otto","42",LOW vs HIGH,confirmed,"null"," padded ",true,grep -E 'a|b' x.go,1,"-1.5e3","invalid_syntax: 1:2",NEEDS_REVIEW
+  LOW,"ユニコード.go:0",bad  byte,"",style,0,"","","false","","","","",null,"",null,"","",""

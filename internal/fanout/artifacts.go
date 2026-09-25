@@ -438,13 +438,17 @@ func statusFor(r Result, fr findingsResult) AgentStatus {
 	if r.Err != nil {
 		st.Error = r.Err.Error()
 	}
+	// The model is recorded on every completed slot, usage or not: the per-model
+	// trust path reads it from the pool summary, and a provider that never reports
+	// usage would otherwise leave its personas permanently neutral there.
+	if r.Status == StatusOK || r.TokensIn > 0 || r.TokensOut > 0 {
+		st.Model = r.Model
+	}
 	// Persist usage only when the provider reported token counts (Epic 3.3). A
 	// zero-usage result (a failed agent, or a completer that reports no usage)
-	// leaves the omitempty fields absent, so status.json stays byte-identical to
-	// the pre-3.3 shape for those runs. The model is recorded alongside the
-	// tokens it priced so a $0 cost remains auditable.
+	// leaves the token fields absent. The model is recorded alongside the tokens
+	// it priced so a $0 cost remains auditable.
 	if r.TokensIn > 0 || r.TokensOut > 0 {
-		st.Model = r.Model
 		st.TokensIn = r.TokensIn
 		st.TokensOut = r.TokensOut
 	}

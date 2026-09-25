@@ -934,6 +934,26 @@ func TestPersonasList_ScoresFooterNamesTheScopeAndTheLensesReconcileUses(t *test
 	assert.Contains(t, stdout, "In use by reconcile: sasha\n")
 }
 
+// The in-use list is read persona-only, but reconcile keys each prior on the
+// model the persona runs on in that review (owner ruling 2026-09-23). The footer
+// must say so, or it names a persona that reconcile treats as neutral after a
+// model switch as one reconcile acts on.
+func TestPersonasList_ScoresFooterStatesThePerModelRule(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withPersonasScores(t, personasScoreData{
+		rates: map[string]float64{"sasha": 0.72},
+		inUse: map[string]float64{"sasha": 0.7},
+		path:  "/tmp/sc",
+	}, nil, nil)
+
+	stdout, _, err := executeSplit(t, "personas", "list", "--scores")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "In use by reconcile: sasha\n")
+	assert.Contains(t, stdout, "Reconcile scores a persona only on the model it runs on in that review")
+	assert.Contains(t, stdout, fmt.Sprintf("neutral there until it has %d runs on the new model", scorecard.DefaultTrustMinRuns))
+}
+
 func TestPersonasList_ScoresFooterSaysNoneWhenNoLensClearsTheProductionFloor(t *testing.T) {
 	srv := personasTestServer(t, map[string]string{})
 	withPersonasEnv(t, srv)

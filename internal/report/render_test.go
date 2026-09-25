@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	reclib "github.com/samestrin/atcr/reconcile"
+	goaxi "github.com/samestrin/go-axi"
 	"os"
 	"path/filepath"
 	"strings"
@@ -616,12 +617,11 @@ func TestRenderAXI_CapsOversizeCell(t *testing.T) {
 
 // TestRenderAXI_QuotesInvalidUTF8C1Byte pins the renderer's self-enforced
 // no-raw-C1 guarantee (TD from sprint 31.0): a field carrying a lone raw C1 byte
-// (8-bit CSI 0x9b / OSC 0x9d) decodes to U+FFFD under range/IndexFunc, for which
-// isTOONControl is false — so without an explicit invalid-UTF-8 check toonMustQuote
-// returns false and the raw C1 byte reaches stdout verbatim in an unquoted field.
-// The field must be quoted so toonEscape replaces the raw byte with U+FFFD, and no
-// raw 0x9b/0x9d may appear on the wire. Guards against the masking effect of the
-// upstream json.Marshal round-trip — the renderer must enforce this itself.
+// (8-bit CSI 0x9b / OSC 0x9d) is invalid UTF-8 on its own, and go-axi's sanitizer
+// drops it, so no raw 0x9b/0x9d may appear on the wire. (The legacy pipe path
+// writes U+FFFD instead; see TestLegacyPipe_InvalidUTF8RendersReplacementChar.)
+// Guards against the masking effect of the upstream json.Marshal round-trip — the
+// renderer must enforce this itself.
 func TestRenderAXI_QuotesInvalidUTF8C1Byte(t *testing.T) {
 	findings := []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "a.go", Line: 1, Confidence: "MEDIUM",
@@ -679,10 +679,12 @@ func TestRenderAXI_ReservedAndNumericQuoted(t *testing.T) {
 			require.NoError(t, Render(&b, findings, FormatAXI))
 			out := b.String()
 			assert.Contains(t, out, c.wantQuoted, "%s value must be quoted so it round-trips as a string", c.name)
-			// The bare token must never appear as an unquoted column value (which a
-			// TOON parser would misread as a non-string type).
-			bare := string(axiDelim) + c.val + string(axiDelim)
-			assert.NotContains(t, out, bare, "%s must not appear as a bare column value", c.name)
+			// A typed decode must read the value back as the original string, never
+			// as a bool/null/number.
+			decoded, err := goaxi.Decode(strings.NewReader(out))
+			require.NoError(t, err)
+			row := decoded.(map[string]any)["findings"].([]any)[0].(map[string]any)
+			assert.Equal(t, c.val, row["category"], "%s must decode back as a string", c.name)
 		})
 	}
 }
@@ -711,31 +713,26 @@ func TestRenderAXI_AllEscapeSequences(t *testing.T) {
 
 // --- AC 01-02: AXI schema reconciled with atcr-findings/v1 + TOON conventions ---
 
-// axiHeaderFields returns the tabular-array header's declared field list (the
-// tokens between `{` and `}` on the first output line), for the field-count
-// invariant checks. Fixtures used with it must not embed the pipe delimiter in a
-// value, so a naive split is exact.
+// axiHeaderFields returns the tabular-array header's declared field list, read
+// by go-axi's stock TOON decoder.
 func axiHeaderFields(t *testing.T, out string) []string {
 	t.Helper()
-	line := strings.SplitN(out, "\n", 2)[0]
-	i := strings.Index(line, "{")
-	j := strings.LastIndex(line, "}")
-	require.Truef(t, i >= 0 && j > i, "axi header must carry a {field} list: %q", line)
-	return strings.Split(line[i+1:j], string(axiDelim))
+	doc, err := goaxi.DecodeTabular(strings.NewReader(out))
+	require.NoErrorf(t, err, "axi payload must decode: %q", out)
+	return doc.Fields
 }
 
-// TestRenderAXI_PipeHeaderAndV1FieldSet pins AC 01-02 Scenarios 1 & 2: the header
-// declares the pipe delimiter (findings[N|]{...}:) and its field list mirrors the
-// atcr-findings/v1 reconciled 9-column contract field-for-field, so the axi
-// surface converges with the existing machine format instead of fragmenting it.
-func TestRenderAXI_PipeHeaderAndV1FieldSet(t *testing.T) {
+// TestRenderAXI_HeaderAndV1FieldSet pins AC 01-02 Scenarios 1 & 2 on the
+// standard TOON path: the header declares the count with the default comma
+// delimiter (findings[N]{...}:) and its field list mirrors the atcr-findings/v1
+// reconciled 9-column contract field-for-field.
+func TestRenderAXI_HeaderAndV1FieldSet(t *testing.T) {
 	var b strings.Builder
 	require.NoError(t, Render(&b, sample(), FormatAXI))
 	header := strings.SplitN(b.String(), "\n", 2)[0]
-	assert.True(t, strings.HasPrefix(header, "findings[2|]{"), "header declares count and pipe delimiter: %q", header)
-	assert.Contains(t, header,
-		`severity|"file:line"|problem|fix|category|est_minutes|evidence|reviewers|confidence`,
-		"header field list mirrors the atcr-findings/v1 9-column contract")
+	assert.Equal(t,
+		`findings[2]{severity,"file:line",problem,fix,category,est_minutes,evidence,reviewers,confidence}:`,
+		header, "header field list mirrors the atcr-findings/v1 9-column contract")
 }
 
 // TestRenderAXI_VerificationEvidenceRoundTrip is AC 01-02 Edge Cases 1-3: a
@@ -786,7 +783,7 @@ func TestRenderAXI_DisagreementAndChallengeSurvived(t *testing.T) {
 	assert.Contains(t, header, "verification.challenge_survived", "the judge-upheld signal must not be dropped")
 	assert.Contains(t, out, "LOW vs MEDIUM", "the disagreement value must be carried into the row")
 	// challenge_survived is a bare TOON boolean.
-	assert.Contains(t, out, string(axiDelim)+"true\n", "challenge_survived=true emitted as a bare boolean at row end")
+	assert.Contains(t, out, ",true\n", "challenge_survived=true emitted as a bare boolean at row end")
 	// A no-disagreement payload must NOT declare the column (omitempty discipline).
 	var b2 strings.Builder
 	require.NoError(t, Render(&b2, sample(), FormatAXI))
@@ -808,11 +805,10 @@ func TestRenderAXI_FieldCountInvariant(t *testing.T) {
 	var b strings.Builder
 	require.NoError(t, Render(&b, findings, FormatAXI))
 	out := b.String()
-	want := len(axiHeaderFields(t, out))
-	rows := strings.Split(strings.TrimRight(out, "\n"), "\n")[1:] // drop header line
-	require.Len(t, rows, 2, "one row per finding")
-	for i, r := range rows {
-		got := len(strings.Split(strings.TrimSpace(r), string(axiDelim)))
-		assert.Equalf(t, want, got, "row %d column count must equal header field count", i)
+	doc, err := goaxi.DecodeTabular(strings.NewReader(out))
+	require.NoError(t, err, "the stock decoder rejects any row whose width differs from the header")
+	require.Len(t, doc.Rows, 2, "one row per finding")
+	for i, r := range doc.Rows {
+		assert.Lenf(t, r, len(doc.Fields), "row %d column count must equal header field count", i)
 	}
 }

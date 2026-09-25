@@ -99,37 +99,15 @@ func TestCompactThenAppend_UnsettledBranchKeepsTheDonor(t *testing.T) {
 	)
 }
 
-// TestCompactThenAppend_SettledBranchDropsAHigherPrecedenceDonor REPRODUCES the
-// half of TD-014 that is NOT fixed. It is committed skipped so the reproduction
-// survives without leaving the suite red.
+// TestCompactThenAppend_SettledBranchKeepsAHigherPrecedenceDonor is a LIVE GUARD
+// on the settled-branch half of TD-014.
 //
-// modelDonorIndex returns -1 when the effective record already carries a Model,
-// so a NEWER, higher-precedence donor is deleted: {wontfix@T1 m2, resolved@T2
-// m3} compacts to {wontfix m2}, and a later model-less wontfix is then credited
-// to m2 instead of m3. A MISATTRIBUTION rather than a loss, which is the worse
-// of the two for a per-(persona, model) score.
-//
-// WHY IT IS NOT FIXED. retainForCompaction already documents two ordering rules
-// that point opposite ways:
-//
-//   - eff must be emitted LAST, so it wins its own fold (latestItem breaks a
-//     full tie by append order).
-//   - the donor must win foldTerminalByID's donor slot, which ALSO breaks a
-//     timestamp tie by append order — i.e. the donor must come last.
-//
-// With distinct timestamps the conflict is inert: the timestamp comparison
-// dominates both selections and append order never decides. On an exact tie the
-// two rules cannot both hold, and choosing which one gives is a decision about
-// what every existing store retains. Deciding it needs the identify-eff-by-
-// position change already filed as TD-003 for Phase 6, and a live store with
-// terminal records to measure against — which does not exist yet (the store
-// holds 363 records and zero terminal ones as of 2026-09-20).
-//
-// Ruled Option A by Sam, 2026-09-20: fix the lost-row half now, leave this one
-// open with its reproduction in place.
-func TestCompactThenAppend_SettledBranchDropsAHigherPrecedenceDonor(t *testing.T) {
-	t.Skip("TD-014 (open half): the settled-branch tie-break needs a decision before the fix lands")
-
+// modelDonorIndex used to return -1 when the effective record already carried a
+// Model, so a NEWER donor was deleted: {wontfix@T1 m2, resolved@T2 m3} compacted
+// to {wontfix m2}, and a later model-less wontfix was then credited to m2 instead
+// of m3. A MISATTRIBUTION rather than a loss, which is the worse of the two for a
+// per-(persona, model) score.
+func TestCompactThenAppend_SettledBranchKeepsAHigherPrecedenceDonor(t *testing.T) {
 	const id = "abc123"
 	assertSignalInvariant(t,
 		[]Record{
@@ -138,6 +116,36 @@ func TestCompactThenAppend_SettledBranchDropsAHigherPrecedenceDonor(t *testing.T
 		},
 		[]Record{diffRecord(id, StatusWontfix, "", "2026-09-03T00:00:00Z")},
 	)
+}
+
+// TestCompactThenAppend_ExactTieKeepsTheEffectiveRecord pins the tie-break ruled
+// by Sam on 2026-09-24 (option A: status wins). retainForCompaction has two
+// ordering rules that point opposite ways on an EXACT timestamp tie between the
+// effective record and a model donor: eff must be emitted last to win its own
+// fold, and the donor must be emitted last to win foldTerminalByID's donor slot.
+// Both break the tie by append order, so only one can hold. The effective record
+// wins: a wrong status changes what `debt list` shows and what `debt resolve`
+// touches, while a wrong model credit on an exact tie moves one trust score.
+func TestCompactThenAppend_ExactTieKeepsTheEffectiveRecord(t *testing.T) {
+	const id = "abc123"
+	const ts = "2026-09-01T00:00:00Z"
+	before := []Record{
+		diffRecord(id, StatusWontfix, "m2", ts),
+		diffRecord(id, StatusResolved, "m3", ts),
+	}
+	later := []Record{diffRecord(id, "", "", "2026-09-02T00:00:00Z")} // a re-detection
+
+	uncompacted := FoldRecords(append(append([]Record{}, before...), later...))
+	compacted := FoldRecords(append(retainForCompaction(before), later...))
+	require.Len(t, uncompacted, 1)
+	require.Len(t, compacted, 1)
+	assert.Equal(t, uncompacted[0].Status, compacted[0].Status)
+	assert.Equal(t, uncompacted[0].Model, compacted[0].Model)
+
+	// The before-set itself also folds to the same effective record.
+	eff, kept := FoldRecords(before)[0], FoldRecords(retainForCompaction(before))[0]
+	assert.Equal(t, eff.Status, kept.Status)
+	assert.Equal(t, eff.Model, kept.Model)
 }
 
 func TestCompactThenAppend_RetentionBoundStillHolds(t *testing.T) {
@@ -182,6 +190,28 @@ func TestCompactThenAppend_RetentionBoundStillHolds(t *testing.T) {
 		retained := retainForCompaction(group)
 		require.LessOrEqual(t, len(retained), 4,
 			"compaction must retain at most 4 records per id; got %d", len(retained))
+	}
+}
+
+// TestCompactThenAppend_EffectiveDonorIsNotRetainedTwice pins the donorIdx ==
+// effIdx dedupe: when the effective record is itself the newest model-carrier,
+// it is the donor too, and must be emitted once (as eff), not again as a zeroed
+// donor copy ahead of it.
+func TestCompactThenAppend_EffectiveDonorIsNotRetainedTwice(t *testing.T) {
+	const id = "abc123"
+	for _, group := range [][]Record{
+		{diffRecord(id, StatusResolved, "m1", "2026-09-01T00:00:00Z"), diffRecord(id, StatusWontfix, "m2", "2026-09-02T00:00:00Z")},
+		{diffRecord(id, StatusWontfix, "m1", "2026-09-01T00:00:00Z"), diffRecord(id, StatusResolved, "m2", "2026-09-02T00:00:00Z")},
+		{diffRecord(id, StatusUnreproducible, "m1", "2026-09-01T00:00:00Z"), diffRecord(id, StatusDeferred, "m2", "2026-09-02T00:00:00Z")},
+	} {
+		eff := group[len(group)-1]
+		seen := 0
+		for _, r := range retainForCompaction(group) {
+			if r.Timestamp == eff.Timestamp {
+				seen++
+			}
+		}
+		assert.Equalf(t, 1, seen, "effective record %s@%s must be retained exactly once", eff.Status, eff.Timestamp)
 	}
 }
 

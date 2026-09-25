@@ -296,10 +296,10 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 	}, opts)
 }
 
-// absPath is filepath.Abs, a package var so a test can reach the fallback in
+// runIDAbsPath is filepath.Abs, a package var so a test can reach the fallback in
 // RunIDForReviewDir: Abs fails only when the working directory cannot be read,
 // which a test cannot arrange portably.
-var absPath = filepath.Abs
+var runIDAbsPath = filepath.Abs
 
 // RunIDForReviewDir is the run id EmitForReconcile writes for a review
 // directory. It is the ONE place that id is built, so `atcr scorecard
@@ -320,7 +320,7 @@ var absPath = filepath.Abs
 // ReconciledAt-basename form; a reader that must find those looks that form up
 // as a fallback.
 func RunIDForReviewDir(reconciledAt, reviewDir string) string {
-	absDir, err := absPath(reviewDir)
+	absDir, err := runIDAbsPath(reviewDir)
 	if err != nil {
 		absDir = reviewDir
 	}

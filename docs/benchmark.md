@@ -337,6 +337,12 @@ When any case fails — or any single reviewer **slot** fails (one reviewer miss
 WARN benchmark work dir retained after a partial run path=/tmp/atcr-repo-state-1234 failed_cases=1 failed_slots=0 failed_reviewers=0 retained_dirs=3 retained_bytes=41231882
 ```
 
+A failed run (one that exits non-zero, including a cancellation or a consecutive-failure abort) retains its work dir too, and its warning carries the same fields, so a monitor keyed on `retained_bytes` sees both arms:
+
+```
+WARN benchmark work dir retained after a failed run path=/tmp/atcr-repo-state-5678 failed_cases=2 failed_slots=0 failed_reviewers=0 retained_dirs=4 retained_bytes=18204113
+```
+
 Watch `retained_bytes`, and once you have inspected or rescored a run, reclaim it with `rm -rf` on the path from that line. `retained_dirs` counts every retained `atcr-repo-state-*` work dir in the same temp directory, this one included, so growth across runs is visible on one line; it matches by name and reads no sizes. `failed_slots` is the number of failed reviewer slots (one reviewer failing 200 cases is 200), and `failed_reviewers` is how many reviewers those slots belong to. A run that scores every case cleans up after itself, so only partial and failed runs accumulate.
 
 `retained_bytes` is always a number, so you can build a numeric monitor on it — including under `ATCR_LOG_FORMAT=json`, where it is a JSON number. When the size cannot be measured (the walk could not read the work dir's root, or the tree holds more than 200,000 entries, where the walk stops rather than delay exit), the key is **omitted** and a boolean says so in its place, rather than the key changing type:

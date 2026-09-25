@@ -10,8 +10,8 @@ import (
 )
 
 // TestRenderHomeViewAXI_SingleRow pins the home-view AXI payload shape: a
-// single-row TOON tabular array (home[1|]{...}:) reusing the shared toonQuote/
-// axiDelim encoder, one header line plus exactly one data row.
+// single-row standard TOON tabular array (home[1]{...}:) through the shared
+// go-axi encoder, one header line plus exactly one data row.
 func TestRenderHomeViewAXI_SingleRow(t *testing.T) {
 	var b bytes.Buffer
 	require.NoError(t, RenderHomeViewAXI(&b, HomeViewAXI{
@@ -23,13 +23,13 @@ func TestRenderHomeViewAXI_SingleRow(t *testing.T) {
 
 	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
 	require.Len(t, lines, 2, "single-row TOON payload: header + one data row")
-	assert.Equal(t, "home[1|]{exec_path|description|review_id|review_status}:", lines[0],
+	assert.Equal(t, "home[1]{exec_path,description,review_id,review_status}:", lines[0],
 		"header declares the fixed home-view column order")
 	assert.Contains(t, lines[1], "~/go/bin/atcr")
 	assert.Contains(t, lines[1], "2026-06-10_x")
 	assert.Contains(t, lines[1], "completed")
-	assert.Contains(t, lines[1], "Agent Team Code Review — a review panel, not a reviewer",
-		"the description (spaces + em dash, no TOON specials) renders unquoted")
+	assert.Contains(t, lines[1], `"Agent Team Code Review — a review panel, not a reviewer"`,
+		"the description carries the comma delimiter, so standard TOON quotes it")
 }
 
 // TestRenderHomeViewAXI_NoReview covers the first-run state: an empty review_id
@@ -51,7 +51,7 @@ func TestRenderHomeViewAXI_NoReview(t *testing.T) {
 
 // TestRenderHomeViewAXI_NoEscapeSequences pins the same no-ANSI structural
 // guarantee renderAXI/RenderReviewSummaryAXI carry: control/escape bytes in any
-// field are stripped by toonQuote.
+// field are stripped by go-axi's sanitizer.
 func TestRenderHomeViewAXI_NoEscapeSequences(t *testing.T) {
 	var b bytes.Buffer
 	require.NoError(t, RenderHomeViewAXI(&b, HomeViewAXI{
@@ -60,7 +60,7 @@ func TestRenderHomeViewAXI_NoEscapeSequences(t *testing.T) {
 		ReviewID:     "id",
 		ReviewStatus: "completed",
 	}))
-	assert.NotContains(t, b.String(), "\x1b", "control/ANSI bytes are stripped by toonQuote")
+	assert.NotContains(t, b.String(), "\x1b", "control/ANSI bytes are stripped by go-axi's sanitizer")
 }
 
 // TestRenderHomeViewAXI_Golden pins the exact home-view AXI wire format
@@ -73,7 +73,7 @@ func TestRenderHomeViewAXI_Golden(t *testing.T) {
 		ReviewID:     "2026-06-10_x",
 		ReviewStatus: "completed",
 	}))
-	want := "home[1|]{exec_path|description|review_id|review_status}:\n" +
-		"  ~/go/bin/atcr|Agent Team Code Review — a review panel, not a reviewer|2026-06-10_x|completed\n"
+	want := "home[1]{exec_path,description,review_id,review_status}:\n" +
+		"  ~/go/bin/atcr,\"Agent Team Code Review — a review panel, not a reviewer\",2026-06-10_x,completed\n"
 	assert.Equal(t, want, b.String())
 }

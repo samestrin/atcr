@@ -948,8 +948,9 @@ func foldIndex[T foldable](group []T) int {
 // record that a human once closed this finding and why.
 //
 // Retention is bounded at FOUR records per id, so growth stays O(live
-// findings): the effective record, at most one superseded rationale, — when the
-// effective record carries no model attribution — one donor, and — when the
+// findings): the effective record, at most one superseded rationale, one donor —
+// the most recent record that carries model attribution, when it is not already
+// one of the others — and — when the
 // effective record is a re-detection and attempts-exhausted is in play — the
 // latest closed record. Two is the ordinary case and three or four the narrow
 // ones; the rationale and the donor are distinct records only
@@ -1094,18 +1095,14 @@ func retainForCompaction(recs []Record) []Record {
 		// most likely to be closed later. Retention has to serve the append that
 		// has not happened yet.
 		//
-		// This does NOT close TD-014's other half. modelDonorIndex still returns
-		// -1 when eff already carries a Model, so a newer, higher-precedence
-		// donor is still deleted on the settled branch. That half is blocked on a
-		// genuine tie-break conflict (eff must be emitted last to win its own
-		// fold; the donor must be emitted last to win the donor slot) and is
-		// deliberately left open — see TD-014 and the skipped reproduction in
-		// compact_append_differential_test.go.
-		//
-		// For an OPEN effective record the signal never reads eff's own Model:
-		// the re-detection fallback swaps in the latest closed record (see
-		// latestClosedIdx below) and recovers ITS missing Model. So the donor is
-		// chosen for that record, not for eff.
+		// TD-014's other half, the settled branch, is closed the same way: the
+		// donor is kept even when eff carries a Model (see modelDonorIndex). On an
+		// EXACT timestamp tie between eff and the donor the two ordering rules
+		// below conflict (eff must be emitted last to win its own fold; the donor
+		// must be emitted last to win the donor slot). Ruled by Sam, 2026-09-24:
+		// eff wins. A wrong status changes what `debt list` shows and what `debt
+		// resolve` touches; a wrong model credit on an exact tie moves one trust
+		// score. Pinned by TestCompactThenAppend_ExactTieKeepsTheEffectiveRecord.
 		latestClosedIdx := -1
 		if !IsClosedStatus(eff.Status) {
 			var closedIdx []int
@@ -1120,11 +1117,7 @@ func retainForCompaction(recs []Record) []Record {
 				latestClosedIdx = closedIdx[latestIndex(closed)]
 			}
 		}
-		donorSubject := eff
-		if latestClosedIdx >= 0 {
-			donorSubject = group[latestClosedIdx]
-		}
-		donorIdx := modelDonorIndex(group, donorSubject)
+		donorIdx := modelDonorIndex(group)
 
 		trailIdx := -1
 		if len(resolutions) > 0 {
@@ -1132,7 +1125,7 @@ func retainForCompaction(recs []Record) []Record {
 		}
 		// The trail may already BE the donor, in which case the attribution rides
 		// along and nothing more is owed. Position, not value.
-		if donorIdx >= 0 && donorIdx == trailIdx {
+		if donorIdx >= 0 && (donorIdx == trailIdx || donorIdx == effIdx) {
 			donorIdx = -1
 		}
 
@@ -1216,8 +1209,8 @@ func retainForCompaction(recs []Record) []Record {
 		// Retention is bounded at FOUR records per id, and only when all four are
 		// genuinely distinct: the effective record, the highest-ranked rationale,
 		// the latest closed record when the effective record is open (see
-		// latestClosedIdx), and — when the effective record carries no Model — the
-		// attribution donor. The trail and the donor
+		// latestClosedIdx), and — when the most recent model-carrier is not
+		// already one of those — the attribution donor. The trail and the donor
 		// cannot be collapsed: the trail is chosen by RANK so the human-typed
 		// rationale survives, while the donor is chosen by RECENCY AMONG
 		// MODEL-CARRIERS so the recovered Model matches what the signal read
@@ -1231,7 +1224,7 @@ func retainForCompaction(recs []Record) []Record {
 
 // modelDonorIndex returns the INDEX, within this id's group, of the terminal
 // record whose Model AggregateQualitySignal would recover for the id — or -1
-// when the effective record already carries a Model or no donor exists.
+// when no donor exists.
 //
 // Selection matches foldTerminalByID's donor index (qualitysignal.go) exactly —
 // the most recent terminal record with a non-empty Model, last-wins on ties —
@@ -1254,10 +1247,13 @@ func retainForCompaction(recs []Record) []Record {
 // about whether a FUTURE append will need this id's attribution, and an open
 // item is precisely the one most likely to be closed later. A no-op call for an
 // id with nothing to lose costs one comparison.
-func modelDonorIndex(group []Record, eff Record) int {
-	if strings.TrimSpace(eff.Model) != "" {
-		return -1
-	}
+//
+// For the same reason it no longer returns -1 when the effective record carries
+// a Model (TD-014's settled-branch half). eff's own Model covers eff, but a later
+// model-less terminal append recovers from the most recent model-carrier, which
+// can be a NEWER record than eff: {wontfix@T1 m2, resolved@T2 m3} must keep m3,
+// or the later append is credited to m2.
+func modelDonorIndex(group []Record) int {
 	best := -1
 	for i := range group {
 		r := group[i]

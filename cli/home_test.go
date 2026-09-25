@@ -208,7 +208,7 @@ func TestRenderHomeView_Unavailable(t *testing.T) {
 // (home.go renderHomeView): the human home view prints the executable path, and a
 // binary installed at an attacker-controlled path could smuggle ANSI escapes or
 // control bytes to the terminal. The AXI renderer already strips these via
-// toonQuote; the human renderer must reach the same control-byte safety by
+// go-axi's sanitizer; the human renderer must reach the same control-byte safety by
 // routing the exec path through sanitizeDisplay before Fprintln.
 func TestRenderHomeView_SanitizesExecPath(t *testing.T) {
 	stubHomeDir(t, filepath.FromSlash("/home/testuser"))
@@ -220,7 +220,7 @@ func TestRenderHomeView_SanitizesExecPath(t *testing.T) {
 		homeState{hasReview: false}))
 	firstLine, _, _ := strings.Cut(buf.String(), "\n")
 	assert.NotContains(t, firstLine, "\x1b",
-		"the exec path must have terminal control bytes stripped before printing (parity with the AXI toonQuote path)")
+		"the exec path must have terminal control bytes stripped before printing (parity with the AXI sanitizer path)")
 }
 
 // pinArgs overrides os.Args for the duration of a test so the exec-path

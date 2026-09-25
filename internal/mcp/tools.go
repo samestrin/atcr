@@ -335,7 +335,7 @@ var descReport = "Render a view over a review's reconciled findings. " +
 
 // reportInputSchema builds the atcr_report input schema with the format property
 // constrained to the closed enum md|json|checklist|sarif — mcpReportFormats(),
-// i.e. report.FormatList() with FormatAXI filtered OUT (Design Decision #3,
+// i.e. report.FormatList() with FormatAXI and FormatPipe filtered OUT (Design Decision #3,
 // AC 01-05) — so an invalid or CLI-only format is rejected by JSON Schema
 // validation before the handler runs (AC 04-04 Edge Case 2). The handler
 // additionally defends with its own enum check (including an explicit axi reject).

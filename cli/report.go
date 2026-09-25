@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/samestrin/atcr/internal/debate"
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -28,10 +29,22 @@ func newReportCmd() *cobra.Command {
 		Args:  usageArgs(cobra.MaximumNArgs(1)),
 		RunE:  runReport,
 	}
-	cmd.Flags().String("format", "md", "output format: "+report.Formats())
+	cmd.Flags().String("format", "md", "output format: "+formatHelp())
 	cmd.Flags().String("output", "", "write to a file instead of stdout")
 	cmd.Flags().Bool("disagreements", false, "render the disagreement radar: a ranked view of the highest-tension spots (severity splits, solo findings, gray-zone clusters) instead of the standard report")
 	return cmd
+}
+
+// formatHelp is report.Formats() with the legacy pipe format marked deprecated,
+// so --help does not advertise it on equal footing while the fallback exists.
+func formatHelp() string {
+	formats := report.FormatList()
+	for i, f := range formats {
+		if f == report.FormatPipe {
+			formats[i] = f + " (deprecated)"
+		}
+	}
+	return strings.Join(formats, ", ")
 }
 
 func runReport(cmd *cobra.Command, args []string) error {
@@ -115,12 +128,27 @@ func runReport(cmd *cobra.Command, args []string) error {
 		if err := report.RenderMarkdownWithContested(&buf, findings, df, cr); err != nil {
 			return usageError(err)
 		}
+	case format == report.FormatPipe || (format == report.FormatAXI && legacyPipeFromContext(cmd.Context())):
+		// The deprecated legacy pipe encoder: `--format pipe`, or `--format axi`
+		// under the global ATCR_LEGACY_PIPE switch. The switch is resolved once in
+		// the root PersistentPreRunE and read here via legacyPipeFromContext — the
+		// same single-resolution-point contract the AXI surfaces use. Same pagination
+		// knob and exit class as the standard AXI branch below; the notice goes to
+		// stderr so stdout stays payload-only.
+		if format == report.FormatPipe {
+			warnLegacyPipe(cmd.Context(), "--format pipe")
+		} else {
+			warnLegacyPipe(cmd.Context(), "ATCR_LEGACY_PIPE")
+		}
+		if err := report.RenderPipeAXIPaginated(&buf, findings, axiMaxLinesFromEnv(cmd.ErrOrStderr())); err != nil {
+			return fmt.Errorf("axi output rendering failed: %w", err)
+		}
 	case format == report.FormatAXI:
 		// AXI routes through the single shared pagination wrapper (AC 03-04): the
 		// same internal/report step atcr review --axi's findings path would use, so
 		// neither command reimplements truncation. The line cap resolves once from
-		// ATCR_AXI_MAX_LINES (AC 03-03); RenderAXIPaginated caps the payload, preserves
-		// the header's true N, and emits the truncated flag (AC 03-01/03-02).
+		// ATCR_AXI_MAX_LINES (AC 03-03); RenderAXIPaginated caps the rows, and emits
+		// the total and truncated keys (AC 03-01/03-02, as amended by Epic 35.16.11.1).
 		if err := report.RenderAXIPaginated(&buf, findings, axiMaxLinesFromEnv(cmd.ErrOrStderr())); err != nil {
 			// An AXI serialization fault is an internal, non-operator-fixable rendering
 			// fault → exit 1 (generic failure), left unwrapped so it defaults to
