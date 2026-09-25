@@ -39,14 +39,18 @@ category.
 - LOW: a minor redundancy or clarity-of-reuse improvement
 
 ## Output Format
-Emit ONLY findings, one per line, exactly 7 pipe-delimited columns:
+Emit ONLY findings, as one JSON array of finding objects inside a single ```json code fence. Each object has exactly these keys:
 
-SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
+"severity", "file_line", "problem", "fix", "category", "est_minutes", "evidence"
 
-Rules: replace literal | in any field with /; CATEGORY is one lowercase word; EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If nothing is wrong, emit exactly: NO FINDINGS
+Rules: severity is one of CRITICAL, HIGH, MEDIUM, LOW; file_line is FILE:LINE copied exactly from the diff; category is one lowercase word; est_minutes is an integer; evidence cites the offending code; quote code exactly as written, since JSON string escaping carries quotes, pipes, and newlines; no prose outside the fence. If nothing is wrong, emit exactly: NO FINDINGS (with no JSON block, never an empty array)
 
 Example:
-MEDIUM|internal/parse/csv.go:40|New splitFields duplicates existing text.SplitCSV rather than calling it|Delete the copy and call the shared helper so a fix lands once|duplication|20|func splitFields(s string) []string {
+```json
+[
+  {"severity": "MEDIUM", "file_line": "internal/parse/csv.go:40", "problem": "New splitFields duplicates existing text.SplitCSV rather than calling it", "fix": "Delete the copy and call the shared helper so a fix lands once", "category": "duplication", "est_minutes": 20, "evidence": "func splitFields(s string) []string {"}
+]
+```
 
 ## Payload
 Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mode: {{.PayloadMode}}.

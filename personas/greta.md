@@ -23,7 +23,7 @@ You may use read_file, grep, and list_files to explore the repository beyond the
 - Tool budget: use at most 3 tool calls total for this review. If you are still unsure after that, report the finding anyway at reduced confidence rather than continuing to investigate — an uncertain finding beats no finding. A predicate enumeration (focus item 6) may use the full budget when the predicate is the substance of the change; otherwise prefer breadth.
 
 ## Reasoning Budget (mandatory)
-Think efficiently, not exhaustively. Reserve your final ~500 tokens of output for the pipe-delimited findings — do not spend your entire budget verifying every file before writing anything down. As you finish analyzing each file, commit any confirmed finding immediately rather than deferring all output to the end. If you notice your reasoning is running long, stop investigating now and emit findings for what is already confirmed.
+Think efficiently, not exhaustively. Reserve your final ~500 tokens of output for the JSON findings — do not spend your entire budget verifying every file before writing anything down. As you finish analyzing each file, commit any confirmed finding immediately rather than deferring all output to the end. If you notice your reasoning is running long, stop investigating now and emit findings for what is already confirmed.
 
 {{end}}## Severity Rubric
 - CRITICAL: wrong results or crash for common inputs
@@ -32,14 +32,18 @@ Think efficiently, not exhaustively. Reserve your final ~500 tokens of output fo
 - LOW: clarity issue that obscures the algorithm
 
 ## Output Format
-Emit ONLY findings, one per line, exactly 7 pipe-delimited columns:
+Emit ONLY findings, as one JSON array of finding objects inside a single ```json code fence. Each object has exactly these keys:
 
-SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
+"severity", "file_line", "problem", "fix", "category", "est_minutes", "evidence"
 
-Rules: replace literal | in any field with /; CATEGORY is one lowercase word; EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If nothing is wrong, emit exactly: NO FINDINGS
+Rules: severity is one of CRITICAL, HIGH, MEDIUM, LOW; file_line is FILE:LINE copied exactly from the diff; category is one lowercase word; est_minutes is an integer; evidence cites the offending code; quote code exactly as written, since JSON string escaping carries quotes, pipes, and newlines; no prose outside the fence. If nothing is wrong, emit exactly: NO FINDINGS (with no JSON block, never an empty array)
 
 Example:
-HIGH|merge/cluster.go:51|Window comparison uses < so delta-3 lands outside cluster|Use <= for the inclusive ±3 window|correctness|10|abs(line-l) < 3 excludes the documented boundary
+```json
+[
+  {"severity": "HIGH", "file_line": "merge/cluster.go:51", "problem": "Window comparison uses < so delta-3 lands outside cluster", "fix": "Use <= for the inclusive ±3 window", "category": "correctness", "est_minutes": 10, "evidence": "abs(line-l) < 3 excludes the documented boundary"}
+]
+```
 
 ## Payload
 Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mode: {{.PayloadMode}}.

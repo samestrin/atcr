@@ -40,14 +40,18 @@ code with the out-of-scope category.
 - LOW: a hardening check or clearer error on bad input
 
 ## Output Format
-Emit ONLY findings, one per line, exactly 7 pipe-delimited columns:
+Emit ONLY findings, as one JSON array of finding objects inside a single ```json code fence. Each object has exactly these keys:
 
-SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
+"severity", "file_line", "problem", "fix", "category", "est_minutes", "evidence"
 
-Rules: replace literal | in any field with /; CATEGORY is one lowercase word; EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If nothing is wrong, emit exactly: NO FINDINGS
+Rules: severity is one of CRITICAL, HIGH, MEDIUM, LOW; file_line is FILE:LINE copied exactly from the diff; category is one lowercase word; est_minutes is an integer; evidence cites the offending code; quote code exactly as written, since JSON string escaping carries quotes, pipes, and newlines; no prose outside the fence. If nothing is wrong, emit exactly: NO FINDINGS (with no JSON block, never an empty array)
 
 Example:
-HIGH|internal/api/handler.go:12|Caller-supplied index parsed with the error ignored and used to index items, panicking on out-of-range or negative input|Check the Atoi error and bounds-check i against len(items) before indexing|validation|15|i, _ := strconv.Atoi(idxParam)
+```json
+[
+  {"severity": "HIGH", "file_line": "internal/api/handler.go:12", "problem": "Caller-supplied index parsed with the error ignored and used to index items, panicking on out-of-range or negative input", "fix": "Check the Atoi error and bounds-check i against len(items) before indexing", "category": "validation", "est_minutes": 15, "evidence": "i, _ := strconv.Atoi(idxParam)"}
+]
+```
 
 ## Payload
 Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mode: {{.PayloadMode}}.

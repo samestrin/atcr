@@ -42,14 +42,18 @@ out-of-scope category.
 - LOW: structural clarity or naming that hardens the design's boundaries
 
 ## Output Format
-Emit ONLY findings, one per line, exactly 7 pipe-delimited columns:
+Emit ONLY findings, as one JSON array of finding objects inside a single ```json code fence. Each object has exactly these keys:
 
-SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
+"severity", "file_line", "problem", "fix", "category", "est_minutes", "evidence"
 
-Rules: replace literal | in any field with /; CATEGORY is one lowercase word; EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If nothing is wrong, emit exactly: NO FINDINGS
+Rules: severity is one of CRITICAL, HIGH, MEDIUM, LOW; file_line is FILE:LINE copied exactly from the diff; category is one lowercase word; est_minutes is an integer; evidence cites the offending code; quote code exactly as written, since JSON string escaping carries quotes, pipes, and newlines; no prose outside the fence. If nothing is wrong, emit exactly: NO FINDINGS (with no JSON block, never an empty array)
 
 Example:
-HIGH|internal/order/service.go:8|Domain service imports the HTTP handler package, coupling business logic to the transport layer|Depend on an interface owned by the domain and inject the cache from the transport edge|coupling|30|import "internal/http/handler"
+```json
+[
+  {"severity": "HIGH", "file_line": "internal/order/service.go:8", "problem": "Domain service imports the HTTP handler package, coupling business logic to the transport layer", "fix": "Depend on an interface owned by the domain and inject the cache from the transport edge", "category": "coupling", "est_minutes": 30, "evidence": "import \"internal/http/handler\""}
+]
+```
 
 ## Payload
 Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mode: {{.PayloadMode}}.

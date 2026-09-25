@@ -38,14 +38,18 @@ out-of-scope category.
 - LOW: a micro-efficiency or allocation-hygiene improvement
 
 ## Output Format
-Emit ONLY findings, one per line, exactly 7 pipe-delimited columns:
+Emit ONLY findings, as one JSON array of finding objects inside a single ```json code fence. Each object has exactly these keys:
 
-SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
+"severity", "file_line", "problem", "fix", "category", "est_minutes", "evidence"
 
-Rules: replace literal | in any field with /; CATEGORY is one lowercase word; EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If nothing is wrong, emit exactly: NO FINDINGS
+Rules: severity is one of CRITICAL, HIGH, MEDIUM, LOW; file_line is FILE:LINE copied exactly from the diff; category is one lowercase word; est_minutes is an integer; evidence cites the offending code; quote code exactly as written, since JSON string escaping carries quotes, pipes, and newlines; no prose outside the fence. If nothing is wrong, emit exactly: NO FINDINGS (with no JSON block, never an empty array)
 
 Example:
-HIGH|internal/dedup/dedup.go:10|Membership tested with a linear scan inside the loop makes Unique O(n^2)|Track seen ids in a map[int]struct{} for O(n) dedup|complexity|15|if !contains(out, id) {
+```json
+[
+  {"severity": "HIGH", "file_line": "internal/dedup/dedup.go:10", "problem": "Membership tested with a linear scan inside the loop makes Unique O(n^2)", "fix": "Track seen ids in a map[int]struct{} for O(n) dedup", "category": "complexity", "est_minutes": 15, "evidence": "if !contains(out, id) {"}
+]
+```
 
 ## Payload
 Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mode: {{.PayloadMode}}.

@@ -26,7 +26,7 @@ You may use read_file, grep, and list_files to explore the repository beyond the
 - Tool budget: use at most 3 tool calls total for this review. If you are still unsure after that, report the finding anyway at reduced confidence rather than continuing to investigate — an uncertain finding beats no finding. A predicate enumeration (focus item 6) may use the full budget when the predicate is the substance of the change; otherwise prefer breadth.
 
 ## Reasoning Budget (mandatory)
-Think efficiently, not exhaustively. Reserve your final ~500 tokens of output for the pipe-delimited findings — do not spend your entire budget verifying every file before writing anything down. As you finish analyzing each file, commit any confirmed finding immediately rather than deferring all output to the end. If you notice your reasoning is running long, stop investigating now and emit findings for what is already confirmed.
+Think efficiently, not exhaustively. Reserve your final ~500 tokens of output for the JSON findings — do not spend your entire budget verifying every file before writing anything down. As you finish analyzing each file, commit any confirmed finding immediately rather than deferring all output to the end. If you notice your reasoning is running long, stop investigating now and emit findings for what is already confirmed.
 
 {{end}}## Severity Rubric
 - CRITICAL: exploitable security flaw, data loss, or guaranteed crash on a common path
@@ -35,21 +35,25 @@ Think efficiently, not exhaustively. Reserve your final ~500 tokens of output fo
 - LOW: style, clarity, or minor hardening opportunity
 
 ## Output Format
-Emit ONLY findings, one per line, exactly 7 pipe-delimited columns:
+Emit ONLY findings, as one JSON array of finding objects inside a single ```json code fence. Each object has exactly these keys:
 
-SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
+"severity", "file_line", "problem", "fix", "category", "est_minutes", "evidence"
 
 Rules:
-- SEVERITY is one of CRITICAL, HIGH, MEDIUM, LOW — nothing else starts a finding line
-- Replace any literal | inside a field with /
-- CATEGORY is a single lowercase word (security, correctness, performance, testing, style, docs)
-- EST_MINUTES is an integer estimate to fix
-- FILE:LINE must be a real, exact location copied from the diff — never approximate, guess, or invent it
-- EVIDENCE quotes or paraphrases the code that proves the problem
-- No prose, no headers, no markdown around findings; if there are no findings, emit exactly: NO FINDINGS
+- severity is one of CRITICAL, HIGH, MEDIUM, LOW
+- file_line is FILE:LINE and must be a real, exact location copied from the diff — never approximate, guess, or invent it
+- category is a single lowercase word (security, correctness, performance, testing, style, docs)
+- est_minutes is an integer estimate to fix
+- evidence quotes or paraphrases the code that proves the problem
+- Quote code exactly as written: JSON string escaping carries quotes, pipes, and newlines, so never alter a character to fit the format
+- No prose and no headers outside the ```json fence; if there are no findings, emit exactly: NO FINDINGS (with no JSON block, never an empty array)
 
 Example:
-HIGH|src/auth.go:42|Session token never expires|Check expiry in Validate and reject stale tokens|security|15|expiresAt field is set but never read
+```json
+[
+  {"severity": "HIGH", "file_line": "src/auth.go:42", "problem": "Session token never expires", "fix": "Check expiry in Validate and reject stale tokens", "category": "security", "est_minutes": 15, "evidence": "expiresAt field is set but never read"}
+]
+```
 
 ## Payload
 Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mode: {{.PayloadMode}}.

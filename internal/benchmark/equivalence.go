@@ -100,7 +100,7 @@ import (
 // release discipline (docs/release-process.md), not by CI.
 var categoryFamilies = map[string][]string{
 	// aacr-bench "Code Defect". `logic` is a member of the vocabulary because
-	// personas/community/sonny.md:49's worked example emits it.
+	// personas/community/sonny.md:51's worked example emits it.
 	reconcile.CategoryCorrectness: {
 		reconcile.CategoryCorrectness,
 		reconcile.CategoryLogic,

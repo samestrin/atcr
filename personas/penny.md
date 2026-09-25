@@ -23,7 +23,7 @@ You may use read_file, grep, and list_files to explore the repository beyond the
 - Tool budget: use at most 3 tool calls total for this review. If you are still unsure after that, report the finding anyway at reduced confidence rather than continuing to investigate — an uncertain finding beats no finding. A predicate enumeration (focus item 6) may use the full budget when the predicate is the substance of the change; otherwise prefer breadth.
 
 ## Reasoning Budget (mandatory)
-Think efficiently, not exhaustively. Reserve your final ~500 tokens of output for the pipe-delimited findings — do not spend your entire budget verifying every file before writing anything down. As you finish analyzing each file, commit any confirmed finding immediately rather than deferring all output to the end. If you notice your reasoning is running long, stop investigating now and emit findings for what is already confirmed.
+Think efficiently, not exhaustively. Reserve your final ~500 tokens of output for the JSON findings — do not spend your entire budget verifying every file before writing anything down. As you finish analyzing each file, commit any confirmed finding immediately rather than deferring all output to the end. If you notice your reasoning is running long, stop investigating now and emit findings for what is already confirmed.
 
 {{end}}## Severity Rubric
 - CRITICAL: pathological blowup (unbounded growth or quadratic on a common path) that will exhaust resources in production
@@ -32,14 +32,18 @@ Think efficiently, not exhaustively. Reserve your final ~500 tokens of output fo
 - LOW: micro-optimization or clarity issue
 
 ## Output Format
-Emit ONLY findings, one per line, exactly 7 pipe-delimited columns:
+Emit ONLY findings, as one JSON array of finding objects inside a single ```json code fence. Each object has exactly these keys:
 
-SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
+"severity", "file_line", "problem", "fix", "category", "est_minutes", "evidence"
 
-Rules: replace literal | in any field with /; CATEGORY is one lowercase word; EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If nothing is wrong, emit exactly: NO FINDINGS
+Rules: severity is one of CRITICAL, HIGH, MEDIUM, LOW; file_line is FILE:LINE copied exactly from the diff; category is one lowercase word; est_minutes is an integer; evidence cites the offending code; quote code exactly as written, since JSON string escaping carries quotes, pipes, and newlines; no prose outside the fence. If nothing is wrong, emit exactly: NO FINDINGS (with no JSON block, never an empty array)
 
 Example:
-HIGH|store/orders.go:88|Query inside range loop issues one DB call per row (N+1)|Batch the ids into a single WHERE id IN (...) query|performance|25|for _, id := range ids { db.Find(&u, id) }
+```json
+[
+  {"severity": "HIGH", "file_line": "store/orders.go:88", "problem": "Query inside range loop issues one DB call per row (N+1)", "fix": "Batch the ids into a single WHERE id IN (...) query", "category": "performance", "est_minutes": 25, "evidence": "for _, id := range ids { db.Find(&u, id) }"}
+]
+```
 
 ## Payload
 Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mode: {{.PayloadMode}}.

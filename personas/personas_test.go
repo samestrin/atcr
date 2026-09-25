@@ -1,12 +1,14 @@
 package personas
 
 import (
+	"encoding/json"
 	"os"
 	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/payload"
+	"github.com/samestrin/atcr/internal/stream"
 	"github.com/samestrin/atcr/reconcile"
 	"github.com/stretchr/testify/require"
 )
@@ -133,14 +135,54 @@ func TestIngridFixture(t *testing.T) {
 	fixtureTest(t, "ingrid", "testdata/ingrid_fixture.patch", "error")
 }
 
-// exampleLineRe matches a worked-example finding line in a persona prompt: the
-// severity token at column 0 is what makes a line a finding, both in the prompt's
-// own stated contract and in internal/stream's parser.
-var exampleLineRe = regexp.MustCompile(`^(CRITICAL|HIGH|MEDIUM|LOW)\|`)
+// workedExamples decodes every ```json fence inside a prompt's ## Output Format
+// section into finding objects. It reads each value by key, so an example may
+// list its keys in any order and quote a | or " inside a sibling value.
+func workedExamples(text string) ([]map[string]any, error) {
+	var out []map[string]any
+	var block []string
+	inFence := false
+	for _, line := range strings.Split(sectionBody(text, "## Output Format"), "\n") {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case !inFence && trimmed == "```json":
+			inFence, block = true, nil
+		case inFence && trimmed == "```":
+			inFence = false
+			var objs []map[string]any
+			if err := json.Unmarshal([]byte(strings.Join(block, "\n")), &objs); err != nil {
+				return nil, err
+			}
+			out = append(out, objs...)
+		case inFence:
+			block = append(block, line)
+		}
+	}
+	return out, nil
+}
 
-// exampleCategoryField is the 1-based column the CATEGORY occupies in the
-// pipe-delimited finding format: SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE.
-const exampleCategoryField = 5
+// allPrompts returns every embedded persona prompt keyed by its file name:
+// _base.md, the registered personas, and the community library.
+func allPrompts(t *testing.T) map[string]string {
+	t.Helper()
+	prompts := map[string]string{}
+
+	base, err := Base()
+	require.NoError(t, err)
+	prompts["_base.md"] = base
+
+	for _, name := range Names() {
+		text, err := Get(name)
+		require.NoErrorf(t, err, "Get(%q)", name)
+		prompts[name+".md"] = text
+	}
+	for _, name := range CommunityNames() {
+		text, err := CommunityGet(name)
+		require.NoErrorf(t, err, "CommunityGet(%q)", name)
+		prompts["community/"+name+".md"] = text
+	}
+	return prompts
+}
 
 // TestPersonaExamples_UseVocabularyCategories is the class guard for epic
 // 35.16.4: every prompt now carries "Use CATEGORY from this closed vocabulary,
@@ -160,46 +202,67 @@ func TestPersonaExamples_UseVocabularyCategories(t *testing.T) {
 		members[c] = true
 	}
 
-	prompts := map[string]string{}
-
-	base, err := Base()
-	require.NoError(t, err)
-	prompts["_base.md"] = base
-
-	for _, name := range Names() {
-		text, err := Get(name)
-		require.NoErrorf(t, err, "Get(%q)", name)
-		prompts[name+".md"] = text
-	}
-	for _, name := range CommunityNames() {
-		text, err := CommunityGet(name)
-		require.NoErrorf(t, err, "CommunityGet(%q)", name)
-		prompts["community/"+name+".md"] = text
-	}
-
 	checked := 0
-	for file, text := range prompts {
-		for i, line := range strings.Split(text, "\n") {
-			if !exampleLineRe.MatchString(line) {
-				continue
-			}
-			fields := strings.Split(line, "|")
-			require.GreaterOrEqualf(t, len(fields), exampleCategoryField,
-				"%s:%d worked example has %d fields, too few to carry a CATEGORY", file, i+1, len(fields))
-
-			cat := strings.TrimSpace(fields[exampleCategoryField-1])
+	for file, text := range allPrompts(t) {
+		examples, err := workedExamples(text)
+		require.NoErrorf(t, err, "%s worked example is not a valid JSON array of finding objects", file)
+		for i, ex := range examples {
+			cat, ok := ex["category"].(string)
+			require.Truef(t, ok, "%s example %d has no string category key", file, i+1)
 			checked++
 			require.Truef(t, members[cat],
-				"%s:%d worked example emits CATEGORY %q, which is not a member of the closed vocabulary — "+
+				"%s example %d emits CATEGORY %q, which is not a member of the closed vocabulary — "+
 					"the same prompt tells the model to spell CATEGORY exactly as listed, so the example contradicts the rule",
 				file, i+1, cat)
 		}
 	}
 
-	// Non-vacuous: a regex or layout change that stops matching example lines
-	// would otherwise turn this guard into a silent pass.
-	require.GreaterOrEqual(t, checked, len(Names())+len(CommunityNames()),
-		"expected at least one worked example per prompt — the example-line matcher found too few")
+	// Non-vacuous: a layout change that stops the fence scan from finding the
+	// examples would otherwise turn this guard into a silent pass.
+	require.GreaterOrEqual(t, checked, 1+len(Names())+len(CommunityNames()),
+		"expected at least one worked example per prompt — the fence scan found too few")
+}
+
+// TestPersonas_NoPipeContract is the Go form of the AC 01-05 sweep: no embedded
+// prompt may still tell a model to replace | with / or to emit pipe-delimited
+// columns. Either one corrupts code a finding quotes (bitwise OR, type unions,
+// regex alternation, shell pipelines) before the parser ever sees it.
+func TestPersonas_NoPipeContract(t *testing.T) {
+	prompts := allPrompts(t)
+	require.Len(t, prompts, 1+len(Names())+len(CommunityNames()))
+	for file, text := range prompts {
+		for _, banned := range []string{"literal |", "pipe-delimited"} {
+			require.NotContainsf(t, text, banned, "%s still carries the pipe contract (%q)", file, banned)
+		}
+	}
+}
+
+// TestPersonas_OutputFormatIsUniformJSON checks that all 24 prompts (base plus
+// 23 personas) declare the same fenced-JSON contract inside ## Output Format,
+// and that each worked example parses through the producing parser into the
+// finding it shows. A prompt whose example the parser cannot read would teach
+// every model it serves to emit unparseable output.
+func TestPersonas_OutputFormatIsUniformJSON(t *testing.T) {
+	for file, text := range allPrompts(t) {
+		section := sectionBody(text, "## Output Format")
+		require.Containsf(t, section, canonicalOutputContract, "%s ## Output Format must carry the JSON key contract", file)
+		require.Containsf(t, section, canonicalOutputRule, "%s ## Output Format must carry the fenced-JSON rule", file)
+		require.Containsf(t, section, "NO FINDINGS", "%s ## Output Format must keep the clean-review marker", file)
+
+		examples, err := workedExamples(text)
+		require.NoErrorf(t, err, "%s worked example must be valid JSON", file)
+		require.NotEmptyf(t, examples, "%s must show at least one worked example", file)
+
+		got := stream.ParseModelOutput([]byte(section))
+		require.Lenf(t, got, len(examples), "%s: ParseModelOutput must read every worked example", file)
+		for i, ex := range examples {
+			require.Equalf(t, ex["severity"], got[i].Severity, "%s example %d severity", file, i+1)
+			require.Equalf(t, ex["category"], got[i].Category, "%s example %d category", file, i+1)
+			require.Equalf(t, ex["problem"], got[i].Problem, "%s example %d problem", file, i+1)
+			require.Equalf(t, ex["evidence"], got[i].Evidence, "%s example %d evidence", file, i+1)
+			require.Emptyf(t, got[i].Reviewer, "%s example %d: model output never carries a reviewer", file, i+1)
+		}
+	}
 }
 
 // goWordRe matches the standalone language name "go"/"Go" (whole word,
