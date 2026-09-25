@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	findingsFileName = "findings.txt"
-	reconciledDir    = "reconciled"
+	findingsFileName     = "findings.txt"
+	findingsToonFileName = "findings.toon"
+	reconciledDir        = "reconciled"
 	// statusFileName is the per-agent status.json sibling of a leaf findings.txt
 	// (written by internal/fanout's statusFor). Read for fallback provenance only
 	// (Epic 19.10 F5); its full schema stays owned by fanout.
@@ -137,11 +138,15 @@ func sortedUnmatched(allowSet, matched map[string]bool) []string {
 	return out
 }
 
-// leafFindingsFiles returns the leaf findings.txt paths under root: a
-// findings.txt whose directory has no descendant directory that also contains a
-// findings.txt. The result is sorted for deterministic ordering.
+// leafFindingsFiles returns one findings file per leaf directory under root. A
+// directory is a candidate when it holds a regular findings.txt or
+// findings.toon, and a leaf when no descendant directory is also a candidate;
+// the file returned for it is the one stream.SelectFindingsFile picks, so a
+// dual-written leaf is read once, from findings.toon. The result is sorted for
+// deterministic ordering.
 func leafFindingsFiles(root string) ([]string, error) {
 	var dirs []string
+	seen := make(map[string]bool)
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			// One unreadable subtree must not abort discovery of the rest.
@@ -152,11 +157,15 @@ func leafFindingsFiles(root string) ([]string, error) {
 			return nil
 		}
 		// IsRegular() (not just !IsDir) excludes symlinks, FIFOs, devices, and
-		// sockets named findings.txt: a symlink could point outside the review
-		// dir (the same exfiltration risk persona resolution refuses), and a
-		// device/FIFO would block or error on read.
-		if d.Type().IsRegular() && d.Name() == findingsFileName {
-			dirs = append(dirs, filepath.Dir(path))
+		// sockets named findings.txt or findings.toon: a symlink could point
+		// outside the review dir (the same exfiltration risk persona resolution
+		// refuses), and a device/FIFO would block or error on read.
+		name := d.Name()
+		if d.Type().IsRegular() && (name == findingsFileName || name == findingsToonFileName) {
+			if dir := filepath.Dir(path); !seen[dir] {
+				seen[dir] = true
+				dirs = append(dirs, dir)
+			}
 		}
 		return nil
 	})
@@ -175,9 +184,16 @@ func leafFindingsFiles(root string) ([]string, error) {
 				break
 			}
 		}
-		if isLeaf {
-			leaves = append(leaves, filepath.Join(d, findingsFileName))
+		if !isLeaf {
+			continue
 		}
+		f, serr := stream.SelectFindingsFile(d)
+		if serr != nil {
+			// The file vanished (or became unreadable) since the walk.
+			fmt.Fprintf(os.Stderr, "warning: skipping %s: %v\n", d, serr)
+			continue
+		}
+		leaves = append(leaves, f)
 	}
 	sort.Strings(leaves)
 	return leaves, nil

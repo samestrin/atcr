@@ -650,12 +650,12 @@ func writeResumedAgents(poolDir string, results []Result, changed payload.Change
 	return nil
 }
 
-// maxAgentFileBytes caps a single per-agent findings.txt read during pool
+// maxAgentFileBytes caps a single per-agent findings file read during pool
 // rebuild so a corrupt or pathologically large artifact cannot exhaust memory.
 // It is a var (not const) so tests can shrink it.
 var maxAgentFileBytes int64 = 32 << 20 // 32 MiB
 
-// errFindingsTooLarge reports a per-agent findings.txt that exceeds
+// errFindingsTooLarge reports a per-agent findings file that exceeds
 // maxAgentFileBytes; the rebuild fails loudly rather than reading it unbounded.
 var errFindingsTooLarge = errors.New("findings file exceeds size limit")
 
@@ -732,11 +732,17 @@ func RebuildPool(ctx context.Context, poolDir string, roster []string) (Summary,
 		// republishes an absent files_dropped as null while status.json says [].
 		normalizeFilesDropped(&st)
 		statuses = append(statuses, st)
-		fdata, ferr := readFileLimited(filepath.Join(agentDir, findingsFile), maxAgentFileBytes)
+		// findings.toon when present, else findings.txt. The choice is final: a
+		// failure on the selected file below is never retried on the other one.
+		fpath, serr := stream.SelectFindingsFile(agentDir)
+		if serr != nil {
+			continue // no findings file: tolerated, as the missing-file read below
+		}
+		fdata, ferr := readFileLimited(fpath, maxAgentFileBytes)
 		if ferr != nil {
-			// An oversize findings.txt is a corruption signal — fail the rebuild
+			// An oversize findings file is a corruption signal — fail the rebuild
 			// rather than read it unbounded. A merely missing or unreadable
-			// findings.txt stays tolerated: a completed agent whose status.json
+			// findings file stays tolerated: a completed agent whose status.json
 			// landed but whose findings were never finalized contributes no
 			// findings, exactly as the original lenient read did.
 			if errors.Is(ferr, errFindingsTooLarge) {

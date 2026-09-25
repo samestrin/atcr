@@ -352,6 +352,8 @@ func TestRebuildPool_HardFailsOnCorruptCompletedFindings(t *testing.T) {
 		{Agent: "alpha", Status: StatusOK, Content: "CRITICAL|a.go:1|x|y|security|15|ev"},
 	}, nil))
 	// Corrupt alpha's findings.txt: strip the version header so ParseSource fails.
+	// Remove the .toon sibling so the v1 file is the one selected.
+	require.NoError(t, os.Remove(filepath.Join(poolDir, poolRawAgentDir, "alpha", findingsToonFile)))
 	require.NoError(t, os.WriteFile(
 		filepath.Join(poolDir, poolRawAgentDir, "alpha", findingsFile),
 		[]byte("garbage without a version header\n"), 0o644))
@@ -757,4 +759,117 @@ func TestExecuteResume_PrefetchReflectsTheResumedRun(t *testing.T) {
 		"the finalized manifest must report the pre-fetch outcome the RESUMED run built, not the interrupted run's")
 	assert.False(t, after.Prefetch.Present,
 		"the pending agents received no Context Definitions block; present:true here is the ambiguity the field exists to remove")
+}
+
+// seedAgentDir writes one agent's status.json plus whichever findings files are
+// given (nil skips that file), so RebuildPool's per-directory selection can be
+// driven with .toon and .txt contents that differ.
+func seedAgentDir(t *testing.T, poolDir, agent, status string, toon, txt []byte) {
+	t.Helper()
+	ad := filepath.Join(poolDir, poolRawAgentDir, agent)
+	require.NoError(t, os.MkdirAll(ad, 0o755))
+	require.NoError(t, WriteStatus(filepath.Join(ad, statusFile), &AgentStatus{Agent: agent, Status: status}))
+	if toon != nil {
+		require.NoError(t, os.WriteFile(filepath.Join(ad, findingsToonFile), toon, 0o644))
+	}
+	if txt != nil {
+		require.NoError(t, os.WriteFile(filepath.Join(ad, findingsFile), txt, 0o644))
+	}
+}
+
+func v2Bytes(t *testing.T, findings []stream.Finding) []byte {
+	t.Helper()
+	var b bytes.Buffer
+	require.NoError(t, stream.WriteSourceV2(&b, findings))
+	return b.Bytes()
+}
+
+func rebuiltPool(t *testing.T, poolDir string, roster []string) []stream.Finding {
+	t.Helper()
+	_, _, err := RebuildPool(context.Background(), poolDir, roster)
+	require.NoError(t, err)
+	return parseFile(t, filepath.Join(poolDir, findingsToonFile))
+}
+
+var (
+	toonFinding = stream.Finding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x | y", Fix: "a | b", Category: "correctness", EstMinutes: 5, Evidence: "l1\nl2", Reviewer: "alpha"}
+	txtFinding  = stream.Finding{Severity: "LOW", File: "b.go", Line: 2, Problem: "from txt", Fix: "f", Category: "style", EstMinutes: 1, Evidence: "e", Reviewer: "alpha"}
+)
+
+func TestRebuildPool_PrefersToonOverTxt(t *testing.T) {
+	poolDir := filepath.Join(t.TempDir(), "sources", "pool")
+	seedAgentDir(t, poolDir, "alpha", StatusOK,
+		v2Bytes(t, []stream.Finding{toonFinding}), v1Bytes(t, []stream.Finding{txtFinding}))
+	assert.Equal(t, []stream.Finding{toonFinding}, rebuiltPool(t, poolDir, []string{"alpha"}),
+		"only the .toon is read; the sibling .txt is never also counted")
+}
+
+func TestRebuildPool_ReadsToonOnlyAgent(t *testing.T) {
+	poolDir := filepath.Join(t.TempDir(), "sources", "pool")
+	seedAgentDir(t, poolDir, "alpha", StatusOK, v2Bytes(t, []stream.Finding{toonFinding}), nil)
+	assert.Equal(t, []stream.Finding{toonFinding}, rebuiltPool(t, poolDir, []string{"alpha"}))
+}
+
+// AC 04-04: a pre-epic roster with only findings.txt rebuilds unchanged, and a
+// mixed fleet resolves each agent directory on its own.
+func TestRebuildPool_TxtOnlyAndMixedFleet(t *testing.T) {
+	poolDir := filepath.Join(t.TempDir(), "sources", "pool")
+	bravo := stream.Finding{Severity: "MEDIUM", File: "c.go", Line: 3, Problem: "p", Fix: "f", Category: "design", EstMinutes: 2, Evidence: "e", Reviewer: "bravo"}
+	seedAgentDir(t, poolDir, "alpha", StatusOK,
+		v2Bytes(t, []stream.Finding{toonFinding}), v1Bytes(t, []stream.Finding{txtFinding}))
+	seedAgentDir(t, poolDir, "bravo", StatusOK, nil, v1Bytes(t, []stream.Finding{bravo}))
+
+	got := rebuiltPool(t, poolDir, []string{"bravo", "alpha"})
+	assert.Equal(t, []stream.Finding{bravo, toonFinding}, got, "roster order, each agent from its own selected file")
+}
+
+// The size cap applies to the selected file alone: an oversize .toon fails the
+// rebuild even when the sibling .txt is under the cap.
+func TestRebuildPool_OversizeToonFailsEvenWithSmallTxt(t *testing.T) {
+	poolDir := filepath.Join(t.TempDir(), "sources", "pool")
+	txt := []byte(stream.Version + "\n")
+	toon := v2Bytes(t, []stream.Finding{toonFinding, toonFinding, toonFinding})
+	seedAgentDir(t, poolDir, "alpha", StatusOK, toon, txt)
+
+	prev := maxAgentFileBytes
+	maxAgentFileBytes = int64(len(txt)) + 1
+	defer func() { maxAgentFileBytes = prev }()
+
+	_, _, err := RebuildPool(context.Background(), poolDir, []string{"alpha"})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, errFindingsTooLarge))
+}
+
+// A corrupt .toon is handled as a corrupt .txt is today and never falls back to
+// the sibling .txt: hard fail for an OK agent, tolerated for a failed one.
+func TestRebuildPool_CorruptToonNeverFallsBackToTxt(t *testing.T) {
+	corrupt := []byte(stream.VersionV2 + "\nnot a findings table\n")
+	good := v1Bytes(t, []stream.Finding{txtFinding})
+
+	t.Run("ok agent fails the rebuild", func(t *testing.T) {
+		poolDir := filepath.Join(t.TempDir(), "sources", "pool")
+		seedAgentDir(t, poolDir, "alpha", StatusOK, corrupt, good)
+		_, _, err := RebuildPool(context.Background(), poolDir, []string{"alpha"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `parsing findings for completed agent "alpha"`)
+	})
+	t.Run("failed agent is tolerated with no findings", func(t *testing.T) {
+		poolDir := filepath.Join(t.TempDir(), "sources", "pool")
+		seedAgentDir(t, poolDir, "alpha", StatusFailed, corrupt, good)
+		assert.Empty(t, rebuiltPool(t, poolDir, []string{"alpha"}))
+	})
+}
+
+func TestRebuildPool_UnreadableToonContributesNothing(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode-0 file")
+	}
+	poolDir := filepath.Join(t.TempDir(), "sources", "pool")
+	seedAgentDir(t, poolDir, "alpha", StatusOK,
+		v2Bytes(t, []stream.Finding{toonFinding}), v1Bytes(t, []stream.Finding{txtFinding}))
+	toonPath := filepath.Join(poolDir, poolRawAgentDir, "alpha", findingsToonFile)
+	require.NoError(t, os.Chmod(toonPath, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(toonPath, 0o644) })
+
+	assert.Empty(t, rebuiltPool(t, poolDir, []string{"alpha"}), "the .txt sibling is never read as a substitute")
 }

@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 
 	goaxi "github.com/samestrin/go-axi"
@@ -334,4 +337,41 @@ func recoverElements(text string) []json.RawMessage {
 		}
 	}
 	return out
+}
+
+// Findings file names in a source directory. atcr dual-writes both; v1 stays
+// the wire contract for external consumers until they migrate.
+const (
+	findingsFileV1 = "findings.txt"
+	findingsFileV2 = "findings.toon"
+)
+
+// SelectFindingsFile returns the findings file an atcr reader parses in dir:
+// findings.toon when it is a regular file, else findings.txt when it exists,
+// else an error for which errors.Is(err, fs.ErrNotExist) holds. Every reader
+// calls this rather than restating the rule, so no two readers pick different
+// files for one directory.
+//
+// A findings.toon that is a symlink, FIFO, device, or directory counts as
+// absent: a symlink could point outside the review tree and a FIFO would block
+// the read. findings.txt keeps today's check (plain existence), so a .txt-only
+// directory reads exactly as before.
+//
+// The choice is final. A caller that selected findings.toon must never retry
+// findings.txt when the read or parse fails: that would hide a v2 writer bug
+// behind lossy data.
+func SelectFindingsFile(dir string) (string, error) {
+	toon := filepath.Join(dir, findingsFileV2)
+	fi, err := os.Lstat(toon)
+	if err == nil && fi.Mode().IsRegular() {
+		return toon, nil
+	}
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+	txt := filepath.Join(dir, findingsFileV1)
+	if _, err := os.Stat(txt); err != nil {
+		return "", err
+	}
+	return txt, nil
 }

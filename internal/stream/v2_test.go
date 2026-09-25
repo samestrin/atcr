@@ -6,7 +6,9 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -343,4 +345,76 @@ func isMustCompile(e ast.Expr) bool {
 	}
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	return ok && sel.Sel.Name == "MustCompile"
+}
+
+// TestSelectFindingsFile pins the one .toon-first selection rule every atcr
+// reader of a findings directory shares (AC 04-02): findings.toon when it is a
+// regular file, else findings.txt when it exists, else an fs.ErrNotExist error.
+// A findings.toon that is not a regular file counts as absent.
+func TestSelectFindingsFile(t *testing.T) {
+	const v1 = Version + "\n"
+	const v2 = VersionV2 + "\n"
+	cases := []struct {
+		name  string
+		setup func(t *testing.T, dir string)
+		want  string // file name selected; "" means fs.ErrNotExist
+	}{
+		{"both present picks toon", func(t *testing.T, dir string) {
+			writeFile(t, dir, "findings.toon", v2)
+			writeFile(t, dir, "findings.txt", v1)
+		}, "findings.toon"},
+		{"toon only", func(t *testing.T, dir string) {
+			writeFile(t, dir, "findings.toon", v2)
+		}, "findings.toon"},
+		{"txt only", func(t *testing.T, dir string) {
+			writeFile(t, dir, "findings.txt", v1)
+		}, "findings.txt"},
+		{"neither", func(t *testing.T, dir string) {}, ""},
+		{"toon is a directory", func(t *testing.T, dir string) {
+			require.NoError(t, os.Mkdir(filepath.Join(dir, "findings.toon"), 0o755))
+			writeFile(t, dir, "findings.txt", v1)
+		}, "findings.txt"},
+		{"toon is a symlink", func(t *testing.T, dir string) {
+			target := filepath.Join(t.TempDir(), "elsewhere.toon")
+			require.NoError(t, os.WriteFile(target, []byte(v2), 0o644))
+			if err := os.Symlink(target, filepath.Join(dir, "findings.toon")); err != nil {
+				t.Skipf("symlink unsupported: %v", err)
+			}
+			writeFile(t, dir, "findings.txt", v1)
+		}, "findings.txt"},
+		{"toon symlink and no txt", func(t *testing.T, dir string) {
+			target := filepath.Join(t.TempDir(), "elsewhere.toon")
+			require.NoError(t, os.WriteFile(target, []byte(v2), 0o644))
+			if err := os.Symlink(target, filepath.Join(dir, "findings.toon")); err != nil {
+				t.Skipf("symlink unsupported: %v", err)
+			}
+		}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tc.setup(t, dir)
+			got, err := SelectFindingsFile(dir)
+			if tc.want == "" {
+				require.Error(t, err)
+				assert.True(t, errors.Is(err, fs.ErrNotExist), "want fs.ErrNotExist, got %v", err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, filepath.Join(dir, tc.want), got)
+		})
+	}
+}
+
+// TestSelectFindingsFile_MissingDirIsNotExist keeps a review with no
+// sources/pool directory on every reader's "missing" branch.
+func TestSelectFindingsFile_MissingDirIsNotExist(t *testing.T) {
+	_, err := SelectFindingsFile(filepath.Join(t.TempDir(), "no", "such", "dir"))
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, fs.ErrNotExist), "want fs.ErrNotExist, got %v", err)
+}
+
+func writeFile(t *testing.T, dir, name, body string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644))
 }

@@ -3,6 +3,7 @@ package reconcile
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/stream"
@@ -201,4 +202,115 @@ func TestAllFindings_FlattensInSourceOrder(t *testing.T) {
 	require.Len(t, all, 2)
 	assert.Equal(t, "host", all[0].Reviewer)
 	assert.Equal(t, "greta", all[1].Reviewer)
+}
+
+// writeToon writes a v2 findings.toon at sourcesDir/relPath.
+func writeToon(t *testing.T, sourcesDir, relPath string, findings []stream.Finding) {
+	t.Helper()
+	var b strings.Builder
+	require.NoError(t, stream.WriteSourceV2(&b, findings))
+	full := filepath.Join(sourcesDir, relPath)
+	require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o755))
+	require.NoError(t, os.WriteFile(full, []byte(b.String()), 0o644))
+}
+
+var lossless = stream.Finding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x | y", Fix: "a | b", Category: "correctness", EstMinutes: 5, Evidence: "l1\nl2", Reviewer: "greta"}
+
+// AC 04-02 Scenario 1: one leaf holding both files yields the .toon findings
+// once, never the .txt as well.
+func TestDiscover_LeafWithBothFilesReadsToonOnce(t *testing.T) {
+	dir := t.TempDir()
+	writeToon(t, dir, "pool/raw/agent/greta/findings.toon", []stream.Finding{lossless})
+	writeFindings(t, dir, "pool/raw/agent/greta/findings.txt", "LOW|b.go:2|from txt|f|style|1|e|greta\n")
+
+	sources, err := Discover(dir, nil)
+	require.NoError(t, err)
+	pool, ok := sourceByName(sources, "pool")
+	require.True(t, ok)
+	assert.Equal(t, []stream.Finding{lossless}, pool.Findings)
+}
+
+func TestDiscover_ToonOnlyLeaf(t *testing.T) {
+	dir := t.TempDir()
+	writeToon(t, dir, "pool/raw/agent/greta/findings.toon", []stream.Finding{lossless})
+
+	sources, err := Discover(dir, nil)
+	require.NoError(t, err)
+	pool, ok := sourceByName(sources, "pool")
+	require.True(t, ok, "a directory holding only findings.toon is a leaf")
+	assert.Equal(t, []stream.Finding{lossless}, pool.Findings)
+}
+
+// Nesting is format-blind: a parent .txt above a child .toon is not a leaf.
+func TestDiscover_NestedMixedFormatsDeepestWins(t *testing.T) {
+	dir := t.TempDir()
+	writeFindings(t, dir, "pool/findings.txt", "LOW|b.go:2|merged|f|style|1|e|greta\n")
+	writeToon(t, dir, "pool/raw/agent/greta/findings.toon", []stream.Finding{lossless})
+
+	sources, err := Discover(dir, nil)
+	require.NoError(t, err)
+	pool, _ := sourceByName(sources, "pool")
+	assert.Equal(t, []stream.Finding{lossless}, pool.Findings)
+}
+
+// A corrupt .toon is skipped and reported; the sibling .txt is never read.
+func TestDiscover_CorruptToonSkippedNotMaskedByTxt(t *testing.T) {
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "pool", "raw", "agent", "greta", "findings.toon")
+	require.NoError(t, os.MkdirAll(filepath.Dir(bad), 0o755))
+	require.NoError(t, os.WriteFile(bad, []byte(stream.VersionV2+"\nnot a table\n"), 0o644))
+	writeFindings(t, dir, "pool/raw/agent/greta/findings.txt", "LOW|b.go:2|from txt|f|style|1|e|greta\n")
+
+	sources, err := Discover(dir, nil)
+	require.NoError(t, err)
+	pool, ok := sourceByName(sources, "pool")
+	require.True(t, ok)
+	assert.Empty(t, pool.Findings, "the .txt sibling must not stand in for a corrupt .toon")
+	assert.Equal(t, []string{bad}, pool.SkippedFiles)
+}
+
+// A non-regular findings.toon is not a leaf marker; a regular .txt beside it
+// still makes the directory a leaf and is the file read.
+func TestDiscover_SymlinkToonIgnoredTxtRead(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "secret.toon")
+	var b strings.Builder
+	require.NoError(t, stream.WriteSourceV2(&b, []stream.Finding{lossless}))
+	require.NoError(t, os.WriteFile(outside, []byte(b.String()), 0o644))
+
+	writeFindings(t, dir, "ci/findings.txt", "LOW|b.go:2|from txt|f|style|1|e|ci\n")
+	if err := os.Symlink(outside, filepath.Join(dir, "ci", "findings.toon")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "lone"), 0o755))
+	if err := os.Symlink(outside, filepath.Join(dir, "lone", "findings.toon")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	sources, err := Discover(dir, nil)
+	require.NoError(t, err)
+	ci, ok := sourceByName(sources, "ci")
+	require.True(t, ok)
+	require.Len(t, ci.Findings, 1)
+	assert.Equal(t, "from txt", ci.Findings[0].Problem)
+	_, ok = sourceByName(sources, "lone")
+	assert.False(t, ok, "a symlinked findings.toon alone is not a source")
+}
+
+// AC 04-04: a host-review-shaped .txt-only source keeps reconciling beside a
+// dual-written pool, each resolved on its own.
+func TestDiscover_TxtOnlyHostBesideDualWrittenPool(t *testing.T) {
+	dir := t.TempDir()
+	hostBody := "HIGH|h.go:3|host finding|f|security|10|ev|host\n"
+	writeFindings(t, dir, "host/findings.txt", hostBody)
+	writeToon(t, dir, "pool/raw/agent/greta/findings.toon", []stream.Finding{lossless})
+	writeFindings(t, dir, "pool/raw/agent/greta/findings.txt", "LOW|b.go:2|from txt|f|style|1|e|greta\n")
+
+	sources, err := Discover(dir, nil)
+	require.NoError(t, err)
+	require.Len(t, sources, 2)
+	host, _ := sourceByName(sources, "host")
+	assert.Equal(t, mustFindings(t, strings.TrimSuffix(hostBody, "\n")), host.Findings)
+	pool, _ := sourceByName(sources, "pool")
+	assert.Equal(t, []stream.Finding{lossless}, pool.Findings)
 }
