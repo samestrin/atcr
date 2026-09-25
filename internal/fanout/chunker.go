@@ -372,6 +372,9 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 			out.ToolsDegradedReason = r.ToolsDegradedReason
 		}
 		out.ResponseTruncated = out.ResponseTruncated || r.ResponseTruncated
+		// Any chunk that returned prose no parser could use marks the persona;
+		// reading only g[0]'s flag hid a later chunk's failure from status.json.
+		out.UnparseableResponse = out.UnparseableResponse || r.UnparseableResponse
 		// FIRST NON-ZERO across the group, not g[0]'s. The diff-wide shed is a property
 		// of the PAYLOAD — every chunk of a persona is rendered from the same
 		// modePayload, so the value is identical wherever it appears and the first

@@ -25,6 +25,10 @@ const Version = "# atcr-findings/v1"
 // sentinel provides. Every persona prompt instructs it.
 const NoFindingsSentinel = "NO FINDINGS"
 
+// bareFenceRe matches a code-fence marker line that carries nothing but an
+// optional info word.
+var bareFenceRe = regexp.MustCompile("^\\s*`{3,}[A-Za-z0-9_-]*\\s*$")
+
 // IsNoFindings reports whether a reviewer response says "clean" and nothing
 // else. The sentinel is model-produced, so the shapes a model slips into are
 // accepted too: any case, surrounding whitespace, trailing '.', ':' or '!', a
@@ -36,7 +40,9 @@ const NoFindingsSentinel = "NO FINDINGS"
 func IsNoFindings(content string) bool {
 	var kept []string
 	for _, l := range strings.Split(content, "\n") {
-		if !isFenceMarker(strings.TrimRight(l, "\r")) {
+		// Only a bare marker line (```, ```json) is dropped; text sharing a
+		// fence line is content like any other.
+		if !bareFenceRe.MatchString(strings.TrimRight(l, "\r")) {
 			kept = append(kept, l)
 		}
 	}

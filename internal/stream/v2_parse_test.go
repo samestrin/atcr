@@ -163,6 +163,7 @@ func TestParseModelOutput_ObjectShapes(t *testing.T) {
 		{"file_line wins over split keys", `[{"severity":"HIGH","file_line":"b.go:2","file":"a.go","line":7}]`,
 			[]Finding{{Severity: "HIGH", File: "b.go", Line: 2}}},
 		{"split keys without a file are dropped", `[{"severity":"HIGH","line":7}]`, nil},
+		{"file already carrying a line", `[{"severity":"HIGH","file":"a.go:7","line":7}]`, []Finding{{Severity: "HIGH", File: "a.go", Line: 7}}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -186,6 +187,7 @@ func TestIsNoFindings_AcceptsCleanSlips(t *testing.T) {
 	for _, in := range []string{
 		"NO FINDINGS HERE", "NO FINDINGSX", "[]x", "[1]", `{"findings":[{}]}`, `{"findings":[],"x":1}`,
 		"No findings are present; all claims are verified.", "NO FINDINGS\nbut see line 3", "```json\n```", "{}",
+		"```\nNO FINDINGS\n``` but a.go:3 has a nil deref", "```HIGH|a.go:1|nil deref|f\nNO FINDINGS",
 	} {
 		assert.False(t, IsNoFindings(in), "%q must not count as clean", in)
 	}

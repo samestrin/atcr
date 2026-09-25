@@ -346,10 +346,17 @@ func splitLocation(e json.RawMessage) string {
 		File string  `json:"file"`
 		Line flexInt `json:"line"`
 	}
-	if json.Unmarshal(e, &alt) != nil || strings.TrimSpace(alt.File) == "" {
+	if json.Unmarshal(e, &alt) != nil {
 		return ""
 	}
-	return fmt.Sprintf("%s:%d", strings.TrimSpace(alt.File), int(alt.Line))
+	file := strings.TrimSpace(alt.File)
+	if file == "" {
+		return ""
+	}
+	if _, line := splitFileLine(file); line > 0 {
+		return file // "file" already carries FILE:LINE
+	}
+	return fmt.Sprintf("%s:%d", file, int(alt.Line))
 }
 
 // emptyFindingsValue returns the length of the empty JSON array or

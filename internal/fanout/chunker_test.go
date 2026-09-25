@@ -414,6 +414,30 @@ func TestMergeResultGroup_ModelIsTheModalServingModel(t *testing.T) {
 	})
 }
 
+// A chunk after the first that emitted prose no parser could use must still
+// mark the persona: status.json's unparseable_response is the only signal that
+// separates it from a clean review (bruce, live panel run 5, 2026-09-25).
+func TestMergeResultGroup_AggregatesUnparseableResponse(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		flags []bool
+		want  bool
+	}{
+		{"later chunk unparseable", []bool{false, true}, true},
+		{"first chunk unparseable", []bool{true, false}, true},
+		{"third chunk unparseable", []bool{false, false, true}, true},
+		{"none unparseable", []bool{false, false}, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var g []Result
+			for _, f := range c.flags {
+				g = append(g, Result{Agent: "reviewer", Status: StatusOK, UnparseableResponse: f})
+			}
+			assert.Equal(t, c.want, mergeResultGroup(g, nil).UnparseableResponse)
+		})
+	}
+}
+
 func TestMergeResultGroup_AggregatesResponseTruncated(t *testing.T) {
 	t.Run("later chunk truncated is preserved", func(t *testing.T) {
 		g := []Result{
