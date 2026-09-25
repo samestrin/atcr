@@ -1,0 +1,10 @@
+# Frozen v1 characterization baseline (sprint 35.16.11.2), model-output shape: no version header. Do not edit to make a failing test pass.
+Here is my review. Overall this change carries HIGH risk of regressions.
+
+HIGH|src/auth.go:42|token never expires|check expiry|security|15|expiresAt unread
+MEDIUM|db.go:7|query built by concat|use params|security|20|see line 7|mallory
+```text
+LOW|example.go:1|sample row inside a fence|ignore|style|1|example
+```
+LOW|util.go:5|short row
+HIGH|

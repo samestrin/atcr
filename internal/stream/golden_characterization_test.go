@@ -1,0 +1,203 @@
+package stream
+
+// Golden v1 characterization tests (sprint 35.16.11.2, Story 05).
+//
+// These tests freeze the CURRENT behavior of the v1 pipe-delimited parser and
+// writer against checked-in fixtures under testdata/golden/. They are a baseline,
+// not a target: a failure here means v1 behavior changed, so fix the code, never
+// the fixture or the expected values. Expected values are hand-derived from the
+// fixture text, not captured by running the parser.
+//
+// Call-site coverage map. All six production read paths call stream.ParseSource
+// on a per-source (8-column) findings.txt, so one shape covers all of them:
+//
+//   - internal/reconcile/discover.go:89 (Discover)                  -> TestGolden_ParseSource_PerSource
+//   - internal/fanout/resume.go:747 (RebuildPool)                   -> TestGolden_ParseSource_PerSource
+//   - internal/history/capture.go:38 (RecordReview)                 -> TestGolden_ParseSource_PerSource
+//   - internal/audit/capture.go:71 (summarize)                      -> TestGolden_ParseSource_PerSource
+//   - cli/benchmark_run.go:934 (readCaseFindings)                   -> TestGolden_ParseSource_PerSource, which also pins the exact SkippedRow.Content that skippedRowReviewer reads back
+//   - cli/benchmark_repostate.go:1191 (readCaseFindingsLocated)     -> TestGolden_ParseSource_PerSource
+//
+// Line numbers are as of story creation; the function names are the anchor.
+// When these call sites later prefer findings.toon, this map still describes
+// their v1 fallback branch, which keeps calling ParseSource on findings.txt.
+//
+// End-to-end peer: cli/backend_contract_test.go:127
+// (TestBackendContract_OutputDirTreeMatchesDocumentedShape, via
+// assertFindingsColumns) already drives a full review + reconcile and checks the
+// 8-/9-column shapes. These tests are its package-local complement, not a copy.
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func readGolden(t *testing.T, name string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", "golden", name))
+	require.NoError(t, err)
+	return data
+}
+
+func TestGolden_ParseSource_PerSource(t *testing.T) {
+	res, err := ParseSource(readGolden(t, "per_source.txt"))
+	require.NoError(t, err)
+
+	assert.Equal(t, []Finding{
+		{Severity: "CRITICAL", File: "src/auth.go", Line: 42, Problem: "token never expires", Fix: "check expiry", Category: "security", EstMinutes: 15, Evidence: "expiresAt unread", Reviewer: "greta"},
+		// Trailing '|' is padding, not a leaked column.
+		{Severity: "HIGH", File: "cmd/main.go", Line: 88, Problem: "goroutine leak", Fix: "add WaitGroup", Category: "concurrency", EstMinutes: 30, Evidence: "no wg.Wait", Reviewer: "kai"},
+		// No ":LINE" keeps the whole column as File with Line 0; a non-integer EST_MINUTES becomes 0.
+		{Severity: "MEDIUM", File: "pkg/x.go", Line: 0, Problem: "no line number", Fix: "add one", Category: "correctness", EstMinutes: 0, Evidence: "ev2", Reviewer: "otto"},
+		{Severity: "LOW", File: "util.go", Line: 5, Problem: "unused import", Fix: "remove it", Category: "style", EstMinutes: 2, Evidence: "lint", Reviewer: "dax"},
+	}, res.Findings)
+
+	// Line counts every physical line, including the header, comment, and blank.
+	assert.Equal(t, []SkippedRow{{
+		Line:    6,
+		Content: "HIGH|a.go:1|leaked pipe|fix|style|5|ev|bruce|extra",
+		Reason:  "expected 8 columns, got 9",
+	}}, res.Skipped)
+}
+
+func TestGolden_ParseReconciled_Reconciled(t *testing.T) {
+	res, err := ParseReconciled(readGolden(t, "reconciled.txt"))
+	require.NoError(t, err)
+
+	assert.Equal(t, []Finding{
+		{Severity: "CRITICAL", File: "db.go", Line: 100, Problem: "sql injection", Fix: "parametrize input", Category: "security", EstMinutes: 30, Evidence: "pool repro", Reviewers: []string{"greta", "host"}, Confidence: "HIGH"},
+		// REVIEWERS entries are trimmed.
+		{Severity: "HIGH", File: "auth.go", Line: 42, Problem: "token never expires", Fix: "guard it", Category: "security", EstMinutes: 15, Evidence: "seen twice", Reviewers: []string{"greta", "kai"}, Confidence: "MEDIUM"},
+		{Severity: "LOW", File: "util.go", Line: 5, Problem: "unused import", Fix: "remove it", Category: "style", EstMinutes: 2, Evidence: "lint", Reviewers: []string{"dax"}, Confidence: "LOW"},
+	}, res.Findings)
+
+	assert.Equal(t, []SkippedRow{{
+		Line:    6,
+		Content: "MEDIUM|pay.go:10|x|y|security|20|ev|greta|MEDIUM|extra",
+		Reason:  "expected 9 columns, got 10",
+	}}, res.Skipped)
+}
+
+// TestGolden_ParseReconciled_ReconcileFixture reads the pre-existing
+// internal/reconcile golden stream in place (not copied) so this package's
+// baseline agrees with the reconcile package's.
+func TestGolden_ParseReconciled_ReconcileFixture(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "reconcile", "testdata", "golden", "findings.txt"))
+	require.NoError(t, err)
+	res, err := ParseReconciled(data)
+	require.NoError(t, err)
+	assert.Empty(t, res.Skipped)
+
+	assert.Equal(t, []Finding{
+		{Severity: "CRITICAL", File: "db.go", Line: 100, Problem: "sql injection in query builder", Fix: "parametrize input", Category: "security", EstMinutes: 30, Evidence: "[greta] pool repro / [host] host low (disagreement: LOW vs CRITICAL)", Reviewers: []string{"greta", "host"}, Confidence: "HIGH"},
+		{Severity: "HIGH", File: "auth.go", Line: 42, Problem: "token never expires here", Fix: "guard it", Category: "security", EstMinutes: 15, Evidence: "[greta] pool saw it / [host] host also", Reviewers: []string{"greta", "host"}, Confidence: "HIGH"},
+		{Severity: "HIGH", File: "legacy.go", Line: 7, Problem: "preexisting smell outside the diff", Fix: "n/a", Category: "out-of-scope", EstMinutes: 0, Evidence: "pool oos", Reviewers: []string{"greta"}, Confidence: "MEDIUM"},
+		{Severity: "MEDIUM", File: "pay.go", Line: 10, Problem: "session token expires without refresh check", Fix: "add refresh", Category: "security", EstMinutes: 20, Evidence: "pool note", Reviewers: []string{"greta"}, Confidence: "MEDIUM"},
+		{Severity: "MEDIUM", File: "pay.go", Line: 12, Problem: "session token expires without bound", Fix: "cap it", Category: "security", EstMinutes: 20, Evidence: "host note", Reviewers: []string{"host"}, Confidence: "MEDIUM"},
+		{Severity: "LOW", File: "util.go", Line: 5, Problem: "unused import lingers in file", Fix: "remove it", Category: "style", EstMinutes: 2, Evidence: "pool lint", Reviewers: []string{"greta"}, Confidence: "MEDIUM"},
+	}, res.Findings)
+}
+
+func TestGolden_ParseModelOutput_ModelOutput(t *testing.T) {
+	got := ParseModelOutput(readGolden(t, "model_output.txt"))
+
+	// The comment, the prose line, the fenced example row, and the bare "HIGH|"
+	// contribute nothing. Reviewer is always empty.
+	assert.Equal(t, []Finding{
+		{Severity: "HIGH", File: "src/auth.go", Line: 42, Problem: "token never expires", Fix: "check expiry", Category: "security", EstMinutes: 15, Evidence: "expiresAt unread"},
+		// TD-016: a model-supplied 8th field folds into EVIDENCE, never Reviewer.
+		{Severity: "MEDIUM", File: "db.go", Line: 7, Problem: "query built by concat", Fix: "use params", Category: "security", EstMinutes: 20, Evidence: "see line 7/mallory"},
+		// A short row is padded.
+		{Severity: "LOW", File: "util.go", Line: 5, Problem: "short row"},
+	}, got)
+}
+
+func TestGolden_HeaderErrors(t *testing.T) {
+	_, err := ParseSource([]byte("HIGH|a.go:1|p|f|c|1|e|r\n"))
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrMissingHeader))
+	assert.Equal(t, `missing version header: first line must be "# atcr-findings/v1"`, err.Error())
+
+	// v99, not v2: a v2 header gets its own decoder later in this sprint.
+	_, err = ParseReconciled([]byte("# atcr-findings/v99\n"))
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrUnknownVersion))
+	assert.Equal(t, `unknown findings version: "# atcr-findings/v99" (want "# atcr-findings/v1")`, err.Error())
+}
+
+// The writer emits only the header and canonical finding rows, so each
+// round-trip compares against a checked-in *.roundtrip.txt holding the exact
+// expected writer output (comments, blanks, and skipped rows gone; trailing
+// pipes dropped; ":0" and "0" filled in; REVIEWERS trimmed).
+func TestGolden_RoundTrip_WriteSource(t *testing.T) {
+	res, err := ParseSource(readGolden(t, "per_source.txt"))
+	require.NoError(t, err)
+	var b strings.Builder
+	require.NoError(t, WriteSource(&b, res.Findings))
+	assert.Equal(t, string(readGolden(t, "per_source.roundtrip.txt")), b.String())
+}
+
+func TestGolden_RoundTrip_WriteReconciled(t *testing.T) {
+	res, err := ParseReconciled(readGolden(t, "reconciled.txt"))
+	require.NoError(t, err)
+	var b strings.Builder
+	require.NoError(t, WriteReconciled(&b, res.Findings))
+	assert.Equal(t, string(readGolden(t, "reconciled.roundtrip.txt")), b.String())
+}
+
+// TestGolden_RoundTrip_ReconcileFixture is the check that would catch a
+// dual-write regression: the reconcile golden stream is already canonical, so
+// it must come back byte-for-byte with no exclusions.
+func TestGolden_RoundTrip_ReconcileFixture(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "reconcile", "testdata", "golden", "findings.txt"))
+	require.NoError(t, err)
+	res, err := ParseReconciled(data)
+	require.NoError(t, err)
+	var b strings.Builder
+	require.NoError(t, WriteReconciled(&b, res.Findings))
+	assert.Equal(t, string(data), b.String())
+}
+
+// TestGolden_WriteSource_LossyEscaping pins the v1 writer's lossy escaping as
+// expected behavior: a literal '|' becomes '/', and CR/LF become one space so a
+// finding stays on one physical line.
+func TestGolden_WriteSource_LossyEscaping(t *testing.T) {
+	var b strings.Builder
+	require.NoError(t, WriteSource(&b, []Finding{{
+		Severity: "LOW", File: "a.go", Line: 1,
+		Problem: "use a || b", Fix: "f", Category: "style", EstMinutes: 5,
+		Evidence: "line one\r\nline two\nline three", Reviewer: "otto",
+	}}))
+	assert.Equal(t, Version+"\nLOW|a.go:1|use a // b|f|style|5|line one line two line three|otto\n", b.String())
+	assert.Len(t, strings.Split(strings.TrimRight(b.String(), "\n"), "\n"), 2)
+}
+
+type failingWriter struct{ failAfter int }
+
+var errGoldenWrite = errors.New("disk full")
+
+func (w *failingWriter) Write(p []byte) (int, error) {
+	if w.failAfter == 0 {
+		return 0, errGoldenWrite
+	}
+	w.failAfter--
+	return len(p), nil
+}
+
+func TestGolden_WriteErrorsPropagate(t *testing.T) {
+	findings := []Finding{{Severity: "LOW", File: "a.go", Line: 1}}
+
+	err := WriteSource(&failingWriter{failAfter: 0}, findings)
+	require.ErrorIs(t, err, errGoldenWrite)
+	assert.Equal(t, "writing findings header: disk full", err.Error())
+
+	err = WriteReconciled(&failingWriter{failAfter: 1}, findings)
+	require.ErrorIs(t, err, errGoldenWrite)
+	assert.Equal(t, "writing finding: disk full", err.Error())
+}

@@ -1,0 +1,4 @@
+# atcr-findings/v1
+CRITICAL|db.go:100|sql injection|parametrize input|security|30|pool repro|greta,host|HIGH
+HIGH|auth.go:42|token never expires|guard it|security|15|seen twice|greta,kai|MEDIUM
+LOW|util.go:5|unused import|remove it|style|2|lint|dax|LOW

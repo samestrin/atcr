@@ -1,0 +1,5 @@
+# atcr-findings/v1
+CRITICAL|src/auth.go:42|token never expires|check expiry|security|15|expiresAt unread|greta
+HIGH|cmd/main.go:88|goroutine leak|add WaitGroup|concurrency|30|no wg.Wait|kai
+MEDIUM|pkg/x.go:0|no line number|add one|correctness|0|ev2|otto
+LOW|util.go:5|unused import|remove it|style|2|lint|dax
