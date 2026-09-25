@@ -283,7 +283,7 @@ func promoteDiffTruncation(r Result) Result {
 // (most frequent) model, tie-breaking by first appearance, instead of joining them
 // into a composite value that would never match another persona's key.
 func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
-	out := g[0] // inherit stable per-slot identity (Agent, Model, PayloadMode, constraints)
+	out := g[0] // inherit stable per-slot identity (Agent, PayloadMode, constraints); Model is re-derived below
 	out.Err = nil
 	out.DurationMS = 0
 	out.TokensIn, out.TokensOut = 0, 0
@@ -319,7 +319,18 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	fallbackFromSet := make(map[string]struct{})
 	fallbackModelCounts := make(map[string]int)
 	var fallbackModelOrder []string
-	for _, r := range g {
+	servedModelCounts := make(map[string]int)
+	servedModelFirst := make(map[string]int) // model key -> index of its first serving chunk
+	var servedModelOrder []string
+	for i, r := range g {
+		if m := strings.TrimSpace(r.Model); r.Status == StatusOK && m != "" {
+			k := strings.ToLower(m)
+			if servedModelCounts[k] == 0 {
+				servedModelOrder = append(servedModelOrder, k)
+				servedModelFirst[k] = i
+			}
+			servedModelCounts[k]++
+		}
 		if strings.TrimSpace(r.Content) != "" {
 			contents = append(contents, r.Content)
 		}
@@ -388,6 +399,32 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	}
 	out.Content = strings.Join(contents, "\n")
 	out.CacheHit = allCacheHit
+	// Model names the model that served most of the persona's successful chunks,
+	// not chunk 0's: a chunk 0 that failed over to a backup would otherwise record
+	// the backup for the whole persona, scoring its per-model trust prior against
+	// the wrong history. A disagreement still names ONE model (modal, first
+	// appearance on a tie) rather than none — cost pricing reads this field, and an
+	// empty model would price the persona's real tokens at $0. With no successful
+	// chunk, chunk 0's model stands.
+	//
+	// The window, reservation and cap move WITH the model: invokeAgent stamps them
+	// as a matched set from one serving agent (see promoteRePackedDegradation), so
+	// they are taken from the same chunk. This runs before that promote so its
+	// budget-0 zeroing still has the last word.
+	bestServedIdx, bestServedCount := 0, 0
+	for _, k := range servedModelOrder {
+		if c := servedModelCounts[k]; c > bestServedCount {
+			bestServedCount = c
+			bestServedIdx = servedModelFirst[k]
+		}
+	}
+	if bestServedCount > 0 {
+		src := g[bestServedIdx]
+		out.Model = src.Model
+		out.ResolvedWindow = src.ResolvedWindow
+		out.ReservedOutputTokens = src.ReservedOutputTokens
+		out.ResolvedMaxTokens = src.ResolvedMaxTokens
+	}
 	promoteRePackedDegradation(&out, g)
 	if len(fallbackFromSet) > 0 {
 		fallbacks := make([]string, 0, len(fallbackFromSet))
@@ -470,10 +507,11 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 // stops describing a single agent. That is deliberate and must stay contained:
 // resolved_window and reserved_output_tokens are NOT promoted with it. invokeAgent
 // stamps Model, ResolvedWindow and ReservedOutputTokens from the serving agent in
-// one block (engine.go), so `out := g[0]` inherits a matched set, and
+// one block (engine.go), and mergeResultGroup copies all of them from the one
+// chunk that supplies the merged Model, so the record carries a matched set, and
 // resolved_window is a pure function of the model beside it
 // (payload.ContextWindowTokens). Promoting the window to "match" the aggregate
-// budget would pair chunk 0's model with a different agent's window — a
+// budget would pair the recorded model with a different agent's window — a
 // combination that function says cannot exist, traded for a mismatch that is
 // documented right here. An earlier revision did exactly that; the invariant is
 // pinned by TestMergeChunkResults_PromotedBudgetDoesNotDragTheWindowOffItsModel.

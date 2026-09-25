@@ -132,7 +132,7 @@ func CountFailingJSON(findings []JSONFinding, threshold string, requireVerified 
 // in two cases: the verify stage never ran, or it ran and every verdict it
 // produced was unverifiable (allUnverifiableCollapse). The error text names
 // which one, because the remedy differs — "run atcr verify" only fixes the
-// first. The caller surfaces it as a warning (TD-004).
+// first. Callers log it as a warning and still run the gate; it never fails the run.
 //
 // It does NOT warn on every run with zero verified findings. A verification
 // that refuted every finding, or refuted some and could not verify the rest,

@@ -299,6 +299,11 @@ func listPersonasWithScores(cmd *cobra.Command, dir string) error {
 // ResolveTrustPriors — a windowed read under DefaultTrustMinRuns. Without this
 // footer the table reads as the rates reconcile uses, and for a lens under the
 // production floor it describes a decision reconcile never made.
+//
+// The in-use list is read persona-only (ResolveTrustPriors), while reconcile keys
+// each prior on the model the persona runs on in that review. The last line says
+// so: without it the list can name a persona that reconcile treats as neutral
+// after a model switch.
 func renderScoresScope(w io.Writer, inUse map[string]float64) {
 	names := make([]string, 0, len(inUse))
 	for name := range inUse {
@@ -310,8 +315,10 @@ func renderScoresScope(w io.Writer, inUse map[string]float64) {
 		used = strings.Join(names, ", ")
 	}
 	_, _ = fmt.Fprintf(w, "\nCORROBORATION, RAISED and CASES cover all run history with no run floor.\n"+
-		"Reconcile uses only the last %d days with a %d-run floor.\nIn use by reconcile: %s\n",
-		int(scorecard.DefaultTrustWindow.Hours()/24), scorecard.DefaultTrustMinRuns, used)
+		"Reconcile uses only the last %d days with a %d-run floor.\nIn use by reconcile: %s\n"+
+		"Reconcile scores a persona only on the model it runs on in that review, so a persona that\n"+
+		"switched models is neutral there until it has %d runs on the new model.\n",
+		int(scorecard.DefaultTrustWindow.Hours()/24), scorecard.DefaultTrustMinRuns, used, scorecard.DefaultTrustMinRuns)
 }
 
 func newPersonasSearchCmd() *cobra.Command {

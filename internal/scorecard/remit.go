@@ -43,7 +43,7 @@ import (
 // member, which catches a constant that is removed from the offered vocabulary
 // while still existing in Go.
 var personaRemit = map[string][]string{
-	// personas/bruce.md:7-13 ## Focus — the generalist, and the widest entry here by
+	// personas/bruce.md ## Focus — the generalist, and the widest entry here by
 	// design. Item 1 logic errors, 2 error handling, 3 contract violations,
 	// 4 state bugs, 5 resource handling, 6 predicate exhaustiveness (whose own
 	// text says "with CATEGORY invariant" — the member most easily lost by
@@ -57,14 +57,14 @@ var personaRemit = map[string][]string{
 		reclib.CategoryResourceLeak,
 		reclib.CategoryInvariant,
 	},
-	// personas/dax.md:7-13 ## Focus — test coverage and error paths. Items 2/3/5 are
+	// personas/dax.md ## Focus — test coverage and error paths. Items 2/3/5 are
 	// test-shaped, item 1 is untested ERROR paths, item 6 is invariant.
 	"dax": {
 		reclib.CategoryTesting,
 		reclib.CategoryErrorHandling,
 		reclib.CategoryInvariant,
 	},
-	// personas/greta.md:7-13 ## Focus — algorithmic correctness. Item 1 boundaries and
+	// personas/greta.md ## Focus — algorithmic correctness. Item 1 boundaries and
 	// 2 loop correctness are correctness/logic, 3 numeric truncation is type,
 	// 4 slice aliasing and mutation-during-iteration is state, 5 accidental
 	// O(n^2) is complexity/performance, 6 is invariant.
@@ -77,7 +77,7 @@ var personaRemit = map[string][]string{
 		reclib.CategoryPerformance,
 		reclib.CategoryInvariant,
 	},
-	// personas/ingrid.md:7-13 ## Focus — language idioms. Item 1 error handling,
+	// personas/ingrid.md ## Focus — language idioms. Item 1 error handling,
 	// 2 resource and task leaks, 3 abstraction misuse is type plus bloat
 	// ("unnecessary indirection or wrapper layers" is category.go's "unused
 	// abstraction, speculative generality"), 4 concurrency misuse names
@@ -96,7 +96,7 @@ var personaRemit = map[string][]string{
 		reclib.CategoryStyle,
 		reclib.CategoryInvariant,
 	},
-	// personas/kai.md:7-13 ## Focus — architecture and design fit. Items 1/2 boundary
+	// personas/kai.md ## Focus — architecture and design fit. Items 1/2 boundary
 	// violations and coupling, 3 contract design ("APIs that lie") covers both
 	// the published-interface and the honours-its-own-name senses, 4 duplication
 	// of responsibility, 5 extensibility traps, 6 invariant. Item 1's "layers
@@ -111,7 +111,7 @@ var personaRemit = map[string][]string{
 		reclib.CategoryExtensibility,
 		reclib.CategoryInvariant,
 	},
-	// personas/mira.md:7-13 ## Focus — production feasibility. Item 1 failure
+	// personas/mira.md ## Focus — production feasibility. Item 1 failure
 	// handling, 2 resource exhaustion, 3 observability, 4 "race-prone
 	// startup/shutdown" is concurrency AND race — category.go keeps the two
 	// apart on purpose, so mapping only one of them narrows mira against its
@@ -125,7 +125,7 @@ var personaRemit = map[string][]string{
 		reclib.CategoryConfiguration,
 		reclib.CategoryInvariant,
 	},
-	// personas/otto.md:7-13 ## Focus — style, naming, readability. Item 1 misleading
+	// personas/otto.md ## Focus — style, naming, readability. Item 1 misleading
 	// names, 2 idiom violations, 3 structure is maintainability plus complexity
 	// ("deep nesting, boolean parameter soup" is category.go's "harder to follow
 	// than the problem requires"), 4 comments is docs, 5 consistency is naming
@@ -138,7 +138,7 @@ var personaRemit = map[string][]string{
 		reclib.CategoryDocs,
 		reclib.CategoryInvariant,
 	},
-	// personas/penny.md:7-13 ## Focus — performance. Items 1/3/4 are performance,
+	// personas/penny.md ## Focus — performance. Items 1/3/4 are performance,
 	// 2 memory leaks is leak, 4 hidden O(n^2) is complexity, 5 missing
 	// close/release is resource-leak, 6 invariant.
 	"penny": {
@@ -148,7 +148,7 @@ var personaRemit = map[string][]string{
 		reclib.CategoryResourceLeak,
 		reclib.CategoryInvariant,
 	},
-	// personas/sasha.md:7-13 ## Focus — dedicated security. Item 1 injection is
+	// personas/sasha.md ## Focus — dedicated security. Item 1 injection is
 	// security plus input-validation, 2 broken auth is security, 3 secrets
 	// leakage is secret, 4 insecure defaults is security plus validation,
 	// 5 sensitive data exposure is security plus leak ("overbroad error detail"

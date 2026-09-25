@@ -53,6 +53,9 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	// for the shared token-dense payload, read from the same context value review.go
 	// uses so review/resume stay in lockstep with one flag parse (AC 01-04).
 	axiMode := axiFromContext(ctx)
+	// Snapshot the resolved legacy-pipe choice once, like axiMode (TD:
+	// cli/review_summary.go:103).
+	legacyMode := legacyPipeFromContext(ctx)
 
 	// --resume targets an existing review; --id and --output-dir only make sense
 	// when creating a new one, so reject the combination up front (exit 2).
@@ -239,7 +242,7 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		if err := fanout.ClearInterrupted(dir); err != nil {
 			return usageError(fmt.Errorf("resume failed: %w", err))
 		}
-		reconciledTotal, err := resumeReconcile(ctx, cmd, dir, consensusLevel)
+		reconciledTotal, bySeverity, err := resumeReconcile(ctx, cmd, dir, consensusLevel)
 		if err != nil {
 			return err
 		}
@@ -250,11 +253,13 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		if axiMode {
 			// This path runs no fan-out, so there is no metrics delta to report: the
 			// payload carries the already-complete agent set (all succeeded) and the
-			// just-reconciled findings total.
-			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), prep.ID, dir, summarySnapshot{
-				agentsSucceeded: int64(len(info.Completed)),
-				agentsTotal:     int64(len(info.Completed)),
-				findingsTotal:   int64(reconciledTotal),
+			// just-reconciled findings, broken down by severity so an agent gating on
+			// severity from the payload sees the real counts (TD: cli/resume.go:254).
+			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), legacyMode, prep.ID, dir, summarySnapshot{
+				agentsSucceeded:    int64(len(info.Completed)),
+				agentsTotal:        int64(len(info.Completed)),
+				findingsTotal:      int64(reconciledTotal),
+				findingsBySeverity: bySeverity,
 			}); werr != nil {
 				return fmt.Errorf("axi output rendering failed: %w", werr)
 			}
@@ -305,7 +310,7 @@ func runResume(cmd *cobra.Command, anchor string) error {
 			// and surfaced only after the history/audit ledgers are written below, so
 			// a closed pipe cannot cost the run its compliance record; the fault
 			// stays unwrapped → exitFailure (1) (AC 02-02 Error Scenario 3).
-			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), result.ID, result.Dir, summaryDelta); werr != nil {
+			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), legacyMode, result.ID, result.Dir, summaryDelta); werr != nil {
 				axiWerr = fmt.Errorf("axi output rendering failed: %w", werr)
 			}
 		} else {
@@ -338,7 +343,7 @@ func runResume(cmd *cobra.Command, anchor string) error {
 
 	// Auto-reconcile on successful completion (epic 4.1.1: a resumed run always
 	// produces a fresh reconciliation, mirroring the in-process one-shot path).
-	if _, err := resumeReconcile(ctx, cmd, result.Dir, consensusLevel); err != nil {
+	if _, _, err := resumeReconcile(ctx, cmd, result.Dir, consensusLevel); err != nil {
 		return err
 	}
 	recordHistory(ctx, histRoot, result.Dir, req.StartedAt)
@@ -380,12 +385,14 @@ func recordResumeAudit(cmd *cobra.Command, ctx context.Context, dir string, ts t
 }
 
 // resumeReconcile runs the deterministic reconcile pipeline against dir, prints
-// the merged finding count (gated under --axi), and returns that count so the
-// AllComplete path can carry it in the run-summary payload. A reconcile failure
-// maps to a usage error (exit 2) with the on-disk review preserved for inspection.
-// The partial flag is read from the just-finalized review so reconcile records the
-// run's partial provenance.
-func resumeReconcile(ctx context.Context, cmd *cobra.Command, dir, consensusLevel string) (int, error) {
+// the merged finding count (gated under --axi), and returns that count plus the
+// reconciled findings broken down by severity, so the already-complete resume
+// path can carry the same per-severity columns the fresh-run payload does (an
+// agent gating on severity from the payload sees the real criticals, not zeros).
+// A reconcile failure maps to a usage error (exit 2) with the on-disk review
+// preserved for inspection. The partial flag is read from the just-finalized
+// review so reconcile records the run's partial provenance.
+func resumeReconcile(ctx context.Context, cmd *cobra.Command, dir, consensusLevel string) (int, map[string]int64, error) {
 	// Config/registry tiers only — `resume` has no --consensus flag (epic 35.9.1
 	// scope). It reconciles and persists like `atcr reconcile` does, so leaving
 	// Consensus unresolved here would silently ignore a configured level. The
@@ -399,7 +406,7 @@ func resumeReconcile(ctx context.Context, cmd *cobra.Command, dir, consensusLeve
 		Consensus:    consensusLevel,
 	})
 	if err != nil {
-		return 0, usageError(fmt.Errorf("resume failed: %w", err))
+		return 0, nil, usageError(fmt.Errorf("resume failed: %w", err))
 	}
 	// Mirrors the `atcr reconcile` line: the priors come from a 180d windowed
 	// store read (epic 35.11), so a reviewer with no runs inside the window drops
@@ -430,5 +437,12 @@ func resumeReconcile(ctx context.Context, cmd *cobra.Command, dir, consensusLeve
 	if !axiFromContext(ctx) {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s)\n", rec.Summary.TotalFindings)
 	}
-	return rec.Summary.TotalFindings, nil
+	// Break the reconciled findings down by severity so the already-complete
+	// resume payload's findings_<severity> columns describe the same data
+	// findings_total does (TD: cli/resume.go:254).
+	bySeverity := make(map[string]int64, len(severityOrder))
+	for _, f := range rec.Findings {
+		bySeverity[reconcile.NormalizeSeverity(f.Severity)]++
+	}
+	return rec.Summary.TotalFindings, bySeverity, nil
 }

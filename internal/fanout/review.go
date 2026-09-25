@@ -1443,7 +1443,7 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 	// hatch that stops repository source from OUTSIDE the diff reaching a provider at
 	// all. The fallback re-fit is the exception in both cases: it re-sizes every entry
 	// to its dispatched bytes and funds the exempt set cumulatively against the budget
-	// (internal/payload/budget.go:173-179), so a tight per-agent window can drop
+	// (internal/payload applyByteBudgetOrdered's exempt pass), so a tight per-agent window can drop
 	// either section. Context carries the LOWER exempt rank, so it goes first. This is the single
 	// option-construction chokepoint, so the resume path (resume.go) inherits it
 	// without its own threading.
@@ -1466,7 +1466,7 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 			return nil, nil, fmt.Errorf("%w (mode %s, dropped %d file(s))", ErrPayloadFullyDropped, mode, len(trunc.FilesDropped))
 		}
 		// Surface the PARTIAL shed, exactly as the two sibling builders do
-		// (PrepareReviewFromRepo :811, PrepareReviewFromDiff :870). AllDropped
+		// (PrepareReviewFromRepo, PrepareReviewFromDiff). AllDropped
 		// returned above, so this is the some-but-not-all case — the only one that
 		// can be silent, and the expensive one: whole files are gone before any
 		// per-agent sizing or on_overflow policy is consulted, so no reviewer ever
@@ -1490,8 +1490,8 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 		// sections here — the claim ledger and the Context Definitions block — and
 		// counting them reports more files than the range changed. FileCount has
 		// exactly two consumers, both in this file: the persona-visible
-		// {{.FileCount}} (:2978) and the chunked no-op warning gated on
-		// FileCount > 1 (:2149). It reaches no manifest field — payload.Manifest has
+		// {{.FileCount}} (set in renderAgent) and the chunked no-op warning gated on
+		// FileCount > 1 (in buildSlots). It reaches no manifest field — payload.Manifest has
 		// no file count at all, and PerFilePayload is derived independently from
 		// perFileModes. Epic 35.16.7 recorded that
 		// inflation as an accepted consequence only because it was forbidden from
@@ -2070,17 +2070,17 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 						//
 						// mp.Truncation is the shed applied to the concatenated AUDIT TEXT,
 						// but this branch partitions mp.Entries — the PRE-budget set
-						// (PrepareReviewFromRepo :833) — through PartitionByBudget, whose
+						// (PrepareReviewFromRepo) — through PartitionByBudget, whose
 						// contract is never-split-never-dropped. So every file the audit-text
-						// shed named is still delivered, across chunks. TD-012 at :812-818
-						// says exactly this: "every enumerated file is still reviewed across
-						// per-model chunks."
+						// shed named is still delivered, across chunks. The TD-012 comment in
+						// buildRepoPayloads says exactly this: "every enumerated file is still
+						// reviewed across per-model chunks."
 						//
 						// Stamping it here therefore claimed a data loss that did not happen —
 						// the inverse of the never-silent violation the promotion exists to
 						// fix, and just as wrong, since AgentStatus.Truncated is read as
-						// "this reviewer saw only a fraction" (status.go:291) and mapped to
-						// benchmark.OutcomeIncomplete (cli/benchmark_run.go:437). The
+						// "this reviewer saw only a fraction" (AgentStatus's doc) and mapped to
+						// benchmark.OutcomeIncomplete (ReviewerOutcome). The
 						// git-range branch below chunks mp.Text (the KEPT subset), so there
 						// the shed is real and the stamp belongs; so does the bulk
 						// fall-through, which reviews the kept subset and records it directly.
@@ -2369,7 +2369,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				// capScopeConstraintForBudget funds the plan at budget/8, so any ceiling in
 				// 1..7 floors that to 0 and returns "" while the agent's own window is
 				// perfectly healthy — the review then runs UNSCOPED. Registry validation
-				// only rejects a negative chunk_byte_budget (precedence.go:289), so nothing
+				// only rejects a negative chunk_byte_budget (registry.ResolveSettings), so nothing
 				// upstream catches it either. This is the one configuration where the ""
 				// sentinel's two meanings actually separate ("no plan was given" vs "the
 				// budget cannot fund one"), which is why it needs its own signal rather
@@ -3196,10 +3196,10 @@ func inheritedPayloadFits(primary Agent, budget int64) bool {
 		// the range builder rendered cannot manage that: a combined (diff --cc)
 		// section still carries +++/--- lines diffSectionPath resolves, and a
 		// header-only section resolves through headPathFromGitHeader
-		// (internal/payload/ingest.go:344-357).
+		// (internal/payload diffSectionPath).
 		//
 		// That guarantee is a property of the PRODUCER, not of the type. CodeContext
-		// is built by codeContextFor (:2928) from whatever payload text the slot was
+		// is built by codeContextFor from whatever payload text the slot was
 		// handed, and on the ingestion path that text is supplied rather than
 		// rendered. renderedSectionPath returns "" for either diffSectionPath error —
 		// an unresolvable header, or the traversal-safety rejection — and
@@ -4056,7 +4056,7 @@ func absRoot(p string) string {
 	if err != nil {
 		return ""
 	}
-	// Record the REAL path, not a pointer at it (TD internal/payload/manifest.go:70).
+	// Record the REAL path, not a pointer at it (TD on payload.Manifest.Root).
 	// A recorded root is re-validated by a marker check alone, which cannot tell one
 	// repository from another now living at the same path — so a root recorded
 	// through a symlink re-validates cleanly after the link is repointed, and the

@@ -177,8 +177,17 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		// the only copy of work that will not be re-run. There is no error to wrap
 		// the path into either, so the log line is the whole report; the run-result's
 		// case_failures array names which cases are missing from it.
+		// Both retaining arms report the same growth figures beside the path; see the
+		// partial arm below for why the size is reported and how an unmeasurable one
+		// is spelled.
+		retentionAttrs := func() []any {
+			attrs := []any{"path", tmp, "failed_cases", len(caseFailures),
+				"failed_slots", failedSlotCount(slotFailures), "failed_reviewers", len(slotFailures),
+				"retained_dirs", retainedDirCount(tmp)}
+			return append(attrs, retainedSizeAttrs(tmp)...)
+		}
 		if err != nil {
-			log.FromContext(ctx).Warn("benchmark work dir retained after a failed run", "path", tmp)
+			log.FromContext(ctx).Warn("benchmark work dir retained after a failed run", retentionAttrs()...)
 			err = fmt.Errorf("%w (work dir retained at %s)", err, tmp)
 			retainedWorkDir = tmp
 			return
@@ -209,11 +218,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			// (a number, or absent) leaves absence to mean "not measured", which is
 			// what an omitted key already means everywhere else here, while the
 			// sibling boolean keeps the unmeasured case VISIBLE rather than inferred.
-			attrs := []any{"path", tmp, "failed_cases", len(caseFailures),
-				"failed_slots", failedSlotCount(slotFailures), "failed_reviewers", len(slotFailures),
-				"retained_dirs", retainedDirCount(tmp)}
-			attrs = append(attrs, retainedSizeAttrs(tmp)...)
-			log.FromContext(ctx).Warn("benchmark work dir retained after a partial run", attrs...)
+			log.FromContext(ctx).Warn("benchmark work dir retained after a partial run", retentionAttrs()...)
 			// Returned to the caller as well as logged. The log line is suppressible —
 			// ATCR_LOG_LEVEL=error is a legal setting and drops Warn entirely — and the
 			// partial arm has no error to wrap the path into the way the failure arm

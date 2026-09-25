@@ -135,18 +135,20 @@ module external tools embed. Treat them as a reader's aid that can lag
 
 ## AXI TOON encoding (`atcr report --format axi`)
 
-`atcr report --format axi` re-encodes these same reconciled findings as a token-dense [TOON](https://toonformat.dev/) tabular array for agent consumption. It is a **re-encoding of this contract, not a competing schema** — the columns map to the reconciled 9-column stream field-for-field:
+`atcr report --format axi` re-encodes these same reconciled findings as a token-dense, specification-compliant [TOON](https://toonformat.dev/) tabular array for agent consumption, encoded by [`go-axi` v0.3.1](https://github.com/samestrin/go-axi). It is a **re-encoding of this contract, not a competing schema** — the columns map to the reconciled 9-column stream field-for-field:
 
 ```
-findings[N|]{severity|"file:line"|problem|fix|category|est_minutes|evidence|reviewers|confidence}:
-  CRITICAL|"auth.go:42"|token never expires|check expiry|security|15|expiresAt unread|greta,host|HIGH
+findings[2]{severity,"file:line",problem,fix,category,est_minutes,evidence,reviewers,confidence}:
+  CRITICAL,"auth.go:42",token never expires,check expiry,security,15,expiresAt unread,"greta,host",HIGH
+  LOW,"util.go:7",unused var,"",style,0,"",otto,MEDIUM
 ```
 
-- **Delimiter:** the pipe (`[N|]{…}:`) is declared in the header so a row is structurally adjacent to the `SEVERITY|FILE:LINE|…` grammar above.
-- **`N`:** the array header carries the true total finding count.
-- **Escaping is faithful, not lossy:** unlike the per-source stream's `|`→`/` neutralization, the axi encoder quotes any field containing the delimiter, a colon, a reserved token (`true`/`false`/`null`), a number-like value, or a control character, using only TOON's five escapes (`\\ \" \n \r \t`). Control/ANSI bytes have no TOON escape and are stripped, so the payload is structurally free of escape sequences.
+- **Delimiter:** the standard TOON comma. Any off-the-shelf TOON decoder reads the payload with no custom delimiter option.
+- **`N`:** the array header declares the rows actually present. The paginated CLI payload adds a `total` line (the true, pre-truncation count) and a `truncated` line after the array; see [Agentic Consumption → Pagination and truncation](agentic-consumption.md#pagination-and-truncation).
+- **Escaping is faithful, not lossy:** unlike the per-source stream's `|`→`/` neutralization, the encoder quotes any field containing the delimiter, a colon, a reserved token (`true`/`false`/`null`), a number-like value, or a control character, using only TOON's five escapes (`\\ \" \n \r \t`). Control/ANSI bytes and invalid UTF-8 have no TOON escape and are stripped, so the payload is structurally free of escape sequences. Code containing `|`, `||`, quotes, or newlines survives verbatim for fields of at most 500 runes.
 - **Additive signals:** a finding's optional severity `disagreement` annotation and its `verification` / `evidence_exec` JSON blocks (below) surface as additive `disagreement` / `verification.*` / `evidence_exec.*` columns when any finding in the payload carries them, so the axi payload is a superset — never a lossy subset — of the JSON form.
 - **Column names are lower-case here and upper-case in the pipe stream — normalise before keying on them.** The TOON header declares `severity`, `file:line`, `est_minutes`; the **reconciled** nine-column grammar above declares `SEVERITY`, `FILE:LINE`, `EST_MINUTES`. Those two name the same nine fields in the same order and only the casing differs, so a consumer that reads both of atcr's own output formats must case-normalise its key lookup. One that does not gets rows which decode perfectly and then key to nothing, with no parse error to point at. The comparison is to the **reconciled** stream specifically, because two grammars appear above and only that one matches: the **per-source** stream has eight columns ending in `REVIEWER` — a single source name, with no `CONFIDENCE` column at all — so mapping the axi payload onto it differs by more than casing. `REVIEWER` is not `reviewers`, and the ninth field a consumer goes looking for is simply not there.
+- **Legacy pipe fallback (deprecated):** the pre-migration pipe-delimited encoding (`findings[N|]{a|b}:`, header `N` = true total, no `total` line) is still available through `--format pipe`, `--legacy-pipe` on `review --axi` and `atcr --axi`, or `ATCR_LEGACY_PIPE=1` for every AXI surface. Each legacy route writes this notice to stderr: `warning: pipe-delimited AXI output is deprecated and will be removed in a future release; migrate to standard TOON.` It will be removed in a future release.
 
 ## Parsing rules
 

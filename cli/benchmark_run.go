@@ -421,7 +421,7 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 			raised := raisedByReviewer[a.Agent]
 			// Cost + latency are usage-gated: a completer that reports no token
 			// usage (the test stub) contributes neither, keeping the score
-			// deterministic. status.json only records Model/tokens when usage > 0.
+			// deterministic. status.json records tokens only when usage > 0.
 			usageReported := a.TokensIn > 0 || a.TokensOut > 0
 			var cost float64
 			var latency int64

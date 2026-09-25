@@ -136,6 +136,7 @@ type eraAcc struct {
 	raisedTotal     int
 	corroborated    int
 	costTotal       float64
+	costCorrob      int // corroborated findings of the usage-reported runs costTotal covers
 	latencies       []int64
 	verified        int
 	refuted         int
@@ -159,8 +160,12 @@ func (a *reviewerAcc) add(r Record) {
 	e.runs++
 	e.raisedTotal += clampNonNeg(r.FindingsRaised)
 	e.corroborated += clampNonNeg(r.FindingsCorroborated)
-	e.costTotal = clampNonNegF(e.costTotal + clampNonNegF(r.CostUSD))
-	e.latencies = append(e.latencies, clampNonNeg64(r.LatencyMS))
+	// Usage-gated, as in Aggregate: see usageReported.
+	if usageReported(r) {
+		e.costTotal = clampNonNegF(e.costTotal + clampNonNegF(r.CostUSD))
+		e.costCorrob += clampNonNeg(r.FindingsCorroborated)
+		e.latencies = append(e.latencies, clampNonNeg64(r.LatencyMS))
+	}
 	// Any verification pointer present marks the group as verified; the counts
 	// sum only over the runs that actually carried verification data.
 	if r.FindingsVerified != nil {
@@ -191,7 +196,7 @@ func (a *reviewerAcc) finalize() PublicRecord {
 		LatencyP50MS:      medianInt64(e.latencies),
 		RaisedDenominator: a.raisedDenominator,
 	}
-	pr.CostPerCorroboratedFindingUSD = costPer(e.costTotal, e.corroborated)
+	pr.CostPerCorroboratedFindingUSD = costPer(e.costTotal, e.costCorrob)
 	// Emit the rate ONLY when real verdict data backs it. hasVerification merely
 	// records that some verification pointer was present; a degenerate record can
 	// carry zero counts AND no stored rate (verified+refuted==0, storedRates empty),

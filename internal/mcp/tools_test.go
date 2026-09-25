@@ -80,7 +80,7 @@ func TestToolSchema_ReportFormatEnum(t *testing.T) {
 // TestMCPReportFormats_AllowListContract pins the atcr_report MCP surface as an
 // explicit allow list consulted by BOTH the JSON Schema enum and handleReport's
 // defense-in-depth guard (AC 01-05): every advertised format is CLI-valid, the
-// CLI-only axi format is absent, and for every format report.FormatList() knows,
+// CLI-only axi and pipe formats are absent, and for every format report.FormatList() knows,
 // the handler accepts it iff the advertised set contains it — so a future
 // CLI-only format added to FormatList() is excluded by construction instead of
 // leaking onto the MCP surface through one of the two sites.
@@ -90,6 +90,7 @@ func TestMCPReportFormats_AllowListContract(t *testing.T) {
 		assert.True(t, report.ValidFormat(f), "MCP-advertised format %q must be CLI-valid", f)
 	}
 	assert.NotContains(t, advertised, report.FormatAXI, "axi is CLI-only and must stay off the MCP surface")
+	assert.NotContains(t, advertised, report.FormatPipe, "pipe is CLI-only and must stay off the MCP surface")
 
 	e := &engine{root: t.TempDir()}
 	for _, f := range report.FormatList() {
@@ -145,11 +146,14 @@ func TestReportInputSchema_Enum(t *testing.T) {
 	s, err := reportInputSchema()
 	require.NoError(t, err)
 	require.NotNil(t, s.Properties["format"])
-	// The MCP enum is the CLI format list MINUS FormatAXI (AC 01-05, Design
-	// Decision #3): axi is a CLI-only format, never surfaced through MCP.
+	// The MCP enum is the CLI format list MINUS FormatAXI and FormatPipe (AC
+	// 01-05, Design Decision #3): both are CLI-only formats, never surfaced
+	// through MCP.
 	assert.ElementsMatch(t, []any{"md", "json", "checklist", "sarif"}, s.Properties["format"].Enum)
 	assert.NotContains(t, s.Properties["format"].Enum, report.FormatAXI,
 		"FormatAXI must be filtered out of the MCP report enum")
+	assert.NotContains(t, s.Properties["format"].Enum, report.FormatPipe,
+		"FormatPipe must be filtered out of the MCP report enum")
 }
 
 // TestReportFormatDescriptions_DerivedFromFormats verifies the format list shown

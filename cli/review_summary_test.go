@@ -58,7 +58,7 @@ func TestWriteReviewSummaryAXIIncludesSeverityBreakdown(t *testing.T) {
 	snap := snapshotSummaryMetrics(reg).sub(snapshotSummaryMetrics(metrics.NewRegistry()))
 
 	var buf bytes.Buffer
-	if err := writeReviewSummaryAXI(&buf, "2026-07-18_ax", "review/2026-07-18_ax", snap); err != nil {
+	if err := writeReviewSummaryAXI(&buf, false, "2026-07-18_ax", "review/2026-07-18_ax", snap); err != nil {
 		t.Fatalf("writeReviewSummaryAXI: %v", err)
 	}
 	out := buf.String()
@@ -68,9 +68,9 @@ func TestWriteReviewSummaryAXIIncludesSeverityBreakdown(t *testing.T) {
 			t.Errorf("axi summary header missing column %q\n---\n%s", want, out)
 		}
 	}
-	// Ordered row tail: findings_total|crit|high|med|low = 6|1|2|3|0 (pipe = axiDelim).
-	if !strings.Contains(out, "6|1|2|3|0") {
-		t.Errorf("axi summary row missing ordered severity counts 6|1|2|3|0\n---\n%s", out)
+	// Ordered row tail: findings_total,crit,high,med,low = 6,1,2,3,0.
+	if !strings.Contains(out, "6,1,2,3,0\n") {
+		t.Errorf("axi summary row missing ordered severity counts 6,1,2,3,0\n---\n%s", out)
 	}
 }
 

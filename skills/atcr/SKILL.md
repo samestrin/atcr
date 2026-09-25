@@ -67,7 +67,7 @@ Invoke the dispatcher as `/atcr <command> <flags>`. Every command maps 1:1 to an
 | `atcr verify` | Run adversarial skeptics over reconciled findings |
 | `atcr diff-smell` | Scan a unified diff for over-simplification (reward-hack) fingerprints; deterministic and model-free |
 | `atcr debate` | Cross-examine disputed findings (proposer/challenger/judge) |
-| `atcr report` | Render md, json, checklist, sarif, axi views over reconciled findings |
+| `atcr report` | Render md, json, checklist, sarif, axi, pipe (deprecated) views over reconciled findings |
 | `atcr quality-report` | Rank persona+model reviewer prompts by dismissal rate from the content-free local quality signal |
 | `atcr github` | Post reconciled findings to a GitHub pull request as a check run |
 | `atcr range` | Resolve the review range and print resolution JSON |

@@ -108,6 +108,14 @@ func ApplyFilters(records []Record, opts FilterOpts, now time.Time) ([]Record, e
 	return out, nil
 }
 
+// usageReported reports whether a run's cost and latency were measured. The pool
+// summary records the model on every completed slot, usage or not, so a
+// diff-cache replay or a provider that reports no usage lands in the real
+// (persona, model) group with $0 and a near-zero wall clock. Counting those would
+// understate cost per corroborated finding and latency, so both are summed over
+// the usage-reported runs only — the same gate the benchmark applies.
+func usageReported(r Record) bool { return r.TokensIn > 0 || r.TokensOut > 0 }
+
 // Aggregate groups per-reviewer records by (reviewer, model) and sums them into
 // ranked LeaderboardRows. Aggregate records are skipped defensively. Rows are
 // sorted by corroboration rate descending, then reviewer then model ascending, so
@@ -117,6 +125,8 @@ func Aggregate(records []Record) []LeaderboardRow {
 	groups := map[key]*LeaderboardRow{}
 	order := []key{}
 	totalLatency := map[key]int64{}
+	measuredRuns := map[key]int{}
+	measuredCorroborated := map[key]int{}
 
 	for _, r := range records {
 		if r.RecordType != RecordTypeReviewer {
@@ -137,26 +147,32 @@ func Aggregate(records []Record) []LeaderboardRow {
 		row.FindingsRaised += r.FindingsRaised
 		row.FindingsCorroborated += r.FindingsCorroborated
 		row.FindingsDocShielded += r.FindingsDocShielded
-		row.TotalCostUSD += r.CostUSD
-		totalLatency[k] += r.LatencyMS
+		// Cost and latency are usage-gated: see usageReported.
+		if usageReported(r) {
+			row.TotalCostUSD += r.CostUSD
+			totalLatency[k] += r.LatencyMS
+			measuredRuns[k]++
+			measuredCorroborated[k] += r.FindingsCorroborated
+		}
 	}
 
 	rows := make([]LeaderboardRow, 0, len(order))
 	for _, k := range order {
 		row := groups[k]
 		row.CorroborationRate = ratio(row.FindingsCorroborated, row.FindingsRaised)
-		if row.FindingsCorroborated > 0 {
+		if measuredCorroborated[k] > 0 {
 			// CostPerCorroborated is, by definition, total cost / corroborated
 			// findings ("cost per corroborated finding") — the formula matches the
-			// metric name. It is distinct from a hypothetical "cost per verified
-			// finding" (cost / (corroborated + refuted)), which is new scope: it
-			// would require tracking FindingsRefuted on LeaderboardRow and summing
-			// it in Aggregate, not a change to this formula.
-			row.CostPerCorroborated = row.TotalCostUSD / float64(row.FindingsCorroborated)
+			// metric name, over the measured runs only. It is distinct from a
+			// hypothetical "cost per verified finding" (cost / (corroborated +
+			// refuted)), which is new scope: it would require tracking
+			// FindingsRefuted on LeaderboardRow and summing it in Aggregate, not a
+			// change to this formula.
+			row.CostPerCorroborated = row.TotalCostUSD / float64(measuredCorroborated[k])
 			row.HasCostPerCorroborated = true
 		}
-		if row.Runs > 0 {
-			row.AvgLatencyMS = totalLatency[k] / int64(row.Runs)
+		if measuredRuns[k] > 0 {
+			row.AvgLatencyMS = totalLatency[k] / int64(measuredRuns[k])
 		}
 		rows = append(rows, *row)
 	}

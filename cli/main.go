@@ -434,9 +434,44 @@ func NewRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 			// so review.go/resume.go read it via axiFromContext rather than re-parsing
 			// the flag at each stdout call site (AC 01-04). The flag lives only on
 			// `atcr review`; the Lookup guard leaves every other command unaffected.
+			// Resolve the legacy-pipe choice ONCE, at this single flag-parse point,
+			// for every command that can consume it: AXI surfaces (flag or env) and
+			// report's --format pipe (env). Non-consuming commands skip the env read
+			// so an invalid ATCR_LEGACY_PIPE value does not warn on unrelated surfaces.
+			// Consumers read the resolved choice via legacyPipeFromContext — report
+			// included — so the resolution rule lives in exactly one place.
+			legacyFlag := false
+			legacy := false
+			if cmd.Flags().Lookup("axi") != nil || cmd.Name() == "report" {
+				if cmd.Flags().Lookup("legacy-pipe") != nil {
+					legacyFlag, _ = cmd.Flags().GetBool("legacy-pipe")
+				}
+				legacy = legacyFlag || legacyPipeFromEnv(cmd.ErrOrStderr())
+			}
+			cmd.SetContext(newLegacyPipeContext(cmd.Context(), legacy))
 			if cmd.Flags().Lookup("axi") != nil {
 				axi, _ := cmd.Flags().GetBool("axi")
 				cmd.SetContext(newAXIContext(cmd.Context(), axi))
+				// Fail-closed like --exec requires --verify: an explicit --legacy-pipe
+				// without --axi is inert, so a legacy consumer who forgets --axi gets a
+				// diagnostic instead of silence. The ATCR_LEGACY_PIPE env switch is NOT
+				// rejected — it is a documented global switch that non-AXI output ignores.
+				if legacyFlag && !axi {
+					return usageError(errors.New("--legacy-pipe requires --axi"))
+				}
+				// The flag or ATCR_LEGACY_PIPE selects the deprecated pipe encoder;
+				// the notice is written here, once per invocation, and only when
+				// AXI output is actually requested. --dry-run (or its --preview alias,
+				// via dryRunFlagSet) is skipped: it short-circuits to the quality-signal
+				// preview in runReview before any pipe renderer is selected, so the
+				// notice would describe output that never happens (TD: cli/review.go:283).
+				if axi && legacy && !dryRunFlagSet(cmd) {
+					if legacyFlag {
+						warnLegacyPipe(cmd.Context(), "--legacy-pipe")
+					} else {
+						warnLegacyPipe(cmd.Context(), "ATCR_LEGACY_PIPE")
+					}
+				}
 			}
 			return nil
 		},
@@ -457,6 +492,7 @@ func NewRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 	// context (newAXIContext), so runHome reads it via axiFromContext — the same
 	// context-propagation plumbing review/resume already reuse (Epic 31.0).
 	root.Flags().Bool("axi", false, "emit the home view as a token-dense, ANSI/Markdown-free TOON payload on stdout for agent consumption (Agent eXperience Interface)")
+	root.Flags().Bool("legacy-pipe", false, "with --axi, emit the deprecated pipe-delimited payload instead of standard TOON (also ATCR_LEGACY_PIPE=1; report uses --format pipe instead)")
 
 	// Flag-parse errors (unknown flags, bad values, violated flag groups)
 	// are usage errors: exit 2.

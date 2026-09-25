@@ -121,6 +121,7 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().String("sprint-plan", "", "path to a sprint/epic plan (markdown); its content is injected as a SCOPE CONSTRAINT before the diff so reviewers suppress findings unrelated to the plan's work items")
 	cmd.Flags().Int("pr", 0, "pull-request number to stamp on this run's audit record; falls back to GITHUB_REF (refs/pull/<n>/...) when unset")
 	cmd.Flags().Bool("axi", false, "emit a token-dense, ANSI/Markdown-free TOON payload on stdout for agent consumption; diagnostics and progress stay on stderr (Agent eXperience Interface)")
+	cmd.Flags().Bool("legacy-pipe", false, "with --axi, emit the deprecated pipe-delimited payload instead of standard TOON (also ATCR_LEGACY_PIPE=1)")
 	addRangeFlags(cmd)
 	addBaselineFlags(cmd)
 	addAutoFixFlags(cmd)
@@ -288,6 +289,10 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// immediately after the --dry-run short-circuit; the auto-fix guard below and
 	// every later write site consult axiMode rather than re-reading the context.
 	axiMode := axiFromContext(cmd.Context())
+	// Snapshot the resolved legacy-pipe choice once, like axiMode, so the
+	// summary renderer reads one local rather than re-reading the wrapped
+	// context at each call site (TD: cli/review_summary.go:103).
+	legacyMode := legacyPipeFromContext(cmd.Context())
 
 	// --axi and --auto-fix are mutually exclusive (exit 2): --auto-fix drives an
 	// interactive write-back/PR flow whose stdout handoff (orchestrateAutoFix) is not
@@ -657,7 +662,7 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 			// undeliverable either way, but the compliance record is not). The fault
 			// stays unwrapped → exitFailure (1), never a usageError (AC 02-02 Error
 			// Scenario 3).
-			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), result.ID, result.Dir, summaryDelta); werr != nil {
+			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), legacyMode, result.ID, result.Dir, summaryDelta); werr != nil {
 				axiWerr = fmt.Errorf("axi output rendering failed: %w", werr)
 			}
 		} else {

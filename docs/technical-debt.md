@@ -262,16 +262,19 @@ shards atomically, carrying `occurrences` and `first_seen` forward so the
 regression signal survives at O(1) size instead of O(history).
 
 Retention is bounded at **four records per id**: the effective record, at
-most one superseded rationale, — when the effective record
-carries no model attribution — one donor, and — when the effective record is a
+most one superseded rationale, one donor — the most recent record that carries
+model attribution, when it is not already one of the others — and — when the effective record is a
 re-detection and `attempts-exhausted` is in play — the latest closed record, so
 the re-detection keeps reporting the same outcome after compaction. Two of those
 four are the ordinary case; the donor is
 the narrow one, and it collapses into the rationale record whenever the
 highest-ranked rationale is also the most recent model-carrier. The donor exists
-because a fold can select an effective record with no `model` on it, and the
-attribution the quality signal is scored on would then be deleted by the very
-pass that is meant only to drop superseded duplicates.
+because a fold can select an effective record with no `model` on it, or a later
+append can add one, and the quality signal then recovers the model from the most
+recent record that carries one. Without the donor, that attribution would be
+deleted or moved to an older model by the very pass that is meant only to drop
+superseded duplicates. On an exact timestamp tie between the effective record and
+the donor, the effective record keeps its status and the model credit can move.
 
 The resolution trail is kept, and it is exactly one record deep: alongside the
 effective record, compaction retains the highest-ranked superseded record that

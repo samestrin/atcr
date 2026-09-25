@@ -354,6 +354,66 @@ func TestMergeResultGroup_FallbackModelModal(t *testing.T) {
 	assert.NotContains(t, merged.FallbackModel, ",", "composite FallbackModel breaks F5 collapse")
 }
 
+// TestMergeResultGroup_ModelIsTheModalServingModel pins the merged Model to the
+// model that served most of the persona's successful chunks, not chunk 0's. When
+// chunk 0 failed over to a backup and later chunks ran on the primary, inheriting
+// g[0].Model recorded the backup's model for the whole persona, so its trust prior
+// was scored against the wrong model's history. A disagreement still names ONE
+// model rather than none: cost pricing reads this field, and an empty model would
+// price the persona's real tokens at $0.
+func TestMergeResultGroup_ModelIsTheModalServingModel(t *testing.T) {
+	t.Run("backup chunk 0 does not outvote primary chunks", func(t *testing.T) {
+		g := []Result{
+			{Agent: "reviewer", Status: StatusOK, Model: "backup-model", FallbackUsed: true, FallbackModel: "backup-model"},
+			{Agent: "reviewer", Status: StatusOK, Model: "primary-model"},
+			{Agent: "reviewer", Status: StatusOK, Model: "primary-model"},
+		}
+		assert.Equal(t, "primary-model", mergeResultGroup(g, nil).Model)
+	})
+	t.Run("case-only differences are one model", func(t *testing.T) {
+		g := []Result{
+			{Agent: "reviewer", Status: StatusOK, Model: "other-model"},
+			{Agent: "reviewer", Status: StatusOK, Model: "primary-model"},
+			{Agent: "reviewer", Status: StatusOK, Model: "Primary-Model"},
+		}
+		assert.Equal(t, "primary-model", mergeResultGroup(g, nil).Model)
+	})
+	t.Run("failed chunks do not vote", func(t *testing.T) {
+		g := []Result{
+			{Agent: "reviewer", Status: StatusFailed, Model: "backup-model"},
+			{Agent: "reviewer", Status: StatusTimeout, Model: "backup-model"},
+			{Agent: "reviewer", Status: StatusOK, Model: "primary-model"},
+		}
+		assert.Equal(t, "primary-model", mergeResultGroup(g, nil).Model)
+	})
+	t.Run("a tie keeps the first serving model", func(t *testing.T) {
+		g := []Result{
+			{Agent: "reviewer", Status: StatusOK, Model: "backup-model"},
+			{Agent: "reviewer", Status: StatusOK, Model: "primary-model"},
+		}
+		assert.Equal(t, "backup-model", mergeResultGroup(g, nil).Model)
+	})
+	t.Run("the window and reservation move with the model", func(t *testing.T) {
+		g := []Result{
+			{Agent: "reviewer", Status: StatusOK, Model: "backup-model", ResolvedWindow: 32768, ReservedOutputTokens: 4096, ResolvedMaxTokens: 4096},
+			{Agent: "reviewer", Status: StatusOK, Model: "primary-model", ResolvedWindow: 200000, ReservedOutputTokens: 8192, ResolvedMaxTokens: 16384},
+			{Agent: "reviewer", Status: StatusOK, Model: "primary-model", ResolvedWindow: 200000, ReservedOutputTokens: 8192, ResolvedMaxTokens: 16384},
+		}
+		out := mergeResultGroup(g, nil)
+		assert.Equal(t, "primary-model", out.Model)
+		assert.Equal(t, 200000, out.ResolvedWindow)
+		assert.Equal(t, 8192, out.ReservedOutputTokens)
+		assert.Equal(t, 16384, out.ResolvedMaxTokens)
+	})
+	t.Run("no successful chunk keeps chunk 0's model", func(t *testing.T) {
+		g := []Result{
+			{Agent: "reviewer", Status: StatusFailed, Model: "primary-model"},
+			{Agent: "reviewer", Status: StatusFailed, Model: "backup-model"},
+		}
+		assert.Equal(t, "primary-model", mergeResultGroup(g, nil).Model)
+	})
+}
+
 func TestMergeResultGroup_AggregatesResponseTruncated(t *testing.T) {
 	t.Run("later chunk truncated is preserved", func(t *testing.T) {
 		g := []Result{
