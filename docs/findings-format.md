@@ -291,7 +291,7 @@ With no findings the body is `findings[0]:`.
 
 - **Routing:** a reader picks the envelope when the body, after leading whitespace, starts with the literal `{"axi_format`. It never routes on a bare `{` or `[`, because several TOON shapes start with `[`.
 - **Required:** `axi_format` must be `"json"`, and the findings must be at `data.findings` (an empty array is a clean review). `axi_notice` is optional.
-- **Keys:** every finding object must carry all 8 keys, spelled exactly in lower case. A missing or misspelled key is an error, never an empty field, and so is an extra key that differs from one of the 8 only in case. Any other key, at any level, is ignored (see [v2 evolution](#v2-evolution)). The reader checks keys, not values: a `null` or wrong-typed value reads as empty text or 0, and `severity` is not checked against the four levels.
+- **Keys:** every finding object must carry all 8 keys, spelled exactly in lower case. A missing or misspelled key is an error, never an empty field, and so is an extra key that differs from one of the 8 only in case. Any other key in a finding object is ignored, and so is any other key beside `axi_format`, `axi_notice`, and `data` (see [v2 evolution](#v2-evolution)). The reader checks keys, not meaning: a `null` value reads as empty text or 0, a number or boolean where text belongs is an error, `est_minutes` accepts a number or a numeric string, and `severity` is not checked against the four levels.
 - **Nothing after it:** a second envelope, prose, or a code fence after the envelope is an error.
 
 ### What survives
@@ -308,7 +308,7 @@ The skill-driven host reviewer (atcr v0.4.0 or later) writes only `sources/host/
 
 ### Which file atcr reads
 
-Every atcr reader picks a directory's file with one rule: `findings.toon` when it is a regular file, else `findings.txt`. A `findings.toon` that is a symlink, FIFO, device, or directory counts as absent. The readers that follow this rule are reconcile source discovery, the pool rebuild in `atcr review --resume`, `atcr history`, the audit capture, and `atcr benchmark` (both the case run and the repo-state reader). `atcr history`, the audit capture, and `atcr benchmark` read `sources/pool/findings.toon` first and fall back to `findings.txt` only when no `findings.toon` exists.
+Every atcr reader picks a directory's file with one rule: `findings.toon` when it is a regular file, else `findings.txt`. A `findings.toon` that is a symlink, FIFO, device, or directory counts as absent. The readers that follow this rule are reconcile source discovery, the pool rebuild in `atcr review --resume`, `atcr history`, the audit capture, and `atcr benchmark` (both the case run and the repo-state reader). `atcr history`, the audit capture, and `atcr benchmark` read `sources/pool/findings.toon` first and fall back to `findings.txt` only when no regular-file `findings.toon` exists.
 
 The choice is final. When atcr picks `findings.toon` and it does not parse, the reader reports an error; it never retries `findings.txt`, because that would hide a v2 writer bug behind lossy data. A file named `findings.toon` must carry the v2 header; a v1 header there is an error.
 
@@ -335,4 +335,4 @@ v2 follows the same rule as v1: evolution is additive-only within a major versio
 
 ### v1 deprecation policy
 
-v1 is still written and is not deprecated for removal yet. atcr writes `findings.txt` beside every `findings.toon` it writes, byte-identical to its pre-v2 output, so an existing v1 consumer needs no change. A new consumer should read `findings.toon`. These consumers still read v1 only and are the next to migrate: `llm_support_td_dedupe`, the `/reconcile-code-review` skill, and `internal/report/legacy_pipe.go`. v1 stays until they have moved.
+v1 is still written and is not deprecated for removal yet. atcr writes `findings.txt` beside every `findings.toon` it writes, byte-identical to its pre-v2 output, so an existing v1 consumer needs no change. A new consumer should read `findings.toon`. These consumers outside atcr still read v1 only and are the next to migrate: `llm_support_td_dedupe` and the `/reconcile-code-review` skill. v1 stays until they have moved. (`internal/report/legacy_pipe.go` is not a findings-file reader: it renders the deprecated `--format pipe` AXI output from reconciled findings.)

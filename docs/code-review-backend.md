@@ -91,7 +91,7 @@ name, e.g. `bruce`), so a downstream reconciler can cluster atcr's reviewers
 together with other sources and compute confidence across the whole set rather
 than ingesting atcr's pre-collapsed blob.
 
-`findings.txt` is still written byte-identical to its output before v2 existed, so an existing consumer needs no change. A new consumer should read `sources/pool/findings.toon`. atcr's own readers already do: `atcr history`, the audit capture, and `atcr benchmark` read `findings.toon` first and fall back to `findings.txt` only when no `findings.toon` exists. A skill-driven review also has a host source at `sources/host/findings.toon`, written by the host agent (not by atcr's pool writer), and has no `findings.txt` there.
+`findings.txt` is still written byte-identical to its output before v2 existed, so an existing consumer needs no change. A new consumer should read `sources/pool/findings.toon`. atcr's own readers already do: `atcr history`, the audit capture, and `atcr benchmark` read `findings.toon` first and fall back to `findings.txt` only when no regular-file `findings.toon` exists. A skill-driven review also has a host source at `sources/host/findings.toon`, written by the host agent (not by atcr's pool writer), and has no `findings.txt` there.
 
 ## summary.json fields
 
