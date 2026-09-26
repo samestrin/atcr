@@ -73,5 +73,17 @@ func TestRegistryDoc_ResponseFormatRejectsWhatTheDocExcludes(t *testing.T) {
 
 func responseFormatRow(t *testing.T) string {
 	t.Helper()
-	return docRow(t, readRepoFile(t, "../../docs/registry.md"), "`response_format`")
+	doc := readRepoFile(t, "../../docs/registry.md")
+	row := docRow(t, doc, "`response_format`")
+	// The row's doctor-verification and model-evidence detail lives in a prose
+	// subsection immediately below the table (the doc's elaboration pattern);
+	// the pinned phrases span both, so the row is read as row-plus-subsection.
+	const detailMarker = "**`response_format` verification detail.**"
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, detailMarker) {
+			return row + "\n" + line
+		}
+	}
+	t.Fatalf("no response_format detail subsection starting with %q below the table", detailMarker)
+	return ""
 }
