@@ -331,3 +331,29 @@ func TestToolLoop_ParsedFindingCount(t *testing.T) {
 	assert.Equal(t, StatusOK, r.Status)
 	assert.Equal(t, 1, r.ParsedFindingCount(), "tool-loop result should carry the parsed finding count")
 }
+
+// A response whose only content is a ```json block that decodes to nothing is
+// the JSON-era form of "emitted prose no parser could use": recorded, not a
+// clean review. (The clean-review sentinel is covered above.)
+func TestInvokeSlot_UndecodableJSONBlock_IsRecordedUnparseable(t *testing.T) {
+	c := &mapMetaCompleter{byModel: map[string]llmclient.Completion{
+		"primary": {Content: "```json\n[{\"severity\": oops\n```\n"},
+	}}
+	e := NewEngine(c, WithTruncationFailover())
+	slot := Slot{Primary: Agent{Name: "brad", Invocation: llmclient.Invocation{Model: "primary"}}}
+	r := e.invokeSlot(context.Background(), slot)
+
+	assert.Equal(t, StatusOK, r.Status)
+	assert.Equal(t, 0, r.ParsedFindingCount())
+	assert.True(t, r.UnparseableResponse, "an undecodable JSON block is not a clean review")
+}
+
+// The truncation-failover gate counts only COMPLETE findings: a JSON block cut
+// off mid-object contributes the objects before the cut, never the partial one.
+func TestResult_ParsedFindingCount_CountsOnlyCompleteJSONFindings(t *testing.T) {
+	r := &Result{Content: "```json\n[" +
+		`{"severity":"HIGH","file_line":"a.go:1","problem":"p"},` + "\n" +
+		`{"severity":"LOW","file_line":"b.go:2","problem":"q"},` + "\n" +
+		`{"severity":"LOW","file_line":"c.go:3","prob`}
+	assert.Equal(t, 2, r.ParsedFindingCount())
+}

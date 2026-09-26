@@ -11,12 +11,12 @@ import (
 	"github.com/samestrin/atcr/internal/stream"
 )
 
-// poolFindingsRel is the review-directory-relative path to the merged, 8-column
-// per-source pool findings file that every review run writes via WritePool. It
-// is the single findings artifact guaranteed to exist on every run (reconciled
-// findings.json exists only when reconcile runs), so it is the history hook's
-// source of truth.
-var poolFindingsRel = filepath.Join("sources", "pool", "findings.txt")
+// poolDirRel is the review-directory-relative pool directory. Every review run
+// writes the merged, 8-column per-source pool findings there via WritePool
+// (findings.toon, with the lossy findings.txt beside it). It is the single
+// findings artifact guaranteed to exist on every run (reconciled findings.json
+// exists only when reconcile runs), so it is the history hook's source of truth.
+var poolDirRel = filepath.Join("sources", "pool")
 
 // RecordReview reads the pool findings for the review at reviewDir, derives one
 // Record per finding (stamped with run time ts), and appends them to the history
@@ -27,23 +27,22 @@ var poolFindingsRel = filepath.Join("sources", "pool", "findings.txt")
 // A findings file that parses to zero findings appends nothing and creates no
 // ledger file.
 func RecordReview(histPath, reviewDir string, ts time.Time) (int, error) {
-	data, err := os.ReadFile(filepath.Join(reviewDir, poolFindingsRel))
+	res, err := stream.ReadPoolFindings(filepath.Join(reviewDir, poolDirRel))
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
+		var pe *stream.FindingsParseError
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
 			return 0, nil
+		case errors.As(err, &pe):
+			return 0, fmt.Errorf("parsing pool findings: %s: %w", pe.Path, err)
 		}
 		return 0, fmt.Errorf("reading pool findings: %w", err)
-	}
-
-	res, err := stream.ParseSource(data)
-	if err != nil {
-		return 0, fmt.Errorf("parsing pool findings: %w", err)
 	}
 	if len(res.Skipped) > 0 {
 		fmt.Fprintf(os.Stderr, "atcr: warning: history: skipped %d malformed pool row(s); they will not appear in the trend ledger\n", len(res.Skipped))
 	}
 
-	// The pool findings.txt is the concatenation of every reviewer's rows, so a
+	// The pool findings file is the concatenation of every reviewer's rows, so a
 	// finding caught by N reviewers appears N times. Dedupe by id within this run
 	// so the ledger holds one record per distinct finding per run ("one JSON
 	// record per finding", per the plan) and the severity table is not inflated

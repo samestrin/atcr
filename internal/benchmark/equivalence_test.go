@@ -350,7 +350,7 @@ func TestEquivalence_SonnyWorkedExampleJustifiesLogicMembership(t *testing.T) {
 		"the family this test justifies must actually contain `logic`")
 
 	sonny := readRepoFile(t, "personas/community/sonny.md")
-	assert.Contains(t, sonny, "|"+reconcile.CategoryLogic+"|",
+	assert.Contains(t, sonny, `"category": "`+reconcile.CategoryLogic+`"`,
 		"personas/community/sonny.md's worked example is the sole justification for "+
 			"`logic` in the correctness family; if it no longer emits that word, re-argue "+
 			"the family membership in equivalence.go rather than deleting this test")

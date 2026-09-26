@@ -4,6 +4,8 @@ The findings stream is atcr's public contract: a pipe-delimited, machine-parseab
 
 Two shapes share one grammar: **per-source** (8 columns, written by each reviewer source) and **reconciled** (9 columns, written by `atcr reconcile`).
 
+A second, lossless per-source format, `# atcr-findings/v2` (`findings.toon`), is written beside every per-source `findings.txt` atcr writes. It is described in [v2 lossless stream](#v2-lossless-stream-findingstoon) at the end of this document; everything before that section is the v1 contract.
+
 ## Version header
 
 Every findings file MUST begin with this exact line as its first non-blank line:
@@ -15,7 +17,7 @@ Every findings file MUST begin with this exact line as its first non-blank line:
 The parser treats the header as a hard gate:
 
 - **Missing header** → fatal parse error (`missing version header`).
-- **Header with an unknown version** (e.g. `# atcr-findings/v2`) → fatal parse error (`unknown findings version`), distinct from "missing" so a consumer never silently parses incompatible data.
+- **Header with an unknown version** (e.g. `# atcr-findings/v3`) → fatal parse error (`unknown findings version`), distinct from "missing" so a consumer never silently parses incompatible data. atcr's per-source reader also accepts `# atcr-findings/v2` (see [v2 lossless stream](#v2-lossless-stream-findingstoon)); its reconciled reader accepts only v1.
 
 ## Per-source stream (8 columns)
 
@@ -169,9 +171,9 @@ Escaping is lossy but structurally stable: the column count and one-row-per-line
 
 ## Source discovery (reconcile inputs)
 
-Any directory under a review's `sources/` that contains a `findings.txt` is a reconcile source — an open extension point: drop `sources/<tool>/findings.txt` from any producer and reconcile picks it up with zero config.
+Any directory under a review's `sources/` that contains a `findings.txt` or a `findings.toon` is a reconcile source — an open extension point: drop `sources/<tool>/findings.txt` from any producer and reconcile picks it up with zero config.
 
-Discovery is **leaf-preference**: a directory's `findings.txt` is an input only when no subdirectory beneath it also contains one. Per-agent raw files (`sources/pool/raw/agent/<name>/findings.txt`) are the pool inputs; the merged `sources/pool/findings.txt` is written for downstream convenience but is **not** re-discovered, so reviewers are never double-counted. `reconciled/` is output, never an input.
+Discovery is **leaf-preference**: a directory's findings file is an input only when no subdirectory beneath it also contains one. Either name counts on both sides of that test, so a `findings.toon` in a subdirectory makes a parent's `findings.txt` a non-leaf, and the reverse. A directory that also holds a `findings.toon` is read through that file instead, and a directory that holds only a `findings.toon` (the skill-driven host source) is a source too; see [Which file atcr reads](#which-file-atcr-reads). Per-agent raw files (`sources/pool/raw/agent/<name>/findings.txt`) are the pool inputs; the merged `sources/pool/` findings files are written for downstream convenience but are **not** re-discovered, so reviewers are never double-counted. `reconciled/` is output, never an input.
 
 A source's **`review.md`** — the human-readable narrative each reviewer (every pool agent and the host) writes alongside its `findings.txt` in the same leaf directory — is, as of Epic 18.2, also read at reconcile time. `atcr reconcile` correlates each finding to the `review.md` section that references its `FILE:LINE` (best-effort) and carries that narrative forward as the `justification` / `source_report` JSON fields (see [JSON form](#json-form) below). It is an **optional** input: a source with no `review.md` simply contributes no narrative, and `review.md` never itself yields findings — only `findings.txt` does.
 
@@ -214,7 +216,7 @@ When `verification` is present, readers must treat an absent or unrecognized `ve
 
 **Reconcile-time narrative (Epic 18.2).** Two additive fields carry the originating review's context past reconciliation, so a downstream technical-debt-resolution consumer inherits the reviewer's reasoning instead of re-deriving it from raw `review.md` files:
 
-- `justification` — the narrative section extracted from the finding's originating source `review.md`, matched **best-effort** by `FILE:LINE`. Fenced blocks inside that section are **quoted examples, not the reviewer's prose**, so each **terminated** fence — its ``` markers included — is replaced by the single line `[quoted example elided]`; follow `source_report` to read the quote itself. An **unterminated** fence is the exception: its tail is rendered as ordinary prose rather than elided, and the excerpt always carries a ``` marker, because that marker is the only remaining sign a quote was opened at all. The marker is guaranteed to be **present**, not guaranteed to be **leading** — atcr prepends it whenever the extracted block begins inside the released tail (a quoted body beginning with a list item or a heading is a genuine block start, so the walk stops below the opener), and when the block starts at or above the opener the reviewer's own ``` is carried inline as ordinary excerpt text instead. So an excerpt drawn from an unterminated fence always **contains** a ```, and its absence does mean the excerpt is not released quote — but the converse does not hold: a bare ``` is not distinguishable from a reviewer who simply typed backticks, nor from the elision, which is why `source_report` is the authority. An excerpt that would consist of nothing but placeholders carries no reviewer content and is omitted entirely, exactly as an unmatched finding is. The literal is **not escaped** in retained prose, so a reviewer who writes it is passed through verbatim and is byte-indistinguishable from a real elision; a match is evidence, not proof — follow `source_report` for the authority. A placeholder that will not fit whole inside the excerpt's rune budget is dropped rather than cut in half, so a fragment of it never appears; the budget really is counted in runes, so non-ASCII prose buys the same excerpt length as ASCII. When the excerpt is truncated, the trailing `…` sits on its own line, so a cut landing on a placeholder can never fuse into it. It is distinct from `verification.notes`: `justification` is the reviewer's *original* explanation captured at reconcile time, whereas `verification.notes` is the *adversarial* stage's later skeptic/judge reasoning. Omitted when no `review.md` section references the finding's `FILE:LINE` (a match requires a line-level reference, so a bare "no issues" file mention never attaches a misleading narrative).
+- `justification` — the narrative section extracted from the finding's originating source `review.md`, matched **best-effort** by `FILE:LINE`. Fenced blocks inside that section are **quoted examples, not the reviewer's prose**, so each **terminated** fence — its ``` markers included — is replaced by the single line `[quoted example elided]`; follow `source_report` to read the quote itself. An unfenced JSON finding array that atcr reads as findings is elided the same way, and it bounds the excerpt like a fenced block. An **unterminated** fence is the exception: its tail is rendered as ordinary prose rather than elided (unless the fence is a ```` ```json ```` block, which is the model's cut-off findings output and is elided like a terminated fence), and the excerpt always carries a ``` marker, because that marker is the only remaining sign a quote was opened at all. The marker is guaranteed to be **present**, not guaranteed to be **leading** — atcr prepends it whenever the extracted block begins inside the released tail (a quoted body beginning with a list item or a heading is a genuine block start, so the walk stops below the opener), and when the block starts at or above the opener the reviewer's own ``` is carried inline as ordinary excerpt text instead. So an excerpt drawn from an unterminated fence always **contains** a ```, and its absence does mean the excerpt is not released quote — but the converse does not hold: a bare ``` is not distinguishable from a reviewer who simply typed backticks, nor from the elision, which is why `source_report` is the authority. An excerpt that would consist of nothing but placeholders carries no reviewer content and is omitted entirely, exactly as an unmatched finding is. The literal is **not escaped** in retained prose, so a reviewer who writes it is passed through verbatim and is byte-indistinguishable from a real elision; a match is evidence, not proof — follow `source_report` for the authority. A placeholder that will not fit whole inside the excerpt's rune budget is dropped rather than cut in half, so a fragment of it never appears; the budget really is counted in runes, so non-ASCII prose buys the same excerpt length as ASCII. When the excerpt is truncated, the trailing `…` sits on its own line, so a cut landing on a placeholder can never fuse into it. It is distinct from `verification.notes`: `justification` is the reviewer's *original* explanation captured at reconcile time, whereas `verification.notes` is the *adversarial* stage's later skeptic/judge reasoning. Omitted when no `review.md` section references the finding's `FILE:LINE` (a match requires a line-level reference, so a bare "no issues" file mention never attaches a misleading narrative).
 - `source_report` — the back-reference to that section: `{ "path": <review-dir-relative review.md path>, "line": <1-based anchor line>, "section": <nearest Markdown heading> }`, so a consumer can navigate to full detail without re-deriving the mapping. `path` is relative to the review directory (the same dir that holds `reconciled/findings.json`); `line` and `section` are omitted when absent.
 
 ```json
@@ -244,3 +246,98 @@ findings and the gray-zone sidecar — the disagreement-radar handoff queue Epic
 ## Evolution policy
 
 The version header is in force from day one. **Evolution is additive-only within a major version:** new optional columns may be appended and new optional JSON fields may be added, but existing column positions, the severity enum, and the extraction regex never change under `v1`. Any breaking change increments the version (`atcr-findings/v2`), and the header gate guarantees old consumers reject it loudly rather than misparsing.
+
+## v2 lossless stream (`findings.toon`)
+
+v1 cannot carry some text. Its writer replaces `|` with `/` and line breaks with a space, so a bitwise OR, a regex alternation, a shell pipeline, or a multiline diff is changed on the way to disk. v2 changes nothing: every `|`, quote, backslash, comma, colon, `\n`, and `\r\n` survives, with no per-field length cap.
+
+v2 is a per-source format only. There is no reconciled v2 shape: `reconciled/findings.txt` stays v1, and atcr's reconciled reader rejects a v2 header.
+
+### File layout
+
+The first non-blank line is the header `# atcr-findings/v2`. The rest of the file is one [go-axi](https://github.com/samestrin/go-axi) v0.3.1 document holding the findings, in one of two encodings:
+
+- a TOON table named `findings` (what atcr writes), or
+- the go-axi JSON envelope `{"axi_format":"json","axi_notice":"...","data":{"findings":[...]}}` (what the skill-driven host reviewer writes).
+
+Each finding has the same 8 fields as a v1 per-source row, in lower case: `severity`, `file_line`, `problem`, `fix`, `category`, `est_minutes`, `evidence`, `reviewer`. `file_line` is `FILE:LINE`; a reader splits it at the last colon. `est_minutes` is an integer.
+
+### TOON table
+
+atcr writes the table with `goaxi.EncodeOrJSON`. This example is the exact output for two findings:
+
+```
+# atcr-findings/v2
+findings[2]{severity,file_line,problem,fix,category,est_minutes,evidence,reviewer}:
+  HIGH,"internal/fs/open.go:42",os.O_CREATE | os.O_WRONLY drops O_TRUNC,Use os.O_WRONLY | os.O_CREATE | os.O_TRUNC,correctness,10,"-f, _ := os.OpenFile(p, os.O_CREATE|os.O_WRONLY, 0o644)\n+f, _ := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)",bruce
+  LOW,"cmd/main.go:7","log says \"done\" before the write","",style,5,"",bruce
+```
+
+With no findings the body is `findings[0]:`.
+
+- **Delimiter:** the standard TOON comma. `|` is ordinary text.
+- **Quoting:** the encoder quotes a field when TOON requires it, for example one that holds the delimiter, a colon, a quote, or a line break, and an empty field. Inside quotes it uses only TOON's five escapes: `\\ \" \n \r \t`.
+- **`N`:** the header declares the exact row count. A reader rejects a table whose row count differs from `N`, so a file cut on a row boundary is an error, not a short read.
+- **Columns:** a reader needs all 8 columns, in any order. It ignores any other column (see [v2 evolution](#v2-evolution)).
+
+### JSON envelope
+
+`goaxi.EncodeOrJSON` writes the envelope instead of the table only when TOON would lose data. Size never triggers it. The choice is made once for the whole document, so one field TOON cannot carry turns every row into the envelope. atcr's own findings are all text and integers, which TOON always carries, so in practice the envelope comes from the host reviewer, which writes it directly because plain JSON is easier to produce correctly than TOON indentation.
+
+```
+# atcr-findings/v2
+{"axi_format":"json","axi_notice":"","data":{"findings":[{"severity":"HIGH","file_line":"scripts/release.sh:12","problem":"The pipeline returns the exit status of tee, not of the build","fix":"set -o pipefail\ngo build ./... | tee build.log","category":"correctness","est_minutes":10,"evidence":"go build ./... | tee build.log","reviewer":"host"}]}}
+```
+
+- **Routing:** a reader picks the envelope when the body, after leading whitespace, starts with the literal `{"axi_format`. It never routes on a bare `{` or `[`, because several TOON shapes start with `[`.
+- **Required:** `axi_format` must be `"json"`, and the findings must be at `data.findings` (an empty array is a clean review). `axi_notice` is optional.
+- **Keys:** every finding object must carry all 8 keys, spelled exactly in lower case. A missing or misspelled key is an error, never an empty field, and so is an extra key that differs from one of the 8 only in case. Any other key in a finding object is ignored, and so is any other key beside `axi_format`, `axi_notice`, and `data` (see [v2 evolution](#v2-evolution)), with two exceptions: a key that differs from one of those three, or from `findings` inside `data`, only in case is an error, and so is a top-level `findings` key.
+- **Values:** `severity` must be `CRITICAL`, `HIGH`, `MEDIUM`, or `LOW` in upper case, and `file_line` and `reviewer` must not be empty. Anything else is an error, in the table form too. The reader does not check other values: a `null` value reads as empty text or 0, a number or boolean where text belongs is an error, and `est_minutes` must be an integer or a string holding one (a boolean, a fraction, or any other text is an error, in the table form too).
+- **Nothing after it:** a second envelope, prose, or a code fence after the envelope is an error.
+
+### What survives
+
+v2 round-trips any text byte for byte, with one exception. `EncodeOrJSON` runs go-axi's sanitizer on both encodings, which strips control bytes other than tab, LF, and CR, ANSI escape sequences, `U+2028`/`U+2029`, and invalid UTF-8. v2 has no per-field rune cap. The limits are on size: go-axi reads a TOON row of at most 8 MiB, and the pool rebuild in `atcr review --resume` reads a findings file of at most 32 MiB. The 500-rune cap in [AXI TOON encoding](#axi-toon-encoding-atcr-report---format-axi) belongs to `atcr report --format axi` only.
+
+**Not the same as `--format axi`.** Both use TOON through go-axi, but they are separate surfaces. The v2 stream (`internal/stream`) is a per-source findings file on disk with a `file_line` column and a single `reviewer`. The `--format axi` report is a rendering of the reconciled findings for agents, with `file:line`, `reviewers`, and `confidence` columns. Do not parse one with rules written for the other.
+
+### Dual write
+
+atcr writes every per-source findings file twice, side by side: `findings.toon` (v2) and `findings.txt` (v1). This covers each `sources/pool/raw/agent/<agent>/` directory and the merged `sources/pool/` file, including a pool rebuilt by `atcr review --resume`. `findings.txt` is byte-identical to what atcr wrote before v2 existed. Both files are encoded before either is written, and `findings.toon` is written first, so a failed write never leaves a stale `findings.toon` beside a fresh `findings.txt`.
+
+The skill-driven host reviewer (atcr v0.4.0 or later) writes only `sources/host/findings.toon`, as the JSON envelope. It writes no `findings.txt`.
+
+### Which file atcr reads
+
+Every atcr reader picks a directory's file with one rule: `findings.toon` when it is a regular file, else `findings.txt` when it is a regular file. A findings file that is a symlink, FIFO, device, or directory counts as absent, and atcr prints a warning on stderr when it skips one, because atcr never writes one. The readers that follow this rule are reconcile source discovery, the pool rebuild in `atcr review --resume`, `atcr history`, the audit capture, and `atcr benchmark` (both the case run and the repo-state reader). `atcr history`, the audit capture, and `atcr benchmark` read `sources/pool/findings.toon` first and fall back to `findings.txt` only when no regular-file `findings.toon` exists.
+
+The choice is final. When atcr picks `findings.toon` and it does not parse, the reader reports an error; it never retries `findings.txt`, because that would hide a v2 writer bug behind lossy data. A file named `findings.toon` must carry the v2 header; a v1 header there is an error.
+
+A `findings.txt`-only directory reads exactly as before, so review directories written by an older atcr, or by a third-party tool, still work.
+
+The reverse does not hold. A tool that rewrites only `findings.txt` in a directory that already has a `findings.toon` (an older atcr resuming a newer review, or a hand edit) must delete that `findings.toon` too. Otherwise every reader keeps selecting the stale `findings.toon` and the rewrite is silently ignored.
+
+### What reviewer models emit
+
+Reviewer models do not write v2 files. Each persona prompt asks the model for one fenced `json` code block holding a JSON array of finding objects with 7 keys: `severity`, `file_line`, `problem`, `fix`, `category`, `est_minutes`, `evidence`. There is no `reviewer` key: the engine sets the reviewer from the agent name, and a model-supplied `reviewer` key is ignored. A clean review is the line `NO FINDINGS`. atcr parses the reply (`stream.ParseModelOutput`) and writes the result as both files above. [Persona authoring → Output Format](personas-authoring.md) has the prompt text.
+
+The parser also accepts what models commonly send instead:
+
+- several fenced `json` blocks, as a chunked review produces; their findings are combined;
+- a block cut off mid-object; every complete object before the cut is kept;
+- a JSON array with no fence, a `{"findings":[...]}` wrapper, or a single finding object;
+- `file` and `line` keys in place of `file_line`;
+- `NO FINDINGS` with a trailing `.`, `:`, or `!`, inside a code fence, or an empty array `[]` or `{"findings":[]}`, all read as a clean review;
+- legacy 7-column pipe rows, from a custom persona that still uses the v1 contract.
+
+Anything inside another code fence (a ```` ``` ```` or `~~~` fence with any other info word) is a quoted example and is never read. A fence closes only on a marker of its own character at least as long as its opener, so a ```` ```json ```` example quoted inside a ```` ```` ```` or `~~~` fence stays quoted. Two shapes are accepted limits of reading unfenced values: a finding the model restates outside its fenced block is counted twice, and a finding-shaped JSON example written in plain prose (outside any fence) is read as a finding.
+
+An object with an unknown severity or no location is dropped. A reply that yields no findings and is not a clean review is recorded as `unparseable_response` in the agent's `status.json`. For a chunked review that flag means the persona has no parseable findings across all its chunks; `unparseable_chunks` counts the individual chunks that yielded none, so one garbled chunk beside a chunk with findings is counted there without marking the persona unparseable.
+
+### v2 evolution
+
+v2 follows the same rule as v1: evolution is additive-only within a major version. A newer atcr may add a column or key. A reader must require the 8 fields above and ignore any other one, which is what atcr's reader does, so an older atcr still reads a newer file. Renaming or removing one of the 8 fields, or changing its meaning, needs a new version (`atcr-findings/v3`).
+
+### v1 deprecation policy
+
+v1 is still written and is not deprecated for removal yet. atcr writes `findings.txt` beside every `findings.toon` it writes, byte-identical to its pre-v2 output, so an existing v1 consumer needs no change. A new consumer should read `findings.toon`. These consumers outside atcr still read v1 only and are the next to migrate: `llm_support_td_dedupe` and the `/reconcile-code-review` skill. v1 stays until they have moved. (`internal/report/legacy_pipe.go` is not a findings-file reader: it renders the deprecated `--format pipe` AXI output from reconciled findings.)

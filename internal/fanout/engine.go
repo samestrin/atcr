@@ -381,6 +381,11 @@ type Result struct {
 	// the failover gate instead, and never sets this.
 	UnparseableResponse bool
 
+	// UnparseableChunks counts a chunked persona's chunks that set
+	// UnparseableResponse. mergeResultGroup sets it; the merged
+	// UnparseableResponse means zero parseable findings persona-wide.
+	UnparseableChunks int
+
 	// Tool-loop accounting (Epic 2.0). Tools records that this was a tool-enabled
 	// agent (so status.json emits explicit zero counters even on the degrade
 	// path, while pure single-shot agents keep them absent). Turns/ToolCalls/
@@ -475,6 +480,25 @@ type Result struct {
 	// independently (TD-019).
 	parsedFindingCount    int
 	parsedFindingCountSet bool
+
+	// chunkContents holds the non-empty chunk outputs mergeResultGroup joined
+	// into Content. parseFindings parses each one on its own, so a chunk cut off
+	// inside a ```json block or an unfenced array cannot swallow the next
+	// chunk's findings (TD-048). Nil for an unchunked result.
+	chunkContents []string
+}
+
+// parseFindings returns the findings in r's model output: the union of each
+// chunk's findings for a merged result, else those in Content.
+func (r *Result) parseFindings() []stream.Finding {
+	if r.chunkContents == nil {
+		return stream.ParseModelOutput([]byte(r.Content))
+	}
+	var out []stream.Finding
+	for _, c := range r.chunkContents {
+		out = append(out, stream.ParseModelOutput([]byte(c))...)
+	}
+	return out
 }
 
 // ParsedFindingCount returns the number of parseable findings in r.Content,
@@ -486,7 +510,7 @@ func (r *Result) ParsedFindingCount() int {
 	if r.parsedFindingCountSet {
 		return r.parsedFindingCount
 	}
-	r.parsedFindingCount = len(stream.ParseModelOutput([]byte(r.Content)))
+	r.parsedFindingCount = len(r.parseFindings())
 	r.parsedFindingCountSet = true
 	return r.parsedFindingCount
 }
@@ -838,10 +862,10 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 		// dead call.
 		//
 		// This overrides the prompt contract's "if there are no findings, emit
-		// nothing" (personas/_base.md:48): a clean review must now be positively
-		// signalled rather than inferred from silence, because silence is also
-		// what a failed call looks like. See the TD row filed alongside this
-		// change for the prompt-side follow-up.
+		// nothing" (now the NO FINDINGS rule, personas/_base.md:49): a clean
+		// review must now be positively signalled rather than inferred from
+		// silence, because silence is also what a failed call looks like. See
+		// the TD row filed alongside this change for the prompt-side follow-up.
 		//
 		// Scoped deliberately to EMPTY content. The adjacent shape — content
 		// present, nothing parseable — is left alone: routing that through

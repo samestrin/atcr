@@ -80,10 +80,14 @@ func readCommunityIndex(t *testing.T) []indexEntry {
 	return entries
 }
 
-// canonicalOutputContract is the exact 7-column pipe-delimited output header the
-// reconciler parses byte-for-byte; every persona's ## Output Format block must
-// carry it verbatim (AC 04-03 Scenario 2 / docs/personas-authoring.md §2).
-const canonicalOutputContract = "SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE"
+// canonicalOutputContract is the exact key list of the finding object that
+// internal/stream's ParseModelOutput decodes; every persona's ## Output Format
+// block must carry it verbatim (AC 04-03 Scenario 2 / docs/personas-authoring.md §2).
+const canonicalOutputContract = `"severity", "file_line", "problem", "fix", "category", "est_minutes", "evidence"`
+
+// canonicalOutputRule is the rule text that tells the model to emit one fenced
+// JSON array; ParseModelOutput reads findings from ```json fences first.
+const canonicalOutputRule = "one JSON array of finding objects inside a single ```json code fence"
 
 // requiredTemplateTokens are the variables the renderer relies on; a persona
 // template that never mentions one renders cleanly yet drops a required field, so
@@ -495,7 +499,7 @@ func TestCommunityFixtures_PlantCategoryWord(t *testing.T) {
 // TestCommunityPersonas_PromptStructure enforces the AC 04-03 source-text
 // contract on every persona template (Scenarios 2, 3, 5): all required template
 // tokens are literally present (a render can't catch an omitted token), the
-// mandatory ## Role and ## Output Format headings are present, the exact 7-column
+// mandatory ## Role and ## Output Format headings are present, the exact JSON
 // output contract appears byte-for-byte, and exactly one non-empty vendor-guidance
 // citation is present.
 func TestCommunityPersonas_PromptStructure(t *testing.T) {
@@ -511,14 +515,14 @@ func TestCommunityPersonas_PromptStructure(t *testing.T) {
 			require.Containsf(t, text, "## Role", "persona %q missing mandatory ## Role heading", p.Slug)
 			require.Containsf(t, text, "## Output Format", "persona %q missing mandatory ## Output Format heading", p.Slug)
 
-			// Anchor the contract to its own section: the header line AND the
-			// "7 pipe-delimited columns" rule text must live inside ## Output
-			// Format, not merely somewhere in the file.
+			// Anchor the contract to its own section: the key list AND the
+			// fenced-JSON rule text must live inside ## Output Format, not merely
+			// somewhere in the file.
 			outputSection := sectionBody(text, "## Output Format")
 			require.Containsf(t, outputSection, canonicalOutputContract,
-				"persona %q ## Output Format must carry the 7-column contract byte-for-byte", p.Slug)
-			require.Containsf(t, outputSection, "7 pipe-delimited columns",
-				"persona %q ## Output Format must keep the one-per-line / 7-column rule text", p.Slug)
+				"persona %q ## Output Format must carry the JSON key contract byte-for-byte", p.Slug)
+			require.Containsf(t, outputSection, canonicalOutputRule,
+				"persona %q ## Output Format must keep the fenced-JSON rule text", p.Slug)
 
 			matches := vendorGuidanceRe.FindAllStringSubmatch(text, -1)
 			require.Lenf(t, matches, 1, "persona %q must carry exactly one vendor-guidance citation", p.Slug)

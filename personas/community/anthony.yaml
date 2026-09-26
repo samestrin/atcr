@@ -1,5 +1,5 @@
 name: anthony
-version: 1.0.0
+version: 1.1.0
 description: Claude Opus architecture and design-integrity reviewer (deep-reasoning lens)
 provider: openrouter
 model: anthropic/claude-opus-4.8

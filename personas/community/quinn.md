@@ -38,14 +38,18 @@ tag any pre-existing issue in unchanged code with the out-of-scope category.
 - LOW: a clarity or defensive-typing hardening
 
 ## Output Format
-Emit ONLY findings, one per line, exactly 7 pipe-delimited columns:
+Emit ONLY findings, as one JSON array of finding objects inside a single ```json code fence. Each object has exactly these keys:
 
-SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
+"severity", "file_line", "problem", "fix", "category", "est_minutes", "evidence"
 
-Rules: replace literal | in any field with /; CATEGORY is one lowercase word; EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If nothing is wrong, emit exactly: NO FINDINGS
+Rules: severity is one of CRITICAL, HIGH, MEDIUM, LOW; file_line is FILE:LINE copied exactly from the diff; category is one lowercase word; est_minutes is an integer; evidence cites the offending code; quote code exactly as written, since JSON string escaping carries quotes, pipes, and newlines; no prose outside the fence. If nothing is wrong, send no code fence, no JSON block, and no empty array; reply with exactly this line and nothing else: NO FINDINGS
 
 Example:
-HIGH|internal/decode/decode.go:11|Unchecked type assertion v.(*User) panics on any other dynamic type|Use the comma-ok form and return a typed error on mismatch|type|10|return v.(*User)
+```json
+[
+  {"severity": "HIGH", "file_line": "internal/decode/decode.go:11", "problem": "Unchecked type assertion v.(*User) panics on any other dynamic type", "fix": "Use the comma-ok form and return a typed error on mismatch", "category": "type", "est_minutes": 10, "evidence": "return v.(*User)"}
+]
+```
 
 ## Payload
 Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mode: {{.PayloadMode}}.

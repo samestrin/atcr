@@ -1,5 +1,5 @@
 name: delia
-version: 1.0.0
+version: 1.1.0
 description: DeepSeek algorithmic-complexity and efficiency reviewer (reasoning-tier lens)
 provider: openrouter
 model: deepseek/deepseek-v4-pro

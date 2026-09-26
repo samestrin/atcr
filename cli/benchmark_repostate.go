@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -1023,7 +1024,8 @@ type repoStateAcc struct {
 //
 // Identical definition, not identical comparability — this comment used to claim
 // the second and only supported the first. The findings fed to the category scorer
-// are read from the post-grounding findings.txt, and the Epic 14.1 gate is live on
+// are read from the post-grounding pool findings file (findings.toon, else
+// findings.txt), and the Epic 14.1 gate is live on
 // this tier and fails open on standard-v1, so the two tiers' rates are computed
 // over different populations. The row states which via
 // benchmark.ReviewerCoverage.GroundingEnabled rather than adjusting the rate, so
@@ -1175,10 +1177,9 @@ func readCaseFindingsLocated(reviewDir string, agents map[string]bool) (located 
 	located = map[string][]benchmark.ReportedFinding{}
 	categorical = map[string][]string{}
 
-	path := filepath.Join(reviewDir, "sources", "pool", "findings.txt")
-	data, rerr := os.ReadFile(path)
+	parsed, rerr := stream.ReadPoolFindings(filepath.Join(reviewDir, "sources", "pool"))
 	if rerr != nil {
-		if os.IsNotExist(rerr) {
+		if errors.Is(rerr, fs.ErrNotExist) {
 			// A missing findings file means the review produced NOTHING — but a
 			// caller reading only the returned maps cannot distinguish that from
 			// reviewers that wrote nothing. Surfaced as a flag so the runner can
@@ -1186,11 +1187,7 @@ func readCaseFindingsLocated(reviewDir string, agents map[string]bool) (located 
 			// change (internal/benchmark), which this tier's file does not own.
 			return located, categorical, 0, true, nil
 		}
-		return nil, nil, 0, false, rerr
-	}
-	parsed, perr := stream.ParseSource(data)
-	if perr != nil {
-		return nil, nil, 0, false, perr
+		return nil, nil, 0, false, withFindingsPath(rerr)
 	}
 	for _, f := range parsed.Findings {
 		located[f.Reviewer] = append(located[f.Reviewer], benchmark.ReportedFinding{

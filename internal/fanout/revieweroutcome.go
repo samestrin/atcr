@@ -110,7 +110,8 @@ func ReviewerOutcome(a AgentStatus, raisedCount int) string {
 	case a.DroppedByGrounding > 0:
 		return "ungrounded"
 	// The grounding gate's SIBLING, and the wider of the two. Both discard findings
-	// after the reviewer raised them — `raised` is read from the merged findings.txt
+	// after the reviewer raised them — `raised` is read from the merged pool
+	// findings file (findings.toon, else findings.txt)
 	// written after enforceConstraints — so both leave a reviewer that found things
 	// looking identical here to one that found nothing. Grounding is repo-state-only;
 	// min_severity is any registry agent on either tier (internal/fanout/engine.go,

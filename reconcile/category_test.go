@@ -232,7 +232,7 @@ func TestCategories_LockedSet(t *testing.T) {
 // no recorded fold, split identical findings across every category-keyed
 // consumer — ModalCategory clustering, SARIF rule ids, the 35.16.5 scorer — which
 // re-creates the unscoreability this epic exists to close. The member stays
-// (personas/community/sonny.md:49's worked example emits it, and a prompt whose
+// (personas/community/sonny.md:51's worked example emits it, and a prompt whose
 // example contradicts its own vocabulary is the defect this epic removes), so the
 // fold is recorded for the ingestion boundary instead.
 //
@@ -249,7 +249,7 @@ func TestCategories_EquivalentMembersRecordTheirFold(t *testing.T) {
 		t.Errorf("categoryMerges[%q] = %q, want %q", CategoryLogic, target, CategoryCorrectness)
 	}
 	if !categorySet()[CategoryLogic] {
-		t.Errorf("%q must stay a member — sonny.md:49's worked example emits it, and the prompt may not contradict its own vocabulary", CategoryLogic)
+		t.Errorf("%q must stay a member — sonny.md:51's worked example emits it, and the prompt may not contradict its own vocabulary", CategoryLogic)
 	}
 }
 

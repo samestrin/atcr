@@ -39,14 +39,18 @@ out-of-scope category.
 - LOW: clarity or a defensive check that prevents a future logic slip
 
 ## Output Format
-Emit ONLY findings, one per line, exactly 7 pipe-delimited columns:
+Emit ONLY findings, as one JSON array of finding objects inside a single ```json code fence. Each object has exactly these keys:
 
-SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
+"severity", "file_line", "problem", "fix", "category", "est_minutes", "evidence"
 
-Rules: replace literal | in any field with /; CATEGORY is one lowercase word; EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If nothing is wrong, emit exactly: NO FINDINGS
+Rules: severity is one of CRITICAL, HIGH, MEDIUM, LOW; file_line is FILE:LINE copied exactly from the diff; category is one lowercase word; est_minutes is an integer; evidence cites the offending code; quote code exactly as written, since JSON string escaping carries quotes, pipes, and newlines; no prose outside the fence. If nothing is wrong, send no code fence, no JSON block, and no empty array; reply with exactly this line and nothing else: NO FINDINGS
 
 Example:
-HIGH|internal/pager/page.go:10|Integer division drops the partial final page, so LastPage undercounts by one|Return (n + size - 1) / size, or add 1 when n%size != 0|logic|15|return n / size
+```json
+[
+  {"severity": "HIGH", "file_line": "internal/pager/page.go:10", "problem": "Integer division drops the partial final page, so LastPage undercounts by one", "fix": "Return (n + size - 1) / size, or add 1 when n%size != 0", "category": "logic", "est_minutes": 15, "evidence": "return n / size"}
+]
+```
 
 ## Payload
 Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mode: {{.PayloadMode}}.

@@ -1,7 +1,11 @@
 package fanout
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -317,4 +321,175 @@ func TestWritePool_DiagnosabilityFieldsInSummary(t *testing.T) {
 	assert.Zero(t, byAgent["legacy"].EffectiveBudget)
 	assert.Zero(t, byAgent["legacy"].ResolvedWindow)
 	assert.Empty(t, byAgent["legacy"].DegradationAction)
+}
+
+// dualWriteFindings is a fixture whose fields v1 cannot carry: a literal pipe
+// and a multi-line EVIDENCE. findings.toon must keep them; findings.txt keeps
+// today's lossy bytes.
+var dualWriteFindings = []stream.Finding{
+	{Severity: "HIGH", File: "flags.go", Line: 7, Problem: "mode is O_CREATE | O_WRONLY", Fix: "use a | b", Category: "correctness", EstMinutes: 5, Evidence: "line one\n    line two", Reviewer: "greta"},
+	{Severity: "LOW", File: "x.go", Line: 1, Problem: "plain", Fix: "plain fix", Category: "style", EstMinutes: 1, Evidence: "ev", Reviewer: "kai"},
+}
+
+func v1Bytes(t *testing.T, findings []stream.Finding) []byte {
+	t.Helper()
+	var b bytes.Buffer
+	require.NoError(t, stream.WriteSource(&b, findings))
+	return b.Bytes()
+}
+
+func parseFile(t *testing.T, path string) []stream.Finding {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	res, err := stream.ParseSource(data)
+	require.NoError(t, err)
+	return res.Findings
+}
+
+// stubWriteFindingsFile swaps the atomic write writeFindings uses, recording the
+// order of written paths and failing the write whose base name is failOn.
+func stubWriteFindingsFile(t *testing.T, failOn string) *[]string {
+	t.Helper()
+	var order []string
+	orig := writeFindingsFileFn
+	writeFindingsFileFn = func(path string, data []byte) error {
+		order = append(order, filepath.Base(path))
+		if filepath.Base(path) == failOn {
+			return errors.New("injected write failure")
+		}
+		return orig(path, data)
+	}
+	t.Cleanup(func() { writeFindingsFileFn = orig })
+	return &order
+}
+
+func TestWriteFindings_DualWritesTxtAndToon(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, writeFindings(filepath.Join(dir, findingsFile), dualWriteFindings))
+
+	txt, err := os.ReadFile(filepath.Join(dir, findingsFile))
+	require.NoError(t, err)
+	// Literal bytes captured from main's writer before this change, so the
+	// check does not compare stream.WriteSource with itself.
+	const wantV1 = "# atcr-findings/v1\n" +
+		"HIGH|flags.go:7|mode is O_CREATE / O_WRONLY|use a / b|correctness|5|line one     line two|greta\n" +
+		"LOW|x.go:1|plain|plain fix|style|1|ev|kai\n"
+	assert.Equal(t, wantV1, string(txt), "findings.txt must stay byte-identical v1")
+
+	assert.Equal(t, dualWriteFindings, parseFile(t, filepath.Join(dir, findingsToonFile)),
+		"findings.toon must carry every field losslessly")
+}
+
+func TestWriteFindings_ToonAndTxtAgreeOnPlainFindings(t *testing.T) {
+	dir := t.TempDir()
+	plain := dualWriteFindings[1:]
+	require.NoError(t, writeFindings(filepath.Join(dir, findingsFile), plain))
+	assert.Equal(t, parseFile(t, filepath.Join(dir, findingsFile)), parseFile(t, filepath.Join(dir, findingsToonFile)))
+}
+
+func TestWriteFindings_EmptyFindingsWritesBothHeaders(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, writeFindings(filepath.Join(dir, findingsFile), nil))
+	assert.Empty(t, parseFile(t, filepath.Join(dir, findingsFile)))
+	assert.Empty(t, parseFile(t, filepath.Join(dir, findingsToonFile)))
+}
+
+func TestWriteFindings_WritesToonBeforeTxt(t *testing.T) {
+	order := stubWriteFindingsFile(t, "")
+	require.NoError(t, writeFindings(filepath.Join(t.TempDir(), findingsFile), dualWriteFindings))
+	assert.Equal(t, []string{findingsToonFile, findingsFile}, *order)
+}
+
+// A v2 encode failure must leave the directory untouched: both buffers are
+// encoded before either write.
+func TestWriteFindings_V2EncodeFailureWritesNeitherFile(t *testing.T) {
+	orig := encodeFindingsV2Fn
+	encodeFindingsV2Fn = func(io.Writer, []stream.Finding) error { return errors.New("injected encode failure") }
+	t.Cleanup(func() { encodeFindingsV2Fn = orig })
+
+	dir := t.TempDir()
+	err := writeFindings(filepath.Join(dir, findingsFile), dualWriteFindings)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "encoding findings (v2)")
+
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.NotContains(t, []string{findingsFile, findingsToonFile}, e.Name())
+	}
+}
+
+// Decision A (AC 04-01 Error Scenario 3): a failed findings.toon write on a
+// rewrite leaves the previous pair intact, so no reader sees a stale .toon
+// beside a fresh .txt.
+func TestWriteFindings_ToonWriteFailureKeepsPreviousPair(t *testing.T) {
+	dir := t.TempDir()
+	old := dualWriteFindings[1:]
+	require.NoError(t, writeFindings(filepath.Join(dir, findingsFile), old))
+	oldTxt, err := os.ReadFile(filepath.Join(dir, findingsFile))
+	require.NoError(t, err)
+	oldToon, err := os.ReadFile(filepath.Join(dir, findingsToonFile))
+	require.NoError(t, err)
+
+	stubWriteFindingsFile(t, findingsToonFile)
+	require.Error(t, writeFindings(filepath.Join(dir, findingsFile), dualWriteFindings))
+
+	gotTxt, err := os.ReadFile(filepath.Join(dir, findingsFile))
+	require.NoError(t, err)
+	gotToon, err := os.ReadFile(filepath.Join(dir, findingsToonFile))
+	require.NoError(t, err)
+	assert.Equal(t, oldTxt, gotTxt, "findings.txt must not be written after a failed .toon write")
+	assert.Equal(t, oldToon, gotToon)
+
+	sel, err := stream.SelectFindingsFile(dir)
+	require.NoError(t, err)
+	assert.Equal(t, old, parseFile(t, sel), "readers still see the previous consistent findings")
+}
+
+func TestWriteFindings_TxtWriteFailureKeepsFreshToonAndErrors(t *testing.T) {
+	dir := t.TempDir()
+	stubWriteFindingsFile(t, findingsFile)
+	require.Error(t, writeFindings(filepath.Join(dir, findingsFile), dualWriteFindings))
+	assert.Equal(t, dualWriteFindings, parseFile(t, filepath.Join(dir, findingsToonFile)))
+}
+
+// Every writeFindings call site dual-writes: per-agent (writeAgentArtifacts),
+// merged pool (writePool), and the resume rewrite (RebuildPool).
+func TestWritePool_DualWritesPerAgentAndPool(t *testing.T) {
+	pool := filepath.Join(t.TempDir(), "pool")
+	content := "HIGH|a.go:1|p|f|security|10|ev"
+	_, err := WritePool(pool, []Result{okResult("greta", content), okResult("kai", content)}, nil)
+	require.NoError(t, err)
+
+	for _, dir := range []string{
+		filepath.Join(pool, poolRawAgentDir, "greta"),
+		filepath.Join(pool, poolRawAgentDir, "kai"),
+		pool,
+	} {
+		txt := parseFile(t, filepath.Join(dir, findingsFile))
+		toon := parseFile(t, filepath.Join(dir, findingsToonFile))
+		assert.NotEmpty(t, toon, dir)
+		assert.Equal(t, txt, toon, "%s: both files hold the same findings in the same order", dir)
+	}
+}
+
+func TestRebuildPool_DualWritesPool(t *testing.T) {
+	poolDir := filepath.Join(t.TempDir(), "sources", "pool")
+	require.NoError(t, writeResumedAgents(poolDir, []Result{
+		okResult("zeta", "CRITICAL|z.go:1|z|fz|security|15|ez"),
+		okResult("alpha", "HIGH|a.go:1|a|fa|security|15|ea"),
+	}, nil))
+	// writeResumedAgents writes only per-agent artifacts, so the merged pool
+	// files come from the rebuild alone.
+	require.NoFileExists(t, filepath.Join(poolDir, findingsToonFile))
+
+	_, _, err := RebuildPool(context.Background(), poolDir, []string{"zeta", "alpha"})
+	require.NoError(t, err)
+
+	txt := parseFile(t, filepath.Join(poolDir, findingsFile))
+	toon := parseFile(t, filepath.Join(poolDir, findingsToonFile))
+	require.Len(t, toon, 2)
+	assert.Equal(t, txt, toon)
+	assert.Equal(t, "z.go", toon[0].File, "roster order")
 }

@@ -57,6 +57,12 @@ func TestEveryPersona_InstructsTheCleanReviewMarker(t *testing.T) {
 				t.Errorf("%s %s: still instructs silence on a clean review; emit the NO FINDINGS "+
 					"marker instead", src.name, path)
 			}
+			// stream.IsNoFindings reads [] and {"findings":[]} as clean, so a
+			// prompt that threatens failure for them contradicts the parser (TD-049).
+			if strings.Contains(low, "read as a failed review") {
+				t.Errorf("%s %s: claims an empty array is read as a failed review, but the "+
+					"parser reads it as clean", src.name, path)
+			}
 			return nil
 		})
 		if err != nil {

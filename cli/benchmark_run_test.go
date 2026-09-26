@@ -76,7 +76,7 @@ func (s stubCategoryCompleter) Complete(_ context.Context, _ llmclient.Invocatio
 type stubNoFindingsCompleter struct{}
 
 func (stubNoFindingsCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
-	return "No findings.", nil
+	return "No findings were identified in this diff.", nil
 }
 
 // executeBenchmarkRun loads + validates the suite, executes each case's diff

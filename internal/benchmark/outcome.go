@@ -107,7 +107,8 @@ const (
 	// (fanout.AgentStatus.DroppedByMinSeverity > 0 with nothing surviving).
 	//
 	// It is OutcomeUngrounded's sibling and exists for the identical reason: `raised`
-	// is read from the merged findings.txt written AFTER enforceConstraints, so a
+	// is read from the merged pool findings file (findings.toon, else findings.txt)
+	// written AFTER enforceConstraints, so a
 	// total wipe is indistinguishable at the call site from a reviewer that found
 	// nothing, and publishing it as "clean" asserts something false about the row.
 	//

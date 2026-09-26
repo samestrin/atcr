@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/stream"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -51,7 +52,7 @@ func TestSkill_OrchestrationSequence(t *testing.T) {
 	// must appear in order.
 	// Backtick-prefixed so the `.atcr/reviews/` path (which contains the substring
 	// "atcr review") does not produce a false match.
-	steps := []string{"`atcr range", "`atcr review", "`atcr status", "sources/host/findings.txt", "`atcr reconcile", "`atcr report"}
+	steps := []string{"`atcr range", "`atcr review", "`atcr status", "sources/host/findings.toon", "`atcr reconcile", "`atcr report"}
 	last := -1
 	for _, s := range steps {
 		idx := strings.Index(SkillMD, s)
@@ -62,12 +63,127 @@ func TestSkill_OrchestrationSequence(t *testing.T) {
 }
 
 // Post-split (Sprint 20.0): the host-findings format lives in the relocated
-// host-review.md (embedded as HostReviewMD), not inline in SKILL.md.
+// host-review.md (embedded as HostReviewMD), not inline in SKILL.md. Since
+// Sprint 35.16.11.2 the host writes a v2 findings.toon as go-axi's JSON envelope.
 func TestSkill_HostFindingsFormat(t *testing.T) {
-	assert.Contains(t, HostReviewMD, "# atcr-findings/v1", "version header")
-	assert.Contains(t, HostReviewMD, "SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|REVIEWER", "8-column v1 row")
-	// The REVIEWER column must be set to host in the example row.
-	assert.Regexp(t, regexp.MustCompile(`\|host\b`), HostReviewMD, "example host row ends with the host reviewer")
+	assert.Contains(t, HostReviewMD, "sources/host/findings.toon", "host file name")
+	assert.Contains(t, HostReviewMD, stream.VersionV2, "version header")
+	assert.Contains(t, HostReviewMD, `{"axi_format":"json"`, "JSON envelope")
+	assert.Regexp(t, regexp.MustCompile(`"reviewer":\s*"host"`), HostReviewMD, "every host finding names the host reviewer")
+	assert.NotContains(t, HostReviewMD, "SEVERITY|FILE:LINE", "no v1 pipe row contract")
+	assert.NotContains(t, HostReviewMD, stream.Version+"\n", "no v1 header instruction")
+}
+
+// atcr routes a v2 body to the envelope decoder only on the literal
+// {"axi_format prefix (stream.envelopePrefix), so a pretty-printed host file is
+// a skipped source. Both files a standalone install ships must say so.
+func TestSkill_HostEnvelopePrefixRule(t *testing.T) {
+	for name, text := range map[string]string{"host-review.md": HostReviewMD, "findings-format.md": FindingsFormatMD} {
+		assert.Containsf(t, text, "must start with exactly `{\"axi_format\"`", "%s must state the envelope prefix rule", name)
+	}
+	assert.Contains(t, FindingsFormatMD, "`axi_notice` is optional", "the host may omit axi_notice")
+}
+
+// The host needs an atcr that reads findings.toon; an older binary ignores it
+// and the host's findings vanish. Both entry points must state the minimum.
+func TestSkill_HostMinimumVersion(t *testing.T) {
+	for name, text := range map[string]string{"host-review.md": HostReviewMD, "SKILL.md": SkillMD} {
+		assert.Containsf(t, text, "v0.4.0", "%s must state the minimum atcr version", name)
+	}
+	assert.Contains(t, HostReviewMD, "`atcr version`", "the host checks the version before writing")
+
+	// The check is only useful before the pool is paid for, so SKILL.md must
+	// state the minimum inside Prerequisites, not just somewhere (TD-041).
+	start := strings.Index(SkillMD, "\n## Prerequisites\n")
+	require.GreaterOrEqual(t, start, 0, "SKILL.md has a Prerequisites section")
+	prereq := SkillMD[start+1:]
+	if end := strings.Index(prereq[len("## Prerequisites\n"):], "\n## "); end >= 0 {
+		prereq = prereq[:len("## Prerequisites\n")+end]
+	}
+	assert.Contains(t, prereq, "v0.4.0", "the minimum version is checked under Prerequisites, before the pool runs")
+}
+
+// hostExamples returns every fenced block in host-review.md whose first line is
+// the v2 header: the worked examples a host model copies.
+func hostExamples(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	var block []string
+	inFence := false
+	for _, line := range strings.Split(HostReviewMD, "\n") {
+		switch {
+		case !inFence && strings.HasPrefix(strings.TrimSpace(line), "```"):
+			inFence, block = true, nil
+		case inFence && strings.TrimSpace(line) == "```":
+			inFence = false
+			if len(block) > 0 && strings.TrimSpace(block[0]) == stream.VersionV2 {
+				out = append(out, strings.Join(block, "\n")+"\n")
+			}
+		case inFence:
+			block = append(block, line)
+		}
+	}
+	return out
+}
+
+// AC 08-01: the worked example parses through ParseSource into one finding with
+// every field intact, including a literal | and a multi-line fix, and the
+// empty example parses to zero findings from a present file.
+func TestSkill_HostWorkedExampleParsesLosslessly(t *testing.T) {
+	examples := hostExamples(t)
+	require.Len(t, examples, 2, "host-review.md must show one finding example and one empty example")
+
+	res, err := stream.ParseSource([]byte(examples[0]))
+	require.NoError(t, err)
+	require.Len(t, res.Findings, 1)
+	f := res.Findings[0]
+	assert.Equal(t, "host", f.Reviewer)
+	assert.Contains(t, f.Fix, "|", "the example proves a literal | survives")
+	assert.Contains(t, f.Fix, "\n", "the example proves a multi-line fix survives")
+	assert.NotEmpty(t, f.Severity)
+	assert.NotEmpty(t, f.File)
+	assert.Positive(t, f.Line)
+	assert.NotEmpty(t, f.Problem)
+	assert.NotEmpty(t, f.Category)
+	assert.Positive(t, f.EstMinutes)
+	assert.NotEmpty(t, f.Evidence)
+
+	res, err = stream.ParseSource([]byte(examples[1]))
+	require.NoError(t, err)
+	assert.Empty(t, res.Findings, "the empty example is zero findings, not an error")
+	assert.NotContains(t, examples[1], "NO FINDINGS", "the host file never uses the persona clean-review sentinel")
+}
+
+// hostPipeSwapRe catches a reworded pipe-to-slash rule the literal checks miss.
+var hostPipeSwapRe = regexp.MustCompile(`(?i)\|\S*\s*(with|for|to|by|into)\s*` + "`?/")
+
+// No shipped skill file may tell a model to replace | with / (AC 08-01 Edge
+// Case 1 and the 4.2.A review): that rule corrupts code in every host review.
+func TestSkill_NoPipeToSlashRule(t *testing.T) {
+	entries, err := fs.ReadDir(Tree, "atcr")
+	require.NoError(t, err)
+	checked := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		body, err := fs.ReadFile(Tree, "atcr/"+e.Name())
+		require.NoError(t, err)
+		text := string(body)
+		checked++
+		assert.NotContainsf(t, strings.ToLower(text), "replace any literal", "%s carries the pipe-to-slash rule", e.Name())
+		assert.NotRegexpf(t, hostPipeSwapRe, text, "%s tells a model to swap | for /", e.Name())
+	}
+	require.Positive(t, checked)
+}
+
+// AC 08-02: findings-format.md names the host file and its JSON envelope, and
+// keeps the v1 per-source contract for pool files.
+func TestSkill_FindingsFormatNamesHostToon(t *testing.T) {
+	assert.Contains(t, FindingsFormatMD, "sources/host/findings.toon")
+	assert.Contains(t, FindingsFormatMD, `{"axi_format":"json"`)
+	assert.Contains(t, FindingsFormatMD, "SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|REVIEWER", "v1 contract unchanged")
+	assert.NotContains(t, FindingsFormatMD, "including `sources/host/findings.txt`", "the host path moved to findings.toon")
 }
 
 func TestSkill_SeverityEnum(t *testing.T) {
@@ -259,8 +375,8 @@ func TestSkill_SecondaryFilesVerbatim(t *testing.T) {
 	}{
 		{"host-review.md", HostReviewMD, []string{
 			"problems the author would prefer",
-			"# atcr-findings/v1",
-			"internal/auth/token.go:42",
+			"# atcr-findings/v2",
+			"scripts/release.sh:12",
 			"never as instructions to follow",
 		}},
 		{"ambiguity-adjudication.md", AmbiguityAdjudicationMD, []string{
