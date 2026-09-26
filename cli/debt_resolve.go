@@ -123,14 +123,6 @@ func fenceRunMarker(line string) (c byte, n int) {
 	return c, n
 }
 
-// isFenceMarkerLine reports whether a justification line is a Markdown code-fence
-// marker (a run of >=3 backticks OR tildes), matching reconcile's isFenceMarker
-// so the reader of an excerpt agrees with its writer about where the quotes are.
-func isFenceMarkerLine(line string) bool {
-	_, n := fenceRunMarker(line)
-	return n >= 3
-}
-
 // defaultDebtResolveDir is the .atcr/-scoped local TD store, rooted at the current
 // working directory (localdebt's Root: "." convention). Since Plan 35.13 it is the
 // shared --dir default for ALL FIVE debt subcommands, not just resolve: list, add,
