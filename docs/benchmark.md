@@ -329,7 +329,7 @@ These failures still abort the whole run, and none of them is transient:
 | A **host-level work-dir fault** (`ENOSPC`, `EDQUOT`, `EMFILE`/`ENFILE`, or `EROFS` while creating a case's work directory). | A property of the host, not of the case: every remaining case repeats the identical failing syscall, so recording each as its own bad luck writes one entry per case and still exits 0 while the host stays broken. |
 | The **realized-identity printability guard** (a provider's usage payload supplied a model identity whose runes cannot survive publication). | Publishing would emit a public identity no consumer can join against, and a re-run on this tier re-pays the whole panel — so the guard fails the run before payment rather than letting export reject the finished artifact. |
 
-When any case fails — or any single reviewer **slot** fails (one reviewer missing one case the rest of the panel scored) — the **work dir is retained** and its path is logged, exactly as it is on a hard failure: the whole panel's raw transcripts, `findings.txt` and `summary.json` survive for inspection or manual rescoring. A slot failure retains the WHOLE run, not just the case that lost the slot: the failed slot's `status.json` lives inside that case's review directory, and the retained artifacts are kept together rather than partially reclaimed. On a large panel a single routine provider timeout — not an exceptional event on quota-limited primaries — is therefore enough to leave a full work dir behind.
+When any case fails — or any single reviewer **slot** fails (one reviewer missing one case the rest of the panel scored) — the **work dir is retained** and its path is logged, exactly as it is on a hard failure: the whole panel's raw transcripts, the pool findings files and `summary.json` survive for inspection or manual rescoring. atcr scores `findings.toon` whenever it exists and never reads `findings.txt` beside it, so a manual rescore must edit `findings.toon`, or delete it so `findings.txt` is read. A slot failure retains the WHOLE run, not just the case that lost the slot: the failed slot's `status.json` lives inside that case's review directory, and the retained artifacts are kept together rather than partially reclaimed. On a large panel a single routine provider timeout — not an exceptional event on quota-limited primaries — is therefore enough to leave a full work dir behind.
 
 **That retention is unbounded, and reclaiming it is yours to do.** Nothing prunes, caps or expires a retained work dir, deliberately: it holds the only copy of a panel you already paid for, so the run will not delete it on your behalf. The trade is that a scheduled suite losing one case per run — or one slot per run, which on a large roster is the more common trigger — leaves one full work dir behind per run. The partial-run warning reports the size alongside the path so the growth is visible before the volume is:
 
@@ -676,6 +676,10 @@ simply found less. Five details matter when reading it:
   representative.
 - A finding with an **empty** category counts as drift. Otherwise the rate would
   improve when a reviewer stopped labelling entirely.
+- **Rates from before the JSON output contract are not directly comparable.** A
+  row the old pipe parser recorded as skipped (and so scored as empty-category
+  drift) now parses with its real category, so drift can fall and recall can rise
+  across that boundary with no change in the reviewer.
 - The key is **absent** (not `0.0`) for a run that raised no findings at all, and
   for any run-result predating the field. Absent means *unmeasured*; an explicit
   `0.0` means *measured and clean*. Do not read one as the other.
@@ -801,7 +805,7 @@ call failed all raise zero categories and score identically:
 | Outcome | Meaning |
 |---------|---------|
 | `findings` | Raised at least one parseable finding. |
-| `clean` | Reviewed successfully and emitted the `NO FINDINGS` sentinel. |
+| `clean` | Reviewed successfully and emitted the `NO FINDINGS` sentinel (a trailing `.`, `:` or `!` and a surrounding code fence are accepted), an empty JSON array, or `{"findings":[]}`. Earlier versions accepted only the bare sentinel and counted every other shape as `unparseable`, so `clean` and `unparseable` tallies shift across that boundary. |
 | `unparseable` | Returned content that parsed to zero findings and was not the sentinel. |
 | `truncated` | Response cut off on `finish_reason: length`; whatever it raised is incomplete. |
 | `incomplete` | The reviewer saw only a fraction of the diff — either a chunked slot whose bins failed while it still reported ok, or a payload shed to fit a byte budget (`files_dropped` names the shed entries by path; the shed is accounted per entry, so a path listed there can still be present via another occurrence of the same path in the diff). |
