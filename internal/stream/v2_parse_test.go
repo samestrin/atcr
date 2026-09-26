@@ -33,7 +33,7 @@ func TestParseModelOutput_JSONBlock(t *testing.T) {
 }
 
 func TestParseModelOutput_JSONFenceInfoString(t *testing.T) {
-	for _, opener := range []string{"```json", "```JSON", "  ```json", "````json", "``` json", "```json  ", "```json\r"} {
+	for _, opener := range []string{"```json", "```JSON", "  ```json", "````json", "``` json", "```json  ", "```json\r", "```json title=x", "```json\ttitle=x"} {
 		t.Run(opener, func(t *testing.T) {
 			content := opener + "\n[" + objB + "]\n```\n"
 			assert.Equal(t, []Finding{findB}, ParseModelOutput([]byte(content)))

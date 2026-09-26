@@ -82,7 +82,7 @@ func TestIsJSONFenceOpener_AgreesWithTheProducingParser(t *testing.T) {
 	const body = `[{"severity":"HIGH","file_line":"a.go:10","problem":"p","fix":"f","category":"c","est_minutes":1,"evidence":"HIGH|x.go:1|pipe-shaped|text"}]`
 	for _, opener := range []string{
 		"```json", "```JSON", "  ```json", "````json", "``` json", "```json  ",
-		"```", "```text", "```jsonc", "```js", "~~~json", "json",
+		"```", "```text", "```jsonc", "```js", "~~~json", "json", "```json title=x", "```json5",
 	} {
 		t.Run(opener, func(t *testing.T) {
 			const lead = "```json\n" + `[{"severity":"LOW","file_line":"lead.go:1"}]` + "\n```\n"
