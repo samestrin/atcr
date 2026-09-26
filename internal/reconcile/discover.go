@@ -27,12 +27,12 @@ const (
 )
 
 // Source is a discovered reconcile source: the immediate-child name under
-// sources/ (e.g. "pool", "host") and the findings parsed from the leaf
-// findings files (findings.toon or findings.txt) beneath it. Skipped records
-// malformed rows so the caller can warn without failing the run. SkippedFiles
-// records whole findings files dropped on a read error or bad header, so the run summary can report
-// the degradation (skipped_sources in summary.json) instead of losing it to a
-// stderr-only warning.
+// sources/ (e.g. "pool", "host") and the findings parsed from the leaf findings
+// files (findings.toon or findings.txt) beneath it. Skipped records malformed
+// rows so the caller can warn without failing the run. SkippedFiles records
+// whole findings files dropped on a read error or bad header, so the run
+// summary can report the degradation (skipped_sources in summary.json) instead
+// of losing it to a stderr-only warning.
 type Source struct {
 	Name         string
 	Findings     []stream.Finding

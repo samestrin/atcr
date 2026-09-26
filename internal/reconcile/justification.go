@@ -766,10 +766,10 @@ func isFindingRecordStart(s string) bool {
 
 // fenceMask reports, per line, whether it sits INSIDE a fenced code block, in TWO
 // views. strict matches the toggle-then-continue order in
-// stream.ParseModelOutput's fence switch byte-for-byte: fence markers are OUTSIDE, and an UNTERMINATED fence masks to EOF,
-// exactly as the parser's bare `inFence = !inFence` skips every line below a
-// dangling opener. released is identical except that the run below a dangling
-// opener is un-masked.
+// stream.ParseModelOutput's fence switch byte-for-byte: fence markers are OUTSIDE,
+// and an UNTERMINATED fence masks to EOF, exactly as the parser's bare `inFence =
+// !inFence` skips every line below a dangling opener. released is identical except
+// that the run below a dangling opener is un-masked.
 //
 // balanced is a third, disjoint signal: it marks the MARKER lines of every
 // TERMINATED pair (both views leave markers themselves unmasked, so no mask can
