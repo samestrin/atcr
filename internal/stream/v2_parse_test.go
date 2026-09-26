@@ -549,4 +549,13 @@ func TestIsNoFindings_DropsFenceMarkerLinesWithInfoStrings(t *testing.T) {
 	// response is not clean even if a sentinel appears elsewhere.
 	assert.False(t, IsNoFindings("```js `x`\nNO FINDINGS"),
 		"a fence line sharing backtick content is content, not an info string")
+	// Only the first info-string token is a bare word (the language); every
+	// later one is a key=value attribute. A fence line followed by plain prose
+	// is content sharing the line, so the response is not clean.
+	for _, in := range []string{
+		"NO FINDINGS\n``` but the lock is never released\n```",
+		"```text there is a HIGH bug here\nNO FINDINGS\n```",
+	} {
+		assert.False(t, IsNoFindings(in), "%q carries prose on a fence line", in)
+	}
 }
