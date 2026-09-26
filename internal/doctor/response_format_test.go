@@ -421,6 +421,28 @@ func TestRenderJSON_DeclaredAgentCarriesTheProbeOutcome(t *testing.T) {
 	assert.Contains(t, buf.String(), `"response_format_detail": "reply was fenced"`)
 }
 
+// Both diagnostic branches the short-detail tests miss: an endpoint hint and a
+// response_format detail must join under the " | " separator (never read as one
+// sentence), and an over-160-byte detail must clamp with the --json suffix — the
+// wrong-shape detail at run.go already exceeds the cap in practice.
+func TestRenderTable_JoinsHintAndClampsLongResponseFormatDetail(t *testing.T) {
+	long := strings.Repeat("x", 200)
+	var buf bytes.Buffer
+	require.NoError(t, RenderTableError(&buf, &Report{Agents: []AgentResult{{
+		Agent: "a", Provider: "p", Model: "m", Status: StatusOKWarning,
+		Hint:                 "HTTP 200 but marker absent/empty",
+		ResponseFormatStatus: ResponseFormatNotHonored,
+		ResponseFormatDetail: long,
+	}}}))
+
+	out := buf.String()
+	assert.Contains(t, out, "HTTP 200 but marker absent/empty | response_format not honored: ",
+		"the endpoint hint and the labelled detail join under the pipe separator")
+	assert.Contains(t, out, "… (--json for full text)",
+		"a detail over the 160-byte table cap clamps with the --json suffix")
+	assert.NotContains(t, out, strings.Repeat("x", 161), "the clamped cell never carries the full detail")
+}
+
 // The table must show a not-honored row in words that cannot be mistaken for the
 // marker-absent hint.
 func TestRenderTable_NotHonoredRowNamesResponseFormat(t *testing.T) {
