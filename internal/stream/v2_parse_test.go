@@ -320,6 +320,13 @@ func TestParseSource_V2Errors(t *testing.T) {
 		{"table unknown severity", "findings[1]{severity,file_line,problem,fix,category,est_minutes,evidence,reviewer}:\n  BLOCKER,\"a.go:1\",p,f,c,1,e,r"},
 		{"table empty file_line", "findings[1]{severity,file_line,problem,fix,category,est_minutes,evidence,reviewer}:\n  HIGH,\"\",p,f,c,1,e,r"},
 		{"table empty reviewer", "findings[1]{severity,file_line,problem,fix,category,est_minutes,evidence,reviewer}:\n  HIGH,\"a.go:1\",p,f,c,1,e,\"\""},
+		// est_minutes is an integer in an atcr-written file; model output stays
+		// lenient (flexInt), the on-disk readers do not.
+		{"est_minutes non-numeric string", `{"axi_format":"json","axi_notice":"","data":{"findings":[{"severity":"HIGH","file_line":"a.go:1","problem":"p","fix":"f","category":"c","est_minutes":"abc","evidence":"e","reviewer":"host"}]}}`},
+		{"est_minutes boolean", `{"axi_format":"json","axi_notice":"","data":{"findings":[{"severity":"HIGH","file_line":"a.go:1","problem":"p","fix":"f","category":"c","est_minutes":true,"evidence":"e","reviewer":"host"}]}}`},
+		{"est_minutes float", `{"axi_format":"json","axi_notice":"","data":{"findings":[{"severity":"HIGH","file_line":"a.go:1","problem":"p","fix":"f","category":"c","est_minutes":12.9,"evidence":"e","reviewer":"host"}]}}`},
+		{"table est_minutes non-numeric", "findings[1]{severity,file_line,problem,fix,category,est_minutes,evidence,reviewer}:\n  HIGH,\"a.go:1\",p,f,c,abc,e,r"},
+		{"table est_minutes float", "findings[1]{severity,file_line,problem,fix,category,est_minutes,evidence,reviewer}:\n  HIGH,\"a.go:1\",p,f,c,1.5,e,r"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -342,6 +349,7 @@ func TestParseSource_V2ToleratesAdditiveFields(t *testing.T) {
 		{"extra table column", "findings[1]{severity,file_line,problem,fix,category,est_minutes,evidence,reviewer,confidence}:\n  HIGH,\"a.go:1\",p,f,c,2,e,r,0.9"},
 		{"extra column first, known columns reordered", "findings[1]{confidence,reviewer,evidence,est_minutes,category,fix,problem,file_line,severity}:\n  0.9,r,e,2,c,f,p,\"a.go:1\",HIGH"},
 		{"extra row key", `{"axi_format":"json","axi_notice":"","data":{"findings":[{"severity":"HIGH","file_line":"a.go:1","problem":"p","fix":"f","category":"c","est_minutes":2,"evidence":"e","reviewer":"r","confidence":{"score":0.9}}]}}`},
+		{"est_minutes as a numeric string", `{"axi_format":"json","axi_notice":"","data":{"findings":[{"severity":"HIGH","file_line":"a.go:1","problem":"p","fix":"f","category":"c","est_minutes":"2","evidence":"e","reviewer":"r"}]}}`},
 		{"extra envelope and data keys", `{"axi_format":"json","axi_notice":"","extra":1,"data":{"schema":2,"findings":[{"severity":"HIGH","file_line":"a.go:1","problem":"p","fix":"f","category":"c","est_minutes":2,"evidence":"e","reviewer":"r"}]}}`},
 	}
 	for _, c := range cases {
