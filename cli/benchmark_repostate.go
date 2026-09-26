@@ -1024,7 +1024,8 @@ type repoStateAcc struct {
 //
 // Identical definition, not identical comparability — this comment used to claim
 // the second and only supported the first. The findings fed to the category scorer
-// are read from the post-grounding findings.txt, and the Epic 14.1 gate is live on
+// are read from the post-grounding pool findings file (findings.toon, else
+// findings.txt), and the Epic 14.1 gate is live on
 // this tier and fails open on standard-v1, so the two tiers' rates are computed
 // over different populations. The row states which via
 // benchmark.ReviewerCoverage.GroundingEnabled rather than adjusting the rate, so
