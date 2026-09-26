@@ -722,9 +722,11 @@ func responseFormatCall(ctx context.Context, c Completer, tgt Target, opts Optio
 	if err != nil {
 		// Only a client-side refusal is a verdict on the declaration. The endpoint
 		// just answered the marker probe, so a 4xx here points at what this call
-		// added; a 429, a 5xx, or a transport error points at nothing.
+		// added; a 429, a 408 (the provider timed out — the same no-verdict class as
+		// the client-side deadline below), a 5xx, or a transport error points at
+		// nothing.
 		var se *llmclient.HTTPStatusError
-		if errors.As(err, &se) && se.Status >= 400 && se.Status < 500 && se.Status != 429 {
+		if errors.As(err, &se) && se.Status >= 400 && se.Status < 500 && se.Status != 429 && se.Status != 408 {
 			return ResponseFormatNotHonored, fmt.Sprintf("the provider rejected %s (HTTP %d): %s", declared, se.Status, scrubCredentials(se.Snippet, tgt))
 		}
 		if se != nil {

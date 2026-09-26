@@ -227,9 +227,12 @@ func TestRun_ResponseFormatProbeWarnsWhenTheProviderRejectsTheField(t *testing.T
 func TestRun_ResponseFormatProbeIsUnverifiedOnATransientError(t *testing.T) {
 	cases := map[string]error{
 		"rate limited": &llmclient.HTTPStatusError{Status: 429, Snippet: "quota"},
-		"server error": &llmclient.HTTPStatusError{Status: 503, Snippet: "upstream down"},
-		"deadline":     context.DeadlineExceeded,
-		"transport":    errors.New("connection reset"),
+		// 408 is the provider timing out on the probe — the same no-verdict class as
+		// a client-side deadline, never a verdict on the declaration.
+		"request timeout": &llmclient.HTTPStatusError{Status: 408, Snippet: "probe timed out"},
+		"server error":    &llmclient.HTTPStatusError{Status: 503, Snippet: "upstream down"},
+		"deadline":        context.DeadlineExceeded,
+		"transport":       errors.New("connection reset"),
 	}
 	for name, callErr := range cases {
 		t.Run(name, func(t *testing.T) {
