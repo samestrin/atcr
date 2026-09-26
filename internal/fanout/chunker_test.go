@@ -552,13 +552,11 @@ func TestMergeResultGroup_UnparseableFlagIsPersonaWide(t *testing.T) {
 	st := statusFor(merged, fr)
 	assert.False(t, st.UnparseableResponse, "the persona produced a parseable finding")
 	assert.Equal(t, 1, st.UnparseableChunks)
-	// TD (sprint 35.16.11.2): a garbled chunk is a partial read of the payload,
-	// the same fact a failed bin (UnreviewedChunks) or a shed (Truncated)
-	// records — it must score "incomplete", not "findings", or the benchmark
-	// and scorecard charge a missed defect in the garbled bin as a full-coverage
-	// miss. Sits below the unparseable arm: zero parsed findings is still
+	// A garbled chunk beside a chunk with findings is only counted: the persona
+	// scores "findings", so scorecard trust (which excludes "incomplete") still
+	// credits the findings it did produce. Zero parsed findings overall is
 	// "unparseable" (asserted below).
-	assert.Equal(t, "incomplete", ReviewerOutcome(st, len(fr.Findings)))
+	assert.Equal(t, "findings", ReviewerOutcome(st, len(fr.Findings)))
 
 	merged = mergeResultGroup([]Result{garbled, garbled}, nil)
 	fr = findingsFor(merged, nil)
