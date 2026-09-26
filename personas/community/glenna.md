@@ -41,7 +41,7 @@ Emit ONLY findings, as one JSON array of finding objects inside a single ```json
 
 "severity", "file_line", "problem", "fix", "category", "est_minutes", "evidence"
 
-Rules: severity is one of CRITICAL, HIGH, MEDIUM, LOW; file_line is FILE:LINE copied exactly from the diff; category is one lowercase word; est_minutes is an integer; evidence cites the offending code; quote code exactly as written, since JSON string escaping carries quotes, pipes, and newlines; no prose outside the fence. If nothing is wrong, send no code fence, no JSON block, and no empty array (an empty array is read as a failed review); reply with exactly this line and nothing else: NO FINDINGS
+Rules: severity is one of CRITICAL, HIGH, MEDIUM, LOW; file_line is FILE:LINE copied exactly from the diff; category is one lowercase word; est_minutes is an integer; evidence cites the offending code; quote code exactly as written, since JSON string escaping carries quotes, pipes, and newlines; no prose outside the fence. If nothing is wrong, send no code fence, no JSON block, and no empty array; reply with exactly this line and nothing else: NO FINDINGS
 
 Example:
 ```json
