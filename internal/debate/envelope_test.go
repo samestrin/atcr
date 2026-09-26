@@ -85,10 +85,13 @@ func TestParseRuling_SkipsDecoyBrace(t *testing.T) {
 }
 
 // Sprint 35.16.11.2.1 AC 03-03: under response_format json_object the judge's
-// reply is a bare object with no fence and no prose. parseRuling must read that
-// shape, which is why the judge seat needs no Output Format swap.
+// reply is a bare object with no fence and no prose — which is why the judge seat
+// needs no Output Format swap. What JSON mode actually changes is the envelope a
+// model may choose: a bare, valid-JSON object that nests the ruling inside a
+// wrapper (no top-level outcome) must degrade to unresolved — never read the
+// nested ruling or crash. (The plain bare ruling is already covered, with
+// stricter assertions, by the "uphold" case of TestParseRuling above.)
 func TestParseRuling_BareJSONModeObject(t *testing.T) {
-	r := parseRuling(`{"outcome":"uphold","reasoning":"x"}`)
-	assert.Equal(t, OutcomeUphold, r.Outcome)
-	assert.Equal(t, "x", r.Reasoning)
+	r := parseRuling(`{"ruling":{"outcome":"uphold","reasoning":"nested"},"confidence":0.9}`)
+	assert.Equal(t, OutcomeUnresolved, r.Outcome)
 }
