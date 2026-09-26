@@ -88,7 +88,14 @@ func ReviewerOutcome(a AgentStatus, raisedCount int) string {
 	// budget.go separately calls identical ledger delivery load-bearing for
 	// fairness across reviewers — that is a real, still-open tradeoff this arm
 	// does not resolve, only chooses not to reclassify as incomplete.
-	case a.UnreviewedChunks > 0 || a.Truncated:
+	// UnparseableChunks joins the incomplete arm BELOW the unparseable one: a
+	// garbled chunk beside chunks that produced findings is a partial read of
+	// the payload — the same fact a failed bin (UnreviewedChunks) or a shed
+	// (Truncated) records — so the benchmark and scorecard must not charge a
+	// missed defect in the garbled bin as a full-coverage miss. Zero parsed
+	// findings overall is still "unparseable" (the arm above), so this only
+	// reclassifies the partial-success shape.
+	case a.UnreviewedChunks > 0 || a.Truncated || a.UnparseableChunks > 0:
 		return "incomplete"
 	case raisedCount > 0:
 		return "findings"
