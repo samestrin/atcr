@@ -267,7 +267,7 @@ case $status in
 esac
 ```
 
-Step 4 is yours to fill in: pass `findings.toon` to whatever your agent uses to act on findings. Decode the rows with a standard TOON decoder. The payload is spec-compliant TOON, so any off-the-shelf decoder reads it (in Go: `goaxi.DecodeTabular`). Free-text cells can hold commas, pipes, and escaped newlines, so never split rows with a bare shell split.
+Step 4 is yours to fill in: pass `findings.toon` to whatever your agent uses to act on findings. Decode the rows with a standard TOON decoder. The payload is spec-compliant TOON, so any off-the-shelf decoder reads it (in Go: `goaxi.DecodeTabular`). Free-text cells can hold commas, pipes, and escaped newlines, so never split rows with a bare shell split. The typed columns `verification.challenge_survived` and `evidence_exec.exit_code` are `null` on a finding with no verification or evidence block, so decode them into nullable fields (pointers in Go); a plain int would read a missing evidence block as exit code 0.
 
 Two invariants the example relies on, both guaranteed by AXI mode: `review.log`
 and `report.log` capture *all* diagnostics because stderr is the only diagnostic

@@ -15,6 +15,8 @@
 - `atcr report --format axi`, `atcr review --axi` and `atcr --axi` emit standard comma-delimited TOON (`findings[N]{...}:`) instead of the pipe variant (`findings[N|]{...}:`). Code fields carrying `|`, `||`, quotes, or newlines now survive a stock decode verbatim (fields of at most 500 runes).
 - On the standard path, a truncated findings payload's header `N` now equals the rows emitted, so it still decodes; the true count moved to the `total` line. The legacy pipe path keeps its old contract byte-for-byte.
 - Control-byte stripping on the standard path now uses go-axi's sanitizer (invalid UTF-8 is dropped); the hand-rolled `toonQuote`/`toonEscape`/`isTOONControl` encoder is gone. The legacy path keeps its own helper, which still writes U+FFFD for invalid UTF-8.
+- `--legacy-pipe` without `--axi` is now a usage error (exit 2).
+- The pool summary now records the model on every completed slot, whether or not the provider reported token usage, so per-model trust scoring no longer leaves those personas permanently neutral.
 
 *Shipped via /execute-epic (epic 35.16.11.1)*
 
