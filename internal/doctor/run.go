@@ -734,6 +734,12 @@ func responseFormatCall(ctx context.Context, c Completer, tgt Target, opts Optio
 		}
 		return ResponseFormatUnverified, fmt.Sprintf("the %s probe reached no verdict: %s", declared, scrubCredentials(bounded(err.Error()), tgt))
 	}
+	// Completer is an exported interface: an implementation may return (nil, nil).
+	// Reading resp below would panic inside a Run goroutine and kill the whole
+	// self-test, violating Run's report-is-always-complete contract.
+	if resp == nil {
+		return ResponseFormatUnverified, fmt.Sprintf("the %s probe got no response back, so no verdict was reached", declared)
+	}
 	if len(toolDefs) > 0 && len(resp.Message.ToolCalls) > 0 {
 		return ResponseFormatHonored, ""
 	}

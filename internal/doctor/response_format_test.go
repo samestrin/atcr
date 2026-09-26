@@ -247,6 +247,23 @@ func TestRun_ResponseFormatProbeIsUnverifiedOnATransientError(t *testing.T) {
 	}
 }
 
+// Completer is an exported interface: an implementation returning (nil, nil) must
+// degrade to an unverified verdict, not panic inside a Run goroutine and kill the
+// whole self-test — Run's contract is that the report is always complete.
+func TestRun_ResponseFormatProbeSurvivesANilResponse(t *testing.T) {
+	t.Setenv(rfDoctorEnvK, rfDoctorKey)
+	fake := newFake(markerOK)
+	fake.chatFn = func(llmclient.Invocation, []llmclient.Message, []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+		return nil, nil
+	}
+
+	rep := Run(context.Background(), fake, declaredTarget(t, false), Options{Nonce: testNonce, MaxTokens: 2048})
+	require.Len(t, rep.Agents, 1)
+	assert.Equal(t, StatusOK, rep.Agents[0].Status, "the marker verdict is untouched")
+	assert.Equal(t, ResponseFormatUnverified, rep.Agents[0].ResponseFormatStatus)
+	assert.Contains(t, rep.Agents[0].ResponseFormatDetail, "no verdict was reached")
+}
+
 // A reply cut off at the cap is invalid JSON no matter what the provider did with the
 // field, so it reaches no verdict rather than blaming the model.
 func TestRun_ResponseFormatProbeIsUnverifiedWhenTheReplyIsTruncated(t *testing.T) {
