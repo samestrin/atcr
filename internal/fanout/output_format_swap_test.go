@@ -191,6 +191,20 @@ func TestSwapOutputFormatSection_NoHeadingAppends(t *testing.T) {
 	}
 }
 
+// A direct negative payloadStart must not panic on prompt[:payloadStart]: the
+// max(0, ...) lower clamp in swapOutputFormatSectionWithSpan is the only guard
+// against a negative-offset slice for direct callers (production offsets all
+// trace to renderedPayloadStart, which never returns negative). Pins the clamp
+// as the append arm: payloadStart clamps to 0, no heading is found in the empty
+// prefix, and the block is appended after the intact prompt.
+func TestSwapOutputFormatSection_NegativePayloadStartClampsToZero(t *testing.T) {
+	prompt := "## Role\nYou review code.\n\n## Payload\nsome diff\n"
+
+	got := swapOutputFormatSection(prompt, -1)
+	assert.True(t, strings.HasPrefix(got, prompt), "the clamped swap leaves the prompt intact")
+	assert.True(t, strings.HasSuffix(got, jsonObjectOutputFormat), "a negative offset clamps to the append arm, not a panic")
+}
+
 // Adversarial review 3.2.A: the swap must never read or rewrite the payload.
 func TestSwapOutputFormatSection_NeverTouchesPayload(t *testing.T) {
 	// A persona with no heading whose DIFF carries one, as a line of its own.
