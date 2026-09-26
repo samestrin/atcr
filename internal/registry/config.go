@@ -176,6 +176,11 @@ const (
 	RoleExecutor = "executor"
 )
 
+// ResponseFormatJSONObject is the one legal AgentConfig.ResponseFormat value
+// (Epic 35.16.11.2.1): the API returns syntactically valid JSON, a single
+// object. json_schema is deliberately not accepted.
+const ResponseFormatJSONObject = "json_object"
+
 // Executor defaults (Epic 7.0). DefaultExecutorPersona is the fix-focused persona
 // applied when the executor block sets none; DefaultFixMinSeverity is the severity
 // floor below which a verified finding gets no generated fix (the executor's
@@ -531,6 +536,14 @@ type AgentConfig struct {
 	// non-tool-capable unless explicitly declared, and a tools:true agent on an
 	// undeclared model degrades safely to single-shot.
 	SupportsFC bool `yaml:"supports_function_calling"` // Stage 2 — model function-calling capability
+
+	// ResponseFormat declares that this agent's model honors the
+	// OpenAI-compatible response_format request field (Epic 35.16.11.2.1). The
+	// only legal value is ResponseFormatJSONObject; unset (the default) sends no
+	// response_format at all, so an undeclared agent's request body is
+	// unchanged. Like SupportsFC it is declared per agent and never inherited by
+	// a fallback: a fallback that also honors it must declare it itself.
+	ResponseFormat string `yaml:"response_format,omitempty"`
 
 	// Review-constraint guardrails (Epic 2.2). All optional and
 	// backward-compatible: an unset field imposes no constraint, so a 1.x/2.0
@@ -1136,6 +1149,12 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 	// tool_budget_bytes are active in 2.0 and bound the tool loop.
 	if !roleValid(a.Role) {
 		errs = append(errs, agentErrf(name, "agent '%s': role must be one of reviewer, skeptic, judge", name))
+	}
+	// response_format (Epic 35.16.11.2.1): strict equality, no case-folding or
+	// trimming — the value is forwarded verbatim into the request body, so a
+	// near-miss must fail loudly here rather than reach a live review.
+	if a.ResponseFormat != "" && a.ResponseFormat != ResponseFormatJSONObject {
+		errs = append(errs, agentErrf(name, "agent '%s': response_format must be %q or unset", name, ResponseFormatJSONObject))
 	}
 	if a.MaxTurns != nil && (*a.MaxTurns <= 0 || *a.MaxTurns > MaxAgentTurns) {
 		errs = append(errs, agentErrf(name, "agent '%s': max_turns must be within 1..%d", name, MaxAgentTurns))
