@@ -1,0 +1,279 @@
+package fanout
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/samestrin/atcr/internal/payload"
+	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/stream"
+	"github.com/samestrin/atcr/personas"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// Story 4 (Sprint 35.16.11.2.1): a review agent declaring response_format:
+// json_object gets one shared ## Output Format block in place of its persona's
+// fenced-array section; every undeclared agent's prompt stays byte-identical.
+
+// payloadHeadingSentinel is diff text that repeats the heading, so a locator that
+// matched anything but the FIRST occurrence would corrupt the payload.
+const payloadHeadingSentinel = "+## Output Format\n+PAYLOAD-SENTINEL-KEEP-ME\n"
+
+// allPersonaPrompts returns the 24 embedded persona templates: _base.md, the
+// registered personas, and the community library (mirrors personas.allPrompts).
+func allPersonaPrompts(t *testing.T) map[string]string {
+	t.Helper()
+	prompts := map[string]string{}
+	base, err := personas.Base()
+	require.NoError(t, err)
+	prompts["_base.md"] = base
+	for _, name := range personas.Names() {
+		text, err := personas.Get(name)
+		require.NoErrorf(t, err, "Get(%q)", name)
+		prompts[name+".md"] = text
+	}
+	for _, name := range personas.CommunityNames() {
+		text, err := personas.CommunityGet(name)
+		require.NoErrorf(t, err, "CommunityGet(%q)", name)
+		prompts["community/"+name+".md"] = text
+	}
+	require.Len(t, prompts, 24, "precondition: the swap must be proven over all 24 persona files")
+	return prompts
+}
+
+// outputFormatSection returns the ## Output Format section (heading included) up
+// to the next "\n## " heading, matching personas/community_test.go's sectionBody.
+func outputFormatSection(text string) string {
+	i := strings.Index(text, outputFormatHeading)
+	if i < 0 {
+		return ""
+	}
+	rest := text[i:]
+	if j := strings.Index(rest[len(outputFormatHeading):], "\n## "); j >= 0 {
+		return rest[:len(outputFormatHeading)+j]
+	}
+	return rest
+}
+
+func renderPersona(t *testing.T, text string) string {
+	t.Helper()
+	out, err := payload.RenderPrompt(text, payload.PayloadContext{
+		AgentName:   "tester",
+		BaseRef:     "main",
+		HeadRef:     "feature",
+		FileCount:   1,
+		PayloadMode: string(payload.ModeBlocks),
+		Payload:     payloadHeadingSentinel,
+		ScopeRule:   payload.ScopeRule(payload.ModeBlocks),
+	})
+	require.NoError(t, err)
+	return out
+}
+
+func TestJSONObjectOutputFormat_Content(t *testing.T) {
+	block := jsonObjectOutputFormat
+	require.True(t, strings.HasPrefix(block, outputFormatHeading+"\n"), "the shared block replaces the section heading too")
+	assert.Contains(t, block, "JSON", "json_object mode requires a message to mention JSON")
+	assert.Contains(t, block, `{"findings":[...]}`)
+	assert.Contains(t, block, `{"findings":[]}`)
+	assert.Contains(t, block, `"severity", "file_line", "problem", "fix", "category", "est_minutes", "evidence"`,
+		"the shared block keeps the persona sections' seven-key contract")
+	assert.NotContains(t, block, "```", "json_object mode sends no code fence")
+	assert.NotContains(t, block, "NO FINDINGS", "json_object mode cannot emit the plain-text sentinel")
+	assert.NotContains(t, block, "\n## ", "the block must be one section, so the next heading still ends it")
+	assert.NotContains(t, block, "{{", "the swap runs on rendered text; a template action would never render")
+
+	// The worked example must be readable by the unchanged 35.16.11.2 parser, and
+	// the clean reply the block asks for must read as a clean review.
+	ex := block[strings.Index(block, "Example:"):]
+	got := stream.ParseModelOutput([]byte(ex))
+	require.Len(t, got, 1, "ParseModelOutput must read the shared block's worked example")
+	assert.Equal(t, "HIGH", got[0].Severity)
+	assert.True(t, stream.IsNoFindings(`{"findings":[]}`), "the clean reply the block asks for must be a clean review")
+}
+
+// AC 04-01: heading-located swap across all 24 personas; undeclared byte-identical.
+func TestSwapOutputFormatSection_AllPersonas(t *testing.T) {
+	for file, text := range allPersonaPrompts(t) {
+		t.Run(file, func(t *testing.T) {
+			rendered := renderPersona(t, text)
+			i := strings.Index(rendered, outputFormatHeading)
+			require.GreaterOrEqualf(t, i, 0, "precondition: %s carries the heading", file)
+			original := outputFormatSection(rendered)
+			require.Contains(t, original, "```json", "precondition: the persona section asks for the fenced array")
+
+			// Undeclared: byte-identical.
+			require.Equal(t, rendered, promptForResponseFormat(rendered, ""))
+
+			// Declared: the section is exactly the shared block.
+			swapped := promptForResponseFormat(rendered, registry.ResponseFormatJSONObject)
+			section := outputFormatSection(swapped)
+			assert.Equal(t, jsonObjectOutputFormat, section, "the declared section must be exactly the shared block")
+			assert.NotContains(t, section, "```json")
+			assert.NotContains(t, section, "NO FINDINGS")
+
+			// Only the section changed: prefix and everything from the next heading on
+			// (payload included, with its own copy of the heading) are untouched.
+			assert.Equal(t, rendered[:i], swapped[:i], "text before the section must be unchanged")
+			assert.Equal(t, rendered[i+len(original):], swapped[i+len(jsonObjectOutputFormat):],
+				"text after the section must be unchanged")
+			assert.Equal(t, 1, strings.Count(swapped, "PAYLOAD-SENTINEL-KEEP-ME"))
+			assert.Equal(t, strings.Count(rendered, outputFormatHeading), strings.Count(swapped, outputFormatHeading),
+				"the payload's copy of the heading must survive; only the first match is swapped")
+		})
+	}
+}
+
+func TestSwapOutputFormatSection_NestedSubheadingAndLastSection(t *testing.T) {
+	nested := "## Role\nr\n\n## Output Format\nold\n### Sub\nstill old\n\n## Payload\nP\n"
+	assert.Equal(t, "## Role\nr\n\n"+jsonObjectOutputFormat+"\n## Payload\nP\n", swapOutputFormatSection(nested),
+		"a ### subheading stays inside the replaced span; only a ## heading ends it")
+
+	last := "## Role\nr\n\n## Output Format\nold\n### Sub\nold"
+	assert.Equal(t, "## Role\nr\n\n"+jsonObjectOutputFormat, swapOutputFormatSection(last),
+		"with no following ## heading the section runs to end of prompt")
+}
+
+// AC 04-02: a declared persona with no ## Output Format heading gets the block
+// appended, silently; undeclared is unchanged.
+func TestSwapOutputFormatSection_NoHeadingAppends(t *testing.T) {
+	custom := "## Role\nYou review code.\n\n## Payload\nsome diff\n"
+
+	var got string
+	stderr := captureStderr(t, func() { got = promptForResponseFormat(custom, registry.ResponseFormatJSONObject) })
+	assert.Empty(t, stderr, "the append path is the intended fallback and warns nothing")
+	assert.True(t, strings.HasPrefix(got, custom), "the rest of the prompt is unchanged")
+	assert.True(t, strings.HasSuffix(got, jsonObjectOutputFormat), "the shared block is appended at the end")
+
+	assert.Equal(t, custom, promptForResponseFormat(custom, ""))
+
+	// A near-miss heading is not the heading: it falls through to the append path.
+	nearMiss := "## Role\nr\n\n##Output Format\nold\n"
+	got = promptForResponseFormat(nearMiss, registry.ResponseFormatJSONObject)
+	assert.True(t, strings.HasPrefix(got, nearMiss))
+	assert.True(t, strings.HasSuffix(got, jsonObjectOutputFormat))
+}
+
+// swapRoster is two plain review agents, greta falling back to kai, with each
+// agent's response_format set as given.
+func swapRoster(gretaRF, kaiRF string) *ReviewConfig {
+	cfg := twoAgentConfig("http://unused")
+	g := cfg.Registry.Agents["greta"]
+	g.Fallback = "kai"
+	g.ResponseFormat = gretaRF
+	cfg.Registry.Agents["greta"] = g
+	k := cfg.Registry.Agents["kai"]
+	k.ResponseFormat = kaiRF
+	cfg.Registry.Agents["kai"] = k
+	cfg.Project.Agents = []string{"greta"}
+	return cfg
+}
+
+func isSwapped(prompt string) bool {
+	return outputFormatSection(prompt) == jsonObjectOutputFormat
+}
+
+// AC 04-01 wiring: renderAgent swaps on its own ac, feeds both Prompt and the
+// Invocation, and records the pre-swap text.
+func TestRenderAgent_SwapsOnDeclaredFlag(t *testing.T) {
+	payloads := map[string]modePayload{"blocks": {Text: "diff", FileCount: 1}}
+	rng := ReviewRange{Base: "a", Head: "b"}
+
+	undeclared, _, err := buildOneAgent(swapRoster("", ""), "greta", payloads, rng, "", "")
+	require.NoError(t, err)
+	declared, _, err := buildOneAgent(swapRoster(registry.ResponseFormatJSONObject, ""), "greta", payloads, rng, "", "")
+	require.NoError(t, err)
+
+	assert.False(t, isSwapped(undeclared.Prompt))
+	assert.Equal(t, undeclared.Prompt, undeclared.unswappedPrompt)
+
+	assert.True(t, isSwapped(declared.Prompt))
+	assert.Equal(t, declared.Prompt, declared.Invocation.Prompt, "the wire prompt is the swapped prompt")
+	assert.Equal(t, undeclared.Prompt, declared.unswappedPrompt, "the pre-swap text is recorded for the fallback")
+	assert.NotEqual(t, undeclared.CacheKey, declared.CacheKey)
+}
+
+// AC 04-02 Edge Case 1: scope focus comes first, the appended block last.
+func TestRenderAgent_ScopeFocusThenAppendedBlock(t *testing.T) {
+	cfg := swapRoster(registry.ResponseFormatJSONObject, "")
+	ac := cfg.Registry.Agents["greta"]
+	ac.Scope = []string{"security"}
+	persona := registry.ResolvedPersona{Text: "## Role\nr\n\n## Payload\n{{.Payload}}\n"}
+
+	a, err := renderAgent(cfg, "greta", ac, persona, "blocks", "diff", 1, payload.Truncation{}, ReviewRange{}, "", agentSizing{})
+	require.NoError(t, err)
+	focus := payload.ScopeFocus(ac.Scope)
+	require.NotEmpty(t, focus)
+	assert.Less(t, strings.Index(a.Prompt, focus), strings.Index(a.Prompt, jsonObjectOutputFormat))
+	assert.True(t, strings.HasSuffix(a.Prompt, jsonObjectOutputFormat))
+}
+
+// AC 04-03 Scenarios 1-2 and Edge Case 1: the fallback swaps on its OWN flag.
+func TestBuildFallbackAgent_SwapKeyedOnOwnFlag(t *testing.T) {
+	payloads := map[string]modePayload{"blocks": {Text: "diff", FileCount: 1}}
+	rng := ReviewRange{Base: "a", Head: "b"}
+	cases := []struct {
+		name           string
+		gretaRF, kaiRF string
+	}{
+		{"undeclared primary, declared fallback", "", registry.ResponseFormatJSONObject},
+		{"declared primary, undeclared fallback", registry.ResponseFormatJSONObject, ""},
+		{"both declared", registry.ResponseFormatJSONObject, registry.ResponseFormatJSONObject},
+		{"neither declared", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := swapRoster(tc.gretaRF, tc.kaiRF)
+			primary, _, err := buildOneAgent(cfg, "greta", payloads, rng, "", "")
+			require.NoError(t, err)
+			fb, _, err := buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
+			require.NoError(t, err)
+
+			assert.Equal(t, tc.gretaRF != "", isSwapped(primary.Prompt), "primary follows its own flag")
+			assert.Equal(t, tc.kaiRF != "", isSwapped(fb.Prompt), "fallback follows its own flag")
+			assert.Equal(t, fb.Prompt, fb.Invocation.Prompt)
+			assert.Equal(t, primary.unswappedPrompt, fb.unswappedPrompt, "the no-refit fallback reviews the primary's payload")
+			if tc.kaiRF == "" {
+				assert.Equal(t, primary.unswappedPrompt, fb.Prompt, "an undeclared fallback's prompt is the primary's unswapped text")
+			}
+		})
+	}
+}
+
+// AC 04-03 Scenario 3 and Edge Case 2: the truncate re-fit re-renders under the
+// PRIMARY's config, so the fallback must re-key the swap on its own flag.
+func TestBuildFallbackAgent_RefitSwapKeyedOnOwnFlag(t *testing.T) {
+	cases := []struct {
+		name           string
+		gretaRF, kaiRF string
+	}{
+		{"undeclared primary, declared fallback", "", registry.ResponseFormatJSONObject},
+		{"declared primary, undeclared fallback", registry.ResponseFormatJSONObject, ""},
+		{"neither declared", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := refitRoster(t, 128000, OverflowTruncate)
+			g := cfg.Registry.Agents["greta"]
+			g.ResponseFormat = tc.gretaRF
+			cfg.Registry.Agents["greta"] = g
+			k := cfg.Registry.Agents["kai"]
+			k.ResponseFormat = tc.kaiRF
+			cfg.Registry.Agents["kai"] = k
+
+			slot := buildRefitSlot(t, cfg)
+			primary, fb := slot.Primary, slot.Fallbacks[0]
+			require.Equal(t, degradationTruncate, fb.DegradationAction, "precondition: the re-fit arm was taken")
+
+			assert.Equal(t, tc.gretaRF != "", isSwapped(primary.Prompt), "primary follows its own flag")
+			assert.Equal(t, tc.kaiRF != "", isSwapped(fb.Prompt), "re-fit fallback follows its own flag, not refit.primaryConfig's")
+			assert.Equal(t, fb.Prompt, fb.Invocation.Prompt)
+			assert.Less(t, len(fb.unswappedPrompt), len(primary.unswappedPrompt), "the re-fit payload is smaller")
+			if tc.kaiRF == "" {
+				assert.Equal(t, fb.unswappedPrompt, fb.Prompt)
+				assert.Contains(t, outputFormatSection(fb.Prompt), "```json", "an undeclared re-fit keeps the fenced contract")
+			}
+		})
+	}
+}

@@ -3002,6 +3002,11 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 	// both Agent.Prompt and Invocation.Prompt below (a fallback reuses the
 	// primary's prompt, so it inherits the focus too). No-op when scope is unset.
 	prompt += payload.ScopeFocus(ac.Scope)
+	// response_format (Sprint 35.16.11.2.1): a json_object agent gets the shared
+	// ## Output Format block. Swapped after the scope focus so unswapped is the
+	// full text a fallback starts from before re-keying the swap on its own flag.
+	unswapped := prompt
+	prompt = promptForResponseFormat(prompt, ac.ResponseFormat)
 	prov, ok := cfg.Registry.Providers[ac.Provider]
 	if !ok {
 		return Agent{}, fmt.Errorf("agent %q references unknown provider %q", name, ac.Provider)
@@ -3053,6 +3058,7 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 		ResolvedMaxTokens:    agentMaxTokens,
 		DegradationAction:    sz.action,
 		chunkMaxLines:        sz.maxLines,
+		unswappedPrompt:      unswapped,
 		// Diff-cache key (Epic 5.2): derived from the full rendered prompt + model
 		// + temperature + the per-agent sizing token (Epic 19.10 F7, see
 		// diffCacheKey). Tool agents carry a key too but the engine never caches them
@@ -3407,7 +3413,14 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// re-fit arm below overwrites them, and it overwrites ALL of them together:
 	// prompt, per-file breakdown, shed record, coverage tag and sizing describe one
 	// payload, so a partial overwrite would leave the record describing two.
-	fbPrompt := primary.Prompt
+	//
+	// fbPrompt starts from the primary's UNSWAPPED prompt: the response_format
+	// swap is re-keyed on the fallback's own declaration just before return.
+	// A hand-built Agent (no renderAgent) has no unswappedPrompt, so use Prompt.
+	fbPrompt := primary.unswappedPrompt
+	if fbPrompt == "" {
+		fbPrompt = primary.Prompt
+	}
 	fbTrunc := primary.Truncation
 	fbCodeContext := primary.CodeContext
 	// The coverage tag follows the payload, so it is copied from the primary here
@@ -3466,7 +3479,9 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 				return Agent{}, false, err
 			}
 			if ok {
-				fbPrompt = rp.agent.Prompt
+				// Unswapped: the re-render ran under refit.primaryConfig, so its
+				// Prompt is swapped on the PRIMARY's flag, not this fallback's.
+				fbPrompt = rp.agent.unswappedPrompt
 				fbCodeContext = rp.agent.CodeContext
 				fbTrunc = rp.trunc
 				// Compose with the primary's shed record rather than replacing it:
@@ -3562,6 +3577,10 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 			fbDegradation = degradationOverflow
 		}
 	}
+	// response_format swap (Sprint 35.16.11.2.1), keyed on the fallback's OWN
+	// declaration on both arms — never the primary's, like SupportsFC.
+	fbUnswapped := fbPrompt
+	fbPrompt = promptForResponseFormat(fbPrompt, ac.ResponseFormat)
 	return Agent{
 		Name: name,
 		// A fallback keys on its OWN provider: if it uses a different provider than
@@ -3621,6 +3640,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		ResolvedMaxTokens:    fbMaxTokens,
 		DegradationAction:    fbDegradation,
 		chunkMaxLines:        fbMaxLines,
+		unswappedPrompt:      fbUnswapped,
 		rePacked:             refitted,
 		// The coverage tag of the payload this agent actually reviews (Epic
 		// 35.16.5.4 T3): the primary's chunk when it ships the inherited payload,

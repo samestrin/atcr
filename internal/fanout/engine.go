@@ -206,6 +206,13 @@ type Agent struct {
 	// bulk (non-chunked) path.
 	chunkMaxLines int
 
+	// unswappedPrompt is Prompt before the response_format ## Output Format swap
+	// (output_format_swap.go). buildFallbackAgent starts from it and re-applies
+	// the swap keyed on the FALLBACK's own declaration, so a fallback never
+	// inherits its primary's prompt contract. Equal to Prompt for an undeclared
+	// agent; empty on a hand-built Agent, which falls back to Prompt.
+	unswappedPrompt string
+
 	// Retry/backoff (Epic 4.6): the agent's effective retry budget and base
 	// delay (ms), resolved by renderAgent from the per-agent override layered over
 	// the global Settings. invokeAgent threads them onto the call context so the
