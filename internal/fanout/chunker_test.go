@@ -491,3 +491,43 @@ func TestMergeResultGroup_InvalidatesMemoOnRebuild(t *testing.T) {
 	assert.Len(t, fr.Findings, 1,
 		"merged persona must retain the finding from chunk[1], not short-circuit findingsFor on chunk[0]'s stale zero memo")
 }
+
+// TD-048: each chunk's output is parsed on its own. Parsing the newline-joined
+// Content let a chunk cut off inside a ```json block or an unfenced array swallow
+// every later chunk, silently, because the count stayed above zero.
+func TestMergeResultGroup_CutOffChunkDoesNotSwallowTheNext(t *testing.T) {
+	obj := func(loc string) string {
+		return `{"severity":"HIGH","file_line":"` + loc + `","problem":"p","fix":"f","category":"c","est_minutes":1,"evidence":"e"}`
+	}
+	cases := []struct {
+		name   string
+		chunks []string
+	}{
+		{"cut off inside a json fence", []string{
+			"```json\n[" + obj("a.go:1") + ",\n{\"severity\":\"LOW\",\"fi",
+			"[" + obj("b.go:2") + "]",
+			"LOW|c.go:3|p|f|c|1|e",
+		}},
+		{"cut off inside an unfenced array", []string{
+			"[" + obj("a.go:1") + ",\n{\"severity\":\"LOW\",\"fi",
+			"[" + obj("b.go:2") + "]",
+			"LOW|c.go:3|p|f|c|1|e",
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var g []Result
+			for _, content := range c.chunks {
+				g = append(g, Result{Agent: "reviewer", Status: StatusOK, Content: content})
+			}
+			merged := mergeResultGroup(g, nil)
+			assert.Equal(t, 3, merged.ParsedFindingCount())
+			fr := findingsFor(merged, nil)
+			var got []string
+			for _, f := range fr.Findings {
+				got = append(got, f.File)
+			}
+			assert.Equal(t, []string{"a.go", "b.go", "c.go"}, got)
+		})
+	}
+}
