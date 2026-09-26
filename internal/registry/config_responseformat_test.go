@@ -95,7 +95,8 @@ agents:
 				return
 			}
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), `agent 'myagent': response_format must be "json_object" or unset`)
+			decoded := strings.Trim(tc.value, `"`)
+			assert.Contains(t, err.Error(), `invalid response_format `+strconv.Quote(decoded)+`: must be "json_object" or unset`)
 		})
 	}
 }
@@ -134,7 +135,7 @@ agents:
     response_format: json_schema
 `))
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), `agent 'myagent': response_format must be "json_object" or unset`)
+	assert.Contains(t, err.Error(), `invalid response_format "json_schema": must be "json_object" or unset`)
 	assert.Contains(t, err.Error(), "agent 'myagent': required field 'provider' is missing")
 }
 

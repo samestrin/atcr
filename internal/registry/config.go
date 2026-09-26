@@ -1154,7 +1154,7 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 	// trimming — the value is forwarded verbatim into the request body, so a
 	// near-miss must fail loudly here rather than reach a live review.
 	if a.ResponseFormat != "" && a.ResponseFormat != ResponseFormatJSONObject {
-		errs = append(errs, agentErrf(name, "agent '%s': response_format must be %q or unset", name, ResponseFormatJSONObject))
+		errs = append(errs, agentErrf(name, "agent '%s': invalid response_format %q: must be %q or unset", name, a.ResponseFormat, ResponseFormatJSONObject))
 	}
 	if a.MaxTurns != nil && (*a.MaxTurns <= 0 || *a.MaxTurns > MaxAgentTurns) {
 		errs = append(errs, agentErrf(name, "agent '%s': max_turns must be within 1..%d", name, MaxAgentTurns))
