@@ -689,7 +689,15 @@ func probeResponseFormat(ctx context.Context, c Completer, tgt Target, opts Opti
 			return outcome, strings.Join(details, "; ")
 		}
 	}
-	return ResponseFormatHonored, ""
+	// An honored pass can still carry a note (the combined probe's "accepted;
+	// shape not observed"), and --json consumers read it from this field.
+	var honoredNotes []string
+	for _, detail := range byOutcome[ResponseFormatHonored] {
+		if detail != "" {
+			honoredNotes = append(honoredNotes, detail)
+		}
+	}
+	return ResponseFormatHonored, strings.Join(honoredNotes, "; ")
 }
 
 // responseFormatCall places one response_format probe and returns its outcome and,
@@ -741,7 +749,12 @@ func responseFormatCall(ctx context.Context, c Completer, tgt Target, opts Optio
 		return ResponseFormatUnverified, fmt.Sprintf("the %s probe got no response back, so no verdict was reached", declared)
 	}
 	if len(toolDefs) > 0 && len(resp.Message.ToolCalls) > 0 {
-		return ResponseFormatHonored, ""
+		// A tool call proves the provider ACCEPTED tools beside response_format; it
+		// does not observe the model's text shape. A provider that silently drops
+		// response_format whenever tools are present would otherwise get a clean
+		// pass, contrary to the "ignored field must warn" risk rule — so the pass
+		// says what it actually saw, and --json can tell accepted from observed.
+		return ResponseFormatHonored, "accepted; shape not observed (the combined probe passed on a tool call)"
 	}
 	// A reply cut off at the budget is invalid or empty JSON whatever the provider did
 	// with the field — and a thinking model can spend the whole budget before answering.

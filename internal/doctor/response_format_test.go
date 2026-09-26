@@ -364,6 +364,27 @@ func TestRun_CombinedProbePassesOnAToolCall(t *testing.T) {
 	require.NotNil(t, combined, "one call must carry the tool definition")
 	assert.Len(t, combined.tools, 1)
 	assert.Equal(t, registry.ResponseFormatJSONObject, combined.inv.ResponseFormat)
+	// A tool call proves the provider ACCEPTED tools beside response_format, not
+	// that the model's text replies honor it. The pass must say so in --json, so a
+	// provider that drops the field whenever tools are present is distinguishable
+	// from one whose shape was actually observed.
+	assert.Contains(t, a.ResponseFormatDetail, "accepted", "--json must distinguish accepted from observed")
+	assert.Contains(t, a.ResponseFormatDetail, "shape not observed")
+}
+
+// A tool-call pass reports no acceptance note when the shape WAS observed: the
+// combined probe also returned a bare findings object, so nothing is inferred.
+func TestRun_CombinedProbePassOnAToolCallStillObservedTheShape(t *testing.T) {
+	// The combined probe is offered tools; a reply that is a bare findings object
+	// WITHOUT a tool call exercises the shape branch of the combined call.
+	a, fake := runDeclared(t, true, func(inv llmclient.Invocation, _ []llmclient.Message, tools []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+		return reply(oneFinding)(inv, nil, nil)
+	})
+	_ = fake
+
+	assert.Equal(t, ResponseFormatHonored, a.ResponseFormatStatus)
+	assert.NotContains(t, a.ResponseFormatDetail, "shape not observed",
+		"the bare findings object was observed; no acceptance inference is needed")
 }
 
 // Declining the tool is fine; the pass condition is a tool call OR a findings object.
