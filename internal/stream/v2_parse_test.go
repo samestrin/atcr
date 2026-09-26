@@ -2,6 +2,7 @@ package stream
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -140,6 +141,29 @@ func TestParseModelOutput_UnfencedArrayFallback(t *testing.T) {
 
 	// A bare array quoted inside a non-json fence is an example.
 	assert.Empty(t, ParseModelOutput([]byte("```\n["+objA+"]\n```\n")))
+}
+
+// The bare-value bound limits the bytes failed attempts scan, not how many
+// "["- or "{"-led lines are tried: every bare finding is read, and a run of
+// link or [NOTE] lines does not hide the array after it (TD-016).
+func TestParseModelOutput_BareValueBoundCountsScannedBytes(t *testing.T) {
+	var many strings.Builder
+	var want []Finding
+	for i := 1; i <= 20; i++ {
+		fmt.Fprintf(&many, `{"severity":"LOW","file_line":"f.go:%d"}`+"\n", i)
+		want = append(want, Finding{Severity: "LOW", File: "f.go", Line: i})
+	}
+	assert.Equal(t, want, ParseModelOutput([]byte(many.String())), "20 unfenced findings read 20")
+
+	links := strings.Repeat("[NOTE] see [the docs](https://example.com)\n", 16)
+	assert.Equal(t, []Finding{findA}, ParseModelOutput([]byte(links+"["+objA+"]\n")),
+		"16 link lines do not hide a bare array")
+
+	// Failed attempts that each rescan the rest of the text are still bounded:
+	// once they have scanned maxBareScanFactor times the text, no more are tried.
+	spent := strings.Repeat("[prose]\n", 200)
+	assert.Empty(t, ParseModelOutput([]byte(spent+"["+objA+"]\n")),
+		"an exhausted scan budget reads no further bare values")
 }
 
 // The shapes a model slips into, and the only one a json_object response
