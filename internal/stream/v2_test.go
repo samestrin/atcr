@@ -1,11 +1,13 @@
 package stream
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -384,6 +386,16 @@ func TestSelectFindingsFile(t *testing.T) {
 			}
 			writeFile(t, dir, "findings.txt", v1)
 		}, "findings.txt"},
+		{"txt is a symlink", func(t *testing.T, dir string) {
+			target := filepath.Join(t.TempDir(), "elsewhere.txt")
+			require.NoError(t, os.WriteFile(target, []byte(v1), 0o644))
+			if err := os.Symlink(target, filepath.Join(dir, "findings.txt")); err != nil {
+				t.Skipf("symlink unsupported: %v", err)
+			}
+		}, ""},
+		{"txt is a directory", func(t *testing.T, dir string) {
+			require.NoError(t, os.Mkdir(filepath.Join(dir, "findings.txt"), 0o755))
+		}, ""},
 		{"toon symlink and no txt", func(t *testing.T, dir string) {
 			target := filepath.Join(t.TempDir(), "elsewhere.toon")
 			require.NoError(t, os.WriteFile(target, []byte(v2), 0o644))
@@ -419,4 +431,62 @@ func TestSelectFindingsFile_MissingDirIsNotExist(t *testing.T) {
 func writeFile(t *testing.T, dir, name, body string) {
 	t.Helper()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644))
+}
+
+// atcr never writes a non-regular findings.toon, so one is a tampering signal.
+// Selection still reads findings.txt, but says why on stderr (TD-031).
+func TestSelectFindingsFile_WarnsOnANonRegularToon(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "findings.toon"), 0o755))
+	writeFile(t, dir, "findings.txt", Version+"\n")
+
+	var got string
+	stderr := captureStderr(t, func() {
+		var err error
+		got, err = SelectFindingsFile(dir)
+		require.NoError(t, err)
+	})
+	assert.Equal(t, filepath.Join(dir, "findings.txt"), got)
+	assert.Contains(t, stderr, filepath.Join(dir, "findings.toon"))
+	assert.Contains(t, stderr, "not a regular file")
+
+	clean := t.TempDir()
+	writeFile(t, clean, "findings.txt", Version+"\n")
+	assert.Empty(t, captureStderr(t, func() { _, _ = SelectFindingsFile(clean) }), "an absent findings.toon is not a warning")
+}
+
+// A findings.toon deleted after selection is absent, not a missing pool: the
+// read selects again and finds findings.txt (TD-030).
+func TestReadPoolFindings_ToonDeletedAfterSelectionReadsTxt(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "findings.toon", VersionV2+"\n")
+	writeFile(t, dir, "findings.txt", Version+"\n"+"HIGH|a.go:1|p|f|c|1|e|r\n")
+	orig := readFindingsFile
+	t.Cleanup(func() { readFindingsFile = orig })
+	readFindingsFile = func(path string) ([]byte, error) {
+		if filepath.Base(path) == "findings.toon" {
+			require.NoError(t, os.Remove(path))
+		}
+		return orig(path)
+	}
+
+	res, err := ReadPoolFindings(dir)
+	require.NoError(t, err)
+	assert.Len(t, res.Findings, 1)
+}
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+	defer func() { os.Stderr = old }()
+
+	fn()
+	require.NoError(t, w.Close())
+	var buf bytes.Buffer
+	_, err = io.Copy(&buf, r)
+	require.NoError(t, err)
+	return buf.String()
 }

@@ -3,9 +3,13 @@
 package stream
 
 import (
+	"errors"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,4 +27,41 @@ func TestSelectFindingsFile_FIFOToonCountsAsAbsent(t *testing.T) {
 	got, err := SelectFindingsFile(dir)
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(dir, "findings.txt"), got)
+}
+
+// A FIFO named findings.txt would block a reader forever, so selection treats
+// it as absent too (TD-026).
+func TestSelectFindingsFile_FIFOTxtCountsAsAbsent(t *testing.T) {
+	dir := t.TempDir()
+	if err := syscall.Mkfifo(filepath.Join(dir, "findings.txt"), 0o644); err != nil {
+		t.Skipf("mkfifo unsupported: %v", err)
+	}
+	_, err := SelectFindingsFile(dir)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, fs.ErrNotExist), "got %v", err)
+}
+
+// The read opens the selected file once and checks the handle, so a symlink or
+// FIFO swapped in after selection is refused, and a FIFO never blocks (TD-030).
+func TestReadFindingsFile_RefusesASwappedInSymlinkOrFIFO(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "elsewhere")
+	require.NoError(t, os.WriteFile(target, []byte(VersionV2+"\n"), 0o644))
+	link := filepath.Join(dir, "findings.toon")
+	require.NoError(t, os.Symlink(target, link))
+	_, err := readFindingsFile(link)
+	assert.Error(t, err, "a symlink is not followed")
+
+	fifo := filepath.Join(dir, "fifo.toon")
+	if err := syscall.Mkfifo(fifo, 0o644); err != nil {
+		t.Skipf("mkfifo unsupported: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := readFindingsFile(fifo); done <- err }()
+	select {
+	case err := <-done:
+		assert.Error(t, err, "a FIFO is not a regular file")
+	case <-time.After(5 * time.Second):
+		t.Fatal("reading a FIFO blocked")
+	}
 }
