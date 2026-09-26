@@ -171,9 +171,9 @@ Escaping is lossy but structurally stable: the column count and one-row-per-line
 
 ## Source discovery (reconcile inputs)
 
-Any directory under a review's `sources/` that contains a `findings.txt` is a reconcile source — an open extension point: drop `sources/<tool>/findings.txt` from any producer and reconcile picks it up with zero config.
+Any directory under a review's `sources/` that contains a `findings.txt` or a `findings.toon` is a reconcile source — an open extension point: drop `sources/<tool>/findings.txt` from any producer and reconcile picks it up with zero config.
 
-Discovery is **leaf-preference**: a directory's `findings.txt` is an input only when no subdirectory beneath it also contains one. A directory that also holds a `findings.toon` is read through that file instead, and a directory that holds only a `findings.toon` (the skill-driven host source) is a source too; see [Which file atcr reads](#which-file-atcr-reads). Per-agent raw files (`sources/pool/raw/agent/<name>/findings.txt`) are the pool inputs; the merged `sources/pool/findings.txt` is written for downstream convenience but is **not** re-discovered, so reviewers are never double-counted. `reconciled/` is output, never an input.
+Discovery is **leaf-preference**: a directory's findings file is an input only when no subdirectory beneath it also contains one. Either name counts on both sides of that test, so a `findings.toon` in a subdirectory makes a parent's `findings.txt` a non-leaf, and the reverse. A directory that also holds a `findings.toon` is read through that file instead, and a directory that holds only a `findings.toon` (the skill-driven host source) is a source too; see [Which file atcr reads](#which-file-atcr-reads). Per-agent raw files (`sources/pool/raw/agent/<name>/findings.txt`) are the pool inputs; the merged `sources/pool/` findings files are written for downstream convenience but are **not** re-discovered, so reviewers are never double-counted. `reconciled/` is output, never an input.
 
 A source's **`review.md`** — the human-readable narrative each reviewer (every pool agent and the host) writes alongside its `findings.txt` in the same leaf directory — is, as of Epic 18.2, also read at reconcile time. `atcr reconcile` correlates each finding to the `review.md` section that references its `FILE:LINE` (best-effort) and carries that narrative forward as the `justification` / `source_report` JSON fields (see [JSON form](#json-form) below). It is an **optional** input: a source with no `review.md` simply contributes no narrative, and `review.md` never itself yields findings — only `findings.txt` does.
 
@@ -313,6 +313,8 @@ Every atcr reader picks a directory's file with one rule: `findings.toon` when i
 The choice is final. When atcr picks `findings.toon` and it does not parse, the reader reports an error; it never retries `findings.txt`, because that would hide a v2 writer bug behind lossy data. A file named `findings.toon` must carry the v2 header; a v1 header there is an error.
 
 A `findings.txt`-only directory reads exactly as before, so review directories written by an older atcr, or by a third-party tool, still work.
+
+The reverse does not hold. A tool that rewrites only `findings.txt` in a directory that already has a `findings.toon` (an older atcr resuming a newer review, or a hand edit) must delete that `findings.toon` too. Otherwise every reader keeps selecting the stale `findings.toon` and the rewrite is silently ignored.
 
 ### What reviewer models emit
 
