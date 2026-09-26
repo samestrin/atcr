@@ -51,6 +51,7 @@ Rules (see the findings-format reference):
 - `file_line` is `FILE:LINE`. File-level findings (no specific line) use line `0`, e.g. `path/to/file.go:0`.
 - `est_minutes` is an integer. `reviewer` is `"host"` on every finding.
 - Quote code exactly as written. JSON string escaping carries quotes (`\"`), pipes, and line breaks (`\n`), so never change a character to fit the format.
+- The text after the header line must start with exactly `{"axi_format"`: `axi_format` is the first key, with no space or line break between `{` and it, and the envelope is not pretty-printed before it. atcr recognizes the envelope by that literal prefix, so valid JSON in any other layout is rejected.
 - The file must be valid UTF-8 (no byte-order mark) and valid JSON after the header line: no trailing commas, no comments, no code fence, nothing after the closing `}`, and no keys other than the 8 above (atcr ignores an extra key, but rejects a missing or misspelled one). atcr rejects a malformed file and reports it as a skipped source, so your findings would not count.
 - If you find no issues, write the empty example above (never the text `NO FINDINGS`), and state in `sources/host/review.md` that no issues were found.
 
