@@ -1834,6 +1834,9 @@ func TestIsRecordedRationale_MatchesReconcileFenceGrammar(t *testing.T) {
 		{"dangling tilde tail", "~~~\nquoted example text", false},
 		{"dangling backtick opener", "```\nsome quoted example text", false},
 		{"terminated tilde quote only", "~~~\nquoted\n~~~", false},
+		// A ~~~ line inside a ``` quote does not close it: the text after it is
+		// still quoted example.
+		{"tilde line inside backtick quote", "```\nexample\n~~~\nstill quoted example text", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
