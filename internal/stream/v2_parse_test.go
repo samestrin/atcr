@@ -369,6 +369,29 @@ func TestParseSource_V2Errors(t *testing.T) {
 	}
 }
 
+// Most TestParseSource_V2Errors cases break two rules, so any one guard can
+// reject them. Each case here breaks exactly one, and names the error that
+// guard reports, so deleting the guard fails the test.
+func TestParseSource_V2ErrorsComeFromTheBrokenRule(t *testing.T) {
+	const cols = "severity,file_line,problem,fix,category,est_minutes,evidence,reviewer"
+	cases := []struct {
+		name, body, want string
+	}{
+		{"table cut on a row boundary", "findings[2]{" + cols + "}:\n  HIGH,\"a.go:1\",p,f,c,1,e,r", "header declares 2 row(s), found 1"},
+		{"table missing the problem column", "findings[1]{severity,file_line,fix,category,est_minutes,evidence,reviewer}:\n  HIGH,\"a.go:1\",f,c,1,e,r", `missing column "problem"`},
+		{"table missing the evidence column", "findings[1]{severity,file_line,problem,fix,category,est_minutes,reviewer}:\n  HIGH,\"a.go:1\",p,f,c,1,r", `missing column "evidence"`},
+		{"row missing the problem key", `{"axi_format":"json","axi_notice":"","data":{"findings":[{"severity":"HIGH","file_line":"a.go:1","fix":"f","category":"c","est_minutes":1,"evidence":"e","reviewer":"host"}]}}`, `missing key "problem"`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			res, err := ParseSource([]byte(VersionV2 + "\n" + c.body + "\n"))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), c.want)
+			assert.Empty(t, res.Findings)
+		})
+	}
+}
+
 // TD-044: v2 evolves additively, like v1. A reader requires the eight known
 // columns or keys and ignores any others, so a newer atcr can add a field and
 // an older atcr still reads the file.
@@ -389,6 +412,28 @@ func TestParseSource_V2ToleratesAdditiveFields(t *testing.T) {
 			res, err := ParseSource([]byte(VersionV2 + "\n" + c.body + "\n"))
 			require.NoError(t, err)
 			assert.Equal(t, want, res.Findings)
+		})
+	}
+}
+
+// diskInt reads null as 0, and a numeric string json.Number rejects (padded
+// with spaces) through its string branch. A plain "2" never reaches that
+// branch: json.Number accepts a quoted number.
+func TestParseSource_V2EnvelopeEstMinutesNullAndPaddedString(t *testing.T) {
+	cases := []struct {
+		name, est string
+		want      int
+	}{
+		{"null reads as 0", `null`, 0},
+		{"space-padded numeric string", `" 5 "`, 5},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			body := `{"axi_format":"json","axi_notice":"","data":{"findings":[{"severity":"HIGH","file_line":"a.go:1","problem":"p","fix":"f","category":"c","est_minutes":` + c.est + `,"evidence":"e","reviewer":"r"}]}}`
+			res, err := ParseSource([]byte(VersionV2 + "\n" + body + "\n"))
+			require.NoError(t, err)
+			require.Len(t, res.Findings, 1)
+			assert.Equal(t, c.want, res.Findings[0].EstMinutes)
 		})
 	}
 }
