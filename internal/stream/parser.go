@@ -86,23 +86,28 @@ func IsNoFindings(content string) bool {
 
 // infoStringTokenRe matches one whitespace-separated token of a fence info
 // string: a bare word ("json", "c") or a key=value attribute ("title=x").
-// Anything else — pipes, dots, colons, sentence text — means the rest is
-// content sharing the line (a pipe row like "```HIGH|a.go:1|..." or prose like
-// "``` but a.go:3 has a nil deref"), not metadata.
+// Anything else — pipes, dots, colons — means the rest is content sharing the
+// line (a pipe row like "```HIGH|a.go:1|..."), not metadata.
 var infoStringTokenRe = regexp.MustCompile(`^[A-Za-z0-9_-]+(=[A-Za-z0-9_-]+)?$`)
 
+// infoStringAttrRe matches a key=value attribute, the only shape a token after
+// the first may take.
+var infoStringAttrRe = regexp.MustCompile(`^[A-Za-z0-9_-]+=[A-Za-z0-9_-]+$`)
+
 // isInfoString reports whether s (the rest of a line after the fence run) is
-// only an info string: empty or whitespace-separated word-like tokens. A
-// backtick fence's info string cannot contain a backtick (CommonMark), so a
-// rest carrying one is shared content regardless.
+// only an info string: empty, or one word-like token followed by key=value
+// attributes. A second bare word means sentence text ("``` but the lock is
+// never released"), which is content sharing the line. A backtick fence's info
+// string cannot contain a backtick (CommonMark), so a rest carrying one is
+// shared content regardless.
 func isInfoString(line string, c byte, n int) bool {
 	t := strings.TrimLeft(line, " \t")
 	rest := t[n:]
 	if c == '`' && strings.Contains(rest, "`") {
 		return false
 	}
-	for _, tok := range strings.Fields(rest) {
-		if !infoStringTokenRe.MatchString(tok) {
+	for i, tok := range strings.Fields(rest) {
+		if i == 0 && !infoStringTokenRe.MatchString(tok) || i > 0 && !infoStringAttrRe.MatchString(tok) {
 			return false
 		}
 	}
