@@ -277,6 +277,26 @@ func TestRun_ResponseFormatProbeIsUnverifiedWhenTheReplyIsTruncated(t *testing.T
 	assert.NotContains(t, a.ResponseFormatDetail, "ignored response_format")
 }
 
+// With no output cap applied (the exported Run contract allows budget 0), a
+// truncated reply was cut by the PROVIDER's default limit — telling the operator
+// to raise "the output cap (0 tokens)" they never set is a remedy for a knob that
+// does not exist.
+func TestRun_ResponseFormatProbeTruncationWordingWithoutABudget(t *testing.T) {
+	t.Setenv(rfDoctorEnvK, rfDoctorKey)
+	fake := newFake(markerOK)
+	fake.chatFn = func(llmclient.Invocation, []llmclient.Message, []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+		cut := `{"findings":[{"severity":"HIGH","file_li`
+		return &llmclient.ChatResponse{Message: llmclient.Message{Role: "assistant", Content: &cut}, FinishReason: "length", Truncated: true}, nil
+	}
+
+	rep := Run(context.Background(), fake, declaredTarget(t, false), Options{Nonce: testNonce})
+	require.Len(t, rep.Agents, 1)
+
+	assert.Equal(t, ResponseFormatUnverified, rep.Agents[0].ResponseFormatStatus)
+	assert.Contains(t, rep.Agents[0].ResponseFormatDetail, "the provider's default output limit")
+	assert.NotContains(t, rep.Agents[0].ResponseFormatDetail, "0 tokens")
+}
+
 // A definite failure outranks an inconclusive one: the operator must hear about it.
 func TestRun_NotHonoredOutranksUnverifiedAcrossProbes(t *testing.T) {
 	a, _ := runDeclared(t, true, func(inv llmclient.Invocation, msgs []llmclient.Message, tools []llmclient.ToolDef) (*llmclient.ChatResponse, error) {

@@ -758,8 +758,13 @@ func responseFormatCall(ctx context.Context, c Completer, tgt Target, opts Optio
 	}
 	// A reply cut off at the budget is invalid or empty JSON whatever the provider did
 	// with the field — and a thinking model can spend the whole budget before answering.
-	// Calling that not_honored would drop a model that honors it.
+	// Calling that not_honored would drop a model that honors it. With no budget
+	// applied the provider's own default limit did the cutting, so the remedy cannot
+	// name a cap the run never set.
 	if resp.Truncated {
+		if budget <= 0 {
+			return ResponseFormatUnverified, fmt.Sprintf("the %s probe reply was cut off at the provider's default output limit, so no verdict was reached; declare a higher max_tokens or pass --max-tokens", declared)
+		}
 		return ResponseFormatUnverified, fmt.Sprintf("the %s probe reply was cut off at the output cap (%d tokens), so no verdict was reached; raise this agent's max_tokens or pass --max-tokens", declared, budget)
 	}
 	content := ""
