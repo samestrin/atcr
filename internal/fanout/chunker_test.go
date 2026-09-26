@@ -393,6 +393,13 @@ func TestMergeResultGroup_ModelIsTheModalServingModel(t *testing.T) {
 		}
 		assert.Equal(t, "backup-model", mergeResultGroup(g, nil).Model)
 	})
+	t.Run("a tie prefers the model a chunk reached without failing over", func(t *testing.T) {
+		g := []Result{
+			{Agent: "reviewer", Status: StatusOK, Model: "backup-model", FallbackUsed: true, FallbackModel: "backup-model"},
+			{Agent: "reviewer", Status: StatusOK, Model: "primary-model"},
+		}
+		assert.Equal(t, "primary-model", mergeResultGroup(g, nil).Model)
+	})
 	t.Run("the window and reservation move with the model", func(t *testing.T) {
 		g := []Result{
 			{Agent: "reviewer", Status: StatusOK, Model: "backup-model", ResolvedWindow: 32768, ReservedOutputTokens: 4096, ResolvedMaxTokens: 4096},
