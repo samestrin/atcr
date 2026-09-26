@@ -40,17 +40,18 @@ type Source struct {
 // Discover finds reconcile sources under sourcesDir using leaf-preference: each
 // immediate child directory (except reconciled/) is a source, and within it the
 // findings come from the deepest findings files — a directory holding a
-// findings.toon or findings.txt is an input only when no subdirectory beneath it
-// holds either, and it is read through stream.SelectFindingsFile (findings.toon,
-// else findings.txt). This makes the per-agent pool/raw/agent/<name>/ files the
-// pool's inputs while the merged files written at the source root are ignored
-// (never double-counted), and reads host/ directly. allow, when non-empty,
-// restricts which immediate children are read (AC 01-05 Scenario 7).
-// reconciled/ is never an input. A file with a bad/missing header — or an unreadable subtree, or a
-// non-regular findings file (symlink/FIFO/device) — is skipped with a warning
-// rather than aborting the whole reconcile (sources/ is an open extension point).
-// Only immediate-child directories are sources; a findings file placed directly
-// under sources/ (not inside a child dir) is not a source and is ignored.
+// findings.toon or findings.txt is an input only when no subdirectory beneath
+// it holds either, and it is read through stream.SelectFindingsFile
+// (findings.toon, else findings.txt). This makes the per-agent
+// pool/raw/agent/<name>/ files the pool's inputs while the merged files written
+// at the source root are ignored (never double-counted), and reads host/
+// directly. allow, when non-empty, restricts which immediate children are read
+// (AC 01-05 Scenario 7). reconciled/ is never an input. A file with a
+// bad/missing header — or an unreadable subtree, or a non-regular findings file
+// (symlink/FIFO/device) — is skipped with a warning rather than aborting the
+// whole reconcile (sources/ is an open extension point). Only immediate-child
+// directories are sources; a findings file placed directly under sources/ (not
+// inside a child dir) is not a source and is ignored.
 func Discover(sourcesDir string, allow []string) ([]Source, error) {
 	entries, err := os.ReadDir(sourcesDir)
 	if err != nil {
