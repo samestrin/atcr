@@ -215,9 +215,10 @@ type Agent struct {
 	// included) for the whole run. Zero value = no swap: the unswapped text IS
 	// Prompt (undeclared or hand-built agent).
 	swap swapSpan
-	// payloadStart is where the rendered payload begins in unswappedPrompt; the
-	// swap only searches the text before it. 0 on a hand-built Agent, so a
-	// declared fallback of one appends the shared block rather than search.
+	// payloadStart is where the rendered payload begins in the unswapped text
+	// (swapSpan.rebuildUnswapped); the swap only searches the text before it. 0 on
+	// a hand-built Agent, so a declared fallback of one appends the shared block
+	// rather than search.
 	payloadStart int
 
 	// Retry/backoff (Epic 4.6): the agent's effective retry budget and base
