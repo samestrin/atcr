@@ -2980,7 +2980,7 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 	// payload unchanged for a diff-wide review. Because the constraint becomes part
 	// of the rendered prompt, the diff-cache key (which hashes the full prompt)
 	// invalidates correctly when the plan changes (AC5).
-	prompt, err := payload.RenderPrompt(persona.Text, payload.PayloadContext{
+	pctx := payload.PayloadContext{
 		AgentName:   name,
 		BaseRef:     rng.Base,
 		HeadRef:     rng.Head,
@@ -2993,10 +2993,14 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 		// holding any full-file body gets the wider files-mode rule.
 		ScopeRule:    payload.ScopeRuleForPayload(payload.PayloadMode(mode), payloadText),
 		ToolsEnabled: ac.Tools,
-	})
+	}
+	prompt, err := payload.RenderPrompt(persona.Text, pctx)
 	if err != nil {
 		return Agent{}, fmt.Errorf("agent %q: %w", name, err)
 	}
+	// Where the rendered payload begins, so the response_format swap below never
+	// reads or rewrites diff text.
+	payloadStart := renderedPayloadStart(prompt, persona.Text, pctx)
 	// Soft per-agent scope focus (Epic 2.2): appended after the persona template
 	// renders so it lands in every persona regardless of its template, and feeds
 	// both Agent.Prompt and Invocation.Prompt below (a fallback reuses the
@@ -3006,7 +3010,7 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 	// ## Output Format block. Swapped after the scope focus so unswapped is the
 	// full text a fallback starts from before re-keying the swap on its own flag.
 	unswapped := prompt
-	prompt = promptForResponseFormat(prompt, ac.ResponseFormat)
+	prompt = promptForResponseFormat(prompt, payloadStart, ac.ResponseFormat)
 	prov, ok := cfg.Registry.Providers[ac.Provider]
 	if !ok {
 		return Agent{}, fmt.Errorf("agent %q references unknown provider %q", name, ac.Provider)
@@ -3059,6 +3063,7 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 		DegradationAction:    sz.action,
 		chunkMaxLines:        sz.maxLines,
 		unswappedPrompt:      unswapped,
+		payloadStart:         payloadStart,
 		// Diff-cache key (Epic 5.2): derived from the full rendered prompt + model
 		// + temperature + the per-agent sizing token (Epic 19.10 F7, see
 		// diffCacheKey). Tool agents carry a key too but the engine never caches them
@@ -3417,7 +3422,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// fbPrompt starts from the primary's UNSWAPPED prompt: the response_format
 	// swap is re-keyed on the fallback's own declaration just before return.
 	// A hand-built Agent (no renderAgent) has no unswappedPrompt, so use Prompt.
-	fbPrompt := primary.unswappedPrompt
+	fbPrompt, fbPayloadStart := primary.unswappedPrompt, primary.payloadStart
 	if fbPrompt == "" {
 		fbPrompt = primary.Prompt
 	}
@@ -3481,7 +3486,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 			if ok {
 				// Unswapped: the re-render ran under refit.primaryConfig, so its
 				// Prompt is swapped on the PRIMARY's flag, not this fallback's.
-				fbPrompt = rp.agent.unswappedPrompt
+				fbPrompt, fbPayloadStart = rp.agent.unswappedPrompt, rp.agent.payloadStart
 				fbCodeContext = rp.agent.CodeContext
 				fbTrunc = rp.trunc
 				// Compose with the primary's shed record rather than replacing it:
@@ -3580,7 +3585,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// response_format swap (Sprint 35.16.11.2.1), keyed on the fallback's OWN
 	// declaration on both arms — never the primary's, like SupportsFC.
 	fbUnswapped := fbPrompt
-	fbPrompt = promptForResponseFormat(fbPrompt, ac.ResponseFormat)
+	fbPrompt = promptForResponseFormat(fbPrompt, fbPayloadStart, ac.ResponseFormat)
 	return Agent{
 		Name: name,
 		// A fallback keys on its OWN provider: if it uses a different provider than
@@ -3641,6 +3646,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		DegradationAction:    fbDegradation,
 		chunkMaxLines:        fbMaxLines,
 		unswappedPrompt:      fbUnswapped,
+		payloadStart:         fbPayloadStart,
 		rePacked:             refitted,
 		// The coverage tag of the payload this agent actually reviews (Epic
 		// 35.16.5.4 T3): the primary's chunk when it ships the inherited payload,

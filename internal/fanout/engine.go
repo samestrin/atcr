@@ -212,6 +212,10 @@ type Agent struct {
 	// inherits its primary's prompt contract. Equal to Prompt for an undeclared
 	// agent; empty on a hand-built Agent, which falls back to Prompt.
 	unswappedPrompt string
+	// payloadStart is where the rendered payload begins in unswappedPrompt; the
+	// swap only searches the text before it. 0 on a hand-built Agent, so a
+	// declared fallback of one appends the shared block rather than search.
+	payloadStart int
 
 	// Retry/backoff (Epic 4.6): the agent's effective retry budget and base
 	// delay (ms), resolved by renderAgent from the per-agent override layered over

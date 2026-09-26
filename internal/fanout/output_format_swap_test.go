@@ -103,11 +103,14 @@ func TestSwapOutputFormatSection_AllPersonas(t *testing.T) {
 			original := outputFormatSection(rendered)
 			require.Contains(t, original, "```json", "precondition: the persona section asks for the fenced array")
 
+			start := strings.Index(rendered, payloadHeadingSentinel)
+			require.Greater(t, start, i, "precondition: the payload follows the persona's section")
+
 			// Undeclared: byte-identical.
-			require.Equal(t, rendered, promptForResponseFormat(rendered, ""))
+			require.Equal(t, rendered, promptForResponseFormat(rendered, start, ""))
 
 			// Declared: the section is exactly the shared block.
-			swapped := promptForResponseFormat(rendered, registry.ResponseFormatJSONObject)
+			swapped := promptForResponseFormat(rendered, start, registry.ResponseFormatJSONObject)
 			section := outputFormatSection(swapped)
 			assert.Equal(t, jsonObjectOutputFormat, section, "the declared section must be exactly the shared block")
 			assert.NotContains(t, section, "```json")
@@ -127,11 +130,11 @@ func TestSwapOutputFormatSection_AllPersonas(t *testing.T) {
 
 func TestSwapOutputFormatSection_NestedSubheadingAndLastSection(t *testing.T) {
 	nested := "## Role\nr\n\n## Output Format\nold\n### Sub\nstill old\n\n## Payload\nP\n"
-	assert.Equal(t, "## Role\nr\n\n"+jsonObjectOutputFormat+"\n## Payload\nP\n", swapOutputFormatSection(nested),
+	assert.Equal(t, "## Role\nr\n\n"+jsonObjectOutputFormat+"\n## Payload\nP\n", swapOutputFormatSection(nested, len(nested)),
 		"a ### subheading stays inside the replaced span; only a ## heading ends it")
 
 	last := "## Role\nr\n\n## Output Format\nold\n### Sub\nold"
-	assert.Equal(t, "## Role\nr\n\n"+jsonObjectOutputFormat, swapOutputFormatSection(last),
+	assert.Equal(t, "## Role\nr\n\n"+jsonObjectOutputFormat, swapOutputFormatSection(last, len(last)),
 		"with no following ## heading the section runs to end of prompt")
 }
 
@@ -141,18 +144,57 @@ func TestSwapOutputFormatSection_NoHeadingAppends(t *testing.T) {
 	custom := "## Role\nYou review code.\n\n## Payload\nsome diff\n"
 
 	var got string
-	stderr := captureStderr(t, func() { got = promptForResponseFormat(custom, registry.ResponseFormatJSONObject) })
+	stderr := captureStderr(t, func() { got = promptForResponseFormat(custom, len(custom), registry.ResponseFormatJSONObject) })
 	assert.Empty(t, stderr, "the append path is the intended fallback and warns nothing")
 	assert.True(t, strings.HasPrefix(got, custom), "the rest of the prompt is unchanged")
 	assert.True(t, strings.HasSuffix(got, jsonObjectOutputFormat), "the shared block is appended at the end")
 
-	assert.Equal(t, custom, promptForResponseFormat(custom, ""))
+	assert.Equal(t, custom, promptForResponseFormat(custom, len(custom), ""))
 
 	// A near-miss heading is not the heading: it falls through to the append path.
-	nearMiss := "## Role\nr\n\n##Output Format\nold\n"
-	got = promptForResponseFormat(nearMiss, registry.ResponseFormatJSONObject)
-	assert.True(t, strings.HasPrefix(got, nearMiss))
-	assert.True(t, strings.HasSuffix(got, jsonObjectOutputFormat))
+	for _, nearMiss := range []string{
+		"## Role\nr\n\n##Output Format\nold\n",
+		"## Role\nr\n\n### Output Format\nold\n",
+		"## Role\nr\n\n## Output Formatting\nold\n",
+	} {
+		got = promptForResponseFormat(nearMiss, len(nearMiss), registry.ResponseFormatJSONObject)
+		assert.Truef(t, strings.HasPrefix(got, nearMiss), "%q must be left intact", nearMiss)
+		assert.Truef(t, strings.HasSuffix(got, jsonObjectOutputFormat), "%q is not the heading, so the block is appended", nearMiss)
+	}
+}
+
+// Adversarial review 3.2.A: the swap must never read or rewrite the payload.
+func TestSwapOutputFormatSection_NeverTouchesPayload(t *testing.T) {
+	// A persona with no heading whose DIFF carries one, as a line of its own.
+	prefix := "## Role\nr\n\n## Payload\n"
+	diff := "## Output Format\nremoved-line\n## Next\nkept\n"
+	got := swapOutputFormatSection(prefix+diff, len(prefix))
+	assert.Equal(t, prefix+diff+"\n"+jsonObjectOutputFormat, got, "the diff is unchanged and the block appended")
+
+	// A persona whose section runs straight into the payload, with no heading between.
+	prefix = "## Role\nr\n\n## Output Format\nold rules\n"
+	diff = "body\n## Heading in a markdown file\nmore\n"
+	got = swapOutputFormatSection(prefix+diff, len(prefix))
+	assert.Equal(t, "## Role\nr\n\n"+jsonObjectOutputFormat+diff, got, "the section ends where the payload begins")
+}
+
+// The same guarantee through renderAgent, whose payloadStart is derived from the
+// rendered payload rather than passed in.
+func TestRenderAgent_NoHeadingPersonaKeepsHeadingInDiff(t *testing.T) {
+	cfg := swapRoster(registry.ResponseFormatJSONObject, "")
+	persona := registry.ResolvedPersona{Text: "## Role\nr\n\n## Payload\n{{.Payload}}\n"}
+	diff := "## Output Format\n+secret-line\n"
+
+	a, err := renderAgent(cfg, "greta", cfg.Registry.Agents["greta"], persona, "blocks", diff, 1, payload.Truncation{}, ReviewRange{}, "", agentSizing{})
+	require.NoError(t, err)
+	assert.Equal(t, a.unswappedPrompt+"\n"+jsonObjectOutputFormat, a.Prompt)
+	assert.Contains(t, a.Prompt, diff, "the diff reaches the model whole")
+}
+
+// Every persona's Reasoning Budget still says "the single ```json array"; the
+// block must say it replaces that.
+func TestJSONObjectOutputFormat_SupersedesEarlierArrayWording(t *testing.T) {
+	assert.Contains(t, jsonObjectOutputFormat, "replaces any earlier instruction in this prompt to emit a fenced JSON array")
 }
 
 // swapRoster is two plain review agents, greta falling back to kai, with each
@@ -276,4 +318,26 @@ func TestBuildFallbackAgent_RefitSwapKeyedOnOwnFlag(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRenderedPayloadStart(t *testing.T) {
+	ctx := payload.PayloadContext{Payload: "diff"}
+	render := func(tmpl string) string {
+		out, err := payload.RenderPrompt(tmpl, ctx)
+		require.NoError(t, err)
+		return out
+	}
+
+	// The payload text also appears in the persona's own words, earlier.
+	tmpl := "copy it from the diff\n## Payload\n{{.Payload}}\ntail"
+	prompt := render(tmpl)
+	assert.Equal(t, strings.Index(prompt, "## Payload\n")+len("## Payload\n"), renderedPayloadStart(prompt, tmpl, ctx))
+
+	// A persona that never renders the payload has nothing to protect.
+	tmpl = "## Output Format\nold\n"
+	prompt = render(tmpl)
+	assert.Equal(t, len(prompt), renderedPayloadStart(prompt, tmpl, ctx))
+
+	// A prompt that does not match its template yields 0, so the swap only appends.
+	assert.Equal(t, 0, renderedPayloadStart("unrelated", "## Payload\n{{.Payload}}", ctx))
 }
