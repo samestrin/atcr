@@ -383,3 +383,26 @@ func TestDiffCacheKey_ResponseFormatChangesTheKey(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, before.CacheKey, after.CacheKey, "the built agent's key follows its own declaration")
 }
+
+// TD-005: the fallback's cache key follows the FALLBACK's own response_format and
+// ignores the primary's, like its Invocation does.
+func TestDiffCacheKey_FallbackKeysOnItsOwnResponseFormat(t *testing.T) {
+	build := func(primaryRF, fallbackRF string) string {
+		cfg := toolCfg()
+		g := cfg.Registry.Agents["greta"]
+		g.ResponseFormat = primaryRF
+		cfg.Registry.Agents["greta"] = g
+		k := cfg.Registry.Agents["kai"]
+		k.ResponseFormat = fallbackRF
+		cfg.Registry.Agents["kai"] = k
+		payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
+		primary, _, err := buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+		require.NoError(t, err)
+		fb, _, err := buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
+		require.NoError(t, err)
+		return fb.CacheKey
+	}
+	const jo = registry.ResponseFormatJSONObject
+	assert.NotEqual(t, build("", ""), build("", jo), "declaring the fallback must change its key")
+	assert.Equal(t, build("", ""), build(jo, ""), "declaring only the primary must not change the fallback's key")
+}
