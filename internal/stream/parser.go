@@ -481,9 +481,9 @@ func fieldsToFinding(f []string, cols int) Finding {
 		Problem:  f[2],
 		Fix:      f[3],
 		Category: f[4],
-		// Same typo-guard clamp the JSON decode path applies (v2.go): a typo'd
-		// negative or absurd est_minutes from a model must not reach a Finding.
-		EstMinutes: max(0, min(atoiOrZero(f[5]), maxModelEstMinutes)),
+		// Same typo-guard clamp every decode path applies (v2.go): a typo'd
+		// negative or absurd est_minutes must not reach a Finding.
+		EstMinutes: clampEstMinutes(atoiOrZero(f[5])),
 		Evidence:   f[6],
 	}
 	if cols == ReconciledColumns {
