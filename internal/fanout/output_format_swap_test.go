@@ -370,6 +370,13 @@ func TestRenderedPayloadStart(t *testing.T) {
 	// A template that fails to render (payload.RenderPrompt error) fails safe to 0
 	// as well — a corrupted template must never send the swap searching the prompt.
 	assert.Equal(t, 0, renderedPayloadStart("anything", "## Payload\n{{.Payload", ctx))
+
+	// Text before the payload that depends on .Payload renders differently for
+	// the marker than for the real payload, so the two renders disagree before
+	// the marker: the offset is unreliable and the swap must only append.
+	tmpl = "size {{len .Payload}}\n## Payload\n{{.Payload}}"
+	prompt = render(tmpl)
+	assert.Equal(t, 0, renderedPayloadStart(prompt, tmpl, ctx))
 }
 
 // A template that renders the payload through an escaper (printf %q) must not
