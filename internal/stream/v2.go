@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -348,23 +349,31 @@ type modelFinding struct {
 }
 
 // flexInt is EST_MINUTES as a model writes it: a number, a numeric string, or
-// junk. Like atoiOrZero it is best-effort and never fails the finding.
+// junk. Like atoiOrZero it is best-effort and never fails the finding. It also
+// reads a split "line" key (splitLocation).
 type flexInt int
 
+// maxModelEstMinutes is one week of minutes, the same typo-guard bound as
+// registry.MaxExecutorEstimatedMinutes. decodeJSONValue clamps a model's
+// est_minutes to 0..maxModelEstMinutes, so 1e300 or a negative number from an
+// untrusted model cannot reach a Finding.
+const maxModelEstMinutes = 7 * 24 * 60
+
 func (n *flexInt) UnmarshalJSON(b []byte) error {
+	var f float64
 	var num json.Number
-	if json.Unmarshal(b, &num) == nil {
-		if i, err := num.Int64(); err == nil {
-			*n = flexInt(i)
-		} else if f, err := num.Float64(); err == nil {
-			*n = flexInt(int(f))
-		}
-		return nil
-	}
 	var s string
-	if json.Unmarshal(b, &s) == nil {
-		*n = flexInt(atoiOrZero(s))
+	switch {
+	case json.Unmarshal(b, &num) == nil:
+		if i, err := num.Int64(); err == nil {
+			f = float64(i)
+		} else if v, err := num.Float64(); err == nil {
+			f = v
+		}
+	case json.Unmarshal(b, &s) == nil:
+		f = float64(atoiOrZero(s))
 	}
+	*n = flexInt(max(math.MinInt32, min(f, math.MaxInt32)))
 	return nil
 }
 
@@ -470,7 +479,7 @@ func decodeJSONValue(text string) ([]Finding, int) {
 			Problem:    m.Problem,
 			Fix:        m.Fix,
 			Category:   m.Category,
-			EstMinutes: int(m.EstMinutes),
+			EstMinutes: max(0, min(int(m.EstMinutes), maxModelEstMinutes)),
 			Evidence:   m.Evidence,
 		})
 	}

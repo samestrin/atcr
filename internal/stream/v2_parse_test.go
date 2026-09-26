@@ -165,6 +165,7 @@ func TestParseModelOutput_ObjectShapes(t *testing.T) {
 		{"file_line wins over split keys", `[{"severity":"HIGH","file_line":"b.go:2","file":"a.go","line":7}]`,
 			[]Finding{{Severity: "HIGH", File: "b.go", Line: 2}}},
 		{"split keys without a file are dropped", `[{"severity":"HIGH","line":7}]`, nil},
+		{"a split line past one week of minutes is not clamped", `[{"severity":"HIGH","file":"a.go","line":20000}]`, []Finding{{Severity: "HIGH", File: "a.go", Line: 20000}}},
 		{"file already carrying a line", `[{"severity":"HIGH","file":"a.go:7","line":7}]`, []Finding{{Severity: "HIGH", File: "a.go", Line: 7}}},
 	}
 	for _, c := range cases {
