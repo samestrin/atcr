@@ -773,7 +773,9 @@ func isFindingRecordStart(s string) bool {
 //
 // balanced is a third, disjoint signal: it marks the MARKER lines of every
 // TERMINATED pair (both views leave markers themselves unmasked, so no mask can
-// answer this). A dangling opener is in no pair and is therefore not marked. It
+// answer this). A dangling opener is in no pair and is therefore not marked,
+// except a dangling ```json opener, whose tail stays masked (see below) and
+// whose marker is elided with it. It
 // exists so the excerpt builder can absorb a fence's markers into the elision by
 // their PAIRING rather than by whether a neighbouring line happens to be masked —
 // an empty fence has no masked neighbour in either direction, and keying on that
@@ -814,21 +816,36 @@ func isFindingRecordStart(s string) bool {
 func fenceMask(lines []string) (strict, released, balanced []bool) {
 	strict = make([]bool, len(lines))
 	balanced = make([]bool, len(lines))
-	inFence := false
+	inFence, inJSON := false, false
 	openedAt := -1
 	for i, l := range lines {
 		if isFenceMarker(l) {
-			if inFence {
-				inFence = false
+			switch {
+			case inJSON && isJSONFenceOpener(l):
+				// The parser reads this as the next chunk's opener closing a cut-off
+				// block: it terminates one pair and opens the next (jsonFenceBounds
+				// models the same line).
+				balanced[openedAt], balanced[i] = true, true
+				openedAt = i
+			case inFence:
 				// A TERMINATED pair: both markers delimit a quoted example, whether
 				// or not there is anything between them.
+				inFence, inJSON = false, false
 				balanced[openedAt], balanced[i] = true, true
-			} else {
-				inFence, openedAt = true, i
+			default:
+				inFence, inJSON, openedAt = true, isJSONFenceOpener(l), i
 			}
 			continue
 		}
 		strict[i] = inFence
+	}
+	// A dangling ```json opener is the model's cut-off output, which the parser
+	// reads to EOF, not a quote a model forgot to close. Its tail stays masked in
+	// both views and its opener is elided with it, so an anchor there gets no
+	// narrative rather than a raw-JSON excerpt shared by every finding in it.
+	if inJSON {
+		balanced[openedAt] = true
+		return strict, strict, balanced
 	}
 	// An UNTERMINATED fence releases the tail in the released view only. Every
 	// earlier balanced pair keeps its mask in both views; the strict view keeps the
