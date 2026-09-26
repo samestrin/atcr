@@ -187,7 +187,8 @@ func TestRenderAgent_NoHeadingPersonaKeepsHeadingInDiff(t *testing.T) {
 
 	a, err := renderAgent(cfg, "greta", cfg.Registry.Agents["greta"], persona, "blocks", diff, 1, payload.Truncation{}, ReviewRange{}, "", agentSizing{})
 	require.NoError(t, err)
-	assert.Equal(t, a.unswappedPrompt+"\n"+jsonObjectOutputFormat, a.Prompt)
+	un := a.swap.rebuildUnswapped(a.Prompt)
+	assert.Equal(t, un+"\n"+jsonObjectOutputFormat, a.Prompt, "the swapped prompt is the unswapped text plus the appended block")
 	assert.Contains(t, a.Prompt, diff, "the diff reaches the model whole")
 }
 
@@ -228,11 +229,11 @@ func TestRenderAgent_SwapsOnDeclaredFlag(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.False(t, isSwapped(undeclared.Prompt))
-	assert.Equal(t, undeclared.Prompt, undeclared.unswappedPrompt)
+	assert.Equal(t, undeclared.Prompt, undeclared.swap.rebuildUnswapped(undeclared.Prompt), "no swap: the unswapped text IS the prompt")
 
 	assert.True(t, isSwapped(declared.Prompt))
 	assert.Equal(t, declared.Prompt, declared.Invocation.Prompt, "the wire prompt is the swapped prompt")
-	assert.Equal(t, undeclared.Prompt, declared.unswappedPrompt, "the pre-swap text is recorded for the fallback")
+	assert.Equal(t, undeclared.Prompt, declared.swap.rebuildUnswapped(declared.Prompt), "the pre-swap text is recoverable for the fallback")
 	assert.NotEqual(t, undeclared.CacheKey, declared.CacheKey)
 }
 
@@ -275,9 +276,11 @@ func TestBuildFallbackAgent_SwapKeyedOnOwnFlag(t *testing.T) {
 			assert.Equal(t, tc.gretaRF != "", isSwapped(primary.Prompt), "primary follows its own flag")
 			assert.Equal(t, tc.kaiRF != "", isSwapped(fb.Prompt), "fallback follows its own flag")
 			assert.Equal(t, fb.Prompt, fb.Invocation.Prompt)
-			assert.Equal(t, primary.unswappedPrompt, fb.unswappedPrompt, "the no-refit fallback reviews the primary's payload")
+			assert.Equal(t, primary.swap.rebuildUnswapped(primary.Prompt), fb.swap.rebuildUnswapped(fb.Prompt),
+				"the no-refit fallback reviews the primary's payload")
 			if tc.kaiRF == "" {
-				assert.Equal(t, primary.unswappedPrompt, fb.Prompt, "an undeclared fallback's prompt is the primary's unswapped text")
+				assert.Equal(t, primary.swap.rebuildUnswapped(primary.Prompt), fb.Prompt,
+					"an undeclared fallback's prompt is the primary's unswapped text")
 			}
 		})
 	}
@@ -311,9 +314,10 @@ func TestBuildFallbackAgent_RefitSwapKeyedOnOwnFlag(t *testing.T) {
 			assert.Equal(t, tc.gretaRF != "", isSwapped(primary.Prompt), "primary follows its own flag")
 			assert.Equal(t, tc.kaiRF != "", isSwapped(fb.Prompt), "re-fit fallback follows its own flag, not refit.primaryConfig's")
 			assert.Equal(t, fb.Prompt, fb.Invocation.Prompt)
-			assert.Less(t, len(fb.unswappedPrompt), len(primary.unswappedPrompt), "the re-fit payload is smaller")
+			assert.Less(t, len(fb.swap.rebuildUnswapped(fb.Prompt)), len(primary.swap.rebuildUnswapped(primary.Prompt)),
+				"the re-fit payload is smaller")
 			if tc.kaiRF == "" {
-				assert.Equal(t, fb.unswappedPrompt, fb.Prompt)
+				assert.Equal(t, fb.swap.rebuildUnswapped(fb.Prompt), fb.Prompt)
 				assert.Contains(t, outputFormatSection(fb.Prompt), "```json", "an undeclared re-fit keeps the fenced contract")
 			}
 		})

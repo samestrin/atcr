@@ -42,10 +42,42 @@ const JsonObjectOutputFormat = jsonObjectOutputFormat
 // payloadStart is where the rendered payload begins in prompt; the swap never
 // reads or rewrites anything from there on.
 func promptForResponseFormat(prompt string, payloadStart int, responseFormat string) string {
+	swapped, _ := promptForResponseFormatWithSpan(prompt, payloadStart, responseFormat)
+	return swapped
+}
+
+// promptForResponseFormatWithSpan also returns the swapSpan describing what the
+// swap changed, so callers can rebuild the pre-swap text on demand instead of
+// holding a second full copy of the prompt.
+func promptForResponseFormatWithSpan(prompt string, payloadStart int, responseFormat string) (string, swapSpan) {
 	if responseFormat != registry.ResponseFormatJSONObject {
-		return prompt
+		return prompt, swapSpan{}
 	}
-	return swapOutputFormatSection(prompt, payloadStart)
+	return swapOutputFormatSectionWithSpan(prompt, payloadStart)
+}
+
+// swapSpan records what the response_format ## Output Format swap changed, so the
+// pre-swap text can be rebuilt on demand instead of held as a second full copy of
+// the prompt (payload included) on every declared agent for the whole run. The zero
+// value is "no swap": the unswapped text IS the prompt (undeclared or hand-built
+// agent).
+type swapSpan struct {
+	done       bool   // a swap was applied (declared agent)
+	appended   bool   // append arm: the shared block was appended after the prompt
+	start, end int    // replace arm: the persona's own section, as spans in the UNSWAPPED text
+	section    string // replace arm: the persona's original section text
+}
+
+// rebuildUnswapped inverts the swap byte-for-byte: given the swapped prompt it
+// returns the text promptForResponseFormat was called with.
+func (s swapSpan) rebuildUnswapped(swapped string) string {
+	if !s.done {
+		return swapped
+	}
+	if s.appended {
+		return swapped[:len(swapped)-len("\n"+jsonObjectOutputFormat)]
+	}
+	return swapped[:s.start] + s.section + swapped[s.start+len(jsonObjectOutputFormat):]
 }
 
 // swapOutputFormatSection replaces the first ## Output Format section in
@@ -54,17 +86,24 @@ func promptForResponseFormat(prompt string, payloadStart int, responseFormat str
 // heading before the payload (a custom persona), the block is appended instead,
 // so a declared agent always learns the shape the API will force.
 func swapOutputFormatSection(prompt string, payloadStart int) string {
+	swapped, _ := swapOutputFormatSectionWithSpan(prompt, payloadStart)
+	return swapped
+}
+
+// swapOutputFormatSectionWithSpan is swapOutputFormatSection plus the swapSpan a
+// caller needs to rebuild the unswapped text later.
+func swapOutputFormatSectionWithSpan(prompt string, payloadStart int) (string, swapSpan) {
 	payloadStart = max(0, min(payloadStart, len(prompt)))
 	i := outputFormatHeadingAt(prompt[:payloadStart])
 	if i < 0 {
-		return prompt + "\n" + jsonObjectOutputFormat
+		return prompt + "\n" + jsonObjectOutputFormat, swapSpan{done: true, appended: true}
 	}
 	end := payloadStart
 	if j := strings.Index(prompt[i+len(outputFormatHeading):payloadStart], "\n## "); j >= 0 {
 		end = i + len(outputFormatHeading) + j
 	}
 	// prompt[end:] keeps the blank line before the next heading.
-	return prompt[:i] + jsonObjectOutputFormat + prompt[end:]
+	return prompt[:i] + jsonObjectOutputFormat + prompt[end:], swapSpan{done: true, start: i, end: end, section: prompt[i:end]}
 }
 
 // outputFormatHeadingAt returns the offset of the first line in s that is
