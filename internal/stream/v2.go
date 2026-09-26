@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	goaxi "github.com/samestrin/go-axi"
@@ -123,6 +124,10 @@ func parseV2Body(body string) (ParseResult, error) {
 		if err := checkV2Values(r["severity"], r["file_line"], r["reviewer"]); err != nil {
 			return ParseResult{}, fmt.Errorf("decoding v2 findings table: row %d: %w", i, err)
 		}
+		est, err := strconv.Atoi(strings.TrimSpace(r["est_minutes"]))
+		if err != nil {
+			return ParseResult{}, fmt.Errorf("decoding v2 findings table: row %d: est_minutes %q is not an integer", i, r["est_minutes"])
+		}
 		file, line := splitFileLine(r["file_line"])
 		res.Findings = append(res.Findings, Finding{
 			Severity:   r["severity"],
@@ -131,7 +136,7 @@ func parseV2Body(body string) (ParseResult, error) {
 			Problem:    r["problem"],
 			Fix:        r["fix"],
 			Category:   r["category"],
-			EstMinutes: atoiOrZero(r["est_minutes"]),
+			EstMinutes: est,
 			Evidence:   r["evidence"],
 			Reviewer:   r["reviewer"],
 		})
@@ -154,7 +159,37 @@ func v2TableColumns() []string {
 // which an on-disk file carries and model output must never supply.
 type v2EnvelopeRow struct {
 	modelFinding
-	Reviewer string `json:"reviewer"`
+	// EstMinutes shadows modelFinding's lenient flexInt: an atcr-written file
+	// carries an integer, so anything else is an error here.
+	EstMinutes diskInt `json:"est_minutes"`
+	Reviewer   string  `json:"reviewer"`
+}
+
+// diskInt is EST_MINUTES in an on-disk v2 envelope: an integer or a numeric
+// string. null reads as 0, like any other null value there.
+type diskInt int
+
+func (n *diskInt) UnmarshalJSON(b []byte) error {
+	if string(b) == "null" {
+		return nil
+	}
+	var num json.Number
+	if json.Unmarshal(b, &num) == nil {
+		i, err := strconv.Atoi(num.String())
+		if err != nil {
+			return fmt.Errorf("est_minutes %s is not an integer", b)
+		}
+		*n = diskInt(i)
+		return nil
+	}
+	var s string
+	if json.Unmarshal(b, &s) == nil {
+		if i, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
+			*n = diskInt(i)
+			return nil
+		}
+	}
+	return fmt.Errorf("est_minutes %s is not an integer", b)
 }
 
 // checkV2Values rejects values atcr never writes to a v2 file (TD-037):
