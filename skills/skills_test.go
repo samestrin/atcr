@@ -81,6 +81,16 @@ func TestSkill_HostMinimumVersion(t *testing.T) {
 		assert.Containsf(t, text, "v0.4.0", "%s must state the minimum atcr version", name)
 	}
 	assert.Contains(t, HostReviewMD, "`atcr version`", "the host checks the version before writing")
+
+	// The check is only useful before the pool is paid for, so SKILL.md must
+	// state the minimum inside Prerequisites, not just somewhere (TD-041).
+	start := strings.Index(SkillMD, "\n## Prerequisites\n")
+	require.GreaterOrEqual(t, start, 0, "SKILL.md has a Prerequisites section")
+	prereq := SkillMD[start+1:]
+	if end := strings.Index(prereq[len("## Prerequisites\n"):], "\n## "); end >= 0 {
+		prereq = prereq[:len("## Prerequisites\n")+end]
+	}
+	assert.Contains(t, prereq, "v0.4.0", "the minimum version is checked under Prerequisites, before the pool runs")
 }
 
 // hostExamples returns every fenced block in host-review.md whose first line is
