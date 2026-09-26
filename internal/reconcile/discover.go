@@ -17,6 +17,9 @@ const (
 	findingsFileName     = "findings.txt"
 	findingsToonFileName = "findings.toon"
 	reconciledDir        = "reconciled"
+	// hostSource is the source written by the skill-driven host reviewer. Its
+	// findings are the host's by definition, whatever reviewer the file names.
+	hostSource = "host"
 	// statusFileName is the per-agent status.json sibling of a leaf findings.txt
 	// (written by internal/fanout's statusFor). Read for fallback provenance only
 	// (Epic 19.10 F5); its full schema stays owned by fanout.
@@ -105,6 +108,14 @@ func Discover(sourcesDir string, allow []string) ([]Source, error) {
 			// Fail-closed: a missing/unreadable/malformed status.json (or one with
 			// fallback_used false) leaves FallbackModel empty — the finding counts as
 			// an independent voice, mirroring the PathValid unvalidated default.
+			// The host file is model-written, so its reviewer field is not trusted:
+			// naming a pool agent there would count the host's findings as that
+			// agent's corroboration (TD-040).
+			if e.Name() == hostSource {
+				for i := range res.Findings {
+					res.Findings[i].Reviewer = hostSource
+				}
+			}
 			if fbModel := readSourceFallback(f); fbModel != "" {
 				for i := range res.Findings {
 					res.Findings[i].FallbackModel = fbModel
