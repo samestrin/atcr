@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/assert"
@@ -107,6 +109,29 @@ func TestRun_ResponseFormatProbeAppliesPerCallTimeout(t *testing.T) {
 	require.Len(t, calls, 1)
 	assert.True(t, calls[0].ctxHasDeadline,
 		"the response_format probe must forward a context with the Options timeout deadline")
+}
+
+// responseFormatPrompt restates the findings contract that fanout's shared
+// ## Output Format block sends review agents — one contract in two lanes. This
+// drift test derives the key and severity lists FROM the fanout constant, so a key
+// added or renamed there without the doctor prompt following fails here instead of
+// silently probing a different contract than the review actually runs.
+func TestResponseFormatPromptMatchesTheFanoutContract(t *testing.T) {
+	keyLineRe := regexp.MustCompile(`(?m)^"severity".*$`)
+	line := keyLineRe.FindString(fanout.JsonObjectOutputFormat)
+	require.NotEmpty(t, line, "the fanout block's key list line moved — update this test")
+	for _, m := range regexp.MustCompile(`"([a-z_]+)"`).FindAllStringSubmatch(line, -1) {
+		assert.Containsf(t, responseFormatPrompt, m[1],
+			"fanout contract key %q is missing from the doctor's response_format prompt", m[1])
+	}
+
+	sevLineRe := regexp.MustCompile(`(?m)^Rules: severity is one of (.*?);`)
+	sevLine := sevLineRe.FindStringSubmatch(fanout.JsonObjectOutputFormat)
+	require.Len(t, sevLine, 2, "the fanout block's severity rule line moved — update this test")
+	for _, sev := range strings.Split(sevLine[1], ", ") {
+		assert.Containsf(t, responseFormatPrompt, sev,
+			"fanout contract severity %q is missing from the doctor's response_format prompt", sev)
+	}
 }
 
 // ok_warning (HTTP 200, marker absent — the thinking-model signature) still counts

@@ -31,6 +31,11 @@ Example:
 {"findings":[{"severity": "HIGH", "file_line": "store/cache.go:88", "problem": "Get returns stale entry after Invalidate", "fix": "Delete key inside the same lock as Invalidate", "category": "correctness", "est_minutes": 20, "evidence": "invalidate releases lock before delete"}]}
 `
 
+// JsonObjectOutputFormat aliases the block for module-internal contract tests:
+// doctor's response_format probe prompt restates this block's key and severity
+// lists, and a drift test in internal/doctor pins the two together.
+const JsonObjectOutputFormat = jsonObjectOutputFormat
+
 // promptForResponseFormat returns prompt as the agent declaring responseFormat
 // should see it: swapped for json_object, byte-identical otherwise. Callers pass
 // the agent's OWN declaration — a fallback never inherits its primary's.
