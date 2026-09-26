@@ -819,7 +819,8 @@ func fenceMask(lines []string) (strict, released, balanced []bool) {
 	inFence, inJSON := false, false
 	openedAt := -1
 	for i, l := range lines {
-		if isFenceMarker(l) {
+		// A marker shorter than the open fence's opener is content (TD-019).
+		if isFenceMarker(l) && (!inFence || fenceRun(l) >= fenceRun(lines[openedAt])) {
 			switch {
 			case inJSON && isJSONFenceOpener(l):
 				// The parser reads this as the next chunk's opener closing a cut-off
@@ -869,8 +870,9 @@ func jsonFenceBounds(lines []string) (open, close []bool) {
 	open = make([]bool, len(lines))
 	close = make([]bool, len(lines))
 	inFence, inJSON := false, false
+	openRun := 0
 	for i, l := range lines {
-		if !isFenceMarker(l) {
+		if !isFenceMarker(l) || inFence && fenceRun(l) < openRun {
 			continue
 		}
 		switch {
@@ -878,14 +880,15 @@ func jsonFenceBounds(lines []string) (open, close []bool) {
 			// The parser reads this as the next chunk's opener closing a cut-off
 			// block (stream/parser.go ParseModelOutput): one line, both roles.
 			close[i], open[i] = true, true
+			openRun = fenceRun(l)
 		case inFence:
 			close[i] = inJSON
 			inFence, inJSON = false, false
 		case isJSONFenceOpener(l):
 			open[i] = true
-			inFence, inJSON = true, true
+			inFence, inJSON, openRun = true, true, fenceRun(l)
 		default:
-			inFence = true
+			inFence, openRun = true, fenceRun(l)
 		}
 	}
 	return open, close
@@ -907,6 +910,13 @@ func isJSONFenceOpener(line string) bool {
 // non-space content is a run of >=3 backticks. Mirrors stream.isFenceMarker.
 func isFenceMarker(line string) bool {
 	return strings.HasPrefix(strings.TrimLeft(line, " \t"), "```")
+}
+
+// fenceRun mirrors stream.fenceRun: the length of the backtick run that begins
+// a fence marker line.
+func fenceRun(line string) int {
+	t := strings.TrimLeft(line, " \t")
+	return len(t) - len(strings.TrimLeft(t, "`"))
 }
 
 // isItemStart reports whether s begins a Markdown list item: an unordered bullet

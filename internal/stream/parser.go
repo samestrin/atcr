@@ -188,6 +188,7 @@ func ParseModelOutput(data []byte) []Finding {
 	lines := strings.Split(text, "\n")
 	var out []Finding
 	inFence, inJSON := false, false
+	openRun := 0 // backtick run of the open fence's opener
 	bareAttempts := 0
 	bareEnd := 0   // byte offset just past the last bare value read
 	jsonStart := 0 // byte offset of the current ```json block's first content line
@@ -203,8 +204,10 @@ func ParseModelOutput(data []byte) []Finding {
 		// the count with rows whose cited files do not exist. Skip everything between
 		// fences. Mirrors internal/verify/syntaxguard's fence handling; a fence
 		// marker is a line whose first non-space content is a run of >=3 backticks.
-		// The one exception is a ```json fence: that is the output itself.
-		if isFenceMarker(line) {
+		// The one exception is a ```json fence: that is the output itself. As in
+		// CommonMark, a marker shorter than the open fence's opener is content, so a
+		// ```json example quoted inside a ````md fence stays quoted (TD-019).
+		if isFenceMarker(line) && (!inJSON && !inFence || fenceRun(line) >= openRun) {
 			switch {
 			case inJSON:
 				// A "```json" line here is the NEXT chunk's opener, not this block's
@@ -212,13 +215,13 @@ func ParseModelOutput(data []byte) []Finding {
 				// reading the opener as one would turn the next chunk's array into
 				// prose. It closes this block and opens the next.
 				out = append(out, decodeJSONFindings(text[jsonStart:lineStart])...)
-				inJSON, jsonStart = isJSONFence(line), offset
+				inJSON, jsonStart, openRun = isJSONFence(line), offset, fenceRun(line)
 			case inFence:
 				inFence = false
 			case isJSONFence(line):
-				inJSON, jsonStart = true, offset
+				inJSON, jsonStart, openRun = true, offset, fenceRun(line)
 			default:
-				inFence = true
+				inFence, openRun = true, fenceRun(line)
 			}
 			continue
 		}
@@ -282,6 +285,13 @@ func ParseModelOutput(data []byte) []Finding {
 // state so quoted example rows are not parsed as findings.
 func isFenceMarker(line string) bool {
 	return strings.HasPrefix(strings.TrimLeft(line, " \t"), "```")
+}
+
+// fenceRun returns the length of the backtick run that begins a fence marker
+// line. A fence closes only on a marker whose run is at least its opener's.
+func fenceRun(line string) int {
+	t := strings.TrimLeft(line, " \t")
+	return len(t) - len(strings.TrimLeft(t, "`"))
 }
 
 // ParseSource parses a per-source findings file: a v1 8-column pipe stream, or
