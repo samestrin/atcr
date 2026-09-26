@@ -3,6 +3,7 @@ package fanout
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -382,12 +383,26 @@ func TestDiffCacheKey_ResponseFormatChangesTheKey(t *testing.T) {
 	after, _, err := buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
 	require.NoError(t, err)
 	assert.NotEqual(t, before.CacheKey, after.CacheKey, "the built agent's key follows its own declaration")
+	// NotEqual alone cannot see the response_format ARGUMENT: declaring json_object
+	// also swaps the ## Output Format section, so the hashed prompt differs too, and
+	// a diffCacheKey call site that drops the suffix stays green. Recompute the key
+	// from the built prompt with and without the declaration — only the suffixed
+	// form may match, which pins the wiring at review.go's call site.
+	sizing := fmt.Sprintf("%d:%d", after.EffectiveBudget, after.chunkMaxLines)
+	assert.Equal(t, after.CacheKey,
+		diffCacheKey(after.Prompt, after.Invocation.Model, after.Invocation.BaseURL,
+			after.Invocation.Temperature, sizing, after.ResolvedMaxTokens, registry.ResponseFormatJSONObject),
+		"the built key is the response_format-suffixed form of this exact prompt")
+	assert.NotEqual(t, after.CacheKey,
+		diffCacheKey(after.Prompt, after.Invocation.Model, after.Invocation.BaseURL,
+			after.Invocation.Temperature, sizing, after.ResolvedMaxTokens, ""),
+		"the same prompt without the suffix must produce a different key")
 }
 
 // TD-005: the fallback's cache key follows the FALLBACK's own response_format and
 // ignores the primary's, like its Invocation does.
 func TestDiffCacheKey_FallbackKeysOnItsOwnResponseFormat(t *testing.T) {
-	build := func(primaryRF, fallbackRF string) string {
+	build := func(primaryRF, fallbackRF string) Agent {
 		cfg := toolCfg()
 		g := cfg.Registry.Agents["greta"]
 		g.ResponseFormat = primaryRF
@@ -400,9 +415,23 @@ func TestDiffCacheKey_FallbackKeysOnItsOwnResponseFormat(t *testing.T) {
 		require.NoError(t, err)
 		fb, _, err := buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
 		require.NoError(t, err)
-		return fb.CacheKey
+		return fb
 	}
 	const jo = registry.ResponseFormatJSONObject
-	assert.NotEqual(t, build("", ""), build("", jo), "declaring the fallback must change its key")
-	assert.Equal(t, build("", ""), build(jo, ""), "declaring only the primary must not change the fallback's key")
+	assert.NotEqual(t, build("", "").CacheKey, build("", jo).CacheKey, "declaring the fallback must change its key")
+	assert.Equal(t, build("", "").CacheKey, build(jo, "").CacheKey, "declaring only the primary must not change the fallback's key")
+
+	// Same separation as the primary test above: the fallback prompt hash changes
+	// with the swap, so only a recomputed same-prompt comparison pins the suffix
+	// argument at the fallback call site.
+	fb := build("", jo)
+	fbSizing := fmt.Sprintf("%d:%d", fb.EffectiveBudget, fb.chunkMaxLines)
+	assert.Equal(t, fb.CacheKey,
+		diffCacheKey(fb.Prompt, fb.Invocation.Model, fb.Invocation.BaseURL,
+			fb.Invocation.Temperature, fbSizing, fb.ResolvedMaxTokens, jo),
+		"the fallback key is the response_format-suffixed form of its own prompt")
+	assert.NotEqual(t, fb.CacheKey,
+		diffCacheKey(fb.Prompt, fb.Invocation.Model, fb.Invocation.BaseURL,
+			fb.Invocation.Temperature, fbSizing, fb.ResolvedMaxTokens, ""),
+		"the fallback's own prompt without the suffix must produce a different key")
 }
