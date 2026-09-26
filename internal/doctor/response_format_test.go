@@ -173,6 +173,19 @@ func TestRun_ResponseFormatProbeIsUnverifiedOnATransientError(t *testing.T) {
 	}
 }
 
+// A reply cut off at the cap is invalid JSON no matter what the provider did with the
+// field, so it reaches no verdict rather than blaming the model.
+func TestRun_ResponseFormatProbeIsUnverifiedWhenTheReplyIsTruncated(t *testing.T) {
+	a, _ := runDeclared(t, false, func(llmclient.Invocation, []llmclient.Message, []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+		cut := `{"findings":[{"severity":"HIGH","file_li`
+		return &llmclient.ChatResponse{Message: llmclient.Message{Role: "assistant", Content: &cut}, FinishReason: "length", Truncated: true}, nil
+	})
+
+	assert.Equal(t, ResponseFormatUnverified, a.ResponseFormatStatus)
+	assert.Contains(t, a.ResponseFormatDetail, "cut off")
+	assert.NotContains(t, a.ResponseFormatDetail, "ignored response_format")
+}
+
 // A definite failure outranks an inconclusive one: the operator must hear about it.
 func TestRun_NotHonoredOutranksUnverifiedAcrossProbes(t *testing.T) {
 	a, _ := runDeclared(t, true, func(inv llmclient.Invocation, msgs []llmclient.Message, tools []llmclient.ToolDef) (*llmclient.ChatResponse, error) {

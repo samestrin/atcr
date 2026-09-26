@@ -735,6 +735,12 @@ func responseFormatCall(ctx context.Context, c Completer, tgt Target, opts Optio
 	if len(toolDefs) > 0 && len(resp.Message.ToolCalls) > 0 {
 		return ResponseFormatHonored, ""
 	}
+	// A reply cut off at the budget is invalid or empty JSON whatever the provider did
+	// with the field — and a thinking model can spend the whole budget before answering.
+	// Calling that not_honored would drop a model that honors it.
+	if resp.Truncated {
+		return ResponseFormatUnverified, fmt.Sprintf("the %s probe reply was cut off at the output cap (%d tokens), so no verdict was reached; raise this agent's max_tokens or pass --max-tokens", declared, budget)
+	}
 	content := ""
 	if resp.Message.Content != nil {
 		content = *resp.Message.Content
