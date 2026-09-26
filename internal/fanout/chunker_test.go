@@ -565,3 +565,22 @@ func TestMergeResultGroup_UnparseableFlagIsPersonaWide(t *testing.T) {
 	assert.Equal(t, 2, st.UnparseableChunks)
 	assert.Equal(t, "unparseable", ReviewerOutcome(st, len(fr.Findings)))
 }
+
+// A chunked persona's merged review.md must delimit chunk outputs: findings are
+// parsed per chunk (Result.parseFindings), and the reconcile justification
+// reader re-scans the joined text — without a boundary line, a chunk cut off
+// inside a ```json block masks the next chunk's prose. A persona with a single
+// content chunk (any single-call persona) must stay byte-identical.
+func TestMergeResultGroup_JoinedContentDelimitsChunks(t *testing.T) {
+	two := mergeResultGroup([]Result{
+		{Agent: "reviewer", Status: StatusOK, Content: "chunk one prose\n"},
+		{Agent: "reviewer", Status: StatusOK, Content: "chunk two prose\n"},
+	}, nil)
+	assert.Contains(t, two.Content, "atcr:chunk-boundary", "multi-chunk content carries a boundary line between chunks")
+	assert.Contains(t, two.Content, "chunk one prose")
+	assert.Contains(t, two.Content, "chunk two prose")
+
+	one := mergeResultGroup([]Result{{Agent: "reviewer", Status: StatusOK, Content: "solo prose"}}, nil)
+	assert.NotContains(t, one.Content, "atcr:chunk-boundary", "a single content chunk stays byte-identical")
+	assert.Equal(t, "solo prose", one.Content)
+}

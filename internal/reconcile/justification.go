@@ -19,6 +19,12 @@ const (
 	// reviewFile; kept local to avoid an import cycle (fanout is a consumer, not a
 	// dependency, of this package).
 	reviewFileName = "review.md"
+	// chunkBoundaryLine delimits chunk outputs in a chunked persona's merged
+	// review.md (fanout's mergeResultGroup writes it between chunks whenever more
+	// than one chunk produced content). It mirrors internal/fanout's
+	// chunkBoundaryLine; kept local for the same import-cycle reason as
+	// reviewFileName, with the literal pinned by TestChunkBoundaryLineMatchesFanout.
+	chunkBoundaryLine = "<!-- atcr:chunk-boundary -->"
 	// justificationMaxRunes caps an extracted narrative so a verbose review.md
 	// section cannot bloat findings.json. The excerpt is the human-readable
 	// pointer; SourceReport is the precise back-reference to the full detail.
@@ -506,6 +512,31 @@ func leadingInt(s string) (val, width int) {
 	return v, i
 }
 
+// chunkSegmentBounds reports the [lo,hi) line range of the chunk segment
+// containing idx, and whether any chunkBoundaryLine exists at all. A chunked
+// persona's merged review.md carries one marker between consecutive chunk
+// outputs (fanout's mergeResultGroup); everything the mask and span scans below
+// do must be scoped to the marker-bounded segment the anchor sits in, mirroring
+// Result.parseFindings' per-chunk read. An anchor ON a marker line yields the
+// trivial segment around it (the marker itself is structure, never content),
+// which the mask walk suppresses to the documented "no narrative" state.
+func chunkSegmentBounds(lines []string, idx int) (lo, hi int, ok bool) {
+	lo, hi, ok = 0, len(lines), false
+	for i := idx - 1; i >= 0; i-- {
+		if lines[i] == chunkBoundaryLine {
+			lo, ok = i+1, true
+			break
+		}
+	}
+	for i := idx + 1; i < len(lines); i++ {
+		if lines[i] == chunkBoundaryLine {
+			hi, ok = i, true
+			break
+		}
+	}
+	return lo, hi, ok
+}
+
 // extractSection returns the narrative block containing anchor line idx and the
 // nearest enclosing Markdown heading. The block is the run of contiguous
 // non-blank lines around idx bounded by a blank line, a heading, or a new list
@@ -518,6 +549,23 @@ func leadingInt(s string) (val, width int) {
 // justificationMaxRunes.
 func extractSection(lines []string, idx int) (text, section string) {
 	if idx < 0 || idx >= len(lines) {
+		return "", ""
+	}
+	// A chunked persona's review.md delimits chunk outputs (chunkBoundaryLine,
+	// written by fanout's mergeResultGroup). Findings are parsed per chunk
+	// (Result.parseFindings, TD-048), so the mask and span scans below must run
+	// per chunk too: a chunk cut off inside a ```json block or an unfenced array
+	// would otherwise mask every later chunk's prose, and that chunk's recovered
+	// finding would ship with an empty justification. No marker → a single-call
+	// persona (or a persona whose other chunks produced nothing) → the scans run
+	// over the whole narrative exactly as before.
+	if lo, hi, ok := chunkSegmentBounds(lines, idx); ok {
+		lines, idx = lines[lo:hi], idx-lo
+	}
+	if lines[idx] == chunkBoundaryLine {
+		// An anchor on the delimiter itself is an anchor on pure structure
+		// (buildAnchorIndex can never produce one — a marker carries no file:line
+		// anchor — so this is defensive): the documented "no narrative" state.
 		return "", ""
 	}
 	// Anything inside a fenced block is an EXAMPLE, not structure — the parser skips
@@ -554,7 +602,12 @@ func extractSection(lines []string, idx int) (text, section string) {
 	// An unfenced JSON value the parser reads as findings (TD-018) is the model's
 	// output, like a ```json block: mask it in both views so it elides, and bound
 	// it below exactly as jsonOpen/jsonClose bound a fenced block. The spans come
-	// from the parser's own scan, so they cannot drift from what it read.
+	// from the parser's own scan of THIS chunk's lines: the segment rebase above
+	// bounds lines to the chunk the anchor sits in, the same text
+	// Result.parseFindings read for that chunk, so they cannot drift from what
+	// the parser read. (Before chunk delimiting this held only for single-call
+	// personas — a joined multi-chunk scan could mask a chunk the parser never
+	// read together with this one.)
 	spans := stream.BareValueSpans([]byte(strings.Join(lines, "\n")))
 	if len(spans) > 0 {
 		strict = append([]bool(nil), strict...)
