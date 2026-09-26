@@ -94,4 +94,7 @@ func TestParseRuling_SkipsDecoyBrace(t *testing.T) {
 func TestParseRuling_BareJSONModeObject(t *testing.T) {
 	r := parseRuling(`{"ruling":{"outcome":"uphold","reasoning":"nested"},"confidence":0.9}`)
 	assert.Equal(t, OutcomeUnresolved, r.Outcome)
+	// The diagnostic must say why — an empty unresolved ruling would hide the
+	// wrapper-envelope cause from whoever reads the debate log.
+	assert.NotEmpty(t, r.Reasoning)
 }
