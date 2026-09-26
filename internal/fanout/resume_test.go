@@ -881,3 +881,18 @@ func TestRebuildPool_V1HeaderInToonFailsOKAgent(t *testing.T) {
 	_, _, err := RebuildPool(context.Background(), poolDir, []string{"alpha"})
 	require.Error(t, err)
 }
+
+// A findings.txt that is a symlink is refused by selection, so RebuildPool must
+// skip the agent rather than open that path itself and follow the link out of
+// the review tree.
+func TestRebuildPool_SymlinkedTxtContributesNothing(t *testing.T) {
+	poolDir := filepath.Join(t.TempDir(), "sources", "pool")
+	seedAgentDir(t, poolDir, "alpha", StatusOK, nil, nil)
+	target := filepath.Join(t.TempDir(), "elsewhere.txt")
+	require.NoError(t, os.WriteFile(target, v1Bytes(t, []stream.Finding{txtFinding}), 0o644))
+	if err := os.Symlink(target, filepath.Join(poolDir, poolRawAgentDir, "alpha", findingsFile)); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	assert.Empty(t, rebuiltPool(t, poolDir, []string{"alpha"}), "the symlink target is never read")
+}
