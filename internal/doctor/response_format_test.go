@@ -109,6 +109,25 @@ func TestRun_ResponseFormatProbeAppliesPerCallTimeout(t *testing.T) {
 		"the response_format probe must forward a context with the Options timeout deadline")
 }
 
+// ok_warning (HTTP 200, marker absent — the thinking-model signature) still counts
+// as a working endpoint for the probe gate: the truncated/unverified response_format
+// paths target exactly these agents, so narrowing the gate to a bare ok would
+// silently skip every one of them.
+func TestRun_ResponseFormatProbeRunsForAnOkWarningEndpoint(t *testing.T) {
+	t.Setenv(rfDoctorEnvK, rfDoctorKey)
+	fake := newFake(func(llmclient.Invocation) (string, error) {
+		return "reasoning... marker lost", nil
+	})
+	fake.chatFn = reply(oneFinding)
+
+	rep := Run(context.Background(), fake, declaredTarget(t, false), Options{Nonce: testNonce, MaxTokens: 2048})
+	require.Len(t, rep.Agents, 1)
+
+	assert.Equal(t, StatusOKWarning, rep.Agents[0].Status)
+	require.Len(t, fake.chatCalls(), 1, "the response_format probe must run for an ok_warning endpoint")
+	assert.Equal(t, ResponseFormatHonored, rep.Agents[0].ResponseFormatStatus)
+}
+
 // The marker probe must not carry response_format: its "Reply with exactly" prompt
 // cannot be answered as a JSON object.
 func TestRun_MarkerProbeNeverSendsResponseFormat(t *testing.T) {
