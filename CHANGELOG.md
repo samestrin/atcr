@@ -1,3 +1,30 @@
+## [35.26.0] - 2026-09-25
+
+*Sprint 35.16.11.2 — lossless findings stream and reviewer prompt migration.*
+
+Reviewer personas now output a single fenced JSON array of findings instead of pipe-delimited text, and atcr writes that data losslessly to disk. The old `findings.txt` (v1) keeps working unchanged for every existing consumer.
+
+### Added
+
+- All 24 reviewer persona files (`_base.md` + 23 personas) migrated to a JSON output format; the pipe-to-slash mangling rule is gone, so bitwise-OR expressions, regexes, and multiline diffs survive intact.
+- A lossless `# atcr-findings/v2` writer (`internal/stream/v2.go`) that encodes to TOON by default and falls back to a JSON envelope only when TOON would lose data.
+- Dual-write of `findings.toon` alongside the unchanged `findings.txt`; discovery, resume, history, audit, and benchmark all prefer `.toon` when present.
+- Host-review skill writes `findings.toon` directly as a JSON envelope, with no hand-rolled TOON formatting.
+- `docs/findings-format.md` v2 spec, plus an adversarial round-trip test suite covering chunked, truncated, and malformed model output.
+
+### Changed
+
+- Model output parsing is JSON-first: it unions multiple fenced JSON blocks, recovers from a truncated final object, and still accepts legacy pipe rows from any persona not yet migrated.
+- History, audit, and benchmark parse errors now name the specific findings file that failed, instead of a generic error.
+- A partly-failed-over chunked benchmark case is now credited to whichever model actually served most of it, matching production reconcile behavior.
+
+### Fixed
+
+- v2 readers reject case-variant envelope keys, non-integer `est_minutes`, and non-regular files (symlinks, sockets), closing several data-integrity gaps found by the new adversarial suite.
+- A model's `est_minutes` is now clamped to a sane 0–10080 range instead of accepting runaway or negative values.
+
+*Shipped via /finalize-sprint (sprint 35.16.11.2)*
+
 ## [35.25.0] - 2026-09-23
 
 *Epic 35.16.11.1 — standard toon output migration.*
