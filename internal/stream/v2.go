@@ -267,9 +267,10 @@ func parseV2Envelope(body string) (ParseResult, error) {
 	var data struct {
 		Findings *[]json.RawMessage `json:"findings"`
 	}
-	if len(env.Data) == 0 || string(env.Data) == "null" {
-		return ParseResult{}, errors.New("decoding v2 findings envelope: missing data.findings")
-	}
+	// No pre-check for empty/null data: the Unmarshal + nil-Findings check below
+	// rejects both with the same "missing data.findings" error (pinned by
+	// TestParseV2Envelope_DataNullIsRejected), so a separate guard would be a
+	// redundant duplicate of that outcome.
 	if err := checkExactKeys(env.Data, "findings"); err != nil {
 		return ParseResult{}, fmt.Errorf("decoding v2 findings envelope: data: %w", err)
 	}
