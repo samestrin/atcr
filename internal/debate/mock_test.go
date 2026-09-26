@@ -20,7 +20,9 @@ type chatTurn struct {
 // fakeChatCompleter implements fanout.ChatCompleter. Each Chat call pops the next
 // scripted turn in order, so three seats sharing one completer consume turns[0..2]
 // in seat order. Every Chat call's Invocation is recorded in call order, so a test
-// can inspect what each seat actually sent. Safe for concurrent use.
+// can inspect what each seat actually sent. Complete (the single-shot non-FC path)
+// records its Invocation the same way, so a test can also inspect what a seat that
+// skipped the tool loop actually sent. Safe for concurrent use.
 type fakeChatCompleter struct {
 	mu    sync.Mutex
 	turns []chatTurn
@@ -36,9 +38,10 @@ func (f *fakeChatCompleter) invocations() []llmclient.Invocation {
 	return append([]llmclient.Invocation(nil), f.invs...)
 }
 
-func (f *fakeChatCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
+func (f *fakeChatCompleter) Complete(_ context.Context, inv llmclient.Invocation) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.invs = append(f.invs, inv)
 	if len(f.turns) > 0 {
 		return f.turns[0].content, nil
 	}

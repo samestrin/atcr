@@ -225,4 +225,17 @@ func TestRunDebate_ResponseFormatJudgeSeatOnly(t *testing.T) {
 		assert.Empty(t, got[0], "the same declared agent sends nothing when cast as proposer")
 		assert.Empty(t, got[2], "the undeclared judge sends nothing")
 	})
+
+	// A non-FC judge goes through the engine's single-shot Complete path, not the
+	// tool loop — the gate must hold there too, or a declared non-FC judge would
+	// silently lose its JSON-object reply shape.
+	t.Run("non-FC seats (single-shot Complete path)", func(t *testing.T) {
+		c := fcCast()
+		c.Proposer.Config.SupportsFC = false
+		c.Challenger.Config.SupportsFC = false
+		c.Judge.Config.SupportsFC = false
+		c.Proposer, c.Challenger, c.Judge = declare(c.Proposer), declare(c.Challenger), declare(c.Judge)
+		assert.Equal(t, []string{"", "", jo}, judgeSeatResponseFormats(t, c),
+			"every seat on the single-shot path: only the judge-labeled seat sends response_format")
+	})
 }
