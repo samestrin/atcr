@@ -216,6 +216,10 @@ func TestIsNoFindings_AcceptsCleanSlips(t *testing.T) {
 		"NO FINDINGS HERE", "NO FINDINGSX", "[]x", "[1]", `{"findings":[{}]}`, `{"findings":[],"x":1}`,
 		"No findings are present; all claims are verified.", "NO FINDINGS\nbut see line 3", "```json\n```", "{}",
 		"```\nNO FINDINGS\n``` but a.go:3 has a nil deref", "```HIGH|a.go:1|nil deref|f\nNO FINDINGS",
+		// A marker of the other character or a shorter run does not close the
+		// open fence, so the fence line after it is content inside the fence,
+		// not a fresh opener that would be dropped.
+		"```\nNO FINDINGS\n~~~\n``` a=b\n```", "````\nNO FINDINGS\n```\n``` a=b\n````",
 	} {
 		assert.False(t, IsNoFindings(in), "%q must not count as clean", in)
 	}
