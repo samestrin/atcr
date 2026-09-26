@@ -123,8 +123,9 @@ func TestChat_ResponseFormatPresentWhenDeclared(t *testing.T) {
 	assert.Contains(t, body, wantResponseFormat)
 }
 
-// AC 02-03 Edge Cases 1-2: both request paths carry the same wire shape when
-// declared and neither carries it when unset, so the two structs cannot drift.
+// AC 02-03 Edge Case 1: both request paths carry the same wire shape when
+// declared, so the two structs cannot drift. (The unset half lives in the
+// AC-traceable named tests below.)
 func TestResponseFormat_RoundTripSymmetry(t *testing.T) {
 	declared := Invocation{Model: "m", ResponseFormat: "json_object"}
 	fromComplete := responseFormatRe.FindString(captureComplete(t, declared))
