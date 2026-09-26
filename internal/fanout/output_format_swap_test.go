@@ -366,6 +366,10 @@ func TestRenderedPayloadStart(t *testing.T) {
 
 	// A prompt that does not match its template yields 0, so the swap only appends.
 	assert.Equal(t, 0, renderedPayloadStart("unrelated", "## Payload\n{{.Payload}}", ctx))
+
+	// A template that fails to render (payload.RenderPrompt error) fails safe to 0
+	// as well — a corrupted template must never send the swap searching the prompt.
+	assert.Equal(t, 0, renderedPayloadStart("anything", "## Payload\n{{.Payload", ctx))
 }
 
 // A template that renders the payload through an escaper (printf %q) must not
