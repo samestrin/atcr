@@ -150,13 +150,59 @@ func TestRun_ResponseFormatProbeWarnsWhenTheProviderRejectsTheField(t *testing.T
 	assert.NotContains(t, a.ResponseFormatDetail, rfDoctorKey, "details pass through scrubCredentials")
 }
 
-func TestRun_ResponseFormatProbeWarnsOnATransportError(t *testing.T) {
-	a, _ := runDeclared(t, false, func(llmclient.Invocation, []llmclient.Message, []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
-		return nil, errors.New("connection reset")
+// A rate limit, a 5xx, a timeout, or a transport error says nothing about whether the
+// field is honored. Calling it not_honored would tell the operator to drop a working
+// declaration, and quota-limited upstreams make a 429 on this second call likely.
+func TestRun_ResponseFormatProbeIsUnverifiedOnATransientError(t *testing.T) {
+	cases := map[string]error{
+		"rate limited": &llmclient.HTTPStatusError{Status: 429, Snippet: "quota"},
+		"server error": &llmclient.HTTPStatusError{Status: 503, Snippet: "upstream down"},
+		"deadline":     context.DeadlineExceeded,
+		"transport":    errors.New("connection reset"),
+	}
+	for name, callErr := range cases {
+		t.Run(name, func(t *testing.T) {
+			a, _ := runDeclared(t, false, func(llmclient.Invocation, []llmclient.Message, []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+				return nil, callErr
+			})
+
+			assert.Equal(t, StatusOK, a.Status)
+			assert.Equal(t, ResponseFormatUnverified, a.ResponseFormatStatus)
+			assert.NotContains(t, a.ResponseFormatDetail, "rejected")
+		})
+	}
+}
+
+// A definite failure outranks an inconclusive one: the operator must hear about it.
+func TestRun_NotHonoredOutranksUnverifiedAcrossProbes(t *testing.T) {
+	a, _ := runDeclared(t, true, func(inv llmclient.Invocation, msgs []llmclient.Message, tools []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+		if len(tools) > 0 {
+			return rejected(400, "tools and response_format cannot be combined")(inv, msgs, tools)
+		}
+		return rejected(429, "quota")(inv, msgs, tools)
 	})
 
 	assert.Equal(t, ResponseFormatNotHonored, a.ResponseFormatStatus)
-	assert.Contains(t, a.ResponseFormatDetail, "connection reset")
+}
+
+// JSON mode held but the object carries no readable findings: the detail must not
+// blame response_format for a contract the model ignored.
+func TestRun_ResponseFormatProbeDoesNotBlameTheFieldForAWrongShapeObject(t *testing.T) {
+	a, _ := runDeclared(t, false, reply(`{"findings":[{"severity":"major","problem":"x"}]}`))
+
+	assert.Equal(t, ResponseFormatNotHonored, a.ResponseFormatStatus)
+	assert.NotContains(t, a.ResponseFormatDetail, "ignored response_format")
+}
+
+// The prompt names the severity values, or a model under JSON mode can answer with a
+// severity the parser drops and fail the probe for a reason unrelated to the field.
+func TestRun_ResponseFormatPromptNamesTheSeverityValues(t *testing.T) {
+	_, fake := runDeclared(t, false, reply(oneFinding))
+
+	calls := fake.chatCalls()
+	require.NotEmpty(t, calls)
+	require.NotNil(t, calls[0].msgs[0].Content)
+	assert.Contains(t, *calls[0].msgs[0].Content, "CRITICAL, HIGH, MEDIUM, LOW")
 }
 
 // An undeclared agent pays nothing and reports nothing new.
@@ -323,6 +369,17 @@ func TestRenderTable_NotHonoredRowNamesResponseFormat(t *testing.T) {
 
 	assert.Contains(t, buf.String(), "response_format not honored")
 	assert.Contains(t, buf.String(), "reply was fenced")
+}
+
+func TestRenderTable_UnverifiedRowIsLabelledUnverified(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, RenderTableError(&buf, &Report{Agents: []AgentResult{{
+		Agent: "a", Provider: "p", Model: "m", Status: StatusOK,
+		ResponseFormatStatus: ResponseFormatUnverified, ResponseFormatDetail: "HTTP 429",
+	}}}))
+
+	assert.Contains(t, buf.String(), "response_format unverified: HTTP 429")
+	assert.NotContains(t, buf.String(), "not honored")
 }
 
 func TestRenderTable_HonoredRowAddsNothing(t *testing.T) {

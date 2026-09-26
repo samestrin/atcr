@@ -126,12 +126,16 @@ const maxTableDetailBytes = 160
 // nothing.
 func diagnostic(a AgentResult) string {
 	d := endpointDiagnostic(a)
-	if a.ResponseFormatStatus == ResponseFormatNotHonored {
+	label := map[string]string{
+		ResponseFormatNotHonored: "response_format not honored: ",
+		ResponseFormatUnverified: "response_format unverified: ",
+	}[a.ResponseFormatStatus]
+	if label != "" {
 		detail := clampRunes(a.ResponseFormatDetail, maxTableDetailBytes)
 		if len(detail) < len(a.ResponseFormatDetail) {
 			detail += "… (--json for full text)"
 		}
-		rf := "response_format not honored: " + detail
+		rf := label + detail
 		if d == "" {
 			return rf
 		}
