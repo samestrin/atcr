@@ -34,6 +34,10 @@ type chatCall struct {
 	inv   llmclient.Invocation
 	msgs  []llmclient.Message
 	tools []llmclient.ToolDef
+	// ctxHasDeadline records that the caller forwarded a context carrying a
+	// deadline, so a test can pin the per-call timeout the probe is required to
+	// apply.
+	ctxHasDeadline bool
 }
 
 func newFake(fn func(inv llmclient.Invocation) (string, error)) *fakeCompleter {
@@ -47,9 +51,9 @@ func (f *fakeCompleter) Complete(_ context.Context, inv llmclient.Invocation) (s
 	return f.fn(inv)
 }
 
-func (f *fakeCompleter) Chat(_ context.Context, inv llmclient.Invocation, msgs []llmclient.Message, tools []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+func (f *fakeCompleter) Chat(ctx context.Context, inv llmclient.Invocation, msgs []llmclient.Message, tools []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
 	f.mu.Lock()
-	f.chats = append(f.chats, chatCall{inv: inv, msgs: msgs, tools: tools})
+	f.chats = append(f.chats, chatCall{inv: inv, msgs: msgs, tools: tools, ctxHasDeadline: ctx != nil && func() bool { _, ok := ctx.Deadline(); return ok }()})
 	fn := f.chatFn
 	f.mu.Unlock()
 	if fn == nil {

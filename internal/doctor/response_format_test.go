@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/registry"
@@ -73,6 +74,16 @@ func TestRun_ResponseFormatProbePassesOnABareFindingsObject(t *testing.T) {
 	assert.Equal(t, registry.ResponseFormatJSONObject, calls[0].inv.ResponseFormat,
 		"the probe must send the invocation it claims to test")
 	assert.Empty(t, calls[0].tools)
+	// The probe must reproduce the invocation it speaks for: the run's output cap
+	// and the endpoint identity ride along, not just the response_format field —
+	// otherwise deleting the cap (an uncapped probe) or the endpoint routing passes
+	// the suite while the probe stops being evidence about the real call.
+	require.NotNil(t, calls[0].inv.MaxTokens, "the probe carries the run's output cap")
+	assert.Equal(t, 2048, *calls[0].inv.MaxTokens)
+	assert.Equal(t, "m", calls[0].inv.Model)
+	assert.Equal(t, "https://api.example/v1", calls[0].inv.BaseURL)
+	assert.Equal(t, rfDoctorEnvK, calls[0].inv.APIKeyEnv,
+		"the probe routes through the target's credential env var, as the client resolves it")
 	var mentionsJSON bool
 	for _, m := range calls[0].msgs {
 		if m.Content != nil && strings.Contains(*m.Content, "JSON") {
@@ -80,6 +91,22 @@ func TestRun_ResponseFormatProbePassesOnABareFindingsObject(t *testing.T) {
 		}
 	}
 	assert.True(t, mentionsJSON, "some providers reject json_object unless a message names JSON")
+}
+
+// The response_format probe applies the run's per-call timeout: a hung upstream
+// must yield an unverified verdict on a deadline, not stall the whole self-test.
+func TestRun_ResponseFormatProbeAppliesPerCallTimeout(t *testing.T) {
+	t.Setenv(rfDoctorEnvK, rfDoctorKey)
+	fake := newFake(markerOK)
+	fake.chatFn = reply(oneFinding)
+
+	Run(context.Background(), fake, declaredTarget(t, false),
+		Options{Nonce: testNonce, MaxTokens: 2048, Timeout: 5 * time.Second})
+
+	calls := fake.chatCalls()
+	require.Len(t, calls, 1)
+	assert.True(t, calls[0].ctxHasDeadline,
+		"the response_format probe must forward a context with the Options timeout deadline")
 }
 
 // The marker probe must not carry response_format: its "Reply with exactly" prompt
