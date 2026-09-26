@@ -337,11 +337,37 @@ func TestRenderedPayloadStart(t *testing.T) {
 	prompt := render(tmpl)
 	assert.Equal(t, strings.Index(prompt, "## Payload\n")+len("## Payload\n"), renderedPayloadStart(prompt, tmpl, ctx))
 
-	// A persona that never renders the payload has nothing to protect.
+	// A persona that never renders the payload fails safe to 0 (append-only): a
+	// missing marker is indistinguishable from an escaper having rewritten it, and
+	// len(prompt) would let the swap search the whole prompt including the diff.
 	tmpl = "## Output Format\nold\n"
 	prompt = render(tmpl)
-	assert.Equal(t, len(prompt), renderedPayloadStart(prompt, tmpl, ctx))
+	assert.Equal(t, 0, renderedPayloadStart(prompt, tmpl, ctx))
 
 	// A prompt that does not match its template yields 0, so the swap only appends.
 	assert.Equal(t, 0, renderedPayloadStart("unrelated", "## Payload\n{{.Payload}}", ctx))
+}
+
+// A template that renders the payload through an escaper (printf %q) must not
+// blind the payload locator: with the marker lost, the old len(prompt) fallback
+// let the swap search — and rewrite — the diff itself, so a diff carrying a
+// markdown "## Output Format" line (atcr's own docs do) reached the model with
+// its heading swapped out. The diff must reach the model unchanged.
+func TestRenderedPayloadStart_EscapedPayloadKeepsTheDiffWhole(t *testing.T) {
+	diff := "## Output Format\n+secret-line\n"
+	ctx := payload.PayloadContext{Payload: diff}
+	tmpl := "## Role\nr\n\n{{printf \"%q\" .Payload}}"
+	prompt, err := payload.RenderPrompt(tmpl, ctx)
+	require.NoError(t, err)
+
+	// End to end: a declared agent whose persona lacks the section, reviewing a
+	// diff that itself contains the heading, gets the shared block APPENDED —
+	// byte-for-byte prompt plus block — never a rewritten diff.
+	swapped, span := swapOutputFormatSectionWithSpan(prompt, renderedPayloadStart(prompt, tmpl, ctx))
+	assert.True(t, span.appended, "the swap must be append-only when the payload boundary cannot be trusted")
+	assert.Equal(t, prompt+"\n"+jsonObjectOutputFormat, swapped, "the render is untouched; the block is appended")
+	// The diff content survives verbatim in its escaped form — %q rewrites the
+	// newlines, but the heading clause and the secret line are still there for the
+	// model, and the shared block never displaced them.
+	assert.Contains(t, swapped, `## Output Format\n+secret-line\n`)
 }

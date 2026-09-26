@@ -128,14 +128,20 @@ func outputFormatHeadingAt(s string) int {
 }
 
 // payloadMarker stands in for the payload when renderedPayloadStart re-renders a
-// persona to find where its payload lands.
-const payloadMarker = "\x00atcr-payload-marker\x00"
+// persona to find where its payload lands. Printable and escaper-resistant: the
+// text/template escapers (%q, html, js, urlquery) wrap or leave alphanumeric
+// markers alone rather than rewriting them to something unfindable, so a persona
+// that transforms its payload still shows the marker core. The random-ish suffix
+// keeps the core out of honest persona text and real diffs.
+const payloadMarker = "atcr-payload-marker-v3x9q"
 
 // renderedPayloadStart returns where ctx.Payload begins in prompt, the render of
 // tmpl over ctx. It re-renders tmpl with a marker payload, since searching prompt
-// for the payload text can match the persona's own words first. It returns
-// len(prompt) when tmpl never renders the payload (nothing to protect), and 0
-// when the two renders disagree before the marker (the swap then only appends).
+// for the payload text can match the persona's own words first. It returns 0 — the
+// swap then only appends — whenever the marker cannot be found or the two renders
+// disagree before it: a missing marker is indistinguishable from a transform that
+// rewrote it, and falling back to len(prompt) would let the swap search (and
+// rewrite) the diff itself.
 func renderedPayloadStart(prompt, tmpl string, ctx payload.PayloadContext) int {
 	ctx.Payload = payloadMarker
 	marked, err := payload.RenderPrompt(tmpl, ctx)
@@ -144,7 +150,7 @@ func renderedPayloadStart(prompt, tmpl string, ctx payload.PayloadContext) int {
 	}
 	k := strings.Index(marked, payloadMarker)
 	if k < 0 {
-		return len(prompt)
+		return 0
 	}
 	if k > len(prompt) || prompt[:k] != marked[:k] {
 		return 0
