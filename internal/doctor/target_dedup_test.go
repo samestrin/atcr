@@ -165,6 +165,21 @@ func TestResolve_ToolsWithoutFunctionCallingIsNotAToolLoop(t *testing.T) {
 	assert.False(t, res.Targets[0].Tools)
 }
 
+// The key must use the DERIVED tools value (Tools && SupportsFC), not raw Tools:
+// a tools:true-without-FC agent and a plain agent make identical calls (single-shot,
+// same fields), so they must share one target — keying on raw Tools would split them
+// into duplicate probes and re-file the 429 self-harm D2 prevents.
+func TestResolve_DerivedToolsValueJoinsTheKey(t *testing.T) {
+	res := declaredRegistry(t, map[string]registry.AgentConfig{
+		"a": {ResponseFormat: registry.ResponseFormatJSONObject, Tools: true},
+		"b": {ResponseFormat: registry.ResponseFormatJSONObject},
+	})
+
+	require.Len(t, res.Targets, 1, "identical single-shot invocations share one target")
+	assert.False(t, targetForAgent(t, res, "a").Tools)
+	assert.False(t, targetForAgent(t, res, "b").Tools)
+}
+
 // The Tools segment joins the key only for declared agents. Undeclared agents dedupe
 // exactly as before this field existed, so doctor output does not change for agents
 // that never opted in.
