@@ -422,3 +422,24 @@ func TestParseModelOutput_LongerFenceQuotesAShorterJSONBlock(t *testing.T) {
 	require.Len(t, got, 1)
 	assert.Equal(t, "real.go", got[0].File)
 }
+
+// TD-048 (partial): a ~~~ fence quotes its content like a backtick fence, and
+// closes only on a tilde marker at least as long as its opener (CommonMark).
+func TestParseModelOutput_TildeFenceIsAQuote(t *testing.T) {
+	cases := []struct {
+		name, content string
+		want          []Finding
+	}{
+		{"json array in a tilde fence", "~~~\n[" + objA + "]\n~~~\n", nil},
+		{"tilde json fence is a quote, not output", "~~~json\n[" + objA + "]\n~~~\n", nil},
+		{"pipe row in a tilde fence", "~~~\nHIGH|ex.go:1|p|f|c|1|e\n~~~\n" + jsonBlock("["+objB+"]"), []Finding{findB}},
+		{"a backtick marker does not close a tilde fence", "~~~\n```\n[" + objA + "]\n```\n~~~\n" + jsonBlock("["+objB+"]"), []Finding{findB}},
+		{"a shorter tilde marker does not close", "~~~~\n~~~\n[" + objA + "]\n~~~~\n" + jsonBlock("["+objB+"]"), []Finding{findB}},
+		{"a tilde marker does not close a json block", "```json\n[" + objA + ",\n~~~\n" + objB + "]\n```\n", []Finding{findA, findB}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, ParseModelOutput([]byte(c.content)))
+		})
+	}
+}

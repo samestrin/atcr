@@ -915,3 +915,27 @@ func TestFenceMask_LongerFenceQuotesAShorterFence(t *testing.T) {
 	assert.Equal(t, make([]bool, len(lines)), open, "the quoted ```json opens nothing")
 	assert.Equal(t, make([]bool, len(lines)), close)
 }
+
+// fenceMask and jsonFenceBounds read ~~~ fences as the producing parser does: a
+// quote closed only by a tilde marker at least as long as its opener.
+func TestFenceMask_TildeFence(t *testing.T) {
+	lines := []string{
+		"~~~",
+		"```json",
+		`[{"severity":"HIGH","file_line":"ex.go:1","problem":"p","fix":"f","category":"c","est_minutes":1,"evidence":"e"}]`,
+		"```",
+		"~~~",
+		"LOW|real.go:2|p|f|c|1|e",
+	}
+	got := stream.ParseModelOutput([]byte(strings.Join(lines, "\n")))
+	require.Len(t, got, 1)
+	assert.Equal(t, "real.go", got[0].File)
+
+	strict, released, balanced := fenceMask(lines)
+	assert.Equal(t, []bool{false, true, true, true, false, false}, strict)
+	assert.Equal(t, strict, released)
+	assert.Equal(t, []bool{true, false, false, false, true, false}, balanced)
+	open, close := jsonFenceBounds(lines)
+	assert.Equal(t, make([]bool, len(lines)), open)
+	assert.Equal(t, make([]bool, len(lines)), close)
+}
