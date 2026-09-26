@@ -309,7 +309,7 @@ The skill-driven host reviewer (atcr v0.4.0 or later) writes only `sources/host/
 
 ### Which file atcr reads
 
-Every atcr reader picks a directory's file with one rule: `findings.toon` when it is a regular file, else `findings.txt`. A `findings.toon` that is a symlink, FIFO, device, or directory counts as absent. The readers that follow this rule are reconcile source discovery, the pool rebuild in `atcr review --resume`, `atcr history`, the audit capture, and `atcr benchmark` (both the case run and the repo-state reader). `atcr history`, the audit capture, and `atcr benchmark` read `sources/pool/findings.toon` first and fall back to `findings.txt` only when no regular-file `findings.toon` exists.
+Every atcr reader picks a directory's file with one rule: `findings.toon` when it is a regular file, else `findings.txt` when it is a regular file. A findings file that is a symlink, FIFO, device, or directory counts as absent, and atcr prints a warning on stderr when it skips one, because atcr never writes one. The readers that follow this rule are reconcile source discovery, the pool rebuild in `atcr review --resume`, `atcr history`, the audit capture, and `atcr benchmark` (both the case run and the repo-state reader). `atcr history`, the audit capture, and `atcr benchmark` read `sources/pool/findings.toon` first and fall back to `findings.txt` only when no regular-file `findings.toon` exists.
 
 The choice is final. When atcr picks `findings.toon` and it does not parse, the reader reports an error; it never retries `findings.txt`, because that would hide a v2 writer bug behind lossy data. A file named `findings.toon` must carry the v2 header; a v1 header there is an error.
 
