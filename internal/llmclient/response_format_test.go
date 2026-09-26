@@ -132,9 +132,9 @@ func TestResponseFormat_RoundTripSymmetry(t *testing.T) {
 	require.NotEmpty(t, fromComplete)
 	assert.Equal(t, fromComplete, fromChat)
 
-	unset := Invocation{Model: "m"}
-	assert.NotContains(t, captureComplete(t, unset), "response_format")
-	assert.NotContains(t, captureChat(t, unset), "response_format")
+	// The unset half is pinned by the AC-traceable named tests below
+	// (TestComplete_ResponseFormatOmittedWhenUnset / TestChat_ResponseFormatOmittedWhenUnset);
+	// duplicating it here tripled the HTTP-server round-trips for one property.
 }
 
 // AC 02-01 Edge Case 1: the wire layer does not police the value (validation
