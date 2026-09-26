@@ -1,8 +1,14 @@
 package fanout
 
 import (
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -222,4 +228,38 @@ func TestBuildFallbackAgent_ResponseFormatNotInheritedFromPrimary(t *testing.T) 
 				"the fallback reads its own declaration, never the primary's")
 		})
 	}
+}
+
+// [Story 03 / AC 03-01] Wire proof for the undeclared pair: the fallback's
+// MARSHALED request carries no response_format key at all — not merely an empty
+// value — so a provider that treats an explicit null differently from an absent
+// field cannot see it. Drives the real llmclient marshal path with the built
+// fallback's actual Invocation.
+func TestBuildFallbackAgent_UndeclaredFallbackWireRequestCarriesNoResponseFormat(t *testing.T) {
+	cfg := toolCfg()
+	payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
+	primary, _, err := buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+	require.NoError(t, err)
+	fb, _, err := buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
+	require.NoError(t, err)
+	require.Empty(t, fb.Invocation.ResponseFormat, "precondition: the neither-declares case")
+
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"ok"}}]}`)
+	}))
+	defer srv.Close()
+	t.Setenv("ATCR_TEST_KEY", "sk-test")
+
+	inv := fb.Invocation
+	inv.BaseURL = srv.URL + "/v1"
+	client := llmclient.New(llmclient.WithHTTPClient(srv.Client()), llmclient.WithRetry(1, time.Millisecond, 1))
+	msg := "hi"
+	_, err = client.Chat(context.Background(), inv, []llmclient.Message{{Role: "user", Content: &msg}}, nil)
+	require.NoError(t, err)
+
+	assert.NotContains(t, gotBody, "response_format",
+		"the undeclared fallback's wire body carries no response_format key")
 }
