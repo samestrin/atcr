@@ -25,9 +25,9 @@ const (
 
 // Source is a discovered reconcile source: the immediate-child name under
 // sources/ (e.g. "pool", "host") and the findings parsed from the leaf
-// findings.txt files beneath it. Skipped records malformed rows so the caller
-// can warn without failing the run. SkippedFiles records whole findings.txt
-// files dropped on a read error or bad header, so the run summary can report
+// findings files (findings.toon or findings.txt) beneath it. Skipped records
+// malformed rows so the caller can warn without failing the run. SkippedFiles
+// records whole findings files dropped on a read error or bad header, so the run summary can report
 // the degradation (skipped_sources in summary.json) instead of losing it to a
 // stderr-only warning.
 type Source struct {
@@ -39,16 +39,17 @@ type Source struct {
 
 // Discover finds reconcile sources under sourcesDir using leaf-preference: each
 // immediate child directory (except reconciled/) is a source, and within it the
-// findings come from the deepest findings.txt files — a findings.txt is an input
-// only when no subdirectory beneath it also has one. This makes the per-agent
-// pool/raw/agent/<name>/findings.txt files the pool's inputs while a merged
-// findings.txt written at the source root is ignored (never double-counted), and
-// reads host/findings.txt directly. allow, when non-empty, restricts which
-// immediate children are read (AC 01-05 Scenario 7). reconciled/ is never an
+// findings come from the deepest findings files — a directory holding a
+// findings.toon or findings.txt is an input only when no subdirectory beneath it
+// holds either, and it is read through stream.SelectFindingsFile (findings.toon,
+// else findings.txt). This makes the per-agent pool/raw/agent/<name>/ files the
+// pool's inputs while the merged files written at the source root are ignored
+// (never double-counted), and reads host/ directly. allow, when non-empty,
+// restricts which immediate children are read (AC 01-05 Scenario 7). reconciled/ is never an
 // input. A file with a bad/missing header — or an unreadable subtree, or a
-// non-regular findings.txt (symlink/FIFO/device) — is skipped with a warning
+// non-regular findings file (symlink/FIFO/device) — is skipped with a warning
 // rather than aborting the whole reconcile (sources/ is an open extension point).
-// Only immediate-child directories are sources; a findings.txt placed directly
+// Only immediate-child directories are sources; a findings file placed directly
 // under sources/ (not inside a child dir) is not a source and is ignored.
 func Discover(sourcesDir string, allow []string) ([]Source, error) {
 	entries, err := os.ReadDir(sourcesDir)

@@ -673,10 +673,10 @@ func readFileLimited(path string, limit int64) ([]byte, error) {
 	return os.ReadFile(path)
 }
 
-// RebuildPool recomputes the merged pool findings.txt and summary.json from every
+// RebuildPool recomputes the merged pool findings files and summary.json from every
 // per-agent artifact currently under poolDir/raw/agent (completed + newly
 // resumed), returning the aggregate Summary and the union of per-agent statuses.
-// roster supplies the manifest's agent ordering so the merged findings.txt rows
+// roster supplies the manifest's agent ordering so the merged findings rows
 // follow the same order as a fresh WritePool (which iterates results in roster
 // order); without it, os.ReadDir would yield lexicographic order and a resumed
 // review's findings.txt would differ from an equivalent fresh run. An agent in
@@ -752,7 +752,8 @@ func RebuildPool(ctx context.Context, poolDir string, roster []string) (Summary,
 		}
 		pr, perr := stream.ParseFindingsFile(fpath, fdata)
 		if perr != nil {
-			// The findings.txt exists but does not parse: silently dropping it
+			// The selected findings file (findings.toon or findings.txt) exists
+			// but does not parse: silently dropping it
 			// would let the resumed aggregate diverge from the original run
 			// (short summary.TotalFindings, missing merged rows) with no signal.
 			// Fail loudly for OK agents; tolerate for already-failed agents
