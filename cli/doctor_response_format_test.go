@@ -43,9 +43,9 @@ func jsonModeIgnoringProvider(t *testing.T) *httptest.Server {
 }
 
 // unverifiedProvider answers the marker probe normally but rejects every other
-// (response_format) request with 503 — what a rate-limited or erroring upstream
-// does to a probe that can reach no verdict.
-func unverifiedProvider(t *testing.T) *httptest.Server {
+// (response_format) request with failStatus — what a rate-limited (429) or
+// erroring (5xx) upstream does to a probe that can reach no verdict.
+func unverifiedProvider(t *testing.T, failStatus int) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -57,11 +57,47 @@ func unverifiedProvider(t *testing.T) *httptest.Server {
 			_ = json.NewEncoder(w).Encode(resp)
 			return
 		}
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = io.WriteString(w, `{"error":{"message":"simulated upstream 503"}}`)
+		w.WriteHeader(failStatus)
+		_, _ = io.WriteString(w, `{"error":{"message":"simulated upstream failure"}}`)
 	}))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// setupDeclaredDoctorEnv is setupDoctorEnv plus a response_format declaration on
+// the single agent — the shared prelude of the declared-roster CLI cases.
+func setupDeclaredDoctorEnv(t *testing.T, baseURL string) {
+	t.Helper()
+	setupDoctorEnv(t, baseURL)
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	regPath := filepath.Join(home, ".config", "atcr", "registry.yaml")
+	data, err := os.ReadFile(regPath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(regPath, append(data, []byte("    response_format: json_object\n")...), 0o644))
+	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
+}
+
+// An unverified agent (429 on the probe) must stay OUT of the "drop the
+// declaration" warning: a 429 says nothing about the declaration, and telling the
+// operator to drop a working declaration over a rate limit is exactly wrong. This
+// also pins the human warnings as stderr-only (the merged-stream execute helper
+// cannot see that) and out of --json.
+func TestDoctor_UnverifiedAgentIsNotToldToDropItsDeclaration(t *testing.T) {
+	srv := unverifiedProvider(t, http.StatusTooManyRequests)
+	setupDeclaredDoctorEnv(t, srv.URL)
+
+	stdout, stderr, err := executeSplit(t, "doctor")
+	require.NoError(t, err)
+	assert.Contains(t, stderr, "doctor: WARNING — response_format unverified:")
+	assert.NotContains(t, stderr, "response_format not honored")
+	assert.NotContains(t, stdout, "doctor: WARNING — response_format not honored")
+	assert.NotContains(t, stdout, "doctor: WARNING — response_format unverified")
+
+	// --json consumers read structured fields, never the human warning lines.
+	jsonOut, err := execute(t, "doctor", "--json")
+	require.NoError(t, err)
+	assert.NotContains(t, jsonOut, "doctor: WARNING")
 }
 
 // A declared agent whose probe ends ResponseFormatUnverified gets its own stderr
@@ -70,15 +106,8 @@ func unverifiedProvider(t *testing.T) *httptest.Server {
 // declaration. Without it a CI log scanner reading the one-line summary sees a
 // clean run even though response_format was never verified.
 func TestDoctor_WarnsWhenResponseFormatIsUnverified(t *testing.T) {
-	srv := unverifiedProvider(t)
-	setupDoctorEnv(t, srv.URL)
-	home, err := os.UserHomeDir()
-	require.NoError(t, err)
-	regPath := filepath.Join(home, ".config", "atcr", "registry.yaml")
-	data, err := os.ReadFile(regPath)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(regPath, append(data, []byte("    response_format: json_object\n")...), 0o644))
-	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
+	srv := unverifiedProvider(t, http.StatusServiceUnavailable)
+	setupDeclaredDoctorEnv(t, srv.URL)
 
 	stdout, stderr, err := executeSplit(t, "doctor")
 	require.NoError(t, err, "an unverified probe never fails the exit code")
