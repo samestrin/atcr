@@ -420,13 +420,15 @@ func wantHeaders(cols int) string {
 func fieldsToFinding(f []string, cols int) Finding {
 	file, line := splitFileLine(f[1])
 	fnd := Finding{
-		Severity:   f[0],
-		File:       file,
-		Line:       line,
-		Problem:    f[2],
-		Fix:        f[3],
-		Category:   f[4],
-		EstMinutes: atoiOrZero(f[5]),
+		Severity: f[0],
+		File:     file,
+		Line:     line,
+		Problem:  f[2],
+		Fix:      f[3],
+		Category: f[4],
+		// Same typo-guard clamp the JSON decode path applies (v2.go): a typo'd
+		// negative or absurd est_minutes from a model must not reach a Finding.
+		EstMinutes: max(0, min(atoiOrZero(f[5]), maxModelEstMinutes)),
 		Evidence:   f[6],
 	}
 	if cols == ReconciledColumns {

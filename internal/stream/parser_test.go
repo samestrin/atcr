@@ -330,3 +330,20 @@ func toLossyRow(f Finding, extra any) lossyRow {
 		Category: f.Category, EstMinutes: f.EstMinutes, Evidence: f.Evidence, Reviewer: f.Reviewer, Extra: extra,
 	}
 }
+
+// TD-020 extension: the est_minutes clamp must hold on the LEGACY PIPE branch
+// too, not only the JSON decode path (v2.go clamps EstMinutes to
+// 0..maxModelEstMinutes). A typo'd -5 or 1e11 in column 6 otherwise reaches a
+// Finding unclamped, contradicting maxModelEstMinutes' documented guarantee.
+func TestParseModelOutput_PipeRowsClampEstMinutes(t *testing.T) {
+	data := `MEDIUM|a.go:1|negative minutes|fix|correctness|-5|ev
+HIGH|b.go:2|absurd minutes|fix|correctness|99999999999|ev`
+	findings := ParseModelOutput([]byte(data))
+	require.Len(t, findings, 2)
+	for _, f := range findings {
+		assert.GreaterOrEqual(t, f.EstMinutes, 0, "%s: negative est_minutes must clamp to 0", f.File)
+		assert.LessOrEqual(t, f.EstMinutes, maxModelEstMinutes, "%s: est_minutes above the documented ceiling must clamp", f.File)
+	}
+	assert.Equal(t, 0, findings[0].EstMinutes, "-5 clamps to the 0 floor")
+	assert.Equal(t, maxModelEstMinutes, findings[1].EstMinutes, "99999999999 clamps to the ceiling")
+}
