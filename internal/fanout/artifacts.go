@@ -336,7 +336,7 @@ func findingsFor(r Result, changed payload.ChangedLines) findingsResult {
 	if r.parsedFindingCountSet && r.parsedFindingCount == 0 {
 		return findingsResult{}
 	}
-	findings := stream.ParseModelOutput([]byte(r.Content))
+	findings := r.parseFindings()
 	for i := range findings {
 		findings[i].Reviewer = r.Agent
 	}

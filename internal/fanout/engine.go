@@ -475,6 +475,25 @@ type Result struct {
 	// independently (TD-019).
 	parsedFindingCount    int
 	parsedFindingCountSet bool
+
+	// chunkContents holds the non-empty chunk outputs mergeResultGroup joined
+	// into Content. parseFindings parses each one on its own, so a chunk cut off
+	// inside a ```json block or an unfenced array cannot swallow the next
+	// chunk's findings (TD-048). Nil for an unchunked result.
+	chunkContents []string
+}
+
+// parseFindings returns the findings in r's model output: the union of each
+// chunk's findings for a merged result, else those in Content.
+func (r *Result) parseFindings() []stream.Finding {
+	if r.chunkContents == nil {
+		return stream.ParseModelOutput([]byte(r.Content))
+	}
+	var out []stream.Finding
+	for _, c := range r.chunkContents {
+		out = append(out, stream.ParseModelOutput([]byte(c))...)
+	}
+	return out
 }
 
 // ParsedFindingCount returns the number of parseable findings in r.Content,
@@ -486,7 +505,7 @@ func (r *Result) ParsedFindingCount() int {
 	if r.parsedFindingCountSet {
 		return r.parsedFindingCount
 	}
-	r.parsedFindingCount = len(stream.ParseModelOutput([]byte(r.Content)))
+	r.parsedFindingCount = len(r.parseFindings())
 	r.parsedFindingCountSet = true
 	return r.parsedFindingCount
 }

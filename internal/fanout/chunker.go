@@ -267,8 +267,10 @@ func promoteDiffTruncation(r Result) Result {
 }
 
 // mergeResultGroup folds N chunk results for one persona into a single result.
-// Content is the newline-joined non-empty chunk outputs — ParseModelOutput is
-// line-based, so this is exactly the union of every chunk's findings. Status is
+// Content is the newline-joined non-empty chunk outputs, kept for review.md;
+// findings are parsed per chunk from chunkContents (Result.parseFindings) and
+// unioned, because one parse of the joined text lets a chunk cut off inside a
+// ```json block or an unfenced array swallow the next chunk (TD-048). Status is
 // OK when ANY chunk succeeded (the persona produced findings from at least one
 // bin — a partial-success the reviewer legitimately contributes); otherwise it
 // is Timeout when any chunk timed out, else Failed, carrying the first error.
@@ -401,6 +403,7 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 		}
 	}
 	out.Content = strings.Join(contents, "\n")
+	out.chunkContents = contents
 	out.CacheHit = allCacheHit
 	// Model names the model that served most of the persona's successful chunks,
 	// not chunk 0's: a chunk 0 that failed over to a backup would otherwise record
