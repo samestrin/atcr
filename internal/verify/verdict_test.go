@@ -181,11 +181,36 @@ func TestParseVerdict_UnbalancedLeadingBraceFollowedByValidEnvelope(t *testing.T
 // a bare object with no fence and no prose, although the skeptic prompt asks for
 // a fenced one. The parser must read that shape, which is why this lane needs no
 // Output Format swap.
+//
+// TD (35.16.11.2.1): the JSON-mode-relevant case is a reasoning value that
+// itself embeds braces or a markdown fence — exactly what a brace matcher that
+// is NOT string-aware would truncate. The original bare {"verdict":"refuted",
+// "reasoning":"x"} form was already covered verbatim by the TestParseVerdict
+// table above and could not fail independently, so it only looked like evidence.
 func TestParseVerdict_BareJSONModeObject(t *testing.T) {
 	t.Parallel()
-	v, err := parseVerdict(`{"verdict":"refuted","reasoning":"x"}`)
-	require.NoError(t, err)
-	require.NotNil(t, v)
-	assert.Equal(t, verdictRefuted, v.Verdict)
-	assert.Equal(t, "x", v.Notes)
+	tests := []struct {
+		name     string
+		response string
+		notes    string
+	}{
+		// An UNBALANCED } inside the string: a brace matcher that is not
+		// string-aware closes the object early and json.Unmarshal fails. A
+		// balanced {"a":1} pair would survive that mutation (depth returns to 0
+		// at the real end either way), so the unbalanced form is the one that
+		// actually pins string-awareness.
+		{"reasoning embeds an unbalanced brace", `{"verdict":"refuted","reasoning":"a literal } inside prose does not end the object"}`, "a literal } inside prose does not end the object"},
+		{"reasoning embeds a markdown fence", "{\"verdict\":\"refuted\",\"reasoning\":\"the reply's ```json block is not the verdict\"}", "the reply's ```json block is not the verdict"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			v, err := parseVerdict(tt.response)
+			require.NoError(t, err)
+			require.NotNil(t, v)
+			assert.Equal(t, verdictRefuted, v.Verdict)
+			assert.Equal(t, tt.notes, v.Notes)
+		})
+	}
 }
