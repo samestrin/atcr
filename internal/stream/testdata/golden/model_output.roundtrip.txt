@@ -1,0 +1,4 @@
+# atcr-findings/v1
+HIGH|src/auth.go:42|token never expires|check expiry|security|15|expiresAt unread|greta
+MEDIUM|db.go:7|query built by concat|use params|security|20|see line 7/mallory|greta
+LOW|util.go:5|short row|||0||greta

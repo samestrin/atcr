@@ -427,7 +427,8 @@ type RunResult struct {
 	//
 	// The DEFINITION being unchanged is not the same as the two tiers' values being
 	// comparable, and an earlier version of this comment ran the two together. The
-	// categories CorroborationRate scores come from the merged findings.txt, written
+	// categories CorroborationRate scores come from the merged pool findings file
+	// (findings.toon, else findings.txt), written
 	// AFTER the Epic 14.1 gate: with the gate off (standard-v1, no range, fails
 	// open) that is everything the reviewer emitted; with it on (repo-state-v1) it is
 	// only the patch-anchored findings, so a reviewer that found the planted
@@ -547,7 +548,8 @@ type ReviewerCoverage struct {
 	// It is the COMPARABILITY tag for this row's CorroborationRate. That field's
 	// formula and denominator are identical on every suite — deliberately so, and
 	// unchanged here — but its INPUT is not: the categories it scores come from the
-	// merged findings.txt, which is written AFTER grounding. With the gate off
+	// merged pool findings file (findings.toon, else findings.txt), which is written
+	// AFTER grounding. With the gate off
 	// (standard-v1, which supplies no range, so the gate fails open) that is every
 	// finding the reviewer emitted; with the gate on (repo-state-v1) it is only the
 	// patch-anchored ones. A reviewer that found the planted out-of-diff defect and

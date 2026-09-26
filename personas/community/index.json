@@ -1,7 +1,7 @@
 [
   {
     "name": "anthony",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Claude Opus architecture and design-integrity reviewer (deep-reasoning lens)",
     "path": "anthony.yaml",
     "provider": "openrouter",
@@ -11,7 +11,7 @@
   },
   {
     "name": "sonny",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Claude Sonnet correctness and logic reviewer (balanced fast lens)",
     "path": "sonny.yaml",
     "provider": "openrouter",
@@ -21,7 +21,7 @@
   },
   {
     "name": "gene",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "GPT flagship API-contract and interface-compatibility reviewer",
     "path": "gene.yaml",
     "provider": "openrouter",
@@ -31,7 +31,7 @@
   },
   {
     "name": "milo",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "GPT-mini input-validation and edge-case reviewer (fast high-volume lens)",
     "path": "milo.yaml",
     "provider": "openrouter",
@@ -41,7 +41,7 @@
   },
   {
     "name": "gia",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Gemini Pro concurrency and data-race reviewer (large-context lens)",
     "path": "gia.yaml",
     "provider": "openrouter",
@@ -51,7 +51,7 @@
   },
   {
     "name": "flint",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Gemini Flash resource-lifecycle and leak reviewer (fast high-throughput lens)",
     "path": "flint.yaml",
     "provider": "openrouter",
@@ -61,7 +61,7 @@
   },
   {
     "name": "delia",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "DeepSeek algorithmic-complexity and efficiency reviewer (reasoning-tier lens)",
     "path": "delia.yaml",
     "provider": "openrouter",
@@ -71,7 +71,7 @@
   },
   {
     "name": "quinn",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Qwen type-safety and conversion reviewer (coding-tier lens)",
     "path": "quinn.yaml",
     "provider": "openrouter",
@@ -81,7 +81,7 @@
   },
   {
     "name": "celeste",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Kimi dependency and configuration reviewer (long-context lens)",
     "path": "celeste.yaml",
     "provider": "openrouter",
@@ -91,7 +91,7 @@
   },
   {
     "name": "glenna",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "GLM observability and diagnosability reviewer (structured-instruction lens)",
     "path": "glenna.yaml",
     "provider": "openrouter",
@@ -101,7 +101,7 @@
   },
   {
     "name": "gerald",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Gemma secrets and data-egress reviewer (local zero-egress lens)",
     "path": "gerald.yaml",
     "provider": "local",
@@ -111,7 +111,7 @@
   },
   {
     "name": "orson",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Qwen long-context duplication and repo-wide redundancy reviewer (local 256k lens)",
     "path": "orson.yaml",
     "provider": "local",
@@ -121,7 +121,7 @@
   },
   {
     "name": "liam",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Llama heavyweight invariant and state-consistency reviewer (local 70B lens)",
     "path": "liam.yaml",
     "provider": "local",
@@ -131,7 +131,7 @@
   },
   {
     "name": "simon",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Claude Sonnet anti-slop reviewer targeting AI-generated code bloat and over-engineering (balanced fast lens)",
     "path": "simon.yaml",
     "provider": "openrouter",

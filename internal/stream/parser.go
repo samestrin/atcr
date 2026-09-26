@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // Version is the required first non-blank line of every findings file. Unknown
@@ -24,12 +25,44 @@ const Version = "# atcr-findings/v1"
 // sentinel provides. Every persona prompt instructs it.
 const NoFindingsSentinel = "NO FINDINGS"
 
-// IsNoFindings reports whether a reviewer response is the explicit clean-review
-// sentinel. Matching is case-insensitive and ignores surrounding whitespace —
-// the sentinel is a model-produced token, so exact-byte matching would turn a
-// trailing newline into a spurious anomaly.
+// bareFenceRe matches a code-fence marker line that carries nothing but an
+// optional info word.
+var bareFenceRe = regexp.MustCompile("^\\s*(`{3,}|~{3,})[A-Za-z0-9_-]*\\s*$")
+
+// IsNoFindings reports whether a reviewer response says "clean" and nothing
+// else. The sentinel is model-produced, so the shapes a model slips into are
+// accepted too: any case, surrounding whitespace, trailing '.', ':' or '!', a
+// code fence around it, and an empty JSON array or {"findings":[]} (the clean
+// reply under a json_object response format). A response may repeat these, as
+// a chunked review does, but must hold nothing else: any other text means the
+// model said something no parser read, which is exactly what this check must
+// not call clean.
 func IsNoFindings(content string) bool {
-	return strings.EqualFold(strings.TrimSpace(content), NoFindingsSentinel)
+	var kept []string
+	for _, l := range strings.Split(content, "\n") {
+		// Only a bare marker line (```, ```json) is dropped; text sharing a
+		// fence line is content like any other.
+		if !bareFenceRe.MatchString(strings.TrimRight(l, "\r")) {
+			kept = append(kept, l)
+		}
+	}
+	s := strings.TrimSpace(strings.Join(kept, "\n"))
+	seen := false
+	for s != "" {
+		if n := len(NoFindingsSentinel); len(s) >= n && strings.EqualFold(s[:n], NoFindingsSentinel) {
+			s = strings.TrimLeft(s[n:], ".:!")
+		} else if n := emptyFindingsValue(s); n > 0 {
+			s = s[n:]
+		} else {
+			return false
+		}
+		if s != "" && !unicode.IsSpace(rune(s[0])) {
+			return false // "NO FINDINGSX", "[]x"
+		}
+		s = strings.TrimSpace(s)
+		seen = true
+	}
+	return seen
 }
 
 // versionPrefix matches any atcr-findings version header so a wrong version can
@@ -131,16 +164,57 @@ type ParseResult struct {
 const ModelColumns = 7 // SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
 
 // ParseModelOutput extracts findings from a model's raw review text. Unlike
-// ParseSource it requires no version header — models emit finding rows inline
-// among prose — and it reads exactly the 7 persona columns (SEVERITY..EVIDENCE).
-// Any 8th-or-later field a model emits is dropped, so a model can never
-// self-attribute a REVIEWER: the engine sets Finding.Reviewer from the agent
-// name afterward (TD-016). Non-severity-prefixed lines, blanks, and comments are
-// skipped; short rows are padded. The returned findings have an empty Reviewer.
+// ParseSource it requires no version header — models emit findings inline among
+// prose — and it never lets a model self-attribute a REVIEWER: the engine sets
+// Finding.Reviewer from the agent name afterward (TD-016). The returned findings
+// have an empty Reviewer.
+//
+// Two shapes are read, in Content order, in one forward pass:
+//
+//   - A fenced ```json block holding an array of finding objects — the shape
+//     persona prompts ask for. A chunked review joins several chunk outputs, so
+//     every such block is read and the findings are unioned. A cut-off block
+//     keeps every complete object and drops only the partial one (see
+//     decodeJSONValue). A bare, unfenced value outside any fence is read too,
+//     for a model (or one chunk) that forgot the fence. A value may also be a
+//     {"findings":[...]} wrapper or one finding object, the shapes a model
+//     slips into and the only shape a json_object response format allows.
+//   - A legacy 7-column pipe row, for custom personas that have not migrated:
+//     exactly the 7 persona columns (SEVERITY..EVIDENCE). An 8th-or-later field
+//     is folded into EVIDENCE, never dropped. Non-severity-prefixed lines,
+//     blanks, and comments are skipped; short rows are padded.
 func ParseModelOutput(data []byte) []Finding {
+	out, _ := scanModelOutput(data)
+	return out
+}
+
+// LineSpan is an inclusive range of line indexes into a text split on "\n".
+type LineSpan struct{ First, Last int }
+
+// BareValueSpans returns the lines of every unfenced JSON value ParseModelOutput
+// reads as findings, from its opening line through the last line the value
+// consumed. It is the same scan, so internal/reconcile can bound these values in
+// a narrative exactly where the parser read them.
+func BareValueSpans(data []byte) []LineSpan {
+	_, spans := scanModelOutput(data)
+	return spans
+}
+
+func scanModelOutput(data []byte) ([]Finding, []LineSpan) {
+	text := string(data)
+	lines := strings.Split(text, "\n")
 	var out []Finding
-	inFence := false
-	for _, raw := range strings.Split(string(data), "\n") {
+	var spans []LineSpan
+	inFence, inJSON := false, false
+	openMarker := "" // the open fence's opener, which only a closesFence line ends
+	fences := fenceOffsets(lines, len(text))
+	bareScanned := 0 // bytes scanned by failed bare-value attempts
+	bareEnd := 0     // byte offset just past the last bare value read
+	jsonStart := 0   // byte offset of the current ```json block's first content line
+	offset := 0      // byte offset of the current line
+	for i, raw := range lines {
+		lineStart := offset
+		offset += len(raw) + 1
 		line := strings.TrimRight(raw, "\r")
 		// A markdown code fence toggles "inside a fenced block" state. Rows a model
 		// quotes inside a fence — e.g. a sample findings table it shows while
@@ -148,13 +222,50 @@ func ParseModelOutput(data []byte) []Finding {
 		// a leading severity token and would otherwise parse as findings and inflate
 		// the count with rows whose cited files do not exist. Skip everything between
 		// fences. Mirrors internal/verify/syntaxguard's fence handling; a fence
-		// marker is a line whose first non-space content is a run of >=3 backticks.
-		if isFenceMarker(line) {
-			inFence = !inFence
+		// marker is a line whose first non-space content is a run of >=3 backticks
+		// or tildes.
+		// The one exception is a ```json fence: that is the output itself. As in
+		// CommonMark, a fence closes only on a marker of its own character (` or ~)
+		// at least as long as its opener, so a ```json example quoted inside a
+		// ````md or ~~~ fence stays quoted (TD-019, TD-048).
+		if isFenceMarker(line) && (!inJSON && !inFence || closesFence(line, openMarker)) {
+			switch {
+			case inJSON:
+				// A "```json" line here is the NEXT chunk's opener, not this block's
+				// closer: a chunk cut off inside its block never wrote a closer, and
+				// reading the opener as one would turn the next chunk's array into
+				// prose. It closes this block and opens the next.
+				out = append(out, decodeJSONFindings(text[jsonStart:lineStart])...)
+				inJSON, jsonStart, openMarker = isJSONFence(line), offset, line
+			case inFence:
+				inFence = false
+			case isJSONFence(line):
+				inJSON, jsonStart, openMarker = true, offset, line
+			default:
+				inFence, openMarker = true, line
+			}
 			continue
 		}
-		if inFence {
+		if inJSON || inFence {
 			continue
+		}
+		if lineStart < bareEnd {
+			spans[len(spans)-1].Last = i
+			continue // inside a bare value already read
+		}
+		if t := strings.TrimSpace(line); bareScanned < maxBareScanFactor*len(text) && (strings.HasPrefix(t, "[") || strings.HasPrefix(t, "{")) {
+			// A prose line like "[x](y)" decodes to nothing and is passed over. The
+			// candidate ends at the next fence marker, so recovering a cut-off value
+			// never reaches into a quoted example below it. Failed attempts are
+			// charged the bytes they could scan (maxBareScanFactor).
+			end := max(fences[i], lineStart)
+			if found, n := decodeJSONValue(text[lineStart:end]); len(found) > 0 {
+				out = append(out, found...)
+				bareEnd = lineStart + n
+				spans = append(spans, LineSpan{First: i, Last: i})
+				continue
+			}
+			bareScanned += end - lineStart
 		}
 		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -184,18 +295,47 @@ func ParseModelOutput(data []byte) []Finding {
 		}
 		out = append(out, fieldsToFinding(fields, PerSourceColumns))
 	}
-	return out
+	// An unterminated ```json fence runs to the end of Content: a response cut off
+	// mid-block still contributes its complete findings.
+	if inJSON {
+		out = append(out, decodeJSONFindings(text[min(jsonStart, len(text)):])...)
+	}
+	return out, spans
 }
 
 // isFenceMarker reports whether line opens or closes a markdown code fence: its
-// first non-space content is a run of three or more backticks (```lang, ```, or a
-// CommonMark 4+ backtick fence). Used by ParseModelOutput to toggle fenced-block
-// state so quoted example rows are not parsed as findings.
+// first non-space content is a run of three or more backticks or tildes
+// (```lang, ```, ~~~, or a longer CommonMark fence). Used by ParseModelOutput to
+// toggle fenced-block state so quoted example rows are not parsed as findings.
 func isFenceMarker(line string) bool {
-	return strings.HasPrefix(strings.TrimLeft(line, " \t"), "```")
+	_, n := fenceRun(line)
+	return n >= 3
 }
 
-// ParseSource parses a per-source (8-column) findings file.
+// fenceRun returns the character (` or ~) and length of the run that begins a
+// line after leading spaces and tabs; n is 0 when the line starts with neither.
+func fenceRun(line string) (c byte, n int) {
+	t := strings.TrimLeft(line, " \t")
+	if t == "" || (t[0] != '`' && t[0] != '~') {
+		return 0, 0
+	}
+	c = t[0]
+	for n < len(t) && t[n] == c {
+		n++
+	}
+	return c, n
+}
+
+// closesFence reports whether marker line may close the fence opener opened:
+// same character, and a run at least as long (CommonMark).
+func closesFence(line, opener string) bool {
+	c, n := fenceRun(line)
+	oc, on := fenceRun(opener)
+	return c == oc && n >= on
+}
+
+// ParseSource parses a per-source findings file: a v1 8-column pipe stream, or
+// a v2 document (TOON table or go-axi JSON envelope), chosen by the header.
 func ParseSource(data []byte) (ParseResult, error) {
 	return parse(data, PerSourceColumns)
 }
@@ -215,7 +355,8 @@ func parse(data []byte, cols int) (ParseResult, error) {
 	var res ParseResult
 	headerSeen := false
 
-	for i, raw := range strings.Split(string(data), "\n") {
+	lines := strings.Split(string(data), "\n")
+	for i, raw := range lines {
 		line := strings.TrimRight(raw, "\r")
 		if strings.TrimSpace(line) == "" {
 			continue
@@ -225,10 +366,12 @@ func parse(data []byte, cols int) (ParseResult, error) {
 			case strings.TrimSpace(line) == Version:
 				headerSeen = true
 				continue
+			case strings.TrimSpace(line) == VersionV2 && cols == PerSourceColumns:
+				return parseV2Body(strings.Join(lines[i+1:], "\n"))
 			case strings.HasPrefix(line, versionPrefix) && versionTokenRe.MatchString(strings.TrimSpace(strings.TrimPrefix(line, versionPrefix))):
-				return res, fmt.Errorf("%w: %q (want %q)", ErrUnknownVersion, strings.TrimSpace(line), Version)
+				return res, fmt.Errorf("%w: %q (want %s)", ErrUnknownVersion, strings.TrimSpace(line), wantHeaders(cols))
 			default:
-				return res, fmt.Errorf("%w: first line must be %q", ErrMissingHeader, Version)
+				return res, fmt.Errorf("%w: first line must be %s", ErrMissingHeader, wantHeaders(cols))
 			}
 		}
 		if strings.HasPrefix(line, "#") {
@@ -258,9 +401,18 @@ func parse(data []byte, cols int) (ParseResult, error) {
 	}
 
 	if !headerSeen {
-		return res, fmt.Errorf("%w: first line must be %q", ErrMissingHeader, Version)
+		return res, fmt.Errorf("%w: first line must be %s", ErrMissingHeader, wantHeaders(cols))
 	}
 	return res, nil
+}
+
+// wantHeaders names the headers a parser accepts, for error messages. Only the
+// per-source shape has a v2 form.
+func wantHeaders(cols int) string {
+	if cols == PerSourceColumns {
+		return fmt.Sprintf("%q or %q", Version, VersionV2)
+	}
+	return fmt.Sprintf("%q", Version)
 }
 
 // fieldsToFinding maps a padded column slice to a Finding. cols selects the

@@ -39,14 +39,18 @@ code with the out-of-scope category.
 - LOW: a pinning or documentation-hygiene improvement
 
 ## Output Format
-Emit ONLY findings, one per line, exactly 7 pipe-delimited columns:
+Emit ONLY findings, as one JSON array of finding objects inside a single ```json code fence. Each object has exactly these keys:
 
-SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
+"severity", "file_line", "problem", "fix", "category", "est_minutes", "evidence"
 
-Rules: replace literal | in any field with /; CATEGORY is one lowercase word; EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If nothing is wrong, emit exactly: NO FINDINGS
+Rules: severity is one of CRITICAL, HIGH, MEDIUM, LOW; file_line is FILE:LINE copied exactly from the diff; category is one lowercase word; est_minutes is an integer; evidence cites the offending code; quote code exactly as written, since JSON string escaping carries quotes, pipes, and newlines; no prose outside the fence. If nothing is wrong, send no code fence, no JSON block, and no empty array; reply with exactly this line and nothing else: NO FINDINGS
 
 Example:
-HIGH|go.mod:6|crypto bumped to an unvetted pre-release major (v2.0.0-rc1), a breaking API and supply-chain risk|Pin to the latest vetted stable release and review the v2 migration before adopting|dependency|20|github.com/example/crypto v2.0.0-rc1+incompatible
+```json
+[
+  {"severity": "HIGH", "file_line": "go.mod:6", "problem": "crypto bumped to an unvetted pre-release major (v2.0.0-rc1), a breaking API and supply-chain risk", "fix": "Pin to the latest vetted stable release and review the v2 migration before adopting", "category": "dependency", "est_minutes": 20, "evidence": "github.com/example/crypto v2.0.0-rc1+incompatible"}
+]
+```
 
 ## Payload
 Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mode: {{.PayloadMode}}.

@@ -122,45 +122,36 @@ func TestReviewerModel_FailedFallbackCaseIsNotCreditedToThePrimary(t *testing.T)
 		"no failover -> the configured model is still the right answer")
 	assert.Equal(t, "kimi-k3", reviewerModel(cfg, fanout.AgentStatus{Agent: "brad", Model: "kimi-k3"}),
 		"a usage-reported model still wins over everything")
-	// Superseded by TestReviewerModel_MixedChunkFailoverIsNotCreditedToThePrimary:
-	// the two fields disagreeing is the chunked-merge shape, where the usage-reported
-	// value is chunk 0's and the case was NOT served wholly by it. The precedence is
-	// inverted deliberately — see reviewerModel's doc.
-	assert.Equal(t, "llm-large", reviewerModel(cfg, fanout.AgentStatus{
+	// The two fields disagreeing is the chunked-merge shape. The merged Model is
+	// the modal serving model, the one production reconcile credits, so it wins
+	// here too — see TestReviewerModel_MixedChunkFailoverCreditsTheModalModel.
+	assert.Equal(t, "kimi-k3", reviewerModel(cfg, fanout.AgentStatus{
 		Agent: "brad", Model: "kimi-k3", FallbackUsed: true, FallbackModel: "llm-large",
-	}), "a disagreement between the two means chunk 0's model is not the whole story")
+	}), "a usage-reported model wins even beside a fallback on another chunk")
 }
 
-// A CHUNKED case whose slot partly failed over must not be credited to the primary.
+// A CHUNKED case whose slot partly failed over is credited to the model that
+// served most of its successful chunks.
 //
-// Under review_strategy chunked — the shipped setting — mergeResultGroup builds the
-// merged result as `out := g[0]` and never recomputes Model, while unioning
-// FallbackUsed and computing a modal FallbackModel across the chunks. A slot where
-// only SOME chunks fell back therefore reaches this function as Model="primary",
-// FallbackUsed=true, FallbackModel="backup". Returning Model unconditionally
-// publishes that whole case, and its summed token cost, under a model that served
-// only part of it — the exact attribution AC1 forbids, in the mode this project
-// actually runs.
-//
-// A mixed-chunk case cannot be attributed exactly without a per-chunk breakdown the
-// merge does not keep. FallbackUsed is the load-bearing signal: it says the primary
-// did not serve all of this, so the primary is the one answer known to be wrong.
-func TestReviewerModel_MixedChunkFailoverIsNotCreditedToThePrimary(t *testing.T) {
+// mergeResultGroup sets the merged Model to that modal serving model, and the
+// production scorecard credits AgentStatus.Model (scorecard.modelsFromAgents). The
+// benchmark must use the same rule, or one persona's 4-of-5-primary case lands on
+// the backup here and on the primary in reconcile, on the same leaderboard.
+func TestReviewerModel_MixedChunkFailoverCreditsTheModalModel(t *testing.T) {
 	cfg := benchCfg([3]string{"brad", "qwen3.8-max", "brad"})
 
 	mergedChunks := fanout.AgentStatus{
 		Agent:         "brad",
 		Status:        fanout.StatusOK,
-		Model:         "qwen3.8-max", // inherited from chunk 0, which the primary served
+		Model:         "qwen3.8-max", // modal: the primary served most chunks
 		FallbackUsed:  true,          // unioned: at least one chunk fell back
 		FallbackFrom:  "brad",
 		FallbackModel: "llm-large", // modal across the chunks that did
 	}
-	assert.Equal(t, "llm-large", reviewerModel(cfg, mergedChunks),
-		"a partly-failed-over chunked case must not publish under the primary that served only chunk 0")
+	assert.Equal(t, "qwen3.8-max", reviewerModel(cfg, mergedChunks),
+		"a mostly-primary chunked case is credited to the primary, as reconcile credits it")
 
-	// A slot that failed over WHOLLY reports the same model in both fields, so this
-	// rule cannot change its answer — the two shapes must stay distinguishable.
+	// A slot that failed over WHOLLY reports the same model in both fields.
 	assert.Equal(t, "llm-large", reviewerModel(cfg, fanout.AgentStatus{
 		Agent: "brad", Model: "llm-large", FallbackUsed: true, FallbackModel: "llm-large",
 	}), "a wholly-failed-over slot already agrees with itself")

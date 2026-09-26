@@ -267,8 +267,10 @@ func promoteDiffTruncation(r Result) Result {
 }
 
 // mergeResultGroup folds N chunk results for one persona into a single result.
-// Content is the newline-joined non-empty chunk outputs — ParseModelOutput is
-// line-based, so this is exactly the union of every chunk's findings. Status is
+// Content is the newline-joined non-empty chunk outputs, kept for review.md;
+// findings are parsed per chunk from chunkContents (Result.parseFindings) and
+// unioned, because one parse of the joined text lets a chunk cut off inside a
+// ```json block or an unfenced array swallow the next chunk (TD-048). Status is
 // OK when ANY chunk succeeded (the persona produced findings from at least one
 // bin — a partial-success the reviewer legitimately contributes); otherwise it
 // is Timeout when any chunk timed out, else Failed, carrying the first error.
@@ -300,6 +302,7 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	// produced. Reset so ParsedFindingCount recomputes from the merged content.
 	out.parsedFindingCount = 0
 	out.parsedFindingCountSet = false
+	out.UnparseableChunks = 0 // counted below over every chunk, g[0] included
 	// Chunk-level serving identity does not survive the collapse: the merged
 	// Result is a persona record, so inheriting chunk 0's served tag would name
 	// only its files as if they were the persona's reviewed set — beside a
@@ -320,7 +323,8 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	fallbackModelCounts := make(map[string]int)
 	var fallbackModelOrder []string
 	servedModelCounts := make(map[string]int)
-	servedModelFirst := make(map[string]int) // model key -> index of its first serving chunk
+	servedModelFirst := make(map[string]int)    // model key -> index of its first serving chunk
+	servedModelPrimary := make(map[string]bool) // model key -> some chunk reached it without failing over
 	var servedModelOrder []string
 	for i, r := range g {
 		if m := strings.TrimSpace(r.Model); r.Status == StatusOK && m != "" {
@@ -330,6 +334,7 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 				servedModelFirst[k] = i
 			}
 			servedModelCounts[k]++
+			servedModelPrimary[k] = servedModelPrimary[k] || !r.FallbackUsed
 		}
 		if strings.TrimSpace(r.Content) != "" {
 			contents = append(contents, r.Content)
@@ -372,6 +377,11 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 			out.ToolsDegradedReason = r.ToolsDegradedReason
 		}
 		out.ResponseTruncated = out.ResponseTruncated || r.ResponseTruncated
+		// Count every chunk that returned prose no parser could use; reading only
+		// g[0]'s flag hid a later chunk's failure from status.json.
+		if r.UnparseableResponse {
+			out.UnparseableChunks++
+		}
 		// FIRST NON-ZERO across the group, not g[0]'s. The diff-wide shed is a property
 		// of the PAYLOAD — every chunk of a persona is rendered from the same
 		// modePayload, so the value is identical wherever it appears and the first
@@ -398,12 +408,19 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 		}
 	}
 	out.Content = strings.Join(contents, "\n")
+	out.chunkContents = contents
+	// The persona-level flag keeps its documented meaning: content with zero
+	// parseable findings in total. One garbled chunk beside a chunk with findings
+	// is only counted, so the persona is not scored unparseable or dropped from
+	// trust for findings it did produce.
+	out.UnparseableResponse = out.UnparseableChunks > 0 && out.ParsedFindingCount() == 0
 	out.CacheHit = allCacheHit
 	// Model names the model that served most of the persona's successful chunks,
 	// not chunk 0's: a chunk 0 that failed over to a backup would otherwise record
 	// the backup for the whole persona, scoring its per-model trust prior against
-	// the wrong history. A disagreement still names ONE model (modal, first
-	// appearance on a tie) rather than none — cost pricing reads this field, and an
+	// the wrong history. A disagreement still names ONE model (modal; on a tie, a
+	// model some chunk reached without failing over, then first appearance) rather
+	// than none — cost pricing reads this field, and an
 	// empty model would price the persona's real tokens at $0. With no successful
 	// chunk, chunk 0's model stands.
 	//
@@ -411,10 +428,11 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	// as a matched set from one serving agent (see promoteRePackedDegradation), so
 	// they are taken from the same chunk. This runs before that promote so its
 	// budget-0 zeroing still has the last word.
-	bestServedIdx, bestServedCount := 0, 0
+	bestServedIdx, bestServedCount, bestServedPrimary := 0, 0, false
 	for _, k := range servedModelOrder {
-		if c := servedModelCounts[k]; c > bestServedCount {
-			bestServedCount = c
+		c, primary := servedModelCounts[k], servedModelPrimary[k]
+		if c > bestServedCount || (c == bestServedCount && primary && !bestServedPrimary) {
+			bestServedCount, bestServedPrimary = c, primary
 			bestServedIdx = servedModelFirst[k]
 		}
 	}

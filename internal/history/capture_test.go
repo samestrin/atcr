@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/stream"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -193,4 +194,92 @@ func TestRecordReview_LogsSkippedRows(t *testing.T) {
 func TestFindingID_PinnedDigests(t *testing.T) {
 	assert.Equal(t, "0fa44612c176f768", FindingID("internal/registry/load.go", 42, "unchecked error"))
 	assert.Equal(t, "6b12f4d562e6d5f9", FindingID("a.go", 1, ""))
+}
+
+// writePoolToon writes a v2 pool findings.toon beside whatever findings.txt the
+// test laid down.
+func writePoolToon(t *testing.T, reviewDir string, findings []stream.Finding) {
+	t.Helper()
+	poolDir := filepath.Join(reviewDir, "sources", "pool")
+	require.NoError(t, os.MkdirAll(poolDir, 0o755))
+	var b bytes.Buffer
+	require.NoError(t, stream.WriteSourceV2(&b, findings))
+	require.NoError(t, os.WriteFile(filepath.Join(poolDir, "findings.toon"), b.Bytes(), 0o644))
+}
+
+// With findings.toon present the ledger is built from the lossless bytes: the
+// "x | y" / "x / y" pair stays two findings, and the id hashes the real PROBLEM.
+// On findings.txt, escapeField would have merged them into one.
+func TestRecordReview_ReadsLosslessToon(t *testing.T) {
+	root := t.TempDir()
+	reviewDir := filepath.Join(root, "r")
+	writePoolFindings(t, reviewDir, "LOW|z.go:9|from txt|f|STYLE|1|e|kai\n")
+	writePoolToon(t, reviewDir, []stream.Finding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x | y", Category: "CORRECTNESS", Reviewer: "greta"},
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x / y", Category: "CORRECTNESS", Reviewer: "kai"},
+	})
+
+	histPath := filepath.Join(root, "h.jsonl")
+	n, err := RecordReview(histPath, reviewDir, time.Now())
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+	recs, err := Load(histPath)
+	require.NoError(t, err)
+	require.Len(t, recs, 2)
+	assert.Equal(t, FindingID("a.go", 1, "x | y"), recs[0].ID)
+}
+
+// A corrupt findings.toon is a parse error, never a quiet read of the .txt.
+func TestRecordReview_CorruptToonErrorsWithoutFallback(t *testing.T) {
+	root := t.TempDir()
+	reviewDir := filepath.Join(root, "r")
+	writePoolFindings(t, reviewDir, "HIGH|a.go:1|p|f|C|1|e|greta\n")
+	require.NoError(t, os.WriteFile(filepath.Join(reviewDir, "sources", "pool", "findings.toon"),
+		[]byte(stream.VersionV2+"\nnot a table\n"), 0o644))
+
+	histPath := filepath.Join(root, "h.jsonl")
+	n, err := RecordReview(histPath, reviewDir, time.Now())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parsing pool findings: ")
+	assert.Contains(t, err.Error(), filepath.Join(reviewDir, "sources", "pool", "findings.toon"), "the error names the file that failed (TD-032)")
+	assert.Zero(t, n)
+	assert.NoFileExists(t, histPath)
+}
+
+func TestRecordReview_UnreadableToonIsAReadError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode-0 file")
+	}
+	root := t.TempDir()
+	reviewDir := filepath.Join(root, "r")
+	writePoolFindings(t, reviewDir, "HIGH|a.go:1|p|f|C|1|e|greta\n")
+	writePoolToon(t, reviewDir, []stream.Finding{{Severity: "HIGH", File: "a.go", Line: 1, Reviewer: "greta"}})
+	toon := filepath.Join(reviewDir, "sources", "pool", "findings.toon")
+	require.NoError(t, os.Chmod(toon, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(toon, 0o644) })
+
+	_, err := RecordReview(filepath.Join(root, "h.jsonl"), reviewDir, time.Now())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "reading pool findings: ")
+}
+
+// A findings.toon-only pool is never "missing"; a symlinked findings.toon with
+// no findings.txt is.
+func TestRecordReview_ToonOnlyAndSymlinkToon(t *testing.T) {
+	root := t.TempDir()
+	reviewDir := filepath.Join(root, "r")
+	writePoolToon(t, reviewDir, []stream.Finding{{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Reviewer: "greta"}})
+	n, err := RecordReview(filepath.Join(root, "h.jsonl"), reviewDir, time.Now())
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+
+	linked := filepath.Join(root, "linked")
+	poolDir := filepath.Join(linked, "sources", "pool")
+	require.NoError(t, os.MkdirAll(poolDir, 0o755))
+	if err := os.Symlink(filepath.Join(reviewDir, "sources", "pool", "findings.toon"), filepath.Join(poolDir, "findings.toon")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	n, err = RecordReview(filepath.Join(root, "h2.jsonl"), linked, time.Now())
+	require.NoError(t, err)
+	assert.Zero(t, n, "a symlinked findings.toon is absent, so the pool is missing")
 }

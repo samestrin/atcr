@@ -743,9 +743,10 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// Persist this run's findings to the append-only history ledger (Epic 19.0)
 	// so `atcr history` can answer per-package trend queries later. It runs on
 	// every successful review — before the conditional in-process reconcile
-	// below — reading the pool findings.txt that WritePool always writes, and
-	// always targets <root>/.atcr/history regardless of --output-dir (the ledger
-	// is a repo-level accumulator, not part of the redirected review tree).
+	// below — reading the pool findings WritePool always writes (findings.toon,
+	// else findings.txt), and always targets <root>/.atcr/history regardless of
+	// --output-dir (the ledger is a repo-level accumulator, not part of the
+	// redirected review tree).
 	// Findings are appended to the current month's shard (Epic 19.4; relocated
 	// under .atcr/ by Epic 35.14), which both bounds per-file growth and lets a
 	// --since query skip whole months by filename. A history write failure is

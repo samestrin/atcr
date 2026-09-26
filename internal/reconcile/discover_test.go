@@ -3,6 +3,7 @@ package reconcile
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/stream"
@@ -201,4 +202,254 @@ func TestAllFindings_FlattensInSourceOrder(t *testing.T) {
 	require.Len(t, all, 2)
 	assert.Equal(t, "host", all[0].Reviewer)
 	assert.Equal(t, "greta", all[1].Reviewer)
+}
+
+// writeToon writes a v2 findings.toon at sourcesDir/relPath.
+func writeToon(t *testing.T, sourcesDir, relPath string, findings []stream.Finding) {
+	t.Helper()
+	var b strings.Builder
+	require.NoError(t, stream.WriteSourceV2(&b, findings))
+	full := filepath.Join(sourcesDir, relPath)
+	require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o755))
+	require.NoError(t, os.WriteFile(full, []byte(b.String()), 0o644))
+}
+
+var lossless = stream.Finding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x | y", Fix: "a | b", Category: "correctness", EstMinutes: 5, Evidence: "l1\nl2", Reviewer: "greta"}
+
+// AC 04-02 Scenario 1: one leaf holding both files yields the .toon findings
+// once, never the .txt as well.
+func TestDiscover_LeafWithBothFilesReadsToonOnce(t *testing.T) {
+	dir := t.TempDir()
+	writeToon(t, dir, "pool/raw/agent/greta/findings.toon", []stream.Finding{lossless})
+	writeFindings(t, dir, "pool/raw/agent/greta/findings.txt", "LOW|b.go:2|from txt|f|style|1|e|greta\n")
+
+	sources, err := Discover(dir, nil)
+	require.NoError(t, err)
+	pool, ok := sourceByName(sources, "pool")
+	require.True(t, ok)
+	assert.Equal(t, []stream.Finding{lossless}, pool.Findings)
+}
+
+func TestDiscover_ToonOnlyLeaf(t *testing.T) {
+	dir := t.TempDir()
+	writeToon(t, dir, "pool/raw/agent/greta/findings.toon", []stream.Finding{lossless})
+
+	sources, err := Discover(dir, nil)
+	require.NoError(t, err)
+	pool, ok := sourceByName(sources, "pool")
+	require.True(t, ok, "a directory holding only findings.toon is a leaf")
+	assert.Equal(t, []stream.Finding{lossless}, pool.Findings)
+}
+
+// Nesting is format-blind: a parent .txt above a child .toon is not a leaf.
+func TestDiscover_NestedMixedFormatsDeepestWins(t *testing.T) {
+	dir := t.TempDir()
+	writeFindings(t, dir, "pool/findings.txt", "LOW|b.go:2|merged|f|style|1|e|greta\n")
+	writeToon(t, dir, "pool/raw/agent/greta/findings.toon", []stream.Finding{lossless})
+
+	sources, err := Discover(dir, nil)
+	require.NoError(t, err)
+	pool, _ := sourceByName(sources, "pool")
+	assert.Equal(t, []stream.Finding{lossless}, pool.Findings)
+}
+
+// A corrupt .toon is skipped and reported; the sibling .txt is never read.
+func TestDiscover_CorruptToonSkippedNotMaskedByTxt(t *testing.T) {
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "pool", "raw", "agent", "greta", "findings.toon")
+	require.NoError(t, os.MkdirAll(filepath.Dir(bad), 0o755))
+	require.NoError(t, os.WriteFile(bad, []byte(stream.VersionV2+"\nnot a table\n"), 0o644))
+	writeFindings(t, dir, "pool/raw/agent/greta/findings.txt", "LOW|b.go:2|from txt|f|style|1|e|greta\n")
+
+	sources, err := Discover(dir, nil)
+	require.NoError(t, err)
+	pool, ok := sourceByName(sources, "pool")
+	require.True(t, ok)
+	assert.Empty(t, pool.Findings, "the .txt sibling must not stand in for a corrupt .toon")
+	assert.Equal(t, []string{bad}, pool.SkippedFiles)
+}
+
+// A non-regular findings.toon is not a leaf marker; a regular .txt beside it
+// still makes the directory a leaf and is the file read.
+func TestDiscover_SymlinkToonIgnoredTxtRead(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "secret.toon")
+	var b strings.Builder
+	require.NoError(t, stream.WriteSourceV2(&b, []stream.Finding{lossless}))
+	require.NoError(t, os.WriteFile(outside, []byte(b.String()), 0o644))
+
+	writeFindings(t, dir, "ci/findings.txt", "LOW|b.go:2|from txt|f|style|1|e|ci\n")
+	if err := os.Symlink(outside, filepath.Join(dir, "ci", "findings.toon")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "lone"), 0o755))
+	if err := os.Symlink(outside, filepath.Join(dir, "lone", "findings.toon")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	sources, err := Discover(dir, nil)
+	require.NoError(t, err)
+	ci, ok := sourceByName(sources, "ci")
+	require.True(t, ok)
+	require.Len(t, ci.Findings, 1)
+	assert.Equal(t, "from txt", ci.Findings[0].Problem)
+	_, ok = sourceByName(sources, "lone")
+	assert.False(t, ok, "a symlinked findings.toon alone is not a source")
+}
+
+// AC 04-04: a host-review-shaped .txt-only source keeps reconciling beside a
+// dual-written pool, each resolved on its own.
+func TestDiscover_TxtOnlyHostBesideDualWrittenPool(t *testing.T) {
+	dir := t.TempDir()
+	hostBody := "HIGH|h.go:3|host finding|f|security|10|ev|host\n"
+	writeFindings(t, dir, "host/findings.txt", hostBody)
+	writeToon(t, dir, "pool/raw/agent/greta/findings.toon", []stream.Finding{lossless})
+	writeFindings(t, dir, "pool/raw/agent/greta/findings.txt", "LOW|b.go:2|from txt|f|style|1|e|greta\n")
+
+	sources, err := Discover(dir, nil)
+	require.NoError(t, err)
+	require.Len(t, sources, 2)
+	host, _ := sourceByName(sources, "host")
+	assert.Equal(t, mustFindings(t, strings.TrimSuffix(hostBody, "\n")), host.Findings)
+	pool, _ := sourceByName(sources, "pool")
+	assert.Equal(t, []stream.Finding{lossless}, pool.Findings)
+}
+
+// A leaf whose file cannot be selected after the walk still reaches
+// SkippedFiles, so summary.json's skipped_sources reports it.
+func TestDiscover_UnselectableLeafRecordedInSkippedFiles(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	dir := t.TempDir()
+	writeFindings(t, dir, "pool/raw/agent/greta/findings.txt", "LOW|b.go:2|p|f|style|1|e|greta\n")
+	leafDir := filepath.Join(dir, "pool", "raw", "agent", "greta")
+	// Search permission off: the walk still lists the entry, but Lstat/Stat
+	// inside the directory fail, so selection errors.
+	require.NoError(t, os.Chmod(leafDir, 0o600))
+	t.Cleanup(func() { _ = os.Chmod(leafDir, 0o755) })
+
+	sources, err := Discover(dir, nil)
+	require.NoError(t, err)
+	pool, ok := sourceByName(sources, "pool")
+	require.True(t, ok, "the source must still be reported, not silently dropped")
+	// The .toon probe failed with a permission error, not "absent", so the
+	// skipped path names the .toon: a failed .toon never becomes a .txt read.
+	assert.Equal(t, []string{filepath.Join(leafDir, "findings.toon")}, pool.SkippedFiles)
+}
+
+func TestDiscover_V1HeaderInToonIsSkipped(t *testing.T) {
+	dir := t.TempDir()
+	writeFindings(t, dir, "pool/raw/agent/greta/findings.toon", "LOW|b.go:2|p|f|style|1|e|greta\n")
+	sources, err := Discover(dir, nil)
+	require.NoError(t, err)
+	pool, ok := sourceByName(sources, "pool")
+	require.True(t, ok)
+	assert.Empty(t, pool.Findings)
+	assert.Len(t, pool.SkippedFiles, 1)
+}
+
+// writeRaw writes body verbatim, with no header added: host-written v2 files
+// carry their own header.
+func writeRaw(t *testing.T, sourcesDir, relPath, body string) {
+	t.Helper()
+	full := filepath.Join(sourcesDir, relPath)
+	require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o755))
+	require.NoError(t, os.WriteFile(full, []byte(body), 0o644))
+}
+
+// hostEnvelope is a findings.toon as skills/atcr/host-review.md instructs a
+// host to write it: the v2 header, then go-axi's JSON envelope.
+func hostEnvelope(findings string) string {
+	return stream.VersionV2 + "\n" + `{"axi_format":"json","axi_notice":"","data":{"findings":[` + findings + `]}}` + "\n"
+}
+
+const hostFinding = `{"severity":"HIGH","file_line":"scripts/release.sh:12","problem":"p","fix":"set -o pipefail\ngo build ./... | tee build.log","category":"correctness","est_minutes":10,"evidence":"go build ./... | tee build.log","reviewer":"host"}`
+
+var hostWant = stream.Finding{Severity: "HIGH", File: "scripts/release.sh", Line: 12, Problem: "p", Fix: "set -o pipefail\ngo build ./... | tee build.log", Category: "correctness", EstMinutes: 10, Evidence: "go build ./... | tee build.log", Reviewer: "host"}
+
+// AC 08-03 Scenarios 1-2: a host-written findings.toon is discovered and
+// attributed to host, beside a dual-written pool.
+func TestDiscover_HostWrittenToonBesidePool(t *testing.T) {
+	dir := t.TempDir()
+	writeRaw(t, dir, "host/findings.toon", hostEnvelope(hostFinding))
+	writeToon(t, dir, "pool/raw/agent/greta/findings.toon", []stream.Finding{lossless})
+	writeFindings(t, dir, "pool/raw/agent/greta/findings.txt", "LOW|b.go:2|from txt|f|style|1|e|greta\n")
+
+	sources, err := Discover(dir, nil)
+	require.NoError(t, err)
+	host, ok := sourceByName(sources, "host")
+	require.True(t, ok)
+	assert.Equal(t, []stream.Finding{hostWant}, host.Findings)
+	pool, _ := sourceByName(sources, "pool")
+	assert.Equal(t, []stream.Finding{lossless}, pool.Findings)
+}
+
+// AC 08-03 Scenario 4: a host directory with both files reads only the .toon.
+func TestDiscover_HostToonPreferredOverTxt(t *testing.T) {
+	dir := t.TempDir()
+	writeRaw(t, dir, "host/findings.toon", hostEnvelope(hostFinding))
+	writeFindings(t, dir, "host/findings.txt", "LOW|old.go:1|stale|f|style|1|e|host\n")
+
+	sources, err := Discover(dir, nil)
+	require.NoError(t, err)
+	host, _ := sourceByName(sources, "host")
+	assert.Equal(t, []stream.Finding{hostWant}, host.Findings)
+}
+
+// AC 08-03 Scenario 5: an empty host envelope is a present source with zero
+// findings, not a missing one.
+func TestDiscover_EmptyHostEnvelopeIsPresentSource(t *testing.T) {
+	dir := t.TempDir()
+	writeRaw(t, dir, "host/findings.toon", hostEnvelope(""))
+
+	sources, err := Discover(dir, nil)
+	require.NoError(t, err)
+	host, ok := sourceByName(sources, "host")
+	require.True(t, ok, "an empty host file is still a source")
+	assert.Empty(t, host.Findings)
+	assert.Empty(t, host.SkippedFiles)
+}
+
+// AC 08-03 Error Scenario 1: malformed host JSON lands in SkippedFiles and the
+// other sources still reconcile.
+func TestDiscover_MalformedHostEnvelopeIsSkipped(t *testing.T) {
+	dir := t.TempDir()
+	writeRaw(t, dir, "host/findings.toon", hostEnvelope(hostFinding+","))
+	writeToon(t, dir, "pool/raw/agent/greta/findings.toon", []stream.Finding{lossless})
+
+	sources, err := Discover(dir, nil)
+	require.NoError(t, err)
+	host, ok := sourceByName(sources, "host")
+	require.True(t, ok)
+	assert.Empty(t, host.Findings)
+	assert.Equal(t, []string{filepath.Join(dir, "host", "findings.toon")}, host.SkippedFiles)
+	pool, _ := sourceByName(sources, "pool")
+	assert.Equal(t, []stream.Finding{lossless}, pool.Findings)
+}
+
+// TD-040: the host source is the host reviewer by definition. A host file that
+// names another reviewer (a pool agent's name, say) must not let the host's
+// findings count as that agent's corroboration, so Discover stamps "host".
+func TestDiscover_HostReviewerStamped(t *testing.T) {
+	dir := t.TempDir()
+	writeRaw(t, dir, "host/findings.toon", hostEnvelope(strings.Replace(hostFinding, `"reviewer":"host"`, `"reviewer":"greta"`, 1)))
+	writeFindings(t, dir, "other/findings.txt", "LOW|b.go:2|p|f|style|1|e|greta\n")
+
+	sources, err := Discover(dir, nil)
+	require.NoError(t, err)
+	host, _ := sourceByName(sources, "host")
+	assert.Equal(t, []stream.Finding{hostWant}, host.Findings)
+	// Other sources keep the reviewer they wrote.
+	other, _ := sourceByName(sources, "other")
+	require.Len(t, other.Findings, 1)
+	assert.Equal(t, "greta", other.Findings[0].Reviewer)
+
+	v1 := t.TempDir()
+	writeFindings(t, v1, "host/findings.txt", "LOW|b.go:2|p|f|style|1|e|greta\n")
+	sources, err = Discover(v1, nil)
+	require.NoError(t, err)
+	host, _ = sourceByName(sources, "host")
+	require.Len(t, host.Findings, 1)
+	assert.Equal(t, "host", host.Findings[0].Reviewer)
 }

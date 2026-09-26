@@ -2,7 +2,9 @@ package reconcile
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -12,8 +14,12 @@ import (
 )
 
 const (
-	findingsFileName = "findings.txt"
-	reconciledDir    = "reconciled"
+	findingsFileName     = "findings.txt"
+	findingsToonFileName = "findings.toon"
+	reconciledDir        = "reconciled"
+	// hostSource is the source written by the skill-driven host reviewer. Its
+	// findings are the host's by definition, whatever reviewer the file names.
+	hostSource = "host"
 	// statusFileName is the per-agent status.json sibling of a leaf findings.txt
 	// (written by internal/fanout's statusFor). Read for fallback provenance only
 	// (Epic 19.10 F5); its full schema stays owned by fanout.
@@ -21,12 +27,12 @@ const (
 )
 
 // Source is a discovered reconcile source: the immediate-child name under
-// sources/ (e.g. "pool", "host") and the findings parsed from the leaf
-// findings.txt files beneath it. Skipped records malformed rows so the caller
-// can warn without failing the run. SkippedFiles records whole findings.txt
-// files dropped on a read error or bad header, so the run summary can report
-// the degradation (skipped_sources in summary.json) instead of losing it to a
-// stderr-only warning.
+// sources/ (e.g. "pool", "host") and the findings parsed from the leaf findings
+// files (findings.toon or findings.txt) beneath it. Skipped records malformed
+// rows so the caller can warn without failing the run. SkippedFiles records
+// whole findings files dropped on a read error or bad header, so the run
+// summary can report the degradation (skipped_sources in summary.json) instead
+// of losing it to a stderr-only warning.
 type Source struct {
 	Name         string
 	Findings     []stream.Finding
@@ -36,17 +42,19 @@ type Source struct {
 
 // Discover finds reconcile sources under sourcesDir using leaf-preference: each
 // immediate child directory (except reconciled/) is a source, and within it the
-// findings come from the deepest findings.txt files — a findings.txt is an input
-// only when no subdirectory beneath it also has one. This makes the per-agent
-// pool/raw/agent/<name>/findings.txt files the pool's inputs while a merged
-// findings.txt written at the source root is ignored (never double-counted), and
-// reads host/findings.txt directly. allow, when non-empty, restricts which
-// immediate children are read (AC 01-05 Scenario 7). reconciled/ is never an
-// input. A file with a bad/missing header — or an unreadable subtree, or a
-// non-regular findings.txt (symlink/FIFO/device) — is skipped with a warning
-// rather than aborting the whole reconcile (sources/ is an open extension point).
-// Only immediate-child directories are sources; a findings.txt placed directly
-// under sources/ (not inside a child dir) is not a source and is ignored.
+// findings come from the deepest findings files — a directory holding a
+// findings.toon or findings.txt is an input only when no subdirectory beneath
+// it holds either, and it is read through stream.SelectFindingsFile
+// (findings.toon, else findings.txt). This makes the per-agent
+// pool/raw/agent/<name>/ files the pool's inputs while the merged files written
+// at the source root are ignored (never double-counted), and reads host/
+// directly. allow, when non-empty, restricts which immediate children are read
+// (AC 01-05 Scenario 7). reconciled/ is never an input. A file with a
+// bad/missing header — or an unreadable subtree, or a non-regular findings file
+// (symlink/FIFO/device) — is skipped with a warning rather than aborting the
+// whole reconcile (sources/ is an open extension point). Only immediate-child
+// directories are sources; a findings file placed directly under sources/ (not
+// inside a child dir) is not a source and is ignored.
 func Discover(sourcesDir string, allow []string) ([]Source, error) {
 	entries, err := os.ReadDir(sourcesDir)
 	if err != nil {
@@ -71,7 +79,7 @@ func Discover(sourcesDir string, allow []string) ([]Source, error) {
 		}
 		if len(leaves) == 0 {
 			if allowSet[e.Name()] {
-				fmt.Fprintf(os.Stderr, "warning: requested source %q has no findings.txt\n", e.Name())
+				fmt.Fprintf(os.Stderr, "warning: requested source %q has no findings.toon or findings.txt\n", e.Name())
 			}
 			continue // a child with no findings.txt anywhere is not a source
 		}
@@ -86,7 +94,7 @@ func Discover(sourcesDir string, allow []string) ([]Source, error) {
 				src.SkippedFiles = append(src.SkippedFiles, f)
 				continue
 			}
-			res, perr := stream.ParseSource(data)
+			res, perr := stream.ParseFindingsFile(f, data)
 			if perr != nil {
 				fmt.Fprintf(os.Stderr, "warning: skipping %s: %v\n", f, perr)
 				src.SkippedFiles = append(src.SkippedFiles, f)
@@ -100,6 +108,14 @@ func Discover(sourcesDir string, allow []string) ([]Source, error) {
 			// Fail-closed: a missing/unreadable/malformed status.json (or one with
 			// fallback_used false) leaves FallbackModel empty — the finding counts as
 			// an independent voice, mirroring the PathValid unvalidated default.
+			// The host file is model-written, so its reviewer field is not trusted:
+			// naming a pool agent there would count the host's findings as that
+			// agent's corroboration (TD-040).
+			if e.Name() == hostSource {
+				for i := range res.Findings {
+					res.Findings[i].Reviewer = hostSource
+				}
+			}
 			if fbModel := readSourceFallback(f); fbModel != "" {
 				for i := range res.Findings {
 					res.Findings[i].FallbackModel = fbModel
@@ -137,11 +153,15 @@ func sortedUnmatched(allowSet, matched map[string]bool) []string {
 	return out
 }
 
-// leafFindingsFiles returns the leaf findings.txt paths under root: a
-// findings.txt whose directory has no descendant directory that also contains a
-// findings.txt. The result is sorted for deterministic ordering.
+// leafFindingsFiles returns one findings file per leaf directory under root. A
+// directory is a candidate when it holds a regular findings.txt or
+// findings.toon, and a leaf when no descendant directory is also a candidate;
+// the file returned for it is the one stream.SelectFindingsFile picks, so a
+// dual-written leaf is read once, from findings.toon. The result is sorted for
+// deterministic ordering.
 func leafFindingsFiles(root string) ([]string, error) {
 	var dirs []string
+	seen := make(map[string]bool)
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			// One unreadable subtree must not abort discovery of the rest.
@@ -152,11 +172,15 @@ func leafFindingsFiles(root string) ([]string, error) {
 			return nil
 		}
 		// IsRegular() (not just !IsDir) excludes symlinks, FIFOs, devices, and
-		// sockets named findings.txt: a symlink could point outside the review
-		// dir (the same exfiltration risk persona resolution refuses), and a
-		// device/FIFO would block or error on read.
-		if d.Type().IsRegular() && d.Name() == findingsFileName {
-			dirs = append(dirs, filepath.Dir(path))
+		// sockets named findings.txt or findings.toon: a symlink could point
+		// outside the review dir (the same exfiltration risk persona resolution
+		// refuses), and a device/FIFO would block or error on read.
+		name := d.Name()
+		if d.Type().IsRegular() && (name == findingsFileName || name == findingsToonFileName) {
+			if dir := filepath.Dir(path); !seen[dir] {
+				seen[dir] = true
+				dirs = append(dirs, dir)
+			}
 		}
 		return nil
 	})
@@ -175,9 +199,22 @@ func leafFindingsFiles(root string) ([]string, error) {
 				break
 			}
 		}
-		if isLeaf {
-			leaves = append(leaves, filepath.Join(d, findingsFileName))
+		if !isLeaf {
+			continue
 		}
+		f, serr := stream.SelectFindingsFile(d)
+		if serr != nil {
+			// The file vanished (or became unreadable) since the walk. Keep the
+			// leaf so Discover's read fails on it and records it in SkippedFiles,
+			// as it did before selection existed. Name the .toon only when its own
+			// probe failed, so a failed .toon never turns into a .txt read and a
+			// non-regular .toon is never opened.
+			f = filepath.Join(d, findingsFileName)
+			if _, lerr := os.Lstat(filepath.Join(d, findingsToonFileName)); lerr != nil && !errors.Is(lerr, fs.ErrNotExist) {
+				f = filepath.Join(d, findingsToonFileName)
+			}
+		}
+		leaves = append(leaves, f)
 	}
 	sort.Strings(leaves)
 	return leaves, nil

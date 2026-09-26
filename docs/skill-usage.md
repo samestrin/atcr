@@ -74,7 +74,7 @@ The skill then:
 
 1. Pre-flights the range (`atcr range`) — **skipped in baseline mode** (`--all` / `--scope`), which has no range to resolve.
 2. Starts the pool review in the background (`atcr review`) and polls `atcr status <id>` until it completes (10s interval, 10-minute default timeout).
-3. Performs the host review and writes `.atcr/reviews/<id>/sources/host/findings.txt`.
+3. Performs the host review and writes `.atcr/reviews/<id>/sources/host/findings.toon` (needs atcr v0.4.0 or later; the skill checks `atcr version` first).
 4. Reconciles all sources (`atcr reconcile <id>`).
 5. Optionally adjudicates gray-zone ambiguous clusters and re-reconciles.
 6. Renders and presents `report.md`, and prints the review directory path.

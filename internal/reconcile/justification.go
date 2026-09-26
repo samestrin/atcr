@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/samestrin/atcr/internal/stream"
 )
 
 const (
@@ -549,9 +551,33 @@ func extractSection(lines []string, idx int) (text, section string) {
 	// in favour of parity, not overlooked. TestExtractSection_RecordShapedLineBelowA
 	// DanglingFenceIsNotABoundary pins it.
 	strict, released, balanced := fenceMask(lines)
+	// An unfenced JSON value the parser reads as findings (TD-018) is the model's
+	// output, like a ```json block: mask it in both views so it elides, and bound
+	// it below exactly as jsonOpen/jsonClose bound a fenced block. The spans come
+	// from the parser's own scan, so they cannot drift from what it read.
+	spans := stream.BareValueSpans([]byte(strings.Join(lines, "\n")))
+	if len(spans) > 0 {
+		strict = append([]bool(nil), strict...)
+		released = append([]bool(nil), released...)
+		for _, sp := range spans {
+			for j := sp.First; j <= sp.Last; j++ {
+				strict[j], released[j] = true, true
+			}
+		}
+	}
 	headingAt := func(j int) bool { return !released[j] && isHeadingLine(lines[j]) }
 	itemAt := func(j int) bool { return !released[j] && isItemStart(lines[j]) }
 	recordAt := func(j int) bool { return !strict[j] && isFindingRecordStart(lines[j]) }
+	// A ```json block is the model's findings output, so it is ONE record block,
+	// opener through closer: the prose on either side belongs to different
+	// findings and must not be joined across it. Pipe-shaped text inside it bounds
+	// nothing (recordAt reads strict, which masks it). An anchor inside the block
+	// yields a placeholder-only excerpt, which the caller already treats as "no
+	// narrative" and passes over for a prose anchor.
+	jsonOpen, jsonClose := jsonFenceBounds(lines)
+	for _, sp := range spans {
+		jsonOpen[sp.First], jsonClose[sp.Last] = true, true
+	}
 
 	for j := idx; j >= 0; j-- {
 		if released[j] {
@@ -568,8 +594,8 @@ func extractSection(lines []string, idx int) (text, section string) {
 	// a continuation line, absorb the list-item marker line above it so the finding
 	// headline is included in the excerpt.
 	start := idx
-	for start > 0 && !headingAt(start) && !itemAt(start) && !recordAt(start) {
-		if strings.TrimSpace(lines[start-1]) == "" || headingAt(start-1) {
+	for start > 0 && !headingAt(start) && !itemAt(start) && !recordAt(start) && !jsonOpen[start] {
+		if strings.TrimSpace(lines[start-1]) == "" || headingAt(start-1) || jsonClose[start-1] {
 			break
 		}
 		// A finding record begins its OWN block and is never absorbed — unlike a list
@@ -587,8 +613,8 @@ func extractSection(lines []string, idx int) (text, section string) {
 	}
 	// Walk down until the next line starts a new item/section/record or is blank.
 	end := idx
-	for end < len(lines)-1 {
-		if strings.TrimSpace(lines[end+1]) == "" || headingAt(end+1) || itemAt(end+1) || recordAt(end+1) {
+	for end < len(lines)-1 && !jsonClose[end] {
+		if strings.TrimSpace(lines[end+1]) == "" || headingAt(end+1) || itemAt(end+1) || recordAt(end+1) || jsonOpen[end+1] {
 			break
 		}
 		end++
@@ -717,7 +743,7 @@ func extractSection(lines []string, idx int) (text, section string) {
 	return truncateRunes(strings.TrimSpace(b.String()), justificationMaxRunes), section
 }
 
-// recordRe mirrors internal/stream's severityRe (parser.go:53) — the regexp that
+// recordRe mirrors internal/stream's severityRe — the regexp that
 // decides which review.md lines actually become findings. Restated rather than
 // imported because it is unexported there; TestIsFindingRecordStart_AgreesWithThe
 // ProducingParser pins the two together against stream.ParseModelOutput itself, so
@@ -738,9 +764,11 @@ var recordRe = regexp.MustCompile(`^(CRITICAL|HIGH|MEDIUM|LOW)\|`)
 // whose id excludes it, so the first reconcile is the only one that can be right.
 //
 // Hence all three of the parser's conditions, not just the first:
-//   - column-0 anchored, uppercase, pipe adjacent (recordRe, mirroring parser.go:162);
-//   - at least three fields with a non-empty location (mirroring parser.go:168, which
-//     drops degenerate severity-prefixed noise like a bare "HIGH|").
+//   - column-0 anchored, uppercase, pipe adjacent (recordRe, mirroring
+//     ParseModelOutput's severityRe check);
+//   - at least three fields with a non-empty location (mirroring
+//     ParseModelOutput's field-count check, which drops degenerate
+//     severity-prefixed noise like a bare "HIGH|").
 //
 // An EARLIER revision keyed on SeverityRank/NormalizeSeverity after trimming, and
 // claimed that made drift impossible. It did the opposite: NormalizeSeverity accepts
@@ -756,15 +784,17 @@ func isFindingRecordStart(s string) bool {
 }
 
 // fenceMask reports, per line, whether it sits INSIDE a fenced code block, in TWO
-// views. strict matches the toggle-then-continue order in stream/parser.go:152-158
-// byte-for-byte: fence markers are OUTSIDE, and an UNTERMINATED fence masks to EOF,
-// exactly as the parser's bare `inFence = !inFence` skips every line below a
-// dangling opener. released is identical except that the run below a dangling
-// opener is un-masked.
+// views. strict matches the toggle-then-continue order in
+// stream.ParseModelOutput's fence switch byte-for-byte: fence markers are OUTSIDE,
+// and an UNTERMINATED fence masks to EOF, exactly as the parser's bare `inFence =
+// !inFence` skips every line below a dangling opener. released is identical except
+// that the run below a dangling opener is un-masked.
 //
 // balanced is a third, disjoint signal: it marks the MARKER lines of every
 // TERMINATED pair (both views leave markers themselves unmasked, so no mask can
-// answer this). A dangling opener is in no pair and is therefore not marked. It
+// answer this). A dangling opener is in no pair and is therefore not marked,
+// except a dangling ```json opener, whose tail stays masked (see below) and
+// whose marker is elided with it. It
 // exists so the excerpt builder can absorb a fence's markers into the elision by
 // their PAIRING rather than by whether a neighbouring line happens to be masked —
 // an empty fence has no masked neighbour in either direction, and keying on that
@@ -805,21 +835,38 @@ func isFindingRecordStart(s string) bool {
 func fenceMask(lines []string) (strict, released, balanced []bool) {
 	strict = make([]bool, len(lines))
 	balanced = make([]bool, len(lines))
-	inFence := false
+	inFence, inJSON := false, false
 	openedAt := -1
 	for i, l := range lines {
-		if isFenceMarker(l) {
-			if inFence {
-				inFence = false
+		// A marker of the other character, or shorter than the open fence's
+		// opener, is content (TD-019, TD-048).
+		if isFenceMarker(l) && (!inFence || closesFence(l, lines[openedAt])) {
+			switch {
+			case inJSON && isJSONFenceOpener(l):
+				// The parser reads this as the next chunk's opener closing a cut-off
+				// block: it terminates one pair and opens the next (jsonFenceBounds
+				// models the same line).
+				balanced[openedAt], balanced[i] = true, true
+				openedAt = i
+			case inFence:
 				// A TERMINATED pair: both markers delimit a quoted example, whether
 				// or not there is anything between them.
+				inFence, inJSON = false, false
 				balanced[openedAt], balanced[i] = true, true
-			} else {
-				inFence, openedAt = true, i
+			default:
+				inFence, inJSON, openedAt = true, isJSONFenceOpener(l), i
 			}
 			continue
 		}
 		strict[i] = inFence
+	}
+	// A dangling ```json opener is the model's cut-off output, which the parser
+	// reads to EOF, not a quote a model forgot to close. Its tail stays masked in
+	// both views and its opener is elided with it, so an anchor there gets no
+	// narrative rather than a raw-JSON excerpt shared by every finding in it.
+	if inJSON {
+		balanced[openedAt] = true
+		return strict, strict, balanced
 	}
 	// An UNTERMINATED fence releases the tail in the released view only. Every
 	// earlier balanced pair keeps its mask in both views; the strict view keeps the
@@ -835,10 +882,78 @@ func fenceMask(lines []string) (strict, released, balanced []bool) {
 	return strict, released, balanced
 }
 
+// jsonFenceBounds marks the opener and closer of every ```json block, using the
+// same toggle as fenceMask (and the producing parser, stream.ParseModelOutput's
+// fence switch): a "```json" line that closes some other fence opens nothing. A dangling
+// opener has no closer; the parser reads to EOF.
+func jsonFenceBounds(lines []string) (open, close []bool) {
+	open = make([]bool, len(lines))
+	close = make([]bool, len(lines))
+	inFence, inJSON := false, false
+	opener := ""
+	for i, l := range lines {
+		if !isFenceMarker(l) || inFence && !closesFence(l, opener) {
+			continue
+		}
+		switch {
+		case inJSON && isJSONFenceOpener(l):
+			// The parser reads this as the next chunk's opener closing a cut-off
+			// block (stream/parser.go ParseModelOutput): one line, both roles.
+			close[i], open[i] = true, true
+			opener = l
+		case inFence:
+			close[i] = inJSON
+			inFence, inJSON = false, false
+		case isJSONFenceOpener(l):
+			open[i] = true
+			inFence, inJSON, opener = true, true, l
+		default:
+			inFence, opener = true, l
+		}
+	}
+	return open, close
+}
+
+// isJSONFenceOpener mirrors internal/stream's isJSONFence: a fence
+// marker whose info string's first word is "json" in any case. Restated rather than imported
+// because it is unexported there; TestIsJSONFenceOpener_AgreesWithTheProducing
+// Parser pins the two together against stream.ParseModelOutput itself.
+func isJSONFenceOpener(line string) bool {
+	t := strings.TrimLeft(strings.TrimRight(line, "\r"), " \t")
+	if !strings.HasPrefix(t, "```") {
+		return false
+	}
+	info := strings.Fields(strings.TrimLeft(t, "`"))
+	return len(info) > 0 && strings.EqualFold(info[0], "json")
+}
+
 // isFenceMarker reports whether a line opens or closes a fenced block: its first
-// non-space content is a run of >=3 backticks. Mirrors stream/parser.go:194.
+// non-space content is a run of >=3 backticks or tildes. Mirrors
+// stream.isFenceMarker.
 func isFenceMarker(line string) bool {
-	return strings.HasPrefix(strings.TrimLeft(line, " \t"), "```")
+	_, n := fenceRun(line)
+	return n >= 3
+}
+
+// fenceRun mirrors stream.fenceRun: the character (` or ~) and length of the
+// run that begins a line.
+func fenceRun(line string) (c byte, n int) {
+	t := strings.TrimLeft(line, " \t")
+	if t == "" || (t[0] != '`' && t[0] != '~') {
+		return 0, 0
+	}
+	c = t[0]
+	for n < len(t) && t[n] == c {
+		n++
+	}
+	return c, n
+}
+
+// closesFence mirrors stream.closesFence: same character, run at least as long.
+func closesFence(line, opener string) bool {
+	c, n := fenceRun(line)
+	oc, on := fenceRun(opener)
+	return c == oc && n >= on
 }
 
 // isItemStart reports whether s begins a Markdown list item: an unordered bullet

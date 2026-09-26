@@ -17,15 +17,16 @@ import (
 // Pool artifact layout under <reviewDir>/sources/pool (AC 01-03/04/05):
 //
 //	pool/
-//	  raw/agent/<agent>/{review.md, findings.txt, status.json}  # per-agent
-//	  findings.txt                                              # merged (REVIEWER per row)
-//	  summary.json                                              # run stats
+//	  raw/agent/<agent>/{review.md, findings.txt, findings.toon, status.json}  # per-agent
+//	  findings.txt, findings.toon                                              # merged (REVIEWER per row)
+//	  summary.json                                                             # run stats
 const (
-	poolRawAgentDir = "raw/agent"
-	reviewFile      = "review.md"
-	findingsFile    = "findings.txt"
-	statusFile      = "status.json"
-	summaryFile     = "summary.json"
+	poolRawAgentDir  = "raw/agent"
+	reviewFile       = "review.md"
+	findingsFile     = "findings.txt"
+	findingsToonFile = "findings.toon"
+	statusFile       = "status.json"
+	summaryFile      = "summary.json"
 )
 
 // PoolSummary is the fan-out run record written to sources/pool/summary.json:
@@ -335,7 +336,7 @@ func findingsFor(r Result, changed payload.ChangedLines) findingsResult {
 	if r.parsedFindingCountSet && r.parsedFindingCount == 0 {
 		return findingsResult{}
 	}
-	findings := stream.ParseModelOutput([]byte(r.Content))
+	findings := r.parseFindings()
 	for i := range findings {
 		findings[i].Reviewer = r.Agent
 	}
@@ -384,7 +385,7 @@ func writeAgentArtifacts(poolDir, dir string, r Result, fr findingsResult) error
 		return fmt.Errorf("writing review.md for '%s': %w", r.Agent, err)
 	}
 	if err := writeFindings(filepath.Join(agentDir, findingsFile), fr.Findings); err != nil {
-		return fmt.Errorf("writing findings.txt for '%s': %w", r.Agent, err)
+		return fmt.Errorf("writing findings for '%s': %w", r.Agent, err)
 	}
 	st := statusFor(r, fr)
 	return WriteStatus(filepath.Join(agentDir, statusFile), &st)
@@ -408,6 +409,7 @@ func statusFor(r Result, fr findingsResult) AgentStatus {
 		DroppedByGrounding:     fr.Ungrounded,
 		ResponseTruncated:      r.ResponseTruncated,
 		UnparseableResponse:    r.UnparseableResponse,
+		UnparseableChunks:      r.UnparseableChunks,
 		CacheHit:               r.CacheHit,
 		UnreviewedChunks:       r.UnreviewedChunks,
 		// Diagnosability (Epic 19.10 F8): pure pass-through of the per-agent sizing /
@@ -469,14 +471,34 @@ func statusFor(r Result, fr findingsResult) AgentStatus {
 	return st
 }
 
-// writeFindings serializes findings to path in the per-source 8-column v1 format
-// (header + rows), written atomically.
+// writeFindingsFileFn and encodeFindingsV2Fn are seams so tests can fail one
+// write or the v2 encode and check what reaches disk.
+var (
+	writeFindingsFileFn = atomicWriteFile
+	encodeFindingsV2Fn  = stream.WriteSourceV2
+)
+
+// writeFindings writes findings twice beside each other: path (findings.txt,
+// the per-source 8-column v1 stream external consumers read) and the sibling
+// findings.toon (lossless v2, which atcr's own readers prefer). Both buffers
+// are encoded before either write, so an encode failure writes nothing.
+//
+// findings.toon is written first. If that write fails, findings.txt is left
+// alone, so a rewrite (RebuildPool) never leaves a stale .toon beside a fresh
+// .txt — readers prefer .toon and would read the stale one. If the .txt write
+// fails after, the error is returned; atcr readers already see the fresh .toon.
 func writeFindings(path string, findings []stream.Finding) error {
-	var buf bytes.Buffer
-	if err := stream.WriteSource(&buf, findings); err != nil {
+	var v1, v2 bytes.Buffer
+	if err := stream.WriteSource(&v1, findings); err != nil {
 		return fmt.Errorf("encoding findings: %w", err)
 	}
-	return atomicWriteFile(path, buf.Bytes())
+	if err := encodeFindingsV2Fn(&v2, findings); err != nil {
+		return fmt.Errorf("encoding findings (v2): %w", err)
+	}
+	if err := writeFindingsFileFn(filepath.Join(filepath.Dir(path), findingsToonFile), v2.Bytes()); err != nil {
+		return err
+	}
+	return writeFindingsFileFn(path, v1.Bytes())
 }
 
 // writeJSON serializes v to path as indented JSON, written atomically.

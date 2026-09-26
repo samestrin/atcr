@@ -393,6 +393,13 @@ func TestMergeResultGroup_ModelIsTheModalServingModel(t *testing.T) {
 		}
 		assert.Equal(t, "backup-model", mergeResultGroup(g, nil).Model)
 	})
+	t.Run("a tie prefers the model a chunk reached without failing over", func(t *testing.T) {
+		g := []Result{
+			{Agent: "reviewer", Status: StatusOK, Model: "backup-model", FallbackUsed: true, FallbackModel: "backup-model"},
+			{Agent: "reviewer", Status: StatusOK, Model: "primary-model"},
+		}
+		assert.Equal(t, "primary-model", mergeResultGroup(g, nil).Model)
+	})
 	t.Run("the window and reservation move with the model", func(t *testing.T) {
 		g := []Result{
 			{Agent: "reviewer", Status: StatusOK, Model: "backup-model", ResolvedWindow: 32768, ReservedOutputTokens: 4096, ResolvedMaxTokens: 4096},
@@ -412,6 +419,30 @@ func TestMergeResultGroup_ModelIsTheModalServingModel(t *testing.T) {
 		}
 		assert.Equal(t, "primary-model", mergeResultGroup(g, nil).Model)
 	})
+}
+
+// A chunk after the first that emitted prose no parser could use must still
+// mark the persona: status.json's unparseable_response is the only signal that
+// separates it from a clean review (bruce, live panel run 5, 2026-09-25).
+func TestMergeResultGroup_AggregatesUnparseableResponse(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		flags []bool
+		want  bool
+	}{
+		{"later chunk unparseable", []bool{false, true}, true},
+		{"first chunk unparseable", []bool{true, false}, true},
+		{"third chunk unparseable", []bool{false, false, true}, true},
+		{"none unparseable", []bool{false, false}, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var g []Result
+			for _, f := range c.flags {
+				g = append(g, Result{Agent: "reviewer", Status: StatusOK, UnparseableResponse: f})
+			}
+			assert.Equal(t, c.want, mergeResultGroup(g, nil).UnparseableResponse)
+		})
+	}
 }
 
 func TestMergeResultGroup_AggregatesResponseTruncated(t *testing.T) {
@@ -466,4 +497,67 @@ func TestMergeResultGroup_InvalidatesMemoOnRebuild(t *testing.T) {
 	fr := findingsFor(merged, nil)
 	assert.Len(t, fr.Findings, 1,
 		"merged persona must retain the finding from chunk[1], not short-circuit findingsFor on chunk[0]'s stale zero memo")
+}
+
+// TD-048: each chunk's output is parsed on its own. Parsing the newline-joined
+// Content let a chunk cut off inside a ```json block or an unfenced array swallow
+// every later chunk, silently, because the count stayed above zero.
+func TestMergeResultGroup_CutOffChunkDoesNotSwallowTheNext(t *testing.T) {
+	obj := func(loc string) string {
+		return `{"severity":"HIGH","file_line":"` + loc + `","problem":"p","fix":"f","category":"c","est_minutes":1,"evidence":"e"}`
+	}
+	cases := []struct {
+		name   string
+		chunks []string
+	}{
+		{"cut off inside a json fence", []string{
+			"```json\n[" + obj("a.go:1") + ",\n{\"severity\":\"LOW\",\"fi",
+			"[" + obj("b.go:2") + "]",
+			"LOW|c.go:3|p|f|c|1|e",
+		}},
+		{"cut off inside an unfenced array", []string{
+			"[" + obj("a.go:1") + ",\n{\"severity\":\"LOW\",\"fi",
+			"[" + obj("b.go:2") + "]",
+			"LOW|c.go:3|p|f|c|1|e",
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var g []Result
+			for _, content := range c.chunks {
+				g = append(g, Result{Agent: "reviewer", Status: StatusOK, Content: content})
+			}
+			merged := mergeResultGroup(g, nil)
+			assert.Equal(t, 3, merged.ParsedFindingCount())
+			fr := findingsFor(merged, nil)
+			var got []string
+			for _, f := range fr.Findings {
+				got = append(got, f.File)
+			}
+			assert.Equal(t, []string{"a.go", "b.go", "c.go"}, got)
+		})
+	}
+}
+
+// A chunked persona is unparseable only when it has zero parseable findings in
+// total, the flag's documented meaning. One garbled chunk beside a chunk with
+// findings is counted in UnparseableChunks instead, so the persona scores as
+// "findings" and stays eligible for trust.
+func TestMergeResultGroup_UnparseableFlagIsPersonaWide(t *testing.T) {
+	good := Result{Agent: "reviewer", Status: StatusOK, Content: "HIGH|a.go:1|bug|fix|correctness|5|ev"}
+	garbled := Result{Agent: "reviewer", Status: StatusOK, Content: "I looked at it.", UnparseableResponse: true}
+
+	merged := mergeResultGroup([]Result{good, garbled}, nil)
+	fr := findingsFor(merged, nil)
+	st := statusFor(merged, fr)
+	assert.False(t, st.UnparseableResponse, "the persona produced a parseable finding")
+	assert.Equal(t, 1, st.UnparseableChunks)
+	assert.Equal(t, "findings", ReviewerOutcome(st, len(fr.Findings)))
+
+	merged = mergeResultGroup([]Result{garbled, garbled}, nil)
+	fr = findingsFor(merged, nil)
+	st = statusFor(merged, fr)
+	assert.True(t, st.UnparseableResponse, "no chunk produced a parseable finding")
+	assert.Equal(t, 2, st.UnparseableChunks)
+	assert.Equal(t, "unparseable", ReviewerOutcome(st, len(fr.Findings)))
 }
