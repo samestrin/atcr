@@ -176,3 +176,16 @@ func TestParseVerdict_UnbalancedLeadingBraceFollowedByValidEnvelope(t *testing.T
 	assert.Equal(t, verdictRefuted, v.Verdict)
 	assert.Equal(t, "no evidence", v.Notes)
 }
+
+// Sprint 35.16.11.2.1 AC 03-02: under response_format json_object the API returns
+// a bare object with no fence and no prose, although the skeptic prompt asks for
+// a fenced one. The parser must read that shape, which is why this lane needs no
+// Output Format swap.
+func TestParseVerdict_BareJSONModeObject(t *testing.T) {
+	t.Parallel()
+	v, err := parseVerdict(`{"verdict":"refuted","reasoning":"x"}`)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	assert.Equal(t, verdictRefuted, v.Verdict)
+	assert.Equal(t, "x", v.Notes)
+}

@@ -2898,7 +2898,7 @@ func sizingToken(effectiveBudget int64, maxLines int) string {
 //
 // min_severity/max_findings are deterministic post-LLM filters and are correctly NOT
 // in the key.
-func diffCacheKey(prompt, model, baseURL string, temperature *float64, sizing string, maxTokens int) string {
+func diffCacheKey(prompt, model, baseURL string, temperature *float64, sizing string, maxTokens int, responseFormat string) string {
 	temp := "default"
 	if temperature != nil {
 		temp = strconv.FormatFloat(*temperature, 'g', -1, 64)
@@ -2923,6 +2923,12 @@ func diffCacheKey(prompt, model, baseURL string, temperature *float64, sizing st
 	// "unset"), so no key written before the cap became per-agent is invalidated.
 	if maxTokens > 0 && maxTokens != defaultMaxTokens {
 		tuning = tuning + "\x00mt=" + strconv.Itoa(maxTokens)
+	}
+	// A declared response_format changes the response shape (a bare JSON object,
+	// not a fenced array), so it keys apart. Unset appends nothing, so every
+	// on-disk key written before the field existed stays valid.
+	if responseFormat != "" {
+		tuning = tuning + "\x00rf=" + responseFormat
 	}
 	return cache.Key(cache.HashText(prompt), model, tuning)
 }
@@ -3054,7 +3060,7 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 		// keys each chunk independently because its prompt (and thus this hash)
 		// differs per chunk; the sizing token additionally distinguishes two sizing
 		// regimes that render identical prompt text.
-		CacheKey: diffCacheKey(prompt, ac.Model, prov.BaseURL, ac.Temperature, sizingToken(sz.effectiveBudget, sz.maxLines), agentMaxTokens),
+		CacheKey: diffCacheKey(prompt, ac.Model, prov.BaseURL, ac.Temperature, sizingToken(sz.effectiveBudget, sz.maxLines), agentMaxTokens, ac.ResponseFormat),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,
@@ -3062,6 +3068,8 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 			Temperature: ac.Temperature,
 			MaxTokens:   &agentMaxTokens,
 			Prompt:      prompt,
+			// response_format is this agent's OWN declaration, like SupportsFC.
+			ResponseFormat: ac.ResponseFormat,
 		},
 	}, nil
 }
@@ -3639,7 +3647,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		// keeps it off both its primary's cache entry and its own un-refit form's:
 		// the prompt is hashed, so a re-sized payload is a different key by
 		// construction, and the sizing token additionally separates the two budgets.
-		CacheKey: diffCacheKey(fbPrompt, ac.Model, prov.BaseURL, ac.Temperature, sizingToken(fbSizingBudget, fbMaxLines), fbMaxTokens),
+		CacheKey: diffCacheKey(fbPrompt, ac.Model, prov.BaseURL, ac.Temperature, sizingToken(fbSizingBudget, fbMaxLines), fbMaxTokens, ac.ResponseFormat),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,
@@ -3647,6 +3655,11 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 			Temperature: ac.Temperature,
 			MaxTokens:   &fbMaxTokens,
 			Prompt:      fbPrompt,
+			// response_format is per-agent, like SupportsFC: the fallback sends its
+			// OWN declaration, NOT the primary's — on both arms, including the re-fit
+			// arm, whose prompt is re-rendered under the primary's config. A forced
+			// JSON object on a model that never declared it is the harmful case.
+			ResponseFormat: ac.ResponseFormat,
 		},
 	}, warned, nil
 }

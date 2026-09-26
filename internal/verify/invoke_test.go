@@ -1451,3 +1451,45 @@ func TestInvokeSkeptic_DeclaredCeilingAtTheDerivedOnePinsProvenance(t *testing.T
 		"at equality the trip is classified as derived, so a valid refuted survives the CI gate")
 	assert.Contains(t, tripped, "tool_budget_bytes")
 }
+
+// Sprint 35.16.11.2.1 AC 03-02: the skeptic forwards its OWN response_format
+// declaration, with no lane-level override — exec governs tool availability only.
+// Only the declaration is forwarded, so an undeclared skeptic sends none.
+func TestBuildSkepticAgent_ForwardsResponseFormat(t *testing.T) {
+	t.Parallel()
+	sk := testSkeptic()
+	sk.Config.ResponseFormat = registry.ResponseFormatJSONObject
+
+	for _, exec := range []bool{false, true} {
+		a, _ := buildSkepticAgent(sk, "the prompt", exec)
+		assert.Equal(t, registry.ResponseFormatJSONObject, a.Invocation.ResponseFormat, "exec=%v", exec)
+	}
+
+	undeclared, _ := buildSkepticAgent(testSkeptic(), "the prompt", false)
+	assert.Empty(t, undeclared.Invocation.ResponseFormat)
+}
+
+func TestInvokeSkeptic_ForwardsDeclaredResponseFormat(t *testing.T) {
+	t.Parallel()
+
+	t.Run("declared", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		sk.Config.ResponseFormat = registry.ResponseFormatJSONObject
+		cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed"}`}}}
+
+		_, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+		require.NoError(t, err)
+		assert.Equal(t, registry.ResponseFormatJSONObject, cc.lastInvocation().ResponseFormat,
+			"the declaration must reach the request, not stop at the Agent literal")
+	})
+
+	t.Run("undeclared sends none", func(t *testing.T) {
+		t.Parallel()
+		cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed"}`}}}
+
+		_, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false)
+		require.NoError(t, err)
+		assert.Empty(t, cc.lastInvocation().ResponseFormat)
+	})
+}

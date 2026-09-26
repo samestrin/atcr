@@ -169,3 +169,57 @@ func TestBuildFallbackAgent_PrimaryReviewConstraintsWin(t *testing.T) {
 	require.NotNil(t, fb.MaxFindings)
 	assert.Equal(t, 3, *fb.MaxFindings, "primary max_findings governs, not the fallback's own 99")
 }
+
+// Sprint 35.16.11.2.1 AC 03-01: response_format is per-agent like SupportsFC.
+// The primary sends its OWN declaration, and a fallback sends ITS OWN, never the
+// primary's — in both directions, since equal values could not tell the two
+// sources apart. A forced JSON object on an agent whose prompt asks for the
+// fenced array is the harmful case this pins against.
+func TestBuildOneAgent_PropagatesResponseFormat(t *testing.T) {
+	cfg := toolCfg()
+	g := cfg.Registry.Agents["greta"]
+	g.ResponseFormat = registry.ResponseFormatJSONObject
+	cfg.Registry.Agents["greta"] = g
+	payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
+
+	a, _, err := buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, registry.ResponseFormatJSONObject, a.Invocation.ResponseFormat)
+
+	undeclared, _, err := buildOneAgent(cfg, "zoe", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+	require.NoError(t, err)
+	assert.Empty(t, undeclared.Invocation.ResponseFormat, "an undeclared agent sends no response_format")
+}
+
+func TestBuildFallbackAgent_ResponseFormatNotInheritedFromPrimary(t *testing.T) {
+	cases := []struct {
+		name       string
+		primaryRF  string
+		fallbackRF string
+	}{
+		{"declared fallback, undeclared primary", "", registry.ResponseFormatJSONObject},
+		{"declared primary, undeclared fallback", registry.ResponseFormatJSONObject, ""},
+		{"neither declares", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := toolCfg()
+			g := cfg.Registry.Agents["greta"]
+			g.ResponseFormat = tc.primaryRF
+			cfg.Registry.Agents["greta"] = g
+			k := cfg.Registry.Agents["kai"]
+			k.ResponseFormat = tc.fallbackRF
+			cfg.Registry.Agents["kai"] = k
+
+			payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
+			primary, _, err := buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+			require.NoError(t, err)
+			fb, _, err := buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
+			require.NoError(t, err)
+
+			assert.Equal(t, tc.primaryRF, primary.Invocation.ResponseFormat, "the primary reads its own declaration")
+			assert.Equal(t, tc.fallbackRF, fb.Invocation.ResponseFormat,
+				"the fallback reads its own declaration, never the primary's")
+		})
+	}
+}

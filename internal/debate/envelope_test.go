@@ -83,3 +83,12 @@ func TestParseRuling_SkipsDecoyBrace(t *testing.T) {
 	r := parseRuling(raw)
 	assert.Equal(t, OutcomeOverturn, r.Outcome)
 }
+
+// Sprint 35.16.11.2.1 AC 03-03: under response_format json_object the judge's
+// reply is a bare object with no fence and no prose. parseRuling must read that
+// shape, which is why the judge seat needs no Output Format swap.
+func TestParseRuling_BareJSONModeObject(t *testing.T) {
+	r := parseRuling(`{"outcome":"uphold","reasoning":"x"}`)
+	assert.Equal(t, OutcomeUphold, r.Outcome)
+	assert.Equal(t, "x", r.Reasoning)
+}
