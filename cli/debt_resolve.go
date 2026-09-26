@@ -79,12 +79,21 @@ import (
 // been run against a tree that still holds their review.md files.
 func isRecordedRationale(justification string) bool {
 	inFence := false
+	var openC byte
+	var openN int
 	for _, line := range strings.Split(justification, "\n") {
-		// Mirrors reconcile's isFenceMarker (justification.go:702) — the producer of
-		// the text being read. An unterminated opener leaves inFence set for the rest
-		// of the excerpt, which is exactly the released tail that must not count.
-		if isFenceMarkerLine(line) {
-			inFence = !inFence
+		// Mirrors reconcile's fence grammar (internal/reconcile/justification.go:
+		// isFenceMarker/fenceRun/closesFence) — the producer of the text being
+		// read. The opener is tracked so an INNER fence (``` inside a ````md
+		// quote) does not toggle the state off, and ~~~ fences are honored. An
+		// unterminated opener leaves inFence set for the rest of the excerpt,
+		// which is exactly the released tail that must not count.
+		if c, n := fenceRunMarker(line); n >= 3 {
+			if !inFence {
+				inFence, openC, openN = true, c, n
+			} else if c == openC && n >= openN {
+				inFence = false
+			}
 			continue
 		}
 		if inFence {
@@ -97,11 +106,29 @@ func isRecordedRationale(justification string) bool {
 	return false
 }
 
+// fenceRunMarker mirrors reconcile's fenceRun (internal/reconcile/justification.go):
+// the character (` or ~) and length of the run that begins a line, after leading
+// whitespace. Ported rather than shared because exporting it from reconcile
+// would widen that package's API for one consumer; the mirror comment pins the
+// two to each other.
+func fenceRunMarker(line string) (c byte, n int) {
+	t := strings.TrimLeft(line, " \t")
+	if t == "" || (t[0] != '`' && t[0] != '~') {
+		return 0, 0
+	}
+	c = t[0]
+	for n < len(t) && t[n] == c {
+		n++
+	}
+	return c, n
+}
+
 // isFenceMarkerLine reports whether a justification line is a Markdown code-fence
-// marker, matching reconcile.extractSection's own isFenceMarker so the reader of an
-// excerpt agrees with its writer about where the quotes are.
+// marker (a run of >=3 backticks OR tildes), matching reconcile's isFenceMarker
+// so the reader of an excerpt agrees with its writer about where the quotes are.
 func isFenceMarkerLine(line string) bool {
-	return strings.HasPrefix(strings.TrimLeft(line, " \t"), "```")
+	_, n := fenceRunMarker(line)
+	return n >= 3
 }
 
 // defaultDebtResolveDir is the .atcr/-scoped local TD store, rooted at the current
