@@ -180,7 +180,7 @@ func TestIsNoFindings_AcceptsCleanSlips(t *testing.T) {
 		"NO FINDINGS:\nNO FINDINGS",                     // greta, run 3
 		"```json\n[\n]\n```\n```json\nNO FINDINGS\n```", // greta, run 1
 		"NO FINDINGS.", "NO FINDINGS!", "[]", " [ ] ", `{"findings":[]}`,
-		"```\nNO FINDINGS\n```", "NO FINDINGS\n\nNO FINDINGS",
+		"```\nNO FINDINGS\n```", "NO FINDINGS\n\nNO FINDINGS", "~~~\nNO FINDINGS\n~~~",
 	} {
 		assert.True(t, IsNoFindings(in), "%q is a clean review", in)
 	}
