@@ -39,12 +39,31 @@ var bareFenceRe = regexp.MustCompile("^\\s*(`{3,}|~{3,})[A-Za-z0-9_-]*\\s*$")
 // not call clean.
 func IsNoFindings(content string) bool {
 	var kept []string
+	inFence := false
+	var openC byte
+	var openN int
 	for _, l := range strings.Split(content, "\n") {
-		// Only a bare marker line (```, ```json) is dropped; text sharing a
-		// fence line is content like any other.
-		if !bareFenceRe.MatchString(strings.TrimRight(l, "\r")) {
-			kept = append(kept, l)
+		line := strings.TrimRight(l, "\r")
+		// Fence-marker lines the parser toggles state on are metadata, not
+		// content. An OPENER line carries any info string ("```json title=x" —
+		// scanModelOutput reads it as a fence opener, TD-021), so a clean reply
+		// fenced that way must count as clean here too; a backtick fence's info
+		// string cannot contain a backtick (CommonMark), so "```js `x`" stays
+		// content. A CLOSER line with trailing rest ("``` but a.go:3 has a nil
+		// deref") also stays content: prose appended after a fence is text no
+		// parser read, and this check must not call it clean.
+		c, n := fenceRun(line)
+		switch {
+		case n >= 3 && !inFence && isCleanOpenFence(line):
+			inFence, openC, openN = true, c, n // opener, any info string
+			continue
+		case n >= 3 && inFence && c == openC && n >= openN && strings.TrimSpace(line[n+len(line)-len(strings.TrimLeft(line, " \t")):]) == "":
+			inFence = false // bare closer
+			continue
+		case bareFenceRe.MatchString(line):
+			continue // bare marker line, as before
 		}
+		kept = append(kept, line)
 	}
 	s := strings.TrimSpace(strings.Join(kept, "\n"))
 	seen := false
@@ -63,6 +82,39 @@ func IsNoFindings(content string) bool {
 		seen = true
 	}
 	return seen
+}
+
+// infoStringTokenRe matches one whitespace-separated token of a fence info
+// string: a bare word ("json", "c") or a key=value attribute ("title=x").
+// Anything else — pipes, dots, colons, sentence text — means the rest is
+// content sharing the line (a pipe row like "```HIGH|a.go:1|..." or prose like
+// "``` but a.go:3 has a nil deref"), not metadata.
+var infoStringTokenRe = regexp.MustCompile(`^[A-Za-z0-9_-]+(=[A-Za-z0-9_-]+)?$`)
+
+// isInfoString reports whether s (the rest of a line after the fence run) is
+// only an info string: empty or whitespace-separated word-like tokens. A
+// backtick fence's info string cannot contain a backtick (CommonMark), so a
+// rest carrying one is shared content regardless.
+func isInfoString(line string, c byte, n int) bool {
+	t := strings.TrimLeft(line, " \t")
+	rest := t[n:]
+	if c == '`' && strings.Contains(rest, "`") {
+		return false
+	}
+	for _, tok := range strings.Fields(rest) {
+		if !infoStringTokenRe.MatchString(tok) {
+			return false
+		}
+	}
+	return true
+}
+
+// isCleanOpenFence reports whether an UNOPENED fence-marker line's rest is only
+// an info string, i.e. the line is fence metadata the parser would toggle on
+// and ignore — "```json title=x" — rather than content sharing the line.
+func isCleanOpenFence(line string) bool {
+	c, n := fenceRun(line)
+	return n >= 3 && isInfoString(line, c, n)
 }
 
 // versionPrefix matches any atcr-findings version header so a wrong version can

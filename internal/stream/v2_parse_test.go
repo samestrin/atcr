@@ -529,3 +529,24 @@ func TestBareValueSpans(t *testing.T) {
 	assert.Equal(t, []LineSpan{{First: 1, Last: 2}, {First: 5, Last: 7}}, BareValueSpans([]byte(content)))
 	assert.Empty(t, BareValueSpans([]byte(jsonBlock("["+objA+"]"))), "a fenced block is not a bare value")
 }
+
+// TD-021 companion: the parser reads "```json title=x" as a JSON fence opener
+// (fenceRun >= 3, info string), so a clean reply fenced that way parses to zero
+// findings — but IsNoFindings' old bareFenceRe only dropped a single info WORD,
+// leaving the fence line in the content and marking the clean reply
+// unparseable_response. IsNoFindings must drop any fence-marker line whose rest
+// is only an info string, matching the parser's view of the line.
+func TestIsNoFindings_DropsFenceMarkerLinesWithInfoStrings(t *testing.T) {
+	for _, in := range []string{
+		"```json title=x\n[]\n```",
+		"```json title=x\n{\"findings\":[]}\n```",
+		"~~~json title=y\nNO FINDINGS\n~~~",
+	} {
+		assert.True(t, IsNoFindings(in), "%q is a clean review fenced with an info string", in)
+	}
+	// A backtick fence's info string cannot contain backticks (CommonMark), so a
+	// fence line carrying a backtick shares content and must be KEPT — the
+	// response is not clean even if a sentinel appears elsewhere.
+	assert.False(t, IsNoFindings("```js `x`\nNO FINDINGS"),
+		"a fence line sharing backtick content is content, not an info string")
+}
