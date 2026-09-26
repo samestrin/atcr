@@ -828,3 +828,64 @@ func TestExtractSection_TruncationNeverFusesTheEllipsisOntoThePlaceholder(t *tes
 	assert.Contains(t, strings.Split(text, "\n"), ElidedQuotePlaceholder,
 		"and the marker itself must survive the cut as its own line")
 }
+
+// A chunk cut off inside its ```json block is followed by the next chunk's
+// "```json" opener, which the parser reads as close-and-reopen. fenceMask must
+// read it the same way: toggling instead left the final closer as a dangling
+// opener, strict-masked the pipe row below it (a row the parser emits), and
+// prefixed the prose excerpt with a synthetic ``` marker.
+func TestFenceMask_NextJSONOpenerClosesACutOffBlock(t *testing.T) {
+	lines := []string{
+		"## Findings",
+		"```json",
+		`[{"severity":"HIGH","file_line":"a.go:1","problem":"p","fix":"f","category":"c","est_minutes":1,"evidence":"e"},`,
+		"```json",
+		`[{"severity":"LOW","file_line":"b.go:2","problem":"p","fix":"f","category":"c","est_minutes":1,"evidence":"e"}]`,
+		"```",
+		"LOW|c.go:3|p|f|c|1|e",
+		"The retry at c.go:3 never backs off.",
+	}
+	got := stream.ParseModelOutput([]byte(strings.Join(lines, "\n")))
+	require.Len(t, got, 3)
+	assert.Equal(t, "c.go", got[2].File, "the parser emits the pipe row below the blocks")
+
+	strict, released, _ := fenceMask(lines)
+	assert.False(t, strict[6], "the pipe row is outside every fence, as the parser reads it")
+	assert.True(t, strict[4], "the second chunk's array is inside its own json block, not prose")
+	assert.Equal(t, strict, released, "every fence is terminated, so nothing is released")
+	assert.True(t, recordStartAt(lines, strict, 6), "the pipe row is a record boundary")
+
+	text, _ := extractSection(lines, 7)
+	assert.Equal(t, "The retry at c.go:3 never backs off.", text)
+}
+
+// The parser reads findings out of an unterminated ```json tail, so that tail is
+// output, not a quote a model forgot to close. It stays masked in the released
+// view: an anchor inside it gets no narrative instead of a raw-JSON excerpt that
+// every finding in the tail would share.
+func TestExtractSection_DanglingJSONTailIsNotReleased(t *testing.T) {
+	lines := []string{
+		"## Findings",
+		"The token check at a.go:1 is missing.",
+		"```json",
+		`[{"severity":"HIGH","file_line":"a.go:1","problem":"p","fix":"f","category":"c","est_minutes":1,"evidence":"e"},`,
+		`{"severity":"LOW","file_line":"b.go:2","problem":"q","fix":"g","category":"c","est_minutes":1,"evidence":"e"},`,
+		`{"severity":"LOW","file_line":"c.go:3","pro`,
+	}
+	require.Len(t, stream.ParseModelOutput([]byte(strings.Join(lines, "\n"))), 2)
+
+	_, released, _ := fenceMask(lines)
+	assert.True(t, released[3] && released[4] && released[5], "a dangling json tail stays masked")
+
+	for _, idx := range []int{3, 4} {
+		text, _ := extractSection(lines, idx)
+		assert.Empty(t, text, "anchor %d is inside the model's JSON output, not prose", idx)
+	}
+	above, _ := extractSection(lines, 1)
+	assert.Equal(t, "The token check at a.go:1 is missing.", above)
+}
+
+// recordStartAt applies extractSection's recordAt predicate.
+func recordStartAt(lines []string, strict []bool, j int) bool {
+	return !strict[j] && isFindingRecordStart(lines[j])
+}
