@@ -270,7 +270,7 @@ func TestFenceMask_MarksOnlyContentBetweenMarkers(t *testing.T) {
 }
 
 // isFenceMarker trims leading spaces and tabs before looking for the backtick run,
-// mirroring stream/parser.go:239 exactly. An INDENTED fence is the ordinary shape a model
+// mirroring stream.isFenceMarker exactly. An INDENTED fence is the ordinary shape a model
 // emits when it quotes an example inside a numbered list or a nested bullet, so this is
 // the common case rather than an exotic one.
 //
@@ -299,7 +299,7 @@ func TestFenceMask_RecognizesAnIndentedFence(t *testing.T) {
 
 			assert.False(t, mask[1], "the opening marker is not itself inside the fence")
 			assert.True(t, mask[2],
-				"an indented fence still opens a fenced block — parser.go:239 trims the same "+
+				"an indented fence still opens a fenced block — stream.isFenceMarker trims the same "+
 					"leading space/tab run before testing for the backticks")
 			assert.False(t, mask[3], "the closing marker is not inside the fence")
 			assert.False(t, mask[4], "prose after the fence is not inside it")
@@ -395,7 +395,7 @@ func TestExtractSection_UnterminatedFenceAboveAFindingsList(t *testing.T) {
 }
 
 // A record-shaped line in the tail of an UNTERMINATED fence is a boundary to nothing.
-// The producing parser's bare inFence toggle (stream/parser.go:172-186) skips every
+// The producing parser's bare inFence toggle (stream.ParseModelOutput's fence switch) skips every
 // line below the dangling opener, so the line was never emitted as a record — yet the
 // released mask let recordAt read it as one, and extractSection ended the narrative on
 // a line the parser never saw. That loss is permanent: localdebt persists

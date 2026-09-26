@@ -724,7 +724,7 @@ func extractSection(lines []string, idx int) (text, section string) {
 	return truncateRunes(strings.TrimSpace(b.String()), justificationMaxRunes), section
 }
 
-// recordRe mirrors internal/stream's severityRe (parser.go:53) — the regexp that
+// recordRe mirrors internal/stream's severityRe — the regexp that
 // decides which review.md lines actually become findings. Restated rather than
 // imported because it is unexported there; TestIsFindingRecordStart_AgreesWithThe
 // ProducingParser pins the two together against stream.ParseModelOutput itself, so
@@ -745,9 +745,11 @@ var recordRe = regexp.MustCompile(`^(CRITICAL|HIGH|MEDIUM|LOW)\|`)
 // whose id excludes it, so the first reconcile is the only one that can be right.
 //
 // Hence all three of the parser's conditions, not just the first:
-//   - column-0 anchored, uppercase, pipe adjacent (recordRe, mirroring parser.go:201);
-//   - at least three fields with a non-empty location (mirroring parser.go:207, which
-//     drops degenerate severity-prefixed noise like a bare "HIGH|").
+//   - column-0 anchored, uppercase, pipe adjacent (recordRe, mirroring
+//     ParseModelOutput's severityRe check);
+//   - at least three fields with a non-empty location (mirroring
+//     ParseModelOutput's field-count check, which drops degenerate
+//     severity-prefixed noise like a bare "HIGH|").
 //
 // An EARLIER revision keyed on SeverityRank/NormalizeSeverity after trimming, and
 // claimed that made drift impossible. It did the opposite: NormalizeSeverity accepts
@@ -763,8 +765,8 @@ func isFindingRecordStart(s string) bool {
 }
 
 // fenceMask reports, per line, whether it sits INSIDE a fenced code block, in TWO
-// views. strict matches the toggle-then-continue order in stream/parser.go:172-186
-// byte-for-byte: fence markers are OUTSIDE, and an UNTERMINATED fence masks to EOF,
+// views. strict matches the toggle-then-continue order in
+// stream.ParseModelOutput's fence switch byte-for-byte: fence markers are OUTSIDE, and an UNTERMINATED fence masks to EOF,
 // exactly as the parser's bare `inFence = !inFence` skips every line below a
 // dangling opener. released is identical except that the run below a dangling
 // opener is un-masked.
@@ -843,8 +845,8 @@ func fenceMask(lines []string) (strict, released, balanced []bool) {
 }
 
 // jsonFenceBounds marks the opener and closer of every ```json block, using the
-// same toggle as fenceMask (and the producing parser, stream/parser.go:172-186):
-// a "```json" line that closes some other fence opens nothing. A dangling
+// same toggle as fenceMask (and the producing parser, stream.ParseModelOutput's
+// fence switch): a "```json" line that closes some other fence opens nothing. A dangling
 // opener has no closer; the parser reads to EOF.
 func jsonFenceBounds(lines []string) (open, close []bool) {
 	open = make([]bool, len(lines))
@@ -872,7 +874,7 @@ func jsonFenceBounds(lines []string) (open, close []bool) {
 	return open, close
 }
 
-// isJSONFenceOpener mirrors internal/stream's isJSONFence (v2.go:205): a fence
+// isJSONFenceOpener mirrors internal/stream's isJSONFence: a fence
 // marker whose info string is "json" in any case. Restated rather than imported
 // because it is unexported there; TestIsJSONFenceOpener_AgreesWithTheProducing
 // Parser pins the two together against stream.ParseModelOutput itself.
@@ -885,7 +887,7 @@ func isJSONFenceOpener(line string) bool {
 }
 
 // isFenceMarker reports whether a line opens or closes a fenced block: its first
-// non-space content is a run of >=3 backticks. Mirrors stream/parser.go:239.
+// non-space content is a run of >=3 backticks. Mirrors stream.isFenceMarker.
 func isFenceMarker(line string) bool {
 	return strings.HasPrefix(strings.TrimLeft(line, " \t"), "```")
 }
