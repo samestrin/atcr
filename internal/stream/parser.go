@@ -98,14 +98,12 @@ var infoStringAttrRe = regexp.MustCompile(`^[A-Za-z0-9_-]+=[A-Za-z0-9_-]+$`)
 // only an info string: empty, or one word-like token followed by key=value
 // attributes. A second bare word means sentence text ("``` but the lock is
 // never released"), which is content sharing the line. A backtick fence's info
-// string cannot contain a backtick (CommonMark), so a rest carrying one is
-// shared content regardless.
+// string cannot contain a backtick (CommonMark), and infoStringTokenRe accepts
+// only [A-Za-z0-9_-], so a rest carrying one is rejected as shared content by
+// the token loop below without a separate check.
 func isInfoString(line string, c byte, n int) bool {
 	t := strings.TrimLeft(line, " \t")
 	rest := t[n:]
-	if c == '`' && strings.Contains(rest, "`") {
-		return false
-	}
 	for i, tok := range strings.Fields(rest) {
 		if i == 0 && !infoStringTokenRe.MatchString(tok) || i > 0 && !infoStringAttrRe.MatchString(tok) {
 			return false
