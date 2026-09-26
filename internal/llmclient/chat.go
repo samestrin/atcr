@@ -121,8 +121,9 @@ type chatToolRequest struct {
 	Temperature *float64  `json:"temperature,omitempty"`
 	MaxTokens   *int      `json:"max_tokens,omitempty"`
 	// ResponseFormat is sent on every turn a declared agent makes, tool turns
-	// and the forced final alike: the loop only learns a turn is final from the
-	// response, so a final-turn-only field could never be placed correctly.
+	// and the forced final alike: a turn that ends on its own is only known to be
+	// final from its response, so the field must ride every tool turn; the
+	// forced-final no-tools turn (loop.requestFinalAnswer) carries it too.
 	ResponseFormat *responseFormat `json:"response_format,omitempty"`
 }
 
