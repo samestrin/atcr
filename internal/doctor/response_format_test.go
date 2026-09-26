@@ -375,7 +375,11 @@ func TestRun_CombinedProbeWarnsOnAFencedObjectWithoutAToolCall(t *testing.T) {
 func TestRun_CombinedProbeSkippedForADeclaredNonToolAgent(t *testing.T) {
 	_, fake := runDeclared(t, false, reply(oneFinding))
 
-	for _, c := range fake.chatCalls() {
+	// Guard the loop: zero calls would otherwise make "no combined probe"
+	// indistinguishable from "no probe at all".
+	calls := fake.chatCalls()
+	require.Len(t, calls, 1, "the plain probe runs; only the combined probe is skipped")
+	for _, c := range calls {
 		assert.Empty(t, c.tools, "no tool definition is sent for an agent that runs no tool loop")
 	}
 }
