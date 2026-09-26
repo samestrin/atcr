@@ -119,7 +119,10 @@ func parseV2Body(body string) (ParseResult, error) {
 		return ParseResult{}, fmt.Errorf("decoding v2 findings table: header declares %d row(s), found %d", doc.Declared, len(doc.Rows))
 	}
 	res := ParseResult{Findings: make([]Finding, 0, len(doc.Rows))}
-	for _, r := range doc.Rows {
+	for i, r := range doc.Rows {
+		if err := checkV2Values(r["severity"], r["file_line"], r["reviewer"]); err != nil {
+			return ParseResult{}, fmt.Errorf("decoding v2 findings table: row %d: %w", i, err)
+		}
 		file, line := splitFileLine(r["file_line"])
 		res.Findings = append(res.Findings, Finding{
 			Severity:   r["severity"],
@@ -154,22 +157,56 @@ type v2EnvelopeRow struct {
 	Reviewer string `json:"reviewer"`
 }
 
+// checkV2Values rejects values atcr never writes to a v2 file (TD-037):
+// ParseModelOutput drops a finding with an unknown severity or no location, and
+// the engine stamps every row's reviewer.
+func checkV2Values(severity, fileLine, reviewer string) error {
+	if _, ok := SeverityRank[severity]; !ok {
+		return fmt.Errorf("severity %q is not CRITICAL, HIGH, MEDIUM, or LOW", severity)
+	}
+	if strings.TrimSpace(fileLine) == "" {
+		return errors.New("empty file_line")
+	}
+	if strings.TrimSpace(reviewer) == "" {
+		return errors.New("empty reviewer")
+	}
+	return nil
+}
+
+// checkExactKeys rejects a key that differs from one of want only in case.
+// encoding/json matches keys case-insensitively and the last match wins, so
+// such a key would silently replace the real one (TD-050, TD-052).
+func checkExactKeys(raw json.RawMessage, want ...string) error {
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &keys); err != nil {
+		return err
+	}
+	for k := range keys {
+		for _, w := range want {
+			if k != w && strings.EqualFold(k, w) {
+				return fmt.Errorf("key %q differs from %q only in case", k, w)
+			}
+		}
+	}
+	return nil
+}
+
 // parseV2Envelope decodes go-axi's {"axi_format":"json","axi_notice":...,
 // "data":{"findings":[...]}} envelope. axi_notice is optional (a host-written
-// file may leave it empty); findings outside data are not accepted. Every row
+// file may leave it empty); findings outside data are an error. Every row
 // must carry the eight v2 keys, spelled exactly (TD-025): a host typing
 // "file-line" or "reviewr" by hand must fail loudly, not decode that field as
 // empty. Other keys are a newer atcr's additive fields and are ignored (TD-044).
 func parseV2Envelope(body string) (ParseResult, error) {
 	var env struct {
-		Format string `json:"axi_format"`
-		Notice string `json:"axi_notice"`
-		Data   *struct {
-			Findings *[]json.RawMessage `json:"findings"`
-		} `json:"data"`
+		Format   string          `json:"axi_format"`
+		Notice   string          `json:"axi_notice"`
+		Findings json.RawMessage `json:"findings"`
+		Data     json.RawMessage `json:"data"`
 	}
 	dec := json.NewDecoder(strings.NewReader(body))
-	if err := dec.Decode(&env); err != nil {
+	var raw json.RawMessage
+	if err := dec.Decode(&raw); err != nil {
 		return ParseResult{}, fmt.Errorf("decoding v2 findings envelope: %w", err)
 	}
 	// Anything after the envelope (a second envelope, prose, a copied code
@@ -177,17 +214,43 @@ func parseV2Envelope(body string) (ParseResult, error) {
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return ParseResult{}, errors.New("decoding v2 findings envelope: unexpected data after the envelope")
 	}
+	// A top-level findings key is rejected, not ignored as an additive field: a
+	// reader expecting findings there would see rows this reader drops.
+	if err := checkExactKeys(raw, "axi_format", "axi_notice", "data", "findings"); err != nil {
+		return ParseResult{}, fmt.Errorf("decoding v2 findings envelope: %w", err)
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return ParseResult{}, fmt.Errorf("decoding v2 findings envelope: %w", err)
+	}
+	if env.Findings != nil {
+		return ParseResult{}, errors.New("decoding v2 findings envelope: findings must be inside data")
+	}
 	if env.Format != "json" {
 		return ParseResult{}, fmt.Errorf("decoding v2 findings envelope: axi_format is %q, want \"json\"", env.Format)
 	}
-	if env.Data == nil || env.Data.Findings == nil {
+	var data struct {
+		Findings *[]json.RawMessage `json:"findings"`
+	}
+	if len(env.Data) == 0 || string(env.Data) == "null" {
 		return ParseResult{}, errors.New("decoding v2 findings envelope: missing data.findings")
 	}
-	rows := *env.Data.Findings
+	if err := checkExactKeys(env.Data, "findings"); err != nil {
+		return ParseResult{}, fmt.Errorf("decoding v2 findings envelope: data: %w", err)
+	}
+	if err := json.Unmarshal(env.Data, &data); err != nil {
+		return ParseResult{}, fmt.Errorf("decoding v2 findings envelope: data: %w", err)
+	}
+	if data.Findings == nil {
+		return ParseResult{}, errors.New("decoding v2 findings envelope: missing data.findings")
+	}
+	rows := *data.Findings
 	res := ParseResult{Findings: make([]Finding, 0, len(rows))}
 	for i, raw := range rows {
 		r, err := decodeV2EnvelopeRow(raw)
 		if err != nil {
+			return ParseResult{}, fmt.Errorf("decoding v2 findings envelope: finding %d: %w", i, err)
+		}
+		if err := checkV2Values(r.Severity, r.FileLine, r.Reviewer); err != nil {
 			return ParseResult{}, fmt.Errorf("decoding v2 findings envelope: finding %d: %w", i, err)
 		}
 		file, line := splitFileLine(r.FileLine)
