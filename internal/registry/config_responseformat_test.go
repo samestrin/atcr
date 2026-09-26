@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -96,6 +97,27 @@ agents:
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), `agent 'myagent': response_format must be "json_object" or unset`)
 		})
+	}
+}
+
+// TD: the rejection must echo the value it read, so a case/whitespace typo is
+// visible in the error itself (the payload check above it already does this).
+func TestRegistry_ResponseFormatErrorEchoesValue(t *testing.T) {
+	for _, value := range []string{"json_schema", "JSON_OBJECT", " json_object ", "true"} {
+		_, err := LoadRegistry(writeRegistry(t, `
+providers:
+  p:
+    api_key_env: KEY
+agents:
+  myagent:
+    provider: p
+    model: m
+    response_format: "`+value+`"
+`))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `invalid response_format `+strconv.Quote(value),
+			"error must echo the offending value for %q", value)
+		assert.Contains(t, err.Error(), `must be "json_object" or unset`)
 	}
 }
 
