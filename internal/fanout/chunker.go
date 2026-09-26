@@ -302,6 +302,7 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	// produced. Reset so ParsedFindingCount recomputes from the merged content.
 	out.parsedFindingCount = 0
 	out.parsedFindingCountSet = false
+	out.UnparseableChunks = 0 // counted below over every chunk, g[0] included
 	// Chunk-level serving identity does not survive the collapse: the merged
 	// Result is a persona record, so inheriting chunk 0's served tag would name
 	// only its files as if they were the persona's reviewed set — beside a
@@ -374,9 +375,11 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 			out.ToolsDegradedReason = r.ToolsDegradedReason
 		}
 		out.ResponseTruncated = out.ResponseTruncated || r.ResponseTruncated
-		// Any chunk that returned prose no parser could use marks the persona;
-		// reading only g[0]'s flag hid a later chunk's failure from status.json.
-		out.UnparseableResponse = out.UnparseableResponse || r.UnparseableResponse
+		// Count every chunk that returned prose no parser could use; reading only
+		// g[0]'s flag hid a later chunk's failure from status.json.
+		if r.UnparseableResponse {
+			out.UnparseableChunks++
+		}
 		// FIRST NON-ZERO across the group, not g[0]'s. The diff-wide shed is a property
 		// of the PAYLOAD — every chunk of a persona is rendered from the same
 		// modePayload, so the value is identical wherever it appears and the first
@@ -404,6 +407,11 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	}
 	out.Content = strings.Join(contents, "\n")
 	out.chunkContents = contents
+	// The persona-level flag keeps its documented meaning: content with zero
+	// parseable findings in total. One garbled chunk beside a chunk with findings
+	// is only counted, so the persona is not scored unparseable or dropped from
+	// trust for findings it did produce.
+	out.UnparseableResponse = out.UnparseableChunks > 0 && out.ParsedFindingCount() == 0
 	out.CacheHit = allCacheHit
 	// Model names the model that served most of the persona's successful chunks,
 	// not chunk 0's: a chunk 0 that failed over to a backup would otherwise record

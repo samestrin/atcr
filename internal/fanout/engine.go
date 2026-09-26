@@ -381,6 +381,11 @@ type Result struct {
 	// the failover gate instead, and never sets this.
 	UnparseableResponse bool
 
+	// UnparseableChunks counts a chunked persona's chunks that set
+	// UnparseableResponse. mergeResultGroup sets it; the merged
+	// UnparseableResponse means zero parseable findings persona-wide.
+	UnparseableChunks int
+
 	// Tool-loop accounting (Epic 2.0). Tools records that this was a tool-enabled
 	// agent (so status.json emits explicit zero counters even on the degrade
 	// path, while pure single-shot agents keep them absent). Turns/ToolCalls/

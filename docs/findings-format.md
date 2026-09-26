@@ -330,7 +330,7 @@ The parser also accepts what models commonly send instead:
 - `NO FINDINGS` with a trailing `.`, `:`, or `!`, inside a code fence, or an empty array `[]` or `{"findings":[]}`, all read as a clean review;
 - legacy 7-column pipe rows, from a custom persona that still uses the v1 contract.
 
-An object with an unknown severity or no location is dropped. A reply that yields no findings and is not a clean review is recorded as `unparseable_response` in the agent's `status.json`.
+An object with an unknown severity or no location is dropped. A reply that yields no findings and is not a clean review is recorded as `unparseable_response` in the agent's `status.json`. For a chunked review that flag means the persona has no parseable findings across all its chunks; `unparseable_chunks` counts the individual chunks that yielded none, so one garbled chunk beside a chunk with findings is counted there without marking the persona unparseable.
 
 ### v2 evolution
 
