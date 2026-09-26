@@ -286,6 +286,11 @@ func TestParseSource_V2Errors(t *testing.T) {
 		{"findings outside data", `{"axi_format":"json","axi_notice":"","findings":[]}`},
 		{"data without findings", `{"axi_format":"json","axi_notice":"","data":{}}`},
 		{"a bare object is not an envelope", `{"findings":[]}`},
+		// Readers route on the literal envelopePrefix, so valid JSON in any other
+		// layout is not an envelope; the host skill states this rule.
+		{"pretty-printed envelope", "{\n  \"axi_format\": \"json\",\n  \"axi_notice\": \"\",\n  \"data\": {\"findings\": []}\n}"},
+		{"space after the envelope brace", `{ "axi_format":"json","axi_notice":"","data":{"findings":[]}}`},
+		{"axi_format not the first key", `{"axi_notice":"","axi_format":"json","data":{"findings":[]}}`},
 		{"neither table nor envelope", "hello world"},
 		{"empty body", ""},
 		{"wrong table name", "rows[1]{severity,file_line}:\n  HIGH,\"a.go:1\""},

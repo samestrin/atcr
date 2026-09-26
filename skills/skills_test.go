@@ -74,6 +74,16 @@ func TestSkill_HostFindingsFormat(t *testing.T) {
 	assert.NotContains(t, HostReviewMD, stream.Version+"\n", "no v1 header instruction")
 }
 
+// atcr routes a v2 body to the envelope decoder only on the literal
+// {"axi_format prefix (stream.envelopePrefix), so a pretty-printed host file is
+// a skipped source. Both files a standalone install ships must say so.
+func TestSkill_HostEnvelopePrefixRule(t *testing.T) {
+	for name, text := range map[string]string{"host-review.md": HostReviewMD, "findings-format.md": FindingsFormatMD} {
+		assert.Containsf(t, text, "must start with exactly `{\"axi_format\"`", "%s must state the envelope prefix rule", name)
+	}
+	assert.Contains(t, FindingsFormatMD, "`axi_notice` is optional", "the host may omit axi_notice")
+}
+
 // The host needs an atcr that reads findings.toon; an older binary ignores it
 // and the host's findings vanish. Both entry points must state the minimum.
 func TestSkill_HostMinimumVersion(t *testing.T) {
