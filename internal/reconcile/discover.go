@@ -45,8 +45,8 @@ type Source struct {
 // else findings.txt). This makes the per-agent pool/raw/agent/<name>/ files the
 // pool's inputs while the merged files written at the source root are ignored
 // (never double-counted), and reads host/ directly. allow, when non-empty,
-// restricts which immediate children are read (AC 01-05 Scenario 7). reconciled/ is never an
-// input. A file with a bad/missing header — or an unreadable subtree, or a
+// restricts which immediate children are read (AC 01-05 Scenario 7).
+// reconciled/ is never an input. A file with a bad/missing header — or an unreadable subtree, or a
 // non-regular findings file (symlink/FIFO/device) — is skipped with a warning
 // rather than aborting the whole reconcile (sources/ is an open extension point).
 // Only immediate-child directories are sources; a findings file placed directly
