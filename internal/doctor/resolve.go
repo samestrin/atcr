@@ -37,6 +37,16 @@ type Target struct {
 	// A probe is only evidence about the invocation it reproduces, so distinct caps
 	// are distinct probes. Sharers that agree still dedupe, which is the common case.
 	MaxTokens int
+	// ResponseFormat is the response_format the agents sharing this target declared
+	// ("" when none). Identity, not a merged value, for the reason MaxTokens is: a
+	// declared agent's calls carry the field and an undeclared agent's do not, so they
+	// are different invocations and one probe cannot speak for both.
+	ResponseFormat string
+	// Tools reports that the sharers run the tool loop (tools AND
+	// supports_function_calling — tools alone degrades to single-shot). It joins the
+	// identity only for a declared target, where it decides whether the combined
+	// tools+response_format probe runs; an undeclared agent's key is unchanged.
+	Tools bool
 }
 
 // AgentTarget binds one effective-roster agent to the index of the Target it
@@ -123,16 +133,27 @@ func ResolveWithCap(reg *registry.Registry, proj *registry.ProjectConfig, overri
 		// see Target.MaxTokens for why merging sharers onto one cap made the probe
 		// evidence about a call no agent makes.
 		key := ac.Provider + "\x00" + ac.Model + "\x00" + prov.BaseURL + "\x00" + strconv.Itoa(declared)
+		// response_format and the tool loop change the invocation only for a declared
+		// agent, so only a declared agent's key grows: an undeclared agent keeps
+		// today's key exactly, and doctor output for agents that never opted in does
+		// not change.
+		tools := false
+		if ac.ResponseFormat != "" {
+			tools = ac.Tools && ac.SupportsFC
+			key += "\x00" + ac.ResponseFormat + "\x00" + strconv.FormatBool(tools)
+		}
 		if idx, ok := targetIdx[key]; ok {
 			return idx, nil
 		}
 		idx := len(res.Targets)
 		res.Targets = append(res.Targets, Target{
-			Provider:  ac.Provider,
-			Model:     ac.Model,
-			BaseURL:   prov.BaseURL,
-			APIKeyEnv: prov.APIKeyEnv,
-			MaxTokens: declared,
+			Provider:       ac.Provider,
+			Model:          ac.Model,
+			BaseURL:        prov.BaseURL,
+			APIKeyEnv:      prov.APIKeyEnv,
+			MaxTokens:      declared,
+			ResponseFormat: ac.ResponseFormat,
+			Tools:          tools,
 		})
 		targetIdx[key] = idx
 		return idx, nil

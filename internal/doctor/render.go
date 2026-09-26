@@ -120,7 +120,28 @@ const maxTableDetailBytes = 160
 // guess alone is what let a 403 quota cap read as "check the API key" while the
 // captured body said the billing cycle was exhausted. Healthy rows render no
 // detail, so the common case stays quiet.
+//
+// A response_format mismatch rides after whatever the endpoint probe said, under its
+// own label, so it cannot be read as the marker-absent hint. An honored probe adds
+// nothing.
 func diagnostic(a AgentResult) string {
+	d := endpointDiagnostic(a)
+	if a.ResponseFormatStatus == ResponseFormatNotHonored {
+		detail := clampRunes(a.ResponseFormatDetail, maxTableDetailBytes)
+		if len(detail) < len(a.ResponseFormatDetail) {
+			detail += "… (--json for full text)"
+		}
+		rf := "response_format not honored: " + detail
+		if d == "" {
+			return rf
+		}
+		return d + " | " + rf
+	}
+	return d
+}
+
+// endpointDiagnostic is the HINT cell as the endpoint probe alone would render it.
+func endpointDiagnostic(a AgentResult) string {
 	if healthy(a.Status) || a.Detail == "" {
 		return a.Hint
 	}

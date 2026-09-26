@@ -204,6 +204,23 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 					"community and project personas are not): %s\n",
 				scope, strings.Join(rep.PredicateRuleGaps, ", "))
 		}
+		// Named by agent AND model, since the mismatch belongs to the model behind the
+		// declaration. The endpoint answered, so the ok/failed count and the exit code
+		// above stand; this is a warning, not a failure.
+		var notHonored []string
+		for _, a := range rep.Agents {
+			if a.ResponseFormatStatus == doctor.ResponseFormatNotHonored {
+				notHonored = append(notHonored, a.Agent+" ("+a.Model+")")
+			}
+		}
+		if len(notHonored) > 0 {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+				"doctor: WARNING — response_format not honored: these agents declare "+
+					"response_format but the probe was rejected or got the wrong shape back; "+
+					"the review parser still runs, but drop the declaration or change the model "+
+					"(see the HINT column or --json for why): %s\n",
+				strings.Join(notHonored, ", "))
+		}
 		// A DISTINCT line, not folded into the warning above. These agents were not
 		// found to lack the rule — their prompt could not be read at all, so no
 		// verdict was reached — and `atcr review` hard-fails on the same config that

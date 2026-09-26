@@ -1,0 +1,336 @@
+package doctor
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/registry"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+const (
+	oneFinding   = `{"findings":[{"severity":"HIGH","file_line":"probe.go:2","problem":"division by zero","fix":"check b","category":"correctness","est_minutes":5,"evidence":"return a / b"}]}`
+	rfDoctorKey  = "sk-rf-secret"
+	rfDoctorEnvK = "ATCR_DOCTOR_KEY"
+)
+
+// declaredTarget resolves one agent declaring response_format, optionally as a
+// tool-loop agent.
+func declaredTarget(t *testing.T, tools bool) *Resolution {
+	t.Helper()
+	reg := regWith(
+		map[string]registry.Provider{"p": {APIKeyEnv: rfDoctorEnvK, BaseURL: "https://api.example/v1"}},
+		map[string]registry.AgentConfig{"a": {
+			Provider: "p", Model: "m",
+			ResponseFormat: registry.ResponseFormatJSONObject,
+			Tools:          tools, SupportsFC: tools,
+		}},
+	)
+	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a"}})
+	require.NoError(t, err)
+	return res
+}
+
+func markerOK(llmclient.Invocation) (string, error) { return Marker(testNonce), nil }
+
+func reply(content string) func(llmclient.Invocation, []llmclient.Message, []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+	return func(llmclient.Invocation, []llmclient.Message, []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+		return &llmclient.ChatResponse{Message: llmclient.Message{Role: "assistant", Content: &content}}, nil
+	}
+}
+
+func rejected(status int, snippet string) func(llmclient.Invocation, []llmclient.Message, []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+	return func(llmclient.Invocation, []llmclient.Message, []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+		return nil, &llmclient.HTTPStatusError{Status: status, Snippet: snippet}
+	}
+}
+
+func runDeclared(t *testing.T, tools bool, chat func(llmclient.Invocation, []llmclient.Message, []llmclient.ToolDef) (*llmclient.ChatResponse, error)) (AgentResult, *fakeCompleter) {
+	t.Helper()
+	t.Setenv(rfDoctorEnvK, rfDoctorKey)
+	fake := newFake(markerOK)
+	fake.chatFn = chat
+	rep := Run(context.Background(), fake, declaredTarget(t, tools), Options{Nonce: testNonce, MaxTokens: 2048})
+	require.Len(t, rep.Agents, 1)
+	return rep.Agents[0], fake
+}
+
+// A bare findings object is what JSON mode guarantees, and one finding is what the
+// planted defect should produce.
+func TestRun_ResponseFormatProbePassesOnABareFindingsObject(t *testing.T) {
+	a, fake := runDeclared(t, false, reply(oneFinding))
+
+	assert.Equal(t, StatusOK, a.Status, "the marker-echo verdict is untouched")
+	assert.Equal(t, ResponseFormatHonored, a.ResponseFormatStatus)
+
+	calls := fake.chatCalls()
+	require.Len(t, calls, 1, "one findings-object probe, no combined probe for a non-tool agent")
+	assert.Equal(t, registry.ResponseFormatJSONObject, calls[0].inv.ResponseFormat,
+		"the probe must send the invocation it claims to test")
+	assert.Empty(t, calls[0].tools)
+	var mentionsJSON bool
+	for _, m := range calls[0].msgs {
+		if m.Content != nil && strings.Contains(*m.Content, "JSON") {
+			mentionsJSON = true
+		}
+	}
+	assert.True(t, mentionsJSON, "some providers reject json_object unless a message names JSON")
+}
+
+// The marker probe must not carry response_format: its "Reply with exactly" prompt
+// cannot be answered as a JSON object.
+func TestRun_MarkerProbeNeverSendsResponseFormat(t *testing.T) {
+	t.Setenv(rfDoctorEnvK, rfDoctorKey)
+	var seen []string
+	fake := newFake(func(inv llmclient.Invocation) (string, error) {
+		seen = append(seen, inv.ResponseFormat)
+		return Marker(testNonce), nil
+	})
+	fake.chatFn = reply(oneFinding)
+
+	Run(context.Background(), fake, declaredTarget(t, false), Options{Nonce: testNonce, MaxTokens: 2048})
+
+	require.Len(t, seen, 1)
+	assert.Empty(t, seen[0])
+}
+
+// {"findings":[]} is the required object; an empty array is a clean review, not a
+// broken one.
+func TestRun_ResponseFormatProbePassesOnACleanFindingsObject(t *testing.T) {
+	a, _ := runDeclared(t, false, reply(`{"findings":[]}`))
+
+	assert.Equal(t, ResponseFormatHonored, a.ResponseFormatStatus)
+}
+
+// Each of these is a reply JSON mode cannot produce, so the provider either ignored
+// the field or broke it. The parser accepts some of them (fence, prose), which is
+// exactly why the strict bare-object check exists.
+func TestRun_ResponseFormatProbeWarnsWhenTheReplyIsNotABareObject(t *testing.T) {
+	cases := map[string]string{
+		"fenced object":  "```json\n" + oneFinding + "\n```",
+		"prose before":   "Here are the findings:\n" + oneFinding,
+		"plain sentinel": "NO FINDINGS",
+		"prose only":     "The code divides by zero when b is 0.",
+		"bare array":     "[]",
+		"empty":          "",
+	}
+	for name, content := range cases {
+		t.Run(name, func(t *testing.T) {
+			a, _ := runDeclared(t, false, reply(content))
+
+			assert.Equal(t, StatusOK, a.Status, "a response_format mismatch never changes the endpoint verdict")
+			assert.Equal(t, ResponseFormatNotHonored, a.ResponseFormatStatus)
+			assert.NotEmpty(t, a.ResponseFormatDetail)
+		})
+	}
+}
+
+// A bare object the parser cannot read as findings is valid JSON, but not the
+// {"findings":[...]} object the review lane needs.
+func TestRun_ResponseFormatProbeWarnsOnAnObjectThatIsNotFindings(t *testing.T) {
+	a, _ := runDeclared(t, false, reply(`{"answer":"division by zero"}`))
+
+	assert.Equal(t, ResponseFormatNotHonored, a.ResponseFormatStatus)
+}
+
+// A provider rejecting the field is the same warning class, with its own detail, and
+// the upstream snippet is scrubbed of the key like every other detail.
+func TestRun_ResponseFormatProbeWarnsWhenTheProviderRejectsTheField(t *testing.T) {
+	a, _ := runDeclared(t, false, rejected(400, "response_format unsupported for key "+rfDoctorKey))
+
+	assert.Equal(t, StatusOK, a.Status)
+	assert.Equal(t, ResponseFormatNotHonored, a.ResponseFormatStatus)
+	assert.Contains(t, a.ResponseFormatDetail, "400")
+	assert.Contains(t, a.ResponseFormatDetail, "rejected")
+	assert.NotContains(t, a.ResponseFormatDetail, rfDoctorKey, "details pass through scrubCredentials")
+}
+
+func TestRun_ResponseFormatProbeWarnsOnATransportError(t *testing.T) {
+	a, _ := runDeclared(t, false, func(llmclient.Invocation, []llmclient.Message, []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+		return nil, errors.New("connection reset")
+	})
+
+	assert.Equal(t, ResponseFormatNotHonored, a.ResponseFormatStatus)
+	assert.Contains(t, a.ResponseFormatDetail, "connection reset")
+}
+
+// An undeclared agent pays nothing and reports nothing new.
+func TestRun_UndeclaredAgentRunsNoResponseFormatProbe(t *testing.T) {
+	t.Setenv("ATCR_DOCTOR_KEY", "k")
+	fake := newFake(markerOK)
+
+	rep := Run(context.Background(), fake, twoAgentSharedTarget(t), Options{Nonce: testNonce, MaxTokens: 2048})
+
+	assert.Empty(t, fake.chatCalls())
+	for _, a := range rep.Agents {
+		assert.Empty(t, a.ResponseFormatStatus)
+		assert.Empty(t, a.ResponseFormatDetail)
+	}
+}
+
+// When the endpoint itself failed, a JSON-mode probe can only fail the same way and
+// would bury the real cause under a second warning.
+func TestRun_ResponseFormatProbeSkippedWhenTheEndpointFailed(t *testing.T) {
+	t.Setenv(rfDoctorEnvK, rfDoctorKey)
+	fake := newFake(func(llmclient.Invocation) (string, error) {
+		return "", &llmclient.HTTPStatusError{Status: 401}
+	})
+	fake.chatFn = reply(oneFinding)
+
+	rep := Run(context.Background(), fake, declaredTarget(t, false), Options{Nonce: testNonce, MaxTokens: 2048})
+
+	require.Len(t, rep.Agents, 1)
+	assert.Equal(t, StatusAuthFailed, rep.Agents[0].Status)
+	assert.Empty(t, fake.chatCalls())
+	assert.Empty(t, rep.Agents[0].ResponseFormatStatus)
+}
+
+// The combined probe sends both declarations in one request, the pair the real tool
+// loop sends on every turn.
+func TestRun_CombinedProbePassesOnAToolCall(t *testing.T) {
+	a, fake := runDeclared(t, true, func(inv llmclient.Invocation, _ []llmclient.Message, tools []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+		if len(tools) == 0 {
+			return reply(oneFinding)(inv, nil, nil)
+		}
+		return &llmclient.ChatResponse{Message: llmclient.Message{Role: "assistant", ToolCalls: []llmclient.ToolCall{{
+			ID: "c1", Type: "function", Function: llmclient.FunctionCall{Name: tools[0].Name, Arguments: []byte("{}")},
+		}}}}, nil
+	})
+
+	assert.Equal(t, ResponseFormatHonored, a.ResponseFormatStatus)
+	calls := fake.chatCalls()
+	require.Len(t, calls, 2, "the findings-object probe plus the combined probe")
+	var combined *chatCall
+	for i := range calls {
+		if len(calls[i].tools) > 0 {
+			combined = &calls[i]
+		}
+	}
+	require.NotNil(t, combined, "one call must carry the tool definition")
+	assert.Len(t, combined.tools, 1)
+	assert.Equal(t, registry.ResponseFormatJSONObject, combined.inv.ResponseFormat)
+}
+
+// Declining the tool is fine; the pass condition is a tool call OR a findings object.
+func TestRun_CombinedProbePassesOnAFindingsObjectWithoutAToolCall(t *testing.T) {
+	a, _ := runDeclared(t, true, reply(oneFinding))
+
+	assert.Equal(t, ResponseFormatHonored, a.ResponseFormatStatus)
+}
+
+func TestRun_CombinedProbeWarnsWhenTheCombinationIsRejected(t *testing.T) {
+	a, _ := runDeclared(t, true, func(inv llmclient.Invocation, msgs []llmclient.Message, tools []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+		if len(tools) > 0 {
+			return rejected(400, "tools and response_format cannot be combined")(inv, msgs, tools)
+		}
+		return reply(oneFinding)(inv, msgs, tools)
+	})
+
+	assert.Equal(t, StatusOK, a.Status)
+	assert.Equal(t, ResponseFormatNotHonored, a.ResponseFormatStatus)
+	assert.Contains(t, a.ResponseFormatDetail, "tools", "name both declarations so the operator knows which pair failed")
+	assert.Contains(t, a.ResponseFormatDetail, "response_format")
+	assert.Contains(t, a.ResponseFormatDetail, "rejected")
+}
+
+// Accepted but answered with neither shape: same class, different detail from an
+// outright rejection.
+func TestRun_CombinedProbeWarnsWhenTheReplyIsNeitherShape(t *testing.T) {
+	neither := func(inv llmclient.Invocation, msgs []llmclient.Message, tools []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+		if len(tools) > 0 {
+			return reply("I would call the tool here.")(inv, msgs, tools)
+		}
+		return reply(oneFinding)(inv, msgs, tools)
+	}
+	a, _ := runDeclared(t, true, neither)
+
+	assert.Equal(t, ResponseFormatNotHonored, a.ResponseFormatStatus)
+	assert.Contains(t, a.ResponseFormatDetail, "tools")
+	assert.NotContains(t, a.ResponseFormatDetail, "rejected", "an ignored field reads differently from a rejected one")
+}
+
+func TestRun_CombinedProbeWarnsOnAFencedObjectWithoutAToolCall(t *testing.T) {
+	fenced := func(inv llmclient.Invocation, msgs []llmclient.Message, tools []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+		if len(tools) > 0 {
+			return reply("```json\n"+oneFinding+"\n```")(inv, msgs, tools)
+		}
+		return reply(oneFinding)(inv, msgs, tools)
+	}
+	a, _ := runDeclared(t, true, fenced)
+
+	assert.Equal(t, ResponseFormatNotHonored, a.ResponseFormatStatus)
+}
+
+// A declared agent without the tool loop gets only the findings-object probe.
+func TestRun_CombinedProbeSkippedForADeclaredNonToolAgent(t *testing.T) {
+	_, fake := runDeclared(t, false, reply(oneFinding))
+
+	for _, c := range fake.chatCalls() {
+		assert.Empty(t, c.tools, "no tool definition is sent for an agent that runs no tool loop")
+	}
+}
+
+// A tool-loop agent that did not declare response_format runs neither probe.
+func TestRun_CombinedProbeSkippedForAnUndeclaredToolAgent(t *testing.T) {
+	t.Setenv("ATCR_DOCTOR_KEY", "k")
+	reg := regWith(
+		map[string]registry.Provider{"p": {APIKeyEnv: "ATCR_DOCTOR_KEY", BaseURL: "https://api.example/v1"}},
+		map[string]registry.AgentConfig{"a": {Provider: "p", Model: "m", Tools: true, SupportsFC: true}},
+	)
+	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a"}})
+	require.NoError(t, err)
+	fake := newFake(markerOK)
+
+	Run(context.Background(), fake, res, Options{Nonce: testNonce, MaxTokens: 2048})
+
+	assert.Empty(t, fake.chatCalls())
+}
+
+// Both new fields are omitempty, so an undeclared agent's --json row is unchanged.
+func TestRenderJSON_UndeclaredAgentCarriesNoResponseFormatKeys(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, RenderJSON(&buf, &Report{Agents: []AgentResult{{
+		Agent: "a", Provider: "p", Model: "m", Status: StatusOK, MaxTokens: 2048,
+	}}}))
+
+	assert.NotContains(t, buf.String(), "response_format")
+}
+
+func TestRenderJSON_DeclaredAgentCarriesTheProbeOutcome(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, RenderJSON(&buf, &Report{Agents: []AgentResult{{
+		Agent: "a", Provider: "p", Model: "m", Status: StatusOK,
+		ResponseFormatStatus: ResponseFormatNotHonored, ResponseFormatDetail: "reply was fenced",
+	}}}))
+
+	assert.Contains(t, buf.String(), `"response_format_status": "not_honored"`)
+	assert.Contains(t, buf.String(), `"response_format_detail": "reply was fenced"`)
+}
+
+// The table must show a not-honored row in words that cannot be mistaken for the
+// marker-absent hint.
+func TestRenderTable_NotHonoredRowNamesResponseFormat(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, RenderTableError(&buf, &Report{Agents: []AgentResult{{
+		Agent: "a", Provider: "p", Model: "m", Status: StatusOK,
+		ResponseFormatStatus: ResponseFormatNotHonored, ResponseFormatDetail: "reply was fenced",
+	}}}))
+
+	assert.Contains(t, buf.String(), "response_format not honored")
+	assert.Contains(t, buf.String(), "reply was fenced")
+}
+
+func TestRenderTable_HonoredRowAddsNothing(t *testing.T) {
+	var honored, plain bytes.Buffer
+	row := AgentResult{Agent: "a", Provider: "p", Model: "m", Status: StatusOK}
+	require.NoError(t, RenderTableError(&plain, &Report{Agents: []AgentResult{row}}))
+	row.ResponseFormatStatus = ResponseFormatHonored
+	require.NoError(t, RenderTableError(&honored, &Report{Agents: []AgentResult{row}}))
+
+	assert.Equal(t, plain.String(), honored.String(), "a healthy row stays quiet")
+}
