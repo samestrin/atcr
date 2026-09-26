@@ -132,6 +132,11 @@ type Invocation struct {
 	// output (e.g. the doctor self-test) must set it generously.
 	MaxTokens *int
 	Prompt    string
+	// ResponseFormat is the agent's declared OpenAI response_format type (e.g.
+	// "json_object"). Empty omits the field from the request body entirely, so
+	// an undeclared agent's request is unchanged. Sent on every call, including
+	// every tool-loop turn. Validation is the registry's job, not this layer's.
+	ResponseFormat string
 }
 
 type message struct {
@@ -147,10 +152,27 @@ type message struct {
 }
 
 type chatRequest struct {
-	Model       string    `json:"model"`
-	Messages    []message `json:"messages"`
-	Temperature *float64  `json:"temperature,omitempty"`
-	MaxTokens   *int      `json:"max_tokens,omitempty"`
+	Model          string          `json:"model"`
+	Messages       []message       `json:"messages"`
+	Temperature    *float64        `json:"temperature,omitempty"`
+	MaxTokens      *int            `json:"max_tokens,omitempty"`
+	ResponseFormat *responseFormat `json:"response_format,omitempty"`
+}
+
+// responseFormat is the OpenAI response_format request object. It is always
+// sent through a pointer so an undeclared agent's nil omits the key entirely;
+// a value struct would marshal as {} even when unset.
+type responseFormat struct {
+	Type string `json:"type"`
+}
+
+// newResponseFormat maps an Invocation's declared type onto the wire object,
+// or nil when undeclared.
+func newResponseFormat(t string) *responseFormat {
+	if t == "" {
+		return nil
+	}
+	return &responseFormat{Type: t}
 }
 
 // UsageData carries the provider-reported token counts for one call. A zero
@@ -282,10 +304,11 @@ func (c *Client) CompleteWithMeta(ctx context.Context, inv Invocation) (Completi
 		return Completion{}, err
 	}
 	body, err := json.Marshal(chatRequest{
-		Model:       inv.Model,
-		Messages:    []message{{Role: "user", Content: inv.Prompt}},
-		Temperature: inv.Temperature,
-		MaxTokens:   inv.MaxTokens,
+		Model:          inv.Model,
+		Messages:       []message{{Role: "user", Content: inv.Prompt}},
+		Temperature:    inv.Temperature,
+		MaxTokens:      inv.MaxTokens,
+		ResponseFormat: newResponseFormat(inv.ResponseFormat),
 	})
 	if err != nil {
 		return Completion{}, fmt.Errorf("encoding request: %w", err)
