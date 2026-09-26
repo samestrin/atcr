@@ -184,9 +184,27 @@ const ModelColumns = 7 // SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EV
 //     is folded into EVIDENCE, never dropped. Non-severity-prefixed lines,
 //     blanks, and comments are skipped; short rows are padded.
 func ParseModelOutput(data []byte) []Finding {
+	out, _ := scanModelOutput(data)
+	return out
+}
+
+// LineSpan is an inclusive range of line indexes into a text split on "\n".
+type LineSpan struct{ First, Last int }
+
+// BareValueSpans returns the lines of every unfenced JSON value ParseModelOutput
+// reads as findings, from its opening line through the last line the value
+// consumed. It is the same scan, so internal/reconcile can bound these values in
+// a narrative exactly where the parser read them.
+func BareValueSpans(data []byte) []LineSpan {
+	_, spans := scanModelOutput(data)
+	return spans
+}
+
+func scanModelOutput(data []byte) ([]Finding, []LineSpan) {
 	text := string(data)
 	lines := strings.Split(text, "\n")
 	var out []Finding
+	var spans []LineSpan
 	inFence, inJSON := false, false
 	openMarker := "" // the open fence's opener, which only a closesFence line ends
 	bareAttempts := 0
@@ -203,7 +221,8 @@ func ParseModelOutput(data []byte) []Finding {
 		// a leading severity token and would otherwise parse as findings and inflate
 		// the count with rows whose cited files do not exist. Skip everything between
 		// fences. Mirrors internal/verify/syntaxguard's fence handling; a fence
-		// marker is a line whose first non-space content is a run of >=3 backticks.
+		// marker is a line whose first non-space content is a run of >=3 backticks
+		// or tildes.
 		// The one exception is a ```json fence: that is the output itself. As in
 		// CommonMark, a fence closes only on a marker of its own character (` or ~)
 		// at least as long as its opener, so a ```json example quoted inside a
@@ -230,6 +249,7 @@ func ParseModelOutput(data []byte) []Finding {
 			continue
 		}
 		if lineStart < bareEnd {
+			spans[len(spans)-1].Last = i
 			continue // inside a bare value already read
 		}
 		if t := strings.TrimSpace(line); bareAttempts < maxBareAttempts && (strings.HasPrefix(t, "[") || strings.HasPrefix(t, "{")) {
@@ -241,6 +261,7 @@ func ParseModelOutput(data []byte) []Finding {
 			if found, n := decodeJSONValue(text[lineStart:nextFenceOffset(lines, i, lineStart, len(text))]); len(found) > 0 {
 				out = append(out, found...)
 				bareEnd = lineStart + n
+				spans = append(spans, LineSpan{First: i, Last: i})
 				continue
 			}
 		}
@@ -277,7 +298,7 @@ func ParseModelOutput(data []byte) []Finding {
 	if inJSON {
 		out = append(out, decodeJSONFindings(text[min(jsonStart, len(text)):])...)
 	}
-	return out
+	return out, spans
 }
 
 // isFenceMarker reports whether line opens or closes a markdown code fence: its

@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/samestrin/atcr/internal/stream"
 )
 
 const (
@@ -549,6 +551,20 @@ func extractSection(lines []string, idx int) (text, section string) {
 	// in favour of parity, not overlooked. TestExtractSection_RecordShapedLineBelowA
 	// DanglingFenceIsNotABoundary pins it.
 	strict, released, balanced := fenceMask(lines)
+	// An unfenced JSON value the parser reads as findings (TD-018) is the model's
+	// output, like a ```json block: mask it in both views so it elides, and bound
+	// it below exactly as jsonOpen/jsonClose bound a fenced block. The spans come
+	// from the parser's own scan, so they cannot drift from what it read.
+	spans := stream.BareValueSpans([]byte(strings.Join(lines, "\n")))
+	if len(spans) > 0 {
+		strict = append([]bool(nil), strict...)
+		released = append([]bool(nil), released...)
+		for _, sp := range spans {
+			for j := sp.First; j <= sp.Last; j++ {
+				strict[j], released[j] = true, true
+			}
+		}
+	}
 	headingAt := func(j int) bool { return !released[j] && isHeadingLine(lines[j]) }
 	itemAt := func(j int) bool { return !released[j] && isItemStart(lines[j]) }
 	recordAt := func(j int) bool { return !strict[j] && isFindingRecordStart(lines[j]) }
@@ -559,6 +575,9 @@ func extractSection(lines []string, idx int) (text, section string) {
 	// yields a placeholder-only excerpt, which the caller already treats as "no
 	// narrative" and passes over for a prose anchor.
 	jsonOpen, jsonClose := jsonFenceBounds(lines)
+	for _, sp := range spans {
+		jsonOpen[sp.First], jsonClose[sp.Last] = true, true
+	}
 
 	for j := idx; j >= 0; j-- {
 		if released[j] {

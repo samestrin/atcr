@@ -443,3 +443,12 @@ func TestParseModelOutput_TildeFenceIsAQuote(t *testing.T) {
 		})
 	}
 }
+
+// BareValueSpans names exactly the lines ParseModelOutput read as an unfenced
+// value: a decoded array, and a cut-off one that recovery reads to the next fence.
+func TestBareValueSpans(t *testing.T) {
+	content := "prose\n[" + objA + ",\n" + objB + "]\nmore prose\n[link](x)\n[" + objC + ",\n{\"severity\":\"LOW\",\"fi\ntrailing\n```\nquoted\n```\n"
+	assert.Equal(t, []Finding{findA, findB, findC}, ParseModelOutput([]byte(content)))
+	assert.Equal(t, []LineSpan{{First: 1, Last: 2}, {First: 5, Last: 7}}, BareValueSpans([]byte(content)))
+	assert.Empty(t, BareValueSpans([]byte(jsonBlock("["+objA+"]"))), "a fenced block is not a bare value")
+}
