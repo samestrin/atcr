@@ -136,6 +136,8 @@ Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mo
 > exactly the drift the injection exists to prevent, and it goes stale the moment
 > the vocabulary changes. Keep the category rule as written and let
 > `{{.ScopeRule}}` carry the enumeration.
+>
+> The shipped fallback `personas/_base.md` is the one exception: its category rule still names six example categories. That was a deliberate call recorded in epic 35.16.4's Clarifications (see the comment above `categoryEnumeration` in `internal/payload/scope.go`), not a pattern to copy into a new persona.
 
 **Required template variables** (the renderer fails if a referenced variable is missing, and the fixture test fails if any `{{ }}` action is left unrendered): `{{.AgentName}}`, `{{.ScopeRule}}`, `{{.FileCount}}`, `{{.BaseRef}}`, `{{.HeadRef}}`, `{{.PayloadMode}}`, `{{.Payload}}`. The `{{if .ToolsEnabled}}…{{end}}` block is optional but recommended — it is included only for tool-using agents.
 
