@@ -207,10 +207,11 @@ func scanModelOutput(data []byte) ([]Finding, []LineSpan) {
 	var spans []LineSpan
 	inFence, inJSON := false, false
 	openMarker := "" // the open fence's opener, which only a closesFence line ends
-	bareAttempts := 0
-	bareEnd := 0   // byte offset just past the last bare value read
-	jsonStart := 0 // byte offset of the current ```json block's first content line
-	offset := 0    // byte offset of the current line
+	fences := fenceOffsets(lines, len(text))
+	bareScanned := 0 // bytes scanned by failed bare-value attempts
+	bareEnd := 0     // byte offset just past the last bare value read
+	jsonStart := 0   // byte offset of the current ```json block's first content line
+	offset := 0      // byte offset of the current line
 	for i, raw := range lines {
 		lineStart := offset
 		offset += len(raw) + 1
@@ -252,18 +253,19 @@ func scanModelOutput(data []byte) ([]Finding, []LineSpan) {
 			spans[len(spans)-1].Last = i
 			continue // inside a bare value already read
 		}
-		if t := strings.TrimSpace(line); bareAttempts < maxBareAttempts && (strings.HasPrefix(t, "[") || strings.HasPrefix(t, "{")) {
+		if t := strings.TrimSpace(line); bareScanned < maxBareScanFactor*len(text) && (strings.HasPrefix(t, "[") || strings.HasPrefix(t, "{")) {
 			// A prose line like "[x](y)" decodes to nothing and is passed over. The
 			// candidate ends at the next fence marker, so recovering a cut-off value
-			// never reaches into a quoted example below it, and the attempts are
-			// capped because each one can scan to the next fence.
-			bareAttempts++
-			if found, n := decodeJSONValue(text[lineStart:nextFenceOffset(lines, i, lineStart, len(text))]); len(found) > 0 {
+			// never reaches into a quoted example below it. Failed attempts are
+			// charged the bytes they could scan (maxBareScanFactor).
+			end := max(fences[i], lineStart)
+			if found, n := decodeJSONValue(text[lineStart:end]); len(found) > 0 {
 				out = append(out, found...)
 				bareEnd = lineStart + n
 				spans = append(spans, LineSpan{First: i, Last: i})
 				continue
 			}
+			bareScanned += end - lineStart
 		}
 		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
 			continue

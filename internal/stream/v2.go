@@ -390,22 +390,27 @@ func isJSONFence(line string) bool {
 	return len(info) > 0 && strings.EqualFold(info[0], "json")
 }
 
-// maxBareAttempts bounds how many "["- or "{"-led lines ParseModelOutput tries
-// as an unfenced value. Model output is untrusted, and each attempt can scan to
-// the next fence, so an unbounded count is quadratic.
-const maxBareAttempts = 16
+// maxBareScanFactor bounds the bytes ParseModelOutput's failed bare-value
+// attempts may scan, as a multiple of the text's length. Model output is
+// untrusted and each failed attempt can scan to the next fence, so an unbounded
+// count is quadratic. A successful decode is not charged: it advances past the
+// value it read, so successes scan each byte once.
+const maxBareScanFactor = 32
 
-// nextFenceOffset returns the byte offset of the first fence marker line after
-// line i (which starts at offset start), or end, the length of Content.
-func nextFenceOffset(lines []string, i, start, end int) int {
-	off := start
-	for j := i; j < len(lines); j++ {
-		if j > i && isFenceMarker(strings.TrimRight(lines[j], "\r")) {
-			return off
+// fenceOffsets returns, for each line i, the byte offset of the first fence
+// marker line after it, or len(text) when there is none. One backward pass, so
+// finding a bare value's end costs nothing per attempt.
+func fenceOffsets(lines []string, textLen int) []int {
+	out := make([]int, len(lines))
+	next, off := textLen, textLen+1 // off: byte offset of line i+1
+	for i := len(lines) - 1; i >= 0; i-- {
+		out[i] = min(next, textLen)
+		off -= len(lines[i]) + 1
+		if isFenceMarker(strings.TrimRight(lines[i], "\r")) {
+			next = off
 		}
-		off += len(lines[j]) + 1
 	}
-	return min(off, end)
+	return out
 }
 
 // decodeJSONFindings reads the JSON value at the start of a ```json block.

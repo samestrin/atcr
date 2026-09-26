@@ -77,7 +77,7 @@ func TestIsFindingRecordStart_AgreesWithTheProducingParser(t *testing.T) {
 //
 // The parser's bare-value fallback would otherwise read the array under a
 // non-fence opener like "~~~json" and blur the question this test asks, so each
-// case spends the fallback's capped attempts first (see the comment below).
+// case spends the fallback's scan budget first (see the comment below).
 func TestIsJSONFenceOpener_AgreesWithTheProducingParser(t *testing.T) {
 	const body = `[{"severity":"HIGH","file_line":"a.go:10","problem":"p","fix":"f","category":"c","est_minutes":1,"evidence":"HIGH|x.go:1|pipe-shaped|text"}]`
 	for _, opener := range []string{
@@ -88,10 +88,11 @@ func TestIsJSONFenceOpener_AgreesWithTheProducingParser(t *testing.T) {
 			const lead = "```json\n" + `[{"severity":"LOW","file_line":"lead.go:1"}]` + "\n```\n"
 			// ParseModelOutput also reads a bare, unfenced array (a chunk that
 			// forgot its fence), which would read the body whatever the opener.
-			// Its bare attempts are capped at 16, so 16 "["-led prose lines spend
-			// them first and leave the fence as the only way the body is read.
-			// If the cap changes, "json" and "~~~json" fail here loudly.
-			spent := strings.Repeat("[prose]\n", 16)
+			// Its failed bare attempts may scan at most 32x the text's bytes, so
+			// 200 "["-led prose lines, each rescanning the rest, spend that budget
+			// first and leave the fence as the only way the body is read. If the
+			// bound changes, "json" and "~~~json" fail here loudly.
+			spent := strings.Repeat("[prose]\n", 200)
 			block := lead + spent + opener + "\n" + body + "\n```\n"
 			n := len(stream.ParseModelOutput([]byte(block)))
 			require.Contains(t, []int{1, 2}, n, "the leading block always parses")
