@@ -889,3 +889,29 @@ func TestExtractSection_DanglingJSONTailIsNotReleased(t *testing.T) {
 func recordStartAt(lines []string, strict []bool, j int) bool {
 	return !strict[j] && isFindingRecordStart(lines[j])
 }
+
+// TD-019: fenceMask and jsonFenceBounds close a fence only on a marker at least
+// as long as its opener, as the producing parser does, so a shorter fence quoted
+// inside a longer one is content, not structure.
+func TestFenceMask_LongerFenceQuotesAShorterFence(t *testing.T) {
+	lines := []string{
+		"````md",
+		"```json",
+		`[{"severity":"HIGH","file_line":"ex.go:1","problem":"p","fix":"f","category":"c","est_minutes":1,"evidence":"e"}]`,
+		"```",
+		"````",
+		"LOW|real.go:2|p|f|c|1|e",
+	}
+	got := stream.ParseModelOutput([]byte(strings.Join(lines, "\n")))
+	require.Len(t, got, 1)
+	assert.Equal(t, "real.go", got[0].File)
+
+	strict, released, balanced := fenceMask(lines)
+	assert.Equal(t, []bool{false, true, true, true, false, false}, strict)
+	assert.Equal(t, strict, released)
+	assert.Equal(t, []bool{true, false, false, false, true, false}, balanced)
+
+	open, close := jsonFenceBounds(lines)
+	assert.Equal(t, make([]bool, len(lines)), open, "the quoted ```json opens nothing")
+	assert.Equal(t, make([]bool, len(lines)), close)
+}

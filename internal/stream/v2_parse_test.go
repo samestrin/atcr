@@ -401,3 +401,16 @@ func TestParseSource_HeaderErrorNamesBothVersions(t *testing.T) {
 	assert.Contains(t, err.Error(), Version)
 	assert.Contains(t, err.Error(), VersionV2)
 }
+
+// TD-019: a fence closes only on a marker at least as long as its opener
+// (CommonMark), so a ```json example quoted inside a ````md fence stays quoted.
+func TestParseModelOutput_LongerFenceQuotesAShorterJSONBlock(t *testing.T) {
+	content := "The format looks like this:\n````md\n```json\n[" + objA + "]\n```\n````\n" + jsonBlock("["+objB+"]")
+	assert.Equal(t, []Finding{findB}, ParseModelOutput([]byte(content)))
+
+	// A pipe row quoted the same way is an example too.
+	content = "````\n```\nHIGH|ex.go:1|p|f|c|1|e\n```\n````\nLOW|real.go:2|p|f|c|1|e\n"
+	got := ParseModelOutput([]byte(content))
+	require.Len(t, got, 1)
+	assert.Equal(t, "real.go", got[0].File)
+}
