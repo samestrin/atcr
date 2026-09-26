@@ -368,15 +368,17 @@ func (n *flexInt) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// isJSONFence reports whether a fence marker line opens a ```json block: its
-// info string, after the backticks, is "json" in any case.
+// isJSONFence reports whether a fence marker line opens a ```json block: the
+// first word of its info string, after the backticks, is "json" in any case, so
+// "```json title=x" is output too.
 // internal/reconcile's isJSONFenceOpener restates this rule and is pinned to it.
 func isJSONFence(line string) bool {
 	t := strings.TrimLeft(line, " \t")
 	if !strings.HasPrefix(t, "```") {
 		return false
 	}
-	return strings.EqualFold(strings.TrimSpace(strings.TrimLeft(t, "`")), "json")
+	info := strings.Fields(strings.TrimLeft(t, "`"))
+	return len(info) > 0 && strings.EqualFold(info[0], "json")
 }
 
 // maxBareAttempts bounds how many "["- or "{"-led lines ParseModelOutput tries

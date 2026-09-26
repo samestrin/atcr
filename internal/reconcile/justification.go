@@ -915,7 +915,7 @@ func jsonFenceBounds(lines []string) (open, close []bool) {
 }
 
 // isJSONFenceOpener mirrors internal/stream's isJSONFence: a fence
-// marker whose info string is "json" in any case. Restated rather than imported
+// marker whose info string's first word is "json" in any case. Restated rather than imported
 // because it is unexported there; TestIsJSONFenceOpener_AgreesWithTheProducing
 // Parser pins the two together against stream.ParseModelOutput itself.
 func isJSONFenceOpener(line string) bool {
@@ -923,7 +923,8 @@ func isJSONFenceOpener(line string) bool {
 	if !strings.HasPrefix(t, "```") {
 		return false
 	}
-	return strings.EqualFold(strings.TrimSpace(strings.TrimLeft(t, "`")), "json")
+	info := strings.Fields(strings.TrimLeft(t, "`"))
+	return len(info) > 0 && strings.EqualFold(info[0], "json")
 }
 
 // isFenceMarker reports whether a line opens or closes a fenced block: its first
