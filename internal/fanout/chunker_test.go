@@ -531,3 +531,26 @@ func TestMergeResultGroup_CutOffChunkDoesNotSwallowTheNext(t *testing.T) {
 		})
 	}
 }
+
+// A chunked persona is unparseable only when it has zero parseable findings in
+// total, the flag's documented meaning. One garbled chunk beside a chunk with
+// findings is counted in UnparseableChunks instead, so the persona scores as
+// "findings" and stays eligible for trust.
+func TestMergeResultGroup_UnparseableFlagIsPersonaWide(t *testing.T) {
+	good := Result{Agent: "reviewer", Status: StatusOK, Content: "HIGH|a.go:1|bug|fix|correctness|5|ev"}
+	garbled := Result{Agent: "reviewer", Status: StatusOK, Content: "I looked at it.", UnparseableResponse: true}
+
+	merged := mergeResultGroup([]Result{good, garbled}, nil)
+	fr := findingsFor(merged, nil)
+	st := statusFor(merged, fr)
+	assert.False(t, st.UnparseableResponse, "the persona produced a parseable finding")
+	assert.Equal(t, 1, st.UnparseableChunks)
+	assert.Equal(t, "findings", ReviewerOutcome(st, len(fr.Findings)))
+
+	merged = mergeResultGroup([]Result{garbled, garbled}, nil)
+	fr = findingsFor(merged, nil)
+	st = statusFor(merged, fr)
+	assert.True(t, st.UnparseableResponse, "no chunk produced a parseable finding")
+	assert.Equal(t, 2, st.UnparseableChunks)
+	assert.Equal(t, "unparseable", ReviewerOutcome(st, len(fr.Findings)))
+}

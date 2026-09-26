@@ -343,6 +343,12 @@ type AgentStatus struct {
 	// common status.json.
 	UnparseableResponse bool `json:"unparseable_response,omitempty"`
 
+	// UnparseableChunks counts a chunked persona's chunks that returned content
+	// with zero parseable findings. It is the per-chunk signal; the persona-level
+	// UnparseableResponse above is set only when the persona has zero parseable
+	// findings in total. omitempty keeps the common status.json unchanged.
+	UnparseableChunks int `json:"unparseable_chunks,omitempty"`
+
 	// Post-processing enforcement counters (Epic 2.2). Always present so a
 	// zero is distinguishable from an older status.json that predates the field.
 	DroppedByMinSeverity   int `json:"dropped_by_min_severity"`
