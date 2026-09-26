@@ -27,7 +27,7 @@ const NoFindingsSentinel = "NO FINDINGS"
 
 // bareFenceRe matches a code-fence marker line that carries nothing but an
 // optional info word.
-var bareFenceRe = regexp.MustCompile("^\\s*`{3,}[A-Za-z0-9_-]*\\s*$")
+var bareFenceRe = regexp.MustCompile("^\\s*(`{3,}|~{3,})[A-Za-z0-9_-]*\\s*$")
 
 // IsNoFindings reports whether a reviewer response says "clean" and nothing
 // else. The sentinel is model-produced, so the shapes a model slips into are
@@ -188,7 +188,7 @@ func ParseModelOutput(data []byte) []Finding {
 	lines := strings.Split(text, "\n")
 	var out []Finding
 	inFence, inJSON := false, false
-	openRun := 0 // backtick run of the open fence's opener
+	openMarker := "" // the open fence's opener, which only a closesFence line ends
 	bareAttempts := 0
 	bareEnd := 0   // byte offset just past the last bare value read
 	jsonStart := 0 // byte offset of the current ```json block's first content line
@@ -205,9 +205,10 @@ func ParseModelOutput(data []byte) []Finding {
 		// fences. Mirrors internal/verify/syntaxguard's fence handling; a fence
 		// marker is a line whose first non-space content is a run of >=3 backticks.
 		// The one exception is a ```json fence: that is the output itself. As in
-		// CommonMark, a marker shorter than the open fence's opener is content, so a
-		// ```json example quoted inside a ````md fence stays quoted (TD-019).
-		if isFenceMarker(line) && (!inJSON && !inFence || fenceRun(line) >= openRun) {
+		// CommonMark, a fence closes only on a marker of its own character (` or ~)
+		// at least as long as its opener, so a ```json example quoted inside a
+		// ````md or ~~~ fence stays quoted (TD-019, TD-048).
+		if isFenceMarker(line) && (!inJSON && !inFence || closesFence(line, openMarker)) {
 			switch {
 			case inJSON:
 				// A "```json" line here is the NEXT chunk's opener, not this block's
@@ -215,13 +216,13 @@ func ParseModelOutput(data []byte) []Finding {
 				// reading the opener as one would turn the next chunk's array into
 				// prose. It closes this block and opens the next.
 				out = append(out, decodeJSONFindings(text[jsonStart:lineStart])...)
-				inJSON, jsonStart, openRun = isJSONFence(line), offset, fenceRun(line)
+				inJSON, jsonStart, openMarker = isJSONFence(line), offset, line
 			case inFence:
 				inFence = false
 			case isJSONFence(line):
-				inJSON, jsonStart, openRun = true, offset, fenceRun(line)
+				inJSON, jsonStart, openMarker = true, offset, line
 			default:
-				inFence, openRun = true, fenceRun(line)
+				inFence, openMarker = true, line
 			}
 			continue
 		}
@@ -280,18 +281,34 @@ func ParseModelOutput(data []byte) []Finding {
 }
 
 // isFenceMarker reports whether line opens or closes a markdown code fence: its
-// first non-space content is a run of three or more backticks (```lang, ```, or a
-// CommonMark 4+ backtick fence). Used by ParseModelOutput to toggle fenced-block
-// state so quoted example rows are not parsed as findings.
+// first non-space content is a run of three or more backticks or tildes
+// (```lang, ```, ~~~, or a longer CommonMark fence). Used by ParseModelOutput to
+// toggle fenced-block state so quoted example rows are not parsed as findings.
 func isFenceMarker(line string) bool {
-	return strings.HasPrefix(strings.TrimLeft(line, " \t"), "```")
+	_, n := fenceRun(line)
+	return n >= 3
 }
 
-// fenceRun returns the length of the backtick run that begins a fence marker
-// line. A fence closes only on a marker whose run is at least its opener's.
-func fenceRun(line string) int {
+// fenceRun returns the character (` or ~) and length of the run that begins a
+// line after leading spaces and tabs; n is 0 when the line starts with neither.
+func fenceRun(line string) (c byte, n int) {
 	t := strings.TrimLeft(line, " \t")
-	return len(t) - len(strings.TrimLeft(t, "`"))
+	if t == "" || (t[0] != '`' && t[0] != '~') {
+		return 0, 0
+	}
+	c = t[0]
+	for n < len(t) && t[n] == c {
+		n++
+	}
+	return c, n
+}
+
+// closesFence reports whether marker line may close the fence opener opened:
+// same character, and a run at least as long (CommonMark).
+func closesFence(line, opener string) bool {
+	c, n := fenceRun(line)
+	oc, on := fenceRun(opener)
+	return c == oc && n >= on
 }
 
 // ParseSource parses a per-source findings file: a v1 8-column pipe stream, or

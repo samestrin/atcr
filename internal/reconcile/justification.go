@@ -819,8 +819,9 @@ func fenceMask(lines []string) (strict, released, balanced []bool) {
 	inFence, inJSON := false, false
 	openedAt := -1
 	for i, l := range lines {
-		// A marker shorter than the open fence's opener is content (TD-019).
-		if isFenceMarker(l) && (!inFence || fenceRun(l) >= fenceRun(lines[openedAt])) {
+		// A marker of the other character, or shorter than the open fence's
+		// opener, is content (TD-019, TD-048).
+		if isFenceMarker(l) && (!inFence || closesFence(l, lines[openedAt])) {
 			switch {
 			case inJSON && isJSONFenceOpener(l):
 				// The parser reads this as the next chunk's opener closing a cut-off
@@ -870,9 +871,9 @@ func jsonFenceBounds(lines []string) (open, close []bool) {
 	open = make([]bool, len(lines))
 	close = make([]bool, len(lines))
 	inFence, inJSON := false, false
-	openRun := 0
+	opener := ""
 	for i, l := range lines {
-		if !isFenceMarker(l) || inFence && fenceRun(l) < openRun {
+		if !isFenceMarker(l) || inFence && !closesFence(l, opener) {
 			continue
 		}
 		switch {
@@ -880,15 +881,15 @@ func jsonFenceBounds(lines []string) (open, close []bool) {
 			// The parser reads this as the next chunk's opener closing a cut-off
 			// block (stream/parser.go ParseModelOutput): one line, both roles.
 			close[i], open[i] = true, true
-			openRun = fenceRun(l)
+			opener = l
 		case inFence:
 			close[i] = inJSON
 			inFence, inJSON = false, false
 		case isJSONFenceOpener(l):
 			open[i] = true
-			inFence, inJSON, openRun = true, true, fenceRun(l)
+			inFence, inJSON, opener = true, true, l
 		default:
-			inFence, openRun = true, fenceRun(l)
+			inFence, opener = true, l
 		}
 	}
 	return open, close
@@ -907,16 +908,32 @@ func isJSONFenceOpener(line string) bool {
 }
 
 // isFenceMarker reports whether a line opens or closes a fenced block: its first
-// non-space content is a run of >=3 backticks. Mirrors stream.isFenceMarker.
+// non-space content is a run of >=3 backticks or tildes. Mirrors
+// stream.isFenceMarker.
 func isFenceMarker(line string) bool {
-	return strings.HasPrefix(strings.TrimLeft(line, " \t"), "```")
+	_, n := fenceRun(line)
+	return n >= 3
 }
 
-// fenceRun mirrors stream.fenceRun: the length of the backtick run that begins
-// a fence marker line.
-func fenceRun(line string) int {
+// fenceRun mirrors stream.fenceRun: the character (` or ~) and length of the
+// run that begins a line.
+func fenceRun(line string) (c byte, n int) {
 	t := strings.TrimLeft(line, " \t")
-	return len(t) - len(strings.TrimLeft(t, "`"))
+	if t == "" || (t[0] != '`' && t[0] != '~') {
+		return 0, 0
+	}
+	c = t[0]
+	for n < len(t) && t[n] == c {
+		n++
+	}
+	return c, n
+}
+
+// closesFence mirrors stream.closesFence: same character, run at least as long.
+func closesFence(line, opener string) bool {
+	c, n := fenceRun(line)
+	oc, on := fenceRun(opener)
+	return c == oc && n >= on
 }
 
 // isItemStart reports whether s begins a Markdown list item: an unordered bullet

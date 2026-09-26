@@ -330,6 +330,8 @@ The parser also accepts what models commonly send instead:
 - `NO FINDINGS` with a trailing `.`, `:`, or `!`, inside a code fence, or an empty array `[]` or `{"findings":[]}`, all read as a clean review;
 - legacy 7-column pipe rows, from a custom persona that still uses the v1 contract.
 
+Anything inside another code fence (a ```` ``` ```` or `~~~` fence with any other info word) is a quoted example and is never read. A fence closes only on a marker of its own character at least as long as its opener, so a ```` ```json ```` example quoted inside a ```` ```` ```` or `~~~` fence stays quoted. Two shapes are accepted limits of reading unfenced values: a finding the model restates outside its fenced block is counted twice, and a finding-shaped JSON example written in plain prose (outside any fence) is read as a finding.
+
 An object with an unknown severity or no location is dropped. A reply that yields no findings and is not a clean review is recorded as `unparseable_response` in the agent's `status.json`. For a chunked review that flag means the persona has no parseable findings across all its chunks; `unparseable_chunks` counts the individual chunks that yielded none, so one garbled chunk beside a chunk with findings is counted there without marking the persona unparseable.
 
 ### v2 evolution
