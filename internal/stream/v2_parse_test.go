@@ -273,6 +273,9 @@ func TestParseSource_V2HostShapedEnvelope(t *testing.T) {
 	assert.Equal(t, []Finding{{Severity: "HIGH", File: "a.go", Line: 3, Problem: "p | q", Fix: "f", Category: "c", EstMinutes: 5, Evidence: "e", Reviewer: "host"}}, res.Findings)
 }
 
+// v2Row1 is one valid envelope row, for error cases that hide it behind a bad key.
+const v2Row1 = `{"severity":"HIGH","file_line":"a.go:1","problem":"p","fix":"f","category":"c","est_minutes":1,"evidence":"e","reviewer":"host"}`
+
 func TestParseSource_V2Errors(t *testing.T) {
 	cases := []struct {
 		name string
@@ -301,6 +304,22 @@ func TestParseSource_V2Errors(t *testing.T) {
 		{"trailing envelope", `{"axi_format":"json","axi_notice":"","data":{"findings":[]}}{"axi_format":"json","axi_notice":"","data":{"findings":[]}}`},
 		{"trailing prose", `{"axi_format":"json","axi_notice":"","data":{"findings":[]}}` + "\nthanks"},
 		{"trailing fence", `{"axi_format":"json","axi_notice":"","data":{"findings":[]}}` + "\n```"},
+		// TD-050/TD-052: encoding/json matches envelope keys case-insensitively,
+		// last one wins, so a case variant can silently replace the real key.
+		{"top-level findings beside data", `{"axi_format":"json","axi_notice":"","findings":[` + v2Row1 + `],"data":{"findings":[]}}`},
+		{"data key in the wrong case", `{"axi_format":"json","axi_notice":"","data":{"findings":[` + v2Row1 + `]},"DATA":{"findings":[]}}`},
+		{"axi_format key in the wrong case", `{"AXI_FORMAT":"toon","axi_format":"json","axi_notice":"","data":{"findings":[]}}`},
+		{"axi_notice key in the wrong case", `{"axi_format":"json","axi_notice":"","Axi_Notice":"x","data":{"findings":[]}}`},
+		{"findings key in the wrong case", `{"axi_format":"json","axi_notice":"","data":{"findings":[` + v2Row1 + `],"FINDINGS":[]}}`},
+		// TD-037: atcr never writes these values (ParseModelOutput drops an
+		// unknown severity or empty location; the engine stamps every reviewer).
+		{"unknown severity", `{"axi_format":"json","axi_notice":"","data":{"findings":[{"severity":"BLOCKER","file_line":"a.go:1","problem":"p","fix":"f","category":"c","est_minutes":1,"evidence":"e","reviewer":"host"}]}}`},
+		{"lowercase severity", `{"axi_format":"json","axi_notice":"","data":{"findings":[{"severity":"high","file_line":"a.go:1","problem":"p","fix":"f","category":"c","est_minutes":1,"evidence":"e","reviewer":"host"}]}}`},
+		{"empty file_line", `{"axi_format":"json","axi_notice":"","data":{"findings":[{"severity":"HIGH","file_line":" ","problem":"p","fix":"f","category":"c","est_minutes":1,"evidence":"e","reviewer":"host"}]}}`},
+		{"empty reviewer", `{"axi_format":"json","axi_notice":"","data":{"findings":[{"severity":"HIGH","file_line":"a.go:1","problem":"p","fix":"f","category":"c","est_minutes":1,"evidence":"e","reviewer":""}]}}`},
+		{"table unknown severity", "findings[1]{severity,file_line,problem,fix,category,est_minutes,evidence,reviewer}:\n  BLOCKER,\"a.go:1\",p,f,c,1,e,r"},
+		{"table empty file_line", "findings[1]{severity,file_line,problem,fix,category,est_minutes,evidence,reviewer}:\n  HIGH,\"\",p,f,c,1,e,r"},
+		{"table empty reviewer", "findings[1]{severity,file_line,problem,fix,category,est_minutes,evidence,reviewer}:\n  HIGH,\"a.go:1\",p,f,c,1,e,\"\""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
