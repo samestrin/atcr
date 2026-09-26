@@ -222,7 +222,7 @@ func adversarialCases() []struct {
 	name string
 	f    Finding
 } {
-	long := strings.Repeat("x | y ‖ \"q\" 'r'\n", 200) // 2,800 runes: v2 has no rune cap
+	long := strings.Repeat("x | y ‖ \"q\" 'r'\n", 200) // 3,200 runes: v2 has no rune cap
 	return []struct {
 		name string
 		f    Finding
