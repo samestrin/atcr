@@ -12,8 +12,15 @@ import (
 	"github.com/samestrin/atcr/internal/registry"
 )
 
-// Target is a distinct (provider, model, base_url, max_tokens) invocation target.
-// The doctor invokes each target at most once; several roster agents may share one.
+// Target is a distinct invocation target. The doctor invokes each target at most
+// once; several roster agents may share one.
+//
+// Identity is exactly the dedup key addTarget builds: provider, model, base_url,
+// and the resolved max_tokens cap — plus response_format and the derived tools-loop
+// flag, but only for a DECLARED target (an undeclared agent's key is unchanged, so
+// neither its probes nor its doctor output move). The field comments below carry
+// the per-field rationale; a reader trimming the key later must keep
+// new-fields-are-identity and the conditional-key rule in step with it.
 type Target struct {
 	Provider  string
 	Model     string
