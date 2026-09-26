@@ -65,3 +65,20 @@ func TestReadFindingsFile_RefusesASwappedInSymlinkOrFIFO(t *testing.T) {
 		t.Fatal("reading a FIFO blocked")
 	}
 }
+
+// A findings directory selection cannot search is an error, not an absent
+// file: reporting fs.ErrNotExist would send every reader down its "no
+// findings" branch for a pool it never read.
+func TestSelectFindingsFile_UnsearchableDirIsAnError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root searches a mode-0 directory")
+	}
+	dir := t.TempDir()
+	writeFile(t, dir, "findings.txt", Version+"\n")
+	require.NoError(t, os.Chmod(dir, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	_, err := SelectFindingsFile(dir)
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, fs.ErrNotExist), "got %v", err)
+}
