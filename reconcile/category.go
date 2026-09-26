@@ -29,7 +29,7 @@ package reconcile
 const (
 	// Defect classes — what is wrong with the code's behaviour.
 	CategoryCorrectness   = "correctness"    // the code produces a wrong result: off-by-one, inverted condition, unreachable branch
-	CategoryLogic         = "logic"          // accepted equivalent spelling of correctness; a member because personas/community/sonny.md:49's worked example emits it
+	CategoryLogic         = "logic"          // accepted equivalent spelling of correctness; a member because personas/community/sonny.md:51's worked example emits it
 	CategorySecurity      = "security"       // injection, auth bypass, traversal — every vulnerability class except credential exposure
 	CategorySecret        = "secret"         // an exposed credential specifically: hardcoded key, secret in a log, weak secret handling (personas/community/gerald.md's whole lens)
 	CategoryPerformance   = "performance"    // hot-path cost: N+1 calls, needless allocation, accidental O(n^2)
@@ -149,7 +149,7 @@ var categoryMerges = map[string]string{
 	//
 	// Membership and canonicalization answer different questions. Membership is
 	// what the PROMPT offers: `logic` stays a member because
-	// personas/community/sonny.md:49 ships a worked example that emits it, and a
+	// personas/community/sonny.md:51 ships a worked example that emits it, and a
 	// prompt whose own example contradicts its own vocabulary is the defect this
 	// epic exists to remove. Canonicalization is what INGESTION should do with the
 	// word once emitted: the rendered rule tells every reviewer that `logic` is
