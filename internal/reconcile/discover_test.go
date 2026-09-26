@@ -427,3 +427,29 @@ func TestDiscover_MalformedHostEnvelopeIsSkipped(t *testing.T) {
 	pool, _ := sourceByName(sources, "pool")
 	assert.Equal(t, []stream.Finding{lossless}, pool.Findings)
 }
+
+// TD-040: the host source is the host reviewer by definition. A host file that
+// names another reviewer (a pool agent's name, say) must not let the host's
+// findings count as that agent's corroboration, so Discover stamps "host".
+func TestDiscover_HostReviewerStamped(t *testing.T) {
+	dir := t.TempDir()
+	writeRaw(t, dir, "host/findings.toon", hostEnvelope(strings.Replace(hostFinding, `"reviewer":"host"`, `"reviewer":"greta"`, 1)))
+	writeFindings(t, dir, "other/findings.txt", "LOW|b.go:2|p|f|style|1|e|greta\n")
+
+	sources, err := Discover(dir, nil)
+	require.NoError(t, err)
+	host, _ := sourceByName(sources, "host")
+	assert.Equal(t, []stream.Finding{hostWant}, host.Findings)
+	// Other sources keep the reviewer they wrote.
+	other, _ := sourceByName(sources, "other")
+	require.Len(t, other.Findings, 1)
+	assert.Equal(t, "greta", other.Findings[0].Reviewer)
+
+	v1 := t.TempDir()
+	writeFindings(t, v1, "host/findings.txt", "LOW|b.go:2|p|f|style|1|e|greta\n")
+	sources, err = Discover(v1, nil)
+	require.NoError(t, err)
+	host, _ = sourceByName(sources, "host")
+	require.Len(t, host.Findings, 1)
+	assert.Equal(t, "host", host.Findings[0].Reviewer)
+}
