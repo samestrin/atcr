@@ -142,8 +142,12 @@ func ResolveWithCap(reg *registry.Registry, proj *registry.ProjectConfig, overri
 		key := ac.Provider + "\x00" + ac.Model + "\x00" + prov.BaseURL + "\x00" + strconv.Itoa(declared)
 		// response_format and the tool loop change the invocation only for a declared
 		// agent, so only a declared agent's key grows: an undeclared agent keeps
-		// today's key exactly, and doctor output for agents that never opted in does
-		// not change.
+		// today's key exactly, and that agent's OWN doctor row is unchanged. The run
+		// as a whole can still differ: a declared and an undeclared agent sharing an
+		// endpoint now become two targets, so the identical marker Complete call goes
+		// out twice (deliberate — D2/AC 05-01: one probe is only evidence about the
+		// invocation it reproduces), and against a quota-limited shared upstream the
+		// duplicate can draw a 429 that exits 1.
 		tools := false
 		if ac.ResponseFormat != "" {
 			tools = ac.Tools && ac.SupportsFC
