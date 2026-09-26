@@ -108,11 +108,14 @@ func assertBenchmarkMissing(t *testing.T, dir string) {
 func TestBenchmarkReaders_CorruptToonErrorsWithoutFallback(t *testing.T) {
 	dir := t.TempDir()
 	writeToonPool(t, filepath.Join(dir, "sources", "pool"), []byte(stream.VersionV2+"\nnot a table\n"), stalePoolTxt)
+	toon := filepath.Join(dir, "sources", "pool", "findings.toon")
 
 	_, err := readCaseFindings(dir)
 	require.Error(t, err)
+	assert.Contains(t, err.Error(), toon, "the error names the file that failed (TD-032)")
 	_, _, _, missing, err := readCaseFindingsLocated(dir, map[string]bool{"greta": true})
 	require.Error(t, err)
+	assert.Contains(t, err.Error(), toon, "the error names the file that failed (TD-032)")
 	assert.False(t, missing)
 }
 

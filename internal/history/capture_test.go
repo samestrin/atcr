@@ -241,6 +241,7 @@ func TestRecordReview_CorruptToonErrorsWithoutFallback(t *testing.T) {
 	n, err := RecordReview(histPath, reviewDir, time.Now())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "parsing pool findings: ")
+	assert.Contains(t, err.Error(), filepath.Join(reviewDir, "sources", "pool", "findings.toon"), "the error names the file that failed (TD-032)")
 	assert.Zero(t, n)
 	assert.NoFileExists(t, histPath)
 }

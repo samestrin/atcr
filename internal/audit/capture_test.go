@@ -153,6 +153,7 @@ func TestRecordReview_CorruptToonWarnsWithoutFallback(t *testing.T) {
 	assert.Equal(t, 1, n)
 	assert.Contains(t, stderr, "atcr: warning: audit: ")
 	assert.Contains(t, stderr, "; writing empty severity summary")
+	assert.Contains(t, stderr, filepath.Join(reviewDir, "sources", "pool", "findings.toon"), "the warning names the file that failed (TD-032)")
 	recs, err := Load(auditPath)
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
