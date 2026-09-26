@@ -91,6 +91,8 @@ func TestParseModelOutput_JSONFieldRules(t *testing.T) {
 		{"severity case is normalized", `{"severity":" high ","file_line":"a.go:1"}`, []Finding{{Severity: "HIGH", File: "a.go", Line: 1}}},
 		{"est_minutes as a string", `{"severity":"LOW","file_line":"a.go:1","est_minutes":"15"}`, []Finding{{Severity: "LOW", File: "a.go", Line: 1, EstMinutes: 15}}},
 		{"est_minutes as a float", `{"severity":"LOW","file_line":"a.go:1","est_minutes":7.5}`, []Finding{{Severity: "LOW", File: "a.go", Line: 1, EstMinutes: 7}}},
+		{"est_minutes above one week is clamped", `{"severity":"LOW","file_line":"a.go:1","est_minutes":1e300},{"severity":"LOW","file_line":"b.go:1","est_minutes":99999999999}`, []Finding{{Severity: "LOW", File: "a.go", Line: 1, EstMinutes: 10080}, {Severity: "LOW", File: "b.go", Line: 1, EstMinutes: 10080}}},
+		{"negative est_minutes is clamped to 0", `{"severity":"LOW","file_line":"a.go:1","est_minutes":-5},{"severity":"LOW","file_line":"b.go:1","est_minutes":"-5"}`, []Finding{{Severity: "LOW", File: "a.go", Line: 1}, {Severity: "LOW", File: "b.go", Line: 1}}},
 		{"est_minutes null or junk", `{"severity":"LOW","file_line":"a.go:1","est_minutes":null},{"severity":"LOW","file_line":"b.go:1","est_minutes":"soon"}`, []Finding{{Severity: "LOW", File: "a.go", Line: 1}, {Severity: "LOW", File: "b.go", Line: 1}}},
 		{"null string fields stay empty", `{"severity":"LOW","file_line":"a.go:1","fix":null}`, []Finding{{Severity: "LOW", File: "a.go", Line: 1}}},
 		{"unknown severity is dropped", `{"severity":"INFO","file_line":"a.go:1"}`, nil},
