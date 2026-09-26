@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -95,36 +96,55 @@ func TestJSONObjectOutputFormat_Content(t *testing.T) {
 
 // AC 04-01: heading-located swap across all 24 personas; undeclared byte-identical.
 func TestSwapOutputFormatSection_AllPersonas(t *testing.T) {
-	for file, text := range allPersonaPrompts(t) {
-		t.Run(file, func(t *testing.T) {
-			rendered := renderPersona(t, text)
-			i := strings.Index(rendered, outputFormatHeading)
-			require.GreaterOrEqualf(t, i, 0, "precondition: %s carries the heading", file)
-			original := outputFormatSection(rendered)
-			require.Contains(t, original, "```json", "precondition: the persona section asks for the fenced array")
+	for _, toolsEnabled := range []bool{false, true} {
+		for file, text := range allPersonaPrompts(t) {
+			t.Run(fmt.Sprintf("%s/tools=%t", file, toolsEnabled), func(t *testing.T) {
+				ctx := payload.PayloadContext{
+					AgentName:    "tester",
+					BaseRef:      "main",
+					HeadRef:      "feature",
+					FileCount:    1,
+					PayloadMode:  string(payload.ModeBlocks),
+					Payload:      payloadHeadingSentinel,
+					ScopeRule:    payload.ScopeRule(payload.ModeBlocks),
+					ToolsEnabled: toolsEnabled,
+				}
+				rendered, err := payload.RenderPrompt(text, ctx)
+				require.NoError(t, err)
+				i := strings.Index(rendered, outputFormatHeading)
+				require.GreaterOrEqualf(t, i, 0, "precondition: %s carries the heading", file)
+				original := outputFormatSection(rendered)
+				require.Contains(t, original, "```json", "precondition: the persona section asks for the fenced array")
 
-			start := strings.Index(rendered, payloadHeadingSentinel)
-			require.Greater(t, start, i, "precondition: the payload follows the persona's section")
+				start := strings.Index(rendered, payloadHeadingSentinel)
+				require.Greater(t, start, i, "precondition: the payload follows the persona's section")
+				// The production locator (review.go's renderedPayloadStart), not just a
+				// strings.Index guess: a shipped persona that made the locator fail safe
+				// to 0 would drop every swap to the append path — both the fenced-array
+				// and the JSON-object contracts sent at once (the D4 edge case).
+				require.Equal(t, start, renderedPayloadStart(rendered, text, ctx),
+					"the production payload locator must agree with the sentinel position")
 
-			// Undeclared: byte-identical.
-			require.Equal(t, rendered, promptForResponseFormat(rendered, start, ""))
+				// Undeclared: byte-identical.
+				require.Equal(t, rendered, promptForResponseFormat(rendered, start, ""))
 
-			// Declared: the section is exactly the shared block.
-			swapped := promptForResponseFormat(rendered, start, registry.ResponseFormatJSONObject)
-			section := outputFormatSection(swapped)
-			assert.Equal(t, jsonObjectOutputFormat, section, "the declared section must be exactly the shared block")
-			assert.NotContains(t, section, "```json")
-			assert.NotContains(t, section, "NO FINDINGS")
+				// Declared: the section is exactly the shared block.
+				swapped := promptForResponseFormat(rendered, start, registry.ResponseFormatJSONObject)
+				section := outputFormatSection(swapped)
+				assert.Equal(t, jsonObjectOutputFormat, section, "the declared section must be exactly the shared block")
+				assert.NotContains(t, section, "```json")
+				assert.NotContains(t, section, "NO FINDINGS")
 
-			// Only the section changed: prefix and everything from the next heading on
-			// (payload included, with its own copy of the heading) are untouched.
-			assert.Equal(t, rendered[:i], swapped[:i], "text before the section must be unchanged")
-			assert.Equal(t, rendered[i+len(original):], swapped[i+len(jsonObjectOutputFormat):],
-				"text after the section must be unchanged")
-			assert.Equal(t, 1, strings.Count(swapped, "PAYLOAD-SENTINEL-KEEP-ME"))
-			assert.Equal(t, strings.Count(rendered, outputFormatHeading), strings.Count(swapped, outputFormatHeading),
-				"the payload's copy of the heading must survive; only the first match is swapped")
-		})
+				// Only the section changed: prefix and everything from the next heading on
+				// (payload included, with its own copy of the heading) are untouched.
+				assert.Equal(t, rendered[:i], swapped[:i], "text before the section must be unchanged")
+				assert.Equal(t, rendered[i+len(original):], swapped[i+len(jsonObjectOutputFormat):],
+					"text after the section must be unchanged")
+				assert.Equal(t, 1, strings.Count(swapped, "PAYLOAD-SENTINEL-KEEP-ME"))
+				assert.Equal(t, strings.Count(rendered, outputFormatHeading), strings.Count(swapped, outputFormatHeading),
+					"the payload's copy of the heading must survive; only the first match is swapped")
+			})
+		}
 	}
 }
 
