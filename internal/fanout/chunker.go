@@ -323,7 +323,8 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	fallbackModelCounts := make(map[string]int)
 	var fallbackModelOrder []string
 	servedModelCounts := make(map[string]int)
-	servedModelFirst := make(map[string]int) // model key -> index of its first serving chunk
+	servedModelFirst := make(map[string]int)    // model key -> index of its first serving chunk
+	servedModelPrimary := make(map[string]bool) // model key -> some chunk reached it without failing over
 	var servedModelOrder []string
 	for i, r := range g {
 		if m := strings.TrimSpace(r.Model); r.Status == StatusOK && m != "" {
@@ -333,6 +334,7 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 				servedModelFirst[k] = i
 			}
 			servedModelCounts[k]++
+			servedModelPrimary[k] = servedModelPrimary[k] || !r.FallbackUsed
 		}
 		if strings.TrimSpace(r.Content) != "" {
 			contents = append(contents, r.Content)
@@ -416,8 +418,9 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	// Model names the model that served most of the persona's successful chunks,
 	// not chunk 0's: a chunk 0 that failed over to a backup would otherwise record
 	// the backup for the whole persona, scoring its per-model trust prior against
-	// the wrong history. A disagreement still names ONE model (modal, first
-	// appearance on a tie) rather than none — cost pricing reads this field, and an
+	// the wrong history. A disagreement still names ONE model (modal; on a tie, a
+	// model some chunk reached without failing over, then first appearance) rather
+	// than none — cost pricing reads this field, and an
 	// empty model would price the persona's real tokens at $0. With no successful
 	// chunk, chunk 0's model stands.
 	//
@@ -425,10 +428,11 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	// as a matched set from one serving agent (see promoteRePackedDegradation), so
 	// they are taken from the same chunk. This runs before that promote so its
 	// budget-0 zeroing still has the last word.
-	bestServedIdx, bestServedCount := 0, 0
+	bestServedIdx, bestServedCount, bestServedPrimary := 0, 0, false
 	for _, k := range servedModelOrder {
-		if c := servedModelCounts[k]; c > bestServedCount {
-			bestServedCount = c
+		c, primary := servedModelCounts[k], servedModelPrimary[k]
+		if c > bestServedCount || (c == bestServedCount && primary && !bestServedPrimary) {
+			bestServedCount, bestServedPrimary = c, primary
 			bestServedIdx = servedModelFirst[k]
 		}
 	}
