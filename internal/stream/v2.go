@@ -596,33 +596,46 @@ const (
 )
 
 // SelectFindingsFile returns the findings file an atcr reader parses in dir:
-// findings.toon when it is a regular file, else findings.txt when it exists,
-// else an error for which errors.Is(err, fs.ErrNotExist) holds. Every reader
-// calls this rather than restating the rule, so no two readers pick different
-// files for one directory.
+// findings.toon when it is a regular file, else findings.txt when it is a
+// regular file, else an error for which errors.Is(err, fs.ErrNotExist) holds.
+// Every reader calls this rather than restating the rule, so no two readers
+// pick different files for one directory.
 //
-// A findings.toon that is a symlink, FIFO, device, or directory counts as
+// A findings file that is a symlink, FIFO, device, or directory counts as
 // absent: a symlink could point outside the review tree and a FIFO would block
-// the read. findings.txt keeps today's check (plain existence), so a .txt-only
-// directory reads exactly as before.
+// the read. atcr never writes one, so a non-regular file present is reported on
+// stderr as a warning.
 //
 // The choice is final. A caller that selected findings.toon must never retry
 // findings.txt when the read or parse fails: that would hide a v2 writer bug
 // behind lossy data.
 func SelectFindingsFile(dir string) (string, error) {
 	toon := filepath.Join(dir, findingsFileV2)
-	fi, err := os.Lstat(toon)
-	if err == nil && fi.Mode().IsRegular() {
-		return toon, nil
-	}
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return "", err
+	if ok, err := regularFindingsFile(toon); ok || err != nil {
+		return toon, err
 	}
 	txt := filepath.Join(dir, findingsFileV1)
-	if _, err := os.Stat(txt); err != nil {
-		return "", err
+	if ok, err := regularFindingsFile(txt); ok || err != nil {
+		return txt, err
 	}
-	return txt, nil
+	return "", fmt.Errorf("no regular findings file in %s: %w", dir, fs.ErrNotExist)
+}
+
+// regularFindingsFile reports whether path is a regular file. A missing path is
+// (false, nil); a non-regular one is (false, nil) with a stderr warning; any
+// other Lstat error is returned.
+func regularFindingsFile(path string) (bool, error) {
+	fi, err := os.Lstat(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return false, nil
+	case err != nil:
+		return false, err
+	case !fi.Mode().IsRegular():
+		fmt.Fprintf(os.Stderr, "atcr: warning: ignoring %s: not a regular file\n", path)
+		return false, nil
+	}
+	return true, nil
 }
 
 // FindingsParseError reports that the selected findings file was read but did
@@ -647,7 +660,14 @@ func ReadPoolFindings(dir string) (ParseResult, error) {
 	if err != nil {
 		return ParseResult{}, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := readFindingsFile(path)
+	if errors.Is(err, fs.ErrNotExist) && filepath.Base(path) == findingsFileV2 {
+		// findings.toon was deleted after selection, so it is absent, not a
+		// failed read: select again rather than report a missing pool.
+		if path, err = SelectFindingsFile(dir); err == nil {
+			data, err = readFindingsFile(path)
+		}
+	}
 	if err != nil {
 		return ParseResult{}, err
 	}
