@@ -204,26 +204,35 @@ func TestRunDebate_ResponseFormatJudgeSeatOnly(t *testing.T) {
 	})
 
 	t.Run("single-model cast shares one declared config", func(t *testing.T) {
-		proposer := declare(fcCast().Proposer)
-		challenger, judge := proposer, proposer
-		challenger.Label, judge.Label = LabelChallenger, LabelJudge
-		c := Cast{Proposer: proposer, Challenger: challenger, Judge: judge, SingleModel: true}
+		// Built through production casting: one declared reviewer on the roster, the
+		// single-model fallback putting that same declared config on all three seats.
+		reg := rosterReg(map[string][2]string{"alice": {"model-a", registry.RoleReviewer}})
+		alice := reg.Agents["alice"]
+		alice.ResponseFormat = registry.ResponseFormatJSONObject
+		reg.Agents["alice"] = alice
+		c, ok, reason := CastRoles(reg, debateItem(), Config{AllowSingleModel: true})
+		require.True(t, ok, "reason: %s", reason)
+		require.True(t, c.SingleModel, "the single-agent roster must cast single-model")
 		assert.Equal(t, []string{"", "", jo}, judgeSeatResponseFormats(t, c),
 			"identical configs on all three seats: only the judge-labeled seat sends it")
 	})
 
 	t.Run("same agent, judge on one item and proposer on the next", func(t *testing.T) {
-		x := declare(fcCast().Judge) // carol, declared
-		first := fcCast()
-		first.Judge = x
-		second := fcCast()
-		second.Proposer = x
-		second.Proposer.Label = LabelProposer
-
+		// The same declared agent, cast by production casting into every seat across
+		// two items: whatever seat it lands in, only the judge-labeled seat sends
+		// response_format — the gate reads the seat label fresh per run.
+		reg := rosterReg(map[string][2]string{"alice": {"model-a", registry.RoleReviewer}})
+		alice := reg.Agents["alice"]
+		alice.ResponseFormat = registry.ResponseFormatJSONObject
+		reg.Agents["alice"] = alice
+		first, ok, reason := CastRoles(reg, debateItem(), Config{AllowSingleModel: true})
+		require.True(t, ok, "reason: %s", reason)
 		assert.Equal(t, []string{"", "", jo}, judgeSeatResponseFormats(t, first))
+		second, ok, reason := CastRoles(reg, debateItem(), Config{AllowSingleModel: true})
+		require.True(t, ok, "reason: %s", reason)
 		got := judgeSeatResponseFormats(t, second)
 		assert.Empty(t, got[0], "the same declared agent sends nothing when cast as proposer")
-		assert.Empty(t, got[2], "the undeclared judge sends nothing")
+		assert.Equal(t, jo, got[2], "the declared agent sends it when cast as judge")
 	})
 
 	// A non-FC judge goes through the engine's single-shot Complete path, not the
