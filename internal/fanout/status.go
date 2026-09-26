@@ -344,7 +344,8 @@ type AgentStatus struct {
 	UnparseableResponse bool `json:"unparseable_response,omitempty"`
 
 	// UnparseableChunks counts a chunked persona's chunks that returned content
-	// with zero parseable findings. It is the per-chunk signal; the persona-level
+	// with zero parseable findings and was not a clean review (a NO FINDINGS or
+	// empty-array chunk is clean, not unparseable). It is the per-chunk signal; the persona-level
 	// UnparseableResponse above is set only when the persona has zero parseable
 	// findings in total. omitempty keeps the common status.json unchanged.
 	UnparseableChunks int `json:"unparseable_chunks,omitempty"`
