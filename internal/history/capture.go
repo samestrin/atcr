@@ -34,7 +34,7 @@ func RecordReview(histPath, reviewDir string, ts time.Time) (int, error) {
 		case errors.Is(err, fs.ErrNotExist):
 			return 0, nil
 		case errors.As(err, &pe):
-			return 0, fmt.Errorf("parsing pool findings: %w", err)
+			return 0, fmt.Errorf("parsing pool findings: %s: %w", pe.Path, err)
 		}
 		return 0, fmt.Errorf("reading pool findings: %w", err)
 	}

@@ -1187,7 +1187,7 @@ func readCaseFindingsLocated(reviewDir string, agents map[string]bool) (located 
 			// change (internal/benchmark), which this tier's file does not own.
 			return located, categorical, 0, true, nil
 		}
-		return nil, nil, 0, false, rerr
+		return nil, nil, 0, false, withFindingsPath(rerr)
 	}
 	for _, f := range parsed.Findings {
 		located[f.Reviewer] = append(located[f.Reviewer], benchmark.ReportedFinding{

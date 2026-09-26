@@ -68,7 +68,7 @@ func summarize(reviewDir string) (map[string]int, error) {
 		case errors.Is(err, fs.ErrNotExist):
 			return nil, nil
 		case errors.As(err, &pe):
-			fmt.Fprintf(os.Stderr, "atcr: warning: audit: %v; writing empty severity summary\n", err)
+			fmt.Fprintf(os.Stderr, "atcr: warning: audit: %s: %v; writing empty severity summary\n", pe.Path, err)
 			return nil, nil
 		}
 		return nil, fmt.Errorf("reading pool findings: %w", err)

@@ -931,7 +931,7 @@ func readCaseFindings(reviewDir string) (map[string][]string, error) {
 		if errors.Is(err, fs.ErrNotExist) {
 			return map[string][]string{}, nil
 		}
-		return nil, err
+		return nil, withFindingsPath(err)
 	}
 	out := make(map[string][]string, len(parsed.Findings))
 	for _, f := range parsed.Findings {
@@ -967,6 +967,17 @@ func skippedRowReviewer(content string) string {
 		fields = fields[:len(fields)-1]
 	}
 	return fields[len(fields)-1]
+}
+
+// withFindingsPath prefixes a pool findings parse error with the file that
+// failed, so an operator can tell a findings.toon writer bug from findings.txt
+// corruption. Any other error is returned unchanged.
+func withFindingsPath(err error) error {
+	var pe *stream.FindingsParseError
+	if errors.As(err, &pe) {
+		return fmt.Errorf("%s: %w", pe.Path, err)
+	}
+	return err
 }
 
 // reviewerModel resolves a reviewer's model id, preferring the usage-reported
