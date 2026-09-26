@@ -125,6 +125,74 @@ func TestGolden_ParseModelOutput_ModelOutput(t *testing.T) {
 	}, got)
 }
 
+// crlf rewrites every LF in a fixture as CRLF.
+func crlf(data []byte) []byte {
+	return []byte(strings.ReplaceAll(string(data), "\n", "\r\n"))
+}
+
+// TestGolden_CRLF pins the per-line '\r' strip: a CRLF copy of each fixture
+// parses to exactly what the LF original does, SkippedRow.Line included.
+func TestGolden_CRLF(t *testing.T) {
+	lf, err := ParseSource(readGolden(t, "per_source.txt"))
+	require.NoError(t, err)
+	got, err := ParseSource(crlf(readGolden(t, "per_source.txt")))
+	require.NoError(t, err)
+	assert.Equal(t, lf.Findings, got.Findings)
+	assert.Equal(t, lf.Skipped, got.Skipped)
+	require.Len(t, got.Skipped, 1)
+	assert.Equal(t, 6, got.Skipped[0].Line)
+
+	assert.Equal(t,
+		ParseModelOutput(readGolden(t, "model_output.txt")),
+		ParseModelOutput(crlf(readGolden(t, "model_output.txt"))))
+}
+
+// TestGolden_RoundTrip_ModelOutput freezes the path that produces every
+// per-agent findings.txt: ParseModelOutput, then the engine stamps Reviewer
+// (internal/fanout's findingsFor), then WriteSource.
+func TestGolden_RoundTrip_ModelOutput(t *testing.T) {
+	findings := ParseModelOutput(readGolden(t, "model_output.txt"))
+	for i := range findings {
+		findings[i].Reviewer = "greta"
+	}
+	var b strings.Builder
+	require.NoError(t, WriteSource(&b, findings))
+	assert.Equal(t, string(readGolden(t, "model_output.roundtrip.txt")), b.String())
+}
+
+// TestGolden_RoundTrip_Idempotent pins that writer output is a fixed point:
+// parsing a *.roundtrip.txt and writing it again returns the same bytes.
+func TestGolden_RoundTrip_Idempotent(t *testing.T) {
+	for _, name := range []string{"per_source.roundtrip.txt", "model_output.roundtrip.txt"} {
+		data := readGolden(t, name)
+		res, err := ParseSource(data)
+		require.NoError(t, err, name)
+		var b strings.Builder
+		require.NoError(t, WriteSource(&b, res.Findings), name)
+		assert.Equal(t, string(data), b.String(), name)
+	}
+
+	data := readGolden(t, "reconciled.roundtrip.txt")
+	res, err := ParseReconciled(data)
+	require.NoError(t, err)
+	var b strings.Builder
+	require.NoError(t, WriteReconciled(&b, res.Findings))
+	assert.Equal(t, string(data), b.String())
+}
+
+// TestGolden_WriteReconciled_LossyEscaping pins the 9-column writer's escaping:
+// a comma inside one reviewer name becomes '/' so it cannot forge a second
+// reviewer, and '|' and CR/LF are neutralized exactly as in the 8-column shape.
+func TestGolden_WriteReconciled_LossyEscaping(t *testing.T) {
+	var b strings.Builder
+	require.NoError(t, WriteReconciled(&b, []Finding{{
+		Severity: "LOW", File: "a.go", Line: 1,
+		Problem: "use a || b", Fix: "f", Category: "style", EstMinutes: 5,
+		Evidence: "line one\r\nline two", Reviewers: []string{"a,b", "c"}, Confidence: "HIGH",
+	}}))
+	assert.Equal(t, Version+"\nLOW|a.go:1|use a // b|f|style|5|line one line two|a/b,c|HIGH\n", b.String())
+}
+
 func TestGolden_HeaderErrors(t *testing.T) {
 	_, err := ParseSource([]byte("HIGH|a.go:1|p|f|c|1|e|r\n"))
 	require.Error(t, err)
