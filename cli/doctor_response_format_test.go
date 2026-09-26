@@ -42,6 +42,56 @@ func jsonModeIgnoringProvider(t *testing.T) *httptest.Server {
 	return srv
 }
 
+// unverifiedProvider answers the marker probe normally but rejects every other
+// (response_format) request with 503 — what a rate-limited or erroring upstream
+// does to a probe that can reach no verdict.
+func unverifiedProvider(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), "ATCR-OK-") {
+			content := "ATCR-OK-ok"
+			resp := map[string]any{
+				"choices": []map[string]any{{"message": map[string]string{"role": "assistant", "content": content}}},
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{"error":{"message":"simulated upstream 503"}}`)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// A declared agent whose probe ends ResponseFormatUnverified gets its own stderr
+// line naming the agent and model, stating no verdict was reached and to re-run —
+// distinct from the not-honored warning, which tells the operator to drop the
+// declaration. Without it a CI log scanner reading the one-line summary sees a
+// clean run even though response_format was never verified.
+func TestDoctor_WarnsWhenResponseFormatIsUnverified(t *testing.T) {
+	srv := unverifiedProvider(t)
+	setupDoctorEnv(t, srv.URL)
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	regPath := filepath.Join(home, ".config", "atcr", "registry.yaml")
+	data, err := os.ReadFile(regPath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(regPath, append(data, []byte("    response_format: json_object\n")...), 0o644))
+	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
+
+	stdout, stderr, err := executeSplit(t, "doctor")
+	require.NoError(t, err, "an unverified probe never fails the exit code")
+	assert.Contains(t, stderr, "1 ok / 0 failed")
+	assert.Contains(t, stderr, "doctor: WARNING — response_format unverified:")
+	assert.Contains(t, stderr, "bruce (test-model)")
+	assert.Contains(t, stderr, "reached no verdict")
+	assert.Contains(t, stderr, "re-run doctor to retry")
+	// The summary line is stderr-only; the table's HINT column on stdout may name
+	// the same status, but the WARNING line itself must not leak there.
+	assert.NotContains(t, stdout, "doctor: WARNING — response_format unverified")
+}
+
 // A declared agent whose provider ignores response_format gets a named warning line
 // with its agent and model, while the exit code and the ok/failed count, which speak
 // for the endpoint, stay unchanged.
