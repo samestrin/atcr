@@ -939,3 +939,41 @@ func TestFenceMask_TildeFence(t *testing.T) {
 	assert.Equal(t, make([]bool, len(lines)), open)
 	assert.Equal(t, make([]bool, len(lines)), close)
 }
+
+// TD-018: an unfenced finding array the parser reads is ONE record block, like a
+// fenced ```json block: prose on either side belongs to different findings, and
+// an anchor inside it is quoted data with no narrative.
+func TestExtractSection_BareArrayIsOneRecordBlock(t *testing.T) {
+	doc := "## Findings\n" +
+		"The token check at `internal/auth/token.go:42` is missing entirely.\n" +
+		"[" + `{"severity":"HIGH","file_line":"internal/auth/token.go:42","problem":"p","fix":"f","category":"security","est_minutes":5,"evidence":"e"},` + "\n" +
+		`{"severity":"LOW","file_line":"internal/cli/run.go:7","problem":"q","fix":"g","category":"style","est_minutes":1,"evidence":"e"}]` + "\n" +
+		"The retry loop at `internal/cli/run.go:7` never backs off."
+	lines := strings.Split(doc, "\n")
+	require.Len(t, stream.ParseModelOutput([]byte(doc)), 2, "the parser reads the bare array")
+
+	above, section := extractSection(lines, 1)
+	assert.Equal(t, "Findings", section)
+	assert.Equal(t, "The token check at `internal/auth/token.go:42` is missing entirely.", above)
+
+	below, _ := extractSection(lines, 4)
+	assert.Equal(t, "The retry loop at `internal/cli/run.go:7` never backs off.", below)
+
+	for _, idx := range []int{2, 3} {
+		inside, _ := extractSection(lines, idx)
+		assert.Empty(t, inside, "anchor %d is inside the model's JSON output", idx)
+	}
+}
+
+// A "[...]" line the parser does NOT read as findings (a markdown link) is prose
+// and bounds nothing.
+func TestExtractSection_UnreadBracketLineIsProse(t *testing.T) {
+	lines := []string{
+		"## Notes",
+		"See `a.go:10` for the leak.",
+		"[the upstream issue](https://example.com/1) describes it.",
+	}
+	require.Empty(t, stream.ParseModelOutput([]byte(strings.Join(lines, "\n"))))
+	text, _ := extractSection(lines, 1)
+	assert.Contains(t, text, "the upstream issue")
+}
