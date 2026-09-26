@@ -160,6 +160,14 @@ func TestSwapOutputFormatSection_NestedSubheadingAndLastSection(t *testing.T) {
 
 // AC 04-02: a declared persona with no ## Output Format heading gets the block
 // appended, silently; undeclared is unchanged.
+// A heading (or a mid-line occurrence) that is the last text before the payload
+// has no newline after it: a custom persona "... ## Output Format{{.Payload}}".
+// The search must bound the line at the end of s instead of slicing past it.
+func TestOutputFormatHeadingAt_NoTrailingNewline(t *testing.T) {
+	assert.Equal(t, len("intro\n"), outputFormatHeadingAt("intro\n"+outputFormatHeading))
+	assert.Equal(t, -1, outputFormatHeadingAt("x "+outputFormatHeading))
+}
+
 func TestSwapOutputFormatSection_NoHeadingAppends(t *testing.T) {
 	custom := "## Role\nYou review code.\n\n## Payload\nsome diff\n"
 
