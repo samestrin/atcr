@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/samestrin/atcr/internal/localdebt"
+	"github.com/samestrin/atcr/internal/registry"
 )
 
 // debtStdinIsTTY reports whether stdin is an interactive terminal. It is a
@@ -310,8 +311,14 @@ func finalizeDebtRecord(rec *localdebt.Record) error {
 		status = ""
 	}
 	rec.Status = status
-	if rec.EstMinutes < 0 {
-		return usageError(fmt.Errorf("invalid --est %d: expected a non-negative number of minutes", rec.EstMinutes))
+	// The upper bound is the same typo-guard as the decode-side clamp
+	// (stream.maxModelEstMinutes == registry.MaxExecutorEstimatedMinutes): a
+	// larger --est would be clamped back to exactly the bound on read, making
+	// the typo indistinguishable from a genuine week-long estimate — and with a
+	// max_estimated_minutes ceiling AT the bound, a finding that should never be
+	// autofix-eligible becomes eligible (TD internal/verify/severity.go:40).
+	if rec.EstMinutes < 0 || rec.EstMinutes > registry.MaxExecutorEstimatedMinutes {
+		return usageError(fmt.Errorf("invalid --est %d: expected a number of minutes within 0..%d", rec.EstMinutes, registry.MaxExecutorEstimatedMinutes))
 	}
 
 	// A manual add has no reconcile run behind it, so it carries the synthetic

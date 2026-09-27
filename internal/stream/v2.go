@@ -51,7 +51,20 @@ type v2Payload struct {
 // WriteSourceV2 writes per-source findings (single REVIEWER) as a v2 document.
 // There is no reconciled v2 shape: nothing re-reads reconciled/findings.txt,
 // and a reviewer list would need its own delimiter rule.
+//
+// This is a HOST write path, so it rejects an est_minutes above the clamp bound
+// instead of writing it: the decode side clamps such a value to exactly
+// maxModelEstMinutes, which would make a typo'd 20000 indistinguishable from a
+// genuine week-long estimate — and with a verify max_estimated_minutes ceiling
+// AT the bound, the clamped row becomes autofix-eligible when the original
+// never should have been (TD internal/verify/severity.go:40).
 func WriteSourceV2(w io.Writer, findings []Finding) error {
+	for _, f := range findings {
+		if f.EstMinutes > maxModelEstMinutes {
+			return fmt.Errorf("finding %s:%d: est_minutes %d exceeds the %d-minute bound; decode clamps such a value to the bound itself, so it must be corrected at the source",
+				f.File, f.Line, f.EstMinutes, maxModelEstMinutes)
+		}
+	}
 	rows := make([]v2Row, len(findings))
 	for i, f := range findings {
 		rows[i] = v2Row{
