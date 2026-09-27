@@ -44,54 +44,62 @@ func TestValidateAgent_ThinkingCombinations(t *testing.T) {
 	cases := []struct {
 		name                   string
 		thinking, level, style string
+		maxTokens              string // declared output cap, for anthropic budgets
 		wantErr                string // "" = must load
 	}{
 		// Valid.
-		{"on with style", ThinkingOn, "", ThinkingStyleQwen, ""},
-		{"off with qwen", ThinkingOff, "", ThinkingStyleQwen, ""},
-		{"off with template_kwargs", ThinkingOff, "", ThinkingStyleTemplateKwargs, ""},
-		{"on with template_kwargs", ThinkingOn, "", ThinkingStyleTemplateKwargs, ""},
-		{"off with anthropic", ThinkingOff, "", ThinkingStyleAnthropic, ""},
-		{"on level style", ThinkingOn, ThinkingLevelMedium, ThinkingStyleAnthropic, ""},
-		{"level alone with style", "", ThinkingLevelHigh, ThinkingStyleQwen, ""},
-		{"style alone", "", "", ThinkingStyleQwen, ""},
-		{"reasoning_effort low", "", ThinkingLevelLow, ThinkingStyleReasoningEffort, ""},
-		{"reasoning_effort on low", ThinkingOn, ThinkingLevelLow, ThinkingStyleReasoningEffort, ""},
-		{"max under qwen", "", ThinkingLevelMax, ThinkingStyleQwen, ""},
-		{"none", "", "", "", ""},
+		{"on with style", ThinkingOn, "", ThinkingStyleQwen, "", ""},
+		{"off with qwen", ThinkingOff, "", ThinkingStyleQwen, "", ""},
+		{"off with template_kwargs", ThinkingOff, "", ThinkingStyleTemplateKwargs, "", ""},
+		{"on with template_kwargs", ThinkingOn, "", ThinkingStyleTemplateKwargs, "", ""},
+		{"off with anthropic", ThinkingOff, "", ThinkingStyleAnthropic, "", ""},
+		// Anthropic sends a real budget, so a valid declaration needs a cap
+		// above it (the misfit is the load error pinned by
+		// TestValidateAgent_ThinkingBudgetMisfitErrors).
+		{"on level style", ThinkingOn, ThinkingLevelMedium, ThinkingStyleAnthropic, "16384", ""},
+		{"level alone with style", "", ThinkingLevelHigh, ThinkingStyleQwen, "", ""},
+		{"style alone", "", "", ThinkingStyleQwen, "", ""},
+		{"reasoning_effort low", "", ThinkingLevelLow, ThinkingStyleReasoningEffort, "", ""},
+		{"reasoning_effort on low", ThinkingOn, ThinkingLevelLow, ThinkingStyleReasoningEffort, "", ""},
+		{"max under qwen", "", ThinkingLevelMax, ThinkingStyleQwen, "", ""},
+		{"none", "", "", "", "", ""},
 
 		// 1. Unrecognized thinking value, including bool-shaped literals.
-		{"thinking maybe", "maybe", "", ThinkingStyleQwen, `agent 'myagent': invalid thinking "maybe": must be "on" or "off" or unset`},
-		{"thinking true", "true", "", ThinkingStyleQwen, `agent 'myagent': invalid thinking "true": must be "on" or "off" or unset`},
-		{"thinking false", "false", "", ThinkingStyleQwen, `agent 'myagent': invalid thinking "false": must be "on" or "off" or unset`},
-		{"thinking upper", "ON", "", ThinkingStyleQwen, `agent 'myagent': invalid thinking "ON": must be "on" or "off" or unset`},
+		{"thinking maybe", "maybe", "", ThinkingStyleQwen, "", `agent 'myagent': invalid thinking "maybe": must be "on" or "off" or unset`},
+		{"thinking true", "true", "", ThinkingStyleQwen, "", `agent 'myagent': invalid thinking "true": must be "on" or "off" or unset`},
+		{"thinking false", "false", "", ThinkingStyleQwen, "", `agent 'myagent': invalid thinking "false": must be "on" or "off" or unset`},
+		{"thinking upper", "ON", "", ThinkingStyleQwen, "", `agent 'myagent': invalid thinking "ON": must be "on" or "off" or unset`},
 		// 2. Unknown level, case-sensitive.
-		{"level extreme", "", "extreme", ThinkingStyleQwen, `agent 'myagent': invalid thinking_level "extreme": must be one of ` + levels},
-		{"level wrong case", "", "Low", ThinkingStyleQwen, `agent 'myagent': invalid thinking_level "Low": must be one of ` + levels},
+		{"level extreme", "", "extreme", ThinkingStyleQwen, "", `agent 'myagent': invalid thinking_level "extreme": must be one of ` + levels},
+		{"level wrong case", "", "Low", ThinkingStyleQwen, "", `agent 'myagent': invalid thinking_level "Low": must be one of ` + levels},
 		// 3. Unknown style, case-sensitive.
-		{"style openai", ThinkingOn, "", "openai", `agent 'myagent': invalid thinking_style "openai": must be one of ` + styles},
-		{"style wrong case", ThinkingOn, "", "Qwen", `agent 'myagent': invalid thinking_style "Qwen": must be one of ` + styles},
+		{"style openai", ThinkingOn, "", "openai", "", `agent 'myagent': invalid thinking_style "openai": must be one of ` + styles},
+		{"style wrong case", ThinkingOn, "", "Qwen", "", `agent 'myagent': invalid thinking_style "Qwen": must be one of ` + styles},
 		// 4. off with a level, regardless of style.
-		{"off with level", ThinkingOff, ThinkingLevelMedium, ThinkingStyleQwen, `agent 'myagent': thinking is "off" but thinking_level "medium" is set: remove thinking_level or set thinking: on`},
-		{"off with level anthropic", ThinkingOff, ThinkingLevelLow, ThinkingStyleAnthropic, `agent 'myagent': thinking is "off" but thinking_level "low" is set: remove thinking_level or set thinking: on`},
+		{"off with level", ThinkingOff, ThinkingLevelMedium, ThinkingStyleQwen, "", `agent 'myagent': thinking is "off" but thinking_level "medium" is set: remove thinking_level or set thinking: on`},
+		{"off with level anthropic", ThinkingOff, ThinkingLevelLow, ThinkingStyleAnthropic, "", `agent 'myagent': thinking is "off" but thinking_level "low" is set: remove thinking_level or set thinking: on`},
 		// 5. off with reasoning_effort: the fix names thinking_level: low.
-		{"off with reasoning_effort", ThinkingOff, "", ThinkingStyleReasoningEffort, `agent 'myagent': thinking_style "reasoning_effort" has no off value: set thinking_level: low instead of thinking: off`},
+		{"off with reasoning_effort", ThinkingOff, "", ThinkingStyleReasoningEffort, "", `agent 'myagent': thinking_style "reasoning_effort" has no off value: set thinking_level: low instead of thinking: off`},
 		// 6. A thinking key without a style.
-		{"on without style", ThinkingOn, "", "", `agent 'myagent': thinking is declared but thinking_style is missing: there is no default style`},
-		{"off without style", ThinkingOff, "", "", `agent 'myagent': thinking is declared but thinking_style is missing: there is no default style`},
-		{"level without style", "", ThinkingLevelHigh, "", `agent 'myagent': thinking is declared but thinking_style is missing: there is no default style`},
+		{"on without style", ThinkingOn, "", "", "", `agent 'myagent': thinking is declared but thinking_style is missing: there is no default style`},
+		{"off without style", ThinkingOff, "", "", "", `agent 'myagent': thinking is declared but thinking_style is missing: there is no default style`},
+		{"level without style", "", ThinkingLevelHigh, "", "", `agent 'myagent': thinking is declared but thinking_style is missing: there is no default style`},
 		// 7. on with reasoning_effort and no level (user decision 2026-09-26).
-		{"on reasoning_effort no level", ThinkingOn, "", ThinkingStyleReasoningEffort, `agent 'myagent': thinking_style "reasoning_effort" needs a thinking_level: set thinking_level to low, medium, high, or max`},
+		{"on reasoning_effort no level", ThinkingOn, "", ThinkingStyleReasoningEffort, "", `agent 'myagent': thinking_style "reasoning_effort" needs a thinking_level: set thinking_level to low, medium, high, or max`},
 		// 8. A level under template_kwargs: its wire field carries only on/off
 		// (TD-007, user decision 2026-09-27, option A).
-		{"level alone template_kwargs", "", ThinkingLevelHigh, ThinkingStyleTemplateKwargs, `agent 'myagent': thinking_style "template_kwargs" has no level: remove thinking_level and use thinking: on`},
-		{"on level template_kwargs", ThinkingOn, ThinkingLevelLow, ThinkingStyleTemplateKwargs, `agent 'myagent': thinking_style "template_kwargs" has no level: remove thinking_level and use thinking: on`},
-		{"max template_kwargs", "", ThinkingLevelMax, ThinkingStyleTemplateKwargs, `agent 'myagent': thinking_style "template_kwargs" has no level: remove thinking_level and use thinking: on`},
+		{"level alone template_kwargs", "", ThinkingLevelHigh, ThinkingStyleTemplateKwargs, "", `agent 'myagent': thinking_style "template_kwargs" has no level: remove thinking_level and use thinking: on`},
+		{"on level template_kwargs", ThinkingOn, ThinkingLevelLow, ThinkingStyleTemplateKwargs, "", `agent 'myagent': thinking_style "template_kwargs" has no level: remove thinking_level and use thinking: on`},
+		{"max template_kwargs", "", ThinkingLevelMax, ThinkingStyleTemplateKwargs, "", `agent 'myagent': thinking_style "template_kwargs" has no level: remove thinking_level and use thinking: on`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			captureThinkingWarnings(t)
-			_, err := LoadRegistry(writeRegistry(t, thinkingRegistry(thinkingAgent(tc.thinking, tc.level, tc.style))))
+			agent := thinkingAgent(tc.thinking, tc.level, tc.style)
+			if tc.maxTokens != "" {
+				agent += "    max_tokens: " + tc.maxTokens + "\n"
+			}
+			_, err := LoadRegistry(writeRegistry(t, thinkingRegistry(agent)))
 			if tc.wantErr == "" {
 				require.NoError(t, err)
 				return

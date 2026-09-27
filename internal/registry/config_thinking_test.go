@@ -38,6 +38,7 @@ func TestAgentConfig_ThinkingFieldsDecode(t *testing.T) {
     thinking: on
     thinking_level: max
     thinking_style: anthropic
+    max_tokens: 65536
   style-only:
     provider: p
     model: m
@@ -116,6 +117,7 @@ func TestAgentConfig_ThinkingEveryLegalValueDecodes(t *testing.T) {
     model: m
     thinking_level: `+level+`
     thinking_style: anthropic
+    max_tokens: 65536
 `)))
 			require.NoError(t, err)
 			assert.Equal(t, level, reg.Agents["a"].ThinkingLevel)
@@ -180,6 +182,7 @@ func TestAgentConfig_ThinkingNotInheritedByFallback(t *testing.T) {
     thinking: on
     thinking_level: max
     thinking_style: anthropic
+    max_tokens: 65536
   secondary:
     provider: p
     model: m

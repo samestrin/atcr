@@ -44,8 +44,9 @@ func TestValidateAgent_ThinkingBudgetWarning(t *testing.T) {
 			"warning: agent 'myagent': thinking budget 16384 (thinking_level \"high\") is not below max_tokens 16384 (--max-tokens can change it); the budget shares the output cap, so raise max_tokens or lower thinking_level\n"},
 		{"qwen max over default", "", ThinkingLevelMax, ThinkingStyleQwen, "",
 			"warning: agent 'myagent': thinking budget 32768 (thinking_level \"max\") is not below max_tokens 8192 (the default; --max-tokens can change it); the budget shares the output cap, so raise max_tokens or lower thinking_level\n"},
-		{"anthropic on uses medium at default", ThinkingOn, "", ThinkingStyleAnthropic, "",
-			"warning: agent 'myagent': thinking budget 8192 (thinking_level \"medium\") is not below max_tokens 8192 (the default; --max-tokens can change it); the budget shares the output cap, so raise max_tokens or lower thinking_level\n"},
+		// anthropic on with no level at the default cap is now a load error
+		// (TestValidateAgent_ThinkingBudgetMisfitErrors), so it has no row here:
+		// the budget warning covers only the styles whose budget is advisory.
 		{"qwen high under cap", "", ThinkingLevelHigh, ThinkingStyleQwen, "32768", ""},
 		{"qwen low under default", "", ThinkingLevelLow, ThinkingStyleQwen, "", ""},
 		{"qwen on no level", ThinkingOn, "", ThinkingStyleQwen, "", ""},

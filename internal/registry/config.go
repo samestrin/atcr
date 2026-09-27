@@ -1260,13 +1260,41 @@ func validateThinking(name string, a AgentConfig) []error {
 	if a.ThinkingStyle == ThinkingStyleAnthropic && thinkingOn && a.SupportsFC {
 		errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q with thinking on cannot use supports_function_calling: true: the tool loop does not send reasoning back, which Anthropic requires; set supports_function_calling: false or thinking: off", name, ThinkingStyleAnthropic))
 	}
+	// Anthropic documents a hard budget_tokens < max_tokens constraint: the
+	// thinking budget shares the output cap, so a budget at or above it is a
+	// guaranteed 400 on every live call — the same fail-loud contract the
+	// temperature and supports_function_calling checks above enforce. The cap
+	// is the declared max_tokens, else the review default; a load error fires
+	// before --max-tokens could rescue the run, so the remedies are a declared
+	// cap above the budget or a lower thinking_level. Styles whose budget is
+	// advisory keep the warnThinkingBudget warning instead (TD row
+	// internal/registry/config.go:1270).
+	if a.ThinkingStyle == ThinkingStyleAnthropic {
+		if budget := ThinkingBudgetTokens(a.Thinking, a.ThinkingLevel, a.ThinkingStyle); budget > 0 {
+			limit, source := DefaultMaxTokens, " (the review default)"
+			if a.MaxTokens != nil {
+				limit, source = *a.MaxTokens, ""
+			}
+			if budget >= limit {
+				level := a.ThinkingLevel
+				if level == "" {
+					level = ThinkingLevelMedium // anthropic on with no level
+				}
+				errs = append(errs, agentErrf(name, "agent '%s': thinking budget %d (thinking_level %q) is not below max_tokens %d%s: Anthropic rejects budget_tokens >= max_tokens, so every call fails; declare max_tokens above the budget or lower thinking_level", name, budget, level, limit, source))
+			}
+		}
+	}
 	return errs
 }
 
 // warnThinkingBudget warns (never errors) when the thinking budget an agent
-// sends is not below its output cap. The budget shares that cap, and Anthropic
-// rejects budget_tokens >= max_tokens. The cap is the declared max_tokens, else
-// the review default; the --max-tokens flag is not visible at load.
+// sends is not below its output cap. The budget shares that cap. The cap is
+// the declared max_tokens, else the review default; the --max-tokens flag is
+// not visible at load, so the warning always names it (TD row
+// internal/registry/config.go:1223). For the anthropic style the misfit is a
+// hard load error in validateThinking (Anthropic rejects
+// budget_tokens >= max_tokens), so this warning covers only the styles whose
+// budget is advisory.
 func warnThinkingBudget(name string, a AgentConfig) {
 	budget := ThinkingBudgetTokens(a.Thinking, a.ThinkingLevel, a.ThinkingStyle)
 	if budget == 0 {
