@@ -1252,6 +1252,11 @@ func validateThinking(name string, a AgentConfig) []error {
 	if a.ThinkingStyle == ThinkingStyleAnthropic && thinkingOn && a.Temperature != nil && *a.Temperature != 1 {
 		errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q with thinking on needs temperature 1: remove temperature or set it to 1", name, ThinkingStyleAnthropic))
 	}
+	// Anthropic requires the prior thinking blocks on a tool-use turn, and the
+	// tool loop does not send reasoning back in its history.
+	if a.ThinkingStyle == ThinkingStyleAnthropic && thinkingOn && a.Tools {
+		errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q with thinking on cannot use tools: the tool loop does not send reasoning back, which Anthropic requires; set tools: false or thinking: off", name, ThinkingStyleAnthropic))
+	}
 	return errs
 }
 
