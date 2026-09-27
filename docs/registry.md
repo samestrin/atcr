@@ -565,10 +565,11 @@ Each agent that declares `thinking` or `thinking_level` gets a thinking verdict.
 | Verdict | Meaning | What to do |
 |---------|---------|------------|
 | `honored` | `thinking: off` with no reasoning signal, from a provider shown to report reasoning; or `thinking: on` (or a level) with a signal; or a level with no signal while the control probe shows reasoning, since the level changed the reply. A signal shows only that thinking is on: it does not prove the declared level was applied (for example `reasoning_effort: low`). | Nothing. |
-| `not_honored` | `thinking: off` but the reply still carried a signal (a signal decides even on a cut-off reply), or `thinking: on` with no level and no signal from a provider shown to report reasoning. The model likely ignores the declared field. | Try another `thinking_style` from the style table. If no style works, use a larger `max_tokens` or a different model. |
+| `not_honored` (declared `off`) | `thinking: off` but the reply still carried a signal (a signal decides even on a cut-off reply). The model likely ignores the declared field and keeps thinking. | Try another `thinking_style` from the style table. If no style works, use a larger `max_tokens` or a different model — the runaway thinker still needs room. |
+| `not_honored` (declared `on`) | `thinking: on` (or a declared level) with no reasoning signal from a provider shown to report reasoning. The model likely ignores the declared field. | Try another `thinking_style` from the style table. If no style works, use a different model — more `max_tokens` cannot make an ignored `on` declaration produce reasoning. |
 | `unverified` | The call failed (429, 5xx, timeout, transport error, empty reply), the reply was cut off before any signal showed, the control probe failed or was cut off, or neither call showed a signal, so the provider may not report reasoning at all. | Re-run doctor. For a cut-off reply, raise the agent's `max_tokens` or pass `--max-tokens`. |
 
-The HINT column labels a `not_honored` or `unverified` verdict as `thinking not honored:` or `thinking unverified:`, after any `response_format` label. In table mode, stderr prints one warning line each for `not_honored` and `unverified`, naming the agents and models; `honored` prints none.
+The HINT column labels a `not_honored` or `unverified` verdict as `thinking not honored:` or `thinking unverified:`, after any `response_format` label. In table mode, stderr prints one warning line for each declared polarity of `not_honored` (the remedy differs by polarity), plus one warning line for `unverified`, naming the agents and models; `honored` prints none.
 
 ### Exit codes
 
@@ -603,7 +604,7 @@ A stable top-level object with an `agents` array; one entry per effective-roster
 }
 ```
 
-`thinking_status` (`honored`, `not_honored`, or `unverified`) and `thinking_detail` (the reason, secret-redacted) are present only for an agent that declares `thinking` or `thinking_level` and whose probe placed a call; see [Thinking verdict](#thinking-verdict).
+`thinking_status` (`honored`, `not_honored`, or `unverified`), `thinking_detail` (the reason, secret-redacted), and `thinking_declared` (the declared polarity the verdict measured — `off`, `on`, or the declared level, so remedies can be split by polarity without parsing the detail prose) are present only for an agent that declares `thinking` or `thinking_level` and whose probe placed a call; see [Thinking verdict](#thinking-verdict).
 
 `hint` (actionable next step) and `detail` (a bounded, secret-redacted provider error snippet) are present only when relevant and omitted when empty. `source` is the agent's definition tier — `user` or `project` — surfaced so overlay shadowing is visible rather than silent; the human-readable table shows it as a `SOURCE` column. The doctor invokes each distinct target at most once, so several agents that share a `(provider, model, base_url)` report the same latency and status.
 

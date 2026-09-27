@@ -168,6 +168,12 @@ type AgentResult struct {
 	// is empty (omitted) for an undeclared agent and when no call was placed.
 	ThinkingStatus string `json:"thinking_status,omitempty"`
 	ThinkingDetail string `json:"thinking_detail,omitempty"`
+	// ThinkingDeclared names the declared thinking polarity the verdict measured —
+	// "off", "on", or the declared thinking_level (a level implies on) — so the
+	// cli warning and --json consumers can split remedies by polarity without
+	// parsing ThinkingDetail prose (TD cli/doctor.go:255). Empty (omitted) for an
+	// undeclared agent and when no call was placed, like ThinkingStatus.
+	ThinkingDeclared string `json:"thinking_declared,omitempty"`
 }
 
 // The outcomes ResponseFormatStatus can name.
@@ -346,6 +352,7 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 			ResponseFormatDetail: pr.responseFormatDetail,
 			ThinkingStatus:       pr.thinkingStatus,
 			ThinkingDetail:       pr.thinkingDetail,
+			ThinkingDeclared:     thinkingDeclaredForm(tgt, pr.thinkingStatus),
 		})
 	}
 	rep.ExitCode = exitVerdict(res, results)
@@ -877,6 +884,23 @@ func thinkingDeclaration(t Target) string {
 		return "thinking: " + t.Thinking + " (" + t.ThinkingStyle + ")"
 	}
 	return "thinking_level: " + t.ThinkingLevel + " (" + t.ThinkingStyle + ")"
+}
+
+// thinkingDeclaredForm names the target's declared polarity the way the
+// registry spells it: "off", the declared level (a level implies on), or "on".
+// "" when the target declares no thinking or no verdict was reached, so the
+// field stays omitted exactly when ThinkingStatus is (TD cli/doctor.go:255).
+func thinkingDeclaredForm(t Target, status string) string {
+	if status == "" || !t.declaresThinking() {
+		return ""
+	}
+	if t.Thinking == registry.ThinkingOff {
+		return registry.ThinkingOff
+	}
+	if t.ThinkingLevel != "" {
+		return t.ThinkingLevel
+	}
+	return registry.ThinkingOn
 }
 
 // reasoningSignal describes the reasoning a reply carried, or "" when it carried
