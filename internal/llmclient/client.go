@@ -137,6 +137,14 @@ type Invocation struct {
 	// an undeclared agent's request is unchanged. Sent on every call, including
 	// every tool-loop turn. Validation is the registry's job, not this layer's.
 	ResponseFormat string
+	// Thinking, ThinkingLevel, and ThinkingStyle are the agent's declared
+	// thinking keys, carried verbatim as strings so unset stays distinct from
+	// "off". ThinkingStyle picks the request field (see newThinkingFields); all
+	// three empty leave the request body unchanged. Sent on every call,
+	// including every tool-loop turn.
+	Thinking      string
+	ThinkingLevel string
+	ThinkingStyle string
 }
 
 type message struct {
@@ -157,6 +165,7 @@ type chatRequest struct {
 	Temperature    *float64        `json:"temperature,omitempty"`
 	MaxTokens      *int            `json:"max_tokens,omitempty"`
 	ResponseFormat *responseFormat `json:"response_format,omitempty"`
+	thinkingFields
 }
 
 // responseFormat is the OpenAI response_format request object. It is always

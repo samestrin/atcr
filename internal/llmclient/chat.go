@@ -125,6 +125,8 @@ type chatToolRequest struct {
 	// final from its response, so the field must ride every tool turn; the
 	// forced-final no-tools turn (loop.requestFinalAnswer) carries it too.
 	ResponseFormat *responseFormat `json:"response_format,omitempty"`
+	// thinkingFields rides every turn for the same reason as ResponseFormat.
+	thinkingFields
 }
 
 // chatToolResponse decodes the wire response for a tool-capable turn.
