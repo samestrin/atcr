@@ -41,7 +41,7 @@ func TestValidateAgent_ThinkingBudgetWarning(t *testing.T) {
 		want                                    string // "" = no warning
 	}{
 		{"qwen high equals cap", "", ThinkingLevelHigh, ThinkingStyleQwen, "16384",
-			"warning: agent 'myagent': thinking budget 16384 (thinking_level \"high\") is not below max_tokens 16384; the budget shares the output cap, so raise max_tokens or lower thinking_level\n"},
+			"warning: agent 'myagent': thinking budget 16384 (thinking_level \"high\") is not below max_tokens 16384 (--max-tokens can change it); the budget shares the output cap, so raise max_tokens or lower thinking_level\n"},
 		{"qwen max over default", "", ThinkingLevelMax, ThinkingStyleQwen, "",
 			"warning: agent 'myagent': thinking budget 32768 (thinking_level \"max\") is not below max_tokens 8192 (the default; --max-tokens can change it); the budget shares the output cap, so raise max_tokens or lower thinking_level\n"},
 		{"anthropic on uses medium at default", ThinkingOn, "", ThinkingStyleAnthropic, "",
