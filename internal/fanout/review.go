@@ -2932,7 +2932,10 @@ func diffCacheKey(prompt, model, baseURL string, temperature *float64, sizing st
 	}
 	// A declared thinking setting changes how much the model reasons, and so
 	// what it finds. Each key gets its own clause; an unset key appends nothing,
-	// so an undeclared agent keeps its pre-existing on-disk key.
+	// so an undeclared agent keeps its pre-existing on-disk key. The clauses key
+	// the declaration, not the wire body, so two declarations that send the same
+	// body (a level alone vs. on plus that level) miss each other's entry: a
+	// spurious miss, never a collision.
 	if thinking != "" {
 		tuning = tuning + "\x00th=" + thinking
 	}

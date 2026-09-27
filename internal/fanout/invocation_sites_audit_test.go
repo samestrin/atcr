@@ -1,11 +1,13 @@
 package fanout
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -16,8 +18,14 @@ import (
 )
 
 // invocationSite names one non-test llmclient.Invocation{} literal by file and
-// enclosing function, so the audit survives line shifts.
+// enclosing function, so the audit survives line shifts. A package-level
+// literal has an empty fn.
 type invocationSite struct{ file, fn string }
+
+// siteRule is the audit's decision for one site. recv is the identifier the
+// thinking keys must be read from — the site's own AgentConfig — so a site
+// reading its primary's or a lane default's value fails.
+type siteRule struct{ kind, recv string }
 
 // thinkingFieldNames are the Invocation keys a declared thinking setting rides.
 var thinkingFieldNames = []string{"Thinking", "ThinkingLevel", "ThinkingStyle"}
@@ -35,16 +43,19 @@ var thinkingFieldNames = []string{"Thinking", "ThinkingLevel", "ThinkingStyle"}
 //     thinking keys — nor response_format or max_tokens — so there is no
 //     declaration to forward; adding one is a registry change, not a wiring fix.
 //     This is the documented exclusion, recorded here instead of in executor.go.
-var invocationSiteInventory = map[invocationSite]string{
-	{"internal/fanout/review.go", "renderAgent"}:          "thinking",
-	{"internal/fanout/review.go", "buildFallbackAgent"}:   "thinking",
-	{"internal/verify/invoke.go", "buildSkepticAgent"}:    "thinking",
-	{"internal/debate/protocol.go", "buildDebateAgent"}:   "thinking",
-	{"internal/doctor/run.go", "probe"}:                   "doctor",
-	{"internal/doctor/run.go", "responseFormatCall"}:      "doctor",
-	{"internal/verify/executor.go", "callExecutor"}:       "excluded",
-	{"internal/verify/executor.go", "buildExecutorAgent"}: "excluded",
+var invocationSiteInventory = map[invocationSite]siteRule{
+	{"internal/fanout/review.go", "renderAgent"}:          {"thinking", "ac"},
+	{"internal/fanout/review.go", "buildFallbackAgent"}:   {"thinking", "ac"},
+	{"internal/verify/invoke.go", "buildSkepticAgent"}:    {"thinking", "c"},
+	{"internal/debate/protocol.go", "buildDebateAgent"}:   {"thinking", "c"},
+	{"internal/doctor/run.go", "probe"}:                   {kind: "doctor"},
+	{"internal/doctor/run.go", "responseFormatCall"}:      {kind: "doctor"},
+	{"internal/verify/executor.go", "callExecutor"}:       {kind: "excluded"},
+	{"internal/verify/executor.go", "buildExecutorAgent"}: {kind: "excluded"},
 }
+
+// llmclientImportPath is the package whose Invocation literals are audited.
+const llmclientImportPath = "github.com/samestrin/atcr/internal/llmclient"
 
 // invocationLiteral is one llmclient.Invocation{} literal found in source.
 type invocationLiteral struct {
@@ -55,7 +66,9 @@ type invocationLiteral struct {
 }
 
 // findInvocationLiterals parses every non-test .go file under root and returns
-// each llmclient.Invocation{} composite literal with its enclosing function.
+// each llmclient.Invocation{} composite literal with its enclosing function,
+// including package-level initializers and literals under an import alias. A
+// dot import of llmclient fails the audit, since its literals are unqualified.
 func findInvocationLiterals(t *testing.T, root string) []invocationLiteral {
 	t.Helper()
 	var out []invocationLiteral
@@ -83,14 +96,21 @@ func findInvocationLiterals(t *testing.T, root string) []invocationLiteral {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
+		pkgName, local := llmclientName(f, rel)
+		if pkgName == "." {
+			return fmt.Errorf("%s dot-imports llmclient; the audit cannot see its Invocation literals", rel)
+		}
+		if pkgName == "" && !local {
+			return nil
+		}
 		for _, decl := range f.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
+			fnName := ""
+			if fn, ok := decl.(*ast.FuncDecl); ok {
+				fnName = fn.Name.Name
 			}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
+			ast.Inspect(decl, func(n ast.Node) bool {
 				lit, ok := n.(*ast.CompositeLit)
-				if !ok || !isInvocationType(lit.Type) {
+				if !ok || !isInvocationType(lit.Type, pkgName, local) {
 					return true
 				}
 				keys := map[string]ast.Expr{}
@@ -102,7 +122,7 @@ func findInvocationLiterals(t *testing.T, root string) []invocationLiteral {
 					}
 				}
 				out = append(out, invocationLiteral{
-					site: invocationSite{rel, fn.Name.Name},
+					site: invocationSite{rel, fnName},
 					pos:  fset.Position(lit.Pos()).String(),
 					keys: keys,
 				})
@@ -115,13 +135,32 @@ func findInvocationLiterals(t *testing.T, root string) []invocationLiteral {
 	return out
 }
 
-func isInvocationType(e ast.Expr) bool {
+// llmclientName returns the name f refers to llmclient by ("" when it does
+// not import it), and whether f is itself in package llmclient.
+func llmclientName(f *ast.File, rel string) (name string, local bool) {
+	local = path.Dir(rel) == "internal/llmclient"
+	for _, imp := range f.Imports {
+		if strings.Trim(imp.Path.Value, `"`) != llmclientImportPath {
+			continue
+		}
+		if imp.Name != nil {
+			return imp.Name.Name, local
+		}
+		return "llmclient", local
+	}
+	return "", local
+}
+
+func isInvocationType(e ast.Expr, pkgName string, local bool) bool {
+	if id, ok := e.(*ast.Ident); ok {
+		return local && id.Name == "Invocation"
+	}
 	sel, ok := e.(*ast.SelectorExpr)
 	if !ok || sel.Sel.Name != "Invocation" {
 		return false
 	}
 	x, ok := sel.X.(*ast.Ident)
-	return ok && x.Name == "llmclient"
+	return ok && pkgName != "" && x.Name == pkgName
 }
 
 func TestInvocationSites_ThinkingAudit(t *testing.T) {
@@ -133,18 +172,23 @@ func TestInvocationSites_ThinkingAudit(t *testing.T) {
 	lits := findInvocationLiterals(t, root)
 	seen := map[invocationSite]bool{}
 	for _, lit := range lits {
-		kind, ok := invocationSiteInventory[lit.site]
+		rule, ok := invocationSiteInventory[lit.site]
 		if !assert.True(t, ok, "unexpected llmclient.Invocation{} literal at %s (%s), not in the inventory — decide its thinking wiring and add it", lit.pos, lit.site.fn) {
 			continue
 		}
 		seen[lit.site] = true
-		switch kind {
+		switch rule.kind {
 		case "thinking":
 			for _, name := range thinkingFieldNames {
 				sel, ok := lit.keys[name].(*ast.SelectorExpr)
-				if assert.True(t, ok, "%s (%s) must set %s from its own AgentConfig", lit.pos, lit.site.fn, name) {
-					assert.Equal(t, name, sel.Sel.Name, "%s (%s): %s must read the same-named AgentConfig field", lit.pos, lit.site.fn, name)
+				if !assert.True(t, ok, "%s (%s) must set %s from its own AgentConfig", lit.pos, lit.site.fn, name) {
+					continue
 				}
+				assert.Equal(t, name, sel.Sel.Name, "%s (%s): %s must read the same-named AgentConfig field", lit.pos, lit.site.fn, name)
+				recv, _ := sel.X.(*ast.Ident)
+				assert.True(t, recv != nil && recv.Name == rule.recv,
+					"%s (%s): %s must be read from %s (the site's own AgentConfig), not a primary or lane default",
+					lit.pos, lit.site.fn, name, rule.recv)
 			}
 		case "excluded":
 			for _, name := range thinkingFieldNames {
