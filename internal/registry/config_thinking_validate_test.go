@@ -50,6 +50,7 @@ func TestValidateAgent_ThinkingCombinations(t *testing.T) {
 		{"on with style", ThinkingOn, "", ThinkingStyleQwen, ""},
 		{"off with qwen", ThinkingOff, "", ThinkingStyleQwen, ""},
 		{"off with template_kwargs", ThinkingOff, "", ThinkingStyleTemplateKwargs, ""},
+		{"on with template_kwargs", ThinkingOn, "", ThinkingStyleTemplateKwargs, ""},
 		{"off with anthropic", ThinkingOff, "", ThinkingStyleAnthropic, ""},
 		{"on level style", ThinkingOn, ThinkingLevelMedium, ThinkingStyleAnthropic, ""},
 		{"level alone with style", "", ThinkingLevelHigh, ThinkingStyleQwen, ""},
@@ -81,6 +82,11 @@ func TestValidateAgent_ThinkingCombinations(t *testing.T) {
 		{"level without style", "", ThinkingLevelHigh, "", `agent 'myagent': thinking is declared but thinking_style is missing: there is no default style`},
 		// 7. on with reasoning_effort and no level (user decision 2026-09-26).
 		{"on reasoning_effort no level", ThinkingOn, "", ThinkingStyleReasoningEffort, `agent 'myagent': thinking_style "reasoning_effort" needs a thinking_level: set thinking_level to low, medium, high, or max`},
+		// 8. A level under template_kwargs: its wire field carries only on/off
+		// (TD-007, user decision 2026-09-27, option A).
+		{"level alone template_kwargs", "", ThinkingLevelHigh, ThinkingStyleTemplateKwargs, `agent 'myagent': thinking_style "template_kwargs" has no level: remove thinking_level and use thinking: on`},
+		{"on level template_kwargs", ThinkingOn, ThinkingLevelLow, ThinkingStyleTemplateKwargs, `agent 'myagent': thinking_style "template_kwargs" has no level: remove thinking_level and use thinking: on`},
+		{"max template_kwargs", "", ThinkingLevelMax, ThinkingStyleTemplateKwargs, `agent 'myagent': thinking_style "template_kwargs" has no level: remove thinking_level and use thinking: on`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -117,7 +123,7 @@ func TestValidateAgent_ReasoningEffortMaxWarns(t *testing.T) {
 	assert.Contains(t, out, "agent 'myagent'")
 	assert.Contains(t, out, `"max" is sent as "high"`)
 
-	for _, style := range []string{ThinkingStyleQwen, ThinkingStyleTemplateKwargs, ThinkingStyleAnthropic} {
+	for _, style := range []string{ThinkingStyleQwen, ThinkingStyleAnthropic} {
 		t.Run(style, func(t *testing.T) {
 			buf := captureThinkingWarnings(t)
 			_, err := LoadRegistry(writeRegistry(t, thinkingRegistry(thinkingAgent("", ThinkingLevelMax, style))))

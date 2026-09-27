@@ -1188,6 +1188,11 @@ func validateThinking(name string, a AgentConfig) []error {
 	if a.Thinking == ThinkingOff && a.ThinkingLevel != "" {
 		errs = append(errs, agentErrf(name, "agent '%s': thinking is %q but thinking_level %q is set: remove thinking_level or set thinking: on", name, ThinkingOff, a.ThinkingLevel))
 	}
+	// template_kwargs carries only enable_thinking on/off, so a level would be
+	// silently dropped on the wire.
+	if a.ThinkingStyle == ThinkingStyleTemplateKwargs && a.ThinkingLevel != "" {
+		errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q has no level: remove thinking_level and use thinking: %s", name, ThinkingStyleTemplateKwargs, ThinkingOn))
+	}
 	if (a.Thinking != "" || a.ThinkingLevel != "") && a.ThinkingStyle == "" {
 		errs = append(errs, agentErrf(name, "agent '%s': thinking is declared but thinking_style is missing: there is no default style", name))
 	}

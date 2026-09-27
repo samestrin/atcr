@@ -40,6 +40,7 @@ func TestRegistryDoc_ThinkingRows(t *testing.T) {
 			{"level alone implies `thinking: on`", "a level without thinking is not a missing-value error"},
 			{"`thinking: off` with a level is rejected at load", "off plus a level is contradictory config"},
 			{"loads with a warning and is sent as `high`", "max under reasoning_effort warns at load; the operator must not be surprised"},
+			{"`thinking_style: template_kwargs` any level is rejected at load", "template_kwargs carries only on/off, so a level would be silently dropped"},
 		}},
 		{"`thinking_style`", registry.ThinkingStyles(), []struct{ token, why string }{
 			{"there is no default style", "a thinking key without a style is a load error"},
@@ -86,6 +87,8 @@ func TestRegistryDoc_ThinkingRejectsWhatTheDocExcludes(t *testing.T) {
 	require.ErrorContains(t, load("    thinking: "+registry.ThinkingOn+"\n"), "there is no default style")
 	require.ErrorContains(t, load("    thinking: "+registry.ThinkingOff+"\n"+effort), "set thinking_level: low")
 	require.ErrorContains(t, load("    thinking: "+registry.ThinkingOn+"\n"+effort), "needs a thinking_level")
+	require.ErrorContains(t, load("    thinking_level: "+registry.ThinkingLevelLow+"\n    thinking_style: "+registry.ThinkingStyleTemplateKwargs+"\n"),
+		`"template_kwargs" has no level`, "the doc says a level under template_kwargs is rejected at load")
 }
 
 // documentedValues returns the backticked values in a row's "must be unset,
