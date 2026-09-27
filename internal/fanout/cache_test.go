@@ -462,9 +462,24 @@ func TestDiffCacheKey_ThinkingTokens(t *testing.T) {
 }
 
 // withThinking returns cfg with agent name's thinking keys set.
+//
+// For an anthropic declaration with thinking on it also reconciles the agent's
+// other keys to what validateThinking accepts at load (temperature 1 or unset,
+// supports_function_calling false, and a max_tokens above the level's budget), so
+// the fixture is a config a registry would actually load instead of one the load
+// rejects on two counts. Assertions on Thinking/level/style and cache-key tokens
+// are unaffected.
 func withThinking(cfg *ReviewConfig, name, thinking, level, style string) {
 	a := cfg.Registry.Agents[name]
 	a.Thinking, a.ThinkingLevel, a.ThinkingStyle = thinking, level, style
+	if style == registry.ThinkingStyleAnthropic && (thinking == registry.ThinkingOn || level != "") {
+		a.Temperature = nil
+		a.SupportsFC = false
+		if budget := registry.ThinkingBudgetTokens(thinking, level, style); budget > 0 && (a.MaxTokens == nil || *a.MaxTokens <= budget) {
+			mt := budget * 2
+			a.MaxTokens = &mt
+		}
+	}
 	cfg.Registry.Agents[name] = a
 }
 
