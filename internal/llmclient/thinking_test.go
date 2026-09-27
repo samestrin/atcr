@@ -388,3 +388,17 @@ func TestUsageData_ReasoningFieldsNotSerialized(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"prompt_tokens":1,"completion_tokens":0}`, string(b))
 }
+
+// SentTemperature reports what the body carries: the declared temperature,
+// except under enabled anthropic thinking, where none is sent.
+func TestSentTemperature(t *testing.T) {
+	temp := 0.7
+	inv := Invocation{Temperature: &temp}
+	assert.Same(t, &temp, SentTemperature(inv), "undeclared: sent as declared")
+	inv.Thinking, inv.ThinkingStyle = "off", "anthropic"
+	assert.Same(t, &temp, SentTemperature(inv), "anthropic off: sent as declared")
+	inv.Thinking = "on"
+	assert.Nil(t, SentTemperature(inv), "anthropic on: none sent")
+	inv.ThinkingStyle = "qwen"
+	assert.Same(t, &temp, SentTemperature(inv), "other styles: sent as declared")
+}
