@@ -48,6 +48,13 @@ func TestValidateAgent_ThinkingBudgetWarning(t *testing.T) {
 		// (TestValidateAgent_ThinkingBudgetMisfitErrors), so it has no row here:
 		// the budget warning covers only the styles whose budget is advisory.
 		{"qwen high under cap", "", ThinkingLevelHigh, ThinkingStyleQwen, "32768", ""},
+		// Anthropic explicit levels (TD row config_thinking_wire_test.go:38):
+		// low fits the default cap and stays silent; a higher explicit level
+		// with an adequate declared cap also stays silent. A higher explicit
+		// level at the default cap is a load error now, not a warning — that
+		// case is pinned by TestValidateAgent_ThinkingBudgetMisfitErrors.
+		{"anthropic on level low default cap", ThinkingOn, ThinkingLevelLow, ThinkingStyleAnthropic, "", ""},
+		{"anthropic on level high declared cap above", ThinkingOn, ThinkingLevelHigh, ThinkingStyleAnthropic, "32768", ""},
 		{"qwen low under default", "", ThinkingLevelLow, ThinkingStyleQwen, "", ""},
 		{"qwen on no level", ThinkingOn, "", ThinkingStyleQwen, "", ""},
 		{"qwen off", ThinkingOff, "", ThinkingStyleQwen, "100", ""},
