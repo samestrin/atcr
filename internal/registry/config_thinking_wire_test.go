@@ -53,11 +53,56 @@ func TestValidateAgent_ThinkingBudgetWarning(t *testing.T) {
 	}
 }
 
-// The budget warning and the reasoning_effort clamp warning are independent;
-// a failed load writes no budget warning.
+// A failed agent writes no budget warning, whether the fault is a thinking key
+// or any other field.
 func TestValidateAgent_ThinkingBudgetWarningOnlyOnValidAgent(t *testing.T) {
-	buf := captureThinkingWarnings(t)
-	_, err := LoadRegistry(writeRegistry(t, thinkingRegistry(thinkingAgent(ThinkingOff, ThinkingLevelMax, ThinkingStyleQwen))))
-	require.Error(t, err)
-	assert.False(t, strings.Contains(buf.String(), "thinking budget"), "got %q", buf.String())
+	for name, agent := range map[string]string{
+		"thinking fault":     thinkingAgent(ThinkingOff, ThinkingLevelMax, ThinkingStyleQwen),
+		"non-thinking fault": thinkingAgent("", ThinkingLevelMax, ThinkingStyleQwen) + "    max_tokens: 0\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			buf := captureThinkingWarnings(t)
+			_, err := LoadRegistry(writeRegistry(t, thinkingRegistry(agent)))
+			require.Error(t, err)
+			assert.False(t, strings.Contains(buf.String(), "thinking budget"), "got %q", buf.String())
+		})
+	}
+}
+
+// Anthropic rejects extended thinking with any temperature but 1. A declared
+// temperature other than 1 with anthropic thinking on is a load error; an
+// undeclared one loads (the wire then sends no temperature).
+func TestValidateAgent_AnthropicThinkingTemperature(t *testing.T) {
+	const wantErr = `agent 'myagent': thinking_style "anthropic" with thinking on needs temperature 1: remove temperature or set it to 1`
+	cases := []struct {
+		name, thinking, level, temperature string
+		wantErr                            bool
+	}{
+		{"on with 0.7", ThinkingOn, "", "0.7", true},
+		{"level alone with 0", "", ThinkingLevelLow, "0", true},
+		{"on with 1", ThinkingOn, "", "1", false},
+		{"on with 1.0", ThinkingOn, ThinkingLevelHigh, "1.0", false},
+		{"on undeclared", ThinkingOn, "", "", false},
+		{"off with 0.7", ThinkingOff, "", "0.7", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			captureThinkingWarnings(t)
+			agent := thinkingAgent(tc.thinking, tc.level, ThinkingStyleAnthropic) + "    max_tokens: 65536\n"
+			if tc.temperature != "" {
+				agent += "    temperature: " + tc.temperature + "\n"
+			}
+			reg, err := LoadRegistry(writeRegistry(t, thinkingRegistry(agent)))
+			if tc.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, reg.Agents["myagent"].Temperature, "defaults still apply after validation")
+		})
+	}
+	// Other styles keep any temperature.
+	_, err := LoadRegistry(writeRegistry(t, thinkingRegistry(thinkingAgent(ThinkingOn, "", ThinkingStyleQwen)+"    temperature: 0.2\n")))
+	require.NoError(t, err)
 }

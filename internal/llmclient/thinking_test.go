@@ -2,6 +2,8 @@ package llmclient
 
 import (
 	"encoding/json"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -56,6 +58,12 @@ var thinkingCases = []struct {
 	{"style alone", "", "", ThinkingStyleQwen, `{}`},
 	{"unknown style not coerced", ThinkingOn, "", "openai", `{}`},
 	{"no style", ThinkingOff, "", "", `{}`},
+	// Values the registry would reject are not guessed at: nothing is sent.
+	{"unknown thinking qwen", "true", "", ThinkingStyleQwen, `{}`},
+	{"unknown thinking anthropic", "yes", "", ThinkingStyleAnthropic, `{}`},
+	{"unknown level anthropic", "", "extreme", ThinkingStyleAnthropic, `{}`},
+	{"unknown level reasoning_effort", "", "extreme", ThinkingStyleReasoningEffort, `{}`},
+	{"unknown level qwen", ThinkingOn, "extreme", ThinkingStyleQwen, `{}`},
 }
 
 // AC 03-01: one mapper, one populated style per declaration, exact wire JSON.
@@ -124,11 +132,73 @@ func TestThinking_BothRequestPathsCarryTheMapping(t *testing.T) {
 	}
 }
 
-// AC 03-02 Scenario 3: the forced-final no-tools turn still carries the field.
+// AC 03-02 Scenario 3: the forced-final no-tools turn carries every style's
+// members exactly.
 func TestChat_ForcedFinalTurnCarriesThinking(t *testing.T) {
-	body := captureChatWith(t, Invocation{Model: "m", Thinking: ThinkingOff, ThinkingStyle: ThinkingStyleQwen}, nil)
-	assert.NotContains(t, body, `"tools"`)
-	assert.Contains(t, body, `"enable_thinking":false`)
+	for _, tc := range thinkingCases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := captureChatWith(t, Invocation{Model: "m", Thinking: tc.thinking, ThinkingLevel: tc.level, ThinkingStyle: tc.style}, nil)
+			assert.NotContains(t, body, `"tools"`)
+			assert.Equal(t, tc.want, thinkingMembers(t, body))
+		})
+	}
+}
+
+// Anthropic rejects extended thinking with any temperature but 1, so an
+// anthropic agent with thinking enabled sends no temperature on either path.
+// Every other declaration keeps its temperature.
+func TestThinking_AnthropicEnabledSendsNoTemperature(t *testing.T) {
+	temp := 0.7
+	for _, tc := range thinkingCases {
+		t.Run(tc.name, func(t *testing.T) {
+			inv := Invocation{Model: "m", Temperature: &temp, Thinking: tc.thinking, ThinkingLevel: tc.level, ThinkingStyle: tc.style}
+			enabled := strings.Contains(tc.want, `"type":"enabled"`)
+			for path, body := range map[string]string{"complete": captureComplete(t, inv), "chat": captureChat(t, inv), "final": captureChatWith(t, inv, nil)} {
+				var got map[string]json.RawMessage
+				require.NoError(t, json.Unmarshal([]byte(body), &got))
+				_, has := got["temperature"]
+				assert.Equal(t, !enabled, has, "%s path: temperature sent = %v", path, has)
+			}
+		})
+	}
+}
+
+// response_format and a thinking declaration ride the same body together.
+func TestThinking_CoexistsWithResponseFormat(t *testing.T) {
+	inv := Invocation{Model: "m", ResponseFormat: "json_object", ThinkingLevel: ThinkingLevelLow, ThinkingStyle: ThinkingStyleReasoningEffort}
+	for path, body := range map[string]string{"complete": captureComplete(t, inv), "chat": captureChat(t, inv)} {
+		var got map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal([]byte(body), &got), path)
+		assert.JSONEq(t, `{"type":"json_object"}`, string(got["response_format"]), path)
+		assert.JSONEq(t, `"low"`, string(got["reasoning_effort"]), path)
+	}
+}
+
+// encoding/json silently drops both members when an embedded struct and its
+// parent share a tag at the same depth, so the thinking tags must stay
+// disjoint from every sibling on both request types.
+func TestThinkingFields_TagsDisjointFromRequestTags(t *testing.T) {
+	tags := func(typ reflect.Type) map[string]bool {
+		out := map[string]bool{}
+		for i := 0; i < typ.NumField(); i++ {
+			f := typ.Field(i)
+			if f.Anonymous {
+				continue
+			}
+			out[strings.Split(f.Tag.Get("json"), ",")[0]] = true
+		}
+		return out
+	}
+	own := tags(reflect.TypeOf(thinkingFields{}))
+	require.Len(t, own, len(thinkingKeys))
+	for _, k := range thinkingKeys {
+		require.True(t, own[k], "thinkingKeys lists %s", k)
+	}
+	for _, parent := range []reflect.Type{reflect.TypeOf(chatRequest{}), reflect.TypeOf(chatToolRequest{})} {
+		for k := range tags(parent) {
+			assert.False(t, own[k], "%s.%s collides with a thinking member", parent.Name(), k)
+		}
+	}
 }
 
 // AC 03-03 Scenarios 1, 2: the mapper's unset output leaves both pre-feature

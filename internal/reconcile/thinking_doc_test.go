@@ -35,6 +35,7 @@ func TestRegistryDoc_ThinkingRows(t *testing.T) {
 			{"bare `true`/`false` is rejected", "the field is a string so a YAML bool is not aliased to on/off"},
 			{"`off` is rejected (use `thinking_level: low`)", "reasoning_effort has no off value; the row must give the fix the load error gives"},
 			{"`on` requires a `thinking_level`", "reasoning_effort has no on-without-level value"},
+			{"under `thinking_style: anthropic`, thinking on needs `temperature` unset or `1`", "Anthropic rejects extended thinking at any other temperature; a declared one fails the load"},
 		}},
 		{"`thinking_level`", registry.ThinkingLevels(), []struct{ token, why string }{
 			{"level alone implies `thinking: on`", "a level without thinking is not a missing-value error"},
@@ -87,6 +88,10 @@ func TestRegistryDoc_ThinkingRejectsWhatTheDocExcludes(t *testing.T) {
 	require.ErrorContains(t, load("    thinking: "+registry.ThinkingOn+"\n"), "there is no default style")
 	require.ErrorContains(t, load("    thinking: "+registry.ThinkingOff+"\n"+effort), "set thinking_level: low")
 	require.ErrorContains(t, load("    thinking: "+registry.ThinkingOn+"\n"+effort), "needs a thinking_level")
+	anthropic := "    thinking_style: " + registry.ThinkingStyleAnthropic + "\n    max_tokens: 65536\n"
+	require.ErrorContains(t, load("    thinking: "+registry.ThinkingOn+"\n    temperature: 0.7\n"+anthropic), "needs temperature 1",
+		"the doc says anthropic thinking on with another temperature is rejected at load")
+	require.NoError(t, load("    thinking: "+registry.ThinkingOn+"\n"+anthropic), "the doc says an unset temperature loads")
 	require.ErrorContains(t, load("    thinking_level: "+registry.ThinkingLevelLow+"\n    thinking_style: "+registry.ThinkingStyleTemplateKwargs+"\n"),
 		`"template_kwargs" has no level`, "the doc says a level under template_kwargs is rejected at load")
 }
