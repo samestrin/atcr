@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -112,4 +113,125 @@ func documentedValues(t *testing.T, row string) []string {
 		out = append(out, parts[i])
 	}
 	return out
+}
+
+// docLineWith returns the one line of doc that contains marker. Every asserted
+// phrase must sit on that line, so no phrase can straddle a hard wrap.
+func docLineWith(t *testing.T, doc, marker string) string {
+	t.Helper()
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.Contains(line, marker) {
+			return line
+		}
+	}
+	t.Fatalf("no line containing %q in docs/registry.md", marker)
+	return ""
+}
+
+// assertStates fails for each token the line does not contain.
+func assertStates(t *testing.T, where, line string, must []struct{ token, why string }) {
+	t.Helper()
+	for _, m := range must {
+		if !strings.Contains(line, m.token) {
+			t.Errorf("docs/registry.md's %s must state %q: %s\nline was: %s", where, m.token, m.why, line)
+		}
+	}
+}
+
+// AC 07-01 Scenario 2 and Edge Case 1: the style table maps each style to the
+// wire field llmclient sends, and the budget line states the numbers
+// registry.ThinkingBudgetTokens returns.
+func TestRegistryDoc_ThinkingStyleTable(t *testing.T) {
+	doc := readRepoFile(t, "../../docs/registry.md")
+	type musts = []struct{ token, why string }
+	rows := map[string]musts{
+		registry.ThinkingStyleQwen: {
+			{"`enable_thinking: bool`", "the qwen style's on/off field"},
+			{"`thinking_budget`", "the qwen style sends the level's budget"},
+		},
+		registry.ThinkingStyleTemplateKwargs: {
+			{"`chat_template_kwargs: {\"enable_thinking\": bool}`", "the template_kwargs style's only field"},
+			{"no level", "a level under template_kwargs is rejected at load"},
+		},
+		registry.ThinkingStyleReasoningEffort: {
+			{"`reasoning_effort`", "the reasoning_effort style's field"},
+			{"`max` is sent as `high`", "high is the most the style accepts"},
+			{"no off value", "thinking: off is a load error under this style"},
+			{"use `thinking_level: low`", "the fix the load error gives"},
+		},
+		registry.ThinkingStyleAnthropic: {
+			{"`thinking: {\"type\": \"enabled\", \"budget_tokens\": N}`", "the anthropic style's on shape"},
+			{"`thinking: {\"type\": \"disabled\"}`", "the anthropic style's off shape"},
+			{"sends no `temperature`", "Anthropic rejects extended thinking at any temperature but 1"},
+		},
+	}
+	for _, style := range registry.ThinkingStyles() {
+		must, ok := rows[style]
+		require.True(t, ok, "style %q has no expected wire field in this test; add it", style)
+		assertStates(t, "style table row for `"+style+"`", docRow(t, doc, "`"+style+"`"), must)
+	}
+
+	intro := docLineWith(t, doc, "**Thinking styles.**")
+	assertStates(t, "thinking styles intro", intro, musts{
+		{"no default style", "a thinking key without a style is a load error"},
+		{"no inference from the model id", "the honored field differs per model and the id does not predict it"},
+	})
+
+	budgets := docLineWith(t, doc, "**Thinking budgets.**")
+	for _, level := range registry.ThinkingLevels() {
+		want := "`" + level + "` = " + strconv.Itoa(registry.ThinkingBudgetTokens(registry.ThinkingOn, level, registry.ThinkingStyleQwen))
+		if !strings.Contains(budgets, want) {
+			t.Errorf("docs/registry.md's thinking budgets line must state %q, the budget registry.ThinkingBudgetTokens returns\nline was: %s", want, budgets)
+		}
+	}
+	medium := strconv.Itoa(registry.ThinkingBudgetTokens(registry.ThinkingOn, "", registry.ThinkingStyleAnthropic))
+	assertStates(t, "thinking budgets line", budgets, musts{
+		{"`anthropic` with `thinking: on` and no level uses " + medium, "Anthropic requires a budget when thinking is enabled"},
+		{"loads with a warning", "a budget not below max_tokens warns at load"},
+	})
+}
+
+// AC 07-01 Scenario 3: the max_tokens interaction.
+func TestRegistryDoc_ThinkingMaxTokensNote(t *testing.T) {
+	doc := readRepoFile(t, "../../docs/registry.md")
+	assertStates(t, "thinking and max_tokens note", docLineWith(t, doc, "**Thinking and `max_tokens`.**"), []struct{ token, why string }{
+		{"thinking tokens count against the output cap on most providers", "raising max_tokens alone does not stop a runaway thinker"},
+		{"`thinking: off` is the first fix for a model that truncates with zero findings", "archer ran to about 100k tokens with no findings"},
+	})
+	// TD-008: the executor lane's gap is named, as the max_tokens row names its own.
+	assertStates(t, "`thinking` row", docRow(t, doc, "`thinking`"), []struct{ token, why string }{
+		{"the executor (fix generation) has no thinking keys", "ExecutorConfig has no thinking fields, so fix generation always takes the provider default"},
+	})
+}
+
+// AC 07-01 Scenario 4: the doctor verdict. Rows are read from the thinking
+// verdict section only, so a later table with the same status names cannot
+// satisfy them.
+func TestRegistryDoc_ThinkingDoctorVerdict(t *testing.T) {
+	doc := readRepoFile(t, "../../docs/registry.md")
+	section := docSection(t, doc, "### Thinking verdict")
+	intro := docLineWith(t, section, "declares `thinking` or `thinking_level`")
+	assertStates(t, "thinking verdict intro", intro, []struct{ token, why string }{
+		{"`reasoning_tokens > 0` or non-empty reasoning content", "the either-signal rule: some upstreams never report reasoning_tokens"},
+		{"never changes the ok/failed count or the exit code", "the verdict is a warning, like response_format's"},
+		{"control probe", "a silent reply is judged only after the same prompt without the declaration shows the provider reports reasoning"},
+	})
+	rows := map[string][]struct{ token, why string }{
+		"`honored`": {
+			{"does not prove the declared level", "a signal under thinking: on shows only that thinking is on"},
+		},
+		"`not_honored`": {
+			{"a larger `max_tokens` or a different model", "the remedy the stderr warning suggests"},
+		},
+		"`unverified`": {
+			{"may not report reasoning at all", "silence on both calls cannot be told apart from a provider that cannot report"},
+			{"cut off", "a cut-off reply with no signal reaches no verdict"},
+		},
+	}
+	for key, must := range rows {
+		assertStates(t, "thinking verdict row "+key, docRow(t, section, key), must)
+	}
+	assertStates(t, "doctor JSON schema", docLineWith(t, doc, "`thinking_status`"), []struct{ token, why string }{
+		{"`thinking_detail`", "the verdict's reason rides beside it in --json"},
+	})
 }
