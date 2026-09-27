@@ -46,7 +46,7 @@ func newThinkingFields(thinking, level, style string) thinkingFields {
 	if level != "" && !slices.Contains(registry.ThinkingLevels(), level) {
 		return thinkingFields{}
 	}
-	on := thinking == registry.ThinkingOn || (thinking == "" && level != "")
+	on := registry.ThinkingEnabled(thinking, level)
 	budget := registry.ThinkingBudgetTokens(thinking, level, style)
 	var f thinkingFields
 	switch style {

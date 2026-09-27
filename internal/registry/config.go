@@ -231,6 +231,15 @@ var thinkingBudgets = map[string]int{
 	ThinkingLevelMax:    32768,
 }
 
+// ThinkingEnabled resolves a declared thinking setting to on-ness: thinking
+// on, or a level alone (a level implies on). The single form of the rule —
+// validateThinking, ThinkingBudgetTokens, and internal/llmclient's wire mapper
+// all consume it, so the wire never sends a body validation judges differently
+// (TD row internal/llmclient/thinking.go:47).
+func ThinkingEnabled(thinking, level string) bool {
+	return thinking == ThinkingOn || (thinking == "" && level != "")
+}
+
 // ThinkingBudgetTokens returns the thinking budget a declared setting sends,
 // or 0 when it sends none: thinking off, a style with no budget field, qwen on
 // with no level, or a value validation would reject. Anthropic on with no
@@ -238,8 +247,7 @@ var thinkingBudgets = map[string]int{
 // internal/llmclient reads this when it builds the request, so the load-time
 // warning and the wire always agree.
 func ThinkingBudgetTokens(thinking, level, style string) int {
-	on := thinking == ThinkingOn || (thinking == "" && level != "")
-	if !on {
+	if !ThinkingEnabled(thinking, level) {
 		return 0
 	}
 	switch style {
@@ -1248,7 +1256,7 @@ func validateThinking(name string, a AgentConfig) []error {
 	// Anthropic rejects extended thinking with any temperature but 1; the wire
 	// sends none for such an agent, so only a declared conflict is an error.
 	// Validation runs before applyDefaults, so a nil temperature is undeclared.
-	thinkingOn := a.Thinking == ThinkingOn || (a.Thinking == "" && a.ThinkingLevel != "")
+	thinkingOn := ThinkingEnabled(a.Thinking, a.ThinkingLevel)
 	if a.ThinkingStyle == ThinkingStyleAnthropic && thinkingOn && a.Temperature != nil && *a.Temperature != 1 {
 		errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q with thinking on needs temperature 1: remove temperature or set it to 1", name, ThinkingStyleAnthropic))
 	}
