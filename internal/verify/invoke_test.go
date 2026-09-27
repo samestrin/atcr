@@ -1535,3 +1535,24 @@ func TestInvokeSkeptic_ForwardsDeclaredResponseFormat(t *testing.T) {
 			"the Invocation passed to Complete must carry the declaration")
 	})
 }
+
+// Sprint 35.16.11.2.2 AC 04-03: the skeptic forwards its OWN thinking
+// declaration with no lane-level override, identically on exec and non-exec
+// runs; an undeclared skeptic sends none.
+func TestBuildSkepticAgent_ForwardsThinking(t *testing.T) {
+	t.Parallel()
+	sk := testSkeptic()
+	sk.Config.Thinking, sk.Config.ThinkingLevel, sk.Config.ThinkingStyle = "on", "low", "qwen"
+
+	for _, exec := range []bool{false, true} {
+		a, _ := buildSkepticAgent(sk, "the prompt", exec)
+		assert.Equal(t, "on", a.Invocation.Thinking, "exec=%v", exec)
+		assert.Equal(t, "low", a.Invocation.ThinkingLevel, "exec=%v", exec)
+		assert.Equal(t, "qwen", a.Invocation.ThinkingStyle, "exec=%v", exec)
+	}
+
+	undeclared, _ := buildSkepticAgent(testSkeptic(), "the prompt", false)
+	assert.Empty(t, undeclared.Invocation.Thinking)
+	assert.Empty(t, undeclared.Invocation.ThinkingLevel)
+	assert.Empty(t, undeclared.Invocation.ThinkingStyle)
+}

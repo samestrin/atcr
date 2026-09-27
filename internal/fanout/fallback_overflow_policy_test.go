@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/payload"
@@ -146,4 +147,26 @@ func TestBuildFallbackAgent_RefitKeepsFallbackOwnResponseFormat(t *testing.T) {
 			assert.Equal(t, tc.fallbackRF, fb.Invocation.ResponseFormat)
 		})
 	}
+}
+
+// Sprint 35.16.11.2.2 AC 04-02 Edge Case 1: the re-fit arm re-renders the
+// fallback's prompt under the PRIMARY's config; its thinking declaration and
+// cache-key tokens must still be the fallback's own.
+func TestBuildFallbackAgent_RefitKeepsFallbackOwnThinking(t *testing.T) {
+	cfg := refitRoster(t, 128000, OverflowTruncate)
+	withThinking(cfg, "greta", "on", "high", "anthropic")
+	withThinking(cfg, "kai", "off", "", "qwen")
+
+	slot := buildRefitSlot(t, cfg)
+	fb := slot.Fallbacks[0]
+	require.True(t, fb.rePacked, "precondition: this fixture's fallback takes the re-fit arm")
+	assert.Equal(t, "on", slot.Primary.Invocation.Thinking)
+	assert.Equal(t, "off", fb.Invocation.Thinking)
+	assert.Empty(t, fb.Invocation.ThinkingLevel)
+	assert.Equal(t, "qwen", fb.Invocation.ThinkingStyle)
+	sizing := fmt.Sprintf("%d:%d", fb.EffectiveBudget, fb.chunkMaxLines)
+	assert.Equal(t,
+		diffCacheKey(fb.Prompt, fb.Invocation.Model, fb.Invocation.BaseURL, fb.Invocation.Temperature,
+			sizing, fb.ResolvedMaxTokens, fb.Invocation.ResponseFormat, "off", "", "qwen"),
+		fb.CacheKey, "the re-fit fallback keys on its own thinking declaration")
 }

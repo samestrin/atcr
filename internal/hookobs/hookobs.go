@@ -80,6 +80,12 @@ type Invocation struct {
 	// from any other failure: without it the record cannot answer "what output
 	// contract was this call made under".
 	ResponseFormat string
+	// Thinking, ThinkingLevel, and ThinkingStyle are the agent's declared
+	// thinking keys, copied verbatim (empty when undeclared), so a record can
+	// answer "what reasoning setting was this call made under".
+	Thinking      string
+	ThinkingLevel string
+	ThinkingStyle string
 	// ResponseToolCalls is the tool calls the assistant requested on this turn.
 	// A tool-enabled agent's "response" is frequently a tool call with no text
 	// at all, so a record omitting these would misreport the exchange.

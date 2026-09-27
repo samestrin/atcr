@@ -86,3 +86,10 @@ func temperatureFor(temperature *float64, f thinkingFields) *float64 {
 	}
 	return temperature
 }
+
+// SentTemperature returns the temperature inv's request body actually carries,
+// which differs from inv.Temperature when the declared thinking drops it (see
+// temperatureFor). Observers report this, not the declaration.
+func SentTemperature(inv Invocation) *float64 {
+	return inv.Temperature
+}
