@@ -195,8 +195,14 @@ func TestRun_ThinkingVerdict(t *testing.T) {
 			wantStatus: ThinkingHonored, wantCalls: 2},
 		{name: "off, unclosed think with text", thinking: "off", style: "qwen", declared: llmclient.Completion{Content: "<think>still going"},
 			wantStatus: ThinkingNotHonored, wantCalls: 1},
-		{name: "off, closing tag only", thinking: "off", style: "qwen", declared: llmclient.Completion{Content: "planning the reply</think>\n" + Marker(testNonce)},
-			wantStatus: ThinkingNotHonored, wantCalls: 1},
+		// A stray closing tag with no opener can only be template noise on this
+		// probe (the marker prompt contains no <think>), so it is not a signal —
+		// the model's actual answer must not be counted as reasoning.
+		{name: "off, closing tag only", thinking: "off", style: "qwen", declared: llmclient.Completion{Content: "planning the reply</think>\n" + Marker(testNonce)}, control: thinks,
+			wantStatus: ThinkingHonored, wantCalls: 2},
+		// An empty first pair must not hide a real think block after it.
+		{name: "off, empty pair then real think block", thinking: "off", style: "qwen", declared: llmclient.Completion{Content: "<think></think><think>real reasoning</think>answer"},
+			wantStatus: ThinkingNotHonored, wantCalls: 1, wantDetail: []string{"inline <think> reasoning in the content"}},
 		{name: "declared call empty and cut off", thinking: "off", style: "qwen", declared: llmclient.Completion{Truncated: true}, declaredErr: errors.New("provider returned an empty completion"),
 			wantStatus: "", wantCalls: 1},
 		{name: "off, silent, control cut off reporting zero", thinking: "off", style: "qwen", declared: silent, control: truncatedReportedZero,
