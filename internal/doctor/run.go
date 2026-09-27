@@ -45,12 +45,16 @@ func healthy(status string) bool { return status == StatusOK || status == Status
 // Completer is the subset of llmclient.Client the doctor needs. Tests inject a
 // fake; production passes a real *llmclient.Client.
 //
+// CompleteWithMeta, not Complete: the thinking verdict reads the reply's
+// reasoning signal (Usage.ReasoningTokens and Reasoning), which a bare content
+// string cannot carry.
+//
 // Chat is required, not type-asserted: the response_format probes send messages and
 // tool definitions through it, and an optional assertion would let a Completer
 // without Chat skip them silently — the declared-but-unverified failure they exist
 // to catch.
 type Completer interface {
-	Complete(ctx context.Context, inv llmclient.Invocation) (string, error)
+	CompleteWithMeta(ctx context.Context, inv llmclient.Invocation) (llmclient.Completion, error)
 	Chat(ctx context.Context, inv llmclient.Invocation, messages []llmclient.Message, toolDefs []llmclient.ToolDef) (*llmclient.ChatResponse, error)
 }
 
@@ -143,6 +147,12 @@ type AgentResult struct {
 	// report is unchanged, and when the endpoint probe failed, so no call was made.
 	ResponseFormatStatus string `json:"response_format_status,omitempty"`
 	ResponseFormatDetail string `json:"response_format_detail,omitempty"`
+	// ThinkingStatus is the thinking verdict for an agent that declares thinking or
+	// thinking_level (honored | not_honored | unverified), and ThinkingDetail says
+	// why. Like ResponseFormatStatus it never changes Status or the exit code, and it
+	// is empty (omitted) for an undeclared agent and when no call was placed.
+	ThinkingStatus string `json:"thinking_status,omitempty"`
+	ThinkingDetail string `json:"thinking_detail,omitempty"`
 }
 
 // The outcomes ResponseFormatStatus can name.
@@ -153,6 +163,16 @@ const (
 	// a rate limit, a 5xx, a timeout, or a transport error says nothing about whether
 	// the field is honored, so it must not tell the operator to drop the declaration.
 	ResponseFormatUnverified = "unverified"
+)
+
+// The outcomes ThinkingStatus can name.
+const (
+	ThinkingHonored    = "honored"     // the reply's reasoning signal matched the declaration
+	ThinkingNotHonored = "not_honored" // the reply's reasoning signal contradicted it
+	// ThinkingUnverified means no verdict was reached: the call failed, the reply was
+	// cut off before a signal showed, or the provider reported no reasoning signal
+	// at all, so silence could not be told apart from "cannot report".
+	ThinkingUnverified = "unverified"
 )
 
 // The tiers MaxTokensSource can name, mirroring payload.WindowSource* for the window.
@@ -556,7 +576,7 @@ func probe(ctx context.Context, c Completer, tgt Target, opts Options) probeResu
 	}
 
 	start := time.Now()
-	content, err := c.Complete(callCtx, llmclient.Invocation{
+	comp, err := c.CompleteWithMeta(callCtx, llmclient.Invocation{
 		BaseURL:   tgt.BaseURL,
 		APIKeyEnv: tgt.APIKeyEnv,
 		Model:     tgt.Model,
@@ -564,7 +584,7 @@ func probe(ctx context.Context, c Completer, tgt Target, opts Options) probeResu
 		Prompt:    Prompt(opts.Nonce),
 	})
 	latency := time.Since(start).Milliseconds()
-	pr := classify(content, err, opts.Nonce, latency, tgt, budgetSrc)
+	pr := classify(comp.Content, err, opts.Nonce, latency, tgt, budgetSrc)
 	pr.maxTokens = budget
 	pr.maxTokensSource = budgetSrc
 	return pr

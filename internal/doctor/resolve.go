@@ -54,6 +54,13 @@ type Target struct {
 	// identity only for a declared target, where it decides whether the combined
 	// tools+response_format probe runs; an undeclared agent's key is unchanged.
 	Tools bool
+	// Thinking, ThinkingLevel, and ThinkingStyle are the sharers' thinking
+	// declaration, set only for a DECLARED target (thinking or thinking_level
+	// present). Identity for the reason ResponseFormat is: the declaration changes
+	// the request body, so a declared and an undeclared agent make different calls.
+	Thinking      string
+	ThinkingLevel string
+	ThinkingStyle string
 }
 
 // AgentTarget binds one effective-roster agent to the index of the Target it

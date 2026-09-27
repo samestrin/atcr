@@ -402,3 +402,32 @@ func TestSentTemperature(t *testing.T) {
 	inv.ThinkingStyle = "qwen"
 	assert.Same(t, &temp, SentTemperature(inv), "other styles: sent as declared")
 }
+
+// TD-012: OpenRouter and newer vLLM put reasoning under message.reasoning.
+// It is read when reasoning_content is absent, and reasoning_content wins when
+// both are sent. The empty-Content salvage still reads reasoning_content only.
+func TestReasoningSignal_ReasoningKeyFallback(t *testing.T) {
+	cases := map[string]struct{ msg, want string }{
+		"reasoning only":   {`{"role":"assistant","content":"the review","reasoning":"alt channel"}`, "alt channel"},
+		"both keys":        {`{"role":"assistant","content":"the review","reasoning_content":"primary","reasoning":"alt channel"}`, "primary"},
+		"reasoning object": {`{"role":"assistant","content":"the review","reasoning":{"text":"x"}}`, ""},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			srv := reasoningServer(t, tc.msg)
+			inv := Invocation{BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m"}
+			comp, err := fastRetry(srv.Client()).CompleteWithMeta(context.Background(), inv)
+			require.NoError(t, err)
+			assert.Equal(t, "the review", comp.Content)
+			assert.Equal(t, tc.want, comp.Reasoning)
+			s := "hi"
+			resp, err := fastRetry(srv.Client()).Chat(context.Background(), inv, []Message{{Role: "user", Content: &s}}, nil)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, resp.Reasoning)
+		})
+	}
+
+	srv := reasoningServer(t, `{"role":"assistant","content":"","reasoning":"HIGH|a.go:1|bug"}`)
+	_, err := fastRetry(srv.Client()).CompleteWithMeta(context.Background(), Invocation{BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m"})
+	assert.Error(t, err, "the salvage is unchanged: message.reasoning alone is not salvaged into Content")
+}

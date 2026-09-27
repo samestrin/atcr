@@ -1,0 +1,334 @@
+package doctor
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/registry"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+const thinkingKey = "sk-thinking-secret"
+
+// thinkingTarget resolves one agent with the given thinking declaration.
+func thinkingTarget(t *testing.T, thinking, level, style string) *Resolution {
+	t.Helper()
+	reg := regWith(
+		map[string]registry.Provider{"p": {APIKeyEnv: rfDoctorEnvK, BaseURL: "https://api.example/v1"}},
+		map[string]registry.AgentConfig{"a": {
+			Provider: "p", Model: "m",
+			Thinking: thinking, ThinkingLevel: level, ThinkingStyle: style,
+		}},
+	)
+	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a"}})
+	require.NoError(t, err)
+	return res
+}
+
+// withMarker is a Completion carrying the marker, so the endpoint probe is ok.
+func withMarker(c llmclient.Completion) llmclient.Completion {
+	c.Content = Marker(testNonce)
+	return c
+}
+
+// silent is a marker reply with no reasoning signal and no reasoning-token field.
+var silent = withMarker(llmclient.Completion{})
+
+// thinks is a marker reply carrying reported reasoning tokens.
+var thinks = withMarker(llmclient.Completion{Usage: llmclient.UsageData{ReasoningTokens: 32, ReasoningTokensReported: true}})
+
+// runThinking runs doctor for one declared agent. The first CompleteWithMeta call
+// (the declared marker probe) returns declared; any later call (the control)
+// returns control.
+func runThinking(t *testing.T, res *Resolution, declared llmclient.Completion, declaredErr error, control llmclient.Completion, controlErr error) (AgentResult, *fakeCompleter, *Report) {
+	t.Helper()
+	t.Setenv(rfDoctorEnvK, thinkingKey)
+	fake := newFake(markerOK)
+	n := 0
+	fake.metaFn = func(llmclient.Invocation) (llmclient.Completion, error) {
+		n++
+		if n == 1 {
+			return declared, declaredErr
+		}
+		return control, controlErr
+	}
+	rep := Run(context.Background(), fake, res, Options{Nonce: testNonce, MaxTokens: 2048})
+	require.Len(t, rep.Agents, 1)
+	return rep.Agents[0], fake, rep
+}
+
+// AC 05-01 Scenario 3: the marker probe carries the target's own declaration, so
+// the verdict measures the declared call, not the provider default.
+func TestRun_ThinkingProbeSendsTheDeclaration(t *testing.T) {
+	_, fake, _ := runThinking(t, thinkingTarget(t, registry.ThinkingOff, "", registry.ThinkingStyleQwen), thinks, nil, llmclient.Completion{}, nil)
+	calls := fake.completeCalls()
+	require.NotEmpty(t, calls)
+	assert.Equal(t, registry.ThinkingOff, calls[0].Thinking)
+	assert.Empty(t, calls[0].ThinkingLevel)
+	assert.Equal(t, registry.ThinkingStyleQwen, calls[0].ThinkingStyle)
+	assert.Equal(t, Prompt(testNonce), calls[0].Prompt)
+}
+
+// The response_format probe is the second doctor site: a declared agent's JSON-mode
+// call carries its thinking declaration too.
+func TestRun_ResponseFormatProbeSendsTheThinkingDeclaration(t *testing.T) {
+	reg := regWith(
+		map[string]registry.Provider{"p": {APIKeyEnv: rfDoctorEnvK, BaseURL: "https://api.example/v1"}},
+		map[string]registry.AgentConfig{"a": {
+			Provider: "p", Model: "m", ResponseFormat: registry.ResponseFormatJSONObject,
+			ThinkingLevel: registry.ThinkingLevelLow, ThinkingStyle: registry.ThinkingStyleReasoningEffort,
+		}},
+	)
+	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a"}})
+	require.NoError(t, err)
+	t.Setenv(rfDoctorEnvK, thinkingKey)
+	fake := newFake(markerOK)
+	fake.metaFn = func(llmclient.Invocation) (llmclient.Completion, error) { return thinks, nil }
+	fake.chatFn = reply(oneFinding)
+	Run(context.Background(), fake, res, Options{Nonce: testNonce, MaxTokens: 2048})
+	chats := fake.chatCalls()
+	require.Len(t, chats, 1)
+	assert.Empty(t, chats[0].inv.Thinking)
+	assert.Equal(t, registry.ThinkingLevelLow, chats[0].inv.ThinkingLevel)
+	assert.Equal(t, registry.ThinkingStyleReasoningEffort, chats[0].inv.ThinkingStyle)
+}
+
+// AC 05-02: the four documented verdict cases, plus the control call, truncation,
+// and the thinking: on polarity.
+func TestRun_ThinkingVerdict(t *testing.T) {
+	reasoningOnly := withMarker(llmclient.Completion{Reasoning: "let me think"})
+	reportedZero := withMarker(llmclient.Completion{Usage: llmclient.UsageData{ReasoningTokensReported: true}})
+	truncatedSilent := withMarker(llmclient.Completion{Truncated: true})
+	truncatedThinks := withMarker(llmclient.Completion{Truncated: true, Usage: llmclient.UsageData{ReasoningTokens: 900, ReasoningTokensReported: true}})
+
+	cases := []struct {
+		name                  string
+		thinking, level       string
+		style                 string
+		declared              llmclient.Completion
+		declaredErr           error
+		control               llmclient.Completion
+		controlErr            error
+		wantStatus            string
+		wantCalls             int
+		wantDetail, notDetail []string
+	}{
+		{name: "off, reasoning tokens present", thinking: "off", style: "qwen", declared: thinks,
+			wantStatus: ThinkingNotHonored, wantCalls: 1, wantDetail: []string{"32 reasoning tokens", "thinking: off"}},
+		{name: "off, reasoning content alone", thinking: "off", style: "qwen", declared: reasoningOnly,
+			wantStatus: ThinkingNotHonored, wantCalls: 1, wantDetail: []string{"reasoning content"}},
+		{name: "off, provider reports zero", thinking: "off", style: "qwen", declared: reportedZero,
+			wantStatus: ThinkingHonored, wantCalls: 1},
+		{name: "off, silent, control thinks", thinking: "off", style: "template_kwargs", declared: silent, control: thinks,
+			wantStatus: ThinkingHonored, wantCalls: 2, wantDetail: []string{"without the declaration", "32 reasoning tokens"}},
+		{name: "off, silent, control reports zero", thinking: "off", style: "qwen", declared: silent, control: reportedZero,
+			wantStatus: ThinkingHonored, wantCalls: 2},
+		{name: "off, silent on both", thinking: "off", style: "qwen", declared: silent, control: silent,
+			wantStatus: ThinkingUnverified, wantCalls: 2, wantDetail: []string{"no reasoning signal"}},
+		{name: "off, silent, control 429", thinking: "off", style: "qwen", declared: silent, controlErr: &llmclient.HTTPStatusError{Status: 429, Snippet: "slow down"},
+			wantStatus: ThinkingUnverified, wantCalls: 2, wantDetail: []string{"control", "HTTP 429"}},
+		{name: "off, silent, control truncated", thinking: "off", style: "qwen", declared: silent, control: truncatedSilent,
+			wantStatus: ThinkingUnverified, wantCalls: 2},
+		{name: "declared call 429", thinking: "off", style: "qwen", declaredErr: &llmclient.HTTPStatusError{Status: 429, Snippet: "slow down"},
+			wantStatus: ThinkingUnverified, wantCalls: 1, wantDetail: []string{"the thinking probe got HTTP 429, so no verdict was reached: slow down"}},
+		{name: "declared call 503", thinking: "off", style: "qwen", declaredErr: &llmclient.HTTPStatusError{Status: 503, Snippet: "down"},
+			wantStatus: ThinkingUnverified, wantCalls: 1, wantDetail: []string{"HTTP 503"}},
+		{name: "declared call transport error", thinking: "off", style: "qwen", declaredErr: errors.New("connection reset"),
+			wantStatus: ThinkingUnverified, wantCalls: 1, wantDetail: []string{"the thinking probe reached no verdict: connection reset"}},
+		{name: "declared call timeout", thinking: "off", style: "qwen", declaredErr: context.DeadlineExceeded,
+			wantStatus: ThinkingUnverified, wantCalls: 1},
+		{name: "declared call empty reply", thinking: "off", style: "qwen", declared: llmclient.Completion{Truncated: true}, declaredErr: errors.New("provider returned an empty completion"),
+			wantStatus: ThinkingUnverified, wantCalls: 1},
+		{name: "truncated, no signal", thinking: "off", style: "qwen", declared: truncatedSilent,
+			wantStatus: ThinkingUnverified, wantCalls: 1, wantDetail: []string{"cut off at the output cap (2048 tokens)", "max_tokens"}},
+		{name: "truncated, signal wins", thinking: "off", style: "qwen", declared: truncatedThinks,
+			wantStatus: ThinkingNotHonored, wantCalls: 1, wantDetail: []string{"900 reasoning tokens", "cut off", "max_tokens"}},
+		{name: "on, signal present", thinking: "on", style: "qwen", declared: thinks,
+			wantStatus: ThinkingHonored, wantCalls: 1},
+		{name: "level, signal present, level not claimed", level: "low", style: "reasoning_effort", declared: thinks,
+			wantStatus: ThinkingHonored, wantCalls: 1, wantDetail: []string{"does not verify thinking_level low"}},
+		{name: "on, provider reports zero", thinking: "on", style: "qwen", declared: reportedZero,
+			wantStatus: ThinkingNotHonored, wantCalls: 1, wantDetail: []string{"thinking: on"}},
+		{name: "on, silent, control thinks", thinking: "on", style: "qwen", declared: silent, control: thinks,
+			wantStatus: ThinkingNotHonored, wantCalls: 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a, fake, rep := runThinking(t, thinkingTarget(t, tc.thinking, tc.level, tc.style), tc.declared, tc.declaredErr, tc.control, tc.controlErr)
+			assert.Equal(t, tc.wantStatus, a.ThinkingStatus, "detail: %s", a.ThinkingDetail)
+			assert.Len(t, fake.completeCalls(), tc.wantCalls)
+			for _, want := range tc.wantDetail {
+				assert.Contains(t, a.ThinkingDetail, want)
+			}
+			assert.NotContains(t, a.ThinkingDetail, "honored thinking_level", "a signal never proves the level")
+			if a.Status == StatusOK {
+				assert.Equal(t, 0, rep.ExitCode, "a thinking verdict never changes the exit code")
+			}
+		})
+	}
+}
+
+// Q1 decision: the control call is the declared call minus the declaration — same
+// prompt, same cap, no thinking field.
+func TestRun_ThinkingControlCallDropsOnlyTheDeclaration(t *testing.T) {
+	_, fake, _ := runThinking(t, thinkingTarget(t, "off", "", "qwen"), silent, nil, thinks, nil)
+	calls := fake.completeCalls()
+	require.Len(t, calls, 2)
+	declared, control := calls[0], calls[1]
+	assert.Empty(t, control.Thinking)
+	assert.Empty(t, control.ThinkingLevel)
+	assert.Empty(t, control.ThinkingStyle)
+	assert.Equal(t, declared.Prompt, control.Prompt)
+	require.NotNil(t, control.MaxTokens)
+	assert.Equal(t, *declared.MaxTokens, *control.MaxTokens)
+	assert.Equal(t, declared.Model, control.Model)
+	assert.Equal(t, declared.BaseURL, control.BaseURL)
+}
+
+// AC 05-02 Security: a provider error snippet is scrubbed of the API key before it
+// is stored.
+func TestRun_ThinkingDetailIsScrubbed(t *testing.T) {
+	a, _, _ := runThinking(t, thinkingTarget(t, "off", "", "qwen"), llmclient.Completion{}, &llmclient.HTTPStatusError{Status: 500, Snippet: "bad key " + thinkingKey}, llmclient.Completion{}, nil)
+	assert.Equal(t, ThinkingUnverified, a.ThinkingStatus)
+	assert.NotContains(t, a.ThinkingDetail, thinkingKey)
+	assert.Contains(t, a.ThinkingDetail, "[redacted]")
+}
+
+// AC 05-01 Scenario 2 and the story's fifth case: an undeclared agent gets no
+// verdict, no extra call, and no thinking field on its probe.
+func TestRun_UndeclaredAgentGetsNoThinkingProbe(t *testing.T) {
+	a, fake, _ := runThinking(t, thinkingTarget(t, "", "", ""), thinks, nil, thinks, nil)
+	assert.Empty(t, a.ThinkingStatus)
+	assert.Empty(t, a.ThinkingDetail)
+	calls := fake.completeCalls()
+	require.Len(t, calls, 1)
+	assert.Empty(t, calls[0].Thinking)
+	assert.Empty(t, calls[0].ThinkingStyle)
+}
+
+// AC 05-01 Edge Case 1: a style-only declaration is inert, so it gets no probe.
+func TestRun_StyleOnlyDeclarationGetsNoThinkingProbe(t *testing.T) {
+	a, fake, _ := runThinking(t, thinkingTarget(t, "", "", "qwen"), thinks, nil, thinks, nil)
+	assert.Empty(t, a.ThinkingStatus)
+	assert.Len(t, fake.completeCalls(), 1)
+}
+
+// No call placed (missing key) means no thinking verdict; the row already fails.
+func TestRun_NoThinkingVerdictWithoutACall(t *testing.T) {
+	fake := newFake(markerOK)
+	rep := Run(context.Background(), fake, thinkingTarget(t, "off", "", "qwen"), Options{Nonce: testNonce, MaxTokens: 2048})
+	require.Len(t, rep.Agents, 1)
+	assert.Equal(t, StatusMissingKey, rep.Agents[0].Status)
+	assert.Empty(t, rep.Agents[0].ThinkingStatus)
+	assert.Empty(t, fake.completeCalls())
+}
+
+// AC 05-04 Error Scenario 2: not_honored alone never changes the status, the
+// ok/failed count, or the exit code.
+func TestRun_ThinkingNotHonoredIsNonBlocking(t *testing.T) {
+	a, _, rep := runThinking(t, thinkingTarget(t, "off", "", "qwen"), thinks, nil, llmclient.Completion{}, nil)
+	assert.Equal(t, ThinkingNotHonored, a.ThinkingStatus)
+	assert.Equal(t, StatusOK, a.Status)
+	assert.Empty(t, a.Hint)
+	assert.Equal(t, 0, rep.ExitCode)
+}
+
+// A marker-absent row still answered, so it still gets a verdict.
+func TestRun_ThinkingVerdictOnAnOkWarningRow(t *testing.T) {
+	declared := llmclient.Completion{Content: "no marker here", Usage: llmclient.UsageData{ReasoningTokens: 5, ReasoningTokensReported: true}}
+	a, _, _ := runThinking(t, thinkingTarget(t, "off", "", "qwen"), declared, nil, llmclient.Completion{}, nil)
+	assert.Equal(t, StatusOKWarning, a.Status)
+	assert.Equal(t, ThinkingNotHonored, a.ThinkingStatus)
+}
+
+// AC 05-03: the dedup key grows only for a declared agent.
+func TestResolve_ThinkingDeclarationJoinsTheTargetKey(t *testing.T) {
+	off := registry.AgentConfig{Thinking: "off", ThinkingStyle: "qwen"}
+	cases := []struct {
+		name        string
+		a, b        registry.AgentConfig
+		wantTargets int
+	}{
+		{"declared and undeclared split", off, registry.AgentConfig{}, 2},
+		{"identical declarations share", off, off, 1},
+		{"different level splits", registry.AgentConfig{ThinkingLevel: "low", ThinkingStyle: "reasoning_effort"}, registry.AgentConfig{ThinkingLevel: "high", ThinkingStyle: "reasoning_effort"}, 2},
+		{"different style splits", off, registry.AgentConfig{Thinking: "off", ThinkingStyle: "template_kwargs"}, 2},
+		{"on and off split", off, registry.AgentConfig{Thinking: "on", ThinkingStyle: "qwen"}, 2},
+		{"undeclared pair shares", registry.AgentConfig{}, registry.AgentConfig{}, 1},
+		{"style-only is inert and shares", registry.AgentConfig{ThinkingStyle: "qwen"}, registry.AgentConfig{}, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := declaredRegistry(t, map[string]registry.AgentConfig{"a": tc.a, "b": tc.b})
+			assert.Len(t, res.Targets, tc.wantTargets)
+		})
+	}
+
+	res := declaredRegistry(t, map[string]registry.AgentConfig{"a": off, "b": {}})
+	ta, tb := targetForAgent(t, res, "a"), targetForAgent(t, res, "b")
+	assert.Equal(t, "off", ta.Thinking)
+	assert.Equal(t, "qwen", ta.ThinkingStyle)
+	assert.Empty(t, tb.Thinking)
+	assert.Empty(t, tb.ThinkingStyle)
+	assert.Equal(t, []string{"a"}, res.Paths["a"])
+	assert.Equal(t, []string{"b"}, res.Paths["b"])
+}
+
+// A style-only target carries no thinking fields, so its probe matches an
+// undeclared agent's byte for byte.
+func TestResolve_StyleOnlyTargetCarriesNoThinking(t *testing.T) {
+	res := declaredRegistry(t, map[string]registry.AgentConfig{"a": {ThinkingStyle: "qwen"}})
+	assert.Equal(t, Target{Provider: "p", Model: "same-model", BaseURL: "http://one-endpoint", APIKeyEnv: "K"}, res.Targets[0])
+}
+
+// AC 05-01 Scenario 2: an undeclared agent's JSON carries no thinking keys; a
+// declared agent's carries the verdict.
+func TestRenderJSON_ThinkingKeys(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, RenderJSON(&buf, &Report{Agents: []AgentResult{{Agent: "a", Status: StatusOK}}}))
+	assert.NotContains(t, buf.String(), "thinking")
+
+	buf.Reset()
+	require.NoError(t, RenderJSON(&buf, &Report{Agents: []AgentResult{{Agent: "a", Status: StatusOK, ThinkingStatus: ThinkingNotHonored, ThinkingDetail: "why"}}}))
+	var out struct {
+		Agents []map[string]any `json:"agents"`
+	}
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &out))
+	assert.Equal(t, ThinkingNotHonored, out.Agents[0]["thinking_status"])
+	assert.Equal(t, "why", out.Agents[0]["thinking_detail"])
+}
+
+// AC 05-04: the HINT cell labels the thinking verdict after any response_format
+// label, clamps a long detail, and adds nothing for honored.
+func TestRenderTable_ThinkingLabel(t *testing.T) {
+	render := func(a AgentResult) string {
+		var buf bytes.Buffer
+		RenderTable(&buf, &Report{Agents: []AgentResult{a}})
+		return buf.String()
+	}
+	out := render(AgentResult{Agent: "a", Status: StatusOK, ThinkingStatus: ThinkingNotHonored, ThinkingDetail: "32 reasoning tokens"})
+	assert.Contains(t, out, "thinking not honored: 32 reasoning tokens")
+
+	out = render(AgentResult{Agent: "a", Status: StatusOK, ThinkingStatus: ThinkingUnverified, ThinkingDetail: "no signal"})
+	assert.Contains(t, out, "thinking unverified: no signal")
+
+	out = render(AgentResult{Agent: "a", Status: StatusOK,
+		ResponseFormatStatus: ResponseFormatNotHonored, ResponseFormatDetail: "fenced",
+		ThinkingStatus: ThinkingNotHonored, ThinkingDetail: "tokens"})
+	rf, th := strings.Index(out, "response_format not honored: fenced"), strings.Index(out, "thinking not honored: tokens")
+	require.True(t, rf >= 0 && th >= 0, out)
+	assert.Less(t, rf, th, "thinking rides after response_format")
+
+	out = render(AgentResult{Agent: "a", Status: StatusOK, ThinkingStatus: ThinkingNotHonored, ThinkingDetail: strings.Repeat("x", 400)})
+	assert.Contains(t, out, "… (--json for full text)")
+	assert.NotContains(t, out, strings.Repeat("x", 161))
+
+	out = render(AgentResult{Agent: "a", Status: StatusOK, ThinkingStatus: ThinkingHonored, ThinkingDetail: "a note"})
+	assert.NotContains(t, out, "thinking")
+}

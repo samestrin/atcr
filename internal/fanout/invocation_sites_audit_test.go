@@ -37,8 +37,11 @@ var thinkingFieldNames = []string{"Thinking", "ThinkingLevel", "ThinkingStyle"}
 //
 //   - thinking: the four pipeline sites (review primary and fallback, skeptic,
 //     debate seat) set all three keys from the agent's own AgentConfig.
-//   - doctor: the two probe sites. Their thinking wiring is Phase 4 (Story 5),
-//     which extends this map; until then they are inventoried, not asserted.
+//   - the two doctor probe sites set all three keys from the probed Target,
+//     which carries the declaration of the agents sharing it (Story 5).
+//   - control: the doctor's thinking control call, which must send NO thinking
+//     key — it is the same prompt without the declaration, and a key there would
+//     make it measure the declaration it exists to compare against.
 //   - excluded: the verify executor (fix generation). ExecutorConfig has no
 //     thinking keys — nor response_format or max_tokens — so there is no
 //     declaration to forward; adding one is a registry change, not a wiring fix.
@@ -48,8 +51,9 @@ var invocationSiteInventory = map[invocationSite]siteRule{
 	{"internal/fanout/review.go", "buildFallbackAgent"}:   {"thinking", "ac"},
 	{"internal/verify/invoke.go", "buildSkepticAgent"}:    {"thinking", "c"},
 	{"internal/debate/protocol.go", "buildDebateAgent"}:   {"thinking", "c"},
-	{"internal/doctor/run.go", "probe"}:                   {kind: "doctor"},
-	{"internal/doctor/run.go", "responseFormatCall"}:      {kind: "doctor"},
+	{"internal/doctor/run.go", "probe"}:                   {"thinking", "tgt"},
+	{"internal/doctor/run.go", "responseFormatCall"}:      {"thinking", "tgt"},
+	{"internal/doctor/run.go", "thinkingControlCall"}:     {kind: "control"},
 	{"internal/verify/executor.go", "callExecutor"}:       {kind: "excluded"},
 	{"internal/verify/executor.go", "buildExecutorAgent"}: {kind: "excluded"},
 }
@@ -189,6 +193,10 @@ func TestInvocationSites_ThinkingAudit(t *testing.T) {
 				assert.True(t, recv != nil && recv.Name == rule.recv,
 					"%s (%s): %s must be read from %s (the site's own AgentConfig), not a primary or lane default",
 					lit.pos, lit.site.fn, name, rule.recv)
+			}
+		case "control":
+			for _, name := range thinkingFieldNames {
+				assert.NotContains(t, lit.keys, name, "%s (%s) must not set %s — the control call is the probe without the declaration", lit.pos, lit.site.fn, name)
 			}
 		case "excluded":
 			for _, name := range thinkingFieldNames {
