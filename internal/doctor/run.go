@@ -840,10 +840,9 @@ func responseFormatCall(ctx context.Context, c Completer, tgt Target, opts Optio
 	// applied the provider's own default limit did the cutting, so the remedy cannot
 	// name a cap the run never set.
 	if resp.Truncated {
-		if budget <= 0 {
-			return ResponseFormatUnverified, fmt.Sprintf("the %s probe reply was cut off at the provider's default output limit, so no verdict was reached; declare a higher max_tokens or pass --max-tokens", declared)
-		}
-		return ResponseFormatUnverified, fmt.Sprintf("the %s probe reply was cut off at the output cap (%d tokens), so no verdict was reached; raise this agent's max_tokens or pass --max-tokens", declared, budget)
+		// The remedy text is cutOff's, so the response_format and thinking arms
+		// share one source and cannot drift the next time the wording changes.
+		return ResponseFormatUnverified, fmt.Sprintf("the %s probe reply was %s, so no verdict was reached", declared, cutOff(budget))
 	}
 	content := ""
 	if resp.Message.Content != nil {
