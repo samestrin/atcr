@@ -70,6 +70,62 @@ type invocationLiteral struct {
 	pos  string
 	// keys maps each keyed field to its value expression.
 	keys map[string]ast.Expr
+	// wireLocals maps a same-function local assigned from a thinkingWire(...)
+	// call to its result position (thinkingWire returns maxTokens, thinking,
+	// thinkingLevel), and wireRecv maps that local to the argument the call read
+	// from — the site's own AgentConfig when the wiring is honest. Both are nil
+	// for package-level declarations.
+	wireLocals map[string]int
+	wireRecv   map[string]string
+}
+
+// collectThinkingWireLocals records fn's `a, b, c := thinkingWire(x)` assigns so
+// the receiver check can accept a field read through one of those locals.
+func collectThinkingWireLocals(fn *ast.FuncDecl, wireLocals map[string]int, wireRecv map[string]string) {
+	ast.Inspect(fn, func(n ast.Node) bool {
+		assign, ok := n.(*ast.AssignStmt)
+		if !ok || assign.Tok != token.DEFINE || len(assign.Rhs) != 1 {
+			return true
+		}
+		call, ok := assign.Rhs[0].(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		fun, ok := call.Fun.(*ast.Ident)
+		if !ok || fun.Name != "thinkingWire" || len(call.Args) != 1 {
+			return true
+		}
+		arg, ok := call.Args[0].(*ast.Ident)
+		if !ok {
+			return true
+		}
+		for i, lhs := range assign.Lhs {
+			if id, ok := lhs.(*ast.Ident); ok && id.Name != "_" {
+				wireLocals[id.Name] = i
+				wireRecv[id.Name] = arg.Name
+			}
+		}
+		return true
+	})
+}
+
+// wireResultIndex maps an Invocation thinking field to the thinkingWire result
+// position that feeds it.
+var wireResultIndex = map[string]int{"Thinking": 1, "ThinkingLevel": 2}
+
+// invocationFieldReadsOwnConfig reports whether the Invocation literal sets
+// field from the site's own AgentConfig named recv: either a direct recv.field
+// selector, or a same-function local assigned from thinkingWire(recv) at the
+// result position that feeds field — the shape the skeptic lane uses, so a
+// site's deliberate wire downgrade still reads as its own declaration while a
+// local from anything else (or another config) still fails.
+func invocationFieldReadsOwnConfig(lit invocationLiteral, field, recv string) bool {
+	sel, ok := lit.keys[field].(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	id, _ := sel.X.(*ast.Ident)
+	return sel.Sel.Name == field && id != nil && id.Name == recv
 }
 
 // funcDeclName renders a FuncDecl's site key: the bare name for a plain
@@ -157,8 +213,10 @@ func findInvocationLiterals(t *testing.T, root string) []invocationLiteral {
 		}
 		for _, decl := range f.Decls {
 			fnName := ""
+			wireLocals, wireRecv := map[string]int{}, map[string]string{}
 			if fn, ok := decl.(*ast.FuncDecl); ok {
 				fnName = funcDeclName(fn)
+				collectThinkingWireLocals(fn, wireLocals, wireRecv)
 			}
 			ast.Inspect(decl, func(n ast.Node) bool {
 				var keys map[string]ast.Expr
@@ -191,9 +249,11 @@ func findInvocationLiterals(t *testing.T, root string) []invocationLiteral {
 					return true
 				}
 				out = append(out, invocationLiteral{
-					site: invocationSite{rel, fnName},
-					pos:  fset.Position(pos).String(),
-					keys: keys,
+					site:       invocationSite{rel, fnName},
+					pos:        fset.Position(pos).String(),
+					keys:       keys,
+					wireLocals: wireLocals,
+					wireRecv:   wireRecv,
 				})
 				return true
 			})
@@ -258,15 +318,10 @@ func TestInvocationSites_ThinkingAudit(t *testing.T) {
 		switch rule.kind {
 		case "thinking":
 			for _, name := range thinkingFieldNames {
-				sel, ok := lit.keys[name].(*ast.SelectorExpr)
-				if !assert.True(t, ok, "%s (%s) must set %s from its own AgentConfig", lit.pos, lit.site.fn, name) {
-					continue
+				if !invocationFieldReadsOwnConfig(lit, name, rule.recv) {
+					t.Errorf("%s (%s) must set %s from its own AgentConfig %s — directly (recv.field) or via a same-function thinkingWire(%s) local — not from a primary or lane default",
+						lit.pos, lit.site.fn, name, rule.recv, rule.recv)
 				}
-				assert.Equal(t, name, sel.Sel.Name, "%s (%s): %s must read the same-named AgentConfig field", lit.pos, lit.site.fn, name)
-				recv, _ := sel.X.(*ast.Ident)
-				assert.True(t, recv != nil && recv.Name == rule.recv,
-					"%s (%s): %s must be read from %s (the site's own AgentConfig), not a primary or lane default",
-					lit.pos, lit.site.fn, name, rule.recv)
 			}
 		case "control":
 			for _, name := range thinkingFieldNames {
@@ -333,6 +388,50 @@ func TestInvocationAudit_CatchesNonLiteralDeclarations(t *testing.T) {
 	for _, fn := range []string{"viaNew", "viaVar", "viaAlias"} {
 		assert.True(t, sites[fn], "the audit must flag the Invocation declared in %s (TD-016: ValueSpec/new/alias forms escape it)", fn)
 	}
+}
+
+// TestInvocationAudit_AcceptsThinkingWireLocals pins the receiver-check's local
+// half: a site may read its thinking keys through same-function locals assigned
+// from thinkingWire(<ownConfig>) — the shape the skeptic lane uses for its
+// deliberate wire downgrade — while a local derived from any other call still
+// fails the check.
+func TestInvocationAudit_AcceptsThinkingWireLocals(t *testing.T) {
+	src := `package underaudit
+
+import "github.com/samestrin/atcr/internal/llmclient"
+
+type agentConfig struct{ Thinking, ThinkingLevel, ThinkingStyle string }
+
+func thinkingWire(c agentConfig) (*int, string, string) { return nil, c.Thinking, c.ThinkingLevel }
+
+func otherWire(c agentConfig) (*int, string, string) { return nil, "on", "low" }
+
+func goodSite(c agentConfig) {
+	_, wireThinking, wireThinkingLevel := thinkingWire(c)
+	_ = llmclient.Invocation{Thinking: wireThinking, ThinkingLevel: wireThinkingLevel, ThinkingStyle: c.ThinkingStyle}
+}
+
+func badSite(c agentConfig) {
+	_, wireThinking, _ := otherWire(c)
+	_ = llmclient.Invocation{Thinking: wireThinking}
+}
+`
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "underaudit.go"), []byte(src), 0o600))
+	byFn := map[string]invocationLiteral{}
+	for _, lit := range findInvocationLiterals(t, dir) {
+		byFn[lit.site.fn] = lit
+	}
+	good, ok := byFn["goodSite"]
+	require.True(t, ok, "goodSite must be scanned")
+	for _, field := range thinkingFieldNames {
+		assert.True(t, invocationFieldReadsOwnConfig(good, field, "c"),
+			"goodSite's %s comes from its own AgentConfig (directly or via thinkingWire(c)) and must pass", field)
+	}
+	bad, ok := byFn["badSite"]
+	require.True(t, ok, "badSite must be scanned")
+	assert.False(t, invocationFieldReadsOwnConfig(bad, "Thinking", "c"),
+		"a local assigned from a non-thinkingWire call must still fail the receiver check")
 }
 
 // TestInvocationAudit_KeysMethodsByReceiver pins half 2 of TD-016: a method's
