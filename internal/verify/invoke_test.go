@@ -83,7 +83,7 @@ func TestBuildSkepticAgent_ForwardsProviderAndBudgets(t *testing.T) {
 	assert.Equal(t, "the prompt", a.Invocation.Prompt)
 }
 
-// TestBuildSkepticAgent_ThinkingBudgetFitsUnderOutputCap locks the skeptic-lane
+// TestBuildSkepticAgent_ThinkingBudgetFitsUnderOutputCap locks the single-shot
 // half of the budget/cap invariant: an anthropic thinking declaration sends
 // budget_tokens, and Anthropic rejects budget_tokens >= max_tokens. A skeptic
 // with no declared max_tokens previously sent the budget with NO cap, so the
@@ -92,6 +92,7 @@ func TestBuildSkepticAgent_ForwardsProviderAndBudgets(t *testing.T) {
 func TestBuildSkepticAgent_ThinkingBudgetFitsUnderOutputCap(t *testing.T) {
 	t.Parallel()
 	sk := testSkeptic()
+	sk.Config.SupportsFC = false // cap path runs on the single-shot (degrade) lane
 	sk.Config.Thinking, sk.Config.ThinkingStyle = registry.ThinkingOn, registry.ThinkingStyleAnthropic
 	a, _ := buildSkepticAgent(sk, "prompt", false)
 	require.NotNil(t, a.Invocation.MaxTokens, "a thinking budget must not go on the wire without an output cap")
@@ -105,6 +106,7 @@ func TestBuildSkepticAgent_ThinkingBudgetFitsUnderOutputCap(t *testing.T) {
 func TestBuildSkepticAgent_ThinkingBudgetClampedWhenAboveCap(t *testing.T) {
 	t.Parallel()
 	sk := testSkeptic()
+	sk.Config.SupportsFC = false // cap path runs on the single-shot (degrade) lane
 	sk.Config.Thinking, sk.Config.ThinkingLevel, sk.Config.ThinkingStyle = registry.ThinkingOn, registry.ThinkingLevelHigh, registry.ThinkingStyleAnthropic
 	sk.Config.MaxTokens = intPtr(8192) // high's 16384 budget cannot fit
 	a, _ := buildSkepticAgent(sk, "prompt", false)
@@ -121,6 +123,7 @@ func TestBuildSkepticAgent_ThinkingBudgetClampedWhenAboveCap(t *testing.T) {
 func TestBuildSkepticAgent_ThinkingDroppedWhenNothingFits(t *testing.T) {
 	t.Parallel()
 	sk := testSkeptic()
+	sk.Config.SupportsFC = false // cap path runs on the single-shot (degrade) lane
 	sk.Config.Thinking, sk.Config.ThinkingLevel, sk.Config.ThinkingStyle = registry.ThinkingOn, registry.ThinkingLevelLow, registry.ThinkingStyleAnthropic
 	sk.Config.MaxTokens = intPtr(1024) // low's 2048 budget cannot fit; nothing smaller exists
 	a, _ := buildSkepticAgent(sk, "prompt", false)

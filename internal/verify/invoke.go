@@ -446,6 +446,18 @@ func thinkingWire(c registry.AgentConfig) (maxTokens *int, thinking, thinkingLev
 	if c.ThinkingStyle != registry.ThinkingStyleAnthropic {
 		return c.MaxTokens, c.Thinking, c.ThinkingLevel
 	}
+	// The tool loop does not re-send prior reasoning blocks, which Anthropic
+	// requires on every continuation turn — a thinking declaration on a
+	// tool-loop agent is a guaranteed 400. The load-time guard rejects the
+	// combination for registry-loaded configs, but it is keyed on the agent's
+	// own supports_function_calling DECLARATION, and this lane forwards that
+	// declaration (the executor lane hardcodes it true regardless). Strip here,
+	// where the lane is actually about to run the loop: a SupportsFC-forwarded
+	// skeptic degrades to single-shot only when the declaration is false, and
+	// single-shot is the one path where thinking is legal.
+	if c.SupportsFC {
+		return c.MaxTokens, "", ""
+	}
 	budget := registry.ThinkingBudgetTokens(c.Thinking, c.ThinkingLevel, c.ThinkingStyle)
 	if budget == 0 {
 		return c.MaxTokens, c.Thinking, c.ThinkingLevel
