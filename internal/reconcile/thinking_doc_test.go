@@ -3,11 +3,13 @@ package reconcile
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/doctor"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/require"
 )
@@ -128,6 +130,22 @@ func docLineWith(t *testing.T, doc, marker string) string {
 	return ""
 }
 
+// styleTable returns the style table: the lines after the **Thinking styles.**
+// intro, up to the first blank line after the table.
+func styleTable(t *testing.T, doc string) string {
+	t.Helper()
+	start := strings.Index(doc, "**Thinking styles.**")
+	require.True(t, start >= 0, "docs/registry.md has no **Thinking styles.** paragraph")
+	rest := doc[start:]
+	tableStart := strings.Index(rest, "\n|")
+	require.True(t, tableStart >= 0, "no table after **Thinking styles.**")
+	rest = rest[tableStart+1:]
+	if end := strings.Index(rest, "\n\n"); end >= 0 {
+		rest = rest[:end]
+	}
+	return rest
+}
+
 // assertStates fails for each token the line does not contain.
 func assertStates(t *testing.T, where, line string, must []struct{ token, why string }) {
 	t.Helper()
@@ -165,10 +183,28 @@ func TestRegistryDoc_ThinkingStyleTable(t *testing.T) {
 			{"sends no `temperature`", "Anthropic rejects extended thinking at any temperature but 1"},
 		},
 	}
+	// Rows are read from the table after the intro only, so another table with a
+	// `qwen` or `anthropic` row cannot satisfy them, and the table's style set must
+	// equal the registry's.
+	table := styleTable(t, doc)
+	var listed []string
+	for _, line := range strings.Split(table, "\n") {
+		if strings.HasPrefix(line, "| `") {
+			listed = append(listed, strings.Split(line, "`")[1])
+		}
+	}
+	require.Equal(t, registry.ThinkingStyles(), listed, "the style table must list exactly the registry's styles, in order")
+	efforts := slices.DeleteFunc(registry.ThinkingLevels(), func(l string) bool { return l == registry.ThinkingLevelMax })
+	var effortList []string
+	for _, l := range efforts {
+		effortList = append(effortList, "`"+l+"`")
+	}
+	rows[registry.ThinkingStyleReasoningEffort] = append(rows[registry.ThinkingStyleReasoningEffort],
+		struct{ token, why string }{strings.Join(effortList[:len(effortList)-1], ", ") + ", or " + effortList[len(effortList)-1], "every level but max is sent as itself"})
 	for _, style := range registry.ThinkingStyles() {
 		must, ok := rows[style]
 		require.True(t, ok, "style %q has no expected wire field in this test; add it", style)
-		assertStates(t, "style table row for `"+style+"`", docRow(t, doc, "`"+style+"`"), must)
+		assertStates(t, "style table row for `"+style+"`", docRow(t, table, "`"+style+"`"), must)
 	}
 
 	intro := docLineWith(t, doc, "**Thinking styles.**")
@@ -197,8 +233,14 @@ func TestRegistryDoc_ThinkingMaxTokensNote(t *testing.T) {
 	assertStates(t, "thinking and max_tokens note", docLineWith(t, doc, "**Thinking and `max_tokens`.**"), []struct{ token, why string }{
 		{"thinking tokens count against the output cap on most providers", "raising max_tokens alone does not stop a runaway thinker"},
 		{"`thinking: off` is the first fix for a model that truncates with zero findings", "archer ran to about 100k tokens with no findings"},
+		{"under `reasoning_effort`, use `thinking_level: low` instead", "thinking: off is a load error under that style"},
 	})
-	// TD-008: the executor lane's gap is named, as the max_tokens row names its own.
+	// TD-008: the executor lane's gap is named, as the max_tokens row names its own,
+	// and the claim is checked against ExecutorConfig so it cannot go stale.
+	executor := reflect.TypeOf(registry.ExecutorConfig{})
+	for i := 0; i < executor.NumField(); i++ {
+		require.NotContains(t, executor.Field(i).Name, "Thinking", "ExecutorConfig gained a thinking field; update the `thinking` row's executor clause")
+	}
 	assertStates(t, "`thinking` row", docRow(t, doc, "`thinking`"), []struct{ token, why string }{
 		{"the executor (fix generation) has no thinking keys", "ExecutorConfig has no thinking fields, so fix generation always takes the provider default"},
 	})
@@ -213,25 +255,30 @@ func TestRegistryDoc_ThinkingDoctorVerdict(t *testing.T) {
 	intro := docLineWith(t, section, "declares `thinking` or `thinking_level`")
 	assertStates(t, "thinking verdict intro", intro, []struct{ token, why string }{
 		{"`reasoning_tokens > 0` or non-empty reasoning content", "the either-signal rule: some upstreams never report reasoning_tokens"},
+		{"a `reasoning_content` or `reasoning` field, or inline `<think>` text in the content", "every signal reasoningSignal reads"},
 		{"never changes the ok/failed count or the exit code", "the verdict is a warning, like response_format's"},
-		{"control probe", "a silent reply is judged only after the same prompt without the declaration shows the provider reports reasoning"},
+		{"the same prompt and cap without the declaration", "a silent reply is judged only after a control probe shows the provider reports reasoning"},
+	})
+	assertStates(t, "thinking verdict warning line", docLineWith(t, section, "The HINT column labels"), []struct{ token, why string }{
+		{"In table mode, stderr prints one warning line each for `" + doctor.ThinkingNotHonored + "` and `" + doctor.ThinkingUnverified + "`", "--json prints no warning lines and honored prints none"},
 	})
 	rows := map[string][]struct{ token, why string }{
-		"`honored`": {
+		doctor.ThinkingHonored: {
 			{"does not prove the declared level", "a signal under thinking: on shows only that thinking is on"},
 		},
-		"`not_honored`": {
+		doctor.ThinkingNotHonored: {
 			{"a larger `max_tokens` or a different model", "the remedy the stderr warning suggests"},
 		},
-		"`unverified`": {
+		doctor.ThinkingUnverified: {
 			{"may not report reasoning at all", "silence on both calls cannot be told apart from a provider that cannot report"},
-			{"cut off", "a cut-off reply with no signal reaches no verdict"},
+			{"cut off before any signal showed", "a cut-off reply with no signal reaches no verdict"},
 		},
 	}
-	for key, must := range rows {
-		assertStates(t, "thinking verdict row "+key, docRow(t, section, key), must)
+	for status, must := range rows {
+		assertStates(t, "thinking verdict row `"+status+"`", docRow(t, section, "`"+status+"`"), must)
 	}
-	assertStates(t, "doctor JSON schema", docLineWith(t, doc, "`thinking_status`"), []struct{ token, why string }{
+	assertStates(t, "doctor JSON schema", docLineWith(t, doc, "`thinking_status` (`"), []struct{ token, why string }{
+		{"`thinking_status` (`" + doctor.ThinkingHonored + "`, `" + doctor.ThinkingNotHonored + "`, or `" + doctor.ThinkingUnverified + "`)", "the JSON field's values are the doctor constants"},
 		{"`thinking_detail`", "the verdict's reason rides beside it in --json"},
 	})
 }
