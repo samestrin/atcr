@@ -74,6 +74,27 @@ func TestComplete_FallsBackToReasoningWhenContentEmpty(t *testing.T) {
 	assert.Contains(t, out, "HIGH|a.go:1|bug")
 }
 
+func TestComplete_FallsBackToReasoningKeyWhenContentEmpty(t *testing.T) {
+	// OpenRouter and newer vLLM carry the chain-of-thought under the "reasoning"
+	// key instead of reasoning_content. A cut-off thinking reply from such a
+	// provider must be salvaged exactly like the reasoning_content form —
+	// otherwise the same truncated reply salvages on DashScope/DeepSeek-style
+	// providers but hard-fails with "empty completion" here.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := chatResponse{}
+		resp.Choices = append(resp.Choices, chatChoice{Message: message{Role: "assistant", Content: "", Reasoning: "HIGH|a.go:1|bug|fix|correctness|5|evidence|greta"}})
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	out, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+		BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "review this",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, out, "HIGH|a.go:1|bug")
+}
+
 func TestComplete_ContentWinsOverReasoning(t *testing.T) {
 	// When both arrive, visible content is authoritative and the reasoning
 	// chain-of-thought must not leak into the returned review.
