@@ -43,6 +43,20 @@ const defaultConcurrency = 8
 // healthy reports whether a status counts as a working invocation path.
 func healthy(status string) bool { return status == StatusOK || status == StatusOKWarning }
 
+// thinkingProbeWorthwhile reports that a thinking verdict is meaningful on a row
+// with this endpoint status: healthy rows always, and failed rows only when the
+// failure is transient (rate limit, provider 5xx, timeout) so a re-run could reach
+// a verdict. Permanent failures — auth, bad model name, transport — repeat
+// identically, and an unverified verdict on them only buries the real cause.
+func thinkingProbeWorthwhile(status string) bool {
+	switch status {
+	case StatusRateLimited, StatusProviderError, StatusTimeout:
+		return true
+	default:
+		return healthy(status)
+	}
+}
+
 // Completer is the subset of llmclient.Client the doctor needs. Tests inject a
 // fake; production passes a real *llmclient.Client.
 //
@@ -262,7 +276,13 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 			// Unlike response_format, a failed call still gets a verdict (unverified):
 			// the marker call IS the declared thinking call, and its failure is the
 			// reason no verdict was reached. No call placed means nothing to report.
-			if res.Targets[i].declaresThinking() && pr.called {
+			// But only a failure a re-run could plausibly fix: an auth refusal, a 404,
+			// or a transport error repeats identically, so like the response_format
+			// probe (which skips unhealthy endpoints because one "can only fail the
+			// same way and bury the real cause") those rows get no thinking verdict at
+			// all rather than a second, competing warning. Transient classes — 429, a
+			// 5xx, a timeout — keep unverified: a retry really can reach a verdict.
+			if res.Targets[i].declaresThinking() && pr.called && thinkingProbeWorthwhile(pr.status) {
 				pr.thinkingStatus, pr.thinkingDetail = probeThinking(ctx, c, res.Targets[i], opts, pr.maxTokens, pr.comp, pr.callErr)
 			}
 			results[i] = pr
