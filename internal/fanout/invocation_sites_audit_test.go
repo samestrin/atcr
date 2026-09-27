@@ -17,9 +17,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// invocationSite names one non-test llmclient.Invocation{} literal by file and
-// enclosing function, so the audit survives line shifts. A package-level
-// literal has an empty fn.
+// invocationSite names one non-test llmclient.Invocation declaration — a
+// composite literal, a new(llmclient.Invocation), a var (ValueSpec) of the type,
+// or an alias of it (TD-016) — by file and enclosing function, so the audit
+// survives line shifts. A package-level declaration has an empty fn; a method is
+// keyed with its receiver as (T).name or (*T).name, so two same-named methods in
+// one file are two entries, not one.
 type invocationSite struct{ file, fn string }
 
 // siteRule is the audit's decision for one site. recv is the identifier the
@@ -69,10 +72,39 @@ type invocationLiteral struct {
 	keys map[string]ast.Expr
 }
 
+// funcDeclName renders a FuncDecl's site key: the bare name for a plain
+// function, the receiver-qualified (*T).name / (T).name for a method, so
+// same-named methods on different receivers do not share an inventory entry
+// (TD-016). A generic receiver falls back to the bare name.
+func funcDeclName(fn *ast.FuncDecl) string {
+	if fn.Recv == nil || len(fn.Recv.List) == 0 || fn.Name == nil {
+		return fn.Name.Name
+	}
+	recv := fn.Recv.List[0].Type
+	if star, ok := recv.(*ast.StarExpr); ok {
+		if id, ok := star.X.(*ast.Ident); ok {
+			return "(*" + id.Name + ")." + fn.Name.Name
+		}
+		return fn.Name.Name
+	}
+	if id, ok := recv.(*ast.Ident); ok {
+		return "(" + id.Name + ")." + fn.Name.Name
+	}
+	return fn.Name.Name
+}
+
+// isInvocationNew reports whether call is a new(llmclient.Invocation).
+func isInvocationNew(call *ast.CallExpr, pkgName string, local bool) bool {
+	id, ok := call.Fun.(*ast.Ident)
+	return ok && id.Name == "new" && len(call.Args) == 1 && isInvocationType(call.Args[0], pkgName, local)
+}
+
 // findInvocationLiterals parses every non-test .go file under root and returns
-// each llmclient.Invocation{} composite literal with its enclosing function,
-// including package-level initializers and literals under an import alias. A
-// dot import of llmclient fails the audit, since its literals are unqualified.
+// each llmclient.Invocation declaration — composite literals, new(...) calls,
+// and var (ValueSpec) declarations of the type or of an alias of it — with its
+// enclosing function, including package-level initializers and files under an
+// import alias. A dot import of llmclient fails the audit, since its
+// declarations are unqualified.
 func findInvocationLiterals(t *testing.T, root string) []invocationLiteral {
 	t.Helper()
 	var out []invocationLiteral
@@ -107,27 +139,60 @@ func findInvocationLiterals(t *testing.T, root string) []invocationLiteral {
 		if pkgName == "" && !local {
 			return nil
 		}
+		// TD-016: a package-level `type X = llmclient.Invocation` alias lets a
+		// declaration hide behind X, so collect the file's aliases first and
+		// treat an alias name as the type everywhere below.
+		aliases := map[string]bool{}
+		for _, decl := range f.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				ts, ok := spec.(*ast.TypeSpec)
+				if ok && ts.Assign.IsValid() && isInvocationType(ts.Type, pkgName, local) {
+					aliases[ts.Name.Name] = true
+				}
+			}
+		}
 		for _, decl := range f.Decls {
 			fnName := ""
 			if fn, ok := decl.(*ast.FuncDecl); ok {
-				fnName = fn.Name.Name
+				fnName = funcDeclName(fn)
 			}
 			ast.Inspect(decl, func(n ast.Node) bool {
-				lit, ok := n.(*ast.CompositeLit)
-				if !ok || !isInvocationType(lit.Type, pkgName, local) {
-					return true
-				}
-				keys := map[string]ast.Expr{}
-				for _, el := range lit.Elts {
-					if kv, ok := el.(*ast.KeyValueExpr); ok {
-						if id, ok := kv.Key.(*ast.Ident); ok {
-							keys[id.Name] = kv.Value
+				var keys map[string]ast.Expr
+				var pos token.Pos
+				switch node := n.(type) {
+				case *ast.CompositeLit:
+					if !isInvocationType(node.Type, pkgName, local) && !aliases[identName(node.Type)] {
+						return true
+					}
+					keys = map[string]ast.Expr{}
+					for _, el := range node.Elts {
+						if kv, ok := el.(*ast.KeyValueExpr); ok {
+							if id, ok := kv.Key.(*ast.Ident); ok {
+								keys[id.Name] = kv.Value
+							}
 						}
 					}
+					pos = node.Pos()
+				case *ast.CallExpr:
+					if !isInvocationNew(node, pkgName, local) {
+						return true
+					}
+					pos = node.Pos()
+				case *ast.ValueSpec:
+					if node.Type == nil || (!isInvocationType(node.Type, pkgName, local) && !aliases[identName(node.Type)]) {
+						return true
+					}
+					pos = node.Pos()
+				default:
+					return true
 				}
 				out = append(out, invocationLiteral{
 					site: invocationSite{rel, fnName},
-					pos:  fset.Position(lit.Pos()).String(),
+					pos:  fset.Position(pos).String(),
 					keys: keys,
 				})
 				return true
@@ -153,6 +218,15 @@ func llmclientName(f *ast.File, rel string) (name string, local bool) {
 		return "llmclient", local
 	}
 	return "", local
+}
+
+// identName returns e's bare identifier name, or "" when e is not one.
+func identName(e ast.Expr) string {
+	id, ok := e.(*ast.Ident)
+	if !ok {
+		return ""
+	}
+	return id.Name
 }
 
 func isInvocationType(e ast.Expr, pkgName string, local bool) bool {
