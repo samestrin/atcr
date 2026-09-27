@@ -37,7 +37,16 @@ func TestRun_FlagCapAtOrBelowAnthropicBudgetNamesTheFlag(t *testing.T) {
 			res := thinkingTarget(t, registry.ThinkingOn, registry.ThinkingLevelHigh, registry.ThinkingStyleAnthropic)
 			t.Setenv(rfDoctorEnvK, thinkingKey)
 			fake := newFake(markerOK)
-			fake.metaFn = func(llmclient.Invocation) (llmclient.Completion, error) { return llmclient.Completion{}, tc.err }
+			// Only the declared call is rejected; the control call (no declaration,
+			// so no budget_tokens) succeeds, as it would against Anthropic.
+			n := 0
+			fake.metaFn = func(llmclient.Invocation) (llmclient.Completion, error) {
+				n++
+				if n == 1 {
+					return llmclient.Completion{}, tc.err
+				}
+				return silent, nil
+			}
 			rep := Run(context.Background(), fake, res, Options{Nonce: testNonce, MaxTokens: tc.maxTok, MaxTokensSet: tc.set})
 			require.Len(t, rep.Agents, 1)
 			hint := rep.Agents[0].Hint
