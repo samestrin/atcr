@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
 )
@@ -37,6 +38,34 @@ func TestRunDebate_DrivesThreeTurnsInOrder(t *testing.T) {
 	assert.Equal(t, "challenger attacks", rec.ChallengerStatement)
 	assert.Contains(t, rec.JudgeRaw, "uphold")
 	assert.Empty(t, rec.Halted)
+}
+
+// TestRunDebate_TruncatedReasoningSeatHaltsAndIsNotForwarded reproduces the
+// TD internal/debate/protocol.go:148 scenario: a seat forced onto the
+// single-shot path (thinking on plus supports_function_calling: false, the
+// state the anthropic thinking load rule creates) whose reply truncates at
+// finish_reason=length. llmclient salvages the chain-of-thought into Content,
+// so the engine returns StatusOK with that reasoning as the statement —
+// previously pasted verbatim into the challenger's prompt. The seat must be
+// halted and its salvaged reasoning must never reach another seat.
+func TestRunDebate_TruncatedReasoningSeatHaltsAndIsNotForwarded(t *testing.T) {
+	reasoning := "let me think through this: the severity split hinges on..."
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{meta: &llmclient.Completion{Content: reasoning, Truncated: true}},
+		{content: "challenger attacks"},
+		{content: `{"outcome":"uphold","settled_severity":"HIGH","reasoning":"evidence holds"}`},
+	}}
+	// The proposer declares no function calling, so its tool agent degrades to
+	// the single-shot path; challenger and judge still run the tool loop.
+	cast := fcCast()
+	cast.Proposer.Config.SupportsFC = false
+	rec := RunDebate(context.Background(), debateItem(), cast, cc, &fakeDispatcher{}, nil)
+
+	assert.Equal(t, []string{LabelProposer}, rec.Halted)
+	assert.Empty(t, rec.ProposerStatement)
+	for _, inv := range cc.invocations() {
+		assert.NotContains(t, inv.Prompt, reasoning)
+	}
 }
 
 func TestRunDebate_HaltedJudgeRecorded(t *testing.T) {

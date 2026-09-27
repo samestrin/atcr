@@ -11,10 +11,14 @@ import (
 )
 
 // chatTurn scripts one Chat response: a final message carrying content, or an
-// error. Mirrors verify's test mock.
+// error. Mirrors verify's test mock. meta, when set, scripts the single-shot
+// CompleteWithMeta reply instead (a truncated, reasoning-salvaged completion),
+// so a test can reproduce the degraded single-shot path a thinking-on
+// supports_function_calling:false seat takes.
 type chatTurn struct {
 	content string
 	err     error
+	meta    *llmclient.Completion
 }
 
 // fakeChatCompleter implements fanout.ChatCompleter. Each Chat call pops the next
@@ -46,6 +50,30 @@ func (f *fakeChatCompleter) Complete(_ context.Context, inv llmclient.Invocation
 		return f.turns[0].content, nil
 	}
 	return "", nil
+}
+
+// CompleteWithMeta serves the single-shot path the engine picks first when the
+// completer is a MetaCompleter. It pops the same scripted turn the Chat path
+// would (by idx), so turns stay in seat order across mixed single-shot and
+// tool-loop seats. A turn with meta set returns that completion verbatim
+// (including its Truncated marker); otherwise it mirrors Complete.
+func (f *fakeChatCompleter) CompleteWithMeta(_ context.Context, inv llmclient.Invocation) (llmclient.Completion, error) {
+	f.mu.Lock()
+	f.invs = append(f.invs, inv)
+	call := f.idx
+	f.idx++
+	var turn chatTurn
+	if call < len(f.turns) {
+		turn = f.turns[call]
+	}
+	f.mu.Unlock()
+	if turn.err != nil {
+		return llmclient.Completion{}, turn.err
+	}
+	if turn.meta != nil {
+		return *turn.meta, nil
+	}
+	return llmclient.Completion{Content: turn.content}, nil
 }
 
 func (f *fakeChatCompleter) Chat(ctx context.Context, inv llmclient.Invocation, _ []llmclient.Message, _ []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
