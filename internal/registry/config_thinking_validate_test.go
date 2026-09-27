@@ -122,9 +122,23 @@ func TestValidateAgent_ReasoningEffortMaxWarns(t *testing.T) {
 			buf := captureThinkingWarnings(t)
 			_, err := LoadRegistry(writeRegistry(t, thinkingRegistry(thinkingAgent("", ThinkingLevelMax, style))))
 			require.NoError(t, err)
-			assert.NotContains(t, buf.String(), `"max" is sent as "high"`)
+			assert.Empty(t, buf.String(), "max under %s writes no warning", style)
 		})
 	}
+
+	t.Run("explicit on warns once", func(t *testing.T) {
+		buf := captureThinkingWarnings(t)
+		_, err := LoadRegistry(writeRegistry(t, thinkingRegistry(thinkingAgent(ThinkingOn, ThinkingLevelMax, ThinkingStyleReasoningEffort))))
+		require.NoError(t, err)
+		assert.Equal(t, 1, strings.Count(buf.String(), "\n"))
+	})
+	t.Run("off with max errors without warning", func(t *testing.T) {
+		buf := captureThinkingWarnings(t)
+		_, err := LoadRegistry(writeRegistry(t, thinkingRegistry(thinkingAgent(ThinkingOff, ThinkingLevelMax, ThinkingStyleReasoningEffort))))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `has no off value: set thinking_level: low`)
+		assert.Empty(t, buf.String())
+	})
 }
 
 // AC 02-05: a community persona may not declare any thinking key; one key is

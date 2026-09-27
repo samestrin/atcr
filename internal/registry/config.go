@@ -21,7 +21,8 @@ import (
 var scopeVocabularyWarnWriter io.Writer = os.Stderr
 
 // thinkingWarnWriter is the sink for the thinking-level clamp warning; a var so
-// tests can capture it, mirroring scopeVocabularyWarnWriter.
+// tests can capture it, mirroring scopeVocabularyWarnWriter. A test that swaps
+// it must not run in parallel.
 var thinkingWarnWriter io.Writer = os.Stderr
 
 // scopeSuggestMaxDistance bounds how far a scope entry may be from a vocabulary
