@@ -996,6 +996,13 @@ func probeThinking(ctx context.Context, c Completer, tgt Target, opts Options, b
 
 // thinkingControlCall places the control call: the marker probe minus the thinking
 // declaration, so a signal here shows the provider reports reasoning.
+//
+// Deadline bound (TD-019): the marker, response_format, and control calls each
+// apply opts.Timeout independently, so a target that hangs to its deadline can
+// hold its concurrency slot for roughly three timeouts. Sharing one deadline
+// across a target's calls would change probe signatures, so the per-call bound
+// is documented here rather than restructured; the control call's deadline is
+// pinned by TestThinkingControlCallCarriesTheRunDeadline.
 func thinkingControlCall(ctx context.Context, c Completer, tgt Target, opts Options, budget int) (llmclient.Completion, error) {
 	callCtx := ctx
 	if opts.Timeout > 0 {
