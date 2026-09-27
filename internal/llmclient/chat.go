@@ -137,10 +137,17 @@ type chatToolRequest struct {
 // chatToolResponse decodes the wire response for a tool-capable turn.
 type chatToolResponse struct {
 	Choices []struct {
-		FinishReason string  `json:"finish_reason"`
-		Message      Message `json:"message"`
+		FinishReason string          `json:"finish_reason"`
+		Message      responseMessage `json:"message"`
 	} `json:"choices"`
 	Usage UsageData `json:"usage"`
+}
+
+// responseMessage is a decoded assistant turn: the Message the loop keeps as
+// history, plus reasoning_content, which is split off so it is never re-sent.
+type responseMessage struct {
+	Message
+	ReasoningContent string `json:"reasoning_content"`
 }
 
 // Chat performs one multi-turn chat-completions exchange: it serializes the
@@ -207,7 +214,7 @@ func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, t
 			return &ChatResponse{CallRecords: records}, fmt.Errorf("provider truncated response (finish_reason=%s): empty content with no tool_calls", ch.FinishReason)
 		}
 	}
-	resp := &ChatResponse{Message: ch.Message, FinishReason: ch.FinishReason, Usage: parsed.Usage, CallRecords: records}
+	resp := &ChatResponse{Message: ch.Message.Message, FinishReason: ch.FinishReason, Usage: parsed.Usage, CallRecords: records, Reasoning: ch.Message.ReasoningContent}
 	if ch.FinishReason == "length" {
 		resp.Truncated = true
 	}

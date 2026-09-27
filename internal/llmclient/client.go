@@ -222,6 +222,18 @@ func (u *UsageData) UnmarshalJSON(data []byte) error {
 			u.CompletionTokens = clampNonNegative(n)
 		}
 	}
+	// completion_tokens_details is optional; a missing or malformed block
+	// leaves ReasoningTokensReported false. A negative count is not usable,
+	// so it is not reported either.
+	var details struct {
+		ReasoningTokens *json.Number `json:"reasoning_tokens"`
+	}
+	if d, ok := raw["completion_tokens_details"]; ok && json.Unmarshal(d, &details) == nil && details.ReasoningTokens != nil {
+		if v, err := details.ReasoningTokens.Float64(); err == nil && v >= 0 {
+			u.ReasoningTokens = clampNonNegative(*details.ReasoningTokens)
+			u.ReasoningTokensReported = true
+		}
+	}
 	return nil
 }
 
@@ -361,7 +373,7 @@ func (c *Client) CompleteWithMeta(ctx context.Context, inv Invocation) (Completi
 		// Non-retryable — a re-request with the same budget would repeat the result.
 		return Completion{CallRecords: records, Truncated: truncated}, atcrerrors.NewSystemError(fmt.Errorf("provider returned an empty completion (no content or reasoning_content)"))
 	}
-	return Completion{Content: content, Usage: parsed.Usage, CallRecords: records, Truncated: truncated}, nil
+	return Completion{Content: content, Usage: parsed.Usage, CallRecords: records, Truncated: truncated, Reasoning: ch.Message.ReasoningContent}, nil
 }
 
 // resolveKey reads the invocation's API key env var; the value is never logged.
