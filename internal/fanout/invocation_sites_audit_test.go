@@ -214,3 +214,68 @@ func TestInvocationSites_ThinkingAudit(t *testing.T) {
 	sort.Strings(missing)
 	assert.Empty(t, missing, "inventoried llmclient.Invocation{} sites no longer found — update the inventory")
 }
+
+// underauditSrc is a synthetic non-test file exercising the declaration forms
+// TD-016 says the audit must catch beyond composite literals: new(llmclient.Invocation),
+// a var (ValueSpec) of the type, and a package-level alias of it.
+const underauditSrc = `package underaudit
+
+import "github.com/samestrin/atcr/internal/llmclient"
+
+type invAlias = llmclient.Invocation
+
+func viaNew() *llmclient.Invocation {
+	return new(llmclient.Invocation)
+}
+
+func viaVar() {
+	var zero llmclient.Invocation
+	_ = zero
+}
+
+func viaAlias() {
+	a := invAlias{Model: "m"}
+	_ = a
+}
+`
+
+func findUnderauditSites(t *testing.T, src string) map[string]bool {
+	t.Helper()
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "underaudit.go"), []byte(src), 0o600))
+	sites := map[string]bool{}
+	for _, lit := range findInvocationLiterals(t, dir) {
+		sites[lit.site.fn] = true
+	}
+	return sites
+}
+
+// TestInvocationAudit_CatchesNonLiteralDeclarations pins half 1 of TD-016: the
+// audit must see new(llmclient.Invocation), a var of the type, and an alias of
+// it — not just llmclient.Invocation{} literals — so a site cannot escape the
+// inventory by switching declaration form.
+func TestInvocationAudit_CatchesNonLiteralDeclarations(t *testing.T) {
+	sites := findUnderauditSites(t, underauditSrc)
+	for _, fn := range []string{"viaNew", "viaVar", "viaAlias"} {
+		assert.True(t, sites[fn], "the audit must flag the Invocation declared in %s (TD-016: ValueSpec/new/alias forms escape it)", fn)
+	}
+}
+
+// TestInvocationAudit_KeysMethodsByReceiver pins half 2 of TD-016: a method's
+// site key carries its receiver as (*T).name (or (T).name), so two same-named
+// methods in one file are two inventory entries, not one.
+func TestInvocationAudit_KeysMethodsByReceiver(t *testing.T) {
+	src := `package underaudit
+
+import "github.com/samestrin/atcr/internal/llmclient"
+
+type alpha struct{}
+type beta struct{}
+
+func (alpha) probe() { _ = llmclient.Invocation{} }
+func (b *beta) probe() { _ = llmclient.Invocation{Model: "m"} }
+`
+	sites := findUnderauditSites(t, src)
+	assert.True(t, sites["(alpha).probe"], "value-receiver method must be keyed as (T).name; got sites %v", sites)
+	assert.True(t, sites["(*beta).probe"], "pointer-receiver method must be keyed as (*T).name; got sites %v", sites)
+}
