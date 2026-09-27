@@ -181,6 +181,31 @@ const (
 // object. json_schema is deliberately not accepted.
 const ResponseFormatJSONObject = "json_object"
 
+// Legal AgentConfig.Thinking / ThinkingLevel / ThinkingStyle values (Epic
+// 35.16.11.2.2). Validation and the docs drift test read these, never literals.
+const (
+	ThinkingOn  = "on"
+	ThinkingOff = "off"
+
+	ThinkingLevelLow    = "low"
+	ThinkingLevelMedium = "medium"
+	ThinkingLevelHigh   = "high"
+	ThinkingLevelMax    = "max"
+
+	ThinkingStyleQwen            = "qwen"
+	ThinkingStyleTemplateKwargs  = "template_kwargs"
+	ThinkingStyleReasoningEffort = "reasoning_effort"
+	ThinkingStyleAnthropic       = "anthropic"
+)
+
+// ThinkingValues, ThinkingLevels, and ThinkingStyles list each key's legal
+// values in documented order.
+var (
+	ThinkingValues = []string{ThinkingOn, ThinkingOff}
+	ThinkingLevels = []string{ThinkingLevelLow, ThinkingLevelMedium, ThinkingLevelHigh, ThinkingLevelMax}
+	ThinkingStyles = []string{ThinkingStyleQwen, ThinkingStyleTemplateKwargs, ThinkingStyleReasoningEffort, ThinkingStyleAnthropic}
+)
+
 // Executor defaults (Epic 7.0). DefaultExecutorPersona is the fix-focused persona
 // applied when the executor block sets none; DefaultFixMinSeverity is the severity
 // floor below which a verified finding gets no generated fix (the executor's
@@ -544,6 +569,19 @@ type AgentConfig struct {
 	// unchanged. Like SupportsFC it is declared per agent and never inherited by
 	// a fallback: a fallback that also honors it must declare it itself.
 	ResponseFormat string `yaml:"response_format,omitempty"`
+
+	// Thinking, ThinkingLevel, and ThinkingStyle declare whether this agent's
+	// model thinks, how much, and which request field carries that (Epic
+	// 35.16.11.2.2). Thinking is ThinkingOn or ThinkingOff — a string, not a
+	// bool, so a bare YAML true/false is rejected rather than aliased. A level
+	// alone implies on. ThinkingStyle names the wire field; there is no default
+	// style and none is inferred from the model id. All three unset (the
+	// default) sends no thinking field, so an undeclared agent's request body is
+	// unchanged. Like ResponseFormat they are declared per agent and never
+	// inherited by a fallback.
+	Thinking      string `yaml:"thinking,omitempty"`
+	ThinkingLevel string `yaml:"thinking_level,omitempty"`
+	ThinkingStyle string `yaml:"thinking_style,omitempty"`
 
 	// Review-constraint guardrails (Epic 2.2). All optional and
 	// backward-compatible: an unset field imposes no constraint, so a 1.x/2.0
