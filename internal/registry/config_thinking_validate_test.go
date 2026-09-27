@@ -165,3 +165,43 @@ func TestRejectMachineLocalFields_ThinkingKeysBanned(t *testing.T) {
 	}
 	require.NoError(t, ValidateCommunityPersonaYAML("sample", []byte(base)))
 }
+
+// The anthropic budget misfit is a load error, not a warning (TD row
+// config.go:1270): Anthropic rejects budget_tokens >= max_tokens, so the
+// misfit is a guaranteed 400 on every live call — the same fail-loud contract
+// the temperature and supports_function_calling checks in validateThinking
+// already apply. Advisory-budget styles (qwen, reasoning_effort,
+// template_kwargs) keep the warnThinkingBudget warning instead.
+func TestValidateAgent_ThinkingBudgetMisfitErrors(t *testing.T) {
+	cases := []struct {
+		name, level, maxTokens string
+		wantErr                string // "" = must load without error or warning
+	}{
+		{"on no level default cap", "", "", "thinking budget 8192"},
+		{"on level high default cap", ThinkingLevelHigh, "", "thinking budget 16384"},
+		{"on level max default cap", ThinkingLevelMax, "", "thinking budget 32768"},
+		{"on level max declared cap equal", ThinkingLevelMax, "32768", "not below max_tokens 32768"},
+		{"on level low default cap", ThinkingLevelLow, "", ""},
+		{"on level medium declared cap above", ThinkingLevelMedium, "16384", ""},
+		{"on level max declared cap above", ThinkingLevelMax, "65536", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			buf := captureThinkingWarnings(t)
+			agent := thinkingAgent(ThinkingOn, tc.level, ThinkingStyleAnthropic)
+			if tc.maxTokens != "" {
+				agent += "    max_tokens: " + tc.maxTokens + "\n"
+			}
+			_, err := LoadRegistry(writeRegistry(t, thinkingRegistry(agent)))
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				assert.Empty(t, buf.String(), "a fitting budget writes no warning: %q", buf.String())
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+			assert.Contains(t, err.Error(), "declare max_tokens above the budget or lower thinking_level")
+			assert.Empty(t, buf.String(), "a load error suppresses the budget warning: %q", buf.String())
+		})
+	}
+}
