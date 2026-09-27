@@ -353,9 +353,14 @@ func (o *observingClient) base(ctx context.Context, inv llmclient.Invocation, st
 		BaseURL:        endpoint,
 		Prompt:         inv.Prompt,
 		ResponseFormat: inv.ResponseFormat,
-		Temperature:    copyFloat64(inv.Temperature),
-		MaxTokens:      copyInt(inv.MaxTokens),
-		StartedAt:      start.UTC(),
+		Thinking:       inv.Thinking,
+		ThinkingLevel:  inv.ThinkingLevel,
+		ThinkingStyle:  inv.ThinkingStyle,
+		// The temperature the request carried, which a declared thinking
+		// setting can drop (anthropic thinking on sends none).
+		Temperature: copyFloat64(llmclient.SentTemperature(inv)),
+		MaxTokens:   copyInt(inv.MaxTokens),
+		StartedAt:   start.UTC(),
 	}
 }
 

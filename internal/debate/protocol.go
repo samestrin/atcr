@@ -171,6 +171,10 @@ func nonOKStatus(status string) string {
 // text pasted into later prompts, so a forced object shape would corrupt them.
 // The gate reads the seat's Label, not the agent, because the same agent can be
 // judge on one item and proposer on another.
+//
+// Thinking is deliberately NOT gated the same way: it changes how much the
+// model reasons, not the shape of its reply, so every seat sends its own
+// declaration.
 func buildDebateAgent(seat Caster, prompt string) fanout.Agent {
 	c := seat.Config
 	var responseFormat string
@@ -201,6 +205,10 @@ func buildDebateAgent(seat Caster, prompt string) fanout.Agent {
 			// only; a nil pointer keeps the provider default.
 			MaxTokens:      c.MaxTokens,
 			ResponseFormat: responseFormat,
+			// Every seat, not judge-only: see the function comment.
+			Thinking:      c.Thinking,
+			ThinkingLevel: c.ThinkingLevel,
+			ThinkingStyle: c.ThinkingStyle,
 		},
 	}
 }

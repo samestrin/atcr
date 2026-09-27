@@ -2930,6 +2930,18 @@ func diffCacheKey(prompt, model, baseURL string, temperature *float64, sizing st
 	if responseFormat != "" {
 		tuning = tuning + "\x00rf=" + responseFormat
 	}
+	// A declared thinking setting changes how much the model reasons, and so
+	// what it finds. Each key gets its own clause; an unset key appends nothing,
+	// so an undeclared agent keeps its pre-existing on-disk key.
+	if thinking != "" {
+		tuning = tuning + "\x00th=" + thinking
+	}
+	if thinkingLevel != "" {
+		tuning = tuning + "\x00tl=" + thinkingLevel
+	}
+	if thinkingStyle != "" {
+		tuning = tuning + "\x00ts=" + thinkingStyle
+	}
 	return cache.Key(cache.HashText(prompt), model, tuning)
 }
 
@@ -3071,7 +3083,7 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 		// keys each chunk independently because its prompt (and thus this hash)
 		// differs per chunk; the sizing token additionally distinguishes two sizing
 		// regimes that render identical prompt text.
-		CacheKey: diffCacheKey(prompt, ac.Model, prov.BaseURL, ac.Temperature, sizingToken(sz.effectiveBudget, sz.maxLines), agentMaxTokens, ac.ResponseFormat, "", "", ""),
+		CacheKey: diffCacheKey(prompt, ac.Model, prov.BaseURL, ac.Temperature, sizingToken(sz.effectiveBudget, sz.maxLines), agentMaxTokens, ac.ResponseFormat, ac.Thinking, ac.ThinkingLevel, ac.ThinkingStyle),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,
@@ -3081,6 +3093,9 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 			Prompt:      prompt,
 			// response_format is this agent's OWN declaration, like SupportsFC.
 			ResponseFormat: ac.ResponseFormat,
+			Thinking:       ac.Thinking,
+			ThinkingLevel:  ac.ThinkingLevel,
+			ThinkingStyle:  ac.ThinkingStyle,
 		},
 	}, nil
 }
@@ -3670,7 +3685,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		// keeps it off both its primary's cache entry and its own un-refit form's:
 		// the prompt is hashed, so a re-sized payload is a different key by
 		// construction, and the sizing token additionally separates the two budgets.
-		CacheKey: diffCacheKey(fbPrompt, ac.Model, prov.BaseURL, ac.Temperature, sizingToken(fbSizingBudget, fbMaxLines), fbMaxTokens, ac.ResponseFormat, "", "", ""),
+		CacheKey: diffCacheKey(fbPrompt, ac.Model, prov.BaseURL, ac.Temperature, sizingToken(fbSizingBudget, fbMaxLines), fbMaxTokens, ac.ResponseFormat, ac.Thinking, ac.ThinkingLevel, ac.ThinkingStyle),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,
@@ -3683,6 +3698,11 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 			// arm, whose prompt is re-rendered under the primary's config. A forced
 			// JSON object on a model that never declared it is the harmful case.
 			ResponseFormat: ac.ResponseFormat,
+			// Thinking follows the same rule, on both arms: a fallback that
+			// declares nothing sends nothing, whatever its primary declared.
+			Thinking:      ac.Thinking,
+			ThinkingLevel: ac.ThinkingLevel,
+			ThinkingStyle: ac.ThinkingStyle,
 		},
 	}, warned, nil
 }

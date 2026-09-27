@@ -388,6 +388,11 @@ func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool) (agent fanout.
 			// override. The verdict is already a JSON object, so no prompt swap is
 			// needed: parseVerdict reads a bare, unfenced object.
 			ResponseFormat: c.ResponseFormat,
+			// thinking: the skeptic's OWN declaration, same rule — no lane
+			// default, so an undeclared skeptic keeps the provider default.
+			Thinking:      c.Thinking,
+			ThinkingLevel: c.ThinkingLevel,
+			ThinkingStyle: c.ThinkingStyle,
 		},
 	}, derived
 }

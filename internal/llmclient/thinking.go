@@ -91,5 +91,5 @@ func temperatureFor(temperature *float64, f thinkingFields) *float64 {
 // which differs from inv.Temperature when the declared thinking drops it (see
 // temperatureFor). Observers report this, not the declaration.
 func SentTemperature(inv Invocation) *float64 {
-	return inv.Temperature
+	return temperatureFor(inv.Temperature, newThinkingFields(inv.Thinking, inv.ThinkingLevel, inv.ThinkingStyle))
 }
