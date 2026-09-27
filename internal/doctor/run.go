@@ -887,23 +887,32 @@ func reasoningSignal(comp llmclient.Completion) string {
 	return strings.Join(parts, " and ")
 }
 
-// inlineThinking reports non-blank text inside a <think> block: closed, left
-// open, or with only the closing tag (a template that puts the opening tag in
-// the prompt). An empty pair is what a hybrid chat template emits when
-// thinking is off, so it is not a signal.
+// inlineThinking reports non-blank reasoning text in the content: any
+// <think>…</think> pair carrying text, or a trailing unclosed <think> after its
+// opener. It scans EVERY pair — an empty first pair is what a hybrid chat
+// template emits when thinking is off, and a template that emits one can emit
+// a real block after it. Text requires an opener: the doctor's marker prompt
+// contains no <think>, so a stray closer with none is template noise, never
+// the model's answer being misread as reasoning.
 func inlineThinking(content string) bool {
-	inner := content
-	if start := strings.Index(content, "<think>"); start >= 0 {
-		inner = content[start+len("<think>"):]
+	const open, close = "<think>", "</think>"
+	rest := content
+	for {
+		start := strings.Index(rest, open)
+		if start < 0 {
+			return false // no opener anywhere: no signal
+		}
+		rest = rest[start+len(open):]
+		end := strings.Index(rest, close)
+		if end < 0 {
+			// Left open: everything after the opener is reasoning-in-progress.
+			return strings.TrimSpace(rest) != ""
+		}
+		if strings.TrimSpace(rest[:end]) != "" {
+			return true
+		}
+		rest = rest[end+len(close):]
 	}
-	end := strings.Index(inner, "</think>")
-	switch {
-	case end >= 0:
-		inner = inner[:end]
-	case len(inner) == len(content):
-		return false // neither tag
-	}
-	return strings.TrimSpace(inner) != ""
 }
 
 // probeThinking classifies whether the provider honored the target's thinking
