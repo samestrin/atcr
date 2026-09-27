@@ -3,6 +3,7 @@ package reconcile
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -32,10 +33,13 @@ func TestRegistryDoc_ThinkingRows(t *testing.T) {
 		{"`thinking`", registry.ThinkingValues(), []struct{ token, why string }{
 			{"byte-identical", "an agent with no thinking keys sends the same request body as before the keys existed"},
 			{"bare `true`/`false` is rejected", "the field is a string so a YAML bool is not aliased to on/off"},
+			{"`off` is rejected (use `thinking_level: low`)", "reasoning_effort has no off value; the row must give the fix the load error gives"},
+			{"`on` requires a `thinking_level`", "reasoning_effort has no on-without-level value"},
 		}},
 		{"`thinking_level`", registry.ThinkingLevels(), []struct{ token, why string }{
 			{"level alone implies `thinking: on`", "a level without thinking is not a missing-value error"},
 			{"`thinking: off` with a level is rejected at load", "off plus a level is contradictory config"},
+			{"loads with a warning and is sent as `high`", "max under reasoning_effort warns at load; the operator must not be surprised"},
 		}},
 		{"`thinking_style`", registry.ThinkingStyles(), []struct{ token, why string }{
 			{"there is no default style", "a thinking key without a style is a load error"},
@@ -45,8 +49,8 @@ func TestRegistryDoc_ThinkingRows(t *testing.T) {
 	for _, r := range rows {
 		row := docRow(t, doc, r.key)
 		var must []struct{ token, why string }
-		for _, v := range r.values {
-			must = append(must, struct{ token, why string }{"`" + v + "`", "the row must name every value validateAgent accepts, spelled as the registry constant"})
+		if got := documentedValues(t, row); !slices.Equal(got, r.values) {
+			t.Errorf("docs/registry.md's %s row lists legal values %v, validateAgent accepts %v", r.key, got, r.values)
 		}
 		must = append(must, shared...)
 		must = append(must, r.extra...)
@@ -70,11 +74,31 @@ func TestRegistryDoc_ThinkingRejectsWhatTheDocExcludes(t *testing.T) {
 		return err
 	}
 	style := "    thinking_style: " + registry.ThinkingStyleQwen + "\n"
+	effort := "    thinking_style: " + registry.ThinkingStyleReasoningEffort + "\n"
 	require.NoError(t, load("    thinking: "+registry.ThinkingOff+"\n"+style), "the documented off value must load")
-	for _, bad := range []string{"true", "false"} {
-		require.Errorf(t, load("    thinking: "+bad+"\n"+style), "the doc says bare %s is rejected at load", bad)
+	require.NoError(t, load(style), "the doc says a style alone loads")
+	require.NoError(t, load("    thinking_level: "+registry.ThinkingLevelHigh+"\n"+style), "the doc says a level alone loads")
+	for _, bad := range []string{"true", "false", "On"} {
+		require.ErrorContainsf(t, load("    thinking: "+bad+"\n"+style), "invalid thinking", "the doc says %s is rejected at load", bad)
 	}
-	require.Error(t, load("    thinking: "+registry.ThinkingOff+"\n    thinking_level: "+registry.ThinkingLevelLow+"\n"+style),
-		"the doc says off with a level is rejected at load")
-	require.Error(t, load("    thinking: "+registry.ThinkingOn+"\n"), "the doc says there is no default style")
+	require.ErrorContains(t, load("    thinking: "+registry.ThinkingOff+"\n    thinking_level: "+registry.ThinkingLevelLow+"\n"+style),
+		`thinking is "off" but thinking_level`, "the doc says off with a level is rejected at load")
+	require.ErrorContains(t, load("    thinking: "+registry.ThinkingOn+"\n"), "there is no default style")
+	require.ErrorContains(t, load("    thinking: "+registry.ThinkingOff+"\n"+effort), "set thinking_level: low")
+	require.ErrorContains(t, load("    thinking: "+registry.ThinkingOn+"\n"+effort), "needs a thinking_level")
+}
+
+// documentedValues returns the backticked values in a row's "must be unset,
+// ... (exact" clause, in order, so an extra or missing value in the doc fails.
+func documentedValues(t *testing.T, row string) []string {
+	t.Helper()
+	start := strings.Index(row, "must be unset, ")
+	end := strings.Index(row, " (exact")
+	require.True(t, start >= 0 && end > start, "row must enumerate its legal values as \"must be unset, ... (exact\": %s", row)
+	var out []string
+	parts := strings.Split(row[start:end], "`")
+	for i := 1; i < len(parts); i += 2 {
+		out = append(out, parts[i])
+	}
+	return out
 }
