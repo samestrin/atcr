@@ -148,6 +148,14 @@ func driveSeat(ctx context.Context, seat Caster, prompt string, cc fanout.ChatCo
 	if r.Status != fanout.StatusOK || len(r.TrippedBudgets) > 0 {
 		return r.Content, fanout.StatusFailed
 	}
+	// A truncated single-shot reply carries only the salvaged chain-of-thought,
+	// not a statement: halt the seat and return no statement. Forwarding it would
+	// paste one model's reasoning into the next seat's prompt — the case the
+	// anthropic thinking load rule exists to prevent (TD
+	// internal/debate/protocol.go:148).
+	if r.ResponseTruncated {
+		return "", fanout.StatusFailed
+	}
 	return r.Content, fanout.StatusOK
 }
 
