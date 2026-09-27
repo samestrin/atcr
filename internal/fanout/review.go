@@ -2898,7 +2898,7 @@ func sizingToken(effectiveBudget int64, maxLines int) string {
 //
 // min_severity/max_findings are deterministic post-LLM filters and are correctly NOT
 // in the key.
-func diffCacheKey(prompt, model, baseURL string, temperature *float64, sizing string, maxTokens int) string {
+func diffCacheKey(prompt, model, baseURL string, temperature *float64, sizing string, maxTokens int, responseFormat string) string {
 	temp := "default"
 	if temperature != nil {
 		temp = strconv.FormatFloat(*temperature, 'g', -1, 64)
@@ -2923,6 +2923,12 @@ func diffCacheKey(prompt, model, baseURL string, temperature *float64, sizing st
 	// "unset"), so no key written before the cap became per-agent is invalidated.
 	if maxTokens > 0 && maxTokens != defaultMaxTokens {
 		tuning = tuning + "\x00mt=" + strconv.Itoa(maxTokens)
+	}
+	// A declared response_format changes the response shape (a bare JSON object,
+	// not a fenced array), so it keys apart. Unset appends nothing, so every
+	// on-disk key written before the field existed stays valid.
+	if responseFormat != "" {
+		tuning = tuning + "\x00rf=" + responseFormat
 	}
 	return cache.Key(cache.HashText(prompt), model, tuning)
 }
@@ -2974,7 +2980,7 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 	// payload unchanged for a diff-wide review. Because the constraint becomes part
 	// of the rendered prompt, the diff-cache key (which hashes the full prompt)
 	// invalidates correctly when the plan changes (AC5).
-	prompt, err := payload.RenderPrompt(persona.Text, payload.PayloadContext{
+	pctx := payload.PayloadContext{
 		AgentName:   name,
 		BaseRef:     rng.Base,
 		HeadRef:     rng.Head,
@@ -2987,15 +2993,24 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 		// holding any full-file body gets the wider files-mode rule.
 		ScopeRule:    payload.ScopeRuleForPayload(payload.PayloadMode(mode), payloadText),
 		ToolsEnabled: ac.Tools,
-	})
+	}
+	prompt, err := payload.RenderPrompt(persona.Text, pctx)
 	if err != nil {
 		return Agent{}, fmt.Errorf("agent %q: %w", name, err)
 	}
+	// Where the rendered payload begins, so the response_format swap below never
+	// reads or rewrites diff text.
+	payloadStart := renderedPayloadStart(prompt, persona.Text, pctx)
 	// Soft per-agent scope focus (Epic 2.2): appended after the persona template
 	// renders so it lands in every persona regardless of its template, and feeds
 	// both Agent.Prompt and Invocation.Prompt below (a fallback reuses the
 	// primary's prompt, so it inherits the focus too). No-op when scope is unset.
 	prompt += payload.ScopeFocus(ac.Scope)
+	// response_format (Sprint 35.16.11.2.1): a json_object agent gets the shared
+	// ## Output Format block. Swapped after the scope focus so the span-rebuilt
+	// text is the full text a fallback starts from before re-keying the swap on
+	// its own flag.
+	prompt, formatSwap := promptForResponseFormatWithSpan(prompt, payloadStart, ac.ResponseFormat)
 	prov, ok := cfg.Registry.Providers[ac.Provider]
 	if !ok {
 		return Agent{}, fmt.Errorf("agent %q references unknown provider %q", name, ac.Provider)
@@ -3047,6 +3062,8 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 		ResolvedMaxTokens:    agentMaxTokens,
 		DegradationAction:    sz.action,
 		chunkMaxLines:        sz.maxLines,
+		swap:                 formatSwap,
+		payloadStart:         payloadStart,
 		// Diff-cache key (Epic 5.2): derived from the full rendered prompt + model
 		// + temperature + the per-agent sizing token (Epic 19.10 F7, see
 		// diffCacheKey). Tool agents carry a key too but the engine never caches them
@@ -3054,7 +3071,7 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 		// keys each chunk independently because its prompt (and thus this hash)
 		// differs per chunk; the sizing token additionally distinguishes two sizing
 		// regimes that render identical prompt text.
-		CacheKey: diffCacheKey(prompt, ac.Model, prov.BaseURL, ac.Temperature, sizingToken(sz.effectiveBudget, sz.maxLines), agentMaxTokens),
+		CacheKey: diffCacheKey(prompt, ac.Model, prov.BaseURL, ac.Temperature, sizingToken(sz.effectiveBudget, sz.maxLines), agentMaxTokens, ac.ResponseFormat),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,
@@ -3062,6 +3079,8 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 			Temperature: ac.Temperature,
 			MaxTokens:   &agentMaxTokens,
 			Prompt:      prompt,
+			// response_format is this agent's OWN declaration, like SupportsFC.
+			ResponseFormat: ac.ResponseFormat,
 		},
 	}, nil
 }
@@ -3399,7 +3418,12 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// re-fit arm below overwrites them, and it overwrites ALL of them together:
 	// prompt, per-file breakdown, shed record, coverage tag and sizing describe one
 	// payload, so a partial overwrite would leave the record describing two.
-	fbPrompt := primary.Prompt
+	//
+	// fbPrompt starts from the primary's UNSWAPPED prompt, rebuilt on demand from
+	// its swap span: the response_format swap is re-keyed on the fallback's own
+	// declaration just before return. A hand-built Agent (no renderAgent) carries
+	// a zero span, so the rebuild IS its Prompt.
+	fbPrompt, fbPayloadStart := primary.swap.rebuildUnswapped(primary.Prompt), primary.payloadStart
 	fbTrunc := primary.Truncation
 	fbCodeContext := primary.CodeContext
 	// The coverage tag follows the payload, so it is copied from the primary here
@@ -3458,7 +3482,9 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 				return Agent{}, false, err
 			}
 			if ok {
-				fbPrompt = rp.agent.Prompt
+				// Unswapped: the re-render ran under refit.primaryConfig, so its
+				// Prompt is swapped on the PRIMARY's flag, not this fallback's.
+				fbPrompt, fbPayloadStart = rp.agent.swap.rebuildUnswapped(rp.agent.Prompt), rp.agent.payloadStart
 				fbCodeContext = rp.agent.CodeContext
 				fbTrunc = rp.trunc
 				// Compose with the primary's shed record rather than replacing it:
@@ -3554,6 +3580,9 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 			fbDegradation = degradationOverflow
 		}
 	}
+	// response_format swap (Sprint 35.16.11.2.1), keyed on the fallback's OWN
+	// declaration on both arms — never the primary's, like SupportsFC.
+	fbPrompt, fbSwap := promptForResponseFormatWithSpan(fbPrompt, fbPayloadStart, ac.ResponseFormat)
 	return Agent{
 		Name: name,
 		// A fallback keys on its OWN provider: if it uses a different provider than
@@ -3613,6 +3642,8 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		ResolvedMaxTokens:    fbMaxTokens,
 		DegradationAction:    fbDegradation,
 		chunkMaxLines:        fbMaxLines,
+		swap:                 fbSwap,
+		payloadStart:         fbPayloadStart,
 		rePacked:             refitted,
 		// The coverage tag of the payload this agent actually reviews (Epic
 		// 35.16.5.4 T3): the primary's chunk when it ships the inherited payload,
@@ -3639,7 +3670,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		// keeps it off both its primary's cache entry and its own un-refit form's:
 		// the prompt is hashed, so a re-sized payload is a different key by
 		// construction, and the sizing token additionally separates the two budgets.
-		CacheKey: diffCacheKey(fbPrompt, ac.Model, prov.BaseURL, ac.Temperature, sizingToken(fbSizingBudget, fbMaxLines), fbMaxTokens),
+		CacheKey: diffCacheKey(fbPrompt, ac.Model, prov.BaseURL, ac.Temperature, sizingToken(fbSizingBudget, fbMaxLines), fbMaxTokens, ac.ResponseFormat),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,
@@ -3647,6 +3678,11 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 			Temperature: ac.Temperature,
 			MaxTokens:   &fbMaxTokens,
 			Prompt:      fbPrompt,
+			// response_format is per-agent, like SupportsFC: the fallback sends its
+			// OWN declaration, NOT the primary's — on both arms, including the re-fit
+			// arm, whose prompt is re-rendered under the primary's config. A forced
+			// JSON object on a model that never declared it is the harmful case.
+			ResponseFormat: ac.ResponseFormat,
 		},
 	}, warned, nil
 }

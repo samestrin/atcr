@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/payload"
+	"github.com/samestrin/atcr/internal/stream"
 )
 
 // Status classes for a single endpoint probe. ok means the nonce marker came
@@ -42,8 +44,14 @@ func healthy(status string) bool { return status == StatusOK || status == Status
 
 // Completer is the subset of llmclient.Client the doctor needs. Tests inject a
 // fake; production passes a real *llmclient.Client.
+//
+// Chat is required, not type-asserted: the response_format probes send messages and
+// tool definitions through it, and an optional assertion would let a Completer
+// without Chat skip them silently — the declared-but-unverified failure they exist
+// to catch.
 type Completer interface {
 	Complete(ctx context.Context, inv llmclient.Invocation) (string, error)
+	Chat(ctx context.Context, inv llmclient.Invocation, messages []llmclient.Message, toolDefs []llmclient.ToolDef) (*llmclient.ChatResponse, error)
 }
 
 // Options tune the self-test.
@@ -127,7 +135,25 @@ type AgentResult struct {
 	// cell and lets a --json consumer re-derive the budget atcr actually warned about.
 	// Always present, like MaxTokens, for the same distinguishability rule.
 	ReviewMaxTokens int `json:"review_max_tokens"`
+	// ResponseFormatStatus is the outcome of the response_format probes for an agent
+	// that declares response_format (honored | not_honored), and ResponseFormatDetail
+	// says why. Separate from Status and Hint: the marker-echo probe's verdict is
+	// unchanged by this one, and "marker absent" must stay distinguishable from
+	// "response_format not honored". Empty (omitted) for an undeclared agent, so its
+	// report is unchanged, and when the endpoint probe failed, so no call was made.
+	ResponseFormatStatus string `json:"response_format_status,omitempty"`
+	ResponseFormatDetail string `json:"response_format_detail,omitempty"`
 }
+
+// The outcomes ResponseFormatStatus can name.
+const (
+	ResponseFormatHonored    = "honored"     // every response_format probe passed
+	ResponseFormatNotHonored = "not_honored" // a probe was rejected or got the wrong shape back
+	// ResponseFormatUnverified means no probe failed, but one could not reach a verdict:
+	// a rate limit, a 5xx, a timeout, or a transport error says nothing about whether
+	// the field is honored, so it must not tell the operator to drop the declaration.
+	ResponseFormatUnverified = "unverified"
+)
 
 // The tiers MaxTokensSource can name, mirroring payload.WindowSource* for the window.
 const (
@@ -172,6 +198,10 @@ type probeResult struct {
 	maxTokens int
 	// maxTokensSource is the tier maxTokens came from, carried for the same reason.
 	maxTokensSource string
+	// responseFormatStatus and responseFormatDetail are the response_format probes'
+	// outcome; empty when the target declares none or the endpoint probe failed.
+	responseFormatStatus string
+	responseFormatDetail string
 }
 
 // Run probes every distinct target once (bounded concurrency), maps results
@@ -193,7 +223,13 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 		go func(i int) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			results[i] = probe(ctx, c, res.Targets[i], opts)
+			pr := probe(ctx, c, res.Targets[i], opts)
+			// Only a working endpoint is worth a JSON-mode probe: against a failed
+			// one it can only fail the same way and bury the real cause.
+			if res.Targets[i].ResponseFormat != "" && healthy(pr.status) {
+				pr.responseFormatStatus, pr.responseFormatDetail = probeResponseFormat(ctx, c, res.Targets[i], opts, pr.maxTokens)
+			}
+			results[i] = pr
 		}(i)
 	}
 	wg.Wait()
@@ -225,20 +261,22 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 			}
 		}
 		rep.Agents = append(rep.Agents, AgentResult{
-			Agent:               at.Agent,
-			Serial:              at.Serial,
-			Provider:            tgt.Provider,
-			Model:               tgt.Model,
-			Status:              status,
-			LatencyMS:           pr.latencyMS,
-			Hint:                hint,
-			Detail:              pr.detail,
-			Source:              at.Source,
-			ContextWindowTokens: at.ContextWindowTokens,
-			WindowSource:        at.WindowSource,
-			MaxTokens:           pr.maxTokens,
-			MaxTokensSource:     pr.maxTokensSource,
-			ReviewMaxTokens:     reviewCap,
+			Agent:                at.Agent,
+			Serial:               at.Serial,
+			Provider:             tgt.Provider,
+			Model:                tgt.Model,
+			Status:               status,
+			LatencyMS:            pr.latencyMS,
+			Hint:                 hint,
+			Detail:               pr.detail,
+			Source:               at.Source,
+			ContextWindowTokens:  at.ContextWindowTokens,
+			WindowSource:         at.WindowSource,
+			MaxTokens:            pr.maxTokens,
+			MaxTokensSource:      pr.maxTokensSource,
+			ReviewMaxTokens:      reviewCap,
+			ResponseFormatStatus: pr.responseFormatStatus,
+			ResponseFormatDetail: pr.responseFormatDetail,
 		})
 	}
 	rep.ExitCode = exitVerdict(res, results)
@@ -599,6 +637,155 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 
 	detail := scrubCredentials(bounded(err.Error()), tgt)
 	return probeResult{status: StatusNetworkError, latencyMS: latencyMS, detail: detail}
+}
+
+// responseFormatPrompt is the fixed prompt of the response_format probes. It names
+// JSON, because some providers reject json_object when no message does, and plants
+// one defect (a division by a count that can be zero) so a healthy model is expected
+// to report one finding. An empty {"findings":[]} still passes: it is the required
+// object, just a less attentive answer.
+const responseFormatPrompt = `Review this two-line Go function for bugs. Reply with exactly one JSON object and nothing else: {"findings":[...]}. The object has only that one key. Each finding has exactly these keys: "severity" (one of CRITICAL, HIGH, MEDIUM, LOW), "file_line" (a string such as "probe.go:2"), "problem", "fix", "category" (one lowercase word), "est_minutes" (an integer), "evidence" (all other values are strings). If nothing is wrong, reply {"findings":[]}.
+
+probe.go:1: func percent(hits, total int) int {
+probe.go:2: 	return hits * 100 / total }`
+
+// probeToolDef is the one trivial tool the combined probe offers. It is never
+// executed; the probe only checks whether the provider accepts it beside
+// response_format.
+var probeToolDef = llmclient.ToolDef{
+	Name:        "read_file",
+	Description: "Read a file from the repository under review.",
+	Parameters: map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"path": map[string]any{"type": "string"}},
+		"required":   []string{"path"},
+	},
+}
+
+// probeResponseFormat checks that a target declaring response_format gets a bare,
+// parseable {"findings":[...]} object back under it, and, for a tool-loop target,
+// that the provider also accepts tools and response_format in one request — the
+// pair the real tool loop sends on every turn. budget is the cap the marker probe
+// ran at (0 = uncapped). It never changes the marker probe's verdict; a mismatch is
+// a warning, returned as ResponseFormatNotHonored with every failed probe's detail.
+// A probe that reached no verdict yields ResponseFormatUnverified, unless another
+// probe did fail.
+//
+// A pass is strong evidence, not proof: a model that returns a bare object without
+// JSON mode looks the same as one under it. What the probe does catch is a provider
+// that rejects the field, or ignores it and lets the model drift into a fence or prose.
+func probeResponseFormat(ctx context.Context, c Completer, tgt Target, opts Options, budget int) (string, string) {
+	calls := [][]llmclient.ToolDef{nil}
+	if tgt.Tools {
+		calls = append(calls, []llmclient.ToolDef{probeToolDef})
+	}
+	byOutcome := map[string][]string{}
+	for _, toolDefs := range calls {
+		outcome, detail := responseFormatCall(ctx, c, tgt, opts, budget, toolDefs)
+		byOutcome[outcome] = append(byOutcome[outcome], detail)
+	}
+	for _, outcome := range []string{ResponseFormatNotHonored, ResponseFormatUnverified} {
+		if details := byOutcome[outcome]; len(details) > 0 {
+			return outcome, strings.Join(details, "; ")
+		}
+	}
+	// An honored pass can still carry a note (the combined probe's "accepted;
+	// shape not observed"), and --json consumers read it from this field.
+	var honoredNotes []string
+	for _, detail := range byOutcome[ResponseFormatHonored] {
+		if detail != "" {
+			honoredNotes = append(honoredNotes, detail)
+		}
+	}
+	return ResponseFormatHonored, strings.Join(honoredNotes, "; ")
+}
+
+// responseFormatCall places one response_format probe and returns its outcome and,
+// unless honored, the reason. With toolDefs it is the combined probe, which also
+// passes on a tool call.
+func responseFormatCall(ctx context.Context, c Completer, tgt Target, opts Options, budget int, toolDefs []llmclient.ToolDef) (string, string) {
+	declared := "response_format: " + tgt.ResponseFormat
+	if len(toolDefs) > 0 {
+		declared = "tools: true with " + declared
+	}
+	callCtx := ctx
+	if opts.Timeout > 0 {
+		var cancel context.CancelFunc
+		callCtx, cancel = context.WithTimeout(ctx, opts.Timeout)
+		defer cancel()
+	}
+	var maxTokens *int
+	if budget > 0 {
+		v := budget
+		maxTokens = &v
+	}
+	prompt := responseFormatPrompt
+	resp, err := c.Chat(callCtx, llmclient.Invocation{
+		BaseURL:        tgt.BaseURL,
+		APIKeyEnv:      tgt.APIKeyEnv,
+		Model:          tgt.Model,
+		MaxTokens:      maxTokens,
+		ResponseFormat: tgt.ResponseFormat,
+	}, []llmclient.Message{{Role: "user", Content: &prompt}}, toolDefs)
+	if err != nil {
+		// Only a client-side refusal is a verdict on the declaration. The endpoint
+		// just answered the marker probe, so a 4xx here points at what this call
+		// added; a 429, a 408 (the provider timed out — the same no-verdict class as
+		// the client-side deadline below), a 5xx, or a transport error points at
+		// nothing.
+		var se *llmclient.HTTPStatusError
+		if errors.As(err, &se) && se.Status >= 400 && se.Status < 500 && se.Status != 429 && se.Status != 408 {
+			return ResponseFormatNotHonored, fmt.Sprintf("the provider rejected %s (HTTP %d): %s", declared, se.Status, scrubCredentials(se.Snippet, tgt))
+		}
+		if se != nil {
+			return ResponseFormatUnverified, fmt.Sprintf("the %s probe got HTTP %d, so no verdict was reached: %s", declared, se.Status, scrubCredentials(se.Snippet, tgt))
+		}
+		return ResponseFormatUnverified, fmt.Sprintf("the %s probe reached no verdict: %s", declared, scrubCredentials(bounded(err.Error()), tgt))
+	}
+	// Completer is an exported interface: an implementation may return (nil, nil).
+	// Reading resp below would panic inside a Run goroutine and kill the whole
+	// self-test, violating Run's report-is-always-complete contract.
+	if resp == nil {
+		return ResponseFormatUnverified, fmt.Sprintf("the %s probe got no response back, so no verdict was reached", declared)
+	}
+	if len(toolDefs) > 0 && len(resp.Message.ToolCalls) > 0 {
+		// A tool call proves the provider ACCEPTED tools beside response_format; it
+		// does not observe the model's text shape. A provider that silently drops
+		// response_format whenever tools are present would otherwise get a clean
+		// pass, contrary to the "ignored field must warn" risk rule — so the pass
+		// says what it actually saw, and --json can tell accepted from observed.
+		return ResponseFormatHonored, "accepted; shape not observed (the combined probe passed on a tool call)"
+	}
+	// A reply cut off at the budget is invalid or empty JSON whatever the provider did
+	// with the field — and a thinking model can spend the whole budget before answering.
+	// Calling that not_honored would drop a model that honors it. With no budget
+	// applied the provider's own default limit did the cutting, so the remedy cannot
+	// name a cap the run never set.
+	if resp.Truncated {
+		if budget <= 0 {
+			return ResponseFormatUnverified, fmt.Sprintf("the %s probe reply was cut off at the provider's default output limit, so no verdict was reached; declare a higher max_tokens or pass --max-tokens", declared)
+		}
+		return ResponseFormatUnverified, fmt.Sprintf("the %s probe reply was cut off at the output cap (%d tokens), so no verdict was reached; raise this agent's max_tokens or pass --max-tokens", declared, budget)
+	}
+	content := ""
+	if resp.Message.Content != nil {
+		content = *resp.Message.Content
+	}
+	// JSON mode guarantees one bare object. The parser alone is not enough: it also
+	// reads a fenced block or prose around the value, which is exactly what a model
+	// produces when the provider drops response_format.
+	s := strings.TrimSpace(content)
+	if s == "" || s[0] != '{' || !json.Valid([]byte(s)) {
+		if len(toolDefs) > 0 {
+			return ResponseFormatNotHonored, "declared " + declared + ", but the reply was neither a tool call nor a bare JSON object; the provider likely ignored response_format"
+		}
+		return ResponseFormatNotHonored, "declared " + declared + ", but the reply was not a bare JSON object; the provider likely ignored response_format"
+	}
+	// JSON mode held here; what failed is the shape of the object the model chose.
+	if !stream.IsNoFindings(s) && len(stream.ParseModelOutput([]byte(s))) == 0 {
+		return ResponseFormatNotHonored, "declared " + declared + `, and the reply was a bare JSON object, but the review parser read no findings from it (wrong keys or severity values); the model may not follow the {"findings":[...]} contract`
+	}
+	return ResponseFormatHonored, ""
 }
 
 // scrubCredentials enforces credential exclusion on a detail string surfaced in

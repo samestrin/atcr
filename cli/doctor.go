@@ -204,6 +204,42 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 					"community and project personas are not): %s\n",
 				scope, strings.Join(rep.PredicateRuleGaps, ", "))
 		}
+		// Named by agent AND model, since the mismatch belongs to the model behind the
+		// declaration. The endpoint answered, so the ok/failed count and the exit code
+		// above stand; this is a warning, not a failure.
+		var notHonored []string
+		for _, a := range rep.Agents {
+			if a.ResponseFormatStatus == doctor.ResponseFormatNotHonored {
+				notHonored = append(notHonored, a.Agent+" ("+a.Model+")")
+			}
+		}
+		if len(notHonored) > 0 {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+				"doctor: WARNING — response_format not honored: these agents declare "+
+					"response_format but the probe was rejected or got the wrong shape back; "+
+					"the review parser still runs, but drop the declaration or change the model "+
+					"(see the HINT column or --json for why): %s\n",
+				strings.Join(notHonored, ", "))
+		}
+		// A DISTINCT line, not folded into the warning above. These agents' probes
+		// never reached a verdict (429, 5xx, timeout, cut-off reply), so unlike the
+		// not-honored case nothing says the declaration is wrong — and unlike the
+		// not-honored case the one-line summary above reads as a clean run. Named by
+		// agent AND model, for the same reason as the not-honored line: the probe
+		// outcome belongs to the model behind the declaration.
+		var unverified []string
+		for _, a := range rep.Agents {
+			if a.ResponseFormatStatus == doctor.ResponseFormatUnverified {
+				unverified = append(unverified, a.Agent+" ("+a.Model+")")
+			}
+		}
+		if len(unverified) > 0 {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+				"doctor: WARNING — response_format unverified: these agents declare "+
+					"response_format but the probe reached no verdict, so nothing is known "+
+					"about the declaration either way; re-run doctor to retry: %s\n",
+				strings.Join(unverified, ", "))
+		}
 		// A DISTINCT line, not folded into the warning above. These agents were not
 		// found to lack the rule — their prompt could not be read at all, so no
 		// verdict was reached — and `atcr review` hard-fails on the same config that

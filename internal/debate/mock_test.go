@@ -19,26 +19,40 @@ type chatTurn struct {
 
 // fakeChatCompleter implements fanout.ChatCompleter. Each Chat call pops the next
 // scripted turn in order, so three seats sharing one completer consume turns[0..2]
-// in seat order. Safe for concurrent use.
+// in seat order. Every Chat call's Invocation is recorded in call order, so a test
+// can inspect what each seat actually sent. Complete (the single-shot non-FC path)
+// records its Invocation the same way, so a test can also inspect what a seat that
+// skipped the tool loop actually sent. Safe for concurrent use.
 type fakeChatCompleter struct {
 	mu    sync.Mutex
 	turns []chatTurn
 	idx   int
+	invs  []llmclient.Invocation
 }
 
-func (f *fakeChatCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
+// invocations returns a copy of the Invocation each Chat call received, in call
+// order.
+func (f *fakeChatCompleter) invocations() []llmclient.Invocation {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	return append([]llmclient.Invocation(nil), f.invs...)
+}
+
+func (f *fakeChatCompleter) Complete(_ context.Context, inv llmclient.Invocation) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.invs = append(f.invs, inv)
 	if len(f.turns) > 0 {
 		return f.turns[0].content, nil
 	}
 	return "", nil
 }
 
-func (f *fakeChatCompleter) Chat(ctx context.Context, _ llmclient.Invocation, _ []llmclient.Message, _ []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+func (f *fakeChatCompleter) Chat(ctx context.Context, inv llmclient.Invocation, _ []llmclient.Message, _ []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
 	f.mu.Lock()
 	call := f.idx
 	f.idx++
+	f.invs = append(f.invs, inv)
 	var turn chatTurn
 	if call < len(f.turns) {
 		turn = f.turns[call]

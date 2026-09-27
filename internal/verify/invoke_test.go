@@ -1451,3 +1451,87 @@ func TestInvokeSkeptic_DeclaredCeilingAtTheDerivedOnePinsProvenance(t *testing.T
 		"at equality the trip is classified as derived, so a valid refuted survives the CI gate")
 	assert.Contains(t, tripped, "tool_budget_bytes")
 }
+
+// Sprint 35.16.11.2.1 AC 03-02: the skeptic forwards its OWN response_format
+// declaration, with no lane-level override — exec governs tool availability only.
+// Only the declaration is forwarded, so an undeclared skeptic sends none.
+func TestBuildSkepticAgent_ForwardsResponseFormat(t *testing.T) {
+	t.Parallel()
+	sk := testSkeptic()
+	sk.Config.ResponseFormat = registry.ResponseFormatJSONObject
+
+	for _, exec := range []bool{false, true} {
+		a, _ := buildSkepticAgent(sk, "the prompt", exec)
+		assert.Equal(t, registry.ResponseFormatJSONObject, a.Invocation.ResponseFormat, "exec=%v", exec)
+	}
+
+	undeclared, _ := buildSkepticAgent(testSkeptic(), "the prompt", false)
+	assert.Empty(t, undeclared.Invocation.ResponseFormat)
+}
+
+func TestInvokeSkeptic_ForwardsDeclaredResponseFormat(t *testing.T) {
+	t.Parallel()
+
+	t.Run("declared", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		sk.Config.ResponseFormat = registry.ResponseFormatJSONObject
+		cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed"}`}}}
+
+		_, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+		require.NoError(t, err)
+		assert.Equal(t, registry.ResponseFormatJSONObject, cc.lastInvocation().ResponseFormat,
+			"the declaration must reach the request, not stop at the Agent literal")
+	})
+
+	t.Run("undeclared sends none", func(t *testing.T) {
+		t.Parallel()
+		cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed"}`}}}
+
+		_, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false)
+		require.NoError(t, err)
+		assert.Empty(t, cc.lastInvocation().ResponseFormat)
+	})
+
+	// TD (35.16.11.2.1): the declaration must ride EVERY tool-loop turn, not just
+	// the last one the single content-turn test happened to observe. A regression
+	// dropping the field on turn 1 (or any intermediate turn) must fail here.
+	t.Run("multi-turn tool loop carries it on every turn", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		sk.Config.ResponseFormat = registry.ResponseFormatJSONObject
+		cc := &fakeChatCompleter{turns: []chatTurn{
+			toolCallTurn("read_file"),
+			{content: `{"verdict":"refuted","reasoning":"the cited line does not do what the finding claims"}`},
+		}}
+
+		v, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+		require.NoError(t, err)
+		require.NotNil(t, v)
+		invs := cc.allInvocations()
+		require.NotEmpty(t, invs)
+		for i, inv := range invs {
+			assert.Equal(t, registry.ResponseFormatJSONObject, inv.ResponseFormat,
+				"turn %d dropped response_format", i)
+		}
+	})
+
+	// TD (35.16.11.2.1): the SupportsFC=false degrade path hands the Invocation
+	// to plain Complete (fanout invokeSingleShot), not the tool loop. A regression
+	// dropping the field on the single-shot path must fail here.
+	t.Run("single-shot degrade path carries it to Complete", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		sk.Config.ResponseFormat = registry.ResponseFormatJSONObject
+		sk.Config.SupportsFC = false
+		cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed"}`}}}
+
+		_, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+		require.NoError(t, err)
+		assert.Zero(t, cc.chatCalls, "a non-FC skeptic must not enter the tool loop")
+		invs := cc.allInvocations()
+		require.Len(t, invs, 1, "exactly one Complete call expected")
+		assert.Equal(t, registry.ResponseFormatJSONObject, invs[0].ResponseFormat,
+			"the Invocation passed to Complete must carry the declaration")
+	})
+}

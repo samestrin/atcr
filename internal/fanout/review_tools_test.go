@@ -1,8 +1,14 @@
 package fanout
 
 import (
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -168,4 +174,92 @@ func TestBuildFallbackAgent_PrimaryReviewConstraintsWin(t *testing.T) {
 	assert.Equal(t, "HIGH", fb.MinSeverity, "primary min_severity governs, not the fallback's own LOW")
 	require.NotNil(t, fb.MaxFindings)
 	assert.Equal(t, 3, *fb.MaxFindings, "primary max_findings governs, not the fallback's own 99")
+}
+
+// Sprint 35.16.11.2.1 AC 03-01: response_format is per-agent like SupportsFC.
+// The primary sends its OWN declaration, and a fallback sends ITS OWN, never the
+// primary's — in both directions, since equal values could not tell the two
+// sources apart. A forced JSON object on an agent whose prompt asks for the
+// fenced array is the harmful case this pins against.
+func TestBuildOneAgent_PropagatesResponseFormat(t *testing.T) {
+	cfg := toolCfg()
+	g := cfg.Registry.Agents["greta"]
+	g.ResponseFormat = registry.ResponseFormatJSONObject
+	cfg.Registry.Agents["greta"] = g
+	payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
+
+	a, _, err := buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, registry.ResponseFormatJSONObject, a.Invocation.ResponseFormat)
+
+	undeclared, _, err := buildOneAgent(cfg, "zoe", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+	require.NoError(t, err)
+	assert.Empty(t, undeclared.Invocation.ResponseFormat, "an undeclared agent sends no response_format")
+}
+
+func TestBuildFallbackAgent_ResponseFormatNotInheritedFromPrimary(t *testing.T) {
+	cases := []struct {
+		name       string
+		primaryRF  string
+		fallbackRF string
+	}{
+		{"declared fallback, undeclared primary", "", registry.ResponseFormatJSONObject},
+		{"declared primary, undeclared fallback", registry.ResponseFormatJSONObject, ""},
+		{"neither declares", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := toolCfg()
+			g := cfg.Registry.Agents["greta"]
+			g.ResponseFormat = tc.primaryRF
+			cfg.Registry.Agents["greta"] = g
+			k := cfg.Registry.Agents["kai"]
+			k.ResponseFormat = tc.fallbackRF
+			cfg.Registry.Agents["kai"] = k
+
+			payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
+			primary, _, err := buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+			require.NoError(t, err)
+			fb, _, err := buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
+			require.NoError(t, err)
+
+			assert.Equal(t, tc.primaryRF, primary.Invocation.ResponseFormat, "the primary reads its own declaration")
+			assert.Equal(t, tc.fallbackRF, fb.Invocation.ResponseFormat,
+				"the fallback reads its own declaration, never the primary's")
+		})
+	}
+}
+
+// [Story 03 / AC 03-01] Wire proof for the undeclared pair: the fallback's
+// MARSHALED request carries no response_format key at all — not merely an empty
+// value — so a provider that treats an explicit null differently from an absent
+// field cannot see it. Drives the real llmclient marshal path with the built
+// fallback's actual Invocation.
+func TestBuildFallbackAgent_UndeclaredFallbackWireRequestCarriesNoResponseFormat(t *testing.T) {
+	cfg := toolCfg()
+	payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
+	primary, _, err := buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+	require.NoError(t, err)
+	fb, _, err := buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
+	require.NoError(t, err)
+	require.Empty(t, fb.Invocation.ResponseFormat, "precondition: the neither-declares case")
+
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"ok"}}]}`)
+	}))
+	defer srv.Close()
+	t.Setenv("ATCR_TEST_KEY", "sk-test")
+
+	inv := fb.Invocation
+	inv.BaseURL = srv.URL + "/v1"
+	client := llmclient.New(llmclient.WithHTTPClient(srv.Client()), llmclient.WithRetry(1, time.Millisecond, 1))
+	msg := "hi"
+	_, err = client.Chat(context.Background(), inv, []llmclient.Message{{Role: "user", Content: &msg}}, nil)
+	require.NoError(t, err)
+
+	assert.NotContains(t, gotBody, "response_format",
+		"the undeclared fallback's wire body carries no response_format key")
 }

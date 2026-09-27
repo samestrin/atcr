@@ -159,3 +159,92 @@ func TestBuildDebateAgent_ForwardsDeclaredMaxTokens(t *testing.T) {
 	require.NotNil(t, got, "the seat's max_tokens declaration must reach the request")
 	assert.Equal(t, 24000, *got)
 }
+
+// judgeSeatResponseFormats runs one debate over cast and returns the
+// response_format each seat's request carried, in seat order.
+func judgeSeatResponseFormats(t *testing.T, cast Cast) []string {
+	t.Helper()
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "challenger attacks"},
+		{content: `{"outcome":"uphold","settled_severity":"HIGH"}`},
+	}}
+	RunDebate(context.Background(), debateItem(), cast, cc, &fakeDispatcher{}, nil)
+	invs := cc.invocations()
+	require.Len(t, invs, 3, "one Chat call per seat")
+	return []string{invs[0].ResponseFormat, invs[1].ResponseFormat, invs[2].ResponseFormat}
+}
+
+func declare(seat Caster) Caster {
+	seat.Config.ResponseFormat = registry.ResponseFormatJSONObject
+	return seat
+}
+
+// Sprint 35.16.11.2.1 AC 03-03 (D5): only the judge's reply is read as a JSON
+// object. Proposer and challenger statements are free text pasted into later
+// prompts, so those seats never send response_format, even when the agent cast
+// into them declares it. The gate is the seat, not the agent's declaration.
+func TestRunDebate_ResponseFormatJudgeSeatOnly(t *testing.T) {
+	const jo = registry.ResponseFormatJSONObject
+
+	t.Run("all three seats declare", func(t *testing.T) {
+		c := fcCast()
+		c.Proposer, c.Challenger, c.Judge = declare(c.Proposer), declare(c.Challenger), declare(c.Judge)
+		assert.Equal(t, []string{"", "", jo}, judgeSeatResponseFormats(t, c))
+	})
+
+	t.Run("only the judge declares", func(t *testing.T) {
+		c := fcCast()
+		c.Judge = declare(c.Judge)
+		assert.Equal(t, []string{"", "", jo}, judgeSeatResponseFormats(t, c))
+	})
+
+	t.Run("no seat declares", func(t *testing.T) {
+		assert.Equal(t, []string{"", "", ""}, judgeSeatResponseFormats(t, fcCast()))
+	})
+
+	t.Run("single-model cast shares one declared config", func(t *testing.T) {
+		// Built through production casting: one declared reviewer on the roster, the
+		// single-model fallback putting that same declared config on all three seats.
+		reg := rosterReg(map[string][2]string{"alice": {"model-a", registry.RoleReviewer}})
+		alice := reg.Agents["alice"]
+		alice.ResponseFormat = registry.ResponseFormatJSONObject
+		reg.Agents["alice"] = alice
+		c, ok, reason := CastRoles(reg, debateItem(), Config{AllowSingleModel: true})
+		require.True(t, ok, "reason: %s", reason)
+		require.True(t, c.SingleModel, "the single-agent roster must cast single-model")
+		assert.Equal(t, []string{"", "", jo}, judgeSeatResponseFormats(t, c),
+			"identical configs on all three seats: only the judge-labeled seat sends it")
+	})
+
+	t.Run("same agent, judge on one item and proposer on the next", func(t *testing.T) {
+		// The same declared agent, cast by production casting into every seat across
+		// two items: whatever seat it lands in, only the judge-labeled seat sends
+		// response_format — the gate reads the seat label fresh per run.
+		reg := rosterReg(map[string][2]string{"alice": {"model-a", registry.RoleReviewer}})
+		alice := reg.Agents["alice"]
+		alice.ResponseFormat = registry.ResponseFormatJSONObject
+		reg.Agents["alice"] = alice
+		first, ok, reason := CastRoles(reg, debateItem(), Config{AllowSingleModel: true})
+		require.True(t, ok, "reason: %s", reason)
+		assert.Equal(t, []string{"", "", jo}, judgeSeatResponseFormats(t, first))
+		second, ok, reason := CastRoles(reg, debateItem(), Config{AllowSingleModel: true})
+		require.True(t, ok, "reason: %s", reason)
+		got := judgeSeatResponseFormats(t, second)
+		assert.Empty(t, got[0], "the same declared agent sends nothing when cast as proposer")
+		assert.Equal(t, jo, got[2], "the declared agent sends it when cast as judge")
+	})
+
+	// A non-FC judge goes through the engine's single-shot Complete path, not the
+	// tool loop — the gate must hold there too, or a declared non-FC judge would
+	// silently lose its JSON-object reply shape.
+	t.Run("non-FC seats (single-shot Complete path)", func(t *testing.T) {
+		c := fcCast()
+		c.Proposer.Config.SupportsFC = false
+		c.Challenger.Config.SupportsFC = false
+		c.Judge.Config.SupportsFC = false
+		c.Proposer, c.Challenger, c.Judge = declare(c.Proposer), declare(c.Challenger), declare(c.Judge)
+		assert.Equal(t, []string{"", "", jo}, judgeSeatResponseFormats(t, c),
+			"every seat on the single-shot path: only the judge-labeled seat sends response_format")
+	})
+}

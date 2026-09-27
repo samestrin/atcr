@@ -12,8 +12,15 @@ import (
 	"github.com/samestrin/atcr/internal/registry"
 )
 
-// Target is a distinct (provider, model, base_url, max_tokens) invocation target.
-// The doctor invokes each target at most once; several roster agents may share one.
+// Target is a distinct invocation target. The doctor invokes each target at most
+// once; several roster agents may share one.
+//
+// Identity is exactly the dedup key addTarget builds: provider, model, base_url,
+// and the resolved max_tokens cap — plus response_format and the derived tools-loop
+// flag, but only for a DECLARED target (an undeclared agent's key is unchanged, so
+// neither its probes nor its doctor output move). The field comments below carry
+// the per-field rationale; a reader trimming the key later must keep
+// new-fields-are-identity and the conditional-key rule in step with it.
 type Target struct {
 	Provider  string
 	Model     string
@@ -37,6 +44,16 @@ type Target struct {
 	// A probe is only evidence about the invocation it reproduces, so distinct caps
 	// are distinct probes. Sharers that agree still dedupe, which is the common case.
 	MaxTokens int
+	// ResponseFormat is the response_format the agents sharing this target declared
+	// ("" when none). Identity, not a merged value, for the reason MaxTokens is: a
+	// declared agent's calls carry the field and an undeclared agent's do not, so they
+	// are different invocations and one probe cannot speak for both.
+	ResponseFormat string
+	// Tools reports that the sharers run the tool loop (tools AND
+	// supports_function_calling — tools alone degrades to single-shot). It joins the
+	// identity only for a declared target, where it decides whether the combined
+	// tools+response_format probe runs; an undeclared agent's key is unchanged.
+	Tools bool
 }
 
 // AgentTarget binds one effective-roster agent to the index of the Target it
@@ -123,16 +140,31 @@ func ResolveWithCap(reg *registry.Registry, proj *registry.ProjectConfig, overri
 		// see Target.MaxTokens for why merging sharers onto one cap made the probe
 		// evidence about a call no agent makes.
 		key := ac.Provider + "\x00" + ac.Model + "\x00" + prov.BaseURL + "\x00" + strconv.Itoa(declared)
+		// response_format and the tool loop change the invocation only for a declared
+		// agent, so only a declared agent's key grows: an undeclared agent keeps
+		// today's key exactly, and that agent's OWN doctor row is unchanged. The run
+		// as a whole can still differ: a declared and an undeclared agent sharing an
+		// endpoint now become two targets, so the identical marker Complete call goes
+		// out twice (deliberate — D2/AC 05-01: one probe is only evidence about the
+		// invocation it reproduces), and against a quota-limited shared upstream the
+		// duplicate can draw a 429 that exits 1.
+		tools := false
+		if ac.ResponseFormat != "" {
+			tools = ac.Tools && ac.SupportsFC
+			key += "\x00" + ac.ResponseFormat + "\x00" + strconv.FormatBool(tools)
+		}
 		if idx, ok := targetIdx[key]; ok {
 			return idx, nil
 		}
 		idx := len(res.Targets)
 		res.Targets = append(res.Targets, Target{
-			Provider:  ac.Provider,
-			Model:     ac.Model,
-			BaseURL:   prov.BaseURL,
-			APIKeyEnv: prov.APIKeyEnv,
-			MaxTokens: declared,
+			Provider:       ac.Provider,
+			Model:          ac.Model,
+			BaseURL:        prov.BaseURL,
+			APIKeyEnv:      prov.APIKeyEnv,
+			MaxTokens:      declared,
+			ResponseFormat: ac.ResponseFormat,
+			Tools:          tools,
 		})
 		targetIdx[key] = idx
 		return idx, nil

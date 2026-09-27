@@ -83,3 +83,113 @@ func TestResolve_DefaultsToNoOverride(t *testing.T) {
 
 	assert.Len(t, res.Targets, 2, "Resolve is ResolveWithCap with no override")
 }
+
+// declaredRegistry resolves agents that share one endpoint and model and differ only
+// in the fields the response_format probes key on.
+func declaredRegistry(t *testing.T, agents map[string]registry.AgentConfig) *Resolution {
+	t.Helper()
+	reg := &registry.Registry{
+		Providers: map[string]registry.Provider{"p": {BaseURL: "http://one-endpoint", APIKeyEnv: "K"}},
+		Agents:    map[string]registry.AgentConfig{},
+	}
+	proj := &registry.ProjectConfig{}
+	for _, name := range []string{"a", "b"} {
+		ac, ok := agents[name]
+		if !ok {
+			continue
+		}
+		ac.Provider, ac.Model = "p", "same-model"
+		reg.Agents[name] = ac
+		proj.Agents = append(proj.Agents, name)
+	}
+	res, err := Resolve(reg, proj)
+	require.NoError(t, err)
+	return res
+}
+
+// A declared agent's calls carry response_format and an undeclared agent's do not, so
+// one probe cannot speak for both: the JSON-mode invocation would never be the one
+// probed, the MaxTokens identity bug recurring for a new field.
+func TestResolve_ResponseFormatSplitsADeclaredAndUndeclaredAgent(t *testing.T) {
+	res := declaredRegistry(t, map[string]registry.AgentConfig{
+		"a": {ResponseFormat: registry.ResponseFormatJSONObject},
+		"b": {},
+	})
+
+	require.Len(t, res.Targets, 2, "declared and undeclared agents make different calls")
+	assert.Equal(t, registry.ResponseFormatJSONObject, targetForAgent(t, res, "a").ResponseFormat)
+	assert.Empty(t, targetForAgent(t, res, "b").ResponseFormat)
+}
+
+func TestResolve_AgreeingResponseFormatDeclarationsShareOneTarget(t *testing.T) {
+	res := declaredRegistry(t, map[string]registry.AgentConfig{
+		"a": {ResponseFormat: registry.ResponseFormatJSONObject},
+		"b": {ResponseFormat: registry.ResponseFormatJSONObject},
+	})
+
+	assert.Len(t, res.Targets, 1, "sharers that agree still collapse to one probe")
+}
+
+// A MaxTokens difference already split these two; the new segment must not change a
+// count that was already 2.
+func TestResolve_ResponseFormatWithADistinctCapStaysTwoTargets(t *testing.T) {
+	res := declaredRegistry(t, map[string]registry.AgentConfig{
+		"a": {ResponseFormat: registry.ResponseFormatJSONObject, MaxTokens: capOf(8000)},
+		"b": {},
+	})
+
+	assert.Len(t, res.Targets, 2)
+}
+
+// Two declared agents, one running the tool loop and one not: only the tool-loop one
+// makes the tools+response_format call, so only it may run the combined probe.
+func TestResolve_DeclaredToolLoopAgentGetsItsOwnTarget(t *testing.T) {
+	res := declaredRegistry(t, map[string]registry.AgentConfig{
+		"a": {ResponseFormat: registry.ResponseFormatJSONObject, Tools: true, SupportsFC: true},
+		"b": {ResponseFormat: registry.ResponseFormatJSONObject},
+	})
+
+	require.Len(t, res.Targets, 2)
+	assert.True(t, targetForAgent(t, res, "a").Tools)
+	assert.False(t, targetForAgent(t, res, "b").Tools)
+}
+
+// tools without supports_function_calling degrades to single-shot, so it runs no tool
+// loop and a combined probe would test a call the real run never makes.
+func TestResolve_ToolsWithoutFunctionCallingIsNotAToolLoop(t *testing.T) {
+	res := declaredRegistry(t, map[string]registry.AgentConfig{
+		"a": {ResponseFormat: registry.ResponseFormatJSONObject, Tools: true},
+	})
+
+	require.Len(t, res.Targets, 1)
+	assert.False(t, res.Targets[0].Tools)
+}
+
+// The key must use the DERIVED tools value (Tools && SupportsFC), not raw Tools:
+// a tools:true-without-FC agent and a plain agent make identical calls (single-shot,
+// same fields), so they must share one target — keying on raw Tools would split them
+// into duplicate probes and re-file the 429 self-harm D2 prevents.
+func TestResolve_DerivedToolsValueJoinsTheKey(t *testing.T) {
+	res := declaredRegistry(t, map[string]registry.AgentConfig{
+		"a": {ResponseFormat: registry.ResponseFormatJSONObject, Tools: true},
+		"b": {ResponseFormat: registry.ResponseFormatJSONObject},
+	})
+
+	require.Len(t, res.Targets, 1, "identical single-shot invocations share one target")
+	assert.False(t, targetForAgent(t, res, "a").Tools)
+	assert.False(t, targetForAgent(t, res, "b").Tools)
+}
+
+// The Tools segment joins the key only for declared agents. Undeclared agents dedupe
+// exactly as before this field existed, so doctor output does not change for agents
+// that never opted in.
+func TestResolve_UndeclaredAgentsKeepTodaysDedupRegardlessOfTools(t *testing.T) {
+	res := declaredRegistry(t, map[string]registry.AgentConfig{
+		"a": {Tools: true, SupportsFC: true},
+		"b": {},
+	})
+
+	require.Len(t, res.Targets, 1, "an undeclared tool-loop agent must not split its target")
+	assert.False(t, res.Targets[0].Tools, "and Tools stays unset where it is not identity")
+	assert.Empty(t, res.Targets[0].ResponseFormat)
+}

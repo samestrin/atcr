@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/samestrin/atcr/internal/payload"
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -92,4 +93,57 @@ func TestBuildFallbackAgent_OnOverflowFailDoesNotFireWhenPayloadFits(t *testing.
 	require.NoError(t, err, "a fitting payload must not trip the overflow policy")
 	assert.NotEqual(t, degradationOverflow, fb.DegradationAction,
 		"and must not be stamped as an overflow either")
+}
+
+// Sprint 35.16.11.2.1 AC 03-01 Scenario 3 / Edge Case 3: the re-fit arm
+// re-renders the fallback's prompt through renderAgent with the PRIMARY's
+// config, so a re-rendered Agent carries the primary's response_format. The
+// fallback must still send its own — on the re-fit arm and on the arm where the
+// re-fit declines and the inherited payload ships.
+func TestBuildFallbackAgent_RefitKeepsFallbackOwnResponseFormat(t *testing.T) {
+	cases := []struct {
+		name       string
+		primaryRF  string
+		fallbackRF string
+	}{
+		{"declared fallback, undeclared primary", "", registry.ResponseFormatJSONObject},
+		{"declared primary, undeclared fallback", registry.ResponseFormatJSONObject, ""},
+	}
+	for _, tc := range cases {
+		t.Run("refit/"+tc.name, func(t *testing.T) {
+			cfg := refitRoster(t, 128000, OverflowTruncate)
+			g := cfg.Registry.Agents["greta"]
+			g.ResponseFormat = tc.primaryRF
+			cfg.Registry.Agents["greta"] = g
+			k := cfg.Registry.Agents["kai"]
+			k.ResponseFormat = tc.fallbackRF
+			cfg.Registry.Agents["kai"] = k
+
+			slot := buildRefitSlot(t, cfg)
+			fb := slot.Fallbacks[0]
+			require.True(t, fb.rePacked, "precondition: this fixture's fallback takes the re-fit arm")
+			assert.Equal(t, tc.primaryRF, slot.Primary.Invocation.ResponseFormat)
+			assert.Equal(t, tc.fallbackRF, fb.Invocation.ResponseFormat,
+				"a re-fit fallback still sends its own response_format, not the re-rendered primary's")
+		})
+		t.Run("refit declines/"+tc.name, func(t *testing.T) {
+			cfg := oversizedFallbackCfg(t, OverflowTruncate)
+			g := cfg.Registry.Agents["greta"]
+			g.ResponseFormat = tc.primaryRF
+			cfg.Registry.Agents["greta"] = g
+			k := cfg.Registry.Agents["kai"]
+			k.ResponseFormat = tc.fallbackRF
+			cfg.Registry.Agents["kai"] = k
+
+			primary, _, err := buildOneAgent(cfg, "greta", oversizedBlocksPayload(), ReviewRange{Base: "a", Head: "b"}, "", "")
+			require.NoError(t, err)
+			var fb Agent
+			captureStderr(t, func() {
+				fb, _, err = buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
+			})
+			require.NoError(t, err)
+			require.False(t, fb.rePacked, "precondition: no re-pack source, so the inherited payload ships")
+			assert.Equal(t, tc.fallbackRF, fb.Invocation.ResponseFormat)
+		})
+	}
 }
