@@ -216,6 +216,9 @@ func TestIsNoFindings_AcceptsCleanSlips(t *testing.T) {
 		"NO FINDINGS HERE", "NO FINDINGSX", "[]x", "[1]", `{"findings":[{}]}`, `{"findings":[],"x":1}`,
 		"No findings are present; all claims are verified.", "NO FINDINGS\nbut see line 3", "```json\n```", "{}",
 		"```\nNO FINDINGS\n``` but a.go:3 has a nil deref", "```HIGH|a.go:1|nil deref|f\nNO FINDINGS",
+		// A single no-space content token is the only rest the FIRST-token check
+		// alone rejects (a later token would also fail the key=value check).
+		"```HIGH|a.go:1|x|f\nNO FINDINGS",
 		// A marker of the other character or a shorter run does not close the
 		// open fence, so the fence line after it is content inside the fence,
 		// not a fresh opener that would be dropped.
