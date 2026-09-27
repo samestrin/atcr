@@ -794,3 +794,32 @@ func TestDebtNamespace_DeferredItemIsStillCloseable(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, strings.ToLower(out), "already closed as resolved")
 }
+
+// TestDebtAdd_OverBoundEstIsRejectedAndNotWritten pins the host write-path
+// guard from TD internal/verify/severity.go:40: an --est above the executor's
+// typo-guard bound (registry.MaxExecutorEstimatedMinutes, one week) must be
+// rejected at the CLI rather than filed, because the decode-side clamp turns
+// such a value into exactly the bound — indistinguishable from a genuine
+// week-long estimate, and with a max_estimated_minutes ceiling AT the bound a
+// finding that should never be autofix-eligible becomes eligible. The boundary
+// itself (exactly the bound) stays legal.
+func TestDebtAdd_OverBoundEstIsRejectedAndNotWritten(t *testing.T) {
+	dir := emptyDebtStore(t)
+
+	_, err := runDebt(t, "add", "--dir", dir,
+		"--severity", "HIGH", "--file", "a.go:1", "--problem", "P", "--fix", "F",
+		"--category", "correctness", "--est", "20000")
+
+	require.Error(t, err, "an est above the clamp bound must be rejected at the write path")
+	assert.Equal(t, exitUsage, exitCode(err), "an over-bound --est is a usage error (exit 2)")
+	assert.Contains(t, err.Error(), "est")
+	assert.Empty(t, readDebtStore(t, dir), "the rejected record is not appended")
+
+	// The boundary itself is a legitimate value and files fine.
+	dir2 := emptyDebtStore(t)
+	_, err = runDebt(t, "add", "--dir", dir2,
+		"--severity", "HIGH", "--file", "a.go:1", "--problem", "P", "--fix", "F",
+		"--category", "correctness", "--est", "10080")
+	require.NoError(t, err, "an est exactly at the bound is not rejected")
+	require.Len(t, readDebtStore(t, dir2), 1)
+}
