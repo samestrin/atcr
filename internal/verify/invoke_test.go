@@ -229,6 +229,40 @@ func TestInvokeSkeptic_SurfacesTrippedBudgets(t *testing.T) {
 	assert.Contains(t, tripped, "max_turns", "tripped budgets must be surfaced separately from Notes")
 }
 
+// TestInvokeSkeptic_TruncatedModelResponse locks the skeptic-lane counterpart of
+// the executor lane's ResponseTruncated propagation (executor.go): a reply cut
+// off on finish_reason=length must not be parsed into a confirmed/refuted
+// verdict. The truncated final turn carries verdict-shaped draft content, so
+// without the guard parseVerdict takes the draft at face value and it counts
+// toward reviewer precision as a full read.
+func TestInvokeSkeptic_TruncatedModelResponse(t *testing.T) {
+	t.Parallel()
+	cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed","reasoning":"draft formed before the reply was cut off"}`, truncated: true}}}
+	v, tripped, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	assert.NotEqual(t, verdictConfirmed, v.Verdict, "a verdict parsed from a truncated reply must not be confirmed")
+	assert.NotEqual(t, verdictRefuted, v.Verdict, "a verdict parsed from a truncated reply must not be refuted")
+	assert.Equal(t, verdictUnverifiable, v.Verdict)
+	assert.True(t, v.Truncated, "the verdict object must carry the truncation caveat")
+	assert.Empty(t, tripped, "model-response truncation is not a budget trip")
+}
+
+// TestInvokeSkeptic_TruncatedModelResponse_ToolLoop covers the same guard on the
+// tool-loop path: the loop's FINAL content turn is what can be cut off.
+func TestInvokeSkeptic_TruncatedModelResponse_ToolLoop(t *testing.T) {
+	t.Parallel()
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		toolCallTurn("read_file"),
+		{content: `{"verdict":"confirmed","reasoning":"draft"}`, truncated: true},
+	}}
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	assert.Equal(t, verdictUnverifiable, v.Verdict, "a truncated tool-loop final answer must not become a real verdict")
+	assert.True(t, v.Truncated)
+}
+
 // TestInvokeSkeptic_NoTrippedBudgetsOnCleanVerdict: a verdict reached without a
 // trip returns an empty tripped-budgets slice (the field never carries noise).
 func TestInvokeSkeptic_NoTrippedBudgetsOnCleanVerdict(t *testing.T) {
