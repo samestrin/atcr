@@ -405,7 +405,9 @@ func TestSentTemperature(t *testing.T) {
 
 // TD-012: OpenRouter and newer vLLM put reasoning under message.reasoning.
 // It is read when reasoning_content is absent, and reasoning_content wins when
-// both are sent. The empty-Content salvage still reads reasoning_content only.
+// both are sent. The empty-Content salvage reads both keys too, so a cut-off
+// thinking reply salvages the same way regardless of which key the provider
+// uses.
 func TestReasoningSignal_ReasoningKeyFallback(t *testing.T) {
 	cases := map[string]struct{ msg, want string }{
 		"reasoning only":   {`{"role":"assistant","content":"the review","reasoning":"alt channel"}`, "alt channel"},
@@ -428,6 +430,7 @@ func TestReasoningSignal_ReasoningKeyFallback(t *testing.T) {
 	}
 
 	srv := reasoningServer(t, `{"role":"assistant","content":"","reasoning":"HIGH|a.go:1|bug"}`)
-	_, err := fastRetry(srv.Client()).CompleteWithMeta(context.Background(), Invocation{BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m"})
-	assert.Error(t, err, "the salvage is unchanged: message.reasoning alone is not salvaged into Content")
+	comp, err := fastRetry(srv.Client()).CompleteWithMeta(context.Background(), Invocation{BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m"})
+	require.NoError(t, err, "the reasoning key alone must be salvaged into Content like reasoning_content")
+	assert.Equal(t, "HIGH|a.go:1|bug", comp.Content)
 }
