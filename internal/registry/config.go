@@ -1295,6 +1295,18 @@ func validateThinking(name string, a AgentConfig) ([]error, []string) {
 	if a.ThinkingStyle == ThinkingStyleAnthropic && thinkingOn && a.SupportsFC {
 		errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q with thinking on cannot use supports_function_calling: true: the tool loop does not send reasoning back, which Anthropic requires; set supports_function_calling: false or thinking: off", name, ThinkingStyleAnthropic))
 	}
+	// Anthropic rejects extended thinking alongside a forced tool_choice, and
+	// providers map response_format onto exactly that, so anthropic thinking-on
+	// plus response_format: json_object fails every call from such an agent
+	// (the wire sends both together). Declared at load like the sibling
+	// temperature and supports_function_calling rules. The live-proxy probe
+	// this row asked for could not be run — the flat-rate proxy served no
+	// anthropic model — so the guard rests on the documented provider
+	// constraint (TD row internal/registry/config.go:1260, user decision
+	// 2026-09-27, path b).
+	if a.ThinkingStyle == ThinkingStyleAnthropic && thinkingOn && a.ResponseFormat == ResponseFormatJSONObject {
+		errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q with thinking on cannot use response_format: %q: providers map response_format onto a forced tool_choice, which Anthropic rejects while extended thinking is on; remove response_format or set thinking: off", name, ThinkingStyleAnthropic, ResponseFormatJSONObject))
+	}
 	// Anthropic documents a hard budget_tokens < max_tokens constraint: the
 	// thinking budget shares the output cap, so a budget at or above it is a
 	// guaranteed 400 on every live call — the same fail-loud contract the

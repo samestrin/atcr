@@ -40,6 +40,7 @@ func TestRegistryDoc_ThinkingRows(t *testing.T) {
 			{"`on` requires a `thinking_level`", "reasoning_effort has no on-without-level value"},
 			{"under `thinking_style: anthropic`, thinking on needs `temperature` unset or `1`", "Anthropic rejects extended thinking at any other temperature; a declared one fails the load"},
 			{"under `thinking_style: anthropic`, thinking on cannot be combined with `supports_function_calling: true`", "the tool loop does not send reasoning back, which Anthropic requires on a tool-use turn; skeptic, debate, and fallback lanes can put any function-calling agent in the loop"},
+			{"under `thinking_style: anthropic`, thinking on cannot be combined with `response_format: json_object`", "providers map response_format onto a forced tool_choice, which Anthropic rejects while extended thinking is on; the live-proxy probe was inconclusive, so the clause rests on the documented provider constraint"},
 		}},
 		{"`thinking_level`", registry.ThinkingLevels(), []struct{ token, why string }{
 			{"level alone implies `thinking: on`", "a level without thinking is not a missing-value error"},

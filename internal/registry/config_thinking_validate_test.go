@@ -234,7 +234,7 @@ func TestValidateAgent_ThinkingBudgetMisfitErrors(t *testing.T) {
 // could not be constructed: the flat-rate proxy served no anthropic model, so
 // the guard rests on the documented provider constraint, like its siblings.
 func TestValidateAgent_AnthropicThinkingWithResponseFormat(t *testing.T) {
-	const wantErr = `thinking_style "anthropic" with thinking on cannot use response_format: json_object`
+	const wantErr = `thinking_style "anthropic" with thinking on cannot use response_format: "json_object"`
 	cases := []struct {
 		name, thinking, level, style, responseFormat string
 		wantErr                                      string
