@@ -969,6 +969,16 @@ func probeThinking(ctx context.Context, c Completer, tgt Target, opts Options, b
 	off := tgt.Thinking == registry.ThinkingOff
 	declared := thinkingDeclaration(tgt)
 	if err != nil {
+		// A genuine 4xx is the provider rejecting the request, and the marker call is
+		// the only one carrying the declaration. If the same prompt without it
+		// succeeds, the declaration is what was rejected — that repeats on every run,
+		// so it is not_honored, not a retryable no-verdict.
+		var se *llmclient.HTTPStatusError
+		if errors.As(err, &se) && rejectsDeclaration(se.Status) {
+			if _, cerr := thinkingControlCall(ctx, c, tgt, opts, budget); cerr == nil {
+				return ThinkingNotHonored, fmt.Sprintf("the provider rejected %s with HTTP %d (%s), but accepted the same prompt without the declaration", declared, se.Status, scrubCredentials(se.Snippet, tgt))
+			}
+		}
 		detail := noVerdict("the thinking probe", err, tgt)
 		if comp.Truncated {
 			// An empty reply cut off at the cap is what a model thinking past the
@@ -1026,6 +1036,17 @@ func probeThinking(ctx context.Context, c Completer, tgt Target, opts Options, b
 		return ThinkingHonored, "no reasoning signal under " + declared + "; the provider does report reasoning (" + evidence + ")"
 	}
 	return ThinkingNotHonored, "declared " + declared + ", but the reply carried no reasoning signal, and the provider does report reasoning (" + evidence + ")"
+}
+
+// rejectsDeclaration reports that a declared-call status can be the provider
+// refusing the request itself: a 4xx other than auth (401/403), not-found (404),
+// and the transient 408/429. Those never reach probeThinking or stay unverified.
+func rejectsDeclaration(status int) bool {
+	switch status {
+	case 401, 403, 404, 408, 429:
+		return false
+	}
+	return status >= 400 && status < 500
 }
 
 // thinkingControlCall places the control call: the marker probe minus the thinking
