@@ -2,6 +2,7 @@ package registry
 
 import (
 	"bytes"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -9,9 +10,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// captureThinkingWarnings swaps thinkingWarnWriter for a buffer for the test.
+// captureThinkingWarnings swaps the package-global thinkingWarnWriter
+// (config.go) for a buffer for the test. Like every test seam in this
+// package (the convention overlay.go states for its own vars), a test that
+// mutates it must not call t.Parallel(): concurrent mutations would race,
+// and one test's load would write into another test's buffer while the
+// exact-byte assertions read whichever landed last. The helper fails fast
+// when it does, so the first parallel test in the package surfaces here
+// instead of as a nondeterministic assertion failure or a -race report
+// later (TD row internal/registry/config_thinking_validate_test.go:13).
 func captureThinkingWarnings(t *testing.T) *bytes.Buffer {
 	t.Helper()
+	if v := reflect.ValueOf(t).Elem().FieldByName("isParallel"); v.IsValid() && v.Bool() {
+		t.Fatalf("captureThinkingWarnings swaps the package-global thinkingWarnWriter; a test calling t.Parallel() would race it (see the test-seam convention in overlay.go)")
+	}
 	var buf bytes.Buffer
 	orig := thinkingWarnWriter
 	thinkingWarnWriter = &buf
