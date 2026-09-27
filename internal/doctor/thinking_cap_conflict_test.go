@@ -47,6 +47,11 @@ func TestRun_FlagCapAtOrBelowAnthropicBudgetNamesTheFlag(t *testing.T) {
 			if tc.notHint != "" {
 				assert.NotContains(t, hint, tc.notHint)
 			}
+			// The flag caused the rejection, not the provider refusing the
+			// declaration, so the control call must not turn it into not_honored.
+			if len(tc.wantHint) > 0 && tc.wantHint[0] != "check the API key" {
+				assert.NotEqual(t, ThinkingNotHonored, rep.Agents[0].ThinkingStatus, "detail: %s", rep.Agents[0].ThinkingDetail)
+			}
 		})
 	}
 }
