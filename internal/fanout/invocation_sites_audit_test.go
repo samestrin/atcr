@@ -120,12 +120,19 @@ var wireResultIndex = map[string]int{"Thinking": 1, "ThinkingLevel": 2}
 // site's deliberate wire downgrade still reads as its own declaration while a
 // local from anything else (or another config) still fails.
 func invocationFieldReadsOwnConfig(lit invocationLiteral, field, recv string) bool {
-	sel, ok := lit.keys[field].(*ast.SelectorExpr)
-	if !ok {
-		return false
+	switch v := lit.keys[field].(type) {
+	case *ast.SelectorExpr:
+		id, _ := v.X.(*ast.Ident)
+		return v.Sel.Name == field && id != nil && id.Name == recv
+	case *ast.Ident:
+		// A same-function local: accepted only when it was assigned from
+		// thinkingWire(recv) at the result position that feeds this field —
+		// the site's own AgentConfig, possibly deliberately downgraded for
+		// the wire.
+		idx, isWire := lit.wireLocals[v.Name]
+		return isWire && wireResultIndex[field] == idx && lit.wireRecv[v.Name] == recv
 	}
-	id, _ := sel.X.(*ast.Ident)
-	return sel.Sel.Name == field && id != nil && id.Name == recv
+	return false
 }
 
 // funcDeclName renders a FuncDecl's site key: the bare name for a plain
