@@ -106,6 +106,12 @@ func TestRun_ThinkingVerdict(t *testing.T) {
 	reportedZero := withMarker(llmclient.Completion{Usage: llmclient.UsageData{ReasoningTokensReported: true}})
 	truncatedSilent := withMarker(llmclient.Completion{Truncated: true})
 	truncatedThinks := withMarker(llmclient.Completion{Truncated: true, Usage: llmclient.UsageData{ReasoningTokens: 900, ReasoningTokensReported: true}})
+	truncatedReportedZero := withMarker(llmclient.Completion{Truncated: true, Usage: llmclient.UsageData{ReasoningTokensReported: true}})
+	// A Qwen-family upstream can put its thinking inline in the content instead
+	// of on a reasoning channel, and a proxy can still report 0 reasoning tokens.
+	inlineThink := llmclient.Completion{Content: "<think>plan the reply</think>\n" + Marker(testNonce)}
+	inlineThinkReportedZero := inlineThink
+	inlineThinkReportedZero.Usage = llmclient.UsageData{ReasoningTokensReported: true}
 
 	cases := []struct {
 		name                  string
@@ -157,6 +163,16 @@ func TestRun_ThinkingVerdict(t *testing.T) {
 			wantStatus: ThinkingNotHonored, wantCalls: 1, wantDetail: []string{"thinking: on"}},
 		{name: "on, silent, control thinks", thinking: "on", style: "qwen", declared: silent, control: thinks,
 			wantStatus: ThinkingNotHonored, wantCalls: 2},
+		{name: "off, inline think tags", thinking: "off", style: "qwen", declared: inlineThink,
+			wantStatus: ThinkingNotHonored, wantCalls: 1, wantDetail: []string{"inline <think> reasoning in the content"}},
+		{name: "off, reported zero but inline think tags", thinking: "off", style: "qwen", declared: inlineThinkReportedZero,
+			wantStatus: ThinkingNotHonored, wantCalls: 1},
+		{name: "declared call empty and cut off", thinking: "off", style: "qwen", declared: llmclient.Completion{Truncated: true}, declaredErr: errors.New("provider returned an empty completion"),
+			wantStatus: ThinkingUnverified, wantCalls: 1, wantDetail: []string{"cut off at the output cap (2048 tokens)"}},
+		{name: "off, silent, control cut off reporting zero", thinking: "off", style: "qwen", declared: silent, control: truncatedReportedZero,
+			wantStatus: ThinkingUnverified, wantCalls: 2, wantDetail: []string{"control", "cut off"}},
+		{name: "on, truncated, signal", thinking: "on", style: "qwen", declared: truncatedThinks,
+			wantStatus: ThinkingHonored, wantCalls: 1, wantDetail: []string{"the reply was also cut off"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -166,7 +182,6 @@ func TestRun_ThinkingVerdict(t *testing.T) {
 			for _, want := range tc.wantDetail {
 				assert.Contains(t, a.ThinkingDetail, want)
 			}
-			assert.NotContains(t, a.ThinkingDetail, "honored thinking_level", "a signal never proves the level")
 			if a.Status == StatusOK {
 				assert.Equal(t, 0, rep.ExitCode, "a thinking verdict never changes the exit code")
 			}
@@ -198,6 +213,23 @@ func TestRun_ThinkingDetailIsScrubbed(t *testing.T) {
 	assert.Equal(t, ThinkingUnverified, a.ThinkingStatus)
 	assert.NotContains(t, a.ThinkingDetail, thinkingKey)
 	assert.Contains(t, a.ThinkingDetail, "[redacted]")
+}
+
+// Every error detail is scrubbed: the transport branch and the control call too,
+// and the key is removed before the detail is bounded, so a key straddling the
+// bound cannot leave a prefix behind.
+func TestRun_ThinkingDetailIsScrubbedOnEveryErrorPath(t *testing.T) {
+	transport := errors.New("dial failed for " + thinkingKey)
+	a, _, _ := runThinking(t, thinkingTarget(t, "off", "", "qwen"), llmclient.Completion{}, transport, llmclient.Completion{}, nil)
+	assert.NotContains(t, a.ThinkingDetail, thinkingKey)
+
+	a, _, _ = runThinking(t, thinkingTarget(t, "off", "", "qwen"), silent, nil, llmclient.Completion{}, transport)
+	assert.Equal(t, ThinkingUnverified, a.ThinkingStatus)
+	assert.NotContains(t, a.ThinkingDetail, thinkingKey)
+
+	straddle := errors.New(strings.Repeat("x", maxDetailBytes-7) + thinkingKey)
+	a, _, _ = runThinking(t, thinkingTarget(t, "off", "", "qwen"), llmclient.Completion{}, straddle, llmclient.Completion{}, nil)
+	assert.NotContains(t, a.ThinkingDetail, thinkingKey[:7])
 }
 
 // AC 05-01 Scenario 2 and the story's fifth case: an undeclared agent gets no

@@ -850,7 +850,9 @@ func thinkingDeclaration(t Target) string {
 }
 
 // reasoningSignal describes the reasoning a reply carried, or "" when it carried
-// none. Either signal alone counts: some upstreams never report reasoning_tokens.
+// none. Any signal alone counts: some upstreams never report reasoning_tokens,
+// and a Qwen-family upstream can put its thinking inline as <think> in the
+// content while a proxy still reports 0 reasoning tokens.
 func reasoningSignal(comp llmclient.Completion) string {
 	var parts []string
 	if comp.Usage.ReasoningTokens > 0 {
@@ -858,6 +860,9 @@ func reasoningSignal(comp llmclient.Completion) string {
 	}
 	if comp.Reasoning != "" {
 		parts = append(parts, fmt.Sprintf("reasoning content (%d bytes)", len(comp.Reasoning)))
+	}
+	if strings.Contains(comp.Content, "<think>") || strings.Contains(comp.Content, "</think>") {
+		parts = append(parts, "inline <think> reasoning in the content")
 	}
 	return strings.Join(parts, " and ")
 }
@@ -881,7 +886,13 @@ func probeThinking(ctx context.Context, c Completer, tgt Target, opts Options, b
 	off := tgt.Thinking == registry.ThinkingOff
 	declared := thinkingDeclaration(tgt)
 	if err != nil {
-		return ThinkingUnverified, noVerdict("the thinking probe", err, tgt)
+		detail := noVerdict("the thinking probe", err, tgt)
+		if comp.Truncated {
+			// An empty reply cut off at the cap is what a model thinking past the
+			// budget looks like; the remedy must survive the error.
+			detail += "; the reply was " + cutOff(budget)
+		}
+		return ThinkingUnverified, detail
 	}
 	if sig := reasoningSignal(comp); sig != "" {
 		status, detail := ThinkingHonored, ""
@@ -905,6 +916,10 @@ func probeThinking(ctx context.Context, c Completer, tgt Target, opts Options, b
 			return ThinkingUnverified, noVerdict("the thinking control probe (the same prompt without the declaration)", cerr, tgt)
 		}
 		sig := reasoningSignal(ctrl)
+		if sig == "" && ctrl.Truncated {
+			// A cut-off control reply reporting 0 stopped early; it proves nothing.
+			return ThinkingUnverified, "no reasoning signal under " + declared + ", and the control probe without the declaration was " + cutOff(budget) + " before a reasoning signal showed, so no verdict was reached"
+		}
 		if sig == "" && !ctrl.Usage.ReasoningTokensReported {
 			return ThinkingUnverified, "no reasoning signal under " + declared + ", and none from a control probe without the declaration either (no reasoning tokens, no reasoning content), so the provider may not report reasoning at all"
 		}
@@ -956,7 +971,8 @@ func noVerdict(what string, err error, tgt Target) string {
 	if errors.As(err, &se) {
 		return fmt.Sprintf("%s got HTTP %d, so no verdict was reached: %s", what, se.Status, scrubCredentials(se.Snippet, tgt))
 	}
-	return what + " reached no verdict: " + scrubCredentials(bounded(err.Error()), tgt)
+	// Scrub before bounding, so a key straddling the bound leaves no prefix.
+	return what + " reached no verdict: " + bounded(scrubCredentials(err.Error(), tgt))
 }
 
 // scrubCredentials enforces credential exclusion on a detail string surfaced in
