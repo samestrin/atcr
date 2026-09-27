@@ -147,6 +147,40 @@ func TestBuildSkepticAgent_NoCapForPlainUndeclaredSkeptic(t *testing.T) {
 	assert.Equal(t, 1234, *declared.Invocation.MaxTokens, "a declared cap is forwarded verbatim")
 }
 
+// TestBuildSkepticAgent_AnthropicThinkingStrippedForToolLoop locks the
+// lane-local invariant the load-time guard only asserts for registry configs:
+// an anthropic-thinking agent that will run the TOOL LOOP (SupportsFC forwarded
+// true — the declaration the executor lane ignores, hardcoding it true) must
+// not emit thinking on the wire. The loop does not re-send prior reasoning
+// blocks, so Anthropic rejects every continuation turn — a guaranteed 400 on
+// every call beats no call, but stripping beats both.
+func TestBuildSkepticAgent_AnthropicThinkingStrippedForToolLoop(t *testing.T) {
+	t.Parallel()
+	sk := testSkeptic() // testSkeptic declares SupportsFC: true
+	sk.Config.Thinking, sk.Config.ThinkingLevel, sk.Config.ThinkingStyle = registry.ThinkingOn, registry.ThinkingLevelLow, registry.ThinkingStyleAnthropic
+	a, _ := buildSkepticAgent(sk, "prompt", false)
+	assert.Empty(t, a.Invocation.Thinking, "an anthropic-thinking declaration must not reach the wire of a forced-tool lane")
+	assert.Empty(t, a.Invocation.ThinkingLevel)
+	budget := registry.ThinkingBudgetTokens(a.Invocation.Thinking, a.Invocation.ThinkingLevel, a.Invocation.ThinkingStyle)
+	assert.Equal(t, 0, budget, "no budget may be derived once thinking is stripped")
+}
+
+// TestBuildSkepticAgent_AnthropicThinkingKeptForSingleShot: the strip is scoped
+// to the tool loop. A skeptic whose model lacks function calling degrades to
+// single-shot, where thinking is legal — the declaration (with the item-2 cap)
+// must survive.
+func TestBuildSkepticAgent_AnthropicThinkingKeptForSingleShot(t *testing.T) {
+	t.Parallel()
+	sk := testSkeptic()
+	sk.Config.SupportsFC = false
+	sk.Config.Thinking, sk.Config.ThinkingStyle = registry.ThinkingOn, registry.ThinkingStyleAnthropic
+	a, _ := buildSkepticAgent(sk, "prompt", false)
+	assert.Equal(t, registry.ThinkingOn, a.Invocation.Thinking, "single-shot degrade lane may carry thinking")
+	require.NotNil(t, a.Invocation.MaxTokens)
+	budget := registry.ThinkingBudgetTokens(a.Invocation.Thinking, a.Invocation.ThinkingLevel, a.Invocation.ThinkingStyle)
+	assert.Greater(t, *a.Invocation.MaxTokens, budget)
+}
+
 func TestInvokeSkeptic_Confirms(t *testing.T) {
 	t.Parallel()
 	cc := finalChat(`{"verdict": "confirmed", "reasoning": "evidence valid"}`)
