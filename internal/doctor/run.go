@@ -646,6 +646,16 @@ func probe(ctx context.Context, c Completer, tgt Target, opts Options) probeResu
 	})
 	latency := time.Since(start).Milliseconds()
 	pr := classify(comp.Content, err, opts.Nonce, latency, tgt, budgetSrc)
+	// TD-020: this call carries the thinking declaration, and Anthropic rejects
+	// budget_tokens >= max_tokens. Load time already rejects a declared max_tokens
+	// at or below the budget, so only the flag can cause it; name it, since review
+	// at its own cap may work fine.
+	var se *llmclient.HTTPStatusError
+	if budgetSrc == MaxTokensSourceFlag && tgt.ThinkingStyle == registry.ThinkingStyleAnthropic && errors.As(err, &se) && rejectsDeclaration(se.Status) {
+		if tb := registry.ThinkingBudgetTokens(tgt.Thinking, tgt.ThinkingLevel, tgt.ThinkingStyle); tb > 0 && tb >= budget {
+			pr.hint = fmt.Sprintf("--max-tokens %d is at or below this agent's thinking budget %d, and Anthropic rejects budget_tokens >= max_tokens — pass --max-tokens above %d", budget, tb, tb)
+		}
+	}
 	pr.maxTokens = budget
 	pr.maxTokensSource = budgetSrc
 	pr.called, pr.comp, pr.callErr = true, comp, err
