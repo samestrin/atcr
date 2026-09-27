@@ -646,13 +646,12 @@ func probe(ctx context.Context, c Completer, tgt Target, opts Options) probeResu
 	})
 	latency := time.Since(start).Milliseconds()
 	pr := classify(comp.Content, err, opts.Nonce, latency, tgt, budgetSrc)
-	// TD-020: this call carries the thinking declaration, and Anthropic rejects
-	// budget_tokens >= max_tokens. Load time already rejects a declared max_tokens
-	// at or below the budget, so only the flag can cause it; name it, since review
-	// at its own cap may work fine.
+	// TD-020: this call carries the thinking declaration, so a --max-tokens at or
+	// below an anthropic budget is rejected. Name the flag, since review at its own
+	// cap may work fine.
 	var se *llmclient.HTTPStatusError
-	if budgetSrc == MaxTokensSourceFlag && tgt.ThinkingStyle == registry.ThinkingStyleAnthropic && errors.As(err, &se) && rejectsDeclaration(se.Status) {
-		if tb := registry.ThinkingBudgetTokens(tgt.Thinking, tgt.ThinkingLevel, tgt.ThinkingStyle); tb > 0 && tb >= budget {
+	if errors.As(err, &se) && rejectsDeclaration(se.Status) {
+		if tb := flagCapBelowAnthropicBudget(tgt, opts, budget); tb > 0 {
 			pr.hint = fmt.Sprintf("--max-tokens %d is at or below this agent's thinking budget %d, and Anthropic rejects budget_tokens >= max_tokens — pass --max-tokens above %d", budget, tb, tb)
 		}
 	}
@@ -984,7 +983,9 @@ func probeThinking(ctx context.Context, c Completer, tgt Target, opts Options, b
 		// succeeds, the declaration is what was rejected — that repeats on every run,
 		// so it is not_honored, not a retryable no-verdict.
 		var se *llmclient.HTTPStatusError
-		if errors.As(err, &se) && rejectsDeclaration(se.Status) {
+		// Unless --max-tokens sits at or below an anthropic budget: then the flag,
+		// not the declaration, is the likely cause, and the endpoint hint says so.
+		if errors.As(err, &se) && rejectsDeclaration(se.Status) && flagCapBelowAnthropicBudget(tgt, opts, budget) == 0 {
 			if _, cerr := thinkingControlCall(ctx, c, tgt, opts, budget); cerr == nil {
 				return ThinkingNotHonored, fmt.Sprintf("the provider rejected %s with HTTP %d (%s), but accepted the same prompt without the declaration", declared, se.Status, scrubCredentials(se.Snippet, tgt))
 			}
@@ -1057,6 +1058,20 @@ func rejectsDeclaration(status int) bool {
 		return false
 	}
 	return status >= 400 && status < 500
+}
+
+// flagCapBelowAnthropicBudget returns the anthropic thinking budget when an
+// explicit --max-tokens is at or below it (Anthropic rejects budget_tokens >=
+// max_tokens), else 0. Load time rejects a declared max_tokens that low, so only
+// the flag can cause it.
+func flagCapBelowAnthropicBudget(tgt Target, opts Options, budget int) int {
+	if !opts.MaxTokensSet || budget <= 0 || tgt.ThinkingStyle != registry.ThinkingStyleAnthropic {
+		return 0
+	}
+	if tb := registry.ThinkingBudgetTokens(tgt.Thinking, tgt.ThinkingLevel, tgt.ThinkingStyle); tb >= budget {
+		return tb
+	}
+	return 0
 }
 
 // thinkingControlCall places the control call: the marker probe minus the thinking
