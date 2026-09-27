@@ -117,6 +117,10 @@ type ModelInvocation struct {
 	// provider returned only tool calls (an assistant turn with content:null),
 	// and when the invocation failed before producing content.
 	Response string
+	// ResponseFormat is the declared JSON output mode the request carried
+	// ("json_object" when the agent declared response_format, empty otherwise),
+	// so a provider 400 caused by the declaration is attributable in the record.
+	ResponseFormat string
 	// ResponseToolCalls is the tool calls the assistant requested on this turn.
 	// A tool-enabled agent's response is frequently a tool call with no text at
 	// all, so Response alone would misreport the exchange.
@@ -296,6 +300,7 @@ func (a observerAdapter) OnModelInvocation(ctx context.Context, in hookobs.Invoc
 		BaseURL:          in.BaseURL,
 		Prompt:           in.Prompt,
 		Response:         in.Response,
+		ResponseFormat:   in.ResponseFormat,
 		FinishReason:     in.FinishReason,
 		Truncated:        in.Truncated,
 		PromptTokens:     in.PromptTokens,

@@ -120,6 +120,11 @@ type chatToolRequest struct {
 	ToolChoice  string    `json:"tool_choice,omitempty"`
 	Temperature *float64  `json:"temperature,omitempty"`
 	MaxTokens   *int      `json:"max_tokens,omitempty"`
+	// ResponseFormat is sent on every turn a declared agent makes, tool turns
+	// and the forced final alike: a turn that ends on its own is only known to be
+	// final from its response, so the field must ride every tool turn; the
+	// forced-final no-tools turn (loop.requestFinalAnswer) carries it too.
+	ResponseFormat *responseFormat `json:"response_format,omitempty"`
 }
 
 // chatToolResponse decodes the wire response for a tool-capable turn.
@@ -144,10 +149,11 @@ func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, t
 		return nil, err
 	}
 	req := chatToolRequest{
-		Model:       inv.Model,
-		Messages:    messages,
-		Temperature: inv.Temperature,
-		MaxTokens:   inv.MaxTokens,
+		Model:          inv.Model,
+		Messages:       messages,
+		Temperature:    inv.Temperature,
+		MaxTokens:      inv.MaxTokens,
+		ResponseFormat: newResponseFormat(inv.ResponseFormat),
 	}
 	if len(toolDefs) > 0 {
 		req.Tools = toolDefs

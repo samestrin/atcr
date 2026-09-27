@@ -137,7 +137,7 @@ func parseV2Body(body string) (ParseResult, error) {
 			Problem:    r["problem"],
 			Fix:        r["fix"],
 			Category:   r["category"],
-			EstMinutes: est,
+			EstMinutes: clampEstMinutes(est),
 			Evidence:   r["evidence"],
 			Reviewer:   r["reviewer"],
 		})
@@ -267,7 +267,11 @@ func parseV2Envelope(body string) (ParseResult, error) {
 	var data struct {
 		Findings *[]json.RawMessage `json:"findings"`
 	}
-	if len(env.Data) == 0 || string(env.Data) == "null" {
+	// No pre-check for empty/null data beyond the absent-key guard below: a null
+	// data and an ABSENT data key both report "missing data.findings" (pinned by
+	// TestParseV2Envelope_DataNullIsRejected and TestParseV2Envelope_DataAbsentIsRejected),
+	// so a separate guard would be a redundant duplicate of that outcome.
+	if len(env.Data) == 0 {
 		return ParseResult{}, errors.New("decoding v2 findings envelope: missing data.findings")
 	}
 	if err := checkExactKeys(env.Data, "findings"); err != nil {
@@ -297,7 +301,7 @@ func parseV2Envelope(body string) (ParseResult, error) {
 			Problem:    r.Problem,
 			Fix:        r.Fix,
 			Category:   r.Category,
-			EstMinutes: int(r.EstMinutes),
+			EstMinutes: clampEstMinutes(int(r.EstMinutes)),
 			Evidence:   r.Evidence,
 			Reviewer:   r.Reviewer,
 		})
@@ -354,10 +358,18 @@ type modelFinding struct {
 type flexInt int
 
 // maxModelEstMinutes is one week of minutes, the same typo-guard bound as
-// registry.MaxExecutorEstimatedMinutes. decodeJSONValue clamps a model's
-// est_minutes to 0..maxModelEstMinutes, so 1e300 or a negative number from an
-// untrusted model cannot reach a Finding.
+// registry.MaxExecutorEstimatedMinutes. Every decode path clamps est_minutes
+// through clampEstMinutes, so 1e300 or a negative number from an untrusted
+// model (or a typo'd host-authored row) cannot reach a Finding.
 const maxModelEstMinutes = 7 * 24 * 60
+
+// clampEstMinutes bounds est_minutes to 0..maxModelEstMinutes on every decode
+// path (v1 pipe rows, v2 TOON table, v2 envelope, model JSON), so a host- or
+// model-authored source row reads the same regardless of file format and
+// reconcile's max-EST merge cannot depend on the format a file happened to use.
+func clampEstMinutes(n int) int {
+	return max(0, min(n, maxModelEstMinutes))
+}
 
 func (n *flexInt) UnmarshalJSON(b []byte) error {
 	var f float64
@@ -484,7 +496,7 @@ func decodeJSONValue(text string) ([]Finding, int) {
 			Problem:    m.Problem,
 			Fix:        m.Fix,
 			Category:   m.Category,
-			EstMinutes: max(0, min(int(m.EstMinutes), maxModelEstMinutes)),
+			EstMinutes: clampEstMinutes(int(m.EstMinutes)),
 			Evidence:   m.Evidence,
 		})
 	}

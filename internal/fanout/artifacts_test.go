@@ -493,3 +493,21 @@ func TestRebuildPool_DualWritesPool(t *testing.T) {
 	assert.Equal(t, txt, toon)
 	assert.Equal(t, "z.go", toon[0].File, "roster order")
 }
+
+// TD (sprint 35.16.11.2): the findings-write wrap in writeAgentArtifacts
+// ("writing findings for '<agent>'") had no test. A failing findings.toon/txt
+// write must surface as a wrapped, agent-attributed error, not a bare write
+// error.
+func TestWriteAgentArtifacts_FindingsWriteFailureIsWrapped(t *testing.T) {
+	dir := t.TempDir()
+	orig := writeFindingsFileFn
+	writeFindingsFileFn = func(path string, data []byte) error {
+		return errors.New("injected findings write failure")
+	}
+	t.Cleanup(func() { writeFindingsFileFn = orig })
+
+	err := writeAgentArtifacts(dir, "greta", Result{Agent: "greta"}, findingsResult{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "writing findings for 'greta'")
+	assert.Contains(t, err.Error(), "injected findings write failure")
+}

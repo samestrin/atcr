@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -452,4 +453,28 @@ func TestDiscover_HostReviewerStamped(t *testing.T) {
 	host, _ = sourceByName(sources, "host")
 	require.Len(t, host.Findings, 1)
 	assert.Equal(t, "host", host.Findings[0].Reviewer)
+}
+
+// TD (sprint 35.16.11.2): the allow-listed empty-source warning (discover.go)
+// had no test. An allow-listed child with no findings files must emit the
+// warning and be dropped, while a non-allow-listed empty child stays silent.
+func TestDiscover_AllowListedEmptySourceWarns(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "empty-src"), 0o755))
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "unlisted-empty"), 0o755))
+
+	old := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	sources, err := Discover(dir, []string{"empty-src"})
+	_ = w.Close()
+	os.Stderr = old
+	require.NoError(t, err)
+	assert.Empty(t, sources, "an empty source contributes nothing")
+
+	buf, err := io.ReadAll(r)
+	require.NoError(t, err)
+	assert.Contains(t, string(buf), `requested source "empty-src" has no findings.toon or findings.txt`)
+	assert.NotContains(t, string(buf), `"unlisted-empty"`,
+		"a non-allow-listed empty child stays silent")
 }

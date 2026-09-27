@@ -38,6 +38,12 @@ type fakeChatCompleter struct {
 	// assert what reaches the provider rather than only what the Agent literal
 	// was built with. Read it through lastInvocation, never directly.
 	lastInv llmclient.Invocation
+	// allInvs records EVERY Invocation from both Chat and Complete, in call
+	// order. A per-turn request field (response_format) must be asserted across
+	// the whole loop, not just the last call — a regression dropping it on any
+	// single turn is exactly what lastInvocation cannot see. Read through
+	// allInvocations, never directly.
+	allInvs []llmclient.Invocation
 	// toolBytesSeen accumulates the length of every role:"tool" message that has
 	// ever reached this completer, deduplicated across calls by counting only the
 	// messages past the previous call's length — the engine re-sends the whole
@@ -94,10 +100,19 @@ func (f *fakeChatCompleter) lastInvocation() llmclient.Invocation {
 	return f.lastInv
 }
 
+// allInvocations returns every Invocation recorded by Complete and Chat, in
+// call order.
+func (f *fakeChatCompleter) allInvocations() []llmclient.Invocation {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]llmclient.Invocation(nil), f.allInvs...)
+}
+
 func (f *fakeChatCompleter) Complete(_ context.Context, inv llmclient.Invocation) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.lastInv = inv
+	f.allInvs = append(f.allInvs, inv)
 	if len(f.turns) > 0 {
 		return f.turns[0].content, nil
 	}
@@ -107,6 +122,7 @@ func (f *fakeChatCompleter) Complete(_ context.Context, inv llmclient.Invocation
 func (f *fakeChatCompleter) Chat(ctx context.Context, inv llmclient.Invocation, msgs []llmclient.Message, _ []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
 	f.mu.Lock()
 	f.lastInv = inv
+	f.allInvs = append(f.allInvs, inv)
 	if f.violation == "" {
 		if len(msgs) < f.msgsSeen {
 			f.violation = fmt.Sprintf("message list shrank from %d to %d: the dedupe below under-counts and every toolBytesDelivered assertion passes vacuously", f.msgsSeen, len(msgs))

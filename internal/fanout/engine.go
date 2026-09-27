@@ -206,6 +206,21 @@ type Agent struct {
 	// bulk (non-chunked) path.
 	chunkMaxLines int
 
+	// swap records what the response_format ## Output Format swap changed
+	// (output_format_swap.go). buildFallbackAgent rebuilds the pre-swap text from
+	// it on demand — swapSpan.rebuildUnswapped — and re-applies the swap keyed on
+	// the FALLBACK's own declaration, so a fallback never inherits its primary's
+	// prompt contract. Storing the span instead of the pre-swap text keeps a
+	// declared agent from holding a second full copy of the prompt (payload
+	// included) for the whole run. Zero value = no swap: the unswapped text IS
+	// Prompt (undeclared or hand-built agent).
+	swap swapSpan
+	// payloadStart is where the rendered payload begins in the unswapped text
+	// (swapSpan.rebuildUnswapped); the swap only searches the text before it. 0 on
+	// a hand-built Agent, so a declared fallback of one appends the shared block
+	// rather than search.
+	payloadStart int
+
 	// Retry/backoff (Epic 4.6): the agent's effective retry budget and base
 	// delay (ms), resolved by renderAgent from the per-agent override layered over
 	// the global Settings. invokeAgent threads them onto the call context so the

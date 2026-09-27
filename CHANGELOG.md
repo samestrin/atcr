@@ -1,3 +1,26 @@
+## [35.27.0] - 2026-09-26
+
+*Sprint 35.16.11.2.1 — declared JSON-mode response format per agent.*
+
+Agents can now declare `response_format: json_object` in the registry to get real API-level JSON mode, layered on top of 35.16.11.2's fenced-JSON parser baseline.
+
+### Added
+
+- `response_format: json_object` as an optional per-agent registry field (`AgentConfig.ResponseFormat`), threaded through `Invocation`, `chatRequest`, and every `chatToolRequest` turn, including forced-final turns.
+- Per-lane wiring for review primary/fallback, skeptic, and the debate judge seat only (proposer/challenger keep their own single-object contracts).
+- A render-time `## Output Format` prompt swap that replaces a declared agent's fenced-array contract with a shared `{"findings":[...]}` schema, located by the actual rendered payload offset so undeclared agents' prompts stay byte-identical.
+- A live `atcr doctor` probe that exercises the declared flag against the real provider.
+- `docs/registry.md` documentation for the new field.
+
+### Fixed
+
+- `IsNoFindings` no longer misreads a fence opener carrying an info string, or a bare `~~~` quoted example, as a findings block.
+- `est_minutes` is clamped to 0–10080 on every decode path, including the legacy pipe branch.
+- The doctor Target dedup key correctly reflects the declared flag, and a validation error now echoes the rejected `response_format` value.
+- Several dead-code and stale-comment cleanups surfaced by the sprint's adversarial review (`cli/debt_resolve.go`, `internal/stream`, `internal/fanout`, `internal/reconcile`).
+
+*Shipped via /finalize-sprint (sprint 35.16.11.2.1)*
+
 ## [35.26.0] - 2026-09-25
 
 *Sprint 35.16.11.2 — lossless findings stream and reviewer prompt migration.*

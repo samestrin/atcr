@@ -251,3 +251,29 @@ func TestAgentConfig_EffectiveContextWindowTokens(t *testing.T) {
 	atCapCfg := AgentConfig{ContextWindowTokens: &atCap}
 	assert.Equal(t, ContextWindowTokensCap, atCapCfg.EffectiveContextWindowTokens())
 }
+
+// response_format is machine-LOCAL by the same reasoning as
+// context_window_tokens: the field's own doc defines it as a claim about the
+// endpoint the CONSUMER resolves ("this agent's model honors the
+// OpenAI-compatible response_format request field"). A community persona that
+// publishes json_object imposes that contract on every consumer's review calls
+// — a provider that 400s or ignores it breaks the lane the consumer never
+// chose, bypassing their own doctor verification. The strict community
+// validator must fail closed on it rather than accept it as an ordinary
+// inlined agent field.
+func TestValidateCommunityPersonaYAML_RejectsResponseFormat(t *testing.T) {
+	const y = "name: sample\nprovider: openrouter\nmodel: anthropic/claude-opus-4.8\nresponse_format: json_object\n"
+	err := ValidateCommunityPersonaYAML("sample", []byte(y))
+	require.Error(t, err, "a published response_format declaration must be rejected")
+	assert.Contains(t, err.Error(), "response_format",
+		"the error must name the offending key so the persona author can remove it")
+	assert.Contains(t, err.Error(), "sample",
+		"the error must name the persona, matching the rest of this validator's messages")
+}
+
+func TestValidateCommunityPersonaYAML_AcceptsUndeclaredResponseFormat(t *testing.T) {
+	// The rejection must be scoped to the declaration itself: a persona that
+	// declares nothing still loads.
+	const y = "name: sample\nprovider: openrouter\nmodel: anthropic/claude-opus-4.8\n"
+	require.NoError(t, ValidateCommunityPersonaYAML("sample", []byte(y)))
+}

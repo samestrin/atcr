@@ -50,8 +50,10 @@ import (
 // degrading.
 //
 // For a FALLBACK it is not. A fallback never resolves a persona of its own —
-// buildChain seeds it with `fbPrompt := primary.Prompt`, inheriting
-// the primary's already-rendered text verbatim — so its `persona:` ref is dead at
+// buildChain seeds it with `fbPrompt := primary.swap.rebuildUnswapped(primary.Prompt)`,
+// i.e. the primary's rendered text with any response_format swap undone, then
+// re-swaps per fallback via `promptForResponseFormatWithSpan` (internal/fanout/review.go) —
+// so its `persona:` ref is dead at
 // review time and a broken one costs nothing there. A fallback-only agent can sit
 // in this list while review runs fine. That is still worth reporting: the ref is live for `doctor`, for
 // any future direct promotion of that agent onto a roster, and as a plain

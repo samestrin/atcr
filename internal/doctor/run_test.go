@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -22,6 +23,21 @@ type fakeCompleter struct {
 	mu    sync.Mutex
 	calls map[string]int
 	fn    func(inv llmclient.Invocation) (string, error)
+	// chatFn scripts Chat; chats records every Chat call. A nil chatFn fails the
+	// call, so a probe that should not have run shows up as a result, not a panic.
+	chatFn func(inv llmclient.Invocation, msgs []llmclient.Message, tools []llmclient.ToolDef) (*llmclient.ChatResponse, error)
+	chats  []chatCall
+}
+
+// chatCall is one recorded Chat invocation.
+type chatCall struct {
+	inv   llmclient.Invocation
+	msgs  []llmclient.Message
+	tools []llmclient.ToolDef
+	// ctxHasDeadline records that the caller forwarded a context carrying a
+	// deadline, so a test can pin the per-call timeout the probe is required to
+	// apply.
+	ctxHasDeadline bool
 }
 
 func newFake(fn func(inv llmclient.Invocation) (string, error)) *fakeCompleter {
@@ -33,6 +49,23 @@ func (f *fakeCompleter) Complete(_ context.Context, inv llmclient.Invocation) (s
 	f.calls[inv.Model]++
 	f.mu.Unlock()
 	return f.fn(inv)
+}
+
+func (f *fakeCompleter) Chat(ctx context.Context, inv llmclient.Invocation, msgs []llmclient.Message, tools []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+	f.mu.Lock()
+	f.chats = append(f.chats, chatCall{inv: inv, msgs: msgs, tools: tools, ctxHasDeadline: ctx != nil && func() bool { _, ok := ctx.Deadline(); return ok }()})
+	fn := f.chatFn
+	f.mu.Unlock()
+	if fn == nil {
+		return nil, errors.New("fakeCompleter: unexpected Chat call")
+	}
+	return fn(inv, msgs, tools)
+}
+
+func (f *fakeCompleter) chatCalls() []chatCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]chatCall(nil), f.chats...)
 }
 
 func (f *fakeCompleter) count(model string) int {

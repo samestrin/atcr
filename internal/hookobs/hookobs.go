@@ -74,6 +74,12 @@ type Invocation struct {
 	Prompt   string
 	Messages []Message
 	Response string
+	// ResponseFormat is the declared JSON output mode the request carried
+	// ("json_object" when the agent declared response_format, empty otherwise).
+	// A provider 400 caused by the declaration is otherwise indistinguishable
+	// from any other failure: without it the record cannot answer "what output
+	// contract was this call made under".
+	ResponseFormat string
 	// ResponseToolCalls is the tool calls the assistant requested on this turn.
 	// A tool-enabled agent's "response" is frequently a tool call with no text
 	// at all, so a record omitting these would misreport the exchange.
@@ -332,17 +338,18 @@ func (o *observingClient) base(ctx context.Context, inv llmclient.Invocation, st
 	}
 	c := CallFrom(ctx)
 	return Invocation{
-		RunID:       c.RunID,
-		AgentName:   c.AgentName,
-		Stage:       c.Stage,
-		CodeContext: c.CodeContext,
-		Model:       inv.Model,
-		Provider:    provider,
-		BaseURL:     endpoint,
-		Prompt:      inv.Prompt,
-		Temperature: copyFloat64(inv.Temperature),
-		MaxTokens:   copyInt(inv.MaxTokens),
-		StartedAt:   start.UTC(),
+		RunID:          c.RunID,
+		AgentName:      c.AgentName,
+		Stage:          c.Stage,
+		CodeContext:    c.CodeContext,
+		Model:          inv.Model,
+		Provider:       provider,
+		BaseURL:        endpoint,
+		Prompt:         inv.Prompt,
+		ResponseFormat: inv.ResponseFormat,
+		Temperature:    copyFloat64(inv.Temperature),
+		MaxTokens:      copyInt(inv.MaxTokens),
+		StartedAt:      start.UTC(),
 	}
 }
 

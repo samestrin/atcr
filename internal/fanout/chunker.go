@@ -266,11 +266,38 @@ func promoteDiffTruncation(r Result) Result {
 	return r
 }
 
+// chunkBoundaryLine delimits chunk outputs in a chunked persona's merged
+// review.md (joinChunkContents). Findings are parsed per chunk
+// (Result.parseFindings), so a chunk cut off inside a ```json block must not
+// mask the next chunk's prose in consumers that re-scan the joined text —
+// reconcile's justification reader scopes its fence/JSON mask and bare-value
+// span scans to marker-bounded segments. The literal is mirrored (not imported)
+// by internal/reconcile's chunkBoundaryLine, which pins it to this exact string;
+// changing one requires changing both. An HTML comment so rendered markdown
+// hides it, and it carries no backtick/tilde run a fence scanner could read as
+// a marker.
+const chunkBoundaryLine = "<!-- atcr:chunk-boundary -->"
+
+// joinChunkContents newline-joins chunk outputs, inserting chunkBoundaryLine
+// between them when more than one chunk produced content. Fewer than two
+// content chunks join exactly as before, so a single-call persona's review.md
+// is byte-identical to its model output.
+func joinChunkContents(contents []string) string {
+	if len(contents) < 2 {
+		return strings.Join(contents, "\n")
+	}
+	return strings.Join(contents, "\n"+chunkBoundaryLine+"\n")
+}
+
 // mergeResultGroup folds N chunk results for one persona into a single result.
-// Content is the newline-joined non-empty chunk outputs, kept for review.md;
-// findings are parsed per chunk from chunkContents (Result.parseFindings) and
-// unioned, because one parse of the joined text lets a chunk cut off inside a
-// ```json block or an unfenced array swallow the next chunk (TD-048). Status is
+// Content is the newline-joined non-empty chunk outputs, delimited by
+// chunkBoundaryLine when more than one chunk produced content, kept for
+// review.md; findings are parsed per chunk from chunkContents
+// (Result.parseFindings) and unioned, because one parse of the joined text lets
+// a chunk cut off inside a ```json block or an unfenced array swallow the next
+// chunk (TD-048). The delimiter lets review.md consumers that re-scan the
+// joined text (reconcile's justification reader) scope their scans per chunk
+// the same way; a single-call persona's review.md stays byte-identical. Status is
 // OK when ANY chunk succeeded (the persona produced findings from at least one
 // bin — a partial-success the reviewer legitimately contributes); otherwise it
 // is Timeout when any chunk timed out, else Failed, carrying the first error.
@@ -407,7 +434,7 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 			}
 		}
 	}
-	out.Content = strings.Join(contents, "\n")
+	out.Content = joinChunkContents(contents)
 	out.chunkContents = contents
 	// The persona-level flag keeps its documented meaning: content with zero
 	// parseable findings in total. One garbled chunk beside a chunk with findings

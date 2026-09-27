@@ -1813,3 +1813,34 @@ func TestDebtResolve_NewStatusesReachAggregateQualitySignal(t *testing.T) {
 		})
 	}
 }
+
+// TD (sprint 35.16.11.2): isRecordedRationale fenced with a plain ``` toggle,
+// while reconcile's mirror (justification.go fenceRun/closesFence) honors ~~~
+// and the CommonMark run-length rule. An excerpt that is ALL quoted example —
+// an inner ``` inside a ````md fence, or the released tail of a dangling ~~~
+// fence — was accepted as a recorded wontfix rationale.
+func TestIsRecordedRationale_MatchesReconcileFenceGrammar(t *testing.T) {
+	cases := []struct {
+		name  string
+		text  string
+		match bool
+	}{
+		// Real reviewer prose, in and out of terminated quotes, still matches.
+		{"plain prose", "The reviewer noted the nil check is missing.", true},
+		{"prose outside backtick quote", "prose line\n```\nquoted\n```\n", true},
+		{"prose outside tilde quote", "prose\n~~~\nquoted\n~~~\n", true},
+		// All-quoted-example shapes must NOT match.
+		{"inner fence inside a longer opener", "````md\nexample\n```\nmore example\n```", false},
+		{"dangling tilde tail", "~~~\nquoted example text", false},
+		{"dangling backtick opener", "```\nsome quoted example text", false},
+		{"terminated tilde quote only", "~~~\nquoted\n~~~", false},
+		// A ~~~ line inside a ``` quote does not close it: the text after it is
+		// still quoted example.
+		{"tilde line inside backtick quote", "```\nexample\n~~~\nstill quoted example text", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.match, isRecordedRationale(tc.text))
+		})
+	}
+}

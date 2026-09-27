@@ -93,12 +93,22 @@ type communityPersonaFile struct {
 // duplicated key. So the schema admits them and this guard removes them, which
 // keeps the strict decode's unknown-key behavior untouched.
 //
-// context_window_tokens is the only member today: it describes a proxy-local
+// context_window_tokens is one member: it describes a proxy-local
 // alias's real window (config.go's ContextWindowTokens — "proxy-LOCAL and
 // meaningless to any other atcr user"). Installed verbatim onto a consumer whose
 // proxy serves that model at 32,768, an author's 128,000 declaration resolves
 // AHEAD of the static table and produces guaranteed over-window payloads — the
-// one direction the Conservatism NFR forbids. Rejecting at validation means the
+// one direction the Conservatism NFR forbids.
+//
+// response_format is the other: its own doc (config.go's ResponseFormat) defines
+// it as a claim about the endpoint the CONSUMER resolves — "this agent's model
+// honors the OpenAI-compatible response_format request field". A published
+// json_object declaration imposes that contract on every consumer's review
+// calls, and a provider that 400s on it (or silently ignores it, breaking the
+// declared JSON mode) fails a lane the consumer never chose, bypassing their own
+// doctor verification. Each consumer opts in on their own agents instead.
+//
+// Rejecting at validation means the
 // persona never reaches disk (internal/personas/install.go writes only after
 // this returns nil), rather than being silently stripped after the fact.
 func rejectMachineLocalFields(name string, cfg AgentConfig) error {
@@ -106,6 +116,11 @@ func rejectMachineLocalFields(name string, cfg AgentConfig) error {
 		return fmt.Errorf("community persona %q must not declare context_window_tokens: "+
 			"the window of a proxy-local model alias is specific to the machine that authored it, "+
 			"so each consumer declares it in their own registry", name)
+	}
+	if cfg.ResponseFormat != "" {
+		return fmt.Errorf("community persona %q must not declare response_format: "+
+			"whether a model honors the response_format request field is specific to the "+
+			"endpoint each consumer resolves, so each consumer declares it on their own agents", name)
 	}
 	return nil
 }

@@ -165,8 +165,18 @@ func nonOKStatus(status string) string {
 // investigate the code), SupportsFC and the per-call budgets are forwarded from
 // the AgentConfig, and the provider's BaseURL/APIKeyEnv are threaded onto the
 // Invocation so the call routes correctly.
+//
+// response_format is the exception: it is sent only on the judge seat, whose
+// ruling is parsed as a JSON object. Proposer and challenger statements are free
+// text pasted into later prompts, so a forced object shape would corrupt them.
+// The gate reads the seat's Label, not the agent, because the same agent can be
+// judge on one item and proposer on another.
 func buildDebateAgent(seat Caster, prompt string) fanout.Agent {
 	c := seat.Config
+	var responseFormat string
+	if seat.Label == LabelJudge {
+		responseFormat = c.ResponseFormat
+	}
 	return fanout.Agent{
 		Name:             seat.Agent,
 		Provider:         c.Provider,
@@ -189,7 +199,8 @@ func buildDebateAgent(seat Caster, prompt string) fanout.Agent {
 			// that finishes mid-reasoning returns no parseable outcome and the item
 			// is recorded unresolved while the run reports success. The DECLARATION
 			// only; a nil pointer keeps the provider default.
-			MaxTokens: c.MaxTokens,
+			MaxTokens:      c.MaxTokens,
+			ResponseFormat: responseFormat,
 		},
 	}
 }

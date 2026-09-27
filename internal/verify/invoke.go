@@ -384,6 +384,10 @@ func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool) (agent fanout.
 			// — a separate decision on separate evidence. A nil pointer keeps
 			// today's behaviour exactly.
 			MaxTokens: c.MaxTokens,
+			// response_format: the skeptic's OWN declaration, with no lane-level
+			// override. The verdict is already a JSON object, so no prompt swap is
+			// needed: parseVerdict reads a bare, unfenced object.
+			ResponseFormat: c.ResponseFormat,
 		},
 	}, derived
 }
