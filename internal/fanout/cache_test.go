@@ -16,6 +16,7 @@ import (
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // cacheableSlot builds a non-serial, non-tool slot whose primary carries the
@@ -547,4 +548,30 @@ func TestBuildFallbackAgent_CarriesAndKeysOnItsOwnThinking(t *testing.T) {
 		assert.Equal(t, recompute(fb, fallbackDecl), fb.CacheKey)
 		assert.NotEqual(t, recompute(fb, decl{}), fb.CacheKey)
 	})
+}
+
+// TestWithThinkingFixtures_AreLoadable pins the sprint's thinking fixtures to the
+// real load validator. The anthropic-thinking-on fixtures set greta's declaration
+// while her roster config carries Temperature 0.7 and (in toolCfg) SupportsFC true
+// — a combination validateThinking rejects at load on two counts. These tests
+// exercised wiring for a config that could never load; this test fails until the
+// helper (or the roster) makes the declaration match what a registry load accepts.
+func TestWithThinkingFixtures_AreLoadable(t *testing.T) {
+	decls := []struct{ thinking, level, style string }{
+		{"on", "low", "anthropic"},  // TestRenderAgent_PrimaryCarriesAndKeysOnItsOwnThinking
+		{"on", "high", "anthropic"}, // TestBuildFallbackAgent_CarriesAndKeysOnItsOwnThinking + the refit arm
+	}
+	rosters := map[string]*ReviewConfig{
+		"toolCfg": toolCfg(),
+		"sizing":  declaredWindowRoster(t, 128000),
+	}
+	for rname, cfg := range rosters {
+		for _, d := range decls {
+			withThinking(cfg, "greta", d.thinking, d.level, d.style)
+			data, err := yaml.Marshal(cfg.Registry.Agents["greta"])
+			require.NoError(t, err)
+			err = registry.ValidateAgentYAML("greta", data)
+			assert.NoError(t, err, "roster %s: greta with thinking=%q level=%q style=%q must be a loadable declaration; validateAgent said: %v", rname, d.thinking, d.level, d.style, err)
+		}
+	}
 }
