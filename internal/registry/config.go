@@ -1253,9 +1253,12 @@ func validateThinking(name string, a AgentConfig) []error {
 		errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q with thinking on needs temperature 1: remove temperature or set it to 1", name, ThinkingStyleAnthropic))
 	}
 	// Anthropic requires the prior thinking blocks on a tool-use turn, and the
-	// tool loop does not send reasoning back in its history.
-	if a.ThinkingStyle == ThinkingStyleAnthropic && thinkingOn && a.Tools {
-		errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q with thinking on cannot use tools: the tool loop does not send reasoning back, which Anthropic requires; set tools: false or thinking: off", name, ThinkingStyleAnthropic))
+	// tool loop does not send reasoning back in its history. The skeptic and
+	// debate seats force tools on and a fallback takes its primary's tools, so
+	// the agent's own tools key does not keep it out of the loop; only its
+	// model's function-calling declaration does.
+	if a.ThinkingStyle == ThinkingStyleAnthropic && thinkingOn && a.SupportsFC {
+		errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q with thinking on cannot use supports_function_calling: true: the tool loop does not send reasoning back, which Anthropic requires; set supports_function_calling: false or thinking: off", name, ThinkingStyleAnthropic))
 	}
 	return errs
 }
