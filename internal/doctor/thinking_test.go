@@ -163,6 +163,17 @@ func TestRun_ThinkingVerdict(t *testing.T) {
 			wantStatus: ThinkingNotHonored, wantCalls: 1, wantDetail: []string{"thinking: on"}},
 		{name: "on, silent, control thinks", thinking: "on", style: "qwen", declared: silent, control: thinks,
 			wantStatus: ThinkingNotHonored, wantCalls: 2},
+		// Phase 4 gate decision (option A): a level legitimately lowers reasoning, and
+		// a short prompt can need none, so silence under a level is not a failure.
+		// Reasoning on the control call shows the declaration changed the reply.
+		{name: "level, silent, control thinks", level: "low", style: "reasoning_effort", declared: silent, control: thinks,
+			wantStatus: ThinkingHonored, wantCalls: 2, wantDetail: []string{"changed the reply", "does not verify thinking_level low"}},
+		{name: "level, reported zero still sends the control", level: "low", style: "reasoning_effort", declared: reportedZero, control: thinks,
+			wantStatus: ThinkingHonored, wantCalls: 2},
+		{name: "level, silent, control reports zero", level: "low", style: "reasoning_effort", declared: silent, control: reportedZero,
+			wantStatus: ThinkingUnverified, wantCalls: 2},
+		{name: "on with level, silent, control thinks", thinking: "on", level: "high", style: "qwen", declared: silent, control: thinks,
+			wantStatus: ThinkingHonored, wantCalls: 2},
 		{name: "off, inline think tags", thinking: "off", style: "qwen", declared: inlineThink,
 			wantStatus: ThinkingNotHonored, wantCalls: 1, wantDetail: []string{"inline <think> reasoning in the content"}},
 		{name: "off, reported zero but inline think tags", thinking: "off", style: "qwen", declared: inlineThinkReportedZero,

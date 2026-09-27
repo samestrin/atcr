@@ -265,6 +265,7 @@ func TestRegistryDoc_ThinkingDoctorVerdict(t *testing.T) {
 	rows := map[string][]struct{ token, why string }{
 		doctor.ThinkingHonored: {
 			{"does not prove the declared level", "a signal under thinking: on shows only that thinking is on"},
+			{"a level with no signal while the control probe shows reasoning", "a level can legitimately remove reasoning on a short prompt"},
 		},
 		doctor.ThinkingNotHonored: {
 			{"a larger `max_tokens` or a different model", "the remedy the stderr warning suggests"},

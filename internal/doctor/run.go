@@ -881,7 +881,8 @@ func reasoningSignal(comp llmclient.Completion) string {
 // cannot report reasoning looks the same as one that did not reason.
 //
 // For thinking: on or a level, a signal shows only that thinking is on; it does
-// not prove the provider applied the declared level.
+// not prove the provider applied the declared level. Under a level, silence is
+// judged only against the control call (see leveled below).
 func probeThinking(ctx context.Context, c Completer, tgt Target, opts Options, budget int, comp llmclient.Completion, err error) (string, string) {
 	off := tgt.Thinking == registry.ThinkingOff
 	declared := thinkingDeclaration(tgt)
@@ -909,8 +910,13 @@ func probeThinking(ctx context.Context, c Completer, tgt Target, opts Options, b
 	if comp.Truncated {
 		return ThinkingUnverified, "the thinking probe reply was " + cutOff(budget) + " before a reasoning signal showed, so no verdict was reached"
 	}
+	// A level legitimately lowers reasoning, and the short marker prompt can need
+	// none, so silence under a level is no failure. Only reasoning on the control
+	// call says anything: the declaration changed the reply, so it was honored.
+	// A reported 0 is not enough here, since the level may have caused it.
+	leveled := !off && tgt.ThinkingLevel != ""
 	evidence := "a reasoning-token count of 0"
-	if !comp.Usage.ReasoningTokensReported {
+	if !comp.Usage.ReasoningTokensReported || leveled {
 		ctrl, cerr := thinkingControlCall(ctx, c, tgt, opts, budget)
 		if cerr != nil {
 			return ThinkingUnverified, noVerdict("the thinking control probe (the same prompt without the declaration)", cerr, tgt)
@@ -922,6 +928,12 @@ func probeThinking(ctx context.Context, c Completer, tgt Target, opts Options, b
 		}
 		if sig == "" && !ctrl.Usage.ReasoningTokensReported {
 			return ThinkingUnverified, "no reasoning signal under " + declared + ", and none from a control probe without the declaration either (no reasoning tokens, no reasoning content), so the provider may not report reasoning at all"
+		}
+		if leveled {
+			if sig == "" {
+				return ThinkingUnverified, "no reasoning signal under " + declared + ", and none from a control probe without the declaration either, so the probe cannot tell whether the level took effect"
+			}
+			return ThinkingHonored, "the declaration changed the reply: no reasoning under " + declared + ", " + sig + " without it; the probe does not verify thinking_level " + tgt.ThinkingLevel + " itself"
 		}
 		if sig == "" {
 			sig = "a reasoning-token count of 0"
