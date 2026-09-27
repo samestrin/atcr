@@ -156,7 +156,20 @@ type message struct {
 	// emitting any Content: the chain-of-thought still holds the draft review,
 	// which the severity-prefix extraction recovers downstream. omitempty keeps
 	// it out of request bodies, where this struct is also used.
-	ReasoningContent string `json:"reasoning_content,omitempty"`
+	ReasoningContent reasoningText `json:"reasoning_content,omitempty"`
+}
+
+// reasoningText decodes reasoning_content tolerantly: it is an optional side
+// channel, so a provider that sends it as anything but a string gets it
+// treated as absent rather than failing the whole response decode.
+type reasoningText string
+
+func (r *reasoningText) UnmarshalJSON(data []byte) error {
+	var s string
+	if json.Unmarshal(data, &s) == nil {
+		*r = reasoningText(s)
+	}
+	return nil
 }
 
 type chatRequest struct {
@@ -194,8 +207,8 @@ type UsageData struct {
 	// of CompletionTokens the model spent thinking. ReasoningTokensReported is
 	// true only when the provider sent a usable count, so a reported zero is
 	// distinct from a provider that never reports the field.
-	ReasoningTokens         int
-	ReasoningTokensReported bool
+	ReasoningTokens         int  `json:"-"`
+	ReasoningTokensReported bool `json:"-"`
 }
 
 // UnmarshalJSON tolerates malformed or non-integer usage blocks. Token usage is
@@ -365,7 +378,7 @@ func (c *Client) CompleteWithMeta(ctx context.Context, inv Invocation) (Completi
 		// chain-of-thought so the reviewer still contributes instead of returning
 		// an empty review. Truncated (captured above) is preserved so the caller
 		// still knows this salvaged content is partial.
-		content = ch.Message.ReasoningContent
+		content = string(ch.Message.ReasoningContent)
 	}
 	if content == "" {
 		// Both content and reasoning_content are empty: the provider said nothing.
@@ -373,7 +386,7 @@ func (c *Client) CompleteWithMeta(ctx context.Context, inv Invocation) (Completi
 		// Non-retryable — a re-request with the same budget would repeat the result.
 		return Completion{CallRecords: records, Truncated: truncated}, atcrerrors.NewSystemError(fmt.Errorf("provider returned an empty completion (no content or reasoning_content)"))
 	}
-	return Completion{Content: content, Usage: parsed.Usage, CallRecords: records, Truncated: truncated, Reasoning: ch.Message.ReasoningContent}, nil
+	return Completion{Content: content, Usage: parsed.Usage, CallRecords: records, Truncated: truncated, Reasoning: string(ch.Message.ReasoningContent)}, nil
 }
 
 // resolveKey reads the invocation's API key env var; the value is never logged.

@@ -353,3 +353,38 @@ func TestMessage_HasNoReasoningField(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(b), "reasoning")
 }
+
+// A malformed reasoning signal never fails the turn: a non-string
+// reasoning_content is treated as absent on both paths, and the answer and
+// tool calls survive. A tool-call turn with content:null still decodes through
+// the response wrapper.
+func TestReasoningSignal_NonStringIsAbsent(t *testing.T) {
+	for name, rc := range map[string]string{"object": `{"text":"x"}`, "array": `["x"]`, "number": `7`, "null": `null`} {
+		t.Run(name, func(t *testing.T) {
+			srv := reasoningServer(t, `{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"read_file","arguments":"{}"}}],"reasoning_content":`+rc+`}`)
+			inv := Invocation{BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m"}
+			s := "hi"
+			resp, err := fastRetry(srv.Client()).Chat(context.Background(), inv, []Message{{Role: "user", Content: &s}}, nil)
+			require.NoError(t, err)
+			assert.Nil(t, resp.Message.Content)
+			require.Len(t, resp.Message.ToolCalls, 1)
+			assert.Equal(t, "read_file", resp.Message.ToolCalls[0].Function.Name)
+			assert.Empty(t, resp.Reasoning)
+
+			srv2 := reasoningServer(t, `{"role":"assistant","content":"the review","reasoning_content":`+rc+`}`)
+			inv.BaseURL = srv2.URL
+			comp, err := fastRetry(srv2.Client()).CompleteWithMeta(context.Background(), inv)
+			require.NoError(t, err)
+			assert.Equal(t, "the review", comp.Content)
+			assert.Empty(t, comp.Reasoning)
+		})
+	}
+}
+
+// The reasoning fields are decode-only: UsageData has no wire key for them, so
+// a later serializer must choose their names on purpose.
+func TestUsageData_ReasoningFieldsNotSerialized(t *testing.T) {
+	b, err := json.Marshal(UsageData{PromptTokens: 1, ReasoningTokens: 5, ReasoningTokensReported: true})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"prompt_tokens":1,"completion_tokens":0}`, string(b))
+}
