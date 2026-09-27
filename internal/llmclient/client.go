@@ -391,13 +391,14 @@ func (c *Client) CompleteWithMeta(ctx context.Context, inv Invocation) (Completi
 		// chain-of-thought so the reviewer still contributes instead of returning
 		// an empty review. Truncated (captured above) is preserved so the caller
 		// still knows this salvaged content is partial.
-		content = string(ch.Message.ReasoningContent)
+		content = reasoningOf(ch.Message.ReasoningContent, ch.Message.Reasoning)
 	}
 	if content == "" {
-		// Both content and reasoning_content are empty: the provider said nothing.
-		// Fail loudly so callers cannot mistake silence for a clean/empty review.
-		// Non-retryable — a re-request with the same budget would repeat the result.
-		return Completion{CallRecords: records, Truncated: truncated}, atcrerrors.NewSystemError(fmt.Errorf("provider returned an empty completion (no content or reasoning_content)"))
+		// Content, reasoning_content, and reasoning are all empty: the provider
+		// said nothing. Fail loudly so callers cannot mistake silence for a
+		// clean/empty review. Non-retryable — a re-request with the same budget
+		// would repeat the result.
+		return Completion{CallRecords: records, Truncated: truncated}, atcrerrors.NewSystemError(fmt.Errorf("provider returned an empty completion (no content or reasoning)"))
 	}
 	return Completion{Content: content, Usage: parsed.Usage, CallRecords: records, Truncated: truncated, Reasoning: reasoningOf(ch.Message.ReasoningContent, ch.Message.Reasoning)}, nil
 }
