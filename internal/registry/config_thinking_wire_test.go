@@ -1,6 +1,8 @@
 package registry
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -169,4 +171,54 @@ func TestValidateAgent_AnthropicThinkingWithFunctionCalling(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
+
+// TD row config.go:1200: load warnings are collected during validation and
+// emitted once, after ALL validation succeeds — a load that fails must not
+// print advice for config that never runs. Today the reasoning_effort clamp
+// warning is written mid-validation, so a registry with any other fault still
+// emits it.
+func TestThinkingWarnings_EmittedOnlyOnFullyValidLoad(t *testing.T) {
+	// The clamp warning triggers (reasoning_effort + max), but the agent has an
+	// unrelated fault, so the load errors and no warning may be written.
+	buf := captureThinkingWarnings(t)
+	_, err := LoadRegistry(writeRegistry(t, thinkingRegistry(thinkingAgent("", ThinkingLevelMax, ThinkingStyleReasoningEffort)+"    payload: bogus\n")))
+	require.Error(t, err)
+	assert.Empty(t, buf.String(), "a failed load must not emit thinking warnings, got %q", buf.String())
+
+	// The same agent without the fault loads and emits exactly once.
+	buf2 := captureThinkingWarnings(t)
+	_, err = LoadRegistry(writeRegistry(t, thinkingRegistry(thinkingAgent("", ThinkingLevelMax, ThinkingStyleReasoningEffort))))
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(buf2.String(), "\n"), "exactly one warning on a valid load: %q", buf2.String())
+}
+
+// The merged load emits the effective roster's warnings exactly once.
+func TestThinkingWarnings_EmittedOnceFromMergedLoad(t *testing.T) {
+	// The overlay declares agents only, referencing the user-tier provider p —
+	// a project agent on a user provider passes the trust gate freely.
+	writeProject := func(t *testing.T, agents string) string {
+		dir := t.TempDir()
+		path := filepath.Join(dir, ".atcr")
+		require.NoError(t, os.MkdirAll(path, 0o755))
+		body := "agents:\n" + agents
+		require.NoError(t, os.WriteFile(filepath.Join(path, "registry.yaml"), []byte(body), 0o600))
+		return dir
+	}
+	userBody := thinkingRegistry(thinkingAgent("", ThinkingLevelMax, ThinkingStyleReasoningEffort))
+	t.Run("user tier alone", func(t *testing.T) {
+		buf := captureThinkingWarnings(t)
+		_, err := LoadMergedRegistry(writeRegistry(t, userBody), t.TempDir())
+		require.NoError(t, err)
+		assert.Equal(t, 1, strings.Count(buf.String(), "\n"), "exactly one warning from the merged load: %q", buf.String())
+	})
+	t.Run("project overlay shadows the warning agent", func(t *testing.T) {
+		buf := captureThinkingWarnings(t)
+		// The overlay replaces myagent with a low-level declaration that warns
+		// about nothing; the user-tier warning must not fire.
+		root := writeProject(t, thinkingAgent("", ThinkingLevelLow, ThinkingStyleReasoningEffort))
+		_, err := LoadMergedRegistry(writeRegistry(t, userBody), root)
+		require.NoError(t, err)
+		assert.Empty(t, buf.String(), "the shadowing declaration's state governs, got %q", buf.String())
+	})
 }
