@@ -123,25 +123,32 @@ func TestValidateAgent_AnthropicThinkingTemperature(t *testing.T) {
 }
 
 // The tool loop does not send reasoning back on history turns, and Anthropic
-// requires the prior thinking blocks on a tool-use turn, so anthropic thinking
-// on with tools fails the load. Off, other styles, and no tools still load.
-func TestValidateAgent_AnthropicThinkingWithTools(t *testing.T) {
-	const wantErr = `agent 'myagent': thinking_style "anthropic" with thinking on cannot use tools: the tool loop does not send reasoning back, which Anthropic requires; set tools: false or thinking: off`
+// requires the prior thinking blocks on a tool-use turn. Any lane can put an
+// agent in the tool loop (the skeptic and debate seats force tools, and a
+// fallback takes its primary's tools), but only when the agent's own model
+// declares supports_function_calling, so that flag is the guard.
+func TestValidateAgent_AnthropicThinkingWithFunctionCalling(t *testing.T) {
+	const wantErr = `agent 'myagent': thinking_style "anthropic" with thinking on cannot use supports_function_calling: true: the tool loop does not send reasoning back, which Anthropic requires; set supports_function_calling: false or thinking: off`
 	cases := []struct {
 		name, thinking, level, style string
-		tools, wantErr               bool
+		fc, tools, wantErr           bool
 	}{
-		{"anthropic on tools", ThinkingOn, "", ThinkingStyleAnthropic, true, true},
-		{"anthropic level alone tools", "", ThinkingLevelLow, ThinkingStyleAnthropic, true, true},
-		{"anthropic off tools", ThinkingOff, "", ThinkingStyleAnthropic, true, false},
-		{"anthropic on no tools", ThinkingOn, "", ThinkingStyleAnthropic, false, false},
-		{"qwen on tools", ThinkingOn, "", ThinkingStyleQwen, true, false},
-		{"anthropic style alone tools", "", "", ThinkingStyleAnthropic, true, false},
+		{"on fc tools", ThinkingOn, "", ThinkingStyleAnthropic, true, true, true},
+		{"on fc no tools (skeptic, debate, fallback lanes)", ThinkingOn, "", ThinkingStyleAnthropic, true, false, true},
+		{"level alone fc", "", ThinkingLevelLow, ThinkingStyleAnthropic, true, false, true},
+		{"on tools without fc degrades to single-shot", ThinkingOn, "", ThinkingStyleAnthropic, false, true, false},
+		{"on no fc", ThinkingOn, "", ThinkingStyleAnthropic, false, false, false},
+		{"off fc", ThinkingOff, "", ThinkingStyleAnthropic, true, true, false},
+		{"qwen on fc", ThinkingOn, "", ThinkingStyleQwen, true, true, false},
+		{"style alone fc", "", "", ThinkingStyleAnthropic, true, true, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			captureThinkingWarnings(t)
 			agent := thinkingAgent(tc.thinking, tc.level, tc.style) + "    max_tokens: 65536\n"
+			if tc.fc {
+				agent += "    supports_function_calling: true\n"
+			}
 			if tc.tools {
 				agent += "    tools: true\n"
 			}
