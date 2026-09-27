@@ -132,13 +132,16 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 	// object, so a DRAFT verdict inside cut-off chain-of-thought would become a
 	// real confirmed/refuted and count toward reviewer precision as a full read.
 	// The executor lane propagates the same marker (executor.go:751-757); this
-	// lane collapses to unverifiable with the named note and the caveat on the
-	// verdict object — never a separate tier, never a budget trip (the model
-	// ran out of tokens, not out of budget).
+	// lane collapses to unverifiable with the named note. Deliberately NOT
+	// v.Truncated: that flag means "answered from a shortened tool READ" (a
+	// derived byte-budget trip) and pipeline.go's re-verify backfill credits a
+	// tool_budget_bytes trip from it — a model-token cutoff is not a byte trip,
+	// and marking it so would fabricate one on the audit row. The verdict is
+	// unverifiable, so no precision is charged and the note carries the reason.
 	if res.ResponseTruncated {
 		logger.Warn("skeptic failed", "skeptic", skeptic.Name, "class", "response_truncated")
 		logger.Debug("skeptic failure detail", "skeptic", skeptic.Name, "class", "response_truncated", "detail", "model reply cut off on finish_reason length; draft verdict not trusted")
-		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "response_truncated", Skeptic: skeptic.Name, Truncated: true}, res.TrippedBudgets, nil
+		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "response_truncated", Skeptic: skeptic.Name}, res.TrippedBudgets, nil
 	}
 
 	v, _ := parseVerdict(res.Content)

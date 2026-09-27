@@ -244,7 +244,8 @@ func TestInvokeSkeptic_TruncatedModelResponse(t *testing.T) {
 	assert.NotEqual(t, verdictConfirmed, v.Verdict, "a verdict parsed from a truncated reply must not be confirmed")
 	assert.NotEqual(t, verdictRefuted, v.Verdict, "a verdict parsed from a truncated reply must not be refuted")
 	assert.Equal(t, verdictUnverifiable, v.Verdict)
-	assert.True(t, v.Truncated, "the verdict object must carry the truncation caveat")
+	assert.Equal(t, "response_truncated", v.Notes, "the named note must carry the truncation reason")
+	assert.False(t, v.Truncated, "the Truncated flag means a shortened tool READ (byte budget), not a model-token cutoff — see invoke.go")
 	assert.Empty(t, tripped, "model-response truncation is not a budget trip")
 }
 
@@ -260,7 +261,7 @@ func TestInvokeSkeptic_TruncatedModelResponse_ToolLoop(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, v)
 	assert.Equal(t, verdictUnverifiable, v.Verdict, "a truncated tool-loop final answer must not become a real verdict")
-	assert.True(t, v.Truncated)
+	assert.Equal(t, "response_truncated", v.Notes)
 }
 
 // TestInvokeSkeptic_NoTrippedBudgetsOnCleanVerdict: a verdict reached without a
