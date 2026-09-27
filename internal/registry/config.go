@@ -785,6 +785,13 @@ type Registry struct {
 	PayloadMode       string `yaml:"payload_mode,omitempty"`
 	TimeoutSecs       *int   `yaml:"timeout_secs,omitempty"`
 	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
+	// validationWarnings buffers the thinking load warnings collected during
+	// validate() until a load entry point emits them after ALL validation
+	// succeeds, so a failed load never prints advice for config that never
+	// runs and a merged load emits the effective roster's warnings exactly
+	// once (TD row internal/registry/config.go:1200). yaml:"-" keeps it out
+	// of every decode and encode.
+	validationWarnings []string `yaml:"-"`
 	// ChunkByteBudget caps the PER-CHUNK payload independently of the global
 	// payload cap above. Unset (nil) inherits the resolved PayloadByteBudget, so a
 	// config that never mentions it is sized exactly as before this key existed.
@@ -897,8 +904,24 @@ func LoadRegistry(path string) (*Registry, error) {
 	if err := reg.ValidateFallbacks(); err != nil {
 		return nil, fmt.Errorf("%s: %w", base, err)
 	}
+	reg.emitValidationWarnings()
 	reg.applyDefaults()
 	return reg, nil
+}
+
+// emitValidationWarnings writes the warnings collected during validation to
+// thinkingWarnWriter and clears the buffer. The load entry points
+// (LoadRegistry, LoadMergedRegistry) call it only after every validation
+// stage has passed, so a failed load never prints advice for config that
+// never runs and each load emits its warnings exactly once (TD row
+// internal/registry/config.go:1200). Merged loads buffer during validate()
+// over the post-merge roster, so the warnings describe the config that
+// actually runs, never a user-tier entry a project overlay shadows.
+func (r *Registry) emitValidationWarnings() {
+	for _, w := range r.validationWarnings {
+		_, _ = fmt.Fprint(thinkingWarnWriter, w)
+	}
+	r.validationWarnings = nil
 }
 
 // validate checks required fields and reference integrity. It accumulates every
@@ -1219,8 +1242,12 @@ func validateProvider(name string, p Provider) []error {
 // review. A bare YAML true/false decodes as "true"/"false" and is rejected
 // here like any other unknown value. max under reasoning_effort is legal: the
 // wire layer sends it as high, so the loader warns instead of failing.
-func validateThinking(name string, a AgentConfig) []error {
+// Warnings are returned alongside the faults and buffered by the caller —
+// they are emitted by the load entry points only after all validation
+// succeeds (TD row internal/registry/config.go:1200).
+func validateThinking(name string, a AgentConfig) ([]error, []string) {
 	var errs []error
+	var warns []string
 	if a.Thinking != "" && !slices.Contains(thinkingValues, a.Thinking) {
 		errs = append(errs, agentErrf(name, "agent '%s': invalid thinking %q: must be %q or %q or unset", name, a.Thinking, ThinkingOn, ThinkingOff))
 	}
@@ -1248,9 +1275,9 @@ func validateThinking(name string, a AgentConfig) []error {
 		case a.Thinking == ThinkingOn && a.ThinkingLevel == "":
 			errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q needs a thinking_level: set thinking_level to %s, %s, %s, or %s", name, ThinkingStyleReasoningEffort, ThinkingLevelLow, ThinkingLevelMedium, ThinkingLevelHigh, ThinkingLevelMax))
 		case a.ThinkingLevel == ThinkingLevelMax:
-			_, _ = fmt.Fprintf(thinkingWarnWriter,
+			warns = append(warns, fmt.Sprintf(
 				"warning: agent '%s': thinking_level %q is sent as %q under thinking_style %q, the highest value that style accepts\n",
-				name, ThinkingLevelMax, ThinkingLevelHigh, ThinkingStyleReasoningEffort)
+				name, ThinkingLevelMax, ThinkingLevelHigh, ThinkingStyleReasoningEffort))
 		}
 	}
 	// Anthropic rejects extended thinking with any temperature but 1; the wire
@@ -1292,7 +1319,7 @@ func validateThinking(name string, a AgentConfig) []error {
 			}
 		}
 	}
-	return errs
+	return errs, warns
 }
 
 // warnThinkingBudget warns (never errors) when the thinking budget an agent
@@ -1302,11 +1329,13 @@ func validateThinking(name string, a AgentConfig) []error {
 // internal/registry/config.go:1223). For the anthropic style the misfit is a
 // hard load error in validateThinking (Anthropic rejects
 // budget_tokens >= max_tokens), so this warning covers only the styles whose
-// budget is advisory.
-func warnThinkingBudget(name string, a AgentConfig) {
+// budget is advisory. The warning text is returned to the caller (buffered
+// until the load succeeds — TD row internal/registry/config.go:1200), not
+// written directly.
+func warnThinkingBudget(name string, a AgentConfig) string {
 	budget := ThinkingBudgetTokens(a.Thinking, a.ThinkingLevel, a.ThinkingStyle)
 	if budget == 0 {
-		return
+		return ""
 	}
 	// The flag note is named in both branches (TD-010): at runtime --max-tokens
 	// overrides a declared max_tokens too, so the declared cap the warning
@@ -1316,13 +1345,13 @@ func warnThinkingBudget(name string, a AgentConfig) {
 		limit, source = *a.MaxTokens, " (--max-tokens can change it)"
 	}
 	if budget < limit {
-		return
+		return ""
 	}
 	level := a.ThinkingLevel
 	if level == "" {
 		level = ThinkingLevelMedium // anthropic on with no level
 	}
-	_, _ = fmt.Fprintf(thinkingWarnWriter,
+	return fmt.Sprintf(
 		"warning: agent '%s': thinking budget %d (thinking_level %q) is not below max_tokens %d%s; the budget shares the output cap, so raise max_tokens or lower thinking_level\n",
 		name, budget, level, limit, source)
 }
@@ -1364,7 +1393,14 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 	if a.ResponseFormat != "" && a.ResponseFormat != ResponseFormatJSONObject {
 		errs = append(errs, agentErrf(name, "agent '%s': invalid response_format %q: must be %q or unset", name, a.ResponseFormat, ResponseFormatJSONObject))
 	}
-	errs = append(errs, validateThinking(name, a)...)
+	terrs, twarns := validateThinking(name, a)
+	errs = append(errs, terrs...)
+	// Buffer the thinking warnings on the registry: the load entry points emit
+	// them once, after all validation succeeds (TD row
+	// internal/registry/config.go:1200). Like the old direct write, the clamp
+	// warning fires regardless of other faults; the budget warning stays
+	// gated on a fully valid agent.
+	r.validationWarnings = append(r.validationWarnings, twarns...)
 	if a.MaxTurns != nil && (*a.MaxTurns <= 0 || *a.MaxTurns > MaxAgentTurns) {
 		errs = append(errs, agentErrf(name, "agent '%s': max_turns must be within 1..%d", name, MaxAgentTurns))
 	}
@@ -1465,7 +1501,9 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 		errs = append(errs, agentErrf(name, "agent '%s': binding must be at most %d characters", name, MaxBindingLen))
 	}
 	if len(errs) == 0 {
-		warnThinkingBudget(name, a)
+		if w := warnThinkingBudget(name, a); w != "" {
+			r.validationWarnings = append(r.validationWarnings, w)
+		}
 	}
 	return errs
 }
