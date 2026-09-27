@@ -191,16 +191,16 @@ func TestRun_ThinkingVerdict(t *testing.T) {
 		// An empty think pair or blank reasoning is what a hybrid template emits
 		// when thinking is correctly off; it is not a signal.
 		{name: "off, empty think pair", thinking: "off", style: "qwen", declared: withEmptyThink, control: thinks,
-			wantStatus: ThinkingHonored, wantCalls: 2},
+			wantStatus: ThinkingHonored, wantCalls: 2, notDetail: []string{"inline <think> reasoning in the content", "cut off"}},
 		{name: "off, blank reasoning", thinking: "off", style: "template_kwargs", declared: withMarker(llmclient.Completion{Reasoning: " \n "}), control: thinks,
-			wantStatus: ThinkingHonored, wantCalls: 2},
+			wantStatus: ThinkingHonored, wantCalls: 2, notDetail: []string{"reasoning content", "inline <think> reasoning in the content", "cut off"}},
 		{name: "off, unclosed think with text", thinking: "off", style: "qwen", declared: llmclient.Completion{Content: "<think>still going"},
 			wantStatus: ThinkingNotHonored, wantCalls: 1},
 		// A stray closing tag with no opener can only be template noise on this
 		// probe (the marker prompt contains no <think>), so it is not a signal —
 		// the model's actual answer must not be counted as reasoning.
 		{name: "off, closing tag only", thinking: "off", style: "qwen", declared: llmclient.Completion{Content: "planning the reply</think>\n" + Marker(testNonce)}, control: thinks,
-			wantStatus: ThinkingHonored, wantCalls: 2},
+			wantStatus: ThinkingHonored, wantCalls: 2, notDetail: []string{"inline <think> reasoning in the content"}},
 		// An empty first pair must not hide a real think block after it.
 		{name: "off, empty pair then real think block", thinking: "off", style: "qwen", declared: llmclient.Completion{Content: "<think></think><think>real reasoning</think>answer"},
 			wantStatus: ThinkingNotHonored, wantCalls: 1, wantDetail: []string{"inline <think> reasoning in the content"}},
@@ -218,6 +218,9 @@ func TestRun_ThinkingVerdict(t *testing.T) {
 			assert.Len(t, fake.completeCalls(), tc.wantCalls)
 			for _, want := range tc.wantDetail {
 				assert.Contains(t, a.ThinkingDetail, want)
+			}
+			for _, not := range tc.notDetail {
+				assert.NotContains(t, a.ThinkingDetail, not)
 			}
 			if a.Status == StatusOK {
 				assert.Equal(t, 0, rep.ExitCode, "a thinking verdict never changes the exit code")
