@@ -43,14 +43,65 @@ type anthropicThinking struct {
 	BudgetTokens int    `json:"budget_tokens,omitempty"`
 }
 
+// thinkingBudgets is the one level-to-budget table, read by the qwen
+// thinking_budget and anthropic budget_tokens fields.
+var thinkingBudgets = map[string]int{
+	ThinkingLevelLow:    2048,
+	ThinkingLevelMedium: 8192,
+	ThinkingLevelHigh:   16384,
+	ThinkingLevelMax:    32768,
+}
+
 // newThinkingFields maps a declared thinking setting onto its style's wire
-// members.
+// members. A level alone means on. Nothing is sent unless a style and either
+// thinking or a level are declared, and an unknown style is never coerced into
+// another style's shape. Legality is the registry's job, not this layer's.
 func newThinkingFields(thinking, level, style string) thinkingFields {
-	return thinkingFields{}
+	if thinking == "" && level == "" {
+		return thinkingFields{}
+	}
+	on := thinking == ThinkingOn || (thinking == "" && level != "")
+	var f thinkingFields
+	switch style {
+	case ThinkingStyleQwen:
+		f.EnableThinking = &on
+		if b, ok := thinkingBudgets[level]; ok && on {
+			f.ThinkingBudget = &b
+		}
+	case ThinkingStyleTemplateKwargs:
+		f.ChatTemplateKwargs = &chatTemplateKwargs{EnableThinking: &on}
+	case ThinkingStyleReasoningEffort:
+		// The style has no off value and accepts nothing above high.
+		if on && level != "" {
+			effort := level
+			if effort == ThinkingLevelMax {
+				effort = ThinkingLevelHigh
+			}
+			f.ReasoningEffort = &effort
+		}
+	case ThinkingStyleAnthropic:
+		if !on {
+			f.Thinking = &anthropicThinking{Type: "disabled"}
+			break
+		}
+		// Anthropic requires a budget when enabled, so on with no level takes medium.
+		if level == "" {
+			level = ThinkingLevelMedium
+		}
+		f.Thinking = &anthropicThinking{Type: "enabled", BudgetTokens: thinkingBudgets[level]}
+	}
+	return f
 }
 
 // ThinkingBudgetTokens returns the thinking budget the declared setting sends,
-// or 0 when it sends none.
+// or 0 when it sends none. It reads the same mapping the request body uses.
 func ThinkingBudgetTokens(thinking, level, style string) int {
+	f := newThinkingFields(thinking, level, style)
+	switch {
+	case f.ThinkingBudget != nil:
+		return *f.ThinkingBudget
+	case f.Thinking != nil:
+		return f.Thinking.BudgetTokens
+	}
 	return 0
 }

@@ -126,7 +126,8 @@ func TestValidateAgent_ReasoningEffortMaxWarns(t *testing.T) {
 	for _, style := range []string{ThinkingStyleQwen, ThinkingStyleAnthropic} {
 		t.Run(style, func(t *testing.T) {
 			buf := captureThinkingWarnings(t)
-			_, err := LoadRegistry(writeRegistry(t, thinkingRegistry(thinkingAgent("", ThinkingLevelMax, style))))
+			// A cap above the max budget keeps the separate budget warning quiet.
+			_, err := LoadRegistry(writeRegistry(t, thinkingRegistry(thinkingAgent("", ThinkingLevelMax, style)+"    max_tokens: 65536\n")))
 			require.NoError(t, err)
 			assert.Empty(t, buf.String(), "max under %s writes no warning", style)
 		})

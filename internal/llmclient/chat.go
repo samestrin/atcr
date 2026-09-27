@@ -156,6 +156,7 @@ func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, t
 		Temperature:    inv.Temperature,
 		MaxTokens:      inv.MaxTokens,
 		ResponseFormat: newResponseFormat(inv.ResponseFormat),
+		thinkingFields: newThinkingFields(inv.Thinking, inv.ThinkingLevel, inv.ThinkingStyle),
 	}
 	if len(toolDefs) > 0 {
 		req.Tools = toolDefs

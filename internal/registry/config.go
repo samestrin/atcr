@@ -3,6 +3,8 @@ package registry
 import (
 	"errors"
 	"fmt"
+	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/payload"
 	reclib "github.com/samestrin/atcr/reconcile"
 	"io"
 	"math"
@@ -20,7 +22,7 @@ import (
 // var so tests can capture it, mirroring insecureRegistryWarnWriter.
 var scopeVocabularyWarnWriter io.Writer = os.Stderr
 
-// thinkingWarnWriter is the sink for the thinking-level clamp warning; a var so
+// thinkingWarnWriter is the sink for the thinking load warnings; a var so
 // tests can capture it, mirroring scopeVocabularyWarnWriter. A test that swaps
 // it must not run in parallel.
 var thinkingWarnWriter io.Writer = os.Stderr
@@ -1208,7 +1210,35 @@ func validateThinking(name string, a AgentConfig) []error {
 				name, ThinkingLevelMax, ThinkingLevelHigh, ThinkingStyleReasoningEffort)
 		}
 	}
+	if len(errs) == 0 {
+		warnThinkingBudget(name, a)
+	}
 	return errs
+}
+
+// warnThinkingBudget warns (never errors) when the thinking budget an agent
+// sends is not below its output cap. The budget shares that cap, and Anthropic
+// rejects budget_tokens >= max_tokens. The cap is the declared max_tokens, else
+// the review default; the --max-tokens flag is not visible at load.
+func warnThinkingBudget(name string, a AgentConfig) {
+	budget := llmclient.ThinkingBudgetTokens(a.Thinking, a.ThinkingLevel, a.ThinkingStyle)
+	if budget == 0 {
+		return
+	}
+	limit, source := payload.DefaultOutputTokens, " (the default; --max-tokens can change it)"
+	if a.MaxTokens != nil {
+		limit, source = *a.MaxTokens, ""
+	}
+	if budget < limit {
+		return
+	}
+	level := a.ThinkingLevel
+	if level == "" {
+		level = ThinkingLevelMedium // anthropic on with no level
+	}
+	_, _ = fmt.Fprintf(thinkingWarnWriter,
+		"warning: agent '%s': thinking budget %d (thinking_level %q) is not below max_tokens %d%s; the budget shares the output cap, so raise max_tokens or lower thinking_level\n",
+		name, budget, level, limit, source)
 }
 
 // validateAgent returns every fault found in a single agent entry (Epic 4.2 /
