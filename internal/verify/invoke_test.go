@@ -83,6 +83,70 @@ func TestBuildSkepticAgent_ForwardsProviderAndBudgets(t *testing.T) {
 	assert.Equal(t, "the prompt", a.Invocation.Prompt)
 }
 
+// TestBuildSkepticAgent_ThinkingBudgetFitsUnderOutputCap locks the skeptic-lane
+// half of the budget/cap invariant: an anthropic thinking declaration sends
+// budget_tokens, and Anthropic rejects budget_tokens >= max_tokens. A skeptic
+// with no declared max_tokens previously sent the budget with NO cap, so the
+// provider's own (lower) default applied and EVERY call 400ed. The lane must
+// put a cap on the wire that the budget fits strictly under.
+func TestBuildSkepticAgent_ThinkingBudgetFitsUnderOutputCap(t *testing.T) {
+	t.Parallel()
+	sk := testSkeptic()
+	sk.Config.Thinking, sk.Config.ThinkingStyle = registry.ThinkingOn, registry.ThinkingStyleAnthropic
+	a, _ := buildSkepticAgent(sk, "prompt", false)
+	require.NotNil(t, a.Invocation.MaxTokens, "a thinking budget must not go on the wire without an output cap")
+	budget := registry.ThinkingBudgetTokens(a.Invocation.Thinking, a.Invocation.ThinkingLevel, a.Invocation.ThinkingStyle)
+	assert.Greater(t, *a.Invocation.MaxTokens, budget, "budget_tokens must be strictly below the max_tokens actually sent")
+}
+
+// TestBuildSkepticAgent_ThinkingBudgetClampedWhenAboveCap: a declared cap the
+// budget does not fit under downgrades the level to the largest one that fits —
+// a 400 on every call is worse than a smaller thinking budget.
+func TestBuildSkepticAgent_ThinkingBudgetClampedWhenAboveCap(t *testing.T) {
+	t.Parallel()
+	sk := testSkeptic()
+	sk.Config.Thinking, sk.Config.ThinkingLevel, sk.Config.ThinkingStyle = registry.ThinkingOn, registry.ThinkingLevelHigh, registry.ThinkingStyleAnthropic
+	sk.Config.MaxTokens = intPtr(8192) // high's 16384 budget cannot fit
+	a, _ := buildSkepticAgent(sk, "prompt", false)
+	require.NotNil(t, a.Invocation.MaxTokens)
+	assert.Equal(t, 8192, *a.Invocation.MaxTokens, "a declared cap is sent as-is")
+	budget := registry.ThinkingBudgetTokens(a.Invocation.Thinking, a.Invocation.ThinkingLevel, a.Invocation.ThinkingStyle)
+	assert.Less(t, budget, 8192, "the level must be downgraded so the budget fits under the declared cap")
+	assert.NotEmpty(t, a.Invocation.ThinkingLevel, "a downgrade keeps thinking on at a lower level")
+}
+
+// TestBuildSkepticAgent_ThinkingDroppedWhenNothingFits: below the smallest
+// anthropic budget no level fits, so the lane sends no thinking at all rather
+// than a request the provider rejects.
+func TestBuildSkepticAgent_ThinkingDroppedWhenNothingFits(t *testing.T) {
+	t.Parallel()
+	sk := testSkeptic()
+	sk.Config.Thinking, sk.Config.ThinkingLevel, sk.Config.ThinkingStyle = registry.ThinkingOn, registry.ThinkingLevelLow, registry.ThinkingStyleAnthropic
+	sk.Config.MaxTokens = intPtr(1024) // low's 2048 budget cannot fit; nothing smaller exists
+	a, _ := buildSkepticAgent(sk, "prompt", false)
+	assert.Empty(t, a.Invocation.Thinking, "no anthropic budget fits under a 1024 cap — thinking must not be sent")
+	assert.Empty(t, a.Invocation.ThinkingLevel)
+	budget := registry.ThinkingBudgetTokens(a.Invocation.Thinking, a.Invocation.ThinkingLevel, a.Invocation.ThinkingStyle)
+	assert.Equal(t, 0, budget)
+}
+
+// TestBuildSkepticAgent_NoCapForPlainUndeclaredSkeptic guards the documented
+// concern the fix must NOT regress: imposing a built-in output cap on every
+// UNDECLARED skeptic would truncate models at a value nothing measured. The
+// cap is added only when a thinking budget needs one.
+func TestBuildSkepticAgent_NoCapForPlainUndeclaredSkeptic(t *testing.T) {
+	t.Parallel()
+	a, _ := buildSkepticAgent(testSkeptic(), "prompt", false)
+	assert.Nil(t, a.Invocation.MaxTokens, "a skeptic with no thinking declaration keeps the provider default cap")
+	declared, _ := buildSkepticAgent(func() Skeptic {
+		sk := testSkeptic()
+		sk.Config.MaxTokens = intPtr(1234)
+		return sk
+	}(), "prompt", false)
+	require.NotNil(t, declared.Invocation.MaxTokens)
+	assert.Equal(t, 1234, *declared.Invocation.MaxTokens, "a declared cap is forwarded verbatim")
+}
+
 func TestInvokeSkeptic_Confirms(t *testing.T) {
 	t.Parallel()
 	cc := finalChat(`{"verdict": "confirmed", "reasoning": "evidence valid"}`)
