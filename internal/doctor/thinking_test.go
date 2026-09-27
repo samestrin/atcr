@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/registry"
@@ -227,6 +228,55 @@ func TestRun_ThinkingVerdict(t *testing.T) {
 
 // Q1 decision: the control call is the declared call minus the declaration — same
 // prompt, same cap, no thinking field.
+// deadlineCompleter records whether the context it received carried a deadline,
+// so a test can pin which calls the run's --timeout actually bounds.
+type deadlineCompleter struct {
+	hasDeadline bool
+	remaining   time.Duration
+}
+
+func (f *deadlineCompleter) CompleteWithMeta(ctx context.Context, inv llmclient.Invocation) (llmclient.Completion, error) {
+	if dl, ok := ctx.Deadline(); ok {
+		f.hasDeadline = true
+		f.remaining = time.Until(dl)
+	}
+	return llmclient.Completion{Content: Marker(testNonce)}, nil
+}
+
+func (f *deadlineCompleter) Chat(ctx context.Context, inv llmclient.Invocation, messages []llmclient.Message, toolDefs []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+	return nil, errors.New("not used")
+}
+
+// TD-019: the marker, response_format, and thinking control calls each apply
+// --timeout independently, so one slow target can hold its concurrency slot for
+// several timeouts. The bound is accepted and documented beside the control call
+// (run.go, thinkingControlCall) rather than restructured into one shared deadline;
+// this test pins that the control call really does carry the run deadline, that a
+// parent deadline survives, and that none is manufactured when no timeout is set.
+func TestThinkingControlCallCarriesTheRunDeadline(t *testing.T) {
+	t.Setenv(rfDoctorEnvK, thinkingKey)
+	tgt := Target{BaseURL: "https://api.example/v1", APIKeyEnv: rfDoctorEnvK, Model: "m"}
+
+	capped := &deadlineCompleter{}
+	_, err := thinkingControlCall(context.Background(), capped, tgt, Options{Nonce: testNonce, Timeout: 2 * time.Second}, 0)
+	require.NoError(t, err)
+	assert.True(t, capped.hasDeadline, "control call must carry the --timeout deadline")
+	assert.Greater(t, capped.remaining, time.Duration(0))
+	assert.LessOrEqual(t, capped.remaining, 2*time.Second)
+
+	parent, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	inherited := &deadlineCompleter{}
+	_, err = thinkingControlCall(parent, inherited, tgt, Options{Nonce: testNonce}, 0)
+	require.NoError(t, err)
+	assert.True(t, inherited.hasDeadline, "a parent deadline must reach the control call")
+
+	uncapped := &deadlineCompleter{}
+	_, err = thinkingControlCall(context.Background(), uncapped, tgt, Options{Nonce: testNonce}, 0)
+	require.NoError(t, err)
+	assert.False(t, uncapped.hasDeadline, "no deadline may be manufactured without --timeout")
+}
+
 func TestRun_ThinkingControlCallDropsOnlyTheDeclaration(t *testing.T) {
 	_, fake, _ := runThinking(t, thinkingTarget(t, "off", "", "qwen"), silent, nil, thinks, nil)
 	calls := fake.completeCalls()
