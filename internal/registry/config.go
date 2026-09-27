@@ -1272,9 +1272,12 @@ func warnThinkingBudget(name string, a AgentConfig) {
 	if budget == 0 {
 		return
 	}
+	// The flag note is named in both branches (TD-010): at runtime --max-tokens
+	// overrides a declared max_tokens too, so the declared cap the warning
+	// compares against is not necessarily the cap a review actually sends.
 	limit, source := DefaultMaxTokens, " (the default; --max-tokens can change it)"
 	if a.MaxTokens != nil {
-		limit, source = *a.MaxTokens, ""
+		limit, source = *a.MaxTokens, " (--max-tokens can change it)"
 	}
 	if budget < limit {
 		return
