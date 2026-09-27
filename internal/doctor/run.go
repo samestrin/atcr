@@ -285,6 +285,17 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 			if res.Targets[i].declaresThinking() && pr.called && thinkingProbeWorthwhile(pr.status) {
 				pr.thinkingStatus, pr.thinkingDetail = probeThinking(ctx, c, res.Targets[i], opts, pr.maxTokens, pr.comp, pr.callErr)
 			}
+			// Round-trip bound: a declared target can cost up to three live calls
+			// inside this semaphore — the marker, the response_format probe(s), and
+			// the thinking control call when the marker reply is silent. Against a
+			// quota-limited shared upstream the extra call can draw a 429 that lands
+			// on OTHER targets' marker probes (the hazard resolve.go widens target
+			// identity to avoid), and doctor's wall time doubles per silent target.
+			// Skipping the control call on a reported reasoning-token count of 0
+			// would misjudge leveled declarations (a level may legitimately produce
+			// zero tokens — see probeThinking), and a per-run call budget would
+			// thread new state through the probe plumbing, so the bound is
+			// documented here rather than restructured.
 			results[i] = pr
 		}(i)
 	}
