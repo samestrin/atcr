@@ -1672,6 +1672,84 @@ func TestInvokeSkeptic_ForwardsDeclaredResponseFormat(t *testing.T) {
 	})
 }
 
+// Sprint 35.16.11.2.2 TD: end-to-end proof that a declared thinking setting
+// reaches the chat completer through invokeSkeptic, mirroring the
+// response_format sibling above: declared reaches the invocation, undeclared
+// sends none, the multi-turn tool loop carries it on every turn, and the
+// SupportsFC=false single-shot degrade path carries it to Complete.
+func TestInvokeSkeptic_ForwardsDeclaredThinking(t *testing.T) {
+	t.Parallel()
+
+	t.Run("declared", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		sk.Config.Thinking, sk.Config.ThinkingLevel, sk.Config.ThinkingStyle = "on", "low", "qwen"
+		cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed"}`}}}
+
+		_, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+		require.NoError(t, err)
+		assert.Equal(t, "on", cc.lastInvocation().Thinking,
+			"the declaration must reach the request, not stop at the Agent literal")
+		assert.Equal(t, "low", cc.lastInvocation().ThinkingLevel)
+		assert.Equal(t, "qwen", cc.lastInvocation().ThinkingStyle)
+	})
+
+	t.Run("undeclared sends none", func(t *testing.T) {
+		t.Parallel()
+		cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed"}`}}}
+
+		_, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false)
+		require.NoError(t, err)
+		assert.Empty(t, cc.lastInvocation().Thinking)
+		assert.Empty(t, cc.lastInvocation().ThinkingLevel)
+		assert.Empty(t, cc.lastInvocation().ThinkingStyle)
+	})
+
+	// A regression dropping thinking on an intermediate tool-loop turn must fail
+	// here, mirroring the response_format sibling's per-turn assertion.
+	t.Run("multi-turn tool loop carries it on every turn", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		sk.Config.Thinking, sk.Config.ThinkingLevel, sk.Config.ThinkingStyle = "on", "low", "qwen"
+		cc := &fakeChatCompleter{turns: []chatTurn{
+			toolCallTurn("read_file"),
+			{content: `{"verdict":"confirmed","reasoning":"verified via file read"}`},
+		}}
+
+		v, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+		require.NoError(t, err)
+		require.NotNil(t, v)
+		invs := cc.allInvocations()
+		require.NotEmpty(t, invs)
+		for i, inv := range invs {
+			assert.Equal(t, "on", inv.Thinking, "turn %d dropped thinking", i)
+			assert.Equal(t, "low", inv.ThinkingLevel, "turn %d dropped thinking level", i)
+			assert.Equal(t, "qwen", inv.ThinkingStyle, "turn %d dropped thinking style", i)
+		}
+	})
+
+	// The SupportsFC=false degrade path hands the Invocation to plain Complete
+	// (fanout invokeSingleShot), not the tool loop. A regression dropping the
+	// declaration on the single-shot path must fail here.
+	t.Run("single-shot degrade path carries it to Complete", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		sk.Config.Thinking, sk.Config.ThinkingLevel, sk.Config.ThinkingStyle = "on", "low", "qwen"
+		sk.Config.SupportsFC = false
+		cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed"}`}}}
+
+		_, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+		require.NoError(t, err)
+		assert.Zero(t, cc.chatCalls, "a non-FC skeptic must not enter the tool loop")
+		invs := cc.allInvocations()
+		require.Len(t, invs, 1, "exactly one Complete call expected")
+		assert.Equal(t, "on", invs[0].Thinking,
+			"the Invocation passed to Complete must carry the declaration")
+		assert.Equal(t, "low", invs[0].ThinkingLevel)
+		assert.Equal(t, "qwen", invs[0].ThinkingStyle)
+	})
+}
+
 // Sprint 35.16.11.2.2 AC 04-03: the skeptic forwards its OWN thinking
 // declaration with no lane-level override, identically on exec and non-exec
 // runs; an undeclared skeptic sends none.
