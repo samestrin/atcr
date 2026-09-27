@@ -55,3 +55,27 @@ func TestFlexInt_ClampsToThirtyTwoBitRange(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(`"5000000000"`), &hugeString))
 	assert.Equal(t, flexInt(math.MaxInt32), hugeString, "an out-of-range string number clamps too")
 }
+
+// TD-021 companion: the parser reads "```json title=x" as a JSON fence opener,
+// but the old bareFenceRe only dropped a single info WORD, so a clean reply
+// fenced that way parsed to zero findings yet was marked unparseable_response.
+// IsNoFindings must drop an opener line whose rest is only an info string —
+// while a fence line sharing content (a pipe row, a backtick, prose after a
+// closer) stays content and keeps the response unclean.
+func TestIsNoFindings_DropsOpenFenceLinesWithInfoStrings(t *testing.T) {
+	for _, in := range []string{
+		"```json title=x\n[]\n```",
+		"```json title=x\n{\"findings\":[]}\n```",
+		"~~~json title=y\nNO FINDINGS\n~~~",
+	} {
+		assert.True(t, IsNoFindings(in), "%q is a clean review fenced with an info string", in)
+	}
+	for _, in := range []string{
+		"NO FINDINGS[]", // FIX's own example: sentinel glued to a value
+		"```js `x`\nNO FINDINGS",
+		"```HIGH|a.go:1|nil deref|f\nNO FINDINGS",
+		"```\nNO FINDINGS\n``` but a.go:3 has a nil deref",
+	} {
+		assert.False(t, IsNoFindings(in), "%q must not count as clean", in)
+	}
+}
