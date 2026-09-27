@@ -858,13 +858,32 @@ func reasoningSignal(comp llmclient.Completion) string {
 	if comp.Usage.ReasoningTokens > 0 {
 		parts = append(parts, fmt.Sprintf("%d reasoning tokens", comp.Usage.ReasoningTokens))
 	}
-	if comp.Reasoning != "" {
+	if strings.TrimSpace(comp.Reasoning) != "" {
 		parts = append(parts, fmt.Sprintf("reasoning content (%d bytes)", len(comp.Reasoning)))
 	}
-	if strings.Contains(comp.Content, "<think>") || strings.Contains(comp.Content, "</think>") {
+	if inlineThinking(comp.Content) {
 		parts = append(parts, "inline <think> reasoning in the content")
 	}
 	return strings.Join(parts, " and ")
+}
+
+// inlineThinking reports non-blank text inside a <think> block: closed, left
+// open, or with only the closing tag (a template that puts the opening tag in
+// the prompt). An empty pair is what a hybrid chat template emits when
+// thinking is off, so it is not a signal.
+func inlineThinking(content string) bool {
+	inner := content
+	if start := strings.Index(content, "<think>"); start >= 0 {
+		inner = content[start+len("<think>"):]
+	}
+	end := strings.Index(inner, "</think>")
+	switch {
+	case end >= 0:
+		inner = inner[:end]
+	case len(inner) == len(content):
+		return false // neither tag
+	}
+	return strings.TrimSpace(inner) != ""
 }
 
 // probeThinking classifies whether the provider honored the target's thinking

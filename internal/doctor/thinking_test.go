@@ -110,6 +110,7 @@ func TestRun_ThinkingVerdict(t *testing.T) {
 	// A Qwen-family upstream can put its thinking inline in the content instead
 	// of on a reasoning channel, and a proxy can still report 0 reasoning tokens.
 	inlineThink := llmclient.Completion{Content: "<think>plan the reply</think>\n" + Marker(testNonce)}
+	withEmptyThink := llmclient.Completion{Content: "<think>\n\n</think>\n" + Marker(testNonce)}
 	inlineThinkReportedZero := inlineThink
 	inlineThinkReportedZero.Usage = llmclient.UsageData{ReasoningTokensReported: true}
 
@@ -177,6 +178,16 @@ func TestRun_ThinkingVerdict(t *testing.T) {
 		{name: "off, inline think tags", thinking: "off", style: "qwen", declared: inlineThink,
 			wantStatus: ThinkingNotHonored, wantCalls: 1, wantDetail: []string{"inline <think> reasoning in the content"}},
 		{name: "off, reported zero but inline think tags", thinking: "off", style: "qwen", declared: inlineThinkReportedZero,
+			wantStatus: ThinkingNotHonored, wantCalls: 1},
+		// An empty think pair or blank reasoning is what a hybrid template emits
+		// when thinking is correctly off; it is not a signal.
+		{name: "off, empty think pair", thinking: "off", style: "qwen", declared: withEmptyThink, control: thinks,
+			wantStatus: ThinkingHonored, wantCalls: 2},
+		{name: "off, blank reasoning", thinking: "off", style: "template_kwargs", declared: withMarker(llmclient.Completion{Reasoning: " \n "}), control: thinks,
+			wantStatus: ThinkingHonored, wantCalls: 2},
+		{name: "off, unclosed think with text", thinking: "off", style: "qwen", declared: llmclient.Completion{Content: "<think>still going"},
+			wantStatus: ThinkingNotHonored, wantCalls: 1},
+		{name: "off, closing tag only", thinking: "off", style: "qwen", declared: llmclient.Completion{Content: "planning the reply</think>\n" + Marker(testNonce)},
 			wantStatus: ThinkingNotHonored, wantCalls: 1},
 		{name: "declared call empty and cut off", thinking: "off", style: "qwen", declared: llmclient.Completion{Truncated: true}, declaredErr: errors.New("provider returned an empty completion"),
 			wantStatus: ThinkingUnverified, wantCalls: 1, wantDetail: []string{"cut off at the output cap (2048 tokens)"}},
