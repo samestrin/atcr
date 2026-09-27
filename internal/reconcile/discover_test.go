@@ -467,7 +467,7 @@ func TestDiscover_AllowListedEmptySourceWarns(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stderr = w
 	sources, err := Discover(dir, []string{"empty-src"})
-	w.Close()
+	_ = w.Close()
 	os.Stderr = old
 	require.NoError(t, err)
 	assert.Empty(t, sources, "an empty source contributes nothing")
