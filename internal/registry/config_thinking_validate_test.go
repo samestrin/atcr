@@ -225,3 +225,40 @@ func TestValidateAgent_ThinkingBudgetMisfitErrors(t *testing.T) {
 		})
 	}
 }
+
+// TD row config.go:1260 (user decision 2026-09-27, path b): Anthropic rejects
+// extended thinking alongside a forced tool_choice, and providers map
+// response_format onto exactly that — so anthropic thinking-on plus
+// response_format: json_object is rejected at load, next to the temperature
+// and supports_function_calling rules. The live-proxy probe the row asked for
+// could not be constructed: the flat-rate proxy served no anthropic model, so
+// the guard rests on the documented provider constraint, like its siblings.
+func TestValidateAgent_AnthropicThinkingWithResponseFormat(t *testing.T) {
+	const wantErr = `thinking_style "anthropic" with thinking on cannot use response_format: json_object`
+	cases := []struct {
+		name, thinking, level, style, responseFormat string
+		wantErr                                      string
+	}{
+		{"on with json_object", ThinkingOn, "", ThinkingStyleAnthropic, ResponseFormatJSONObject, wantErr},
+		{"level alone with json_object", "", ThinkingLevelLow, ThinkingStyleAnthropic, ResponseFormatJSONObject, wantErr},
+		{"off with json_object", ThinkingOff, "", ThinkingStyleAnthropic, ResponseFormatJSONObject, ""},
+		{"on without response_format", ThinkingOn, "", ThinkingStyleAnthropic, "", ""},
+		{"qwen on with json_object", ThinkingOn, "", ThinkingStyleQwen, ResponseFormatJSONObject, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			captureThinkingWarnings(t)
+			agent := thinkingAgent(tc.thinking, tc.level, tc.style) + "    max_tokens: 65536\n"
+			if tc.responseFormat != "" {
+				agent += "    response_format: " + tc.responseFormat + "\n"
+			}
+			_, err := LoadRegistry(writeRegistry(t, thinkingRegistry(agent)))
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
+}
