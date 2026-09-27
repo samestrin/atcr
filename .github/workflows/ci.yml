@@ -14,9 +14,60 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ci:
-    name: Go Lint & Test
+  lint:
+    name: Go Lint
     runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.25'
+          # Cache on: these are ephemeral GitHub-hosted runners, so setup-go's
+          # module/build cache (GOMODCACHE/GOCACHE via the Actions Cache) avoids
+          # re-downloading deps and recompiling from scratch on every run.
+          cache: true
+
+      - name: Verify Formatted
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "Go files must be formatted with gofmt. Run: go fmt ./..."
+            gofmt -d .
+            exit 1
+          fi
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v8
+        with:
+          # Single pinned version shared with reconcile-module.yml and the root
+          # .golangci.yml so a tag cannot pass locally but fail in CI (or vice versa).
+          version: v2.12.2
+
+  # Split off the former single "Go Lint & Test" job's test step into its own
+  # sharded job. The whole-repo `go test -race ./...` was serial on one
+  # runner's cores, so the heaviest packages (cli, astgroup, sandbox, payload)
+  # were competing for the same CPU budget as everything else instead of
+  # running on their own runner. Two shards name the known-heavy packages
+  # explicitly; the third is a `go list` catch-all, not a hardcoded list, so a
+  # newly added package always lands somewhere and is never silently dropped
+  # from CI coverage just because nobody updated a shard's package list.
+  test:
+    name: Go Test (${{ matrix.name }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: cli
+            packages: "./cli/... ./cmd/..."
+          - name: heavy
+            packages: "./internal/astgroup/... ./internal/sandbox/... ./internal/payload/..."
+          - name: rest
+            packages: "" # computed at runtime: everything not in the two shards above
 
     env:
       # This job is the ONLY thing that builds the root module against the
@@ -47,25 +98,7 @@ jobs:
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.25'
-          # Cache on: these are ephemeral GitHub-hosted runners, so setup-go's
-          # module/build cache (GOMODCACHE/GOCACHE via the Actions Cache) avoids
-          # re-downloading deps and recompiling from scratch on every run.
           cache: true
-
-      - name: Verify Formatted
-        run: |
-          if [ -n "$(gofmt -l .)" ]; then
-            echo "Go files must be formatted with gofmt. Run: go fmt ./..."
-            gofmt -d .
-            exit 1
-          fi
-
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v8
-        with:
-          # Single pinned version shared with reconcile-module.yml and the root
-          # .golangci.yml so a tag cannot pass locally but fail in CI (or vice versa).
-          version: v2.12.2
 
       - name: Run Tests
         # -race now runs on pull_request too, because it no longer runs anywhere
@@ -83,11 +116,22 @@ jobs:
         # overruns Go's 10m default, which surfaces as a panic rather than a
         # useful failure. Both paths get it: the post-merge job runs the same
         # suite with coverage on top and is strictly slower.
+        #
+        # The "rest" shard's package list is computed here, not hardcoded,
+        # specifically so it always equals "everything minus the two named
+        # shards" even as packages are added, renamed, or removed.
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            go test -race -timeout 20m ./...
+          if [ "${{ matrix.name }}" = "rest" ]; then
+            pkgs=$(go list ./... | grep -v -e '^github.com/samestrin/atcr/cli$' -e '^github.com/samestrin/atcr/cmd/' -e '/astgroup$' -e '/sandbox$' -e '/payload$')
           else
-            go test -v -race -timeout 20m -coverprofile=coverage.out ./...
+            pkgs="${{ matrix.packages }}"
+          fi
+          echo "packages under test:"
+          echo "$pkgs"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            go test -race -timeout 20m $pkgs
+          else
+            go test -v -race -timeout 20m -coverprofile=coverage-${{ matrix.name }}.out $pkgs
           fi
 
       - name: Surface reconcile release-lag skip
@@ -114,6 +158,10 @@ jobs:
         # yields no matching Action and fails the step, which is the rename this
         # step exists to catch. The human output is reconstructed from the same
         # stream for the log, so the step still reads like a verbose test run.
+        #
+        # Runs once, on the "rest" shard, since that is where internal/reconcile
+        # lands under the split above.
+        if: matrix.name == 'rest'
         run: |
           out=$(go test ./internal/reconcile/ -run '^TestReconcileModule_ReleasedVocabularyMatchesInTree$' -v -json -count=1 2>&1) || { echo "$out"; exit 1; }
           echo "$out" | jq -j 'select(.Action=="output") | .Output'
@@ -131,8 +179,8 @@ jobs:
         if: github.event_name == 'push'
         continue-on-error: true # non-essential: a storage-quota/upload failure must not fail CI
         with:
-          name: coverage
-          path: coverage.out
+          name: coverage-${{ matrix.name }}
+          path: coverage-${{ matrix.name }}.out
           if-no-files-found: warn
           retention-days: 7
 
