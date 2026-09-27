@@ -1167,6 +1167,44 @@ func validateProvider(name string, p Provider) []error {
 	return errs
 }
 
+// validateThinking returns every fault in an agent's thinking keys (Epic
+// 35.16.11.2.2). Like response_format it uses strict equality with no
+// case-folding, so a near-miss fails at load instead of reaching a live
+// review. A bare YAML true/false decodes as "true"/"false" and is rejected
+// here like any other unknown value. max under reasoning_effort is legal: the
+// wire layer sends it as high, so the loader warns instead of failing.
+func validateThinking(name string, a AgentConfig) []error {
+	var errs []error
+	if a.Thinking != "" && !slices.Contains(thinkingValues, a.Thinking) {
+		errs = append(errs, agentErrf(name, "agent '%s': invalid thinking %q: must be %q or %q or unset", name, a.Thinking, ThinkingOn, ThinkingOff))
+	}
+	if a.ThinkingLevel != "" && !slices.Contains(thinkingLevels, a.ThinkingLevel) {
+		errs = append(errs, agentErrf(name, "agent '%s': invalid thinking_level %q: must be one of %s", name, a.ThinkingLevel, strings.Join(thinkingLevels, ", ")))
+	}
+	if a.ThinkingStyle != "" && !slices.Contains(thinkingStyles, a.ThinkingStyle) {
+		errs = append(errs, agentErrf(name, "agent '%s': invalid thinking_style %q: must be one of %s", name, a.ThinkingStyle, strings.Join(thinkingStyles, ", ")))
+	}
+	if a.Thinking == ThinkingOff && a.ThinkingLevel != "" {
+		errs = append(errs, agentErrf(name, "agent '%s': thinking is %q but thinking_level %q is set: remove thinking_level or set thinking: on", name, ThinkingOff, a.ThinkingLevel))
+	}
+	if (a.Thinking != "" || a.ThinkingLevel != "") && a.ThinkingStyle == "" {
+		errs = append(errs, agentErrf(name, "agent '%s': thinking is declared but thinking_style is missing: there is no default style", name))
+	}
+	if a.ThinkingStyle == ThinkingStyleReasoningEffort {
+		switch {
+		case a.Thinking == ThinkingOff:
+			errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q has no off value: set thinking_level: %s instead of thinking: off", name, ThinkingStyleReasoningEffort, ThinkingLevelLow))
+		case a.Thinking == ThinkingOn && a.ThinkingLevel == "":
+			errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q needs a thinking_level: set thinking_level to %s, %s, %s, or %s", name, ThinkingStyleReasoningEffort, ThinkingLevelLow, ThinkingLevelMedium, ThinkingLevelHigh, ThinkingLevelMax))
+		case a.ThinkingLevel == ThinkingLevelMax:
+			_, _ = fmt.Fprintf(thinkingWarnWriter,
+				"warning: agent '%s': thinking_level %q is sent as %q under thinking_style %q, the highest value that style accepts\n",
+				name, ThinkingLevelMax, ThinkingLevelHigh, ThinkingStyleReasoningEffort)
+		}
+	}
+	return errs
+}
+
 // validateAgent returns every fault found in a single agent entry (Epic 4.2 /
 // AC6 — accumulate rather than short-circuit). The unknown-provider reference
 // check is suppressed when provider is empty so a missing-provider agent reports
@@ -1204,6 +1242,7 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 	if a.ResponseFormat != "" && a.ResponseFormat != ResponseFormatJSONObject {
 		errs = append(errs, agentErrf(name, "agent '%s': invalid response_format %q: must be %q or unset", name, a.ResponseFormat, ResponseFormatJSONObject))
 	}
+	errs = append(errs, validateThinking(name, a)...)
 	if a.MaxTurns != nil && (*a.MaxTurns <= 0 || *a.MaxTurns > MaxAgentTurns) {
 		errs = append(errs, agentErrf(name, "agent '%s': max_turns must be within 1..%d", name, MaxAgentTurns))
 	}

@@ -100,7 +100,11 @@ type communityPersonaFile struct {
 // AHEAD of the static table and produces guaranteed over-window payloads — the
 // one direction the Conservatism NFR forbids.
 //
-// response_format is the other: its own doc (config.go's ResponseFormat) defines
+// thinking, thinking_level, and thinking_style follow the same rule as
+// response_format below: which request field a model honors is a fact about
+// the endpoint the consumer resolves, not about the persona.
+//
+// response_format is another: its own doc (config.go's ResponseFormat) defines
 // it as a claim about the endpoint the CONSUMER resolves — "this agent's model
 // honors the OpenAI-compatible response_format request field". A published
 // json_object declaration imposes that contract on every consumer's review
@@ -121,6 +125,17 @@ func rejectMachineLocalFields(name string, cfg AgentConfig) error {
 		return fmt.Errorf("community persona %q must not declare response_format: "+
 			"whether a model honors the response_format request field is specific to the "+
 			"endpoint each consumer resolves, so each consumer declares it on their own agents", name)
+	}
+	for _, f := range []struct{ key, value string }{
+		{"thinking", cfg.Thinking},
+		{"thinking_level", cfg.ThinkingLevel},
+		{"thinking_style", cfg.ThinkingStyle},
+	} {
+		if f.value != "" {
+			return fmt.Errorf("community persona %q must not declare %s: "+
+				"whether and how a model's thinking behavior is honored is specific to the "+
+				"endpoint each consumer resolves, so each consumer declares it on their own agents", name, f.key)
+		}
 	}
 	return nil
 }
