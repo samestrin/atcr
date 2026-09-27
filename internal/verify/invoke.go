@@ -360,6 +360,7 @@ func tripsVoidTheVerdict(tripped []string, derivedBudget bool) bool {
 func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool) (agent fanout.Agent, derived bool) {
 	c := skeptic.Config
 	budget, derived := skepticToolBudget(c)
+	wireMaxTokens, wireThinking, wireThinkingLevel := thinkingWire(c)
 	return fanout.Agent{
 		Name:        skeptic.Name,
 		Provider:    c.Provider,
@@ -394,24 +395,82 @@ func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool) (agent fanout.
 			// content, so under a low default the skeptic finishes mid-reasoning
 			// and the engine records "unverifiable" while the run reports success.
 			//
-			// The DECLARATION only. The review fan-out resolves three tiers
-			// (--max-tokens flag > declaration > payload.DefaultOutputTokens), but
-			// this lane has no flag to read and imposing the built-in default here
-			// would newly cap every UNDECLARED skeptic at a value nothing measured
-			// — a separate decision on separate evidence. A nil pointer keeps
-			// today's behaviour exactly.
-			MaxTokens: c.MaxTokens,
+			// Output cap (max_tokens) + thinking, resolved together by
+			// thinkingWire: an anthropic thinking budget may not go on the wire
+			// without a cap it fits strictly under (Anthropic rejects
+			// budget_tokens >= max_tokens, and with no cap sent the provider's own
+			// lower default applied — a guaranteed 400 on every call). The DECLARATION
+			// alone still governs non-thinking skeptics: imposing the built-in default
+			// on every UNDECLARED skeptic would cap them at a value nothing measured.
+			MaxTokens:     wireMaxTokens,
+			Thinking:      wireThinking,
+			ThinkingLevel: wireThinkingLevel,
 			// response_format: the skeptic's OWN declaration, with no lane-level
 			// override. The verdict is already a JSON object, so no prompt swap is
 			// needed: parseVerdict reads a bare, unfenced object.
 			ResponseFormat: c.ResponseFormat,
-			// thinking: the skeptic's OWN declaration, same rule — no lane
-			// default, so an undeclared skeptic keeps the provider default.
-			Thinking:      c.Thinking,
-			ThinkingLevel: c.ThinkingLevel,
+			// thinking style: the skeptic's OWN declaration. The on/off state and
+			// level come from thinkingWire above (which may downgrade a level or
+			// drop the declaration entirely when no budget fits under the cap).
 			ThinkingStyle: c.ThinkingStyle,
 		},
 	}, derived
+}
+
+// thinkingWire resolves the output cap and thinking declaration the skeptic
+// lane puts on the wire, so a declared anthropic thinking budget always has a
+// max_tokens to fit strictly under.
+//
+// Anthropic rejects budget_tokens >= max_tokens. The skeptic lane used to
+// forward the thinking declaration while deliberately forwarding no output cap
+// for an undeclared agent (a nil stays nil, per the reserve-vs-send distinction
+// in reservedOutputTokens) — so the request carried budget_tokens: 8192 with no
+// max_tokens, the provider's own default cap applied (4096 through LiteLLM),
+// and EVERY call for that agent 400ed. The load-time guard cannot catch it: it
+// only warns, and it compares the budget against the registry's default rather
+// than the cap this lane actually sends.
+//
+// The rule here is: a thinking budget buys a cap. When the declaration sends a
+// budget (anthropic style, thinking on — the only style whose budget shares
+// max_tokens), the lane sends max_tokens = the declared cap, else the built-in
+// payload.DefaultOutputTokens (the same single source reservedOutputTokens
+// uses), and the budget must fit strictly under it. A budget that does not fit
+// downgrades the level to the largest one that does; below the smallest budget
+// no level fits, so the declaration is dropped rather than sent as a guaranteed
+// 400. Skeptics with NO thinking declaration are untouched: their MaxTokens
+// stays nil and the provider default applies, exactly as before.
+func thinkingWire(c registry.AgentConfig) (maxTokens *int, thinking, thinkingLevel string) {
+	// Anthropic style only: its budget_tokens is the one whose value shares
+	// max_tokens (the registry's own budget warning is scoped the same way).
+	// The qwen style's thinking_budget is a separate provider parameter.
+	if c.ThinkingStyle != registry.ThinkingStyleAnthropic {
+		return c.MaxTokens, c.Thinking, c.ThinkingLevel
+	}
+	budget := registry.ThinkingBudgetTokens(c.Thinking, c.ThinkingLevel, c.ThinkingStyle)
+	if budget == 0 {
+		return c.MaxTokens, c.Thinking, c.ThinkingLevel
+	}
+	capTokens := payload.DefaultOutputTokens
+	if c.MaxTokens != nil && *c.MaxTokens > 0 {
+		capTokens = *c.MaxTokens
+	}
+	if budget < capTokens {
+		return &capTokens, c.Thinking, c.ThinkingLevel
+	}
+	// Downgrade to the largest level whose budget fits strictly under the cap.
+	// Levels are ordered low..max, so keep the last fit.
+	fitting := ""
+	for _, level := range registry.ThinkingLevels() {
+		if registry.ThinkingBudgetTokens(registry.ThinkingOn, level, c.ThinkingStyle) < capTokens {
+			fitting = level
+		}
+	}
+	if fitting == "" {
+		// No anthropic budget fits under this cap — send no thinking rather than
+		// a request the provider rejects on every call.
+		return &capTokens, "", ""
+	}
+	return &capTokens, c.Thinking, fitting
 }
 
 // failureNotes builds a diagnostic note for a halted skeptic run, naming the
