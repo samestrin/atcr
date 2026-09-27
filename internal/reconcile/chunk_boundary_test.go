@@ -34,6 +34,33 @@ func TestExtractSection_ChunkBoundaryStopsAMaskedChunk(t *testing.T) {
 	}
 }
 
+// An anchor in a MIDDLE chunk is bounded by the NEXT marker too: without the
+// forward bound the excerpt runs on through the marker into the third chunk's
+// text, which the parser never read together with this chunk.
+func TestExtractSection_NextChunkBoundaryEndsTheExcerpt(t *testing.T) {
+	lines := []string{
+		"## Chunk One",
+		"a.go:1 first chunk prose",
+		"<!-- atcr:chunk-boundary -->",
+		"## Chunk Two",
+		"b.go:5 the retry loop never releases the lock on error",
+		"<!-- atcr:chunk-boundary -->",
+		"c.go:9 third chunk prose about an unrelated file",
+	}
+
+	text, section := extractSection(lines, 4)
+
+	if section != "Chunk Two" {
+		t.Errorf("section = %q, want %q", section, "Chunk Two")
+	}
+	if !strings.Contains(text, "never releases the lock") {
+		t.Errorf("the middle chunk's own prose is missing: %q", text)
+	}
+	if strings.Contains(text, "third chunk prose") || strings.Contains(text, "atcr:chunk-boundary") {
+		t.Errorf("the excerpt ran past the next chunk boundary: %q", text)
+	}
+}
+
 // The marker line itself is never excerpt content: an anchor cannot land on it,
 // and a segment scan must treat it as pure structure.
 func TestExtractSection_AnchorOnTheBoundaryLineIsSuppressed(t *testing.T) {
