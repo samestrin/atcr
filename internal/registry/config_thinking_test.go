@@ -108,7 +108,7 @@ func TestAgentConfig_ThinkingLevelAloneImpliesOn(t *testing.T) {
 
 // AC 01-02 Scenarios 4-5: every legal level and style round-trips through load.
 func TestAgentConfig_ThinkingEveryLegalValueDecodes(t *testing.T) {
-	for _, level := range ThinkingLevels {
+	for _, level := range ThinkingLevels() {
 		t.Run("level_"+level, func(t *testing.T) {
 			reg, err := LoadRegistry(writeRegistry(t, thinkingRegistry(`
   a:
@@ -121,7 +121,7 @@ func TestAgentConfig_ThinkingEveryLegalValueDecodes(t *testing.T) {
 			assert.Equal(t, level, reg.Agents["a"].ThinkingLevel)
 		})
 	}
-	for _, style := range ThinkingStyles {
+	for _, style := range ThinkingStyles() {
 		t.Run("style_"+style, func(t *testing.T) {
 			reg, err := LoadRegistry(writeRegistry(t, thinkingRegistry(`
   a:
@@ -259,4 +259,19 @@ func TestAgentConfig_ThinkingYAMLRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(out), "thinking: \"off\"")
 	assert.Contains(t, string(out), "thinking_style: qwen")
+}
+
+// TD-002: the legal-value accessors return copies, so a caller cannot change
+// the legal set for the rest of the process.
+func TestThinkingLegalValues_ReturnCopies(t *testing.T) {
+	assert.Equal(t, []string{ThinkingOn, ThinkingOff}, ThinkingValues())
+	assert.Equal(t, []string{"low", "medium", "high", "max"}, ThinkingLevels())
+	assert.Equal(t, []string{"qwen", "template_kwargs", "reasoning_effort", "anthropic"}, ThinkingStyles())
+
+	ThinkingValues()[0] = "x"
+	ThinkingLevels()[0] = "x"
+	ThinkingStyles()[0] = "x"
+	assert.Equal(t, ThinkingOn, ThinkingValues()[0])
+	assert.Equal(t, ThinkingLevelLow, ThinkingLevels()[0])
+	assert.Equal(t, ThinkingStyleQwen, ThinkingStyles()[0])
 }

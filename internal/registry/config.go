@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -18,6 +19,10 @@ import (
 // scopeVocabularyWarnWriter is the sink for the off-vocabulary scope warning; a
 // var so tests can capture it, mirroring insecureRegistryWarnWriter.
 var scopeVocabularyWarnWriter io.Writer = os.Stderr
+
+// thinkingWarnWriter is the sink for the thinking-level clamp warning; a var so
+// tests can capture it, mirroring scopeVocabularyWarnWriter.
+var thinkingWarnWriter io.Writer = os.Stderr
 
 // scopeSuggestMaxDistance bounds how far a scope entry may be from a vocabulary
 // member before the warning stops suggesting that member. At 2, a typo
@@ -198,13 +203,18 @@ const (
 	ThinkingStyleAnthropic       = "anthropic"
 )
 
-// ThinkingValues, ThinkingLevels, and ThinkingStyles list each key's legal
-// values in documented order.
 var (
-	ThinkingValues = []string{ThinkingOn, ThinkingOff}
-	ThinkingLevels = []string{ThinkingLevelLow, ThinkingLevelMedium, ThinkingLevelHigh, ThinkingLevelMax}
-	ThinkingStyles = []string{ThinkingStyleQwen, ThinkingStyleTemplateKwargs, ThinkingStyleReasoningEffort, ThinkingStyleAnthropic}
+	thinkingValues = []string{ThinkingOn, ThinkingOff}
+	thinkingLevels = []string{ThinkingLevelLow, ThinkingLevelMedium, ThinkingLevelHigh, ThinkingLevelMax}
+	thinkingStyles = []string{ThinkingStyleQwen, ThinkingStyleTemplateKwargs, ThinkingStyleReasoningEffort, ThinkingStyleAnthropic}
 )
+
+// ThinkingValues, ThinkingLevels, and ThinkingStyles return each key's legal
+// values in documented order. Each call returns a fresh copy, so a caller
+// cannot change the legal set.
+func ThinkingValues() []string { return slices.Clone(thinkingValues) }
+func ThinkingLevels() []string { return slices.Clone(thinkingLevels) }
+func ThinkingStyles() []string { return slices.Clone(thinkingStyles) }
 
 // Executor defaults (Epic 7.0). DefaultExecutorPersona is the fix-focused persona
 // applied when the executor block sets none; DefaultFixMinSeverity is the severity
