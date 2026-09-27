@@ -157,6 +157,19 @@ type message struct {
 	// which the severity-prefix extraction recovers downstream. omitempty keeps
 	// it out of request bodies, where this struct is also used.
 	ReasoningContent reasoningText `json:"reasoning_content,omitempty"`
+	// Reasoning is the same chain-of-thought under the key OpenRouter and newer
+	// vLLM use. Read only for the reported reasoning signal (see reasoningOf),
+	// never for the salvage above.
+	Reasoning reasoningText `json:"reasoning,omitempty"`
+}
+
+// reasoningOf is a reply's reasoning text: reasoning_content, else the
+// reasoning key some providers send instead.
+func reasoningOf(content, alt reasoningText) string {
+	if content != "" {
+		return string(content)
+	}
+	return string(alt)
 }
 
 // reasoningText decodes reasoning_content tolerantly: it is an optional side
@@ -386,7 +399,7 @@ func (c *Client) CompleteWithMeta(ctx context.Context, inv Invocation) (Completi
 		// Non-retryable — a re-request with the same budget would repeat the result.
 		return Completion{CallRecords: records, Truncated: truncated}, atcrerrors.NewSystemError(fmt.Errorf("provider returned an empty completion (no content or reasoning_content)"))
 	}
-	return Completion{Content: content, Usage: parsed.Usage, CallRecords: records, Truncated: truncated, Reasoning: string(ch.Message.ReasoningContent)}, nil
+	return Completion{Content: content, Usage: parsed.Usage, CallRecords: records, Truncated: truncated, Reasoning: reasoningOf(ch.Message.ReasoningContent, ch.Message.Reasoning)}, nil
 }
 
 // resolveKey reads the invocation's API key env var; the value is never logged.

@@ -17,7 +17,7 @@ import (
 //
 // Identity is exactly the dedup key addTarget builds: provider, model, base_url,
 // and the resolved max_tokens cap — plus response_format and the derived tools-loop
-// flag, but only for a DECLARED target (an undeclared agent's key is unchanged, so
+// flag, and the thinking declaration, but only for a DECLARED target (an undeclared agent's key is unchanged, so
 // neither its probes nor its doctor output move). The field comments below carry
 // the per-field rationale; a reader trimming the key later must keep
 // new-fields-are-identity and the conditional-key rule in step with it.
@@ -160,6 +160,14 @@ func ResolveWithCap(reg *registry.Registry, proj *registry.ProjectConfig, overri
 			tools = ac.Tools && ac.SupportsFC
 			key += "\x00" + ac.ResponseFormat + "\x00" + strconv.FormatBool(tools)
 		}
+		// The thinking declaration joins the key on the same rule: only a declared
+		// agent (thinking or thinking_level set) grows it, and a style alone is inert
+		// (it changes no request), so it neither splits a target nor rides one.
+		var thinking, level, style string
+		if ac.Thinking != "" || ac.ThinkingLevel != "" {
+			thinking, level, style = ac.Thinking, ac.ThinkingLevel, ac.ThinkingStyle
+			key += "\x00thinking\x00" + thinking + "\x00" + level + "\x00" + style
+		}
 		if idx, ok := targetIdx[key]; ok {
 			return idx, nil
 		}
@@ -172,6 +180,9 @@ func ResolveWithCap(reg *registry.Registry, proj *registry.ProjectConfig, overri
 			MaxTokens:      declared,
 			ResponseFormat: ac.ResponseFormat,
 			Tools:          tools,
+			Thinking:       thinking,
+			ThinkingLevel:  level,
+			ThinkingStyle:  style,
 		})
 		targetIdx[key] = idx
 		return idx, nil

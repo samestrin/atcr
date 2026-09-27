@@ -16,6 +16,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/payload"
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/stream"
 )
 
@@ -222,6 +223,15 @@ type probeResult struct {
 	// outcome; empty when the target declares none or the endpoint probe failed.
 	responseFormatStatus string
 	responseFormatDetail string
+	// called reports that the marker call was placed, and comp/callErr are its
+	// result: the thinking verdict reads the declared call's reasoning signal.
+	called  bool
+	comp    llmclient.Completion
+	callErr error
+	// thinkingStatus and thinkingDetail are the thinking verdict; empty when the
+	// target declares none or no call was placed.
+	thinkingStatus string
+	thinkingDetail string
 }
 
 // Run probes every distinct target once (bounded concurrency), maps results
@@ -248,6 +258,12 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 			// one it can only fail the same way and bury the real cause.
 			if res.Targets[i].ResponseFormat != "" && healthy(pr.status) {
 				pr.responseFormatStatus, pr.responseFormatDetail = probeResponseFormat(ctx, c, res.Targets[i], opts, pr.maxTokens)
+			}
+			// Unlike response_format, a failed call still gets a verdict (unverified):
+			// the marker call IS the declared thinking call, and its failure is the
+			// reason no verdict was reached. No call placed means nothing to report.
+			if res.Targets[i].declaresThinking() && pr.called {
+				pr.thinkingStatus, pr.thinkingDetail = probeThinking(ctx, c, res.Targets[i], opts, pr.maxTokens, pr.comp, pr.callErr)
 			}
 			results[i] = pr
 		}(i)
@@ -297,6 +313,8 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 			ReviewMaxTokens:      reviewCap,
 			ResponseFormatStatus: pr.responseFormatStatus,
 			ResponseFormatDetail: pr.responseFormatDetail,
+			ThinkingStatus:       pr.thinkingStatus,
+			ThinkingDetail:       pr.thinkingDetail,
 		})
 	}
 	rep.ExitCode = exitVerdict(res, results)
@@ -582,11 +600,17 @@ func probe(ctx context.Context, c Completer, tgt Target, opts Options) probeResu
 		Model:     tgt.Model,
 		MaxTokens: maxTokens,
 		Prompt:    Prompt(opts.Nonce),
+		// The target's own declaration, so the thinking verdict measures the call
+		// the agent makes rather than the provider default. Empty when undeclared.
+		Thinking:      tgt.Thinking,
+		ThinkingLevel: tgt.ThinkingLevel,
+		ThinkingStyle: tgt.ThinkingStyle,
 	})
 	latency := time.Since(start).Milliseconds()
 	pr := classify(comp.Content, err, opts.Nonce, latency, tgt, budgetSrc)
 	pr.maxTokens = budget
 	pr.maxTokensSource = budgetSrc
+	pr.called, pr.comp, pr.callErr = true, comp, err
 	return pr
 }
 
@@ -746,6 +770,9 @@ func responseFormatCall(ctx context.Context, c Completer, tgt Target, opts Optio
 		Model:          tgt.Model,
 		MaxTokens:      maxTokens,
 		ResponseFormat: tgt.ResponseFormat,
+		Thinking:       tgt.Thinking,
+		ThinkingLevel:  tgt.ThinkingLevel,
+		ThinkingStyle:  tgt.ThinkingStyle,
 	}, []llmclient.Message{{Role: "user", Content: &prompt}}, toolDefs)
 	if err != nil {
 		// Only a client-side refusal is a verdict on the declaration. The endpoint
@@ -806,6 +833,130 @@ func responseFormatCall(ctx context.Context, c Completer, tgt Target, opts Optio
 		return ResponseFormatNotHonored, "declared " + declared + `, and the reply was a bare JSON object, but the review parser read no findings from it (wrong keys or severity values); the model may not follow the {"findings":[...]} contract`
 	}
 	return ResponseFormatHonored, ""
+}
+
+// declaresThinking reports that the target's agents declared thinking or
+// thinking_level. resolve.go sets the fields only then, since a style alone
+// changes no request.
+func (t Target) declaresThinking() bool { return t.Thinking != "" || t.ThinkingLevel != "" }
+
+// thinkingDeclaration names the declaration in a verdict detail, e.g.
+// "thinking: off (qwen)" or "thinking_level: low (reasoning_effort)".
+func thinkingDeclaration(t Target) string {
+	if t.Thinking != "" {
+		return "thinking: " + t.Thinking + " (" + t.ThinkingStyle + ")"
+	}
+	return "thinking_level: " + t.ThinkingLevel + " (" + t.ThinkingStyle + ")"
+}
+
+// reasoningSignal describes the reasoning a reply carried, or "" when it carried
+// none. Either signal alone counts: some upstreams never report reasoning_tokens.
+func reasoningSignal(comp llmclient.Completion) string {
+	var parts []string
+	if comp.Usage.ReasoningTokens > 0 {
+		parts = append(parts, fmt.Sprintf("%d reasoning tokens", comp.Usage.ReasoningTokens))
+	}
+	if comp.Reasoning != "" {
+		parts = append(parts, fmt.Sprintf("reasoning content (%d bytes)", len(comp.Reasoning)))
+	}
+	return strings.Join(parts, " and ")
+}
+
+// probeThinking classifies whether the provider honored the target's thinking
+// declaration, from the declared marker call's result (comp, err) and, when that
+// reply is silent, one control call. budget is the cap the marker call ran at
+// (0 = uncapped). The verdict never changes the endpoint status or the exit code.
+//
+// A reasoning signal on the declared call decides alone, even on a cut-off reply:
+// a model that kept thinking under thinking: off and ran out of budget is exactly
+// the failure this exists to name. Silence decides only once the provider is
+// shown to report reasoning at all — by a reported reasoning-token count of zero,
+// or by a signal on the control call, which is the same prompt without the
+// declaration. Silence on both stays unverified, never honored: a provider that
+// cannot report reasoning looks the same as one that did not reason.
+//
+// For thinking: on or a level, a signal shows only that thinking is on; it does
+// not prove the provider applied the declared level.
+func probeThinking(ctx context.Context, c Completer, tgt Target, opts Options, budget int, comp llmclient.Completion, err error) (string, string) {
+	off := tgt.Thinking == registry.ThinkingOff
+	declared := thinkingDeclaration(tgt)
+	if err != nil {
+		return ThinkingUnverified, noVerdict("the thinking probe", err, tgt)
+	}
+	if sig := reasoningSignal(comp); sig != "" {
+		status, detail := ThinkingHonored, ""
+		if off {
+			status, detail = ThinkingNotHonored, "declared "+declared+", but the reply still carried "+sig
+		} else if tgt.ThinkingLevel != "" {
+			detail = "reasoning observed; the probe does not verify thinking_level " + tgt.ThinkingLevel
+		}
+		if comp.Truncated {
+			detail = strings.TrimPrefix(detail+"; the reply was also "+cutOff(budget), "; ")
+		}
+		return status, detail
+	}
+	if comp.Truncated {
+		return ThinkingUnverified, "the thinking probe reply was " + cutOff(budget) + " before a reasoning signal showed, so no verdict was reached"
+	}
+	evidence := "a reasoning-token count of 0"
+	if !comp.Usage.ReasoningTokensReported {
+		ctrl, cerr := thinkingControlCall(ctx, c, tgt, opts, budget)
+		if cerr != nil {
+			return ThinkingUnverified, noVerdict("the thinking control probe (the same prompt without the declaration)", cerr, tgt)
+		}
+		sig := reasoningSignal(ctrl)
+		if sig == "" && !ctrl.Usage.ReasoningTokensReported {
+			return ThinkingUnverified, "no reasoning signal under " + declared + ", and none from a control probe without the declaration either (no reasoning tokens, no reasoning content), so the provider may not report reasoning at all"
+		}
+		if sig == "" {
+			sig = "a reasoning-token count of 0"
+		}
+		evidence = sig + " on a control probe without the declaration"
+	}
+	if off {
+		return ThinkingHonored, "no reasoning signal under " + declared + "; the provider does report reasoning (" + evidence + ")"
+	}
+	return ThinkingNotHonored, "declared " + declared + ", but the reply carried no reasoning signal, and the provider does report reasoning (" + evidence + ")"
+}
+
+// thinkingControlCall places the control call: the marker probe minus the thinking
+// declaration, so a signal here shows the provider reports reasoning.
+func thinkingControlCall(ctx context.Context, c Completer, tgt Target, opts Options, budget int) (llmclient.Completion, error) {
+	callCtx := ctx
+	if opts.Timeout > 0 {
+		var cancel context.CancelFunc
+		callCtx, cancel = context.WithTimeout(ctx, opts.Timeout)
+		defer cancel()
+	}
+	var maxTokens *int
+	if budget > 0 {
+		v := budget
+		maxTokens = &v
+	}
+	return c.CompleteWithMeta(callCtx, llmclient.Invocation{
+		BaseURL:   tgt.BaseURL,
+		APIKeyEnv: tgt.APIKeyEnv,
+		Model:     tgt.Model,
+		MaxTokens: maxTokens,
+		Prompt:    Prompt(opts.Nonce),
+	})
+}
+
+// cutOff names where a truncated thinking reply stopped and the remedy.
+func cutOff(budget int) string {
+	if budget <= 0 {
+		return "cut off at the provider's default output limit (declare a higher max_tokens or pass --max-tokens)"
+	}
+	return fmt.Sprintf("cut off at the output cap (%d tokens) (raise this agent's max_tokens or pass --max-tokens)", budget)
+}
+
+// noVerdict is the detail for a thinking call that failed, scrubbed of credentials.
+func noVerdict(what string, err error, tgt Target) string {
+	var se *llmclient.HTTPStatusError
+	if errors.As(err, &se) {
+		return fmt.Sprintf("%s got HTTP %d, so no verdict was reached: %s", what, se.Status, scrubCredentials(se.Snippet, tgt))
+	}
+	return what + " reached no verdict: " + scrubCredentials(bounded(err.Error()), tgt)
 }
 
 // scrubCredentials enforces credential exclusion on a detail string surfaced in

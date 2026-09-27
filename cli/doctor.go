@@ -240,6 +240,33 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 					"about the declaration either way; re-run doctor to retry: %s\n",
 				strings.Join(unverified, ", "))
 		}
+		// The thinking verdict gets the same pair of lines. Not honored names the
+		// remedy for a model that ignores every thinking field: thinking tokens share
+		// the output cap, so a larger cap or another model is what is left.
+		var thinkingNotHonored, thinkingUnverified []string
+		for _, a := range rep.Agents {
+			switch a.ThinkingStatus {
+			case doctor.ThinkingNotHonored:
+				thinkingNotHonored = append(thinkingNotHonored, a.Agent+" ("+a.Model+")")
+			case doctor.ThinkingUnverified:
+				thinkingUnverified = append(thinkingUnverified, a.Agent+" ("+a.Model+")")
+			}
+		}
+		if len(thinkingNotHonored) > 0 {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+				"doctor: WARNING — thinking not honored: these agents declare thinking but "+
+					"the reply's reasoning signal contradicts it; the model likely ignores the "+
+					"declared field, so try a larger max_tokens or a different model "+
+					"(see the HINT column or --json for why): %s\n",
+				strings.Join(thinkingNotHonored, ", "))
+		}
+		if len(thinkingUnverified) > 0 {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+				"doctor: WARNING — thinking unverified: these agents declare thinking but "+
+					"the probe reached no verdict, so nothing is known about the declaration "+
+					"either way; re-run doctor to retry: %s\n",
+				strings.Join(thinkingUnverified, ", "))
+		}
 		// A DISTINCT line, not folded into the warning above. These agents were not
 		// found to lack the rule — their prompt could not be read at all, so no
 		// verdict was reached — and `atcr review` hard-fails on the same config that
