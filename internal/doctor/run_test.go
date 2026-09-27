@@ -587,3 +587,30 @@ func TestProbe_UsesTheTargetsDeclaredMaxTokensUnlessTheFlagWasPassed(t *testing.
 		assert.Equal(t, 2048, got[0])
 	})
 }
+
+// The truncated-reply remedy must come from cutOff — one source for the remedy
+// text, so the response_format and thinking arms cannot drift the next time the
+// wording changes (the response_format sites were already left on the old
+// wording once).
+func TestRun_ResponseFormatTruncatedRemedyIsCutOffText(t *testing.T) {
+	cut := `{"findings":[{"severity":"HIGH","file_li"`
+	truncated := func(llmclient.Invocation, []llmclient.Message, []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+		return &llmclient.ChatResponse{Message: llmclient.Message{Role: "assistant", Content: &cut}, FinishReason: "length", Truncated: true}, nil
+	}
+
+	t.Run("with a budget", func(t *testing.T) {
+		a, _ := runDeclared(t, false, truncated)
+		assert.Contains(t, a.ResponseFormatDetail, cutOff(2048),
+			"response_format must reuse cutOff's remedy text verbatim")
+	})
+
+	t.Run("without a budget", func(t *testing.T) {
+		t.Setenv(rfDoctorEnvK, rfDoctorKey)
+		fake := newFake(markerOK)
+		fake.chatFn = truncated
+		rep := Run(context.Background(), fake, declaredTarget(t, false), Options{Nonce: testNonce})
+		require.Len(t, rep.Agents, 1)
+		assert.Contains(t, rep.Agents[0].ResponseFormatDetail, cutOff(0),
+			"the no-budget remedy must come from cutOff too")
+	})
+}
