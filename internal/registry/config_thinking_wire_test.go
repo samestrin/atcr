@@ -121,3 +121,37 @@ func TestValidateAgent_AnthropicThinkingTemperature(t *testing.T) {
 	_, err := LoadRegistry(writeRegistry(t, thinkingRegistry(thinkingAgent(ThinkingOn, "", ThinkingStyleQwen)+"    temperature: 0.2\n")))
 	require.NoError(t, err)
 }
+
+// The tool loop does not send reasoning back on history turns, and Anthropic
+// requires the prior thinking blocks on a tool-use turn, so anthropic thinking
+// on with tools fails the load. Off, other styles, and no tools still load.
+func TestValidateAgent_AnthropicThinkingWithTools(t *testing.T) {
+	const wantErr = `agent 'myagent': thinking_style "anthropic" with thinking on cannot use tools: the tool loop does not send reasoning back, which Anthropic requires; set tools: false or thinking: off`
+	cases := []struct {
+		name, thinking, level, style string
+		tools, wantErr               bool
+	}{
+		{"anthropic on tools", ThinkingOn, "", ThinkingStyleAnthropic, true, true},
+		{"anthropic level alone tools", "", ThinkingLevelLow, ThinkingStyleAnthropic, true, true},
+		{"anthropic off tools", ThinkingOff, "", ThinkingStyleAnthropic, true, false},
+		{"anthropic on no tools", ThinkingOn, "", ThinkingStyleAnthropic, false, false},
+		{"qwen on tools", ThinkingOn, "", ThinkingStyleQwen, true, false},
+		{"anthropic style alone tools", "", "", ThinkingStyleAnthropic, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			captureThinkingWarnings(t)
+			agent := thinkingAgent(tc.thinking, tc.level, tc.style) + "    max_tokens: 65536\n"
+			if tc.tools {
+				agent += "    tools: true\n"
+			}
+			_, err := LoadRegistry(writeRegistry(t, thinkingRegistry(agent)))
+			if tc.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), wantErr)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
