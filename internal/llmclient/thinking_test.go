@@ -1,7 +1,10 @@
 package llmclient
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -241,4 +244,112 @@ func TestThinking_DeclaredFalsePresentAndOnlyOwnStyle(t *testing.T) {
 	assert.Contains(t, captureComplete(t, Invocation{Model: "m", Thinking: registry.ThinkingOff, ThinkingStyle: registry.ThinkingStyleQwen}), `"enable_thinking":false`)
 	assert.Equal(t, `{"reasoning_effort":"low"}`,
 		thinkingMembers(t, captureComplete(t, Invocation{Model: "m", ThinkingLevel: registry.ThinkingLevelLow, ThinkingStyle: registry.ThinkingStyleReasoningEffort})))
+}
+
+// AC 03-04: completion_tokens_details.reasoning_tokens decodes through the same
+// tolerant path as the sibling counts, with a presence signal that tells a
+// reported zero from a provider that never reports the field.
+func TestUsageData_ReasoningTokensDecode(t *testing.T) {
+	cases := []struct {
+		name, usage string
+		want        UsageData
+	}{
+		{"reported", `{"prompt_tokens":7,"completion_tokens":3,"completion_tokens_details":{"reasoning_tokens":120}}`,
+			UsageData{PromptTokens: 7, CompletionTokens: 3, ReasoningTokens: 120, ReasoningTokensReported: true}},
+		{"reported zero", `{"prompt_tokens":7,"completion_tokens":3,"completion_tokens_details":{"reasoning_tokens":0}}`,
+			UsageData{PromptTokens: 7, CompletionTokens: 3, ReasoningTokensReported: true}},
+		{"float", `{"completion_tokens_details":{"reasoning_tokens":45.0}}`,
+			UsageData{ReasoningTokens: 45, ReasoningTokensReported: true}},
+		{"block absent", `{"prompt_tokens":7,"completion_tokens":3}`,
+			UsageData{PromptTokens: 7, CompletionTokens: 3}},
+		{"field absent", `{"prompt_tokens":7,"completion_tokens_details":{"accepted_prediction_tokens":1}}`,
+			UsageData{PromptTokens: 7}},
+		{"block not an object", `{"prompt_tokens":7,"completion_tokens":3,"completion_tokens_details":"not-an-object"}`,
+			UsageData{PromptTokens: 7, CompletionTokens: 3}},
+		{"count not a number", `{"prompt_tokens":7,"completion_tokens":3,"completion_tokens_details":{"reasoning_tokens":"lots"}}`,
+			UsageData{PromptTokens: 7, CompletionTokens: 3}},
+		{"count null", `{"completion_tokens_details":{"reasoning_tokens":null}}`, UsageData{}},
+		{"negative count", `{"completion_tokens_details":{"reasoning_tokens":-4}}`, UsageData{}},
+		{"usage not an object", `"oops"`, UsageData{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var u UsageData
+			require.NoError(t, json.Unmarshal([]byte(tc.usage), &u))
+			assert.Equal(t, tc.want, u)
+		})
+	}
+}
+
+// reasoningServer answers every request with one choice carrying the given
+// message JSON and a usage block that reports 120 reasoning tokens.
+func reasoningServer(t *testing.T, messageJSON string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		respondJSON(w, `{"choices":[{"finish_reason":"stop","message":`+messageJSON+`}],"usage":{"prompt_tokens":7,"completion_tokens":3,"completion_tokens_details":{"reasoning_tokens":120}}}`)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("TEST_KEY", testKey)
+	return srv
+}
+
+// AC 03-04 Scenarios 1, 2 and AC 03-05: both paths report reasoning tokens and
+// reasoning content on their own fields, alongside a non-empty answer.
+func TestReasoningSignal_BothPaths(t *testing.T) {
+	const msg = `{"role":"assistant","content":"the review","reasoning_content":"thinking it over"}`
+	wantUsage := UsageData{PromptTokens: 7, CompletionTokens: 3, ReasoningTokens: 120, ReasoningTokensReported: true}
+
+	srv := reasoningServer(t, msg)
+	inv := Invocation{BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m"}
+	comp, err := fastRetry(srv.Client()).CompleteWithMeta(context.Background(), inv)
+	require.NoError(t, err)
+	assert.Equal(t, "the review", comp.Content)
+	assert.Equal(t, "thinking it over", comp.Reasoning)
+	assert.Equal(t, wantUsage, comp.Usage)
+
+	s := "hi"
+	resp, err := fastRetry(srv.Client()).Chat(context.Background(), inv, []Message{{Role: "user", Content: &s}}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, resp.Message.Content)
+	assert.Equal(t, "the review", *resp.Message.Content)
+	assert.Equal(t, "thinking it over", resp.Reasoning)
+	assert.Equal(t, wantUsage, resp.Usage)
+}
+
+// AC 03-05 Scenario 3: the empty-Content salvage is unchanged and Reasoning
+// carries the same text beside it.
+func TestReasoningSignal_SalvageUnchanged(t *testing.T) {
+	srv := reasoningServer(t, `{"role":"assistant","content":"","reasoning_content":"HIGH|a.go:1|bug"}`)
+	comp, err := fastRetry(srv.Client()).CompleteWithMeta(context.Background(), Invocation{BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m"})
+	require.NoError(t, err)
+	assert.Equal(t, "HIGH|a.go:1|bug", comp.Content)
+	assert.Equal(t, "HIGH|a.go:1|bug", comp.Reasoning)
+}
+
+// AC 03-05 Edge Case 1: no reasoning_content leaves the field empty on both paths.
+func TestReasoningSignal_AbsentIsEmpty(t *testing.T) {
+	srv := reasoningServer(t, `{"role":"assistant","content":"the review"}`)
+	inv := Invocation{BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m"}
+	comp, err := fastRetry(srv.Client()).CompleteWithMeta(context.Background(), inv)
+	require.NoError(t, err)
+	assert.Empty(t, comp.Reasoning)
+	s := "hi"
+	resp, err := fastRetry(srv.Client()).Chat(context.Background(), inv, []Message{{Role: "user", Content: &s}}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, resp.Reasoning)
+}
+
+// AC 03-05 Edge Case 2: Message is re-sent as history, so it must have no field
+// that could carry reasoning back to the model.
+func TestMessage_HasNoReasoningField(t *testing.T) {
+	typ := reflect.TypeOf(Message{})
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		assert.NotContains(t, strings.ToLower(f.Name), "reasoning")
+		assert.NotContains(t, f.Tag.Get("json"), "reasoning")
+	}
+	content := "the review"
+	b, err := json.Marshal(Message{Role: "assistant", Content: &content})
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), "reasoning")
 }

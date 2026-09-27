@@ -108,6 +108,11 @@ type ChatResponse struct {
 	// dropped — the same accepted limitation that already applies to Usage on an
 	// errored turn (see the no-choices note below).
 	CallRecords []CallRecord
+
+	// Reasoning is this turn's reasoning_content. It rides the response only:
+	// Message, which the loop re-sends as history, has no reasoning field, so
+	// reasoning is never sent back to the model.
+	Reasoning string
 }
 
 // chatToolRequest is the multi-turn request body. Tools (and tool_choice) are

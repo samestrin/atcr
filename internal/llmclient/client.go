@@ -190,6 +190,12 @@ func newResponseFormat(t string) *responseFormat {
 type UsageData struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
+	// ReasoningTokens is completion_tokens_details.reasoning_tokens, the part
+	// of CompletionTokens the model spent thinking. ReasoningTokensReported is
+	// true only when the provider sent a usable count, so a reported zero is
+	// distinct from a provider that never reports the field.
+	ReasoningTokens         int
+	ReasoningTokensReported bool
 }
 
 // UnmarshalJSON tolerates malformed or non-integer usage blocks. Token usage is
@@ -297,6 +303,10 @@ type Completion struct {
 	Usage       UsageData
 	CallRecords []CallRecord
 	Truncated   bool
+	// Reasoning is the model's reasoning_content, reported on its own whether
+	// or not Content is empty. The empty-Content salvage still copies it into
+	// Content; this field does not change that.
+	Reasoning string
 }
 
 // CompleteWithMeta is CompleteWithUsage plus the truncation signal: it reports
