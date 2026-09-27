@@ -261,15 +261,21 @@ func TestRegistryDoc_ThinkingDoctorVerdict(t *testing.T) {
 		{"the same prompt and cap without the declaration", "a silent reply is judged only after a control probe shows the provider reports reasoning"},
 	})
 	assertStates(t, "thinking verdict warning line", docLineWith(t, section, "The HINT column labels"), []struct{ token, why string }{
-		{"In table mode, stderr prints one warning line each for `" + doctor.ThinkingNotHonored + "` and `" + doctor.ThinkingUnverified + "`", "--json prints no warning lines and honored prints none"},
+		{"one warning line for each declared polarity of `" + doctor.ThinkingNotHonored + "`", "the not-honored remedy differs by polarity (TD cli/doctor.go:255)"},
+		{"one warning line for `" + doctor.ThinkingUnverified + "`", "--json prints no warning lines and honored prints none"},
 	})
 	rows := map[string][]struct{ token, why string }{
 		doctor.ThinkingHonored: {
 			{"does not prove the declared level", "a signal under thinking: on shows only that thinking is on"},
 			{"a level with no signal while the control probe shows reasoning", "a level can legitimately remove reasoning on a short prompt"},
 		},
-		doctor.ThinkingNotHonored: {
-			{"a larger `max_tokens` or a different model", "the remedy the stderr warning suggests"},
+		"`not_honored` (declared `off`)": {
+			{"another `thinking_style`", "first remedy for a declared-off that is ignored"},
+			{"a larger `max_tokens`", "the off-polarity remedy keeps the max_tokens escape hatch (TD cli/doctor.go:255)"},
+		},
+		"`not_honored` (declared `on`)": {
+			{"another `thinking_style`", "first remedy for a declared-on that produced no signal"},
+			{"a different model", "the on-polarity remedy drops the max_tokens escape hatch (TD cli/doctor.go:255)"},
 		},
 		doctor.ThinkingUnverified: {
 			{"may not report reasoning at all", "silence on both calls cannot be told apart from a provider that cannot report"},
@@ -282,5 +288,6 @@ func TestRegistryDoc_ThinkingDoctorVerdict(t *testing.T) {
 	assertStates(t, "doctor JSON schema", docLineWith(t, doc, "`thinking_status` (`"), []struct{ token, why string }{
 		{"`thinking_status` (`" + doctor.ThinkingHonored + "`, `" + doctor.ThinkingNotHonored + "`, or `" + doctor.ThinkingUnverified + "`)", "the JSON field's values are the doctor constants"},
 		{"`thinking_detail`", "the verdict's reason rides beside it in --json"},
+		{"`thinking_declared`", "the declared polarity (off/on/level) rides beside the verdict so remedies can be split without parsing detail prose"},
 	})
 }
