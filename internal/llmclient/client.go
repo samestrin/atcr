@@ -312,13 +312,14 @@ func (c *Client) CompleteWithMeta(ctx context.Context, inv Invocation) (Completi
 	if err != nil {
 		return Completion{}, err
 	}
+	thinking := newThinkingFields(inv.Thinking, inv.ThinkingLevel, inv.ThinkingStyle)
 	body, err := json.Marshal(chatRequest{
 		Model:          inv.Model,
 		Messages:       []message{{Role: "user", Content: inv.Prompt}},
-		Temperature:    inv.Temperature,
+		Temperature:    temperatureFor(inv.Temperature, thinking),
 		MaxTokens:      inv.MaxTokens,
 		ResponseFormat: newResponseFormat(inv.ResponseFormat),
-		thinkingFields: newThinkingFields(inv.Thinking, inv.ThinkingLevel, inv.ThinkingStyle),
+		thinkingFields: thinking,
 	})
 	if err != nil {
 		return Completion{}, fmt.Errorf("encoding request: %w", err)

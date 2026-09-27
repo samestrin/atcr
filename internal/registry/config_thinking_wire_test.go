@@ -4,17 +4,32 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TD-006: internal/llmclient stays a leaf and duplicates the thinking values
-// it forwards, so a renamed value on one side must fail here, not at the wire.
-func TestThinkingValues_MatchLLMClient(t *testing.T) {
-	assert.Equal(t, []string{llmclient.ThinkingOn, llmclient.ThinkingOff}, ThinkingValues())
-	assert.Equal(t, []string{llmclient.ThinkingLevelLow, llmclient.ThinkingLevelMedium, llmclient.ThinkingLevelHigh, llmclient.ThinkingLevelMax}, ThinkingLevels())
-	assert.Equal(t, []string{llmclient.ThinkingStyleQwen, llmclient.ThinkingStyleTemplateKwargs, llmclient.ThinkingStyleReasoningEffort, llmclient.ThinkingStyleAnthropic}, ThinkingStyles())
+// The one level-to-budget table, and which declarations send a budget at all.
+func TestThinkingBudgetTokens_Table(t *testing.T) {
+	want := map[string]int{ThinkingLevelLow: 2048, ThinkingLevelMedium: 8192, ThinkingLevelHigh: 16384, ThinkingLevelMax: 32768}
+	require.Len(t, want, len(ThinkingLevels()))
+	for level, budget := range want {
+		assert.Equal(t, budget, ThinkingBudgetTokens("", level, ThinkingStyleQwen), "qwen %s", level)
+		assert.Equal(t, budget, ThinkingBudgetTokens(ThinkingOn, level, ThinkingStyleAnthropic), "anthropic %s", level)
+	}
+	assert.Equal(t, 8192, ThinkingBudgetTokens(ThinkingOn, "", ThinkingStyleAnthropic), "anthropic on with no level uses medium")
+	for _, tc := range []struct{ thinking, level, style string }{
+		{ThinkingOn, "", ThinkingStyleQwen},
+		{ThinkingOff, "", ThinkingStyleQwen},
+		{ThinkingOff, "", ThinkingStyleAnthropic},
+		{"", ThinkingLevelHigh, ThinkingStyleReasoningEffort},
+		{ThinkingOn, "", ThinkingStyleTemplateKwargs},
+		{"", ThinkingLevelHigh, ""},
+		{"", "extreme", ThinkingStyleQwen},
+		{"yes", ThinkingLevelHigh, ThinkingStyleAnthropic},
+		{"", "", ""},
+	} {
+		assert.Zero(t, ThinkingBudgetTokens(tc.thinking, tc.level, tc.style), "%+v sends no budget", tc)
+	}
 }
 
 // Phase 1 clarification: a budget that is not below the agent's output cap

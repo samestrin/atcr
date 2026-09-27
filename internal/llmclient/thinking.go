@@ -1,21 +1,9 @@
 package llmclient
 
-// Thinking values an Invocation carries verbatim from the registry (Epic
-// 35.16.11.2.2). They duplicate internal/registry's constants so this package
-// stays a leaf; a drift test in internal/registry pins the two sets together.
-const (
-	ThinkingOn  = "on"
-	ThinkingOff = "off"
+import (
+	"slices"
 
-	ThinkingLevelLow    = "low"
-	ThinkingLevelMedium = "medium"
-	ThinkingLevelHigh   = "high"
-	ThinkingLevelMax    = "max"
-
-	ThinkingStyleQwen            = "qwen"
-	ThinkingStyleTemplateKwargs  = "template_kwargs"
-	ThinkingStyleReasoningEffort = "reasoning_effort"
-	ThinkingStyleAnthropic       = "anthropic"
+	"github.com/samestrin/atcr/internal/registry"
 )
 
 // thinkingFields is the set of request-body members that carry a declared
@@ -43,65 +31,58 @@ type anthropicThinking struct {
 	BudgetTokens int    `json:"budget_tokens,omitempty"`
 }
 
-// thinkingBudgets is the one level-to-budget table, read by the qwen
-// thinking_budget and anthropic budget_tokens fields.
-var thinkingBudgets = map[string]int{
-	ThinkingLevelLow:    2048,
-	ThinkingLevelMedium: 8192,
-	ThinkingLevelHigh:   16384,
-	ThinkingLevelMax:    32768,
-}
-
 // newThinkingFields maps a declared thinking setting onto its style's wire
 // members. A level alone means on. Nothing is sent unless a style and either
-// thinking or a level are declared, and an unknown style is never coerced into
-// another style's shape. Legality is the registry's job, not this layer's.
+// thinking or a level are declared. Legality is the registry's job, so a value
+// it would reject (an unknown style, thinking value, or level) is never
+// guessed at: nothing is sent.
 func newThinkingFields(thinking, level, style string) thinkingFields {
 	if thinking == "" && level == "" {
 		return thinkingFields{}
 	}
-	on := thinking == ThinkingOn || (thinking == "" && level != "")
+	if thinking != "" && thinking != registry.ThinkingOn && thinking != registry.ThinkingOff {
+		return thinkingFields{}
+	}
+	if level != "" && !slices.Contains(registry.ThinkingLevels(), level) {
+		return thinkingFields{}
+	}
+	on := thinking == registry.ThinkingOn || (thinking == "" && level != "")
+	budget := registry.ThinkingBudgetTokens(thinking, level, style)
 	var f thinkingFields
 	switch style {
-	case ThinkingStyleQwen:
+	case registry.ThinkingStyleQwen:
 		f.EnableThinking = &on
-		if b, ok := thinkingBudgets[level]; ok && on {
-			f.ThinkingBudget = &b
+		if budget > 0 {
+			f.ThinkingBudget = &budget
 		}
-	case ThinkingStyleTemplateKwargs:
+	case registry.ThinkingStyleTemplateKwargs:
 		f.ChatTemplateKwargs = &chatTemplateKwargs{EnableThinking: &on}
-	case ThinkingStyleReasoningEffort:
+	case registry.ThinkingStyleReasoningEffort:
 		// The style has no off value and accepts nothing above high.
 		if on && level != "" {
 			effort := level
-			if effort == ThinkingLevelMax {
-				effort = ThinkingLevelHigh
+			if effort == registry.ThinkingLevelMax {
+				effort = registry.ThinkingLevelHigh
 			}
 			f.ReasoningEffort = &effort
 		}
-	case ThinkingStyleAnthropic:
+	case registry.ThinkingStyleAnthropic:
 		if !on {
 			f.Thinking = &anthropicThinking{Type: "disabled"}
 			break
 		}
-		// Anthropic requires a budget when enabled, so on with no level takes medium.
-		if level == "" {
-			level = ThinkingLevelMedium
-		}
-		f.Thinking = &anthropicThinking{Type: "enabled", BudgetTokens: thinkingBudgets[level]}
+		f.Thinking = &anthropicThinking{Type: "enabled", BudgetTokens: budget}
 	}
 	return f
 }
 
-// ThinkingBudgetTokens returns the thinking budget the declared setting sends,
-// or 0 when it sends none. It reads the same mapping the request body uses.
-func ThinkingBudgetTokens(thinking, level, style string) int {
-	f := newThinkingFields(thinking, level, style)
-	switch {
-	case f.ThinkingBudget != nil:
-		return *f.ThinkingBudget
-	case f.Thinking != nil:
-		return f.Thinking.BudgetTokens
+// temperatureFor returns the temperature to send alongside f. Anthropic rejects
+// extended thinking with any temperature but 1, so an enabled anthropic
+// declaration sends none and the provider default (1) applies. The registry
+// rejects a declared temperature other than 1 for such an agent at load.
+func temperatureFor(temperature *float64, f thinkingFields) *float64 {
+	if f.Thinking != nil && f.Thinking.Type == "enabled" {
+		return nil
 	}
-	return 0
+	return temperature
 }

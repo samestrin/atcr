@@ -3,8 +3,6 @@ package registry
 import (
 	"errors"
 	"fmt"
-	"github.com/samestrin/atcr/internal/llmclient"
-	"github.com/samestrin/atcr/internal/payload"
 	reclib "github.com/samestrin/atcr/reconcile"
 	"io"
 	"math"
@@ -218,6 +216,43 @@ var (
 func ThinkingValues() []string { return slices.Clone(thinkingValues) }
 func ThinkingLevels() []string { return slices.Clone(thinkingLevels) }
 func ThinkingStyles() []string { return slices.Clone(thinkingStyles) }
+
+// DefaultMaxTokens is the output cap the review applies to an agent that
+// declares no max_tokens. It mirrors payload.DefaultOutputTokens, which this
+// leaf package cannot import; a test in internal/doctor pins the two together.
+const DefaultMaxTokens = 8192
+
+// thinkingBudgets is the one level-to-budget table, sent as the qwen
+// thinking_budget and anthropic budget_tokens fields.
+var thinkingBudgets = map[string]int{
+	ThinkingLevelLow:    2048,
+	ThinkingLevelMedium: 8192,
+	ThinkingLevelHigh:   16384,
+	ThinkingLevelMax:    32768,
+}
+
+// ThinkingBudgetTokens returns the thinking budget a declared setting sends,
+// or 0 when it sends none: thinking off, a style with no budget field, qwen on
+// with no level, or a value validation would reject. Anthropic on with no
+// level takes the medium budget, because Anthropic requires one when enabled.
+// internal/llmclient reads this when it builds the request, so the load-time
+// warning and the wire always agree.
+func ThinkingBudgetTokens(thinking, level, style string) int {
+	on := thinking == ThinkingOn || (thinking == "" && level != "")
+	if !on {
+		return 0
+	}
+	switch style {
+	case ThinkingStyleQwen:
+		return thinkingBudgets[level]
+	case ThinkingStyleAnthropic:
+		if level == "" {
+			level = ThinkingLevelMedium
+		}
+		return thinkingBudgets[level]
+	}
+	return 0
+}
 
 // Executor defaults (Epic 7.0). DefaultExecutorPersona is the fix-focused persona
 // applied when the executor block sets none; DefaultFixMinSeverity is the severity
@@ -1210,8 +1245,12 @@ func validateThinking(name string, a AgentConfig) []error {
 				name, ThinkingLevelMax, ThinkingLevelHigh, ThinkingStyleReasoningEffort)
 		}
 	}
-	if len(errs) == 0 {
-		warnThinkingBudget(name, a)
+	// Anthropic rejects extended thinking with any temperature but 1; the wire
+	// sends none for such an agent, so only a declared conflict is an error.
+	// Validation runs before applyDefaults, so a nil temperature is undeclared.
+	thinkingOn := a.Thinking == ThinkingOn || (a.Thinking == "" && a.ThinkingLevel != "")
+	if a.ThinkingStyle == ThinkingStyleAnthropic && thinkingOn && a.Temperature != nil && *a.Temperature != 1 {
+		errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q with thinking on needs temperature 1: remove temperature or set it to 1", name, ThinkingStyleAnthropic))
 	}
 	return errs
 }
@@ -1221,11 +1260,11 @@ func validateThinking(name string, a AgentConfig) []error {
 // rejects budget_tokens >= max_tokens. The cap is the declared max_tokens, else
 // the review default; the --max-tokens flag is not visible at load.
 func warnThinkingBudget(name string, a AgentConfig) {
-	budget := llmclient.ThinkingBudgetTokens(a.Thinking, a.ThinkingLevel, a.ThinkingStyle)
+	budget := ThinkingBudgetTokens(a.Thinking, a.ThinkingLevel, a.ThinkingStyle)
 	if budget == 0 {
 		return
 	}
-	limit, source := payload.DefaultOutputTokens, " (the default; --max-tokens can change it)"
+	limit, source := DefaultMaxTokens, " (the default; --max-tokens can change it)"
 	if a.MaxTokens != nil {
 		limit, source = *a.MaxTokens, ""
 	}
@@ -1377,6 +1416,9 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 	}
 	if len(a.Binding) > MaxBindingLen {
 		errs = append(errs, agentErrf(name, "agent '%s': binding must be at most %d characters", name, MaxBindingLen))
+	}
+	if len(errs) == 0 {
+		warnThinkingBudget(name, a)
 	}
 	return errs
 }

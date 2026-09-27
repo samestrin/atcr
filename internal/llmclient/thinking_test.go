@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -36,34 +37,34 @@ var thinkingCases = []struct {
 	name, thinking, level, style, want string
 }{
 	// qwen: enable_thinking plus a budget when a level is declared.
-	{"qwen on high", ThinkingOn, ThinkingLevelHigh, ThinkingStyleQwen, `{"enable_thinking":true,"thinking_budget":16384}`},
-	{"qwen level alone medium", "", ThinkingLevelMedium, ThinkingStyleQwen, `{"enable_thinking":true,"thinking_budget":8192}`},
-	{"qwen max not clamped", "", ThinkingLevelMax, ThinkingStyleQwen, `{"enable_thinking":true,"thinking_budget":32768}`},
-	{"qwen on no level", ThinkingOn, "", ThinkingStyleQwen, `{"enable_thinking":true}`},
-	{"qwen off", ThinkingOff, "", ThinkingStyleQwen, `{"enable_thinking":false}`},
+	{"qwen on high", registry.ThinkingOn, registry.ThinkingLevelHigh, registry.ThinkingStyleQwen, `{"enable_thinking":true,"thinking_budget":16384}`},
+	{"qwen level alone medium", "", registry.ThinkingLevelMedium, registry.ThinkingStyleQwen, `{"enable_thinking":true,"thinking_budget":8192}`},
+	{"qwen max not clamped", "", registry.ThinkingLevelMax, registry.ThinkingStyleQwen, `{"enable_thinking":true,"thinking_budget":32768}`},
+	{"qwen on no level", registry.ThinkingOn, "", registry.ThinkingStyleQwen, `{"enable_thinking":true}`},
+	{"qwen off", registry.ThinkingOff, "", registry.ThinkingStyleQwen, `{"enable_thinking":false}`},
 	// template_kwargs: on/off only.
-	{"template_kwargs off", ThinkingOff, "", ThinkingStyleTemplateKwargs, `{"chat_template_kwargs":{"enable_thinking":false}}`},
-	{"template_kwargs on", ThinkingOn, "", ThinkingStyleTemplateKwargs, `{"chat_template_kwargs":{"enable_thinking":true}}`},
+	{"template_kwargs off", registry.ThinkingOff, "", registry.ThinkingStyleTemplateKwargs, `{"chat_template_kwargs":{"enable_thinking":false}}`},
+	{"template_kwargs on", registry.ThinkingOn, "", registry.ThinkingStyleTemplateKwargs, `{"chat_template_kwargs":{"enable_thinking":true}}`},
 	// reasoning_effort: the level itself, max clamped to high.
-	{"reasoning_effort low", "", ThinkingLevelLow, ThinkingStyleReasoningEffort, `{"reasoning_effort":"low"}`},
-	{"reasoning_effort on medium", ThinkingOn, ThinkingLevelMedium, ThinkingStyleReasoningEffort, `{"reasoning_effort":"medium"}`},
-	{"reasoning_effort max clamps", "", ThinkingLevelMax, ThinkingStyleReasoningEffort, `{"reasoning_effort":"high"}`},
+	{"reasoning_effort low", "", registry.ThinkingLevelLow, registry.ThinkingStyleReasoningEffort, `{"reasoning_effort":"low"}`},
+	{"reasoning_effort on medium", registry.ThinkingOn, registry.ThinkingLevelMedium, registry.ThinkingStyleReasoningEffort, `{"reasoning_effort":"medium"}`},
+	{"reasoning_effort max clamps", "", registry.ThinkingLevelMax, registry.ThinkingStyleReasoningEffort, `{"reasoning_effort":"high"}`},
 	// anthropic: a thinking object; on with no level takes the medium budget.
-	{"anthropic on low", ThinkingOn, ThinkingLevelLow, ThinkingStyleAnthropic, `{"thinking":{"type":"enabled","budget_tokens":2048}}`},
-	{"anthropic level alone max", "", ThinkingLevelMax, ThinkingStyleAnthropic, `{"thinking":{"type":"enabled","budget_tokens":32768}}`},
-	{"anthropic on no level", ThinkingOn, "", ThinkingStyleAnthropic, `{"thinking":{"type":"enabled","budget_tokens":8192}}`},
-	{"anthropic off", ThinkingOff, "", ThinkingStyleAnthropic, `{"thinking":{"type":"disabled"}}`},
+	{"anthropic on low", registry.ThinkingOn, registry.ThinkingLevelLow, registry.ThinkingStyleAnthropic, `{"thinking":{"type":"enabled","budget_tokens":2048}}`},
+	{"anthropic level alone max", "", registry.ThinkingLevelMax, registry.ThinkingStyleAnthropic, `{"thinking":{"type":"enabled","budget_tokens":32768}}`},
+	{"anthropic on no level", registry.ThinkingOn, "", registry.ThinkingStyleAnthropic, `{"thinking":{"type":"enabled","budget_tokens":8192}}`},
+	{"anthropic off", registry.ThinkingOff, "", registry.ThinkingStyleAnthropic, `{"thinking":{"type":"disabled"}}`},
 	// Nothing to send.
 	{"unset", "", "", "", `{}`},
-	{"style alone", "", "", ThinkingStyleQwen, `{}`},
-	{"unknown style not coerced", ThinkingOn, "", "openai", `{}`},
-	{"no style", ThinkingOff, "", "", `{}`},
+	{"style alone", "", "", registry.ThinkingStyleQwen, `{}`},
+	{"unknown style not coerced", registry.ThinkingOn, "", "openai", `{}`},
+	{"no style", registry.ThinkingOff, "", "", `{}`},
 	// Values the registry would reject are not guessed at: nothing is sent.
-	{"unknown thinking qwen", "true", "", ThinkingStyleQwen, `{}`},
-	{"unknown thinking anthropic", "yes", "", ThinkingStyleAnthropic, `{}`},
-	{"unknown level anthropic", "", "extreme", ThinkingStyleAnthropic, `{}`},
-	{"unknown level reasoning_effort", "", "extreme", ThinkingStyleReasoningEffort, `{}`},
-	{"unknown level qwen", ThinkingOn, "extreme", ThinkingStyleQwen, `{}`},
+	{"unknown thinking qwen", "true", "", registry.ThinkingStyleQwen, `{}`},
+	{"unknown thinking anthropic", "yes", "", registry.ThinkingStyleAnthropic, `{}`},
+	{"unknown level anthropic", "", "extreme", registry.ThinkingStyleAnthropic, `{}`},
+	{"unknown level reasoning_effort", "", "extreme", registry.ThinkingStyleReasoningEffort, `{}`},
+	{"unknown level qwen", registry.ThinkingOn, "extreme", registry.ThinkingStyleQwen, `{}`},
 }
 
 // AC 03-01: one mapper, one populated style per declaration, exact wire JSON.
@@ -79,40 +80,28 @@ func TestNewThinkingFields_PerStyle(t *testing.T) {
 
 // AC 03-01 DoD: a declared false is a non-nil pointer, distinct from unset.
 func TestNewThinkingFields_FalseIsNotUnset(t *testing.T) {
-	off := newThinkingFields(ThinkingOff, "", ThinkingStyleQwen)
+	off := newThinkingFields(registry.ThinkingOff, "", registry.ThinkingStyleQwen)
 	require.NotNil(t, off.EnableThinking)
 	assert.False(t, *off.EnableThinking)
-	assert.Nil(t, newThinkingFields("", "", ThinkingStyleQwen).EnableThinking)
+	assert.Nil(t, newThinkingFields("", "", registry.ThinkingStyleQwen).EnableThinking)
 
-	kw := newThinkingFields(ThinkingOff, "", ThinkingStyleTemplateKwargs)
+	kw := newThinkingFields(registry.ThinkingOff, "", registry.ThinkingStyleTemplateKwargs)
 	require.NotNil(t, kw.ChatTemplateKwargs)
 	require.NotNil(t, kw.ChatTemplateKwargs.EnableThinking)
 	assert.False(t, *kw.ChatTemplateKwargs.EnableThinking)
 }
 
-// AC 03-01 Edge Case 2: qwen and anthropic read one level-to-budget table, and
-// ThinkingBudgetTokens reports exactly what the wire carries.
-func TestThinkingBudgetTokens_OneTable(t *testing.T) {
-	want := map[string]int{ThinkingLevelLow: 2048, ThinkingLevelMedium: 8192, ThinkingLevelHigh: 16384, ThinkingLevelMax: 32768}
-	for level, budget := range want {
-		assert.Equal(t, budget, ThinkingBudgetTokens("", level, ThinkingStyleQwen), "qwen %s", level)
-		assert.Equal(t, budget, ThinkingBudgetTokens("", level, ThinkingStyleAnthropic), "anthropic %s", level)
-		q, a := newThinkingFields("", level, ThinkingStyleQwen), newThinkingFields("", level, ThinkingStyleAnthropic)
+// AC 03-01 Edge Case 2: qwen and anthropic send the registry's one budget
+// table, so the load-time budget warning describes exactly what is sent.
+func TestNewThinkingFields_BudgetFromRegistryTable(t *testing.T) {
+	for _, level := range registry.ThinkingLevels() {
+		want := registry.ThinkingBudgetTokens("", level, registry.ThinkingStyleQwen)
+		require.Positive(t, want)
+		q, a := newThinkingFields("", level, registry.ThinkingStyleQwen), newThinkingFields("", level, registry.ThinkingStyleAnthropic)
 		require.NotNil(t, q.ThinkingBudget)
 		require.NotNil(t, a.Thinking)
-		assert.Equal(t, budget, *q.ThinkingBudget)
-		assert.Equal(t, budget, a.Thinking.BudgetTokens)
-	}
-	assert.Equal(t, 8192, ThinkingBudgetTokens(ThinkingOn, "", ThinkingStyleAnthropic), "anthropic on with no level uses medium")
-	for _, tc := range []struct{ thinking, level, style string }{
-		{ThinkingOn, "", ThinkingStyleQwen},
-		{ThinkingOff, "", ThinkingStyleQwen},
-		{ThinkingOff, "", ThinkingStyleAnthropic},
-		{"", ThinkingLevelHigh, ThinkingStyleReasoningEffort},
-		{ThinkingOn, "", ThinkingStyleTemplateKwargs},
-		{"", "", ""},
-	} {
-		assert.Zero(t, ThinkingBudgetTokens(tc.thinking, tc.level, tc.style), "%+v sends no budget", tc)
+		assert.Equal(t, want, *q.ThinkingBudget, "qwen %s", level)
+		assert.Equal(t, registry.ThinkingBudgetTokens("", level, registry.ThinkingStyleAnthropic), a.Thinking.BudgetTokens, "anthropic %s", level)
 	}
 }
 
@@ -165,7 +154,7 @@ func TestThinking_AnthropicEnabledSendsNoTemperature(t *testing.T) {
 
 // response_format and a thinking declaration ride the same body together.
 func TestThinking_CoexistsWithResponseFormat(t *testing.T) {
-	inv := Invocation{Model: "m", ResponseFormat: "json_object", ThinkingLevel: ThinkingLevelLow, ThinkingStyle: ThinkingStyleReasoningEffort}
+	inv := Invocation{Model: "m", ResponseFormat: "json_object", ThinkingLevel: registry.ThinkingLevelLow, ThinkingStyle: registry.ThinkingStyleReasoningEffort}
 	for path, body := range map[string]string{"complete": captureComplete(t, inv), "chat": captureChat(t, inv)} {
 		var got map[string]json.RawMessage
 		require.NoError(t, json.Unmarshal([]byte(body), &got), path)
@@ -234,7 +223,7 @@ func TestThinking_UnsetBodyByteIdentical(t *testing.T) {
 // paths, with no thinking key at all (not as {}, not as null).
 func TestThinking_UndeclaredSendsNoThinkingKey(t *testing.T) {
 	plain := Invocation{Model: "m"}
-	styleOnly := Invocation{Model: "m", ThinkingStyle: ThinkingStyleAnthropic}
+	styleOnly := Invocation{Model: "m", ThinkingStyle: registry.ThinkingStyleAnthropic}
 	for name, capture := range map[string]func(*testing.T, Invocation) string{"complete": captureComplete, "chat": captureChat} {
 		t.Run(name, func(t *testing.T) {
 			body := capture(t, plain)
@@ -249,7 +238,7 @@ func TestThinking_UndeclaredSendsNoThinkingKey(t *testing.T) {
 // AC 03-03 Scenario 3 and Edge Case 2: a declared false is on the wire, and a
 // declared style emits only its own members.
 func TestThinking_DeclaredFalsePresentAndOnlyOwnStyle(t *testing.T) {
-	assert.Contains(t, captureComplete(t, Invocation{Model: "m", Thinking: ThinkingOff, ThinkingStyle: ThinkingStyleQwen}), `"enable_thinking":false`)
+	assert.Contains(t, captureComplete(t, Invocation{Model: "m", Thinking: registry.ThinkingOff, ThinkingStyle: registry.ThinkingStyleQwen}), `"enable_thinking":false`)
 	assert.Equal(t, `{"reasoning_effort":"low"}`,
-		thinkingMembers(t, captureComplete(t, Invocation{Model: "m", ThinkingLevel: ThinkingLevelLow, ThinkingStyle: ThinkingStyleReasoningEffort})))
+		thinkingMembers(t, captureComplete(t, Invocation{Model: "m", ThinkingLevel: registry.ThinkingLevelLow, ThinkingStyle: registry.ThinkingStyleReasoningEffort})))
 }

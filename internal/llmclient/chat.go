@@ -150,13 +150,14 @@ func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, t
 	if err != nil {
 		return nil, err
 	}
+	thinking := newThinkingFields(inv.Thinking, inv.ThinkingLevel, inv.ThinkingStyle)
 	req := chatToolRequest{
 		Model:          inv.Model,
 		Messages:       messages,
-		Temperature:    inv.Temperature,
+		Temperature:    temperatureFor(inv.Temperature, thinking),
 		MaxTokens:      inv.MaxTokens,
 		ResponseFormat: newResponseFormat(inv.ResponseFormat),
-		thinkingFields: newThinkingFields(inv.Thinking, inv.ThinkingLevel, inv.ThinkingStyle),
+		thinkingFields: thinking,
 	}
 	if len(toolDefs) > 0 {
 		req.Tools = toolDefs
