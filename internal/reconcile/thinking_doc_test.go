@@ -273,7 +273,12 @@ func TestRegistryDoc_ThinkingStyleTable(t *testing.T) {
 	medium := strconv.Itoa(registry.ThinkingBudgetTokens(registry.ThinkingOn, "", registry.ThinkingStyleAnthropic))
 	assertStates(t, "thinking budgets line", budgets, musts{
 		{"`anthropic` with `thinking: on` and no level uses " + medium, "Anthropic requires a budget when thinking is enabled"},
-		{"loads with a warning", "a budget not below max_tokens warns at load"},
+		// TD: since the anthropic hard-constraint check, a budget not below
+		// max_tokens is a LOAD ERROR for anthropic (Anthropic rejects
+		// budget_tokens >= max_tokens); only qwen's advisory budget reaches
+		// warnThinkingBudget. The line must not read as a blanket warning.
+		{"fails to load under `anthropic`", "config.go rejects budget_tokens >= max_tokens at load for the anthropic style"},
+		{"loads with a warning under `qwen`", "only the qwen style's advisory budget reaches warnThinkingBudget"},
 	})
 }
 
