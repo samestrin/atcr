@@ -202,9 +202,7 @@ func reasoningMember(raw json.RawMessage, structured bool) json.RawMessage {
 		return nil
 	}
 	if structured {
-		// A decoded RawMessage has no leading whitespace, so trimming is about
-		// compact carriers like "[ ]": len > 2 means at least one real element.
-		if (raw[0] == '[' || raw[0] == '{') && len(bytes.TrimSpace(raw)) > 2 {
+		if (raw[0] == '[' || raw[0] == '{') && containerHasElement(raw) {
 			return raw
 		}
 		return nil
@@ -213,6 +211,24 @@ func reasoningMember(raw json.RawMessage, structured bool) json.RawMessage {
 		return nil
 	}
 	return raw
+}
+
+// containerHasElement reports whether a JSON array or object holds any
+// non-whitespace byte between its delimiters, without decoding: "[]", "{}",
+// and whitespace-padded empties like "[ ]" are empty, so a multi-megabyte
+// container is scanned, not copied, on a path that only needs an emptiness
+// verdict. An object like {"a":null} has non-whitespace bytes and counts as
+// populated — emptiness here means no members, not no values.
+func containerHasElement(raw json.RawMessage) bool {
+	if len(raw) < 2 {
+		return false
+	}
+	for _, b := range raw[1 : len(raw)-1] {
+		if b != ' ' && b != '\t' && b != '\n' && b != '\r' {
+			return true
+		}
+	}
+	return false
 }
 
 // stringMemberHasContent reports whether raw is a JSON string holding a

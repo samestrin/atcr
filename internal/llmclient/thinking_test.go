@@ -486,6 +486,8 @@ func TestReasoningCarrier_DecodesEachShapeOntoMessage(t *testing.T) {
 			map[string]string{"reasoning_content": `"because X"`, "reasoning_details": details}},
 		"empty array and object": {`"thinking_blocks":[],"reasoning_details":{}`,
 			map[string]string{}}, // an empty container is absent: neither the value the provider signed nor a meaningful replay
+		"whitespace-padded empties": {`"thinking_blocks":[ ],"reasoning_details":{ }`,
+			map[string]string{}},
 		"none": {"", map[string]string{}},
 	}
 	for name, tc := range cases {
