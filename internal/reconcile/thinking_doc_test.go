@@ -64,7 +64,10 @@ func TestRegistryDoc_ThinkingRows(t *testing.T) {
 			{"requires `thinking_style: " + registry.ThinkingStyleQwen + "` or `thinking_style: " + registry.ThinkingStyleGLM + "`", "only those styles have a preserved-thinking field"},
 			{"and thinking on", "the flag with thinking off is a load error"},
 			{"`preserve_thinking: true`", "the qwen wire field"},
-			{"`thinking: {\"type\":\"enabled\",\"clear_thinking\":false}`", "the glm wire object, as the code sends it"},
+			{"`off` sends `preserve_thinking: false`", "the qwen off value is an explicit signal, not nothing"},
+			{"`thinking: {\"type\":\"enabled\",\"clear_thinking\":false}`", "the glm on object; llmclient's thinking tests pin the wire bytes"},
+			{"`\"clear_thinking\":true`", "the glm off value is inverted"},
+			{"the loop sends it back with or without the flag", "the flag asks the model to use the replay, it does not turn the replay on"},
 			{"Unset sends nothing", "an undeclared agent's body is unchanged"},
 		}},
 	}
@@ -83,8 +86,10 @@ func TestRegistryDoc_ThinkingRows(t *testing.T) {
 		}
 	}
 	// The replay shipped in Sprint 35.16.11.2.2.1, so the old caveat must be gone.
-	require.NotContains(t, docRow(t, doc, "`thinking`"), "does not send",
-		"the `thinking` row still says the tool loop does not send reasoning back")
+	thinking := docRow(t, doc, "`thinking`")
+	for _, stale := range []string{"does not send", "epic 35.16.11.2.2.1", "may fail on turn 2"} {
+		require.NotContains(t, thinking, stale, "the `thinking` row still carries the pre-replay caveat")
+	}
 }
 
 // The thinking row says a bare YAML bool is rejected and the level row says off
@@ -222,6 +227,7 @@ func TestRegistryDoc_ThinkingStyleTable(t *testing.T) {
 			{"no level", "a level under glm is rejected at load"},
 			{"keeps its `temperature`", "only anthropic drops the temperature"},
 			{"`\"clear_thinking\": false` when `preserve_thinking` is `on`", "the glm preserved-thinking field is inverted"},
+			{"`\"clear_thinking\": true` when it is `off`", "the glm off value is inverted too"},
 		},
 	}
 	// Rows are read from the table after the intro only, so another table with a
@@ -282,6 +288,8 @@ func TestRegistryDoc_ThinkingMaxTokensNote(t *testing.T) {
 		{"`modify_params=True`", "the proxy setting that causes it"},
 		{"silently turns thinking off for that turn", "the specific failure mode, not a generic caveat"},
 		{"instead of returning the provider's 400", "the visible failure it replaces"},
+		{"another style (for example `reasoning_effort`)", "the anthropic style is already rejected with function calling, so the risk is a Claude model under another style"},
+		{"Neither atcr nor `atcr doctor` can see the proxy setting", "the operator must check the proxy; atcr cannot"},
 	})
 	// TD-008: the executor lane's gap is named, as the max_tokens row names its own,
 	// and the claim is checked against ExecutorConfig so it cannot go stale.
