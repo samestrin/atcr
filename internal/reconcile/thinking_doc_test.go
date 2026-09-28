@@ -68,6 +68,9 @@ func TestRegistryDoc_ThinkingRows(t *testing.T) {
 		}},
 		{"`preserve_thinking`", registry.ThinkingValues(), []struct{ token, why string }{
 			{"requires `thinking_style: " + registry.ThinkingStyleQwen + "` or `thinking_style: " + registry.ThinkingStyleGLM + "`", "only those styles have a preserved-thinking field"},
+			// TD internal/reconcile/thinking_doc_test.go:65: the level-alone half of
+			// "thinking on" must be pinned as a token and against a real load.
+			{"or a `thinking_level` under `qwen`", "thinking on also means a level under qwen; the drift test pinned only the thinking: on path"},
 			{"and thinking on", "the flag with thinking off is a load error"},
 			{"`preserve_thinking: true`", "the qwen wire field"},
 			{"`off` sends `preserve_thinking: false`", "the qwen off value is an explicit signal, not nothing"},
@@ -137,6 +140,10 @@ func TestRegistryDoc_ThinkingRejectsWhatTheDocExcludes(t *testing.T) {
 	require.NoError(t, load("    thinking_level: "+registry.ThinkingLevelHigh+"\n    supports_function_calling: true\n"+effort),
 		"the doc says only the anthropic combination is rejected: another style with function calling loads")
 	glm := "    thinking_style: " + registry.ThinkingStyleGLM + "\n"
+	// TD internal/reconcile/thinking_doc_test.go:65: the doc's "or a thinking_level
+	// under qwen" half of thinking-on must actually load.
+	require.NoError(t, load("    thinking_level: "+registry.ThinkingLevelHigh+"\n    preserve_thinking: "+registry.ThinkingOn+"\n"+style),
+		"the doc says preserve_thinking is legal with a thinking_level alone under qwen")
 	for _, s := range []string{style, glm} {
 		require.NoError(t, load("    thinking: "+registry.ThinkingOn+"\n    preserve_thinking: "+registry.ThinkingOn+"\n"+s),
 			"the doc says preserve_thinking loads under qwen or glm with thinking on")
