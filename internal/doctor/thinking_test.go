@@ -159,7 +159,7 @@ func TestRun_ThinkingVerdict(t *testing.T) {
 			wantStatus: "", wantCalls: 1},
 		{name: "declared call timeout", thinking: "off", style: "qwen", declaredErr: context.DeadlineExceeded,
 			wantStatus: ThinkingUnverified, wantCalls: 1},
-		{name: "declared call empty reply", thinking: "off", style: "qwen", declared: llmclient.Completion{Truncated: true}, declaredErr: errors.New("provider returned an empty completion"),
+		{name: "declared call empty reply", thinking: "off", style: "qwen", declaredErr: errors.New("provider returned an empty completion"),
 			wantStatus: "", wantCalls: 1},
 		{name: "truncated, no signal", thinking: "off", style: "qwen", declared: truncatedSilent,
 			wantStatus: ThinkingUnverified, wantCalls: 1, wantDetail: []string{"cut off at the output cap (2048 tokens)", "max_tokens"}},
@@ -204,8 +204,11 @@ func TestRun_ThinkingVerdict(t *testing.T) {
 		// An empty first pair must not hide a real think block after it.
 		{name: "off, empty pair then real think block", thinking: "off", style: "qwen", declared: llmclient.Completion{Content: "<think></think><think>real reasoning</think>answer"},
 			wantStatus: ThinkingNotHonored, wantCalls: 1, wantDetail: []string{"inline <think> reasoning in the content"}},
+		// An empty reply cut off at the cap is the runaway thinker the verdict exists
+		// to name: it classifies as network_error, yet must still get a verdict that
+		// carries the cut-off remedy (TD internal/doctor/run.go:994).
 		{name: "declared call empty and cut off", thinking: "off", style: "qwen", declared: llmclient.Completion{Truncated: true}, declaredErr: errors.New("provider returned an empty completion"),
-			wantStatus: "", wantCalls: 1},
+			wantStatus: ThinkingUnverified, wantCalls: 1, wantDetail: []string{"the reply was cut off at the output cap (2048 tokens)", "max_tokens"}},
 		{name: "off, silent, control cut off reporting zero", thinking: "off", style: "qwen", declared: silent, control: truncatedReportedZero,
 			wantStatus: ThinkingUnverified, wantCalls: 2, wantDetail: []string{"control", "cut off"}},
 		{name: "on, truncated, signal", thinking: "on", style: "qwen", declared: truncatedThinks,
