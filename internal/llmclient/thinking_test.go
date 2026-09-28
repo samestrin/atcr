@@ -339,19 +339,191 @@ func TestReasoningSignal_AbsentIsEmpty(t *testing.T) {
 	assert.Empty(t, resp.Reasoning)
 }
 
-// AC 03-05 Edge Case 2: Message is re-sent as history, so it must have no field
-// that could carry reasoning back to the model.
-func TestMessage_HasNoReasoningField(t *testing.T) {
+// carrierKeys are the reasoning members an assistant Message carries back into
+// tool-loop history (sprint 35.16.11.2.2.1).
+var carrierKeys = []string{"reasoning_content", "reasoning", "reasoning_details", "thinking_blocks"}
+
+// carrierOf returns the reasoning members m would send, as the exact bytes it
+// marshals them to.
+func carrierOf(t *testing.T, m Message) map[string]string {
+	t.Helper()
+	b, err := json.Marshal(m)
+	require.NoError(t, err)
+	var all map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(b, &all))
+	out := map[string]string{}
+	for _, k := range carrierKeys {
+		if v, ok := all[k]; ok {
+			out[k] = string(v)
+		}
+	}
+	return out
+}
+
+// chatReply runs one Chat turn against a server that replies with messageJSON.
+func chatReply(t *testing.T, messageJSON string) *ChatResponse {
+	t.Helper()
+	srv := reasoningServer(t, messageJSON)
+	s := "hi"
+	resp, err := fastRetry(srv.Client()).Chat(context.Background(), Invocation{BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m"}, []Message{{Role: "user", Content: &s}}, nil)
+	require.NoError(t, err)
+	return resp
+}
+
+// toolCallTurn is an assistant tool-call reply with extra members appended.
+func toolCallTurn(members string) string {
+	msg := `{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"read_file","arguments":"{}"}}]`
+	if members != "" {
+		msg += "," + members
+	}
+	return msg + "}"
+}
+
+// Sprint 35.16.11.2.2.1 AC 02-01: each provider's reasoning member decodes onto
+// the assistant Message as the bytes received, under the key it arrived in.
+// reasoning_content and reasoning stay separate, never merged.
+func TestReasoningCarrier_DecodesEachShapeOntoMessage(t *testing.T) {
+	const blocks = `[{"type":"thinking","thinking":"step 1","signature":"EqQBCkgIARABGAIiQL+/zzA0Xq9b=="}]`
+	const details = `[{"type":"reasoning.text","text":"step 1"}]`
+	cases := map[string]struct {
+		members string
+		want    map[string]string
+	}{
+		"reasoning_content": {`"reasoning_content":"because X"`, map[string]string{"reasoning_content": `"because X"`}},
+		"reasoning":         {`"reasoning":"chain of thought"`, map[string]string{"reasoning": `"chain of thought"`}},
+		"both string keys": {`"reasoning_content":"primary","reasoning":"alt"`,
+			map[string]string{"reasoning_content": `"primary"`, "reasoning": `"alt"`}},
+		"reasoning_details": {`"reasoning_details":` + details, map[string]string{"reasoning_details": details}},
+		"thinking_blocks":   {`"thinking_blocks":` + blocks, map[string]string{"thinking_blocks": blocks}},
+		"content and details": {`"reasoning_content":"because X","reasoning_details":` + details,
+			map[string]string{"reasoning_content": `"because X"`, "reasoning_details": details}},
+		"empty array and object": {`"thinking_blocks":[],"reasoning_details":{}`,
+			map[string]string{"thinking_blocks": `[]`, "reasoning_details": `{}`}},
+		"none": {"", map[string]string{}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			resp := chatReply(t, toolCallTurn(tc.members))
+			assert.Equal(t, tc.want, carrierOf(t, resp.Message))
+			require.Len(t, resp.Message.ToolCalls, 1, "the tool call survives beside the carrier")
+		})
+	}
+}
+
+// AC 02-01 Edge Cases 4-5 and Error Scenario 1: a null, an empty string, or a
+// value of the wrong type is absent. It never fails the turn and never
+// re-marshals as a member: null would change the request body, and "" is the
+// presence marker the user decided never to send (Phase 2 clarification).
+// Strings must be strings; reasoning_details and thinking_blocks must be an
+// array or an object.
+func TestReasoningCarrier_AbsentValuesLeaveNoMember(t *testing.T) {
+	cases := map[string]string{
+		"null reasoning_content":   `"reasoning_content":null`,
+		"null reasoning":           `"reasoning":null`,
+		"null reasoning_details":   `"reasoning_details":null`,
+		"null thinking_blocks":     `"thinking_blocks":null`,
+		"empty reasoning_content":  `"reasoning_content":""`,
+		"empty reasoning":          `"reasoning":""`,
+		"number reasoning_content": `"reasoning_content":42`,
+		"object reasoning":         `"reasoning":{"text":"x"}`,
+		"string thinking_blocks":   `"thinking_blocks":"x"`,
+		"number reasoning_details": `"reasoning_details":7`,
+	}
+	for name, members := range cases {
+		t.Run(name, func(t *testing.T) {
+			resp := chatReply(t, toolCallTurn(members))
+			assert.Empty(t, carrierOf(t, resp.Message))
+			assert.Empty(t, resp.Reasoning)
+			require.Len(t, resp.Message.ToolCalls, 1)
+		})
+	}
+}
+
+// AC 02-03 Scenarios 2-4 and Edge Cases 2, 4: each shape re-marshals as the
+// exact bytes received. Escapes, unicode, and the Anthropic signature are
+// unchanged, and array/object members stay JSON, never a quoted string.
+func TestReasoningCarrier_RoundTripByteForByte(t *testing.T) {
+	cases := map[string]string{
+		"reasoning_content": `"line one\nline \"two\" caf\u00e9 café"`,
+		"reasoning":         `"tab\there / slash"`,
+		"reasoning_details": `[{"type":"reasoning.text","text":"a\tb","index":0}]`,
+		"thinking_blocks":   `[{"type":"thinking","thinking":"weigh \"x\"","signature":"EqQBCkgIARABGAIiQL+/zzA0Xq9b+/9w=="},{"type":"redacted_thinking","data":"c2VjcmV0"}]`,
+	}
+	for key, raw := range cases {
+		t.Run(key, func(t *testing.T) {
+			resp := chatReply(t, toolCallTurn(`"`+key+`":`+raw))
+			got := carrierOf(t, resp.Message)
+			assert.Equal(t, raw, got[key], "%s must round-trip byte-for-byte", key)
+			if key == "reasoning_details" || key == "thinking_blocks" {
+				require.NotEmpty(t, got[key])
+				assert.Contains(t, "[{", got[key][:1], "%s re-marshals as JSON, not a string", key)
+			}
+		})
+	}
+}
+
+// encoding/json HTML-escapes <, >, and & in every marshaled string, the carrier
+// included, so reasoning holding them re-sends as the same JSON value with
+// different bytes. The decoded text is unchanged, which is what a provider
+// reads.
+func TestReasoningCarrier_HTMLCharsReencodeEquivalently(t *testing.T) {
+	resp := chatReply(t, toolCallTurn(`"reasoning_content":"if a < b && c > d"`))
+	got := carrierOf(t, resp.Message)["reasoning_content"]
+	assert.Equal(t, `"if a \u003c b \u0026\u0026 c \u003e d"`, got)
+	var s string
+	require.NoError(t, json.Unmarshal([]byte(got), &s))
+	assert.Equal(t, "if a < b && c > d", s)
+}
+
+// goldenToolHistoryRequest is a tool-loop turn-2 body (user, assistant tool
+// call, tool result) captured from pre-plan main at e5c9754d, before Message
+// had any reasoning member.
+const goldenToolHistoryRequest = `{"model":"m","messages":[{"role":"user","content":"review f.go"},{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"f.go\"}"}}]},{"role":"tool","content":"package main","tool_call_id":"c1"}],"tools":[{"function":{"description":"Read a file","name":"read_file","parameters":{"type":"object"}},"type":"function"}],"tool_choice":"auto","temperature":0.3,"max_tokens":512}`
+
+// AC 02-03 Scenario 1: a history with no reasoning set, tool-call turn
+// included, marshals byte-identical to the pre-plan body.
+func TestMessage_ReasoningCarrierUnsetIsByteIdentical(t *testing.T) {
+	u, tr := "review f.go", "package main"
+	temp, maxTok := 0.3, 512
+	b, err := json.Marshal(chatToolRequest{
+		Model: "m",
+		Messages: []Message{
+			{Role: "user", Content: &u},
+			{Role: "assistant", ToolCalls: []ToolCall{{ID: "c1", Type: "function", Function: FunctionCall{Name: "read_file", Arguments: json.RawMessage(`"{\"path\":\"f.go\"}"`)}}}},
+			{Role: "tool", Content: &tr, ToolCallID: "c1"},
+		},
+		Tools:          []ToolDef{{Name: "read_file", Description: "Read a file", Parameters: map[string]any{"type": "object"}}},
+		ToolChoice:     "auto",
+		Temperature:    &temp,
+		MaxTokens:      &maxTok,
+		thinkingFields: newThinkingFields("", "", ""),
+	})
+	require.NoError(t, err)
+	require.Equal(t, goldenToolHistoryRequest, string(b))
+}
+
+// Replaces TestMessage_HasNoReasoningField (sprint 35.16.11.2.2), which pinned
+// the opposite: Message now carries reasoning back into tool-loop history.
+// Every carrier member is raw JSON, so no shape is reshaped, and omitempty, so
+// an unset carrier adds nothing to the body.
+func TestMessage_ReasoningCarrierIsRawAndOmitempty(t *testing.T) {
 	typ := reflect.TypeOf(Message{})
+	var found []string
 	for i := 0; i < typ.NumField(); i++ {
 		f := typ.Field(i)
-		assert.NotContains(t, strings.ToLower(f.Name), "reasoning")
-		assert.NotContains(t, f.Tag.Get("json"), "reasoning")
+		tag := strings.Split(f.Tag.Get("json"), ",")
+		for _, k := range carrierKeys {
+			if tag[0] != k {
+				continue
+			}
+			found = append(found, k)
+			assert.Equal(t, reflect.TypeOf(json.RawMessage(nil)), f.Type, "%s is raw JSON", k)
+			assert.Contains(t, tag[1:], "omitempty", "%s is omitempty", k)
+		}
 	}
+	assert.ElementsMatch(t, carrierKeys, found)
 	content := "the review"
-	b, err := json.Marshal(Message{Role: "assistant", Content: &content})
-	require.NoError(t, err)
-	assert.NotContains(t, string(b), "reasoning")
+	assert.Empty(t, carrierOf(t, Message{Role: "assistant", Content: &content}))
 }
 
 // A malformed reasoning signal never fails the turn: a non-string

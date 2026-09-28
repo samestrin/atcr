@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -90,10 +91,11 @@ func TestToolLoop_ResponseFormatAbsentWhenUnset(t *testing.T) {
 	}
 }
 
-// Sprint 35.16.11.2.2 (AC 04 story, TD-013): a declared thinking setting rides
-// every tool-loop turn, and a turn-1 reply's reasoning_content is never re-sent
-// in the turn-2 history — reasoning rides the response only, never a Message.
-func TestToolLoop_ThinkingOnEveryTurnAndReasoningNeverResent(t *testing.T) {
+// Sprint 35.16.11.2.2 (AC 04 story): a declared thinking setting rides every
+// tool-loop turn. Sprint 35.16.11.2.2.1 inverted the second half: a turn-1
+// reply's reasoning_content is re-sent on its assistant turn in the turn-2
+// history, since providers expect their own reasoning back.
+func TestToolLoop_ThinkingOnEveryTurnAndReasoningResent(t *testing.T) {
 	var (
 		mu     sync.Mutex
 		bodies []string
@@ -129,6 +131,6 @@ func TestToolLoop_ThinkingOnEveryTurnAndReasoningNeverResent(t *testing.T) {
 	for i, body := range bodies {
 		assert.Contains(t, body, `"enable_thinking":false`, "turn %d", i+1)
 	}
-	assert.NotContains(t, bodies[1], "PRIVATE-CHAIN-OF-THOUGHT", "turn-1 reasoning must not be re-sent")
-	assert.NotContains(t, bodies[1], "reasoning_content")
+	assert.Contains(t, bodies[1], `"reasoning_content":"PRIVATE-CHAIN-OF-THOUGHT"`, "turn-1 reasoning must be re-sent")
+	assert.Equal(t, 1, strings.Count(bodies[1], "reasoning_content"), "only the assistant turn carries it")
 }

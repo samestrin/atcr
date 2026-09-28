@@ -71,11 +71,22 @@ type ToolCall struct {
 // an empty string; user/tool messages set it to a real string. ToolCalls is
 // present on an assistant turn requesting tools; ToolCallID ties a role:"tool"
 // result back to the call that produced it.
+//
+// The reasoning members carry an assistant turn's own reasoning back into
+// tool-loop history, because providers expect it on the next turn. Each holds
+// the provider's bytes as received, under the key they arrived in, and is set
+// only by Chat on a reply: user and tool messages never carry one, and unset
+// members add nothing to the body.
 type Message struct {
 	Role       string     `json:"role"`
 	Content    *string    `json:"content"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
+
+	ReasoningContent json.RawMessage `json:"reasoning_content,omitempty"`
+	Reasoning        json.RawMessage `json:"reasoning,omitempty"`
+	ReasoningDetails json.RawMessage `json:"reasoning_details,omitempty"`
+	ThinkingBlocks   json.RawMessage `json:"thinking_blocks,omitempty"`
 }
 
 // ChatResponse is the engine-facing result of one Chat turn: the assistant
@@ -109,9 +120,9 @@ type ChatResponse struct {
 	// errored turn (see the no-choices note below).
 	CallRecords []CallRecord
 
-	// Reasoning is this turn's reasoning_content. It rides the response only:
-	// Message, which the loop re-sends as history, has no reasoning field, so
-	// reasoning is never sent back to the model.
+	// Reasoning is this turn's reasoning_content (or reasoning) as text, for
+	// readers that report it. What goes back to the model is Message's own
+	// reasoning members, not this field.
 	Reasoning string
 }
 
@@ -144,11 +155,54 @@ type chatToolResponse struct {
 }
 
 // responseMessage is a decoded assistant turn: the Message the loop keeps as
-// history, plus reasoning_content (or reasoning), split off so it is never re-sent.
+// history, plus its reasoning members as received. These fields shadow
+// Message's own reasoning members, so decode never fills those: Chat copies
+// each one across only after reasoningMember checks its shape.
 type responseMessage struct {
 	Message
-	ReasoningContent reasoningText `json:"reasoning_content"`
-	Reasoning        reasoningText `json:"reasoning"`
+	ReasoningContent json.RawMessage `json:"reasoning_content"`
+	Reasoning        json.RawMessage `json:"reasoning"`
+	ReasoningDetails json.RawMessage `json:"reasoning_details"`
+	ThinkingBlocks   json.RawMessage `json:"thinking_blocks"`
+}
+
+// history is the reply as the loop re-sends it: the Message with each
+// reasoning member that has its key's shape.
+func (m responseMessage) history() Message {
+	msg := m.Message
+	msg.ReasoningContent = reasoningMember(m.ReasoningContent, false)
+	msg.Reasoning = reasoningMember(m.Reasoning, false)
+	msg.ReasoningDetails = reasoningMember(m.ReasoningDetails, true)
+	msg.ThinkingBlocks = reasoningMember(m.ThinkingBlocks, true)
+	return msg
+}
+
+// reasoningMember is a reasoning member as received, kept only when it has its
+// key's shape: a non-empty string, or (structured) an array or object. Anything
+// else — null, "", a wrong type — is absent, so it never reaches a request body
+// and never fails the decode.
+func reasoningMember(raw json.RawMessage, structured bool) json.RawMessage {
+	if len(raw) == 0 {
+		return nil
+	}
+	if structured {
+		if raw[0] == '[' || raw[0] == '{' {
+			return raw
+		}
+		return nil
+	}
+	var s string
+	if json.Unmarshal(raw, &s) != nil || s == "" {
+		return nil
+	}
+	return raw
+}
+
+// memberText is a string reasoning member's text, "" when absent.
+func memberText(raw json.RawMessage) reasoningText {
+	var s string
+	_ = json.Unmarshal(raw, &s)
+	return reasoningText(s)
 }
 
 // Chat performs one multi-turn chat-completions exchange: it serializes the
@@ -215,7 +269,8 @@ func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, t
 			return &ChatResponse{CallRecords: records}, fmt.Errorf("provider truncated response (finish_reason=%s): empty content with no tool_calls", ch.FinishReason)
 		}
 	}
-	resp := &ChatResponse{Message: ch.Message.Message, FinishReason: ch.FinishReason, Usage: parsed.Usage, CallRecords: records, Reasoning: reasoningOf(ch.Message.ReasoningContent, ch.Message.Reasoning)}
+	msg := ch.Message.history()
+	resp := &ChatResponse{Message: msg, FinishReason: ch.FinishReason, Usage: parsed.Usage, CallRecords: records, Reasoning: reasoningOf(memberText(msg.ReasoningContent), memberText(msg.Reasoning))}
 	if ch.FinishReason == "length" {
 		resp.Truncated = true
 	}
