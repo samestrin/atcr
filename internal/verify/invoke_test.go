@@ -184,6 +184,34 @@ func TestBuildSkepticAgent_AnthropicThinkingKeptForSingleShot(t *testing.T) {
 	assert.Greater(t, *a.Invocation.MaxTokens, budget)
 }
 
+// TestBuildSkepticAgent_AnthropicOffKeepsUndeclaredCap: thinking: off carries
+// no budget, so an anthropic skeptic with no declared max_tokens must keep the
+// provider default (nil), not gain the built-in cap a budget would need.
+func TestBuildSkepticAgent_AnthropicOffKeepsUndeclaredCap(t *testing.T) {
+	t.Parallel()
+	sk := testSkeptic()
+	sk.Config.SupportsFC = false // the budget path runs on the single-shot lane
+	sk.Config.Thinking, sk.Config.ThinkingStyle = registry.ThinkingOff, registry.ThinkingStyleAnthropic
+	a, _ := buildSkepticAgent(sk, "prompt", false)
+	assert.Nil(t, a.Invocation.MaxTokens, "no budget means no cap is imposed: the provider default applies")
+	assert.Equal(t, registry.ThinkingOff, a.Invocation.Thinking)
+}
+
+// TestBuildSkepticAgent_AnthropicDeclaredCapAboveBudgetForwarded: a declared
+// max_tokens the budget already fits under is sent as-is, not replaced by the
+// built-in default cap.
+func TestBuildSkepticAgent_AnthropicDeclaredCapAboveBudgetForwarded(t *testing.T) {
+	t.Parallel()
+	sk := testSkeptic()
+	sk.Config.SupportsFC = false
+	sk.Config.Thinking, sk.Config.ThinkingLevel, sk.Config.ThinkingStyle = registry.ThinkingOn, registry.ThinkingLevelLow, registry.ThinkingStyleAnthropic
+	sk.Config.MaxTokens = intPtr(12345) // low's 2048 budget fits under it
+	a, _ := buildSkepticAgent(sk, "prompt", false)
+	require.NotNil(t, a.Invocation.MaxTokens)
+	assert.Equal(t, 12345, *a.Invocation.MaxTokens, "a declared cap above the budget is forwarded verbatim")
+	assert.Equal(t, registry.ThinkingLevelLow, a.Invocation.ThinkingLevel, "a fitting level is not downgraded")
+}
+
 func TestInvokeSkeptic_Confirms(t *testing.T) {
 	t.Parallel()
 	cc := finalChat(`{"verdict": "confirmed", "reasoning": "evidence valid"}`)
