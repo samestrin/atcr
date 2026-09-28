@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // ToolDef is a function-calling tool definition. It marshals to the OpenAI tool
@@ -188,9 +189,9 @@ func (m responseMessage) history() Message {
 }
 
 // reasoningMember is a reasoning member as received, kept only when it has its
-// key's shape: a non-empty string, or (structured) an array or object. Anything
-// else — null, "", a wrong type — is absent, so it never reaches a request body
-// and never fails the decode.
+// key's shape: a string holding a non-whitespace character, or (structured) an
+// array or object. Anything else — null, "", whitespace-only, a wrong type —
+// is absent, so it never reaches a request body and never fails the decode.
 func reasoningMember(raw json.RawMessage, structured bool) json.RawMessage {
 	if len(raw) == 0 {
 		return nil
@@ -201,11 +202,34 @@ func reasoningMember(raw json.RawMessage, structured bool) json.RawMessage {
 		}
 		return nil
 	}
-	var s string
-	if json.Unmarshal(raw, &s) != nil || s == "" {
+	if !stringMemberHasContent(raw) {
 		return nil
 	}
 	return raw
+}
+
+// stringMemberHasContent reports whether raw is a JSON string holding a
+// non-whitespace character, without materializing the decoded string: a
+// multi-megabyte reasoning member is measured, not copied, on a path that only
+// needs an emptiness verdict. Escape-free strings are scanned directly (with no
+// backslash the content bytes are the raw bytes between the quotes); an escape
+// could stand for whitespace ("\t") or content ("\\"), so those fall back to a
+// full decode for the exact answer.
+func stringMemberHasContent(raw json.RawMessage) bool {
+	if len(raw) < 2 || raw[0] != '"' || raw[len(raw)-1] != '"' {
+		return false
+	}
+	content := raw[1 : len(raw)-1]
+	if bytes.IndexByte(content, '\\') < 0 {
+		for _, b := range content {
+			if b != ' ' && b != '\t' && b != '\n' && b != '\r' {
+				return true
+			}
+		}
+		return false
+	}
+	var s string
+	return json.Unmarshal(raw, &s) == nil && strings.TrimSpace(s) != ""
 }
 
 // memberText is a string reasoning member's text, "" when absent.

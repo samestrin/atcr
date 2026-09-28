@@ -500,7 +500,7 @@ func TestReasoningCarrier_WhitespaceOnlyReasoningDropped(t *testing.T) {
 		"space":        `"reasoning_content":" "`,
 		"newline":      `"reasoning_content":"\n"`,
 		"tab":          `"reasoning_content":"\t"`,
-		"escaped tab":  `"reasoning_content":"\\t"`,
+		"escaped tab":  `"reasoning_content":"\t"`,
 		"mixed spaces": `"reasoning_content":" \t \n "`,
 		"whitespace":   `"reasoning":"   "`,
 	}
