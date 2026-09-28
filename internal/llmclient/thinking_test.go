@@ -15,7 +15,7 @@ import (
 )
 
 // thinkingKeys are every top-level request member a thinking style can emit.
-var thinkingKeys = []string{"enable_thinking", "thinking_budget", "chat_template_kwargs", "reasoning_effort", "thinking"}
+var thinkingKeys = []string{"enable_thinking", "thinking_budget", "chat_template_kwargs", "reasoning_effort", "thinking", "preserve_thinking"}
 
 // thinkingMembers decodes a request body and returns only its thinking members,
 // re-encoded as one JSON object, so a test can compare them exactly.
@@ -57,6 +57,9 @@ var thinkingCases = []struct {
 	{"anthropic level alone max", "", registry.ThinkingLevelMax, registry.ThinkingStyleAnthropic, `{"thinking":{"type":"enabled","budget_tokens":32768}}`},
 	{"anthropic on no level", registry.ThinkingOn, "", registry.ThinkingStyleAnthropic, `{"thinking":{"type":"enabled","budget_tokens":8192}}`},
 	{"anthropic off", registry.ThinkingOff, "", registry.ThinkingStyleAnthropic, `{"thinking":{"type":"disabled"}}`},
+	// glm: a thinking object with no budget.
+	{"glm on", registry.ThinkingOn, "", registry.ThinkingStyleGLM, `{"thinking":{"type":"enabled"}}`},
+	{"glm off", registry.ThinkingOff, "", registry.ThinkingStyleGLM, `{"thinking":{"type":"disabled"}}`},
 	// Nothing to send.
 	{"unset", "", "", "", `{}`},
 	{"style alone", "", "", registry.ThinkingStyleQwen, `{}`},
@@ -74,7 +77,7 @@ var thinkingCases = []struct {
 func TestNewThinkingFields_PerStyle(t *testing.T) {
 	for _, tc := range thinkingCases {
 		t.Run(tc.name, func(t *testing.T) {
-			b, err := json.Marshal(newThinkingFields(tc.thinking, tc.level, tc.style))
+			b, err := json.Marshal(newThinkingFields(tc.thinking, tc.level, tc.style, ""))
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, string(b))
 		})
@@ -83,12 +86,12 @@ func TestNewThinkingFields_PerStyle(t *testing.T) {
 
 // AC 03-01 DoD: a declared false is a non-nil pointer, distinct from unset.
 func TestNewThinkingFields_FalseIsNotUnset(t *testing.T) {
-	off := newThinkingFields(registry.ThinkingOff, "", registry.ThinkingStyleQwen)
+	off := newThinkingFields(registry.ThinkingOff, "", registry.ThinkingStyleQwen, "")
 	require.NotNil(t, off.EnableThinking)
 	assert.False(t, *off.EnableThinking)
-	assert.Nil(t, newThinkingFields("", "", registry.ThinkingStyleQwen).EnableThinking)
+	assert.Nil(t, newThinkingFields("", "", registry.ThinkingStyleQwen, "").EnableThinking)
 
-	kw := newThinkingFields(registry.ThinkingOff, "", registry.ThinkingStyleTemplateKwargs)
+	kw := newThinkingFields(registry.ThinkingOff, "", registry.ThinkingStyleTemplateKwargs, "")
 	require.NotNil(t, kw.ChatTemplateKwargs)
 	require.NotNil(t, kw.ChatTemplateKwargs.EnableThinking)
 	assert.False(t, *kw.ChatTemplateKwargs.EnableThinking)
@@ -100,7 +103,7 @@ func TestNewThinkingFields_BudgetFromRegistryTable(t *testing.T) {
 	for _, level := range registry.ThinkingLevels() {
 		want := registry.ThinkingBudgetTokens("", level, registry.ThinkingStyleQwen)
 		require.Positive(t, want)
-		q, a := newThinkingFields("", level, registry.ThinkingStyleQwen), newThinkingFields("", level, registry.ThinkingStyleAnthropic)
+		q, a := newThinkingFields("", level, registry.ThinkingStyleQwen, ""), newThinkingFields("", level, registry.ThinkingStyleAnthropic, "")
 		require.NotNil(t, q.ThinkingBudget)
 		require.NotNil(t, a.Thinking)
 		assert.Equal(t, want, *q.ThinkingBudget, "qwen %s", level)
@@ -144,7 +147,7 @@ func TestThinking_AnthropicEnabledSendsNoTemperature(t *testing.T) {
 	for _, tc := range thinkingCases {
 		t.Run(tc.name, func(t *testing.T) {
 			inv := Invocation{Model: "m", Temperature: &temp, Thinking: tc.thinking, ThinkingLevel: tc.level, ThinkingStyle: tc.style}
-			enabled := strings.Contains(tc.want, `"type":"enabled"`)
+			enabled := tc.style == registry.ThinkingStyleAnthropic && strings.Contains(tc.want, `"type":"enabled"`)
 			for path, body := range map[string]string{"complete": captureComplete(t, inv), "chat": captureChat(t, inv), "final": captureChatWith(t, inv, nil)} {
 				var got map[string]json.RawMessage
 				require.NoError(t, json.Unmarshal([]byte(body), &got))
@@ -153,6 +156,68 @@ func TestThinking_AnthropicEnabledSendsNoTemperature(t *testing.T) {
 			}
 		})
 	}
+}
+
+// preserveCases pair a thinking declaration with preserve_thinking. want is
+// the exact JSON of the thinking members; the flag renders only under qwen and
+// glm with thinking on, and anything the registry would reject sends nothing
+// for it.
+var preserveCases = []struct {
+	name, thinking, level, style, preserve, want string
+}{
+	{"qwen on", registry.ThinkingOn, "", registry.ThinkingStyleQwen, registry.ThinkingOn, `{"enable_thinking":true,"preserve_thinking":true}`},
+	{"qwen level off", "", registry.ThinkingLevelHigh, registry.ThinkingStyleQwen, registry.ThinkingOff, `{"enable_thinking":true,"preserve_thinking":false,"thinking_budget":16384}`},
+	{"glm on", registry.ThinkingOn, "", registry.ThinkingStyleGLM, registry.ThinkingOn, `{"thinking":{"type":"enabled","clear_thinking":false}}`},
+	{"glm off", registry.ThinkingOn, "", registry.ThinkingStyleGLM, registry.ThinkingOff, `{"thinking":{"type":"enabled","clear_thinking":true}}`},
+	// Other styles never carry it.
+	{"anthropic ignores it", registry.ThinkingOn, "", registry.ThinkingStyleAnthropic, registry.ThinkingOn, `{"thinking":{"type":"enabled","budget_tokens":8192}}`},
+	{"reasoning_effort ignores it", "", registry.ThinkingLevelLow, registry.ThinkingStyleReasoningEffort, registry.ThinkingOn, `{"reasoning_effort":"low"}`},
+	{"template_kwargs ignores it", registry.ThinkingOn, "", registry.ThinkingStyleTemplateKwargs, registry.ThinkingOn, `{"chat_template_kwargs":{"enable_thinking":true}}`},
+	// Thinking not on: the registry rejects these at load.
+	{"flag without thinking", "", "", registry.ThinkingStyleQwen, registry.ThinkingOn, `{}`},
+	{"flag with qwen thinking off", registry.ThinkingOff, "", registry.ThinkingStyleQwen, registry.ThinkingOn, `{"enable_thinking":false}`},
+	{"flag with glm thinking off", registry.ThinkingOff, "", registry.ThinkingStyleGLM, registry.ThinkingOn, `{"thinking":{"type":"disabled"}}`},
+	// A value the registry would reject is not guessed at.
+	{"unknown value", registry.ThinkingOn, "", registry.ThinkingStyleQwen, "true", `{}`},
+}
+
+// AC 03-01 / 03-02: preserve_thinking renders per style on the mapper, both
+// request paths, and the forced-final turn.
+func TestPreserveThinking_PerStyleOnEveryPath(t *testing.T) {
+	for _, tc := range preserveCases {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := json.Marshal(newThinkingFields(tc.thinking, tc.level, tc.style, tc.preserve))
+			require.NoError(t, err)
+			assert.JSONEq(t, tc.want, string(b), "mapper")
+			inv := Invocation{Model: "m", Thinking: tc.thinking, ThinkingLevel: tc.level, ThinkingStyle: tc.style, PreserveThinking: tc.preserve}
+			assert.Equal(t, tc.want, thinkingMembers(t, captureComplete(t, inv)), "single-shot path")
+			assert.Equal(t, tc.want, thinkingMembers(t, captureChat(t, inv)), "tool-loop path")
+			assert.Equal(t, tc.want, thinkingMembers(t, captureChatWith(t, inv, nil)), "forced-final path")
+		})
+	}
+}
+
+// AC 03-01 Edge Case 3: a declared off is a non-nil false, distinct from unset.
+func TestPreserveThinking_OffIsNotUnset(t *testing.T) {
+	off := newThinkingFields(registry.ThinkingOn, "", registry.ThinkingStyleQwen, registry.ThinkingOff)
+	require.NotNil(t, off.PreserveThinking)
+	assert.False(t, *off.PreserveThinking)
+	assert.Nil(t, newThinkingFields(registry.ThinkingOn, "", registry.ThinkingStyleQwen, "").PreserveThinking)
+
+	glm := newThinkingFields(registry.ThinkingOn, "", registry.ThinkingStyleGLM, "")
+	require.NotNil(t, glm.Thinking)
+	assert.Nil(t, glm.Thinking.ClearThinking, "glm with no flag sends no clear_thinking")
+}
+
+// Decision 4 (2026-09-28): only anthropic drops temperature; glm with thinking
+// on keeps the declared temperature.
+func TestPreserveThinking_GLMKeepsTemperature(t *testing.T) {
+	temp := 0.6
+	inv := Invocation{Model: "m", Temperature: &temp, Thinking: registry.ThinkingOn, ThinkingStyle: registry.ThinkingStyleGLM, PreserveThinking: registry.ThinkingOn}
+	assert.Contains(t, captureComplete(t, inv), `"temperature":0.6`)
+	assert.Contains(t, captureChat(t, inv), `"temperature":0.6`)
+	require.NotNil(t, SentTemperature(inv))
+	assert.InDelta(t, 0.6, *SentTemperature(inv), 1e-9)
 }
 
 // response_format and a thinking declaration ride the same body together.
@@ -203,7 +268,7 @@ func TestThinking_UnsetBodyByteIdentical(t *testing.T) {
 		Messages:       []message{{Role: "user", Content: "review this"}},
 		Temperature:    &temp,
 		MaxTokens:      &maxTok,
-		thinkingFields: newThinkingFields("", "", ""),
+		thinkingFields: newThinkingFields("", "", "", ""),
 	})
 	require.NoError(t, err)
 	require.Equal(t, goldenChatRequest, string(b))
@@ -215,7 +280,7 @@ func TestThinking_UnsetBodyByteIdentical(t *testing.T) {
 		ToolChoice:     "auto",
 		Temperature:    &temp,
 		MaxTokens:      &maxTok,
-		thinkingFields: newThinkingFields("", "", ""),
+		thinkingFields: newThinkingFields("", "", "", ""),
 	})
 	require.NoError(t, err)
 	require.Equal(t, goldenChatToolRequest, string(b))
@@ -227,6 +292,7 @@ func TestThinking_UnsetBodyByteIdentical(t *testing.T) {
 func TestThinking_UndeclaredSendsNoThinkingKey(t *testing.T) {
 	plain := Invocation{Model: "m"}
 	styleOnly := Invocation{Model: "m", ThinkingStyle: registry.ThinkingStyleAnthropic}
+	flagOnly := Invocation{Model: "m", PreserveThinking: registry.ThinkingOn}
 	for name, capture := range map[string]func(*testing.T, Invocation) string{"complete": captureComplete, "chat": captureChat} {
 		t.Run(name, func(t *testing.T) {
 			body := capture(t, plain)
@@ -234,6 +300,7 @@ func TestThinking_UndeclaredSendsNoThinkingKey(t *testing.T) {
 				assert.NotContains(t, body, `"`+k+`"`)
 			}
 			assert.Equal(t, body, capture(t, styleOnly))
+			assert.Equal(t, body, capture(t, flagOnly))
 		})
 	}
 }
@@ -508,7 +575,7 @@ func TestMessage_ReasoningCarrierUnsetIsByteIdentical(t *testing.T) {
 		ToolChoice:     "auto",
 		Temperature:    &temp,
 		MaxTokens:      &maxTok,
-		thinkingFields: newThinkingFields("", "", ""),
+		thinkingFields: newThinkingFields("", "", "", ""),
 	})
 	require.NoError(t, err)
 	require.Equal(t, goldenToolHistoryRequest, string(b))

@@ -643,9 +643,10 @@ func probe(ctx context.Context, c Completer, tgt Target, opts Options) probeResu
 		Prompt:    Prompt(opts.Nonce),
 		// The target's own declaration, so the thinking verdict measures the call
 		// the agent makes rather than the provider default. Empty when undeclared.
-		Thinking:      tgt.Thinking,
-		ThinkingLevel: tgt.ThinkingLevel,
-		ThinkingStyle: tgt.ThinkingStyle,
+		Thinking:         tgt.Thinking,
+		ThinkingLevel:    tgt.ThinkingLevel,
+		ThinkingStyle:    tgt.ThinkingStyle,
+		PreserveThinking: tgt.PreserveThinking,
 	})
 	latency := time.Since(start).Milliseconds()
 	pr := classify(comp.Content, err, opts.Nonce, latency, tgt, budgetSrc)
@@ -815,14 +816,15 @@ func responseFormatCall(ctx context.Context, c Completer, tgt Target, opts Optio
 	}
 	prompt := responseFormatPrompt
 	resp, err := c.Chat(callCtx, llmclient.Invocation{
-		BaseURL:        tgt.BaseURL,
-		APIKeyEnv:      tgt.APIKeyEnv,
-		Model:          tgt.Model,
-		MaxTokens:      maxTokens,
-		ResponseFormat: tgt.ResponseFormat,
-		Thinking:       tgt.Thinking,
-		ThinkingLevel:  tgt.ThinkingLevel,
-		ThinkingStyle:  tgt.ThinkingStyle,
+		BaseURL:          tgt.BaseURL,
+		APIKeyEnv:        tgt.APIKeyEnv,
+		Model:            tgt.Model,
+		MaxTokens:        maxTokens,
+		ResponseFormat:   tgt.ResponseFormat,
+		Thinking:         tgt.Thinking,
+		ThinkingLevel:    tgt.ThinkingLevel,
+		ThinkingStyle:    tgt.ThinkingStyle,
+		PreserveThinking: tgt.PreserveThinking,
 	}, []llmclient.Message{{Role: "user", Content: &prompt}}, toolDefs)
 	if err != nil {
 		// Only a client-side refusal is a verdict on the declaration. The endpoint

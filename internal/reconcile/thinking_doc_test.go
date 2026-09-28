@@ -183,6 +183,12 @@ func TestRegistryDoc_ThinkingStyleTable(t *testing.T) {
 			{"`thinking: {\"type\": \"disabled\"}`", "the anthropic style's off shape"},
 			{"sends no `temperature`", "Anthropic rejects extended thinking at any temperature but 1"},
 		},
+		registry.ThinkingStyleGLM: {
+			{"`thinking: {\"type\": \"enabled\"}`", "the glm style's on shape, with no budget"},
+			{"`thinking: {\"type\": \"disabled\"}`", "the glm style's off shape"},
+			{"no level", "a level under glm is rejected at load"},
+			{"keeps its `temperature`", "only anthropic drops the temperature"},
+		},
 	}
 	// Rows are read from the table after the intro only, so another table with a
 	// `qwen` or `anthropic` row cannot satisfy them, and the table's style set must

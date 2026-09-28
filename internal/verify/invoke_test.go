@@ -1798,3 +1798,17 @@ func TestBuildSkepticAgent_ForwardsThinking(t *testing.T) {
 	assert.Empty(t, undeclared.Invocation.ThinkingLevel)
 	assert.Empty(t, undeclared.Invocation.ThinkingStyle)
 }
+
+// Sprint 35.16.11.2.2.1 AC 03-04 Scenario 3: the skeptic sends its own
+// preserve_thinking in both lanes; an undeclared skeptic sends none.
+func TestBuildSkepticAgent_ForwardsPreserveThinking(t *testing.T) {
+	t.Parallel()
+	sk := testSkeptic()
+	sk.Config.Thinking, sk.Config.ThinkingStyle, sk.Config.PreserveThinking = "on", "glm", "on"
+	for _, exec := range []bool{false, true} {
+		a, _ := buildSkepticAgent(sk, "the prompt", exec)
+		assert.Equal(t, "on", a.Invocation.PreserveThinking, "exec=%v", exec)
+	}
+	undeclared, _ := buildSkepticAgent(testSkeptic(), "the prompt", false)
+	assert.Empty(t, undeclared.Invocation.PreserveThinking)
+}

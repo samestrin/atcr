@@ -215,9 +215,10 @@ func buildDebateAgent(seat Caster, prompt string) fanout.Agent {
 			MaxTokens:      c.MaxTokens,
 			ResponseFormat: responseFormat,
 			// Every seat, not judge-only: see the function comment.
-			Thinking:      c.Thinking,
-			ThinkingLevel: c.ThinkingLevel,
-			ThinkingStyle: c.ThinkingStyle,
+			Thinking:         c.Thinking,
+			ThinkingLevel:    c.ThinkingLevel,
+			ThinkingStyle:    c.ThinkingStyle,
+			PreserveThinking: c.PreserveThinking,
 		},
 	}
 }

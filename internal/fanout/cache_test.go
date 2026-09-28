@@ -26,7 +26,7 @@ func cacheableSlot(name, model, prompt string) Slot {
 	return Slot{Primary: Agent{
 		Name:        name,
 		PayloadMode: "blocks",
-		CacheKey:    diffCacheKey(prompt, model, "", nil, "", defaultMaxTokens, "", "", "", ""),
+		CacheKey:    diffCacheKey(prompt, model, "", nil, "", defaultMaxTokens, "", "", "", "", ""),
 		Invocation:  llmclient.Invocation{Model: model, Prompt: prompt},
 	}}
 }
@@ -113,7 +113,7 @@ func TestEngine_DifferentTemperatureMissesCache(t *testing.T) {
 		return Slot{Primary: Agent{
 			Name:        "a",
 			PayloadMode: "blocks",
-			CacheKey:    diffCacheKey("same prompt", "m", "", temp, "", defaultMaxTokens, "", "", "", ""),
+			CacheKey:    diffCacheKey("same prompt", "m", "", temp, "", defaultMaxTokens, "", "", "", "", ""),
 			Invocation:  llmclient.Invocation{Model: "m", Prompt: "same prompt", Temperature: temp},
 		}}
 	}
@@ -135,7 +135,7 @@ func TestEngine_DifferentProviderMissesCache(t *testing.T) {
 		return Slot{Primary: Agent{
 			Name:        "a",
 			PayloadMode: "blocks",
-			CacheKey:    diffCacheKey("same prompt", "m", baseURL, nil, "", defaultMaxTokens, "", "", "", ""),
+			CacheKey:    diffCacheKey("same prompt", "m", baseURL, nil, "", defaultMaxTokens, "", "", "", "", ""),
 			Invocation:  llmclient.Invocation{Model: "m", Prompt: "same prompt", BaseURL: baseURL},
 		}}
 	}
@@ -157,14 +157,14 @@ func TestEngine_DifferentProviderMissesCache(t *testing.T) {
 func TestDiffCacheKey_SizingTokenDistinguishesRegimes(t *testing.T) {
 	// Backward-compat: empty and the "0:0" no-sizing sentinel both reduce to the
 	// exact pre-F7 (baseURL+temperature-only) key.
-	base := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, "", "", "", "")
-	assert.Equal(t, base, diffCacheKey("p", "m", "", nil, "0:0", defaultMaxTokens, "", "", "", ""),
+	base := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, "", "", "", "", "")
+	assert.Equal(t, base, diffCacheKey("p", "m", "", nil, "0:0", defaultMaxTokens, "", "", "", "", ""),
 		`"0:0" (no per-agent sizing) must collapse to the pre-F7 key`)
 
 	// A real sizing token changes the key, and two distinct regimes never collide —
 	// even though prompt/model/backend/temperature are identical across all three.
-	sizedA := diffCacheKey("p", "m", "", nil, "100000:0", defaultMaxTokens, "", "", "", "")  // bulk, 100KB budget
-	sizedB := diffCacheKey("p", "m", "", nil, "50000:200", defaultMaxTokens, "", "", "", "") // chunked, 50KB budget, 200-line chunks
+	sizedA := diffCacheKey("p", "m", "", nil, "100000:0", defaultMaxTokens, "", "", "", "", "")  // bulk, 100KB budget
+	sizedB := diffCacheKey("p", "m", "", nil, "50000:200", defaultMaxTokens, "", "", "", "", "") // chunked, 50KB budget, 200-line chunks
 	assert.NotEqual(t, base, sizedA, "a real sizing regime must change the key")
 	assert.NotEqual(t, sizedA, sizedB, "different sizing regimes must produce different keys")
 }
@@ -183,7 +183,7 @@ func TestEngine_DifferentSizingMissesCache(t *testing.T) {
 		return Slot{Primary: Agent{
 			Name:        "a",
 			PayloadMode: "blocks",
-			CacheKey:    diffCacheKey("same prompt", "m", "", nil, sizing, defaultMaxTokens, "", "", "", ""),
+			CacheKey:    diffCacheKey("same prompt", "m", "", nil, sizing, defaultMaxTokens, "", "", "", "", ""),
 			Invocation:  llmclient.Invocation{Model: "m", Prompt: "same prompt"},
 		}}
 	}
@@ -207,17 +207,17 @@ func TestEngine_DifferentSizingMissesCache(t *testing.T) {
 // operator who adds max_tokens to fix an empty review then replays the cached empty
 // review and concludes the setting does nothing.
 func TestDiffCacheKey_ResolvedOutputCapChangesTheKey(t *testing.T) {
-	base := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, "", "", "", "")
-	assert.Equal(t, base, diffCacheKey("p", "m", "", nil, "0:0", defaultMaxTokens, "", "", "", ""),
+	base := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, "", "", "", "", "")
+	assert.Equal(t, base, diffCacheKey("p", "m", "", nil, "0:0", defaultMaxTokens, "", "", "", "", ""),
 		"an agent at the embedded default cap must keep its pre-existing on-disk key")
-	assert.NotEqual(t, base, diffCacheKey("p", "m", "", nil, "", 32000, "", "", "", ""),
+	assert.NotEqual(t, base, diffCacheKey("p", "m", "", nil, "", 32000, "", "", "", "", ""),
 		"a declared max_tokens must invalidate the entry the default-capped run wrote")
 
 	// The clamped case the sizing token cannot see: identical token, different cap.
 	const clamped = "524288:0" // both caps derive a budget above payload_byte_budget
 	assert.NotEqual(t,
-		diffCacheKey("p", "m", "", nil, clamped, 8192, "", "", "", ""),
-		diffCacheKey("p", "m", "", nil, clamped, 32000, "", "", "", ""),
+		diffCacheKey("p", "m", "", nil, clamped, 8192, "", "", "", "", ""),
+		diffCacheKey("p", "m", "", nil, clamped, 32000, "", "", "", "", ""),
 		"two output caps that clamp to one sizing token must still key apart")
 }
 
@@ -230,7 +230,7 @@ func TestEngine_DifferentMaxTokensMissesCache(t *testing.T) {
 		return Slot{Primary: Agent{
 			Name:        "a",
 			PayloadMode: "blocks",
-			CacheKey:    diffCacheKey("same prompt", "m", "", nil, "524288:0", maxTokens, "", "", "", ""),
+			CacheKey:    diffCacheKey("same prompt", "m", "", nil, "524288:0", maxTokens, "", "", "", "", ""),
 			Invocation:  llmclient.Invocation{Model: "m", Prompt: "same prompt", MaxTokens: &maxTokens},
 		}}
 	}
@@ -368,8 +368,8 @@ func (errAssertFail) Error() string { return "synthetic failure" }
 // pre-existing key, so no on-disk entry written before the field existed is
 // invalidated.
 func TestDiffCacheKey_ResponseFormatChangesTheKey(t *testing.T) {
-	base := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, "", "", "", "")
-	declared := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, "json_object", "", "", "")
+	base := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, "", "", "", "", "")
+	declared := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, "json_object", "", "", "", "")
 	assert.NotEqual(t, base, declared, "declaring response_format must miss the undeclared entry")
 	assert.Equal(t, cache.Key(cache.HashText("p"), "m", "default"), base,
 		"an undeclared agent keeps its pre-existing on-disk key")
@@ -392,11 +392,11 @@ func TestDiffCacheKey_ResponseFormatChangesTheKey(t *testing.T) {
 	sizing := fmt.Sprintf("%d:%d", after.EffectiveBudget, after.chunkMaxLines)
 	assert.Equal(t, after.CacheKey,
 		diffCacheKey(after.Prompt, after.Invocation.Model, after.Invocation.BaseURL,
-			after.Invocation.Temperature, sizing, after.ResolvedMaxTokens, registry.ResponseFormatJSONObject, "", "", ""),
+			after.Invocation.Temperature, sizing, after.ResolvedMaxTokens, registry.ResponseFormatJSONObject, "", "", "", ""),
 		"the built key is the response_format-suffixed form of this exact prompt")
 	assert.NotEqual(t, after.CacheKey,
 		diffCacheKey(after.Prompt, after.Invocation.Model, after.Invocation.BaseURL,
-			after.Invocation.Temperature, sizing, after.ResolvedMaxTokens, "", "", "", ""),
+			after.Invocation.Temperature, sizing, after.ResolvedMaxTokens, "", "", "", "", ""),
 		"the same prompt without the suffix must produce a different key")
 }
 
@@ -429,11 +429,11 @@ func TestDiffCacheKey_FallbackKeysOnItsOwnResponseFormat(t *testing.T) {
 	fbSizing := fmt.Sprintf("%d:%d", fb.EffectiveBudget, fb.chunkMaxLines)
 	assert.Equal(t, fb.CacheKey,
 		diffCacheKey(fb.Prompt, fb.Invocation.Model, fb.Invocation.BaseURL,
-			fb.Invocation.Temperature, fbSizing, fb.ResolvedMaxTokens, jo, "", "", ""),
+			fb.Invocation.Temperature, fbSizing, fb.ResolvedMaxTokens, jo, "", "", "", ""),
 		"the fallback key is the response_format-suffixed form of its own prompt")
 	assert.NotEqual(t, fb.CacheKey,
 		diffCacheKey(fb.Prompt, fb.Invocation.Model, fb.Invocation.BaseURL,
-			fb.Invocation.Temperature, fbSizing, fb.ResolvedMaxTokens, "", "", "", ""),
+			fb.Invocation.Temperature, fbSizing, fb.ResolvedMaxTokens, "", "", "", "", ""),
 		"the fallback's own prompt without the suffix must produce a different key")
 }
 
@@ -455,7 +455,7 @@ func TestDiffCacheKey_ThinkingTokens(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, tc.rf, tc.th, tc.level, tc.style)
+			got := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, tc.rf, tc.th, tc.level, tc.style, "")
 			assert.Equal(t, cache.Key(hash, "m", tc.want), got)
 		})
 	}
@@ -500,7 +500,7 @@ func TestRenderAgent_PrimaryCarriesAndKeysOnItsOwnThinking(t *testing.T) {
 	recompute := func(a Agent, thinking, level, style string) string {
 		sizing := fmt.Sprintf("%d:%d", a.EffectiveBudget, a.chunkMaxLines)
 		return diffCacheKey(a.Prompt, a.Invocation.Model, a.Invocation.BaseURL, a.Invocation.Temperature,
-			sizing, a.ResolvedMaxTokens, a.Invocation.ResponseFormat, thinking, level, style)
+			sizing, a.ResolvedMaxTokens, a.Invocation.ResponseFormat, thinking, level, style, "")
 	}
 
 	declared := build("on", "low", "anthropic")
@@ -537,7 +537,7 @@ func TestBuildFallbackAgent_CarriesAndKeysOnItsOwnThinking(t *testing.T) {
 	recompute := func(fb Agent, d decl) string {
 		sizing := fmt.Sprintf("%d:%d", fb.EffectiveBudget, fb.chunkMaxLines)
 		return diffCacheKey(fb.Prompt, fb.Invocation.Model, fb.Invocation.BaseURL, fb.Invocation.Temperature,
-			sizing, fb.ResolvedMaxTokens, fb.Invocation.ResponseFormat, d.thinking, d.level, d.style)
+			sizing, fb.ResolvedMaxTokens, fb.Invocation.ResponseFormat, d.thinking, d.level, d.style, "")
 	}
 	primaryDecl := decl{"on", "high", "anthropic"}
 	fallbackDecl := decl{"off", "", "template_kwargs"}
@@ -563,6 +563,56 @@ func TestBuildFallbackAgent_CarriesAndKeysOnItsOwnThinking(t *testing.T) {
 		assert.Equal(t, recompute(fb, fallbackDecl), fb.CacheKey)
 		assert.NotEqual(t, recompute(fb, decl{}), fb.CacheKey)
 	})
+}
+
+// Sprint 35.16.11.2.2.1 AC 03-04 Scenario 2: preserve_thinking gets its own
+// cache-key clause; unset appends nothing, so an undeclared key is unchanged.
+func TestDiffCacheKey_PreserveThinkingToken(t *testing.T) {
+	hash := cache.HashText("p")
+	key := func(preserve string) string {
+		return diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, "", "on", "", "qwen", preserve)
+	}
+	assert.Equal(t, cache.Key(hash, "m", "default\x00th=on\x00ts=qwen"), key(""))
+	assert.Equal(t, cache.Key(hash, "m", "default\x00th=on\x00ts=qwen\x00pt=on"), key("on"))
+	assert.NotEqual(t, key("on"), key("off"))
+}
+
+// Sprint 35.16.11.2.2.1 AC 03-03 Edge Cases 3, 5 and AC 03-04: the primary and
+// its fallback each send and key on their OWN preserve_thinking, never the
+// other's.
+func TestBuildAgents_PreserveThinkingIsPerAgent(t *testing.T) {
+	type decl struct{ primary, fallback string }
+	build := func(d decl) (Agent, Agent) {
+		cfg := toolCfg()
+		withThinking(cfg, "greta", "on", "", "qwen")
+		withThinking(cfg, "kai", "on", "", "glm")
+		g, k := cfg.Registry.Agents["greta"], cfg.Registry.Agents["kai"]
+		g.PreserveThinking, k.PreserveThinking = d.primary, d.fallback
+		cfg.Registry.Agents["greta"], cfg.Registry.Agents["kai"] = g, k
+		payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
+		p, _, err := buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+		require.NoError(t, err)
+		fb, _, err := buildFallbackAgent(cfg, p, "kai", true, fallbackRefit{})
+		require.NoError(t, err)
+		return p, fb
+	}
+	recompute := func(a Agent, style, preserve string) string {
+		sizing := fmt.Sprintf("%d:%d", a.EffectiveBudget, a.chunkMaxLines)
+		return diffCacheKey(a.Prompt, a.Invocation.Model, a.Invocation.BaseURL, a.Invocation.Temperature,
+			sizing, a.ResolvedMaxTokens, a.Invocation.ResponseFormat, "on", "", style, preserve)
+	}
+
+	p, fb := build(decl{primary: "on"})
+	assert.Equal(t, "on", p.Invocation.PreserveThinking)
+	assert.Equal(t, recompute(p, "qwen", "on"), p.CacheKey, "the primary keys on its own flag")
+	assert.Empty(t, fb.Invocation.PreserveThinking, "the primary's flag must not reach the fallback")
+	assert.Equal(t, recompute(fb, "glm", ""), fb.CacheKey)
+
+	p, fb = build(decl{fallback: "off"})
+	assert.Empty(t, p.Invocation.PreserveThinking)
+	assert.Equal(t, recompute(p, "qwen", ""), p.CacheKey)
+	assert.Equal(t, "off", fb.Invocation.PreserveThinking, "the fallback sends its own flag")
+	assert.Equal(t, recompute(fb, "glm", "off"), fb.CacheKey)
 }
 
 // TestWithThinkingFixtures_AreLoadable pins the sprint's thinking fixtures to the

@@ -413,6 +413,9 @@ func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool) (agent fanout.
 			// level come from thinkingWire above (which may downgrade a level or
 			// drop the declaration entirely when no budget fits under the cap).
 			ThinkingStyle: c.ThinkingStyle,
+			// preserve_thinking: the skeptic's OWN declaration. thinkingWire only
+			// strips the anthropic style, which never carries it.
+			PreserveThinking: c.PreserveThinking,
 		},
 	}, derived
 }

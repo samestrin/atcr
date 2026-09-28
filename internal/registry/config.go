@@ -188,7 +188,9 @@ const (
 const ResponseFormatJSONObject = "json_object"
 
 // Legal AgentConfig.Thinking / ThinkingLevel / ThinkingStyle values (Epic
-// 35.16.11.2.2). Validation and the docs drift test read these, never literals.
+// 35.16.11.2.2; glm added in Sprint 35.16.11.2.2.1). PreserveThinking takes the
+// Thinking values. Validation and the docs drift test read these, never
+// literals.
 const (
 	ThinkingOn  = "on"
 	ThinkingOff = "off"
@@ -202,12 +204,16 @@ const (
 	ThinkingStyleTemplateKwargs  = "template_kwargs"
 	ThinkingStyleReasoningEffort = "reasoning_effort"
 	ThinkingStyleAnthropic       = "anthropic"
+	ThinkingStyleGLM             = "glm"
 )
 
 var (
 	thinkingValues = []string{ThinkingOn, ThinkingOff}
 	thinkingLevels = []string{ThinkingLevelLow, ThinkingLevelMedium, ThinkingLevelHigh, ThinkingLevelMax}
-	thinkingStyles = []string{ThinkingStyleQwen, ThinkingStyleTemplateKwargs, ThinkingStyleReasoningEffort, ThinkingStyleAnthropic}
+	thinkingStyles = []string{ThinkingStyleQwen, ThinkingStyleTemplateKwargs, ThinkingStyleReasoningEffort, ThinkingStyleAnthropic, ThinkingStyleGLM}
+	// preserveThinkingStyles are the styles with a preserved-thinking wire
+	// field: qwen's preserve_thinking and glm's thinking.clear_thinking.
+	preserveThinkingStyles = []string{ThinkingStyleQwen, ThinkingStyleGLM}
 )
 
 // ThinkingValues, ThinkingLevels, and ThinkingStyles return each key's legal
@@ -635,9 +641,15 @@ type AgentConfig struct {
 	// default) sends no thinking field, so an undeclared agent's request body is
 	// unchanged. Like ResponseFormat they are declared per agent and never
 	// inherited by a fallback.
-	Thinking      string `yaml:"thinking,omitempty"`
-	ThinkingLevel string `yaml:"thinking_level,omitempty"`
-	ThinkingStyle string `yaml:"thinking_style,omitempty"`
+	//
+	// PreserveThinking asks the model to keep its reasoning from earlier
+	// tool-loop turns (Sprint 35.16.11.2.2.1). It is ThinkingOn or ThinkingOff,
+	// legal only under the qwen or glm style with thinking on. Unset sends
+	// nothing. Like the keys above it is never inherited by a fallback.
+	Thinking         string `yaml:"thinking,omitempty"`
+	ThinkingLevel    string `yaml:"thinking_level,omitempty"`
+	ThinkingStyle    string `yaml:"thinking_style,omitempty"`
+	PreserveThinking string `yaml:"preserve_thinking,omitempty"`
 
 	// Review-constraint guardrails (Epic 2.2). All optional and
 	// backward-compatible: an unset field imposes no constraint, so a 1.x/2.0
@@ -1260,10 +1272,10 @@ func validateThinking(name string, a AgentConfig) ([]error, []string) {
 	if a.Thinking == ThinkingOff && a.ThinkingLevel != "" {
 		errs = append(errs, agentErrf(name, "agent '%s': thinking is %q but thinking_level %q is set: remove thinking_level or set thinking: on", name, ThinkingOff, a.ThinkingLevel))
 	}
-	// template_kwargs carries only enable_thinking on/off, so a level would be
-	// silently dropped on the wire.
-	if a.ThinkingStyle == ThinkingStyleTemplateKwargs && a.ThinkingLevel != "" {
-		errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q has no level: remove thinking_level and use thinking: %s", name, ThinkingStyleTemplateKwargs, ThinkingOn))
+	// template_kwargs carries only enable_thinking on/off and glm has no budget,
+	// so a level would be silently dropped on the wire.
+	if (a.ThinkingStyle == ThinkingStyleTemplateKwargs || a.ThinkingStyle == ThinkingStyleGLM) && a.ThinkingLevel != "" {
+		errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q has no level: remove thinking_level and use thinking: %s", name, a.ThinkingStyle, ThinkingOn))
 	}
 	if (a.Thinking != "" || a.ThinkingLevel != "") && a.ThinkingStyle == "" {
 		errs = append(errs, agentErrf(name, "agent '%s': thinking is declared but thinking_style is missing: there is no default style", name))
@@ -1284,6 +1296,18 @@ func validateThinking(name string, a AgentConfig) ([]error, []string) {
 	// sends none for such an agent, so only a declared conflict is an error.
 	// Validation runs before applyDefaults, so a nil temperature is undeclared.
 	thinkingOn := ThinkingEnabled(a.Thinking, a.ThinkingLevel)
+	if a.PreserveThinking != "" {
+		switch {
+		case !slices.Contains(thinkingValues, a.PreserveThinking):
+			errs = append(errs, agentErrf(name, "agent '%s': invalid preserve_thinking %q: must be %q or %q or unset", name, a.PreserveThinking, ThinkingOn, ThinkingOff))
+		case a.ThinkingStyle == "":
+			errs = append(errs, agentErrf(name, "agent '%s': preserve_thinking is declared but thinking_style is missing: set thinking_style: %s or %s", name, ThinkingStyleQwen, ThinkingStyleGLM))
+		case !slices.Contains(preserveThinkingStyles, a.ThinkingStyle):
+			errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q has no preserve_thinking: only %s and %s send it", name, a.ThinkingStyle, ThinkingStyleQwen, ThinkingStyleGLM))
+		case !thinkingOn:
+			errs = append(errs, agentErrf(name, "agent '%s': preserve_thinking is set but thinking is off: set thinking: %s or remove preserve_thinking", name, ThinkingOn))
+		}
+	}
 	if a.ThinkingStyle == ThinkingStyleAnthropic && thinkingOn && a.Temperature != nil && *a.Temperature != 1 {
 		errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q with thinking on needs temperature 1: remove temperature or set it to 1", name, ThinkingStyleAnthropic))
 	}

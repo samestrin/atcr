@@ -80,12 +80,13 @@ type Invocation struct {
 	// from any other failure: without it the record cannot answer "what output
 	// contract was this call made under".
 	ResponseFormat string
-	// Thinking, ThinkingLevel, and ThinkingStyle are the agent's declared
-	// thinking keys, copied verbatim (empty when undeclared), so a record can
-	// answer "what reasoning setting was this call made under".
-	Thinking      string
-	ThinkingLevel string
-	ThinkingStyle string
+	// Thinking, ThinkingLevel, ThinkingStyle, and PreserveThinking are the
+	// agent's declared thinking keys, copied verbatim (empty when undeclared),
+	// so a record can answer "what reasoning setting was this call made under".
+	Thinking         string
+	ThinkingLevel    string
+	ThinkingStyle    string
+	PreserveThinking string
 	// ResponseToolCalls is the tool calls the assistant requested on this turn.
 	// A tool-enabled agent's "response" is frequently a tool call with no text
 	// at all, so a record omitting these would misreport the exchange.
@@ -344,18 +345,19 @@ func (o *observingClient) base(ctx context.Context, inv llmclient.Invocation, st
 	}
 	c := CallFrom(ctx)
 	return Invocation{
-		RunID:          c.RunID,
-		AgentName:      c.AgentName,
-		Stage:          c.Stage,
-		CodeContext:    c.CodeContext,
-		Model:          inv.Model,
-		Provider:       provider,
-		BaseURL:        endpoint,
-		Prompt:         inv.Prompt,
-		ResponseFormat: inv.ResponseFormat,
-		Thinking:       inv.Thinking,
-		ThinkingLevel:  inv.ThinkingLevel,
-		ThinkingStyle:  inv.ThinkingStyle,
+		RunID:            c.RunID,
+		AgentName:        c.AgentName,
+		Stage:            c.Stage,
+		CodeContext:      c.CodeContext,
+		Model:            inv.Model,
+		Provider:         provider,
+		BaseURL:          endpoint,
+		Prompt:           inv.Prompt,
+		ResponseFormat:   inv.ResponseFormat,
+		Thinking:         inv.Thinking,
+		ThinkingLevel:    inv.ThinkingLevel,
+		ThinkingStyle:    inv.ThinkingStyle,
+		PreserveThinking: inv.PreserveThinking,
 		// The temperature the request carried, which a declared thinking
 		// setting can drop (anthropic thinking on sends none).
 		Temperature: copyFloat64(llmclient.SentTemperature(inv)),

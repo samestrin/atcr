@@ -31,7 +31,7 @@ type invocationSite struct{ file, fn string }
 type siteRule struct{ kind, recv string }
 
 // thinkingFieldNames are the Invocation keys a declared thinking setting rides.
-var thinkingFieldNames = []string{"Thinking", "ThinkingLevel", "ThinkingStyle"}
+var thinkingFieldNames = []string{"Thinking", "ThinkingLevel", "ThinkingStyle", "PreserveThinking"}
 
 // Sprint 35.16.11.2.2 AC 04-05: the closed inventory of non-test
 // llmclient.Invocation{} literals. A declared thinking setting is only as
@@ -407,7 +407,7 @@ func TestInvocationAudit_AcceptsThinkingWireLocals(t *testing.T) {
 
 import "github.com/samestrin/atcr/internal/llmclient"
 
-type agentConfig struct{ Thinking, ThinkingLevel, ThinkingStyle string }
+type agentConfig struct{ Thinking, ThinkingLevel, ThinkingStyle, PreserveThinking string }
 
 func thinkingWire(c agentConfig) (*int, string, string) { return nil, c.Thinking, c.ThinkingLevel }
 
@@ -415,7 +415,7 @@ func otherWire(c agentConfig) (*int, string, string) { return nil, "on", "low" }
 
 func goodSite(c agentConfig) {
 	_, wireThinking, wireThinkingLevel := thinkingWire(c)
-	_ = llmclient.Invocation{Thinking: wireThinking, ThinkingLevel: wireThinkingLevel, ThinkingStyle: c.ThinkingStyle}
+	_ = llmclient.Invocation{Thinking: wireThinking, ThinkingLevel: wireThinkingLevel, ThinkingStyle: c.ThinkingStyle, PreserveThinking: c.PreserveThinking}
 }
 
 func badSite(c agentConfig) {

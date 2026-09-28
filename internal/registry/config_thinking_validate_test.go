@@ -48,6 +48,89 @@ func thinkingAgent(thinking, level, style string) string {
 	return b.String()
 }
 
+// AC 03-03 (Sprint 35.16.11.2.2.1): preserve_thinking is legal only as on/off
+// under the qwen or glm style with thinking on; glm takes no level. Every other
+// combination fails load with an error naming the agent.
+func TestValidateAgent_PreserveThinking(t *testing.T) {
+	cases := []struct {
+		name                             string
+		thinking, level, style, preserve string
+		wantErr                          string // "" = must load
+	}{
+		// Valid.
+		{"qwen on", ThinkingOn, "", ThinkingStyleQwen, ThinkingOn, ""},
+		{"qwen level alone off", "", ThinkingLevelHigh, ThinkingStyleQwen, ThinkingOff, ""},
+		{"glm on", ThinkingOn, "", ThinkingStyleGLM, ThinkingOn, ""},
+		{"glm on flag off", ThinkingOn, "", ThinkingStyleGLM, ThinkingOff, ""},
+		{"glm on no flag", ThinkingOn, "", ThinkingStyleGLM, "", ""},
+		{"glm off no flag", ThinkingOff, "", ThinkingStyleGLM, "", ""},
+
+		// Values: the same on/off vocabulary as thinking; a bare YAML bool
+		// decodes to "true" and fails the value check.
+		{"bare true", ThinkingOn, "", ThinkingStyleQwen, "true", `agent 'myagent': invalid preserve_thinking "true": must be "on" or "off" or unset`},
+		{"wrong case", ThinkingOn, "", ThinkingStyleQwen, "ON", `agent 'myagent': invalid preserve_thinking "ON": must be "on" or "off" or unset`},
+		// Style: only qwen and glm carry it.
+		{"anthropic", ThinkingOn, "", ThinkingStyleAnthropic, ThinkingOn, `agent 'myagent': thinking_style "anthropic" has no preserve_thinking: only qwen and glm send it`},
+		{"template_kwargs", ThinkingOn, "", ThinkingStyleTemplateKwargs, ThinkingOn, `agent 'myagent': thinking_style "template_kwargs" has no preserve_thinking: only qwen and glm send it`},
+		{"reasoning_effort", "", ThinkingLevelLow, ThinkingStyleReasoningEffort, ThinkingOn, `agent 'myagent': thinking_style "reasoning_effort" has no preserve_thinking: only qwen and glm send it`},
+		{"no style", ThinkingOn, "", "", ThinkingOn, `agent 'myagent': preserve_thinking is declared but thinking_style is missing: set thinking_style: qwen or glm`},
+		// Thinking must be on (AC 03-01 Edge Cases 4-5, AC 03-03 Edge Case 6).
+		{"thinking unset", "", "", ThinkingStyleQwen, ThinkingOn, `agent 'myagent': preserve_thinking is set but thinking is off: set thinking: on or remove preserve_thinking`},
+		{"thinking off", ThinkingOff, "", ThinkingStyleGLM, ThinkingOn, `agent 'myagent': preserve_thinking is set but thinking is off: set thinking: on or remove preserve_thinking`},
+		// glm has no budget, so no level.
+		{"glm level", "", ThinkingLevelHigh, ThinkingStyleGLM, "", `agent 'myagent': thinking_style "glm" has no level: remove thinking_level and use thinking: on`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			captureThinkingWarnings(t)
+			agent := thinkingAgent(tc.thinking, tc.level, tc.style)
+			if tc.preserve != "" {
+				agent += "    preserve_thinking: " + tc.preserve + "\n"
+			}
+			reg, err := LoadRegistry(writeRegistry(t, thinkingRegistry(agent)))
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				assert.Equal(t, tc.preserve, reg.Agents["myagent"].PreserveThinking, "decoded verbatim")
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
+}
+
+// AC 03-03 Edge Cases 3 and 5: preserve_thinking is never inherited through
+// fallback:, in either direction.
+func TestAgentConfig_PreserveThinkingNotInheritedByFallback(t *testing.T) {
+	reg, err := LoadRegistry(writeRegistry(t, thinkingRegistry(`
+  primary:
+    provider: p
+    model: m
+    thinking: on
+    thinking_style: qwen
+    preserve_thinking: on
+    fallback: secondary
+  secondary:
+    provider: p
+    model: m
+  own:
+    provider: p
+    model: m
+    thinking: on
+    thinking_style: glm
+    preserve_thinking: off
+  usesown:
+    provider: p
+    model: m
+    fallback: own
+`)))
+	require.NoError(t, err)
+	assert.Empty(t, reg.Agents["secondary"].PreserveThinking, "a fallback must not inherit its primary's flag")
+	assert.Empty(t, reg.Agents["usesown"].PreserveThinking, "a primary must not inherit its fallback's flag")
+	assert.Equal(t, ThinkingOn, reg.Agents["primary"].PreserveThinking)
+	assert.Equal(t, ThinkingOff, reg.Agents["own"].PreserveThinking)
+}
+
 // AC 02-01 / 02-02 / 02-03: every invalid combination fails load with an
 // error naming the agent; every valid combination loads.
 func TestValidateAgent_ThinkingCombinations(t *testing.T) {
@@ -176,6 +259,7 @@ func TestRejectMachineLocalFields_ThinkingKeysBanned(t *testing.T) {
 		{"thinking", "thinking: off\nthinking_style: qwen\n"},
 		{"thinking_level", "thinking_level: high\nthinking_style: qwen\n"},
 		{"thinking_style", "thinking_style: qwen\n"},
+		{"preserve_thinking", "preserve_thinking: on\n"},
 	} {
 		t.Run(tc.key, func(t *testing.T) {
 			err := ValidateCommunityPersonaYAML("sample", []byte(base+tc.body))

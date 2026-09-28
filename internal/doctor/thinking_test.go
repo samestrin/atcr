@@ -468,3 +468,40 @@ func TestRenderTable_ThinkingLabel(t *testing.T) {
 	assert.NotContains(t, out, "reasoning observed")
 	assert.NotContains(t, out, "thinking")
 }
+
+// Sprint 35.16.11.2.2.1 AC 03-04 Edge Case 3: preserve_thinking joins a
+// declared target's identity, and both doctor probe sites send it.
+func TestDoctor_PreserveThinkingJoinsTargetAndProbe(t *testing.T) {
+	on := registry.AgentConfig{Thinking: "on", ThinkingStyle: "qwen"}
+	flagged := on
+	flagged.PreserveThinking = "on"
+	res := declaredRegistry(t, map[string]registry.AgentConfig{"a": flagged, "b": on})
+	assert.Len(t, res.Targets, 2, "the flag changes the request, so it splits the target")
+	assert.Equal(t, "on", targetForAgent(t, res, "a").PreserveThinking)
+	assert.Empty(t, targetForAgent(t, res, "b").PreserveThinking)
+	assert.Len(t, declaredRegistry(t, map[string]registry.AgentConfig{"a": flagged, "b": flagged}).Targets, 1)
+
+	reg := regWith(
+		map[string]registry.Provider{"p": {APIKeyEnv: rfDoctorEnvK, BaseURL: "https://api.example/v1"}},
+		map[string]registry.AgentConfig{"a": {
+			Provider: "p", Model: "m", ResponseFormat: registry.ResponseFormatJSONObject,
+			Thinking: registry.ThinkingOn, ThinkingStyle: registry.ThinkingStyleGLM, PreserveThinking: registry.ThinkingOn,
+		}},
+	)
+	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a"}})
+	require.NoError(t, err)
+	t.Setenv(rfDoctorEnvK, thinkingKey)
+	fake := newFake(markerOK)
+	fake.metaFn = func(llmclient.Invocation) (llmclient.Completion, error) { return thinks, nil }
+	fake.chatFn = reply(oneFinding)
+	Run(context.Background(), fake, res, Options{Nonce: testNonce, MaxTokens: 2048})
+	calls := fake.completeCalls()
+	require.NotEmpty(t, calls)
+	assert.Equal(t, registry.ThinkingOn, calls[0].PreserveThinking, "the marker probe sends the flag")
+	for _, c := range calls[1:] {
+		assert.Empty(t, c.PreserveThinking, "the control call drops the whole declaration")
+	}
+	chats := fake.chatCalls()
+	require.Len(t, chats, 1)
+	assert.Equal(t, registry.ThinkingOn, chats[0].inv.PreserveThinking, "the response_format probe sends the flag")
+}

@@ -121,13 +121,15 @@ type ModelInvocation struct {
 	// ("json_object" when the agent declared response_format, empty otherwise),
 	// so a provider 400 caused by the declaration is attributable in the record.
 	ResponseFormat string
-	// Thinking, ThinkingLevel, and ThinkingStyle are the agent's declared
-	// registry thinking keys ("on"/"off", "low".."max", and the wire style),
-	// copied verbatim and empty when undeclared. They record what the operator
-	// declared, not the provider-specific field it was sent as.
-	Thinking      string
-	ThinkingLevel string
-	ThinkingStyle string
+	// Thinking, ThinkingLevel, ThinkingStyle, and PreserveThinking are the
+	// agent's declared registry thinking keys ("on"/"off", "low".."max", and
+	// the wire style), copied verbatim and empty when undeclared. They record
+	// what the operator declared, not the provider-specific field it was sent
+	// as.
+	Thinking         string
+	ThinkingLevel    string
+	ThinkingStyle    string
+	PreserveThinking string
 	// ResponseToolCalls is the tool calls the assistant requested on this turn.
 	// A tool-enabled agent's response is frequently a tool call with no text at
 	// all, so Response alone would misreport the exchange.
@@ -311,6 +313,7 @@ func (a observerAdapter) OnModelInvocation(ctx context.Context, in hookobs.Invoc
 		Thinking:         in.Thinking,
 		ThinkingLevel:    in.ThinkingLevel,
 		ThinkingStyle:    in.ThinkingStyle,
+		PreserveThinking: in.PreserveThinking,
 		FinishReason:     in.FinishReason,
 		Truncated:        in.Truncated,
 		PromptTokens:     in.PromptTokens,

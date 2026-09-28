@@ -137,14 +137,15 @@ type Invocation struct {
 	// an undeclared agent's request is unchanged. Sent on every call, including
 	// every tool-loop turn. Validation is the registry's job, not this layer's.
 	ResponseFormat string
-	// Thinking, ThinkingLevel, and ThinkingStyle are the agent's declared
-	// thinking keys, carried verbatim as strings so unset stays distinct from
-	// "off". ThinkingStyle picks the request field (see newThinkingFields); all
-	// three empty leave the request body unchanged. Sent on every call,
-	// including every tool-loop turn.
-	Thinking      string
-	ThinkingLevel string
-	ThinkingStyle string
+	// Thinking, ThinkingLevel, ThinkingStyle, and PreserveThinking are the
+	// agent's declared thinking keys, carried verbatim as strings so unset
+	// stays distinct from "off". ThinkingStyle picks the request field (see
+	// newThinkingFields); all empty leave the request body unchanged.
+	// Sent on every call, including every tool-loop turn.
+	Thinking         string
+	ThinkingLevel    string
+	ThinkingStyle    string
+	PreserveThinking string
 }
 
 type message struct {
@@ -360,11 +361,11 @@ func (c *Client) CompleteWithMeta(ctx context.Context, inv Invocation) (Completi
 	if err != nil {
 		return Completion{}, err
 	}
-	thinking := newThinkingFields(inv.Thinking, inv.ThinkingLevel, inv.ThinkingStyle)
+	thinking := newThinkingFields(inv.Thinking, inv.ThinkingLevel, inv.ThinkingStyle, inv.PreserveThinking)
 	body, err := json.Marshal(chatRequest{
 		Model:          inv.Model,
 		Messages:       []message{{Role: "user", Content: inv.Prompt}},
-		Temperature:    temperatureFor(inv.Temperature, thinking),
+		Temperature:    temperatureFor(inv.Temperature, inv.ThinkingStyle, thinking),
 		MaxTokens:      inv.MaxTokens,
 		ResponseFormat: newResponseFormat(inv.ResponseFormat),
 		thinkingFields: thinking,
