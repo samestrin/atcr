@@ -344,6 +344,17 @@ func TestRegistryDoc_ThinkingDoctorVerdict(t *testing.T) {
 		{"a single-turn probe cannot verify it", "the flag's effect is on later tool-loop turns, which the probe never reaches"},
 		{"retried without the flag before changing the style", "a 4xx on a flagged probe may be the flag, not the thinking declaration"},
 	})
+	// TD: the intro's no-verdict rule must cover permanent failures too — run.go
+	// gates the verdict on thinkingProbeWorthwhile, so 401/403/404/transport rows
+	// placed a call and still get none. The JSON schema line claims the thinking_*
+	// fields are present whenever the probe placed a call, which is necessary but
+	// not sufficient; both places must name the permanent-failure classes.
+	assertStates(t, "thinking verdict intro", intro, []struct{ token, why string }{
+		{"failed permanently", "run.go:294 gates the verdict on thinkingProbeWorthwhile: permanent failures get no verdict despite placing a call"},
+	})
+	assertStates(t, "doctor JSON schema", docLineWith(t, doc, "`thinking_status` (`"), []struct{ token, why string }{
+		{"did not fail permanently", "a placed call is necessary but not sufficient: auth_failed, not_found, and network_error rows get no thinking fields"},
+	})
 	assertStates(t, "thinking verdict warning line", docLineWith(t, section, "The HINT column labels"), []struct{ token, why string }{
 		{"one warning line for each declared polarity of `" + doctor.ThinkingNotHonored + "`", "the not-honored remedy differs by polarity (TD cli/doctor.go:255)"},
 		{"one warning line for `" + doctor.ThinkingUnverified + "`", "--json prints no warning lines and honored prints none"},
