@@ -2945,6 +2945,11 @@ func diffCacheKey(prompt, model, baseURL string, temperature *float64, sizing st
 	if thinkingStyle != "" {
 		tuning = tuning + "\x00ts=" + thinkingStyle
 	}
+	// preserve_thinking keys the wire body (the replayed reasoning members it
+	// enables differ per flag), so it keys apart like the other thinking keys.
+	// It only matters in multi-turn tool loops — which are never cached — so on
+	// a single-shot agent the clause is inert for behavior and costs only a
+	// spurious miss, never a collision.
 	if preserveThinking != "" {
 		tuning = tuning + "\x00pt=" + preserveThinking
 	}

@@ -615,6 +615,27 @@ func TestBuildAgents_PreserveThinkingIsPerAgent(t *testing.T) {
 	assert.Equal(t, recompute(fb, "glm", "off"), fb.CacheKey)
 }
 
+// TD internal/fanout/review.go:2948: the pt= clause keys non-tool agents too.
+// The flag is inert on a single-shot agent (no tool loop means no reasoning
+// replay), but the declaration still keys apart — a spurious miss, never a
+// collision. TestBuildAgents_PreserveThinkingIsPerAgent pins tool agents only.
+func TestBuildAgents_PreserveThinkingKeysNonToolAgent(t *testing.T) {
+	payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
+	build := func(preserve string) Agent {
+		cfg := toolCfg()
+		a := cfg.Registry.Agents["greta"]
+		a.Tools, a.SupportsFC = false, false // single-shot: the engine would cache this agent
+		a.Thinking, a.ThinkingStyle, a.PreserveThinking = registry.ThinkingOn, registry.ThinkingStyleQwen, preserve
+		cfg.Registry.Agents["greta"] = a
+		agent, _, err := buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+		require.NoError(t, err)
+		return agent
+	}
+	on, unset := build(registry.ThinkingOn), build("")
+	assert.NotEqual(t, on.CacheKey, unset.CacheKey,
+		"the preserve flag keys the cache key even where the flag itself is inert")
+}
+
 // TestWithThinkingFixtures_AreLoadable pins the sprint's thinking fixtures to the
 // real load validator. The anthropic-thinking-on fixtures set greta's declaration
 // while her roster config carries Temperature 0.7 and (in toolCfg) SupportsFC true
