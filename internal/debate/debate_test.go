@@ -336,6 +336,36 @@ func TestRunDebate_JudgeHaltedIsUnresolved(t *testing.T) {
 	assert.Equal(t, "judge_halted", df.Items[0].Reason)
 }
 
+// A halted proposer or challenger made no case, so a judge ruling against that
+// side is not a debate outcome: the item must record unresolved, not the ruling
+// (TD internal/debate/protocol.go:156).
+func TestRunDebate_ArguingSeatHaltedIsUnresolved(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		turns []chatTurn
+	}{
+		{"proposer", []chatTurn{{err: errContext()}, {content: "c"}, {content: `{"outcome":"overturn","reasoning":"no defense"}`}}},
+		{"challenger", []chatTurn{{content: "p"}, {err: errContext()}, {content: `{"outcome":"uphold","settled_severity":"HIGH"}`}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+			cc := &fakeChatCompleter{turns: tc.turns}
+			res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+			require.NoError(t, err)
+			assert.Equal(t, 1, res.Unresolved)
+			assert.Zero(t, res.Upheld+res.Overturned+res.Split)
+
+			f := readFindings(t, dir)
+			assert.Nil(t, f[0].Verification) // a one-sided ruling writes no verdict
+
+			var df DebateFile
+			raw, _ := os.ReadFile(filepath.Join(dir, reconciledSubdir, DebateJSON))
+			require.NoError(t, json.Unmarshal(raw, &df))
+			assert.Equal(t, "seat_halted", df.Items[0].Reason)
+		})
+	}
+}
+
 func TestRunDebate_OverflowRecorded(t *testing.T) {
 	f1 := splitFinding()
 	f2 := splitFinding()
