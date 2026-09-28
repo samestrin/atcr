@@ -147,9 +147,15 @@ func TestValidateAgent_PreserveThinkingUnknownStyleIsOneFault(t *testing.T) {
 	assert.NotContains(t, err.Error(), "has no preserve_thinking")
 }
 
-// AC 03-03 Edge Cases 3 and 5: preserve_thinking is never inherited through
-// fallback:, in either direction.
-func TestAgentConfig_PreserveThinkingNotInheritedByFallback(t *testing.T) {
+// TD internal/registry/config_thinking_validate_test.go:113: this test used
+// to claim "preserve_thinking is never inherited through fallback:" — but the
+// registry never merges a primary into its fallback (Fallback is read only in
+// graph.go's validation), so these assertions prove only DECODE-LEVEL
+// independence: the YAML for one agent does not bleed into another. The real
+// inheritance guard lives where the lane wiring actually copies fields:
+// internal/fanout/cache_test.go:608 (TestBuildAgents_PreserveThinkingIsPerAgent)
+// pins that the fallback's Invocation carries its own flag, not the primary's.
+func TestAgentConfig_PreserveThinkingDecodesIndependentlyOfFallback(t *testing.T) {
 	reg, err := LoadRegistry(writeRegistry(t, thinkingRegistry(`
   primary:
     provider: p
