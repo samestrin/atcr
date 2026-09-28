@@ -475,6 +475,18 @@ func TestReasoningCarrier_HTMLCharsReencodeEquivalently(t *testing.T) {
 	assert.Equal(t, "if a < b && c > d", s)
 }
 
+// The same holds for a structured member sent with whitespace: it re-sends
+// compacted and escaped, as the same JSON value, and the signature string is
+// unchanged byte-for-byte.
+func TestReasoningCarrier_StructuredMemberReencodesAsSameValue(t *testing.T) {
+	const sent = `[ {"type": "thinking", "thinking": "a<b & c", "signature": "EqQBCkgIARABGAIiQL+/zzA0Xq9b=="} ]`
+	resp := chatReply(t, toolCallTurn(`"thinking_blocks":`+sent))
+	got := carrierOf(t, resp.Message)["thinking_blocks"]
+	assert.JSONEq(t, sent, got)
+	assert.Contains(t, got, `"signature":"EqQBCkgIARABGAIiQL+/zzA0Xq9b=="`)
+	assert.Contains(t, got, `"thinking":"a\u003cb \u0026 c"`)
+}
+
 // goldenToolHistoryRequest is a tool-loop turn-2 body (user, assistant tool
 // call, tool result) captured from pre-plan main at e5c9754d, before Message
 // had any reasoning member.

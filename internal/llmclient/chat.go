@@ -74,9 +74,11 @@ type ToolCall struct {
 //
 // The reasoning members carry an assistant turn's own reasoning back into
 // tool-loop history, because providers expect it on the next turn. Each holds
-// the provider's bytes as received, under the key they arrived in, and is set
-// only by Chat on a reply: user and tool messages never carry one, and unset
-// members add nothing to the body.
+// the provider's JSON value as received, under the key it arrived in, and is
+// set only by Chat on a reply: user and tool messages never carry one, and
+// unset members add nothing to the body. On marshal, encoding/json compacts the
+// value and HTML-escapes <, >, and &, so only the bytes can differ, never the
+// value.
 type Message struct {
 	Role       string     `json:"role"`
 	Content    *string    `json:"content"`
