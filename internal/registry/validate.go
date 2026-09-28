@@ -100,7 +100,11 @@ type communityPersonaFile struct {
 // AHEAD of the static table and produces guaranteed over-window payloads — the
 // one direction the Conservatism NFR forbids.
 //
-// response_format is the other: its own doc (config.go's ResponseFormat) defines
+// thinking, thinking_level, and thinking_style follow the same rule as
+// response_format below: which request field a model honors is a fact about
+// the endpoint the consumer resolves, not about the persona.
+//
+// response_format is another: its own doc (config.go's ResponseFormat) defines
 // it as a claim about the endpoint the CONSUMER resolves — "this agent's model
 // honors the OpenAI-compatible response_format request field". A published
 // json_object declaration imposes that contract on every consumer's review
@@ -112,15 +116,30 @@ type communityPersonaFile struct {
 // persona never reaches disk (internal/personas/install.go writes only after
 // this returns nil), rather than being silently stripped after the fact.
 func rejectMachineLocalFields(name string, cfg AgentConfig) error {
+	// Accumulate every rejection (matching validateAgent's posture for the
+	// same fields) so a persona author sees the full list in one install
+	// attempt instead of one fault per round-trip.
+	var errs []error
 	if cfg.ContextWindowTokens != nil {
-		return fmt.Errorf("community persona %q must not declare context_window_tokens: "+
+		errs = append(errs, fmt.Errorf("community persona %q must not declare context_window_tokens: "+
 			"the window of a proxy-local model alias is specific to the machine that authored it, "+
-			"so each consumer declares it in their own registry", name)
+			"so each consumer declares it in their own registry", name))
 	}
 	if cfg.ResponseFormat != "" {
-		return fmt.Errorf("community persona %q must not declare response_format: "+
+		errs = append(errs, fmt.Errorf("community persona %q must not declare response_format: "+
 			"whether a model honors the response_format request field is specific to the "+
-			"endpoint each consumer resolves, so each consumer declares it on their own agents", name)
+			"endpoint each consumer resolves, so each consumer declares it on their own agents", name))
 	}
-	return nil
+	for _, f := range []struct{ key, value string }{
+		{"thinking", cfg.Thinking},
+		{"thinking_level", cfg.ThinkingLevel},
+		{"thinking_style", cfg.ThinkingStyle},
+	} {
+		if f.value != "" {
+			errs = append(errs, fmt.Errorf("community persona %q must not declare %s: "+
+				"whether and how a model's thinking behavior is honored is specific to the "+
+				"endpoint each consumer resolves, so each consumer declares it on their own agents", name, f.key))
+		}
+	}
+	return errors.Join(errs...)
 }

@@ -83,6 +83,135 @@ func TestBuildSkepticAgent_ForwardsProviderAndBudgets(t *testing.T) {
 	assert.Equal(t, "the prompt", a.Invocation.Prompt)
 }
 
+// TestBuildSkepticAgent_ThinkingBudgetFitsUnderOutputCap locks the single-shot
+// half of the budget/cap invariant: an anthropic thinking declaration sends
+// budget_tokens, and Anthropic rejects budget_tokens >= max_tokens. A skeptic
+// with no declared max_tokens previously sent the budget with NO cap, so the
+// provider's own (lower) default applied and EVERY call 400ed. The lane must
+// put a cap on the wire that the budget fits strictly under.
+func TestBuildSkepticAgent_ThinkingBudgetFitsUnderOutputCap(t *testing.T) {
+	t.Parallel()
+	sk := testSkeptic()
+	sk.Config.SupportsFC = false // cap path runs on the single-shot (degrade) lane
+	sk.Config.Thinking, sk.Config.ThinkingStyle = registry.ThinkingOn, registry.ThinkingStyleAnthropic
+	a, _ := buildSkepticAgent(sk, "prompt", false)
+	require.NotNil(t, a.Invocation.MaxTokens, "a thinking budget must not go on the wire without an output cap")
+	budget := registry.ThinkingBudgetTokens(a.Invocation.Thinking, a.Invocation.ThinkingLevel, a.Invocation.ThinkingStyle)
+	assert.Greater(t, *a.Invocation.MaxTokens, budget, "budget_tokens must be strictly below the max_tokens actually sent")
+}
+
+// TestBuildSkepticAgent_ThinkingBudgetClampedWhenAboveCap: a declared cap the
+// budget does not fit under downgrades the level to the largest one that fits —
+// a 400 on every call is worse than a smaller thinking budget.
+func TestBuildSkepticAgent_ThinkingBudgetClampedWhenAboveCap(t *testing.T) {
+	t.Parallel()
+	sk := testSkeptic()
+	sk.Config.SupportsFC = false // cap path runs on the single-shot (degrade) lane
+	sk.Config.Thinking, sk.Config.ThinkingLevel, sk.Config.ThinkingStyle = registry.ThinkingOn, registry.ThinkingLevelHigh, registry.ThinkingStyleAnthropic
+	sk.Config.MaxTokens = intPtr(8192) // high's 16384 budget cannot fit
+	a, _ := buildSkepticAgent(sk, "prompt", false)
+	require.NotNil(t, a.Invocation.MaxTokens)
+	assert.Equal(t, 8192, *a.Invocation.MaxTokens, "a declared cap is sent as-is")
+	budget := registry.ThinkingBudgetTokens(a.Invocation.Thinking, a.Invocation.ThinkingLevel, a.Invocation.ThinkingStyle)
+	assert.Less(t, budget, 8192, "the level must be downgraded so the budget fits under the declared cap")
+	assert.NotEmpty(t, a.Invocation.ThinkingLevel, "a downgrade keeps thinking on at a lower level")
+}
+
+// TestBuildSkepticAgent_ThinkingDroppedWhenNothingFits: below the smallest
+// anthropic budget no level fits, so the lane sends no thinking at all rather
+// than a request the provider rejects.
+func TestBuildSkepticAgent_ThinkingDroppedWhenNothingFits(t *testing.T) {
+	t.Parallel()
+	sk := testSkeptic()
+	sk.Config.SupportsFC = false // cap path runs on the single-shot (degrade) lane
+	sk.Config.Thinking, sk.Config.ThinkingLevel, sk.Config.ThinkingStyle = registry.ThinkingOn, registry.ThinkingLevelLow, registry.ThinkingStyleAnthropic
+	sk.Config.MaxTokens = intPtr(1024) // low's 2048 budget cannot fit; nothing smaller exists
+	a, _ := buildSkepticAgent(sk, "prompt", false)
+	assert.Empty(t, a.Invocation.Thinking, "no anthropic budget fits under a 1024 cap — thinking must not be sent")
+	assert.Empty(t, a.Invocation.ThinkingLevel)
+	budget := registry.ThinkingBudgetTokens(a.Invocation.Thinking, a.Invocation.ThinkingLevel, a.Invocation.ThinkingStyle)
+	assert.Equal(t, 0, budget)
+}
+
+// TestBuildSkepticAgent_NoCapForPlainUndeclaredSkeptic guards the documented
+// concern the fix must NOT regress: imposing a built-in output cap on every
+// UNDECLARED skeptic would truncate models at a value nothing measured. The
+// cap is added only when a thinking budget needs one.
+func TestBuildSkepticAgent_NoCapForPlainUndeclaredSkeptic(t *testing.T) {
+	t.Parallel()
+	a, _ := buildSkepticAgent(testSkeptic(), "prompt", false)
+	assert.Nil(t, a.Invocation.MaxTokens, "a skeptic with no thinking declaration keeps the provider default cap")
+	declared, _ := buildSkepticAgent(func() Skeptic {
+		sk := testSkeptic()
+		sk.Config.MaxTokens = intPtr(1234)
+		return sk
+	}(), "prompt", false)
+	require.NotNil(t, declared.Invocation.MaxTokens)
+	assert.Equal(t, 1234, *declared.Invocation.MaxTokens, "a declared cap is forwarded verbatim")
+}
+
+// TestBuildSkepticAgent_AnthropicThinkingStrippedForToolLoop locks the
+// lane-local invariant the load-time guard only asserts for registry configs:
+// an anthropic-thinking agent that will run the TOOL LOOP (SupportsFC forwarded
+// true — the declaration the executor lane ignores, hardcoding it true) must
+// not emit thinking on the wire. The loop does not re-send prior reasoning
+// blocks, so Anthropic rejects every continuation turn — a guaranteed 400 on
+// every call beats no call, but stripping beats both.
+func TestBuildSkepticAgent_AnthropicThinkingStrippedForToolLoop(t *testing.T) {
+	t.Parallel()
+	sk := testSkeptic() // testSkeptic declares SupportsFC: true
+	sk.Config.Thinking, sk.Config.ThinkingLevel, sk.Config.ThinkingStyle = registry.ThinkingOn, registry.ThinkingLevelLow, registry.ThinkingStyleAnthropic
+	a, _ := buildSkepticAgent(sk, "prompt", false)
+	assert.Empty(t, a.Invocation.Thinking, "an anthropic-thinking declaration must not reach the wire of a forced-tool lane")
+	assert.Empty(t, a.Invocation.ThinkingLevel)
+	budget := registry.ThinkingBudgetTokens(a.Invocation.Thinking, a.Invocation.ThinkingLevel, a.Invocation.ThinkingStyle)
+	assert.Equal(t, 0, budget, "no budget may be derived once thinking is stripped")
+}
+
+// TestBuildSkepticAgent_AnthropicThinkingKeptForSingleShot: the strip is scoped
+// to the tool loop. A skeptic whose model lacks function calling degrades to
+// single-shot, where thinking is legal — the declaration (with the item-2 cap)
+// must survive.
+func TestBuildSkepticAgent_AnthropicThinkingKeptForSingleShot(t *testing.T) {
+	t.Parallel()
+	sk := testSkeptic()
+	sk.Config.SupportsFC = false
+	sk.Config.Thinking, sk.Config.ThinkingStyle = registry.ThinkingOn, registry.ThinkingStyleAnthropic
+	a, _ := buildSkepticAgent(sk, "prompt", false)
+	assert.Equal(t, registry.ThinkingOn, a.Invocation.Thinking, "single-shot degrade lane may carry thinking")
+	require.NotNil(t, a.Invocation.MaxTokens)
+	budget := registry.ThinkingBudgetTokens(a.Invocation.Thinking, a.Invocation.ThinkingLevel, a.Invocation.ThinkingStyle)
+	assert.Greater(t, *a.Invocation.MaxTokens, budget)
+}
+
+// TestBuildSkepticAgent_AnthropicOffKeepsUndeclaredCap: thinking: off carries
+// no budget, so an anthropic skeptic with no declared max_tokens must keep the
+// provider default (nil), not gain the built-in cap a budget would need.
+func TestBuildSkepticAgent_AnthropicOffKeepsUndeclaredCap(t *testing.T) {
+	t.Parallel()
+	sk := testSkeptic()
+	sk.Config.SupportsFC = false // the budget path runs on the single-shot lane
+	sk.Config.Thinking, sk.Config.ThinkingStyle = registry.ThinkingOff, registry.ThinkingStyleAnthropic
+	a, _ := buildSkepticAgent(sk, "prompt", false)
+	assert.Nil(t, a.Invocation.MaxTokens, "no budget means no cap is imposed: the provider default applies")
+	assert.Equal(t, registry.ThinkingOff, a.Invocation.Thinking)
+}
+
+// TestBuildSkepticAgent_AnthropicDeclaredCapAboveBudgetForwarded: a declared
+// max_tokens the budget already fits under is sent as-is, not replaced by the
+// built-in default cap.
+func TestBuildSkepticAgent_AnthropicDeclaredCapAboveBudgetForwarded(t *testing.T) {
+	t.Parallel()
+	sk := testSkeptic()
+	sk.Config.SupportsFC = false
+	sk.Config.Thinking, sk.Config.ThinkingLevel, sk.Config.ThinkingStyle = registry.ThinkingOn, registry.ThinkingLevelLow, registry.ThinkingStyleAnthropic
+	sk.Config.MaxTokens = intPtr(12345) // low's 2048 budget fits under it
+	a, _ := buildSkepticAgent(sk, "prompt", false)
+	require.NotNil(t, a.Invocation.MaxTokens)
+	assert.Equal(t, 12345, *a.Invocation.MaxTokens, "a declared cap above the budget is forwarded verbatim")
+	assert.Equal(t, registry.ThinkingLevelLow, a.Invocation.ThinkingLevel, "a fitting level is not downgraded")
+}
+
 func TestInvokeSkeptic_Confirms(t *testing.T) {
 	t.Parallel()
 	cc := finalChat(`{"verdict": "confirmed", "reasoning": "evidence valid"}`)
@@ -227,6 +356,41 @@ func TestInvokeSkeptic_SurfacesTrippedBudgets(t *testing.T) {
 	require.NotNil(t, v)
 	assert.Equal(t, verdictUnverifiable, v.Verdict)
 	assert.Contains(t, tripped, "max_turns", "tripped budgets must be surfaced separately from Notes")
+}
+
+// TestInvokeSkeptic_TruncatedModelResponse locks the skeptic-lane counterpart of
+// the executor lane's ResponseTruncated propagation (executor.go): a reply cut
+// off on finish_reason=length must not be parsed into a confirmed/refuted
+// verdict. The truncated final turn carries verdict-shaped draft content, so
+// without the guard parseVerdict takes the draft at face value and it counts
+// toward reviewer precision as a full read.
+func TestInvokeSkeptic_TruncatedModelResponse(t *testing.T) {
+	t.Parallel()
+	cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed","reasoning":"draft formed before the reply was cut off"}`, truncated: true}}}
+	v, tripped, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	assert.NotEqual(t, verdictConfirmed, v.Verdict, "a verdict parsed from a truncated reply must not be confirmed")
+	assert.NotEqual(t, verdictRefuted, v.Verdict, "a verdict parsed from a truncated reply must not be refuted")
+	assert.Equal(t, verdictUnverifiable, v.Verdict)
+	assert.Equal(t, "response_truncated", v.Notes, "the named note must carry the truncation reason")
+	assert.False(t, v.Truncated, "the Truncated flag means a shortened tool READ (byte budget), not a model-token cutoff — see invoke.go")
+	assert.Empty(t, tripped, "model-response truncation is not a budget trip")
+}
+
+// TestInvokeSkeptic_TruncatedModelResponse_ToolLoop covers the same guard on the
+// tool-loop path: the loop's FINAL content turn is what can be cut off.
+func TestInvokeSkeptic_TruncatedModelResponse_ToolLoop(t *testing.T) {
+	t.Parallel()
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		toolCallTurn("read_file"),
+		{content: `{"verdict":"confirmed","reasoning":"draft"}`, truncated: true},
+	}}
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	assert.Equal(t, verdictUnverifiable, v.Verdict, "a truncated tool-loop final answer must not become a real verdict")
+	assert.Equal(t, "response_truncated", v.Notes)
 }
 
 // TestInvokeSkeptic_NoTrippedBudgetsOnCleanVerdict: a verdict reached without a
@@ -1534,4 +1698,103 @@ func TestInvokeSkeptic_ForwardsDeclaredResponseFormat(t *testing.T) {
 		assert.Equal(t, registry.ResponseFormatJSONObject, invs[0].ResponseFormat,
 			"the Invocation passed to Complete must carry the declaration")
 	})
+}
+
+// Sprint 35.16.11.2.2 TD: end-to-end proof that a declared thinking setting
+// reaches the chat completer through invokeSkeptic, mirroring the
+// response_format sibling above: declared reaches the invocation, undeclared
+// sends none, the multi-turn tool loop carries it on every turn, and the
+// SupportsFC=false single-shot degrade path carries it to Complete.
+func TestInvokeSkeptic_ForwardsDeclaredThinking(t *testing.T) {
+	t.Parallel()
+
+	t.Run("declared", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		sk.Config.Thinking, sk.Config.ThinkingLevel, sk.Config.ThinkingStyle = "on", "low", "qwen"
+		cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed"}`}}}
+
+		_, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+		require.NoError(t, err)
+		assert.Equal(t, "on", cc.lastInvocation().Thinking,
+			"the declaration must reach the request, not stop at the Agent literal")
+		assert.Equal(t, "low", cc.lastInvocation().ThinkingLevel)
+		assert.Equal(t, "qwen", cc.lastInvocation().ThinkingStyle)
+	})
+
+	t.Run("undeclared sends none", func(t *testing.T) {
+		t.Parallel()
+		cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed"}`}}}
+
+		_, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false)
+		require.NoError(t, err)
+		assert.Empty(t, cc.lastInvocation().Thinking)
+		assert.Empty(t, cc.lastInvocation().ThinkingLevel)
+		assert.Empty(t, cc.lastInvocation().ThinkingStyle)
+	})
+
+	// A regression dropping thinking on an intermediate tool-loop turn must fail
+	// here, mirroring the response_format sibling's per-turn assertion.
+	t.Run("multi-turn tool loop carries it on every turn", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		sk.Config.Thinking, sk.Config.ThinkingLevel, sk.Config.ThinkingStyle = "on", "low", "qwen"
+		cc := &fakeChatCompleter{turns: []chatTurn{
+			toolCallTurn("read_file"),
+			{content: `{"verdict":"confirmed","reasoning":"verified via file read"}`},
+		}}
+
+		v, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+		require.NoError(t, err)
+		require.NotNil(t, v)
+		invs := cc.allInvocations()
+		require.NotEmpty(t, invs)
+		for i, inv := range invs {
+			assert.Equal(t, "on", inv.Thinking, "turn %d dropped thinking", i)
+			assert.Equal(t, "low", inv.ThinkingLevel, "turn %d dropped thinking level", i)
+			assert.Equal(t, "qwen", inv.ThinkingStyle, "turn %d dropped thinking style", i)
+		}
+	})
+
+	// The SupportsFC=false degrade path hands the Invocation to plain Complete
+	// (fanout invokeSingleShot), not the tool loop. A regression dropping the
+	// declaration on the single-shot path must fail here.
+	t.Run("single-shot degrade path carries it to Complete", func(t *testing.T) {
+		t.Parallel()
+		sk := testSkeptic()
+		sk.Config.Thinking, sk.Config.ThinkingLevel, sk.Config.ThinkingStyle = "on", "low", "qwen"
+		sk.Config.SupportsFC = false
+		cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed"}`}}}
+
+		_, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+		require.NoError(t, err)
+		assert.Zero(t, cc.chatCalls, "a non-FC skeptic must not enter the tool loop")
+		invs := cc.allInvocations()
+		require.Len(t, invs, 1, "exactly one Complete call expected")
+		assert.Equal(t, "on", invs[0].Thinking,
+			"the Invocation passed to Complete must carry the declaration")
+		assert.Equal(t, "low", invs[0].ThinkingLevel)
+		assert.Equal(t, "qwen", invs[0].ThinkingStyle)
+	})
+}
+
+// Sprint 35.16.11.2.2 AC 04-03: the skeptic forwards its OWN thinking
+// declaration with no lane-level override, identically on exec and non-exec
+// runs; an undeclared skeptic sends none.
+func TestBuildSkepticAgent_ForwardsThinking(t *testing.T) {
+	t.Parallel()
+	sk := testSkeptic()
+	sk.Config.Thinking, sk.Config.ThinkingLevel, sk.Config.ThinkingStyle = "on", "low", "qwen"
+
+	for _, exec := range []bool{false, true} {
+		a, _ := buildSkepticAgent(sk, "the prompt", exec)
+		assert.Equal(t, "on", a.Invocation.Thinking, "exec=%v", exec)
+		assert.Equal(t, "low", a.Invocation.ThinkingLevel, "exec=%v", exec)
+		assert.Equal(t, "qwen", a.Invocation.ThinkingStyle, "exec=%v", exec)
+	}
+
+	undeclared, _ := buildSkepticAgent(testSkeptic(), "the prompt", false)
+	assert.Empty(t, undeclared.Invocation.Thinking)
+	assert.Empty(t, undeclared.Invocation.ThinkingLevel)
+	assert.Empty(t, undeclared.Invocation.ThinkingStyle)
 }

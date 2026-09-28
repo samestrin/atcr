@@ -95,17 +95,38 @@ var infoStringTokenRe = regexp.MustCompile(`^[A-Za-z0-9_-]+(=[A-Za-z0-9_-]+)?$`)
 var infoStringAttrRe = regexp.MustCompile(`^[A-Za-z0-9_-]+=[A-Za-z0-9_-]+$`)
 
 // isInfoString reports whether s (the rest of a line after the fence run) is
-// only an info string: empty, or one word-like token followed by key=value
-// attributes. A second bare word means sentence text ("``` but the lock is
-// never released"), which is content sharing the line. A backtick fence's info
-// string cannot contain a backtick (CommonMark), and infoStringTokenRe accepts
-// only [A-Za-z0-9_-], so a rest carrying one is rejected as shared content by
-// the token loop below without a separate check.
+// only an info string: empty, one word-like token, key=value attributes after
+// it, or — when the rest carries none of the content-like characters (pipe,
+// colon, dot) — at most ONE extra bare word. That extra word is the labeled
+// fence opener a model slips into ("```json response"), which the fence
+// scanner already toggles on and parses as a json block; IsNoFindings must
+// agree rather than leave the opener as unread content (TD
+// internal/fanout/engine.go:903). Sentence prose sharing the line — "``` but
+// the lock is never released", three or more bare words — and any rest with a
+// content-like character (a pipe row "```HIGH|a.go:1|...", referenced prose
+// "```see a.go:3") stays content. A backtick fence's info string cannot
+// contain a backtick (CommonMark), and infoStringTokenRe accepts only
+// [A-Za-z0-9_-], so a rest carrying one is rejected as shared content by the
+// token loop below without a separate check.
 func isInfoString(line string, c byte, n int) bool {
 	t := strings.TrimLeft(line, " \t")
 	rest := t[n:]
+	noContentLike := !strings.ContainsAny(rest, "|:.")
+	bareExtra := 0
 	for i, tok := range strings.Fields(rest) {
-		if i == 0 && !infoStringTokenRe.MatchString(tok) || i > 0 && !infoStringAttrRe.MatchString(tok) {
+		word := infoStringTokenRe.MatchString(tok)
+		switch {
+		case i == 0:
+			if !word {
+				return false
+			}
+		case infoStringAttrRe.MatchString(tok):
+		case noContentLike && word:
+			bareExtra++
+			if bareExtra > 1 {
+				return false
+			}
+		default:
 			return false
 		}
 	}

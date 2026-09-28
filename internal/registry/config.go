@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -18,6 +19,11 @@ import (
 // scopeVocabularyWarnWriter is the sink for the off-vocabulary scope warning; a
 // var so tests can capture it, mirroring insecureRegistryWarnWriter.
 var scopeVocabularyWarnWriter io.Writer = os.Stderr
+
+// thinkingWarnWriter is the sink for the thinking load warnings; a var so
+// tests can capture it, mirroring scopeVocabularyWarnWriter. A test that swaps
+// it must not run in parallel.
+var thinkingWarnWriter io.Writer = os.Stderr
 
 // scopeSuggestMaxDistance bounds how far a scope entry may be from a vocabulary
 // member before the warning stops suggesting that member. At 2, a typo
@@ -180,6 +186,81 @@ const (
 // (Epic 35.16.11.2.1): the API returns syntactically valid JSON, a single
 // object. json_schema is deliberately not accepted.
 const ResponseFormatJSONObject = "json_object"
+
+// Legal AgentConfig.Thinking / ThinkingLevel / ThinkingStyle values (Epic
+// 35.16.11.2.2). Validation and the docs drift test read these, never literals.
+const (
+	ThinkingOn  = "on"
+	ThinkingOff = "off"
+
+	ThinkingLevelLow    = "low"
+	ThinkingLevelMedium = "medium"
+	ThinkingLevelHigh   = "high"
+	ThinkingLevelMax    = "max"
+
+	ThinkingStyleQwen            = "qwen"
+	ThinkingStyleTemplateKwargs  = "template_kwargs"
+	ThinkingStyleReasoningEffort = "reasoning_effort"
+	ThinkingStyleAnthropic       = "anthropic"
+)
+
+var (
+	thinkingValues = []string{ThinkingOn, ThinkingOff}
+	thinkingLevels = []string{ThinkingLevelLow, ThinkingLevelMedium, ThinkingLevelHigh, ThinkingLevelMax}
+	thinkingStyles = []string{ThinkingStyleQwen, ThinkingStyleTemplateKwargs, ThinkingStyleReasoningEffort, ThinkingStyleAnthropic}
+)
+
+// ThinkingValues, ThinkingLevels, and ThinkingStyles return each key's legal
+// values in documented order. Each call returns a fresh copy, so a caller
+// cannot change the legal set.
+func ThinkingValues() []string { return slices.Clone(thinkingValues) }
+func ThinkingLevels() []string { return slices.Clone(thinkingLevels) }
+func ThinkingStyles() []string { return slices.Clone(thinkingStyles) }
+
+// DefaultMaxTokens is the output cap the review applies to an agent that
+// declares no max_tokens. It mirrors payload.DefaultOutputTokens, which this
+// leaf package cannot import; a test in internal/doctor pins the two together.
+const DefaultMaxTokens = 8192
+
+// thinkingBudgets is the one level-to-budget table, sent as the qwen
+// thinking_budget and anthropic budget_tokens fields.
+var thinkingBudgets = map[string]int{
+	ThinkingLevelLow:    2048,
+	ThinkingLevelMedium: 8192,
+	ThinkingLevelHigh:   16384,
+	ThinkingLevelMax:    32768,
+}
+
+// ThinkingEnabled resolves a declared thinking setting to on-ness: thinking
+// on, or a level alone (a level implies on). The single form of the rule —
+// validateThinking, ThinkingBudgetTokens, and internal/llmclient's wire mapper
+// all consume it, so the wire never sends a body validation judges differently
+// (TD row internal/llmclient/thinking.go:47).
+func ThinkingEnabled(thinking, level string) bool {
+	return thinking == ThinkingOn || (thinking == "" && level != "")
+}
+
+// ThinkingBudgetTokens returns the thinking budget a declared setting sends,
+// or 0 when it sends none: thinking off, a style with no budget field, qwen on
+// with no level, or a value validation would reject. Anthropic on with no
+// level takes the medium budget, because Anthropic requires one when enabled.
+// internal/llmclient reads this when it builds the request, so the load-time
+// warning and the wire always agree.
+func ThinkingBudgetTokens(thinking, level, style string) int {
+	if !ThinkingEnabled(thinking, level) {
+		return 0
+	}
+	switch style {
+	case ThinkingStyleQwen:
+		return thinkingBudgets[level]
+	case ThinkingStyleAnthropic:
+		if level == "" {
+			level = ThinkingLevelMedium
+		}
+		return thinkingBudgets[level]
+	}
+	return 0
+}
 
 // Executor defaults (Epic 7.0). DefaultExecutorPersona is the fix-focused persona
 // applied when the executor block sets none; DefaultFixMinSeverity is the severity
@@ -545,6 +626,19 @@ type AgentConfig struct {
 	// a fallback: a fallback that also honors it must declare it itself.
 	ResponseFormat string `yaml:"response_format,omitempty"`
 
+	// Thinking, ThinkingLevel, and ThinkingStyle declare whether this agent's
+	// model thinks, how much, and which request field carries that (Epic
+	// 35.16.11.2.2). Thinking is ThinkingOn or ThinkingOff — a string, not a
+	// bool, so a bare YAML true/false is rejected rather than aliased. A level
+	// alone implies on. ThinkingStyle names the wire field; there is no default
+	// style and none is inferred from the model id. All three unset (the
+	// default) sends no thinking field, so an undeclared agent's request body is
+	// unchanged. Like ResponseFormat they are declared per agent and never
+	// inherited by a fallback.
+	Thinking      string `yaml:"thinking,omitempty"`
+	ThinkingLevel string `yaml:"thinking_level,omitempty"`
+	ThinkingStyle string `yaml:"thinking_style,omitempty"`
+
 	// Review-constraint guardrails (Epic 2.2). All optional and
 	// backward-compatible: an unset field imposes no constraint, so a 1.x/2.0
 	// config keeps loading unchanged. Scope is a SOFT prompt-injection focus hint
@@ -691,6 +785,13 @@ type Registry struct {
 	PayloadMode       string `yaml:"payload_mode,omitempty"`
 	TimeoutSecs       *int   `yaml:"timeout_secs,omitempty"`
 	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
+	// validationWarnings buffers the thinking load warnings collected during
+	// validate() until a load entry point emits them after ALL validation
+	// succeeds, so a failed load never prints advice for config that never
+	// runs and a merged load emits the effective roster's warnings exactly
+	// once (TD row internal/registry/config.go:1200). yaml:"-" keeps it out
+	// of every decode and encode.
+	validationWarnings []string `yaml:"-"`
 	// ChunkByteBudget caps the PER-CHUNK payload independently of the global
 	// payload cap above. Unset (nil) inherits the resolved PayloadByteBudget, so a
 	// config that never mentions it is sized exactly as before this key existed.
@@ -803,8 +904,24 @@ func LoadRegistry(path string) (*Registry, error) {
 	if err := reg.ValidateFallbacks(); err != nil {
 		return nil, fmt.Errorf("%s: %w", base, err)
 	}
+	reg.emitValidationWarnings()
 	reg.applyDefaults()
 	return reg, nil
+}
+
+// emitValidationWarnings writes the warnings collected during validation to
+// thinkingWarnWriter and clears the buffer. The load entry points
+// (LoadRegistry, LoadMergedRegistry) call it only after every validation
+// stage has passed, so a failed load never prints advice for config that
+// never runs and each load emits its warnings exactly once (TD row
+// internal/registry/config.go:1200). Merged loads buffer during validate()
+// over the post-merge roster, so the warnings describe the config that
+// actually runs, never a user-tier entry a project overlay shadows.
+func (r *Registry) emitValidationWarnings() {
+	for _, w := range r.validationWarnings {
+		_, _ = fmt.Fprint(thinkingWarnWriter, w)
+	}
+	r.validationWarnings = nil
 }
 
 // validate checks required fields and reference integrity. It accumulates every
@@ -1119,6 +1236,135 @@ func validateProvider(name string, p Provider) []error {
 	return errs
 }
 
+// validateThinking returns every fault in an agent's thinking keys (Epic
+// 35.16.11.2.2). Like response_format it uses strict equality with no
+// case-folding, so a near-miss fails at load instead of reaching a live
+// review. A bare YAML true/false decodes as "true"/"false" and is rejected
+// here like any other unknown value. max under reasoning_effort is legal: the
+// wire layer sends it as high, so the loader warns instead of failing.
+// Warnings are returned alongside the faults and buffered by the caller —
+// they are emitted by the load entry points only after all validation
+// succeeds (TD row internal/registry/config.go:1200).
+func validateThinking(name string, a AgentConfig) ([]error, []string) {
+	var errs []error
+	var warns []string
+	if a.Thinking != "" && !slices.Contains(thinkingValues, a.Thinking) {
+		errs = append(errs, agentErrf(name, "agent '%s': invalid thinking %q: must be %q or %q or unset", name, a.Thinking, ThinkingOn, ThinkingOff))
+	}
+	if a.ThinkingLevel != "" && !slices.Contains(thinkingLevels, a.ThinkingLevel) {
+		errs = append(errs, agentErrf(name, "agent '%s': invalid thinking_level %q: must be one of %s", name, a.ThinkingLevel, strings.Join(thinkingLevels, ", ")))
+	}
+	if a.ThinkingStyle != "" && !slices.Contains(thinkingStyles, a.ThinkingStyle) {
+		errs = append(errs, agentErrf(name, "agent '%s': invalid thinking_style %q: must be one of %s", name, a.ThinkingStyle, strings.Join(thinkingStyles, ", ")))
+	}
+	if a.Thinking == ThinkingOff && a.ThinkingLevel != "" {
+		errs = append(errs, agentErrf(name, "agent '%s': thinking is %q but thinking_level %q is set: remove thinking_level or set thinking: on", name, ThinkingOff, a.ThinkingLevel))
+	}
+	// template_kwargs carries only enable_thinking on/off, so a level would be
+	// silently dropped on the wire.
+	if a.ThinkingStyle == ThinkingStyleTemplateKwargs && a.ThinkingLevel != "" {
+		errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q has no level: remove thinking_level and use thinking: %s", name, ThinkingStyleTemplateKwargs, ThinkingOn))
+	}
+	if (a.Thinking != "" || a.ThinkingLevel != "") && a.ThinkingStyle == "" {
+		errs = append(errs, agentErrf(name, "agent '%s': thinking is declared but thinking_style is missing: there is no default style", name))
+	}
+	if a.ThinkingStyle == ThinkingStyleReasoningEffort {
+		switch {
+		case a.Thinking == ThinkingOff:
+			errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q has no off value: set thinking_level: %s instead of thinking: off", name, ThinkingStyleReasoningEffort, ThinkingLevelLow))
+		case a.Thinking == ThinkingOn && a.ThinkingLevel == "":
+			errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q needs a thinking_level: set thinking_level to %s, %s, %s, or %s", name, ThinkingStyleReasoningEffort, ThinkingLevelLow, ThinkingLevelMedium, ThinkingLevelHigh, ThinkingLevelMax))
+		case a.ThinkingLevel == ThinkingLevelMax:
+			warns = append(warns, fmt.Sprintf(
+				"warning: agent '%s': thinking_level %q is sent as %q under thinking_style %q, the highest value that style accepts\n",
+				name, ThinkingLevelMax, ThinkingLevelHigh, ThinkingStyleReasoningEffort))
+		}
+	}
+	// Anthropic rejects extended thinking with any temperature but 1; the wire
+	// sends none for such an agent, so only a declared conflict is an error.
+	// Validation runs before applyDefaults, so a nil temperature is undeclared.
+	thinkingOn := ThinkingEnabled(a.Thinking, a.ThinkingLevel)
+	if a.ThinkingStyle == ThinkingStyleAnthropic && thinkingOn && a.Temperature != nil && *a.Temperature != 1 {
+		errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q with thinking on needs temperature 1: remove temperature or set it to 1", name, ThinkingStyleAnthropic))
+	}
+	// Anthropic requires the prior thinking blocks on a tool-use turn, and the
+	// tool loop does not send reasoning back in its history. The skeptic and
+	// debate seats force tools on and a fallback takes its primary's tools, so
+	// the agent's own tools key does not keep it out of the loop; only its
+	// model's function-calling declaration does.
+	if a.ThinkingStyle == ThinkingStyleAnthropic && thinkingOn && a.SupportsFC {
+		errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q with thinking on cannot use supports_function_calling: true: the tool loop does not send reasoning back, which Anthropic requires; set supports_function_calling: false or thinking: off", name, ThinkingStyleAnthropic))
+	}
+	// Anthropic rejects extended thinking alongside a forced tool_choice, and
+	// providers map response_format onto exactly that, so anthropic thinking-on
+	// plus response_format: json_object fails every call from such an agent
+	// (the wire sends both together). Declared at load like the sibling
+	// temperature and supports_function_calling rules. The live-proxy probe
+	// this row asked for could not be run — the flat-rate proxy served no
+	// anthropic model — so the guard rests on the documented provider
+	// constraint (TD row internal/registry/config.go:1260, user decision
+	// 2026-09-27, path b).
+	if a.ThinkingStyle == ThinkingStyleAnthropic && thinkingOn && a.ResponseFormat == ResponseFormatJSONObject {
+		errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q with thinking on cannot use response_format: %q: providers map response_format onto a forced tool_choice, which Anthropic rejects while extended thinking is on; remove response_format or set thinking: off", name, ThinkingStyleAnthropic, ResponseFormatJSONObject))
+	}
+	// Anthropic documents a hard budget_tokens < max_tokens constraint: the
+	// thinking budget shares the output cap, so a budget at or above it is a
+	// guaranteed 400 on every live call — the same fail-loud contract the
+	// temperature and supports_function_calling checks above enforce. The cap
+	// is the declared max_tokens, else the review default; a load error fires
+	// before --max-tokens could rescue the run, so the remedies are a declared
+	// cap above the budget or a lower thinking_level. Styles whose budget is
+	// advisory keep the warnThinkingBudget warning instead (TD row
+	// internal/registry/config.go:1270).
+	if a.ThinkingStyle == ThinkingStyleAnthropic {
+		if budget := ThinkingBudgetTokens(a.Thinking, a.ThinkingLevel, a.ThinkingStyle); budget > 0 {
+			limit, source := DefaultMaxTokens, " (the review default)"
+			if a.MaxTokens != nil {
+				limit, source = *a.MaxTokens, ""
+			}
+			if budget >= limit {
+				level := a.ThinkingLevel
+				if level == "" {
+					level = ThinkingLevelMedium // anthropic on with no level
+				}
+				errs = append(errs, agentErrf(name, "agent '%s': thinking budget %d (thinking_level %q) is not below max_tokens %d%s: Anthropic rejects budget_tokens >= max_tokens, so every call fails; declare max_tokens above the budget or lower thinking_level", name, budget, level, limit, source))
+			}
+		}
+	}
+	return errs, warns
+}
+
+// warnThinkingBudget warns (never errors) when the thinking budget an agent
+// sends is not below its output cap. The budget shares that cap. The cap is
+// the declared max_tokens, else the review default; the --max-tokens flag is
+// not visible at load, so the warning always names it (TD row
+// internal/registry/config.go:1223). For the anthropic style the misfit is a
+// hard load error in validateThinking (Anthropic rejects
+// budget_tokens >= max_tokens), so this warning covers only the styles whose
+// budget is advisory. The warning text is returned to the caller (buffered
+// until the load succeeds — TD row internal/registry/config.go:1200), not
+// written directly.
+func warnThinkingBudget(name string, a AgentConfig) string {
+	budget := ThinkingBudgetTokens(a.Thinking, a.ThinkingLevel, a.ThinkingStyle)
+	// The flag note is named in both branches (TD-010): at runtime --max-tokens
+	// overrides a declared max_tokens too, so the declared cap the warning
+	// compares against is not necessarily the cap a review actually sends.
+	limit, source := DefaultMaxTokens, " (the default; --max-tokens can change it)"
+	if a.MaxTokens != nil {
+		limit, source = *a.MaxTokens, " (--max-tokens can change it)"
+	}
+	// A zero budget (thinking off, or a style with no budget) is always below a
+	// max_tokens load validation holds to 1 or more. Only the qwen style reaches
+	// past this: anthropic misfits are load errors, and qwen's budget is keyed on
+	// a declared level, so the level named below is never empty.
+	if budget < limit {
+		return ""
+	}
+	return fmt.Sprintf(
+		"warning: agent '%s': thinking budget %d (thinking_level %q) is not below max_tokens %d%s; the budget shares the output cap, so raise max_tokens or lower thinking_level\n",
+		name, budget, a.ThinkingLevel, limit, source)
+}
+
 // validateAgent returns every fault found in a single agent entry (Epic 4.2 /
 // AC6 — accumulate rather than short-circuit). The unknown-provider reference
 // check is suppressed when provider is empty so a missing-provider agent reports
@@ -1156,6 +1402,14 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 	if a.ResponseFormat != "" && a.ResponseFormat != ResponseFormatJSONObject {
 		errs = append(errs, agentErrf(name, "agent '%s': invalid response_format %q: must be %q or unset", name, a.ResponseFormat, ResponseFormatJSONObject))
 	}
+	terrs, twarns := validateThinking(name, a)
+	errs = append(errs, terrs...)
+	// Buffer the thinking warnings on the registry: the load entry points emit
+	// them once, after all validation succeeds (TD row
+	// internal/registry/config.go:1200). Like the old direct write, the clamp
+	// warning fires regardless of other faults; the budget warning stays
+	// gated on a fully valid agent.
+	r.validationWarnings = append(r.validationWarnings, twarns...)
 	if a.MaxTurns != nil && (*a.MaxTurns <= 0 || *a.MaxTurns > MaxAgentTurns) {
 		errs = append(errs, agentErrf(name, "agent '%s': max_turns must be within 1..%d", name, MaxAgentTurns))
 	}
@@ -1254,6 +1508,11 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 	}
 	if len(a.Binding) > MaxBindingLen {
 		errs = append(errs, agentErrf(name, "agent '%s': binding must be at most %d characters", name, MaxBindingLen))
+	}
+	if len(errs) == 0 {
+		if w := warnThinkingBudget(name, a); w != "" {
+			r.validationWarnings = append(r.validationWarnings, w)
+		}
 	}
 	return errs
 }

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/payload"
@@ -510,4 +511,45 @@ func TestWriteAgentArtifacts_FindingsWriteFailureIsWrapped(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "writing findings for 'greta'")
 	assert.Contains(t, err.Error(), "injected findings write failure")
+}
+
+// TestTruncatedZeroRemedy_MatchesDocThinkingLever pins truncatedZeroRemedy to
+// docs/registry.md's "Thinking and max_tokens" paragraph, which makes `thinking: off`
+// the FIRST remedy for a reviewer that truncates with zero findings. The warning in
+// artifacts.go is the only runtime place that remedy is stated, so the two must name
+// the same lever in the same order — if the doc's advice changes, this test fails
+// until the runtime remedy follows it (and vice versa).
+func TestTruncatedZeroRemedy_MatchesDocThinkingLever(t *testing.T) {
+	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "registry.md"))
+	require.NoError(t, err)
+	docPara := ""
+	for _, para := range strings.Split(string(doc), "\n\n") {
+		if strings.Contains(para, "Thinking and `max_tokens`") {
+			docPara = para
+			break
+		}
+	}
+	require.NotEmpty(t, docPara, "docs/registry.md must keep a 'Thinking and max_tokens' paragraph")
+
+	// Doc-side anchor: the paragraph must still lead with the thinking lever.
+	docOff := strings.Index(docPara, "`thinking: off`")
+	docCap := strings.Index(docPara, "max_tokens` alone")
+	require.GreaterOrEqual(t, docOff, 0, "doc paragraph must state the thinking: off remedy")
+	require.Less(t, docOff, docCap, "doc paragraph must lead with the thinking lever, not the cap raise")
+
+	// Runtime side: the operator-facing remedy must agree with the doc.
+	remedy := truncatedZeroRemedy
+	off := strings.Index(remedy, "thinking: off")
+	low := strings.Index(remedy, "thinking_level: low")
+	capIdx := strings.Index(remedy, "--max-tokens")
+	require.GreaterOrEqual(t, off, 0, "truncatedZeroRemedy must mention thinking: off (docs' first fix)")
+	require.GreaterOrEqual(t, low, 0, "truncatedZeroRemedy must mention thinking_level: low (reasoning_effort has no off)")
+	require.GreaterOrEqual(t, capIdx, 0, "truncatedZeroRemedy must keep the cap-raise advice")
+	require.Less(t, off, capIdx,
+		"truncatedZeroRemedy must LEAD with the thinking lever: docs/registry.md calls thinking: off the first fix, and raising max_tokens alone gives a runaway thinker more room")
+
+	// The existing context-window tradeoff text must be retained.
+	for _, token := range []string{"same context window", "4096", "context_window_tokens"} {
+		require.Contains(t, remedy, token, "truncatedZeroRemedy must keep its context-window tradeoff text (%s)", token)
+	}
 }

@@ -89,3 +89,46 @@ func TestToolLoop_ResponseFormatAbsentWhenUnset(t *testing.T) {
 		assert.NotContains(t, body, "response_format", "turn %d", i+1)
 	}
 }
+
+// Sprint 35.16.11.2.2 (AC 04 story, TD-013): a declared thinking setting rides
+// every tool-loop turn, and a turn-1 reply's reasoning_content is never re-sent
+// in the turn-2 history — reasoning rides the response only, never a Message.
+func TestToolLoop_ThinkingOnEveryTurnAndReasoningNeverResent(t *testing.T) {
+	var (
+		mu     sync.Mutex
+		bodies []string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, string(b))
+		turn := len(bodies)
+		mu.Unlock()
+		if turn == 1 {
+			_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,`+
+				`"reasoning_content":"PRIVATE-CHAIN-OF-THOUGHT",`+
+				`"tool_calls":[{"id":"c1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"f.go\"}"}}]}}]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"NO FINDINGS"}}]}`)
+	}))
+	defer srv.Close()
+	t.Setenv("ATCR_TEST_KEY", "k")
+
+	d := newFakeDispatcher()
+	d.byName["read_file"] = tools.ToolResult{Content: "x"}
+	a := toolAgent("a", 3, 0)
+	a.Invocation = llmclient.Invocation{BaseURL: srv.URL, APIKeyEnv: "ATCR_TEST_KEY", Model: "m",
+		Thinking: "off", ThinkingStyle: "qwen"}
+
+	r := toolEngine(llmclient.New(llmclient.WithHTTPClient(srv.Client())), d).invokeAgent(context.Background(), a)
+	require.Equal(t, StatusOK, r.Status)
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, bodies, 2, "one tool turn, then the final answer")
+	for i, body := range bodies {
+		assert.Contains(t, body, `"enable_thinking":false`, "turn %d", i+1)
+	}
+	assert.NotContains(t, bodies[1], "PRIVATE-CHAIN-OF-THOUGHT", "turn-1 reasoning must not be re-sent")
+	assert.NotContains(t, bodies[1], "reasoning_content")
+}

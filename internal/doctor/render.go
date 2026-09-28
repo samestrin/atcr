@@ -124,24 +124,34 @@ const maxTableDetailBytes = 160
 // A response_format mismatch rides after whatever the endpoint probe said, under its
 // own label, so it cannot be read as the marker-absent hint. An honored probe adds
 // nothing.
+//
+// A thinking verdict rides after that, under its own label, on the same rule.
 func diagnostic(a AgentResult) string {
 	d := endpointDiagnostic(a)
-	label := map[string]string{
+	d = withVerdict(d, map[string]string{
 		ResponseFormatNotHonored: "response_format not honored: ",
 		ResponseFormatUnverified: "response_format unverified: ",
-	}[a.ResponseFormatStatus]
-	if label != "" {
-		detail := clampRunes(a.ResponseFormatDetail, maxTableDetailBytes)
-		if len(detail) < len(a.ResponseFormatDetail) {
-			detail += "… (--json for full text)"
-		}
-		rf := label + detail
-		if d == "" {
-			return rf
-		}
-		return d + " | " + rf
+	}[a.ResponseFormatStatus], a.ResponseFormatDetail)
+	return withVerdict(d, map[string]string{
+		ThinkingNotHonored: "thinking not honored: ",
+		ThinkingUnverified: "thinking unverified: ",
+	}[a.ThinkingStatus], a.ThinkingDetail)
+}
+
+// withVerdict appends a labelled, clamped verdict detail to the HINT cell d; an
+// empty label (honored, or no verdict) adds nothing.
+func withVerdict(d, label, detail string) string {
+	if label == "" {
+		return d
 	}
-	return d
+	clamped := clampRunes(detail, maxTableDetailBytes)
+	if len(clamped) < len(detail) {
+		clamped += "… (--json for full text)"
+	}
+	if d == "" {
+		return label + clamped
+	}
+	return d + " | " + label + clamped
 }
 
 // endpointDiagnostic is the HINT cell as the endpoint probe alone would render it.

@@ -145,6 +145,15 @@ func driveSeat(ctx context.Context, seat Caster, prompt string, cc fanout.ChatCo
 		return "", fanout.StatusFailed
 	}
 	r := results[0]
+	// A truncated single-shot reply carries only the salvaged chain-of-thought,
+	// not a statement: halt the seat and return no statement. Forwarding it would
+	// paste one model's reasoning into the next seat's prompt — the case the
+	// anthropic thinking load rule exists to prevent (TD
+	// internal/debate/protocol.go:148). Checked before the tripped-budget return
+	// so a truncated forced final answer is no statement either.
+	if r.ResponseTruncated {
+		return "", fanout.StatusFailed
+	}
 	if r.Status != fanout.StatusOK || len(r.TrippedBudgets) > 0 {
 		return r.Content, fanout.StatusFailed
 	}
@@ -171,6 +180,10 @@ func nonOKStatus(status string) string {
 // text pasted into later prompts, so a forced object shape would corrupt them.
 // The gate reads the seat's Label, not the agent, because the same agent can be
 // judge on one item and proposer on another.
+//
+// Thinking is deliberately NOT gated the same way: it changes how much the
+// model reasons, not the shape of its reply, so every seat sends its own
+// declaration.
 func buildDebateAgent(seat Caster, prompt string) fanout.Agent {
 	c := seat.Config
 	var responseFormat string
@@ -201,6 +214,10 @@ func buildDebateAgent(seat Caster, prompt string) fanout.Agent {
 			// only; a nil pointer keeps the provider default.
 			MaxTokens:      c.MaxTokens,
 			ResponseFormat: responseFormat,
+			// Every seat, not judge-only: see the function comment.
+			Thinking:      c.Thinking,
+			ThinkingLevel: c.ThinkingLevel,
+			ThinkingStyle: c.ThinkingStyle,
 		},
 	}
 }

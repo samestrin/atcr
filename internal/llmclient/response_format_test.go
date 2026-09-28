@@ -80,6 +80,13 @@ func captureComplete(t *testing.T, inv Invocation) string {
 // capturing server and returns the raw request body.
 func captureChat(t *testing.T, inv Invocation) string {
 	t.Helper()
+	return captureChatWith(t, inv, []ToolDef{{Name: "read_file", Description: "Read a file", Parameters: map[string]any{"type": "object"}}})
+}
+
+// captureChatWith is captureChat with the caller's tool definitions; nil is the
+// forced-final no-tools turn.
+func captureChatWith(t *testing.T, inv Invocation, tools []ToolDef) string {
+	t.Helper()
 	var gotBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
@@ -90,7 +97,6 @@ func captureChat(t *testing.T, inv Invocation) string {
 	t.Setenv("TEST_KEY", testKey)
 	inv.BaseURL, inv.APIKeyEnv = srv.URL, "TEST_KEY"
 	s := "hi"
-	tools := []ToolDef{{Name: "read_file", Description: "Read a file", Parameters: map[string]any{"type": "object"}}}
 	_, err := fastRetry(srv.Client()).Chat(context.Background(), inv, []Message{{Role: "user", Content: &s}}, tools)
 	require.NoError(t, err)
 	return gotBody

@@ -32,6 +32,7 @@ func TestRegistryDoc_ResponseFormatRow(t *testing.T) {
 		{"`## Output Format` section is swapped", "a declared review agent's persona Output Format is replaced at render time; an operator reading the prompt must not be surprised"},
 		{"skeptic and debate judge lanes need no swap", "those lanes already ask for their own JSON object; the row must not imply they are rewritten"},
 		{"known-good models", "the list is a positive-evidence allowlist seeded from a real doctor run, not a compatibility claim"},
+		{"does not verify `response_format` for the skeptic lane or the debate judge seat", "doctor walks only the review roster and checks the findings contract, so a skeptic or judge declaration goes unprobed; the doc must not imply otherwise"},
 	} {
 		if !strings.Contains(row, must.token) {
 			t.Errorf("docs/registry.md's response_format row must state %q: %s\nrow was: %s", must.token, must.why, row)
