@@ -336,6 +336,14 @@ func TestRegistryDoc_ThinkingDoctorVerdict(t *testing.T) {
 		{"never changes the ok/failed count or the exit code", "the verdict is a warning, like response_format's"},
 		{"the same prompt and cap without the declaration", "a silent reply is judged only after a control probe shows the provider reports reasoning"},
 	})
+	// TD-017: the probes carry the agent's preserve_thinking declaration and the
+	// verdict detail names it, so the section must say so — and must say what a
+	// single-turn probe can and cannot conclude about the flag.
+	assertStates(t, "thinking verdict intro", intro, []struct{ token, why string }{
+		{"carries the agent's `preserve_thinking` declaration", "the probe sends the flag (internal/doctor/run.go probe targets), matching the detail naming it"},
+		{"a single-turn probe cannot verify it", "the flag's effect is on later tool-loop turns, which the probe never reaches"},
+		{"retried without the flag before changing the style", "a 4xx on a flagged probe may be the flag, not the thinking declaration"},
+	})
 	assertStates(t, "thinking verdict warning line", docLineWith(t, section, "The HINT column labels"), []struct{ token, why string }{
 		{"one warning line for each declared polarity of `" + doctor.ThinkingNotHonored + "`", "the not-honored remedy differs by polarity (TD cli/doctor.go:255)"},
 		{"one warning line for `" + doctor.ThinkingUnverified + "`", "--json prints no warning lines and honored prints none"},
