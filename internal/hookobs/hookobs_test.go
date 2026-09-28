@@ -866,7 +866,16 @@ func TestWrap_EchoesDeclaredThinking(t *testing.T) {
 		},
 	}
 	for name, call := range calls {
-		for _, decl := range [][4]string{{"on", "low", "qwen", "on"}, {}} {
+		// TD internal/hookobs/hookobs_test.go:870: the qwen case stays, the
+		// anthropic echo case is restored (preserve empty — that style has no
+		// such field), and a declaration-differs-from-wire case pins that the
+		// record echoes the DECLARED keys, not ones derived from the wire.
+		for _, decl := range [][4]string{
+			{"on", "low", "qwen", "on"},
+			{"on", "", "anthropic", ""},
+			{"off", "", "qwen", "off"},
+			{},
+		} {
 			t.Run(fmt.Sprintf("%s/%v", name, decl), func(t *testing.T) {
 				srv := chatServer(t, http.StatusOK, okCompletion)
 				inv := testInvocation(t, srv)
