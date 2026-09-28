@@ -169,11 +169,19 @@ type responseMessage struct {
 }
 
 // history is the reply as the loop re-sends it: the Message with each
-// reasoning member that has its key's shape.
+// reasoning member that has its key's shape. Reasoning and ReasoningContent
+// name the same chain of thought under two provider keys (see Client's
+// reasoning fallback), so when the two string members are byte-equal only
+// reasoning_content is kept — a provider that fills both would otherwise have
+// the same reasoning re-sent twice on every later turn. Different values stay
+// independent.
 func (m responseMessage) history() Message {
 	msg := m.Message
 	msg.ReasoningContent = reasoningMember(m.ReasoningContent, false)
 	msg.Reasoning = reasoningMember(m.Reasoning, false)
+	if msg.ReasoningContent != nil && bytes.Equal(msg.Reasoning, msg.ReasoningContent) {
+		msg.Reasoning = nil
+	}
 	msg.ReasoningDetails = reasoningMember(m.ReasoningDetails, true)
 	msg.ThinkingBlocks = reasoningMember(m.ThinkingBlocks, true)
 	return msg
