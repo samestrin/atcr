@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/samestrin/atcr/internal/doctor"
+	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/require"
 )
@@ -308,6 +309,44 @@ func TestRegistryDoc_ReasoningReplaySubsection(t *testing.T) {
 	// The thinking row keeps its full contract text and points here, so a
 	// reader who arrives via the table still finds the top-level statement.
 	require.Contains(t, docRow(t, doc, "`thinking`"), "**Reasoning replay.**", "the thinking row must cross-reference the top-level replay subsection")
+}
+
+// TD-018: the replay-shape key list in the `thinking` row is not restated
+// here as typed literals — it is reflected off llmclient.Message's reasoning
+// json tags (as TestReasoningKeys_ReadFromMessage in internal/fanout does), so
+// a member added, renamed, or removed without a doc update fails this test.
+func TestRegistryDoc_ReplayShapeKeysMatchMessage(t *testing.T) {
+	doc := readRepoFile(t, "../../docs/registry.md")
+	plain := map[string]bool{"role": true, "content": true, "tool_calls": true, "tool_call_id": true}
+	var keys []string
+	typ := reflect.TypeOf(llmclient.Message{})
+	for i := 0; i < typ.NumField(); i++ {
+		if k := strings.Split(typ.Field(i).Tag.Get("json"), ",")[0]; k != "" && !plain[k] {
+			keys = append(keys, k)
+		}
+	}
+	require.NotEmpty(t, keys, "Message must carry reasoning members")
+
+	thinking := docRow(t, doc, "`thinking`")
+	marker := "in the shape the provider returned it ("
+	start := strings.Index(thinking, marker)
+	require.GreaterOrEqual(t, start, 0, "the thinking row must state the replay shape")
+	clause := thinking[start+len(marker):]
+	if end := strings.Index(clause, ")"); end >= 0 {
+		clause = clause[:end]
+	}
+	documented := map[string]bool{}
+	for _, token := range strings.Split(clause, "`") {
+		if strings.Contains(token, "reasoning") || strings.Contains(token, "thinking") {
+			documented[token] = true
+		}
+	}
+	for _, k := range keys {
+		require.Containsf(t, documented, k, "the thinking row's replay-shape list must name llmclient.Message member %q exactly", k)
+	}
+	for d := range documented {
+		require.Containsf(t, keys, d, "the thinking row documents %q, which is not a reasoning member of llmclient.Message", d)
+	}
 }
 
 // TD-020: the `preserve_thinking` row and the glm style row must spell
