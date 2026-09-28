@@ -492,15 +492,26 @@ func TestDoctor_PreserveThinkingJoinsTargetAndProbe(t *testing.T) {
 	require.NoError(t, err)
 	t.Setenv(rfDoctorEnvK, thinkingKey)
 	fake := newFake(markerOK)
-	fake.metaFn = func(llmclient.Invocation) (llmclient.Completion, error) { return thinks, nil }
+	// TD internal/doctor/thinking_test.go:500: the old script returned the
+	// `thinks` fixture for every call, so probeThinking reached honored on the
+	// declared call alone — the loop over calls[1:] never ran and the "control
+	// call drops the whole declaration" claim was checked by an empty loop.
+	// Script a silent declared call reporting no reasoning-token field, which
+	// forces the control call, then pin the control's PreserveThinking exactly.
+	n := 0
+	fake.metaFn = func(llmclient.Invocation) (llmclient.Completion, error) {
+		n++
+		if n == 1 {
+			return withMarker(llmclient.Completion{}), nil // silent, not reported-zero
+		}
+		return thinks, nil
+	}
 	fake.chatFn = reply(oneFinding)
 	Run(context.Background(), fake, res, Options{Nonce: testNonce, MaxTokens: 2048})
 	calls := fake.completeCalls()
-	require.NotEmpty(t, calls)
+	require.Len(t, calls, 2, "the silent declared call must force exactly one control call")
 	assert.Equal(t, registry.ThinkingOn, calls[0].PreserveThinking, "the marker probe sends the flag")
-	for _, c := range calls[1:] {
-		assert.Empty(t, c.PreserveThinking, "the control call drops the whole declaration")
-	}
+	assert.Empty(t, calls[1].PreserveThinking, "the control call drops the whole declaration")
 	chats := fake.chatCalls()
 	require.Len(t, chats, 1)
 	assert.Equal(t, registry.ThinkingOn, chats[0].inv.PreserveThinking, "the response_format probe sends the flag")
