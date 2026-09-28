@@ -213,7 +213,7 @@ func allUnverifiableCollapse(verPath string) error {
 	// records window_below_prompt_overhead) are gone by the time anyone could read
 	// them. An enrichment that never fires reads, in review, as one that works.
 	// Point at the command that CAN diagnose it instead.
-	return fmt.Errorf("all %d verdict(s) came back unverifiable; the gate counts only VERIFIED findings, so it will pass over every one of them. Run 'atcr doctor': the usual cause is an agent whose declared context_window_tokens cannot fund one tool read, which makes every check it runs unverifiable", len(vf.Findings))
+	return fmt.Errorf("all %d verdict(s) came back unverifiable; the gate counts only VERIFIED findings, so it will pass over every one of them. Run 'atcr doctor': the usual cause is an agent whose declared context_window_tokens cannot fund one tool read, which makes every check it runs unverifiable. A skeptic reply cut off on finish_reason=length (response_truncated) collapses to unverifiable the same way without any window fault, so check for it before blaming the declaration", len(vf.Findings))
 }
 
 // RunReconcile discovers sources under reviewDir/sources, runs the deterministic
