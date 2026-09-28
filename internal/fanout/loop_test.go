@@ -224,6 +224,15 @@ func TestToolLoop_ReplaysEachReasoningShapeUnderItsKey(t *testing.T) {
 			assert.Empty(t, reasoningOn(msgs[0]))
 			assert.Equal(t, map[string]string{key: raw}, reasoningOn(msgs[1]))
 			assert.Empty(t, reasoningOn(msgs[2]))
+			// TD internal/fanout/loop_test.go:207: persistence must hold on EVERY
+			// later request, including the forced-final one — turn 1 is the only
+			// turn carrying the member, so msgs[1] carries {key: raw} each time.
+			for i, body := range bodies[2:] {
+				later := wireMessages(t, body)
+				require.Greater(t, len(later), 1, "later request %d must carry history", i+2)
+				assert.Equal(t, map[string]string{key: raw}, reasoningOn(later[1]),
+					"request %d must re-send turn-1 reasoning under its own key", i+2)
+			}
 		})
 	}
 }
