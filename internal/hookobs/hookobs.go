@@ -43,6 +43,12 @@ import (
 //
 // SENSITIVE DATA: Prompt and Response hold the model exchange verbatim. This
 // package applies no masking beyond stripping credentials from the endpoint.
+// One deliberate omission: Messages flattens away the replayed assistant
+// reasoning members (reasoning_content, reasoning, reasoning_details,
+// thinking_blocks) that a thinking-declaring agent sends on every tool-loop
+// turn after the first — so the record is NOT a byte-faithful wire body, and
+// its most sensitive content (chain-of-thought) is present on the wire but
+// absent from Messages.
 type Invocation struct {
 	// Seq is a process-wide monotonic sequence number assigned when the call
 	// completes. The engine runs agents concurrently and `atcr serve` runs
@@ -161,6 +167,8 @@ type ToolCall struct {
 
 // Message is one chat message in a multi-turn invocation, with a nil
 // (content:null) assistant tool-call turn flattened to an empty string.
+// Replayed assistant reasoning members are deliberately dropped here — see
+// the SENSITIVE DATA note on Invocation.
 type Message struct {
 	Role    string
 	Content string

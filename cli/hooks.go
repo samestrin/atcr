@@ -112,6 +112,15 @@ type ModelInvocation struct {
 	Prompt string
 	// Messages is the conversation history sent on a multi-turn (tool-loop)
 	// turn, in wire order. It is nil for single-shot invocations.
+	//
+	// Deliberately NOT the wire body: replayed assistant reasoning
+	// (reasoning_content, reasoning, reasoning_details, thinking_blocks) is
+	// omitted from these records even though thinking-declaring agents send it
+	// on every tool-loop turn after the first. A consumer reconstructing or
+	// replaying the exchange from Messages builds a SMALLER request than the
+	// one that actually left the process — and the omitted members are the
+	// most sensitive content in it. Redact accordingly, and do not treat this
+	// field as a byte-faithful replay source.
 	Messages []ModelMessage
 	// Response is the assistant's content for this call. It is empty when the
 	// provider returned only tool calls (an assistant turn with content:null),
@@ -212,6 +221,10 @@ type CodeRef struct {
 // ModelMessage is one chat message in a multi-turn invocation. Content is
 // flattened to a string: a nil (content:null) assistant tool-call turn is
 // reported as an empty string.
+//
+// Replayed assistant reasoning members (reasoning_content, reasoning,
+// reasoning_details, thinking_blocks) are deliberately not carried here —
+// see ModelInvocation.Messages.
 type ModelMessage struct {
 	Role    string
 	Content string
