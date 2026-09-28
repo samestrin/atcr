@@ -477,6 +477,20 @@ func TestReasoningCarrier_DecodesEachShapeOntoMessage(t *testing.T) {
 	}
 }
 
+// client.go documents reasoning and reasoning_content as the same chain of
+// thought under two keys (the vLLM transition from reasoning_content to
+// reasoning). A provider or proxy that fills both with identical text would be
+// re-sent that text twice on every later turn, doubling the replay growth — so
+// when the two string members are byte-equal, history() keeps reasoning_content
+// and drops the duplicate reasoning. Different values stay independent (the
+// "both string keys" case above).
+func TestReasoningCarrier_ByteEqualReasoningKeyDropped(t *testing.T) {
+	resp := chatReply(t, toolCallTurn(`"reasoning_content":"same chain","reasoning":"same chain"`))
+	got := carrierOf(t, resp.Message)
+	assert.Equal(t, map[string]string{"reasoning_content": `"same chain"`}, got,
+		"a byte-equal reasoning duplicate is not re-sent")
+}
+
 // AC 02-01 Edge Cases 4-5 and Error Scenario 1: a null, an empty string, or a
 // value of the wrong type is absent. It never fails the turn and never
 // re-marshals as a member: null would change the request body, and "" is the
