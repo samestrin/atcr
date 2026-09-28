@@ -491,6 +491,28 @@ func TestReasoningCarrier_ByteEqualReasoningKeyDropped(t *testing.T) {
 		"a byte-equal reasoning duplicate is not re-sent")
 }
 
+// A whitespace-only reasoning string is absent: it adds a member to a request
+// body that would otherwise be byte-identical to the pre-epic body, for a
+// provider that emits a placeholder blank reasoning field (a LiteLLM/vLLM
+// habit). Both literal and escaped whitespace count as absent.
+func TestReasoningCarrier_WhitespaceOnlyReasoningDropped(t *testing.T) {
+	cases := map[string]string{
+		"space":        `"reasoning_content":" "`,
+		"newline":      `"reasoning_content":"\n"`,
+		"tab":          `"reasoning_content":"\t"`,
+		"escaped tab":  `"reasoning_content":"\\t"`,
+		"mixed spaces": `"reasoning_content":" \t \n "`,
+		"whitespace":   `"reasoning":"   "`,
+	}
+	for name, members := range cases {
+		t.Run(name, func(t *testing.T) {
+			resp := chatReply(t, toolCallTurn(members))
+			assert.Empty(t, carrierOf(t, resp.Message),
+				"a whitespace-only reasoning string is not re-sent")
+		})
+	}
+}
+
 // AC 02-01 Edge Cases 4-5 and Error Scenario 1: a null, an empty string, or a
 // value of the wrong type is absent. It never fails the turn and never
 // re-marshals as a member: null would change the request body, and "" is the
