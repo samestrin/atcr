@@ -274,6 +274,20 @@ func TestRegistryDoc_ThinkingStyleTable(t *testing.T) {
 	})
 }
 
+// TD-020: the `preserve_thinking` row and the glm style row must spell
+// clear_thinking the same way, and that way must be the wire bytes llmclient
+// actually sends (compact JSON — Go's encoding/json emits no spaces), so the
+// style table cannot document a body the provider never receives.
+func TestRegistryDoc_GLMClearThinkingSpellingMatchesWire(t *testing.T) {
+	doc := readRepoFile(t, "../../docs/registry.md")
+	wire := `{"type":"enabled","clear_thinking":false}`
+	row := docRow(t, doc, "`preserve_thinking`")
+	require.Contains(t, row, wire, "the preserve_thinking row must carry the wire bytes, compact")
+	style := styleTable(t, doc)
+	glmLine := docLineWith(t, style, "`glm`")
+	require.Contains(t, glmLine, wire, "the glm style row must spell clear_thinking exactly as the wire does, matching the preserve_thinking row")
+}
+
 // AC 07-01 Scenario 3: the max_tokens interaction.
 func TestRegistryDoc_ThinkingMaxTokensNote(t *testing.T) {
 	doc := readRepoFile(t, "../../docs/registry.md")
