@@ -47,6 +47,7 @@ func TestRejectMachineLocalFields_Accumulates(t *testing.T) {
 		Thinking:            ThinkingOn,
 		ThinkingLevel:       ThinkingLevelHigh,
 		ThinkingStyle:       ThinkingStyleQwen,
+		PreserveThinking:    ThinkingOn, // TD-023: the sixth machine-local key
 	}
 	err := rejectMachineLocalFields("kai", cfg)
 	require.Error(t, err)
@@ -56,6 +57,7 @@ func TestRejectMachineLocalFields_Accumulates(t *testing.T) {
 		"must not declare thinking:",
 		"must not declare thinking_level",
 		"must not declare thinking_style",
+		"must not declare preserve_thinking",
 	} {
 		assert.Contains(t, err.Error(), want, "the joined error must list every rejection, not stop at the first")
 	}
