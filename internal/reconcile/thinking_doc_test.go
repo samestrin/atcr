@@ -67,7 +67,9 @@ func TestRegistryDoc_ThinkingRows(t *testing.T) {
 			{"style alone is inert", "a style with no thinking or level sends nothing"},
 		}},
 		{"`preserve_thinking`", registry.ThinkingValues(), []struct{ token, why string }{
-			{"requires `thinking_style: " + registry.ThinkingStyleQwen + "` or `thinking_style: " + registry.ThinkingStyleGLM + "`", "only those styles have a preserved-thinking field"},
+			// TD-019: the phrase is built from registry.PreserveThinkingStyles(),
+			// not restated literals, so a third preserve style updates the token.
+			{"requires " + preserveThinkingStylesPhrase(registry.PreserveThinkingStyles()), "only those styles have a preserved-thinking field"},
 			// TD internal/reconcile/thinking_doc_test.go:65: the level-alone half of
 			// "thinking on" must be pinned as a token and against a real load.
 			{"or a `thinking_level` under `qwen`", "thinking on also means a level under qwen; the drift test pinned only the thinking: on path"},
@@ -148,8 +150,17 @@ func TestRegistryDoc_ThinkingRejectsWhatTheDocExcludes(t *testing.T) {
 		require.NoError(t, load("    thinking: "+registry.ThinkingOn+"\n    preserve_thinking: "+registry.ThinkingOn+"\n"+s),
 			"the doc says preserve_thinking loads under qwen or glm with thinking on")
 	}
-	require.ErrorContains(t, load("    thinking: "+registry.ThinkingOn+"\n    preserve_thinking: "+registry.ThinkingOn+"\n"+anthropic),
-		"has no preserve_thinking", "the doc says preserve_thinking is rejected under any other style")
+	// TD-019: the rejection check loops over EVERY non-preserve style, not just
+	// anthropic, so a new style added to the registry without preserve support
+	// is caught here too.
+	for _, s := range registry.ThinkingStyles() {
+		if slices.Contains(registry.PreserveThinkingStyles(), s) {
+			continue
+		}
+		require.ErrorContainsf(t,
+			load("    thinking: "+registry.ThinkingOn+"\n    preserve_thinking: "+registry.ThinkingOn+"\n    thinking_style: "+s+"\n"),
+			"has no preserve_thinking", "the doc says preserve_thinking is rejected under %s", s)
+	}
 	require.ErrorContains(t, load("    thinking: "+registry.ThinkingOff+"\n    preserve_thinking: "+registry.ThinkingOn+"\n"+style),
 		"thinking is not on", "the doc says preserve_thinking needs thinking on")
 	require.ErrorContains(t, load("    thinking_level: "+registry.ThinkingLevelLow+"\n    thinking_style: "+registry.ThinkingStyleTemplateKwargs+"\n"),
@@ -484,4 +495,15 @@ func TestRegistryDoc_ThinkingDoctorVerdict(t *testing.T) {
 		{"`thinking_detail`", "the verdict's reason rides beside it in --json"},
 		{"`thinking_declared`", "the declared polarity (off/on/level) rides beside the verdict so remedies can be split without parsing detail prose"},
 	})
+}
+
+// preserveThinkingStylesPhrase builds the doc-row token from the accessor's
+// live set (TD-019): "requires `thinking_style: qwen` or `thinking_style: glm`"
+// for the current two, extending automatically if a third style ships.
+func preserveThinkingStylesPhrase(styles []string) string {
+	parts := make([]string, len(styles))
+	for i, s := range styles {
+		parts[i] = "`thinking_style: " + s + "`"
+	}
+	return strings.Join(parts, " or ")
 }

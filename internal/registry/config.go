@@ -223,6 +223,12 @@ func ThinkingValues() []string { return slices.Clone(thinkingValues) }
 func ThinkingLevels() []string { return slices.Clone(thinkingLevels) }
 func ThinkingStyles() []string { return slices.Clone(thinkingStyles) }
 
+// PreserveThinkingStyles returns the styles that carry a preserved-thinking
+// wire field, in documented order (TD-019: doc drift tests and rejection-loop
+// tests build their expectations from this, not from restated literals).
+// Like the other accessors it returns a fresh copy.
+func PreserveThinkingStyles() []string { return slices.Clone(preserveThinkingStyles) }
+
 // DefaultMaxTokens is the output cap the review applies to an agent that
 // declares no max_tokens. It mirrors payload.DefaultOutputTokens, which this
 // leaf package cannot import; a test in internal/doctor pins the two together.
