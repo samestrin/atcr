@@ -1308,11 +1308,14 @@ func validateThinking(name string, a AgentConfig) ([]error, []string) {
 		case !slices.Contains(thinkingValues, a.PreserveThinking):
 			errs = append(errs, agentErrf(name, "agent '%s': invalid preserve_thinking %q: must be %q or %q or unset", name, a.PreserveThinking, ThinkingOn, ThinkingOff))
 		case a.ThinkingStyle == "":
-			errs = append(errs, agentErrf(name, "agent '%s': preserve_thinking is declared but thinking_style is missing: set thinking_style: %s or %s", name, ThinkingStyleQwen, ThinkingStyleGLM))
+			// TD internal/registry/config.go:1304: both messages are built from the
+			// live style set, as the invalid thinking_style message above is, so a
+			// third preserve style cannot leave the text stale.
+			errs = append(errs, agentErrf(name, "agent '%s': preserve_thinking is declared but thinking_style is missing: set thinking_style: %s", name, strings.Join(preserveThinkingStyles, " or ")))
 		case !slices.Contains(thinkingStyles, a.ThinkingStyle):
 			// Already reported as an invalid thinking_style above.
 		case !slices.Contains(preserveThinkingStyles, a.ThinkingStyle):
-			errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q has no preserve_thinking: only %s and %s send it", name, a.ThinkingStyle, ThinkingStyleQwen, ThinkingStyleGLM))
+			errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q has no preserve_thinking: only %s send it", name, a.ThinkingStyle, strings.Join(preserveThinkingStyles, ", ")))
 		case !thinkingOn:
 			errs = append(errs, agentErrf(name, "agent '%s': preserve_thinking is set but thinking is not on: set thinking: %s or remove preserve_thinking", name, ThinkingOn))
 		}

@@ -52,6 +52,11 @@ func thinkingAgent(thinking, level, style string) string {
 // under the qwen or glm style with thinking on; glm takes no level. Every other
 // combination fails load with an error naming the agent.
 func TestValidateAgent_PreserveThinking(t *testing.T) {
+	// TD internal/registry/config.go:1304: the expectations below are built from
+	// the live preserveThinkingStyles set, so a third style changing the message
+	// text fails here, not in production.
+	preserveJoined := strings.Join(PreserveThinkingStyles(), ", ")
+	preserveOr := strings.Join(PreserveThinkingStyles(), " or ")
 	cases := []struct {
 		name                             string
 		thinking, level, style, preserve string
@@ -70,10 +75,10 @@ func TestValidateAgent_PreserveThinking(t *testing.T) {
 		{"bare true", ThinkingOn, "", ThinkingStyleQwen, "true", `agent 'myagent': invalid preserve_thinking "true": must be "on" or "off" or unset`},
 		{"wrong case", ThinkingOn, "", ThinkingStyleQwen, "ON", `agent 'myagent': invalid preserve_thinking "ON": must be "on" or "off" or unset`},
 		// Style: only qwen and glm carry it.
-		{"anthropic", ThinkingOn, "", ThinkingStyleAnthropic, ThinkingOn, `agent 'myagent': thinking_style "anthropic" has no preserve_thinking: only qwen and glm send it`},
-		{"template_kwargs", ThinkingOn, "", ThinkingStyleTemplateKwargs, ThinkingOn, `agent 'myagent': thinking_style "template_kwargs" has no preserve_thinking: only qwen and glm send it`},
-		{"reasoning_effort", "", ThinkingLevelLow, ThinkingStyleReasoningEffort, ThinkingOn, `agent 'myagent': thinking_style "reasoning_effort" has no preserve_thinking: only qwen and glm send it`},
-		{"no style", ThinkingOn, "", "", ThinkingOn, `agent 'myagent': preserve_thinking is declared but thinking_style is missing: set thinking_style: qwen or glm`},
+		{"anthropic", ThinkingOn, "", ThinkingStyleAnthropic, ThinkingOn, `agent 'myagent': thinking_style "anthropic" has no preserve_thinking: only ` + preserveJoined + ` send it`},
+		{"template_kwargs", ThinkingOn, "", ThinkingStyleTemplateKwargs, ThinkingOn, `agent 'myagent': thinking_style "template_kwargs" has no preserve_thinking: only ` + preserveJoined + ` send it`},
+		{"reasoning_effort", "", ThinkingLevelLow, ThinkingStyleReasoningEffort, ThinkingOn, `agent 'myagent': thinking_style "reasoning_effort" has no preserve_thinking: only ` + preserveJoined + ` send it`},
+		{"no style", ThinkingOn, "", "", ThinkingOn, "agent 'myagent': preserve_thinking is declared but thinking_style is missing: set thinking_style: " + preserveOr},
 		// Thinking must be on (AC 03-01 Edge Cases 4-5, AC 03-03 Edge Case 6).
 		{"thinking unset", "", "", ThinkingStyleQwen, ThinkingOn, `agent 'myagent': preserve_thinking is set but thinking is not on: set thinking: on or remove preserve_thinking`},
 		{"thinking off", ThinkingOff, "", ThinkingStyleGLM, ThinkingOn, `agent 'myagent': preserve_thinking is set but thinking is not on: set thinking: on or remove preserve_thinking`},
@@ -97,6 +102,24 @@ func TestValidateAgent_PreserveThinking(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.wantErr)
 		})
 	}
+}
+
+// TD internal/registry/config.go:1304: the expectations are built from the
+// live preserveThinkingStyles set via the exported accessor, so a third style
+// changing the messages fails here instead of shipping stale text.
+func TestValidateAgent_PreserveThinkingMessagesBuiltFromStyleSet(t *testing.T) {
+	captureThinkingWarnings(t)
+	styles := PreserveThinkingStyles()
+	joined := strings.Join(styles, ", ")
+	orJoined := strings.Join(styles, " or ")
+
+	_, err := LoadRegistry(writeRegistry(t, thinkingRegistry(thinkingAgent(ThinkingOn, "", ThinkingStyleAnthropic))+"    preserve_thinking: on\n"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "only "+joined+" send it")
+
+	_, err = LoadRegistry(writeRegistry(t, thinkingRegistry(thinkingAgent(ThinkingOn, "", ""))+"    preserve_thinking: on\n"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "set thinking_style: "+orJoined)
 }
 
 // TD-011: an unknown style with the flag is one fault (the style), not two.
