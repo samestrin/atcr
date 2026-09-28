@@ -70,6 +70,8 @@ func TestRegistryDoc_ThinkingRows(t *testing.T) {
 			{"the loop sends it back with or without the flag", "the flag asks the model to use the replay, it does not turn the replay on"},
 			{"Unset sends nothing", "an undeclared agent's body is unchanged"},
 			{"It is sent by the review fan-out, the skeptic, the debate seats, and `atcr doctor`", "the lanes that send the flag, matching the thinking row's lane list"},
+			{"accepted on the wire but its later-turn effect is not live-verified", "TD-022: GLM never reached turn 2 in any live run, so the rows must not read as verified"},
+			{"can spend the whole output cap on turn 1", "the observed failure: finish_reason=length at both the 16384 and 32768 budgets in two of three runs"},
 		}},
 	}
 	for _, r := range rows {
