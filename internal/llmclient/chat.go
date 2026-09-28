@@ -189,15 +189,22 @@ func (m responseMessage) history() Message {
 }
 
 // reasoningMember is a reasoning member as received, kept only when it has its
-// key's shape: a string holding a non-whitespace character, or (structured) an
-// array or object. Anything else — null, "", whitespace-only, a wrong type —
-// is absent, so it never reaches a request body and never fails the decode.
+// key's shape: a string holding a non-whitespace character, or (structured) a
+// non-empty array or object. Anything else — null, "", whitespace-only, a
+// wrong type, a zero-length container — is absent, so it never reaches a
+// request body and never fails the decode. An empty container is dropped as
+// absent rather than replayed: an empty thinking_blocks array on a tool-use
+// turn is neither the blocks the provider signed nor a meaningful replay, and
+// Anthropic rejects a continuation turn whose thinking blocks are missing or
+// altered.
 func reasoningMember(raw json.RawMessage, structured bool) json.RawMessage {
 	if len(raw) == 0 {
 		return nil
 	}
 	if structured {
-		if raw[0] == '[' || raw[0] == '{' {
+		// A decoded RawMessage has no leading whitespace, so trimming is about
+		// compact carriers like "[ ]": len > 2 means at least one real element.
+		if (raw[0] == '[' || raw[0] == '{') && len(bytes.TrimSpace(raw)) > 2 {
 			return raw
 		}
 		return nil

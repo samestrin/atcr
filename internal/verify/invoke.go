@@ -453,7 +453,9 @@ func thinkingWire(c registry.AgentConfig) (maxTokens *int, thinking, thinkingLev
 	// missing or altered. The tool loop replays them, but never against a live
 	// Anthropic model, so the registry's validateThinking guard rejects the
 	// combination for registry-loaded configs; change this strip whenever that
-	// guard changes. The guard is keyed on the agent's own
+	// guard changes. Empty reasoning containers never reach the replay:
+	// reasoningMember treats a zero-length array or object as absent, so an
+	// unsigned empty thinking_blocks value is dropped rather than re-sent. The guard is keyed on the agent's own
 	// supports_function_calling DECLARATION, and this lane forwards that
 	// declaration (the executor lane hardcodes it true regardless). Strip here,
 	// where the lane is actually about to run the loop: a SupportsFC-forwarded

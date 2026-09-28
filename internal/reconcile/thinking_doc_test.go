@@ -49,6 +49,7 @@ func TestRegistryDoc_ThinkingRows(t *testing.T) {
 			{"in the shape the provider returned it", "each provider's own member is replayed unedited, never converted"},
 			{"on assistant turns only", "reasoning never rides a user or tool-result turn"},
 			{"whatever the `thinking_style`", "the replay has no style gate (D1)"},
+			{"an empty array or object is not sent back either", "an empty container is dropped as absent, not replayed as received"},
 		}},
 		{"`thinking_level`", registry.ThinkingLevels(), []struct{ token, why string }{
 			{"level alone implies `thinking: on`", "a level without thinking is not a missing-value error"},

@@ -1317,9 +1317,12 @@ func validateThinking(name string, a AgentConfig) ([]error, []string) {
 	// or altered. The tool loop replays them, but that replay has never run
 	// against a live Anthropic model (the proxy serves none, sprint
 	// 35.16.11.2.2.1), so the combination stays a load error until a live run
-	// proves it. The skeptic and debate seats force tools on and a fallback
-	// takes its primary's tools, so the agent's own tools key does not keep it
-	// out of the loop; only its model's function-calling declaration does.
+	// proves it. Empty reasoning containers are not part of that risk: the
+	// replay filter treats a zero-length array or object as absent, so an empty
+	// thinking_blocks value is dropped, never re-sent. The skeptic and debate
+	// seats force tools on and a fallback takes its primary's tools, so the
+	// agent's own tools key does not keep it out of the loop; only its model's
+	// function-calling declaration does.
 	if a.ThinkingStyle == ThinkingStyleAnthropic && thinkingOn && a.SupportsFC {
 		errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q with thinking on cannot use supports_function_calling: true: the tool loop's reasoning replay has not been verified against a live Anthropic model, which rejects a tool-use turn whose thinking blocks are missing or altered; set supports_function_calling: false or thinking: off", name, ThinkingStyleAnthropic))
 	}
