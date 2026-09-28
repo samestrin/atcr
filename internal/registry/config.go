@@ -1346,9 +1346,6 @@ func validateThinking(name string, a AgentConfig) ([]error, []string) {
 // written directly.
 func warnThinkingBudget(name string, a AgentConfig) string {
 	budget := ThinkingBudgetTokens(a.Thinking, a.ThinkingLevel, a.ThinkingStyle)
-	if budget == 0 {
-		return ""
-	}
 	// The flag note is named in both branches (TD-010): at runtime --max-tokens
 	// overrides a declared max_tokens too, so the declared cap the warning
 	// compares against is not necessarily the cap a review actually sends.
@@ -1356,16 +1353,16 @@ func warnThinkingBudget(name string, a AgentConfig) string {
 	if a.MaxTokens != nil {
 		limit, source = *a.MaxTokens, " (--max-tokens can change it)"
 	}
+	// A zero budget (thinking off, or a style with no budget) is always below a
+	// max_tokens load validation holds to 1 or more. Only the qwen style reaches
+	// past this: anthropic misfits are load errors, and qwen's budget is keyed on
+	// a declared level, so the level named below is never empty.
 	if budget < limit {
 		return ""
 	}
-	level := a.ThinkingLevel
-	if level == "" {
-		level = ThinkingLevelMedium // anthropic on with no level
-	}
 	return fmt.Sprintf(
 		"warning: agent '%s': thinking budget %d (thinking_level %q) is not below max_tokens %d%s; the budget shares the output cap, so raise max_tokens or lower thinking_level\n",
-		name, budget, level, limit, source)
+		name, budget, a.ThinkingLevel, limit, source)
 }
 
 // validateAgent returns every fault found in a single agent entry (Epic 4.2 /
