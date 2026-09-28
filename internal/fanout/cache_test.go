@@ -16,6 +16,7 @@ import (
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // cacheableSlot builds a non-serial, non-tool slot whose primary carries the
@@ -25,7 +26,7 @@ func cacheableSlot(name, model, prompt string) Slot {
 	return Slot{Primary: Agent{
 		Name:        name,
 		PayloadMode: "blocks",
-		CacheKey:    diffCacheKey(prompt, model, "", nil, "", defaultMaxTokens, ""),
+		CacheKey:    diffCacheKey(prompt, model, "", nil, "", defaultMaxTokens, "", "", "", ""),
 		Invocation:  llmclient.Invocation{Model: model, Prompt: prompt},
 	}}
 }
@@ -112,7 +113,7 @@ func TestEngine_DifferentTemperatureMissesCache(t *testing.T) {
 		return Slot{Primary: Agent{
 			Name:        "a",
 			PayloadMode: "blocks",
-			CacheKey:    diffCacheKey("same prompt", "m", "", temp, "", defaultMaxTokens, ""),
+			CacheKey:    diffCacheKey("same prompt", "m", "", temp, "", defaultMaxTokens, "", "", "", ""),
 			Invocation:  llmclient.Invocation{Model: "m", Prompt: "same prompt", Temperature: temp},
 		}}
 	}
@@ -134,7 +135,7 @@ func TestEngine_DifferentProviderMissesCache(t *testing.T) {
 		return Slot{Primary: Agent{
 			Name:        "a",
 			PayloadMode: "blocks",
-			CacheKey:    diffCacheKey("same prompt", "m", baseURL, nil, "", defaultMaxTokens, ""),
+			CacheKey:    diffCacheKey("same prompt", "m", baseURL, nil, "", defaultMaxTokens, "", "", "", ""),
 			Invocation:  llmclient.Invocation{Model: "m", Prompt: "same prompt", BaseURL: baseURL},
 		}}
 	}
@@ -156,14 +157,14 @@ func TestEngine_DifferentProviderMissesCache(t *testing.T) {
 func TestDiffCacheKey_SizingTokenDistinguishesRegimes(t *testing.T) {
 	// Backward-compat: empty and the "0:0" no-sizing sentinel both reduce to the
 	// exact pre-F7 (baseURL+temperature-only) key.
-	base := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, "")
-	assert.Equal(t, base, diffCacheKey("p", "m", "", nil, "0:0", defaultMaxTokens, ""),
+	base := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, "", "", "", "")
+	assert.Equal(t, base, diffCacheKey("p", "m", "", nil, "0:0", defaultMaxTokens, "", "", "", ""),
 		`"0:0" (no per-agent sizing) must collapse to the pre-F7 key`)
 
 	// A real sizing token changes the key, and two distinct regimes never collide —
 	// even though prompt/model/backend/temperature are identical across all three.
-	sizedA := diffCacheKey("p", "m", "", nil, "100000:0", defaultMaxTokens, "")  // bulk, 100KB budget
-	sizedB := diffCacheKey("p", "m", "", nil, "50000:200", defaultMaxTokens, "") // chunked, 50KB budget, 200-line chunks
+	sizedA := diffCacheKey("p", "m", "", nil, "100000:0", defaultMaxTokens, "", "", "", "")  // bulk, 100KB budget
+	sizedB := diffCacheKey("p", "m", "", nil, "50000:200", defaultMaxTokens, "", "", "", "") // chunked, 50KB budget, 200-line chunks
 	assert.NotEqual(t, base, sizedA, "a real sizing regime must change the key")
 	assert.NotEqual(t, sizedA, sizedB, "different sizing regimes must produce different keys")
 }
@@ -182,7 +183,7 @@ func TestEngine_DifferentSizingMissesCache(t *testing.T) {
 		return Slot{Primary: Agent{
 			Name:        "a",
 			PayloadMode: "blocks",
-			CacheKey:    diffCacheKey("same prompt", "m", "", nil, sizing, defaultMaxTokens, ""),
+			CacheKey:    diffCacheKey("same prompt", "m", "", nil, sizing, defaultMaxTokens, "", "", "", ""),
 			Invocation:  llmclient.Invocation{Model: "m", Prompt: "same prompt"},
 		}}
 	}
@@ -206,17 +207,17 @@ func TestEngine_DifferentSizingMissesCache(t *testing.T) {
 // operator who adds max_tokens to fix an empty review then replays the cached empty
 // review and concludes the setting does nothing.
 func TestDiffCacheKey_ResolvedOutputCapChangesTheKey(t *testing.T) {
-	base := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, "")
-	assert.Equal(t, base, diffCacheKey("p", "m", "", nil, "0:0", defaultMaxTokens, ""),
+	base := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, "", "", "", "")
+	assert.Equal(t, base, diffCacheKey("p", "m", "", nil, "0:0", defaultMaxTokens, "", "", "", ""),
 		"an agent at the embedded default cap must keep its pre-existing on-disk key")
-	assert.NotEqual(t, base, diffCacheKey("p", "m", "", nil, "", 32000, ""),
+	assert.NotEqual(t, base, diffCacheKey("p", "m", "", nil, "", 32000, "", "", "", ""),
 		"a declared max_tokens must invalidate the entry the default-capped run wrote")
 
 	// The clamped case the sizing token cannot see: identical token, different cap.
 	const clamped = "524288:0" // both caps derive a budget above payload_byte_budget
 	assert.NotEqual(t,
-		diffCacheKey("p", "m", "", nil, clamped, 8192, ""),
-		diffCacheKey("p", "m", "", nil, clamped, 32000, ""),
+		diffCacheKey("p", "m", "", nil, clamped, 8192, "", "", "", ""),
+		diffCacheKey("p", "m", "", nil, clamped, 32000, "", "", "", ""),
 		"two output caps that clamp to one sizing token must still key apart")
 }
 
@@ -229,7 +230,7 @@ func TestEngine_DifferentMaxTokensMissesCache(t *testing.T) {
 		return Slot{Primary: Agent{
 			Name:        "a",
 			PayloadMode: "blocks",
-			CacheKey:    diffCacheKey("same prompt", "m", "", nil, "524288:0", maxTokens, ""),
+			CacheKey:    diffCacheKey("same prompt", "m", "", nil, "524288:0", maxTokens, "", "", "", ""),
 			Invocation:  llmclient.Invocation{Model: "m", Prompt: "same prompt", MaxTokens: &maxTokens},
 		}}
 	}
@@ -367,8 +368,8 @@ func (errAssertFail) Error() string { return "synthetic failure" }
 // pre-existing key, so no on-disk entry written before the field existed is
 // invalidated.
 func TestDiffCacheKey_ResponseFormatChangesTheKey(t *testing.T) {
-	base := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, "")
-	declared := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, "json_object")
+	base := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, "", "", "", "")
+	declared := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, "json_object", "", "", "")
 	assert.NotEqual(t, base, declared, "declaring response_format must miss the undeclared entry")
 	assert.Equal(t, cache.Key(cache.HashText("p"), "m", "default"), base,
 		"an undeclared agent keeps its pre-existing on-disk key")
@@ -391,11 +392,11 @@ func TestDiffCacheKey_ResponseFormatChangesTheKey(t *testing.T) {
 	sizing := fmt.Sprintf("%d:%d", after.EffectiveBudget, after.chunkMaxLines)
 	assert.Equal(t, after.CacheKey,
 		diffCacheKey(after.Prompt, after.Invocation.Model, after.Invocation.BaseURL,
-			after.Invocation.Temperature, sizing, after.ResolvedMaxTokens, registry.ResponseFormatJSONObject),
+			after.Invocation.Temperature, sizing, after.ResolvedMaxTokens, registry.ResponseFormatJSONObject, "", "", ""),
 		"the built key is the response_format-suffixed form of this exact prompt")
 	assert.NotEqual(t, after.CacheKey,
 		diffCacheKey(after.Prompt, after.Invocation.Model, after.Invocation.BaseURL,
-			after.Invocation.Temperature, sizing, after.ResolvedMaxTokens, ""),
+			after.Invocation.Temperature, sizing, after.ResolvedMaxTokens, "", "", "", ""),
 		"the same prompt without the suffix must produce a different key")
 }
 
@@ -428,10 +429,164 @@ func TestDiffCacheKey_FallbackKeysOnItsOwnResponseFormat(t *testing.T) {
 	fbSizing := fmt.Sprintf("%d:%d", fb.EffectiveBudget, fb.chunkMaxLines)
 	assert.Equal(t, fb.CacheKey,
 		diffCacheKey(fb.Prompt, fb.Invocation.Model, fb.Invocation.BaseURL,
-			fb.Invocation.Temperature, fbSizing, fb.ResolvedMaxTokens, jo),
+			fb.Invocation.Temperature, fbSizing, fb.ResolvedMaxTokens, jo, "", "", ""),
 		"the fallback key is the response_format-suffixed form of its own prompt")
 	assert.NotEqual(t, fb.CacheKey,
 		diffCacheKey(fb.Prompt, fb.Invocation.Model, fb.Invocation.BaseURL,
-			fb.Invocation.Temperature, fbSizing, fb.ResolvedMaxTokens, ""),
+			fb.Invocation.Temperature, fbSizing, fb.ResolvedMaxTokens, "", "", "", ""),
 		"the fallback's own prompt without the suffix must produce a different key")
+}
+
+// Sprint 35.16.11.2.2 AC 04-01: each declared thinking key folds into the tuning
+// token as its own NUL-separated clause after rf=, in th/tl/ts order. An empty
+// key appends nothing, so an undeclared agent keeps its pre-existing on-disk key.
+func TestDiffCacheKey_ThinkingTokens(t *testing.T) {
+	hash := cache.HashText("p")
+	cases := []struct {
+		name                 string
+		rf, th, level, style string
+		want                 string
+	}{
+		{"undeclared keeps the pre-existing key", "", "", "", "", "default"},
+		{"thinking alone", "", "off", "", "", "default\x00th=off"},
+		{"level and style without thinking", "", "", "low", "reasoning_effort", "default\x00tl=low\x00ts=reasoning_effort"},
+		{"all three after rf", "json_object", "on", "low", "anthropic",
+			"default\x00rf=json_object\x00th=on\x00tl=low\x00ts=anthropic"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, tc.rf, tc.th, tc.level, tc.style)
+			assert.Equal(t, cache.Key(hash, "m", tc.want), got)
+		})
+	}
+}
+
+// withThinking returns cfg with agent name's thinking keys set.
+//
+// For an anthropic declaration with thinking on it also reconciles the agent's
+// other keys to what validateThinking accepts at load (temperature 1 or unset,
+// supports_function_calling false, and a max_tokens above the level's budget), so
+// the fixture is a config a registry would actually load instead of one the load
+// rejects on two counts. Assertions on Thinking/level/style and cache-key tokens
+// are unaffected.
+func withThinking(cfg *ReviewConfig, name, thinking, level, style string) {
+	a := cfg.Registry.Agents[name]
+	a.Thinking, a.ThinkingLevel, a.ThinkingStyle = thinking, level, style
+	if style == registry.ThinkingStyleAnthropic && (thinking == registry.ThinkingOn || level != "") {
+		a.Temperature = nil
+		a.SupportsFC = false
+		if budget := registry.ThinkingBudgetTokens(thinking, level, style); budget > 0 && (a.MaxTokens == nil || *a.MaxTokens <= budget) {
+			mt := budget * 2
+			a.MaxTokens = &mt
+		}
+	}
+	cfg.Registry.Agents[name] = a
+}
+
+// Sprint 35.16.11.2.2 AC 04-01: the primary's Invocation carries its own
+// declaration verbatim, and its cache key is the thinking-suffixed form of its
+// own prompt. The recompute pins the arguments at review.go's call site: a
+// thinking declaration does not change the prompt, so a site that drops the
+// suffix would otherwise still produce a stable key.
+func TestRenderAgent_PrimaryCarriesAndKeysOnItsOwnThinking(t *testing.T) {
+	payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
+	build := func(thinking, level, style string) Agent {
+		cfg := toolCfg()
+		withThinking(cfg, "greta", thinking, level, style)
+		a, _, err := buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+		require.NoError(t, err)
+		return a
+	}
+	recompute := func(a Agent, thinking, level, style string) string {
+		sizing := fmt.Sprintf("%d:%d", a.EffectiveBudget, a.chunkMaxLines)
+		return diffCacheKey(a.Prompt, a.Invocation.Model, a.Invocation.BaseURL, a.Invocation.Temperature,
+			sizing, a.ResolvedMaxTokens, a.Invocation.ResponseFormat, thinking, level, style)
+	}
+
+	declared := build("on", "low", "anthropic")
+	assert.Equal(t, "on", declared.Invocation.Thinking)
+	assert.Equal(t, "low", declared.Invocation.ThinkingLevel)
+	assert.Equal(t, "anthropic", declared.Invocation.ThinkingStyle)
+	assert.Equal(t, recompute(declared, "on", "low", "anthropic"), declared.CacheKey,
+		"the primary keys on its own thinking declaration")
+	assert.NotEqual(t, recompute(declared, "", "", ""), declared.CacheKey)
+
+	undeclared := build("", "", "")
+	assert.Empty(t, undeclared.Invocation.Thinking)
+	assert.Empty(t, undeclared.Invocation.ThinkingLevel)
+	assert.Empty(t, undeclared.Invocation.ThinkingStyle)
+	assert.Equal(t, recompute(undeclared, "", "", ""), undeclared.CacheKey,
+		"an undeclared primary keeps the byte-identical pre-existing key")
+}
+
+// Sprint 35.16.11.2.2 AC 04-02: the fallback sends and keys on ITS OWN thinking
+// declaration, never its primary's, in both directions.
+func TestBuildFallbackAgent_CarriesAndKeysOnItsOwnThinking(t *testing.T) {
+	type decl struct{ thinking, level, style string }
+	build := func(primary, fallback decl) Agent {
+		cfg := toolCfg()
+		withThinking(cfg, "greta", primary.thinking, primary.level, primary.style)
+		withThinking(cfg, "kai", fallback.thinking, fallback.level, fallback.style)
+		payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
+		p, _, err := buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+		require.NoError(t, err)
+		fb, _, err := buildFallbackAgent(cfg, p, "kai", true, fallbackRefit{})
+		require.NoError(t, err)
+		return fb
+	}
+	recompute := func(fb Agent, d decl) string {
+		sizing := fmt.Sprintf("%d:%d", fb.EffectiveBudget, fb.chunkMaxLines)
+		return diffCacheKey(fb.Prompt, fb.Invocation.Model, fb.Invocation.BaseURL, fb.Invocation.Temperature,
+			sizing, fb.ResolvedMaxTokens, fb.Invocation.ResponseFormat, d.thinking, d.level, d.style)
+	}
+	primaryDecl := decl{"on", "high", "anthropic"}
+	fallbackDecl := decl{"off", "", "template_kwargs"}
+
+	t.Run("divergent declarations", func(t *testing.T) {
+		fb := build(primaryDecl, fallbackDecl)
+		assert.Equal(t, "off", fb.Invocation.Thinking)
+		assert.Empty(t, fb.Invocation.ThinkingLevel, "the primary's level must not leak")
+		assert.Equal(t, "template_kwargs", fb.Invocation.ThinkingStyle)
+		assert.Equal(t, recompute(fb, fallbackDecl), fb.CacheKey)
+	})
+	t.Run("primary declares, fallback does not", func(t *testing.T) {
+		fb := build(primaryDecl, decl{})
+		assert.Empty(t, fb.Invocation.Thinking)
+		assert.Empty(t, fb.Invocation.ThinkingLevel)
+		assert.Empty(t, fb.Invocation.ThinkingStyle)
+		assert.Equal(t, recompute(fb, decl{}), fb.CacheKey, "no primary-only thinking token in the fallback key")
+	})
+	t.Run("fallback declares, primary does not", func(t *testing.T) {
+		fb := build(decl{}, fallbackDecl)
+		assert.Equal(t, "off", fb.Invocation.Thinking)
+		assert.Equal(t, "template_kwargs", fb.Invocation.ThinkingStyle)
+		assert.Equal(t, recompute(fb, fallbackDecl), fb.CacheKey)
+		assert.NotEqual(t, recompute(fb, decl{}), fb.CacheKey)
+	})
+}
+
+// TestWithThinkingFixtures_AreLoadable pins the sprint's thinking fixtures to the
+// real load validator. The anthropic-thinking-on fixtures set greta's declaration
+// while her roster config carries Temperature 0.7 and (in toolCfg) SupportsFC true
+// — a combination validateThinking rejects at load on two counts. These tests
+// exercised wiring for a config that could never load; this test fails until the
+// helper (or the roster) makes the declaration match what a registry load accepts.
+func TestWithThinkingFixtures_AreLoadable(t *testing.T) {
+	decls := []struct{ thinking, level, style string }{
+		{"on", "low", "anthropic"},  // TestRenderAgent_PrimaryCarriesAndKeysOnItsOwnThinking
+		{"on", "high", "anthropic"}, // TestBuildFallbackAgent_CarriesAndKeysOnItsOwnThinking + the refit arm
+	}
+	rosters := map[string]*ReviewConfig{
+		"toolCfg": toolCfg(),
+		"sizing":  declaredWindowRoster(t, 128000),
+	}
+	for rname, cfg := range rosters {
+		for _, d := range decls {
+			withThinking(cfg, "greta", d.thinking, d.level, d.style)
+			data, err := yaml.Marshal(cfg.Registry.Agents["greta"])
+			require.NoError(t, err)
+			err = registry.ValidateAgentYAML("greta", data)
+			assert.NoError(t, err, "roster %s: greta with thinking=%q level=%q style=%q must be a loadable declaration; validateAgent said: %v", rname, d.thinking, d.level, d.style, err)
+		}
+	}
 }

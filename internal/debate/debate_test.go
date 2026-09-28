@@ -336,6 +336,81 @@ func TestRunDebate_JudgeHaltedIsUnresolved(t *testing.T) {
 	assert.Equal(t, "judge_halted", df.Items[0].Reason)
 }
 
+// A halted proposer or challenger made no case, so a judge ruling against that
+// side is not a debate outcome: the item must record unresolved, not the ruling
+// (TD internal/debate/protocol.go:156).
+func TestRunDebate_ArguingSeatHaltedIsUnresolved(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		turns []chatTurn
+	}{
+		{"proposer", []chatTurn{{err: errContext()}, {content: "c"}, {content: `{"outcome":"overturn","reasoning":"no defense"}`}}},
+		{"challenger", []chatTurn{{content: "p"}, {err: errContext()}, {content: `{"outcome":"uphold","settled_severity":"HIGH"}`}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+			cc := &fakeChatCompleter{turns: tc.turns}
+			res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+			require.NoError(t, err)
+			assert.Equal(t, 1, res.Unresolved)
+			assert.Zero(t, res.Upheld+res.Overturned+res.Split)
+
+			f := readFindings(t, dir)
+			assert.Nil(t, f[0].Verification) // a one-sided ruling writes no verdict
+
+			var df DebateFile
+			raw, _ := os.ReadFile(filepath.Join(dir, reconciledSubdir, DebateJSON))
+			require.NoError(t, json.Unmarshal(raw, &df))
+			assert.Equal(t, "seat_halted", df.Items[0].Reason)
+		})
+	}
+}
+
+// A seat halted by a tripped budget still returns its forced final answer, so
+// the judge ruled on both sides: that ruling must apply, not be discarded as
+// seat_halted. A blank or truncated forced answer is still no case (TD
+// internal/debate/debate.go:523, internal/debate/protocol.go:148).
+func TestRunDebate_BudgetTrippedSeatWithStatementKeepsRuling(t *testing.T) {
+	call := []llmclient.ToolCall{{ID: "1", Type: "function", Function: llmclient.FunctionCall{Name: "read_file", Arguments: json.RawMessage(`{"path":"a.go"}`)}}}
+	for _, tc := range []struct {
+		name, seat, answer string
+		truncated          bool
+		wantUpheld         int
+		wantUnresolved     int
+	}{
+		{"statement", "alice", "the defense", false, 1, 0},
+		{"blank statement", "alice", "   ", false, 0, 1},
+		{"truncated statement", "alice", "the defense is cut o", true, 0, 1},
+		{"challenger statement", "bob", "the attack", false, 1, 0},
+		{"challenger blank statement", "bob", "   ", false, 0, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+			reg := debateRoster()
+			a := reg.Agents[tc.seat]
+			one := 1
+			a.MaxTurns = &one
+			reg.Agents[tc.seat] = a
+			tripped := []chatTurn{
+				{toolCalls: call}, // the seat asks for a tool on its only turn: max_turns trips
+				{content: tc.answer, truncated: tc.truncated}, // forced final answer
+			}
+			var turns []chatTurn
+			if tc.seat == "alice" { // proposer
+				turns = append(tripped, chatTurn{content: "c"})
+			} else { // challenger
+				turns = append([]chatTurn{{content: "p"}}, tripped...)
+			}
+			turns = append(turns, chatTurn{content: `{"outcome":"uphold","reasoning":"defense holds"}`})
+			cc := &fakeChatCompleter{turns: turns}
+			res, err := runDebate(context.Background(), dir, reg, Options{}, harness(cc))
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantUpheld, res.Upheld)
+			assert.Equal(t, tc.wantUnresolved, res.Unresolved)
+		})
+	}
+}
+
 func TestRunDebate_OverflowRecorded(t *testing.T) {
 	f1 := splitFinding()
 	f2 := splitFinding()

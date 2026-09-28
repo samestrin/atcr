@@ -108,6 +108,11 @@ type ChatResponse struct {
 	// dropped — the same accepted limitation that already applies to Usage on an
 	// errored turn (see the no-choices note below).
 	CallRecords []CallRecord
+
+	// Reasoning is this turn's reasoning_content. It rides the response only:
+	// Message, which the loop re-sends as history, has no reasoning field, so
+	// reasoning is never sent back to the model.
+	Reasoning string
 }
 
 // chatToolRequest is the multi-turn request body. Tools (and tool_choice) are
@@ -125,15 +130,25 @@ type chatToolRequest struct {
 	// final from its response, so the field must ride every tool turn; the
 	// forced-final no-tools turn (loop.requestFinalAnswer) carries it too.
 	ResponseFormat *responseFormat `json:"response_format,omitempty"`
+	// thinkingFields rides every turn for the same reason as ResponseFormat.
+	thinkingFields
 }
 
 // chatToolResponse decodes the wire response for a tool-capable turn.
 type chatToolResponse struct {
 	Choices []struct {
-		FinishReason string  `json:"finish_reason"`
-		Message      Message `json:"message"`
+		FinishReason string          `json:"finish_reason"`
+		Message      responseMessage `json:"message"`
 	} `json:"choices"`
 	Usage UsageData `json:"usage"`
+}
+
+// responseMessage is a decoded assistant turn: the Message the loop keeps as
+// history, plus reasoning_content (or reasoning), split off so it is never re-sent.
+type responseMessage struct {
+	Message
+	ReasoningContent reasoningText `json:"reasoning_content"`
+	Reasoning        reasoningText `json:"reasoning"`
 }
 
 // Chat performs one multi-turn chat-completions exchange: it serializes the
@@ -148,12 +163,14 @@ func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, t
 	if err != nil {
 		return nil, err
 	}
+	thinking := newThinkingFields(inv.Thinking, inv.ThinkingLevel, inv.ThinkingStyle)
 	req := chatToolRequest{
 		Model:          inv.Model,
 		Messages:       messages,
-		Temperature:    inv.Temperature,
+		Temperature:    temperatureFor(inv.Temperature, thinking),
 		MaxTokens:      inv.MaxTokens,
 		ResponseFormat: newResponseFormat(inv.ResponseFormat),
+		thinkingFields: thinking,
 	}
 	if len(toolDefs) > 0 {
 		req.Tools = toolDefs
@@ -198,7 +215,7 @@ func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, t
 			return &ChatResponse{CallRecords: records}, fmt.Errorf("provider truncated response (finish_reason=%s): empty content with no tool_calls", ch.FinishReason)
 		}
 	}
-	resp := &ChatResponse{Message: ch.Message, FinishReason: ch.FinishReason, Usage: parsed.Usage, CallRecords: records}
+	resp := &ChatResponse{Message: ch.Message.Message, FinishReason: ch.FinishReason, Usage: parsed.Usage, CallRecords: records, Reasoning: reasoningOf(ch.Message.ReasoningContent, ch.Message.Reasoning)}
 	if ch.FinishReason == "length" {
 		resp.Truncated = true
 	}

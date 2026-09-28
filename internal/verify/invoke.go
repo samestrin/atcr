@@ -127,6 +127,23 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: notes, Skeptic: skeptic.Name}, res.TrippedBudgets, nil
 	}
 
+	// A reply the provider cut off on finish_reason=length must not be parsed
+	// into a verdict: parseVerdict takes the first balanced verdict-shaped
+	// object, so a DRAFT verdict inside cut-off chain-of-thought would become a
+	// real confirmed/refuted and count toward reviewer precision as a full read.
+	// The executor lane propagates the same marker (executor.go:751-757); this
+	// lane collapses to unverifiable with the named note. Deliberately NOT
+	// v.Truncated: that flag means "answered from a shortened tool READ" (a
+	// derived byte-budget trip) and pipeline.go's re-verify backfill credits a
+	// tool_budget_bytes trip from it — a model-token cutoff is not a byte trip,
+	// and marking it so would fabricate one on the audit row. The verdict is
+	// unverifiable, so no precision is charged and the note carries the reason.
+	if res.ResponseTruncated {
+		logger.Warn("skeptic failed", "skeptic", skeptic.Name, "class", "response_truncated")
+		logger.Debug("skeptic failure detail", "skeptic", skeptic.Name, "class", "response_truncated", "detail", "model reply cut off on finish_reason length; draft verdict not trusted")
+		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "response_truncated", Skeptic: skeptic.Name}, res.TrippedBudgets, nil
+	}
+
 	v, _ := parseVerdict(res.Content)
 	v.Skeptic = skeptic.Name
 	if v.Verdict == verdictUnverifiable {
@@ -343,6 +360,7 @@ func tripsVoidTheVerdict(tripped []string, derivedBudget bool) bool {
 func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool) (agent fanout.Agent, derived bool) {
 	c := skeptic.Config
 	budget, derived := skepticToolBudget(c)
+	wireMaxTokens, wireThinking, wireThinkingLevel := thinkingWire(c)
 	return fanout.Agent{
 		Name:        skeptic.Name,
 		Provider:    c.Provider,
@@ -377,19 +395,94 @@ func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool) (agent fanout.
 			// content, so under a low default the skeptic finishes mid-reasoning
 			// and the engine records "unverifiable" while the run reports success.
 			//
-			// The DECLARATION only. The review fan-out resolves three tiers
-			// (--max-tokens flag > declaration > payload.DefaultOutputTokens), but
-			// this lane has no flag to read and imposing the built-in default here
-			// would newly cap every UNDECLARED skeptic at a value nothing measured
-			// — a separate decision on separate evidence. A nil pointer keeps
-			// today's behaviour exactly.
-			MaxTokens: c.MaxTokens,
+			// Output cap (max_tokens) + thinking, resolved together by
+			// thinkingWire: an anthropic thinking budget may not go on the wire
+			// without a cap it fits strictly under (Anthropic rejects
+			// budget_tokens >= max_tokens, and with no cap sent the provider's own
+			// lower default applied — a guaranteed 400 on every call). The DECLARATION
+			// alone still governs non-thinking skeptics: imposing the built-in default
+			// on every UNDECLARED skeptic would cap them at a value nothing measured.
+			MaxTokens:     wireMaxTokens,
+			Thinking:      wireThinking,
+			ThinkingLevel: wireThinkingLevel,
 			// response_format: the skeptic's OWN declaration, with no lane-level
 			// override. The verdict is already a JSON object, so no prompt swap is
 			// needed: parseVerdict reads a bare, unfenced object.
 			ResponseFormat: c.ResponseFormat,
+			// thinking style: the skeptic's OWN declaration. The on/off state and
+			// level come from thinkingWire above (which may downgrade a level or
+			// drop the declaration entirely when no budget fits under the cap).
+			ThinkingStyle: c.ThinkingStyle,
 		},
 	}, derived
+}
+
+// thinkingWire resolves the output cap and thinking declaration the skeptic
+// lane puts on the wire, so a declared anthropic thinking budget always has a
+// max_tokens to fit strictly under.
+//
+// Anthropic rejects budget_tokens >= max_tokens. The skeptic lane used to
+// forward the thinking declaration while deliberately forwarding no output cap
+// for an undeclared agent (a nil stays nil, per the reserve-vs-send distinction
+// in reservedOutputTokens) — so the request carried budget_tokens: 8192 with no
+// max_tokens, the provider's own default cap applied (4096 through LiteLLM),
+// and EVERY call for that agent 400ed. The load-time guard cannot catch it: it
+// only warns, and it compares the budget against the registry's default rather
+// than the cap this lane actually sends.
+//
+// The rule here is: a thinking budget buys a cap. When the declaration sends a
+// budget (anthropic style, thinking on — the only style whose budget shares
+// max_tokens), the lane sends max_tokens = the declared cap, else the built-in
+// payload.DefaultOutputTokens (the same single source reservedOutputTokens
+// uses), and the budget must fit strictly under it. A budget that does not fit
+// downgrades the level to the largest one that does; below the smallest budget
+// no level fits, so the declaration is dropped rather than sent as a guaranteed
+// 400. Skeptics with NO thinking declaration are untouched: their MaxTokens
+// stays nil and the provider default applies, exactly as before.
+func thinkingWire(c registry.AgentConfig) (maxTokens *int, thinking, thinkingLevel string) {
+	// Anthropic style only: its budget_tokens is the one whose value shares
+	// max_tokens (the registry's own budget warning is scoped the same way).
+	// The qwen style's thinking_budget is a separate provider parameter.
+	if c.ThinkingStyle != registry.ThinkingStyleAnthropic {
+		return c.MaxTokens, c.Thinking, c.ThinkingLevel
+	}
+	// The tool loop does not re-send prior reasoning blocks, which Anthropic
+	// requires on every continuation turn — a thinking declaration on a
+	// tool-loop agent is a guaranteed 400. The load-time guard rejects the
+	// combination for registry-loaded configs, but it is keyed on the agent's
+	// own supports_function_calling DECLARATION, and this lane forwards that
+	// declaration (the executor lane hardcodes it true regardless). Strip here,
+	// where the lane is actually about to run the loop: a SupportsFC-forwarded
+	// skeptic degrades to single-shot only when the declaration is false, and
+	// single-shot is the one path where thinking is legal.
+	if c.SupportsFC {
+		return c.MaxTokens, "", ""
+	}
+	budget := registry.ThinkingBudgetTokens(c.Thinking, c.ThinkingLevel, c.ThinkingStyle)
+	if budget == 0 {
+		return c.MaxTokens, c.Thinking, c.ThinkingLevel
+	}
+	capTokens := payload.DefaultOutputTokens
+	if c.MaxTokens != nil && *c.MaxTokens > 0 {
+		capTokens = *c.MaxTokens
+	}
+	if budget < capTokens {
+		return &capTokens, c.Thinking, c.ThinkingLevel
+	}
+	// Downgrade to the largest level whose budget fits strictly under the cap.
+	// Levels are ordered low..max, so keep the last fit.
+	fitting := ""
+	for _, level := range registry.ThinkingLevels() {
+		if registry.ThinkingBudgetTokens(registry.ThinkingOn, level, c.ThinkingStyle) < capTokens {
+			fitting = level
+		}
+	}
+	if fitting == "" {
+		// No anthropic budget fits under this cap — send no thinking rather than
+		// a request the provider rejects on every call.
+		return &capTokens, "", ""
+	}
+	return &capTokens, c.Thinking, fitting
 }
 
 // failureNotes builds a diagnostic note for a halted skeptic run, naming the

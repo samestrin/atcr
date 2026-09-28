@@ -240,6 +240,27 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 					"about the declaration either way; re-run doctor to retry: %s\n",
 				strings.Join(unverified, ", "))
 		}
+		// The thinking verdict gets the same treatment. The not-honored warning is
+		// split by DECLARED polarity (TD-017): a declared off that was ignored
+		// leaves a runaway thinker, so a larger max_tokens is still a real remedy;
+		// a declared on/level that produced no signal will not think harder with
+		// more budget, so only another style or model is left.
+		var thinkingUnverified []string
+		for _, a := range rep.Agents {
+			if a.ThinkingStatus == doctor.ThinkingUnverified {
+				thinkingUnverified = append(thinkingUnverified, a.Agent+" ("+a.Model+")")
+			}
+		}
+		for _, line := range thinkingNotHonoredWarnings(rep) {
+			_, _ = fmt.Fprint(cmd.ErrOrStderr(), line)
+		}
+		if len(thinkingUnverified) > 0 {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+				"doctor: WARNING — thinking unverified: these agents declare thinking but "+
+					"the probe reached no verdict, so nothing is known about the declaration "+
+					"either way; re-run doctor to retry: %s\n",
+				strings.Join(thinkingUnverified, ", "))
+		}
 		// A DISTINCT line, not folded into the warning above. These agents were not
 		// found to lack the rule — their prompt could not be read at all, so no
 		// verdict was reached — and `atcr review` hard-fails on the same config that
@@ -312,4 +333,43 @@ func filterRoster(proj *registry.ProjectConfig, names []string) (*registry.Proje
 		}
 	}
 	return out, nil
+}
+
+// thinkingNotHonoredWarnings splits the "thinking not honored" warning by the
+// DECLARED polarity (TD-017): a declared off that was ignored leaves a runaway
+// thinker — the model thinks anyway — so a larger max_tokens is still a real
+// remedy; a declared on/level that produced no signal will not think harder
+// with more budget, so only another style or model is left. One line per
+// non-empty polarity group, off-polarity first.
+func thinkingNotHonoredWarnings(rep *doctor.Report) []string {
+	var off, on []string
+	for _, a := range rep.Agents {
+		if a.ThinkingStatus != doctor.ThinkingNotHonored {
+			continue
+		}
+		name := a.Agent + " (" + a.Model + ")"
+		if a.ThinkingDeclared == registry.ThinkingOff {
+			off = append(off, name)
+		} else {
+			on = append(on, name)
+		}
+	}
+	var lines []string
+	if len(off) > 0 {
+		lines = append(lines, fmt.Sprintf(
+			"doctor: WARNING — thinking not honored: these agents declare thinking: off but "+
+				"the reply still carried reasoning; the model likely ignores the declared "+
+				"field, so try another thinking_style, a larger max_tokens, or a different "+
+				"model (see the HINT column or --json for why): %s\n",
+			strings.Join(off, ", ")))
+	}
+	if len(on) > 0 {
+		lines = append(lines, fmt.Sprintf(
+			"doctor: WARNING — thinking not honored: these agents declare thinking on (or a level) "+
+				"but the reply carried no reasoning signal; the model likely ignores the declared "+
+				"field, so try another thinking_style or a different model "+
+				"(see the HINT column or --json for why): %s\n",
+			strings.Join(on, ", ")))
+	}
+	return lines
 }

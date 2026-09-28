@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestValidateAgentYAML_ExtraFieldsAllowed locks the non-strict unmarshal
@@ -32,4 +33,30 @@ role: reviewer
 	assert.Error(t, err, "missing provider and model must fail validation")
 	assert.Contains(t, err.Error(), "provider", "error must mention missing provider")
 	assert.Contains(t, err.Error(), "model", "error must mention missing model")
+}
+
+// A community persona declaring every machine-local key is rejected once, in
+// full: the joined error lists every rejection so one install attempt suffices
+// to clean up the file (matching validateAgent's accumulate-never-
+// short-circuit posture for the same fields).
+func TestRejectMachineLocalFields_Accumulates(t *testing.T) {
+	window := 128000
+	cfg := AgentConfig{
+		ContextWindowTokens: &window,
+		ResponseFormat:      ResponseFormatJSONObject,
+		Thinking:            ThinkingOn,
+		ThinkingLevel:       ThinkingLevelHigh,
+		ThinkingStyle:       ThinkingStyleQwen,
+	}
+	err := rejectMachineLocalFields("kai", cfg)
+	require.Error(t, err)
+	for _, want := range []string{
+		"must not declare context_window_tokens",
+		"must not declare response_format",
+		"must not declare thinking:",
+		"must not declare thinking_level",
+		"must not declare thinking_style",
+	} {
+		assert.Contains(t, err.Error(), want, "the joined error must list every rejection, not stop at the first")
+	}
 }

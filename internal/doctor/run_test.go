@@ -23,6 +23,10 @@ type fakeCompleter struct {
 	mu    sync.Mutex
 	calls map[string]int
 	fn    func(inv llmclient.Invocation) (string, error)
+	// metaFn, when set, scripts the full Completion (usage and reasoning) and
+	// takes precedence over fn. invs records every CompleteWithMeta call in order.
+	metaFn func(inv llmclient.Invocation) (llmclient.Completion, error)
+	invs   []llmclient.Invocation
 	// chatFn scripts Chat; chats records every Chat call. A nil chatFn fails the
 	// call, so a probe that should not have run shows up as a result, not a panic.
 	chatFn func(inv llmclient.Invocation, msgs []llmclient.Message, tools []llmclient.ToolDef) (*llmclient.ChatResponse, error)
@@ -44,11 +48,23 @@ func newFake(fn func(inv llmclient.Invocation) (string, error)) *fakeCompleter {
 	return &fakeCompleter{calls: map[string]int{}, fn: fn}
 }
 
-func (f *fakeCompleter) Complete(_ context.Context, inv llmclient.Invocation) (string, error) {
+func (f *fakeCompleter) CompleteWithMeta(_ context.Context, inv llmclient.Invocation) (llmclient.Completion, error) {
 	f.mu.Lock()
 	f.calls[inv.Model]++
+	f.invs = append(f.invs, inv)
+	metaFn := f.metaFn
 	f.mu.Unlock()
-	return f.fn(inv)
+	if metaFn != nil {
+		return metaFn(inv)
+	}
+	content, err := f.fn(inv)
+	return llmclient.Completion{Content: content}, err
+}
+
+func (f *fakeCompleter) completeCalls() []llmclient.Invocation {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]llmclient.Invocation(nil), f.invs...)
 }
 
 func (f *fakeCompleter) Chat(ctx context.Context, inv llmclient.Invocation, msgs []llmclient.Message, tools []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
@@ -569,5 +585,32 @@ func TestProbe_UsesTheTargetsDeclaredMaxTokensUnlessTheFlagWasPassed(t *testing.
 		probe(context.Background(), fake, bare, Options{MaxTokens: 2048, Nonce: "n"})
 		require.Len(t, got, 1)
 		assert.Equal(t, 2048, got[0])
+	})
+}
+
+// The truncated-reply remedy must come from cutOff — one source for the remedy
+// text, so the response_format and thinking arms cannot drift the next time the
+// wording changes (the response_format sites were already left on the old
+// wording once).
+func TestRun_ResponseFormatTruncatedRemedyIsCutOffText(t *testing.T) {
+	cut := `{"findings":[{"severity":"HIGH","file_li"`
+	truncated := func(llmclient.Invocation, []llmclient.Message, []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+		return &llmclient.ChatResponse{Message: llmclient.Message{Role: "assistant", Content: &cut}, FinishReason: "length", Truncated: true}, nil
+	}
+
+	t.Run("with a budget", func(t *testing.T) {
+		a, _ := runDeclared(t, false, truncated)
+		assert.Contains(t, a.ResponseFormatDetail, cutOff(2048),
+			"response_format must reuse cutOff's remedy text verbatim")
+	})
+
+	t.Run("without a budget", func(t *testing.T) {
+		t.Setenv(rfDoctorEnvK, rfDoctorKey)
+		fake := newFake(markerOK)
+		fake.chatFn = truncated
+		rep := Run(context.Background(), fake, declaredTarget(t, false), Options{Nonce: testNonce})
+		require.Len(t, rep.Agents, 1)
+		assert.Contains(t, rep.Agents[0].ResponseFormatDetail, cutOff(0),
+			"the no-budget remedy must come from cutOff too")
 	})
 }

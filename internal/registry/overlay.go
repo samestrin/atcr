@@ -340,6 +340,10 @@ func LoadMergedRegistry(regPath, root string) (*Registry, error) {
 		return nil, err
 	}
 
+	// All validation (and the trust gate) passed: emit the thinking warnings
+	// collected during validate() — once, for the effective merged roster
+	// (TD row internal/registry/config.go:1200).
+	reg.emitValidationWarnings()
 	reg.applyDefaults()
 	return reg, nil
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
 )
@@ -37,6 +38,34 @@ func TestRunDebate_DrivesThreeTurnsInOrder(t *testing.T) {
 	assert.Equal(t, "challenger attacks", rec.ChallengerStatement)
 	assert.Contains(t, rec.JudgeRaw, "uphold")
 	assert.Empty(t, rec.Halted)
+}
+
+// TestRunDebate_TruncatedReasoningSeatHaltsAndIsNotForwarded reproduces the
+// TD internal/debate/protocol.go:148 scenario: a seat forced onto the
+// single-shot path (thinking on plus supports_function_calling: false, the
+// state the anthropic thinking load rule creates) whose reply truncates at
+// finish_reason=length. llmclient salvages the chain-of-thought into Content,
+// so the engine returns StatusOK with that reasoning as the statement —
+// previously pasted verbatim into the challenger's prompt. The seat must be
+// halted and its salvaged reasoning must never reach another seat.
+func TestRunDebate_TruncatedReasoningSeatHaltsAndIsNotForwarded(t *testing.T) {
+	reasoning := "let me think through this: the severity split hinges on..."
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{meta: &llmclient.Completion{Content: reasoning, Truncated: true}},
+		{content: "challenger attacks"},
+		{content: `{"outcome":"uphold","settled_severity":"HIGH","reasoning":"evidence holds"}`},
+	}}
+	// The proposer declares no function calling, so its tool agent degrades to
+	// the single-shot path; challenger and judge still run the tool loop.
+	cast := fcCast()
+	cast.Proposer.Config.SupportsFC = false
+	rec := RunDebate(context.Background(), debateItem(), cast, cc, &fakeDispatcher{}, nil)
+
+	assert.Equal(t, []string{LabelProposer}, rec.Halted)
+	assert.Empty(t, rec.ProposerStatement)
+	for _, inv := range cc.invocations() {
+		assert.NotContains(t, inv.Prompt, reasoning)
+	}
 }
 
 func TestRunDebate_HaltedJudgeRecorded(t *testing.T) {
@@ -246,5 +275,78 @@ func TestRunDebate_ResponseFormatJudgeSeatOnly(t *testing.T) {
 		c.Proposer, c.Challenger, c.Judge = declare(c.Proposer), declare(c.Challenger), declare(c.Judge)
 		assert.Equal(t, []string{"", "", jo}, judgeSeatResponseFormats(t, c),
 			"every seat on the single-shot path: only the judge-labeled seat sends response_format")
+	})
+}
+
+// seatThinking runs one debate over cast and returns each seat's
+// (thinking, level, style) triple, in seat order.
+func seatThinking(t *testing.T, cast Cast) [][3]string {
+	t.Helper()
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "challenger attacks"},
+		{content: `{"outcome":"uphold","settled_severity":"HIGH"}`},
+	}}
+	RunDebate(context.Background(), debateItem(), cast, cc, &fakeDispatcher{}, nil)
+	invs := cc.invocations()
+	require.Len(t, invs, 3, "one Chat call per seat")
+	out := make([][3]string, len(invs))
+	for i, inv := range invs {
+		out[i] = [3]string{inv.Thinking, inv.ThinkingLevel, inv.ThinkingStyle}
+	}
+	return out
+}
+
+func declareThinking(seat Caster, thinking, level, style string) Caster {
+	seat.Config.Thinking, seat.Config.ThinkingLevel, seat.Config.ThinkingStyle = thinking, level, style
+	return seat
+}
+
+// Sprint 35.16.11.2.2 AC 04-04: thinking changes how much a model reasons, not
+// the reply shape, so unlike response_format it rides every seat — proposer,
+// challenger, and judge — each from its own config.
+func TestRunDebate_ThinkingOnEverySeat(t *testing.T) {
+	on := [3]string{"on", "high", "qwen"}
+
+	t.Run("every seat declares, only the judge declares response_format", func(t *testing.T) {
+		c := fcCast()
+		c.Proposer = declareThinking(c.Proposer, on[0], on[1], on[2])
+		c.Challenger = declareThinking(c.Challenger, on[0], on[1], on[2])
+		c.Judge = declare(declareThinking(c.Judge, on[0], on[1], on[2]))
+		assert.Equal(t, [][3]string{on, on, on}, seatThinking(t, c))
+		assert.Equal(t, []string{"", "", registry.ResponseFormatJSONObject}, judgeSeatResponseFormats(t, c),
+			"response_format stays judge-only")
+	})
+
+	t.Run("each seat sends its own declaration", func(t *testing.T) {
+		c := fcCast()
+		c.Proposer = declareThinking(c.Proposer, "off", "", "qwen")
+		c.Judge = declareThinking(c.Judge, "", "low", "reasoning_effort")
+		assert.Equal(t, [][3]string{{"off", "", "qwen"}, {}, {"", "low", "reasoning_effort"}}, seatThinking(t, c))
+	})
+
+	t.Run("no seat declares", func(t *testing.T) {
+		assert.Equal(t, [][3]string{{}, {}, {}}, seatThinking(t, fcCast()))
+	})
+
+	t.Run("same agent in every seat", func(t *testing.T) {
+		reg := rosterReg(map[string][2]string{"alice": {"model-a", registry.RoleReviewer}})
+		alice := reg.Agents["alice"]
+		alice.Thinking, alice.ThinkingLevel, alice.ThinkingStyle = on[0], on[1], on[2]
+		reg.Agents["alice"] = alice
+		c, ok, reason := CastRoles(reg, debateItem(), Config{AllowSingleModel: true})
+		require.True(t, ok, "reason: %s", reason)
+		require.True(t, c.SingleModel)
+		assert.Equal(t, [][3]string{on, on, on}, seatThinking(t, c),
+			"the seat label gates response_format, never thinking")
+	})
+
+	t.Run("non-FC seats (single-shot Complete path)", func(t *testing.T) {
+		c := fcCast()
+		for _, s := range []*Caster{&c.Proposer, &c.Challenger, &c.Judge} {
+			s.Config.SupportsFC = false
+			*s = declareThinking(*s, on[0], on[1], on[2])
+		}
+		assert.Equal(t, [][3]string{on, on, on}, seatThinking(t, c))
 	})
 }

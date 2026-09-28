@@ -137,6 +137,14 @@ type Invocation struct {
 	// an undeclared agent's request is unchanged. Sent on every call, including
 	// every tool-loop turn. Validation is the registry's job, not this layer's.
 	ResponseFormat string
+	// Thinking, ThinkingLevel, and ThinkingStyle are the agent's declared
+	// thinking keys, carried verbatim as strings so unset stays distinct from
+	// "off". ThinkingStyle picks the request field (see newThinkingFields); all
+	// three empty leave the request body unchanged. Sent on every call,
+	// including every tool-loop turn.
+	Thinking      string
+	ThinkingLevel string
+	ThinkingStyle string
 }
 
 type message struct {
@@ -148,7 +156,33 @@ type message struct {
 	// emitting any Content: the chain-of-thought still holds the draft review,
 	// which the severity-prefix extraction recovers downstream. omitempty keeps
 	// it out of request bodies, where this struct is also used.
-	ReasoningContent string `json:"reasoning_content,omitempty"`
+	ReasoningContent reasoningText `json:"reasoning_content,omitempty"`
+	// Reasoning is the same chain-of-thought under the key OpenRouter and newer
+	// vLLM use. Read only for the reported reasoning signal (see reasoningOf),
+	// never for the salvage above.
+	Reasoning reasoningText `json:"reasoning,omitempty"`
+}
+
+// reasoningOf is a reply's reasoning text: reasoning_content, else the
+// reasoning key some providers send instead.
+func reasoningOf(content, alt reasoningText) string {
+	if content != "" {
+		return string(content)
+	}
+	return string(alt)
+}
+
+// reasoningText decodes reasoning_content tolerantly: it is an optional side
+// channel, so a provider that sends it as anything but a string gets it
+// treated as absent rather than failing the whole response decode.
+type reasoningText string
+
+func (r *reasoningText) UnmarshalJSON(data []byte) error {
+	var s string
+	if json.Unmarshal(data, &s) == nil {
+		*r = reasoningText(s)
+	}
+	return nil
 }
 
 type chatRequest struct {
@@ -157,6 +191,7 @@ type chatRequest struct {
 	Temperature    *float64        `json:"temperature,omitempty"`
 	MaxTokens      *int            `json:"max_tokens,omitempty"`
 	ResponseFormat *responseFormat `json:"response_format,omitempty"`
+	thinkingFields
 }
 
 // responseFormat is the OpenAI response_format request object. It is always
@@ -181,6 +216,12 @@ func newResponseFormat(t string) *responseFormat {
 type UsageData struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
+	// ReasoningTokens is completion_tokens_details.reasoning_tokens, the part
+	// of CompletionTokens the model spent thinking. ReasoningTokensReported is
+	// true only when the provider sent a usable count, so a reported zero is
+	// distinct from a provider that never reports the field.
+	ReasoningTokens         int  `json:"-"`
+	ReasoningTokensReported bool `json:"-"`
 }
 
 // UnmarshalJSON tolerates malformed or non-integer usage blocks. Token usage is
@@ -205,6 +246,18 @@ func (u *UsageData) UnmarshalJSON(data []byte) error {
 		var n json.Number
 		if err := json.Unmarshal(ct, &n); err == nil {
 			u.CompletionTokens = clampNonNegative(n)
+		}
+	}
+	// completion_tokens_details is optional; a missing or malformed block
+	// leaves ReasoningTokensReported false. A negative count is not usable,
+	// so it is not reported either.
+	var details struct {
+		ReasoningTokens *json.Number `json:"reasoning_tokens"`
+	}
+	if d, ok := raw["completion_tokens_details"]; ok && json.Unmarshal(d, &details) == nil && details.ReasoningTokens != nil {
+		if v, err := details.ReasoningTokens.Float64(); err == nil && v >= 0 {
+			u.ReasoningTokens = clampNonNegative(*details.ReasoningTokens)
+			u.ReasoningTokensReported = true
 		}
 	}
 	return nil
@@ -288,6 +341,10 @@ type Completion struct {
 	Usage       UsageData
 	CallRecords []CallRecord
 	Truncated   bool
+	// Reasoning is the model's reasoning_content, reported on its own whether
+	// or not Content is empty. The empty-Content salvage still copies it into
+	// Content; this field does not change that.
+	Reasoning string
 }
 
 // CompleteWithMeta is CompleteWithUsage plus the truncation signal: it reports
@@ -303,12 +360,14 @@ func (c *Client) CompleteWithMeta(ctx context.Context, inv Invocation) (Completi
 	if err != nil {
 		return Completion{}, err
 	}
+	thinking := newThinkingFields(inv.Thinking, inv.ThinkingLevel, inv.ThinkingStyle)
 	body, err := json.Marshal(chatRequest{
 		Model:          inv.Model,
 		Messages:       []message{{Role: "user", Content: inv.Prompt}},
-		Temperature:    inv.Temperature,
+		Temperature:    temperatureFor(inv.Temperature, thinking),
 		MaxTokens:      inv.MaxTokens,
 		ResponseFormat: newResponseFormat(inv.ResponseFormat),
+		thinkingFields: thinking,
 	})
 	if err != nil {
 		return Completion{}, fmt.Errorf("encoding request: %w", err)
@@ -332,15 +391,16 @@ func (c *Client) CompleteWithMeta(ctx context.Context, inv Invocation) (Completi
 		// chain-of-thought so the reviewer still contributes instead of returning
 		// an empty review. Truncated (captured above) is preserved so the caller
 		// still knows this salvaged content is partial.
-		content = ch.Message.ReasoningContent
+		content = reasoningOf(ch.Message.ReasoningContent, ch.Message.Reasoning)
 	}
 	if content == "" {
-		// Both content and reasoning_content are empty: the provider said nothing.
-		// Fail loudly so callers cannot mistake silence for a clean/empty review.
-		// Non-retryable — a re-request with the same budget would repeat the result.
-		return Completion{CallRecords: records, Truncated: truncated}, atcrerrors.NewSystemError(fmt.Errorf("provider returned an empty completion (no content or reasoning_content)"))
+		// Content, reasoning_content, and reasoning are all empty: the provider
+		// said nothing. Fail loudly so callers cannot mistake silence for a
+		// clean/empty review. Non-retryable — a re-request with the same budget
+		// would repeat the result.
+		return Completion{CallRecords: records, Truncated: truncated}, atcrerrors.NewSystemError(fmt.Errorf("provider returned an empty completion (no content or reasoning)"))
 	}
-	return Completion{Content: content, Usage: parsed.Usage, CallRecords: records, Truncated: truncated}, nil
+	return Completion{Content: content, Usage: parsed.Usage, CallRecords: records, Truncated: truncated, Reasoning: reasoningOf(ch.Message.ReasoningContent, ch.Message.Reasoning)}, nil
 }
 
 // resolveKey reads the invocation's API key env var; the value is never logged.

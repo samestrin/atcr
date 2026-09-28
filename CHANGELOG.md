@@ -1,3 +1,30 @@
+## [35.28.0] - 2026-09-27
+
+*Sprint 35.16.11.2.2 — registry-level thinking controls and doctor verification.*
+
+Agents can now declare `thinking: on|off`, `thinking_level: low|medium|high|max`, and `thinking_style: qwen|template_kwargs|reasoning_effort|anthropic` in the registry, mapped onto the correct wire field on every request path and verified live by `atcr doctor`.
+
+### Added
+
+- Per-agent `thinking`, `thinking_level`, and `thinking_style` registry keys, mapped through one style-keyed table onto the correct wire field (qwen `thinking_budget`, anthropic `budget_tokens`, `template_kwargs`, `reasoning_effort`) on every request path.
+- A live `atcr doctor` probe that verifies whether a declared thinking setting is actually honored by the provider, with per-style verdicts and remedies.
+- Fail-loud registry validation for thinking keys: invalid style/level combinations, anthropic thinking combined with tools, and a budget that doesn't fit `max_tokens` are now load errors instead of silent misconfiguration.
+- `thinking: off` applied to the known runaway agents (archer, mira-backup, ronin-backup, pace) that previously thought by default and produced unparseable, runaway-token output.
+
+### Changed
+
+- Thinking settings now thread through every reviewer, debate, verify, and doctor call site, replacing per-site ad hoc handling.
+- A halted debate seat (tripped budget or truncated reply) now records `seat_halted` instead of letting the judge rule on a one-sided or salvaged statement.
+- Doctor's inline `<think>` detection and truncated-reply handling were hardened to avoid false thinking verdicts.
+
+### Fixed
+
+- `est_minutes` can no longer bypass its clamp bound on host write paths (`debt add --est`, `WriteSourceV2`).
+- `IsNoFindings` and the fence scanner now agree on a labeled, content-free JSON fence.
+- Machine-local-field validation now reports every rejected key in one joined error instead of only the first.
+
+*Shipped via /finalize-sprint (sprint 35.16.11.2.2)*
+
 ## [35.27.0] - 2026-09-26
 
 *Sprint 35.16.11.2.1 — declared JSON-mode response format per agent.*
