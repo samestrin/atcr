@@ -368,17 +368,19 @@ func TestRunDebate_ArguingSeatHaltedIsUnresolved(t *testing.T) {
 
 // A seat halted by a tripped budget still returns its forced final answer, so
 // the judge ruled on both sides: that ruling must apply, not be discarded as
-// seat_halted. A blank forced answer is still no case (TD
-// internal/debate/debate.go:523).
+// seat_halted. A blank or truncated forced answer is still no case (TD
+// internal/debate/debate.go:523, internal/debate/protocol.go:148).
 func TestRunDebate_BudgetTrippedSeatWithStatementKeepsRuling(t *testing.T) {
 	call := []llmclient.ToolCall{{ID: "1", Type: "function", Function: llmclient.FunctionCall{Name: "read_file", Arguments: json.RawMessage(`{"path":"a.go"}`)}}}
 	for _, tc := range []struct {
 		name, answer   string
+		truncated      bool
 		wantUpheld     int
 		wantUnresolved int
 	}{
-		{"statement", "the defense", 1, 0},
-		{"blank statement", "   ", 0, 1},
+		{"statement", "the defense", false, 1, 0},
+		{"blank statement", "   ", false, 0, 1},
+		{"truncated statement", "the defense is cut o", true, 0, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
@@ -388,8 +390,8 @@ func TestRunDebate_BudgetTrippedSeatWithStatementKeepsRuling(t *testing.T) {
 			alice.MaxTurns = &one
 			reg.Agents["alice"] = alice
 			cc := &fakeChatCompleter{turns: []chatTurn{
-				{toolCalls: call},    // proposer asks for a tool on its only turn: max_turns trips
-				{content: tc.answer}, // forced final answer
+				{toolCalls: call}, // proposer asks for a tool on its only turn: max_turns trips
+				{content: tc.answer, truncated: tc.truncated}, // forced final answer
 				{content: "c"},
 				{content: `{"outcome":"uphold","reasoning":"defense holds"}`},
 			}}

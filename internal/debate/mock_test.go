@@ -20,6 +20,7 @@ type chatTurn struct {
 	err       error
 	meta      *llmclient.Completion
 	toolCalls []llmclient.ToolCall
+	truncated bool // Chat reply stopped on finish_reason "length"
 }
 
 // fakeChatCompleter implements fanout.ChatCompleter. Each Chat call pops the next
@@ -97,7 +98,7 @@ func (f *fakeChatCompleter) Chat(ctx context.Context, inv llmclient.Invocation, 
 		return nil, turn.err
 	}
 	c := turn.content
-	return &llmclient.ChatResponse{Message: llmclient.Message{Role: "assistant", Content: &c, ToolCalls: turn.toolCalls}, FinishReason: "stop"}, nil
+	return &llmclient.ChatResponse{Message: llmclient.Message{Role: "assistant", Content: &c, ToolCalls: turn.toolCalls}, FinishReason: "stop", Truncated: turn.truncated}, nil
 }
 
 // fakeDispatcher implements debate.Dispatcher with a fixed result.
