@@ -605,10 +605,11 @@ func TestMessage_ReasoningCarrierIsRawAndOmitempty(t *testing.T) {
 	assert.Empty(t, carrierOf(t, Message{Role: "assistant", Content: &content}))
 }
 
-// Sprint 35.16.11.2.2.1 AC 04-03: reasoning rides only the assistant turn. Chat
-// sets the carrier on the reply it decodes; the tool loop builds its user and
-// tool messages as plain literals of these shapes, so they marshal with no
-// reasoning member. The loop-level proof is in internal/fanout.
+// Sprint 35.16.11.2.2.1 AC 04-03: the Message shapes the tool loop builds for
+// user and tool turns (Role and Content, plus ToolCallID) marshal with no
+// reasoning member, while an assistant turn with a carrier set sends it. This
+// pins the wire shape only; that the loop's own helpers never set a carrier is
+// proved in internal/fanout (TestToolLoop_EachAssistantTurnReplaysOnlyItsOwnReasoning).
 func TestMessage_ReasoningRidesOnlyTheAssistantTurn(t *testing.T) {
 	content, result := "the review", "package main"
 	assistant := Message{Role: "assistant", Content: &content, ReasoningContent: json.RawMessage(`"because X"`)}

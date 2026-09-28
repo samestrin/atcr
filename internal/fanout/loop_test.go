@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -143,8 +144,24 @@ func TestToolLoop_ThinkingOnEveryTurnAndReasoningResent(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(bodies[1], "reasoning_content"), "only the assistant turn carries it")
 }
 
-// reasoningKeys are the reasoning members an llmclient.Message can carry.
-var reasoningKeys = []string{"reasoning_content", "reasoning", "reasoning_details", "thinking_blocks"}
+// reasoningKeys are the reasoning members an llmclient.Message can carry: every
+// json key besides the four plain chat members. Read from the struct so a new
+// member is covered by the role-isolation tests without an edit here.
+var reasoningKeys = func() []string {
+	plain := map[string]bool{"role": true, "content": true, "tool_calls": true, "tool_call_id": true}
+	var keys []string
+	typ := reflect.TypeOf(llmclient.Message{})
+	for i := 0; i < typ.NumField(); i++ {
+		if k := strings.Split(typ.Field(i).Tag.Get("json"), ",")[0]; !plain[k] {
+			keys = append(keys, k)
+		}
+	}
+	return keys
+}()
+
+func TestReasoningKeys_ReadFromMessage(t *testing.T) {
+	assert.ElementsMatch(t, []string{"reasoning_content", "reasoning", "reasoning_details", "thinking_blocks"}, reasoningKeys)
+}
 
 func withComma(members string) string {
 	if members == "" {
@@ -245,6 +262,7 @@ func TestToolLoop_NoReasoningBodiesUnchanged(t *testing.T) {
 	cases := map[string]string{
 		"null":          `"reasoning_content":null,"reasoning":null,"reasoning_details":null,"thinking_blocks":null`,
 		"empty strings": `"reasoning_content":"","reasoning":""`,
+		"wrong types":   `"reasoning_content":42,"reasoning":{"text":"x"},"reasoning_details":"x","thinking_blocks":7`,
 	}
 	for name, members := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -267,7 +285,10 @@ func TestToolLoop_FallbackCarriesNoPrimaryReasoning(t *testing.T) {
 		var req struct {
 			Model string `json:"model"`
 		}
-		_ = json.Unmarshal(b, &req)
+		if err := json.Unmarshal(b, &req); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		mu.Lock()
 		defer mu.Unlock()
 		if req.Model == "backup" {
