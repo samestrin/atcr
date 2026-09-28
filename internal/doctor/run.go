@@ -288,7 +288,10 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 			// same way and bury the real cause") those rows get no thinking verdict at
 			// all rather than a second, competing warning. Transient classes — 429, a
 			// 5xx, a timeout — keep unverified: a retry really can reach a verdict.
-			if res.Targets[i].declaresThinking() && pr.called && thinkingProbeWorthwhile(pr.status) {
+			// A cut-off reply is the exception: its empty-completion error classifies
+			// as network_error, yet it is the runaway thinker the verdict exists to
+			// name, so it still gets one carrying the cut-off remedy.
+			if res.Targets[i].declaresThinking() && pr.called && (thinkingProbeWorthwhile(pr.status) || pr.comp.Truncated) {
 				pr.thinkingStatus, pr.thinkingDetail = probeThinking(ctx, c, res.Targets[i], opts, pr.maxTokens, pr.comp, pr.callErr)
 			}
 			// Round-trip bound: a declared target can cost up to three live calls
