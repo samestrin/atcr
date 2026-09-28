@@ -1298,9 +1298,10 @@ func validateThinking(name string, a AgentConfig) ([]error, []string) {
 				name, ThinkingLevelMax, ThinkingLevelHigh, ThinkingStyleReasoningEffort))
 		}
 	}
-	// Anthropic rejects extended thinking with any temperature but 1; the wire
-	// sends none for such an agent, so only a declared conflict is an error.
-	// Validation runs before applyDefaults, so a nil temperature is undeclared.
+	// preserve_thinking is only legal with a style that has a preserved-thinking
+	// wire field, and only when thinking is actually on (TD internal/registry/config.go:1295:
+	// this switch gets its own comment; the temperature guard below gets back the
+	// one that was originally above it).
 	thinkingOn := ThinkingEnabled(a.Thinking, a.ThinkingLevel)
 	if a.PreserveThinking != "" {
 		switch {
@@ -1316,6 +1317,9 @@ func validateThinking(name string, a AgentConfig) ([]error, []string) {
 			errs = append(errs, agentErrf(name, "agent '%s': preserve_thinking is set but thinking is not on: set thinking: %s or remove preserve_thinking", name, ThinkingOn))
 		}
 	}
+	// Anthropic rejects extended thinking with any temperature but 1; the wire
+	// sends none for such an agent, so only a declared conflict is an error.
+	// Validation runs before applyDefaults, so a nil temperature is undeclared.
 	if a.ThinkingStyle == ThinkingStyleAnthropic && thinkingOn && a.Temperature != nil && *a.Temperature != 1 {
 		errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q with thinking on needs temperature 1: remove temperature or set it to 1", name, ThinkingStyleAnthropic))
 	}
