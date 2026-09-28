@@ -413,8 +413,22 @@ func TestReasoningSignal_AbsentIsEmpty(t *testing.T) {
 }
 
 // carrierKeys are the reasoning members an assistant Message carries back into
-// tool-loop history (sprint 35.16.11.2.2.1).
-var carrierKeys = []string{"reasoning_content", "reasoning", "reasoning_details", "thinking_blocks"}
+// tool-loop history (sprint 35.16.11.2.2.1): every json tag on Message besides
+// the four plain chat members. Derived from the struct so a new reasoning
+// member is covered by the carrier tests without an edit here (as fanout's
+// reasoningKeys is); TestMessage_ReasoningCarrierIsRawAndOmitempty keeps one
+// literal assertion pinning the expected set.
+var carrierKeys = func() []string {
+	plain := map[string]bool{"role": true, "content": true, "tool_calls": true, "tool_call_id": true}
+	var keys []string
+	typ := reflect.TypeOf(Message{})
+	for i := 0; i < typ.NumField(); i++ {
+		if k := strings.Split(typ.Field(i).Tag.Get("json"), ",")[0]; !plain[k] {
+			keys = append(keys, k)
+		}
+	}
+	return keys
+}()
 
 // carrierOf returns the reasoning members m would send, as the exact bytes it
 // marshals them to.
@@ -628,6 +642,9 @@ func TestMessage_ReasoningCarrierUnsetIsByteIdentical(t *testing.T) {
 // Every carrier member is raw JSON, so no shape is reshaped, and omitempty, so
 // an unset carrier adds nothing to the body.
 func TestMessage_ReasoningCarrierIsRawAndOmitempty(t *testing.T) {
+	// Literal pin for the derived carrierKeys above: without it the derivation
+	// would happily cover a wrong set (a renamed or merged member) silently.
+	assert.ElementsMatch(t, []string{"reasoning_content", "reasoning", "reasoning_details", "thinking_blocks"}, carrierKeys)
 	typ := reflect.TypeOf(Message{})
 	var found []string
 	for i := 0; i < typ.NumField(); i++ {
