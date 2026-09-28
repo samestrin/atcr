@@ -413,8 +413,10 @@ func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool) (agent fanout.
 			// level come from thinkingWire above (which may downgrade a level or
 			// drop the declaration entirely when no budget fits under the cap).
 			ThinkingStyle: c.ThinkingStyle,
-			// preserve_thinking: the skeptic's OWN declaration. thinkingWire only
-			// strips the anthropic style, which never carries it.
+			// preserve_thinking: the skeptic's OWN declaration. thinkingWire rewrites
+			// only the thinking/level of an anthropic-style agent; preserve_thinking
+			// is illegal under that style (validateThinking) and llmclient ignores it
+			// there, so the declaration is forwarded as-is (TD internal/verify/invoke.go:416).
 			PreserveThinking: c.PreserveThinking,
 		},
 	}, derived
