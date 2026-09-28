@@ -385,7 +385,11 @@ func TestHooks_ModelClientsAreObserved(t *testing.T) {
 			return err
 		}
 		if info.IsDir() {
-			if name := info.Name(); name == ".git" || name == "testdata" || name == ".treehouse" {
+			name := info.Name()
+			// TD cli/hooks_test.go:381: skip dot-prefixed directories the same way
+			// `go ./...` does — tool state (`.git`, caches, scratch dirs) is not
+			// module source, and a stray llmclient.New() there is not a real gap.
+			if strings.HasPrefix(name, ".") || name == "testdata" {
 				return filepath.SkipDir
 			}
 			return nil
