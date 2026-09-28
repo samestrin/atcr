@@ -69,6 +69,7 @@ func TestRegistryDoc_ThinkingRows(t *testing.T) {
 			{"`\"clear_thinking\":true`", "the glm off value is inverted"},
 			{"the loop sends it back with or without the flag", "the flag asks the model to use the replay, it does not turn the replay on"},
 			{"Unset sends nothing", "an undeclared agent's body is unchanged"},
+			{"It is sent by the review fan-out, the skeptic, the debate seats, and `atcr doctor`", "the lanes that send the flag, matching the thinking row's lane list"},
 		}},
 	}
 	for _, r := range rows {
@@ -226,8 +227,8 @@ func TestRegistryDoc_ThinkingStyleTable(t *testing.T) {
 			{"`thinking: {\"type\": \"disabled\"}`", "the glm style's off shape"},
 			{"no level", "a level under glm is rejected at load"},
 			{"keeps its `temperature`", "only anthropic drops the temperature"},
-			{"`\"clear_thinking\": false` when `preserve_thinking` is `on`", "the glm preserved-thinking field is inverted"},
-			{"`\"clear_thinking\": true` when it is `off`", "the glm off value is inverted too"},
+			{"`\"clear_thinking\":false` when `preserve_thinking` is `on`", "the glm preserved-thinking field is inverted, compact as the wire bytes"},
+			{"`\"clear_thinking\":true` when it is `off`", "the glm off value is inverted too, compact as the wire bytes"},
 		},
 	}
 	// Rows are read from the table after the intro only, so another table with a
@@ -280,12 +281,16 @@ func TestRegistryDoc_ThinkingStyleTable(t *testing.T) {
 // style table cannot document a body the provider never receives.
 func TestRegistryDoc_GLMClearThinkingSpellingMatchesWire(t *testing.T) {
 	doc := readRepoFile(t, "../../docs/registry.md")
-	wire := `{"type":"enabled","clear_thinking":false}`
+	// Go's encoding/json emits compact JSON with no spaces, and llmclient's
+	// thinking tests pin those wire bytes — the docs must spell the field the
+	// way the provider actually receives it, in both places it appears.
+	compact, spaced := `"clear_thinking":false`, `"clear_thinking": false`
 	row := docRow(t, doc, "`preserve_thinking`")
-	require.Contains(t, row, wire, "the preserve_thinking row must carry the wire bytes, compact")
-	style := styleTable(t, doc)
-	glmLine := docLineWith(t, style, "`glm`")
-	require.Contains(t, glmLine, wire, "the glm style row must spell clear_thinking exactly as the wire does, matching the preserve_thinking row")
+	require.Contains(t, row, compact, "the preserve_thinking row must carry the compact wire spelling")
+	require.NotContains(t, row, spaced, "the preserve_thinking row must not carry a spaced variant")
+	glmLine := docLineWith(t, styleTable(t, doc), "`glm`")
+	require.Contains(t, glmLine, compact, "the glm style row must spell clear_thinking exactly as the wire does, matching the preserve_thinking row")
+	require.NotContains(t, glmLine, spaced, "the glm style row must not carry a spaced variant")
 }
 
 // AC 07-01 Scenario 3: the max_tokens interaction.
