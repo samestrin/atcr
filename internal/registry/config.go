@@ -1302,10 +1302,12 @@ func validateThinking(name string, a AgentConfig) ([]error, []string) {
 			errs = append(errs, agentErrf(name, "agent '%s': invalid preserve_thinking %q: must be %q or %q or unset", name, a.PreserveThinking, ThinkingOn, ThinkingOff))
 		case a.ThinkingStyle == "":
 			errs = append(errs, agentErrf(name, "agent '%s': preserve_thinking is declared but thinking_style is missing: set thinking_style: %s or %s", name, ThinkingStyleQwen, ThinkingStyleGLM))
+		case !slices.Contains(thinkingStyles, a.ThinkingStyle):
+			// Already reported as an invalid thinking_style above.
 		case !slices.Contains(preserveThinkingStyles, a.ThinkingStyle):
 			errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q has no preserve_thinking: only %s and %s send it", name, a.ThinkingStyle, ThinkingStyleQwen, ThinkingStyleGLM))
 		case !thinkingOn:
-			errs = append(errs, agentErrf(name, "agent '%s': preserve_thinking is set but thinking is off: set thinking: %s or remove preserve_thinking", name, ThinkingOn))
+			errs = append(errs, agentErrf(name, "agent '%s': preserve_thinking is set but thinking is not on: set thinking: %s or remove preserve_thinking", name, ThinkingOn))
 		}
 	}
 	if a.ThinkingStyle == ThinkingStyleAnthropic && thinkingOn && a.Temperature != nil && *a.Temperature != 1 {

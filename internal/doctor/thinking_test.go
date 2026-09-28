@@ -505,3 +505,13 @@ func TestDoctor_PreserveThinkingJoinsTargetAndProbe(t *testing.T) {
 	require.Len(t, chats, 1)
 	assert.Equal(t, registry.ThinkingOn, chats[0].inv.PreserveThinking, "the response_format probe sends the flag")
 }
+
+// TD-010: the verdict label names preserve_thinking when the target sends it,
+// so a flag-caused rejection is not blamed on thinking alone.
+func TestThinkingDeclaration_NamesPreserveThinking(t *testing.T) {
+	assert.Equal(t, "thinking: on (glm)", thinkingDeclaration(Target{Thinking: "on", ThinkingStyle: "glm"}))
+	assert.Equal(t, "thinking: on (glm), preserve_thinking: on",
+		thinkingDeclaration(Target{Thinking: "on", ThinkingStyle: "glm", PreserveThinking: "on"}))
+	assert.Equal(t, "thinking_level: low (qwen), preserve_thinking: off",
+		thinkingDeclaration(Target{ThinkingLevel: "low", ThinkingStyle: "qwen", PreserveThinking: "off"}))
+}

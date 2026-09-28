@@ -75,8 +75,8 @@ func TestValidateAgent_PreserveThinking(t *testing.T) {
 		{"reasoning_effort", "", ThinkingLevelLow, ThinkingStyleReasoningEffort, ThinkingOn, `agent 'myagent': thinking_style "reasoning_effort" has no preserve_thinking: only qwen and glm send it`},
 		{"no style", ThinkingOn, "", "", ThinkingOn, `agent 'myagent': preserve_thinking is declared but thinking_style is missing: set thinking_style: qwen or glm`},
 		// Thinking must be on (AC 03-01 Edge Cases 4-5, AC 03-03 Edge Case 6).
-		{"thinking unset", "", "", ThinkingStyleQwen, ThinkingOn, `agent 'myagent': preserve_thinking is set but thinking is off: set thinking: on or remove preserve_thinking`},
-		{"thinking off", ThinkingOff, "", ThinkingStyleGLM, ThinkingOn, `agent 'myagent': preserve_thinking is set but thinking is off: set thinking: on or remove preserve_thinking`},
+		{"thinking unset", "", "", ThinkingStyleQwen, ThinkingOn, `agent 'myagent': preserve_thinking is set but thinking is not on: set thinking: on or remove preserve_thinking`},
+		{"thinking off", ThinkingOff, "", ThinkingStyleGLM, ThinkingOn, `agent 'myagent': preserve_thinking is set but thinking is not on: set thinking: on or remove preserve_thinking`},
 		// glm has no budget, so no level.
 		{"glm level", "", ThinkingLevelHigh, ThinkingStyleGLM, "", `agent 'myagent': thinking_style "glm" has no level: remove thinking_level and use thinking: on`},
 	}
@@ -97,6 +97,15 @@ func TestValidateAgent_PreserveThinking(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.wantErr)
 		})
 	}
+}
+
+// TD-011: an unknown style with the flag is one fault (the style), not two.
+func TestValidateAgent_PreserveThinkingUnknownStyleIsOneFault(t *testing.T) {
+	captureThinkingWarnings(t)
+	_, err := LoadRegistry(writeRegistry(t, thinkingRegistry(thinkingAgent(ThinkingOn, "", "foo")+"    preserve_thinking: on\n")))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `invalid thinking_style "foo"`)
+	assert.NotContains(t, err.Error(), "has no preserve_thinking")
 }
 
 // AC 03-03 Edge Cases 3 and 5: preserve_thinking is never inherited through

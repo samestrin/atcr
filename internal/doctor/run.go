@@ -892,12 +892,17 @@ func responseFormatCall(ctx context.Context, c Completer, tgt Target, opts Optio
 func (t Target) declaresThinking() bool { return t.Thinking != "" || t.ThinkingLevel != "" }
 
 // thinkingDeclaration names the declaration in a verdict detail, e.g.
-// "thinking: off (qwen)" or "thinking_level: low (reasoning_effort)".
+// "thinking: off (qwen)" or "thinking_level: low (reasoning_effort)", plus
+// ", preserve_thinking: on" when the target sends that flag too.
 func thinkingDeclaration(t Target) string {
+	d := "thinking_level: " + t.ThinkingLevel + " (" + t.ThinkingStyle + ")"
 	if t.Thinking != "" {
-		return "thinking: " + t.Thinking + " (" + t.ThinkingStyle + ")"
+		d = "thinking: " + t.Thinking + " (" + t.ThinkingStyle + ")"
 	}
-	return "thinking_level: " + t.ThinkingLevel + " (" + t.ThinkingStyle + ")"
+	if t.PreserveThinking != "" {
+		d += ", preserve_thinking: " + t.PreserveThinking
+	}
+	return d
 }
 
 // thinkingDeclaredForm names the target's declared polarity the way the
