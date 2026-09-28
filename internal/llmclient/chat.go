@@ -304,6 +304,16 @@ func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, t
 		}
 	}
 	msg := ch.Message.history()
+	if ch.FinishReason == "length" {
+		// A length-truncated turn may carry a cut-off structured reasoning value
+		// (for Anthropic, a thinking block with no signature). Replaying it would
+		// send a value that is neither the blocks the provider signed nor absent
+		// — exactly what Anthropic rejects on a continuation turn — so the
+		// structured members are cleared before the turn enters history. String
+		// reasoning members are kept: text truncation degrades gracefully.
+		msg.ThinkingBlocks = nil
+		msg.ReasoningDetails = nil
+	}
 	resp := &ChatResponse{Message: msg, FinishReason: ch.FinishReason, Usage: parsed.Usage, CallRecords: records, Reasoning: reasoningOf(memberText(msg.ReasoningContent), memberText(msg.Reasoning))}
 	if ch.FinishReason == "length" {
 		resp.Truncated = true
