@@ -217,6 +217,7 @@ func TestPreserveThinking_GLMKeepsTemperature(t *testing.T) {
 	inv := Invocation{Model: "m", Temperature: &temp, Thinking: registry.ThinkingOn, ThinkingStyle: registry.ThinkingStyleGLM, PreserveThinking: registry.ThinkingOn}
 	assert.Contains(t, captureComplete(t, inv), `"temperature":0.6`)
 	assert.Contains(t, captureChat(t, inv), `"temperature":0.6`)
+	assert.Contains(t, captureChatWith(t, inv, nil), `"temperature":0.6`, "forced-final path")
 	require.NotNil(t, SentTemperature(inv))
 	assert.InDelta(t, 0.6, *SentTemperature(inv), 1e-9)
 }
@@ -294,7 +295,11 @@ func TestThinking_UndeclaredSendsNoThinkingKey(t *testing.T) {
 	plain := Invocation{Model: "m"}
 	styleOnly := Invocation{Model: "m", ThinkingStyle: registry.ThinkingStyleAnthropic}
 	flagOnly := Invocation{Model: "m", PreserveThinking: registry.ThinkingOn}
-	for name, capture := range map[string]func(*testing.T, Invocation) string{"complete": captureComplete, "chat": captureChat} {
+	for name, capture := range map[string]func(*testing.T, Invocation) string{
+		"complete": captureComplete,
+		"chat":     captureChat,
+		"final":    func(t *testing.T, inv Invocation) string { return captureChatWith(t, inv, nil) },
+	} {
 		t.Run(name, func(t *testing.T) {
 			body := capture(t, plain)
 			for _, k := range thinkingKeys {
