@@ -65,6 +65,10 @@ func TestValidateAgent_PreserveThinking(t *testing.T) {
 		// Valid.
 		{"qwen on", ThinkingOn, "", ThinkingStyleQwen, ThinkingOn, ""},
 		{"qwen level alone off", "", ThinkingLevelHigh, ThinkingStyleQwen, ThinkingOff, ""},
+		// TD internal/registry/config_thinking_validate_test.go:82: a level alone
+		// implies thinking on, so preserve_thinking: on must be legal with no
+		// thinking key at all (the spec's "or a thinking_level under qwen" arm).
+		{"qwen level alone on", "", ThinkingLevelHigh, ThinkingStyleQwen, ThinkingOn, ""},
 		{"glm on", ThinkingOn, "", ThinkingStyleGLM, ThinkingOn, ""},
 		{"glm on flag off", ThinkingOn, "", ThinkingStyleGLM, ThinkingOff, ""},
 		{"glm on no flag", ThinkingOn, "", ThinkingStyleGLM, "", ""},

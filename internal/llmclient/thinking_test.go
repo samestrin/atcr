@@ -167,6 +167,9 @@ var preserveCases = []struct {
 }{
 	{"qwen on", registry.ThinkingOn, "", registry.ThinkingStyleQwen, registry.ThinkingOn, `{"enable_thinking":true,"preserve_thinking":true}`},
 	{"qwen level off", "", registry.ThinkingLevelHigh, registry.ThinkingStyleQwen, registry.ThinkingOff, `{"enable_thinking":true,"preserve_thinking":false,"thinking_budget":16384}`},
+	// TD internal/registry/config_thinking_validate_test.go:82: level alone with
+	// the flag on renders on every path, like the off variant beside it.
+	{"qwen level alone on", "", registry.ThinkingLevelHigh, registry.ThinkingStyleQwen, registry.ThinkingOn, `{"enable_thinking":true,"preserve_thinking":true,"thinking_budget":16384}`},
 	{"glm on", registry.ThinkingOn, "", registry.ThinkingStyleGLM, registry.ThinkingOn, `{"thinking":{"type":"enabled","clear_thinking":false}}`},
 	{"glm off", registry.ThinkingOn, "", registry.ThinkingStyleGLM, registry.ThinkingOff, `{"thinking":{"type":"enabled","clear_thinking":true}}`},
 	// Other styles never carry it.
