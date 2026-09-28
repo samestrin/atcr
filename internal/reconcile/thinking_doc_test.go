@@ -371,6 +371,16 @@ func TestRegistryDoc_ThinkingDoctorVerdict(t *testing.T) {
 	for status, must := range rows {
 		assertStates(t, "thinking verdict row "+status, docRow(t, section, status), must)
 	}
+	// TD: transport errors and empty replies classify as network_error, which
+	// thinkingProbeWorthwhile excludes — those rows get NO verdict (the thinking
+	// tests expect "" for them), so the unverified row must not list them as
+	// unverified causes and must name the permanent-failure no-verdict classes.
+	unverified := docRow(t, section, "`"+doctor.ThinkingUnverified+"`")
+	require.NotContains(t, unverified, "transport error", "transport errors get no verdict (network_error is excluded by thinkingProbeWorthwhile), not unverified")
+	require.NotContains(t, unverified, "empty reply", "empty replies get no verdict (network_error is excluded by thinkingProbeWorthwhile), not unverified")
+	assertStates(t, "thinking verdict unverified row", unverified, []struct{ token, why string }{
+		{"Permanent failures", "auth_failed, not_found, and network_error repeat identically, so they get no verdict rather than unverified"},
+	})
 	assertStates(t, "doctor JSON schema", docLineWith(t, doc, "`thinking_status` (`"), []struct{ token, why string }{
 		{"`thinking_status` (`" + doctor.ThinkingHonored + "`, `" + doctor.ThinkingNotHonored + "`, or `" + doctor.ThinkingUnverified + "`)", "the JSON field's values are the doctor constants"},
 		{"`thinking_detail`", "the verdict's reason rides beside it in --json"},
