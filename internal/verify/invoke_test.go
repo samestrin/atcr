@@ -1801,14 +1801,47 @@ func TestBuildSkepticAgent_ForwardsThinking(t *testing.T) {
 
 // Sprint 35.16.11.2.2.1 AC 03-04 Scenario 3: the skeptic sends its own
 // preserve_thinking in both lanes; an undeclared skeptic sends none.
+//
+// TD internal/verify/invoke_test.go:1804: table-driven over {qwen, glm} x
+// {SupportsFC true, false} x {on, off}, plus an anthropic case. 'off' has
+// distinct wire semantics per provider (qwen preserve_thinking:false, glm
+// clear_thinking:true) and is forwarded verbatim too; the anthropic case pins
+// that the Invocation forwards the declaration while llmclient's mapper renders
+// no preserve member for that style.
 func TestBuildSkepticAgent_ForwardsPreserveThinking(t *testing.T) {
 	t.Parallel()
-	sk := testSkeptic()
-	sk.Config.Thinking, sk.Config.ThinkingStyle, sk.Config.PreserveThinking = "on", "glm", "on"
-	for _, exec := range []bool{false, true} {
-		a, _ := buildSkepticAgent(sk, "the prompt", exec)
-		assert.Equal(t, "on", a.Invocation.PreserveThinking, "exec=%v", exec)
+	cases := []struct {
+		name       string
+		style      string
+		supportsFC bool
+		preserve   string
+		want       string
+	}{
+		{"qwen fc on", "qwen", true, "on", "on"},
+		{"qwen single-shot on", "qwen", false, "on", "on"},
+		{"glm fc on", "glm", true, "on", "on"},
+		{"glm single-shot on", "glm", false, "on", "on"},
+		{"qwen fc off", "qwen", true, "off", "off"},
+		{"qwen single-shot off", "qwen", false, "off", "off"},
+		{"glm fc off", "glm", true, "off", "off"},
+		{"glm single-shot off", "glm", false, "off", "off"},
+		{"anthropic forwards verbatim", "anthropic", true, "on", "on"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sk := testSkeptic()
+			sk.Config.Thinking, sk.Config.ThinkingStyle, sk.Config.PreserveThinking = "on", tc.style, tc.preserve
+			sk.Config.SupportsFC = tc.supportsFC
+			for _, exec := range []bool{false, true} {
+				a, _ := buildSkepticAgent(sk, "the prompt", exec)
+				assert.Equal(t, tc.want, a.Invocation.PreserveThinking, "exec=%v", exec)
+			}
+		})
 	}
 	undeclared, _ := buildSkepticAgent(testSkeptic(), "the prompt", false)
 	assert.Empty(t, undeclared.Invocation.PreserveThinking)
 }
+
+// The anthropic row's WIRE behavior — no preserve_thinking/clear_thinking
+// member rendered under that style — is pinned where the mapper lives:
+// internal/llmclient/thinking_test.go preserveCases "anthropic ignores it".
