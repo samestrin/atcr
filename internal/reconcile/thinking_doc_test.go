@@ -57,6 +57,10 @@ func TestRegistryDoc_ThinkingRows(t *testing.T) {
 			{"`thinking: off` with a level is rejected at load", "off plus a level is contradictory config"},
 			{"loads with a warning and is sent as `high`", "max under reasoning_effort warns at load; the operator must not be surprised"},
 			{"`thinking_style: template_kwargs` any level is rejected at load", "template_kwargs carries only on/off, so a level would be silently dropped"},
+			// TD internal/reconcile/thinking_doc_test.go:53: the glm clause is pinned
+			// as a token AND against a real load, so it cannot be deleted or reversed
+			// silently.
+			{"The same holds under `thinking_style: glm`", "glm has no level field either; the sentence can go stale just like the template_kwargs one"},
 		}},
 		{"`thinking_style`", registry.ThinkingStyles(), []struct{ token, why string }{
 			{"there is no default style", "a thinking key without a style is a load error"},
@@ -143,6 +147,10 @@ func TestRegistryDoc_ThinkingRejectsWhatTheDocExcludes(t *testing.T) {
 		"thinking is not on", "the doc says preserve_thinking needs thinking on")
 	require.ErrorContains(t, load("    thinking_level: "+registry.ThinkingLevelLow+"\n    thinking_style: "+registry.ThinkingStyleTemplateKwargs+"\n"),
 		`"template_kwargs" has no level`, "the doc says a level under template_kwargs is rejected at load")
+	// TD internal/reconcile/thinking_doc_test.go:53: the glm half of that sentence
+	// is a claim about the loader too.
+	require.ErrorContains(t, load("    thinking_level: "+registry.ThinkingLevelLow+"\n"+glm),
+		`"glm" has no level`, "the doc says the template_kwargs level rejection holds under glm")
 }
 
 // documentedValues returns the backticked values in a row's "must be unset,
