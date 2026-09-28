@@ -506,6 +506,26 @@ func TestDoctor_PreserveThinkingJoinsTargetAndProbe(t *testing.T) {
 	assert.Equal(t, registry.ThinkingOn, chats[0].inv.PreserveThinking, "the response_format probe sends the flag")
 }
 
+// TD cli/doctor.go:367: a provider 4xx on the flagged marker call must leave
+// the flag visible on the result row, so the cli warning and --json consumers
+// can name "retry without preserve_thinking" without parsing detail prose.
+func TestRun_ThinkingPreserveFieldPopulatedOnFlaggedRejection(t *testing.T) {
+	reg := regWith(
+		map[string]registry.Provider{"p": {APIKeyEnv: rfDoctorEnvK, BaseURL: "https://api.example/v1"}},
+		map[string]registry.AgentConfig{"a": {
+			Provider: "p", Model: "m",
+			Thinking: registry.ThinkingOn, ThinkingStyle: registry.ThinkingStyleQwen, PreserveThinking: registry.ThinkingOn,
+		}},
+	)
+	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a"}})
+	require.NoError(t, err)
+
+	a, _, _ := runThinking(t, res, llmclient.Completion{}, &llmclient.HTTPStatusError{Status: 400, Snippet: "preserve_thinking not supported"}, silent, nil)
+	assert.Equal(t, ThinkingNotHonored, a.ThinkingStatus)
+	assert.Equal(t, registry.ThinkingOn, a.ThinkingPreserve, "the flagged probe's preserve_thinking must land on the result row")
+	assert.Contains(t, a.ThinkingDetail, "preserve_thinking")
+}
+
 // TD-010: the verdict label names preserve_thinking when the target sends it,
 // so a flag-caused rejection is not blamed on thinking alone.
 func TestThinkingDeclaration_NamesPreserveThinking(t *testing.T) {

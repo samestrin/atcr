@@ -174,6 +174,13 @@ type AgentResult struct {
 	// parsing ThinkingDetail prose (TD cli/doctor.go:255). Empty (omitted) for an
 	// undeclared agent and when no call was placed, like ThinkingStatus.
 	ThinkingDeclared string `json:"thinking_declared,omitempty"`
+	// ThinkingPreserve records that the flagged probe itself sent
+	// preserve_thinking, so a provider 4xx caused by that flag is attributable:
+	// the cli warning names "retry without preserve_thinking" as the first remedy
+	// (TD cli/doctor.go:367) and a --json consumer can see the flag was on the
+	// wire without parsing ThinkingDetail prose. Empty (omitted) exactly when
+	// ThinkingDeclared is — the flag only matters when a verdict was reached.
+	ThinkingPreserve string `json:"thinking_preserve,omitempty"`
 }
 
 // The outcomes ResponseFormatStatus can name.
@@ -356,6 +363,7 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 			ThinkingStatus:       pr.thinkingStatus,
 			ThinkingDetail:       pr.thinkingDetail,
 			ThinkingDeclared:     thinkingDeclaredForm(tgt, pr.thinkingStatus),
+			ThinkingPreserve:     thinkingPreserveForm(tgt, pr.thinkingStatus),
 		})
 	}
 	rep.ExitCode = exitVerdict(res, results)
@@ -909,6 +917,17 @@ func thinkingDeclaration(t Target) string {
 // registry spells it: "off", the declared level (a level implies on), or "on".
 // "" when the target declares no thinking or no verdict was reached, so the
 // field stays omitted exactly when ThinkingStatus is (TD cli/doctor.go:255).
+// thinkingPreserveForm returns the target's declared preserve_thinking value
+// when a verdict was reached, "" otherwise — mirroring thinkingDeclaredForm's
+// omission rule so the field is present exactly when the verdict can name the
+// flag as a culprit.
+func thinkingPreserveForm(t Target, status string) string {
+	if status == "" || !t.declaresThinking() {
+		return ""
+	}
+	return t.PreserveThinking
+}
+
 func thinkingDeclaredForm(t Target, status string) string {
 	if status == "" || !t.declaresThinking() {
 		return ""
