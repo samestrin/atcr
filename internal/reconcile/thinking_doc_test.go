@@ -283,6 +283,24 @@ func TestRegistryDoc_ThinkingStyleTable(t *testing.T) {
 	})
 }
 
+// TD (registry.md:243): the replay contract must be discoverable without
+// reading the thinking table — an operator whose agents declare no thinking
+// keys has no reason to open that row, yet replay changes their turn-2+
+// request body too. A top-level subsection beside **Safety:** carries the
+// contract, and the thinking row cross-references it.
+func TestRegistryDoc_ReasoningReplaySubsection(t *testing.T) {
+	doc := readRepoFile(t, "../../docs/registry.md")
+	replay := docLineWith(t, doc, "**Reasoning replay.**")
+	assertStates(t, "reasoning replay subsection", replay, []struct{ token, why string }{
+		{"re-sends provider reasoning on every later turn", "the contract, stated for operators who never configured thinking"},
+		{"whether or not `thinking` is declared", "not gated by any thinking key"},
+		{"changes the turn-2+ request body for all tool-enabled agents", "the blast radius: every tool-loop roster, not just thinking ones"},
+	})
+	// The thinking row keeps its full contract text and points here, so a
+	// reader who arrives via the table still finds the top-level statement.
+	require.Contains(t, docRow(t, doc, "`thinking`"), "**Reasoning replay.**", "the thinking row must cross-reference the top-level replay subsection")
+}
+
 // TD-020: the `preserve_thinking` row and the glm style row must spell
 // clear_thinking the same way, and that way must be the wire bytes llmclient
 // actually sends (compact JSON — Go's encoding/json emits no spaces), so the
