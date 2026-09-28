@@ -196,6 +196,9 @@ func TestRun_ThinkingVerdict(t *testing.T) {
 			wantStatus: ThinkingHonored, wantCalls: 2, notDetail: []string{"reasoning content", "inline <think> reasoning in the content", "cut off"}},
 		{name: "off, unclosed think with text", thinking: "off", style: "qwen", declared: llmclient.Completion{Content: "<think>still going"},
 			wantStatus: ThinkingNotHonored, wantCalls: 1},
+		// An opener followed only by whitespace carries no reasoning: no signal.
+		{name: "off, unclosed think with blank remainder", thinking: "off", style: "qwen", declared: llmclient.Completion{Content: "<think>   "}, control: thinks,
+			wantStatus: ThinkingHonored, wantCalls: 2, notDetail: []string{"inline <think> reasoning in the content"}},
 		// A stray closing tag with no opener can only be template noise on this
 		// probe (the marker prompt contains no <think>), so it is not a signal —
 		// the model's actual answer must not be counted as reasoning.
