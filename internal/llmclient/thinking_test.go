@@ -605,6 +605,18 @@ func TestMessage_ReasoningCarrierIsRawAndOmitempty(t *testing.T) {
 	assert.Empty(t, carrierOf(t, Message{Role: "assistant", Content: &content}))
 }
 
+// Sprint 35.16.11.2.2.1 AC 04-03: reasoning rides only the assistant turn. Chat
+// sets the carrier on the reply it decodes; the tool loop builds its user and
+// tool messages as plain literals of these shapes, so they marshal with no
+// reasoning member. The loop-level proof is in internal/fanout.
+func TestMessage_ReasoningRidesOnlyTheAssistantTurn(t *testing.T) {
+	content, result := "the review", "package main"
+	assistant := Message{Role: "assistant", Content: &content, ReasoningContent: json.RawMessage(`"because X"`)}
+	assert.Equal(t, map[string]string{"reasoning_content": `"because X"`}, carrierOf(t, assistant))
+	assert.Empty(t, carrierOf(t, Message{Role: "user", Content: &content}))
+	assert.Empty(t, carrierOf(t, Message{Role: "tool", ToolCallID: "c1", Content: &result}))
+}
+
 // A malformed reasoning signal never fails the turn: a non-string
 // reasoning_content is treated as absent on both paths, and the answer and
 // tool calls survive. A tool-call turn with content:null still decodes through
