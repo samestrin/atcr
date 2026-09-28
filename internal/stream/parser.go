@@ -108,6 +108,16 @@ var infoStringAttrRe = regexp.MustCompile(`^[A-Za-z0-9_-]+=[A-Za-z0-9_-]+$`)
 // contain a backtick (CommonMark), and infoStringTokenRe accepts only
 // [A-Za-z0-9_-], so a rest carrying one is rejected as shared content by the
 // token loop below without a separate check.
+//
+// Deliberate cutoff (TD internal/stream/parser.go:111): the agreement with
+// ParseModelOutput's isFenceMarker is PARTIAL. A longer labeled opener such as
+// "```json clean reply" (two extra bare words) toggles a fenced block there —
+// so "```json clean reply\n[]\n```" parses as an empty json block — but stays
+// content here, so IsNoFindings returns false on it. That asymmetry is
+// intentional and one-directional: it can only make IsNoFindings MORE
+// conservative (refuse to call a reply clean), never call prose clean. Full
+// alignment would turn any prose-bearing opener into metadata and lose the
+// sentence-prose guard above.
 func isInfoString(line string, c byte, n int) bool {
 	t := strings.TrimLeft(line, " \t")
 	rest := t[n:]
