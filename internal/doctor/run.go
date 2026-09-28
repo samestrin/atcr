@@ -811,6 +811,12 @@ func responseFormatCall(ctx context.Context, c Completer, tgt Target, opts Optio
 	if len(toolDefs) > 0 {
 		declared = "tools: true with " + declared
 	}
+	// A provider can reject the COMBINATION (preserved thinking plus JSON mode
+	// or tools), not response_format alone — name the whole request so the
+	// not-honored/unverified details are attributable (TD internal/doctor/run.go:801).
+	if tgt.declaresThinking() {
+		declared += " with " + thinkingDeclaration(tgt)
+	}
 	callCtx := ctx
 	if opts.Timeout > 0 {
 		var cancel context.CancelFunc
