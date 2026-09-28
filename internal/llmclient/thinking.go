@@ -18,6 +18,15 @@ type thinkingFields struct {
 	ReasoningEffort    *string             `json:"reasoning_effort,omitempty"`
 	Thinking           *thinkingObject     `json:"thinking,omitempty"`
 	PreserveThinking   *bool               `json:"preserve_thinking,omitempty"`
+
+	// dropTemperature records, on the fields themselves, that this declaration
+	// must send no temperature (enabled anthropic thinking — the provider
+	// rejects any value but 1). It is set in newThinkingFields' anthropic case
+	// and read by temperatureFor, which takes no style parameter: the decision
+	// cannot be re-derived inconsistently by a caller passing a mismatched
+	// style next to fields built from another one. Unexported, so it never
+	// reaches a request body.
+	dropTemperature bool
 }
 
 // chatTemplateKwargs is the template_kwargs style's wire object.
@@ -86,6 +95,7 @@ func newThinkingFields(thinking, level, style, preserve string) thinkingFields {
 			break
 		}
 		f.Thinking = &thinkingObject{Type: "enabled", BudgetTokens: budget}
+		f.dropTemperature = true
 	case registry.ThinkingStyleGLM:
 		if !on {
 			f.Thinking = &thinkingObject{Type: "disabled"}
@@ -100,13 +110,15 @@ func newThinkingFields(thinking, level, style, preserve string) thinkingFields {
 	return f
 }
 
-// temperatureFor returns the temperature to send alongside f, built for style.
-// Anthropic rejects extended thinking with any temperature but 1, so an enabled
-// anthropic declaration sends none and the provider default (1) applies. The
-// registry rejects a declared temperature other than 1 for such an agent at
-// load. glm shares the thinking member but keeps its temperature.
-func temperatureFor(temperature *float64, style string, f thinkingFields) *float64 {
-	if style == registry.ThinkingStyleAnthropic && f.Thinking != nil && f.Thinking.Type == "enabled" {
+// temperatureFor returns the temperature to send alongside f. The fields carry
+// the drop decision themselves (see thinkingFields.dropTemperature), so there
+// is no style parameter a caller could mismatch. Anthropic rejects extended
+// thinking with any temperature but 1, so an enabled anthropic declaration
+// sends none and the provider default (1) applies; the registry rejects a
+// declared temperature other than 1 for such an agent at load. glm shares the
+// thinking member but keeps its temperature.
+func temperatureFor(temperature *float64, f thinkingFields) *float64 {
+	if f.dropTemperature {
 		return nil
 	}
 	return temperature
@@ -116,5 +128,5 @@ func temperatureFor(temperature *float64, style string, f thinkingFields) *float
 // which differs from inv.Temperature when the declared thinking drops it (see
 // temperatureFor). Observers report this, not the declaration.
 func SentTemperature(inv Invocation) *float64 {
-	return temperatureFor(inv.Temperature, inv.ThinkingStyle, newThinkingFields(inv.Thinking, inv.ThinkingLevel, inv.ThinkingStyle, inv.PreserveThinking))
+	return temperatureFor(inv.Temperature, newThinkingFields(inv.Thinking, inv.ThinkingLevel, inv.ThinkingStyle, inv.PreserveThinking))
 }

@@ -222,6 +222,21 @@ func TestPreserveThinking_GLMKeepsTemperature(t *testing.T) {
 	assert.InDelta(t, 0.6, *SentTemperature(inv), 1e-9)
 }
 
+// The drop-temperature decision rides thinkingFields itself, not a style
+// re-derivation in temperatureFor: temperatureFor(temperature, f) has no style
+// parameter to mismatch, so a caller cannot silently send (or drop)
+// temperature by passing the wrong style next to the fields it built.
+func TestThinking_DropTemperatureRidesTheFields(t *testing.T) {
+	assert.True(t, newThinkingFields(registry.ThinkingOn, "", registry.ThinkingStyleAnthropic, "").dropTemperature,
+		"enabled anthropic thinking records the drop on the fields")
+	assert.False(t, newThinkingFields(registry.ThinkingOff, "", registry.ThinkingStyleAnthropic, "").dropTemperature,
+		"disabled anthropic thinking keeps temperature")
+	assert.False(t, newThinkingFields(registry.ThinkingOn, "", registry.ThinkingStyleGLM, "").dropTemperature,
+		"glm shares the thinking member but keeps temperature")
+	assert.False(t, newThinkingFields("", "", "", "").dropTemperature,
+		"no declaration, no drop")
+}
+
 // response_format and a thinking declaration ride the same body together.
 func TestThinking_CoexistsWithResponseFormat(t *testing.T) {
 	inv := Invocation{Model: "m", ResponseFormat: "json_object", ThinkingLevel: registry.ThinkingLevelLow, ThinkingStyle: registry.ThinkingStyleReasoningEffort}
@@ -242,6 +257,11 @@ func TestThinkingFields_TagsDisjointFromRequestTags(t *testing.T) {
 		for i := 0; i < typ.NumField(); i++ {
 			f := typ.Field(i)
 			if f.Anonymous {
+				continue
+			}
+			// An untagged field (the unexported dropTemperature decision marker)
+			// is not a wire member and cannot collide.
+			if f.Tag.Get("json") == "" {
 				continue
 			}
 			out[strings.Split(f.Tag.Get("json"), ",")[0]] = true

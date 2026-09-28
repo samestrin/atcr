@@ -365,7 +365,7 @@ func (c *Client) CompleteWithMeta(ctx context.Context, inv Invocation) (Completi
 	body, err := json.Marshal(chatRequest{
 		Model:          inv.Model,
 		Messages:       []message{{Role: "user", Content: inv.Prompt}},
-		Temperature:    temperatureFor(inv.Temperature, inv.ThinkingStyle, thinking),
+		Temperature:    temperatureFor(inv.Temperature, thinking),
 		MaxTokens:      inv.MaxTokens,
 		ResponseFormat: newResponseFormat(inv.ResponseFormat),
 		thinkingFields: thinking,

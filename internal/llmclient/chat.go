@@ -278,7 +278,7 @@ func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, t
 	req := chatToolRequest{
 		Model:          inv.Model,
 		Messages:       messages,
-		Temperature:    temperatureFor(inv.Temperature, inv.ThinkingStyle, thinking),
+		Temperature:    temperatureFor(inv.Temperature, thinking),
 		MaxTokens:      inv.MaxTokens,
 		ResponseFormat: newResponseFormat(inv.ResponseFormat),
 		thinkingFields: thinking,
