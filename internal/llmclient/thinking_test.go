@@ -160,8 +160,8 @@ func TestThinking_AnthropicEnabledSendsNoTemperature(t *testing.T) {
 
 // preserveCases pair a thinking declaration with preserve_thinking. want is
 // the exact JSON of the thinking members; the flag renders only under qwen and
-// glm with thinking on, and anything the registry would reject sends nothing
-// for it.
+// glm with thinking on, and an illegal preserve value suppresses the whole
+// thinking declaration, not just the flag.
 var preserveCases = []struct {
 	name, thinking, level, style, preserve, want string
 }{
@@ -177,8 +177,9 @@ var preserveCases = []struct {
 	{"flag without thinking", "", "", registry.ThinkingStyleQwen, registry.ThinkingOn, `{}`},
 	{"flag with qwen thinking off", registry.ThinkingOff, "", registry.ThinkingStyleQwen, registry.ThinkingOn, `{"enable_thinking":false}`},
 	{"flag with glm thinking off", registry.ThinkingOff, "", registry.ThinkingStyleGLM, registry.ThinkingOn, `{"thinking":{"type":"disabled"}}`},
-	// A value the registry would reject is not guessed at.
-	{"unknown value", registry.ThinkingOn, "", registry.ThinkingStyleQwen, "true", `{}`},
+	// A value the registry would reject is not guessed at: the whole thinking
+	// declaration is suppressed, dropping the valid enable_thinking too.
+	{"illegal preserve value", registry.ThinkingOn, "", registry.ThinkingStyleQwen, "true", `{}`},
 }
 
 // AC 03-01 / 03-02: preserve_thinking renders per style on the mapper, both
