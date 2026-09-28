@@ -231,8 +231,10 @@ func TestToolLoop_ReplaysEachReasoningShapeUnderItsKey(t *testing.T) {
 // Sprint 35.16.11.2.2.1 AC 05-03: replay has no thinking_style gate. LiteLLM
 // can turn reasoning_effort into Anthropic extended thinking for a Claude
 // model, so a reasoning_effort agent must replay LiteLLM's Claude reply shape
-// exactly as an anthropic-style agent does. The registry adds no second guard
-// for it; this test is the closure.
+// on every later request exactly as an anthropic-style agent does. This pins
+// that parity against a stub; the registry adds no second guard. The replay
+// itself is not live-verified against Anthropic (no model served), so a
+// reasoning_effort Claude agent is knowingly allowed on it (TD-015).
 func TestToolLoop_ReplayIgnoresThinkingStyle(t *testing.T) {
 	const (
 		content = `"reasoning_content":"step 1"`
@@ -256,17 +258,22 @@ func TestToolLoop_ReplayIgnoresThinkingStyle(t *testing.T) {
 	replayed := map[string]map[string]string{}
 	for _, s := range styles {
 		bodies := runWireToolLoopInv(t, s.inv, claudeTurn)
-		require.Contains(t, bodies[1], s.wire, "%s: the declared style must reach the wire", s.name)
-		msgs := wireMessages(t, bodies[1])
-		require.Len(t, msgs, 3, "prompt, assistant tool call, tool result")
-		replayed[s.name] = reasoningOn(msgs[1])
+		for i, body := range bodies[1:] {
+			require.Contains(t, body, s.wire, "%s request %d: the declared style must reach the wire", s.name, i+2)
+			msgs := wireMessages(t, body)
+			require.GreaterOrEqual(t, len(msgs), 3, "prompt, assistant tool call, tool result")
+			key := fmt.Sprintf("%s request %d", s.name, i+2)
+			replayed[key] = reasoningOn(msgs[1])
+		}
 	}
 	want := map[string]string{
 		"reasoning_content": `"step 1"`,
 		"thinking_blocks":   `[{"type":"thinking","thinking":"step 1","signature":"EqQBCkgIARABGAIiQL+/zzA0Xq9b=="}]`,
 	}
-	assert.Equal(t, want, replayed["anthropic"])
-	assert.Equal(t, want, replayed["reasoning_effort"])
+	require.Len(t, replayed, 2*3, "requests 2-4 for each style")
+	for key, got := range replayed {
+		assert.Equal(t, want, got, key)
+	}
 }
 
 // AC 04-01 Scenario 2 and AC 04-02: each assistant turn carries its own

@@ -1321,7 +1321,7 @@ func validateThinking(name string, a AgentConfig) ([]error, []string) {
 	// takes its primary's tools, so the agent's own tools key does not keep it
 	// out of the loop; only its model's function-calling declaration does.
 	if a.ThinkingStyle == ThinkingStyleAnthropic && thinkingOn && a.SupportsFC {
-		errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q with thinking on cannot use supports_function_calling: true: the tool loop's reasoning replay has not been verified against a live Anthropic model, which rejects a tool-use turn without its thinking blocks; set supports_function_calling: false or thinking: off", name, ThinkingStyleAnthropic))
+		errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q with thinking on cannot use supports_function_calling: true: the tool loop's reasoning replay has not been verified against a live Anthropic model, which rejects a tool-use turn whose thinking blocks are missing or altered; set supports_function_calling: false or thinking: off", name, ThinkingStyleAnthropic))
 	}
 	// Anthropic rejects extended thinking alongside a forced tool_choice, and
 	// providers map response_format onto exactly that, so anthropic thinking-on

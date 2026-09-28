@@ -141,7 +141,7 @@ func TestValidateAgent_AnthropicThinkingTemperature(t *testing.T) {
 // primary's tools), but only when the agent's own model declares
 // supports_function_calling, so that flag is the guard.
 func TestValidateAgent_AnthropicThinkingWithFunctionCalling(t *testing.T) {
-	const wantErr = `agent 'myagent': thinking_style "anthropic" with thinking on cannot use supports_function_calling: true: the tool loop's reasoning replay has not been verified against a live Anthropic model, which rejects a tool-use turn without its thinking blocks; set supports_function_calling: false or thinking: off`
+	const wantErr = `agent 'myagent': thinking_style "anthropic" with thinking on cannot use supports_function_calling: true: the tool loop's reasoning replay has not been verified against a live Anthropic model, which rejects a tool-use turn whose thinking blocks are missing or altered; set supports_function_calling: false or thinking: off`
 	cases := []struct {
 		name, thinking, level, style string
 		fc, tools, wantErr           bool
@@ -149,8 +149,6 @@ func TestValidateAgent_AnthropicThinkingWithFunctionCalling(t *testing.T) {
 		{"on fc tools", ThinkingOn, "", ThinkingStyleAnthropic, true, true, true},
 		{"on fc no tools (skeptic, debate, fallback lanes)", ThinkingOn, "", ThinkingStyleAnthropic, true, false, true},
 		{"level alone fc", "", ThinkingLevelLow, ThinkingStyleAnthropic, true, false, true},
-		// No level was run live, so the guard holds at every level.
-		{"level max fc", "", ThinkingLevelMax, ThinkingStyleAnthropic, true, false, true},
 		// A Claude agent under reasoning_effort gets no second style-keyed
 		// guard: its reasoning rides the same style-agnostic replay
 		// (TestToolLoop_ReplayIgnoresThinkingStyle in internal/fanout).
@@ -179,6 +177,14 @@ func TestValidateAgent_AnthropicThinkingWithFunctionCalling(t *testing.T) {
 			}
 			require.NoError(t, err)
 		})
+	}
+	// No level was run live, so the guard holds at every level.
+	for _, level := range ThinkingLevels() {
+		captureThinkingWarnings(t)
+		agent := thinkingAgent("", level, ThinkingStyleAnthropic) + "    max_tokens: 65536\n    supports_function_calling: true\n"
+		_, err := LoadRegistry(writeRegistry(t, thinkingRegistry(agent)))
+		require.Error(t, err, "level %s", level)
+		assert.Contains(t, err.Error(), wantErr, "level %s", level)
 	}
 }
 
