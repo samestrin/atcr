@@ -22,6 +22,8 @@ func TestRun_FlagCapAtOrBelowAnthropicBudgetNamesTheFlag(t *testing.T) {
 		err      error
 		wantHint []string
 		notHint  string
+		style    string // default anthropic
+		wantThk  string // expected thinking status, when set
 	}{
 		{name: "flag below budget, 400", set: true, maxTok: 4096, err: &llmclient.HTTPStatusError{Status: 400, Snippet: "budget_tokens must be less than max_tokens"},
 			wantHint: []string{"--max-tokens 4096", "16384"}},
@@ -31,10 +33,19 @@ func TestRun_FlagCapAtOrBelowAnthropicBudgetNamesTheFlag(t *testing.T) {
 		{name: "no flag", maxTok: 4096, err: &llmclient.HTTPStatusError{Status: 400, Snippet: "x"}, notHint: "--max-tokens"},
 		{name: "auth failure keeps its own hint", set: true, maxTok: 4096, err: &llmclient.HTTPStatusError{Status: 401, Snippet: "bad key"},
 			wantHint: []string{"check the API key"}, notHint: "--max-tokens"},
+		// Only anthropic shares budget_tokens with max_tokens: a qwen 400 under a
+		// low --max-tokens is the declaration being refused, so no flag hint and
+		// the control call decides not_honored.
+		{name: "qwen, flag below budget, 400", style: registry.ThinkingStyleQwen, set: true, maxTok: 4096, err: &llmclient.HTTPStatusError{Status: 400, Snippet: "x"},
+			notHint: "--max-tokens", wantThk: ThinkingNotHonored},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			res := thinkingTarget(t, registry.ThinkingOn, registry.ThinkingLevelHigh, registry.ThinkingStyleAnthropic)
+			style := tc.style
+			if style == "" {
+				style = registry.ThinkingStyleAnthropic
+			}
+			res := thinkingTarget(t, registry.ThinkingOn, registry.ThinkingLevelHigh, style)
 			t.Setenv(rfDoctorEnvK, thinkingKey)
 			fake := newFake(markerOK)
 			// Only the declared call is rejected; the control call (no declaration,
@@ -55,6 +66,9 @@ func TestRun_FlagCapAtOrBelowAnthropicBudgetNamesTheFlag(t *testing.T) {
 			}
 			if tc.notHint != "" {
 				assert.NotContains(t, hint, tc.notHint)
+			}
+			if tc.wantThk != "" {
+				assert.Equal(t, tc.wantThk, rep.Agents[0].ThinkingStatus, "detail: %s", rep.Agents[0].ThinkingDetail)
 			}
 			// The flag caused the rejection, not the provider refusing the
 			// declaration, so the control call must not turn it into not_honored.
