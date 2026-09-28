@@ -453,6 +453,9 @@ func TestRenderTable_ThinkingLabel(t *testing.T) {
 	assert.Contains(t, out, "… (--json for full text)")
 	assert.NotContains(t, out, strings.Repeat("x", 161))
 
-	out = render(AgentResult{Agent: "a", Status: StatusOK, ThinkingStatus: ThinkingHonored, ThinkingDetail: "a note"})
+	// An honored verdict can carry a detail (the leveled "reasoning observed" text);
+	// it must not leak into the HINT cell unlabeled.
+	out = render(AgentResult{Agent: "a", Status: StatusOK, ThinkingStatus: ThinkingHonored, ThinkingDetail: "reasoning observed; the probe does not verify thinking_level low"})
+	assert.NotContains(t, out, "reasoning observed")
 	assert.NotContains(t, out, "thinking")
 }
