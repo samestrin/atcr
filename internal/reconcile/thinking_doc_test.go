@@ -290,7 +290,16 @@ func TestRegistryDoc_ThinkingStyleTable(t *testing.T) {
 // contract, and the thinking row cross-references it.
 func TestRegistryDoc_ReasoningReplaySubsection(t *testing.T) {
 	doc := readRepoFile(t, "../../docs/registry.md")
-	replay := docLineWith(t, doc, "**Reasoning replay.**")
+	// Anchor on the line that STARTS the subsection — the thinking row's
+	// cross-reference also contains the marker, earlier in the file.
+	var replay string
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "**Reasoning replay.**") {
+			replay = line
+			break
+		}
+	}
+	require.NotEmpty(t, replay, "docs/registry.md has no top-level **Reasoning replay.** subsection")
 	assertStates(t, "reasoning replay subsection", replay, []struct{ token, why string }{
 		{"re-sends provider reasoning on every later turn", "the contract, stated for operators who never configured thinking"},
 		{"whether or not `thinking` is declared", "not gated by any thinking key"},
