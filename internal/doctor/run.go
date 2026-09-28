@@ -1040,6 +1040,15 @@ func probeThinking(ctx context.Context, c Completer, tgt Target, opts Options, b
 		} else if tgt.ThinkingLevel != "" {
 			detail = "reasoning observed; the probe does not verify thinking_level " + tgt.ThinkingLevel
 		}
+		// TD-012: the probe is single-turn — honored only proves the flag was
+		// accepted, never that reasoning was actually preserved.
+		if tgt.PreserveThinking != "" {
+			if detail == "" {
+				detail = "the probe does not verify preserve_thinking (single-turn)"
+			} else {
+				detail += "; the probe does not verify preserve_thinking (single-turn)"
+			}
+		}
 		if comp.Truncated {
 			detail = strings.TrimPrefix(detail+"; the reply was also "+cutOff(budget), "; ")
 		}

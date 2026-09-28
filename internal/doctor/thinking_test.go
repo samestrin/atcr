@@ -506,6 +506,26 @@ func TestDoctor_PreserveThinkingJoinsTargetAndProbe(t *testing.T) {
 	assert.Equal(t, registry.ThinkingOn, chats[0].inv.PreserveThinking, "the response_format probe sends the flag")
 }
 
+// TD-012 / TD internal/doctor/run.go:897: the probe is single-turn — an
+// honored verdict only proves the flag was accepted, not that reasoning was
+// actually preserved. When the target sends the flag, the honored detail must
+// say so.
+func TestRun_HonoredDetailNotesPreserveThinkingUnverified(t *testing.T) {
+	reg := regWith(
+		map[string]registry.Provider{"p": {APIKeyEnv: rfDoctorEnvK, BaseURL: "https://api.example/v1"}},
+		map[string]registry.AgentConfig{"a": {
+			Provider: "p", Model: "m",
+			Thinking: registry.ThinkingOn, ThinkingStyle: registry.ThinkingStyleQwen, PreserveThinking: registry.ThinkingOn,
+		}},
+	)
+	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a"}})
+	require.NoError(t, err)
+
+	a, _, _ := runThinking(t, res, thinks, nil, llmclient.Completion{}, nil)
+	assert.Equal(t, ThinkingHonored, a.ThinkingStatus)
+	assert.Contains(t, a.ThinkingDetail, "the probe does not verify preserve_thinking (single-turn)")
+}
+
 // TD cli/doctor.go:367: a provider 4xx on the flagged marker call must leave
 // the flag visible on the result row, so the cli warning and --json consumers
 // can name "retry without preserve_thinking" without parsing detail prose.
