@@ -39,8 +39,16 @@ func TestRegistryDoc_ThinkingRows(t *testing.T) {
 			{"`off` is rejected (use `thinking_level: low`)", "reasoning_effort has no off value; the row must give the fix the load error gives"},
 			{"`on` requires a `thinking_level`", "reasoning_effort has no on-without-level value"},
 			{"under `thinking_style: anthropic`, thinking on needs `temperature` unset or `1`", "Anthropic rejects extended thinking at any other temperature; a declared one fails the load"},
-			{"under `thinking_style: anthropic`, thinking on cannot be combined with `supports_function_calling: true`", "the tool loop does not send reasoning back, which Anthropic requires on a tool-use turn; skeptic, debate, and fallback lanes can put any function-calling agent in the loop"},
+			{"under `thinking_style: anthropic`, thinking on cannot be combined with `supports_function_calling: true`", "the guard stays (AC 05-02); skeptic, debate, and fallback lanes can put any function-calling agent in the loop"},
+			{"has not been verified against a live Anthropic model", "the guard's true reason: no Anthropic model was served to prove the replay live"},
+			{"thinking blocks are missing or altered", "what Anthropic rejects on a tool-use turn"},
+			{"only the `anthropic` combination is rejected at load", "no second style-keyed guard (D6)"},
+			{"another style (for example `reasoning_effort`)", "a Claude model under another style loads and runs the same replay, not live-verified either (TD-015)"},
 			{"under `thinking_style: anthropic`, thinking on cannot be combined with `response_format: json_object`", "providers map response_format onto a forced tool_choice, which Anthropic rejects while extended thinking is on; the live-proxy probe was inconclusive, so the clause rests on the documented provider constraint"},
+			{"the tool loop sends each assistant turn's reasoning back on every later turn", "the replay, stated positively, not just the old caveat removed"},
+			{"in the shape the provider returned it", "each provider's own member is replayed unedited, never converted"},
+			{"on assistant turns only", "reasoning never rides a user or tool-result turn"},
+			{"whatever the `thinking_style`", "the replay has no style gate (D1)"},
 		}},
 		{"`thinking_level`", registry.ThinkingLevels(), []struct{ token, why string }{
 			{"level alone implies `thinking: on`", "a level without thinking is not a missing-value error"},
@@ -51,6 +59,13 @@ func TestRegistryDoc_ThinkingRows(t *testing.T) {
 		{"`thinking_style`", registry.ThinkingStyles(), []struct{ token, why string }{
 			{"there is no default style", "a thinking key without a style is a load error"},
 			{"style alone is inert", "a style with no thinking or level sends nothing"},
+		}},
+		{"`preserve_thinking`", registry.ThinkingValues(), []struct{ token, why string }{
+			{"requires `thinking_style: " + registry.ThinkingStyleQwen + "` or `thinking_style: " + registry.ThinkingStyleGLM + "`", "only those styles have a preserved-thinking field"},
+			{"and thinking on", "the flag with thinking off is a load error"},
+			{"`preserve_thinking: true`", "the qwen wire field"},
+			{"`thinking: {\"type\":\"enabled\",\"clear_thinking\":false}`", "the glm wire object, as the code sends it"},
+			{"Unset sends nothing", "an undeclared agent's body is unchanged"},
 		}},
 	}
 	for _, r := range rows {
@@ -67,6 +82,9 @@ func TestRegistryDoc_ThinkingRows(t *testing.T) {
 			}
 		}
 	}
+	// The replay shipped in Sprint 35.16.11.2.2.1, so the old caveat must be gone.
+	require.NotContains(t, docRow(t, doc, "`thinking`"), "does not send",
+		"the `thinking` row still says the tool loop does not send reasoning back")
 }
 
 // The thinking row says a bare YAML bool is rejected and the level row says off
@@ -97,8 +115,22 @@ func TestRegistryDoc_ThinkingRejectsWhatTheDocExcludes(t *testing.T) {
 	require.ErrorContains(t, load("    thinking: "+registry.ThinkingOn+"\n    temperature: 0.7\n"+anthropic), "needs temperature 1",
 		"the doc says anthropic thinking on with another temperature is rejected at load")
 	require.NoError(t, load("    thinking: "+registry.ThinkingOn+"\n"+anthropic), "the doc says an unset temperature loads")
-	require.ErrorContains(t, load("    thinking: "+registry.ThinkingOn+"\n    supports_function_calling: true\n"+anthropic), "cannot use supports_function_calling",
+	fcErr := load("    thinking: " + registry.ThinkingOn + "\n    supports_function_calling: true\n" + anthropic)
+	require.ErrorContains(t, fcErr, "cannot use supports_function_calling",
 		"the doc says anthropic thinking on with function calling is rejected at load")
+	require.ErrorContains(t, fcErr, "has not been verified against a live Anthropic model",
+		"the doc and the load error must give the same reason")
+	require.NoError(t, load("    thinking_level: "+registry.ThinkingLevelHigh+"\n    supports_function_calling: true\n"+effort),
+		"the doc says only the anthropic combination is rejected: another style with function calling loads")
+	glm := "    thinking_style: " + registry.ThinkingStyleGLM + "\n"
+	for _, s := range []string{style, glm} {
+		require.NoError(t, load("    thinking: "+registry.ThinkingOn+"\n    preserve_thinking: "+registry.ThinkingOn+"\n"+s),
+			"the doc says preserve_thinking loads under qwen or glm with thinking on")
+	}
+	require.ErrorContains(t, load("    thinking: "+registry.ThinkingOn+"\n    preserve_thinking: "+registry.ThinkingOn+"\n"+anthropic),
+		"has no preserve_thinking", "the doc says preserve_thinking is rejected under any other style")
+	require.ErrorContains(t, load("    thinking: "+registry.ThinkingOff+"\n    preserve_thinking: "+registry.ThinkingOn+"\n"+style),
+		"thinking is not on", "the doc says preserve_thinking needs thinking on")
 	require.ErrorContains(t, load("    thinking_level: "+registry.ThinkingLevelLow+"\n    thinking_style: "+registry.ThinkingStyleTemplateKwargs+"\n"),
 		`"template_kwargs" has no level`, "the doc says a level under template_kwargs is rejected at load")
 }
@@ -167,6 +199,7 @@ func TestRegistryDoc_ThinkingStyleTable(t *testing.T) {
 		registry.ThinkingStyleQwen: {
 			{"`enable_thinking: bool`", "the qwen style's on/off field"},
 			{"`thinking_budget`", "the qwen style sends the level's budget"},
+			{"`preserve_thinking: bool` when `preserve_thinking` is set", "the qwen preserved-thinking field"},
 		},
 		registry.ThinkingStyleTemplateKwargs: {
 			{"`chat_template_kwargs: {\"enable_thinking\": bool}`", "the template_kwargs style's only field"},
@@ -188,6 +221,7 @@ func TestRegistryDoc_ThinkingStyleTable(t *testing.T) {
 			{"`thinking: {\"type\": \"disabled\"}`", "the glm style's off shape"},
 			{"no level", "a level under glm is rejected at load"},
 			{"keeps its `temperature`", "only anthropic drops the temperature"},
+			{"`\"clear_thinking\": false` when `preserve_thinking` is `on`", "the glm preserved-thinking field is inverted"},
 		},
 	}
 	// Rows are read from the table after the intro only, so another table with a
@@ -241,6 +275,13 @@ func TestRegistryDoc_ThinkingMaxTokensNote(t *testing.T) {
 		{"thinking tokens count against the output cap on most providers", "raising max_tokens alone does not stop a runaway thinker"},
 		{"`thinking: off` is the first fix for a model that truncates with zero findings", "archer ran to about 100k tokens with no findings"},
 		{"under `reasoning_effort`, use `thinking_level: low` instead", "thinking: off is a load error under that style"},
+	})
+	// Sprint 35.16.11.2.2.1: LiteLLM's modify_params hides a missing-reasoning
+	// failure instead of raising it, so the doc names the silent failure mode.
+	assertStates(t, "modify_params warning", docLineWith(t, doc, "**Thinking and LiteLLM `modify_params`.**"), []struct{ token, why string }{
+		{"`modify_params=True`", "the proxy setting that causes it"},
+		{"silently turns thinking off for that turn", "the specific failure mode, not a generic caveat"},
+		{"instead of returning the provider's 400", "the visible failure it replaces"},
 	})
 	// TD-008: the executor lane's gap is named, as the max_tokens row names its own,
 	// and the claim is checked against ExecutorConfig so it cannot go stale.
