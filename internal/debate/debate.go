@@ -8,6 +8,7 @@ import (
 	reclib "github.com/samestrin/atcr/reconcile"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -488,7 +489,7 @@ func deduplicateFindings(findings []reconcile.JSONFinding) []reconcile.JSONFindi
 
 // debateOne casts and runs the debate for a single item, records its transcript,
 // and returns the recorded outcome. It never returns an error: an uncast item, a
-// halted judge, or an unparseable ruling all degrade to an unresolved ItemResult.
+// halted seat, or an unparseable ruling all degrade to an unresolved ItemResult.
 func debateOne(ctx context.Context, debateDir string, item reconcile.DisagreementItem, cfg Config, reg *registry.Registry, cc fanout.ChatCompleter, disp Dispatcher) ItemResult {
 	ir := ItemResult{File: item.File, Line: item.Line, Kind: item.Kind, Problem: item.Problem, OriginalSeverity: item.Severity}
 
@@ -517,6 +518,15 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 		ir.Outcome = OutcomeUnresolved
 		ir.Reason = "judge_halted"
 		tr.RecordRuling(RulingEvent{Outcome: OutcomeUnresolved, Reasoning: "judge halted"})
+		return ir
+	}
+	if len(rec.Halted) > 0 {
+		// A halted proposer or challenger made no case (its statement is empty),
+		// so the judge ruled on one side only. Recording that as an uphold or
+		// overturn would read as a contested ruling that never happened.
+		ir.Outcome = OutcomeUnresolved
+		ir.Reason = "seat_halted"
+		tr.RecordRuling(RulingEvent{Outcome: OutcomeUnresolved, Reasoning: "seat halted: " + strings.Join(rec.Halted, ",")})
 		return ir
 	}
 
@@ -562,9 +572,9 @@ func splitSeverity(ir ItemResult) string {
 	return ""
 }
 
-// judgeHalted reports whether the judge seat is among the halted seats — the only
-// halt that invalidates the ruling (a halted proposer/challenger still leaves the
-// judge a verdict to render on the available statements).
+// judgeHalted reports whether the judge seat is among the halted seats. A halted
+// judge yields no ruling at all; a halted proposer/challenger yields a one-sided
+// one, which debateOne also records unresolved (reason seat_halted).
 func judgeHalted(halted []string) bool {
 	for _, h := range halted {
 		if h == LabelJudge {
