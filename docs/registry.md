@@ -138,9 +138,7 @@ An agent may not appear twice, and may not appear in both `agents` and `serial_a
 
 ### Config-key ↔ CLI flag mapping
 
-Most shared settings have an `atcr review` CLI override, but three flag names
-differ from their config keys — the mapping is not derivable from the key name
-alone:
+Most shared settings have an `atcr review` CLI override, but three flag names differ from their config keys — the mapping is not derivable from the key name alone:
 
 | Config key (`.atcr/config.yaml`) | CLI flag (`atcr review`) |
 |----------------------------------|--------------------------|
