@@ -1316,6 +1316,11 @@ func validateThinking(name string, a AgentConfig) ([]error, []string) {
 			// Already reported as an invalid thinking_style above.
 		case !slices.Contains(preserveThinkingStyles, a.ThinkingStyle):
 			errs = append(errs, agentErrf(name, "agent '%s': thinking_style %q has no preserve_thinking: only %s send it", name, a.ThinkingStyle, strings.Join(preserveThinkingStyles, ", ")))
+		case a.Thinking != "" && !slices.Contains(thinkingValues, a.Thinking):
+			// TD internal/registry/config.go:1309: an invalid thinking value was
+			// already reported above — ThinkingEnabled is false for it, so the
+			// "thinking is not on" case would double-report and send the user
+			// after the flag instead of the invalid value.
 		case !thinkingOn:
 			errs = append(errs, agentErrf(name, "agent '%s': preserve_thinking is set but thinking is not on: set thinking: %s or remove preserve_thinking", name, ThinkingOn))
 		}

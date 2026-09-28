@@ -122,6 +122,18 @@ func TestValidateAgent_PreserveThinkingMessagesBuiltFromStyleSet(t *testing.T) {
 	assert.Contains(t, err.Error(), "set thinking_style: "+orJoined)
 }
 
+// TD internal/registry/config.go:1309: an invalid thinking VALUE with the flag
+// set is one fault (the value), not two — the "thinking is not on" case must
+// not fire for it, or the operator is sent after preserve_thinking instead of
+// the invalid value.
+func TestValidateAgent_PreserveThinkingInvalidValueIsOneFault(t *testing.T) {
+	captureThinkingWarnings(t)
+	_, err := LoadRegistry(writeRegistry(t, thinkingRegistry(thinkingAgent("true", "", ThinkingStyleQwen)+"    preserve_thinking: on\n")))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `invalid thinking "true"`)
+	assert.NotContains(t, err.Error(), "thinking is not on")
+}
+
 // TD-011: an unknown style with the flag is one fault (the style), not two.
 func TestValidateAgent_PreserveThinkingUnknownStyleIsOneFault(t *testing.T) {
 	captureThinkingWarnings(t)
