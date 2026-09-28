@@ -212,6 +212,17 @@ func buildDebateAgent(seat Caster, prompt string) fanout.Agent {
 			// that finishes mid-reasoning returns no parseable outcome and the item
 			// is recorded unresolved while the run reports success. The DECLARATION
 			// only; a nil pointer keeps the provider default.
+			//
+			// Unlike the skeptic lane, this lane does NOT route the declaration
+			// through verify.thinkingWire, so an ANTHROPIC-style seat whose
+			// thinking budget shares max_tokens sends budget_tokens with NO cap
+			// when max_tokens is undeclared — the request then relies on the
+			// provider's default cap staying above the budget (the exact failure
+			// documented at invoke.go:430, where a 4096 default 400ed every call).
+			// Deliberate for now: debate seats carry their own ruling semantics,
+			// and a silently manufactured cap here would change which seats halt.
+			// Declare max_tokens on any anthropic-style debate seat (TD
+			// internal/debate/protocol.go:213).
 			MaxTokens:      c.MaxTokens,
 			ResponseFormat: responseFormat,
 			// Every seat, not judge-only: see the function comment.
