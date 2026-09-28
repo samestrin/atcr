@@ -384,6 +384,28 @@ func TestChat_LengthFinishReasonWithToolCallsSetsTruncated(t *testing.T) {
 	assert.True(t, resp.Truncated, "length finish_reason with tool_calls must set Truncated")
 }
 
+// TestChat_LengthToolCallTurnClearsStructuredReasoning verifies that a
+// "length"-truncated turn carrying tool_calls does not replay its structured
+// reasoning members: a cut-off thinking_blocks value (for Anthropic, a block
+// with no signature) is neither the blocks the provider signed nor absent, and
+// history() would otherwise re-send it on every later turn.
+func TestChat_LengthToolCallTurnClearsStructuredReasoning(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"length","message":{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"grep","arguments":"{}"}}],"thinking_blocks":[{"type":"thinking","thinking":"cut o","signature":""}],"reasoning_details":[{"type":"reasoning.text","text":"cut o"}]}}]}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	resp, err := fastRetry(srv.Client()).Chat(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m1",
+	}, nil, nil)
+	require.NoError(t, err)
+	require.True(t, resp.Truncated)
+	require.Len(t, resp.Message.ToolCalls, 1)
+	assert.Nil(t, resp.Message.ThinkingBlocks, "a length-truncated turn must not replay thinking_blocks")
+	assert.Nil(t, resp.Message.ReasoningDetails, "a length-truncated turn must not replay reasoning_details")
+}
+
 // TestChat_UsageIsPerTurnNotCumulative pins the per-turn-incremental contract
 // documented on ChatResponse.Usage: each Chat() returns ONLY its own turn's
 // usage and never accumulates across calls. The fanout loop relies on this to
