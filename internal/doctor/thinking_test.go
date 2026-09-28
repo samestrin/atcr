@@ -350,7 +350,13 @@ func TestRun_NoThinkingVerdictWithoutACall(t *testing.T) {
 	require.Len(t, rep.Agents, 1)
 	assert.Equal(t, StatusMissingKey, rep.Agents[0].Status)
 	assert.Empty(t, rep.Agents[0].ThinkingStatus)
+	assert.Empty(t, rep.Agents[0].ThinkingDeclared, "thinking_declared is omitted exactly when thinking_status is")
 	assert.Empty(t, fake.completeCalls())
+
+	// A permanent failure places a call but still reaches no verdict.
+	a, _, _ := runThinking(t, thinkingTarget(t, "off", "", "qwen"), llmclient.Completion{}, &llmclient.HTTPStatusError{Status: 401, Snippet: "bad key"}, llmclient.Completion{}, nil)
+	assert.Empty(t, a.ThinkingStatus)
+	assert.Empty(t, a.ThinkingDeclared, "thinking_declared is omitted exactly when thinking_status is")
 }
 
 // AC 05-04 Error Scenario 2: not_honored alone never changes the status, the
