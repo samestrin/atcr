@@ -121,7 +121,10 @@ var infoStringAttrRe = regexp.MustCompile(`^[A-Za-z0-9_-]+=[A-Za-z0-9_-]+$`)
 func isInfoString(line string, c byte, n int) bool {
 	t := strings.TrimLeft(line, " \t")
 	rest := t[n:]
-	noContentLike := !strings.ContainsAny(rest, "|:.")
+	// The old noContentLike guard here was dead: infoStringTokenRe accepts only
+	// [A-Za-z0-9_-], so a token matching it can never carry | : or . — and any
+	// rest containing them fails at i==0 or in the default case below before a
+	// second bare word is ever counted (TD internal/stream/parser.go:114).
 	bareExtra := 0
 	for i, tok := range strings.Fields(rest) {
 		word := infoStringTokenRe.MatchString(tok)
@@ -131,7 +134,7 @@ func isInfoString(line string, c byte, n int) bool {
 				return false
 			}
 		case infoStringAttrRe.MatchString(tok):
-		case noContentLike && word:
+		case word:
 			bareExtra++
 			if bareExtra > 1 {
 				return false
