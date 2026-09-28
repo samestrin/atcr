@@ -16,9 +16,10 @@ import (
 // so a test can reproduce the degraded single-shot path a thinking-on
 // supports_function_calling:false seat takes.
 type chatTurn struct {
-	content string
-	err     error
-	meta    *llmclient.Completion
+	content   string
+	err       error
+	meta      *llmclient.Completion
+	toolCalls []llmclient.ToolCall
 }
 
 // fakeChatCompleter implements fanout.ChatCompleter. Each Chat call pops the next
@@ -96,7 +97,7 @@ func (f *fakeChatCompleter) Chat(ctx context.Context, inv llmclient.Invocation, 
 		return nil, turn.err
 	}
 	c := turn.content
-	return &llmclient.ChatResponse{Message: llmclient.Message{Role: "assistant", Content: &c}, FinishReason: "stop"}, nil
+	return &llmclient.ChatResponse{Message: llmclient.Message{Role: "assistant", Content: &c, ToolCalls: turn.toolCalls}, FinishReason: "stop"}, nil
 }
 
 // fakeDispatcher implements debate.Dispatcher with a fixed result.

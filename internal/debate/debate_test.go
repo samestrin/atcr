@@ -366,6 +366,29 @@ func TestRunDebate_ArguingSeatHaltedIsUnresolved(t *testing.T) {
 	}
 }
 
+// A seat halted by a tripped budget still returns its forced final answer, so
+// the judge ruled on both sides: that ruling must apply, not be discarded as
+// seat_halted (TD internal/debate/debate.go:523).
+func TestRunDebate_BudgetTrippedSeatWithStatementKeepsRuling(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	reg := debateRoster()
+	alice := reg.Agents["alice"]
+	one := 1
+	alice.MaxTurns = &one
+	reg.Agents["alice"] = alice
+	call := []llmclient.ToolCall{{ID: "1", Type: "function", Function: llmclient.FunctionCall{Name: "read_file", Arguments: json.RawMessage(`{"path":"a.go"}`)}}}
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{toolCalls: call},        // proposer asks for a tool on its only turn: max_turns trips
+		{content: "the defense"}, // forced final answer: a real statement
+		{content: "c"},
+		{content: `{"outcome":"uphold","reasoning":"defense holds"}`},
+	}}
+	res, err := runDebate(context.Background(), dir, reg, Options{}, harness(cc))
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Upheld)
+	assert.Zero(t, res.Unresolved)
+}
+
 func TestRunDebate_OverflowRecorded(t *testing.T) {
 	f1 := splitFinding()
 	f2 := splitFinding()
