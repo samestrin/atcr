@@ -154,9 +154,9 @@ func TestBuildSkepticAgent_NoCapForPlainUndeclaredSkeptic(t *testing.T) {
 // lane-local invariant the load-time guard only asserts for registry configs:
 // an anthropic-thinking agent that will run the TOOL LOOP (SupportsFC forwarded
 // true — the declaration the executor lane ignores, hardcoding it true) must
-// not emit thinking on the wire. The loop does not re-send prior reasoning
-// blocks, so Anthropic rejects every continuation turn — a guaranteed 400 on
-// every call beats no call, but stripping beats both.
+// not emit thinking on the wire. The loop replays prior thinking blocks, but
+// that replay is not live-verified against Anthropic, so the strip matches the
+// registry guard until it is.
 func TestBuildSkepticAgent_AnthropicThinkingStrippedForToolLoop(t *testing.T) {
 	t.Parallel()
 	sk := testSkeptic() // testSkeptic declares SupportsFC: true

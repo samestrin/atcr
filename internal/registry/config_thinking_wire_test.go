@@ -132,13 +132,16 @@ func TestValidateAgent_AnthropicThinkingTemperature(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// The tool loop does not send reasoning back on history turns, and Anthropic
-// requires the prior thinking blocks on a tool-use turn. Any lane can put an
-// agent in the tool loop (the skeptic and debate seats force tools, and a
-// fallback takes its primary's tools), but only when the agent's own model
-// declares supports_function_calling, so that flag is the guard.
+// The tool loop replays each turn's reasoning (thinking_blocks included), but
+// that replay has never run against a live Anthropic model: the proxy serves
+// none (sprint 35.16.11.2.2.1, probe result (e)), and Anthropic rejects a
+// tool-use turn whose thinking blocks are missing or altered. So the guard
+// stays until a live run proves it. Any lane can put an agent in the tool loop
+// (the skeptic and debate seats force tools, and a fallback takes its
+// primary's tools), but only when the agent's own model declares
+// supports_function_calling, so that flag is the guard.
 func TestValidateAgent_AnthropicThinkingWithFunctionCalling(t *testing.T) {
-	const wantErr = `agent 'myagent': thinking_style "anthropic" with thinking on cannot use supports_function_calling: true: the tool loop does not send reasoning back, which Anthropic requires; set supports_function_calling: false or thinking: off`
+	const wantErr = `agent 'myagent': thinking_style "anthropic" with thinking on cannot use supports_function_calling: true: the tool loop's reasoning replay has not been verified against a live Anthropic model, which rejects a tool-use turn without its thinking blocks; set supports_function_calling: false or thinking: off`
 	cases := []struct {
 		name, thinking, level, style string
 		fc, tools, wantErr           bool
@@ -146,6 +149,12 @@ func TestValidateAgent_AnthropicThinkingWithFunctionCalling(t *testing.T) {
 		{"on fc tools", ThinkingOn, "", ThinkingStyleAnthropic, true, true, true},
 		{"on fc no tools (skeptic, debate, fallback lanes)", ThinkingOn, "", ThinkingStyleAnthropic, true, false, true},
 		{"level alone fc", "", ThinkingLevelLow, ThinkingStyleAnthropic, true, false, true},
+		// No level was run live, so the guard holds at every level.
+		{"level max fc", "", ThinkingLevelMax, ThinkingStyleAnthropic, true, false, true},
+		// A Claude agent under reasoning_effort gets no second style-keyed
+		// guard: its reasoning rides the same style-agnostic replay
+		// (TestToolLoop_ReplayIgnoresThinkingStyle in internal/fanout).
+		{"reasoning_effort on fc", ThinkingOn, ThinkingLevelLow, ThinkingStyleReasoningEffort, true, true, false},
 		{"on tools without fc degrades to single-shot", ThinkingOn, "", ThinkingStyleAnthropic, false, true, false},
 		{"on no fc", ThinkingOn, "", ThinkingStyleAnthropic, false, false, false},
 		{"off fc", ThinkingOff, "", ThinkingStyleAnthropic, true, true, false},
@@ -170,6 +179,25 @@ func TestValidateAgent_AnthropicThinkingWithFunctionCalling(t *testing.T) {
 			}
 			require.NoError(t, err)
 		})
+	}
+}
+
+// Sprint 35.16.11.2.2.1 AC 05-04 Edge Case 1: the function-calling guard does
+// not mask a sibling guard. One agent that trips it and the temperature,
+// response_format, and budget guards reports all four.
+func TestValidateAgent_AnthropicFunctionCallingGuardDoesNotMaskSiblings(t *testing.T) {
+	captureThinkingWarnings(t)
+	agent := thinkingAgent(ThinkingOn, ThinkingLevelMax, ThinkingStyleAnthropic) +
+		"    max_tokens: 4096\n    temperature: 0.5\n    response_format: json_object\n    supports_function_calling: true\n"
+	_, err := LoadRegistry(writeRegistry(t, thinkingRegistry(agent)))
+	require.Error(t, err)
+	for _, want := range []string{
+		"cannot use supports_function_calling: true",
+		"needs temperature 1",
+		`cannot use response_format: "json_object"`,
+		"is not below max_tokens 4096",
+	} {
+		assert.Contains(t, err.Error(), want)
 	}
 }
 

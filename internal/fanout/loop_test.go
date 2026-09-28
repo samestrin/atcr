@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -49,6 +50,13 @@ func runWireToolLoop(t *testing.T, responseFormat string) []string {
 // reply: members(turn) is appended inside turn's assistant message.
 func runWireToolLoopWith(t *testing.T, responseFormat string, members func(turn int) string) []string {
 	t.Helper()
+	return runWireToolLoopInv(t, llmclient.Invocation{Model: "m", ResponseFormat: responseFormat}, members)
+}
+
+// runWireToolLoopInv is runWireToolLoopWith for a given invocation; its
+// BaseURL and APIKeyEnv are pointed at the stub server.
+func runWireToolLoopInv(t *testing.T, inv llmclient.Invocation, members func(turn int) string) []string {
+	t.Helper()
 	var (
 		mu     sync.Mutex
 		bodies []string
@@ -73,7 +81,8 @@ func runWireToolLoopWith(t *testing.T, responseFormat string, members func(turn 
 	d := newFakeDispatcher()
 	d.byName["read_file"] = tools.ToolResult{Content: "x"}
 	a := toolAgent("a", 3, 0)
-	a.Invocation = llmclient.Invocation{BaseURL: srv.URL, APIKeyEnv: "ATCR_TEST_KEY", Model: "m", ResponseFormat: responseFormat}
+	inv.BaseURL, inv.APIKeyEnv = srv.URL, "ATCR_TEST_KEY"
+	a.Invocation = inv
 
 	r := toolEngine(llmclient.New(llmclient.WithHTTPClient(srv.Client())), d).invokeAgent(context.Background(), a)
 	require.Equal(t, StatusOK, r.Status)
@@ -217,6 +226,47 @@ func TestToolLoop_ReplaysEachReasoningShapeUnderItsKey(t *testing.T) {
 			assert.Empty(t, reasoningOn(msgs[2]))
 		})
 	}
+}
+
+// Sprint 35.16.11.2.2.1 AC 05-03: replay has no thinking_style gate. LiteLLM
+// can turn reasoning_effort into Anthropic extended thinking for a Claude
+// model, so a reasoning_effort agent must replay LiteLLM's Claude reply shape
+// exactly as an anthropic-style agent does. The registry adds no second guard
+// for it; this test is the closure.
+func TestToolLoop_ReplayIgnoresThinkingStyle(t *testing.T) {
+	const (
+		content = `"reasoning_content":"step 1"`
+		blocks  = `"thinking_blocks":[{"type":"thinking","thinking":"step 1","signature":"EqQBCkgIARABGAIiQL+/zzA0Xq9b=="}]`
+	)
+	claudeTurn := func(turn int) string {
+		if turn == 1 {
+			return content + "," + blocks
+		}
+		return ""
+	}
+	styles := []struct {
+		name, wire string
+		inv        llmclient.Invocation
+	}{
+		{"anthropic", `"thinking":{"type":"enabled"`, llmclient.Invocation{Model: "claude",
+			Thinking: registry.ThinkingOn, ThinkingLevel: registry.ThinkingLevelLow, ThinkingStyle: registry.ThinkingStyleAnthropic}},
+		{"reasoning_effort", `"reasoning_effort":"low"`, llmclient.Invocation{Model: "claude",
+			Thinking: registry.ThinkingOn, ThinkingLevel: registry.ThinkingLevelLow, ThinkingStyle: registry.ThinkingStyleReasoningEffort}},
+	}
+	replayed := map[string]map[string]string{}
+	for _, s := range styles {
+		bodies := runWireToolLoopInv(t, s.inv, claudeTurn)
+		require.Contains(t, bodies[1], s.wire, "%s: the declared style must reach the wire", s.name)
+		msgs := wireMessages(t, bodies[1])
+		require.Len(t, msgs, 3, "prompt, assistant tool call, tool result")
+		replayed[s.name] = reasoningOn(msgs[1])
+	}
+	want := map[string]string{
+		"reasoning_content": `"step 1"`,
+		"thinking_blocks":   `[{"type":"thinking","thinking":"step 1","signature":"EqQBCkgIARABGAIiQL+/zzA0Xq9b=="}]`,
+	}
+	assert.Equal(t, want, replayed["anthropic"])
+	assert.Equal(t, want, replayed["reasoning_effort"])
 }
 
 // AC 04-01 Scenario 2 and AC 04-02: each assistant turn carries its own
