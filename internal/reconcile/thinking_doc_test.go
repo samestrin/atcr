@@ -37,7 +37,8 @@ func TestRegistryDoc_ThinkingRows(t *testing.T) {
 		{"`thinking`", registry.ThinkingValues(), []struct{ token, why string }{
 			{"byte-identical", "an agent with no thinking keys sends the same request body as before the keys existed"},
 			{"bare `true`/`false` is rejected", "the field is a string so a YAML bool is not aliased to on/off"},
-			{"`off` is rejected (use `thinking_level: low`)", "reasoning_effort has no off value; the row must give the fix the load error gives"},
+			{"set a `thinking_level` instead", "reasoning_effort has no off value; the row states the constraint without prescribing low, which epic 35.16.11.2.2.2 measured silencing nemotron-3-super-120b"},
+			{"see **Thinking and `max_tokens`**", "the row cross-references the note that says which level is safe"},
 			{"`on` requires a `thinking_level`", "reasoning_effort has no on-without-level value"},
 			{"under `thinking_style: anthropic`, thinking on needs `temperature` unset or `1`", "Anthropic rejects extended thinking at any other temperature; a declared one fails the load"},
 			{"under `thinking_style: anthropic`, thinking on cannot be combined with `supports_function_calling: true`", "the guard stays (AC 05-02); skeptic, debate, and fallback lanes can put any function-calling agent in the loop"},
@@ -245,7 +246,8 @@ func TestRegistryDoc_ThinkingStyleTable(t *testing.T) {
 			{"`reasoning_effort`", "the reasoning_effort style's field"},
 			{"`max` is sent as `high`", "high is the most the style accepts"},
 			{"no off value", "thinking: off is a load error under this style"},
-			{"use `thinking_level: low`", "the fix the load error gives"},
+			{"set a `thinking_level` instead", "the row states the constraint without prescribing low, which epic 35.16.11.2.2.2 measured silencing nemotron-3-super-120b"},
+			{"see **Thinking and `max_tokens`**", "the row cross-references the note that says which level is safe"},
 		},
 		registry.ThinkingStyleAnthropic: {
 			{"`thinking: {\"type\": \"enabled\", \"budget_tokens\": N}`", "the anthropic style's on shape"},
