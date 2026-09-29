@@ -418,6 +418,7 @@ func TestRegistryDoc_ThinkingMaxTokensNote(t *testing.T) {
 		{"close the array before stopping", "archer left a finding's JSON unclosed"},
 		{"`response_format: json_object` is not a fix for this", "JSON mode answered whole chunks with an empty object"},
 		{"`{\"findings\":[]}`", "the measured empty-review shape under JSON mode"},
+		{"declaring `response_format: json_object` also drops this rule", "JSON mode swaps the persona's ## Output Format section at render time, so the persona fix is lost silently"},
 	})
 	// Sprint 35.16.11.2.2.1: LiteLLM's modify_params hides a missing-reasoning
 	// failure instead of raising it, so the doc names the silent failure mode.
