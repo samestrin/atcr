@@ -2953,14 +2953,16 @@ func diffCacheKey(prompt string, in CacheKeyInputs) string {
 	// so an undeclared agent keeps its pre-existing on-disk key. The clauses key
 	// the declaration, not the wire body, so two declarations that send the same
 	// body (a level alone vs. on plus that level) miss each other's entry: a
-	// spurious miss, never a collision.
+	// spurious miss, never a collision. A style alone declares nothing and sends
+	// no field, so its clause is gated on registry.ThinkingDeclared and a
+	// style-only agent keeps the undeclared key.
 	if in.Thinking != "" {
 		tuning = tuning + "\x00th=" + in.Thinking
 	}
 	if in.ThinkingLevel != "" {
 		tuning = tuning + "\x00tl=" + in.ThinkingLevel
 	}
-	if in.ThinkingStyle != "" {
+	if in.ThinkingStyle != "" && registry.ThinkingDeclared(in.Thinking, in.ThinkingLevel) {
 		tuning = tuning + "\x00ts=" + in.ThinkingStyle
 	}
 	// preserve_thinking keys the wire body (the replayed reasoning members it
