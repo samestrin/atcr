@@ -1,3 +1,21 @@
+## [35.31.0] - 2026-09-29
+
+*Epic 35.16.11.2.2.3 — diffcachekey cachekeyinputs struct.*
+
+An agent that sets `thinking_style` alone no longer gets a different diff-cache key or a thinking style in its model-invocation record. A style with no `thinking` or `thinking_level` sends nothing, so the cache and the audit record now treat it as undeclared, the same way `atcr doctor` already did.
+
+### Fixed
+
+- A style-only agent keeps its pre-existing diff-cache key, so a byte-identical request no longer misses the cache.
+- The model-invocation record (`hookobs.Invocation` and the exported `cli.ModelInvocation`) reports an empty `ThinkingStyle` for a call that sent no thinking field, on every call path (fan-out, verify, debate, doctor).
+
+### Changed
+
+- New `registry.ThinkingDeclared` holds the "declared = thinking or thinking_level set" rule used by the cache key and the telemetry gate.
+- `diffCacheKey` takes a `CacheKeyInputs` struct instead of 11 positional parameters, so adjacent same-typed values cannot be swapped silently. Key bytes are unchanged for every declared agent.
+
+*Shipped via /execute-epic (epic 35.16.11.2.2.3)*
+
 ## [35.30.0] - 2026-09-29
 
 *Epic 35.16.11.2.2.2 — runaway agents content prose and silent lanes.*
