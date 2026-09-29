@@ -396,10 +396,28 @@ func TestRegistryDoc_GLMClearThinkingSpellingMatchesWire(t *testing.T) {
 // AC 07-01 Scenario 3: the max_tokens interaction.
 func TestRegistryDoc_ThinkingMaxTokensNote(t *testing.T) {
 	doc := readRepoFile(t, "../../docs/registry.md")
-	assertStates(t, "thinking and max_tokens note", docLineWith(t, doc, "**Thinking and `max_tokens`.**"), []struct{ token, why string }{
+	maxTokensNote := docLineWith(t, doc, "**Thinking and `max_tokens`.**")
+	assertStates(t, "thinking and max_tokens note", maxTokensNote, []struct{ token, why string }{
 		{"thinking tokens count against the output cap on most providers", "raising max_tokens alone does not stop a runaway thinker"},
 		{"`thinking: off` is the first fix for a model that truncates with zero findings", "archer ran to about 100k tokens with no findings"},
-		{"under `reasoning_effort`, use `thinking_level: low` instead", "thinking: off is a load error under that style"},
+		// Epic 35.16.11.2.2.2: the old remedy (thinking_level: low) silenced
+		// nemotron-3-super-120b, and medium/high still truncated, so the note
+		// names the measured fix instead.
+		{"a lower level is not a safe fix", "thinking_level: low stops the review instead of the runaway"},
+		{"answer `NO FINDINGS` in under 20 output tokens", "the measured silent-lane shape on nemotron-3-super-120b"},
+		{"`medium` and `high` still truncated", "no reasoning_effort level fixed that model"},
+		{"repoint the agent to a different model", "the fix the epic's probe matrix proved"},
+	})
+	require.NotContains(t, maxTokensNote, "use `thinking_level: low` instead", "the max_tokens note must not offer thinking_level: low as a remedy: it silences the lane")
+	// Epic 35.16.11.2.2.2: thinking: off reaches only the reasoning channel; the
+	// content-channel runaway needs a persona fix, and JSON mode is not one.
+	assertStates(t, "prose-in-reply note", docLineWith(t, doc, "**Thinking and prose in the reply.**"), []struct{ token, why string }{
+		{"`thinking: off` stops the reasoning channel only", "archer and llm-large still planned in the reply with thinking off"},
+		{"No thinking key reaches that channel", "the doctor honored verdict does not predict a clean review"},
+		{"forbids analysis in the reply", "the persona remedy the probe matrix proved"},
+		{"close the array before stopping", "archer left a finding's JSON unclosed"},
+		{"`response_format: json_object` is not a fix for this", "JSON mode answered whole chunks with an empty object"},
+		{"`{\"findings\":[]}`", "the measured empty-review shape under JSON mode"},
 	})
 	// Sprint 35.16.11.2.2.1: LiteLLM's modify_params hides a missing-reasoning
 	// failure instead of raising it, so the doc names the silent failure mode.
