@@ -40,11 +40,11 @@ func TestThinkingNotHonoredWarnings_SplitByDeclaredPolarity(t *testing.T) {
 	assert.NotContains(t, joined, "dave (model-d)", "honored agents are never named")
 }
 
-// TD cli/doctor.go:367: when the probe sent preserve_thinking and the provider
-// rejected the declaration, the on-polarity remedy must name "retry without
-// preserve_thinking" FIRST — the current copy sends the operator after
-// thinking_style/model, the wrong knobs when the flagged culprit is the
-// preserve flag itself.
+// TD cli/doctor.go:361: the preserve remedy is per-AGENT, not per-line. When a
+// preserve_thinking probe and a plain on-polarity probe are both not honored,
+// they must get SEPARATE lines: only the preserve-sending agent is told to
+// "retry without preserve_thinking first" — that remedy is wrong for an agent
+// that never sent the flag (the preserve remedy is named first on its line).
 func TestThinkingNotHonoredWarnings_NamesPreserveThinkingRemedyFirst(t *testing.T) {
 	rep := &doctor.Report{Agents: []doctor.AgentResult{
 		{Agent: "erin", Model: "model-e", ThinkingStatus: doctor.ThinkingNotHonored, ThinkingDeclared: registry.ThinkingOn, ThinkingPreserve: registry.ThinkingOn},
@@ -52,15 +52,22 @@ func TestThinkingNotHonoredWarnings_NamesPreserveThinkingRemedyFirst(t *testing.
 	}}
 
 	lines := thinkingNotHonoredWarnings(rep)
-	require.Len(t, lines, 1)
-	// The preserve remedy is named before the style/model remedies.
-	preserveIdx := strings.Index(lines[0], "retry without preserve_thinking")
+	require.Len(t, lines, 2, "preserve-sending and plain on-polarity agents get separate warning lines")
+
+	// The preserve line names ONLY the preserve-sending agent, preserve remedy first.
+	preserveLine, plainLine := lines[0], lines[1]
+	require.Contains(t, preserveLine, "erin (model-e)")
+	require.NotContains(t, preserveLine, "frank (model-f)", "the preserve remedy must not be offered to an agent that never sent the flag")
+	preserveIdx := strings.Index(preserveLine, "retry without preserve_thinking")
 	require.Greater(t, preserveIdx, -1, "warning must name 'retry without preserve_thinking'")
-	styleIdx := strings.Index(lines[0], "thinking_style")
+	styleIdx := strings.Index(preserveLine, "thinking_style")
 	require.Greater(t, styleIdx, -1, "warning keeps the style/model remedies")
 	require.Less(t, preserveIdx, styleIdx, "preserve remedy comes first")
-	assert.Contains(t, lines[0], "erin (model-e)")
-	assert.Contains(t, lines[0], "frank (model-f)")
+
+	// The plain line names only the non-preserve agent and carries no preserve remedy.
+	require.Contains(t, plainLine, "frank (model-f)")
+	require.NotContains(t, plainLine, "preserve_thinking", "an agent that did not send preserve_thinking must not be told to drop it")
+	require.Contains(t, plainLine, "another thinking_style or a different model")
 }
 
 // Agents that did NOT send preserve_thinking must keep the current copy —

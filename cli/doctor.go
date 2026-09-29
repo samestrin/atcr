@@ -342,7 +342,7 @@ func filterRoster(proj *registry.ProjectConfig, names []string) (*registry.Proje
 // with more budget, so only another style or model is left. One line per
 // non-empty polarity group, off-polarity first.
 func thinkingNotHonoredWarnings(rep *doctor.Report) []string {
-	var off, on []string
+	var off, on, onPreserve []string
 	for _, a := range rep.Agents {
 		if a.ThinkingStatus != doctor.ThinkingNotHonored {
 			continue
@@ -350,21 +350,16 @@ func thinkingNotHonoredWarnings(rep *doctor.Report) []string {
 		name := a.Agent + " (" + a.Model + ")"
 		if a.ThinkingDeclared == registry.ThinkingOff {
 			off = append(off, name)
+		} else if a.ThinkingPreserve != "" {
+			// A probe that itself sent preserve_thinking gets its own line: the
+			// "retry without preserve_thinking" remedy is wrong for an agent that
+			// never sent the flag (TD cli/doctor.go:361).
+			onPreserve = append(onPreserve, name)
 		} else {
 			on = append(on, name)
 		}
 	}
 	var lines []string
-	// When any flagged on-polarity probe itself sent preserve_thinking, name
-	// dropping that flag FIRST — a 4xx caused by the flag will not be fixed by
-	// another style or model (TD cli/doctor.go:367).
-	anyPreserve := false
-	for _, a := range rep.Agents {
-		if a.ThinkingStatus == doctor.ThinkingNotHonored && a.ThinkingPreserve != "" {
-			anyPreserve = true
-			break
-		}
-	}
 	if len(off) > 0 {
 		lines = append(lines, fmt.Sprintf(
 			"doctor: WARNING — thinking not honored: these agents declare thinking: off but "+
@@ -373,17 +368,23 @@ func thinkingNotHonoredWarnings(rep *doctor.Report) []string {
 				"model (see the HINT column or --json for why): %s\n",
 			strings.Join(off, ", ")))
 	}
-	if len(on) > 0 {
-		remedy := "the model likely ignores the declared field, so try another thinking_style or a different model"
-		if anyPreserve {
-			remedy = "retry without preserve_thinking first — the provider may reject the flagged request outright — " +
-				"then try another thinking_style or a different model"
-		}
+	// The preserve-sending group comes first: dropping the flag is the cheaper
+	// remedy when the flagged culprit is the preserve flag itself (TD cli/doctor.go:367).
+	if len(onPreserve) > 0 {
 		lines = append(lines, fmt.Sprintf(
 			"doctor: WARNING — thinking not honored: these agents declare thinking on (or a level) "+
-				"but the reply carried no reasoning signal; %s "+
+				"but the reply carried no reasoning signal; retry without preserve_thinking first — "+
+				"the provider may reject the flagged request outright — then try another "+
+				"thinking_style or a different model (see the HINT column or --json for why): %s\n",
+			strings.Join(onPreserve, ", ")))
+	}
+	if len(on) > 0 {
+		lines = append(lines, fmt.Sprintf(
+			"doctor: WARNING — thinking not honored: these agents declare thinking on (or a level) "+
+				"but the reply carried no reasoning signal; the model likely ignores the declared "+
+				"field, so try another thinking_style or a different model "+
 				"(see the HINT column or --json for why): %s\n",
-			remedy, strings.Join(on, ", ")))
+			strings.Join(on, ", ")))
 	}
 	return lines
 }

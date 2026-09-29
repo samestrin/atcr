@@ -123,3 +123,28 @@ func TestGenerateFixes_SnippetTruncatedWithError_FlagsNoUsablePatch(t *testing.T
 	assert.Empty(t, f.Fix, "a truncated fix must NOT be presented as a usable patch")
 	assert.Contains(t, f.FixWarning, "truncated", "truncation must take priority over the generic error warning")
 }
+
+// salvagingExecutor is a snippet-path executorCompleter whose CompleteWithMeta
+// reports the reasoning-salvage shape: EMPTY content with Salvaged=true (the
+// provider answered with chain-of-thought only; llmclient promoted it into
+// Content upstream — here we script the flag the executor must react to).
+type salvagingExecutor struct{}
+
+func (s *salvagingExecutor) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
+	return "chain of thought", nil
+}
+
+func (s *salvagingExecutor) CompleteWithMeta(_ context.Context, _ llmclient.Invocation) (llmclient.Completion, error) {
+	return llmclient.Completion{Content: "chain of thought", Salvaged: true}, nil
+}
+
+// A salvaged single-shot executor reply is NOT a patch: the reasoning the client
+// promoted into Content must never land in the Fix column. The executor must
+// record no fix and name the reason (TD internal/verify/executor.go:542).
+func TestGenerateFixes_SnippetSalvaged_NoFixReasonNamed(t *testing.T) {
+	findings := []reconcile.JSONFinding{truncFinding()}
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), &salvagingExecutor{}, nil, okDispatcher(), 0)
+	f := findings[0]
+	assert.Empty(t, f.Fix, "a salvaged (reasoning-only) reply must NOT be recorded as a patch")
+	assert.Contains(t, f.FixWarning, "salvaged", "the FixWarning must name the salvage reason, not a generic failure")
+}

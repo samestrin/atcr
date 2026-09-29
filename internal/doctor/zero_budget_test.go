@@ -375,3 +375,36 @@ func TestRun_ZeroBudgetHintKeepsTheProbeRemedyWhenTheMarkerWasAlsoAbsent(t *test
 	assert.Contains(t, hint, "111",
 		"and it must name the cap that actually capped this probe, which is the number in the row's max_tokens column")
 }
+
+// TD internal/doctor/run.go:452: a salvaged reply whose REASONING carried the
+// marker is StatusOKWarning, but the marker was found — zeroBudgetVerdict must not
+// lead with "the marker was absent", must not tell the operator to re-probe the
+// marker, and must keep the "repoint the agent" advice rather than replace it.
+func TestRun_ZeroBudgetHintOnASalvagedMarkerDoesNotClaimTheMarkerWasAbsent(t *testing.T) {
+	t.Setenv("ATCR_DOCTOR_KEY", "k")
+	tiny := 1
+	reg := regWith(
+		map[string]registry.Provider{"p": {APIKeyEnv: "ATCR_DOCTOR_KEY", BaseURL: "https://api.example/v1"}},
+		map[string]registry.AgentConfig{"a": {Provider: "p", Model: "m", ContextWindowTokens: &tiny}},
+	)
+	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a"}})
+	require.NoError(t, err)
+
+	fake := newFake(nil)
+	fake.metaFn = func(inv llmclient.Invocation) (llmclient.Completion, error) {
+		return llmclient.Completion{Content: Marker(testNonce), Salvaged: true}, nil
+	}
+
+	rep := Run(context.Background(), fake, res, Options{Nonce: testNonce, MaxTokens: 111, MaxTokensSet: true})
+
+	require.Len(t, rep.Agents, 1)
+	require.NotEqual(t, rep.Agents[0].ReviewMaxTokens, rep.Agents[0].MaxTokens,
+		"precondition: the flag makes the probe's cap differ from review's")
+	require.Equal(t, StatusOKWarning, rep.Agents[0].Status)
+
+	hint := rep.Agents[0].Hint
+	assert.Contains(t, hint, "no input budget", "precondition: the zero-budget verdict fires")
+	assert.NotContains(t, hint, "marker was absent", "the marker was found, in the salvaged reasoning")
+	assert.NotContains(t, hint, "re-probe the marker", "re-probing cannot turn reasoning into content")
+	assert.Contains(t, hint, "repoint the agent", "the salvage remedy must survive the zero-budget verdict")
+}

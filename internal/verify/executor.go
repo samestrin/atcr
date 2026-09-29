@@ -336,9 +336,15 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 					return invokeExecutor(ctx, ex, prov, *f, cc, disp, sharedTimeoutSecs, smellRetry)
 				}
 				prompt := buildFixPrompt(*f, snippet, ex, smellRetry)
-				o, tr, err := callExecutor(ctx, complete, prov, ex, prompt, sharedTimeoutSecs)
+				o, tr, salv, err := callExecutor(ctx, complete, prov, ex, prompt, sharedTimeoutSecs)
 				if err != nil && !tr {
 					return "", "fix generation failed: " + err.Error(), false
+				}
+				// A salvaged reply carries chain-of-thought, not a patch (the skeptic
+				// lane collapses the same shape to reasoning_salvaged). Return it as a
+				// named failure so no reasoning text lands in the Fix column.
+				if salv {
+					return "", "fix generation salvaged reasoning (empty content); the chain-of-thought is not a patch", false
 				}
 				return o, "", tr
 			}
@@ -515,9 +521,11 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 // unconditionally so a default executor (nil fix_timeout) against a hung provider
 // cannot block the verify run unbounded.
 // callExecutor returns the fix content, whether the response was truncated on
-// finish_reason=length, and any error. The truncation bool is only ever true via
-// the MetaCompleter path; a Complete-only completer reports false.
-func callExecutor(ctx context.Context, complete executorCompleter, prov registry.Provider, ex *registry.ExecutorConfig, prompt string, sharedTimeoutSecs int) (string, bool, error) {
+// finish_reason=length, whether the reply was a reasoning salvage (empty content
+// with the chain-of-thought promoted by llmclient — never a patch), and any error.
+// The truncation and salvage bools are only ever true via the MetaCompleter path;
+// a Complete-only completer reports false for both.
+func callExecutor(ctx context.Context, complete executorCompleter, prov registry.Provider, ex *registry.ExecutorConfig, prompt string, sharedTimeoutSecs int) (string, bool, bool, error) {
 	// EffectiveExecutorTimeoutSecs only consults Settings.TimeoutSecs, so a partial
 	// Settings literal is sufficient here.
 	timeout := ex.EffectiveExecutorTimeoutSecs(registry.Settings{TimeoutSecs: sharedTimeoutSecs})
@@ -539,10 +547,10 @@ func callExecutor(ctx context.Context, complete executorCompleter, prov registry
 	// and never silently accepted as a clean patch (Epic 19.5).
 	if mc, ok := complete.(metaCompleter); ok {
 		comp, err := mc.CompleteWithMeta(callCtx, inv)
-		return comp.Content, comp.Truncated, err
+		return comp.Content, comp.Truncated, comp.Salvaged, err
 	}
 	content, err := complete.Complete(callCtx, inv)
-	return content, false, err
+	return content, false, false, err
 }
 
 // readFixSnippet reads up to fixSnippetRadius lines on each side of line from file
