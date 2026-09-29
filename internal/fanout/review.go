@@ -2898,7 +2898,7 @@ func sizingToken(effectiveBudget int64, maxLines int) string {
 //
 // min_severity/max_findings are deterministic post-LLM filters and are correctly NOT
 // in the key.
-func diffCacheKey(prompt, model, baseURL string, temperature *float64, sizing string, maxTokens int, responseFormat, thinking, thinkingLevel, thinkingStyle string) string {
+func diffCacheKey(prompt, model, baseURL string, temperature *float64, sizing string, maxTokens int, responseFormat, thinking, thinkingLevel, thinkingStyle, preserveThinking string) string {
 	temp := "default"
 	if temperature != nil {
 		temp = strconv.FormatFloat(*temperature, 'g', -1, 64)
@@ -2944,6 +2944,14 @@ func diffCacheKey(prompt, model, baseURL string, temperature *float64, sizing st
 	}
 	if thinkingStyle != "" {
 		tuning = tuning + "\x00ts=" + thinkingStyle
+	}
+	// preserve_thinking keys the wire body (the replayed reasoning members it
+	// enables differ per flag), so it keys apart like the other thinking keys.
+	// It only matters in multi-turn tool loops — which are never cached — so on
+	// a single-shot agent the clause is inert for behavior and costs only a
+	// spurious miss, never a collision.
+	if preserveThinking != "" {
+		tuning = tuning + "\x00pt=" + preserveThinking
 	}
 	return cache.Key(cache.HashText(prompt), model, tuning)
 }
@@ -3086,7 +3094,7 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 		// keys each chunk independently because its prompt (and thus this hash)
 		// differs per chunk; the sizing token additionally distinguishes two sizing
 		// regimes that render identical prompt text.
-		CacheKey: diffCacheKey(prompt, ac.Model, prov.BaseURL, ac.Temperature, sizingToken(sz.effectiveBudget, sz.maxLines), agentMaxTokens, ac.ResponseFormat, ac.Thinking, ac.ThinkingLevel, ac.ThinkingStyle),
+		CacheKey: diffCacheKey(prompt, ac.Model, prov.BaseURL, ac.Temperature, sizingToken(sz.effectiveBudget, sz.maxLines), agentMaxTokens, ac.ResponseFormat, ac.Thinking, ac.ThinkingLevel, ac.ThinkingStyle, ac.PreserveThinking),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,
@@ -3095,10 +3103,11 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 			MaxTokens:   &agentMaxTokens,
 			Prompt:      prompt,
 			// response_format is this agent's OWN declaration, like SupportsFC.
-			ResponseFormat: ac.ResponseFormat,
-			Thinking:       ac.Thinking,
-			ThinkingLevel:  ac.ThinkingLevel,
-			ThinkingStyle:  ac.ThinkingStyle,
+			ResponseFormat:   ac.ResponseFormat,
+			Thinking:         ac.Thinking,
+			ThinkingLevel:    ac.ThinkingLevel,
+			ThinkingStyle:    ac.ThinkingStyle,
+			PreserveThinking: ac.PreserveThinking,
 		},
 	}, nil
 }
@@ -3688,7 +3697,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		// keeps it off both its primary's cache entry and its own un-refit form's:
 		// the prompt is hashed, so a re-sized payload is a different key by
 		// construction, and the sizing token additionally separates the two budgets.
-		CacheKey: diffCacheKey(fbPrompt, ac.Model, prov.BaseURL, ac.Temperature, sizingToken(fbSizingBudget, fbMaxLines), fbMaxTokens, ac.ResponseFormat, ac.Thinking, ac.ThinkingLevel, ac.ThinkingStyle),
+		CacheKey: diffCacheKey(fbPrompt, ac.Model, prov.BaseURL, ac.Temperature, sizingToken(fbSizingBudget, fbMaxLines), fbMaxTokens, ac.ResponseFormat, ac.Thinking, ac.ThinkingLevel, ac.ThinkingStyle, ac.PreserveThinking),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,
@@ -3703,9 +3712,10 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 			ResponseFormat: ac.ResponseFormat,
 			// Thinking follows the same rule, on both arms: a fallback that
 			// declares nothing sends nothing, whatever its primary declared.
-			Thinking:      ac.Thinking,
-			ThinkingLevel: ac.ThinkingLevel,
-			ThinkingStyle: ac.ThinkingStyle,
+			Thinking:         ac.Thinking,
+			ThinkingLevel:    ac.ThinkingLevel,
+			ThinkingStyle:    ac.ThinkingStyle,
+			PreserveThinking: ac.PreserveThinking,
 		},
 	}, warned, nil
 }

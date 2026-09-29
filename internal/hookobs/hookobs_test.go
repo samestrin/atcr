@@ -866,11 +866,20 @@ func TestWrap_EchoesDeclaredThinking(t *testing.T) {
 		},
 	}
 	for name, call := range calls {
-		for _, decl := range [][3]string{{"on", "low", "anthropic"}, {}} {
+		// TD internal/hookobs/hookobs_test.go:870: the qwen case stays, the
+		// anthropic echo case is restored (preserve empty — that style has no
+		// such field), and a declaration-differs-from-wire case pins that the
+		// record echoes the DECLARED keys, not ones derived from the wire.
+		for _, decl := range [][4]string{
+			{"on", "low", "qwen", "on"},
+			{"on", "", "anthropic", ""},
+			{"off", "", "qwen", "off"},
+			{},
+		} {
 			t.Run(fmt.Sprintf("%s/%v", name, decl), func(t *testing.T) {
 				srv := chatServer(t, http.StatusOK, okCompletion)
 				inv := testInvocation(t, srv)
-				inv.Thinking, inv.ThinkingLevel, inv.ThinkingStyle = decl[0], decl[1], decl[2]
+				inv.Thinking, inv.ThinkingLevel, inv.ThinkingStyle, inv.PreserveThinking = decl[0], decl[1], decl[2], decl[3]
 				obs := &recordingObserver{}
 				ctx := observedCtx(obs, &bytes.Buffer{})
 
@@ -878,7 +887,7 @@ func TestWrap_EchoesDeclaredThinking(t *testing.T) {
 
 				require.Len(t, obs.calls(), 1)
 				got := obs.calls()[0]
-				assert.Equal(t, decl, [3]string{got.Thinking, got.ThinkingLevel, got.ThinkingStyle})
+				assert.Equal(t, decl, [4]string{got.Thinking, got.ThinkingLevel, got.ThinkingStyle, got.PreserveThinking})
 			})
 		}
 	}

@@ -134,6 +134,7 @@ func rejectMachineLocalFields(name string, cfg AgentConfig) error {
 		{"thinking", cfg.Thinking},
 		{"thinking_level", cfg.ThinkingLevel},
 		{"thinking_style", cfg.ThinkingStyle},
+		{"preserve_thinking", cfg.PreserveThinking},
 	} {
 		if f.value != "" {
 			errs = append(errs, fmt.Errorf("community persona %q must not declare %s: "+

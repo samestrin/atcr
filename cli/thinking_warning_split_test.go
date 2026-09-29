@@ -40,6 +40,40 @@ func TestThinkingNotHonoredWarnings_SplitByDeclaredPolarity(t *testing.T) {
 	assert.NotContains(t, joined, "dave (model-d)", "honored agents are never named")
 }
 
+// TD cli/doctor.go:367: when the probe sent preserve_thinking and the provider
+// rejected the declaration, the on-polarity remedy must name "retry without
+// preserve_thinking" FIRST — the current copy sends the operator after
+// thinking_style/model, the wrong knobs when the flagged culprit is the
+// preserve flag itself.
+func TestThinkingNotHonoredWarnings_NamesPreserveThinkingRemedyFirst(t *testing.T) {
+	rep := &doctor.Report{Agents: []doctor.AgentResult{
+		{Agent: "erin", Model: "model-e", ThinkingStatus: doctor.ThinkingNotHonored, ThinkingDeclared: registry.ThinkingOn, ThinkingPreserve: registry.ThinkingOn},
+		{Agent: "frank", Model: "model-f", ThinkingStatus: doctor.ThinkingNotHonored, ThinkingDeclared: registry.ThinkingOn},
+	}}
+
+	lines := thinkingNotHonoredWarnings(rep)
+	require.Len(t, lines, 1)
+	// The preserve remedy is named before the style/model remedies.
+	preserveIdx := strings.Index(lines[0], "retry without preserve_thinking")
+	require.Greater(t, preserveIdx, -1, "warning must name 'retry without preserve_thinking'")
+	styleIdx := strings.Index(lines[0], "thinking_style")
+	require.Greater(t, styleIdx, -1, "warning keeps the style/model remedies")
+	require.Less(t, preserveIdx, styleIdx, "preserve remedy comes first")
+	assert.Contains(t, lines[0], "erin (model-e)")
+	assert.Contains(t, lines[0], "frank (model-f)")
+}
+
+// Agents that did NOT send preserve_thinking must keep the current copy —
+// no preserve remedy injected.
+func TestThinkingNotHonoredWarnings_NoPreserveRemedyWhenFlagUnsent(t *testing.T) {
+	rep := &doctor.Report{Agents: []doctor.AgentResult{
+		{Agent: "gina", Model: "model-g", ThinkingStatus: doctor.ThinkingNotHonored, ThinkingDeclared: registry.ThinkingOn},
+	}}
+	lines := thinkingNotHonoredWarnings(rep)
+	require.Len(t, lines, 1)
+	assert.NotContains(t, lines[0], "preserve_thinking")
+}
+
 func TestThinkingNotHonoredWarnings_SinglePolarity(t *testing.T) {
 	offOnly := &doctor.Report{Agents: []doctor.AgentResult{
 		{Agent: "alice", Model: "model-a", ThinkingStatus: doctor.ThinkingNotHonored, ThinkingDeclared: registry.ThinkingOff},

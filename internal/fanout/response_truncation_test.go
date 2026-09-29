@@ -19,6 +19,7 @@ import (
 type metaTruncatingCompleter struct {
 	content   string
 	truncated bool
+	salvaged  bool
 }
 
 func (m *metaTruncatingCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
@@ -26,7 +27,7 @@ func (m *metaTruncatingCompleter) Complete(_ context.Context, _ llmclient.Invoca
 }
 
 func (m *metaTruncatingCompleter) CompleteWithMeta(_ context.Context, _ llmclient.Invocation) (llmclient.Completion, error) {
-	return llmclient.Completion{Content: m.content, Truncated: m.truncated}, nil
+	return llmclient.Completion{Content: m.content, Truncated: m.truncated, Salvaged: m.salvaged}, nil
 }
 
 // --- Task 1: the truncation signal reaches the Result on both paths ----------
@@ -356,4 +357,23 @@ func TestResult_ParsedFindingCount_CountsOnlyCompleteJSONFindings(t *testing.T) 
 		`{"severity":"LOW","file_line":"b.go:2","problem":"q"},` + "\n" +
 		`{"severity":"LOW","file_line":"c.go:3","prob`}
 	assert.Equal(t, 2, r.ParsedFindingCount())
+}
+
+// TD internal/llmclient/client.go:394: a salvaged reply (empty content, the
+// chain-of-thought promoted to Content, finish_reason=stop) comes back StatusOK
+// and NOT truncated — caching it would replay one model's raw reasoning as a
+// clean review on a later same-diff run. The cache gate must read the Salvaged
+// marker, not just ResponseTruncated.
+func TestCache_DoesNotCacheSalvagedReply(t *testing.T) {
+	cache := &memCache{m: map[string]string{}}
+	c := &metaTruncatingCompleter{content: "CHAIN OF THOUGHT ONLY", salvaged: true}
+	e := NewEngine(c, WithCache(cache, false))
+	slot := Slot{Primary: Agent{Name: "bruce", CacheKey: "k1", Invocation: llmclient.Invocation{Model: "m"}}}
+
+	r := e.invokeSlot(context.Background(), slot)
+	assert.Equal(t, StatusOK, r.Status, "the salvage still contributes; only caching is refused")
+	assert.True(t, r.Salvaged, "the Salvaged marker must ride the Result")
+
+	_, cached := cache.m["k1"]
+	assert.False(t, cached, "a salvaged reply must not be written to the diff cache")
 }

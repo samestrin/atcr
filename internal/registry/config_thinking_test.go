@@ -269,7 +269,7 @@ func TestAgentConfig_ThinkingYAMLRoundTrip(t *testing.T) {
 func TestThinkingLegalValues_ReturnCopies(t *testing.T) {
 	assert.Equal(t, []string{ThinkingOn, ThinkingOff}, ThinkingValues())
 	assert.Equal(t, []string{"low", "medium", "high", "max"}, ThinkingLevels())
-	assert.Equal(t, []string{"qwen", "template_kwargs", "reasoning_effort", "anthropic"}, ThinkingStyles())
+	assert.Equal(t, []string{"qwen", "template_kwargs", "reasoning_effort", "anthropic", "glm"}, ThinkingStyles())
 
 	ThinkingValues()[0] = "x"
 	ThinkingLevels()[0] = "x"

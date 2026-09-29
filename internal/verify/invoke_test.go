@@ -154,9 +154,9 @@ func TestBuildSkepticAgent_NoCapForPlainUndeclaredSkeptic(t *testing.T) {
 // lane-local invariant the load-time guard only asserts for registry configs:
 // an anthropic-thinking agent that will run the TOOL LOOP (SupportsFC forwarded
 // true — the declaration the executor lane ignores, hardcoding it true) must
-// not emit thinking on the wire. The loop does not re-send prior reasoning
-// blocks, so Anthropic rejects every continuation turn — a guaranteed 400 on
-// every call beats no call, but stripping beats both.
+// not emit thinking on the wire. The loop replays prior thinking blocks, but
+// that replay is not live-verified against Anthropic, so the strip matches the
+// registry guard until it is.
 func TestBuildSkepticAgent_AnthropicThinkingStrippedForToolLoop(t *testing.T) {
 	t.Parallel()
 	sk := testSkeptic() // testSkeptic declares SupportsFC: true
@@ -1797,4 +1797,71 @@ func TestBuildSkepticAgent_ForwardsThinking(t *testing.T) {
 	assert.Empty(t, undeclared.Invocation.Thinking)
 	assert.Empty(t, undeclared.Invocation.ThinkingLevel)
 	assert.Empty(t, undeclared.Invocation.ThinkingStyle)
+}
+
+// Sprint 35.16.11.2.2.1 AC 03-04 Scenario 3: the skeptic sends its own
+// preserve_thinking in both lanes; an undeclared skeptic sends none.
+//
+// TD internal/verify/invoke_test.go:1804: table-driven over {qwen, glm} x
+// {SupportsFC true, false} x {on, off}, plus an anthropic case. 'off' has
+// distinct wire semantics per provider (qwen preserve_thinking:false, glm
+// clear_thinking:true) and is forwarded verbatim too; the anthropic case pins
+// that the Invocation forwards the declaration while llmclient's mapper renders
+// no preserve member for that style.
+func TestBuildSkepticAgent_ForwardsPreserveThinking(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name       string
+		style      string
+		supportsFC bool
+		preserve   string
+		want       string
+	}{
+		{"qwen fc on", "qwen", true, "on", "on"},
+		{"qwen single-shot on", "qwen", false, "on", "on"},
+		{"glm fc on", "glm", true, "on", "on"},
+		{"glm single-shot on", "glm", false, "on", "on"},
+		{"qwen fc off", "qwen", true, "off", "off"},
+		{"qwen single-shot off", "qwen", false, "off", "off"},
+		{"glm fc off", "glm", true, "off", "off"},
+		{"glm single-shot off", "glm", false, "off", "off"},
+		{"anthropic forwards verbatim", "anthropic", true, "on", "on"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sk := testSkeptic()
+			sk.Config.Thinking, sk.Config.ThinkingStyle, sk.Config.PreserveThinking = "on", tc.style, tc.preserve
+			sk.Config.SupportsFC = tc.supportsFC
+			for _, exec := range []bool{false, true} {
+				a, _ := buildSkepticAgent(sk, "the prompt", exec)
+				assert.Equal(t, tc.want, a.Invocation.PreserveThinking, "exec=%v", exec)
+			}
+		})
+	}
+	undeclared, _ := buildSkepticAgent(testSkeptic(), "the prompt", false)
+	assert.Empty(t, undeclared.Invocation.PreserveThinking)
+}
+
+// The anthropic row's WIRE behavior — no preserve_thinking/clear_thinking
+// member rendered under that style — is pinned where the mapper lives:
+// internal/llmclient/thinking_test.go preserveCases "anthropic ignores it".
+
+// TD internal/llmclient/client.go:394: a stop-reason reasoning salvage reaches
+// the skeptic as StatusOK, ResponseTruncated=false, with chain-of-thought as
+// Content — the truncated-reply guard never fires and a draft verdict parsed
+// from the reasoning counts toward precision as a full read. The Salvaged
+// marker must collapse the verdict to unverifiable, like response_truncated.
+func TestInvokeSkeptic_SalvagedModelResponse(t *testing.T) {
+	t.Parallel()
+	sk := testSkeptic()
+	sk.Config.SupportsFC = false // single-shot path
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{meta: &llmclient.Completion{Content: `{"verdict":"confirmed","reasoning":"draft parsed from chain-of-thought"}`, Salvaged: true}},
+	}}
+	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	assert.Equal(t, verdictUnverifiable, v.Verdict, "a verdict parsed from salvaged reasoning must not be confirmed")
+	assert.Equal(t, "reasoning_salvaged", v.Notes, "the named note must carry the salvage reason")
+	assert.Empty(t, tripped, "a salvage is not a budget trip")
 }

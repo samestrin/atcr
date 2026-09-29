@@ -239,6 +239,53 @@ func TestChat_EchoedAssistantToolCallsHaveStringEncodedArguments(t *testing.T) {
 	assert.NotContains(t, gotBodies[1], `"arguments":{"`, "echoed tool-call arguments must not be raw JSON objects")
 }
 
+// Sprint 35.16.11.2.2.1 AC 02-03 Edge Case 1: an assistant turn echoed as
+// history re-sends its reasoning under the key it arrived in, byte-for-byte,
+// and its user and tool neighbours carry none.
+func TestChat_EchoedAssistantTurnResendsReasoningUnderArrivalKey(t *testing.T) {
+	const blocks = `[{"type":"thinking","thinking":"check f.go","signature":"EqQBCkgIARABGAIiQL+/zzA0Xq9b=="}]`
+	var gotBodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBodies = append(gotBodies, string(b))
+		if len(gotBodies) == 1 {
+			_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,`+
+				`"reasoning_content":"PRIVATE","thinking_blocks":`+blocks+`,`+
+				`"tool_calls":[{"id":"c1","type":"function","function":{"name":"read_file","arguments":"{}"}}]}}]}`)
+		} else {
+			_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"done"}}]}`)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	c := fastRetry(srv.Client())
+	inv := Invocation{BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m1"}
+	u, tr := "review", "package main"
+	resp1, err := c.Chat(context.Background(), inv, []Message{{Role: "user", Content: &u}}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "PRIVATE", resp1.Reasoning, "the merged reasoning string is unchanged")
+
+	history := []Message{{Role: "user", Content: &u}, resp1.Message, {Role: "tool", Content: &tr, ToolCallID: "c1"}}
+	_, err = c.Chat(context.Background(), inv, history, nil)
+	require.NoError(t, err)
+	require.Len(t, gotBodies, 2)
+
+	var req struct {
+		Messages []map[string]json.RawMessage `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(gotBodies[1]), &req))
+	require.Len(t, req.Messages, 3)
+	assert.Equal(t, `"PRIVATE"`, string(req.Messages[1]["reasoning_content"]))
+	assert.Equal(t, blocks, string(req.Messages[1]["thinking_blocks"]))
+	assert.NotContains(t, req.Messages[1], "reasoning", "never re-keyed under the alternate name")
+	for _, i := range []int{0, 2} {
+		for _, k := range []string{"reasoning_content", "reasoning", "reasoning_details", "thinking_blocks"} {
+			assert.NotContains(t, req.Messages[i], k, "message %d must carry no reasoning", i)
+		}
+	}
+}
+
 // TestChat_TruncatedFinishReasonWithEmptyContentReturnsError verifies that Chat
 // surfaces finish_reason "length" or "content_filter" with empty content as an
 // error rather than silently returning a successful empty review (StatusOK).
@@ -335,6 +382,28 @@ func TestChat_LengthFinishReasonWithToolCallsSetsTruncated(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, resp.Message.ToolCalls, 1)
 	assert.True(t, resp.Truncated, "length finish_reason with tool_calls must set Truncated")
+}
+
+// TestChat_LengthToolCallTurnClearsStructuredReasoning verifies that a
+// "length"-truncated turn carrying tool_calls does not replay its structured
+// reasoning members: a cut-off thinking_blocks value (for Anthropic, a block
+// with no signature) is neither the blocks the provider signed nor absent, and
+// history() would otherwise re-send it on every later turn.
+func TestChat_LengthToolCallTurnClearsStructuredReasoning(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"length","message":{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"grep","arguments":"{}"}}],"thinking_blocks":[{"type":"thinking","thinking":"cut o","signature":""}],"reasoning_details":[{"type":"reasoning.text","text":"cut o"}]}}]}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	resp, err := fastRetry(srv.Client()).Chat(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m1",
+	}, nil, nil)
+	require.NoError(t, err)
+	require.True(t, resp.Truncated)
+	require.Len(t, resp.Message.ToolCalls, 1)
+	assert.Nil(t, resp.Message.ThinkingBlocks, "a length-truncated turn must not replay thinking_blocks")
+	assert.Nil(t, resp.Message.ReasoningDetails, "a length-truncated turn must not replay reasoning_details")
 }
 
 // TestChat_UsageIsPerTurnNotCumulative pins the per-turn-incremental contract

@@ -174,6 +174,13 @@ type AgentResult struct {
 	// parsing ThinkingDetail prose (TD cli/doctor.go:255). Empty (omitted) for an
 	// undeclared agent and when no call was placed, like ThinkingStatus.
 	ThinkingDeclared string `json:"thinking_declared,omitempty"`
+	// ThinkingPreserve records that the flagged probe itself sent
+	// preserve_thinking, so a provider 4xx caused by that flag is attributable:
+	// the cli warning names "retry without preserve_thinking" as the first remedy
+	// (TD cli/doctor.go:367) and a --json consumer can see the flag was on the
+	// wire without parsing ThinkingDetail prose. Empty (omitted) exactly when
+	// ThinkingDeclared is — the flag only matters when a verdict was reached.
+	ThinkingPreserve string `json:"thinking_preserve,omitempty"`
 }
 
 // The outcomes ResponseFormatStatus can name.
@@ -356,6 +363,7 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 			ThinkingStatus:       pr.thinkingStatus,
 			ThinkingDetail:       pr.thinkingDetail,
 			ThinkingDeclared:     thinkingDeclaredForm(tgt, pr.thinkingStatus),
+			ThinkingPreserve:     thinkingPreserveForm(tgt, pr.thinkingStatus),
 		})
 	}
 	rep.ExitCode = exitVerdict(res, results)
@@ -643,9 +651,10 @@ func probe(ctx context.Context, c Completer, tgt Target, opts Options) probeResu
 		Prompt:    Prompt(opts.Nonce),
 		// The target's own declaration, so the thinking verdict measures the call
 		// the agent makes rather than the provider default. Empty when undeclared.
-		Thinking:      tgt.Thinking,
-		ThinkingLevel: tgt.ThinkingLevel,
-		ThinkingStyle: tgt.ThinkingStyle,
+		Thinking:         tgt.Thinking,
+		ThinkingLevel:    tgt.ThinkingLevel,
+		ThinkingStyle:    tgt.ThinkingStyle,
+		PreserveThinking: tgt.PreserveThinking,
 	})
 	latency := time.Since(start).Milliseconds()
 	pr := classify(comp.Content, err, opts.Nonce, latency, tgt, budgetSrc)
@@ -802,6 +811,12 @@ func responseFormatCall(ctx context.Context, c Completer, tgt Target, opts Optio
 	if len(toolDefs) > 0 {
 		declared = "tools: true with " + declared
 	}
+	// A provider can reject the COMBINATION (preserved thinking plus JSON mode
+	// or tools), not response_format alone — name the whole request so the
+	// not-honored/unverified details are attributable (TD internal/doctor/run.go:801).
+	if tgt.declaresThinking() {
+		declared += " with " + thinkingDeclaration(tgt)
+	}
 	callCtx := ctx
 	if opts.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -815,14 +830,15 @@ func responseFormatCall(ctx context.Context, c Completer, tgt Target, opts Optio
 	}
 	prompt := responseFormatPrompt
 	resp, err := c.Chat(callCtx, llmclient.Invocation{
-		BaseURL:        tgt.BaseURL,
-		APIKeyEnv:      tgt.APIKeyEnv,
-		Model:          tgt.Model,
-		MaxTokens:      maxTokens,
-		ResponseFormat: tgt.ResponseFormat,
-		Thinking:       tgt.Thinking,
-		ThinkingLevel:  tgt.ThinkingLevel,
-		ThinkingStyle:  tgt.ThinkingStyle,
+		BaseURL:          tgt.BaseURL,
+		APIKeyEnv:        tgt.APIKeyEnv,
+		Model:            tgt.Model,
+		MaxTokens:        maxTokens,
+		ResponseFormat:   tgt.ResponseFormat,
+		Thinking:         tgt.Thinking,
+		ThinkingLevel:    tgt.ThinkingLevel,
+		ThinkingStyle:    tgt.ThinkingStyle,
+		PreserveThinking: tgt.PreserveThinking,
 	}, []llmclient.Message{{Role: "user", Content: &prompt}}, toolDefs)
 	if err != nil {
 		// Only a client-side refusal is a verdict on the declaration. The endpoint
@@ -890,18 +906,34 @@ func responseFormatCall(ctx context.Context, c Completer, tgt Target, opts Optio
 func (t Target) declaresThinking() bool { return t.Thinking != "" || t.ThinkingLevel != "" }
 
 // thinkingDeclaration names the declaration in a verdict detail, e.g.
-// "thinking: off (qwen)" or "thinking_level: low (reasoning_effort)".
+// "thinking: off (qwen)" or "thinking_level: low (reasoning_effort)", plus
+// ", preserve_thinking: on" when the target sends that flag too.
 func thinkingDeclaration(t Target) string {
+	d := "thinking_level: " + t.ThinkingLevel + " (" + t.ThinkingStyle + ")"
 	if t.Thinking != "" {
-		return "thinking: " + t.Thinking + " (" + t.ThinkingStyle + ")"
+		d = "thinking: " + t.Thinking + " (" + t.ThinkingStyle + ")"
 	}
-	return "thinking_level: " + t.ThinkingLevel + " (" + t.ThinkingStyle + ")"
+	if t.PreserveThinking != "" {
+		d += ", preserve_thinking: " + t.PreserveThinking
+	}
+	return d
 }
 
 // thinkingDeclaredForm names the target's declared polarity the way the
 // registry spells it: "off", the declared level (a level implies on), or "on".
 // "" when the target declares no thinking or no verdict was reached, so the
 // field stays omitted exactly when ThinkingStatus is (TD cli/doctor.go:255).
+// thinkingPreserveForm returns the target's declared preserve_thinking value
+// when a verdict was reached, "" otherwise — mirroring thinkingDeclaredForm's
+// omission rule so the field is present exactly when the verdict can name the
+// flag as a culprit.
+func thinkingPreserveForm(t Target, status string) string {
+	if status == "" || !t.declaresThinking() {
+		return ""
+	}
+	return t.PreserveThinking
+}
+
 func thinkingDeclaredForm(t Target, status string) string {
 	if status == "" || !t.declaresThinking() {
 		return ""
@@ -1007,6 +1039,15 @@ func probeThinking(ctx context.Context, c Completer, tgt Target, opts Options, b
 			status, detail = ThinkingNotHonored, "declared "+declared+", but the reply still carried "+sig
 		} else if tgt.ThinkingLevel != "" {
 			detail = "reasoning observed; the probe does not verify thinking_level " + tgt.ThinkingLevel
+		}
+		// TD-012: the probe is single-turn — honored only proves the flag was
+		// accepted, never that reasoning was actually preserved.
+		if tgt.PreserveThinking != "" {
+			if detail == "" {
+				detail = "the probe does not verify preserve_thinking (single-turn)"
+			} else {
+				detail += "; the probe does not verify preserve_thinking (single-turn)"
+			}
 		}
 		if comp.Truncated {
 			detail = strings.TrimPrefix(detail+"; the reply was also "+cutOff(budget), "; ")

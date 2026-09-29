@@ -383,12 +383,20 @@ func validDebtStatus(v string) error {
 	return nil
 }
 
-// validDebtEst rejects only a NEGATIVE number of minutes. A non-numeric answer is
-// deliberately left to the caller's existing fall-back-to-the-default warning:
-// est is optional, and that behavior is the documented one.
+// validDebtEst checks exactly what finalizeDebtRecord checks: the same negative
+// rejection plus the same upper bound, so an over-bound answer is re-prompted at
+// the prompt instead of failing the finalizer after all seven answers (TD
+// cli/debt_add.go:389). A non-numeric answer is deliberately left to the
+// caller's existing fall-back-to-the-default warning: est is optional, and that
+// behavior is the documented one.
 func validDebtEst(v string) error {
-	if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n < 0 {
-		return fmt.Errorf("invalid est %d: expected a non-negative number of minutes", n)
+	if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+		if n < 0 {
+			return fmt.Errorf("invalid est %d: expected a non-negative number of minutes", n)
+		}
+		if n > registry.MaxExecutorEstimatedMinutes {
+			return fmt.Errorf("invalid est %d: expected a number of minutes within 0..%d", n, registry.MaxExecutorEstimatedMinutes)
+		}
 	}
 	return nil
 }

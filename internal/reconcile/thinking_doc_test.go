@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/samestrin/atcr/internal/doctor"
+	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/require"
 )
@@ -39,18 +40,49 @@ func TestRegistryDoc_ThinkingRows(t *testing.T) {
 			{"`off` is rejected (use `thinking_level: low`)", "reasoning_effort has no off value; the row must give the fix the load error gives"},
 			{"`on` requires a `thinking_level`", "reasoning_effort has no on-without-level value"},
 			{"under `thinking_style: anthropic`, thinking on needs `temperature` unset or `1`", "Anthropic rejects extended thinking at any other temperature; a declared one fails the load"},
-			{"under `thinking_style: anthropic`, thinking on cannot be combined with `supports_function_calling: true`", "the tool loop does not send reasoning back, which Anthropic requires on a tool-use turn; skeptic, debate, and fallback lanes can put any function-calling agent in the loop"},
+			{"under `thinking_style: anthropic`, thinking on cannot be combined with `supports_function_calling: true`", "the guard stays (AC 05-02); skeptic, debate, and fallback lanes can put any function-calling agent in the loop"},
+			{"has not been verified against a live Anthropic model", "the guard's true reason: no Anthropic model was served to prove the replay live"},
+			{"thinking blocks are missing or altered", "what Anthropic rejects on a tool-use turn"},
+			{"only the `anthropic` combination is rejected at load", "no second style-keyed guard (D6)"},
+			{"another style (for example `reasoning_effort`)", "a Claude model under another style loads and runs the same replay, not live-verified either (TD-015)"},
 			{"under `thinking_style: anthropic`, thinking on cannot be combined with `response_format: json_object`", "providers map response_format onto a forced tool_choice, which Anthropic rejects while extended thinking is on; the live-proxy probe was inconclusive, so the clause rests on the documented provider constraint"},
+			{"the tool loop sends each assistant turn's reasoning back on every later turn", "the replay, stated positively, not just the old caveat removed"},
+			{"in the shape the provider returned it", "each provider's own member is replayed unedited, never converted"},
+			{"on assistant turns only", "reasoning never rides a user or tool-result turn"},
+			{"whatever the `thinking_style`", "the replay has no style gate (D1)"},
+			{"an empty array or object is not sent back either", "an empty container is dropped as absent, not replayed as received"},
 		}},
 		{"`thinking_level`", registry.ThinkingLevels(), []struct{ token, why string }{
 			{"level alone implies `thinking: on`", "a level without thinking is not a missing-value error"},
 			{"`thinking: off` with a level is rejected at load", "off plus a level is contradictory config"},
 			{"loads with a warning and is sent as `high`", "max under reasoning_effort warns at load; the operator must not be surprised"},
 			{"`thinking_style: template_kwargs` any level is rejected at load", "template_kwargs carries only on/off, so a level would be silently dropped"},
+			// TD internal/reconcile/thinking_doc_test.go:53: the glm clause is pinned
+			// as a token AND against a real load, so it cannot be deleted or reversed
+			// silently.
+			{"The same holds under `thinking_style: glm`", "glm has no level field either; the sentence can go stale just like the template_kwargs one"},
 		}},
 		{"`thinking_style`", registry.ThinkingStyles(), []struct{ token, why string }{
 			{"there is no default style", "a thinking key without a style is a load error"},
 			{"style alone is inert", "a style with no thinking or level sends nothing"},
+		}},
+		{"`preserve_thinking`", registry.ThinkingValues(), []struct{ token, why string }{
+			// TD-019: the phrase is built from registry.PreserveThinkingStyles(),
+			// not restated literals, so a third preserve style updates the token.
+			{"requires " + preserveThinkingStylesPhrase(registry.PreserveThinkingStyles()), "only those styles have a preserved-thinking field"},
+			// TD internal/reconcile/thinking_doc_test.go:65: the level-alone half of
+			// "thinking on" must be pinned as a token and against a real load.
+			{"or a `thinking_level` under `qwen`", "thinking on also means a level under qwen; the drift test pinned only the thinking: on path"},
+			{"and thinking on", "the flag with thinking off is a load error"},
+			{"`preserve_thinking: true`", "the qwen wire field"},
+			{"`off` sends `preserve_thinking: false`", "the qwen off value is an explicit signal, not nothing"},
+			{"`thinking: {\"type\":\"enabled\",\"clear_thinking\":false}`", "the glm on object; llmclient's thinking tests pin the wire bytes"},
+			{"`\"clear_thinking\":true`", "the glm off value is inverted"},
+			{"the loop sends it back with or without the flag", "the flag asks the model to use the replay, it does not turn the replay on"},
+			{"Unset sends nothing", "an undeclared agent's body is unchanged"},
+			{"It is sent by the review fan-out, the skeptic, the debate seats, and `atcr doctor`", "the lanes that send the flag, matching the thinking row's lane list"},
+			{"accepted on the wire but its later-turn effect is not live-verified", "TD-022: GLM never reached turn 2 in any live run, so the rows must not read as verified"},
+			{"can spend the whole output cap on turn 1", "the observed failure: finish_reason=length at both the 16384 and 32768 budgets in two of three runs"},
 		}},
 	}
 	for _, r := range rows {
@@ -66,6 +98,11 @@ func TestRegistryDoc_ThinkingRows(t *testing.T) {
 				t.Errorf("docs/registry.md's %s row must state %q: %s\nrow was: %s", r.key, m.token, m.why, row)
 			}
 		}
+	}
+	// The replay shipped in Sprint 35.16.11.2.2.1, so the old caveat must be gone.
+	thinking := docRow(t, doc, "`thinking`")
+	for _, stale := range []string{"does not send", "epic 35.16.11.2.2.1", "may fail on turn 2"} {
+		require.NotContains(t, thinking, stale, "the `thinking` row still carries the pre-replay caveat")
 	}
 }
 
@@ -97,10 +134,41 @@ func TestRegistryDoc_ThinkingRejectsWhatTheDocExcludes(t *testing.T) {
 	require.ErrorContains(t, load("    thinking: "+registry.ThinkingOn+"\n    temperature: 0.7\n"+anthropic), "needs temperature 1",
 		"the doc says anthropic thinking on with another temperature is rejected at load")
 	require.NoError(t, load("    thinking: "+registry.ThinkingOn+"\n"+anthropic), "the doc says an unset temperature loads")
-	require.ErrorContains(t, load("    thinking: "+registry.ThinkingOn+"\n    supports_function_calling: true\n"+anthropic), "cannot use supports_function_calling",
+	fcErr := load("    thinking: " + registry.ThinkingOn + "\n    supports_function_calling: true\n" + anthropic)
+	require.ErrorContains(t, fcErr, "cannot use supports_function_calling",
 		"the doc says anthropic thinking on with function calling is rejected at load")
+	require.ErrorContains(t, fcErr, "has not been verified against a live Anthropic model",
+		"the doc and the load error must give the same reason")
+	require.NoError(t, load("    thinking_level: "+registry.ThinkingLevelHigh+"\n    supports_function_calling: true\n"+effort),
+		"the doc says only the anthropic combination is rejected: another style with function calling loads")
+	glm := "    thinking_style: " + registry.ThinkingStyleGLM + "\n"
+	// TD internal/reconcile/thinking_doc_test.go:65: the doc's "or a thinking_level
+	// under qwen" half of thinking-on must actually load.
+	require.NoError(t, load("    thinking_level: "+registry.ThinkingLevelHigh+"\n    preserve_thinking: "+registry.ThinkingOn+"\n"+style),
+		"the doc says preserve_thinking is legal with a thinking_level alone under qwen")
+	for _, s := range []string{style, glm} {
+		require.NoError(t, load("    thinking: "+registry.ThinkingOn+"\n    preserve_thinking: "+registry.ThinkingOn+"\n"+s),
+			"the doc says preserve_thinking loads under qwen or glm with thinking on")
+	}
+	// TD-019: the rejection check loops over EVERY non-preserve style, not just
+	// anthropic, so a new style added to the registry without preserve support
+	// is caught here too.
+	for _, s := range registry.ThinkingStyles() {
+		if slices.Contains(registry.PreserveThinkingStyles(), s) {
+			continue
+		}
+		require.ErrorContainsf(t,
+			load("    thinking: "+registry.ThinkingOn+"\n    preserve_thinking: "+registry.ThinkingOn+"\n    thinking_style: "+s+"\n"),
+			"has no preserve_thinking", "the doc says preserve_thinking is rejected under %s", s)
+	}
+	require.ErrorContains(t, load("    thinking: "+registry.ThinkingOff+"\n    preserve_thinking: "+registry.ThinkingOn+"\n"+style),
+		"thinking is not on", "the doc says preserve_thinking needs thinking on")
 	require.ErrorContains(t, load("    thinking_level: "+registry.ThinkingLevelLow+"\n    thinking_style: "+registry.ThinkingStyleTemplateKwargs+"\n"),
 		`"template_kwargs" has no level`, "the doc says a level under template_kwargs is rejected at load")
+	// TD internal/reconcile/thinking_doc_test.go:53: the glm half of that sentence
+	// is a claim about the loader too.
+	require.ErrorContains(t, load("    thinking_level: "+registry.ThinkingLevelLow+"\n"+glm),
+		`"glm" has no level`, "the doc says the template_kwargs level rejection holds under glm")
 }
 
 // documentedValues returns the backticked values in a row's "must be unset,
@@ -167,6 +235,7 @@ func TestRegistryDoc_ThinkingStyleTable(t *testing.T) {
 		registry.ThinkingStyleQwen: {
 			{"`enable_thinking: bool`", "the qwen style's on/off field"},
 			{"`thinking_budget`", "the qwen style sends the level's budget"},
+			{"`preserve_thinking: bool` when `preserve_thinking` is set", "the qwen preserved-thinking field"},
 		},
 		registry.ThinkingStyleTemplateKwargs: {
 			{"`chat_template_kwargs: {\"enable_thinking\": bool}`", "the template_kwargs style's only field"},
@@ -182,6 +251,14 @@ func TestRegistryDoc_ThinkingStyleTable(t *testing.T) {
 			{"`thinking: {\"type\": \"enabled\", \"budget_tokens\": N}`", "the anthropic style's on shape"},
 			{"`thinking: {\"type\": \"disabled\"}`", "the anthropic style's off shape"},
 			{"sends no `temperature`", "Anthropic rejects extended thinking at any temperature but 1"},
+		},
+		registry.ThinkingStyleGLM: {
+			{"`thinking: {\"type\": \"enabled\"}`", "the glm style's on shape, with no budget"},
+			{"`thinking: {\"type\": \"disabled\"}`", "the glm style's off shape"},
+			{"no level", "a level under glm is rejected at load"},
+			{"keeps its `temperature`", "only anthropic drops the temperature"},
+			{"`\"clear_thinking\":false` when `preserve_thinking` is `on`", "the glm preserved-thinking field is inverted, compact as the wire bytes"},
+			{"`\"clear_thinking\":true` when it is `off`", "the glm off value is inverted too, compact as the wire bytes"},
 		},
 	}
 	// Rows are read from the table after the intro only, so another table with a
@@ -224,8 +301,96 @@ func TestRegistryDoc_ThinkingStyleTable(t *testing.T) {
 	medium := strconv.Itoa(registry.ThinkingBudgetTokens(registry.ThinkingOn, "", registry.ThinkingStyleAnthropic))
 	assertStates(t, "thinking budgets line", budgets, musts{
 		{"`anthropic` with `thinking: on` and no level uses " + medium, "Anthropic requires a budget when thinking is enabled"},
-		{"loads with a warning", "a budget not below max_tokens warns at load"},
+		// TD: since the anthropic hard-constraint check, a budget not below
+		// max_tokens is a LOAD ERROR for anthropic (Anthropic rejects
+		// budget_tokens >= max_tokens); only qwen's advisory budget reaches
+		// warnThinkingBudget. The line must not read as a blanket warning.
+		{"fails to load under `anthropic`", "config.go rejects budget_tokens >= max_tokens at load for the anthropic style"},
+		{"loads with a warning under `qwen`", "only the qwen style's advisory budget reaches warnThinkingBudget"},
 	})
+}
+
+// TD (registry.md:243): the replay contract must be discoverable without
+// reading the thinking table — an operator whose agents declare no thinking
+// keys has no reason to open that row, yet replay changes their turn-2+
+// request body too. A top-level subsection beside **Safety:** carries the
+// contract, and the thinking row cross-references it.
+func TestRegistryDoc_ReasoningReplaySubsection(t *testing.T) {
+	doc := readRepoFile(t, "../../docs/registry.md")
+	// Anchor on the line that STARTS the subsection — the thinking row's
+	// cross-reference also contains the marker, earlier in the file.
+	var replay string
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "**Reasoning replay.**") {
+			replay = line
+			break
+		}
+	}
+	require.NotEmpty(t, replay, "docs/registry.md has no top-level **Reasoning replay.** subsection")
+	assertStates(t, "reasoning replay subsection", replay, []struct{ token, why string }{
+		{"re-sends provider reasoning on every later turn", "the contract, stated for operators who never configured thinking"},
+		{"whether or not `thinking` is declared", "not gated by any thinking key"},
+		{"changes the turn-2+ request body for all tool-enabled agents", "the blast radius: every tool-loop roster, not just thinking ones"},
+	})
+	// The thinking row keeps its full contract text and points here, so a
+	// reader who arrives via the table still finds the top-level statement.
+	require.Contains(t, docRow(t, doc, "`thinking`"), "**Reasoning replay.**", "the thinking row must cross-reference the top-level replay subsection")
+}
+
+// TD-018: the replay-shape key list in the `thinking` row is not restated
+// here as typed literals — it is reflected off llmclient.Message's reasoning
+// json tags (as TestReasoningKeys_ReadFromMessage in internal/fanout does), so
+// a member added, renamed, or removed without a doc update fails this test.
+func TestRegistryDoc_ReplayShapeKeysMatchMessage(t *testing.T) {
+	doc := readRepoFile(t, "../../docs/registry.md")
+	plain := map[string]bool{"role": true, "content": true, "tool_calls": true, "tool_call_id": true}
+	var keys []string
+	typ := reflect.TypeOf(llmclient.Message{})
+	for i := 0; i < typ.NumField(); i++ {
+		if k := strings.Split(typ.Field(i).Tag.Get("json"), ",")[0]; k != "" && !plain[k] {
+			keys = append(keys, k)
+		}
+	}
+	require.NotEmpty(t, keys, "Message must carry reasoning members")
+
+	thinking := docRow(t, doc, "`thinking`")
+	marker := "in the shape the provider returned it ("
+	start := strings.Index(thinking, marker)
+	require.GreaterOrEqual(t, start, 0, "the thinking row must state the replay shape")
+	clause := thinking[start+len(marker):]
+	if end := strings.Index(clause, ")"); end >= 0 {
+		clause = clause[:end]
+	}
+	documented := map[string]bool{}
+	for _, token := range strings.Split(clause, "`") {
+		if strings.Contains(token, "reasoning") || strings.Contains(token, "thinking") {
+			documented[token] = true
+		}
+	}
+	for _, k := range keys {
+		require.Containsf(t, documented, k, "the thinking row's replay-shape list must name llmclient.Message member %q exactly", k)
+	}
+	for d := range documented {
+		require.Containsf(t, keys, d, "the thinking row documents %q, which is not a reasoning member of llmclient.Message", d)
+	}
+}
+
+// TD-020: the `preserve_thinking` row and the glm style row must spell
+// clear_thinking the same way, and that way must be the wire bytes llmclient
+// actually sends (compact JSON — Go's encoding/json emits no spaces), so the
+// style table cannot document a body the provider never receives.
+func TestRegistryDoc_GLMClearThinkingSpellingMatchesWire(t *testing.T) {
+	doc := readRepoFile(t, "../../docs/registry.md")
+	// Go's encoding/json emits compact JSON with no spaces, and llmclient's
+	// thinking tests pin those wire bytes — the docs must spell the field the
+	// way the provider actually receives it, in both places it appears.
+	compact, spaced := `"clear_thinking":false`, `"clear_thinking": false`
+	row := docRow(t, doc, "`preserve_thinking`")
+	require.Contains(t, row, compact, "the preserve_thinking row must carry the compact wire spelling")
+	require.NotContains(t, row, spaced, "the preserve_thinking row must not carry a spaced variant")
+	glmLine := docLineWith(t, styleTable(t, doc), "`glm`")
+	require.Contains(t, glmLine, compact, "the glm style row must spell clear_thinking exactly as the wire does, matching the preserve_thinking row")
+	require.NotContains(t, glmLine, spaced, "the glm style row must not carry a spaced variant")
 }
 
 // AC 07-01 Scenario 3: the max_tokens interaction.
@@ -235,6 +400,15 @@ func TestRegistryDoc_ThinkingMaxTokensNote(t *testing.T) {
 		{"thinking tokens count against the output cap on most providers", "raising max_tokens alone does not stop a runaway thinker"},
 		{"`thinking: off` is the first fix for a model that truncates with zero findings", "archer ran to about 100k tokens with no findings"},
 		{"under `reasoning_effort`, use `thinking_level: low` instead", "thinking: off is a load error under that style"},
+	})
+	// Sprint 35.16.11.2.2.1: LiteLLM's modify_params hides a missing-reasoning
+	// failure instead of raising it, so the doc names the silent failure mode.
+	assertStates(t, "modify_params warning", docLineWith(t, doc, "**Thinking and LiteLLM `modify_params`.**"), []struct{ token, why string }{
+		{"`modify_params=True`", "the proxy setting that causes it"},
+		{"silently turns thinking off for that turn", "the specific failure mode, not a generic caveat"},
+		{"instead of returning the provider's 400", "the visible failure it replaces"},
+		{"another style (for example `reasoning_effort`)", "the anthropic style is already rejected with function calling, so the risk is a Claude model under another style"},
+		{"Neither atcr nor `atcr doctor` can see the proxy setting", "the operator must check the proxy; atcr cannot"},
 	})
 	// TD-008: the executor lane's gap is named, as the max_tokens row names its own,
 	// and the claim is checked against ExecutorConfig so it cannot go stale.
@@ -259,6 +433,25 @@ func TestRegistryDoc_ThinkingDoctorVerdict(t *testing.T) {
 		{"a `reasoning_content` or `reasoning` field, or inline `<think>` text in the content", "every signal reasoningSignal reads"},
 		{"never changes the ok/failed count or the exit code", "the verdict is a warning, like response_format's"},
 		{"the same prompt and cap without the declaration", "a silent reply is judged only after a control probe shows the provider reports reasoning"},
+	})
+	// TD-017: the probes carry the agent's preserve_thinking declaration and the
+	// verdict detail names it, so the section must say so — and must say what a
+	// single-turn probe can and cannot conclude about the flag.
+	assertStates(t, "thinking verdict intro", intro, []struct{ token, why string }{
+		{"carries the agent's `preserve_thinking` declaration", "the probe sends the flag (internal/doctor/run.go probe targets), matching the detail naming it"},
+		{"a single-turn probe cannot verify it", "the flag's effect is on later tool-loop turns, which the probe never reaches"},
+		{"retried without the flag before changing the style", "a 4xx on a flagged probe may be the flag, not the thinking declaration"},
+	})
+	// TD: the intro's no-verdict rule must cover permanent failures too — run.go
+	// gates the verdict on thinkingProbeWorthwhile, so 401/403/404/transport rows
+	// placed a call and still get none. The JSON schema line claims the thinking_*
+	// fields are present whenever the probe placed a call, which is necessary but
+	// not sufficient; both places must name the permanent-failure classes.
+	assertStates(t, "thinking verdict intro", intro, []struct{ token, why string }{
+		{"failed permanently", "run.go:294 gates the verdict on thinkingProbeWorthwhile: permanent failures get no verdict despite placing a call"},
+	})
+	assertStates(t, "doctor JSON schema", docLineWith(t, doc, "`thinking_status` (`"), []struct{ token, why string }{
+		{"did not fail permanently", "a placed call is necessary but not sufficient: auth_failed, not_found, and network_error rows get no thinking fields"},
 	})
 	assertStates(t, "thinking verdict warning line", docLineWith(t, section, "The HINT column labels"), []struct{ token, why string }{
 		{"one warning line for each declared polarity of `" + doctor.ThinkingNotHonored + "`", "the not-honored remedy differs by polarity (TD cli/doctor.go:255)"},
@@ -287,9 +480,30 @@ func TestRegistryDoc_ThinkingDoctorVerdict(t *testing.T) {
 	for status, must := range rows {
 		assertStates(t, "thinking verdict row "+status, docRow(t, section, status), must)
 	}
+	// TD: transport errors and empty replies classify as network_error, which
+	// thinkingProbeWorthwhile excludes — those rows get NO verdict (the thinking
+	// tests expect "" for them), so the unverified row must not list them as
+	// unverified causes and must name the permanent-failure no-verdict classes.
+	unverified := docRow(t, section, "`"+doctor.ThinkingUnverified+"`")
+	require.NotContains(t, unverified, "transport error", "transport errors get no verdict (network_error is excluded by thinkingProbeWorthwhile), not unverified")
+	require.NotContains(t, unverified, "empty reply", "empty replies get no verdict (network_error is excluded by thinkingProbeWorthwhile), not unverified")
+	assertStates(t, "thinking verdict unverified row", unverified, []struct{ token, why string }{
+		{"Permanent failures", "auth_failed, not_found, and network_error repeat identically, so they get no verdict rather than unverified"},
+	})
 	assertStates(t, "doctor JSON schema", docLineWith(t, doc, "`thinking_status` (`"), []struct{ token, why string }{
 		{"`thinking_status` (`" + doctor.ThinkingHonored + "`, `" + doctor.ThinkingNotHonored + "`, or `" + doctor.ThinkingUnverified + "`)", "the JSON field's values are the doctor constants"},
 		{"`thinking_detail`", "the verdict's reason rides beside it in --json"},
 		{"`thinking_declared`", "the declared polarity (off/on/level) rides beside the verdict so remedies can be split without parsing detail prose"},
 	})
+}
+
+// preserveThinkingStylesPhrase builds the doc-row token from the accessor's
+// live set (TD-019): "requires `thinking_style: qwen` or `thinking_style: glm`"
+// for the current two, extending automatically if a third style ships.
+func preserveThinkingStylesPhrase(styles []string) string {
+	parts := make([]string, len(styles))
+	for i, s := range styles {
+		parts[i] = "`thinking_style: " + s + "`"
+	}
+	return strings.Join(parts, " or ")
 }

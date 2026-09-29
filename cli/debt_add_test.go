@@ -578,6 +578,27 @@ func TestPromptEntry_RePromptsOnANegativeEst(t *testing.T) {
 	assert.Equal(t, 15, rec.EstMinutes)
 }
 
+// TD cli/debt_add.go:389: the upper bound is the other half of what
+// finalizeDebtRecord rejects. An est above registry.MaxExecutorEstimatedMinutes
+// passed the prompt, then failed the finalizer after all seven answers — and the
+// :367-370/:409-411 comments say exactly that cannot happen. The wizard must
+// re-prompt at the prompt, like the negative bound does.
+func TestPromptEntry_RePromptsOnAnOverBoundEst(t *testing.T) {
+	answers := strings.Join([]string{
+		"LOW", "a.go:1", "p", "f", "c",
+		"20000", // above registry.MaxExecutorEstimatedMinutes (7*24*60 = 10080)
+		"15",
+		"open",
+	}, "\n") + "\n"
+
+	var out bytes.Buffer
+	rec, err := promptEntry(strings.NewReader(answers), &out, wizardDefaults{})
+
+	require.NoError(t, err, "a corrected answer completes the wizard instead of discarding it")
+	assert.Equal(t, 15, rec.EstMinutes)
+	assert.Contains(t, out.String(), "invalid est", "the re-prompt names the rejected value")
+}
+
 func TestPromptEntry_InputTooLongErrors(t *testing.T) {
 	answers := strings.Join([]string{
 		"MEDIUM", "a.go:1", "p", "f", "c", "5",

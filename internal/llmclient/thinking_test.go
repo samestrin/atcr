@@ -15,7 +15,7 @@ import (
 )
 
 // thinkingKeys are every top-level request member a thinking style can emit.
-var thinkingKeys = []string{"enable_thinking", "thinking_budget", "chat_template_kwargs", "reasoning_effort", "thinking"}
+var thinkingKeys = []string{"enable_thinking", "thinking_budget", "chat_template_kwargs", "reasoning_effort", "thinking", "preserve_thinking"}
 
 // thinkingMembers decodes a request body and returns only its thinking members,
 // re-encoded as one JSON object, so a test can compare them exactly.
@@ -57,6 +57,9 @@ var thinkingCases = []struct {
 	{"anthropic level alone max", "", registry.ThinkingLevelMax, registry.ThinkingStyleAnthropic, `{"thinking":{"type":"enabled","budget_tokens":32768}}`},
 	{"anthropic on no level", registry.ThinkingOn, "", registry.ThinkingStyleAnthropic, `{"thinking":{"type":"enabled","budget_tokens":8192}}`},
 	{"anthropic off", registry.ThinkingOff, "", registry.ThinkingStyleAnthropic, `{"thinking":{"type":"disabled"}}`},
+	// glm: a thinking object with no budget.
+	{"glm on", registry.ThinkingOn, "", registry.ThinkingStyleGLM, `{"thinking":{"type":"enabled"}}`},
+	{"glm off", registry.ThinkingOff, "", registry.ThinkingStyleGLM, `{"thinking":{"type":"disabled"}}`},
 	// Nothing to send.
 	{"unset", "", "", "", `{}`},
 	{"style alone", "", "", registry.ThinkingStyleQwen, `{}`},
@@ -74,7 +77,7 @@ var thinkingCases = []struct {
 func TestNewThinkingFields_PerStyle(t *testing.T) {
 	for _, tc := range thinkingCases {
 		t.Run(tc.name, func(t *testing.T) {
-			b, err := json.Marshal(newThinkingFields(tc.thinking, tc.level, tc.style))
+			b, err := json.Marshal(newThinkingFields(tc.thinking, tc.level, tc.style, ""))
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, string(b))
 		})
@@ -83,12 +86,12 @@ func TestNewThinkingFields_PerStyle(t *testing.T) {
 
 // AC 03-01 DoD: a declared false is a non-nil pointer, distinct from unset.
 func TestNewThinkingFields_FalseIsNotUnset(t *testing.T) {
-	off := newThinkingFields(registry.ThinkingOff, "", registry.ThinkingStyleQwen)
+	off := newThinkingFields(registry.ThinkingOff, "", registry.ThinkingStyleQwen, "")
 	require.NotNil(t, off.EnableThinking)
 	assert.False(t, *off.EnableThinking)
-	assert.Nil(t, newThinkingFields("", "", registry.ThinkingStyleQwen).EnableThinking)
+	assert.Nil(t, newThinkingFields("", "", registry.ThinkingStyleQwen, "").EnableThinking)
 
-	kw := newThinkingFields(registry.ThinkingOff, "", registry.ThinkingStyleTemplateKwargs)
+	kw := newThinkingFields(registry.ThinkingOff, "", registry.ThinkingStyleTemplateKwargs, "")
 	require.NotNil(t, kw.ChatTemplateKwargs)
 	require.NotNil(t, kw.ChatTemplateKwargs.EnableThinking)
 	assert.False(t, *kw.ChatTemplateKwargs.EnableThinking)
@@ -100,7 +103,7 @@ func TestNewThinkingFields_BudgetFromRegistryTable(t *testing.T) {
 	for _, level := range registry.ThinkingLevels() {
 		want := registry.ThinkingBudgetTokens("", level, registry.ThinkingStyleQwen)
 		require.Positive(t, want)
-		q, a := newThinkingFields("", level, registry.ThinkingStyleQwen), newThinkingFields("", level, registry.ThinkingStyleAnthropic)
+		q, a := newThinkingFields("", level, registry.ThinkingStyleQwen, ""), newThinkingFields("", level, registry.ThinkingStyleAnthropic, "")
 		require.NotNil(t, q.ThinkingBudget)
 		require.NotNil(t, a.Thinking)
 		assert.Equal(t, want, *q.ThinkingBudget, "qwen %s", level)
@@ -144,7 +147,7 @@ func TestThinking_AnthropicEnabledSendsNoTemperature(t *testing.T) {
 	for _, tc := range thinkingCases {
 		t.Run(tc.name, func(t *testing.T) {
 			inv := Invocation{Model: "m", Temperature: &temp, Thinking: tc.thinking, ThinkingLevel: tc.level, ThinkingStyle: tc.style}
-			enabled := strings.Contains(tc.want, `"type":"enabled"`)
+			enabled := tc.style == registry.ThinkingStyleAnthropic && strings.Contains(tc.want, `"type":"enabled"`)
 			for path, body := range map[string]string{"complete": captureComplete(t, inv), "chat": captureChat(t, inv), "final": captureChatWith(t, inv, nil)} {
 				var got map[string]json.RawMessage
 				require.NoError(t, json.Unmarshal([]byte(body), &got))
@@ -153,6 +156,88 @@ func TestThinking_AnthropicEnabledSendsNoTemperature(t *testing.T) {
 			}
 		})
 	}
+}
+
+// preserveCases pair a thinking declaration with preserve_thinking. want is
+// the exact JSON of the thinking members; the flag renders only under qwen and
+// glm with thinking on, and an illegal preserve value suppresses the whole
+// thinking declaration, not just the flag.
+var preserveCases = []struct {
+	name, thinking, level, style, preserve, want string
+}{
+	{"qwen on", registry.ThinkingOn, "", registry.ThinkingStyleQwen, registry.ThinkingOn, `{"enable_thinking":true,"preserve_thinking":true}`},
+	{"qwen level off", "", registry.ThinkingLevelHigh, registry.ThinkingStyleQwen, registry.ThinkingOff, `{"enable_thinking":true,"preserve_thinking":false,"thinking_budget":16384}`},
+	// TD internal/registry/config_thinking_validate_test.go:82: level alone with
+	// the flag on renders on every path, like the off variant beside it.
+	{"qwen level alone on", "", registry.ThinkingLevelHigh, registry.ThinkingStyleQwen, registry.ThinkingOn, `{"enable_thinking":true,"preserve_thinking":true,"thinking_budget":16384}`},
+	{"glm on", registry.ThinkingOn, "", registry.ThinkingStyleGLM, registry.ThinkingOn, `{"thinking":{"type":"enabled","clear_thinking":false}}`},
+	{"glm off", registry.ThinkingOn, "", registry.ThinkingStyleGLM, registry.ThinkingOff, `{"thinking":{"type":"enabled","clear_thinking":true}}`},
+	// Other styles never carry it.
+	{"anthropic ignores it", registry.ThinkingOn, "", registry.ThinkingStyleAnthropic, registry.ThinkingOn, `{"thinking":{"type":"enabled","budget_tokens":8192}}`},
+	{"reasoning_effort ignores it", "", registry.ThinkingLevelLow, registry.ThinkingStyleReasoningEffort, registry.ThinkingOn, `{"reasoning_effort":"low"}`},
+	{"template_kwargs ignores it", registry.ThinkingOn, "", registry.ThinkingStyleTemplateKwargs, registry.ThinkingOn, `{"chat_template_kwargs":{"enable_thinking":true}}`},
+	// Thinking not on: the registry rejects these at load.
+	{"flag without thinking", "", "", registry.ThinkingStyleQwen, registry.ThinkingOn, `{}`},
+	{"flag with qwen thinking off", registry.ThinkingOff, "", registry.ThinkingStyleQwen, registry.ThinkingOn, `{"enable_thinking":false}`},
+	{"flag with glm thinking off", registry.ThinkingOff, "", registry.ThinkingStyleGLM, registry.ThinkingOn, `{"thinking":{"type":"disabled"}}`},
+	// A value the registry would reject is not guessed at: the whole thinking
+	// declaration is suppressed, dropping the valid enable_thinking too.
+	{"illegal preserve value", registry.ThinkingOn, "", registry.ThinkingStyleQwen, "true", `{}`},
+}
+
+// AC 03-01 / 03-02: preserve_thinking renders per style on the mapper, both
+// request paths, and the forced-final turn.
+func TestPreserveThinking_PerStyleOnEveryPath(t *testing.T) {
+	for _, tc := range preserveCases {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := json.Marshal(newThinkingFields(tc.thinking, tc.level, tc.style, tc.preserve))
+			require.NoError(t, err)
+			assert.JSONEq(t, tc.want, string(b), "mapper")
+			inv := Invocation{Model: "m", Thinking: tc.thinking, ThinkingLevel: tc.level, ThinkingStyle: tc.style, PreserveThinking: tc.preserve}
+			assert.Equal(t, tc.want, thinkingMembers(t, captureComplete(t, inv)), "single-shot path")
+			assert.Equal(t, tc.want, thinkingMembers(t, captureChat(t, inv)), "tool-loop path")
+			assert.Equal(t, tc.want, thinkingMembers(t, captureChatWith(t, inv, nil)), "forced-final path")
+		})
+	}
+}
+
+// AC 03-01 Edge Case 3: a declared off is a non-nil false, distinct from unset.
+func TestPreserveThinking_OffIsNotUnset(t *testing.T) {
+	off := newThinkingFields(registry.ThinkingOn, "", registry.ThinkingStyleQwen, registry.ThinkingOff)
+	require.NotNil(t, off.PreserveThinking)
+	assert.False(t, *off.PreserveThinking)
+	assert.Nil(t, newThinkingFields(registry.ThinkingOn, "", registry.ThinkingStyleQwen, "").PreserveThinking)
+
+	glm := newThinkingFields(registry.ThinkingOn, "", registry.ThinkingStyleGLM, "")
+	require.NotNil(t, glm.Thinking)
+	assert.Nil(t, glm.Thinking.ClearThinking, "glm with no flag sends no clear_thinking")
+}
+
+// Decision 4 (2026-09-28): only anthropic drops temperature; glm with thinking
+// on keeps the declared temperature.
+func TestPreserveThinking_GLMKeepsTemperature(t *testing.T) {
+	temp := 0.6
+	inv := Invocation{Model: "m", Temperature: &temp, Thinking: registry.ThinkingOn, ThinkingStyle: registry.ThinkingStyleGLM, PreserveThinking: registry.ThinkingOn}
+	assert.Contains(t, captureComplete(t, inv), `"temperature":0.6`)
+	assert.Contains(t, captureChat(t, inv), `"temperature":0.6`)
+	assert.Contains(t, captureChatWith(t, inv, nil), `"temperature":0.6`, "forced-final path")
+	require.NotNil(t, SentTemperature(inv))
+	assert.InDelta(t, 0.6, *SentTemperature(inv), 1e-9)
+}
+
+// The drop-temperature decision rides thinkingFields itself, not a style
+// re-derivation in temperatureFor: temperatureFor(temperature, f) has no style
+// parameter to mismatch, so a caller cannot silently send (or drop)
+// temperature by passing the wrong style next to the fields it built.
+func TestThinking_DropTemperatureRidesTheFields(t *testing.T) {
+	assert.True(t, newThinkingFields(registry.ThinkingOn, "", registry.ThinkingStyleAnthropic, "").dropTemperature,
+		"enabled anthropic thinking records the drop on the fields")
+	assert.False(t, newThinkingFields(registry.ThinkingOff, "", registry.ThinkingStyleAnthropic, "").dropTemperature,
+		"disabled anthropic thinking keeps temperature")
+	assert.False(t, newThinkingFields(registry.ThinkingOn, "", registry.ThinkingStyleGLM, "").dropTemperature,
+		"glm shares the thinking member but keeps temperature")
+	assert.False(t, newThinkingFields("", "", "", "").dropTemperature,
+		"no declaration, no drop")
 }
 
 // response_format and a thinking declaration ride the same body together.
@@ -175,6 +260,11 @@ func TestThinkingFields_TagsDisjointFromRequestTags(t *testing.T) {
 		for i := 0; i < typ.NumField(); i++ {
 			f := typ.Field(i)
 			if f.Anonymous {
+				continue
+			}
+			// An untagged field (the unexported dropTemperature decision marker)
+			// is not a wire member and cannot collide.
+			if f.Tag.Get("json") == "" {
 				continue
 			}
 			out[strings.Split(f.Tag.Get("json"), ",")[0]] = true
@@ -203,7 +293,7 @@ func TestThinking_UnsetBodyByteIdentical(t *testing.T) {
 		Messages:       []message{{Role: "user", Content: "review this"}},
 		Temperature:    &temp,
 		MaxTokens:      &maxTok,
-		thinkingFields: newThinkingFields("", "", ""),
+		thinkingFields: newThinkingFields("", "", "", ""),
 	})
 	require.NoError(t, err)
 	require.Equal(t, goldenChatRequest, string(b))
@@ -215,7 +305,7 @@ func TestThinking_UnsetBodyByteIdentical(t *testing.T) {
 		ToolChoice:     "auto",
 		Temperature:    &temp,
 		MaxTokens:      &maxTok,
-		thinkingFields: newThinkingFields("", "", ""),
+		thinkingFields: newThinkingFields("", "", "", ""),
 	})
 	require.NoError(t, err)
 	require.Equal(t, goldenChatToolRequest, string(b))
@@ -227,13 +317,19 @@ func TestThinking_UnsetBodyByteIdentical(t *testing.T) {
 func TestThinking_UndeclaredSendsNoThinkingKey(t *testing.T) {
 	plain := Invocation{Model: "m"}
 	styleOnly := Invocation{Model: "m", ThinkingStyle: registry.ThinkingStyleAnthropic}
-	for name, capture := range map[string]func(*testing.T, Invocation) string{"complete": captureComplete, "chat": captureChat} {
+	flagOnly := Invocation{Model: "m", PreserveThinking: registry.ThinkingOn}
+	for name, capture := range map[string]func(*testing.T, Invocation) string{
+		"complete": captureComplete,
+		"chat":     captureChat,
+		"final":    func(t *testing.T, inv Invocation) string { return captureChatWith(t, inv, nil) },
+	} {
 		t.Run(name, func(t *testing.T) {
 			body := capture(t, plain)
 			for _, k := range thinkingKeys {
 				assert.NotContains(t, body, `"`+k+`"`)
 			}
 			assert.Equal(t, body, capture(t, styleOnly))
+			assert.Equal(t, body, capture(t, flagOnly))
 		})
 	}
 }
@@ -339,19 +435,287 @@ func TestReasoningSignal_AbsentIsEmpty(t *testing.T) {
 	assert.Empty(t, resp.Reasoning)
 }
 
-// AC 03-05 Edge Case 2: Message is re-sent as history, so it must have no field
-// that could carry reasoning back to the model.
-func TestMessage_HasNoReasoningField(t *testing.T) {
+// carrierKeys are the reasoning members an assistant Message carries back into
+// tool-loop history (sprint 35.16.11.2.2.1): every json tag on Message besides
+// the four plain chat members. Derived from the struct so a new reasoning
+// member is covered by the carrier tests without an edit here (as fanout's
+// reasoningKeys is); TestMessage_ReasoningCarrierIsRawAndOmitempty keeps one
+// literal assertion pinning the expected set.
+var carrierKeys = func() []string {
+	plain := map[string]bool{"role": true, "content": true, "tool_calls": true, "tool_call_id": true}
+	var keys []string
 	typ := reflect.TypeOf(Message{})
 	for i := 0; i < typ.NumField(); i++ {
-		f := typ.Field(i)
-		assert.NotContains(t, strings.ToLower(f.Name), "reasoning")
-		assert.NotContains(t, f.Tag.Get("json"), "reasoning")
+		if k := strings.Split(typ.Field(i).Tag.Get("json"), ",")[0]; !plain[k] {
+			keys = append(keys, k)
+		}
 	}
-	content := "the review"
-	b, err := json.Marshal(Message{Role: "assistant", Content: &content})
+	return keys
+}()
+
+// carrierOf returns the reasoning members m would send, as the exact bytes it
+// marshals them to.
+func carrierOf(t *testing.T, m Message) map[string]string {
+	t.Helper()
+	b, err := json.Marshal(m)
 	require.NoError(t, err)
-	assert.NotContains(t, string(b), "reasoning")
+	var all map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(b, &all))
+	out := map[string]string{}
+	for _, k := range carrierKeys {
+		if v, ok := all[k]; ok {
+			out[k] = string(v)
+		}
+	}
+	return out
+}
+
+// chatReply runs one Chat turn against a server that replies with messageJSON.
+func chatReply(t *testing.T, messageJSON string) *ChatResponse {
+	t.Helper()
+	srv := reasoningServer(t, messageJSON)
+	s := "hi"
+	resp, err := fastRetry(srv.Client()).Chat(context.Background(), Invocation{BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m"}, []Message{{Role: "user", Content: &s}}, nil)
+	require.NoError(t, err)
+	return resp
+}
+
+// toolCallTurn is an assistant tool-call reply with extra members appended.
+func toolCallTurn(members string) string {
+	msg := `{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"read_file","arguments":"{}"}}]`
+	if members != "" {
+		msg += "," + members
+	}
+	return msg + "}"
+}
+
+// Sprint 35.16.11.2.2.1 AC 02-01: each provider's reasoning member decodes onto
+// the assistant Message as the bytes received, under the key it arrived in.
+// reasoning_content and reasoning stay separate, never merged.
+func TestReasoningCarrier_DecodesEachShapeOntoMessage(t *testing.T) {
+	const blocks = `[{"type":"thinking","thinking":"step 1","signature":"EqQBCkgIARABGAIiQL+/zzA0Xq9b=="}]`
+	const details = `[{"type":"reasoning.text","text":"step 1"}]`
+	cases := map[string]struct {
+		members string
+		want    map[string]string
+	}{
+		"reasoning_content": {`"reasoning_content":"because X"`, map[string]string{"reasoning_content": `"because X"`}},
+		"reasoning":         {`"reasoning":"chain of thought"`, map[string]string{"reasoning": `"chain of thought"`}},
+		"both string keys": {`"reasoning_content":"primary","reasoning":"alt"`,
+			map[string]string{"reasoning_content": `"primary"`, "reasoning": `"alt"`}},
+		"reasoning_details": {`"reasoning_details":` + details, map[string]string{"reasoning_details": details}},
+		"thinking_blocks":   {`"thinking_blocks":` + blocks, map[string]string{"thinking_blocks": blocks}},
+		"content and details": {`"reasoning_content":"because X","reasoning_details":` + details,
+			map[string]string{"reasoning_content": `"because X"`, "reasoning_details": details}},
+		"empty array and object": {`"thinking_blocks":[],"reasoning_details":{}`,
+			map[string]string{}}, // an empty container is absent: neither the value the provider signed nor a meaningful replay
+		"whitespace-padded empties": {`"thinking_blocks":[ ],"reasoning_details":{ }`,
+			map[string]string{}},
+		// Pretty-printed empties: every JSON whitespace byte, not just space.
+		"newline and tab padded empties": {"\"thinking_blocks\":[\n],\"reasoning_details\":{\t}",
+			map[string]string{}},
+		"crlf padded empties": {"\"thinking_blocks\":{\r\n},\"reasoning_details\":[\r]",
+			map[string]string{}},
+		"none": {"", map[string]string{}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			resp := chatReply(t, toolCallTurn(tc.members))
+			assert.Equal(t, tc.want, carrierOf(t, resp.Message))
+			require.Len(t, resp.Message.ToolCalls, 1, "the tool call survives beside the carrier")
+		})
+	}
+}
+
+// TD internal/llmclient/chat.go:224: containerHasElement slices between the
+// delimiters, so a value shorter than two bytes must be reported empty rather
+// than panic. The decoder never hands it one today; this pins the guard.
+func TestContainerHasElement_ShortAndEmptyValues(t *testing.T) {
+	for _, raw := range []string{"", "[", "{", "[]", "{}"} {
+		assert.False(t, containerHasElement(json.RawMessage(raw)), "%q has no element", raw)
+	}
+	assert.True(t, containerHasElement(json.RawMessage(`[1]`)))
+	assert.True(t, containerHasElement(json.RawMessage(`{"a":null}`)))
+}
+
+// client.go documents reasoning and reasoning_content as the same chain of
+// thought under two keys (the vLLM transition from reasoning_content to
+// reasoning). A provider or proxy that fills both with identical text would be
+// re-sent that text twice on every later turn, doubling the replay growth — so
+// when the two string members are byte-equal, history() keeps reasoning_content
+// and drops the duplicate reasoning. Different values stay independent (the
+// "both string keys" case above).
+func TestReasoningCarrier_ByteEqualReasoningKeyDropped(t *testing.T) {
+	resp := chatReply(t, toolCallTurn(`"reasoning_content":"same chain","reasoning":"same chain"`))
+	got := carrierOf(t, resp.Message)
+	assert.Equal(t, map[string]string{"reasoning_content": `"same chain"`}, got,
+		"a byte-equal reasoning duplicate is not re-sent")
+}
+
+// A whitespace-only reasoning string is absent: it adds a member to a request
+// body that would otherwise be byte-identical to the pre-epic body, for a
+// provider that emits a placeholder blank reasoning field (a LiteLLM/vLLM
+// habit). Both literal and escaped whitespace count as absent.
+func TestReasoningCarrier_WhitespaceOnlyReasoningDropped(t *testing.T) {
+	cases := map[string]string{
+		"space":        `"reasoning_content":" "`,
+		"newline":      `"reasoning_content":"\n"`,
+		"tab":          `"reasoning_content":"\t"`,
+		"escaped tab":  `"reasoning_content":"\t"`,
+		"mixed spaces": `"reasoning_content":" \t \n "`,
+		"whitespace":   `"reasoning":"   "`,
+	}
+	for name, members := range cases {
+		t.Run(name, func(t *testing.T) {
+			resp := chatReply(t, toolCallTurn(members))
+			assert.Empty(t, carrierOf(t, resp.Message),
+				"a whitespace-only reasoning string is not re-sent")
+		})
+	}
+}
+
+// AC 02-01 Edge Cases 4-5 and Error Scenario 1: a null, an empty string, or a
+// value of the wrong type is absent. It never fails the turn and never
+// re-marshals as a member: null would change the request body, and "" is the
+// presence marker the user decided never to send (Phase 2 clarification).
+// Strings must be strings; reasoning_details and thinking_blocks must be an
+// array or an object.
+func TestReasoningCarrier_AbsentValuesLeaveNoMember(t *testing.T) {
+	cases := map[string]string{
+		"null reasoning_content":   `"reasoning_content":null`,
+		"null reasoning":           `"reasoning":null`,
+		"null reasoning_details":   `"reasoning_details":null`,
+		"null thinking_blocks":     `"thinking_blocks":null`,
+		"empty reasoning_content":  `"reasoning_content":""`,
+		"empty reasoning":          `"reasoning":""`,
+		"number reasoning_content": `"reasoning_content":42`,
+		"object reasoning":         `"reasoning":{"text":"x"}`,
+		"string thinking_blocks":   `"thinking_blocks":"x"`,
+		"number reasoning_details": `"reasoning_details":7`,
+	}
+	for name, members := range cases {
+		t.Run(name, func(t *testing.T) {
+			resp := chatReply(t, toolCallTurn(members))
+			assert.Empty(t, carrierOf(t, resp.Message))
+			assert.Empty(t, resp.Reasoning)
+			require.Len(t, resp.Message.ToolCalls, 1)
+		})
+	}
+}
+
+// AC 02-03 Scenarios 2-4 and Edge Cases 2, 4: each shape re-marshals as the
+// exact bytes received. Escapes, unicode, and the Anthropic signature are
+// unchanged, and array/object members stay JSON, never a quoted string.
+func TestReasoningCarrier_RoundTripByteForByte(t *testing.T) {
+	cases := map[string]string{
+		"reasoning_content": `"line one\nline \"two\" caf\u00e9 café"`,
+		"reasoning":         `"tab\there / slash"`,
+		"reasoning_details": `[{"type":"reasoning.text","text":"a\tb","index":0}]`,
+		"thinking_blocks":   `[{"type":"thinking","thinking":"weigh \"x\"","signature":"EqQBCkgIARABGAIiQL+/zzA0Xq9b+/9w=="},{"type":"redacted_thinking","data":"c2VjcmV0"}]`,
+	}
+	for key, raw := range cases {
+		t.Run(key, func(t *testing.T) {
+			resp := chatReply(t, toolCallTurn(`"`+key+`":`+raw))
+			got := carrierOf(t, resp.Message)
+			assert.Equal(t, raw, got[key], "%s must round-trip byte-for-byte", key)
+			if key == "reasoning_details" || key == "thinking_blocks" {
+				require.NotEmpty(t, got[key])
+				assert.Contains(t, "[{", got[key][:1], "%s re-marshals as JSON, not a string", key)
+			}
+		})
+	}
+}
+
+// encoding/json HTML-escapes <, >, and & in every marshaled string, the carrier
+// included, so reasoning holding them re-sends as the same JSON value with
+// different bytes. The decoded text is unchanged, which is what a provider
+// reads.
+func TestReasoningCarrier_HTMLCharsReencodeEquivalently(t *testing.T) {
+	resp := chatReply(t, toolCallTurn(`"reasoning_content":"if a < b && c > d"`))
+	got := carrierOf(t, resp.Message)["reasoning_content"]
+	assert.Equal(t, `"if a \u003c b \u0026\u0026 c \u003e d"`, got)
+	var s string
+	require.NoError(t, json.Unmarshal([]byte(got), &s))
+	assert.Equal(t, "if a < b && c > d", s)
+}
+
+// The same holds for a structured member sent with whitespace: it re-sends
+// compacted and escaped, as the same JSON value, and the signature string is
+// unchanged byte-for-byte.
+func TestReasoningCarrier_StructuredMemberReencodesAsSameValue(t *testing.T) {
+	const sent = `[ {"type": "thinking", "thinking": "a<b & c", "signature": "EqQBCkgIARABGAIiQL+/zzA0Xq9b=="} ]`
+	resp := chatReply(t, toolCallTurn(`"thinking_blocks":`+sent))
+	got := carrierOf(t, resp.Message)["thinking_blocks"]
+	assert.JSONEq(t, sent, got)
+	assert.Contains(t, got, `"signature":"EqQBCkgIARABGAIiQL+/zzA0Xq9b=="`)
+	assert.Contains(t, got, `"thinking":"a\u003cb \u0026 c"`)
+}
+
+// goldenToolHistoryRequest is a tool-loop turn-2 body (user, assistant tool
+// call, tool result) captured from pre-plan main at e5c9754d, before Message
+// had any reasoning member.
+const goldenToolHistoryRequest = `{"model":"m","messages":[{"role":"user","content":"review f.go"},{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"f.go\"}"}}]},{"role":"tool","content":"package main","tool_call_id":"c1"}],"tools":[{"function":{"description":"Read a file","name":"read_file","parameters":{"type":"object"}},"type":"function"}],"tool_choice":"auto","temperature":0.3,"max_tokens":512}`
+
+// AC 02-03 Scenario 1: a history with no reasoning set, tool-call turn
+// included, marshals byte-identical to the pre-plan body.
+func TestMessage_ReasoningCarrierUnsetIsByteIdentical(t *testing.T) {
+	u, tr := "review f.go", "package main"
+	temp, maxTok := 0.3, 512
+	b, err := json.Marshal(chatToolRequest{
+		Model: "m",
+		Messages: []Message{
+			{Role: "user", Content: &u},
+			{Role: "assistant", ToolCalls: []ToolCall{{ID: "c1", Type: "function", Function: FunctionCall{Name: "read_file", Arguments: json.RawMessage(`"{\"path\":\"f.go\"}"`)}}}},
+			{Role: "tool", Content: &tr, ToolCallID: "c1"},
+		},
+		Tools:          []ToolDef{{Name: "read_file", Description: "Read a file", Parameters: map[string]any{"type": "object"}}},
+		ToolChoice:     "auto",
+		Temperature:    &temp,
+		MaxTokens:      &maxTok,
+		thinkingFields: newThinkingFields("", "", "", ""),
+	})
+	require.NoError(t, err)
+	require.Equal(t, goldenToolHistoryRequest, string(b))
+}
+
+// Replaces TestMessage_HasNoReasoningField (sprint 35.16.11.2.2), which pinned
+// the opposite: Message now carries reasoning back into tool-loop history.
+// Every carrier member is raw JSON, so no shape is reshaped, and omitempty, so
+// an unset carrier adds nothing to the body.
+func TestMessage_ReasoningCarrierIsRawAndOmitempty(t *testing.T) {
+	// Literal pin for the derived carrierKeys above: without it the derivation
+	// would happily cover a wrong set (a renamed or merged member) silently.
+	assert.ElementsMatch(t, []string{"reasoning_content", "reasoning", "reasoning_details", "thinking_blocks"}, carrierKeys)
+	typ := reflect.TypeOf(Message{})
+	var found []string
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		tag := strings.Split(f.Tag.Get("json"), ",")
+		for _, k := range carrierKeys {
+			if tag[0] != k {
+				continue
+			}
+			found = append(found, k)
+			assert.Equal(t, reflect.TypeOf(json.RawMessage(nil)), f.Type, "%s is raw JSON", k)
+			assert.Contains(t, tag[1:], "omitempty", "%s is omitempty", k)
+		}
+	}
+	assert.ElementsMatch(t, carrierKeys, found)
+	content := "the review"
+	assert.Empty(t, carrierOf(t, Message{Role: "assistant", Content: &content}))
+}
+
+// Sprint 35.16.11.2.2.1 AC 04-03: the Message shapes the tool loop builds for
+// user and tool turns (Role and Content, plus ToolCallID) marshal with no
+// reasoning member, while an assistant turn with a carrier set sends it. This
+// pins the wire shape only; that the loop's own helpers never set a carrier is
+// proved in internal/fanout (TestToolLoop_EachAssistantTurnReplaysOnlyItsOwnReasoning).
+func TestMessage_ReasoningRidesOnlyTheAssistantTurn(t *testing.T) {
+	content, result := "the review", "package main"
+	assistant := Message{Role: "assistant", Content: &content, ReasoningContent: json.RawMessage(`"because X"`)}
+	assert.Equal(t, map[string]string{"reasoning_content": `"because X"`}, carrierOf(t, assistant))
+	assert.Empty(t, carrierOf(t, Message{Role: "user", Content: &content}))
+	assert.Empty(t, carrierOf(t, Message{Role: "tool", ToolCallID: "c1", Content: &result}))
 }
 
 // A malformed reasoning signal never fails the turn: a non-string

@@ -43,6 +43,12 @@ import (
 //
 // SENSITIVE DATA: Prompt and Response hold the model exchange verbatim. This
 // package applies no masking beyond stripping credentials from the endpoint.
+// One deliberate omission: Messages flattens away the replayed assistant
+// reasoning members (reasoning_content, reasoning, reasoning_details,
+// thinking_blocks) that a thinking-declaring agent sends on every tool-loop
+// turn after the first — so the record is NOT a byte-faithful wire body, and
+// its most sensitive content (chain-of-thought) is present on the wire but
+// absent from Messages.
 type Invocation struct {
 	// Seq is a process-wide monotonic sequence number assigned when the call
 	// completes. The engine runs agents concurrently and `atcr serve` runs
@@ -80,12 +86,13 @@ type Invocation struct {
 	// from any other failure: without it the record cannot answer "what output
 	// contract was this call made under".
 	ResponseFormat string
-	// Thinking, ThinkingLevel, and ThinkingStyle are the agent's declared
-	// thinking keys, copied verbatim (empty when undeclared), so a record can
-	// answer "what reasoning setting was this call made under".
-	Thinking      string
-	ThinkingLevel string
-	ThinkingStyle string
+	// Thinking, ThinkingLevel, ThinkingStyle, and PreserveThinking are the
+	// agent's declared thinking keys, copied verbatim (empty when undeclared),
+	// so a record can answer "what reasoning setting was this call made under".
+	Thinking         string
+	ThinkingLevel    string
+	ThinkingStyle    string
+	PreserveThinking string
 	// ResponseToolCalls is the tool calls the assistant requested on this turn.
 	// A tool-enabled agent's "response" is frequently a tool call with no text
 	// at all, so a record omitting these would misreport the exchange.
@@ -160,6 +167,8 @@ type ToolCall struct {
 
 // Message is one chat message in a multi-turn invocation, with a nil
 // (content:null) assistant tool-call turn flattened to an empty string.
+// Replayed assistant reasoning members are deliberately dropped here — see
+// the SENSITIVE DATA note on Invocation.
 type Message struct {
 	Role    string
 	Content string
@@ -344,18 +353,19 @@ func (o *observingClient) base(ctx context.Context, inv llmclient.Invocation, st
 	}
 	c := CallFrom(ctx)
 	return Invocation{
-		RunID:          c.RunID,
-		AgentName:      c.AgentName,
-		Stage:          c.Stage,
-		CodeContext:    c.CodeContext,
-		Model:          inv.Model,
-		Provider:       provider,
-		BaseURL:        endpoint,
-		Prompt:         inv.Prompt,
-		ResponseFormat: inv.ResponseFormat,
-		Thinking:       inv.Thinking,
-		ThinkingLevel:  inv.ThinkingLevel,
-		ThinkingStyle:  inv.ThinkingStyle,
+		RunID:            c.RunID,
+		AgentName:        c.AgentName,
+		Stage:            c.Stage,
+		CodeContext:      c.CodeContext,
+		Model:            inv.Model,
+		Provider:         provider,
+		BaseURL:          endpoint,
+		Prompt:           inv.Prompt,
+		ResponseFormat:   inv.ResponseFormat,
+		Thinking:         inv.Thinking,
+		ThinkingLevel:    inv.ThinkingLevel,
+		ThinkingStyle:    inv.ThinkingStyle,
+		PreserveThinking: inv.PreserveThinking,
 		// The temperature the request carried, which a declared thinking
 		// setting can drop (anthropic thinking on sends none).
 		Temperature: copyFloat64(llmclient.SentTemperature(inv)),

@@ -1,3 +1,25 @@
+## [35.29.0] - 2026-09-28
+
+*Sprint 35.16.11.2.2.1 — tool-loop reasoning round-trip.*
+
+A model's own prior reasoning now replays back through tool-loop history on every turn after the first, in the shape each provider returned it, instead of being silently dropped; a turn with no reasoning still sends the same request body as before.
+
+### Added
+
+- Raw reasoning carrier fields on `internal/llmclient`'s wire types, re-sent under the key they arrived in, with a byte-identical golden test for agents that declare no reasoning.
+- Per-agent preserved-thinking flag (Qwen `preserve_thinking`, GLM `thinking.clear_thinking`) with registry validation, persona/fallback guards, and fan-out wiring.
+- `internal/fanout/loop.go` now appends reasoning on assistant history turns only, replacing the tests that previously pinned the no-replay behavior.
+
+### Fixed
+
+- Distinct `Salvaged` flag on completion/result so engine cache gating, debate, and verify guards no longer conflate salvage state.
+- Reasoning containers padded with whitespace, newlines, tabs, or CR are now treated as empty instead of being replayed as real content.
+- Doctor and cross-examination messaging corrected to name the right remedy (`response_truncated`, retry without `preserve_thinking`).
+
+### Removed
+
+- Dead `noContentLike` guard removed from the stream parser (equivalent mutant).
+
 ## [35.28.0] - 2026-09-27
 
 *Sprint 35.16.11.2.2 — registry-level thinking controls and doctor verification.*
