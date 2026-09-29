@@ -893,6 +893,23 @@ func TestWrap_EchoesDeclaredThinking(t *testing.T) {
 	}
 }
 
+// TD row internal/fanout/review.go:2945: a thinking_style with neither
+// thinking nor thinking_level sends no thinking field, so the record must not
+// report one. The echo is gated on registry.ThinkingDeclared, doctor's rule.
+func TestWrap_StyleAloneRecordsNoThinkingStyle(t *testing.T) {
+	srv := chatServer(t, http.StatusOK, okCompletion)
+	inv := testInvocation(t, srv)
+	inv.ThinkingStyle = "qwen"
+	obs := &recordingObserver{}
+	ctx := observedCtx(obs, &bytes.Buffer{})
+
+	_, err := Wrap(ctx, llmclient.New()).CompleteWithMeta(ctx, inv)
+	require.NoError(t, err)
+
+	require.Len(t, obs.calls(), 1)
+	assert.Empty(t, obs.calls()[0].ThinkingStyle)
+}
+
 // Sprint 35.16.11.2.2 TD-015: an enabled anthropic declaration sends no
 // temperature, so the record reports none rather than the declared value that
 // never reached the provider.
