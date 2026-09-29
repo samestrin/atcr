@@ -701,16 +701,6 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 			}
 			return probeResult{status: StatusOK, latencyMS: latencyMS}
 		}
-		if salvaged {
-			// Salvaged and marker-absent: the generic marker-absent hint below still
-			// applies (raising the cap will not turn reasoning into an answer), but the
-			// operator should know the reply was reasoning-only.
-			return probeResult{
-				status:    StatusOKWarning,
-				latencyMS: latencyMS,
-				hint:      "HTTP 200 but marker absent/empty; the reply carried no content and reasoning was salvaged (thinking models spend the budget on reasoning) — raise this agent's max_tokens declaration, or pass `atcr review --max-tokens N`",
-			}
-		}
 		// The remedy names the knob that capped THIS probe. Which one that is depends on
 		// the resolved tier: without --max-tokens the probe used the agent's declaration,
 		// which `atcr review` also resolves; with it, the flag did, and telling the
@@ -723,6 +713,11 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 		hint := "HTTP 200 but marker absent/empty (thinking models spend the budget on reasoning) — raise this agent's max_tokens declaration, or pass `atcr review --max-tokens N`"
 		if budgetSrc == MaxTokensSourceFlag {
 			hint = "HTTP 200 but marker absent/empty (thinking models spend the budget on reasoning) — this probe was capped by your explicit --max-tokens; raise it to re-probe. `atcr review` resolves its own cap separately"
+		}
+		// A salvaged reply keeps the tier-specific remedy above (a larger cap may leave
+		// room for content after the reasoning) and adds that it was reasoning-only.
+		if salvaged {
+			hint += ". The reply carried no content; its reasoning was salvaged"
 		}
 		return probeResult{
 			status:    StatusOKWarning,
