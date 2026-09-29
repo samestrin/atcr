@@ -448,6 +448,14 @@ func TestRegistryDoc_ThinkingMaxTokensAndProseNote(t *testing.T) {
 		{"close the array before stopping", "archer left a finding's JSON unclosed"},
 		{"`response_format: json_object` is not a fix for this", "JSON mode answered whole chunks with an empty object"},
 		{"`{\"findings\":[]}`", "the measured empty-review shape under JSON mode"},
+		// The JSON-mode evidence comes from the probe runs, not the same panel run as
+		// the prose evidence — the note must not merge the two sources, and the token
+		// count is unmeasured, so it is stated as the reply's exact length instead.
+		{"in the probe runs", "the JSON-mode empty-review evidence is from the probe runs, distinct from the prose panel run"},
+	})
+	require.NotContains(t, proseNote, "handful of tokens", "the note must not claim an unmeasured token count")
+	require.NotContains(t, proseNote, "in the same runs", "the note must not merge the prose panel run with the JSON-mode probe runs")
+	assertStates(t, "prose-in-reply note", docLineWith(t, doc, "**Thinking and prose in the reply.**"), []struct{ token, why string }{
 		// Claim 4: the prose must WARN that JSON mode drops the persona output
 		// rule, not merely describe the consequence after the fact.
 		{"Warning: JSON mode swaps the persona's `## Output Format` section", "the JSON-mode consequence must be framed as a warning before it is explained"},
