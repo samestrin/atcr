@@ -557,6 +557,45 @@ func TestRun_ThinkingPreserveFieldPopulatedOnFlaggedRejection(t *testing.T) {
 	assert.Contains(t, a.ThinkingDetail, "preserve_thinking")
 }
 
+// TD internal/doctor/run.go:1049: a level-alone target that also sends
+// preserve_thinking already has a thinking_level detail when honored, so the
+// preserve note is APPENDED rather than set. Pin the joined sentence exactly.
+func TestRun_HonoredDetailAppendsPreserveNoteToLevelDetail(t *testing.T) {
+	reg := regWith(
+		map[string]registry.Provider{"p": {APIKeyEnv: rfDoctorEnvK, BaseURL: "https://api.example/v1"}},
+		map[string]registry.AgentConfig{"a": {
+			Provider: "p", Model: "m",
+			ThinkingLevel: registry.ThinkingLevelLow, ThinkingStyle: registry.ThinkingStyleQwen, PreserveThinking: registry.ThinkingOn,
+		}},
+	)
+	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a"}})
+	require.NoError(t, err)
+
+	a, _, _ := runThinking(t, res, thinks, nil, llmclient.Completion{}, nil)
+	assert.Equal(t, ThinkingHonored, a.ThinkingStatus)
+	assert.Equal(t, "reasoning observed; the probe does not verify thinking_level low; the probe does not verify preserve_thinking (single-turn)", a.ThinkingDetail)
+}
+
+// TD internal/doctor/run.go:931: thinking_preserve is omitted exactly when
+// thinking_declared is. A preserve_thinking target whose call reaches no
+// verdict (a permanent 401) must not report the flag on its row.
+func TestRun_ThinkingPreserveOmittedWithoutAVerdict(t *testing.T) {
+	reg := regWith(
+		map[string]registry.Provider{"p": {APIKeyEnv: rfDoctorEnvK, BaseURL: "https://api.example/v1"}},
+		map[string]registry.AgentConfig{"a": {
+			Provider: "p", Model: "m",
+			Thinking: registry.ThinkingOn, ThinkingStyle: registry.ThinkingStyleQwen, PreserveThinking: registry.ThinkingOn,
+		}},
+	)
+	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a"}})
+	require.NoError(t, err)
+
+	a, _, _ := runThinking(t, res, llmclient.Completion{}, &llmclient.HTTPStatusError{Status: 401, Snippet: "bad key"}, llmclient.Completion{}, nil)
+	assert.Empty(t, a.ThinkingStatus)
+	assert.Empty(t, a.ThinkingDeclared)
+	assert.Empty(t, a.ThinkingPreserve, "thinking_preserve is omitted exactly when thinking_declared is")
+}
+
 // TD-010: the verdict label names preserve_thinking when the target sends it,
 // so a flag-caused rejection is not blamed on thinking alone.
 func TestThinkingDeclaration_NamesPreserveThinking(t *testing.T) {
