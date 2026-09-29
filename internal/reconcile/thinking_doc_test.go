@@ -577,13 +577,15 @@ func docSentences(s string) []string {
 }
 
 // sentenceNamesLowAsRemedy reports whether a sentence offers `thinking_level: low`
-// as a fix rather than naming it as the measured failure. The two framing markers
-// are the ones the Thinking and max_tokens note uses ("not a safe fix", and the
-// measured silent-lane evidence "made `nemotron-3-super-120b`").
+// as a fix rather than framing it as the measured failure or as load-time syntax
+// only. The framing markers are the ones the Thinking and max_tokens note uses:
+// "not a safe fix", the measured silent-lane evidence "made `nemotron-3-super-120b`",
+// and the load-error disambiguation "syntactic substitute ... not a behavioral fix".
 func sentenceNamesLowAsRemedy(sent string) bool {
 	if !strings.Contains(sent, "`thinking_level: low`") {
 		return false
 	}
 	return !strings.Contains(sent, "not a safe fix") &&
-		!strings.Contains(sent, "made `nemotron-3-super-120b`")
+		!strings.Contains(sent, "made `nemotron-3-super-120b`") &&
+		!strings.Contains(sent, "not a behavioral fix")
 }
