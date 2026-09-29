@@ -1845,3 +1845,23 @@ func TestBuildSkepticAgent_ForwardsPreserveThinking(t *testing.T) {
 // The anthropic row's WIRE behavior — no preserve_thinking/clear_thinking
 // member rendered under that style — is pinned where the mapper lives:
 // internal/llmclient/thinking_test.go preserveCases "anthropic ignores it".
+
+// TD internal/llmclient/client.go:394: a stop-reason reasoning salvage reaches
+// the skeptic as StatusOK, ResponseTruncated=false, with chain-of-thought as
+// Content — the truncated-reply guard never fires and a draft verdict parsed
+// from the reasoning counts toward precision as a full read. The Salvaged
+// marker must collapse the verdict to unverifiable, like response_truncated.
+func TestInvokeSkeptic_SalvagedModelResponse(t *testing.T) {
+	t.Parallel()
+	sk := testSkeptic()
+	sk.Config.SupportsFC = false // single-shot path
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{meta: &llmclient.Completion{Content: `{"verdict":"confirmed","reasoning":"draft parsed from chain-of-thought"}`, Salvaged: true}},
+	}}
+	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	assert.Equal(t, verdictUnverifiable, v.Verdict, "a verdict parsed from salvaged reasoning must not be confirmed")
+	assert.Equal(t, "reasoning_salvaged", v.Notes, "the named note must carry the salvage reason")
+	assert.Empty(t, tripped, "a salvage is not a budget trip")
+}

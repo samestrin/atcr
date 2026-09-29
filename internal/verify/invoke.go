@@ -143,6 +143,15 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 		logger.Debug("skeptic failure detail", "skeptic", skeptic.Name, "class", "response_truncated", "detail", "model reply cut off on finish_reason length; draft verdict not trusted")
 		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "response_truncated", Skeptic: skeptic.Name}, res.TrippedBudgets, nil
 	}
+	// A stop-reason reasoning salvage reaches here as StatusOK, NOT truncated,
+	// with chain-of-thought as Content — the truncated-reply guard never fires
+	// and a draft verdict parsed from the reasoning would count toward precision
+	// as a full read (TD internal/llmclient/client.go:394). Collapse the same way.
+	if res.Salvaged {
+		logger.Warn("skeptic failed", "skeptic", skeptic.Name, "class", "reasoning_salvaged")
+		logger.Debug("skeptic failure detail", "skeptic", skeptic.Name, "class", "reasoning_salvaged", "detail", "provider returned empty content; the salvaged chain-of-thought is not a verdict")
+		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "reasoning_salvaged", Skeptic: skeptic.Name}, res.TrippedBudgets, nil
+	}
 
 	v, _ := parseVerdict(res.Content)
 	v.Skeptic = skeptic.Name

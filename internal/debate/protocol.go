@@ -151,7 +151,10 @@ func driveSeat(ctx context.Context, seat Caster, prompt string, cc fanout.ChatCo
 	// anthropic thinking load rule exists to prevent (TD
 	// internal/debate/protocol.go:148). Checked before the tripped-budget return
 	// so a truncated forced final answer is no statement either.
-	if r.ResponseTruncated {
+	// The Salvaged marker covers the same failure on finish_reason=stop: empty
+	// content, reasoning promoted to Content, ResponseTruncated FALSE — the
+	// truncation gate above never fires on it (TD internal/llmclient/client.go:394).
+	if r.ResponseTruncated || r.Salvaged {
 		return "", fanout.StatusFailed
 	}
 	if r.Status != fanout.StatusOK || len(r.TrippedBudgets) > 0 {
