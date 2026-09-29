@@ -657,7 +657,7 @@ func probe(ctx context.Context, c Completer, tgt Target, opts Options) probeResu
 		PreserveThinking: tgt.PreserveThinking,
 	})
 	latency := time.Since(start).Milliseconds()
-	pr := classify(comp.Content, err, opts.Nonce, latency, tgt, budgetSrc)
+	pr := classify(comp.Content, err, opts.Nonce, latency, tgt, budgetSrc, comp.Salvaged)
 	// TD-020: this call carries the thinking declaration, so a --max-tokens at or
 	// below an anthropic budget is rejected. Name the flag, since review at its own
 	// cap may work fine.
@@ -679,8 +679,9 @@ const maxDetailBytes = 512
 
 // classify turns a completion result into a probe outcome. budgetSrc names the tier the
 // probe's output cap resolved from, so the marker-absent remedy can point at the knob
-// that actually governed THIS probe.
-func classify(content string, err error, nonce string, latencyMS int64, tgt Target, budgetSrc string) probeResult {
+// that actually governed THIS probe. salvaged reports that the reply carried no content
+// and llmclient promoted the chain-of-thought into Content.
+func classify(content string, err error, nonce string, latencyMS int64, tgt Target, budgetSrc string, salvaged bool) probeResult {
 	if err == nil {
 		// Strip the prompt text before checking for the marker so an endpoint
 		// that echoes the request verbatim (a common misconfiguration) does not

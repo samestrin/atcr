@@ -266,7 +266,7 @@ func TestClassify_StatusMapping(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := classify("", tc.err, testNonce, 5, tgt, MaxTokensSourceDefault)
+			got := classify("", tc.err, testNonce, 5, tgt, MaxTokensSourceDefault, false)
 			assert.Equal(t, tc.want, got.status)
 		})
 	}
@@ -274,7 +274,7 @@ func TestClassify_StatusMapping(t *testing.T) {
 
 func TestClassify_CanceledIsTimeoutWithoutRaiseHint(t *testing.T) {
 	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "K"}
-	got := classify("", context.Canceled, testNonce, 5, tgt, MaxTokensSourceDefault)
+	got := classify("", context.Canceled, testNonce, 5, tgt, MaxTokensSourceDefault, false)
 	assert.Equal(t, StatusTimeout, got.status)
 	// A cancellation (Ctrl-C) must not advise changing --timeout.
 	assert.NotContains(t, got.hint, "raise --timeout")
@@ -290,7 +290,7 @@ func TestClassify_Forbidden403DoesNotBlameTheAPIKey(t *testing.T) {
 	got := classify("", &llmclient.HTTPStatusError{
 		Status:  403,
 		Snippet: "You have reached your usage limit for this billing cycle",
-	}, testNonce, 5, tgt, MaxTokensSourceDefault)
+	}, testNonce, 5, tgt, MaxTokensSourceDefault, false)
 
 	assert.Equal(t, StatusAuthFailed, got.status, "403 stays in the auth class")
 	assert.NotContains(t, got.hint, "API key", "a 403 hint must not blame the credential")
@@ -307,7 +307,7 @@ func TestClassify_Forbidden403DoesNotBlameTheAPIKey(t *testing.T) {
 func TestClassify_Unauthorized401KeepsTheAPIKeyHint(t *testing.T) {
 	t.Setenv("ATCR_AUTH_PROBE_KEY", "k")
 	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "ATCR_AUTH_PROBE_KEY"}
-	got := classify("", &llmclient.HTTPStatusError{Status: 401}, testNonce, 5, tgt, MaxTokensSourceDefault)
+	got := classify("", &llmclient.HTTPStatusError{Status: 401}, testNonce, 5, tgt, MaxTokensSourceDefault, false)
 
 	assert.Equal(t, StatusAuthFailed, got.status)
 	assert.Contains(t, got.hint, "API key")
@@ -316,7 +316,7 @@ func TestClassify_Unauthorized401KeepsTheAPIKeyHint(t *testing.T) {
 
 func TestClassify_ErrorBodySnippetSurfaced(t *testing.T) {
 	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "K"}
-	got := classify("", &llmclient.HTTPStatusError{Status: 404, Snippet: "the model `gpt-x` does not exist"}, testNonce, 5, tgt, MaxTokensSourceDefault)
+	got := classify("", &llmclient.HTTPStatusError{Status: 404, Snippet: "the model `gpt-x` does not exist"}, testNonce, 5, tgt, MaxTokensSourceDefault, false)
 	assert.Equal(t, StatusNotFound, got.status)
 	assert.Contains(t, got.detail, "does not exist")
 }
@@ -485,7 +485,7 @@ func TestClassify_NetworkErrorRedactsAPIKey(t *testing.T) {
 	// A transport error that accidentally embeds the API key value (e.g. a
 	// misconfigured proxy that echoes auth headers in its error message).
 	err := fmt.Errorf("request failed: auth key=%s rejected by proxy", secret)
-	got := classify("", err, testNonce, 5, tgt, MaxTokensSourceDefault)
+	got := classify("", err, testNonce, 5, tgt, MaxTokensSourceDefault, false)
 	assert.Equal(t, StatusNetworkError, got.status)
 	assert.NotContains(t, got.detail, secret, "API key must be scrubbed from network-error detail")
 	assert.Contains(t, got.detail, "[redacted]")
@@ -504,7 +504,7 @@ func TestClassify_StatusErrorSnippetScrubsCredentials(t *testing.T) {
 	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://" + proxyUser + ":" + proxyPass + "@proxy.test/v1", APIKeyEnv: "SECRET_REDACT_KEY2"}
 	// An HTTP error whose snippet echoes the API key and the base_url userinfo.
 	snippet := "rejected key " + secret + " for " + proxyUser + ":" + proxyPass
-	got := classify("", &llmclient.HTTPStatusError{Status: 403, Snippet: snippet}, testNonce, 5, tgt, MaxTokensSourceDefault)
+	got := classify("", &llmclient.HTTPStatusError{Status: 403, Snippet: snippet}, testNonce, 5, tgt, MaxTokensSourceDefault, false)
 	assert.Equal(t, StatusAuthFailed, got.status)
 	assert.NotContains(t, got.detail, secret, "API key must be scrubbed from HTTPStatusError snippet")
 	assert.NotContains(t, got.detail, proxyPass, "base_url password must be scrubbed from HTTPStatusError snippet")
@@ -517,7 +517,7 @@ func TestClassify_PromptEchoIsNotOK(t *testing.T) {
 	// An endpoint that echoes the request prompt verbatim contains the marker
 	// (because the prompt embeds it), but it did not follow the instruction —
 	// a common misconfiguration (wrong route returning the request body).
-	got := classify(Prompt(testNonce), nil, testNonce, 5, tgt, MaxTokensSourceDefault)
+	got := classify(Prompt(testNonce), nil, testNonce, 5, tgt, MaxTokensSourceDefault, false)
 	assert.NotEqual(t, StatusOK, got.status, "a verbatim prompt echo must not classify as ok")
 }
 
@@ -613,4 +613,23 @@ func TestRun_ResponseFormatTruncatedRemedyIsCutOffText(t *testing.T) {
 		assert.Contains(t, rep.Agents[0].ResponseFormatDetail, cutOff(0),
 			"the no-budget remedy must come from cutOff too")
 	})
+}
+
+// TD internal/doctor/run.go:660: a salvaged reply (empty content; llmclient
+// promoted the chain-of-thought into Content) that repeats the nonce marker in
+// its REASONING must not report a clean StatusOK — the review lane cannot use
+// that reply. It must collapse to StatusOKWarning naming the salvage.
+func TestClassify_SalvagedReasoningMarkerIsWarningNotOK(t *testing.T) {
+	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "K"}
+	got := classify(Marker(testNonce), nil, testNonce, 5, tgt, MaxTokensSourceDefault, true)
+	assert.Equal(t, StatusOKWarning, got.status,
+		"a salvaged reasoning-only reply must never classify as a clean OK")
+	assert.Contains(t, got.hint, "salvaged", "the hint must name the salvage, not the generic marker-absent remedy")
+}
+
+// A NON-salvaged reply carrying the marker stays a clean StatusOK.
+func TestClassify_ContentMarkerStillOK(t *testing.T) {
+	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "K"}
+	got := classify(Marker(testNonce), nil, testNonce, 5, tgt, MaxTokensSourceDefault, false)
+	assert.Equal(t, StatusOK, got.status)
 }
