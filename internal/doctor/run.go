@@ -259,6 +259,10 @@ type probeResult struct {
 	// target declares none or no call was placed.
 	thinkingStatus string
 	thinkingDetail string
+	// markerInReasoning reports a StatusOKWarning whose marker WAS found, but only in
+	// salvaged reasoning — so consumers that read StatusOKWarning as "marker absent"
+	// can tell the two apart.
+	markerInReasoning bool
 }
 
 // Run probes every distinct target once (bounded concurrency), maps results
@@ -323,7 +327,17 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 		pr := results[at.TargetIdx]
 		status, hint := pr.status, pr.hint
 		reviewCap := reviewMaxTokens(at.DeclaredMaxTokens)
-		if s, h, ok := zeroBudgetVerdict(tgt.Model, at.ContextWindowTokens, reviewCap, pr.maxTokens, status); ok {
+		// zeroBudgetVerdict reads StatusOKWarning as "marker absent". A marker found only
+		// in salvaged reasoning is not that, so it is judged as a found marker and the
+		// salvage hint is kept alongside the budget one rather than replaced by it.
+		zbStatus := status
+		if pr.markerInReasoning {
+			zbStatus = StatusOK
+		}
+		if s, h, ok := zeroBudgetVerdict(tgt.Model, at.ContextWindowTokens, reviewCap, pr.maxTokens, zbStatus); ok {
+			if pr.markerInReasoning {
+				h += " Separately: " + hint
+			}
 			status, hint = s, h
 		}
 		if clause, ok := smallWindowClause(tgt.Model, at.ContextWindowTokens, at.DeclaredMaxTokens, at.WindowSource, status); ok {
@@ -694,9 +708,10 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 			// must not read as a clean OK — collapse to a warning naming the salvage.
 			if salvaged {
 				return probeResult{
-					status:    StatusOKWarning,
-					latencyMS: latencyMS,
-					hint:      "reply had no content; the nonce marker was found only in salvaged reasoning, which the review lane cannot use — repoint the agent to a model that answers with content",
+					status:            StatusOKWarning,
+					latencyMS:         latencyMS,
+					hint:              "reply had no content; the nonce marker was found only in salvaged reasoning, which the review lane cannot use — repoint the agent to a model that answers with content",
+					markerInReasoning: true,
 				}
 			}
 			return probeResult{status: StatusOK, latencyMS: latencyMS}
