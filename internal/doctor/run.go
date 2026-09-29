@@ -688,7 +688,28 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 		// produce a false-positive StatusOK.
 		stripped := strings.ReplaceAll(content, Prompt(nonce), "")
 		if strings.Contains(stripped, Marker(nonce)) {
+			// A salvaged reply's Content is the promoted chain-of-thought, not the
+			// model's answer (TD internal/doctor/run.go:660). Even when the reasoning
+			// repeats the nonce marker, the review lane cannot use that reply, so it
+			// must not read as a clean OK — collapse to a warning naming the salvage.
+			if salvaged {
+				return probeResult{
+					status:    StatusOKWarning,
+					latencyMS: latencyMS,
+					hint:      "reply had no content; the nonce marker was found only in salvaged reasoning, which the review lane cannot use — repoint the agent to a model that answers with content",
+				}
+			}
 			return probeResult{status: StatusOK, latencyMS: latencyMS}
+		}
+		if salvaged {
+			// Salvaged and marker-absent: the generic marker-absent hint below still
+			// applies (raising the cap will not turn reasoning into an answer), but the
+			// operator should know the reply was reasoning-only.
+			return probeResult{
+				status:    StatusOKWarning,
+				latencyMS: latencyMS,
+				hint:      "HTTP 200 but marker absent/empty; the reply carried no content and reasoning was salvaged (thinking models spend the budget on reasoning) — raise this agent's max_tokens declaration, or pass `atcr review --max-tokens N`",
+			}
 		}
 		// The remedy names the knob that capped THIS probe. Which one that is depends on
 		// the resolved tier: without --max-tokens the probe used the agent's declaration,
