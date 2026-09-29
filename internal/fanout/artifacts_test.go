@@ -537,13 +537,20 @@ func TestTruncatedZeroRemedy_MatchesDocThinkingLever(t *testing.T) {
 	require.GreaterOrEqual(t, docOff, 0, "doc paragraph must state the thinking: off remedy")
 	require.Less(t, docOff, docCap, "doc paragraph must lead with the thinking lever, not the cap raise")
 
-	// Runtime side: the operator-facing remedy must agree with the doc.
 	remedy := truncatedZeroRemedy
+
+	// The doc's measured advice: a lower level can silence the model instead of
+	// fixing it, so the runtime remedy must never prescribe thinking_level: low
+	// and must carry the doc's repoint-the-agent advice (epic 35.16.11.2.2.2).
+	require.NotContains(t, remedy, "use thinking_level: low",
+		"truncatedZeroRemedy must not prescribe thinking_level: low — epic 35.16.11.2.2.2 measured it silencing nemotron-3-super-120b (NO FINDINGS)")
+	require.Contains(t, docPara, "repoint", "doc paragraph must carry the repoint-the-agent advice")
+	require.Contains(t, remedy, "repoint", "truncatedZeroRemedy must agree with the doc's repoint-the-agent advice")
+
+	// Runtime side: the operator-facing remedy must agree with the doc.
 	off := strings.Index(remedy, "thinking: off")
-	low := strings.Index(remedy, "thinking_level: low")
 	capIdx := strings.Index(remedy, "--max-tokens")
 	require.GreaterOrEqual(t, off, 0, "truncatedZeroRemedy must mention thinking: off (docs' first fix)")
-	require.GreaterOrEqual(t, low, 0, "truncatedZeroRemedy must mention thinking_level: low (reasoning_effort has no off)")
 	require.GreaterOrEqual(t, capIdx, 0, "truncatedZeroRemedy must keep the cap-raise advice")
 	require.Less(t, off, capIdx,
 		"truncatedZeroRemedy must LEAD with the thinking lever: docs/registry.md calls thinking: off the first fix, and raising max_tokens alone gives a runaway thinker more room")
