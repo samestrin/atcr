@@ -446,6 +446,7 @@ func TestDiffCacheKey_ThinkingTokens(t *testing.T) {
 	}{
 		{"undeclared keeps the pre-existing key", "", "", "", "", "default\x00kv=2"},
 		{"thinking alone", "", "off", "", "", "default\x00th=off\x00kv=2"},
+		{"style alone keeps the pre-existing key", "", "", "", "qwen", "default\x00kv=2"},
 		{"level and style without thinking", "", "", "low", "reasoning_effort", "default\x00tl=low\x00ts=reasoning_effort\x00kv=2"},
 		{"all three after rf", "json_object", "on", "low", "anthropic",
 			"default\x00rf=json_object\x00th=on\x00tl=low\x00ts=anthropic\x00kv=2"},
