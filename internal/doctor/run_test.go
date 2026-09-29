@@ -633,3 +633,14 @@ func TestClassify_ContentMarkerStillOK(t *testing.T) {
 	got := classify(Marker(testNonce), nil, testNonce, 5, tgt, MaxTokensSourceDefault, false)
 	assert.Equal(t, StatusOK, got.status)
 }
+
+// TD internal/doctor/run.go:704: a salvaged reply WITHOUT the marker must still
+// report StatusOKWarning, and the hint must say the reply was reasoning-only —
+// the operator otherwise reads it as an ordinary marker-absent row.
+func TestClassify_SalvagedMarkerAbsentNamesTheSalvage(t *testing.T) {
+	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "K"}
+	got := classify("thinking about the task", nil, testNonce, 5, tgt, MaxTokensSourceDefault, true)
+	assert.Equal(t, StatusOKWarning, got.status)
+	assert.Contains(t, got.hint, "marker absent", "the marker-absent class is still named")
+	assert.Contains(t, got.hint, "salvaged", "the hint must say the reply was reasoning-only")
+}
