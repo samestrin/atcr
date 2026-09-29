@@ -422,7 +422,7 @@ func TestRegistryDoc_ThinkingMaxTokensNote(t *testing.T) {
 		{"`{\"findings\":[]}`", "the measured empty-review shape under JSON mode"},
 		// Claim 4: the prose must WARN that JSON mode drops the persona output
 		// rule, not merely describe the consequence after the fact.
-		{"Warning: JSON mode swaps the persona's ## Output Format section", "the JSON-mode consequence must be framed as a warning before it is explained"},
+		{"Warning: JSON mode swaps the persona's `## Output Format` section", "the JSON-mode consequence must be framed as a warning before it is explained"},
 		{"declaring `response_format: json_object` also drops this rule", "JSON mode swaps the persona's ## Output Format section at render time, so the persona fix is lost silently"},
 	})
 	// Sprint 35.16.11.2.2.1: LiteLLM's modify_params hides a missing-reasoning
