@@ -396,7 +396,7 @@ func TestRegistryDoc_GLMClearThinkingSpellingMatchesWire(t *testing.T) {
 }
 
 // AC 07-01 Scenario 3: the max_tokens interaction.
-func TestRegistryDoc_ThinkingMaxTokensNote(t *testing.T) {
+func TestRegistryDoc_ThinkingMaxTokensAndProseNote(t *testing.T) {
 	doc := readRepoFile(t, "../../docs/registry.md")
 	maxTokensNote := docLineWith(t, doc, "**Thinking and `max_tokens`.**")
 	assertStates(t, "thinking and max_tokens note", maxTokensNote, []struct{ token, why string }{
