@@ -524,7 +524,10 @@ func TestTruncatedZeroRemedy_MatchesDocThinkingLever(t *testing.T) {
 	require.NoError(t, err)
 	docPara := ""
 	for _, para := range strings.Split(string(doc), "\n\n") {
-		if strings.Contains(para, "Thinking and `max_tokens`") {
+		// Anchor on the note's own lead-in: other paragraphs (e.g. the thinking
+		// row) cross-reference "Thinking and `max_tokens`" by name, and matching
+		// on containment alone would pin the wrong paragraph.
+		if strings.HasPrefix(para, "**Thinking and `max_tokens`.**") {
 			docPara = para
 			break
 		}

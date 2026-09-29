@@ -371,8 +371,8 @@ func TestDiffCacheKey_ResponseFormatChangesTheKey(t *testing.T) {
 	base := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, "", "", "", "", "")
 	declared := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, "json_object", "", "", "", "")
 	assert.NotEqual(t, base, declared, "declaring response_format must miss the undeclared entry")
-	assert.Equal(t, cache.Key(cache.HashText("p"), "m", "default"), base,
-		"an undeclared agent keeps its pre-existing on-disk key")
+	assert.Equal(t, cache.Key(cache.HashText("p"), "m", "default\x00kv=2"), base,
+		"an undeclared agent keys on the default tuning plus the unconditional key-version segment (the bump invalidates pre-salvage-gate entries in one pass)")
 
 	cfg := toolCfg()
 	payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
@@ -438,8 +438,9 @@ func TestDiffCacheKey_FallbackKeysOnItsOwnResponseFormat(t *testing.T) {
 }
 
 // Sprint 35.16.11.2.2 AC 04-01: each declared thinking key folds into the tuning
-// token as its own NUL-separated clause after rf=, in th/tl/ts order. An empty
-// key appends nothing, so an undeclared agent keeps its pre-existing on-disk key.
+// token as its own NUL-separated clause after rf=, in th/tl/ts order. The
+// unconditional kv=2 version segment trails every clause (the pre-salvage-gate
+// invalidation bump, TD internal/fanout/review.go:2901).
 func TestDiffCacheKey_ThinkingTokens(t *testing.T) {
 	hash := cache.HashText("p")
 	cases := []struct {
@@ -447,11 +448,11 @@ func TestDiffCacheKey_ThinkingTokens(t *testing.T) {
 		rf, th, level, style string
 		want                 string
 	}{
-		{"undeclared keeps the pre-existing key", "", "", "", "", "default"},
-		{"thinking alone", "", "off", "", "", "default\x00th=off"},
-		{"level and style without thinking", "", "", "low", "reasoning_effort", "default\x00tl=low\x00ts=reasoning_effort"},
+		{"undeclared keeps the pre-existing key", "", "", "", "", "default\x00kv=2"},
+		{"thinking alone", "", "off", "", "", "default\x00th=off\x00kv=2"},
+		{"level and style without thinking", "", "", "low", "reasoning_effort", "default\x00tl=low\x00ts=reasoning_effort\x00kv=2"},
 		{"all three after rf", "json_object", "on", "low", "anthropic",
-			"default\x00rf=json_object\x00th=on\x00tl=low\x00ts=anthropic"},
+			"default\x00rf=json_object\x00th=on\x00tl=low\x00ts=anthropic\x00kv=2"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -572,8 +573,8 @@ func TestDiffCacheKey_PreserveThinkingToken(t *testing.T) {
 	key := func(preserve string) string {
 		return diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, "", "on", "", "qwen", preserve)
 	}
-	assert.Equal(t, cache.Key(hash, "m", "default\x00th=on\x00ts=qwen"), key(""))
-	assert.Equal(t, cache.Key(hash, "m", "default\x00th=on\x00ts=qwen\x00pt=on"), key("on"))
+	assert.Equal(t, cache.Key(hash, "m", "default\x00th=on\x00ts=qwen\x00kv=2"), key(""))
+	assert.Equal(t, cache.Key(hash, "m", "default\x00th=on\x00ts=qwen\x00pt=on\x00kv=2"), key("on"))
 	assert.NotEqual(t, key("on"), key("off"))
 }
 
