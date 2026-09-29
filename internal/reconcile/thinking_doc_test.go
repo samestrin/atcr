@@ -423,8 +423,10 @@ func TestRegistryDoc_ThinkingMaxTokensAndProseNote(t *testing.T) {
 		require.False(t, sentenceNamesLowAsRemedy(sent),
 			"a max_tokens-note sentence offers thinking_level: low as a remedy: %q", sent)
 	}
-	// The guard itself must reject a reworded return of the bad remedy.
-	require.False(t, sentenceNamesLowAsRemedy("If truncation persists, set `thinking_level: low` and rerun."),
+	// The guard itself must reject a reworded return of the bad remedy: a sentence
+	// that offers low as a fix must be reported as a remedy (true), so the loop
+	// above fails on it.
+	require.True(t, sentenceNamesLowAsRemedy("If truncation persists, set `thinking_level: low` and rerun."),
 		"the sentence guard must reject thinking_level: low offered as a fix")
 	// TD internal/reconcile/thinking_doc_test.go:415: the notes must be their own
 	// paragraphs, not substrings buried mid-paragraph.
