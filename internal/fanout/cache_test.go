@@ -661,3 +661,17 @@ func TestWithThinkingFixtures_AreLoadable(t *testing.T) {
 		}
 	}
 }
+
+// TD internal/fanout/review.go:2901: the Salvaged cache gate only stops NEW
+// writes, and the pt= clause is absent for agents that never set
+// preserve_thinking — so a salvaged-reasoning entry written by an older binary
+// replays as a clean StatusOK hit. diffCacheKey must carry a key-version
+// segment so the salvage gate's introduction invalidates every pre-branch
+// entry in one pass (a one-time miss for all entries is the documented cost).
+func TestDiffCacheKey_VersionSegmentInvalidatesPreSalvageGateEntries(t *testing.T) {
+	k := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, "", "", "", "", "")
+	// The tuning token a pre-salvage-gate binary built for the same bare agent.
+	legacy := cache.Key(cache.HashText("p"), "m", "default")
+	assert.NotEqual(t, legacy, k,
+		"a key written before the salvage-gate version bump must never collide with a post-bump key, or a salvaged entry replays as a clean hit")
+}
