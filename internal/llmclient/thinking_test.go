@@ -511,6 +511,11 @@ func TestReasoningCarrier_DecodesEachShapeOntoMessage(t *testing.T) {
 			map[string]string{}}, // an empty container is absent: neither the value the provider signed nor a meaningful replay
 		"whitespace-padded empties": {`"thinking_blocks":[ ],"reasoning_details":{ }`,
 			map[string]string{}},
+		// Pretty-printed empties: every JSON whitespace byte, not just space.
+		"newline and tab padded empties": {"\"thinking_blocks\":[\n],\"reasoning_details\":{\t}",
+			map[string]string{}},
+		"crlf padded empties": {"\"thinking_blocks\":{\r\n},\"reasoning_details\":[\r]",
+			map[string]string{}},
 		"none": {"", map[string]string{}},
 	}
 	for name, tc := range cases {
@@ -520,6 +525,17 @@ func TestReasoningCarrier_DecodesEachShapeOntoMessage(t *testing.T) {
 			require.Len(t, resp.Message.ToolCalls, 1, "the tool call survives beside the carrier")
 		})
 	}
+}
+
+// TD internal/llmclient/chat.go:224: containerHasElement slices between the
+// delimiters, so a value shorter than two bytes must be reported empty rather
+// than panic. The decoder never hands it one today; this pins the guard.
+func TestContainerHasElement_ShortAndEmptyValues(t *testing.T) {
+	for _, raw := range []string{"", "[", "{", "[]", "{}"} {
+		assert.False(t, containerHasElement(json.RawMessage(raw)), "%q has no element", raw)
+	}
+	assert.True(t, containerHasElement(json.RawMessage(`[1]`)))
+	assert.True(t, containerHasElement(json.RawMessage(`{"a":null}`)))
 }
 
 // client.go documents reasoning and reasoning_content as the same chain of
