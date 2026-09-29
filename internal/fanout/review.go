@@ -2861,6 +2861,24 @@ func sizingToken(effectiveBudget int64, maxLines int) string {
 	return fmt.Sprintf("%d:%d", effectiveBudget, maxLines)
 }
 
+// CacheKeyInputs is everything diffCacheKey folds into the tuning token besides
+// the prompt: the agent's model config, its sizing, and its thinking
+// declaration. Named fields replace the positional list, where two adjacent
+// strings (thinking, thinking_level) could be transposed and still compile.
+// Each call site builds it from its OWN agent's values.
+type CacheKeyInputs struct {
+	Model            string
+	BaseURL          string
+	Temperature      *float64
+	Sizing           string
+	MaxTokens        int
+	ResponseFormat   string
+	Thinking         string
+	ThinkingLevel    string
+	ThinkingStyle    string
+	PreserveThinking string
+}
+
 // diffCacheKey derives the Epic 5.2 diff-cache key for a review call. It keys on
 // the FULL rendered prompt — which already embeds the payload, the resolved
 // persona, the per-agent scope focus (Epic 2.2), and the base/head refs, i.e.
@@ -2898,37 +2916,37 @@ func sizingToken(effectiveBudget int64, maxLines int) string {
 //
 // min_severity/max_findings are deterministic post-LLM filters and are correctly NOT
 // in the key.
-func diffCacheKey(prompt, model, baseURL string, temperature *float64, sizing string, maxTokens int, responseFormat, thinking, thinkingLevel, thinkingStyle, preserveThinking string) string {
+func diffCacheKey(prompt string, in CacheKeyInputs) string {
 	temp := "default"
-	if temperature != nil {
-		temp = strconv.FormatFloat(*temperature, 'g', -1, 64)
+	if in.Temperature != nil {
+		temp = strconv.FormatFloat(*in.Temperature, 'g', -1, 64)
 	}
 	// Fold the backend into the tuning token (NUL-separated so a backend string
 	// can never bleed into the temperature) so distinct endpoints never share an
 	// entry. An empty baseURL (e.g. direct Agent construction in tests) collapses
 	// to the pre-existing temperature-only token, preserving old keys.
 	tuning := temp
-	if baseURL != "" {
-		tuning = baseURL + "\x00" + temp
+	if in.BaseURL != "" {
+		tuning = in.BaseURL + "\x00" + temp
 	}
 	// Fold the per-agent sizing token in, NUL-separated, same as baseURL. "0:0" (or
 	// empty) means "no per-agent sizing applied" and collapses to the baseURL+temp
 	// token above, preserving every pre-F7 on-disk key and existing cache_test
 	// assertion for bare/unsized agents.
-	if sizing != "" && sizing != "0:0" {
-		tuning = tuning + "\x00" + sizing
+	if in.Sizing != "" && in.Sizing != "0:0" {
+		tuning = tuning + "\x00" + in.Sizing
 	}
 	// Same NUL-separated append, same backward-compat rule: the embedded default
 	// collapses to the token above (and so does a 0, which resolveMaxTokens treats as
 	// "unset"), so no key written before the cap became per-agent is invalidated.
-	if maxTokens > 0 && maxTokens != defaultMaxTokens {
-		tuning = tuning + "\x00mt=" + strconv.Itoa(maxTokens)
+	if in.MaxTokens > 0 && in.MaxTokens != defaultMaxTokens {
+		tuning = tuning + "\x00mt=" + strconv.Itoa(in.MaxTokens)
 	}
 	// A declared response_format changes the response shape (a bare JSON object,
 	// not a fenced array), so it keys apart. Unset appends nothing, so every
 	// on-disk key written before the field existed stays valid.
-	if responseFormat != "" {
-		tuning = tuning + "\x00rf=" + responseFormat
+	if in.ResponseFormat != "" {
+		tuning = tuning + "\x00rf=" + in.ResponseFormat
 	}
 	// A declared thinking setting changes how much the model reasons, and so
 	// what it finds. Each key gets its own clause; an unset key appends nothing,
@@ -2936,22 +2954,22 @@ func diffCacheKey(prompt, model, baseURL string, temperature *float64, sizing st
 	// the declaration, not the wire body, so two declarations that send the same
 	// body (a level alone vs. on plus that level) miss each other's entry: a
 	// spurious miss, never a collision.
-	if thinking != "" {
-		tuning = tuning + "\x00th=" + thinking
+	if in.Thinking != "" {
+		tuning = tuning + "\x00th=" + in.Thinking
 	}
-	if thinkingLevel != "" {
-		tuning = tuning + "\x00tl=" + thinkingLevel
+	if in.ThinkingLevel != "" {
+		tuning = tuning + "\x00tl=" + in.ThinkingLevel
 	}
-	if thinkingStyle != "" {
-		tuning = tuning + "\x00ts=" + thinkingStyle
+	if in.ThinkingStyle != "" {
+		tuning = tuning + "\x00ts=" + in.ThinkingStyle
 	}
 	// preserve_thinking keys the wire body (the replayed reasoning members it
 	// enables differ per flag), so it keys apart like the other thinking keys.
 	// It only matters in multi-turn tool loops — which are never cached — so on
 	// a single-shot agent the clause is inert for behavior and costs only a
 	// spurious miss, never a collision.
-	if preserveThinking != "" {
-		tuning = tuning + "\x00pt=" + preserveThinking
+	if in.PreserveThinking != "" {
+		tuning = tuning + "\x00pt=" + in.PreserveThinking
 	}
 	// Key-version segment (TD internal/fanout/review.go:2901): unconditional, so
 	// every entry written before the Salvaged cache gate existed is invalidated in
@@ -2960,7 +2978,7 @@ func diffCacheKey(prompt, model, baseURL string, temperature *float64, sizing st
 	// reasoning entry written by an older binary replays as a clean StatusOK hit
 	// until evicted. The cost is a one-time cache miss for all entries.
 	tuning = tuning + "\x00kv=2"
-	return cache.Key(cache.HashText(prompt), model, tuning)
+	return cache.Key(cache.HashText(prompt), in.Model, tuning)
 }
 
 // codeContextFor recovers the per-file breakdown of an agent's payload text for
@@ -3101,7 +3119,18 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 		// keys each chunk independently because its prompt (and thus this hash)
 		// differs per chunk; the sizing token additionally distinguishes two sizing
 		// regimes that render identical prompt text.
-		CacheKey: diffCacheKey(prompt, ac.Model, prov.BaseURL, ac.Temperature, sizingToken(sz.effectiveBudget, sz.maxLines), agentMaxTokens, ac.ResponseFormat, ac.Thinking, ac.ThinkingLevel, ac.ThinkingStyle, ac.PreserveThinking),
+		CacheKey: diffCacheKey(prompt, CacheKeyInputs{
+			Model:            ac.Model,
+			BaseURL:          prov.BaseURL,
+			Temperature:      ac.Temperature,
+			Sizing:           sizingToken(sz.effectiveBudget, sz.maxLines),
+			MaxTokens:        agentMaxTokens,
+			ResponseFormat:   ac.ResponseFormat,
+			Thinking:         ac.Thinking,
+			ThinkingLevel:    ac.ThinkingLevel,
+			ThinkingStyle:    ac.ThinkingStyle,
+			PreserveThinking: ac.PreserveThinking,
+		}),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,
@@ -3704,7 +3733,18 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		// keeps it off both its primary's cache entry and its own un-refit form's:
 		// the prompt is hashed, so a re-sized payload is a different key by
 		// construction, and the sizing token additionally separates the two budgets.
-		CacheKey: diffCacheKey(fbPrompt, ac.Model, prov.BaseURL, ac.Temperature, sizingToken(fbSizingBudget, fbMaxLines), fbMaxTokens, ac.ResponseFormat, ac.Thinking, ac.ThinkingLevel, ac.ThinkingStyle, ac.PreserveThinking),
+		CacheKey: diffCacheKey(fbPrompt, CacheKeyInputs{
+			Model:            ac.Model,
+			BaseURL:          prov.BaseURL,
+			Temperature:      ac.Temperature,
+			Sizing:           sizingToken(fbSizingBudget, fbMaxLines),
+			MaxTokens:        fbMaxTokens,
+			ResponseFormat:   ac.ResponseFormat,
+			Thinking:         ac.Thinking,
+			ThinkingLevel:    ac.ThinkingLevel,
+			ThinkingStyle:    ac.ThinkingStyle,
+			PreserveThinking: ac.PreserveThinking,
+		}),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,

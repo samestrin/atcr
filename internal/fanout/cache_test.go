@@ -26,7 +26,7 @@ func cacheableSlot(name, model, prompt string) Slot {
 	return Slot{Primary: Agent{
 		Name:        name,
 		PayloadMode: "blocks",
-		CacheKey:    diffCacheKey(prompt, model, "", nil, "", defaultMaxTokens, "", "", "", "", ""),
+		CacheKey:    diffCacheKey(prompt, CacheKeyInputs{Model: model, MaxTokens: defaultMaxTokens}),
 		Invocation:  llmclient.Invocation{Model: model, Prompt: prompt},
 	}}
 }
@@ -113,7 +113,7 @@ func TestEngine_DifferentTemperatureMissesCache(t *testing.T) {
 		return Slot{Primary: Agent{
 			Name:        "a",
 			PayloadMode: "blocks",
-			CacheKey:    diffCacheKey("same prompt", "m", "", temp, "", defaultMaxTokens, "", "", "", "", ""),
+			CacheKey:    diffCacheKey("same prompt", CacheKeyInputs{Model: "m", Temperature: temp, MaxTokens: defaultMaxTokens}),
 			Invocation:  llmclient.Invocation{Model: "m", Prompt: "same prompt", Temperature: temp},
 		}}
 	}
@@ -135,7 +135,7 @@ func TestEngine_DifferentProviderMissesCache(t *testing.T) {
 		return Slot{Primary: Agent{
 			Name:        "a",
 			PayloadMode: "blocks",
-			CacheKey:    diffCacheKey("same prompt", "m", baseURL, nil, "", defaultMaxTokens, "", "", "", "", ""),
+			CacheKey:    diffCacheKey("same prompt", CacheKeyInputs{Model: "m", BaseURL: baseURL, MaxTokens: defaultMaxTokens}),
 			Invocation:  llmclient.Invocation{Model: "m", Prompt: "same prompt", BaseURL: baseURL},
 		}}
 	}
@@ -157,14 +157,14 @@ func TestEngine_DifferentProviderMissesCache(t *testing.T) {
 func TestDiffCacheKey_SizingTokenDistinguishesRegimes(t *testing.T) {
 	// Backward-compat: empty and the "0:0" no-sizing sentinel both reduce to the
 	// exact pre-F7 (baseURL+temperature-only) key.
-	base := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, "", "", "", "", "")
-	assert.Equal(t, base, diffCacheKey("p", "m", "", nil, "0:0", defaultMaxTokens, "", "", "", "", ""),
+	base := diffCacheKey("p", CacheKeyInputs{Model: "m", MaxTokens: defaultMaxTokens})
+	assert.Equal(t, base, diffCacheKey("p", CacheKeyInputs{Model: "m", Sizing: "0:0", MaxTokens: defaultMaxTokens}),
 		`"0:0" (no per-agent sizing) must collapse to the pre-F7 key`)
 
 	// A real sizing token changes the key, and two distinct regimes never collide —
 	// even though prompt/model/backend/temperature are identical across all three.
-	sizedA := diffCacheKey("p", "m", "", nil, "100000:0", defaultMaxTokens, "", "", "", "", "")  // bulk, 100KB budget
-	sizedB := diffCacheKey("p", "m", "", nil, "50000:200", defaultMaxTokens, "", "", "", "", "") // chunked, 50KB budget, 200-line chunks
+	sizedA := diffCacheKey("p", CacheKeyInputs{Model: "m", Sizing: "100000:0", MaxTokens: defaultMaxTokens})  // bulk, 100KB budget
+	sizedB := diffCacheKey("p", CacheKeyInputs{Model: "m", Sizing: "50000:200", MaxTokens: defaultMaxTokens}) // chunked, 50KB budget, 200-line chunks
 	assert.NotEqual(t, base, sizedA, "a real sizing regime must change the key")
 	assert.NotEqual(t, sizedA, sizedB, "different sizing regimes must produce different keys")
 }
@@ -183,7 +183,7 @@ func TestEngine_DifferentSizingMissesCache(t *testing.T) {
 		return Slot{Primary: Agent{
 			Name:        "a",
 			PayloadMode: "blocks",
-			CacheKey:    diffCacheKey("same prompt", "m", "", nil, sizing, defaultMaxTokens, "", "", "", "", ""),
+			CacheKey:    diffCacheKey("same prompt", CacheKeyInputs{Model: "m", Sizing: sizing, MaxTokens: defaultMaxTokens}),
 			Invocation:  llmclient.Invocation{Model: "m", Prompt: "same prompt"},
 		}}
 	}
@@ -207,17 +207,17 @@ func TestEngine_DifferentSizingMissesCache(t *testing.T) {
 // operator who adds max_tokens to fix an empty review then replays the cached empty
 // review and concludes the setting does nothing.
 func TestDiffCacheKey_ResolvedOutputCapChangesTheKey(t *testing.T) {
-	base := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, "", "", "", "", "")
-	assert.Equal(t, base, diffCacheKey("p", "m", "", nil, "0:0", defaultMaxTokens, "", "", "", "", ""),
+	base := diffCacheKey("p", CacheKeyInputs{Model: "m", MaxTokens: defaultMaxTokens})
+	assert.Equal(t, base, diffCacheKey("p", CacheKeyInputs{Model: "m", Sizing: "0:0", MaxTokens: defaultMaxTokens}),
 		"an agent at the embedded default cap must keep its pre-existing on-disk key")
-	assert.NotEqual(t, base, diffCacheKey("p", "m", "", nil, "", 32000, "", "", "", "", ""),
+	assert.NotEqual(t, base, diffCacheKey("p", CacheKeyInputs{Model: "m", MaxTokens: 32000}),
 		"a declared max_tokens must invalidate the entry the default-capped run wrote")
 
 	// The clamped case the sizing token cannot see: identical token, different cap.
 	const clamped = "524288:0" // both caps derive a budget above payload_byte_budget
 	assert.NotEqual(t,
-		diffCacheKey("p", "m", "", nil, clamped, 8192, "", "", "", "", ""),
-		diffCacheKey("p", "m", "", nil, clamped, 32000, "", "", "", "", ""),
+		diffCacheKey("p", CacheKeyInputs{Model: "m", Sizing: clamped, MaxTokens: 8192}),
+		diffCacheKey("p", CacheKeyInputs{Model: "m", Sizing: clamped, MaxTokens: 32000}),
 		"two output caps that clamp to one sizing token must still key apart")
 }
 
@@ -230,7 +230,7 @@ func TestEngine_DifferentMaxTokensMissesCache(t *testing.T) {
 		return Slot{Primary: Agent{
 			Name:        "a",
 			PayloadMode: "blocks",
-			CacheKey:    diffCacheKey("same prompt", "m", "", nil, "524288:0", maxTokens, "", "", "", "", ""),
+			CacheKey:    diffCacheKey("same prompt", CacheKeyInputs{Model: "m", Sizing: "524288:0", MaxTokens: maxTokens}),
 			Invocation:  llmclient.Invocation{Model: "m", Prompt: "same prompt", MaxTokens: &maxTokens},
 		}}
 	}
@@ -368,8 +368,8 @@ func (errAssertFail) Error() string { return "synthetic failure" }
 // pre-existing key, so no on-disk entry written before the field existed is
 // invalidated.
 func TestDiffCacheKey_ResponseFormatChangesTheKey(t *testing.T) {
-	base := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, "", "", "", "", "")
-	declared := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, "json_object", "", "", "", "")
+	base := diffCacheKey("p", CacheKeyInputs{Model: "m", MaxTokens: defaultMaxTokens})
+	declared := diffCacheKey("p", CacheKeyInputs{Model: "m", MaxTokens: defaultMaxTokens, ResponseFormat: "json_object"})
 	assert.NotEqual(t, base, declared, "declaring response_format must miss the undeclared entry")
 	assert.Equal(t, cache.Key(cache.HashText("p"), "m", "default\x00kv=2"), base,
 		"an undeclared agent keys on the default tuning plus the unconditional key-version segment (the bump invalidates pre-salvage-gate entries in one pass)")
@@ -391,12 +391,10 @@ func TestDiffCacheKey_ResponseFormatChangesTheKey(t *testing.T) {
 	// form may match, which pins the wiring at review.go's call site.
 	sizing := fmt.Sprintf("%d:%d", after.EffectiveBudget, after.chunkMaxLines)
 	assert.Equal(t, after.CacheKey,
-		diffCacheKey(after.Prompt, after.Invocation.Model, after.Invocation.BaseURL,
-			after.Invocation.Temperature, sizing, after.ResolvedMaxTokens, registry.ResponseFormatJSONObject, "", "", "", ""),
+		diffCacheKey(after.Prompt, CacheKeyInputs{Model: after.Invocation.Model, BaseURL: after.Invocation.BaseURL, Temperature: after.Invocation.Temperature, Sizing: sizing, MaxTokens: after.ResolvedMaxTokens, ResponseFormat: registry.ResponseFormatJSONObject}),
 		"the built key is the response_format-suffixed form of this exact prompt")
 	assert.NotEqual(t, after.CacheKey,
-		diffCacheKey(after.Prompt, after.Invocation.Model, after.Invocation.BaseURL,
-			after.Invocation.Temperature, sizing, after.ResolvedMaxTokens, "", "", "", "", ""),
+		diffCacheKey(after.Prompt, CacheKeyInputs{Model: after.Invocation.Model, BaseURL: after.Invocation.BaseURL, Temperature: after.Invocation.Temperature, Sizing: sizing, MaxTokens: after.ResolvedMaxTokens}),
 		"the same prompt without the suffix must produce a different key")
 }
 
@@ -428,12 +426,10 @@ func TestDiffCacheKey_FallbackKeysOnItsOwnResponseFormat(t *testing.T) {
 	fb := build("", jo)
 	fbSizing := fmt.Sprintf("%d:%d", fb.EffectiveBudget, fb.chunkMaxLines)
 	assert.Equal(t, fb.CacheKey,
-		diffCacheKey(fb.Prompt, fb.Invocation.Model, fb.Invocation.BaseURL,
-			fb.Invocation.Temperature, fbSizing, fb.ResolvedMaxTokens, jo, "", "", "", ""),
+		diffCacheKey(fb.Prompt, CacheKeyInputs{Model: fb.Invocation.Model, BaseURL: fb.Invocation.BaseURL, Temperature: fb.Invocation.Temperature, Sizing: fbSizing, MaxTokens: fb.ResolvedMaxTokens, ResponseFormat: jo}),
 		"the fallback key is the response_format-suffixed form of its own prompt")
 	assert.NotEqual(t, fb.CacheKey,
-		diffCacheKey(fb.Prompt, fb.Invocation.Model, fb.Invocation.BaseURL,
-			fb.Invocation.Temperature, fbSizing, fb.ResolvedMaxTokens, "", "", "", "", ""),
+		diffCacheKey(fb.Prompt, CacheKeyInputs{Model: fb.Invocation.Model, BaseURL: fb.Invocation.BaseURL, Temperature: fb.Invocation.Temperature, Sizing: fbSizing, MaxTokens: fb.ResolvedMaxTokens}),
 		"the fallback's own prompt without the suffix must produce a different key")
 }
 
@@ -456,7 +452,7 @@ func TestDiffCacheKey_ThinkingTokens(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, tc.rf, tc.th, tc.level, tc.style, "")
+			got := diffCacheKey("p", CacheKeyInputs{Model: "m", MaxTokens: defaultMaxTokens, ResponseFormat: tc.rf, Thinking: tc.th, ThinkingLevel: tc.level, ThinkingStyle: tc.style})
 			assert.Equal(t, cache.Key(hash, "m", tc.want), got)
 		})
 	}
@@ -500,8 +496,7 @@ func TestRenderAgent_PrimaryCarriesAndKeysOnItsOwnThinking(t *testing.T) {
 	}
 	recompute := func(a Agent, thinking, level, style string) string {
 		sizing := fmt.Sprintf("%d:%d", a.EffectiveBudget, a.chunkMaxLines)
-		return diffCacheKey(a.Prompt, a.Invocation.Model, a.Invocation.BaseURL, a.Invocation.Temperature,
-			sizing, a.ResolvedMaxTokens, a.Invocation.ResponseFormat, thinking, level, style, "")
+		return diffCacheKey(a.Prompt, CacheKeyInputs{Model: a.Invocation.Model, BaseURL: a.Invocation.BaseURL, Temperature: a.Invocation.Temperature, Sizing: sizing, MaxTokens: a.ResolvedMaxTokens, ResponseFormat: a.Invocation.ResponseFormat, Thinking: thinking, ThinkingLevel: level, ThinkingStyle: style})
 	}
 
 	declared := build("on", "low", "anthropic")
@@ -537,8 +532,7 @@ func TestBuildFallbackAgent_CarriesAndKeysOnItsOwnThinking(t *testing.T) {
 	}
 	recompute := func(fb Agent, d decl) string {
 		sizing := fmt.Sprintf("%d:%d", fb.EffectiveBudget, fb.chunkMaxLines)
-		return diffCacheKey(fb.Prompt, fb.Invocation.Model, fb.Invocation.BaseURL, fb.Invocation.Temperature,
-			sizing, fb.ResolvedMaxTokens, fb.Invocation.ResponseFormat, d.thinking, d.level, d.style, "")
+		return diffCacheKey(fb.Prompt, CacheKeyInputs{Model: fb.Invocation.Model, BaseURL: fb.Invocation.BaseURL, Temperature: fb.Invocation.Temperature, Sizing: sizing, MaxTokens: fb.ResolvedMaxTokens, ResponseFormat: fb.Invocation.ResponseFormat, Thinking: d.thinking, ThinkingLevel: d.level, ThinkingStyle: d.style})
 	}
 	primaryDecl := decl{"on", "high", "anthropic"}
 	fallbackDecl := decl{"off", "", "template_kwargs"}
@@ -571,7 +565,7 @@ func TestBuildFallbackAgent_CarriesAndKeysOnItsOwnThinking(t *testing.T) {
 func TestDiffCacheKey_PreserveThinkingToken(t *testing.T) {
 	hash := cache.HashText("p")
 	key := func(preserve string) string {
-		return diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, "", "on", "", "qwen", preserve)
+		return diffCacheKey("p", CacheKeyInputs{Model: "m", MaxTokens: defaultMaxTokens, Thinking: "on", ThinkingStyle: "qwen", PreserveThinking: preserve})
 	}
 	assert.Equal(t, cache.Key(hash, "m", "default\x00th=on\x00ts=qwen\x00kv=2"), key(""))
 	assert.Equal(t, cache.Key(hash, "m", "default\x00th=on\x00ts=qwen\x00pt=on\x00kv=2"), key("on"))
@@ -599,8 +593,7 @@ func TestBuildAgents_PreserveThinkingIsPerAgent(t *testing.T) {
 	}
 	recompute := func(a Agent, style, preserve string) string {
 		sizing := fmt.Sprintf("%d:%d", a.EffectiveBudget, a.chunkMaxLines)
-		return diffCacheKey(a.Prompt, a.Invocation.Model, a.Invocation.BaseURL, a.Invocation.Temperature,
-			sizing, a.ResolvedMaxTokens, a.Invocation.ResponseFormat, "on", "", style, preserve)
+		return diffCacheKey(a.Prompt, CacheKeyInputs{Model: a.Invocation.Model, BaseURL: a.Invocation.BaseURL, Temperature: a.Invocation.Temperature, Sizing: sizing, MaxTokens: a.ResolvedMaxTokens, ResponseFormat: a.Invocation.ResponseFormat, Thinking: "on", ThinkingStyle: style, PreserveThinking: preserve})
 	}
 
 	p, fb := build(decl{primary: "on"})
@@ -670,7 +663,7 @@ func TestWithThinkingFixtures_AreLoadable(t *testing.T) {
 // segment so the salvage gate's introduction invalidates every pre-branch
 // entry in one pass (a one-time miss for all entries is the documented cost).
 func TestDiffCacheKey_VersionSegmentInvalidatesPreSalvageGateEntries(t *testing.T) {
-	k := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens, "", "", "", "", "")
+	k := diffCacheKey("p", CacheKeyInputs{Model: "m", MaxTokens: defaultMaxTokens})
 	// The tuning token a pre-salvage-gate binary built for the same bare agent.
 	legacy := cache.Key(cache.HashText("p"), "m", "default")
 	assert.NotEqual(t, legacy, k,
