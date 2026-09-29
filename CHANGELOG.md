@@ -1,3 +1,17 @@
+## [35.30.0] - 2026-09-29
+
+*Epic 35.16.11.2.2.2 — runaway agents content prose and silent lanes.*
+
+The registry guide now gives the thinking and output fixes that live probe runs actually proved, and stops recommending `thinking_level: low`, which silenced a reviewer instead of fixing it.
+
+### Changed
+
+- `docs/registry.md` "Thinking and `max_tokens`" no longer offers `thinking_level: low` as the fix under `reasoning_effort`: on `nemotron-3-super-120b` it made the model answer `NO FINDINGS` in under 20 tokens, and `medium`/`high` still truncated, so the guide now says to repoint the agent to a different model.
+- New "Thinking and prose in the reply" note: `thinking: off` stops the reasoning channel only; a persona output rule that forbids analysis in the reply is the measured fix; `response_format: json_object` is not a fix (it produced empty `{"findings":[]}` chunks) and also drops the persona's output rule.
+- The doc drift test in `internal/reconcile/thinking_doc_test.go` pins the new wording and fails if `thinking_level: low` returns as the remedy.
+
+*Shipped via /execute-epic (epic 35.16.11.2.2.2)*
+
 ## [35.29.0] - 2026-09-28
 
 *Sprint 35.16.11.2.2.1 — tool-loop reasoning round-trip.*

@@ -259,6 +259,10 @@ type probeResult struct {
 	// target declares none or no call was placed.
 	thinkingStatus string
 	thinkingDetail string
+	// markerInReasoning reports a StatusOKWarning whose marker WAS found, but only in
+	// salvaged reasoning — so consumers that read StatusOKWarning as "marker absent"
+	// can tell the two apart.
+	markerInReasoning bool
 }
 
 // Run probes every distinct target once (bounded concurrency), maps results
@@ -323,7 +327,17 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 		pr := results[at.TargetIdx]
 		status, hint := pr.status, pr.hint
 		reviewCap := reviewMaxTokens(at.DeclaredMaxTokens)
-		if s, h, ok := zeroBudgetVerdict(tgt.Model, at.ContextWindowTokens, reviewCap, pr.maxTokens, status); ok {
+		// zeroBudgetVerdict reads StatusOKWarning as "marker absent". A marker found only
+		// in salvaged reasoning is not that, so it is judged as a found marker and the
+		// salvage hint is kept alongside the budget one rather than replaced by it.
+		zbStatus := status
+		if pr.markerInReasoning {
+			zbStatus = StatusOK
+		}
+		if s, h, ok := zeroBudgetVerdict(tgt.Model, at.ContextWindowTokens, reviewCap, pr.maxTokens, zbStatus); ok {
+			if pr.markerInReasoning {
+				h += " Separately: " + hint
+			}
 			status, hint = s, h
 		}
 		if clause, ok := smallWindowClause(tgt.Model, at.ContextWindowTokens, at.DeclaredMaxTokens, at.WindowSource, status); ok {
@@ -657,7 +671,7 @@ func probe(ctx context.Context, c Completer, tgt Target, opts Options) probeResu
 		PreserveThinking: tgt.PreserveThinking,
 	})
 	latency := time.Since(start).Milliseconds()
-	pr := classify(comp.Content, err, opts.Nonce, latency, tgt, budgetSrc)
+	pr := classify(comp.Content, err, opts.Nonce, latency, tgt, budgetSrc, comp.Salvaged)
 	// TD-020: this call carries the thinking declaration, so a --max-tokens at or
 	// below an anthropic budget is rejected. Name the flag, since review at its own
 	// cap may work fine.
@@ -679,14 +693,27 @@ const maxDetailBytes = 512
 
 // classify turns a completion result into a probe outcome. budgetSrc names the tier the
 // probe's output cap resolved from, so the marker-absent remedy can point at the knob
-// that actually governed THIS probe.
-func classify(content string, err error, nonce string, latencyMS int64, tgt Target, budgetSrc string) probeResult {
+// that actually governed THIS probe. salvaged reports that the reply carried no content
+// and llmclient promoted the chain-of-thought into Content.
+func classify(content string, err error, nonce string, latencyMS int64, tgt Target, budgetSrc string, salvaged bool) probeResult {
 	if err == nil {
 		// Strip the prompt text before checking for the marker so an endpoint
 		// that echoes the request verbatim (a common misconfiguration) does not
 		// produce a false-positive StatusOK.
 		stripped := strings.ReplaceAll(content, Prompt(nonce), "")
 		if strings.Contains(stripped, Marker(nonce)) {
+			// A salvaged reply's Content is the promoted chain-of-thought, not the
+			// model's answer (TD internal/doctor/run.go:660). Even when the reasoning
+			// repeats the nonce marker, the review lane cannot use that reply, so it
+			// must not read as a clean OK — collapse to a warning naming the salvage.
+			if salvaged {
+				return probeResult{
+					status:            StatusOKWarning,
+					latencyMS:         latencyMS,
+					hint:              "reply had no content; the nonce marker was found only in salvaged reasoning, which the review lane cannot use — repoint the agent to a model that answers with content",
+					markerInReasoning: true,
+				}
+			}
 			return probeResult{status: StatusOK, latencyMS: latencyMS}
 		}
 		// The remedy names the knob that capped THIS probe. Which one that is depends on
@@ -701,6 +728,11 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 		hint := "HTTP 200 but marker absent/empty (thinking models spend the budget on reasoning) — raise this agent's max_tokens declaration, or pass `atcr review --max-tokens N`"
 		if budgetSrc == MaxTokensSourceFlag {
 			hint = "HTTP 200 but marker absent/empty (thinking models spend the budget on reasoning) — this probe was capped by your explicit --max-tokens; raise it to re-probe. `atcr review` resolves its own cap separately"
+		}
+		// A salvaged reply keeps the tier-specific remedy above (a larger cap may leave
+		// room for content after the reasoning) and adds that it was reasoning-only.
+		if salvaged {
+			hint += ". The reply carried no content; its reasoning was salvaged"
 		}
 		return probeResult{
 			status:    StatusOKWarning,

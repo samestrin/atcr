@@ -244,8 +244,12 @@ func stringMemberHasContent(raw json.RawMessage) bool {
 	}
 	content := raw[1 : len(raw)-1]
 	if bytes.IndexByte(content, '\\') < 0 {
+		// Only ' ' can appear: valid JSON strings hold no raw control bytes (a tab
+		// or newline must be escaped, and escaped forms take the backslash branch
+		// below), so the \t/\n/\r arms of this scan were dead (equivalent mutant,
+		// mutation round 35.16.11.2.2.1).
 		for _, b := range content {
-			if b != ' ' && b != '\t' && b != '\n' && b != '\r' {
+			if b != ' ' {
 				return true
 			}
 		}

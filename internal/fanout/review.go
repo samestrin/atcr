@@ -2953,6 +2953,13 @@ func diffCacheKey(prompt, model, baseURL string, temperature *float64, sizing st
 	if preserveThinking != "" {
 		tuning = tuning + "\x00pt=" + preserveThinking
 	}
+	// Key-version segment (TD internal/fanout/review.go:2901): unconditional, so
+	// every entry written before the Salvaged cache gate existed is invalidated in
+	// one pass. The gate only stops NEW salvaged writes, and pt= is absent for
+	// agents that never set preserve_thinking — without this bump a salvaged-
+	// reasoning entry written by an older binary replays as a clean StatusOK hit
+	// until evicted. The cost is a one-time cache miss for all entries.
+	tuning = tuning + "\x00kv=2"
 	return cache.Key(cache.HashText(prompt), model, tuning)
 }
 

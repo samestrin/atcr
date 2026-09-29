@@ -37,7 +37,8 @@ func TestRegistryDoc_ThinkingRows(t *testing.T) {
 		{"`thinking`", registry.ThinkingValues(), []struct{ token, why string }{
 			{"byte-identical", "an agent with no thinking keys sends the same request body as before the keys existed"},
 			{"bare `true`/`false` is rejected", "the field is a string so a YAML bool is not aliased to on/off"},
-			{"`off` is rejected (use `thinking_level: low`)", "reasoning_effort has no off value; the row must give the fix the load error gives"},
+			{"set a `thinking_level` instead", "reasoning_effort has no off value; the row states the constraint without prescribing low, which epic 35.16.11.2.2.2 measured silencing nemotron-3-super-120b"},
+			{"see **Thinking and `max_tokens`**", "the row cross-references the note that says which level is safe"},
 			{"`on` requires a `thinking_level`", "reasoning_effort has no on-without-level value"},
 			{"under `thinking_style: anthropic`, thinking on needs `temperature` unset or `1`", "Anthropic rejects extended thinking at any other temperature; a declared one fails the load"},
 			{"under `thinking_style: anthropic`, thinking on cannot be combined with `supports_function_calling: true`", "the guard stays (AC 05-02); skeptic, debate, and fallback lanes can put any function-calling agent in the loop"},
@@ -245,7 +246,8 @@ func TestRegistryDoc_ThinkingStyleTable(t *testing.T) {
 			{"`reasoning_effort`", "the reasoning_effort style's field"},
 			{"`max` is sent as `high`", "high is the most the style accepts"},
 			{"no off value", "thinking: off is a load error under this style"},
-			{"use `thinking_level: low`", "the fix the load error gives"},
+			{"set a `thinking_level` instead", "the row states the constraint without prescribing low, which epic 35.16.11.2.2.2 measured silencing nemotron-3-super-120b"},
+			{"see **Thinking and `max_tokens`**", "the row cross-references the note that says which level is safe"},
 		},
 		registry.ThinkingStyleAnthropic: {
 			{"`thinking: {\"type\": \"enabled\", \"budget_tokens\": N}`", "the anthropic style's on shape"},
@@ -394,12 +396,70 @@ func TestRegistryDoc_GLMClearThinkingSpellingMatchesWire(t *testing.T) {
 }
 
 // AC 07-01 Scenario 3: the max_tokens interaction.
-func TestRegistryDoc_ThinkingMaxTokensNote(t *testing.T) {
+func TestRegistryDoc_ThinkingMaxTokensAndProseNote(t *testing.T) {
 	doc := readRepoFile(t, "../../docs/registry.md")
-	assertStates(t, "thinking and max_tokens note", docLineWith(t, doc, "**Thinking and `max_tokens`.**"), []struct{ token, why string }{
+	maxTokensNote := docLineWith(t, doc, "**Thinking and `max_tokens`.**")
+	assertStates(t, "thinking and max_tokens note", maxTokensNote, []struct{ token, why string }{
 		{"thinking tokens count against the output cap on most providers", "raising max_tokens alone does not stop a runaway thinker"},
 		{"`thinking: off` is the first fix for a model that truncates with zero findings", "archer ran to about 100k tokens with no findings"},
-		{"under `reasoning_effort`, use `thinking_level: low` instead", "thinking: off is a load error under that style"},
+		// Epic 35.16.11.2.2.2: the old remedy (thinking_level: low) silenced
+		// nemotron-3-super-120b, and medium/high still truncated, so the note
+		// names the measured fix instead.
+		{"a lower level is not a safe fix", "thinking_level: low stops the review instead of the runaway"},
+		{"answer `NO FINDINGS` in under 20 output tokens", "the measured silent-lane shape on nemotron-3-super-120b"},
+		{"`medium` and `high` still truncated", "no reasoning_effort level fixed that model"},
+		{"repoint the agent to a different model", "the fix the epic's probe matrix proved"},
+		// The load error keeps its syntactic substitute; the note must say so and
+		// mark it as load-time syntax, not a behavioral fix.
+		{"still names `thinking_level: low` as the syntactic substitute", "the load error's remedy stays, so the note must disambiguate it from the measured fix"},
+	})
+	require.NotContains(t, maxTokensNote, "use `thinking_level: low` instead", "the max_tokens note must not offer thinking_level: low as a remedy: it silences the lane")
+	// Epic 35.16.11.2.2.2 (TD internal/reconcile/thinking_doc_test.go:411): the
+	// exact-phrase NotContains above passes any reword that brings the bad remedy
+	// back ("set `thinking_level: low`", "try `thinking_level: low`"). Guard every
+	// sentence instead: any sentence naming `thinking_level: low` must frame it as
+	// the measured failure, never as a remedy.
+	for _, sent := range docSentences(maxTokensNote) {
+		require.False(t, sentenceNamesLowAsRemedy(sent),
+			"a max_tokens-note sentence offers thinking_level: low as a remedy: %q", sent)
+	}
+	// The guard itself must reject a reworded return of the bad remedy: a sentence
+	// that offers low as a fix must be reported as a remedy (true), so the loop
+	// above fails on it.
+	require.True(t, sentenceNamesLowAsRemedy("If truncation persists, set `thinking_level: low` and rerun."),
+		"the sentence guard must reject thinking_level: low offered as a fix")
+	// TD internal/reconcile/thinking_doc_test.go:415: the notes must be their own
+	// paragraphs, not substrings buried mid-paragraph.
+	require.True(t, strings.HasPrefix(maxTokensNote, "**Thinking and `max_tokens`.**"),
+		"the max_tokens note must lead its own paragraph")
+	proseNote := docLineWith(t, doc, "**Thinking and prose in the reply.**")
+	require.True(t, strings.HasPrefix(proseNote, "**Thinking and prose in the reply.**"),
+		"the prose-in-reply note must lead its own paragraph")
+	// TD docs/registry.md:260: the thinking row and the reasoning_effort style row
+	// must not offer thinking_level: low as the fix anywhere in the doc.
+	require.NotContains(t, doc, "(use `thinking_level: low`)",
+		"the thinking/reasoning_effort rows must not prescribe thinking_level: low; they must point at Thinking and max_tokens")
+	// Epic 35.16.11.2.2.2: thinking: off reaches only the reasoning channel; the
+	// content-channel runaway needs a persona fix, and JSON mode is not one.
+	assertStates(t, "prose-in-reply note", proseNote, []struct{ token, why string }{
+		{"`thinking: off` stops the reasoning channel only", "archer and llm-large still planned in the reply with thinking off"},
+		{"No thinking key reaches that channel", "the doctor honored verdict does not predict a clean review"},
+		{"forbids analysis in the reply", "the persona remedy the probe matrix proved"},
+		{"close the array before stopping", "archer left a finding's JSON unclosed"},
+		{"`response_format: json_object` is not a fix for this", "JSON mode answered whole chunks with an empty object"},
+		{"`{\"findings\":[]}`", "the measured empty-review shape under JSON mode"},
+		// The JSON-mode evidence comes from the probe runs, not the same panel run as
+		// the prose evidence — the note must not merge the two sources, and the token
+		// count is unmeasured, so it is stated as the reply's exact length instead.
+		{"in the probe runs", "the JSON-mode empty-review evidence is from the probe runs, distinct from the prose panel run"},
+	})
+	require.NotContains(t, proseNote, "handful of tokens", "the note must not claim an unmeasured token count")
+	require.NotContains(t, proseNote, "in the same runs", "the note must not merge the prose panel run with the JSON-mode probe runs")
+	assertStates(t, "prose-in-reply note", docLineWith(t, doc, "**Thinking and prose in the reply.**"), []struct{ token, why string }{
+		// Claim 4: the prose must WARN that JSON mode drops the persona output
+		// rule, not merely describe the consequence after the fact.
+		{"Warning: JSON mode swaps the persona's `## Output Format` section", "the JSON-mode consequence must be framed as a warning before it is explained"},
+		{"declaring `response_format: json_object` also drops this rule", "JSON mode swaps the persona's ## Output Format section at render time, so the persona fix is lost silently"},
 	})
 	// Sprint 35.16.11.2.2.1: LiteLLM's modify_params hides a missing-reasoning
 	// failure instead of raising it, so the doc names the silent failure mode.
@@ -506,4 +566,36 @@ func preserveThinkingStylesPhrase(styles []string) string {
 		parts[i] = "`thinking_style: " + s + "`"
 	}
 	return strings.Join(parts, " or ")
+}
+
+// docSentences splits a doc note into sentences on ". " boundaries (period kept
+// on the sentence). The notes this guards contain no abbreviations with trailing
+// periods, so a plain split is exact here; if one is ever added, this helper is
+// the place to make it smarter.
+func docSentences(s string) []string {
+	parts := strings.Split(s, ". ")
+	out := make([]string, 0, len(parts))
+	for i, p := range parts {
+		if i < len(parts)-1 {
+			p += "."
+		}
+		if strings.TrimSpace(p) != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// sentenceNamesLowAsRemedy reports whether a sentence offers `thinking_level: low`
+// as a fix rather than framing it as the measured failure or as load-time syntax
+// only. The framing markers are the ones the Thinking and max_tokens note uses:
+// "not a safe fix", the measured silent-lane evidence "made `nemotron-3-super-120b`",
+// and the load-error disambiguation "syntactic substitute ... not a behavioral fix".
+func sentenceNamesLowAsRemedy(sent string) bool {
+	if !strings.Contains(sent, "`thinking_level: low`") {
+		return false
+	}
+	return !strings.Contains(sent, "not a safe fix") &&
+		!strings.Contains(sent, "made `nemotron-3-super-120b`") &&
+		!strings.Contains(sent, "not a behavioral fix")
 }
