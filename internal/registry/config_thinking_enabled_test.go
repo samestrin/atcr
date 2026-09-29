@@ -30,3 +30,26 @@ func TestThinkingEnabled(t *testing.T) {
 		})
 	}
 }
+
+// TD row internal/fanout/review.go:2945: "declared" is not "enabled". thinking:
+// off is declared (it sends a wire field) but not on; a thinking_style alone is
+// neither, because a style with no thinking or level sends nothing. The cache
+// key and the model-invocation telemetry gate on this, as doctor does.
+func TestThinkingDeclared(t *testing.T) {
+	cases := []struct {
+		name            string
+		thinking, level string
+		want            bool
+	}{
+		{"unset", "", "", false},
+		{"style only (the style is not an input: it declares nothing)", "", "", false},
+		{"thinking only", ThinkingOn, "", true},
+		{"level only", "", ThinkingLevelLow, true},
+		{"thinking off", ThinkingOff, "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, ThinkingDeclared(tc.thinking, tc.level))
+		})
+	}
+}

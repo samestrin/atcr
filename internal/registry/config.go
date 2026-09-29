@@ -252,6 +252,11 @@ func ThinkingEnabled(thinking, level string) bool {
 	return thinking == ThinkingOn || (thinking == "" && level != "")
 }
 
+// ThinkingDeclared reports that an agent declared thinking or thinking_level.
+func ThinkingDeclared(thinking, level string) bool {
+	return false
+}
+
 // ThinkingBudgetTokens returns the thinking budget a declared setting sends,
 // or 0 when it sends none: thinking off, a style with no budget field, qwen on
 // with no level, or a value validation would reject. Anthropic on with no
