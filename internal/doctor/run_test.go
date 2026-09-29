@@ -644,3 +644,17 @@ func TestClassify_SalvagedMarkerAbsentNamesTheSalvage(t *testing.T) {
 	assert.Contains(t, got.hint, "marker absent", "the marker-absent class is still named")
 	assert.Contains(t, got.hint, "salvaged", "the hint must say the reply was reasoning-only")
 }
+
+// TD internal/doctor/run.go:704: under an explicit --max-tokens the salvaged
+// marker-absent hint must keep the flag-specific remedy the plain marker-absent
+// branch gives — telling the operator to raise a declaration their own flag
+// overrode is a no-op (docs/registry.md, ok_warning (marker absent)).
+func TestClassify_SalvagedMarkerAbsentKeepsTheFlagRemedy(t *testing.T) {
+	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "K"}
+	got := classify("thinking about the task", nil, testNonce, 5, tgt, MaxTokensSourceFlag, true)
+	assert.Equal(t, StatusOKWarning, got.status)
+	assert.Contains(t, got.hint, "explicit --max-tokens", "the flag won, so the flag is the knob to raise")
+	assert.NotContains(t, got.hint, "raise this agent's max_tokens declaration",
+		"the declaration was overridden by the flag, so raising it changes nothing")
+	assert.Contains(t, got.hint, "salvaged")
+}
