@@ -409,11 +409,37 @@ func TestRegistryDoc_ThinkingMaxTokensAndProseNote(t *testing.T) {
 		{"answer `NO FINDINGS` in under 20 output tokens", "the measured silent-lane shape on nemotron-3-super-120b"},
 		{"`medium` and `high` still truncated", "no reasoning_effort level fixed that model"},
 		{"repoint the agent to a different model", "the fix the epic's probe matrix proved"},
+		// The load error keeps its syntactic substitute; the note must say so and
+		// mark it as load-time syntax, not a behavioral fix.
+		{"still names `thinking_level: low` as the syntactic substitute", "the load error's remedy stays, so the note must disambiguate it from the measured fix"},
 	})
 	require.NotContains(t, maxTokensNote, "use `thinking_level: low` instead", "the max_tokens note must not offer thinking_level: low as a remedy: it silences the lane")
+	// Epic 35.16.11.2.2.2 (TD internal/reconcile/thinking_doc_test.go:411): the
+	// exact-phrase NotContains above passes any reword that brings the bad remedy
+	// back ("set `thinking_level: low`", "try `thinking_level: low`"). Guard every
+	// sentence instead: any sentence naming `thinking_level: low` must frame it as
+	// the measured failure, never as a remedy.
+	for _, sent := range docSentences(maxTokensNote) {
+		require.False(t, sentenceNamesLowAsRemedy(sent),
+			"a max_tokens-note sentence offers thinking_level: low as a remedy: %q", sent)
+	}
+	// The guard itself must reject a reworded return of the bad remedy.
+	require.False(t, sentenceNamesLowAsRemedy("If truncation persists, set `thinking_level: low` and rerun."),
+		"the sentence guard must reject thinking_level: low offered as a fix")
+	// TD internal/reconcile/thinking_doc_test.go:415: the notes must be their own
+	// paragraphs, not substrings buried mid-paragraph.
+	require.True(t, strings.HasPrefix(maxTokensNote, "**Thinking and `max_tokens`.**"),
+		"the max_tokens note must lead its own paragraph")
+	proseNote := docLineWith(t, doc, "**Thinking and prose in the reply.**")
+	require.True(t, strings.HasPrefix(proseNote, "**Thinking and prose in the reply.**"),
+		"the prose-in-reply note must lead its own paragraph")
+	// TD docs/registry.md:260: the thinking row and the reasoning_effort style row
+	// must not offer thinking_level: low as the fix anywhere in the doc.
+	require.NotContains(t, doc, "(use `thinking_level: low`)",
+		"the thinking/reasoning_effort rows must not prescribe thinking_level: low; they must point at Thinking and max_tokens")
 	// Epic 35.16.11.2.2.2: thinking: off reaches only the reasoning channel; the
 	// content-channel runaway needs a persona fix, and JSON mode is not one.
-	assertStates(t, "prose-in-reply note", docLineWith(t, doc, "**Thinking and prose in the reply.**"), []struct{ token, why string }{
+	assertStates(t, "prose-in-reply note", proseNote, []struct{ token, why string }{
 		{"`thinking: off` stops the reasoning channel only", "archer and llm-large still planned in the reply with thinking off"},
 		{"No thinking key reaches that channel", "the doctor honored verdict does not predict a clean review"},
 		{"forbids analysis in the reply", "the persona remedy the probe matrix proved"},
@@ -530,4 +556,34 @@ func preserveThinkingStylesPhrase(styles []string) string {
 		parts[i] = "`thinking_style: " + s + "`"
 	}
 	return strings.Join(parts, " or ")
+}
+
+// docSentences splits a doc note into sentences on ". " boundaries (period kept
+// on the sentence). The notes this guards contain no abbreviations with trailing
+// periods, so a plain split is exact here; if one is ever added, this helper is
+// the place to make it smarter.
+func docSentences(s string) []string {
+	parts := strings.Split(s, ". ")
+	out := make([]string, 0, len(parts))
+	for i, p := range parts {
+		if i < len(parts)-1 {
+			p += "."
+		}
+		if strings.TrimSpace(p) != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// sentenceNamesLowAsRemedy reports whether a sentence offers `thinking_level: low`
+// as a fix rather than naming it as the measured failure. The two framing markers
+// are the ones the Thinking and max_tokens note uses ("not a safe fix", and the
+// measured silent-lane evidence "made `nemotron-3-super-120b`").
+func sentenceNamesLowAsRemedy(sent string) bool {
+	if !strings.Contains(sent, "`thinking_level: low`") {
+		return false
+	}
+	return !strings.Contains(sent, "not a safe fix") &&
+		!strings.Contains(sent, "made `nemotron-3-super-120b`")
 }
