@@ -78,9 +78,13 @@ func TestValidateAgent_ThinkingBudgetWarning(t *testing.T) {
 	}
 }
 
-// A failed agent writes no budget warning, whether the fault is a thinking key
-// or any other field.
-func TestValidateAgent_ThinkingBudgetWarningOnlyOnValidAgent(t *testing.T) {
+// TD internal/registry/config.go:1515: renamed to what it actually proves.
+// The len(errs)==0 gate before warnThinkingBudget (config.go:1561) and the
+// warning-buffer clear are what suppress warnings on a failed load; this test
+// pins THAT observable behavior (no budget warning when validation fails), not
+// the gate's internal necessity — warnings only ever emit after a load
+// succeeds, so the gate alone is not what the old name claimed to cover.
+func TestValidateAgent_ThinkingBudgetWarningsSuppressedWhenValidationFails(t *testing.T) {
 	for name, agent := range map[string]string{
 		"thinking fault":     thinkingAgent(ThinkingOff, ThinkingLevelMax, ThinkingStyleQwen),
 		"non-thinking fault": thinkingAgent("", ThinkingLevelMax, ThinkingStyleQwen) + "    max_tokens: 0\n",

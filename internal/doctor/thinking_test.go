@@ -566,3 +566,32 @@ func TestThinkingDeclaration_NamesPreserveThinking(t *testing.T) {
 	assert.Equal(t, "thinking_level: low (qwen), preserve_thinking: off",
 		thinkingDeclaration(Target{ThinkingLevel: "low", ThinkingStyle: "qwen", PreserveThinking: "off"}))
 }
+
+// TD internal/registry/config.go:1515: the evidence wording and the HINT
+// separator were asserted only with Contains, so a wording change passed the
+// suite while every operator-facing doc and alert regex drifted. These pin the
+// EXACT strings: the full honored-off detail sentence (run.go evidence clause)
+// and the leading " | " separator render.go inserts between labels.
+func TestRun_HonoredOffDetailExactWording(t *testing.T) {
+	a, _, _ := runThinking(t, thinkingTarget(t, "off", "", "qwen"), silent, nil, llmclient.Completion{}, nil)
+	assert.Equal(t, ThinkingUnverified, a.ThinkingStatus)
+	// The both-silent case pins the control-probe evidence wording exactly.
+	a2, _, _ := runThinking(t, thinkingTarget(t, "off", "", "qwen"), silent, nil, silent, nil)
+	assert.Equal(t, ThinkingUnverified, a2.ThinkingStatus)
+	assert.Equal(t,
+		"no reasoning signal under thinking: off (qwen), and none from a control probe without the declaration either (no reasoning tokens, no reasoning content), so the provider may not report reasoning at all",
+		a2.ThinkingDetail)
+}
+
+func TestRenderTable_ThinkingLabelExactSeparator(t *testing.T) {
+	var buf bytes.Buffer
+	RenderTable(&buf, &Report{Agents: []AgentResult{{
+		Agent: "a", Status: StatusOK,
+		ResponseFormatStatus: ResponseFormatNotHonored, ResponseFormatDetail: "fenced",
+		ThinkingStatus: ThinkingNotHonored, ThinkingDetail: "tokens",
+	}}})
+	out := buf.String()
+	sep := " | thinking not honored: tokens"
+	assert.Contains(t, out, sep, "the second label must ride the exact leading separator")
+	assert.NotContains(t, out, " | thinking not honored: tokens |", "no trailing separator after the last label")
+}
