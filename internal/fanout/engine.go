@@ -386,6 +386,16 @@ type Result struct {
 	// statusFor surfaces it as the per-agent response_truncated marker (Epic 19.5).
 	ResponseTruncated bool
 
+	// Salvaged marks that the provider returned EMPTY content and the client
+	// promoted its chain-of-thought into Content (llmclient.Completion.Salvaged).
+	// Distinct from ResponseTruncated: a stop-reason salvage is NOT truncated,
+	// so it slips past every truncation gate while carrying one model's raw
+	// reasoning as a purported review. The diff cache refuses to store it (a
+	// later same-diff run would replay the reasoning as a clean review), and
+	// consumers that trust Content as a statement or verdict (debate seats,
+	// the skeptic) must read it (TD internal/llmclient/client.go:394).
+	Salvaged bool
+
 	// UnparseableResponse marks a StatusOK reviewer response that carried content
 	// but yielded zero parseable findings. It is deliberately NOT a failure: that
 	// is exactly what a genuine clean review looks like, and failing it over
@@ -1116,6 +1126,9 @@ func (e *Engine) invokeCachedSingleShot(ctx context.Context, a Agent) Result {
 		}
 	}
 	r := e.invokeSingleShot(ctx, a)
+	// Never cache a salvaged response either (TD internal/llmclient/client.go:394):
+	// its Content is one model's chain-of-thought, not a review, and a later
+	// same-diff run would replay it as a clean StatusOK review.
 	// Never cache a truncated response (Epic 19.5). invokeSingleShot returns a
 	// truncated runaway as StatusOK here — the truncation-failover demotion happens
 	// LATER in invokeSlot — so caching on StatusOK alone would persist the runaway
@@ -1124,7 +1137,7 @@ func (e *Engine) invokeCachedSingleShot(ctx context.Context, a Agent) Result {
 	// all-clean the epic prevents). A truncated-with-findings response is likewise
 	// skipped so its partial content is re-fetched fresh rather than replayed as
 	// clean. Only a clean, complete StatusOK result is cacheable.
-	if r.Status == StatusOK && !r.ResponseTruncated {
+	if r.Status == StatusOK && !r.ResponseTruncated && !r.Salvaged {
 		if err := e.cache.Put(key, r.Content); err != nil {
 			// A write fault only forfeits the future speed-up; the live result is
 			// already correct, so the review proceeds.
@@ -1147,6 +1160,7 @@ func (e *Engine) invokeSingleShot(ctx context.Context, a Agent) Result {
 		usage     llmclient.UsageData
 		records   []llmclient.CallRecord
 		truncated bool
+		salvaged  bool
 		err       error
 	)
 	// Prefer the truncation-aware MetaCompleter so a finish_reason=length response
@@ -1157,6 +1171,7 @@ func (e *Engine) invokeSingleShot(ctx context.Context, a Agent) Result {
 		var comp llmclient.Completion
 		comp, err = mc.CompleteWithMeta(ctx, a.Invocation)
 		content, usage, records, truncated = comp.Content, comp.Usage, comp.CallRecords, comp.Truncated
+		salvaged = comp.Salvaged
 	} else if uc, ok := e.completer.(UsageCompleter); ok {
 		content, usage, records, err = uc.CompleteWithUsage(ctx, a.Invocation)
 	} else {
@@ -1170,6 +1185,7 @@ func (e *Engine) invokeSingleShot(ctx context.Context, a Agent) Result {
 		MinSeverity:       a.MinSeverity,
 		MaxFindings:       a.MaxFindings,
 		ResponseTruncated: truncated,
+		Salvaged:          salvaged,
 		// Preserve the original tool request even on the single-shot path so a
 		// degraded tool agent (invokeDegraded reuses this) reports tools_requested.
 		ToolsRequested: a.Tools,

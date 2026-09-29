@@ -20,7 +20,8 @@ type chatTurn struct {
 	content   string
 	err       error
 	delay     time.Duration
-	truncated bool // final content turn hit finish_reason=length (Epic 19.5)
+	truncated bool                  // final content turn hit finish_reason=length (Epic 19.5)
+	meta      *llmclient.Completion // scripted CompleteWithMeta reply (salvage tests)
 }
 
 // fakeChatCompleter implements fanout.ChatCompleter (Complete + Chat). Each Chat
@@ -117,6 +118,24 @@ func (f *fakeChatCompleter) Complete(_ context.Context, inv llmclient.Invocation
 		return f.turns[0].content, nil
 	}
 	return "", nil
+}
+
+// CompleteWithMeta makes the fake a MetaCompleter so the engine's single-shot
+// path can be scripted with a full Completion (Salvaged, Truncated) — mirroring
+// internal/debate's mock. A turn with meta set returns it verbatim; otherwise it
+// mirrors Complete so every existing single-shot test takes an equivalent path.
+func (f *fakeChatCompleter) CompleteWithMeta(_ context.Context, inv llmclient.Invocation) (llmclient.Completion, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lastInv = inv
+	f.allInvs = append(f.allInvs, inv)
+	if len(f.turns) > 0 && f.turns[0].meta != nil {
+		return *f.turns[0].meta, nil
+	}
+	if len(f.turns) > 0 {
+		return llmclient.Completion{Content: f.turns[0].content, Truncated: f.turns[0].truncated}, nil
+	}
+	return llmclient.Completion{}, nil
 }
 
 func (f *fakeChatCompleter) Chat(ctx context.Context, inv llmclient.Invocation, msgs []llmclient.Message, _ []llmclient.ToolDef) (*llmclient.ChatResponse, error) {

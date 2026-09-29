@@ -151,6 +151,21 @@ func TestAllUnverifiableCollapse_TakesOnlyThePathItReads(t *testing.T) {
 	assert.Contains(t, err.Error(), "atcr doctor")
 }
 
+// TD internal/verify/invoke.go:141: response_truncated is a second path to a
+// wall of unverifiable verdicts — a truncated skeptic reply collapses to
+// unverifiable without any context_window_tokens fault, so the collapse message
+// must name it beside the doctor pointer or it sends the operator after the
+// wrong knob.
+func TestAllUnverifiableCollapse_NamesResponseTruncated(t *testing.T) {
+	dir := t.TempDir()
+	verPath := filepath.Join(dir, "verification.json")
+	require.NoError(t, os.WriteFile(verPath, []byte(`{"findings":[{"verdict":"unverifiable"}]}`), 0o600))
+
+	err := allUnverifiableCollapse(verPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "response_truncated")
+}
+
 // TestAllUnverifiableCollapse_UnreadableFileIsNotAnError covers the ReadFile
 // fallback the caller's os.Stat almost always makes unreachable.
 //

@@ -139,6 +139,7 @@ func TestObserverAdapter_ConvertsEveryField(t *testing.T) {
 		Thinking:          "on",
 		ThinkingLevel:     "low",
 		ThinkingStyle:     "anthropic",
+		PreserveThinking:  "on",
 		ResponseToolCalls: []hookobs.ToolCall{{ID: "c2", Name: "run_tests", Arguments: `{}`}},
 		FinishReason:      "stop",
 		Truncated:         true,
@@ -176,6 +177,7 @@ func TestObserverAdapter_ConvertsEveryField(t *testing.T) {
 		Thinking:          "on",
 		ThinkingLevel:     "low",
 		ThinkingStyle:     "anthropic",
+		PreserveThinking:  "on",
 		ResponseToolCalls: []ModelToolCall{{ID: "c2", Name: "run_tests", Arguments: `{}`}},
 		FinishReason:      "stop",
 		Truncated:         true,
@@ -383,7 +385,11 @@ func TestHooks_ModelClientsAreObserved(t *testing.T) {
 			return err
 		}
 		if info.IsDir() {
-			if name := info.Name(); name == ".git" || name == "testdata" || name == ".treehouse" {
+			name := info.Name()
+			// TD cli/hooks_test.go:381: skip dot-prefixed directories the same way
+			// `go ./...` does — tool state (`.git`, caches, scratch dirs) is not
+			// module source, and a stray llmclient.New() there is not a real gap.
+			if strings.HasPrefix(name, ".") || name == "testdata" {
 				return filepath.SkipDir
 			}
 			return nil

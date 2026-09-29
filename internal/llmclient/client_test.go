@@ -1134,3 +1134,42 @@ func TestRedactErrorSnippet_ForeignFleetKeyPrefixes(t *testing.T) {
 	assert.NotContains(t, got, "xai-FAKExaiKEY789")
 	assert.Contains(t, got, "[redacted]")
 }
+
+// TD internal/llmclient/client.go:394: the empty-content salvage widened to the
+// reasoning key turns a stop-reason reply with chain-of-thought-only output
+// from a hard error into StatusOK with that chain-of-thought as Content and
+// Truncated=false — indistinguishable from a real clean review downstream. The
+// Completion must carry a distinct Salvaged marker on EVERY salvage path so
+// the engine can refuse to cache it and the debate/verify guards can refuse to
+// trust it, without folding it into Truncated (a finish_reason=length marker
+// with different semantics).
+func TestCompleteWithMeta_MarksReasoningSalvage(t *testing.T) {
+	reasoning := "CHAIN OF THOUGHT ONLY"
+
+	// stop-reason salvage: empty content, reasoning_content present, NOT truncated.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := chatResponse{}
+		resp.Choices = append(resp.Choices, chatChoice{FinishReason: "stop", Message: message{Role: "assistant", Content: "", ReasoningContent: reasoningText(reasoning)}})
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+	c := fastRetry(srv.Client())
+	comp, err := c.CompleteWithMeta(context.Background(), Invocation{BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "review"})
+	require.NoError(t, err)
+	assert.Equal(t, reasoning, comp.Content, "the salvage still contributes the reasoning")
+	assert.True(t, comp.Salvaged, "a stop-reason reasoning salvage must be marked")
+	assert.False(t, comp.Truncated, "stop-reason salvage is not a length cutoff — the marker must be distinct")
+	// Reasoning keeps its own documented contract: reported independently of the salvage.
+
+	// normal reply: not salvaged.
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := chatResponse{}
+		resp.Choices = append(resp.Choices, chatChoice{FinishReason: "stop", Message: message{Role: "assistant", Content: "real findings"}})
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv2.Close()
+	comp2, err := fastRetry(srv2.Client()).CompleteWithMeta(context.Background(), Invocation{BaseURL: srv2.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "review"})
+	require.NoError(t, err)
+	assert.False(t, comp2.Salvaged, "a content-bearing reply is never salvaged")
+}

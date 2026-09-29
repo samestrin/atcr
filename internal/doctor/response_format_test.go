@@ -116,6 +116,26 @@ func TestRun_ResponseFormatProbeAppliesPerCallTimeout(t *testing.T) {
 // drift test derives the key and severity lists FROM the fanout constant, so a key
 // added or renamed there without the doctor prompt following fails here instead of
 // silently probing a different contract than the review actually runs.
+// TD internal/doctor/run.go:801: a provider rejecting the COMBINATION (preserved
+// thinking plus JSON mode) must not be reported as "rejected response_format:
+// json_object" — the detail must name the whole request, thinking declaration
+// included.
+func TestResponseFormatCall_DetailNamesThinkingDeclarationWhenFlagged(t *testing.T) {
+	t.Setenv(rfDoctorEnvK, rfDoctorKey)
+	tgt := Target{
+		BaseURL: "https://api.example/v1", APIKeyEnv: rfDoctorEnvK, Model: "glm-x",
+		ResponseFormat: registry.ResponseFormatJSONObject,
+		Thinking:       registry.ThinkingOn, ThinkingStyle: registry.ThinkingStyleGLM, PreserveThinking: registry.ThinkingOn,
+	}
+	fake := newFake(nil)
+	fake.chatFn = func(llmclient.Invocation, []llmclient.Message, []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+		return nil, &llmclient.HTTPStatusError{Status: 400, Snippet: "combination rejected"}
+	}
+	_, detail := responseFormatCall(context.Background(), fake, tgt, Options{Nonce: testNonce}, 2048, nil)
+	assert.Contains(t, detail, "preserve_thinking: on",
+		"a flagged target's rejection detail must name the thinking declaration, got: %s", detail)
+}
+
 func TestResponseFormatPromptMatchesTheFanoutContract(t *testing.T) {
 	keyLineRe := regexp.MustCompile(`(?m)^"severity".*$`)
 	line := keyLineRe.FindString(fanout.JsonObjectOutputFormat)

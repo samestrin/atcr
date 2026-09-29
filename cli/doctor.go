@@ -355,6 +355,16 @@ func thinkingNotHonoredWarnings(rep *doctor.Report) []string {
 		}
 	}
 	var lines []string
+	// When any flagged on-polarity probe itself sent preserve_thinking, name
+	// dropping that flag FIRST — a 4xx caused by the flag will not be fixed by
+	// another style or model (TD cli/doctor.go:367).
+	anyPreserve := false
+	for _, a := range rep.Agents {
+		if a.ThinkingStatus == doctor.ThinkingNotHonored && a.ThinkingPreserve != "" {
+			anyPreserve = true
+			break
+		}
+	}
 	if len(off) > 0 {
 		lines = append(lines, fmt.Sprintf(
 			"doctor: WARNING — thinking not honored: these agents declare thinking: off but "+
@@ -364,12 +374,16 @@ func thinkingNotHonoredWarnings(rep *doctor.Report) []string {
 			strings.Join(off, ", ")))
 	}
 	if len(on) > 0 {
+		remedy := "the model likely ignores the declared field, so try another thinking_style or a different model"
+		if anyPreserve {
+			remedy = "retry without preserve_thinking first — the provider may reject the flagged request outright — " +
+				"then try another thinking_style or a different model"
+		}
 		lines = append(lines, fmt.Sprintf(
 			"doctor: WARNING — thinking not honored: these agents declare thinking on (or a level) "+
-				"but the reply carried no reasoning signal; the model likely ignores the declared "+
-				"field, so try another thinking_style or a different model "+
+				"but the reply carried no reasoning signal; %s "+
 				"(see the HINT column or --json for why): %s\n",
-			strings.Join(on, ", ")))
+			remedy, strings.Join(on, ", ")))
 	}
 	return lines
 }

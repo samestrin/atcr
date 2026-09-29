@@ -137,14 +137,15 @@ type Invocation struct {
 	// an undeclared agent's request is unchanged. Sent on every call, including
 	// every tool-loop turn. Validation is the registry's job, not this layer's.
 	ResponseFormat string
-	// Thinking, ThinkingLevel, and ThinkingStyle are the agent's declared
-	// thinking keys, carried verbatim as strings so unset stays distinct from
-	// "off". ThinkingStyle picks the request field (see newThinkingFields); all
-	// three empty leave the request body unchanged. Sent on every call,
-	// including every tool-loop turn.
-	Thinking      string
-	ThinkingLevel string
-	ThinkingStyle string
+	// Thinking, ThinkingLevel, ThinkingStyle, and PreserveThinking are the
+	// agent's declared thinking keys, carried verbatim as strings so unset
+	// stays distinct from "off". ThinkingStyle picks the request field (see
+	// newThinkingFields); all empty leave the request body unchanged.
+	// Sent on every call, including every tool-loop turn.
+	Thinking         string
+	ThinkingLevel    string
+	ThinkingStyle    string
+	PreserveThinking string
 }
 
 type message struct {
@@ -341,6 +342,17 @@ type Completion struct {
 	Usage       UsageData
 	CallRecords []CallRecord
 	Truncated   bool
+	// Salvaged marks that Content was NOT the model's answer: the reply carried
+	// empty content and the empty-content salvage promoted its chain-of-thought
+	// (reasoning_content or reasoning) into Content. It fires on BOTH salvage
+	// paths — the length-cutoff one (where Truncated is also true) and, the
+	// dangerous one, a stop-reason reply whose only output was reasoning:
+	// StatusOK, not truncated, with chain-of-thought standing in for a review.
+	// Deliberately DISTINCT from Truncated, which is the finish_reason=length
+	// marker with its own consumer set; callers that trust Content as a statement
+	// (the debate seats), a verdict (the skeptic), or a cacheable review (the
+	// engine's diff cache) must check this flag (TD internal/llmclient/client.go:394).
+	Salvaged bool
 	// Reasoning is the model's reasoning_content, reported on its own whether
 	// or not Content is empty. The empty-Content salvage still copies it into
 	// Content; this field does not change that.
@@ -360,7 +372,7 @@ func (c *Client) CompleteWithMeta(ctx context.Context, inv Invocation) (Completi
 	if err != nil {
 		return Completion{}, err
 	}
-	thinking := newThinkingFields(inv.Thinking, inv.ThinkingLevel, inv.ThinkingStyle)
+	thinking := newThinkingFields(inv.Thinking, inv.ThinkingLevel, inv.ThinkingStyle, inv.PreserveThinking)
 	body, err := json.Marshal(chatRequest{
 		Model:          inv.Model,
 		Messages:       []message{{Role: "user", Content: inv.Prompt}},
@@ -386,12 +398,17 @@ func (c *Client) CompleteWithMeta(ctx context.Context, inv Invocation) (Completi
 	ch := parsed.Choices[0]
 	truncated := ch.FinishReason == "length"
 	content := ch.Message.Content
+	salvaged := false
 	if content == "" {
 		// Reasoning model that ran out of output budget mid-thought: salvage the
 		// chain-of-thought so the reviewer still contributes instead of returning
 		// an empty review. Truncated (captured above) is preserved so the caller
-		// still knows this salvaged content is partial.
+		// still knows this salvaged content is partial, and Salvaged is set so a
+		// caller that trusts Content as a statement/verdict/cacheable review can
+		// refuse it — on a stop-reason reply Truncated is FALSE here, which is
+		// exactly the silent case (TD internal/llmclient/client.go:394).
 		content = reasoningOf(ch.Message.ReasoningContent, ch.Message.Reasoning)
+		salvaged = content != ""
 	}
 	if content == "" {
 		// Content, reasoning_content, and reasoning are all empty: the provider
@@ -400,7 +417,7 @@ func (c *Client) CompleteWithMeta(ctx context.Context, inv Invocation) (Completi
 		// would repeat the result.
 		return Completion{CallRecords: records, Truncated: truncated}, atcrerrors.NewSystemError(fmt.Errorf("provider returned an empty completion (no content or reasoning)"))
 	}
-	return Completion{Content: content, Usage: parsed.Usage, CallRecords: records, Truncated: truncated, Reasoning: reasoningOf(ch.Message.ReasoningContent, ch.Message.Reasoning)}, nil
+	return Completion{Content: content, Usage: parsed.Usage, CallRecords: records, Truncated: truncated, Salvaged: salvaged, Reasoning: reasoningOf(ch.Message.ReasoningContent, ch.Message.Reasoning)}, nil
 }
 
 // resolveKey reads the invocation's API key env var; the value is never logged.

@@ -143,6 +143,15 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 		logger.Debug("skeptic failure detail", "skeptic", skeptic.Name, "class", "response_truncated", "detail", "model reply cut off on finish_reason length; draft verdict not trusted")
 		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "response_truncated", Skeptic: skeptic.Name}, res.TrippedBudgets, nil
 	}
+	// A stop-reason reasoning salvage reaches here as StatusOK, NOT truncated,
+	// with chain-of-thought as Content — the truncated-reply guard never fires
+	// and a draft verdict parsed from the reasoning would count toward precision
+	// as a full read (TD internal/llmclient/client.go:394). Collapse the same way.
+	if res.Salvaged {
+		logger.Warn("skeptic failed", "skeptic", skeptic.Name, "class", "reasoning_salvaged")
+		logger.Debug("skeptic failure detail", "skeptic", skeptic.Name, "class", "reasoning_salvaged", "detail", "provider returned empty content; the salvaged chain-of-thought is not a verdict")
+		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "reasoning_salvaged", Skeptic: skeptic.Name}, res.TrippedBudgets, nil
+	}
 
 	v, _ := parseVerdict(res.Content)
 	v.Skeptic = skeptic.Name
@@ -413,6 +422,11 @@ func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool) (agent fanout.
 			// level come from thinkingWire above (which may downgrade a level or
 			// drop the declaration entirely when no budget fits under the cap).
 			ThinkingStyle: c.ThinkingStyle,
+			// preserve_thinking: the skeptic's OWN declaration. thinkingWire rewrites
+			// only the thinking/level of an anthropic-style agent; preserve_thinking
+			// is illegal under that style (validateThinking) and llmclient ignores it
+			// there, so the declaration is forwarded as-is (TD internal/verify/invoke.go:416).
+			PreserveThinking: c.PreserveThinking,
 		},
 	}, derived
 }
@@ -446,11 +460,14 @@ func thinkingWire(c registry.AgentConfig) (maxTokens *int, thinking, thinkingLev
 	if c.ThinkingStyle != registry.ThinkingStyleAnthropic {
 		return c.MaxTokens, c.Thinking, c.ThinkingLevel
 	}
-	// The tool loop does not re-send prior reasoning blocks, which Anthropic
-	// requires on every continuation turn — a thinking declaration on a
-	// tool-loop agent is a guaranteed 400. The load-time guard rejects the
-	// combination for registry-loaded configs, but it is keyed on the agent's
-	// own supports_function_calling DECLARATION, and this lane forwards that
+	// Anthropic rejects a continuation turn whose prior thinking blocks are
+	// missing or altered. The tool loop replays them, but never against a live
+	// Anthropic model, so the registry's validateThinking guard rejects the
+	// combination for registry-loaded configs; change this strip whenever that
+	// guard changes. Empty reasoning containers never reach the replay:
+	// reasoningMember treats a zero-length array or object as absent, so an
+	// unsigned empty thinking_blocks value is dropped rather than re-sent. The guard is keyed on the agent's own
+	// supports_function_calling DECLARATION, and this lane forwards that
 	// declaration (the executor lane hardcodes it true regardless). Strip here,
 	// where the lane is actually about to run the loop: a SupportsFC-forwarded
 	// skeptic degrades to single-shot only when the declaration is false, and

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // ToolDef is a function-calling tool definition. It marshals to the OpenAI tool
@@ -71,11 +72,24 @@ type ToolCall struct {
 // an empty string; user/tool messages set it to a real string. ToolCalls is
 // present on an assistant turn requesting tools; ToolCallID ties a role:"tool"
 // result back to the call that produced it.
+//
+// The reasoning members carry an assistant turn's own reasoning back into
+// tool-loop history, because providers expect it on the next turn. Each holds
+// the provider's JSON value as received, under the key it arrived in, and is
+// set only by Chat on a reply: user and tool messages never carry one, and
+// unset members add nothing to the body. On marshal, encoding/json compacts the
+// value and HTML-escapes <, >, and &, so only the bytes can differ, never the
+// value.
 type Message struct {
 	Role       string     `json:"role"`
 	Content    *string    `json:"content"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
+
+	ReasoningContent json.RawMessage `json:"reasoning_content,omitempty"`
+	Reasoning        json.RawMessage `json:"reasoning,omitempty"`
+	ReasoningDetails json.RawMessage `json:"reasoning_details,omitempty"`
+	ThinkingBlocks   json.RawMessage `json:"thinking_blocks,omitempty"`
 }
 
 // ChatResponse is the engine-facing result of one Chat turn: the assistant
@@ -109,9 +123,9 @@ type ChatResponse struct {
 	// errored turn (see the no-choices note below).
 	CallRecords []CallRecord
 
-	// Reasoning is this turn's reasoning_content. It rides the response only:
-	// Message, which the loop re-sends as history, has no reasoning field, so
-	// reasoning is never sent back to the model.
+	// Reasoning is this turn's reasoning_content (or reasoning) as text, for
+	// readers that report it. What goes back to the model is Message's own
+	// reasoning members, not this field.
 	Reasoning string
 }
 
@@ -144,11 +158,108 @@ type chatToolResponse struct {
 }
 
 // responseMessage is a decoded assistant turn: the Message the loop keeps as
-// history, plus reasoning_content (or reasoning), split off so it is never re-sent.
+// history, plus its reasoning members as received. These fields shadow
+// Message's own reasoning members, so decode never fills those: Chat copies
+// each one across only after reasoningMember checks its shape.
 type responseMessage struct {
 	Message
-	ReasoningContent reasoningText `json:"reasoning_content"`
-	Reasoning        reasoningText `json:"reasoning"`
+	ReasoningContent json.RawMessage `json:"reasoning_content"`
+	Reasoning        json.RawMessage `json:"reasoning"`
+	ReasoningDetails json.RawMessage `json:"reasoning_details"`
+	ThinkingBlocks   json.RawMessage `json:"thinking_blocks"`
+}
+
+// history is the reply as the loop re-sends it: the Message with each
+// reasoning member that has its key's shape. Reasoning and ReasoningContent
+// name the same chain of thought under two provider keys (see Client's
+// reasoning fallback), so when the two string members are byte-equal only
+// reasoning_content is kept — a provider that fills both would otherwise have
+// the same reasoning re-sent twice on every later turn. Different values stay
+// independent.
+func (m responseMessage) history() Message {
+	msg := m.Message
+	msg.ReasoningContent = reasoningMember(m.ReasoningContent, false)
+	msg.Reasoning = reasoningMember(m.Reasoning, false)
+	if msg.ReasoningContent != nil && bytes.Equal(msg.Reasoning, msg.ReasoningContent) {
+		msg.Reasoning = nil
+	}
+	msg.ReasoningDetails = reasoningMember(m.ReasoningDetails, true)
+	msg.ThinkingBlocks = reasoningMember(m.ThinkingBlocks, true)
+	return msg
+}
+
+// reasoningMember is a reasoning member as received, kept only when it has its
+// key's shape: a string holding a non-whitespace character, or (structured) a
+// non-empty array or object. Anything else — null, "", whitespace-only, a
+// wrong type, a zero-length container — is absent, so it never reaches a
+// request body and never fails the decode. An empty container is dropped as
+// absent rather than replayed: an empty thinking_blocks array on a tool-use
+// turn is neither the blocks the provider signed nor a meaningful replay, and
+// Anthropic rejects a continuation turn whose thinking blocks are missing or
+// altered.
+func reasoningMember(raw json.RawMessage, structured bool) json.RawMessage {
+	if len(raw) == 0 {
+		return nil
+	}
+	if structured {
+		if (raw[0] == '[' || raw[0] == '{') && containerHasElement(raw) {
+			return raw
+		}
+		return nil
+	}
+	if !stringMemberHasContent(raw) {
+		return nil
+	}
+	return raw
+}
+
+// containerHasElement reports whether a JSON array or object holds any
+// non-whitespace byte between its delimiters, without decoding: "[]", "{}",
+// and whitespace-padded empties like "[ ]" are empty, so a multi-megabyte
+// container is scanned, not copied, on a path that only needs an emptiness
+// verdict. An object like {"a":null} has non-whitespace bytes and counts as
+// populated — emptiness here means no members, not no values.
+func containerHasElement(raw json.RawMessage) bool {
+	if len(raw) < 2 {
+		return false
+	}
+	for _, b := range raw[1 : len(raw)-1] {
+		if b != ' ' && b != '\t' && b != '\n' && b != '\r' {
+			return true
+		}
+	}
+	return false
+}
+
+// stringMemberHasContent reports whether raw is a JSON string holding a
+// non-whitespace character, without materializing the decoded string: a
+// multi-megabyte reasoning member is measured, not copied, on a path that only
+// needs an emptiness verdict. Escape-free strings are scanned directly (with no
+// backslash the content bytes are the raw bytes between the quotes); an escape
+// could stand for whitespace ("\t") or content ("\\"), so those fall back to a
+// full decode for the exact answer.
+func stringMemberHasContent(raw json.RawMessage) bool {
+	if len(raw) < 2 || raw[0] != '"' || raw[len(raw)-1] != '"' {
+		return false
+	}
+	content := raw[1 : len(raw)-1]
+	if bytes.IndexByte(content, '\\') < 0 {
+		for _, b := range content {
+			if b != ' ' && b != '\t' && b != '\n' && b != '\r' {
+				return true
+			}
+		}
+		return false
+	}
+	var s string
+	return json.Unmarshal(raw, &s) == nil && strings.TrimSpace(s) != ""
+}
+
+// memberText is a string reasoning member's text, "" when absent.
+func memberText(raw json.RawMessage) reasoningText {
+	var s string
+	_ = json.Unmarshal(raw, &s)
+	return reasoningText(s)
 }
 
 // Chat performs one multi-turn chat-completions exchange: it serializes the
@@ -163,7 +274,7 @@ func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, t
 	if err != nil {
 		return nil, err
 	}
-	thinking := newThinkingFields(inv.Thinking, inv.ThinkingLevel, inv.ThinkingStyle)
+	thinking := newThinkingFields(inv.Thinking, inv.ThinkingLevel, inv.ThinkingStyle, inv.PreserveThinking)
 	req := chatToolRequest{
 		Model:          inv.Model,
 		Messages:       messages,
@@ -215,7 +326,18 @@ func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, t
 			return &ChatResponse{CallRecords: records}, fmt.Errorf("provider truncated response (finish_reason=%s): empty content with no tool_calls", ch.FinishReason)
 		}
 	}
-	resp := &ChatResponse{Message: ch.Message.Message, FinishReason: ch.FinishReason, Usage: parsed.Usage, CallRecords: records, Reasoning: reasoningOf(ch.Message.ReasoningContent, ch.Message.Reasoning)}
+	msg := ch.Message.history()
+	if ch.FinishReason == "length" {
+		// A length-truncated turn may carry a cut-off structured reasoning value
+		// (for Anthropic, a thinking block with no signature). Replaying it would
+		// send a value that is neither the blocks the provider signed nor absent
+		// — exactly what Anthropic rejects on a continuation turn — so the
+		// structured members are cleared before the turn enters history. String
+		// reasoning members are kept: text truncation degrades gracefully.
+		msg.ThinkingBlocks = nil
+		msg.ReasoningDetails = nil
+	}
+	resp := &ChatResponse{Message: msg, FinishReason: ch.FinishReason, Usage: parsed.Usage, CallRecords: records, Reasoning: reasoningOf(memberText(msg.ReasoningContent), memberText(msg.Reasoning))}
 	if ch.FinishReason == "length" {
 		resp.Truncated = true
 	}

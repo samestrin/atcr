@@ -468,3 +468,169 @@ func TestRenderTable_ThinkingLabel(t *testing.T) {
 	assert.NotContains(t, out, "reasoning observed")
 	assert.NotContains(t, out, "thinking")
 }
+
+// Sprint 35.16.11.2.2.1 AC 03-04 Edge Case 3: preserve_thinking joins a
+// declared target's identity, and both doctor probe sites send it.
+func TestDoctor_PreserveThinkingJoinsTargetAndProbe(t *testing.T) {
+	on := registry.AgentConfig{Thinking: "on", ThinkingStyle: "qwen"}
+	flagged := on
+	flagged.PreserveThinking = "on"
+	res := declaredRegistry(t, map[string]registry.AgentConfig{"a": flagged, "b": on})
+	assert.Len(t, res.Targets, 2, "the flag changes the request, so it splits the target")
+	assert.Equal(t, "on", targetForAgent(t, res, "a").PreserveThinking)
+	assert.Empty(t, targetForAgent(t, res, "b").PreserveThinking)
+	assert.Len(t, declaredRegistry(t, map[string]registry.AgentConfig{"a": flagged, "b": flagged}).Targets, 1)
+
+	reg := regWith(
+		map[string]registry.Provider{"p": {APIKeyEnv: rfDoctorEnvK, BaseURL: "https://api.example/v1"}},
+		map[string]registry.AgentConfig{"a": {
+			Provider: "p", Model: "m", ResponseFormat: registry.ResponseFormatJSONObject,
+			Thinking: registry.ThinkingOn, ThinkingStyle: registry.ThinkingStyleGLM, PreserveThinking: registry.ThinkingOn,
+		}},
+	)
+	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a"}})
+	require.NoError(t, err)
+	t.Setenv(rfDoctorEnvK, thinkingKey)
+	fake := newFake(markerOK)
+	// TD internal/doctor/thinking_test.go:500: the old script returned the
+	// `thinks` fixture for every call, so probeThinking reached honored on the
+	// declared call alone — the loop over calls[1:] never ran and the "control
+	// call drops the whole declaration" claim was checked by an empty loop.
+	// Script a silent declared call reporting no reasoning-token field, which
+	// forces the control call, then pin the control's PreserveThinking exactly.
+	n := 0
+	fake.metaFn = func(llmclient.Invocation) (llmclient.Completion, error) {
+		n++
+		if n == 1 {
+			return withMarker(llmclient.Completion{}), nil // silent, not reported-zero
+		}
+		return thinks, nil
+	}
+	fake.chatFn = reply(oneFinding)
+	Run(context.Background(), fake, res, Options{Nonce: testNonce, MaxTokens: 2048})
+	calls := fake.completeCalls()
+	require.Len(t, calls, 2, "the silent declared call must force exactly one control call")
+	assert.Equal(t, registry.ThinkingOn, calls[0].PreserveThinking, "the marker probe sends the flag")
+	assert.Empty(t, calls[1].PreserveThinking, "the control call drops the whole declaration")
+	chats := fake.chatCalls()
+	require.Len(t, chats, 1)
+	assert.Equal(t, registry.ThinkingOn, chats[0].inv.PreserveThinking, "the response_format probe sends the flag")
+}
+
+// TD-012 / TD internal/doctor/run.go:897: the probe is single-turn — an
+// honored verdict only proves the flag was accepted, not that reasoning was
+// actually preserved. When the target sends the flag, the honored detail must
+// say so.
+func TestRun_HonoredDetailNotesPreserveThinkingUnverified(t *testing.T) {
+	reg := regWith(
+		map[string]registry.Provider{"p": {APIKeyEnv: rfDoctorEnvK, BaseURL: "https://api.example/v1"}},
+		map[string]registry.AgentConfig{"a": {
+			Provider: "p", Model: "m",
+			Thinking: registry.ThinkingOn, ThinkingStyle: registry.ThinkingStyleQwen, PreserveThinking: registry.ThinkingOn,
+		}},
+	)
+	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a"}})
+	require.NoError(t, err)
+
+	a, _, _ := runThinking(t, res, thinks, nil, llmclient.Completion{}, nil)
+	assert.Equal(t, ThinkingHonored, a.ThinkingStatus)
+	assert.Contains(t, a.ThinkingDetail, "the probe does not verify preserve_thinking (single-turn)")
+}
+
+// TD cli/doctor.go:367: a provider 4xx on the flagged marker call must leave
+// the flag visible on the result row, so the cli warning and --json consumers
+// can name "retry without preserve_thinking" without parsing detail prose.
+func TestRun_ThinkingPreserveFieldPopulatedOnFlaggedRejection(t *testing.T) {
+	reg := regWith(
+		map[string]registry.Provider{"p": {APIKeyEnv: rfDoctorEnvK, BaseURL: "https://api.example/v1"}},
+		map[string]registry.AgentConfig{"a": {
+			Provider: "p", Model: "m",
+			Thinking: registry.ThinkingOn, ThinkingStyle: registry.ThinkingStyleQwen, PreserveThinking: registry.ThinkingOn,
+		}},
+	)
+	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a"}})
+	require.NoError(t, err)
+
+	a, _, _ := runThinking(t, res, llmclient.Completion{}, &llmclient.HTTPStatusError{Status: 400, Snippet: "preserve_thinking not supported"}, silent, nil)
+	assert.Equal(t, ThinkingNotHonored, a.ThinkingStatus)
+	assert.Equal(t, registry.ThinkingOn, a.ThinkingPreserve, "the flagged probe's preserve_thinking must land on the result row")
+	assert.Contains(t, a.ThinkingDetail, "preserve_thinking")
+}
+
+// TD internal/doctor/run.go:1049: a level-alone target that also sends
+// preserve_thinking already has a thinking_level detail when honored, so the
+// preserve note is APPENDED rather than set. Pin the joined sentence exactly.
+func TestRun_HonoredDetailAppendsPreserveNoteToLevelDetail(t *testing.T) {
+	reg := regWith(
+		map[string]registry.Provider{"p": {APIKeyEnv: rfDoctorEnvK, BaseURL: "https://api.example/v1"}},
+		map[string]registry.AgentConfig{"a": {
+			Provider: "p", Model: "m",
+			ThinkingLevel: registry.ThinkingLevelLow, ThinkingStyle: registry.ThinkingStyleQwen, PreserveThinking: registry.ThinkingOn,
+		}},
+	)
+	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a"}})
+	require.NoError(t, err)
+
+	a, _, _ := runThinking(t, res, thinks, nil, llmclient.Completion{}, nil)
+	assert.Equal(t, ThinkingHonored, a.ThinkingStatus)
+	assert.Equal(t, "reasoning observed; the probe does not verify thinking_level low; the probe does not verify preserve_thinking (single-turn)", a.ThinkingDetail)
+}
+
+// TD internal/doctor/run.go:931: thinking_preserve is omitted exactly when
+// thinking_declared is. A preserve_thinking target whose call reaches no
+// verdict (a permanent 401) must not report the flag on its row.
+func TestRun_ThinkingPreserveOmittedWithoutAVerdict(t *testing.T) {
+	reg := regWith(
+		map[string]registry.Provider{"p": {APIKeyEnv: rfDoctorEnvK, BaseURL: "https://api.example/v1"}},
+		map[string]registry.AgentConfig{"a": {
+			Provider: "p", Model: "m",
+			Thinking: registry.ThinkingOn, ThinkingStyle: registry.ThinkingStyleQwen, PreserveThinking: registry.ThinkingOn,
+		}},
+	)
+	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a"}})
+	require.NoError(t, err)
+
+	a, _, _ := runThinking(t, res, llmclient.Completion{}, &llmclient.HTTPStatusError{Status: 401, Snippet: "bad key"}, llmclient.Completion{}, nil)
+	assert.Empty(t, a.ThinkingStatus)
+	assert.Empty(t, a.ThinkingDeclared)
+	assert.Empty(t, a.ThinkingPreserve, "thinking_preserve is omitted exactly when thinking_declared is")
+}
+
+// TD-010: the verdict label names preserve_thinking when the target sends it,
+// so a flag-caused rejection is not blamed on thinking alone.
+func TestThinkingDeclaration_NamesPreserveThinking(t *testing.T) {
+	assert.Equal(t, "thinking: on (glm)", thinkingDeclaration(Target{Thinking: "on", ThinkingStyle: "glm"}))
+	assert.Equal(t, "thinking: on (glm), preserve_thinking: on",
+		thinkingDeclaration(Target{Thinking: "on", ThinkingStyle: "glm", PreserveThinking: "on"}))
+	assert.Equal(t, "thinking_level: low (qwen), preserve_thinking: off",
+		thinkingDeclaration(Target{ThinkingLevel: "low", ThinkingStyle: "qwen", PreserveThinking: "off"}))
+}
+
+// TD internal/registry/config.go:1515: the evidence wording and the HINT
+// separator were asserted only with Contains, so a wording change passed the
+// suite while every operator-facing doc and alert regex drifted. These pin the
+// EXACT strings: the full honored-off detail sentence (run.go evidence clause)
+// and the leading " | " separator render.go inserts between labels.
+func TestRun_HonoredOffDetailExactWording(t *testing.T) {
+	a, _, _ := runThinking(t, thinkingTarget(t, "off", "", "qwen"), silent, nil, llmclient.Completion{}, nil)
+	assert.Equal(t, ThinkingUnverified, a.ThinkingStatus)
+	// The both-silent case pins the control-probe evidence wording exactly.
+	a2, _, _ := runThinking(t, thinkingTarget(t, "off", "", "qwen"), silent, nil, silent, nil)
+	assert.Equal(t, ThinkingUnverified, a2.ThinkingStatus)
+	assert.Equal(t,
+		"no reasoning signal under thinking: off (qwen), and none from a control probe without the declaration either (no reasoning tokens, no reasoning content), so the provider may not report reasoning at all",
+		a2.ThinkingDetail)
+}
+
+func TestRenderTable_ThinkingLabelExactSeparator(t *testing.T) {
+	var buf bytes.Buffer
+	RenderTable(&buf, &Report{Agents: []AgentResult{{
+		Agent: "a", Status: StatusOK,
+		ResponseFormatStatus: ResponseFormatNotHonored, ResponseFormatDetail: "fenced",
+		ThinkingStatus: ThinkingNotHonored, ThinkingDetail: "tokens",
+	}}})
+	out := buf.String()
+	sep := " | thinking not honored: tokens"
+	assert.Contains(t, out, sep, "the second label must ride the exact leading separator")
+	assert.NotContains(t, out, " | thinking not honored: tokens |", "no trailing separator after the last label")
+}

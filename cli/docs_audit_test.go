@@ -434,6 +434,25 @@ func TestConfigKeyFlagMappingIsDocumented(t *testing.T) {
 	}
 }
 
+// The config-key ↔ flag mapping intro is prose in registry.md, which follows
+// the no-hard-wrap rule: a hard-wrapped intro can split a phrase a drift test
+// asserts with Contains, so the paragraph between the mapping header and the
+// mapping table must be a single line.
+func TestConfigKeyFlagMappingIntroIsSingleLine(t *testing.T) {
+	reg := auditedMarkdown(t)["docs/registry.md"]
+	start := strings.Index(reg, "### Config-key ↔ CLI flag mapping")
+	require.GreaterOrEqual(t, start, 0, "registry.md has no config-key mapping header")
+	rest := reg[start:]
+	nl := strings.Index(rest, "\n")
+	require.GreaterOrEqual(t, nl, 0)
+	after := rest[nl+1:]
+	end := strings.Index(after, "\n| Config key")
+	require.GreaterOrEqual(t, end, 0, "mapping header not followed by the mapping table")
+	intro := strings.TrimSpace(after[:end])
+	require.NotEmpty(t, intro, "mapping intro must not be empty")
+	require.NotContains(t, intro, "\n", "config-key mapping intro must be a single line, not hard-wrapped")
+}
+
 // TestSubcommandValidationSkipsFlags asserts that a bogus subcommand placed
 // after a flag is still rejected (e.g. `atcr benchmark --json frobnicate`).
 func TestSubcommandValidationSkipsFlags(t *testing.T) {

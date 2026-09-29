@@ -54,13 +54,15 @@ type Target struct {
 	// identity only for a declared target, where it decides whether the combined
 	// tools+response_format probe runs; an undeclared agent's key is unchanged.
 	Tools bool
-	// Thinking, ThinkingLevel, and ThinkingStyle are the sharers' thinking
-	// declaration, set only for a DECLARED target (thinking or thinking_level
-	// present). Identity for the reason ResponseFormat is: the declaration changes
-	// the request body, so a declared and an undeclared agent make different calls.
-	Thinking      string
-	ThinkingLevel string
-	ThinkingStyle string
+	// Thinking, ThinkingLevel, ThinkingStyle, and PreserveThinking are the
+	// sharers' thinking declaration, set only for a DECLARED target (thinking
+	// or thinking_level present). Identity for the reason ResponseFormat is:
+	// the declaration changes the request body, so a declared and an undeclared
+	// agent make different calls.
+	Thinking         string
+	ThinkingLevel    string
+	ThinkingStyle    string
+	PreserveThinking string
 }
 
 // AgentTarget binds one effective-roster agent to the index of the Target it
@@ -163,26 +165,27 @@ func ResolveWithCap(reg *registry.Registry, proj *registry.ProjectConfig, overri
 		// The thinking declaration joins the key on the same rule: only a declared
 		// agent (thinking or thinking_level set) grows it, and a style alone is inert
 		// (it changes no request), so it neither splits a target nor rides one.
-		var thinking, level, style string
+		var thinking, level, style, preserve string
 		if ac.Thinking != "" || ac.ThinkingLevel != "" {
-			thinking, level, style = ac.Thinking, ac.ThinkingLevel, ac.ThinkingStyle
-			key += "\x00thinking\x00" + thinking + "\x00" + level + "\x00" + style
+			thinking, level, style, preserve = ac.Thinking, ac.ThinkingLevel, ac.ThinkingStyle, ac.PreserveThinking
+			key += "\x00thinking\x00" + thinking + "\x00" + level + "\x00" + style + "\x00" + preserve
 		}
 		if idx, ok := targetIdx[key]; ok {
 			return idx, nil
 		}
 		idx := len(res.Targets)
 		res.Targets = append(res.Targets, Target{
-			Provider:       ac.Provider,
-			Model:          ac.Model,
-			BaseURL:        prov.BaseURL,
-			APIKeyEnv:      prov.APIKeyEnv,
-			MaxTokens:      declared,
-			ResponseFormat: ac.ResponseFormat,
-			Tools:          tools,
-			Thinking:       thinking,
-			ThinkingLevel:  level,
-			ThinkingStyle:  style,
+			Provider:         ac.Provider,
+			Model:            ac.Model,
+			BaseURL:          prov.BaseURL,
+			APIKeyEnv:        prov.APIKeyEnv,
+			MaxTokens:        declared,
+			ResponseFormat:   ac.ResponseFormat,
+			Tools:            tools,
+			Thinking:         thinking,
+			ThinkingLevel:    level,
+			ThinkingStyle:    style,
+			PreserveThinking: preserve,
 		})
 		targetIdx[key] = idx
 		return idx, nil
