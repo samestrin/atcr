@@ -134,7 +134,8 @@ type ModelInvocation struct {
 	// agent's declared registry thinking keys ("on"/"off", "low".."max", and
 	// the wire style), copied verbatim and empty when undeclared. They record
 	// what the operator declared, not the provider-specific field it was sent
-	// as.
+	// as. ThinkingStyle is empty unless Thinking or ThinkingLevel is set,
+	// because a style alone sends nothing.
 	Thinking         string
 	ThinkingLevel    string
 	ThinkingStyle    string

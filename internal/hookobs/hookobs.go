@@ -90,6 +90,8 @@ type Invocation struct {
 	// Thinking, ThinkingLevel, ThinkingStyle, and PreserveThinking are the
 	// agent's declared thinking keys, copied verbatim (empty when undeclared),
 	// so a record can answer "what reasoning setting was this call made under".
+	// ThinkingStyle is empty unless Thinking or ThinkingLevel is set: a style
+	// alone sends no field (registry.ThinkingDeclared).
 	Thinking         string
 	ThinkingLevel    string
 	ThinkingStyle    string
@@ -353,10 +355,9 @@ func (o *observingClient) base(ctx context.Context, inv llmclient.Invocation, st
 		provider = endpoint
 	}
 	c := CallFrom(ctx)
-	// A style alone sends no thinking field, so it is not echoed: the record
-	// reports what was declared on the wire, by doctor's rule (TD row
-	// internal/fanout/review.go:2945). Every site that sets the style, and the
-	// cli.ModelInvocation copy, inherits this one gate.
+	// A style alone sends no thinking field, so it is not echoed (doctor's
+	// rule, TD row internal/fanout/review.go:2945). Every site that sets the
+	// style, and the cli.ModelInvocation copy, inherits this one gate.
 	style := inv.ThinkingStyle
 	if !registry.ThinkingDeclared(inv.Thinking, inv.ThinkingLevel) {
 		style = ""
