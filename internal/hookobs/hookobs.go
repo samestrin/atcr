@@ -36,6 +36,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/circuitbreaker"
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/registry"
 )
 
 // Invocation is one observed model call. It mirrors the exported
@@ -352,6 +353,14 @@ func (o *observingClient) base(ctx context.Context, inv llmclient.Invocation, st
 		provider = endpoint
 	}
 	c := CallFrom(ctx)
+	// A style alone sends no thinking field, so it is not echoed: the record
+	// reports what was declared on the wire, by doctor's rule (TD row
+	// internal/fanout/review.go:2945). Every site that sets the style, and the
+	// cli.ModelInvocation copy, inherits this one gate.
+	style := inv.ThinkingStyle
+	if !registry.ThinkingDeclared(inv.Thinking, inv.ThinkingLevel) {
+		style = ""
+	}
 	return Invocation{
 		RunID:            c.RunID,
 		AgentName:        c.AgentName,
@@ -364,7 +373,7 @@ func (o *observingClient) base(ctx context.Context, inv llmclient.Invocation, st
 		ResponseFormat:   inv.ResponseFormat,
 		Thinking:         inv.Thinking,
 		ThinkingLevel:    inv.ThinkingLevel,
-		ThinkingStyle:    inv.ThinkingStyle,
+		ThinkingStyle:    style,
 		PreserveThinking: inv.PreserveThinking,
 		// The temperature the request carried, which a declared thinking
 		// setting can drop (anthropic thinking on sends none).
