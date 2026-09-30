@@ -80,7 +80,10 @@ func RunDebate(ctx context.Context, item reconcile.DisagreementItem, cast Cast, 
 
 // newSentinel returns the per-item block sentinel used to tag untrusted finding and
 // reviewer content so it cannot forge a closing tag. It is a security boundary, so
-// the value must be unpredictable.
+// the value must be unpredictable. The token alone does NOT stop forgery by a seat
+// model — every seat sees the sentinel in its own prompt — block() neutralizes any
+// sentinel occurrence in wrapped content; this unpredictability keeps a reviewer
+// (who does not see prompts) from forging tags in the finding text.
 func newSentinel() string {
 	var b [16]byte // 128 bits, hex-encoded to 32 chars
 	if _, err := rand.Read(b[:]); err != nil {
@@ -315,9 +318,14 @@ func flattenUntrusted(s string) string {
 }
 
 // block wraps untrusted content in a sentinel-tagged block (<name-SENTINEL>…),
-// so content containing a literal "</name>" cannot close the block early.
+// so content containing a literal "</name>" cannot close the block early. The
+// sentinel is printed in every seat's prompt, so a seat model can also emit the
+// full closing tag — any sentinel occurrence inside the wrapped content is
+// therefore neutralized first, or a seat could close its own block in the
+// downstream prompt and inject instructions as framing.
 func block(name, sentinel, content string) string {
 	tag := name + "-" + sentinel
+	content = strings.ReplaceAll(content, sentinel, "[sentinel-redacted]")
 	return "<" + tag + ">\n" + content + "\n</" + tag + ">"
 }
 

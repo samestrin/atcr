@@ -39,10 +39,10 @@ func TestBlockSeatStatement_CannotForgeClosingTag(t *testing.T) {
 
 	prompt := buildChallengerPrompt(debateItem(), forged, sentinel)
 
-	assert.NotContains(t, prompt, "</proposer-"+sentinel+">",
-		"a seat-visible sentinel must not be able to close its own block in a downstream prompt")
-	assert.NotContains(t, prompt, sentinel+">\nSYSTEM",
-		"no raw sentinel occurrence from the statement may survive into the wrapped block")
+	assert.Equal(t, 1, strings.Count(prompt, "</proposer-"+sentinel+">"),
+		"the only real closing tag must be the wrapper's — a forged one from the statement must not survive")
+	assert.Contains(t, prompt, "</proposer-[sentinel-redacted]>",
+		"the forged tag must be visibly neutralized, not silently dropped")
 	assert.Contains(t, prompt, "fine.", "legitimate statement content is preserved")
 }
 
