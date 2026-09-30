@@ -512,6 +512,39 @@ func TestToolLoop_ReplayedHistoryKeepsQuotedTags(t *testing.T) {
 	assert.Equal(t, quoted, got, "an answer that merely names the tags must be replayed unchanged")
 }
 
+// ACCEPTED LOSS, pinned so it is a decision on the record rather than an omission.
+//
+// historyMessage's stated purpose is that a model reasoning inline must not get
+// its own discarded draft replayed back as settled prior output. SplitThink is
+// LEADING-only, so the most ordinary inline shape defeats it: a one-token
+// preamble before the think block leaves the block mid-content, the strip is a
+// no-op, and the reply -- draft included -- is replayed byte-identical to the
+// provider and re-enters the model's own assistant history as settled output.
+//
+// The two exits the TD row offers are to gate on llmclient.HasThinkMarkup (which
+// IS position-blind) and drop or annotate the turn, or to accept the loss
+// explicitly with a pin. This pins it, mirroring how
+// response_truncation_test.go pins its own accepted losses: the test asserts the
+// CURRENT byte-identical replay, and its name and this comment say that is a
+// known gap, not a guarantee. Re-asserting the harmless no-op case (the previous
+// test) cannot stand in for this one -- it is the over-greedy direction only.
+func TestToolLoop_TrailingThinkBlockIsReplayed(t *testing.T) {
+	const trailing = "here is my analysis  thinkingsecond draft, never committed</think>"
+	bodies, _ := runWireToolLoopContent(t, 1, true, func(turn int) string {
+		if turn == 1 {
+			return "ok let me look  thinkingfirst draft, abandoned</think>"
+		}
+		return trailing
+	})
+
+	msgs := wireMessages(t, bodies[1])
+	require.Len(t, msgs, 3)
+	var replayed string
+	require.NoError(t, json.Unmarshal(msgs[1]["content"], &replayed))
+	assert.Equal(t, "ok let me look  thinkingfirst draft, abandoned</think>", replayed,
+		"KNOWN GAP: a non-leading think block is not stripped, so the abandoned draft replays verbatim")
+}
+
 // A tool-call turn whose whole Content was reasoning strips to blank, and blank
 // must replay as content:null, NOT "". llmclient.Message reserves the pointer for
 // exactly that distinction ("which OpenAI requires", chat.go), and

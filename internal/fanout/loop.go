@@ -37,6 +37,15 @@ func replayedReasoningBytes(m llmclient.Message) int64 {
 // it, a model that reasons inline gets its own discarded draft replayed back as
 // settled prior output on every later turn.
 //
+// LEADING-ONLY, and that limit is the whole point of naming it: SplitThink strips
+// a leading run and nothing else, so a think block placed AFTER a preamble is not
+// seen, the strip is a no-op, and the reply -- abandoned draft included -- replays
+// verbatim and re-enters the model's own assistant history as settled output. That
+// is an ACCEPTED LOSS, not a guarantee: llmclient.HasThinkMarkup is position-blind
+// but is not used here, because dropping a mid-content block risks eating a real
+// answer that quotes the tag. Pinned by TestToolLoop_TrailingThinkBlockIsReplayed
+// so the gap is on the record rather than implied closed by this comment.
+//
 // Content is a *string that the returned copy would otherwise SHARE with the
 // caller's message, so the strip allocates a new one. Stripping in place would
 // also strip l.res.Content — the raw reply review.md writes — which is outside
