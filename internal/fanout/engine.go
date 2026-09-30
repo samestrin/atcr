@@ -1068,10 +1068,22 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 		// parser could use — and ReviewerOutcome ranks unparseable ABOVE clean, so
 		// the false flag would reach the scorecard and the reviewer's trust prior.
 		// Stripped into a local: r.Content stays raw for review.md.
+		//
+		// A SALVAGED reply never reaches the sentinel read: it is uncommitted
+		// reasoning by design (T6), so it cannot be a committed no-findings report
+		// whatever its text — and its ParsedFindingCount is 0 by construction, so a
+		// sentinel-shaped salvage ("NO FINDINGS" on the reasoning channel) would
+		// otherwise score as a genuine clean review. Recorded unparseable, not
+		// failed over (TD-018 keeps widening failover out of scope). Pinned by
+		// TestInvokeSlot_SalvagedSentinelShapedReply_IsNotACleanReview.
 		if r.Status == StatusOK && r.Content != "" && r.ParsedFindingCount() == 0 {
-			answer, _ := llmclient.SplitThink(r.Content)
-			if !stream.IsNoFindings(answer) {
+			if r.Salvaged {
 				r.UnparseableResponse = true
+			} else {
+				answer, _ := llmclient.SplitThink(r.Content)
+				if !stream.IsNoFindings(answer) {
+					r.UnparseableResponse = true
+				}
 			}
 		}
 		if r.Status == StatusOK {
