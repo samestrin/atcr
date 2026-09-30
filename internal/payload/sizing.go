@@ -220,3 +220,6 @@ func ChunkMaxLines(model string, declared *int, outputTokens int) int {
 	}
 	return maxLines
 }
+
+// TokensToBytes is a stub.
+func TokensToBytes(tokens int) int64 { return 0 }

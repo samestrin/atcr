@@ -24,6 +24,8 @@ const defaultMaxTurns = 10
 // memory.
 const sigHistoryDepth = 3
 
+const reasoningReplayReserveCaps = 0
+
 // Loop-control messages. These are static (no per-call allocation) and are
 // appended to the conversation to steer a thrashing or budget-exhausted model.
 const (
