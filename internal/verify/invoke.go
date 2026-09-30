@@ -153,7 +153,21 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "reasoning_salvaged", Skeptic: skeptic.Name}, res.TrippedBudgets, nil
 	}
 
-	v, _ := parseVerdict(res.Content)
+	// A third guard, independent of the two above and reached only by a reply
+	// that passed both: a thinking endpoint can finish cleanly (StatusOK, not
+	// truncated, not salvaged) and still put a DRAFT verdict object inside a
+	// leading <think> block before writing its real one. parseVerdict takes the
+	// first balanced verdict-keyed object, and the draft is a well-formed one —
+	// so its decoy-brace tolerance (which skips objects lacking the key) does
+	// not reject it, and the discarded draft would be graded as the skeptic's
+	// answer and charged to reviewer precision as a full read.
+	//
+	// Strip into a local: res.Content stays the raw reply. internal/llmclient
+	// owns every tag rule (leading-only, so a verdict quoting the tags after
+	// real answer text survives whole); the removed reasoning is dropped here,
+	// because Completion.Reasoning is the only reasoning channel.
+	answer, _ := llmclient.SplitThink(res.Content)
+	v, _ := parseVerdict(answer)
 	v.Skeptic = skeptic.Name
 	if v.Verdict == verdictUnverifiable {
 		logSkepticFailure(logger, skeptic.Name, "malformed_output", v.Notes)

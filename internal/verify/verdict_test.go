@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/samestrin/atcr/internal/llmclient"
 )
 
 func TestParseVerdict(t *testing.T) {
@@ -175,6 +177,60 @@ func TestParseVerdict_UnbalancedLeadingBraceFollowedByValidEnvelope(t *testing.T
 	require.NoError(t, err)
 	assert.Equal(t, verdictRefuted, v.Verdict)
 	assert.Equal(t, "no evidence", v.Notes)
+}
+
+// TestParseVerdict_ThinkWrappedDraftLosesToTheRealVerdict is the decoy case
+// parseVerdict cannot win on its own. A thinking endpoint that drafts a verdict
+// object inside <think> puts that draft FIRST in the string, and the draft is a
+// well-formed envelope carrying a verdict key — so the decoy-brace tolerance
+// pinned above (which skips objects LACKING the key) does not reject it. The
+// draft only loses once the leading reasoning is stripped ahead of the parse,
+// which is what invokeSkeptic does at invoke.go:156.
+//
+// This test runs llmclient.SplitThink then parseVerdict — the production pair,
+// in the production order. It deliberately does NOT assert parseVerdict alone
+// strips the tag: internal/llmclient owns every tag rule, and a second matcher
+// in this package is exactly what AC1 forbids.
+func TestParseVerdict_ThinkWrappedDraftLosesToTheRealVerdict(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		response    string
+		wantVerdict string
+		wantNotes   string
+	}{
+		{
+			name:        "a draft verdict inside a closed think block loses to the real one after it",
+			response:    `<think>{"verdict": "confirmed", "reasoning": "draft, wrong"}</think>{"verdict": "refuted", "reasoning": "real answer"}`,
+			wantVerdict: verdictRefuted,
+			wantNotes:   "real answer",
+		},
+		{
+			name:        "a lone closer with no opener still yields the answer after it",
+			response:    `draft</think>{"verdict": "refuted", "reasoning": "real answer"}`,
+			wantVerdict: verdictRefuted,
+			wantNotes:   "real answer",
+		},
+		{
+			name: "a verdict quoting both tags after real answer text survives intact",
+			// The leading-only rule reaching this lane: the skeptic is reviewing
+			// think-tag handling itself, so its reasoning cites both tags. An
+			// eager mid-string strip would eat the finding it is judging.
+			response:    `{"verdict": "confirmed", "reasoning": "the handler drops text between <think> and </think>"}`,
+			wantVerdict: verdictConfirmed,
+			wantNotes:   "the handler drops text between <think> and </think>",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			answer, _ := llmclient.SplitThink(tt.response)
+			v, err := parseVerdict(answer)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantVerdict, v.Verdict)
+			assert.Equal(t, tt.wantNotes, v.Notes)
+		})
+	}
 }
 
 // Sprint 35.16.11.2.1 AC 03-02: under response_format json_object the API returns

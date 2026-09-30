@@ -99,3 +99,43 @@ func TestAggregateVerdicts_CarriesTruncationFromTheVotersThatCount(t *testing.T)
 		assert.True(t, got.Truncated)
 	})
 }
+
+// TestInvokeSkeptic_StripsThinkBeforeParsingTheVerdict pins the wiring at
+// invoke.go:156, not the helper. The two guards above it — ResponseTruncated
+// and Salvaged — both return unverifiable and never reach the parse, so neither
+// covers this shape: a thinking endpoint that finished cleanly, drafted a
+// verdict inside <think>, discarded it, and wrote the real verdict after. That
+// reply arrives StatusOK, untruncated, unsalvaged, and the draft is the first
+// verdict-keyed object in the string. The strip is a third, independent guard.
+//
+// Without it the test reads back "confirmed" — the draft the model threw away —
+// and that value would be charged to the reviewer's durable precision score as
+// a full read.
+func TestInvokeSkeptic_StripsThinkBeforeParsingTheVerdict(t *testing.T) {
+	t.Parallel()
+
+	t.Run("the real verdict after the think block wins", func(t *testing.T) {
+		t.Parallel()
+		raw := `<think>{"verdict": "confirmed", "reasoning": "draft, wrong"}</think>{"verdict": "refuted", "reasoning": "real answer"}`
+		v, tripped, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+		require.NoError(t, err)
+		require.NotNil(t, v)
+		require.Empty(t, tripped, "precondition: nothing tripped, so the parse path is what is under test")
+		assert.Equal(t, verdictRefuted, v.Verdict,
+			"the draft inside <think> must not outrank the answer the model actually gave")
+		assert.Equal(t, "real answer", v.Notes)
+	})
+
+	t.Run("a verdict that quotes the tags after real text is untouched", func(t *testing.T) {
+		t.Parallel()
+		// A skeptic judging a think-handling finding cites both tags. The
+		// leading-only rule must let that verdict through whole, or this lane
+		// cannot review its own subject matter.
+		raw := `{"verdict": "confirmed", "reasoning": "the handler drops text between <think> and </think>"}`
+		v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+		require.NoError(t, err)
+		require.NotNil(t, v)
+		assert.Equal(t, verdictConfirmed, v.Verdict)
+		assert.Equal(t, "the handler drops text between <think> and </think>", v.Notes)
+	})
+}
