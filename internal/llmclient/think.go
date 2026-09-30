@@ -60,7 +60,11 @@ const thinkOpen, thinkClose = "<think>", "</think>"
 // Matching is on the exact lowercase literals only. A variant opener or closer
 // (<THINK>, <think type=x>, </thinking>) is not recognized as a tag, because
 // guessing at variants is how a strip starts eating answer text; a variant
-// closer therefore reads as "the leading opener was never closed".
+// closer therefore reads as "the leading opener was never closed". A variant
+// OPENER likewise means the content is not thinking markup at all: it survives
+// whole, draft object and all, so a first-match parser takes the draft — the
+// accepted cost of refusing to guess at variants (pinned by the variant-opener
+// row in TestSplitThink).
 //
 // The two returns are NOT a partition of the input: the tag bytes, the
 // whitespace before the leading run, and the whitespace between consumed pairs

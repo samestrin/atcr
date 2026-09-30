@@ -80,6 +80,12 @@ func TestSplitThink(t *testing.T) {
 			wantAnswer: "\nATCR-MARKER", wantReasoning: "plan the reply", wantSignal: true},
 		{name: "marker survives an unstripped lone closer", content: "planning the reply</think>\nATCR-MARKER",
 			wantAnswer: "planning the reply</think>\nATCR-MARKER", wantReasoning: "", wantSignal: false},
+		// A variant opener is not thinking markup (doc comment: matching is on the
+		// exact lowercase literals). The content survives whole — draft object and
+		// all — so a first-match parser takes the draft. That spoof is the accepted
+		// cost of refusing to guess at variants.
+		{name: "variant opener means not thinking markup", content: `<THINK>{"verdict":"draft"}</THINK>{"verdict":"real"}`,
+			wantAnswer: `<THINK>{"verdict":"draft"}</THINK>{"verdict":"real"}`, wantReasoning: "", wantSignal: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
