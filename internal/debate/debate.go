@@ -655,12 +655,7 @@ func seatSilenceNotes(halted, seats []string) []string {
 // one-sided one, which debateOne also records unresolved — reason seat_halted
 // when that seat halted, seat_silent when it ran clean and said nothing.
 func judgeHalted(halted []string) bool {
-	for _, h := range halted {
-		if h == LabelJudge {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(halted, LabelJudge)
 }
 
 // tally accumulates per-outcome counts into the run Result.
