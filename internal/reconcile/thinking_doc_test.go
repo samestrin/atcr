@@ -12,6 +12,7 @@ import (
 	"github.com/samestrin/atcr/internal/doctor"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -499,11 +500,37 @@ func TestRegistryDoc_ThinkingDoctorVerdict(t *testing.T) {
 	})
 	// Sprint 35.16.11.2.2.4: the two rules llmclient.HasThinkMarkup applies that
 	// the older inlineThinking did not. Both are behavior changes the doc states,
-	// so both need a drift guard or the doc can silently revert to the old rules.
+	// so both need a drift guard — and the string checks below are only HALF a
+	// guard, because they assert the document against itself: reverting the
+	// detector to inlineThinking's rules leaves the doc sentence and these
+	// assertions green while the code contradicts the doc. The behavioral anchors
+	// immediately after them are the half that fails on a detector revert.
 	assertStates(t, "thinking verdict intro", intro, []struct{ token, why string }{
 		{"A lone `</think>` with no opener anywhere counts as a signal", "HasThinkMarkup's no-opener branch: a reasoning template can put the opener in the prompt, reversing the old stray-closer-is-noise rule"},
 		{"a block counts wherever it sits in the content", "detection is position-blind, unlike the review lanes' leading-only SplitThink: the probe prompt contains no tag, so a trailing block is the runaway thinker"},
 	})
+
+	// Code anchors for the two rules, one per sentence above. No new import is
+	// needed and no cycle is possible: internal/llmclient does not import
+	// internal/reconcile (this file already imports it for SplitThink's
+	// leading-only sibling checks).
+
+	// Rule 1 — a LONE closer with text before it is a signal. This is exactly
+	// inlineThinking's old stray-closer-is-noise answer, so a revert to those rules
+	// fails here. A blank prefix is still not markup (the doc's carve-out).
+	assert.True(t, llmclient.HasThinkMarkup("mid-thought, only a closer</think>"),
+		"a lone closer with non-blank text before it marks a reply that started mid-thought, which is the opposite of the old stray-closer-is-noise rule")
+	assert.False(t, llmclient.HasThinkMarkup("   </think>"),
+		"the carve-out: a closer with nothing but whitespace before it is what a correctly-off hybrid template emits, so it is not markup holding text")
+
+	// Rule 2 — position-blind. A block AFTER answer text is a signal to the
+	// detector even though SplitThink leaves it in place, which is the asymmetry
+	// that makes the doctor probe's trailing-runaway case reachable at all.
+	assert.True(t, llmclient.HasThinkMarkup("a committed answer<think>and a runaway tail</think>"),
+		"detection is position-blind, so a block after the answer counts — the probe prompt contains no tag, so that block IS the runaway thinker")
+	kept, _ := llmclient.SplitThink("a committed answer<think>and a runaway tail</think>")
+	assert.Contains(t, kept, "a committed answer",
+		"and the detector is deliberately BROADER than the strip, which leaves that block in place — the two questions cannot share one answer")
 	assertStates(t, "doctor JSON schema", docLineContaining(t, doc, "`thinking_status` (`"), []struct{ token, why string }{
 		{"did not fail permanently", "a placed call is necessary but not sufficient: auth_failed, not_found, and network_error rows get no thinking fields"},
 	})
