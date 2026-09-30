@@ -99,3 +99,56 @@ func TestFindingsFormatDoc_StatesTheThinkStrip(t *testing.T) {
 		}
 	})
 }
+
+// docs/providers.md is the operator-facing provider guide, and its
+// reasoning-normalization bullet described the salvage's ORIGINAL purpose: that
+// atcr falls back to reasoning_content to extract findings from. Sprint
+// 35.16.11.2.2.4 T6 reversed that (internal/fanout/engine.go:604-605 returns no
+// findings for a salvaged reply; internal/llmclient/client.go:413-418 records the
+// reversal in-source), so the bullet promised behavior the code had stopped
+// doing. The sprint never touched this file, which is exactly why it needs a
+// guard: the drift is invisible to a reviewer reading only the diff.
+//
+// Tokens, not whole sentences: the doc is one long line per bullet, but a
+// reworded connective must not fail a test whose subject is the claim.
+func TestProvidersDoc_SalvageYieldsNoFindings(t *testing.T) {
+	doc := readDoc(t, "providers.md")
+
+	t.Run("the salvage is named as diagnostic-only", func(t *testing.T) {
+		for _, want := range []string{
+			"marks the reply **salvaged**",
+			"for diagnosability only",
+			// The three places a salvaged reply still shows up. If a later edit
+			// drops these, the salvage reads as pointless and invites removal.
+			"`review.md`, the transcript and `atcr doctor`'s hint",
+		} {
+			assert.Contains(t, doc, want,
+				"providers.md must describe the salvage as diagnostic-only: missing %q", want)
+		}
+	})
+
+	t.Run("the refusal is stated for every lane", func(t *testing.T) {
+		for _, want := range []string{
+			"yields no findings, verdict, ruling, or cache entry",
+			"every lane refuses it",
+			"worse than no answer",
+		} {
+			assert.Contains(t, doc, want,
+				"providers.md must state that a salvaged reply is refused: missing %q", want)
+		}
+	})
+
+	// The strip belongs in the same bullet because it is the other half of "what
+	// atcr does to content before parsing it", and the qualifier is load-bearing:
+	// SplitThink is leading-only, so an unqualified claim here would repeat the
+	// overclaim the Phase 5 gate caught twice in docs/registry.md.
+	t.Run("the think strip is named and qualified as leading-only", func(t *testing.T) {
+		for _, want := range []string{
+			"A **leading** inline `<think>…</think>` run is stripped from `content` before parsing",
+			"leading-only: a block after answer text is left in place",
+		} {
+			assert.Contains(t, doc, want,
+				"providers.md must state the leading-only think strip: missing %q", want)
+		}
+	})
+}

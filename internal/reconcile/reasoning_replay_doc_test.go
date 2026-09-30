@@ -75,7 +75,13 @@ func TestRegistryDoc_ReasoningReplayExcludesInlineThink(t *testing.T) {
 		for _, want := range []string{
 			"replays as `content: null`, not an empty string",
 			"with no think markup in it at all",
-			"for every tool-enabled agent, declared thinking or not",
+			// Conditional, not universal: historyMessage returns a nil Content
+			// untouched (internal/fanout/loop.go:66-68), so a provider that already
+			// sends null on a tool-call turn sees a byte-identical body. The round-2
+			// wording claimed "every tool-enabled agent" and argued against its own
+			// universal two clauses later, where it says null is what OpenAI requires.
+			"whose provider sends an empty string there, declared thinking or not",
+			"a provider that already sends `null` on such a turn is unaffected",
 		} {
 			assert.Contains(t, doc, want,
 				"registry.md must state the content:null normalization is independent of thinking: missing %q", want)
