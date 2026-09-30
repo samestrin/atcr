@@ -27,8 +27,10 @@ const (
 // judge ruled on one side only. Two tokens, not one, because an operator reading
 // debate.json must never be told a seat halted when it ran clean and simply had
 // nothing to say. Constants rather than literals so the docs drift guard in
-// internal/reconcile/ can assert the published list against the code (the
-// convention in CLAUDE.md, per justification_record_boundary_test.go).
+// cli/debate_reason_doc_test.go can assert the published list against the code
+// (the convention in CLAUDE.md, per justification_record_boundary_test.go) —
+// internal/reconcile/ asserts bare string literals there instead, because it
+// cannot import internal/debate without an import cycle.
 const (
 	ReasonSeatHalted = "seat_halted"
 	ReasonSeatSilent = "seat_silent"
