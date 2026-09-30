@@ -1863,7 +1863,11 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// diff together fit the window. Base the cap on eff/8 (not min with a possibly-0
 		// max_sprint_plan_bytes, which would blank the plan).
 		agentMaxTokens := maxTokensFor(cfg, ac)
-		agentBudget := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, payload.SizingOutputTokens(ac.Tools && ac.SupportsFC, agentMaxTokens))
+		// toolLoop mirrors the runtime choice: the harness is wired only when the
+		// range has a head (Run), so a range-less review (baseline, diff ingestion)
+		// degrades a tool agent to single-shot and it replays no reasoning.
+		toolLoop := ac.Tools && ac.SupportsFC && rng.Head != ""
+		agentBudget := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, payload.SizingOutputTokens(toolLoop, agentMaxTokens))
 		// agentWindow is the same resolution, in tokens. Both are resolved ONCE here
 		// and referenced everywhere below: this pair was previously recomputed inline
 		// at five further call sites, so a signature change had to find nine sites
@@ -3437,7 +3441,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// all three with its own bulk-sized record (ChunkTotal 1, chunkMaxLines 0, and
 	// the re-fit's own truncate/overflow action).
 	fbMaxTokens := maxTokensFor(cfg, ac)
-	fbBudget := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, payload.SizingOutputTokens(primary.Tools && ac.SupportsFC, fbMaxTokens))
+	fbBudget := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, payload.SizingOutputTokens(primary.Tools && ac.SupportsFC && refit.rng.Head != "", fbMaxTokens))
 	fbWindow := payload.ContextWindowTokens(ac.Model, ac.ContextWindowTokens)
 	// Gate the reservation on the BUDGET, not the window. ContextWindowTokens never
 	// returns 0 by contract (contextwindow.go), so a window test is a dead branch —
