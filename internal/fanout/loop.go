@@ -10,6 +10,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/tools"
 )
 
@@ -24,7 +25,33 @@ const defaultMaxTurns = 10
 // memory.
 const sigHistoryDepth = 3
 
-const reasoningReplayReserveCaps = 0
+// reasoningReplayReserveCaps is how many output caps of replayed reasoning a
+// tool-loop agent's input budget holds back at sizing time (sizingOutputTokens).
+// Every assistant turn's reasoning rides every later request, and a thinking
+// model can spend its whole output cap on reasoning in one turn, so a payload
+// sized to fill the window overflows it on turn 2. With a reserve of two caps the
+// loop trips once replayed reasoning passes one cap: at that check it holds at
+// most one cap, the next turn adds at most one more, so no request — the final
+// answer included — carries more reasoning than was reserved. Replay itself is
+// never trimmed: providers reject a continuation turn whose reasoning is missing.
+const reasoningReplayReserveCaps = 2
+
+// sizingOutputTokens is the token reservation a payload is sized against: the
+// output cap, plus the replayed-reasoning reserve when the agent will run the
+// tool loop (tools requested on a function-calling model). A single-shot or
+// degraded agent replays nothing, so it keeps the plain output-cap reservation.
+func sizingOutputTokens(toolLoop bool, maxTokens int) int {
+	if !toolLoop {
+		return maxTokens
+	}
+	return maxTokens * (1 + reasoningReplayReserveCaps)
+}
+
+// replayedReasoningBytes is the reasoning an assistant turn adds to every later
+// request: the bytes of each reasoning member history() kept.
+func replayedReasoningBytes(m llmclient.Message) int64 {
+	return int64(len(m.ReasoningContent) + len(m.Reasoning) + len(m.ReasoningDetails) + len(m.ThinkingBlocks))
+}
 
 // Loop-control messages. These are static (no per-call allocation) and are
 // appended to the conversation to steer a thrashing or budget-exhausted model.
@@ -74,6 +101,10 @@ type toolLoop struct {
 	sigHistory    []map[string]bool
 	nudgedSigs    map[string]bool
 	malformedPrev bool
+
+	// reasoningBytes is the reasoning replayed on every later request so far
+	// (see reasoningReplayReserveCaps).
+	reasoningBytes int64
 
 	// tr records the per-turn transcript (tool_calls, tool_results, final). nil
 	// when transcript recording is disabled; every method on *tools.Transcript is
@@ -166,6 +197,7 @@ func (l *toolLoop) run(ctx context.Context) Result {
 		l.res.addUsage(resp.Usage)
 		l.res.addCallRecords(resp.CallRecords)
 		l.messages = append(l.messages, resp.Message)
+		l.reasoningBytes += replayedReasoningBytes(resp.Message)
 
 		// Final message (no tool_calls): the model finished within budget.
 		if len(resp.Message.ToolCalls) == 0 {
@@ -219,6 +251,14 @@ func (l *toolLoop) run(ctx context.Context) Result {
 		// in full; trip only after they are in hand (deferred trip, AC 02-02).
 		if l.agent.ToolBudgetBytes > 0 && l.res.ToolBytes > l.agent.ToolBudgetBytes {
 			l.res.addTripped(budgetToolBytes)
+			return l.requestFinalAnswer(ctx)
+		}
+		// Replayed-reasoning check: trip while the next request still fits the
+		// reserve sizing held back. Only a sized agent (funded budget, resolved
+		// cap) had that reserve taken; an unsized one has nothing to trip on.
+		if l.agent.EffectiveBudget > 0 && l.agent.ResolvedMaxTokens > 0 &&
+			l.reasoningBytes > payload.TokensToBytes(l.agent.ResolvedMaxTokens*(reasoningReplayReserveCaps-1)) {
+			l.res.addTripped(budgetReasoningReplay)
 			return l.requestFinalAnswer(ctx)
 		}
 	}

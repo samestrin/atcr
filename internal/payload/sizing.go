@@ -221,5 +221,14 @@ func ChunkMaxLines(model string, declared *int, outputTokens int) int {
 	return maxLines
 }
 
-// TokensToBytes is a stub.
-func TokensToBytes(tokens int) int64 { return 0 }
+// TokensToBytes converts a token count to bytes at the same conservative
+// ~3.5 B/token ratio EffectiveByteBudget uses, rounding down. A caller that
+// budgets bytes against a token reservation (the tool loop's replayed-reasoning
+// trip) uses it so the two sides of that reservation cannot disagree on the
+// ratio. A negative count converts to 0.
+func TokensToBytes(tokens int) int64 {
+	if tokens <= 0 {
+		return 0
+	}
+	return int64(tokens) * conservativeBytesPerTokenNum / conservativeBytesPerTokenDen
+}

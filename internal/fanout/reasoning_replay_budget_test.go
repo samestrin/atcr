@@ -22,11 +22,12 @@ func sizedToolAgent(maxTokens int) Agent {
 	return a
 }
 
-// reasoningLoop scripts one tool-call turn carrying reasoning of n bytes, then a
-// turn that would call another tool, then a final answer.
+// reasoningLoop scripts one tool-call turn whose reasoning_content is n bytes on
+// the wire (the JSON string, quotes included), then a turn that would call
+// another tool, then a final answer.
 func reasoningLoop(n int) (*scriptedChat, *fakeDispatcher) {
 	cc := &scriptedChat{turns: []chatTurn{
-		{toolCalls: []llmclient.ToolCall{toolCall("c1", "read_file", `{"path":"a.go"}`)}, reasoning: strings.Repeat("r", n)},
+		{toolCalls: []llmclient.ToolCall{toolCall("c1", "read_file", `{"path":"a.go"}`)}, reasoning: strings.Repeat("r", n-2)},
 		{toolCalls: []llmclient.ToolCall{toolCall("c2", "grep", `{"pattern":"x"}`)}},
 		{content: "final answer"},
 	}}
