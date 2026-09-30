@@ -185,3 +185,41 @@ func TestBuildSlots_ChunkedToolLoopReserveClosingTheBudgetFloorsChunkLines(t *te
 			"chunk slot %d: a budget the reserve closes must floor the chunk lines", i)
 	}
 }
+
+// A fallback runs the loop when its PRIMARY's lane requests tools and its OWN
+// model declares function calling, on a review with a range head; only then is
+// its budget sized with the replayed-reasoning reserve.
+func TestBuildFallbackAgent_ReplayReserveFollowsTheLane(t *testing.T) {
+	ranged := ReviewRange{Base: "a", Head: "b"}
+	cases := []struct {
+		name               string
+		primaryTools, fbFC bool
+		fbOwnTools         bool
+		rng                ReviewRange
+		wantReserved       bool
+	}{
+		{"tools lane, FC fallback", true, true, false, ranged, true},
+		{"tools lane, non-FC fallback", true, false, false, ranged, false},
+		{"non-tools lane, FC fallback declaring its own tools", false, true, true, ranged, false},
+		{"tools lane, FC fallback, range-less review", true, true, false, ReviewRange{}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := sizingRosterConfig()
+			kai := cfg.Registry.Agents["kai"]
+			kai.Model = "unlisted-backup-model"
+			kai.SupportsFC = tc.fbFC
+			kai.Tools = tc.fbOwnTools
+			cfg.Registry.Agents["kai"] = kai
+			primary := Agent{Name: "greta", Tools: tc.primaryTools, SupportsFC: true}
+
+			fb, _, err := buildFallbackAgent(cfg, primary, "kai", false, fallbackRefit{rng: tc.rng})
+			require.NoError(t, err)
+			want := payload.EffectiveByteBudget("unlisted-backup-model", nil, payload.SizingOutputTokens(tc.wantReserved, defaultMaxTokens))
+			require.NotEqual(t, payload.EffectiveByteBudget("unlisted-backup-model", nil, defaultMaxTokens),
+				payload.EffectiveByteBudget("unlisted-backup-model", nil, payload.SizingOutputTokens(true, defaultMaxTokens)),
+				"precondition: the reserve changes the budget")
+			assert.Equal(t, want, fb.EffectiveBudget)
+		})
+	}
+}
