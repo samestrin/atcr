@@ -218,6 +218,20 @@ func TestRun_ThinkingVerdict(t *testing.T) {
 		// An empty first pair must not hide a real think block after it.
 		{name: "off, empty pair then real think block", thinking: "off", style: "qwen", declared: llmclient.Completion{Content: "<think></think><think>real reasoning</think>answer"},
 			wantStatus: ThinkingNotHonored, wantCalls: 1, wantDetail: []string{"inline <think> reasoning in the content"}},
+		// The sprint's flip gave up this direction, so pin it: an ANSWER that mentions a
+		// tag the detector must NOT count stays out of the reasoning signal. Here the
+		// answer names a VARIANT closer (</thinking>, the spelling SplitThink's doc calls
+		// out), which is a tag to neither helper, so the reply is judged on its
+		// reasoning channels alone and the control call carries the verdict.
+		{name: "off, answer mentions a variant closer", thinking: "off", style: "qwen",
+			declared: llmclient.Completion{Content: "I never look for </thinking> markers\n" + Marker(testNonce)}, control: thinks,
+			wantStatus: ThinkingHonored, wantCalls: 2, notDetail: []string{"inline <think> reasoning in the content"}},
+		// The control-call skip under `thinking: on` is deliberate: a lone closer IS a
+		// signal to the position-blind detector, and a signal on the declared call
+		// decides alone, so no control call is placed.
+		{name: "on, closing tag only, signal decides alone", thinking: "on", style: "qwen",
+			declared:   llmclient.Completion{Content: "planning the reply</think>\n" + Marker(testNonce)},
+			wantStatus: ThinkingHonored, wantCalls: 1},
 		// An empty reply cut off at the cap is the runaway thinker the verdict exists
 		// to name: it classifies as network_error, yet must still get a verdict that
 		// carries the cut-off remedy (TD internal/doctor/run.go:994).
