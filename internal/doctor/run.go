@@ -973,7 +973,15 @@ func responseFormatCall(ctx context.Context, c Completer, tgt Target, opts Optio
 	// JSON mode guarantees one bare object. The parser alone is not enough: it also
 	// reads a fenced block or prose around the value, which is exactly what a model
 	// produces when the provider drops response_format.
-	s := strings.TrimSpace(content)
+	//
+	// Read the same operand the review lane reads: it parses the reply with a leading
+	// think block stripped off (fanout.Result.parseFindings), so a JSON-mode reply
+	// that OPENS with such a block is a clean review to the lane this probe
+	// pre-flights. Checking the raw content called that declaration broken, a false
+	// misdiagnosis on exactly the thinking-inline endpoints doctor exists to check
+	// (TD internal/doctor/run.go:958).
+	answer, _ := llmclient.SplitThink(content)
+	s := strings.TrimSpace(answer)
 	if s == "" || s[0] != '{' || !json.Valid([]byte(s)) {
 		if len(toolDefs) > 0 {
 			return ResponseFormatNotHonored, "declared " + declared + ", but the reply was neither a tool call nor a bare JSON object; the provider likely ignored response_format"

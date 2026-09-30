@@ -227,8 +227,8 @@ func TestRun_ResponseFormatProbeWarnsWhenTheReplyIsNotABareObject(t *testing.T) 
 // Checking the raw content called that declaration broken.
 func TestResponseFormatProbeStripsALeadingThinkBlockBeforeTheBareObjectCheck(t *testing.T) {
 	for name, content := range map[string]string{
-		"leading think block then a findings object": "<think>" + oneFinding,
-		"leading think block then a clean object":    "<think>" + `{"findings":[]}`,
+		"leading think block then a findings object": "<think>checked it</think>" + oneFinding,
+		"leading think block then a clean object":    "<think>checked it</think>" + `{"findings":[]}`,
 		"empty leading think block then an object":   "<think></think>" + oneFinding,
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -250,7 +250,7 @@ func TestResponseFormatProbeStillWarnsWhenOnlyTheThinkBlockCarriesTheObject(t *t
 // passes on must be the reply the review lane actually parses - one operand, one
 // verdict. Pinned through the lane's own parse so the two lanes cannot drift again.
 func TestResponseFormatProbeAndTheReviewLaneReadTheSameOperand(t *testing.T) {
-	content := "<think>" + `{"findings":[]}`
+	content := "<think>checked it</think>" + `{"findings":[]}`
 	lane := &fanout.Result{Content: content}
 	require.Equal(t, 0, lane.ParsedFindingCount(),
 		"the lane parses the STRIPPED object, so it reads this reply as a clean review")
