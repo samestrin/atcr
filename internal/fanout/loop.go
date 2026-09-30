@@ -221,10 +221,19 @@ func (l *toolLoop) run(ctx context.Context) Result {
 		l.res.Turns++
 		l.res.addUsage(resp.Usage)
 		l.res.addCallRecords(resp.CallRecords)
-		l.messages = append(l.messages, historyMessage(resp.Message))
 		l.reasoningBytes += replayedReasoningBytes(resp.Message)
 
 		// Final message (no tool_calls): the model finished within budget.
+		//
+		// Checked BEFORE the history append so no historyMessage runs on a reply that
+		// is never replayed. The append used to sit above this branch and ran on the
+		// final turn too, producing two costs for a message that is abandoned four
+		// lines later: a full SplitThink scan plus a strings.Clone of the loop's
+		// largest reply (the whole review), and an l.messages ending in an assistant
+		// entry with content null and no tool_calls — an invalid OpenAI chat message,
+		// unsent only by the accident of the immediate return. That is the same
+		// "one append away" hazard the forced-final-answer path calls out explicitly
+		// below.
 		if len(resp.Message.ToolCalls) == 0 {
 			// A model that reached this loop was declared function-calling-capable
 			// (supports_function_calling=true gated entry in invokeAgent). If it never
@@ -241,6 +250,10 @@ func (l *toolLoop) run(ctx context.Context) Result {
 			l.tr.RecordFinal(l.res.Turns, l.res.Content)
 			return l.finalize(StatusOK, nil)
 		}
+
+		// Only a turn that WILL be replayed enters history, so historyMessage's strip
+		// and clone are paid exactly when they buy something.
+		l.messages = append(l.messages, historyMessage(resp.Message))
 
 		// Record the requested tool_calls before deciding whether to execute them,
 		// so the transcript is a faithful record even when the turn is skipped by a
