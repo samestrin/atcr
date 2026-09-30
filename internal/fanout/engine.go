@@ -998,15 +998,17 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 			}
 		}
 		// Truncation failover (Epic 19.5): a reviewer response that hit
-		// finish_reason=length with zero RAW parsed findings (stream.ParseModelOutput,
-		// before grounding) is a runaway that would otherwise be recorded as a silent
+		// finish_reason=length with zero pre-grounding parsed findings
+		// (stream.ParseModelOutput over the think-stripped content, before grounding)
+		// is a runaway that would otherwise be recorded as a silent
 		// clean review. Demote it to StatusFailed so the loop descends to the next
 		// agent in the chain. A truncated response that still parsed >=1 finding stays
 		// StatusOK (its ResponseTruncated marker is preserved for status.json).
 		// NOTE: this gate keys on the pre-grounding parsed count (of the
 		// think-stripped content), whereas the run-level
 		// truncated_zero_findings tally (artifacts.go) keys on the GROUNDED
-		// FindingsCount; a response that raw-parses >=1 finding later dropped as
+		// FindingsCount; a response whose think-stripped content pre-grounds >=1
+		// finding later dropped as
 		// ungrounded/below-min-severity stays StatusOK here yet is tallied there. That
 		// divergence is deferred TD (no ChangedLines at this call site to ground
 		// against), not reconciled in this epic. Applied per attempt, so a truncated

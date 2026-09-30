@@ -47,8 +47,9 @@ type PoolSummary struct {
 	// kept >=1 GROUNDED finding is NOT counted (its partial findings landed).
 	// NOTE: this tally is a DIFFERENT signal from the per-attempt
 	// truncation-failover guard (engine.go invokeSlot), which demotes on the
-	// pre-grounding parsed count (of the think-stripped content). A truncated response that raw-parses >=1
-	// finding but has them all dropped as ungrounded/below-min-severity stays
+	// pre-grounding parsed count (of the think-stripped content). A truncated
+	// response whose think-stripped content pre-grounds >=1 finding but has them
+	// all dropped as ungrounded/below-min-severity stays
 	// StatusOK (the guard does not fire) yet is counted here. Reconciling the two
 	// is deferred TD, not addressed in this epic. Always present so a 0 is
 	// distinguishable from an older summary.json that predates the field.
