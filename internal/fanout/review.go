@@ -2958,7 +2958,10 @@ func diffCacheKey(prompt string, in cacheKeyInputs) string {
 	// body (a level alone vs. on plus that level) miss each other's entry: a
 	// spurious miss, never a collision. A style alone declares nothing and sends
 	// no field, so its clause is gated on registry.ThinkingDeclared and a
-	// style-only agent keeps the undeclared key.
+	// style-only agent keeps the undeclared key. Only ts= needs that explicit
+	// gate: th=/tl= append only when their key is non-empty, and either key
+	// being non-empty IS ThinkingDeclared, so their bare non-empty checks
+	// already imply the gate (TD internal/fanout/review.go:2965).
 	if in.Thinking != "" {
 		tuning = tuning + "\x00th=" + in.Thinking
 	}
