@@ -159,8 +159,9 @@ type message struct {
 	// it out of request bodies, where this struct is also used.
 	ReasoningContent reasoningText `json:"reasoning_content,omitempty"`
 	// Reasoning is the same chain-of-thought under the key OpenRouter and newer
-	// vLLM use. Read only for the reported reasoning signal (see reasoningOf),
-	// never for the salvage above.
+	// vLLM use. Read via reasoningOf both for the reported reasoning signal AND
+	// as the empty-content salvage fallback above: a provider sending only the
+	// reasoning key does drive the salvage (same precedence as reasoning_content).
 	Reasoning reasoningText `json:"reasoning,omitempty"`
 }
 
