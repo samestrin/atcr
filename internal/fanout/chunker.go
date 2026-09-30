@@ -350,14 +350,10 @@ func neutraliseChunkBoundary(content string) string {
 // (most frequent) model, tie-breaking by first appearance, instead of joining them
 // into a composite value that would never match another persona's key.
 //
-// NOT IDEMPOTENT: g must hold RAW per-chunk results, never an already-merged one.
-// out := g[0] inherits a merged element's OR-folded Salvaged, and the loop then
-// records that persona-wide bit as the flag for the joined content, so re-merging a
-// merged persona marks its single joined bin salvaged and parseFindings refuses
-// every finding it had. Not reachable today — mergeChunkResults is the one caller
-// and a single-element group short-circuits before here — so this is a documented
-// precondition rather than a guard, to keep the merge free of a defensive branch no
-// path exercises.
+// NOT IDEMPOTENT: g must hold RAW per-chunk results — re-merging an
+// already-merged element makes parseFindings refuse the persona wholesale.
+// Unreachable today: mergeChunkResults is the only caller and single-element
+// groups short-circuit before here.
 func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	out := g[0] // inherit stable per-slot identity (Agent, PayloadMode, constraints); Model is re-derived below
 	out.Err = nil
@@ -461,18 +457,18 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 		}
 		out.ResponseTruncated = out.ResponseTruncated || r.ResponseTruncated
 		// Same shape as the line above, and the same reason for OR-ing rather than
-		// reading g[0]: a clean bin 0 must not be able to hide a salvaged bin 2.
+		// reading g[0]: a clean bin 0 must not be able to hide a salvaged bin 2. The
+		// fold is computed from the GROUP only — out starts from g[0], but g[0] is
+		// looped below like every other element, so no element's bit is double-counted
+		// and no re-merge can inherit a stale persona-wide value.
 		//
-		// Be honest about the reach of this bit: on a MERGED result it currently has
-		// no consumer. parseFindings does not refuse on it (it reads the
-		// index-aligned chunkSalvaged above, except in the fail-closed branch), and
-		// the diff cache never sees a merged result — the store gate lives in
-		// invokeCachedSingleShot and runs per chunk slot, BEFORE this merge, on the
-		// raw per-chunk flag. statusFor does not emit it either. The fold is kept so
-		// the merged Result stays a truthful description of the persona it
+		// The fold's consumers today: parseFindings's misalignment fail-closed branch
+		// (the only code that READS a merged result's Salvaged) and the persona-level
+		// record itself — the merged Result must truthfully describe the persona it
 		// represents, because a false negative here is the kind of thing a later
-		// consumer inherits silently; do not justify it with a cache or status
-		// consumer that does not exist.
+		// consumer inherits silently. The diff cache gate is NOT a consumer: it lives
+		// in invokeCachedSingleShot and runs per chunk slot, BEFORE this merge, on the
+		// raw per-chunk flag.
 		out.Salvaged = out.Salvaged || r.Salvaged
 		// Count every chunk that returned prose no parser could use; reading only
 		// g[0]'s flag hid a later chunk's failure from status.json.
