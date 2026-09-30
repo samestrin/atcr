@@ -232,9 +232,11 @@ func (l *toolLoop) run(ctx context.Context) Result {
 			return l.requestFinalAnswer(ctx)
 		}
 		// Replayed-reasoning check: trip while the next request still fits the
-		// reserve sizing held back. Only a sized agent (funded budget, resolved
-		// cap) had that reserve taken; an unsized one has nothing to trip on.
-		if l.agent.EffectiveBudget > 0 && l.agent.ResolvedMaxTokens > 0 &&
+		// reserve sizing held back. Only a sized agent (resolved window and cap)
+		// had that reserve taken; an unsized one has nothing to trip on. The byte
+		// budget is not the signal: a reserve that closes it records 0 while the
+		// agent still runs the loop.
+		if l.agent.ResolvedWindow > 0 && l.agent.ResolvedMaxTokens > 0 &&
 			l.reasoningBytes > payload.TokensToBytes(l.agent.ResolvedMaxTokens*(payload.ReasoningReplayReserveCaps-1)) {
 			l.res.addTripped(budgetReasoningReplay)
 			return l.requestFinalAnswer(ctx)
