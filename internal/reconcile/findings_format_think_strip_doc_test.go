@@ -4,6 +4,21 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/llmclient"
+)
+
+// Paragraph markers for findings-format.md. Every assertion below is scoped to
+// the ONE line carrying the paragraph its subtest names, because a phrase that
+// matches anywhere in a 343-line document is not a guard: a sentence relocated
+// to an unrelated section satisfied the whole-document form of these assertions
+// just as well as one that stayed put.
+const (
+	ffParseContractMarker  = "Reviewer models do not write v2 files."
+	ffFenceGrammarMarker   = "Anything inside another code fence is a quoted example"
+	ffDroppedFindingMarker = "An object with an unknown severity or no location is dropped."
+	ffJustificationMarker  = "- `justification` — the narrative section extracted"
 )
 
 // The findings lane strips a leading <think> block before parsing (sprint
@@ -17,10 +32,16 @@ import (
 // docs are never hard-wrapped, so every want below is a single-line literal and
 // no assertion applies wrap tolerance. A reworded connective must not fail a
 // test whose subject is the claim.
+//
+// Scoping is per paragraph (docLineContaining), and each subtest also carries an
+// operand anchored to the CODE. A doc-only guard is revert-blind: T4 (the strip)
+// and T6 (the salvage refusal) can each be reverted with no doc edit and leave a
+// suite that runs green while the doc describes behavior the code no longer has.
 func TestFindingsFormatDoc_StatesTheThinkStrip(t *testing.T) {
 	doc := readDoc(t, "findings-format.md")
 
 	t.Run("the strip is named in the parsing contract", func(t *testing.T) {
+		line := docLineContaining(t, doc, ffParseContractMarker)
 		for _, want := range []string{
 			"inline `<think>...</think>` reasoning block",
 			"removed before it is parsed",
@@ -28,12 +49,29 @@ func TestFindingsFormatDoc_StatesTheThinkStrip(t *testing.T) {
 			"leading-only",
 			"`review.md` always holds the raw reply",
 		} {
-			assert.Contains(t, doc, want,
+			assert.Contains(t, line, want,
 				"findings-format.md must state the think strip: missing %q", want)
 		}
+
+		// Code anchor. T4's strip IS llmclient.SplitThink, so the doc's
+		// "leading-only" qualifier is checkable rather than folklore: the leading
+		// run goes, and a run after answer text does not. A revert of the strip
+		// moves both results — the half a doc-only guard cannot see.
+		answer, reasoning := llmclient.SplitThink("<think>draft</think>Real answer.")
+		assert.Equal(t, "Real answer.", answer,
+			"the leading think run is what T4's strip removes; a doc claiming so must fail when the strip stops removing it")
+		assert.Equal(t, "draft", reasoning,
+			"the removed run is returned as reasoning, not dropped on the floor")
+
+		nonLeading, nonLeadingRemoved := llmclient.SplitThink("Real answer. <think>quoted</think>")
+		assert.Equal(t, "Real answer. <think>quoted</think>", nonLeading,
+			"leading-ONLY: a think run after answer text is answer text, which is the claim the doc's qualifier makes")
+		assert.Empty(t, nonLeadingRemoved,
+			"a non-leading run is not moved into reasoning either, so the qualifier is not merely a doc typo")
 	})
 
 	t.Run("the accepted unclosed-opener loss is named", func(t *testing.T) {
+		line := docLineContaining(t, doc, ffFenceGrammarMarker)
 		for _, want := range []string{
 			"opens with `<think>` and never closes it",
 			"`</thinking>`",
@@ -44,9 +82,20 @@ func TestFindingsFormatDoc_StatesTheThinkStrip(t *testing.T) {
 			"recorded `unparseable_response`",
 			"failed over to its backup model",
 		} {
-			assert.Contains(t, doc, want,
+			assert.Contains(t, line, want,
 				"findings-format.md must state the unclosed-opener loss: missing %q", want)
 		}
+
+		// Code anchor, on the cut-off half — the half whose behavior is stable and
+		// externally observable. "Read as reasoning end to end" is exactly this:
+		// the answer is empty and the whole remainder is the removed reasoning. A
+		// revert of the unclosed-opener branch (strip nothing instead) makes answer
+		// non-empty and fails here.
+		cutOff, cutOffReasoning := llmclient.SplitThink("<think>cut off mid-thought")
+		assert.Empty(t, cutOff,
+			"a reply cut off inside an unclosed opener has no answer text once the run is taken as reasoning")
+		assert.Equal(t, "cut off mid-thought", cutOffReasoning,
+			"everything after the unclosed opener is reasoning, which is what makes the doc's loss real")
 	})
 
 	// T6, same sprint. The salvage refusal vanishes strictly MORE reviewer output
@@ -55,6 +104,7 @@ func TestFindingsFormatDoc_StatesTheThinkStrip(t *testing.T) {
 	// applies with more force. The per-chunk half is pinned too: refusing the whole
 	// persona instead would contradict the chunk contract in the paragraph below.
 	t.Run("the salvage refusal is named, and it is per chunk", func(t *testing.T) {
+		line := docLineContaining(t, doc, ffParseContractMarker)
 		for _, want := range []string{
 			"salvaged from the model's reasoning",
 			"yields no findings at all",
@@ -69,9 +119,29 @@ func TestFindingsFormatDoc_StatesTheThinkStrip(t *testing.T) {
 			"fails over to the backup model",
 			"counted in `unreviewed_chunks`",
 		} {
-			assert.Contains(t, doc, want,
+			assert.Contains(t, line, want,
 				"findings-format.md must state the salvage refusal: missing %q", want)
 		}
+
+		// Code anchor on T6's refusal itself. "Yields no findings at all" is a
+		// claim about ParsedFindingCount, so assert it against a salvaged Result
+		// whose content is a perfectly parseable findings block: a revert of the
+		// refusal parses it and this fails. The CHUNKED half of the claim has no
+		// external constructor (chunkContents/chunkSalvaged are unexported and
+		// mergeResultGroup is package-private), so it stays doc-only above and is
+		// pinned in-package by
+		// TestMergeResultGroup_SalvagedLaterChunkKeepsSiblingFindings.
+		// Unfenced on purpose: docs/findings-format.md records that an unfenced
+		// JSON array in plain prose is READ as findings, so this is the documented
+		// shape and it keeps the literal on one line
+		// (TestFindingsFormatThinkStripDocTest_OneWrapPolicy).
+		findingsBlock := `[{"severity":"LOW","file_line":"a.go:1","problem":"p","fix":"f","category":"c","est_minutes":5,"evidence":"e"}]`
+		salvaged := &fanout.Result{Salvaged: true, Content: findingsBlock}
+		assert.Equal(t, 0, salvaged.ParsedFindingCount(),
+			"a salvaged reply yields no findings even when its content would parse, which is precisely T6's reversal")
+		unsalvaged := &fanout.Result{Content: findingsBlock}
+		assert.Equal(t, 1, unsalvaged.ParsedFindingCount(),
+			"the control: the same content unsalvaged DOES parse, so the zero above is the refusal and not a malformed fixture")
 	})
 
 	// The chunk contract the per-chunk refusal exists to keep true. If a future
@@ -79,21 +149,23 @@ func TestFindingsFormatDoc_StatesTheThinkStrip(t *testing.T) {
 	// beside a bin with findings WOULD mark the persona unparseable and this
 	// sentence would become false.
 	t.Run("the chunk contract still holds", func(t *testing.T) {
+		line := docLineContaining(t, doc, ffDroppedFindingMarker)
 		for _, want := range []string{
 			"one garbled chunk beside a chunk with findings",
 			"without marking the persona unparseable",
 		} {
-			assert.Contains(t, doc, want,
+			assert.Contains(t, line, want,
 				"findings-format.md's chunk contract must hold: missing %q", want)
 		}
 	})
 
 	t.Run("the justification excerpt drift is disclosed", func(t *testing.T) {
+		line := docLineContaining(t, doc, ffJustificationMarker)
 		for _, want := range []string{
 			"reads the raw `review.md`",
 			"the elision and the parser can disagree",
 		} {
-			assert.Contains(t, doc, want,
+			assert.Contains(t, line, want,
 				"findings-format.md must disclose the excerpt-vs-parser drift: missing %q", want)
 		}
 	})
