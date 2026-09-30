@@ -1,7 +1,6 @@
 package reconcile
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,8 +13,10 @@ import (
 // (skeptic_budget_docs_test.go), and CLAUDE.md requires a doc-vs-code drift test
 // to live in internal/reconcile/.
 //
-// Tokens, not whole sentences: the doc is one long line per paragraph, but a
-// reworded connective must not fail a test whose subject is the claim.
+// Tokens, not whole sentences: the doc is one long line per paragraph — these
+// docs are never hard-wrapped, so every want below is a single-line literal and
+// no assertion applies wrap tolerance. A reworded connective must not fail a
+// test whose subject is the claim.
 func TestFindingsFormatDoc_StatesTheThinkStrip(t *testing.T) {
 	doc := readDoc(t, "findings-format.md")
 
@@ -55,7 +56,7 @@ func TestFindingsFormatDoc_StatesTheThinkStrip(t *testing.T) {
 	// persona instead would contradict the chunk contract in the paragraph below.
 	t.Run("the salvage refusal is named, and it is per chunk", func(t *testing.T) {
 		for _, want := range []string{
-			"salvaged from the\nmodel's reasoning",
+			"salvaged from the model's reasoning",
 			"yields no findings at all",
 			"a draft the model abandoned",
 			"that refusal is per chunk",
@@ -68,9 +69,8 @@ func TestFindingsFormatDoc_StatesTheThinkStrip(t *testing.T) {
 			"fails over to the backup model",
 			"counted in `unreviewed_chunks`",
 		} {
-			flat := strings.ReplaceAll(want, "\n", " ")
-			assert.True(t, strings.Contains(doc, want) || strings.Contains(doc, flat),
-				"findings-format.md must state the salvage refusal: missing %q", flat)
+			assert.Contains(t, doc, want,
+				"findings-format.md must state the salvage refusal: missing %q", want)
 		}
 	})
 
@@ -90,12 +90,11 @@ func TestFindingsFormatDoc_StatesTheThinkStrip(t *testing.T) {
 
 	t.Run("the justification excerpt drift is disclosed", func(t *testing.T) {
 		for _, want := range []string{
-			"reads the raw\n`review.md`",
-			"the elision\nand the parser can disagree",
+			"reads the raw `review.md`",
+			"the elision and the parser can disagree",
 		} {
-			flat := strings.ReplaceAll(want, "\n", " ")
-			assert.True(t, strings.Contains(doc, want) || strings.Contains(doc, flat),
-				"findings-format.md must disclose the excerpt-vs-parser drift: missing %q", flat)
+			assert.Contains(t, doc, want,
+				"findings-format.md must disclose the excerpt-vs-parser drift: missing %q", want)
 		}
 	})
 }

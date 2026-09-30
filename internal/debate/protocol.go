@@ -175,10 +175,15 @@ func driveSeat(ctx context.Context, seat Caster, prompt string, cc fanout.ChatCo
 	// a Ruling could hold it even if a caller wanted to. Nothing keeps the raw
 	// reply either, so the transcript records the stripped statement (TD-009).
 	//
-	// Deliberately additive: the status is still derived from the engine result,
-	// NOT from whether the strip emptied the content. A StatusOK seat whose whole
-	// reply was a think block hands back a blank statement and is NOT halted —
-	// accepted, and pinned by TestRunDebate_ThinkOnlyReplyFromAnOKSeatIsAcceptedAsBlank.
+	// Deliberately additive AT THE SEAT STATUS LEVEL ONLY: a seat's status is
+	// still derived from the engine result, not from whether the strip emptied
+	// the content — a think-only reply from a StatusOK seat is NOT halted (pinned
+	// by TestRunDebate_ThinkOnlyReplyFromAnOKSeatIsAcceptedAsBlank). It does NOT
+	// follow that the strip cannot change a debate OUTCOME: silentArguingSeats in
+	// debate.go turns a blank-after-strip arguing-seat statement into a hard
+	// unresolved item before the judge rules, so a think-only proposer flips the
+	// item from the judge's uphold to unresolved (pinned at debate_test.go in the
+	// RunDebate table, "forced answer was entirely a think block").
 	statement, _ := llmclient.SplitThink(r.Content)
 	if r.Status != fanout.StatusOK || len(r.TrippedBudgets) > 0 {
 		return statement, fanout.StatusFailed
