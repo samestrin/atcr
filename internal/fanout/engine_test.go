@@ -655,6 +655,15 @@ func TestInvokeAgent_PreservesOuterCallIdentity(t *testing.T) {
 }
 
 // --- T6 (sprint 35.16.11.2.2.4): refuse a salvaged reply as findings ----------
+//
+// TEST MAP: parseFindings/ParsedFindingCount's cases are split across three files,
+// each covering one layer. The strip and content-preservation cases live in
+// response_truncation_test.go (TestResult_ParseFindings_*); the merge-level,
+// per-bin ones in chunker_test.go (TestMergeResultGroup_*Salvaged*); and the
+// invokeSlot/salvage cases HERE. The split is deliberate (each file already owns
+// its layer) but was unnamed — change parseFindings and you must touch all three.
+// Fixtures (draft/real finding rows, "fresh Result per assertion: ParsedFindingCount
+// memoizes") are duplicated across the halves rather than shared.
 
 // The salvage path (the empty-content branch of llmclient.CompleteWithMeta)
 // promotes a reply's chain-of-thought into Content when the provider returns empty

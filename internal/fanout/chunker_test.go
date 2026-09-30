@@ -629,6 +629,11 @@ func TestMergeResultGroup_JoinedContentDelimitsChunks(t *testing.T) {
 // T4 (sprint 35.16.11.2.2.4): the strip lives inside parseFindings, which parses
 // each chunk on its own, so a <think>-wrapped draft finding in ANY chunk must be
 // excluded the same way the unchunked path excludes it — not just chunk[0].
+//
+// TEST MAP: this is the MERGE-level half of parseFindings' cases. The strip and
+// content-preservation half lives in response_truncation_test.go
+// (TestResult_ParseFindings_*), and the invokeSlot/salvage half in engine_test.go
+// (the T6 block). All three cover one function; see the map there.
 func TestMergeResultGroup_ThinkWrappedDraftChunkContributesNoFindings(t *testing.T) {
 	cases := []struct {
 		name   string

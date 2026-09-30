@@ -386,6 +386,11 @@ func TestCache_DoesNotCacheSalvagedReply(t *testing.T) {
 
 // --- T4 (sprint 35.16.11.2.2.4): strip <think> before findings are parsed -----
 
+// TEST MAP: this is the parseFindings strip/content half. The merge-level cases
+// live in chunker_test.go (TestMergeResultGroup_*Salvaged*), and the
+// invokeSlot/salvage cases in engine_test.go (the T6 block); all three cover the
+// one parseFindings choke point.
+//
 // A model that reasons inline can draft a finding inside a <think> block and then
 // drop it before its real answer. parseFindings is the single choke point both
 // ParsedFindingCount and findingsFor share, so the strip lives there: the draft
