@@ -856,14 +856,27 @@ func TestWrap_ObserverSeesCancellation(t *testing.T) {
 // Sprint 35.16.11.2.2 AC 04-05: the declared thinking keys are echoed verbatim
 // on every wrapped entry point, and an undeclared invocation echoes none.
 func TestWrap_EchoesDeclaredThinking(t *testing.T) {
-	calls := map[string]func(ctx context.Context, c Client, inv llmclient.Invocation){
-		"Complete": func(ctx context.Context, c Client, inv llmclient.Invocation) { _, _ = c.Complete(ctx, inv) },
-		"CompleteWithUsage": func(ctx context.Context, c Client, inv llmclient.Invocation) {
-			_, _, _, _ = c.CompleteWithUsage(ctx, inv)
+	// Closures return the call's error so the caller can require.NoError before
+	// inspecting the record: observingClient emits "on the success and failure
+	// paths alike" (hookobs.go:337-338), so require.Len(obs.calls(), 1) alone
+	// cannot distinguish a successful call from a failed one (TD
+	// internal/hookobs/hookobs_test.go:899).
+	calls := map[string]func(ctx context.Context, c Client, inv llmclient.Invocation) error{
+		"Complete": func(ctx context.Context, c Client, inv llmclient.Invocation) error {
+			_, err := c.Complete(ctx, inv)
+			return err
 		},
-		"CompleteWithMeta": func(ctx context.Context, c Client, inv llmclient.Invocation) { _, _ = c.CompleteWithMeta(ctx, inv) },
-		"Chat": func(ctx context.Context, c Client, inv llmclient.Invocation) {
-			_, _ = c.Chat(ctx, inv, []llmclient.Message{{Role: "user", Content: strPtr("hi")}}, nil)
+		"CompleteWithUsage": func(ctx context.Context, c Client, inv llmclient.Invocation) error {
+			_, _, _, err := c.CompleteWithUsage(ctx, inv)
+			return err
+		},
+		"CompleteWithMeta": func(ctx context.Context, c Client, inv llmclient.Invocation) error {
+			_, err := c.CompleteWithMeta(ctx, inv)
+			return err
+		},
+		"Chat": func(ctx context.Context, c Client, inv llmclient.Invocation) error {
+			_, err := c.Chat(ctx, inv, []llmclient.Message{{Role: "user", Content: strPtr("hi")}}, nil)
+			return err
 		},
 	}
 	for name, call := range calls {
@@ -887,7 +900,7 @@ func TestWrap_EchoesDeclaredThinking(t *testing.T) {
 				obs := &recordingObserver{}
 				ctx := observedCtx(obs, &bytes.Buffer{})
 
-				call(ctx, Wrap(ctx, llmclient.New()), inv)
+				require.NoError(t, call(ctx, Wrap(ctx, llmclient.New()), inv))
 
 				require.Len(t, obs.calls(), 1)
 				got := obs.calls()[0]
@@ -902,14 +915,27 @@ func TestWrap_EchoesDeclaredThinking(t *testing.T) {
 // for a body that carried neither it nor the style that would explain it. The
 // gate mirrors the ThinkingStyle one and is pinned on all four entry points.
 func TestWrap_PreserveThinkingGatedOnThinkingEnabled(t *testing.T) {
-	calls := map[string]func(ctx context.Context, c Client, inv llmclient.Invocation){
-		"Complete": func(ctx context.Context, c Client, inv llmclient.Invocation) { _, _ = c.Complete(ctx, inv) },
-		"CompleteWithUsage": func(ctx context.Context, c Client, inv llmclient.Invocation) {
-			_, _, _, _ = c.CompleteWithUsage(ctx, inv)
+	// Closures return the call's error so the caller can require.NoError before
+	// inspecting the record: observingClient emits "on the success and failure
+	// paths alike" (hookobs.go:337-338), so require.Len(obs.calls(), 1) alone
+	// cannot distinguish a successful call from a failed one (TD
+	// internal/hookobs/hookobs_test.go:899).
+	calls := map[string]func(ctx context.Context, c Client, inv llmclient.Invocation) error{
+		"Complete": func(ctx context.Context, c Client, inv llmclient.Invocation) error {
+			_, err := c.Complete(ctx, inv)
+			return err
 		},
-		"CompleteWithMeta": func(ctx context.Context, c Client, inv llmclient.Invocation) { _, _ = c.CompleteWithMeta(ctx, inv) },
-		"Chat": func(ctx context.Context, c Client, inv llmclient.Invocation) {
-			_, _ = c.Chat(ctx, inv, []llmclient.Message{{Role: "user", Content: strPtr("hi")}}, nil)
+		"CompleteWithUsage": func(ctx context.Context, c Client, inv llmclient.Invocation) error {
+			_, _, _, err := c.CompleteWithUsage(ctx, inv)
+			return err
+		},
+		"CompleteWithMeta": func(ctx context.Context, c Client, inv llmclient.Invocation) error {
+			_, err := c.CompleteWithMeta(ctx, inv)
+			return err
+		},
+		"Chat": func(ctx context.Context, c Client, inv llmclient.Invocation) error {
+			_, err := c.Chat(ctx, inv, []llmclient.Message{{Role: "user", Content: strPtr("hi")}}, nil)
+			return err
 		},
 	}
 	for name, call := range calls {
@@ -926,7 +952,7 @@ func TestWrap_PreserveThinkingGatedOnThinkingEnabled(t *testing.T) {
 				obs := &recordingObserver{}
 				ctx := observedCtx(obs, &bytes.Buffer{})
 
-				call(ctx, Wrap(ctx, llmclient.New()), inv)
+				require.NoError(t, call(ctx, Wrap(ctx, llmclient.New()), inv))
 
 				require.Len(t, obs.calls(), 1)
 				got := obs.calls()[0]
@@ -948,14 +974,27 @@ func TestWrap_PreserveThinkingGatedOnThinkingEnabled(t *testing.T) {
 // lifted into a single path would fail here instead of silently un-gating
 // the Chat path.
 func TestWrap_StyleAloneRecordsNoThinkingStyle(t *testing.T) {
-	calls := map[string]func(ctx context.Context, c Client, inv llmclient.Invocation){
-		"Complete": func(ctx context.Context, c Client, inv llmclient.Invocation) { _, _ = c.Complete(ctx, inv) },
-		"CompleteWithUsage": func(ctx context.Context, c Client, inv llmclient.Invocation) {
-			_, _, _, _ = c.CompleteWithUsage(ctx, inv)
+	// Closures return the call's error so the caller can require.NoError before
+	// inspecting the record: observingClient emits "on the success and failure
+	// paths alike" (hookobs.go:337-338), so require.Len(obs.calls(), 1) alone
+	// cannot distinguish a successful call from a failed one (TD
+	// internal/hookobs/hookobs_test.go:899).
+	calls := map[string]func(ctx context.Context, c Client, inv llmclient.Invocation) error{
+		"Complete": func(ctx context.Context, c Client, inv llmclient.Invocation) error {
+			_, err := c.Complete(ctx, inv)
+			return err
 		},
-		"CompleteWithMeta": func(ctx context.Context, c Client, inv llmclient.Invocation) { _, _ = c.CompleteWithMeta(ctx, inv) },
-		"Chat": func(ctx context.Context, c Client, inv llmclient.Invocation) {
-			_, _ = c.Chat(ctx, inv, []llmclient.Message{{Role: "user", Content: strPtr("hi")}}, nil)
+		"CompleteWithUsage": func(ctx context.Context, c Client, inv llmclient.Invocation) error {
+			_, _, _, err := c.CompleteWithUsage(ctx, inv)
+			return err
+		},
+		"CompleteWithMeta": func(ctx context.Context, c Client, inv llmclient.Invocation) error {
+			_, err := c.CompleteWithMeta(ctx, inv)
+			return err
+		},
+		"Chat": func(ctx context.Context, c Client, inv llmclient.Invocation) error {
+			_, err := c.Chat(ctx, inv, []llmclient.Message{{Role: "user", Content: strPtr("hi")}}, nil)
+			return err
 		},
 	}
 	for name, call := range calls {
@@ -966,7 +1005,7 @@ func TestWrap_StyleAloneRecordsNoThinkingStyle(t *testing.T) {
 			obs := &recordingObserver{}
 			ctx := observedCtx(obs, &bytes.Buffer{})
 
-			call(ctx, Wrap(ctx, llmclient.New()), inv)
+			require.NoError(t, call(ctx, Wrap(ctx, llmclient.New()), inv))
 
 			require.Len(t, obs.calls(), 1)
 			assert.Empty(t, obs.calls()[0].ThinkingStyle)
