@@ -327,6 +327,15 @@ func neutraliseChunkBoundary(content string) string {
 	return strings.Join(lines, "\n")
 }
 
+// chunkBin is one content-bearing chunk output of a merge group, captured with
+// its salvage flag at the moment the bin was emitted. Holding the pair in one
+// value keeps the derived chunkContents/chunkSalvaged slices aligned by
+// construction instead of by two appends sharing a branch.
+type chunkBin struct {
+	content  string
+	salvaged bool
+}
+
 // mergeResultGroup folds N chunk results for one persona into a single result.
 // Content is the newline-joined non-empty chunk outputs, delimited by
 // chunkBoundaryLine when more than one chunk produced content, kept for
@@ -385,15 +394,15 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 
 	isSerial := serialSet[out.Agent]
 
-	var contents []string
-	// Kept index-aligned with contents by appending in the SAME branch below, which
-	// is what makes the per-bin refusal in parseFindings possible: the persona-wide
-	// out.Salvaged folded further down cannot say WHICH bin salvaged, and refusing on
-	// it would discard a clean sibling bin's committed findings. Misalignment is not
-	// benign — parseFindings falls back to refusing everything — so a bin skipped
-	// here must be skipped in contents too. Pinned by
-	// TestMergeResultGroup_EmptyChunkKeepsSalvageFlagsAligned.
-	var salvagedFlags []bool
+	// One struct per emitted bin holds content and salvage flag TOGETHER, so the
+	// index alignment the per-bin refusal in parseFindings depends on is
+	// unrepresentable to break — a bin and its flag are appended in a single
+	// statement, not by two appends whose pairing a refactor could split. (The
+	// persona-wide out.Salvaged folded further down cannot say WHICH bin salvaged,
+	// and refusing on it would discard a clean sibling bin's committed findings —
+	// so a bin skipped here must be skipped in the join too. Pinned by
+	// TestMergeResultGroup_EmptyChunkKeepsSalvageFlagsAligned.)
+	var bins []chunkBin
 	var firstErr error
 	okCount := 0
 	anyOK, sawTimeout, allCacheHit := false, false, true
@@ -415,8 +424,7 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 			servedModelPrimary[k] = servedModelPrimary[k] || !r.FallbackUsed
 		}
 		if strings.TrimSpace(r.Content) != "" {
-			contents = append(contents, r.Content)
-			salvagedFlags = append(salvagedFlags, r.Salvaged)
+			bins = append(bins, chunkBin{content: r.Content, salvaged: r.Salvaged})
 		}
 		out.TokensIn += r.TokensIn
 		out.TokensOut += r.TokensOut
@@ -499,6 +507,12 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 				firstErr = r.Err
 			}
 		}
+	}
+	var contents []string
+	var salvagedFlags []bool
+	for _, b := range bins {
+		contents = append(contents, b.content)
+		salvagedFlags = append(salvagedFlags, b.salvaged)
 	}
 	out.Content = joinChunkContents(contents)
 	out.chunkContents = contents
