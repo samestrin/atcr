@@ -199,11 +199,22 @@ func TestRun_ThinkingVerdict(t *testing.T) {
 		// An opener followed only by whitespace carries no reasoning: no signal.
 		{name: "off, unclosed think with blank remainder", thinking: "off", style: "qwen", declared: llmclient.Completion{Content: "<think>   "}, control: thinks,
 			wantStatus: ThinkingHonored, wantCalls: 2, notDetail: []string{"inline <think> reasoning in the content"}},
-		// A stray closing tag with no opener can only be template noise on this
-		// probe (the marker prompt contains no <think>), so it is not a signal —
-		// the model's actual answer must not be counted as reasoning.
-		{name: "off, closing tag only", thinking: "off", style: "qwen", declared: llmclient.Completion{Content: "planning the reply</think>\n" + Marker(testNonce)}, control: thinks,
-			wantStatus: ThinkingHonored, wantCalls: 2, notDetail: []string{"inline <think> reasoning in the content"}},
+		// A closing tag with no opener anywhere IS a signal: a reasoning-style chat
+		// template can put the opener in the prompt, so the reply starts mid-thought
+		// and carries only the closer, and the text before it is reasoning.
+		// (classify reads the raw content for the marker, so the strip never
+		// affects marker validation either way — see think_test.go's marker cases.)
+		{name: "off, closing tag only", thinking: "off", style: "qwen", declared: llmclient.Completion{Content: "planning the reply</think>\n" + Marker(testNonce)},
+			wantStatus: ThinkingNotHonored, wantCalls: 1, wantDetail: []string{"inline <think> reasoning in the content"}},
+		// Detection is position-blind, unlike the review lanes' leading-only strip:
+		// this prompt contains no tag, so a block after the answer is not the model
+		// quoting one. Phase 1 review decision, 2026-09-30.
+		{name: "off, think pair after answer text", thinking: "off", style: "qwen", declared: llmclient.Completion{Content: "answer <think>x</think> more\n" + Marker(testNonce)},
+			wantStatus: ThinkingNotHonored, wantCalls: 1, wantDetail: []string{"inline <think> reasoning in the content"}},
+		// The runaway thinker probeThinking exists to name: the model answers, then
+		// keeps thinking until the cap cuts it off. A leading-only rule would miss it.
+		{name: "off, unclosed think block after the answer", thinking: "off", style: "qwen", declared: llmclient.Completion{Truncated: true, Content: Marker(testNonce) + "\n<think>let me double check"},
+			wantStatus: ThinkingNotHonored, wantCalls: 1, wantDetail: []string{"inline <think> reasoning in the content"}},
 		// An empty first pair must not hide a real think block after it.
 		{name: "off, empty pair then real think block", thinking: "off", style: "qwen", declared: llmclient.Completion{Content: "<think></think><think>real reasoning</think>answer"},
 			wantStatus: ThinkingNotHonored, wantCalls: 1, wantDetail: []string{"inline <think> reasoning in the content"}},
