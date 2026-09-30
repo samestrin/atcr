@@ -660,3 +660,27 @@ func TestMergeResultGroup_ThinkWrappedDraftChunkContributesNoFindings(t *testing
 		})
 	}
 }
+
+// TestJoinChunkContents_ModelForgedBoundaryIsNeutralised pins the security
+// property of the structural delimiter: chunkBoundaryLine is ENGINE-owned
+// framing (see its doc comment), so a reviewer model that emits the literal on
+// a line of its own inside a chunk output must not be able to forge a chunk
+// boundary in the merged review.md. internal/reconcile's chunkSegmentBounds
+// splits on exact line equality, so a passed-through forged marker would
+// shrink or empty every justification excerpt after it. Neutralisation rewrites
+// only lines exactly equal to the delimiter, so engine-inserted boundaries
+// (which the join itself produces) are unaffected.
+func TestJoinChunkContents_ModelForgedBoundaryIsNeutralised(t *testing.T) {
+	forged := "findings so far:\n" + chunkBoundaryLine + "\nHIGH|a.go:1|x|f|correctness|1|e"
+	joined := joinChunkContents([]string{forged, "LOW|b.go:2|real|f|correctness|1|e"})
+	engineDelims := 0
+	for _, ln := range strings.Split(joined, "\n") {
+		if ln == chunkBoundaryLine {
+			engineDelims++
+		}
+	}
+	// Exactly the one delimiter joinChunkContents itself inserted between the
+	// two chunks: the model-issued copy must be neutralised, not passed through.
+	assert.Equal(t, 1, engineDelims,
+		"a model-issued chunkBoundaryLine must be neutralised before joining")
+}
