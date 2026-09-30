@@ -7,6 +7,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/payload"
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -119,4 +120,34 @@ func TestBuildSlots_ToolsWithoutFunctionCallingKeepsPlainReserve(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, payload.EffectiveByteBudget("unlisted-small-model", nil, defaultMaxTokens), a.EffectiveBudget,
 		"a degraded single-shot agent never enters the loop, so it replays nothing")
+}
+
+// When the replayed-reasoning reserve alone closes a chunked tool-loop agent's
+// budget, its chunks must sit at the minChunkLines floor like any other
+// zero-budget agent — not at the line count the unreserved cap would fund.
+func TestBuildSlots_ChunkedToolLoopReserveClosingTheBudgetFloorsChunkLines(t *testing.T) {
+	const capTokens = 10000
+	const wantLines = 64 // payload.minChunkLines
+	cfg := sizingRosterConfig()
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.ReviewStrategy = "chunked"
+	cfg.Settings.OnOverflow = OverflowTruncate
+	greta := cfg.Registry.Agents["greta"]
+	greta.Tools = true
+	greta.SupportsFC = true
+	greta.MaxTokens = ptrInt(capTokens)
+	cfg.Registry.Agents["greta"] = greta
+
+	require.Zero(t, payload.EffectiveByteBudget("unlisted-small-model", nil, payload.SizingOutputTokens(true, capTokens)),
+		"precondition: the reserve closes the budget")
+	require.Positive(t, payload.EffectiveByteBudget("unlisted-small-model", nil, capTokens),
+		"precondition: the cap alone still funds a budget")
+
+	slots, _, err := buildSlots(cfg, chunkedDiffPayload(12, 900), ReviewRange{Base: "a", Head: "b"}, "", "", false)
+	require.NoError(t, err)
+	require.Greater(t, len(slots), 1, "precondition: the diff must split into chunks")
+	for i, s := range slots {
+		assert.Equal(t, wantLines, s.Primary.chunkMaxLines,
+			"chunk slot %d: a budget the reserve closes must floor the chunk lines", i)
+	}
 }
