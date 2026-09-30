@@ -1162,15 +1162,19 @@ func TestCompleteWithMeta_MarksReasoningSalvage(t *testing.T) {
 	assert.True(t, comp.Salvaged, "a stop-reason reasoning salvage must be marked")
 	assert.False(t, comp.Truncated, "stop-reason salvage is not a length cutoff — the marker must be distinct")
 	// Reasoning keeps its own documented contract: reported independently of the salvage.
+	assert.Equal(t, reasoning, comp.Reasoning,
+		"the reported reasoning channel carries the same chain-of-thought the salvage promoted into Content")
 
 	// normal reply: not salvaged.
 	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		resp := chatResponse{}
-		resp.Choices = append(resp.Choices, chatChoice{FinishReason: "stop", Message: message{Role: "assistant", Content: "real findings"}})
+		resp.Choices = append(resp.Choices, chatChoice{FinishReason: "stop", Message: message{Role: "assistant", Content: "real findings", ReasoningContent: reasoningText(reasoning)}})
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer srv2.Close()
 	comp2, err := fastRetry(srv2.Client()).CompleteWithMeta(context.Background(), Invocation{BaseURL: srv2.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "review"})
 	require.NoError(t, err)
 	assert.False(t, comp2.Salvaged, "a content-bearing reply is never salvaged")
+	assert.Equal(t, reasoning, comp2.Reasoning,
+		"the reasoning channel is reported even when Content is present — the two contracts are independent")
 }
