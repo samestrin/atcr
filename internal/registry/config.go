@@ -252,6 +252,16 @@ func ThinkingEnabled(thinking, level string) bool {
 	return thinking == ThinkingOn || (thinking == "" && level != "")
 }
 
+// ThinkingDeclared reports that an agent declared thinking or thinking_level —
+// the declarations that put a thinking field on the wire. It is not
+// ThinkingEnabled: thinking off is declared but not on. A thinking_style alone
+// declares nothing, since a style with neither key sends no field, so the diff
+// cache key and the model-invocation telemetry gate their style on this (the
+// same rule as doctor's Target.declaresThinking).
+func ThinkingDeclared(thinking, level string) bool {
+	return thinking != "" || level != ""
+}
+
 // ThinkingBudgetTokens returns the thinking budget a declared setting sends,
 // or 0 when it sends none: thinking off, a style with no budget field, qwen on
 // with no level, or a value validation would reject. Anthropic on with no

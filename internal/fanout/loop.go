@@ -10,6 +10,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/tools"
 )
 
@@ -23,6 +24,12 @@ const defaultMaxTurns = 10
 // repeat detection. K=3 catches ABAB and ABCABC oscillation while staying O(K)
 // memory.
 const sigHistoryDepth = 3
+
+// replayedReasoningBytes is the reasoning an assistant turn adds to every later
+// request: the bytes of each reasoning member history() kept.
+func replayedReasoningBytes(m llmclient.Message) int64 {
+	return int64(len(m.ReasoningContent) + len(m.Reasoning) + len(m.ReasoningDetails) + len(m.ThinkingBlocks))
+}
 
 // Loop-control messages. These are static (no per-call allocation) and are
 // appended to the conversation to steer a thrashing or budget-exhausted model.
@@ -72,6 +79,10 @@ type toolLoop struct {
 	sigHistory    []map[string]bool
 	nudgedSigs    map[string]bool
 	malformedPrev bool
+
+	// reasoningBytes is the reasoning replayed on every later request so far
+	// (see payload.ReasoningReplayReserveCaps).
+	reasoningBytes int64
 
 	// tr records the per-turn transcript (tool_calls, tool_results, final). nil
 	// when transcript recording is disabled; every method on *tools.Transcript is
@@ -164,6 +175,7 @@ func (l *toolLoop) run(ctx context.Context) Result {
 		l.res.addUsage(resp.Usage)
 		l.res.addCallRecords(resp.CallRecords)
 		l.messages = append(l.messages, resp.Message)
+		l.reasoningBytes += replayedReasoningBytes(resp.Message)
 
 		// Final message (no tool_calls): the model finished within budget.
 		if len(resp.Message.ToolCalls) == 0 {
@@ -217,6 +229,16 @@ func (l *toolLoop) run(ctx context.Context) Result {
 		// in full; trip only after they are in hand (deferred trip, AC 02-02).
 		if l.agent.ToolBudgetBytes > 0 && l.res.ToolBytes > l.agent.ToolBudgetBytes {
 			l.res.addTripped(budgetToolBytes)
+			return l.requestFinalAnswer(ctx)
+		}
+		// Replayed-reasoning check: trip while the next request still fits the
+		// reserve sizing held back. Only a sized agent (resolved window and cap)
+		// had that reserve taken; an unsized one has nothing to trip on. The byte
+		// budget is not the signal: a reserve that closes it records 0 while the
+		// agent still runs the loop.
+		if l.agent.ResolvedWindow > 0 && l.agent.ResolvedMaxTokens > 0 &&
+			l.reasoningBytes > payload.TokensToBytes(l.agent.ResolvedMaxTokens*(payload.ReasoningReplayReserveCaps-1)) {
+			l.res.addTripped(budgetReasoningReplay)
 			return l.requestFinalAnswer(ctx)
 		}
 	}

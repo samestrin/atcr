@@ -41,6 +41,12 @@ const (
 const defaultConcurrency = 8
 
 // healthy reports whether a status counts as a working invocation path.
+// StatusOKWarning counts — including the salvaged-reasoning class, whose hint
+// says the review lane cannot use that agent's reply: the exit code is an
+// endpoint-reachability contract, so verdict and hint deliberately disagree
+// there (documented in docs/registry.md's status table; TD
+// internal/doctor/run.go:581, clarified 2026-09-29: keep exit 0, no
+// verdict-semantics change).
 func healthy(status string) bool { return status == StatusOK || status == StatusOKWarning }
 
 // thinkingProbeWorthwhile reports that a thinking verdict is meaningful on a row
@@ -168,18 +174,22 @@ type AgentResult struct {
 	// is empty (omitted) for an undeclared agent and when no call was placed.
 	ThinkingStatus string `json:"thinking_status,omitempty"`
 	ThinkingDetail string `json:"thinking_detail,omitempty"`
-	// ThinkingDeclared names the declared thinking polarity the verdict measured —
+	// ThinkingPolarity names the declared thinking polarity the verdict measured —
 	// "off", "on", or the declared thinking_level (a level implies on) — so the
 	// cli warning and --json consumers can split remedies by polarity without
 	// parsing ThinkingDetail prose (TD cli/doctor.go:255). Empty (omitted) for an
-	// undeclared agent and when no call was placed, like ThinkingStatus.
-	ThinkingDeclared string `json:"thinking_declared,omitempty"`
+	// undeclared agent and when no call was placed, like ThinkingStatus. The
+	// JSON key stays thinking_declared (the wire contract predates the rename;
+	// TD internal/registry/config.go:261, clarified 2026-09-29: the registry
+	// predicate keeps the "declared" name — it IS the declaration — while this
+	// field holds a polarity).
+	ThinkingPolarity string `json:"thinking_declared,omitempty"`
 	// ThinkingPreserve records that the flagged probe itself sent
 	// preserve_thinking, so a provider 4xx caused by that flag is attributable:
 	// the cli warning names "retry without preserve_thinking" as the first remedy
 	// (TD cli/doctor.go:367) and a --json consumer can see the flag was on the
 	// wire without parsing ThinkingDetail prose. Empty (omitted) exactly when
-	// ThinkingDeclared is — the flag only matters when a verdict was reached.
+	// ThinkingPolarity is — the flag only matters when a verdict was reached.
 	ThinkingPreserve string `json:"thinking_preserve,omitempty"`
 }
 
@@ -263,6 +273,12 @@ type probeResult struct {
 	// salvaged reasoning — so consumers that read StatusOKWarning as "marker absent"
 	// can tell the two apart.
 	markerInReasoning bool
+	// salvaged reports that the reply carried no content and its reasoning was
+	// promoted into Content — set on BOTH classify salvage branches, so the
+	// zero-budget verdict (which replaces the hint wholesale when the marker is
+	// absent) can re-attach the salvage note it would otherwise drop (TD
+	// internal/doctor/run.go:337).
+	salvaged bool
 }
 
 // Run probes every distinct target once (bounded concurrency), maps results
@@ -334,9 +350,17 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 		if pr.markerInReasoning {
 			zbStatus = StatusOK
 		}
-		if s, h, ok := zeroBudgetVerdict(tgt.Model, at.ContextWindowTokens, reviewCap, pr.maxTokens, zbStatus); ok {
+		if s, h, ok := zeroBudgetVerdict(tgt.Model, at.ContextWindowTokens, reviewCap, pr.maxTokens, zbStatus, at.ToolLoop); ok {
 			if pr.markerInReasoning {
 				h += " Separately: " + hint
+			} else if pr.salvaged {
+				// The marker was absent, so the branch above did not fire and
+				// zeroBudgetVerdict replaced classify's hint — including the
+				// salvage note — wholesale. Re-attach it: "the reply was
+				// reasoning-only" is a separate fact from the budget one, and
+				// the remedy differs (repoint vs. resize) (TD
+				// internal/doctor/run.go:337).
+				h += " Separately: the reply carried no content; its reasoning was salvaged"
 			}
 			status, hint = s, h
 		}
@@ -376,7 +400,7 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 			ResponseFormatDetail: pr.responseFormatDetail,
 			ThinkingStatus:       pr.thinkingStatus,
 			ThinkingDetail:       pr.thinkingDetail,
-			ThinkingDeclared:     thinkingDeclaredForm(tgt, pr.thinkingStatus),
+			ThinkingPolarity:     thinkingDeclaredForm(tgt, pr.thinkingStatus),
 			ThinkingPreserve:     thinkingPreserveForm(tgt, pr.thinkingStatus),
 		})
 	}
@@ -393,7 +417,9 @@ const zeroBudgetRemedy = "lower its max_tokens, or raise (or drop) its context_w
 
 // zeroBudgetVerdict reports the warning doctor owes an agent whose resolved window funds
 // NO input budget once its resolved output cap and the fixed prompt overhead are
-// reserved. It returns ok=false when there is nothing to say.
+// reserved — plus, when toolLoop is true, the replayed-reasoning reserve review sizes a
+// tool-loop agent with (payload.SizingOutputTokens), so doctor and review judge the
+// same budget. It returns ok=false when there is nothing to say.
 //
 // doctor is the only surface holding both operands, and it printed them side by side
 // without comparing them — so an agent `atcr review` cannot size a payload for reported
@@ -452,12 +478,20 @@ const zeroBudgetRemedy = "lower its max_tokens, or raise (or drop) its context_w
 // consequence this verdict's hint (about review's payload sizing) never named.
 // See smallWindowVerdict below; it runs after this one in Run, so the more
 // specific verification-lane warning wins the row where both fire.
-func zeroBudgetVerdict(model string, window, maxTokens, probeMaxTokens int, status string) (string, string, bool) {
+func zeroBudgetVerdict(model string, window, maxTokens, probeMaxTokens int, status string, toolLoop bool) (string, string, bool) {
 	if !healthy(status) || maxTokens <= 0 || window <= 0 {
 		return "", "", false
 	}
-	if payload.EffectiveByteBudget(model, &window, maxTokens) > 0 {
+	if payload.EffectiveByteBudget(model, &window, payload.SizingOutputTokens(toolLoop, maxTokens)) > 0 {
 		return "", "", false
+	}
+	// A tool-loop agent is sized with the replayed-reasoning reserve on top of
+	// its cap, so the hint names it: the window the operator sees can hold the
+	// cap alone, and "no input budget" would otherwise read as a wrong sum.
+	reserveClause := ""
+	if toolLoop {
+		reserveClause = fmt.Sprintf(", the %d-token replayed-reasoning reserve its tool loop holds back (%d× that cap)",
+			maxTokens*payload.ReasoningReplayReserveCaps, payload.ReasoningReplayReserveCaps)
 	}
 	lead := "endpoint is healthy, but"
 	if status == StatusOKWarning {
@@ -496,10 +530,10 @@ func zeroBudgetVerdict(model string, window, maxTokens, probeMaxTokens int, stat
 	}
 	return StatusOKWarning, fmt.Sprintf(
 		"%s the resolved window (%d tokens) leaves no input budget once the %d-token output cap `atcr review` will "+
-			"resolve for this agent%s and the fixed prompt overhead are reserved — review will ship "+
+			"resolve for this agent%s%s and the fixed prompt overhead are reserved — review will ship "+
 			"only the smallest single file, or refuse the run outright under on_overflow fail/fallback. Do NOT raise the "+
 			"cap here: it is reserved out of this same window. Remedy: %s%s",
-		lead, window, maxTokens, disclaimer, zeroBudgetRemedy, probeRemedy), true
+		lead, window, maxTokens, disclaimer, reserveClause, zeroBudgetRemedy, probeRemedy), true
 }
 
 // smallWindowClause reports the tool-lane consequences doctor owes an agent
@@ -712,6 +746,7 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 					latencyMS:         latencyMS,
 					hint:              "reply had no content; the nonce marker was found only in salvaged reasoning, which the review lane cannot use — repoint the agent to a model that answers with content",
 					markerInReasoning: true,
+					salvaged:          true,
 				}
 			}
 			return probeResult{status: StatusOK, latencyMS: latencyMS}
@@ -738,6 +773,7 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 			status:    StatusOKWarning,
 			latencyMS: latencyMS,
 			hint:      hint,
+			salvaged:  salvaged,
 		}
 	}
 
@@ -934,8 +970,12 @@ func responseFormatCall(ctx context.Context, c Completer, tgt Target, opts Optio
 
 // declaresThinking reports that the target's agents declared thinking or
 // thinking_level. resolve.go sets the fields only then, since a style alone
-// changes no request.
-func (t Target) declaresThinking() bool { return t.Thinking != "" || t.ThinkingLevel != "" }
+// changes no request. It delegates to registry.ThinkingDeclared so the
+// declared-ness rule keeps one definition (TD internal/registry/config.go:261);
+// TestTarget_DeclaresThinkingMatchesRegistryPredicate pins the equivalence.
+func (t Target) declaresThinking() bool {
+	return registry.ThinkingDeclared(t.Thinking, t.ThinkingLevel)
+}
 
 // thinkingDeclaration names the declaration in a verdict detail, e.g.
 // "thinking: off (qwen)" or "thinking_level: low (reasoning_effort)", plus

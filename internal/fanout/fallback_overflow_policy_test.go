@@ -166,7 +166,6 @@ func TestBuildFallbackAgent_RefitKeepsFallbackOwnThinking(t *testing.T) {
 	assert.Equal(t, "qwen", fb.Invocation.ThinkingStyle)
 	sizing := fmt.Sprintf("%d:%d", fb.EffectiveBudget, fb.chunkMaxLines)
 	assert.Equal(t,
-		diffCacheKey(fb.Prompt, fb.Invocation.Model, fb.Invocation.BaseURL, fb.Invocation.Temperature,
-			sizing, fb.ResolvedMaxTokens, fb.Invocation.ResponseFormat, "off", "", "qwen", ""),
+		diffCacheKey(fb.Prompt, cacheKeyInputs{Model: fb.Invocation.Model, BaseURL: fb.Invocation.BaseURL, Temperature: fb.Invocation.Temperature, Sizing: sizing, MaxTokens: fb.ResolvedMaxTokens, ResponseFormat: fb.Invocation.ResponseFormat, Thinking: "off", ThinkingStyle: "qwen"}),
 		fb.CacheKey, "the re-fit fallback keys on its own thinking declaration")
 }
