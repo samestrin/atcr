@@ -694,40 +694,38 @@ func TestResult_ParseFindings_SalvagedReplyYieldsNoFindings(t *testing.T) {
 	})
 
 	t.Run("chunked, only the salvaged bin is refused", func(t *testing.T) {
-		// The refusal is per chunk: bin 2 salvaged, so its draft is dropped, but bin
-		// 1's committed finding survives. chunkSalvaged is index-aligned with
-		// chunkContents, exactly as mergeResultGroup writes them.
-		r := Result{
-			Agent:         "bruce",
-			Status:        StatusOK,
-			Content:       real + "\n" + draft,
-			chunkContents: []string{real, draft},
-			chunkSalvaged: []bool{false, true},
-			Salvaged:      true, // the persona-wide fold, for status and the cache
-		}
-		assert.Equal(t, 1, r.ParsedFindingCount(), "the clean bin's finding must survive its sibling's salvage")
-		fr := findingsFor(r, nil)
+		// Built THROUGH mergeResultGroup so the fixture is a shape the chunked path
+		// really emits — hand-setting chunkContents beside a stale Content pins
+		// parseFindings against a Result no code produces. The refusal is per chunk:
+		// bin 2 salvaged, so its draft is dropped, but bin 1's committed finding
+		// survives. chunkSalvaged is index-aligned with chunkContents by construction
+		// (chunkBin).
+		merged := mergeResultGroup([]Result{
+			{Agent: "bruce", Status: StatusOK, Content: real},
+			{Agent: "bruce", Status: StatusOK, Content: draft, Salvaged: true},
+		}, nil)
+		require.Equal(t, []bool{false, true}, merged.chunkSalvaged)
+		assert.Equal(t, 1, merged.ParsedFindingCount(), "the clean bin's finding must survive its sibling's salvage")
+		fr := findingsFor(merged, nil)
 		require.Len(t, fr.Findings, 1)
 		assert.Equal(t, "real finding", fr.Findings[0].Problem)
 	})
 
 	t.Run("chunked, every bin salvaged yields nothing", func(t *testing.T) {
-		r := Result{
-			Agent:         "bruce",
-			Status:        StatusOK,
-			Content:       draft,
-			chunkContents: []string{draft, draft},
-			chunkSalvaged: []bool{true, true},
-			Salvaged:      true,
-		}
-		assert.Equal(t, 0, r.ParsedFindingCount())
-		assert.Empty(t, findingsFor(r, nil).Findings)
+		merged := mergeResultGroup([]Result{
+			{Agent: "bruce", Status: StatusOK, Content: draft, Salvaged: true},
+			{Agent: "bruce", Status: StatusOK, Content: draft, Salvaged: true},
+		}, nil)
+		require.Equal(t, []bool{true, true}, merged.chunkSalvaged)
+		assert.Equal(t, 0, merged.ParsedFindingCount())
+		assert.Empty(t, findingsFor(merged, nil).Findings)
 	})
 
 	t.Run("chunked with no per-chunk flags fails closed", func(t *testing.T) {
-		// A chunked Result assembled by some path other than mergeResultGroup cannot
-		// say WHICH bin salvaged. Refusing the whole result is the safe reading: it
-		// never parses salvaged reasoning as a finding.
+		// Deliberately a shape mergeResultGroup does NOT emit: some other assembling
+		// path left the per-chunk flags absent while the persona-wide bit is set, so
+		// the result cannot say WHICH bin salvaged. Refusing the whole result is the
+		// safe reading: it never parses salvaged reasoning as a finding.
 		r := Result{
 			Agent:         "bruce",
 			Status:        StatusOK,
@@ -737,6 +735,28 @@ func TestResult_ParseFindings_SalvagedReplyYieldsNoFindings(t *testing.T) {
 		}
 		assert.Equal(t, 0, r.ParsedFindingCount(), "without per-chunk flags the persona-wide bit refuses everything")
 		assert.Empty(t, findingsFor(r, nil).Findings)
+	})
+
+	t.Run("chunked, mismatched flags with NO salvage parses every bin", func(t *testing.T) {
+		// The COMPLEMENTARY half of the length-mismatch branch, previously unpinned: a
+		// future change that stopped OR-folding Salvaged in mergeResultGroup would
+		// silently turn the fail-closed guard above into a fail-open one with the suite
+		// still green. Here the flags are misaligned AND no bin is marked salvaged, so
+		// there is no reasoning to protect and parsing every bin is the correct
+		// reading — the guard exists to refuse SALVAGED content, not to reject
+		// misaligned shapes for their own sake. Pinned so that reading is a decision on
+		// the record.
+		r := Result{
+			Agent:         "bruce",
+			Status:        StatusOK,
+			Content:       real + "\n" + draft,
+			chunkContents: []string{real, draft},
+			chunkSalvaged: []bool{false}, // misaligned on purpose
+			Salvaged:      false,
+		}
+		assert.Equal(t, 2, r.ParsedFindingCount(),
+			"with no salvage recorded there is nothing to refuse, so both bins parse")
+		assert.Len(t, findingsFor(r, nil).Findings, 2)
 	})
 }
 
