@@ -660,8 +660,11 @@ func (r *Result) cacheParsedFindings(out []stream.Finding) []stream.Finding {
 
 // ParsedFindingCount returns the number of parseable findings in r's output after
 // parseFindings strips a leading <think> run, so the counted text is not r.Content
-// itself. It is 0 for a salvaged reply, which parseFindings refuses outright
-// whatever its content. It computes and caches the count on first use.
+// itself. It is 0 for an UNCHUNKED salvaged reply, which parseFindings refuses
+// outright; for a chunked one it excludes only the salvaged bins, so a persona
+// with one salvaged bin beside a clean sibling returns a NON-ZERO count (see
+// parseFindings and TestMergeResultGroup_SalvagedLaterChunkKeepsSiblingFindings).
+// It computes and caches the count on first use.
 func (r *Result) ParsedFindingCount() int {
 	if r.Content == "" {
 		return 0
