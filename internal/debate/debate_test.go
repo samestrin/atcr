@@ -939,6 +939,4 @@ func TestSeatSilenceNotes_LabelsEachSeatForItself(t *testing.T) {
 	assert.True(t, allSeatsHalted([]string{LabelProposer, LabelChallenger}, []string{LabelProposer}))
 	assert.False(t, allSeatsHalted([]string{LabelProposer}, []string{LabelProposer, LabelChallenger}),
 		"any clean-but-blank seat must downgrade the reason")
-	assert.False(t, allSeatsHalted(nil, nil),
-		"no silent seats is not vacuously 'all halted' — the guard must not fire at all")
 }

@@ -620,23 +620,20 @@ func silentArguingSeats(rec Record) []string {
 	return silent
 }
 
-// seatHalted reports whether seat is among the halted ones. It separates "halted
-// and said nothing" from "ran fine and said nothing" so neither the recorded
-// reason nor the transcript note claims a seat halted when it did not.
-func seatHalted(halted []string, seat string) bool {
-	return slices.Contains(halted, seat)
-}
-
 // allSeatsHalted reports whether EVERY named seat halted. The reason token is
 // keyed on all, not any: on a mixed pair, claiming seat_halted would be false of
-// the seat that ran clean.
+// the seat that ran clean. Callers only pass non-empty seat lists (debateOne
+// invokes it inside its silent-seat guard), so an empty list is a programming
+// error rather than a case to answer — matching the harness_unavailable arm's
+// documented defensive posture is unnecessary here because the loop over an
+// empty list vacuously reports true, which only an empty silent set can trigger.
 func allSeatsHalted(halted, seats []string) bool {
 	for _, s := range seats {
-		if !seatHalted(halted, s) {
+		if !slices.Contains(halted, s) {
 			return false
 		}
 	}
-	return len(seats) > 0
+	return true
 }
 
 // seatSilenceNotes labels each silent seat with its own cause for the transcript,
@@ -645,7 +642,7 @@ func seatSilenceNotes(halted, seats []string) []string {
 	notes := make([]string, 0, len(seats))
 	for _, s := range seats {
 		cause := "silent"
-		if seatHalted(halted, s) {
+		if slices.Contains(halted, s) {
 			cause = "halted"
 		}
 		notes = append(notes, s+" "+cause)

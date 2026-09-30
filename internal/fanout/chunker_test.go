@@ -684,3 +684,22 @@ func TestJoinChunkContents_ModelForgedBoundaryIsNeutralised(t *testing.T) {
 	assert.Equal(t, 1, engineDelims,
 		"a model-issued chunkBoundaryLine must be neutralised before joining")
 }
+
+// TestMergeResultGroup_PopulatesParsedFindingMemoForCleanPersona pins the
+// operand order of the merged UnparseableResponse predicate: ParsedFindingCount
+// must be evaluated FIRST so its memo is populated even when UnparseableChunks
+// is 0 — the common clean chunked persona. With the non-zero test on the left,
+// Go's short-circuit never calls ParsedFindingCount, the memo stays unset, and
+// findingsFor re-parses every bin (N SplitThink scans + N ParseModelOutput
+// passes) instead of taking the cached-zero short-circuit.
+func TestMergeResultGroup_PopulatesParsedFindingMemoForCleanPersona(t *testing.T) {
+	g := []Result{
+		{Agent: "reviewer", Status: StatusOK, Content: "LOW|b.go:2|real|f|correctness|1|e"},
+		{Agent: "reviewer", Status: StatusOK, Content: "LOW|c.go:3|real2|f|correctness|1|e"},
+	}
+	merged := mergeResultGroup(g, nil)
+	assert.True(t, merged.parsedFindingCountSet,
+		"merged memo must be populated for a clean chunked persona so findingsFor can short-circuit")
+	assert.Equal(t, 2, merged.ParsedFindingCount())
+	assert.False(t, merged.UnparseableResponse)
+}
