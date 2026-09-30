@@ -41,6 +41,12 @@ const (
 const defaultConcurrency = 8
 
 // healthy reports whether a status counts as a working invocation path.
+// StatusOKWarning counts — including the salvaged-reasoning class, whose hint
+// says the review lane cannot use that agent's reply: the exit code is an
+// endpoint-reachability contract, so verdict and hint deliberately disagree
+// there (documented in docs/registry.md's status table; TD
+// internal/doctor/run.go:581, clarified 2026-09-29: keep exit 0, no
+// verdict-semantics change).
 func healthy(status string) bool { return status == StatusOK || status == StatusOKWarning }
 
 // thinkingProbeWorthwhile reports that a thinking verdict is meaningful on a row
