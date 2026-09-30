@@ -790,3 +790,34 @@ func TestApplyRulings_ClearsTheSkepticsTruncationCaveat(t *testing.T) {
 	assert.False(t, findings[0].Verification.Truncated,
 		"the judge's verdict came from the judge's own read — the skeptic's truncation does not describe it")
 }
+
+// TestRunDebate_TranscriptRecordsTheStrippedStatement closes the last consumer
+// of driveSeat's return value. runTurn records the same string it hands back as
+// TurnEvent.Statement, so the on-disk transcript — the artifact a human reads to
+// audit a debate — must carry the statement, not the model's scratch reasoning.
+//
+// This is the full-roster path (real reviewDir, real transcript.jsonl), unlike
+// the RunDebate-level tests in protocol_test.go which pass a nil Transcript.
+func TestRunDebate_TranscriptRecordsTheStrippedStatement(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "<think>draft attack, discarded</think>the attack stands"},
+		{content: `{"outcome":"uphold","settled_severity":"HIGH","reasoning":"evidence holds"}`},
+	}}
+	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	require.Equal(t, 1, res.Upheld, "precondition: the debate resolved, so all three seats ran")
+
+	paths, err := filepath.Glob(filepath.Join(dir, debateSubdir, "*", "transcript.jsonl"))
+	require.NoError(t, err)
+	require.Len(t, paths, 1, "one debated item writes one transcript")
+	raw, err := os.ReadFile(paths[0])
+	require.NoError(t, err)
+
+	assert.NotContains(t, string(raw), "<think>",
+		"the transcript is the audit artifact — a think tag reaching it means the strip missed a consumer")
+	assert.NotContains(t, string(raw), "draft attack, discarded")
+	assert.Contains(t, string(raw), "the attack stands",
+		"the real statement must survive; a strip that ate it would pass the assertions above vacuously")
+}

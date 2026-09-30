@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/samestrin/atcr/internal/llmclient"
 )
 
 func TestParseRuling(t *testing.T) {
@@ -97,4 +99,52 @@ func TestParseRuling_BareJSONModeObject(t *testing.T) {
 	// The diagnostic must say why — an empty unresolved ruling would hide the
 	// wrapper-envelope cause from whoever reads the debate log.
 	assert.NotEmpty(t, r.Reasoning)
+}
+
+// TestParseRuling_ThinkWrappedDraftLosesToTheRealRuling is the decoy shape
+// TestParseRuling_SkipsDecoyBrace does not cover. That test skips an object
+// LACKING an outcome key; a judge that drafts a ruling inside a leading <think>
+// block emits a decoy that HAS one, so it is accepted as the first match and
+// the discarded draft becomes the debate's outcome.
+//
+// The fix lives at the driveSeat choke point, not in parseRuling — internal/llmclient
+// owns every tag rule. This test therefore runs llmclient.SplitThink then
+// parseRuling: the production pair, in the production order.
+func TestParseRuling_ThinkWrappedDraftLosesToTheRealRuling(t *testing.T) {
+	cases := []struct {
+		name        string
+		raw         string
+		wantOutcome string
+		wantReason  string
+	}{
+		{
+			name:        "a draft ruling inside a closed think block loses to the real one after it",
+			raw:         `<think>{"outcome":"overturn","reasoning":"draft, wrong"}</think>{"outcome":"uphold","reasoning":"real answer"}`,
+			wantOutcome: OutcomeUphold,
+			wantReason:  "real answer",
+		},
+		{
+			name:        "a lone closer with no opener still yields the ruling after it",
+			raw:         `draft</think>{"outcome":"uphold","reasoning":"real answer"}`,
+			wantOutcome: OutcomeUphold,
+			wantReason:  "real answer",
+		},
+		{
+			name: "a ruling quoting both tags after real answer text survives intact",
+			// The leading-only rule reaching this lane: the debated finding is
+			// itself about think-tag handling, so the judge cites both tags. An
+			// eager mid-string strip would eat the ruling it is recording.
+			raw:         `{"outcome":"uphold","reasoning":"the handler drops text between <think> and </think>"}`,
+			wantOutcome: OutcomeUphold,
+			wantReason:  "the handler drops text between <think> and </think>",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			answer, _ := llmclient.SplitThink(tc.raw)
+			r := parseRuling(answer)
+			assert.Equal(t, tc.wantOutcome, r.Outcome)
+			assert.Equal(t, tc.wantReason, r.Reasoning)
+		})
+	}
 }

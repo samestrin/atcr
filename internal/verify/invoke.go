@@ -163,9 +163,12 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 	// answer and charged to reviewer precision as a full read.
 	//
 	// Strip into a local: res.Content stays the raw reply. internal/llmclient
-	// owns every tag rule (leading-only, so a verdict quoting the tags after
-	// real answer text survives whole); the removed reasoning is dropped here,
-	// because Completion.Reasoning is the only reasoning channel.
+	// owns every tag rule (leading-only, so a verdict quoting BOTH tags after
+	// real answer text survives whole). The inline reasoning is dropped here
+	// and reaches no channel at all — fanout.Result carries no reasoning field,
+	// and an endpoint that reasons inline leaves Completion.Reasoning empty by
+	// construction. That is deliberate: Completion.Reasoning stays the only
+	// reasoning channel, and this reply did not populate it.
 	answer, _ := llmclient.SplitThink(res.Content)
 	v, _ := parseVerdict(answer)
 	v.Skeptic = skeptic.Name

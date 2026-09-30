@@ -157,10 +157,28 @@ func driveSeat(ctx context.Context, seat Caster, prompt string, cc fanout.ChatCo
 	if r.ResponseTruncated || r.Salvaged {
 		return "", fanout.StatusFailed
 	}
+	// An endpoint that reasons inline puts a <think> block in Content even on a
+	// clean reply, which the guard above never sees. This is the one choke point
+	// every seat's reply passes through, so stripping here cleans all four
+	// downstream uses at once: the two arguing statements pasted into later
+	// seats' prompts, JudgeRaw fed to parseRuling (which would otherwise read a
+	// DRAFT ruling object out of the block), and the recorded transcript.
+	//
+	// internal/llmclient owns every tag rule, and the strip is leading-only, so
+	// a seat citing <think> mid-argument — the likely shape when the debated
+	// finding is about think handling — comes back whole. The removed reasoning
+	// is dropped, never stored on rec or a Ruling: ChatResponse.Reasoning stays
+	// the only reasoning channel.
+	//
+	// Deliberately additive: the status is still derived from the engine result,
+	// NOT from whether the strip emptied the content. A StatusOK seat whose whole
+	// reply was a think block hands back a blank statement and is NOT halted —
+	// accepted, and pinned by TestRunDebate_ThinkOnlyReplyFromAnOKSeatIsAcceptedAsBlank.
+	statement, _ := llmclient.SplitThink(r.Content)
 	if r.Status != fanout.StatusOK || len(r.TrippedBudgets) > 0 {
-		return r.Content, fanout.StatusFailed
+		return statement, fanout.StatusFailed
 	}
-	return r.Content, fanout.StatusOK
+	return statement, fanout.StatusOK
 }
 
 // nonOKStatus returns the status string only when it is not StatusOK, so a clean

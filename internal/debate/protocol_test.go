@@ -392,3 +392,114 @@ func TestRunDebate_SalvagedStopReasonSeatHaltsAndIsNotForwarded(t *testing.T) {
 		assert.NotContains(t, inv.Prompt, reasoning)
 	}
 }
+
+// TestRunDebate_StripsThinkBlocksFromSeatContent pins the strip at driveSeat's
+// two content-returning paths. Every seat's reply passes through that one choke
+// point, so a single strip cleans all four downstream uses at once:
+// ProposerStatement and ChallengerStatement (pasted into later seats' prompts),
+// JudgeRaw (fed to parseRuling), and the recorded transcript.
+//
+// Leading-only, so the quoted-tag row is not incidental coverage: a debate about
+// think-tag handling has seats that cite both tags mid-sentence, and an eager
+// strip would delete the statement being argued.
+func TestRunDebate_StripsThinkBlocksFromSeatContent(t *testing.T) {
+	const realRuling = `{"outcome":"uphold","settled_severity":"HIGH","reasoning":"evidence holds"}`
+	for _, tc := range []struct {
+		name, reply, wantStatement string
+	}{
+		{
+			name:          "a leading closed think block is removed",
+			reply:         "<think>draft notes</think>real statement text",
+			wantStatement: "real statement text",
+		},
+		{
+			name:          "a lone closer with no opener leaves the text after it",
+			reply:         "draft</think>real statement",
+			wantStatement: "real statement",
+		},
+		{
+			name:          "tags quoted after real answer text come back byte-identical",
+			reply:         "x.go:1 mishandles <think> and </think>",
+			wantStatement: "x.go:1 mishandles <think> and </think>",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cc := &fakeChatCompleter{turns: []chatTurn{
+				{content: tc.reply},
+				{content: "challenger attacks"},
+				{content: realRuling},
+			}}
+			rec := RunDebate(context.Background(), debateItem(), fcCast(), cc, &fakeDispatcher{}, nil)
+
+			assert.Empty(t, rec.Halted, "the strip is additive: it must not change any seat's status")
+			assert.Equal(t, tc.wantStatement, rec.ProposerStatement)
+			if !strings.Contains(tc.wantStatement, "<think>") {
+				// Only assert prompt cleanliness where the statement itself is
+				// clean — the quoted-tag row is SUPPOSED to forward its tags.
+				for _, inv := range cc.invocations() {
+					assert.NotContains(t, inv.Prompt, "draft notes",
+						"a seat's removed reasoning must never reach another seat's prompt")
+				}
+			}
+		})
+	}
+
+	t.Run("the judge's raw output is stripped before it is parsed", func(t *testing.T) {
+		cc := &fakeChatCompleter{turns: []chatTurn{
+			{content: "proposer defends"},
+			{content: "challenger attacks"},
+			{content: `<think>{"outcome":"overturn","reasoning":"draft, wrong"}</think>` + realRuling},
+		}}
+		rec := RunDebate(context.Background(), debateItem(), fcCast(), cc, &fakeDispatcher{}, nil)
+
+		assert.NotContains(t, rec.JudgeRaw, "<think>")
+		// The point of stripping JudgeRaw: parseRuling takes the first
+		// outcome-keyed object, so the draft would otherwise be the ruling.
+		r := parseRuling(rec.JudgeRaw)
+		assert.Equal(t, OutcomeUphold, r.Outcome, "the draft ruling must not outrank the real one")
+		assert.Equal(t, "evidence holds", r.Reasoning)
+	})
+}
+
+// TestRunDebate_ThinkOnlyReplyFromAnOKSeatIsAcceptedAsBlank PINS a decision, not
+// a fix. A StatusOK seat whose entire reply is a think block hands back an empty
+// statement after the strip, and that is ACCEPTED (Option A, chosen 2026-09-30):
+// driveSeat must keep deriving a seat's status independently of the stripped
+// content. Returning StatusFailed on blank-after-strip (Option B) was considered
+// and rejected — it would make the strip change debate outcome semantics.
+//
+// The accepted degradation is already safe and symmetric with the verify lane: a
+// blank statement reaches the next seat, and a blank judge reply parses to
+// unresolved with Reasoning "empty_response", exactly as a blank stripped
+// skeptic reply parses to unverifiable with Notes "empty_response".
+func TestRunDebate_ThinkOnlyReplyFromAnOKSeatIsAcceptedAsBlank(t *testing.T) {
+	t.Run("an arguing seat is blank but NOT halted", func(t *testing.T) {
+		cc := &fakeChatCompleter{turns: []chatTurn{
+			{content: "<think>only reasoning</think>"},
+			{content: "challenger attacks"},
+			{content: `{"outcome":"uphold","settled_severity":"HIGH","reasoning":"evidence holds"}`},
+		}}
+		rec := RunDebate(context.Background(), debateItem(), fcCast(), cc, &fakeDispatcher{}, nil)
+
+		assert.Empty(t, rec.ProposerStatement, "the whole reply was reasoning, so there is no statement")
+		assert.Empty(t, rec.Halted, "no StatusFailed-on-blank path exists, by design")
+		for _, inv := range cc.invocations() {
+			assert.NotContains(t, inv.Prompt, "only reasoning")
+		}
+	})
+
+	t.Run("a blank judge reply degrades to unresolved, not a halt", func(t *testing.T) {
+		cc := &fakeChatCompleter{turns: []chatTurn{
+			{content: "proposer defends"},
+			{content: "challenger attacks"},
+			{content: "<think>only reasoning</think>"},
+		}}
+		rec := RunDebate(context.Background(), debateItem(), fcCast(), cc, &fakeDispatcher{}, nil)
+
+		assert.Empty(t, rec.JudgeRaw)
+		assert.Empty(t, rec.Halted)
+		r := parseRuling(rec.JudgeRaw)
+		assert.Equal(t, OutcomeUnresolved, r.Outcome)
+		assert.Equal(t, "empty_response", r.Reasoning)
+	})
+}
