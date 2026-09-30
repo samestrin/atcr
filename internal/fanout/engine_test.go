@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/llmclient"
@@ -910,4 +911,20 @@ func TestInvokeSlot_SalvagedReply_ContributesNoFindings(t *testing.T) {
 		assert.False(t, r.UnparseableResponse,
 			"the unparseable marker is gated on StatusOK, so the failover path never sets it")
 	})
+}
+
+// TestResult_ParseFindings_MemoizesTheParsedSlice pins the slice cache: a
+// second parseFindings call on the same Result must return the cached slice
+// (shared backing array), not re-run SplitThink + ParseModelOutput. The
+// truncation-failover gate parses via ParsedFindingCount and findingsFor parses
+// again for every result that HAS findings — caching the slice is what makes
+// the two share one parse instead of only the zero case sharing one.
+func TestResult_ParseFindings_MemoizesTheParsedSlice(t *testing.T) {
+	r := &Result{Content: "HIGH|a.go:1|x|f|correctness|1|e\nLOW|b.go:2|y|f|correctness|1|e"}
+	first := r.parseFindings()
+	require.NotEmpty(t, first)
+	second := r.parseFindings()
+	if unsafe.SliceData(first) != unsafe.SliceData(second) {
+		t.Fatalf("parseFindings must memoize the parsed slice across calls on the same Result; got two separate parses")
+	}
 }
