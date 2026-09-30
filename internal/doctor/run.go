@@ -350,7 +350,7 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 		if pr.markerInReasoning {
 			zbStatus = StatusOK
 		}
-		if s, h, ok := zeroBudgetVerdict(tgt.Model, at.ContextWindowTokens, reviewCap, pr.maxTokens, zbStatus); ok {
+		if s, h, ok := zeroBudgetVerdict(tgt.Model, at.ContextWindowTokens, reviewCap, pr.maxTokens, zbStatus, at.ToolLoop); ok {
 			if pr.markerInReasoning {
 				h += " Separately: " + hint
 			} else if pr.salvaged {
@@ -476,7 +476,7 @@ const zeroBudgetRemedy = "lower its max_tokens, or raise (or drop) its context_w
 // consequence this verdict's hint (about review's payload sizing) never named.
 // See smallWindowVerdict below; it runs after this one in Run, so the more
 // specific verification-lane warning wins the row where both fire.
-func zeroBudgetVerdict(model string, window, maxTokens, probeMaxTokens int, status string) (string, string, bool) {
+func zeroBudgetVerdict(model string, window, maxTokens, probeMaxTokens int, status string, toolLoop bool) (string, string, bool) {
 	if !healthy(status) || maxTokens <= 0 || window <= 0 {
 		return "", "", false
 	}

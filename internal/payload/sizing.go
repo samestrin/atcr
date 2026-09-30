@@ -232,3 +232,6 @@ func TokensToBytes(tokens int) int64 {
 	}
 	return int64(tokens) * conservativeBytesPerTokenNum / conservativeBytesPerTokenDen
 }
+
+// SizingOutputTokens is a stub.
+func SizingOutputTokens(toolLoop bool, outputTokens int) int { return outputTokens }

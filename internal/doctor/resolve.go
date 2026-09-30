@@ -89,6 +89,7 @@ type AgentTarget struct {
 	// built-in default). Recovering what review will use therefore requires the
 	// declaration to survive the override somewhere, and this is that somewhere.
 	DeclaredMaxTokens int
+	ToolLoop          bool
 }
 
 // Resolution is the deduplicated invocation plan for a roster: the distinct
