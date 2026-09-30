@@ -2163,7 +2163,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			// window (Epic 19.10 F3), so a 32k model gets more, smaller chunks and a
 			// 144k model gets fewer — both from the same diff, zero files dropped.
 			// chunkDiff itself is unchanged; only the source of ml changes.
-			ml := payload.ChunkMaxLines(ac.Model, ac.ContextWindowTokens, agentMaxTokens)
+			ml := payload.ChunkMaxLines(ac.Model, ac.ContextWindowTokens, payload.SizingOutputTokens(toolLoop, agentMaxTokens))
 			// Re-cap the plan against the budget that actually sizes THIS call. ml is
 			// clamped to chunk_byte_budget just below, but agentScopeConstraint was
 			// capped at the PAYLOAD tier (agentBudget/8) which never consults that key —
