@@ -42,6 +42,21 @@ const thinkOpen, thinkClose = "<think>", "</think>"
 // Malformed markup never errors and never panics: it degrades to stripping the
 // leading run only, or to stripping nothing.
 //
+// Each pair in the run ends at the FIRST </think> after its opener. So reasoning
+// that QUOTES the closer cuts its own block early, and the tail of that reasoning
+// survives into the answer — a draft object in that tail can then win a
+// first-match parse. That loss is accepted, not overlooked (2026-09-30, sprint
+// 35.16.11.2.2.4 Phase 5 review; TD-022). It cannot be fixed here, because
+// `<think>a </think> b</think>answer` and `<think>a</think>answer naming </think>`
+// have the same tag structure — one opener, two closers — and no positional rule
+// separates them. Ending the run at the LAST closer instead, or refusing to strip
+// when an unmatched closer remains, was measured against the suite: each one
+// breaks the "leading pair then a later closer reference" row in TestSplitThink
+// and relocates the draft-wins failure rather than removing it. Both shapes are
+// pinned — the stripped one there, this one in
+// TestSplitThink_AcceptedLossyEdges — so a future narrowing is a deliberate
+// change with a failing test.
+//
 // Matching is on the exact lowercase literals only. A variant opener or closer
 // (<THINK>, <think type=x>, </thinking>) is not recognized as a tag, because
 // guessing at variants is how a strip starts eating answer text; a variant

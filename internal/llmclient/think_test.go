@@ -145,20 +145,37 @@ func TestHasThinkMarkup_BroaderThanSplitThink(t *testing.T) {
 	}
 }
 
-// TestSplitThink_AcceptedLossyEdges pins the one remaining input on which the
-// strip DOES eat real answer text, so the blast radius stays visible to whoever
-// wires a lane onto the helper and a later narrowing is a deliberate change
-// with a failing test rather than a silent one. Filed as TD-002.
+// TestSplitThink_AcceptedLossyEdges pins the inputs on which the strip gets the
+// boundary wrong, so the blast radius stays visible to whoever wires a lane onto
+// the helper and a later narrowing is a deliberate change with a failing test
+// rather than a silent one. Filed as TD-002 and TD-022.
 //
 // TD-001's case — a bare </think> with no opener taking the whole prefix — is
 // no longer here: the rule that caused it was removed on 2026-09-30 and its
 // inputs now appear in TestSplitThink as survive-whole rows.
 func TestSplitThink_AcceptedLossyEdges(t *testing.T) {
-	// A variant closer is not a closer, so the leading opener reads as unclosed
-	// and everything after it is reasoning.
+	// TD-002: a variant closer is not a closer, so the leading opener reads as
+	// unclosed and everything after it is reasoning. Loses real answer text.
 	answer, reasoning := SplitThink("<think>reasoning</thinking>REAL ANSWER")
 	assert.Empty(t, answer, "a variant closer leaves the opener unclosed")
 	assert.Equal(t, "reasoning</thinking>REAL ANSWER", reasoning)
+
+	// TD-022, the opposite direction: reasoning that QUOTES the closer cuts its
+	// own block early, so the tail of the reasoning survives into the answer and
+	// a draft object in that tail wins a first-match parse. Unfixable here — the
+	// shape is structurally identical to the stripped "leading pair then a later
+	// closer reference" row above (one opener, two closers), and every rule that
+	// catches this one breaks that one. See SplitThink's doc comment.
+	const quotedCloserInsideTheBlock = `<think>the code searches for </think> in the content. ` +
+		`Draft: {"verdict":"confirmed","reasoning":"draft, wrong"} no wait</think>` +
+		`{"verdict":"refuted","reasoning":"real answer"}`
+	answer, reasoning = SplitThink(quotedCloserInsideTheBlock)
+	assert.Equal(t, "the code searches for ", reasoning,
+		"the run ends at the quoted closer, so only the prefix is taken as reasoning")
+	assert.Contains(t, answer, `{"verdict":"confirmed"`,
+		"the discarded draft survives into the answer ahead of the real verdict")
+	assert.Contains(t, answer, "</think>",
+		"the real closer is left behind in the answer, which is the visible tell")
 }
 
 // SplitThink returns strings only. The signature already makes reaching the
