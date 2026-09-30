@@ -23,6 +23,17 @@ const (
 	ReasonInsufficientModels = "insufficient_distinct_models"
 )
 
+// Unresolved reasons recorded when an arguing seat left no statement, so the
+// judge ruled on one side only. Two tokens, not one, because an operator reading
+// debate.json must never be told a seat halted when it ran clean and simply had
+// nothing to say. Constants rather than literals so the docs drift guard in
+// internal/reconcile/ can assert the published list against the code (the
+// convention in CLAUDE.md, per justification_record_boundary_test.go).
+const (
+	ReasonSeatHalted = "seat_halted"
+	ReasonSeatSilent = "seat_silent"
+)
+
 // Caster is one filled debate seat: the label, the backing registry agent, and
 // the resolved provider/config needed to invoke it through the tool loop.
 type Caster struct {

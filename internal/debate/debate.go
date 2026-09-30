@@ -8,6 +8,7 @@ import (
 	reclib "github.com/samestrin/atcr/reconcile"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -530,14 +531,19 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 		// seat halted (tripped budget, provider error) and returned nothing, or
 		// it ran clean and had nothing to say — an empty reply, or one that was
 		// entirely think markup that driveSeat stripped.
+		// ReasonSeatHalted is the stronger claim, so it is reserved for the case
+		// where EVERY silent seat really halted. A mixed pair — a halted
+		// proposer plus a clean-but-blank challenger — reports the weaker
+		// ReasonSeatSilent, which is true of both, rather than asserting a halt
+		// that one of them did not have.
 		ir.Outcome = OutcomeUnresolved
-		ir.Reason = "seat_silent"
-		note := "seat silent: "
-		if anySeatHalted(rec.Halted, silent) {
-			ir.Reason = "seat_halted"
-			note = "seat halted: "
+		ir.Reason = ReasonSeatSilent
+		if allSeatsHalted(rec.Halted, silent) {
+			ir.Reason = ReasonSeatHalted
 		}
-		tr.RecordRuling(RulingEvent{Outcome: OutcomeUnresolved, Reasoning: note + strings.Join(silent, ",")})
+		// The single reason token cannot describe a mixed pair, so the
+		// transcript note labels each seat for itself.
+		tr.RecordRuling(RulingEvent{Outcome: OutcomeUnresolved, Reasoning: "no statement: " + strings.Join(seatSilenceNotes(rec.Halted, silent), ", ")})
 		return ir
 	}
 
@@ -607,18 +613,37 @@ func silentArguingSeats(rec Record) []string {
 	return silent
 }
 
-// anySeatHalted reports whether any of the named seats is among the halted ones.
-// It separates "halted and said nothing" from "ran fine and said nothing" so the
-// recorded reason does not claim a seat halted when it did not.
-func anySeatHalted(halted, seats []string) bool {
+// seatHalted reports whether seat is among the halted ones. It separates "halted
+// and said nothing" from "ran fine and said nothing" so neither the recorded
+// reason nor the transcript note claims a seat halted when it did not.
+func seatHalted(halted []string, seat string) bool {
+	return slices.Contains(halted, seat)
+}
+
+// allSeatsHalted reports whether EVERY named seat halted. The reason token is
+// keyed on all, not any: on a mixed pair, claiming seat_halted would be false of
+// the seat that ran clean.
+func allSeatsHalted(halted, seats []string) bool {
 	for _, s := range seats {
-		for _, h := range halted {
-			if h == s {
-				return true
-			}
+		if !seatHalted(halted, s) {
+			return false
 		}
 	}
-	return false
+	return len(seats) > 0
+}
+
+// seatSilenceNotes labels each silent seat with its own cause for the transcript,
+// which the single reason token cannot do on a mixed pair.
+func seatSilenceNotes(halted, seats []string) []string {
+	notes := make([]string, 0, len(seats))
+	for _, s := range seats {
+		cause := "silent"
+		if seatHalted(halted, s) {
+			cause = "halted"
+		}
+		notes = append(notes, s+" "+cause)
+	}
+	return notes
 }
 
 // judgeHalted reports whether the judge seat is among the halted seats. A halted

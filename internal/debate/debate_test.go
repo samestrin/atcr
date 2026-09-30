@@ -361,7 +361,7 @@ func TestRunDebate_ArguingSeatHaltedIsUnresolved(t *testing.T) {
 			var df DebateFile
 			raw, _ := os.ReadFile(filepath.Join(dir, reconciledSubdir, DebateJSON))
 			require.NoError(t, json.Unmarshal(raw, &df))
-			assert.Equal(t, "seat_halted", df.Items[0].Reason)
+			assert.Equal(t, ReasonSeatHalted, df.Items[0].Reason)
 		})
 	}
 }
@@ -867,7 +867,43 @@ func TestRunDebate_BlankArguingSeatIsUnresolvedEvenWhenNotHalted(t *testing.T) {
 			var df DebateFile
 			raw, _ := os.ReadFile(filepath.Join(dir, reconciledSubdir, DebateJSON))
 			require.NoError(t, json.Unmarshal(raw, &df))
-			assert.Equal(t, "seat_silent", df.Items[0].Reason)
+			assert.Equal(t, ReasonSeatSilent, df.Items[0].Reason)
 		})
 	}
+
+	// A mixed pair is the case one reason token cannot describe: the proposer
+	// halted, and the challenger it handed a blank prompt to then ran clean and
+	// said nothing. Reporting seat_halted here would be false of the challenger,
+	// so the weaker seat_silent wins and the transcript note labels each seat.
+	t.Run("a halted seat plus a clean-but-blank seat reports the weaker reason", func(t *testing.T) {
+		dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+		cc := &fakeChatCompleter{turns: []chatTurn{
+			{err: errContext()}, // proposer halts
+			{content: ""},       // challenger runs clean, says nothing
+			{content: `{"outcome":"uphold","settled_severity":"HIGH","reasoning":"evidence holds"}`},
+		}}
+		res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+		require.NoError(t, err)
+		require.Equal(t, 1, res.Unresolved)
+
+		var df DebateFile
+		raw, _ := os.ReadFile(filepath.Join(dir, reconciledSubdir, DebateJSON))
+		require.NoError(t, json.Unmarshal(raw, &df))
+		assert.Equal(t, ReasonSeatSilent, df.Items[0].Reason,
+			"not every silent seat halted, so the stronger claim would be a lie about the challenger")
+	})
+}
+
+// TestSeatSilenceNotes_LabelsEachSeatForItself pins the per-seat labelling the
+// single reason token cannot carry. Without it a mixed pair rendered as
+// "seat halted: proposer,challenger" — telling an operator the challenger
+// halted when it had run clean.
+func TestSeatSilenceNotes_LabelsEachSeatForItself(t *testing.T) {
+	assert.Equal(t, []string{"proposer halted", "challenger silent"},
+		seatSilenceNotes([]string{LabelProposer}, []string{LabelProposer, LabelChallenger}))
+	assert.True(t, allSeatsHalted([]string{LabelProposer, LabelChallenger}, []string{LabelProposer}))
+	assert.False(t, allSeatsHalted([]string{LabelProposer}, []string{LabelProposer, LabelChallenger}),
+		"any clean-but-blank seat must downgrade the reason")
+	assert.False(t, allSeatsHalted(nil, nil),
+		"no silent seats is not vacuously 'all halted' — the guard must not fire at all")
 }

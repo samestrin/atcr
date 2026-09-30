@@ -131,6 +131,23 @@ func TestDocs_ContextWindowRowDoesNotRestateTheSkepticClamp(t *testing.T) {
 		"absence of the old formula is not the fix — the row must actually POINT at the one description of the clamp")
 }
 
+// docLineContaining returns the single line of doc containing want. Mirrors
+// docTableRow's "one line is the unit that drifts" rationale, and fails loudly on
+// more than one match so a decoy sentence cannot pin the guard to the wrong line.
+func docLineContaining(t *testing.T, doc, want string) string {
+	t.Helper()
+	var matches []string
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.Contains(line, want) {
+			matches = append(matches, line)
+		}
+	}
+	if len(matches) != 1 {
+		t.Fatalf("docs has %d lines containing %q — the guard must pin exactly one", len(matches), want)
+	}
+	return matches[0]
+}
+
 // findBulletLines returns every "- " line of doc containing want. Split out of
 // docBullet so the match-count contract is unit-testable: a second, earlier
 // bullet mentioning the same substring (a summary or changelog-style line) must
@@ -254,10 +271,26 @@ func TestDocs_CrossExaminationStatesTheSilentSeatRule(t *testing.T) {
 		"the qualifier IS the correction: without it the sentence describes the pre-fix behaviour, in which a clean-but-blank seat produced a fake contested ruling")
 	assert.NotContains(t, bullet, "and so does a halted arguing seat",
 		"the old narrower wording must never come back — it is the hole, stated as the rule")
-	assert.Contains(t, bullet, "`seat_silent`",
-		"a reason string that appears in debate.json and in no document is a reason an operator cannot look up")
-	assert.Contains(t, bullet, "`seat_halted`",
-		"the two reasons are kept apart on purpose: a clean seat must never be reported as having halted")
+	// Reason tokens as LITERALS here, deliberately. internal/debate imports
+	// internal/reconcile, so this package cannot import it back to anchor on
+	// debate.ReasonSeatHalted — the cycle forbids it. The code-anchored half of
+	// this guard therefore lives in cli/, which can import both: see
+	// TestDocs_DebateReasonTokensMatchTheConstants. Same split the benchmark
+	// outcome vocabulary uses for the same reason.
+	for _, reason := range []string{"seat_halted", "seat_silent", "no_resolvable_proposer", "insufficient_distinct_models"} {
+		assert.Contains(t, bullet, "`"+reason+"`",
+			"a reason string that appears in debate.json and in no document is a reason an operator cannot look up")
+	}
+	assert.Contains(t, bullet, "every silent seat halted",
+		"the two reasons are kept apart on purpose, and the rule that picks between them is what an operator needs: a mixed pair reports the weaker one")
+
+	// The list used to claim completeness while omitting four reasons the code
+	// writes. A falsely-complete enumeration is worse than none, because a
+	// reader stops looking.
+	for _, reason := range []string{"context_cancelled", "no_cluster_decision", "harness_unavailable", "unparseable_ruling", "judge_halted"} {
+		assert.Contains(t, bullet, "`"+reason+"`",
+			"the bullet enumerates debate.json's unresolved reasons, so an omitted one reads as a reason that cannot occur")
+	}
 }
 
 // TestDocs_CrossExaminationStatesTheThinkStrip pins the transcript row against
@@ -280,6 +313,35 @@ func TestDocs_CrossExaminationStatesTheThinkStrip(t *testing.T) {
 		"the load-bearing consequence: the removed bytes are unrecoverable, so a mis-strip cannot be diagnosed from this artifact")
 	assert.NotContains(t, row, "The replayable per-item exchange",
 		"the unqualified claim is what drifted — the file no longer holds the raw reply")
+}
+
+// TestDocs_ParsingSentencesDoNotPromiseTheRawReply pins both lanes' defensive
+// parsing sentences against internal/verify/invoke.go and internal/debate/debate.go.
+//
+// Both promised the diagnostic notes carry "the raw text preserved". Phase 2 of
+// sprint 35.16.11.2.2.4 made that false in both lanes: the parsers now receive
+// the reply AFTER llmclient.SplitThink removes a leading <think> block, and the
+// removed bytes are kept nowhere — so a reply that was entirely reasoning reads
+// as empty_response and the operator sees none of what the model said. The
+// debate transcript row was corrected during the phase and these two were not,
+// which is the asymmetry this guard exists to prevent recurring.
+func TestDocs_ParsingSentencesDoNotPromiseTheRawReply(t *testing.T) {
+	for _, tc := range []struct{ doc, anchor string }{
+		{"verification.md", "Parsing is defensive"},
+		{"cross-examination.md", "Parsing is defensive"},
+	} {
+		t.Run(tc.doc, func(t *testing.T) {
+			doc := readDoc(t, tc.doc)
+			line := docLineContaining(t, doc, tc.anchor)
+
+			assert.NotContains(t, line, "raw text preserved",
+				"the raw reply is NOT preserved once the think strip runs ahead of the parser — this is the exact phrase that went stale")
+			assert.Contains(t, line, "<think>",
+				"a reader cannot tell the recorded text from the reply unless the sentence names what is removed")
+			assert.Contains(t, line, "kept nowhere",
+				"the load-bearing consequence: the stripped bytes are unrecoverable, so the notes are not a faithful record of the reply")
+		})
+	}
 }
 
 // TestFindBulletLines_RequiresExactlyOneMatch pins the helper docBullet is built
