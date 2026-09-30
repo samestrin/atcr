@@ -168,18 +168,22 @@ type AgentResult struct {
 	// is empty (omitted) for an undeclared agent and when no call was placed.
 	ThinkingStatus string `json:"thinking_status,omitempty"`
 	ThinkingDetail string `json:"thinking_detail,omitempty"`
-	// ThinkingDeclared names the declared thinking polarity the verdict measured —
+	// ThinkingPolarity names the declared thinking polarity the verdict measured —
 	// "off", "on", or the declared thinking_level (a level implies on) — so the
 	// cli warning and --json consumers can split remedies by polarity without
 	// parsing ThinkingDetail prose (TD cli/doctor.go:255). Empty (omitted) for an
-	// undeclared agent and when no call was placed, like ThinkingStatus.
-	ThinkingDeclared string `json:"thinking_declared,omitempty"`
+	// undeclared agent and when no call was placed, like ThinkingStatus. The
+	// JSON key stays thinking_declared (the wire contract predates the rename;
+	// TD internal/registry/config.go:261, clarified 2026-09-29: the registry
+	// predicate keeps the "declared" name — it IS the declaration — while this
+	// field holds a polarity).
+	ThinkingPolarity string `json:"thinking_declared,omitempty"`
 	// ThinkingPreserve records that the flagged probe itself sent
 	// preserve_thinking, so a provider 4xx caused by that flag is attributable:
 	// the cli warning names "retry without preserve_thinking" as the first remedy
 	// (TD cli/doctor.go:367) and a --json consumer can see the flag was on the
 	// wire without parsing ThinkingDetail prose. Empty (omitted) exactly when
-	// ThinkingDeclared is — the flag only matters when a verdict was reached.
+	// ThinkingPolarity is — the flag only matters when a verdict was reached.
 	ThinkingPreserve string `json:"thinking_preserve,omitempty"`
 }
 
@@ -390,7 +394,7 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 			ResponseFormatDetail: pr.responseFormatDetail,
 			ThinkingStatus:       pr.thinkingStatus,
 			ThinkingDetail:       pr.thinkingDetail,
-			ThinkingDeclared:     thinkingDeclaredForm(tgt, pr.thinkingStatus),
+			ThinkingPolarity:     thinkingDeclaredForm(tgt, pr.thinkingStatus),
 			ThinkingPreserve:     thinkingPreserveForm(tgt, pr.thinkingStatus),
 		})
 	}

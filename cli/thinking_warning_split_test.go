@@ -20,10 +20,10 @@ import (
 // max_tokens or a different model" to both groups.
 func TestThinkingNotHonoredWarnings_SplitByDeclaredPolarity(t *testing.T) {
 	rep := &doctor.Report{Agents: []doctor.AgentResult{
-		{Agent: "alice", Model: "model-a", ThinkingStatus: doctor.ThinkingNotHonored, ThinkingDeclared: registry.ThinkingOff},
-		{Agent: "bob", Model: "model-b", ThinkingStatus: doctor.ThinkingNotHonored, ThinkingDeclared: registry.ThinkingLevelLow},
-		{Agent: "carol", Model: "model-c", ThinkingStatus: doctor.ThinkingNotHonored, ThinkingDeclared: registry.ThinkingOn},
-		{Agent: "dave", Model: "model-d", ThinkingStatus: doctor.ThinkingHonored, ThinkingDeclared: registry.ThinkingOn},
+		{Agent: "alice", Model: "model-a", ThinkingStatus: doctor.ThinkingNotHonored, ThinkingPolarity: registry.ThinkingOff},
+		{Agent: "bob", Model: "model-b", ThinkingStatus: doctor.ThinkingNotHonored, ThinkingPolarity: registry.ThinkingLevelLow},
+		{Agent: "carol", Model: "model-c", ThinkingStatus: doctor.ThinkingNotHonored, ThinkingPolarity: registry.ThinkingOn},
+		{Agent: "dave", Model: "model-d", ThinkingStatus: doctor.ThinkingHonored, ThinkingPolarity: registry.ThinkingOn},
 	}}
 
 	lines := thinkingNotHonoredWarnings(rep)
@@ -47,8 +47,8 @@ func TestThinkingNotHonoredWarnings_SplitByDeclaredPolarity(t *testing.T) {
 // that never sent the flag (the preserve remedy is named first on its line).
 func TestThinkingNotHonoredWarnings_NamesPreserveThinkingRemedyFirst(t *testing.T) {
 	rep := &doctor.Report{Agents: []doctor.AgentResult{
-		{Agent: "erin", Model: "model-e", ThinkingStatus: doctor.ThinkingNotHonored, ThinkingDeclared: registry.ThinkingOn, ThinkingPreserve: registry.ThinkingOn},
-		{Agent: "frank", Model: "model-f", ThinkingStatus: doctor.ThinkingNotHonored, ThinkingDeclared: registry.ThinkingOn},
+		{Agent: "erin", Model: "model-e", ThinkingStatus: doctor.ThinkingNotHonored, ThinkingPolarity: registry.ThinkingOn, ThinkingPreserve: registry.ThinkingOn},
+		{Agent: "frank", Model: "model-f", ThinkingStatus: doctor.ThinkingNotHonored, ThinkingPolarity: registry.ThinkingOn},
 	}}
 
 	lines := thinkingNotHonoredWarnings(rep)
@@ -74,7 +74,7 @@ func TestThinkingNotHonoredWarnings_NamesPreserveThinkingRemedyFirst(t *testing.
 // no preserve remedy injected.
 func TestThinkingNotHonoredWarnings_NoPreserveRemedyWhenFlagUnsent(t *testing.T) {
 	rep := &doctor.Report{Agents: []doctor.AgentResult{
-		{Agent: "gina", Model: "model-g", ThinkingStatus: doctor.ThinkingNotHonored, ThinkingDeclared: registry.ThinkingOn},
+		{Agent: "gina", Model: "model-g", ThinkingStatus: doctor.ThinkingNotHonored, ThinkingPolarity: registry.ThinkingOn},
 	}}
 	lines := thinkingNotHonoredWarnings(rep)
 	require.Len(t, lines, 1)
@@ -83,7 +83,7 @@ func TestThinkingNotHonoredWarnings_NoPreserveRemedyWhenFlagUnsent(t *testing.T)
 
 func TestThinkingNotHonoredWarnings_SinglePolarity(t *testing.T) {
 	offOnly := &doctor.Report{Agents: []doctor.AgentResult{
-		{Agent: "alice", Model: "model-a", ThinkingStatus: doctor.ThinkingNotHonored, ThinkingDeclared: registry.ThinkingOff},
+		{Agent: "alice", Model: "model-a", ThinkingStatus: doctor.ThinkingNotHonored, ThinkingPolarity: registry.ThinkingOff},
 	}}
 	lines := thinkingNotHonoredWarnings(offOnly)
 	require.Len(t, lines, 1)
@@ -91,7 +91,7 @@ func TestThinkingNotHonoredWarnings_SinglePolarity(t *testing.T) {
 	assert.Contains(t, lines[0], "alice (model-a)")
 
 	onOnly := &doctor.Report{Agents: []doctor.AgentResult{
-		{Agent: "bob", Model: "model-b", ThinkingStatus: doctor.ThinkingNotHonored, ThinkingDeclared: registry.ThinkingOn},
+		{Agent: "bob", Model: "model-b", ThinkingStatus: doctor.ThinkingNotHonored, ThinkingPolarity: registry.ThinkingOn},
 	}}
 	lines = thinkingNotHonoredWarnings(onOnly)
 	require.Len(t, lines, 1)

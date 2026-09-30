@@ -348,7 +348,7 @@ func thinkingNotHonoredWarnings(rep *doctor.Report) []string {
 			continue
 		}
 		name := a.Agent + " (" + a.Model + ")"
-		if a.ThinkingDeclared == registry.ThinkingOff {
+		if a.ThinkingPolarity == registry.ThinkingOff {
 			off = append(off, name)
 		} else if a.ThinkingPreserve != "" {
 			// A probe that itself sent preserve_thinking gets its own line: the
