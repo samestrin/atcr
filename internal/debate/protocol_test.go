@@ -69,6 +69,29 @@ func TestSeatStatements_FlattenedBeforeWrapping(t *testing.T) {
 	assert.Contains(t, judge, "the defense is weak.", "statement content is preserved, only flattened")
 }
 
+// TestRunDebate_SilentProposerShortCircuitsRemainingSeats pins the waste
+// elimination on the silent-proposer path: debateOne discards the item as
+// unresolved the moment silentArguingSeats sees a blank arguing statement, so
+// driving the challenger and judge — two full tool loops with their tool calls —
+// through an item whose outcome is already decided is pure cost. The remaining
+// turns must not run.
+func TestRunDebate_SilentProposerShortCircuitsRemainingSeats(t *testing.T) {
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: ""}, // proposer runs clean, says nothing
+		{content: "challenger attacks"},
+		{content: `{"outcome":"uphold","settled_severity":"HIGH","reasoning":"evidence holds"}`},
+	}}
+	rec := RunDebate(context.Background(), debateItem(), fcCast(), cc, &fakeDispatcher{}, nil)
+
+	assert.Len(t, cc.invocations(), 1,
+		"a silent proposer already decides the item as unresolved — the challenger and judge must not be invoked")
+	assert.Empty(t, rec.ChallengerStatement)
+	assert.Empty(t, rec.JudgeRaw)
+
+	// The outcome must be unchanged: still the silent-seat unresolved path.
+	assert.Equal(t, []string{LabelProposer}, silentArguingSeats(rec))
+}
+
 func TestRunDebate_DrivesThreeTurnsInOrder(t *testing.T) {
 	cc := &fakeChatCompleter{turns: []chatTurn{
 		{content: "proposer defends"},
