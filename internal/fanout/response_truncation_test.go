@@ -466,27 +466,36 @@ func TestResult_ParseFindings_LeavesContentUnstripped(t *testing.T) {
 }
 
 // ACCEPTED LOSS, pinned so it is a decision on the record rather than a surprise.
-// A LEADING <think> with no canonical closer makes the whole reply reasoning. Where
-// that lands depends on WHY the closer is missing: a variant spelling
-// (</thinking>) loses a real finding that follows and scores the slot unparseable,
-// while a reply cut off mid-thought has no following finding and is demoted by the
-// truncation-failover gate instead — see
+// A LEADING  thinking with no canonical closer makes the whole reply reasoning. Where
+// that lands depends on WHY the closer is missing: a reply cut off mid-thought has
+// no following finding and is demoted by the truncation-failover gate instead — see
 // TestInvokeSlot_TruncatedThinkOnlyReply_DemotesToFailover for that half.
 //
-// Not fixed, because the only remedy available is to re-parse the raw content when
-// the strip yields nothing, and the raw parse of a reply cut off mid-draft returns
-// the DRAFT — the exact bug the strip exists to stop. That remedy was tested and
-// rejected for the verify lane at this sprint's Phase 2 review; the third case
-// below is the evidence it fails here too. Filed as TD for the blast radius.
+// The variant-spelling half is NO LONGER an accepted loss. llmclient.SplitThink was
+// changed (2026-09-30, superseding TD-002) so an unclosed opener followed by a
+// closer-LIKE token strips NOTHING: the opener was real and its closer was merely
+// spelled differently, so returning the reply whole beats classifying the entire
+// answer as reasoning. A real finding after the variant closer therefore SURVIVES,
+// which is what the second case below now asserts. Only a genuinely cut-off reply
+// (no closer-like token at all) still loses its tail; that case keeps its own
+// subtest.
+//
+// The raw-fallback rejection below is unaffected: it concerns a reply cut off
+// mid-thought, whose raw parse sees only the draft.
 func TestResult_ParseFindings_UnclosedLeadingOpenerLosesTheReply(t *testing.T) {
 	t.Run("unclosed opener swallows a real finding after it", func(t *testing.T) {
 		const c = "<think>\nreasoning about the diff\nHIGH|a.go:1|real finding|f|correctness|5|e"
 		assert.Equal(t, 1, len(parseRawFindings(c)), "the raw reply really does hold one finding")
 		assert.Equal(t, 0, (&Result{Content: c}).ParsedFindingCount(), "and the strip loses it")
 	})
-	t.Run("variant closer is not a closer", func(t *testing.T) {
+	t.Run("variant closer is not a closer: nothing is stripped, the finding survives", func(t *testing.T) {
+		// Supersedes the TD-002 accepted-loss. SplitThink now returns the reply whole
+		// when a variant closer follows an unclosed opener, so the real finding after it
+		// is preserved rather than silently lost with the reasoning.
 		const c = "<think>reasoning</thinking>\nHIGH|a.go:1|real|f|correctness|5|e"
-		assert.Equal(t, 0, (&Result{Content: c}).ParsedFindingCount())
+		assert.Equal(t, 1, (&Result{Content: c}).ParsedFindingCount(),
+			"a variant closer no longer makes the whole reply reasoning")
+		assert.Equal(t, c, (&Result{Content: c}).Content, "the raw reply must survive for review.md")
 	})
 	t.Run("why the raw fallback is rejected: raw returns the draft", func(t *testing.T) {
 		// A reply cut off mid-thought has no real answer, only the draft. Falling
