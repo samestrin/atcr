@@ -12,7 +12,7 @@ An agent that sets `thinking_style` alone no longer gets a different diff-cache 
 ### Changed
 
 - New `registry.ThinkingDeclared` holds the "declared = thinking or thinking_level set" rule used by the cache key and the telemetry gate.
-- `diffCacheKey` takes a `CacheKeyInputs` struct instead of 11 positional parameters, so adjacent same-typed values cannot be swapped silently. Key bytes are unchanged for every declared agent.
+- `diffCacheKey` takes a (package-private) `cacheKeyInputs` struct instead of 11 positional parameters, so adjacent same-typed values cannot be swapped silently. Key bytes are unchanged for every declared agent.
 
 *Shipped via /execute-epic (epic 35.16.11.2.2.3)*
 
