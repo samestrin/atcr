@@ -632,9 +632,23 @@ func extractSection(lines []string, idx int) (text, section string) {
 	//     parser read one. It bounds by unfenced JSON VALUES only; record-shaped
 	//     lines are the bullet above.
 	//
-	// Filings: the excerpt/parser parity and the fork between following the artifact
-	// and following the parser are tracked as TD, and the choice is DECIDED in favour
-	// of the artifact (pinned by
+	// THE DAMAGE IS WIDER THAN A DEGRADED EXCERPT, and the earlier form of this
+	// comment said otherwise. buildAnchorIndex and matchNarrative are built from
+	// these SAME raw lines, with no exclusion for the stripped block, so a FILE:LINE
+	// reference written inside it is a candidate anchor like any other. When such a
+	// line wins the match, the finding ships with justification text drawn from the
+	// model's ABANDONED draft reasoning and a source_report.line pointing into the
+	// block the findings parser deliberately refused. That is a wrong PROVENANCE for
+	// a published field, not merely excerpt quality — and it is the content this
+	// sprint exists to keep out of the record. It cannot be corrected later either:
+	// localdebt persists Justification into an append-only store whose id excludes
+	// it, so no later reconcile can replace the value. (Reachable by a
+	// prompt-injected reviewer reply, which can put a chosen file:line in the draft.)
+	//
+	// Separate TD row, not fixed here: excluding in-block lines from buildAnchorIndex
+	// changes anchor MATCHING, so it reaches matchNarrative and the tiebreak plus the
+	// three test files that pin them — beyond a localized fix. The parity choice
+	// below is DECIDED in favour of following the artifact (pinned by
 	// TestExtractSection_FollowsTheRawArtifactWhileTheParserReadsStripped): stripping
 	// here would make the excerpt stop matching the review.md a reader is pointed at
 	// by source_report.
