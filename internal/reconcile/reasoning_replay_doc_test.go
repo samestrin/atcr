@@ -28,10 +28,17 @@ import (
 //
 // Tokens, not whole sentences: registry.md is one long line per paragraph, so a
 // reworded connective must not fail a test whose subject is the claim.
+// Marker for the **Reasoning replay.** paragraph, unique in registry.md (the
+// word "reasoning" appears on two other lines, one of them the preserve_thinking
+// row, so a looser marker would pin the wrong line).
+const replayParagraphMarker = "the tool loop re-sends provider reasoning on every later turn"
+
 func TestRegistryDoc_ReasoningReplayExcludesInlineThink(t *testing.T) {
 	doc := readDoc(t, "registry.md")
+	paragraph := docLineContaining(t, doc, replayParagraphMarker)
 
 	t.Run("the replay contract names the members-only scope", func(t *testing.T) {
+		line := paragraph
 		for _, want := range []string{
 			"**Reasoning here means those four members only.**",
 			"is not provider reasoning for replay purposes",
@@ -42,7 +49,7 @@ func TestRegistryDoc_ReasoningReplayExcludesInlineThink(t *testing.T) {
 			// The consequence an operator actually observes.
 			"replay contributes nothing",
 		} {
-			assert.Contains(t, doc, want,
+			assert.Contains(t, line, want,
 				"registry.md's Reasoning replay paragraph must state the inline-think carve-out: missing %q", want)
 		}
 	})
@@ -54,16 +61,24 @@ func TestRegistryDoc_ReasoningReplayExcludesInlineThink(t *testing.T) {
 	// eliminated when it is only narrowed (TD-008). Asserted as its own subtest so
 	// the failure message says which half went wrong.
 	t.Run("the replay contract keeps the leading-only qualifier", func(t *testing.T) {
+		line := paragraph
 		for _, want := range []string{
 			"A **leading** inline `<think>…</think>` run in the reply **content**",
 			"The strip is **leading-only**",
 			"left in place and DOES ride back in history",
 		} {
-			assert.Contains(t, doc, want,
+			assert.Contains(t, line, want,
 				"registry.md must NOT claim an inline block never rides back: missing %q", want)
 		}
-		assert.NotContains(t, doc, "so it never rides back",
-			"an unqualified never-rides-back claim is false: the strip is leading-only")
+		// The three positive assertions above ARE the change-sensitive half: they
+		// name the qualifier a false "never rides back" would have to drop. A
+		// NotContains on one SPELLING of the bad claim caught nothing — the phrase
+		// it banned ("so it never rides back") does not occur in registry.md at
+		// all, so it would have passed even if the paragraph had been rewritten to
+		// assert the very thing it bans — and being whole-document scoped, an
+		// unrelated later sentence in a 630-line file would false-fail it. Banned
+		// wording is not a guard; the positive form is (see the "a DEFAULT, not a
+		// floor" pattern in skeptic_budget_docs_test.go).
 	})
 
 	// The content:null normalization is the one part of this strip whose output
@@ -72,6 +87,7 @@ func TestRegistryDoc_ReasoningReplayExcludesInlineThink(t *testing.T) {
 	// tool-enabled agent, including a roster that declares no thinking keys. The
 	// paragraph must not attribute the null to a think block alone.
 	t.Run("the content-null normalization is stated as independent of thinking", func(t *testing.T) {
+		line := paragraph
 		for _, want := range []string{
 			"replays as `content: null`, not an empty string",
 			"with no think markup in it at all",
@@ -83,7 +99,7 @@ func TestRegistryDoc_ReasoningReplayExcludesInlineThink(t *testing.T) {
 			"whose provider sends an empty string there, declared thinking or not",
 			"a provider that already sends `null` on such a turn is unaffected",
 		} {
-			assert.Contains(t, doc, want,
+			assert.Contains(t, line, want,
 				"registry.md must state the content:null normalization is independent of thinking: missing %q", want)
 		}
 	})
