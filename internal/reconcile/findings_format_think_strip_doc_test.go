@@ -19,6 +19,8 @@ const (
 	ffFenceGrammarMarker   = "Anything inside another code fence is a quoted example"
 	ffDroppedFindingMarker = "An object with an unknown severity or no location is dropped."
 	ffJustificationMarker  = "- `justification` — the narrative section extracted"
+	// providers.md is a bullet-per-paragraph file, so the bullet IS the paragraph.
+	provNormalizationMarker = "**Reasoning/thinking token normalization.**"
 )
 
 // The findings lane strips a leading <think> block before parsing (sprint
@@ -186,6 +188,7 @@ func TestProvidersDoc_SalvageYieldsNoFindings(t *testing.T) {
 	doc := readDoc(t, "providers.md")
 
 	t.Run("the salvage is named as diagnostic-only", func(t *testing.T) {
+		line := docLineContaining(t, doc, provNormalizationMarker)
 		for _, want := range []string{
 			"marks the reply **salvaged**",
 			"for diagnosability only",
@@ -200,18 +203,19 @@ func TestProvidersDoc_SalvageYieldsNoFindings(t *testing.T) {
 			// from being added back.
 			"`review.md` and `atcr doctor`'s hint",
 		} {
-			assert.Contains(t, doc, want,
+			assert.Contains(t, line, want,
 				"providers.md must describe the salvage as diagnostic-only: missing %q", want)
 		}
 	})
 
 	t.Run("the refusal is stated for every lane", func(t *testing.T) {
+		line := docLineContaining(t, doc, provNormalizationMarker)
 		for _, want := range []string{
 			"yields no findings, verdict, ruling, or cache entry",
 			"every lane refuses it",
 			"worse than no answer",
 		} {
-			assert.Contains(t, doc, want,
+			assert.Contains(t, line, want,
 				"providers.md must state that a salvaged reply is refused: missing %q", want)
 		}
 	})
@@ -221,12 +225,28 @@ func TestProvidersDoc_SalvageYieldsNoFindings(t *testing.T) {
 	// SplitThink is leading-only, so an unqualified claim here would repeat the
 	// overclaim the Phase 5 gate caught twice in docs/registry.md.
 	t.Run("the think strip is named and qualified as leading-only", func(t *testing.T) {
+		line := docLineContaining(t, doc, provNormalizationMarker)
 		for _, want := range []string{
 			"A **leading** inline `<think>…</think>` run is stripped from `content` before parsing",
 			"leading-only: a block after answer text is left in place",
 		} {
-			assert.Contains(t, doc, want,
+			assert.Contains(t, line, want,
 				"providers.md must state the leading-only think strip: missing %q", want)
 		}
+
+		// Code anchor. The bullet's two halves name the strip's actual behavior,
+		// so assert them: a leading run leaves `content` before parsing, and a
+		// block after answer text does not. Deliberately the same clause the
+		// findings-format guard asserts — this repo asserts a shared clause in
+		// BOTH documents precisely so the pair cannot drift apart (see
+		// skeptic_budget_docs_test.go).
+		stripped, removed := llmclient.SplitThink("<think>reasoning</think>Answer body.")
+		assert.Equal(t, "Answer body.", stripped,
+			"a leading run is stripped from the content before parsing, which is what this bullet promises")
+		assert.Equal(t, "reasoning", removed,
+			"the strip is not a no-op: it removes the run rather than passing the reply through")
+		kept, _ := llmclient.SplitThink("Answer body. <think>a quoted tag</think>")
+		assert.Equal(t, "Answer body. <think>a quoted tag</think>", kept,
+			"leading-ONLY is the qualifier the bullet carries; a run after answer text stays put")
 	})
 }
