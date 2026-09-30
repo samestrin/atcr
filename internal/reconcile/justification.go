@@ -607,15 +607,37 @@ func extractSection(lines []string, idx int) (text, section string) {
 	// held only for single-call personas — a joined multi-chunk scan could mask a
 	// chunk the parser never read together with this one.)
 	//
-	// One accepted drift, since sprint 35.16.11.2.2.4: this scan reads review.md,
-	// which is the RAW reply, while Result.parseFindings now parses the reply with
-	// a leading <think> block stripped off. So for a reply that opens with such a
-	// block, a finding-shaped line INSIDE it is masked and bounds the excerpt here
-	// although the parser never read it, and conversely BareValueSpans can report
-	// nothing where the parser read a value. The damage is a degraded justification
-	// excerpt, never a wrong finding — findings come from the parser, not from this
-	// scan. Filed as TD rather than fixed: stripping here would make the excerpt
-	// stop matching the review.md a reader is pointed at by source_report.
+	// One accepted drift, since sprint 35.16.11.2.2.4. THREE readers below disagree
+	// with the parser for a reply that opens with a leading <think> block, because
+	// all three read review.md (the RAW reply) while Result.parseFindings parses the
+	// reply with that block stripped off. They are distinct mechanisms and diverge on
+	// different inputs, so they are named separately rather than described as one
+	// scan:
+	//
+	//   - fenceMask (called immediately below) is the LARGEST divergence, and the
+	//     one whose consequence is not merely a worse excerpt. A ```` ```json ````
+	//     opener INSIDE the stripped block — a draft findings block, the likeliest
+	//     thing a model writes in its reasoning — is read here as a dangling json
+	//     opener, and fenceMask masks the whole rest of the chunk in BOTH views. The
+	//     section walk-up then finds no heading at all, so source_report.section comes
+	//     back empty and the excerpt collapses to nothing for EVERY finding anchored
+	//     in that chunk — a whole-review loss, not a per-line one. The parser, reading
+	//     stripped content, never saw that fence.
+	//   - recordAt / isFindingRecordStart: a finding-shaped line inside the block
+	//     bounds the excerpt here although the parser never emitted it. That bounding
+	//     is isFindingRecordStart's, not BareValueSpans' — the two are separate scans
+	//     and conflating them is what this comment previously did.
+	//   - stream.BareValueSpans (below) reads the same raw lines, so it can report an
+	//     unfenced JSON value the parser never read, or report nothing where the
+	//     parser read one. It bounds by unfenced JSON VALUES only; record-shaped
+	//     lines are the bullet above.
+	//
+	// Filings: the excerpt/parser parity and the fork between following the artifact
+	// and following the parser are tracked as TD, and the choice is DECIDED in favour
+	// of the artifact (pinned by
+	// TestExtractSection_FollowsTheRawArtifactWhileTheParserReadsStripped): stripping
+	// here would make the excerpt stop matching the review.md a reader is pointed at
+	// by source_report.
 	spans := stream.BareValueSpans([]byte(strings.Join(lines, "\n")))
 	if len(spans) > 0 {
 		strict = append([]bool(nil), strict...)
