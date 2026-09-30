@@ -823,8 +823,21 @@ func TestRunDebate_TranscriptRecordsTheStrippedStatement(t *testing.T) {
 	raw, err := os.ReadFile(paths[0])
 	require.NoError(t, err)
 
-	assert.NotContains(t, string(raw), "<think>",
-		"the transcript is the audit artifact — a think tag reaching it means the strip missed a consumer")
+	// Assert on the DECODED statements, not on the raw file bytes: json.Marshal
+	// HTML-escapes '<' by default, so a surviving think tag is written as the
+	// escaped \u003cthink\u003e form and a NotContains on the literal would never
+	// fail. Decoding each line into a TurnEvent unescapes it, making the
+	// assertion load-bearing.
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		var ev TurnEvent
+		if err := json.Unmarshal([]byte(line), &ev); err != nil || ev.Event != "turn" {
+			continue
+		}
+		assert.NotContains(t, ev.Statement, "<think>",
+			"a think tag in a recorded statement means the strip missed a consumer")
+	}
+	assert.NotContains(t, string(raw), "\\u003cthink",
+		"the transcript is the audit artifact — an escaped think tag reaching it means the strip missed a consumer")
 	assert.NotContains(t, string(raw), "draft attack, discarded")
 	assert.Contains(t, string(raw), "the attack stands",
 		"the real statement must survive; a strip that ate it would pass the assertions above vacuously")

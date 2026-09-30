@@ -270,8 +270,10 @@ type probeResult struct {
 	thinkingStatus string
 	thinkingDetail string
 	// markerInReasoning reports a StatusOKWarning whose marker WAS found, but only in
-	// salvaged reasoning — so consumers that read StatusOKWarning as "marker absent"
-	// can tell the two apart.
+	// reasoning the review lane cannot use — salvaged chain-of-thought (the salvaged
+	// field names that case) or a leading inline think block the lane strips before
+	// parsing — so consumers that read StatusOKWarning as "marker absent" can tell
+	// the two apart.
 	markerInReasoning bool
 	// salvaged reports that the reply carried no content and its reasoning was
 	// promoted into Content — set on BOTH classify salvage branches, so the
@@ -747,6 +749,23 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 					hint:              "reply had no content; the nonce marker was found only in salvaged reasoning, which the review lane cannot use — repoint the agent to a model that answers with content",
 					markerInReasoning: true,
 					salvaged:          true,
+				}
+			}
+			// The review lane parses the reply with a leading think block stripped
+			// off (fanout.Result.parseFindings), so a marker that lives only inside
+			// that block is invisible to the lane this probe pre-flights. Reading
+			// raw content reported a clean StatusOK for exactly that shape - the
+			// pre-flight calling a healthy endpoint an agent whose every review will
+			// be discarded (TD internal/doctor/run.go:737). Mirror the salvaged
+			// branch above: a StatusOKWarning naming the channel the marker was
+			// found in, so a consumer that reads StatusOKWarning as "marker absent"
+			// can still tell the two apart.
+			if answer, _ := llmclient.SplitThink(stripped); !strings.Contains(answer, Marker(nonce)) {
+				return probeResult{
+					status:            StatusOKWarning,
+					latencyMS:         latencyMS,
+					hint:              "the nonce marker was found only inside inline <think> reasoning, which the review lane strips before parsing - inline reasoning is not an answer; repoint the agent to a model that answers with content",
+					markerInReasoning: true,
 				}
 			}
 			return probeResult{status: StatusOK, latencyMS: latencyMS}
