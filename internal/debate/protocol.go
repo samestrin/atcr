@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/fanout"
@@ -66,6 +67,18 @@ func RunDebate(ctx context.Context, item reconcile.DisagreementItem, cast Cast, 
 
 	// Turn 1 — proposer defends the finding.
 	rec.ProposerStatement = rec.runTurn(ctx, cast.Proposer, 1, buildProposerPrompt(item, sentinel), cc, disp, tr)
+
+	// A clean-but-blank proposer statement already decides the item: debateOne's
+	// silentArguingSeats guard discards it as unresolved before any ruling is
+	// read, so driving the challenger and judge — two full tool loops — through
+	// an outcome that cannot change is pure waste. This is the routine case for
+	// an inline-reasoning endpoint, where a think-only reply strips to blank.
+	// A HALTED proposer is excluded: its halt must keep flowing through the
+	// full-run path so the seat_halted/judge_halted reason tokens stay truthful
+	// about which engines actually failed.
+	if rec.ProposerStatement == "" && !slices.Contains(rec.Halted, cast.Proposer.Label) {
+		return rec
+	}
 
 	// Turn 2 — challenger attacks, seeing the proposer's defense.
 	rec.ChallengerStatement = rec.runTurn(ctx, cast.Challenger, 2,

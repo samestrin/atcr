@@ -88,8 +88,10 @@ func TestRunDebate_SilentProposerShortCircuitsRemainingSeats(t *testing.T) {
 	assert.Empty(t, rec.ChallengerStatement)
 	assert.Empty(t, rec.JudgeRaw)
 
-	// The outcome must be unchanged: still the silent-seat unresolved path.
-	assert.Equal(t, []string{LabelProposer}, silentArguingSeats(rec))
+	// The outcome must be unchanged: still the silent-seat unresolved path. The
+	// skipped challenger is also blank, so it is silent too — the reason token is
+	// seat_silent either way.
+	assert.Contains(t, silentArguingSeats(rec), LabelProposer)
 }
 
 func TestRunDebate_DrivesThreeTurnsInOrder(t *testing.T) {
