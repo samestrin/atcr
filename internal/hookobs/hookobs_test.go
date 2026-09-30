@@ -871,11 +871,14 @@ func TestWrap_EchoesDeclaredThinking(t *testing.T) {
 		// anthropic echo case is restored (preserve empty — that style has no
 		// such field), and a declaration-differs-from-wire case pins that the
 		// record echoes the DECLARED keys, not ones derived from the wire.
-		for _, decl := range [][4]string{
-			{"on", "low", "qwen", "on"},
-			{"on", "", "anthropic", ""},
-			{"off", "", "qwen", "off"},
-			{},
+		// The off+preserve row carries a want-preserve: thinking off means the
+		// wire carried no preserve flag, so the gate blanks it (TD
+		// internal/hookobs/hookobs.go:377) even though the key was declared.
+		for _, decl := range [][5]string{
+			{"on", "low", "qwen", "on", "on"},
+			{"on", "", "anthropic", "", ""},
+			{"off", "", "qwen", "off", ""},
+			{"", "", "", "", ""},
 		} {
 			t.Run(fmt.Sprintf("%s/%v", name, decl), func(t *testing.T) {
 				srv := chatServer(t, http.StatusOK, okCompletion)
@@ -888,7 +891,7 @@ func TestWrap_EchoesDeclaredThinking(t *testing.T) {
 
 				require.Len(t, obs.calls(), 1)
 				got := obs.calls()[0]
-				assert.Equal(t, decl, [4]string{got.Thinking, got.ThinkingLevel, got.ThinkingStyle, got.PreserveThinking})
+				assert.Equal(t, [4]string{decl[0], decl[1], decl[2], decl[4]}, [4]string{got.Thinking, got.ThinkingLevel, got.ThinkingStyle, got.PreserveThinking})
 			})
 		}
 	}

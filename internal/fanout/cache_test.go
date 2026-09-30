@@ -577,11 +577,11 @@ func TestDiffCacheKey_PreserveThinkingGatedOnEnabled(t *testing.T) {
 	key := func(th, level string) string {
 		return diffCacheKey("p", cacheKeyInputs{Model: "m", MaxTokens: defaultMaxTokens, Thinking: th, ThinkingLevel: level, ThinkingStyle: "qwen", PreserveThinking: "on"})
 	}
-	assert.Equal(t, cache.Key(hash, "m", "default\x00th=off\x00kv=2"), key("off", ""),
+	assert.Equal(t, cache.Key(hash, "m", "default\x00th=off\x00ts=qwen\x00kv=2"), key("off", ""),
 		"preserve with thinking off keeps the thinking-off key — nothing preserve-shaped reached the wire")
 	assert.Equal(t, cache.Key(hash, "m", "default\x00kv=2"), key("", ""),
 		"a preserve-only agent keeps the undeclared key")
-	assert.Equal(t, cache.Key(hash, "m", "default\x00th=on\x00pt=on\x00kv=2"), key("on", ""),
+	assert.Equal(t, cache.Key(hash, "m", "default\x00th=on\x00ts=qwen\x00pt=on\x00kv=2"), key("on", ""),
 		"preserve with thinking on still keys apart — the wire really carries it")
 }
 

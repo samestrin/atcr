@@ -362,6 +362,16 @@ func (o *observingClient) base(ctx context.Context, inv llmclient.Invocation, st
 	if !registry.ThinkingDeclared(inv.Thinking, inv.ThinkingLevel) {
 		style = ""
 	}
+	// preserve_thinking renders on the wire only when thinking is enabled
+	// (newThinkingFields sends it only under on), so it is gated the same way:
+	// a record must not report a preserve flag for a body that carried neither
+	// it nor the style that would explain it (TD internal/hookobs/hookobs.go:377).
+	// registry.validateThinking already rejects preserve-with-thinking-off at
+	// load, so this only binds hand-built invocations.
+	preserve := inv.PreserveThinking
+	if !registry.ThinkingEnabled(inv.Thinking, inv.ThinkingLevel) {
+		preserve = ""
+	}
 	return Invocation{
 		RunID:            c.RunID,
 		AgentName:        c.AgentName,
@@ -375,7 +385,7 @@ func (o *observingClient) base(ctx context.Context, inv llmclient.Invocation, st
 		Thinking:         inv.Thinking,
 		ThinkingLevel:    inv.ThinkingLevel,
 		ThinkingStyle:    style,
-		PreserveThinking: inv.PreserveThinking,
+		PreserveThinking: preserve,
 		// The temperature the request carried, which a declared thinking
 		// setting can drop (anthropic thinking on sends none).
 		Temperature: copyFloat64(llmclient.SentTemperature(inv)),

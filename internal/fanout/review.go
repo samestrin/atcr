@@ -2973,10 +2973,16 @@ func diffCacheKey(prompt string, in cacheKeyInputs) string {
 	}
 	// preserve_thinking keys the wire body (the replayed reasoning members it
 	// enables differ per flag), so it keys apart like the other thinking keys.
-	// It only matters in multi-turn tool loops — which are never cached — so on
-	// a single-shot agent the clause is inert for behavior and costs only a
-	// spurious miss, never a collision.
-	if in.PreserveThinking != "" {
+	// It renders on the wire only when thinking is enabled (newThinkingFields
+	// sends it only under on), so the clause is gated on ThinkingEnabled: a
+	// preserve flag with thinking off, or with nothing declared, sends nothing
+	// and must keep the key that body had (TD internal/fanout/review.go:2974).
+	// registry.validateThinking already rejects those shapes at load, so this
+	// gate only binds hand-built inputs — defense in depth, no production key
+	// changes. It only matters in multi-turn tool loops — which are never
+	// cached — so on a single-shot agent the clause is inert for behavior and
+	// costs only a spurious miss, never a collision.
+	if in.PreserveThinking != "" && registry.ThinkingEnabled(in.Thinking, in.ThinkingLevel) {
 		tuning = tuning + "\x00pt=" + in.PreserveThinking
 	}
 	// Key-version segment (TD internal/fanout/review.go:2901): unconditional, so
