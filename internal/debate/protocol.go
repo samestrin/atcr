@@ -148,10 +148,14 @@ func driveSeat(ctx context.Context, seat Caster, prompt string, cc fanout.ChatCo
 		return "", fanout.StatusFailed
 	}
 	r := results[0]
-	// A truncated single-shot reply carries only the salvaged chain-of-thought,
-	// not a statement: halt the seat and return no statement. Forwarding it would
-	// paste one model's reasoning into the next seat's prompt — the case the
-	// anthropic thinking load rule exists to prevent (TD
+	// A truncated or salvaged reply carries only the salvaged chain-of-thought,
+	// not a statement: halt the seat and return no statement. The salvaged
+	// content never reaches a transcript because driveSeat returns an empty
+	// statement and runTurn records that empty string as the turn — not because
+	// salvaged replies skip transcript recording (runTurn records a turn row for
+	// every seat, single-shot or tool-loop, salvaged or clean). Forwarding it
+	// would paste one model's reasoning into the next seat's prompt — the case
+	// the anthropic thinking load rule exists to prevent (TD
 	// internal/debate/protocol.go:148). Checked before the tripped-budget return
 	// so a truncated forced final answer is no statement either.
 	// The Salvaged marker covers the same failure on finish_reason=stop: empty
