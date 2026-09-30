@@ -282,11 +282,44 @@ const chunkBoundaryLine = "<!-- atcr:chunk-boundary -->"
 // between them when more than one chunk produced content. Fewer than two
 // content chunks join exactly as before, so a single-call persona's review.md
 // is byte-identical to its model output.
+//
+// The delimiter is engine-owned framing that model content may never produce:
+// internal/reconcile's chunkSegmentBounds splits the joined text on exact line
+// equality with chunkBoundaryLine, so a chunk carrying the literal on a line of
+// its own would let a reviewer model forge a boundary in review.md and shrink
+// or empty every justification excerpt after it. Lines exactly equal to the
+// delimiter are therefore neutralised (annotated, so they can no longer match
+// the split predicate) before joining; only the delimiters this function
+// inserts itself survive verbatim. Pinned by
+// TestJoinChunkContents_ModelForgedBoundaryIsNeutralised.
 func joinChunkContents(contents []string) string {
 	if len(contents) < 2 {
 		return strings.Join(contents, "\n")
 	}
-	return strings.Join(contents, "\n"+chunkBoundaryLine+"\n")
+	neutralised := make([]string, len(contents))
+	for i, c := range contents {
+		neutralised[i] = neutraliseChunkBoundary(c)
+	}
+	return strings.Join(neutralised, "\n"+chunkBoundaryLine+"\n")
+}
+
+// neutraliseChunkBoundary rewrites any line of content exactly equal to
+// chunkBoundaryLine so it can no longer be read as a chunk boundary by an
+// exact-line-equality splitter, while staying a visible HTML comment in the
+// rendered markdown. Only the exact literal matches — near-miss lines were
+// never boundaries and are left untouched.
+func neutraliseChunkBoundary(content string) string {
+	if !strings.Contains(content, chunkBoundaryLine) {
+		return content
+	}
+	neutral := "<!-- atcr:chunk-boundary (model-issued copy; not a chunk delimiter) -->"
+	lines := strings.Split(content, "\n")
+	for i, ln := range lines {
+		if ln == chunkBoundaryLine {
+			lines[i] = neutral
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // mergeResultGroup folds N chunk results for one persona into a single result.
