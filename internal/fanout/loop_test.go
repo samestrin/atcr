@@ -515,7 +515,8 @@ func TestToolLoop_ReplayedHistoryKeepsQuotedTags(t *testing.T) {
 // A tool-call turn whose whole Content was reasoning strips to blank, and blank
 // must replay as content:null, NOT "". llmclient.Message reserves the pointer for
 // exactly that distinction ("which OpenAI requires", chat.go), and
-// TestChat_RoleToolMessageSerialization (internal/llmclient/chat_test.go:117)
+// TestChat_RoleToolMessageSerialization (internal/llmclient/chat_test.go, named
+// not cited by line)
 // pins it on the request side. Replaying "" risks
 // a strict validator's 400 or an empty text block in a LiteLLM-to-Anthropic
 // translation — either fails the whole agent. This is the only shape this strip

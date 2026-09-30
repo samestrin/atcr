@@ -51,7 +51,7 @@ func replayedReasoningBytes(m llmclient.Message) int64 {
 // more than it strips, deliberately: llmclient.Message's own contract reserves
 // content:null for the assistant tool-call turn "distinctly from an empty string"
 // (chat.go) because OpenAI requires it, and TestChat_RoleToolMessageSerialization
-// (internal/llmclient/chat_test.go:117) pins that on the request side. Replaying
+// (internal/llmclient/chat_test.go, named not numbered) pins that on the request side. Replaying
 // "" risks a strict validator's 400 or an empty text block in a
 // LiteLLM-to-Anthropic translation, either of which fails the whole agent. This is
 // the only one of this sprint's strip sites whose output goes back on the wire, so
