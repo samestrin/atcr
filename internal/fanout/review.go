@@ -2865,14 +2865,17 @@ func sizingToken(effectiveBudget int64, maxLines int) string {
 // the prompt: the agent's model config, its sizing, and its thinking
 // declaration. Named fields replace the positional list, where two adjacent
 // strings (thinking, thinking_level) could be transposed and still compile.
-// Each call site builds it from its OWN agent's values.
+// Fields are grouped to match that summary: model config (including
+// response_format, a per-agent declaration like the others), sizing, then the
+// thinking declaration as one block. Each call site builds it from its OWN
+// agent's values.
 type cacheKeyInputs struct {
 	Model            string
 	BaseURL          string
 	Temperature      *float64
+	ResponseFormat   string
 	Sizing           string
 	MaxTokens        int
-	ResponseFormat   string
 	Thinking         string
 	ThinkingLevel    string
 	ThinkingStyle    string
