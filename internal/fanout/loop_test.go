@@ -399,12 +399,21 @@ func TestToolLoop_FallbackCarriesNoPrimaryReasoning(t *testing.T) {
 // --- T5 (sprint 35.16.11.2.2.4): strip <think> from replayed history ---------
 
 // runWireToolLoopContent drives the real toolLoop against a server whose
-// tool-call turn carries CONTENT as well as a tool_call — the shape
+// tool-call turns carry CONTENT as well as a tool_call — the shape
 // runWireToolLoopInv cannot produce, because its template hardcodes
 // "content":null. turnContent supplies the assistant content per turn (1-based);
-// turn 2 answers with finish_reason=stop, so the loop ends there with turn 2's
-// content as the result. It returns every captured request body and the Result.
-func runWireToolLoopContent(t *testing.T, turnContent func(turn int) string) ([]string, Result) {
+// the first toolTurns turns request a tool, the next answers with
+// finish_reason=stop, so the loop ends there with that turn's content as the
+// result. withReasoning adds a reasoning_content member to each tool-call turn.
+//
+// A real provider sends one shape or the other, never both: one that populates
+// reasoning_content has already lifted the block out of content. withReasoning
+// true is therefore a deliberate superset, the only way to assert the reasoning
+// channel rides through untouched; withReasoning false is the realistic inline
+// shape. Both are exercised.
+//
+// It returns every captured request body and the Result.
+func runWireToolLoopContent(t *testing.T, toolTurns int, withReasoning bool, turnContent func(turn int) string) ([]string, Result) {
 	t.Helper()
 	var (
 		mu     sync.Mutex
@@ -417,11 +426,14 @@ func runWireToolLoopContent(t *testing.T, turnContent func(turn int) string) ([]
 		turn := len(bodies)
 		mu.Unlock()
 		content, _ := json.Marshal(turnContent(turn))
-		if turn == 1 {
-			_, _ = fmt.Fprintf(w, `{"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":%s,`+
-				`"reasoning_content":"separate channel",`+
-				`"tool_calls":[{"id":"c1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"f.go\"}"}}]}}]}`,
-				content)
+		if turn <= toolTurns {
+			reasoning := ""
+			if withReasoning {
+				reasoning = fmt.Sprintf(`"reasoning_content":"separate channel %d",`, turn)
+			}
+			_, _ = fmt.Fprintf(w, `{"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":%s,%s`+
+				`"tool_calls":[{"id":"c%d","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"f%d.go\"}"}}]}}]}`,
+				content, reasoning, turn, turn)
 			return
 		}
 		_, _ = fmt.Fprintf(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":%s}}]}`, content)
@@ -438,7 +450,7 @@ func runWireToolLoopContent(t *testing.T, turnContent func(turn int) string) ([]
 	require.Equal(t, StatusOK, r.Status)
 	mu.Lock()
 	defer mu.Unlock()
-	require.Len(t, bodies, 2, "one tool turn plus the final answer turn")
+	require.Len(t, bodies, toolTurns+1, "%d tool turns plus the final answer turn", toolTurns)
 	return append([]string(nil), bodies...), r
 }
 
@@ -448,12 +460,14 @@ func runWireToolLoopContent(t *testing.T, turnContent func(turn int) string) ([]
 //
 // This ALSO pins the aliasing guard, which is the real bug risk: Message.Content
 // is a *string shared by the history entry and resp.Message, so an in-place strip
-// would silently also strip l.res.Content (loop.go:190, :353) and therefore the
-// raw review.md artifact. A test that only checked the history entry would pass
-// against that bug; the r.Content assertion is what catches it.
+// would silently also strip l.res.Content — assigned in both the final-answer
+// branch and the forced-final branch — and therefore the raw review.md artifact.
+// A test that only checked the history entry would pass against that bug; the
+// r.Content assertion is what catches it. (Branches named, not cited by line: an
+// insert upstream drifts a line number silently.)
 func TestToolLoop_ReplayedHistoryCarriesNoThinkBlock(t *testing.T) {
 	const finalRaw = "<think>second draft</think>real answer"
-	bodies, r := runWireToolLoopContent(t, func(turn int) string {
+	bodies, r := runWireToolLoopContent(t, 1, true, func(turn int) string {
 		if turn == 1 {
 			return "<think>draft reasoning</think>keep going"
 		}
@@ -468,8 +482,7 @@ func TestToolLoop_ReplayedHistoryCarriesNoThinkBlock(t *testing.T) {
 	require.NoError(t, json.Unmarshal(msgs[1]["content"], &replayed))
 	assert.Equal(t, "keep going", replayed,
 		"the replayed assistant turn must carry the stripped answer")
-	assert.NotContains(t, replayed, "think", "no think markup may reach the wire as history")
-	assert.Equal(t, map[string]string{"reasoning_content": `"separate channel"`}, reasoningOn(msgs[1]),
+	assert.Equal(t, map[string]string{"reasoning_content": `"separate channel 1"`}, reasoningOn(msgs[1]),
 		"the separate reasoning channel is a deliberate replay channel and must be untouched")
 
 	assert.Equal(t, finalRaw, r.Content,
@@ -478,9 +491,14 @@ func TestToolLoop_ReplayedHistoryCarriesNoThinkBlock(t *testing.T) {
 
 // The leading-only rule at this lane's call site: a turn whose answer merely
 // quotes the tags is replayed byte-identical.
+//
+// This is a GUARD, not coverage of the strip — it passes with the strip reverted
+// too, because the no-op direction is what it protects. What it does catch is a
+// future over-greedy strip: swap SplitThink for a position-blind tag delete and
+// this test fails. Do not count it toward this change's coverage.
 func TestToolLoop_ReplayedHistoryKeepsQuotedTags(t *testing.T) {
 	const quoted = "loop.go replays history without stripping <think> or </think>"
-	bodies, _ := runWireToolLoopContent(t, func(turn int) string {
+	bodies, _ := runWireToolLoopContent(t, 1, true, func(turn int) string {
 		if turn == 1 {
 			return quoted
 		}
@@ -492,4 +510,69 @@ func TestToolLoop_ReplayedHistoryKeepsQuotedTags(t *testing.T) {
 	var got string
 	require.NoError(t, json.Unmarshal(msgs[1]["content"], &got))
 	assert.Equal(t, quoted, got, "an answer that merely names the tags must be replayed unchanged")
+}
+
+// A tool-call turn whose whole Content was reasoning strips to blank, and blank
+// must replay as content:null, NOT "". llmclient.Message reserves the pointer for
+// exactly that distinction ("which OpenAI requires", chat.go), and
+// TestChat_ToolResultMessageShape pins it on the request side. Replaying "" risks
+// a strict validator's 400 or an empty text block in a LiteLLM-to-Anthropic
+// translation — either fails the whole agent. This is the only shape this strip
+// puts back on the wire, so it is the only place the distinction can break.
+func TestToolLoop_ThinkOnlyTurnReplaysAsNullContent(t *testing.T) {
+	cases := map[string]string{
+		"closed pair, nothing after":       "<think>I should read f1.go</think>",
+		"whitespace remainder":             "<think>I should read f1.go</think>\n\n  ",
+		"unclosed opener, cut mid-thought": "<think>I should read f1.go",
+	}
+	for name, content := range cases {
+		t.Run(name, func(t *testing.T) {
+			bodies, _ := runWireToolLoopContent(t, 1, false, func(turn int) string {
+				if turn == 1 {
+					return content
+				}
+				return "final answer"
+			})
+			msgs := wireMessages(t, bodies[1])
+			require.Len(t, msgs, 3, "prompt, assistant tool call, tool result")
+			assert.Equal(t, "null", string(msgs[1]["content"]),
+				"a turn that was entirely reasoning must take the canonical content:null shape")
+		})
+	}
+}
+
+// The realistic inline shape: a provider that leaves the block in content sends no
+// reasoning member at all. The combined fixture elsewhere is a deliberate superset
+// used to assert the reasoning channel is untouched; this is the shape that occurs.
+func TestToolLoop_InlineThinkWithNoReasoningMemberIsStripped(t *testing.T) {
+	bodies, _ := runWireToolLoopContent(t, 1, false, func(turn int) string {
+		if turn == 1 {
+			return "<think>let me look</think>reading f1.go now"
+		}
+		return "final answer"
+	})
+	msgs := wireMessages(t, bodies[1])
+	require.Len(t, msgs, 3)
+	var replayed string
+	require.NoError(t, json.Unmarshal(msgs[1]["content"], &replayed))
+	assert.Equal(t, "reading f1.go now", replayed)
+	assert.Empty(t, reasoningOn(msgs[1]), "no reasoning member was sent, so none may be replayed")
+}
+
+// The strip must persist on EVERY later request, for EVERY earlier assistant turn
+// — the same property TestToolLoop_ReplaysEachReasoningShapeUnderItsKey asserts
+// for the reasoning members. One tool turn cannot show this.
+func TestToolLoop_EveryEarlierAssistantTurnStaysStripped(t *testing.T) {
+	bodies, _ := runWireToolLoopContent(t, 2, false, func(turn int) string {
+		return fmt.Sprintf("<think>draft %d</think>answer %d", turn, turn)
+	})
+	// bodies[2] is the third request: it carries BOTH earlier assistant turns.
+	msgs := wireMessages(t, bodies[2])
+	require.Len(t, msgs, 5, "prompt, assistant 1, tool 1, assistant 2, tool 2")
+	for i, idx := range []int{1, 3} {
+		var replayed string
+		require.NoError(t, json.Unmarshal(msgs[idx]["content"], &replayed))
+		assert.Equal(t, fmt.Sprintf("answer %d", i+1), replayed,
+			"assistant turn %d must still be stripped on the third request", i+1)
+	}
 }

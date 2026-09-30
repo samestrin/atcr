@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/samestrin/atcr/internal/llmclient"
@@ -43,11 +44,28 @@ func replayedReasoningBytes(m llmclient.Message) int64 {
 // (ReasoningContent, Reasoning, ReasoningDetails, ThinkingBlocks) are a separate,
 // deliberate replay channel and ride through unchanged, as does the nil Content a
 // pure tool-call turn carries.
+//
+// A turn whose Content was ENTIRELY reasoning strips to blank, and blank becomes
+// nil, not "". That is the one shape this function puts back on the wire, and
+// llmclient.Message's own contract reserves content:null for the assistant
+// tool-call turn "distinctly from an empty string" (chat.go, pinned by
+// TestChat_ToolResultMessageShape) because OpenAI requires it. Replaying "" risks
+// a strict validator's 400 or an empty text block in a LiteLLM-to-Anthropic
+// translation, either of which fails the whole agent.
+//
+// SplitThink returns a substring, so the stripped answer would otherwise keep the
+// whole original reply — draft included — alive in its backing array for the life
+// of the loop. Clone drops it, which is what the strip is for.
 func historyMessage(m llmclient.Message) llmclient.Message {
 	if m.Content == nil {
 		return m
 	}
 	answer, _ := llmclient.SplitThink(*m.Content)
+	if strings.TrimSpace(answer) == "" {
+		m.Content = nil
+		return m
+	}
+	answer = strings.Clone(answer)
 	m.Content = &answer
 	return m
 }
@@ -371,6 +389,9 @@ func (l *toolLoop) requestFinalAnswer(ctx context.Context) Result {
 	// attempts are real and must count toward the agent's usage and call telemetry.
 	l.res.addUsage(resp.Usage)
 	l.res.addCallRecords(resp.CallRecords)
+	// Raw, and no historyMessage: this reply is deliberately never appended to
+	// l.messages — the forced final answer ends the loop, so nothing replays it.
+	// A later change that does append it must route through historyMessage.
 	l.res.Content = derefContent(resp.Message.Content)
 	// A truncated forced final-answer is still cut off; surface it (Epic 19.5).
 	l.res.ResponseTruncated = resp.Truncated
