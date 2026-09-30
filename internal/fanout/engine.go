@@ -508,6 +508,17 @@ type Result struct {
 	parsedFindingCount    int
 	parsedFindingCountSet bool
 
+	// parsedFindings is the parsed findings SLICE behind parsedFindingCount, so
+	// the gate's parse and findingsFor's parse are literally the same one —
+	// every result that HAS findings runs ParseModelOutput once, not twice (once
+	// via ParsedFindingCount at the gate, once via parseFindings in findingsFor).
+	// The cached slice is returned by reference: findingsFor mutates it in place
+	// (Reviewer stamping, and enforceConstraints' severity sort on a cap) — both
+	// idempotent against the cache, since every consumer of this Result lineage
+	// stamps the same Agent and re-derives downstream output from the slice.
+	parsedFindings    []stream.Finding
+	parsedFindingsSet bool
+
 	// chunkContents holds the non-empty chunk outputs mergeResultGroup joined
 	// into Content. parseFindings parses each one on its own, so a chunk cut off
 	// inside a ```json block or an unfenced array cannot swallow the next
@@ -600,12 +611,16 @@ type Result struct {
 // adversarial review; decided 2026-09-30 by the user at the Phase 4 gate, which
 // RESOLVES TD-017 inside the sprint rather than deferring it.)
 func (r *Result) parseFindings() []stream.Finding {
+	if r.parsedFindingsSet {
+		return r.parsedFindings
+	}
+	var out []stream.Finding
 	if r.chunkContents == nil {
 		if r.Salvaged {
-			return nil
+			return r.cacheParsedFindings(nil)
 		}
 		answer, _ := llmclient.SplitThink(r.Content)
-		return stream.ParseModelOutput([]byte(answer))
+		return r.cacheParsedFindings(stream.ParseModelOutput([]byte(answer)))
 	}
 	// mergeResultGroup writes chunkSalvaged beside chunkContents, so the lengths
 	// agree for every Result the chunked path produces. If they ever do not, there
@@ -613,9 +628,8 @@ func (r *Result) parseFindings() []stream.Finding {
 	// whole result: fail closed, never parse salvaged reasoning as findings.
 	perChunk := len(r.chunkSalvaged) == len(r.chunkContents)
 	if !perChunk && r.Salvaged {
-		return nil
+		return r.cacheParsedFindings(nil)
 	}
-	var out []stream.Finding
 	for i, c := range r.chunkContents {
 		if perChunk && r.chunkSalvaged[i] {
 			continue
@@ -623,6 +637,17 @@ func (r *Result) parseFindings() []stream.Finding {
 		answer, _ := llmclient.SplitThink(c)
 		out = append(out, stream.ParseModelOutput([]byte(answer))...)
 	}
+	return r.cacheParsedFindings(out)
+}
+
+// cacheParsedFindings stores the parse result on both memos (count and slice)
+// and returns it, so a later ParsedFindingCount or findingsFor call on this
+// Result lineage reuses the parse instead of repeating it.
+func (r *Result) cacheParsedFindings(out []stream.Finding) []stream.Finding {
+	r.parsedFindings = out
+	r.parsedFindingsSet = true
+	r.parsedFindingCount = len(out)
+	r.parsedFindingCountSet = true
 	return out
 }
 

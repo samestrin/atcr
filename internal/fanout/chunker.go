@@ -381,6 +381,8 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	// produced. Reset so ParsedFindingCount recomputes from the merged content.
 	out.parsedFindingCount = 0
 	out.parsedFindingCountSet = false
+	out.parsedFindings = nil
+	out.parsedFindingsSet = false
 	out.UnparseableChunks = 0 // counted below over every chunk, g[0] included
 	// Chunk-level serving identity does not survive the collapse: the merged
 	// Result is a persona record, so inheriting chunk 0's served tag would name
