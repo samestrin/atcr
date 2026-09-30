@@ -20,8 +20,7 @@ const thinkOpen, thinkClose = "<think>", "</think>"
 // one — and eating it would delete real answer text. A lone closer with no
 // opener anywhere counts as reasoning, because a reasoning-style chat template
 // can put the opener in the prompt, so the reply starts mid-thought and carries
-// only the closer; this reverses doctor's older "a stray closer is template
-// noise" rule (decided 2026-09-29).
+// only the closer (decided 2026-09-29).
 //
 // Use this to decide what to PARSE or re-send. To decide whether a reply thought
 // at all, use HasThinkMarkup: detection is position-blind where a strip cannot
@@ -38,8 +37,8 @@ const thinkOpen, thinkClose = "<think>", "</think>"
 // The two returns are NOT a partition of the input: the tag bytes, the
 // whitespace before the leading run, and the whitespace between consumed pairs
 // are dropped from both, so the original cannot be reconstructed from them. A
-// caller that needs the raw reply must keep its own copy — which every strip
-// site in this repo does, since none of them reassigns the field it read.
+// caller that needs the raw reply MUST keep its own copy: strip into a local or
+// onto a copied message, never over the field you read.
 //
 // SplitThink returns strings and nothing else. It never writes to
 // Completion.Reasoning or ChatResponse.Reasoning — those stay the only reasoning
@@ -95,6 +94,10 @@ func SplitThink(content string) (answer, reasoning string) {
 // block AFTER the answer there is not a quote: it is the runaway thinker the
 // verdict exists to name (decided 2026-09-30 at the sprint 35.16.11.2.2.4
 // Phase 1 review, reversing the plan's original single-predicate shape).
+//
+// The lone-closer rule lives here too, which is where doctor's older "a stray
+// closer is template noise" rule was reversed (decided 2026-09-29): the verdict
+// is the only consumer that rule ever governed.
 //
 // It lives beside SplitThink on the same tag constants so internal/llmclient
 // stays the repo's only place that knows what a think tag looks like.

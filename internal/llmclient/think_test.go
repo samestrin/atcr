@@ -8,9 +8,9 @@ import (
 )
 
 // TestSplitThink pins every tag shape the strip contract names. wantSignal
-// restates what doctor's inlineThinking derives from reasoning (a blank run is
-// not a signal); it is documentation of that coupling, not independent coverage
-// of it — the coupling itself is pinned in internal/doctor.
+// documents the strip's own blank-run rule — a consumed run that held only
+// whitespace yields no reasoning worth reporting — and is derived from
+// wantReasoning, so it restates the table rather than adding coverage.
 func TestSplitThink(t *testing.T) {
 	cases := []struct {
 		name          string
@@ -23,6 +23,10 @@ func TestSplitThink(t *testing.T) {
 		{name: "no tags at all", content: "just an answer", wantAnswer: "just an answer", wantReasoning: "", wantSignal: false},
 		{name: "closed pair with text", content: "<think>plan the reply</think>answer",
 			wantAnswer: "answer", wantReasoning: "plan the reply", wantSignal: true},
+		// Whitespace before the leading run is dropped from BOTH returns, which is
+		// why the two are not a partition of the input.
+		{name: "whitespace before the leading run", content: "\n\n<think>a</think>answer",
+			wantAnswer: "answer", wantReasoning: "a", wantSignal: true},
 		// An empty pair is what a hybrid chat template emits when thinking is
 		// correctly off: stripped, but not a signal.
 		{name: "empty pair", content: "<think>\n\n</think>answer",
@@ -103,6 +107,11 @@ func TestHasThinkMarkup(t *testing.T) {
 		{name: "pair after answer text", content: "answer <think>x</think> more", want: true},
 		{name: "unclosed opener after answer text", content: "ATCR-OK-n\n<think>let me double check", want: true},
 		{name: "empty pair after answer text is still not a signal", content: "answer <think></think> more", want: false},
+		// Accepted limit: the lone-closer rule is gated on no opener ANYWHERE, so a
+		// later empty pair suppresses the mid-thought signal. Pinned as false rather
+		// than fixed — it matches doctor's pre-migration behavior, and a template
+		// that starts mid-thought and then emits an empty pair is not a real shape.
+		{name: "lone closer then a later empty pair", content: "draft</think>answer<think></think>", want: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

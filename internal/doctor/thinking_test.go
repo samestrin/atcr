@@ -202,8 +202,8 @@ func TestRun_ThinkingVerdict(t *testing.T) {
 		// A closing tag with no opener anywhere IS a signal: a reasoning-style chat
 		// template can put the opener in the prompt, so the reply starts mid-thought
 		// and carries only the closer, and the text before it is reasoning.
-		// (classify reads the raw content for the marker, so the strip never
-		// affects marker validation either way — see think_test.go's marker cases.)
+		// (classify reads the raw content for the marker, so this detection never
+		// touches marker validation.)
 		{name: "off, closing tag only", thinking: "off", style: "qwen", declared: llmclient.Completion{Content: "planning the reply</think>\n" + Marker(testNonce)},
 			wantStatus: ThinkingNotHonored, wantCalls: 1, wantDetail: []string{"inline <think> reasoning in the content"}},
 		// Detection is position-blind, unlike the review lanes' leading-only strip:

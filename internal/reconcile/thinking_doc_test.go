@@ -510,6 +510,13 @@ func TestRegistryDoc_ThinkingDoctorVerdict(t *testing.T) {
 	assertStates(t, "thinking verdict intro", intro, []struct{ token, why string }{
 		{"failed permanently", "run.go:294 gates the verdict on thinkingProbeWorthwhile: permanent failures get no verdict despite placing a call"},
 	})
+	// Sprint 35.16.11.2.2.4: the two rules llmclient.HasThinkMarkup applies that
+	// the older inlineThinking did not. Both are behavior changes the doc states,
+	// so both need a drift guard or the doc can silently revert to the old rules.
+	assertStates(t, "thinking verdict intro", intro, []struct{ token, why string }{
+		{"A lone `</think>` with no opener anywhere counts as a signal", "HasThinkMarkup's no-opener branch: a reasoning template can put the opener in the prompt, reversing the old stray-closer-is-noise rule"},
+		{"a block counts wherever it sits in the content", "detection is position-blind, unlike the review lanes' leading-only SplitThink: the probe prompt contains no tag, so a trailing block is the runaway thinker"},
+	})
 	assertStates(t, "doctor JSON schema", docLineWith(t, doc, "`thinking_status` (`"), []struct{ token, why string }{
 		{"did not fail permanently", "a placed call is necessary but not sufficient: auth_failed, not_found, and network_error rows get no thinking fields"},
 	})
