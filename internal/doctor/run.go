@@ -263,6 +263,12 @@ type probeResult struct {
 	// salvaged reasoning — so consumers that read StatusOKWarning as "marker absent"
 	// can tell the two apart.
 	markerInReasoning bool
+	// salvaged reports that the reply carried no content and its reasoning was
+	// promoted into Content — set on BOTH classify salvage branches, so the
+	// zero-budget verdict (which replaces the hint wholesale when the marker is
+	// absent) can re-attach the salvage note it would otherwise drop (TD
+	// internal/doctor/run.go:337).
+	salvaged bool
 }
 
 // Run probes every distinct target once (bounded concurrency), maps results
@@ -337,6 +343,14 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 		if s, h, ok := zeroBudgetVerdict(tgt.Model, at.ContextWindowTokens, reviewCap, pr.maxTokens, zbStatus); ok {
 			if pr.markerInReasoning {
 				h += " Separately: " + hint
+			} else if pr.salvaged {
+				// The marker was absent, so the branch above did not fire and
+				// zeroBudgetVerdict replaced classify's hint — including the
+				// salvage note — wholesale. Re-attach it: "the reply was
+				// reasoning-only" is a separate fact from the budget one, and
+				// the remedy differs (repoint vs. resize) (TD
+				// internal/doctor/run.go:337).
+				h += " Separately: the reply carried no content; its reasoning was salvaged"
 			}
 			status, hint = s, h
 		}
@@ -712,6 +726,7 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 					latencyMS:         latencyMS,
 					hint:              "reply had no content; the nonce marker was found only in salvaged reasoning, which the review lane cannot use — repoint the agent to a model that answers with content",
 					markerInReasoning: true,
+					salvaged:          true,
 				}
 			}
 			return probeResult{status: StatusOK, latencyMS: latencyMS}
@@ -738,6 +753,7 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 			status:    StatusOKWarning,
 			latencyMS: latencyMS,
 			hint:      hint,
+			salvaged:  salvaged,
 		}
 	}
 
