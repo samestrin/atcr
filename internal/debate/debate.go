@@ -226,9 +226,9 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 			var ir ItemResult
 			switch {
 			case harnessFailed:
-				ir = ItemResult{File: it.File, Line: it.Line, Kind: it.Kind, Problem: it.Problem, OriginalSeverity: it.Severity, Outcome: OutcomeUnresolved, Reason: "harness_unavailable"}
+				ir = ItemResult{File: it.File, Line: it.Line, Kind: it.Kind, Problem: it.Problem, OriginalSeverity: it.Severity, Outcome: OutcomeUnresolved, Reason: ReasonHarnessUnavailable}
 			case ctx.Err() != nil:
-				ir = ItemResult{File: it.File, Line: it.Line, Kind: it.Kind, Problem: it.Problem, OriginalSeverity: it.Severity, Outcome: OutcomeUnresolved, Reason: "context_cancelled"}
+				ir = ItemResult{File: it.File, Line: it.Line, Kind: it.Kind, Problem: it.Problem, OriginalSeverity: it.Severity, Outcome: OutcomeUnresolved, Reason: ReasonContextCancelled}
 			default:
 				ir = debateOne(ctx, debateDir, it, cfg, reg, cc, disp)
 			}
@@ -254,7 +254,7 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 					// Empty or unparseable cluster decision on a real gray-zone item:
 					// record a distinct reason so the no-decision case is auditable
 					// rather than silently treated as separate.
-					oc.ir.Reason = "no_cluster_decision"
+					oc.ir.Reason = ReasonNoClusterDecision
 				}
 			default:
 				oc.apply = true
@@ -517,7 +517,7 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 
 	if judgeHalted(rec.Halted) {
 		ir.Outcome = OutcomeUnresolved
-		ir.Reason = "judge_halted"
+		ir.Reason = ReasonJudgeHalted
 		tr.RecordRuling(RulingEvent{Outcome: OutcomeUnresolved, Reasoning: "judge halted"})
 		return ir
 	}
@@ -567,7 +567,7 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 	ir.ClusterDecision = ruling.ClusterDecision
 	ir.ChallengeSurvived = ruling.ChallengeSurvived()
 	if ruling.Outcome == OutcomeUnresolved {
-		ir.Reason = "unparseable_ruling"
+		ir.Reason = ReasonUnparseableRuling
 	}
 	if ruling.Outcome == OutcomeSplit {
 		// A split with no settled_severity settles nothing: record no settled

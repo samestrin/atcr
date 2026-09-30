@@ -34,10 +34,15 @@ func TestDocs_DebateReasonTokensMatchTheConstants(t *testing.T) {
 	doc := string(raw)
 
 	for _, reason := range []string{
-		debate.ReasonSeatHalted,
-		debate.ReasonSeatSilent,
 		debate.ReasonNoProposer,
 		debate.ReasonInsufficientModels,
+		debate.ReasonSeatHalted,
+		debate.ReasonSeatSilent,
+		debate.ReasonJudgeHalted,
+		debate.ReasonUnparseableRuling,
+		debate.ReasonHarnessUnavailable,
+		debate.ReasonContextCancelled,
+		debate.ReasonNoClusterDecision,
 	} {
 		assert.True(t, strings.Contains(doc, "`"+reason+"`"),
 			"docs/cross-examination.md must publish the CURRENT constant %q — a rename in internal/debate that leaves the doc behind is exactly what a literal-only guard misses", reason)

@@ -23,6 +23,18 @@ const (
 	ReasonInsufficientModels = "insufficient_distinct_models"
 )
 
+// Unresolved reasons recorded across a debate run, published in
+// docs/cross-examination.md and asserted there by
+// cli/debate_reason_doc_test.go. The full published vocabulary lives in this
+// block so a rename the guard catches has exactly one site to update.
+const (
+	ReasonJudgeHalted        = "judge_halted"
+	ReasonUnparseableRuling  = "unparseable_ruling"
+	ReasonHarnessUnavailable = "harness_unavailable"
+	ReasonContextCancelled   = "context_cancelled"
+	ReasonNoClusterDecision  = "no_cluster_decision"
+)
+
 // Unresolved reasons recorded when an arguing seat left no statement, so the
 // judge ruled on one side only. Two tokens, not one, because an operator reading
 // debate.json must never be told a seat halted when it ran clean and simply had
