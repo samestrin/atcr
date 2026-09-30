@@ -521,7 +521,11 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	// parseable findings in total. One garbled chunk beside a chunk with findings
 	// is only counted, so the persona is not scored unparseable or dropped from
 	// trust for findings it did produce.
-	out.UnparseableResponse = out.UnparseableChunks > 0 && out.ParsedFindingCount() == 0
+	// ParsedFindingCount FIRST: the memo must be populated even when
+	// UnparseableChunks is 0 (the common clean chunked persona), so findingsFor's
+	// cached-zero short-circuit can fire instead of re-parsing every bin. The
+	// predicate's value is identical either way; only the memo's reach differs.
+	out.UnparseableResponse = out.ParsedFindingCount() == 0 && out.UnparseableChunks > 0
 	out.CacheHit = allCacheHit
 	// Model names the model that served most of the persona's successful chunks,
 	// not chunk 0's: a chunk 0 that failed over to a backup would otherwise record
