@@ -692,3 +692,120 @@ func TestDiffCacheKey_VersionSegmentInvalidatesPreSalvageGateEntries(t *testing.
 	assert.NotEqual(t, legacy, k,
 		"a key written before the salvage-gate version bump must never collide with a post-bump key, or a salvaged entry replays as a clean hit")
 }
+
+// TD internal/fanout/review.go:2869: cacheKeyInputs is built with named fields,
+// so a future keyed field a production builder forgets to set compiles
+// silently as its zero value — the positional form would have failed to
+// compile. This guard varies every keyed AgentConfig field one at a time
+// against the all-zero baseline and requires the built CacheKey to move, for
+// BOTH production builders. (Sizing is not an AgentConfig field — it is
+// computed from the payload and budget — and is pinned per-regime at the
+// diffCacheKey level by TestDiffCacheKey_SizingTokenDistinguishesRegimes.)
+func TestBuildAgents_EveryKeyedFieldChangesTheCacheKey(t *testing.T) {
+	payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
+
+	buildPrimary := func(mutate func(*ReviewConfig)) Agent {
+		cfg := toolCfg()
+		if mutate != nil {
+			mutate(cfg)
+		}
+		a, _, err := buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+		require.NoError(t, err)
+		return a
+	}
+	buildFallback := func(mutate func(*ReviewConfig)) Agent {
+		cfg := toolCfg()
+		if mutate != nil {
+			mutate(cfg)
+		}
+		primary, _, err := buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+		require.NoError(t, err)
+		fb, _, err := buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
+		require.NoError(t, err)
+		return fb
+	}
+
+	// mutators below touch the PRIMARY's agent ("greta") or the FALLBACK's
+	// ("kai"); the fallback variants leave greta stock so only the fallback
+	// side of the key moves.
+	onGreta := func(f func(a *registry.AgentConfig)) func(*ReviewConfig) {
+		return func(cfg *ReviewConfig) {
+			a := cfg.Registry.Agents["greta"]
+			f(&a)
+			cfg.Registry.Agents["greta"] = a
+		}
+	}
+	onKai := func(f func(a *registry.AgentConfig)) func(*ReviewConfig) {
+		return func(cfg *ReviewConfig) {
+			a := cfg.Registry.Agents["kai"]
+			f(&a)
+			cfg.Registry.Agents["kai"] = a
+		}
+	}
+	onProvider := func(f func(p *registry.Provider)) func(*ReviewConfig) {
+		return func(cfg *ReviewConfig) {
+			p := cfg.Registry.Providers["p"]
+			f(&p)
+			cfg.Registry.Providers["p"] = p
+		}
+	}
+	bigTokens := 32123
+
+	primaryVariants := []struct {
+		name   string
+		mutate func(*ReviewConfig)
+	}{
+		{"model", onGreta(func(a *registry.AgentConfig) { a.Model = "m-guard" })},
+		{"base_url", onProvider(func(p *registry.Provider) { p.BaseURL = "http://guard" })},
+		{"temperature", onGreta(func(a *registry.AgentConfig) { a.Temperature = ptrF(0.8) })},
+		{"response_format", onGreta(func(a *registry.AgentConfig) { a.ResponseFormat = registry.ResponseFormatJSONObject })},
+		{"max_tokens", onGreta(func(a *registry.AgentConfig) { a.MaxTokens = &bigTokens })},
+		{"thinking", func(cfg *ReviewConfig) { withThinking(cfg, "greta", "on", "", "qwen") }},
+		{"preserve_thinking", func(cfg *ReviewConfig) {
+			withThinking(cfg, "greta", "on", "", "qwen")
+			a := cfg.Registry.Agents["greta"]
+			a.PreserveThinking = "on"
+			cfg.Registry.Agents["greta"] = a
+		}},
+	}
+	fallbackVariants := []struct {
+		name   string
+		mutate func(*ReviewConfig)
+	}{
+		{"model", onKai(func(a *registry.AgentConfig) { a.Model = "m2-guard" })},
+		{"base_url", onProvider(func(p *registry.Provider) { p.BaseURL = "http://guard" })},
+		{"temperature", onKai(func(a *registry.AgentConfig) { a.Temperature = ptrF(0.8) })},
+		{"response_format", onKai(func(a *registry.AgentConfig) { a.ResponseFormat = registry.ResponseFormatJSONObject })},
+		{"max_tokens", onKai(func(a *registry.AgentConfig) { a.MaxTokens = &bigTokens })},
+		{"thinking", func(cfg *ReviewConfig) { withThinking(cfg, "kai", "on", "", "qwen") }},
+		{"preserve_thinking", func(cfg *ReviewConfig) {
+			withThinking(cfg, "kai", "on", "", "qwen")
+			a := cfg.Registry.Agents["kai"]
+			a.PreserveThinking = "on"
+			cfg.Registry.Agents["kai"] = a
+		}},
+	}
+
+	for _, tc := range []struct {
+		name     string
+		build    func(func(*ReviewConfig)) Agent
+		variants []struct {
+			name   string
+			mutate func(*ReviewConfig)
+		}
+	}{
+		{"primary", buildPrimary, primaryVariants},
+		{"fallback", buildFallback, fallbackVariants},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := tc.build(nil)
+			for _, v := range tc.variants {
+				t.Run(v.name, func(t *testing.T) {
+					got := tc.build(v.mutate)
+					assert.NotEqual(t, base.CacheKey, got.CacheKey,
+						"builder must fold %s into the cache key — a forgotten field silently shares cache entries", v.name)
+				})
+			}
+		})
+	}
+}
