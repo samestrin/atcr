@@ -568,6 +568,23 @@ func TestBuildFallbackAgent_CarriesAndKeysOnItsOwnThinking(t *testing.T) {
 
 // Sprint 35.16.11.2.2.1 AC 03-04 Scenario 2: preserve_thinking gets its own
 // cache-key clause; unset appends nothing, so an undeclared key is unchanged.
+// TD internal/fanout/review.go:2974: preserve_thinking reaches the wire only
+// when thinking is ENABLED (newThinkingFields sends it only under on), so the
+// pt= clause must be gated the same way — a preserve flag with thinking off or
+// with nothing declared sends nothing and must keep the key that body had.
+func TestDiffCacheKey_PreserveThinkingGatedOnEnabled(t *testing.T) {
+	hash := cache.HashText("p")
+	key := func(th, level string) string {
+		return diffCacheKey("p", cacheKeyInputs{Model: "m", MaxTokens: defaultMaxTokens, Thinking: th, ThinkingLevel: level, ThinkingStyle: "qwen", PreserveThinking: "on"})
+	}
+	assert.Equal(t, cache.Key(hash, "m", "default\x00th=off\x00kv=2"), key("off", ""),
+		"preserve with thinking off keeps the thinking-off key — nothing preserve-shaped reached the wire")
+	assert.Equal(t, cache.Key(hash, "m", "default\x00kv=2"), key("", ""),
+		"a preserve-only agent keeps the undeclared key")
+	assert.Equal(t, cache.Key(hash, "m", "default\x00th=on\x00pt=on\x00kv=2"), key("on", ""),
+		"preserve with thinking on still keys apart — the wire really carries it")
+}
+
 func TestDiffCacheKey_PreserveThinkingToken(t *testing.T) {
 	hash := cache.HashText("p")
 	key := func(preserve string) string {

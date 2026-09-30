@@ -11,6 +11,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/circuitbreaker"
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -888,6 +889,49 @@ func TestWrap_EchoesDeclaredThinking(t *testing.T) {
 				require.Len(t, obs.calls(), 1)
 				got := obs.calls()[0]
 				assert.Equal(t, decl, [4]string{got.Thinking, got.ThinkingLevel, got.ThinkingStyle, got.PreserveThinking})
+			})
+		}
+	}
+}
+
+// TD internal/hookobs/hookobs.go:377: preserve_thinking renders on the wire
+// only when thinking is enabled, so the record must not report a preserve flag
+// for a body that carried neither it nor the style that would explain it. The
+// gate mirrors the ThinkingStyle one and is pinned on all four entry points.
+func TestWrap_PreserveThinkingGatedOnThinkingEnabled(t *testing.T) {
+	calls := map[string]func(ctx context.Context, c Client, inv llmclient.Invocation){
+		"Complete": func(ctx context.Context, c Client, inv llmclient.Invocation) { _, _ = c.Complete(ctx, inv) },
+		"CompleteWithUsage": func(ctx context.Context, c Client, inv llmclient.Invocation) {
+			_, _, _, _ = c.CompleteWithUsage(ctx, inv)
+		},
+		"CompleteWithMeta": func(ctx context.Context, c Client, inv llmclient.Invocation) { _, _ = c.CompleteWithMeta(ctx, inv) },
+		"Chat": func(ctx context.Context, c Client, inv llmclient.Invocation) {
+			_, _ = c.Chat(ctx, inv, []llmclient.Message{{Role: "user", Content: strPtr("hi")}}, nil)
+		},
+	}
+	for name, call := range calls {
+		for _, decl := range [][4]string{
+			{"off", "", "qwen", "on"}, // gated: preserve with thinking off records none
+			{"", "", "qwen", "on"},    // gated: preserve-only sends no thinking field at all
+			{"on", "", "qwen", "on"},  // enabled: the wire really carries it
+			{"", "low", "qwen", "on"}, // level alone is enabled
+		} {
+			t.Run(fmt.Sprintf("%s/%v", name, decl), func(t *testing.T) {
+				srv := chatServer(t, http.StatusOK, okCompletion)
+				inv := testInvocation(t, srv)
+				inv.Thinking, inv.ThinkingLevel, inv.ThinkingStyle, inv.PreserveThinking = decl[0], decl[1], decl[2], decl[3]
+				obs := &recordingObserver{}
+				ctx := observedCtx(obs, &bytes.Buffer{})
+
+				call(ctx, Wrap(ctx, llmclient.New()), inv)
+
+				require.Len(t, obs.calls(), 1)
+				got := obs.calls()[0]
+				want := decl[3]
+				if !registry.ThinkingEnabled(decl[0], decl[1]) {
+					want = ""
+				}
+				assert.Equal(t, want, got.PreserveThinking)
 			})
 		}
 	}
