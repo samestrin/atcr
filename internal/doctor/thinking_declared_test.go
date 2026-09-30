@@ -49,3 +49,23 @@ func TestRun_ThinkingDeclaredPolarity(t *testing.T) {
 	assert.Empty(t, agent.ThinkingStatus)
 	assert.Empty(t, agent.ThinkingDeclared)
 }
+
+// TD internal/registry/config.go:261: the declared-ness rule must have one
+// definition. Target.declaresThinking delegates to registry.ThinkingDeclared,
+// so a future change to the rule (e.g. preserve_thinking gaining declared
+// status) cannot leave the diagnostic disagreeing with the behavior it
+// diagnoses. The table covers every input shape both predicates can receive.
+func TestTarget_DeclaresThinkingMatchesRegistryPredicate(t *testing.T) {
+	for _, tc := range [][2]string{
+		{"", ""},
+		{"on", ""},
+		{"off", ""},
+		{"", "low"},
+		{"on", "low"},
+		{"off", "low"},
+	} {
+		assert.Equal(t, registry.ThinkingDeclared(tc[0], tc[1]),
+			Target{Thinking: tc[0], ThinkingLevel: tc[1]}.declaresThinking(),
+			"declaresThinking(%q, %q) diverged from registry.ThinkingDeclared", tc[0], tc[1])
+	}
+}

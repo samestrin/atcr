@@ -934,8 +934,12 @@ func responseFormatCall(ctx context.Context, c Completer, tgt Target, opts Optio
 
 // declaresThinking reports that the target's agents declared thinking or
 // thinking_level. resolve.go sets the fields only then, since a style alone
-// changes no request.
-func (t Target) declaresThinking() bool { return t.Thinking != "" || t.ThinkingLevel != "" }
+// changes no request. It delegates to registry.ThinkingDeclared so the
+// declared-ness rule keeps one definition (TD internal/registry/config.go:261);
+// TestTarget_DeclaresThinkingMatchesRegistryPredicate pins the equivalence.
+func (t Target) declaresThinking() bool {
+	return registry.ThinkingDeclared(t.Thinking, t.ThinkingLevel)
+}
 
 // thinkingDeclaration names the declaration in a verdict detail, e.g.
 // "thinking: off (qwen)" or "thinking_level: low (reasoning_effort)", plus
