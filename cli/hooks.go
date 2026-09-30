@@ -135,7 +135,11 @@ type ModelInvocation struct {
 	// the wire style), copied verbatim and empty when undeclared. They record
 	// what the operator declared, not the provider-specific field it was sent
 	// as. ThinkingStyle is empty unless Thinking or ThinkingLevel is set,
-	// because a style alone sends nothing.
+	// because a style alone sends nothing. That gate is enforced by the
+	// producer (hookobs.base blanks the style when nothing is declared) and
+	// pinned by TestNewCompleter_StyleAloneRecordsNoThinkingStyle; this adapter
+	// copies verbatim and deliberately does not re-apply the predicate, so the
+	// declared-ness rule keeps one definition.
 	Thinking         string
 	ThinkingLevel    string
 	ThinkingStyle    string
