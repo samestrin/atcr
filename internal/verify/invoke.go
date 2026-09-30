@@ -166,8 +166,9 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 	// owns every tag rule (leading-only, so a verdict quoting BOTH tags after
 	// real answer text survives whole). The inline reasoning is dropped here
 	// and reaches no channel at all — fanout.Result carries no reasoning field,
-	// and an endpoint that reasons inline leaves Completion.Reasoning empty by
-	// construction. That is deliberate: Completion.Reasoning stays the only
+	// and on the endpoints observed so far one that reasons inline leaves
+	// Completion.Reasoning empty (a proxy COULD populate both; reasoningOf,
+	// client.go:169). That is deliberate: Completion.Reasoning stays the only
 	// reasoning channel, and this reply did not populate it.
 	answer, _ := llmclient.SplitThink(res.Content)
 	v, _ := parseVerdict(answer)

@@ -10,17 +10,30 @@ const thinkOpen, thinkClose = "<think>", "</think>"
 // SplitThink splits inline <think> reasoning markup off the front of a reply,
 // returning the answer text and the reasoning that was removed. It strips only
 // a LEADING run — a run of <think>…</think> pairs at the start of the content
-// (whitespace between them allowed), a trailing unclosed opener that begins that
-// run, or, when no opener appears anywhere, the text before the first lone
-// </think>. A tag that appears after real answer text has started is left in
-// place and belongs to the answer.
+// (whitespace between them allowed), or a trailing unclosed opener that begins
+// that run. Everything else is the answer: a tag that appears after real answer
+// text has started, and a bare </think> with no opener anywhere, are both left
+// in place.
 //
 // Leading-only, because a tag after answer text is the model quoting the tag —
 // a reviewer writing a finding about <think> handling, or a debate seat citing
-// one — and eating it would delete real answer text. A lone closer with no
-// opener anywhere counts as reasoning, because a reasoning-style chat template
-// can put the opener in the prompt, so the reply starts mid-thought and carries
-// only the closer (decided 2026-09-29).
+// one — and eating it would delete real answer text.
+//
+// A bare closer with no opener is NOT stripped (decided 2026-09-30, reversing
+// the rule this function shipped with on 2026-09-29). The old rule read it as a
+// reply that started mid-thought because a chat template had put the opener in
+// the prompt, and took everything before the closer as reasoning. That is
+// position-blind and unbounded, so a verdict naming the bare closer —
+// `{"verdict":"confirmed","reasoning":"never looks for </think>"}` — lost its
+// whole prefix and parsed as malformed. The mid-thought shape is speculative;
+// an answer that names the closer is the likeliest input in this repo, since
+// findings and TD rows discuss </think> handling directly. Keeping the prefix
+// costs at most an unstripped reasoning run reaching a parser that scans for a
+// keyed JSON object anyway; the old rule silently destroyed real verdicts.
+//
+// The DETECTOR keeps the bare-closer rule — see HasThinkMarkup. Detecting that
+// a reply thought is a different question from deciding what to remove, and the
+// doctor verdict is the only consumer that rule ever governed.
 //
 // Use this to decide what to PARSE or re-send. To decide whether a reply thought
 // at all, use HasThinkMarkup: detection is position-blind where a strip cannot
@@ -67,14 +80,10 @@ func SplitThink(content string) (answer, reasoning string) {
 	if stripped {
 		return rest, thought.String()
 	}
-	if strings.Contains(content, thinkOpen) {
-		// An opener exists but does not lead: the tag is quoted inside the
-		// answer, so the content is returned untouched.
-		return content, ""
-	}
-	if end := strings.Index(content, thinkClose); end >= 0 {
-		return content[end+len(thinkClose):], content[:end]
-	}
+	// Nothing led, so nothing is removed. This covers both an opener quoted
+	// inside the answer and a bare closer with no opener anywhere: neither is a
+	// leading run, and a strip has no way to tell a mid-thought reply from an
+	// answer that merely names the tag.
 	return content, ""
 }
 

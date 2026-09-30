@@ -166,9 +166,14 @@ func driveSeat(ctx context.Context, seat Caster, prompt string, cc fanout.ChatCo
 	//
 	// internal/llmclient owns every tag rule, and the strip is leading-only, so
 	// a seat citing <think> mid-argument — the likely shape when the debated
-	// finding is about think handling — comes back whole. The removed reasoning
-	// is dropped, never stored on rec or a Ruling: ChatResponse.Reasoning stays
-	// the only reasoning channel.
+	// finding is about think handling — comes back whole. Accepted limit: a
+	// block placed AFTER the answer is forwarded verbatim, including to the
+	// judge, where parseRuling can then read a draft ruling out of it (TD-008).
+	//
+	// The removed reasoning is dropped and reaches no channel at all: this lane
+	// has none — fanout.Result carries no reasoning field — so nothing on rec or
+	// a Ruling could hold it even if a caller wanted to. Nothing keeps the raw
+	// reply either, so the transcript records the stripped statement (TD-009).
 	//
 	// Deliberately additive: the status is still derived from the engine result,
 	// NOT from whether the strip emptied the content. A StatusOK seat whose whole

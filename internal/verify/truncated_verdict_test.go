@@ -126,6 +126,22 @@ func TestInvokeSkeptic_StripsThinkBeforeParsingTheVerdict(t *testing.T) {
 		assert.Equal(t, "real answer", v.Notes)
 	})
 
+	// The bare closer is the shape that forced the 2026-09-30 reversal of
+	// SplitThink's lone-closer rule. Under the old rule this reply stripped down
+	// to ` at all"}`, the verdict degraded confirmed -> unverifiable, and the
+	// skeptic was scored as producing garbage — silent loss of a real
+	// verification. Pinned at the call site, because the call site is what ships.
+	t.Run("a verdict naming only the bare closer is not stripped", func(t *testing.T) {
+		t.Parallel()
+		raw := `{"verdict": "confirmed", "reasoning": "the code never looks for </think> at all"}`
+		v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+		require.NoError(t, err)
+		require.NotNil(t, v)
+		assert.Equal(t, verdictConfirmed, v.Verdict,
+			"a skeptic verifying a think-handling finding names the bare closer; its verdict must survive")
+		assert.Equal(t, "the code never looks for </think> at all", v.Notes)
+	})
+
 	t.Run("a verdict that quotes the tags after real text is untouched", func(t *testing.T) {
 		t.Parallel()
 		// A skeptic judging a think-handling finding cites both tags. The

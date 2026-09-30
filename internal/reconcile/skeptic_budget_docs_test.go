@@ -236,6 +236,52 @@ func TestDocs_CrossExaminationPerSeatBudgetsMatchTheDebateLane(t *testing.T) {
 		"naming the lane that behaves differently is what makes the asymmetry findable")
 }
 
+// TestDocs_CrossExaminationStatesTheSilentSeatRule pins the same bullet against
+// internal/debate/debate.go's silentArguingSeats + debateOne.
+//
+// The bullet said only a HALTED arguing seat with no statement yields unresolved,
+// which is what the code did — and the code was wrong: silentArguingSeats keyed
+// on rec.Halted, so a StatusOK seat that returned nothing sailed past the guard
+// and its one-sided ruling was recorded as a real contested outcome. Both the
+// guard and the sentence were corrected together (sprint 35.16.11.2.2.4 Phase 2),
+// so the doc needs a guard of its own or it can silently revert to describing the
+// hole as the rule.
+func TestDocs_CrossExaminationStatesTheSilentSeatRule(t *testing.T) {
+	doc := readDoc(t, "cross-examination.md")
+	bullet := docBullet(t, doc, "Per-seat budgets")
+
+	assert.Contains(t, bullet, "whether or not it halted",
+		"the qualifier IS the correction: without it the sentence describes the pre-fix behaviour, in which a clean-but-blank seat produced a fake contested ruling")
+	assert.NotContains(t, bullet, "and so does a halted arguing seat",
+		"the old narrower wording must never come back — it is the hole, stated as the rule")
+	assert.Contains(t, bullet, "`seat_silent`",
+		"a reason string that appears in debate.json and in no document is a reason an operator cannot look up")
+	assert.Contains(t, bullet, "`seat_halted`",
+		"the two reasons are kept apart on purpose: a clean seat must never be reported as having halted")
+}
+
+// TestDocs_CrossExaminationStatesTheThinkStrip pins the transcript row against
+// internal/debate/protocol.go's driveSeat.
+//
+// The row called the transcript "the replayable per-item exchange" while
+// driveSeat began stripping leading <think> markup and keeping no copy of the raw
+// reply, so the transcript stopped being replayable in the literal sense. A
+// mis-strip is undiagnosable from the artifact, which is exactly the fact the row
+// now has to carry.
+func TestDocs_CrossExaminationStatesTheThinkStrip(t *testing.T) {
+	doc := readDoc(t, "cross-examination.md")
+	row := docTableRow(t, doc, "debate/<item-id>/transcript.jsonl")
+
+	assert.Contains(t, row, "<think>",
+		"the row must name the markup that is removed, or a reader cannot tell the recorded statement from the raw reply")
+	assert.Contains(t, row, "stripped",
+		"the transformation has to be stated, not implied by 'as later seats saw it' alone")
+	assert.Contains(t, row, "kept nowhere",
+		"the load-bearing consequence: the removed bytes are unrecoverable, so a mis-strip cannot be diagnosed from this artifact")
+	assert.NotContains(t, row, "The replayable per-item exchange",
+		"the unqualified claim is what drifted — the file no longer holds the raw reply")
+}
+
 // TestFindBulletLines_RequiresExactlyOneMatch pins the helper docBullet is built
 // on: it must surface EVERY matching bullet so docBullet can fail loudly on a
 // decoy, mirroring the "one row is the unit that drifts" rationale of

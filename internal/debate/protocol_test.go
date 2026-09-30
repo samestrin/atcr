@@ -413,11 +413,21 @@ func TestRunDebate_StripsThinkBlocksFromSeatContent(t *testing.T) {
 			wantStatement: "real statement text",
 		},
 		{
-			name:          "a lone closer with no opener leaves the text after it",
+			// A bare closer is NOT stripped (2026-09-30). A seat arguing about
+			// think-tag handling names the closer in prose, and the old rule
+			// deleted its whole argument up to that point.
+			name:          "a bare closer with no opener is left in place",
 			reply:         "draft</think>real statement",
-			wantStatement: "real statement",
+			wantStatement: "draft</think>real statement",
 		},
 		{
+			name:          "a statement naming only the bare closer keeps its whole prefix",
+			reply:         "the code never looks for </think> at all",
+			wantStatement: "the code never looks for </think> at all",
+		},
+		{
+			// No-regression row: passes with or without the production strip.
+			// It guards the leading-only rule, not the wiring.
 			name:          "tags quoted after real answer text come back byte-identical",
 			reply:         "x.go:1 mishandles <think> and </think>",
 			wantStatement: "x.go:1 mishandles <think> and </think>",

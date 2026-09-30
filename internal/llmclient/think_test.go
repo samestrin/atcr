@@ -45,11 +45,18 @@ func TestSplitThink(t *testing.T) {
 			wantAnswer: "", wantReasoning: "still going", wantSignal: true},
 		{name: "open-only with blank remainder", content: "<think>   ",
 			wantAnswer: "", wantReasoning: "   ", wantSignal: false},
-		// The lone-closer rule (2026-09-29): a reasoning chat template can put the
-		// opener in the prompt, so the reply starts mid-thought carrying only the
-		// closer. Reversed from doctor's old "a stray closer is template noise".
-		{name: "lone closer with no opener", content: "draft</think>answer",
-			wantAnswer: "answer", wantReasoning: "draft", wantSignal: true},
+		// A bare closer with no opener is NOT stripped (2026-09-30, reversing the
+		// rule this helper shipped with). Reading it as a mid-thought reply was
+		// position-blind and unbounded, so an answer that merely NAMES the closer
+		// lost its whole prefix. The detector keeps the rule; the strip does not.
+		{name: "lone closer with no opener is left alone", content: "draft</think>answer",
+			wantAnswer: "draft</think>answer", wantReasoning: "", wantSignal: false},
+		// The shape that forced the reversal: a real verdict naming the bare
+		// closer used to strip down to ` at all"}` and parse as malformed.
+		{name: "a keyed JSON answer naming the bare closer survives whole",
+			content:       `{"verdict":"confirmed","reasoning":"never looks for </think>"}`,
+			wantAnswer:    `{"verdict":"confirmed","reasoning":"never looks for </think>"}`,
+			wantReasoning: "", wantSignal: false},
 		// Proves a downstream JSON-object parser (verdict, ruling) sees only the
 		// real answer once T2/T3 apply this helper.
 		{name: "draft JSON object inside a leading block", content: `<think>{"verdict":"fail"}</think>{"verdict":"pass"}`,
@@ -71,8 +78,8 @@ func TestSplitThink(t *testing.T) {
 		// pins the helper's behavior, not a doctor coupling.
 		{name: "marker survives a leading pair", content: "<think>plan the reply</think>\nATCR-MARKER",
 			wantAnswer: "\nATCR-MARKER", wantReasoning: "plan the reply", wantSignal: true},
-		{name: "marker survives a lone closer", content: "planning the reply</think>\nATCR-MARKER",
-			wantAnswer: "\nATCR-MARKER", wantReasoning: "planning the reply", wantSignal: true},
+		{name: "marker survives an unstripped lone closer", content: "planning the reply</think>\nATCR-MARKER",
+			wantAnswer: "planning the reply</think>\nATCR-MARKER", wantReasoning: "", wantSignal: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -127,6 +134,9 @@ func TestHasThinkMarkup_BroaderThanSplitThink(t *testing.T) {
 	for _, content := range []string{
 		"answer <think>x</think> more",
 		"ATCR-OK-n\n<think>let me double check",
+		// The bare closer joined this list on 2026-09-30: the strip stopped
+		// removing it, the detector still reports it.
+		"draft</think>answer",
 	} {
 		answer, reasoning := SplitThink(content)
 		assert.Equal(t, content, answer, "the strip leaves a non-leading tag in place")
@@ -135,24 +145,18 @@ func TestHasThinkMarkup_BroaderThanSplitThink(t *testing.T) {
 	}
 }
 
-// TestSplitThink_AcceptedLossyEdges pins two inputs on which the strip DOES eat
-// real answer text. Both are documented, accepted edges of the leading-only
-// scope (plan 35.16.11.2.2.4 Risk Mitigation, task-01: "out of scope for this
-// task's fix, only for test awareness — do not attempt a code-fence heuristic
-// here"). They are pinned so the blast radius is visible to whoever wires a lane
-// onto the helper, and so a later narrowing of these cases is a deliberate
-// change with a failing test, not a silent one. Filed as TD-001 and TD-002.
+// TestSplitThink_AcceptedLossyEdges pins the one remaining input on which the
+// strip DOES eat real answer text, so the blast radius stays visible to whoever
+// wires a lane onto the helper and a later narrowing is a deliberate change
+// with a failing test rather than a silent one. Filed as TD-002.
+//
+// TD-001's case — a bare </think> with no opener taking the whole prefix — is
+// no longer here: the rule that caused it was removed on 2026-09-30 and its
+// inputs now appear in TestSplitThink as survive-whole rows.
 func TestSplitThink_AcceptedLossyEdges(t *testing.T) {
-	// A bare </think> quoted in an answer with no opener anywhere is
-	// indistinguishable from a reply that started mid-thought, so the whole
-	// prefix is taken as reasoning.
-	answer, reasoning := SplitThink(`{"findings":[{"note":"model emitted </think>"}]}`)
-	assert.Equal(t, `"}]}`, answer, "the prefix before a quoted lone closer is lost")
-	assert.NotEmpty(t, reasoning)
-
 	// A variant closer is not a closer, so the leading opener reads as unclosed
 	// and everything after it is reasoning.
-	answer, reasoning = SplitThink("<think>reasoning</thinking>REAL ANSWER")
+	answer, reasoning := SplitThink("<think>reasoning</thinking>REAL ANSWER")
 	assert.Empty(t, answer, "a variant closer leaves the opener unclosed")
 	assert.Equal(t, "reasoning</thinking>REAL ANSWER", reasoning)
 }

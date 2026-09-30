@@ -206,10 +206,23 @@ func TestParseVerdict_ThinkWrappedDraftLosesToTheRealVerdict(t *testing.T) {
 			wantNotes:   "real answer",
 		},
 		{
-			name:        "a lone closer with no opener still yields the answer after it",
+			// A bare closer is NOT stripped (2026-09-30). The verdict still
+			// parses, because parseVerdict skips text before the first
+			// verdict-keyed object — the strip was never what saved this shape.
+			name:        "a lone closer with no opener is left in place and still parses",
 			response:    `draft</think>{"verdict": "refuted", "reasoning": "real answer"}`,
 			wantVerdict: verdictRefuted,
 			wantNotes:   "real answer",
+		},
+		{
+			// The regression the bare-closer rule caused in THIS lane: the old
+			// rule stripped this to ` at all"}` and the verdict degraded from
+			// confirmed to unverifiable. A skeptic verifying a finding about
+			// think-tag handling names the bare closer routinely.
+			name:        "a verdict naming only the bare closer keeps its whole prefix",
+			response:    `{"verdict": "confirmed", "reasoning": "the code never looks for </think> at all"}`,
+			wantVerdict: verdictConfirmed,
+			wantNotes:   "the code never looks for </think> at all",
 		},
 		{
 			name: "a verdict quoting both tags after real answer text survives intact",

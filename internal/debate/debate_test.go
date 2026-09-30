@@ -383,6 +383,11 @@ func TestRunDebate_BudgetTrippedSeatWithStatementKeepsRuling(t *testing.T) {
 		{"truncated statement", "alice", "the defense is cut o", true, 0, 1},
 		{"challenger statement", "bob", "the attack", false, 1, 0},
 		{"challenger blank statement", "bob", "   ", false, 0, 1},
+		// The T3 strip reaches the halted path too: a forced final answer that
+		// was entirely think markup strips to blank, so the seat that "kept its
+		// ruling" before now records unresolved. Pinned because the strip is
+		// otherwise described as additive, and at the RUN level it is not.
+		{"forced answer was entirely a think block", "alice", "<think>ran out mid-thought</think>", false, 0, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
@@ -820,4 +825,49 @@ func TestRunDebate_TranscriptRecordsTheStrippedStatement(t *testing.T) {
 	assert.NotContains(t, string(raw), "draft attack, discarded")
 	assert.Contains(t, string(raw), "the attack stands",
 		"the real statement must survive; a strip that ate it would pass the assertions above vacuously")
+}
+
+// TestRunDebate_BlankArguingSeatIsUnresolvedEvenWhenNotHalted closes a hole that
+// predates the think strip: silentArguingSeats keyed on rec.Halted, so a seat
+// that returned StatusOK with empty content was invisible to it. The judge then
+// ruled on one side and the item was recorded as a genuine outcome — a contested
+// ruling that never happened, exactly what the seat_halted guard exists to stop.
+//
+// It is durable, not just wrong once: an upheld item is written with
+// ChallengeSurvived true, and filterAlreadyDebated skips any finding carrying a
+// challenge-survived verification, so the fake win is never revisited.
+//
+// A seat that said nothing made no case, whether or not the engine halted it.
+// The plain-empty row is the pre-existing path; the think-only row is the one the
+// T3 strip opened, and both must resolve the same way or the guard is keyed on
+// the wrong fact.
+func TestRunDebate_BlankArguingSeatIsUnresolvedEvenWhenNotHalted(t *testing.T) {
+	for _, tc := range []struct{ name, reply string }{
+		{"plain empty reply", ""},
+		{"whitespace-only reply", "   \n  "},
+		{"reply that was entirely a think block", "<think>only reasoning</think>"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+			cc := &fakeChatCompleter{turns: []chatTurn{
+				{content: tc.reply}, // proposer says nothing
+				{content: "challenger attacks"},
+				{content: `{"outcome":"uphold","settled_severity":"HIGH","reasoning":"evidence holds"}`},
+			}}
+			res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+			require.NoError(t, err)
+
+			assert.Equal(t, 1, res.Unresolved, "one side never argued, so there is no contested outcome")
+			assert.Zero(t, res.Upheld+res.Overturned+res.Split)
+
+			f := readFindings(t, dir)
+			assert.Nil(t, f[0].Verification,
+				"a one-sided ruling must write no verdict — ChallengeSurvived here would make filterAlreadyDebated skip the finding forever")
+
+			var df DebateFile
+			raw, _ := os.ReadFile(filepath.Join(dir, reconciledSubdir, DebateJSON))
+			require.NoError(t, json.Unmarshal(raw, &df))
+			assert.Equal(t, "seat_silent", df.Items[0].Reason)
+		})
+	}
 }

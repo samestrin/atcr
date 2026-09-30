@@ -108,8 +108,13 @@ func TestParseRuling_BareJSONModeObject(t *testing.T) {
 // the discarded draft becomes the debate's outcome.
 //
 // The fix lives at the driveSeat choke point, not in parseRuling — internal/llmclient
-// owns every tag rule. This test therefore runs llmclient.SplitThink then
-// parseRuling: the production pair, in the production order.
+// owns every tag rule. This test composes llmclient.SplitThink with parseRuling
+// to document the shape the lane relies on.
+//
+// NO-REGRESSION TEST, not change coverage: it calls SplitThink in the test body,
+// so it passes with or without the production strip. The change-sensitive proof
+// that JudgeRaw reaches parseRuling stripped lives in protocol_test.go →
+// TestRunDebate_StripsThinkBlocksFromSeatContent, which drives RunDebate.
 func TestParseRuling_ThinkWrappedDraftLosesToTheRealRuling(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -124,10 +129,22 @@ func TestParseRuling_ThinkWrappedDraftLosesToTheRealRuling(t *testing.T) {
 			wantReason:  "real answer",
 		},
 		{
-			name:        "a lone closer with no opener still yields the ruling after it",
+			// A bare closer is NOT stripped (2026-09-30). The ruling still
+			// parses, because parseRuling skips text before the first
+			// outcome-keyed object — the strip was never what saved this shape.
+			name:        "a lone closer with no opener is left in place and still parses",
 			raw:         `draft</think>{"outcome":"uphold","reasoning":"real answer"}`,
 			wantOutcome: OutcomeUphold,
 			wantReason:  "real answer",
+		},
+		{
+			// The regression the bare-closer rule caused in THIS lane: the old
+			// rule stripped this ruling down to a fragment and it degraded to
+			// unresolved.
+			name:        "a ruling naming only the bare closer keeps its whole prefix",
+			raw:         `{"outcome":"uphold","reasoning":"the code never looks for </think> at all"}`,
+			wantOutcome: OutcomeUphold,
+			wantReason:  "the code never looks for </think> at all",
 		},
 		{
 			name: "a ruling quoting both tags after real answer text survives intact",

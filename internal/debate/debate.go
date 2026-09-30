@@ -521,12 +521,23 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 		return ir
 	}
 	if silent := silentArguingSeats(rec); len(silent) > 0 {
-		// A halted proposer or challenger with no statement made no case, so the
-		// judge ruled on one side only. Recording that as an uphold or overturn
-		// would read as a contested ruling that never happened.
+		// A proposer or challenger with no statement made no case, so the judge
+		// ruled on one side only. Recording that as an uphold or overturn would
+		// read as a contested ruling that never happened.
+		//
+		// Two ways to arrive here, kept apart in the reason so an operator
+		// reading debate.json is never told a seat halted when it did not: the
+		// seat halted (tripped budget, provider error) and returned nothing, or
+		// it ran clean and had nothing to say — an empty reply, or one that was
+		// entirely think markup that driveSeat stripped.
 		ir.Outcome = OutcomeUnresolved
-		ir.Reason = "seat_halted"
-		tr.RecordRuling(RulingEvent{Outcome: OutcomeUnresolved, Reasoning: "seat halted: " + strings.Join(silent, ",")})
+		ir.Reason = "seat_silent"
+		note := "seat silent: "
+		if anySeatHalted(rec.Halted, silent) {
+			ir.Reason = "seat_halted"
+			note = "seat halted: "
+		}
+		tr.RecordRuling(RulingEvent{Outcome: OutcomeUnresolved, Reasoning: note + strings.Join(silent, ",")})
 		return ir
 	}
 
@@ -572,20 +583,42 @@ func splitSeverity(ir ItemResult) string {
 	return ""
 }
 
-// silentArguingSeats returns the halted proposer/challenger seats that left no
+// silentArguingSeats returns the proposer/challenger seats that left no
 // statement. A seat halted by a tripped budget still returns its forced final
-// answer, which the next seats saw, so only an empty statement means that side
+// answer, which the next seats saw, so only an EMPTY statement means that side
 // made no case.
+//
+// Keyed on the statement, not on rec.Halted: a seat that said nothing made no
+// case whether or not the engine halted it. Keying on Halted alone made a
+// StatusOK seat with empty content invisible here, so the judge's one-sided
+// ruling was recorded as a real outcome — and, being written with
+// ChallengeSurvived true, filterAlreadyDebated then skipped that finding on
+// every later run, making the fake win durable. driveSeat's think strip added a
+// second way to reach the same blank (a reply that was entirely think markup),
+// which is how the pre-existing hole was found.
 func silentArguingSeats(rec Record) []string {
 	var silent []string
-	for _, h := range rec.Halted {
-		switch {
-		case h == LabelProposer && strings.TrimSpace(rec.ProposerStatement) == "",
-			h == LabelChallenger && strings.TrimSpace(rec.ChallengerStatement) == "":
-			silent = append(silent, h)
-		}
+	if strings.TrimSpace(rec.ProposerStatement) == "" {
+		silent = append(silent, LabelProposer)
+	}
+	if strings.TrimSpace(rec.ChallengerStatement) == "" {
+		silent = append(silent, LabelChallenger)
 	}
 	return silent
+}
+
+// anySeatHalted reports whether any of the named seats is among the halted ones.
+// It separates "halted and said nothing" from "ran fine and said nothing" so the
+// recorded reason does not claim a seat halted when it did not.
+func anySeatHalted(halted, seats []string) bool {
+	for _, s := range seats {
+		for _, h := range halted {
+			if h == s {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // judgeHalted reports whether the judge seat is among the halted seats. A halted
