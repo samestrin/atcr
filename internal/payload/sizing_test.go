@@ -226,3 +226,12 @@ func TestInputRoomTokens_NeverReportsADeficit(t *testing.T) {
 		t.Errorf("undeclared: InputRoomTokens = %d, want %d", got, want)
 	}
 }
+
+// TokensToBytes converts at EffectiveByteBudget's ~3.5 B/token ratio, rounding
+// down, and a non-positive count is 0 rather than a negative byte allowance.
+// The expectations are literals so a change to the ratio has to be acknowledged.
+func TestTokensToBytes(t *testing.T) {
+	for tokens, want := range map[int]int64{-1: 0, 0: 0, 1: 3, 2: 7, 100: 350} {
+		assert.Equal(t, want, TokensToBytes(tokens), "tokens=%d", tokens)
+	}
+}
