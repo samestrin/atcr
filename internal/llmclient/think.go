@@ -71,9 +71,14 @@ const thinkOpen, thinkClose = "<think>", "</think>"
 //
 // The two returns are NOT a partition of the input: the tag bytes, the
 // whitespace before the leading run, and the whitespace between consumed pairs
-// are dropped from both, so the original cannot be reconstructed from them. A
-// caller that needs the raw reply MUST keep its own copy: strip into a local or
-// onto a copied message, never over the field you read.
+// are dropped from both, so the original cannot be reconstructed from them.
+// The asymmetry runs one way only: whitespace AFTER the run is KEPT, so a
+// stripped answer may begin with `\n` or whitespace — the answer is everything
+// from the first byte after the last consumed closer, deliberately, so it stays
+// a suffix of the input. Any caller that branches on the answer's first byte
+// (e.g. `answer[0] == '{'`) must trim first. A caller that needs the raw reply
+// MUST keep its own copy: strip into a local or onto a copied message, never
+// over the field you read.
 //
 // SplitThink returns strings and nothing else. It never writes to
 // Completion.Reasoning or ChatResponse.Reasoning — those stay the only reasoning

@@ -86,6 +86,12 @@ func TestSplitThink(t *testing.T) {
 			wantAnswer: "\nATCR-MARKER", wantReasoning: "plan the reply", wantSignal: true},
 		{name: "marker survives an unstripped lone closer", content: "planning the reply</think>\nATCR-MARKER",
 			wantAnswer: "planning the reply</think>\nATCR-MARKER", wantReasoning: "", wantSignal: false},
+		// Whitespace AFTER the run is kept: a stripped answer may begin with `\n`.
+		// Pins the doc's asymmetry sentence — a future TrimLeft on the answer path
+		// cannot land silently. (The marker row above happens to show it; this row
+		// names the contract.)
+		{name: "whitespace after the run survives into the answer", content: "<think>plan</think>\n\n answer",
+			wantAnswer: "\n\n answer", wantReasoning: "plan", wantSignal: true},
 		// A variant opener is not thinking markup (doc comment: matching is on the
 		// exact lowercase literals). The content survives whole — draft object and
 		// all — so a first-match parser takes the draft. That spoof is the accepted
