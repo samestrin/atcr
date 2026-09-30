@@ -118,9 +118,16 @@ func TestProvidersDoc_SalvageYieldsNoFindings(t *testing.T) {
 		for _, want := range []string{
 			"marks the reply **salvaged**",
 			"for diagnosability only",
-			// The three places a salvaged reply still shows up. If a later edit
-			// drops these, the salvage reads as pointless and invites removal.
-			"`review.md`, the transcript and `atcr doctor`'s hint",
+			// The two places a salvaged reply still shows up. If a later edit drops
+			// these, the salvage reads as pointless and invites removal.
+			//
+			// Exactly two, not three: the transcript is NOT one of them. Only the
+			// tool loop writes a transcript (internal/fanout/loop.go), and
+			// llmclient.ChatResponse carries no Salvaged field, so a salvaged reply
+			// is always a single-shot reply. The Phase 5 gate caught this doc
+			// claiming the transcript; asserting the two-place list keeps the third
+			// from being added back.
+			"`review.md` and `atcr doctor`'s hint",
 		} {
 			assert.Contains(t, doc, want,
 				"providers.md must describe the salvage as diagnostic-only: missing %q", want)

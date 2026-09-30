@@ -402,9 +402,11 @@ func (c *Client) CompleteWithMeta(ctx context.Context, inv Invocation) (Completi
 	salvaged := false
 	if content == "" {
 		// Reasoning model that ran out of output budget mid-thought: salvage the
-		// chain-of-thought so the reply is DIAGNOSABLE (it reaches review.md, the
-		// transcript, and doctor's hint) instead of being indistinguishable from a
-		// dead call. Truncated (captured above) is preserved so the caller still
+		// chain-of-thought so the reply is DIAGNOSABLE (it reaches review.md and
+		// doctor's hint) instead of being indistinguishable from a dead call. NOT
+		// the transcript: only the tool loop writes one (fanout/loop.go), and
+		// ChatResponse carries no Salvaged field, so a salvaged reply is always a
+		// single-shot reply and has no transcript to appear in. Truncated (captured above) is preserved so the caller still
 		// knows this salvaged content is partial, and Salvaged is set so a caller
 		// that trusts Content as a statement/verdict/finding/cacheable review can
 		// refuse it — on a stop-reason reply Truncated is FALSE here, which is
