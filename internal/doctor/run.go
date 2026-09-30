@@ -1066,15 +1066,23 @@ func reasoningSignal(comp llmclient.Completion) string {
 
 // inlineThinking reports non-blank reasoning text in the content. It is a thin
 // wrapper over llmclient.HasThinkMarkup, which owns every tag rule; see its doc
-// comment. Doctor keeps no tag matching of its own, so the probe and the review
-// lanes can never disagree about what a think block LOOKS LIKE.
+// comment. Doctor keeps no tag matching of its own.
 //
-// They can still disagree about what to DO with one, and since sprint
-// 35.16.11.2.2.4 they do: the review lane strips a leading block before parsing
-// (fanout.Result.parseFindings), while responseFormatCall's bare-object check
-// above reads raw content, so `<think>ok</think>{"findings":[]}` is a clean review
-// to the review lane and response_format_not_honored to this probe. Doctor verdict
-// semantics were out of scope for that sprint; filed as TD.
+// HasThinkMarkup and llmclient.SplitThink share the tag LITERALS but not the tag
+// RULES, so the probe and the review lane can disagree about what a think block
+// LOOKS LIKE, not merely about what to do with one. The live disagreement is the
+// bare closer: a lone </think> with text before it is markup to the detector
+// (position-blind — HasThinkMarkup) and no tag at all to the strip, which is
+// leading-only and leaves it in place (SplitThink). That rule difference is what
+// flipped this probe's verdict when doctor adopted the detector; it is pinned by
+// TestInlineThinkingDivergesFromTheStripOnABareCloser, so narrowing either side is
+// a deliberate change with a failing test.
+//
+// The two BEHAVIOURAL divergences the same sprint opened are closed, each by
+// reading the operand the review lane reads: responseFormatCall strips a leading
+// block before its bare-object check (TD internal/doctor/run.go:958) and classify
+// now checks the marker against the stripped answer (TD internal/doctor/run.go:737).
+// A reply the review lane parses as clean is no longer a probe failure here.
 //
 // It reads the DETECTOR, not llmclient.SplitThink's leading-only strip: this
 // prompt provably contains no tag, so a block after the marker is not the model

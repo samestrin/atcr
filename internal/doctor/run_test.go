@@ -635,6 +635,31 @@ func TestClassify_ContentMarkerStillOK(t *testing.T) {
 	assert.Equal(t, StatusOK, got.status)
 }
 
+// inlineThinking's doc comment claims the two helpers share the tag LITERALS but
+// not the tag RULES, and names the bare closer as the live disagreement. Pin both
+// halves against the live code, so the comment cannot drift back to the false
+// "can never disagree about what a think block LOOKS LIKE".
+func TestInlineThinkingDivergesFromTheStripOnABareCloser(t *testing.T) {
+	content := "planning the reply</think>\n" + Marker(testNonce)
+	assert.True(t, inlineThinking(content),
+		"the detector is position-blind: a lone closer with text before it is markup")
+	answer, _ := llmclient.SplitThink(content)
+	assert.Equal(t, content, answer,
+		"the strip is leading-only: a bare closer is not a tag, so nothing is removed")
+}
+
+// The two behavioural divergences the sprint opened are closed, and the comment
+// now says so. Pin the doctor-vs-lane agreement that closed them: content whose
+// leading block is stripped to a readable object must have NO caller here reading
+// the raw reply for shape.
+func TestDoctorReadsTheLaneOperandForShapeChecks(t *testing.T) {
+	content := "<think>checked it</think>" + `{"findings":[]}`
+	answer, _ := llmclient.SplitThink(content)
+	require.NotEqual(t, content, answer, "the leading block must be stripped for this pin to mean anything")
+	assert.True(t, stream.IsNoFindings(answer), "the lane reads a clean review from the stripped operand")
+	assert.False(t, inlineThinking(answer), "the stripped operand carries no markup to report")
+}
+
 // TD internal/doctor/run.go:737: the review lane parses a leading <think> block
 // stripped off (fanout.Result.parseFindings), so a marker that lives only inside
 // that block is invisible to the lane doctor pre-flights. classify reads raw
