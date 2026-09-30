@@ -515,13 +515,30 @@ type Result struct {
 
 // parseFindings returns the findings in r's model output: the union of each
 // chunk's findings for a merged result, else those in Content.
+//
+// Inline <think> reasoning is stripped first. stream.ParseModelOutput scans every
+// line identically to prose, so a draft finding a model writes inside a <think>
+// block and then drops before its real answer would otherwise be counted and
+// written to the pool as real. The strip lives HERE, at the one choke point both
+// ParsedFindingCount and findingsFor share, and not inside ParseModelOutput:
+// internal/doctor calls that parser directly for its own probe, which must keep
+// seeing raw output. r.Content and r.chunkContents are read, never reassigned, so
+// review.md still writes the raw reply.
+//
+// The strip is leading-only (see llmclient.SplitThink), so a block placed AFTER
+// the answer still reaches the parser and its draft findings still count. That is
+// the accepted limit of the leading-only rule in this lane — the same one TD-008
+// records for the debate lane — and it is the price of not eating a real finding
+// whose text quotes the tag.
 func (r *Result) parseFindings() []stream.Finding {
 	if r.chunkContents == nil {
-		return stream.ParseModelOutput([]byte(r.Content))
+		answer, _ := llmclient.SplitThink(r.Content)
+		return stream.ParseModelOutput([]byte(answer))
 	}
 	var out []stream.Finding
 	for _, c := range r.chunkContents {
-		out = append(out, stream.ParseModelOutput([]byte(c))...)
+		answer, _ := llmclient.SplitThink(c)
+		out = append(out, stream.ParseModelOutput([]byte(answer))...)
 	}
 	return out
 }
@@ -910,9 +927,19 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 		// The clean-review sentinel is excluded: it IS the specified way to report
 		// nothing, so flagging it would mark every clean review as anomalous and
 		// destroy the distinction this marker exists to draw.
-		if r.Status == StatusOK && r.Content != "" && r.ParsedFindingCount() == 0 &&
-			!stream.IsNoFindings(r.Content) {
-			r.UnparseableResponse = true
+		//
+		// The sentinel is matched against STRIPPED content, for the same reason
+		// parseFindings parses stripped content. IsNoFindings returns false on any
+		// text besides the sentinel, so a clean review from a thinking-inline model
+		// ("<think>checked every file</think>\nNO FINDINGS") would read as prose no
+		// parser could use — and ReviewerOutcome ranks unparseable ABOVE clean, so
+		// the false flag would reach the scorecard and the reviewer's trust prior.
+		// Stripped into a local: r.Content stays raw for review.md.
+		if r.Status == StatusOK && r.Content != "" && r.ParsedFindingCount() == 0 {
+			answer, _ := llmclient.SplitThink(r.Content)
+			if !stream.IsNoFindings(answer) {
+				r.UnparseableResponse = true
+			}
 		}
 		if r.Status == StatusOK {
 			r.DurationMS = time.Since(start).Milliseconds()

@@ -377,3 +377,82 @@ func TestCache_DoesNotCacheSalvagedReply(t *testing.T) {
 	_, cached := cache.m["k1"]
 	assert.False(t, cached, "a salvaged reply must not be written to the diff cache")
 }
+
+// --- T4 (sprint 35.16.11.2.2.4): strip <think> before findings are parsed -----
+
+// A model that reasons inline can draft a finding inside a <think> block and then
+// drop it before its real answer. parseFindings is the single choke point both
+// ParsedFindingCount and findingsFor share, so the strip lives there: the draft
+// must not be counted and must not reach the pool.
+func TestResult_ParseFindings_ThinkWrappedDraftLosesToTheRealFinding(t *testing.T) {
+	// The draft sits on its own line so the parser DOES read it today: pre-fix
+	// this content yields two findings, which is what makes the draft's
+	// disappearance the thing under test rather than a parsing accident.
+	const content = "<think>\nHIGH|a.go:1|draft finding|f|correctness|1|e\n" +
+		"on reflection a.go is fine\n</think>\nMEDIUM|b.go:2|real finding|f|correctness|2|e"
+
+	// Fresh Result per assertion: ParsedFindingCount memoizes on first use.
+	assert.Equal(t, 1, (&Result{Content: content}).ParsedFindingCount(),
+		"the draft finding inside <think> must not be counted")
+
+	fr := findingsFor(Result{Agent: "bruce", Status: StatusOK, Content: content}, nil)
+	require.Len(t, fr.Findings, 1, "findingsFor must see the stripped content too, not just the count gate")
+	assert.Equal(t, "b.go", fr.Findings[0].File)
+	assert.Equal(t, "real finding", fr.Findings[0].Problem)
+}
+
+// The leading-only rule, at this lane's call site: a reviewer reviewing THIS
+// sprint's diff writes a finding whose text quotes both tags. The finding starts
+// the content, so nothing is a leading run and nothing is removed.
+func TestResult_ParseFindings_QuotedTagAfterAnswerSurvives(t *testing.T) {
+	const problem = "parseFindings never strips <think> or </think>"
+	content := "HIGH|a.go:1|" + problem + "|add the strip|correctness|5|e"
+
+	assert.Equal(t, 1, (&Result{Content: content}).ParsedFindingCount())
+	fr := findingsFor(Result{Agent: "bruce", Status: StatusOK, Content: content}, nil)
+	require.Len(t, fr.Findings, 1)
+	assert.Equal(t, problem, fr.Findings[0].Problem,
+		"a finding that merely names the tags must be byte-identical after the strip")
+}
+
+// A genuinely clean review from a thinking-inline model. IsNoFindings returns
+// false on ANY text besides the sentinel, so without a strip before the sentinel
+// check the reply reads as "prose no parser could use" and gets stamped
+// UnparseableResponse — which ReviewerOutcome ranks ABOVE clean, so the false flag
+// reaches the scorecard and the reviewer's trust prior.
+func TestInvokeSlot_ThinkWrappedCleanReview_IsNotUnparseable(t *testing.T) {
+	c := &mapMetaCompleter{byModel: map[string]llmclient.Completion{
+		"primary": {Content: "<think>checked every file in the diff</think>\nNO FINDINGS"},
+	}}
+	e := NewEngine(c, WithTruncationFailover())
+	r := e.invokeSlot(context.Background(), Slot{Primary: Agent{Name: "brad", Invocation: llmclient.Invocation{Model: "primary"}}})
+
+	assert.Equal(t, StatusOK, r.Status)
+	assert.Equal(t, 0, r.ParsedFindingCount())
+	assert.False(t, r.UnparseableResponse, "a stripped clean review is clean, not unparseable")
+}
+
+// PINNED, not special-cased (task-04 Risk Mitigation): a reply that is ONLY a
+// think block has no answer at all. Zero findings is correct, and it is NOT the
+// clean-review sentinel, so UnparseableResponse is the right flag — the reviewer
+// really did emit nothing a parser could use.
+func TestInvokeSlot_ThinkOnlyReply_IsUnparseable(t *testing.T) {
+	c := &mapMetaCompleter{byModel: map[string]llmclient.Completion{
+		"primary": {Content: "<think>HIGH|a.go:1|draft|f|correctness|1|e</think>"},
+	}}
+	e := NewEngine(c, WithTruncationFailover())
+	r := e.invokeSlot(context.Background(), Slot{Primary: Agent{Name: "brad", Invocation: llmclient.Invocation{Model: "primary"}}})
+
+	assert.Equal(t, StatusOK, r.Status)
+	assert.Equal(t, 0, r.ParsedFindingCount(), "a think-only reply carries no answer to parse")
+	assert.True(t, r.UnparseableResponse, "think-only is not the clean-review sentinel")
+}
+
+// The strip must never reassign r.Content: review.md writes the raw reply
+// (artifacts.go), and plan.md's Rollback Plan keeps it that way.
+func TestResult_ParseFindings_LeavesContentUnstripped(t *testing.T) {
+	const content = "<think>draft</think>\nMEDIUM|b.go:2|real|f|correctness|2|e"
+	r := &Result{Content: content}
+	assert.Equal(t, 1, r.ParsedFindingCount())
+	assert.Equal(t, content, r.Content, "the raw reply must survive for review.md")
+}

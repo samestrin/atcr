@@ -584,3 +584,38 @@ func TestMergeResultGroup_JoinedContentDelimitsChunks(t *testing.T) {
 	assert.NotContains(t, one.Content, "atcr:chunk-boundary", "a single content chunk stays byte-identical")
 	assert.Equal(t, "solo prose", one.Content)
 }
+
+// T4 (sprint 35.16.11.2.2.4): the strip lives inside parseFindings, which parses
+// each chunk on its own, so a <think>-wrapped draft finding in ANY chunk must be
+// excluded the same way the unchunked path excludes it — not just chunk[0].
+func TestMergeResultGroup_ThinkWrappedDraftChunkContributesNoFindings(t *testing.T) {
+	cases := []struct {
+		name   string
+		chunks []string
+	}{
+		{"draft in the first chunk", []string{
+			"<think>\nHIGH|a.go:1|draft|f|correctness|1|e\n</think>",
+			"LOW|b.go:2|real|f|correctness|1|e",
+		}},
+		{"draft in a later chunk", []string{
+			"LOW|b.go:2|real|f|correctness|1|e",
+			"<think>\nHIGH|a.go:1|draft|f|correctness|1|e\n</think>",
+		}},
+		{"draft then real inside the same chunk", []string{
+			"<think>\nHIGH|a.go:1|draft|f|correctness|1|e\n</think>\nLOW|b.go:2|real|f|correctness|1|e",
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var g []Result
+			for _, content := range c.chunks {
+				g = append(g, Result{Agent: "reviewer", Status: StatusOK, Content: content})
+			}
+			merged := mergeResultGroup(g, nil)
+			assert.Equal(t, 1, merged.ParsedFindingCount(), "only the real finding counts")
+			fr := findingsFor(merged, nil)
+			require.Len(t, fr.Findings, 1)
+			assert.Equal(t, "b.go", fr.Findings[0].File, "the draft chunk must contribute nothing")
+		})
+	}
+}
