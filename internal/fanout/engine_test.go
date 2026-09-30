@@ -667,6 +667,8 @@ func TestResult_ParseFindings_SalvagedReplyYieldsNoFindings(t *testing.T) {
 	// Well-formed on purpose: pre-fix this content parses to one finding, which is
 	// what makes its refusal the thing under test rather than a parsing accident.
 	const draft = "HIGH|a.go:1|draft finding from abandoned reasoning|f|correctness|5|e"
+	// A committed finding from a bin that did NOT salvage, for the per-chunk cases.
+	const real = "MEDIUM|b.go:2|real finding|f|correctness|2|e"
 
 	t.Run("unchunked", func(t *testing.T) {
 		assert.Equal(t, 1, (&Result{Content: draft}).ParsedFindingCount(),
@@ -681,18 +683,49 @@ func TestResult_ParseFindings_SalvagedReplyYieldsNoFindings(t *testing.T) {
 			"findingsFor must see the guard too, not just the count gate — it is the path to the pool")
 	})
 
-	t.Run("chunked with salvage on a later chunk", func(t *testing.T) {
-		// The guard sits ABOVE the chunkContents branch, so a merged result whose
-		// Salvaged flag was folded up from chunk 2..N is refused whole. Without the
-		// fold in mergeResultGroup this flag would never be true here.
+	t.Run("chunked, only the salvaged bin is refused", func(t *testing.T) {
+		// The refusal is per chunk: bin 2 salvaged, so its draft is dropped, but bin
+		// 1's committed finding survives. chunkSalvaged is index-aligned with
+		// chunkContents, exactly as mergeResultGroup writes them.
 		r := Result{
 			Agent:         "bruce",
 			Status:        StatusOK,
-			Content:       "clean chunk\n" + draft,
-			chunkContents: []string{"clean chunk", draft},
+			Content:       real + "\n" + draft,
+			chunkContents: []string{real, draft},
+			chunkSalvaged: []bool{false, true},
+			Salvaged:      true, // the persona-wide fold, for status and the cache
+		}
+		assert.Equal(t, 1, r.ParsedFindingCount(), "the clean bin's finding must survive its sibling's salvage")
+		fr := findingsFor(r, nil)
+		require.Len(t, fr.Findings, 1)
+		assert.Equal(t, "real finding", fr.Findings[0].Problem)
+	})
+
+	t.Run("chunked, every bin salvaged yields nothing", func(t *testing.T) {
+		r := Result{
+			Agent:         "bruce",
+			Status:        StatusOK,
+			Content:       draft,
+			chunkContents: []string{draft, draft},
+			chunkSalvaged: []bool{true, true},
 			Salvaged:      true,
 		}
-		assert.Equal(t, 0, r.ParsedFindingCount(), "no chunk of a salvaged result is parsed")
+		assert.Equal(t, 0, r.ParsedFindingCount())
+		assert.Empty(t, findingsFor(r, nil).Findings)
+	})
+
+	t.Run("chunked with no per-chunk flags fails closed", func(t *testing.T) {
+		// A chunked Result assembled by some path other than mergeResultGroup cannot
+		// say WHICH bin salvaged. Refusing the whole result is the safe reading: it
+		// never parses salvaged reasoning as a finding.
+		r := Result{
+			Agent:         "bruce",
+			Status:        StatusOK,
+			Content:       real + "\n" + draft,
+			chunkContents: []string{real, draft},
+			Salvaged:      true,
+		}
+		assert.Equal(t, 0, r.ParsedFindingCount(), "without per-chunk flags the persona-wide bit refuses everything")
 		assert.Empty(t, findingsFor(r, nil).Findings)
 	})
 }
@@ -723,22 +756,53 @@ func TestResult_ParseFindings_UnflaggedReplyIsUnaffected(t *testing.T) {
 	assert.Len(t, findingsFor(Result{Agent: "bruce", Status: StatusOK, Content: real}, nil).Findings, 1)
 }
 
-// The two halves composing: chunk 1 clean, chunk 2 salvaged. The fold in
-// mergeResultGroup makes the merged result Salvaged, and the parseFindings guard
-// then refuses it. Without the fold, reading only g[0]'s flag would leave the
-// merged result unmarked and chunk 2's abandoned reasoning would reach the pool —
-// the same bug the existing ResponseTruncated fold was added to close.
-func TestMergeResultGroup_SalvagedLaterChunkYieldsNoFindings(t *testing.T) {
+// The whole thing composing, end to end, and the row the 4.1.A review was filed
+// over. Bin 1 returned a committed finding; bin 2 salvaged. The merged persona must
+// keep bin 1's finding and drop bin 2's draft.
+//
+// Refusing on the persona-wide fold instead would discard bin 1's real finding,
+// score the persona unparseable for a finding it did produce, and falsify
+// docs/findings-format.md's chunk contract ("one garbled chunk beside a chunk with
+// findings is counted there without marking the persona unparseable"). Both
+// assertions on UnparseableResponse below exist to pin that the contract holds.
+func TestMergeResultGroup_SalvagedLaterChunkKeepsSiblingFindings(t *testing.T) {
 	g := []Result{
 		{Agent: "bruce", Status: StatusOK, Content: "MEDIUM|b.go:2|real finding|f|correctness|2|e"},
-		{Agent: "bruce", Status: StatusOK, Content: "HIGH|a.go:1|draft|f|correctness|5|e", Salvaged: true},
+		{Agent: "bruce", Status: StatusOK, Content: "HIGH|a.go:1|draft|f|correctness|5|e",
+			Salvaged: true, UnparseableResponse: true},
 	}
 	merged := mergeResultGroup(g, nil)
 
-	require.True(t, merged.Salvaged, "a salvage in any chunk must mark the whole persona")
-	assert.Equal(t, 0, merged.ParsedFindingCount(),
-		"a persona with a salvaged chunk contributes no findings at all")
+	require.True(t, merged.Salvaged,
+		"the persona-wide bit still records that a salvage happened, for status and the cache")
+	require.Equal(t, []bool{false, true}, merged.chunkSalvaged,
+		"the per-chunk flags must stay index-aligned with the chunk contents")
+
+	assert.Equal(t, 1, merged.ParsedFindingCount(), "bin 1's committed finding must survive")
+	fr := findingsFor(merged, nil)
+	require.Len(t, fr.Findings, 1)
+	assert.Equal(t, "real finding", fr.Findings[0].Problem)
+	assert.Equal(t, "b.go", fr.Findings[0].File)
+
+	assert.Equal(t, 1, merged.UnparseableChunks, "the salvaged bin is still counted as unparseable")
+	assert.False(t, merged.UnparseableResponse,
+		"a persona is not scored unparseable for findings it did produce")
+}
+
+// The other half of the same fold: every bin salvaged means the persona really does
+// contribute nothing, and it IS scored unparseable.
+func TestMergeResultGroup_AllChunksSalvagedYieldsNoFindings(t *testing.T) {
+	g := []Result{
+		{Agent: "bruce", Status: StatusOK, Content: "HIGH|a.go:1|draft one|f|correctness|5|e",
+			Salvaged: true, UnparseableResponse: true},
+		{Agent: "bruce", Status: StatusOK, Content: "HIGH|a.go:2|draft two|f|correctness|5|e",
+			Salvaged: true, UnparseableResponse: true},
+	}
+	merged := mergeResultGroup(g, nil)
+
+	assert.Equal(t, 0, merged.ParsedFindingCount())
 	assert.Empty(t, findingsFor(merged, nil).Findings)
+	assert.True(t, merged.UnparseableResponse, "no bin produced anything a parser could use")
 }
 
 // PINNED, not asserted-unchanged (task-06 Test Strategy): the guard necessarily

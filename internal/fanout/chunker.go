@@ -343,6 +343,12 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	isSerial := serialSet[out.Agent]
 
 	var contents []string
+	// Kept index-aligned with contents (appended in the same branch below) so
+	// parseFindings can refuse ONLY the bins the client salvaged. The persona-wide
+	// out.Salvaged folded further down is for status and the diff cache; it cannot
+	// say WHICH bin salvaged, and refusing on it would discard a clean sibling
+	// bin's committed findings.
+	var salvagedFlags []bool
 	var firstErr error
 	okCount := 0
 	anyOK, sawTimeout, allCacheHit := false, false, true
@@ -365,6 +371,7 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 		}
 		if strings.TrimSpace(r.Content) != "" {
 			contents = append(contents, r.Content)
+			salvagedFlags = append(salvagedFlags, r.Salvaged)
 		}
 		out.TokensIn += r.TokensIn
 		out.TokensOut += r.TokensOut
@@ -405,8 +412,12 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 		}
 		out.ResponseTruncated = out.ResponseTruncated || r.ResponseTruncated
 		// Same reason, same shape: reading only g[0]'s flag let a clean chunk 1 hide a
-		// salvaged chunk 2, and parseFindings refuses findings on this flag — so an
-		// unfolded salvage sent chunk 2's abandoned reasoning to the pool as real.
+		// salvaged chunk 2, so the diff cache would store a persona whose content is
+		// part abandoned reasoning and replay it on a later same-diff run.
+		//
+		// This persona-wide bit is for status and the cache ONLY. parseFindings does
+		// NOT refuse on it — it reads the index-aligned chunkSalvaged above, so a
+		// salvaged bin does not discard a clean sibling bin's committed findings.
 		out.Salvaged = out.Salvaged || r.Salvaged
 		// Count every chunk that returned prose no parser could use; reading only
 		// g[0]'s flag hid a later chunk's failure from status.json.
@@ -440,6 +451,7 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	}
 	out.Content = joinChunkContents(contents)
 	out.chunkContents = contents
+	out.chunkSalvaged = salvagedFlags
 	// The persona-level flag keeps its documented meaning: content with zero
 	// parseable findings in total. One garbled chunk beside a chunk with findings
 	// is only counted, so the persona is not scored unparseable or dropped from

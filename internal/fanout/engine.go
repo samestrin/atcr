@@ -513,6 +513,13 @@ type Result struct {
 	// inside a ```json block or an unfenced array cannot swallow the next
 	// chunk's findings (TD-048). Nil for an unchunked result.
 	chunkContents []string
+
+	// chunkSalvaged is chunkContents' salvage flags, same length and same order,
+	// written by mergeResultGroup. Salvaged is a PER-CHUNK wire fact (each bin is
+	// its own API call) that the merged Result flattens into one persona-wide bit,
+	// so parseFindings needs this to refuse only the bins the client salvaged
+	// rather than the whole persona. Nil for an unchunked result.
+	chunkSalvaged []bool
 }
 
 // parseFindings returns the findings in r's model output: the union of each
@@ -582,21 +589,37 @@ type Result struct {
 // Pinned by TestResult_ParseFindings_TruncatedButNotSalvagedKeepsItsFindings; if
 // the asymmetry ever looks wrong, file it as debt rather than widening the guard.
 //
-// SCOPE, and it is wider than one reply: for a MERGED chunked result the flag is
-// persona-wide (mergeResultGroup OR-folds it), so a salvage in ONE chunk refuses
-// every chunk — including a sibling chunk's real, committed findings. That loss is
-// under review and recorded at TD-017; do not read this comment as saying the
-// refused content is always only reasoning.
+// The refusal is PER CHUNK, not per persona. Each bin of a chunked review is its
+// own API call, so one bin can salvage while its siblings return committed
+// findings; mergeResultGroup OR-folds Salvaged into one persona-wide bit for status
+// and the cache, and refusing on that bit would discard those siblings' real
+// findings, mark the persona unparseable for findings it did produce, and falsify
+// docs/findings-format.md's chunk contract. So the chunked branch below reads
+// chunkSalvaged, skipping only the salvaged bins. Pinned by
+// TestMergeResultGroup_SalvagedLaterChunkKeepsSiblingFindings. (Found by the 4.1.A
+// adversarial review; decided 2026-09-30 by the user at the Phase 4 gate, which
+// RESOLVES TD-017 inside the sprint rather than deferring it.)
 func (r *Result) parseFindings() []stream.Finding {
-	if r.Salvaged {
-		return nil
-	}
 	if r.chunkContents == nil {
+		if r.Salvaged {
+			return nil
+		}
 		answer, _ := llmclient.SplitThink(r.Content)
 		return stream.ParseModelOutput([]byte(answer))
 	}
+	// mergeResultGroup writes chunkSalvaged beside chunkContents, so the lengths
+	// agree for every Result the chunked path produces. If they ever do not, there
+	// is no way to tell WHICH bin salvaged, so the persona-wide bit refuses the
+	// whole result: fail closed, never parse salvaged reasoning as findings.
+	perChunk := len(r.chunkSalvaged) == len(r.chunkContents)
+	if !perChunk && r.Salvaged {
+		return nil
+	}
 	var out []stream.Finding
-	for _, c := range r.chunkContents {
+	for i, c := range r.chunkContents {
+		if perChunk && r.chunkSalvaged[i] {
+			continue
+		}
 		answer, _ := llmclient.SplitThink(c)
 		out = append(out, stream.ParseModelOutput([]byte(answer))...)
 	}

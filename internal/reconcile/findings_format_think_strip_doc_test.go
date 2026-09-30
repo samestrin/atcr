@@ -48,6 +48,39 @@ func TestFindingsFormatDoc_StatesTheThinkStrip(t *testing.T) {
 		}
 	})
 
+	// T6, same sprint. The salvage refusal vanishes strictly MORE reviewer output
+	// than the think strip does (a whole reply, and for a chunked review a whole
+	// bin), so the same "operator whose output vanished reads this doc" argument
+	// applies with more force. The per-chunk half is pinned too: refusing the whole
+	// persona instead would contradict the chunk contract in the paragraph below.
+	t.Run("the salvage refusal is named, and it is per chunk", func(t *testing.T) {
+		for _, want := range []string{
+			"salvaged from the\nmodel's reasoning",
+			"yields no findings at all",
+			"a draft the model abandoned",
+			"that refusal is per chunk",
+			"sibling chunks' findings are kept",
+		} {
+			flat := strings.ReplaceAll(want, "\n", " ")
+			assert.True(t, strings.Contains(doc, want) || strings.Contains(doc, flat),
+				"findings-format.md must state the salvage refusal: missing %q", flat)
+		}
+	})
+
+	// The chunk contract the per-chunk refusal exists to keep true. If a future
+	// change goes back to refusing on the persona-wide Salvaged bit, a salvaged bin
+	// beside a bin with findings WOULD mark the persona unparseable and this
+	// sentence would become false.
+	t.Run("the chunk contract still holds", func(t *testing.T) {
+		for _, want := range []string{
+			"one garbled chunk beside a chunk with findings",
+			"without marking the persona unparseable",
+		} {
+			assert.Contains(t, doc, want,
+				"findings-format.md's chunk contract must hold: missing %q", want)
+		}
+	})
+
 	t.Run("the justification excerpt drift is disclosed", func(t *testing.T) {
 		for _, want := range []string{
 			"reads the raw\n`review.md`",
