@@ -36,18 +36,49 @@ func TestRegistryDoc_ReasoningReplayExcludesInlineThink(t *testing.T) {
 			"**Reasoning here means those four members only.**",
 			"is not provider reasoning for replay purposes",
 			"stripped off the assistant turn before that turn is appended",
-			"so it never rides back",
 			// Why the strip exists at all. Without this, a later editor reads the
 			// carve-out as an oversight to "fix" by replaying Content again.
 			"its own discarded draft replayed as settled prior output",
 			// The consequence an operator actually observes.
-			"replay carries nothing and the turn-2+ request body is unchanged",
-			// The content:null normalization is the one part of this strip whose
-			// output goes back on the wire, so a strict validator makes it visible.
-			"replays as `content: null`, not an empty string",
+			"replay contributes nothing",
 		} {
 			assert.Contains(t, doc, want,
 				"registry.md's Reasoning replay paragraph must state the inline-think carve-out: missing %q", want)
+		}
+	})
+
+	// The qualifier is load-bearing, and the round-1 wording of this very
+	// paragraph dropped it: SplitThink is leading-only, so a block after answer
+	// text IS appended and DOES ride back. An unqualified "never rides back" is
+	// false against historyMessage and would tell an operator the hazard is
+	// eliminated when it is only narrowed (TD-008). Asserted as its own subtest so
+	// the failure message says which half went wrong.
+	t.Run("the replay contract keeps the leading-only qualifier", func(t *testing.T) {
+		for _, want := range []string{
+			"A **leading** inline `<think>…</think>` run in the reply **content**",
+			"The strip is **leading-only**",
+			"left in place and DOES ride back in history",
+		} {
+			assert.Contains(t, doc, want,
+				"registry.md must NOT claim an inline block never rides back: missing %q", want)
+		}
+		assert.NotContains(t, doc, "so it never rides back",
+			"an unqualified never-rides-back claim is false: the strip is leading-only")
+	})
+
+	// The content:null normalization is the one part of this strip whose output
+	// goes back on the wire, and it is WIDER than the strip: a blank Content that
+	// carried no think markup is nilled too, so the turn-2+ body changes for every
+	// tool-enabled agent, including a roster that declares no thinking keys. The
+	// paragraph must not attribute the null to a think block alone.
+	t.Run("the content-null normalization is stated as independent of thinking", func(t *testing.T) {
+		for _, want := range []string{
+			"replays as `content: null`, not an empty string",
+			"with no think markup in it at all",
+			"for every tool-enabled agent, declared thinking or not",
+		} {
+			assert.Contains(t, doc, want,
+				"registry.md must state the content:null normalization is independent of thinking: missing %q", want)
 		}
 	})
 
@@ -58,7 +89,10 @@ func TestRegistryDoc_ReasoningReplayExcludesInlineThink(t *testing.T) {
 
 		for _, want := range []string{
 			"the four reasoning **members** only",
-			"is stripped from the replayed assistant turn and is never sent back",
+			// Same qualifier as the paragraph above, for the same reason: the row's
+			// round-1 wording said "never sent back", which is false.
+			"A **leading** inline `<think>…</think>` run in the reply **content** is stripped from the replayed assistant turn and does not ride back",
+			"the strip is leading-only, so a block after answer text is left in place and is replayed",
 			"no replayed reasoning for this flag to preserve",
 			// The row must keep saying WHY this bites here specifically.
 			"legal only under `thinking_style: qwen` or `glm`",
