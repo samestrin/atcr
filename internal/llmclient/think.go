@@ -5,6 +5,14 @@ import (
 	"unicode"
 )
 
+// Reasoning is the chain-of-thought text SplitThink removed from a reply.
+// It is a distinct named type (not a bare string) so the two returns cannot
+// be transposed at a call site without a compile error: the pair's order
+// deliberately inverts their order in the input, and every real consumer of
+// the answer wants a string. Convert with string(r) when the reasoning text
+// itself is needed.
+type Reasoning string
+
 const thinkOpen, thinkClose = "<think>", "</think>"
 
 // SplitThink splits inline <think> reasoning markup off the front of a reply,
@@ -80,11 +88,13 @@ const thinkOpen, thinkClose = "<think>", "</think>"
 // MUST keep its own copy: strip into a local or onto a copied message, never
 // over the field you read.
 //
-// SplitThink returns strings and nothing else. It never writes to
+// SplitThink returns the answer as a plain string and the removed text as
+// Reasoning (a distinct string type — see its declaration) so a transposed
+// destructure fails to compile. It never writes to
 // Completion.Reasoning or ChatResponse.Reasoning — those stay the only reasoning
 // channel, populated by reasoningOf/reasoningText — so a caller that wants the
 // removed text must keep it itself.
-func SplitThink(content string) (answer, reasoning string) {
+func SplitThink(content string) (answer string, reasoning Reasoning) {
 	var thought strings.Builder
 	rest, stripped := content, false
 	for {
@@ -111,13 +121,13 @@ func SplitThink(content string) (answer, reasoning string) {
 			// The run ends in an unclosed opener: the reply was cut off
 			// mid-thought, so everything after the opener is reasoning.
 			thought.WriteString(rest)
-			return "", thought.String()
+			return "", Reasoning(thought.String())
 		}
 		thought.WriteString(rest[:end])
 		rest = rest[end+len(thinkClose):]
 	}
 	if stripped {
-		return rest, thought.String()
+		return rest, Reasoning(thought.String())
 	}
 	// Nothing led, so nothing is removed. This covers both an opener quoted
 	// inside the answer and a bare closer with no opener anywhere: neither is a

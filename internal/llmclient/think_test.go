@@ -103,8 +103,10 @@ func TestSplitThink(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			answer, reasoning := SplitThink(tc.content)
 			assert.Equal(t, tc.wantAnswer, answer, "answer")
-			assert.Equal(t, tc.wantReasoning, reasoning, "reasoning")
-			assert.Equal(t, tc.wantSignal, strings.TrimSpace(reasoning) != "", "reasoning is a signal")
+			// reasoning is the named Reasoning type (non-interchangeable with the
+			// answer by design); convert for the string-literal comparisons.
+			assert.Equal(t, tc.wantReasoning, string(reasoning), "reasoning")
+			assert.Equal(t, tc.wantSignal, strings.TrimSpace(string(reasoning)) != "", "reasoning is a signal")
 		})
 	}
 }
@@ -185,7 +187,7 @@ func TestSplitThink_AcceptedLossyEdges(t *testing.T) {
 		`Draft: {"verdict":"confirmed","reasoning":"draft, wrong"} no wait</think>` +
 		`{"verdict":"refuted","reasoning":"real answer"}`
 	answer, reasoning := SplitThink(quotedCloserInsideTheBlock)
-	assert.Equal(t, "the code searches for ", reasoning,
+	assert.Equal(t, "the code searches for ", string(reasoning),
 		"the run ends at the quoted closer, so only the prefix is taken as reasoning")
 	assert.Contains(t, answer, `{"verdict":"confirmed"`,
 		"the discarded draft survives into the answer ahead of the real verdict")
@@ -201,7 +203,7 @@ func TestSplitThink_DoesNotTouchTheReasoningChannel(t *testing.T) {
 	answer, reasoning := SplitThink(comp.Content)
 
 	assert.Equal(t, "answer", answer)
-	assert.Equal(t, "plan", reasoning)
+	assert.Equal(t, "plan", string(reasoning))
 	assert.Equal(t, "<think>plan</think>answer", comp.Content, "the caller's content is not mutated")
 	assert.Empty(t, comp.Reasoning, "SplitThink never writes Completion.Reasoning")
 }
