@@ -432,8 +432,9 @@ func TestResult_ParseFindings_QuotedTagAfterAnswerSurvives(t *testing.T) {
 // UnparseableResponse — which ReviewerOutcome ranks ABOVE clean, so the false flag
 // reaches the scorecard and the reviewer's trust prior.
 func TestInvokeSlot_ThinkWrappedCleanReview_IsNotUnparseable(t *testing.T) {
+	const raw = "<think>checked every file in the diff</think>\nNO FINDINGS"
 	c := &mapMetaCompleter{byModel: map[string]llmclient.Completion{
-		"primary": {Content: "<think>checked every file in the diff</think>\nNO FINDINGS"},
+		"primary": {Content: raw},
 	}}
 	e := NewEngine(c, WithTruncationFailover())
 	r := e.invokeSlot(context.Background(), Slot{Primary: Agent{Name: "brad", Invocation: llmclient.Invocation{Model: "primary"}}})
@@ -441,6 +442,14 @@ func TestInvokeSlot_ThinkWrappedCleanReview_IsNotUnparseable(t *testing.T) {
 	assert.Equal(t, StatusOK, r.Status)
 	assert.Equal(t, 0, r.ParsedFindingCount())
 	assert.False(t, r.UnparseableResponse, "a stripped clean review is clean, not unparseable")
+	// The sentinel gate strips into a LOCAL (engine.go); a refactor assigning the
+	// stripped answer back to r.Content would keep every assertion above green while
+	// silently shipping a stripped reply as review.md. review.md reads r.Content
+	// (artifacts.go writeAgentArtifacts), so this is the assertion that catches it.
+	// loop_test.go:488 pins its equivalent for the replayed-turn lane; the review
+	// lane's only other strip sites are ParsedFindingCount/parseFindings, covered by
+	// TestResult_ParseFindings_LeavesContentUnstripped.
+	assert.Equal(t, raw, r.Content, "the raw reply must survive for review.md, strip site included")
 }
 
 // PINNED, not special-cased (task-04 Risk Mitigation): a reply that is ONLY a
@@ -448,8 +457,9 @@ func TestInvokeSlot_ThinkWrappedCleanReview_IsNotUnparseable(t *testing.T) {
 // clean-review sentinel, so UnparseableResponse is the right flag — the reviewer
 // really did emit nothing a parser could use.
 func TestInvokeSlot_ThinkOnlyReply_IsUnparseable(t *testing.T) {
+	const raw = "<think>HIGH|a.go:1|draft|f|correctness|1|e</think>"
 	c := &mapMetaCompleter{byModel: map[string]llmclient.Completion{
-		"primary": {Content: "<think>HIGH|a.go:1|draft|f|correctness|1|e</think>"},
+		"primary": {Content: raw},
 	}}
 	e := NewEngine(c, WithTruncationFailover())
 	r := e.invokeSlot(context.Background(), Slot{Primary: Agent{Name: "brad", Invocation: llmclient.Invocation{Model: "primary"}}})
@@ -457,6 +467,7 @@ func TestInvokeSlot_ThinkOnlyReply_IsUnparseable(t *testing.T) {
 	assert.Equal(t, StatusOK, r.Status)
 	assert.Equal(t, 0, r.ParsedFindingCount(), "a think-only reply carries no answer to parse")
 	assert.True(t, r.UnparseableResponse, "think-only is not the clean-review sentinel")
+	assert.Equal(t, raw, r.Content, "the raw reply must survive for review.md, strip site included")
 }
 
 // The strip must never reassign r.Content: review.md writes the raw reply
