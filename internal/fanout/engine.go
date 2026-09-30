@@ -556,7 +556,31 @@ type Result struct {
 // answer text") — so it is not available here either. Pinned by
 // TestResult_ParseFindings_UnclosedLeadingOpenerLosesTheReply and
 // TestInvokeSlot_TruncatedThinkOnlyReply_DemotesToFailover.
+//
+// A SALVAGED reply yields nothing. The salvage (llmclient/client.go:401-411) puts a
+// reply's abandoned chain-of-thought into Content when the provider returned empty
+// content, so every "finding" in it is a draft the model never committed to. Verify
+// (verify/invoke.go:150), every debate seat (debate/protocol.go:157) and the diff
+// cache (below) already refuse it; this was the last lane that did not.
+//
+// The guard reads Salvaged ONLY — deliberately NOT ResponseTruncated || Salvaged,
+// which is what invoke.go and protocol.go check. Do not add ResponseTruncated to
+// make the lanes symmetric; the asymmetry is the point. A verdict or a debate
+// statement is whole or worthless, so truncation destroys it. Findings are not: a
+// truncated review's partial findings are real ones, and the truncation-failover
+// gate below exists to tell truncated-with-findings (keep) from
+// truncated-with-nothing (fail over). Zeroing the count for every truncated reply
+// would fire that gate on reviews that did raise findings, discard the partial
+// findings the diff cache deliberately re-fetches rather than throws away, and
+// change what ReviewerOutcome records for those rows. Salvaged alone is also
+// sufficient: the salvage is what put reasoning in Content, so it is always set on
+// the shape this refuses. Pinned by
+// TestResult_ParseFindings_TruncatedButNotSalvagedKeepsItsFindings; if the
+// asymmetry ever looks wrong, file it as debt rather than widening the guard here.
 func (r *Result) parseFindings() []stream.Finding {
+	if r.Salvaged {
+		return nil
+	}
 	if r.chunkContents == nil {
 		answer, _ := llmclient.SplitThink(r.Content)
 		return stream.ParseModelOutput([]byte(answer))

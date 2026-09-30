@@ -472,6 +472,38 @@ func TestMergeResultGroup_AggregatesResponseTruncated(t *testing.T) {
 	})
 }
 
+// The Salvaged sibling of the fold above (T6, sprint 35.16.11.2.2.4). Salvaged was
+// the one per-chunk flag mergeResultGroup never folded, so a clean chunk 1 beside a
+// salvaged chunk 2 merged to Salvaged == false and the parseFindings guard never
+// fired — chunk 2's abandoned reasoning reached the pool. Same failure the
+// ResponseTruncated fold was added to close, same out.X = out.X || r.X shape.
+func TestMergeResultGroup_AggregatesSalvaged(t *testing.T) {
+	t.Run("later chunk salvaged is preserved", func(t *testing.T) {
+		g := []Result{
+			{Agent: "reviewer", Status: StatusOK, Salvaged: false},
+			{Agent: "reviewer", Status: StatusOK, Salvaged: true},
+		}
+		merged := mergeResultGroup(g, nil)
+		assert.True(t, merged.Salvaged, "any salvaged chunk must mark the whole persona as salvaged")
+	})
+	t.Run("first chunk salvaged is preserved", func(t *testing.T) {
+		g := []Result{
+			{Agent: "reviewer", Status: StatusOK, Salvaged: true},
+			{Agent: "reviewer", Status: StatusOK, Salvaged: false},
+		}
+		merged := mergeResultGroup(g, nil)
+		assert.True(t, merged.Salvaged, "any salvaged chunk must mark the whole persona as salvaged")
+	})
+	t.Run("no salvage stays false", func(t *testing.T) {
+		g := []Result{
+			{Agent: "reviewer", Status: StatusOK, Salvaged: false},
+			{Agent: "reviewer", Status: StatusOK, Salvaged: false},
+		}
+		merged := mergeResultGroup(g, nil)
+		assert.False(t, merged.Salvaged, "clean chunks should not fabricate a salvaged marker")
+	})
+}
+
 // TestMergeResultGroup_InvalidatesMemoOnRebuild reproduces the memo-drift bug at
 // chunker.go:284: mergeResultGroup byte-copies the memoized parsedFindingCount/
 // parsedFindingCountSet from chunk[0] (out := g[0]) but rebuilds out.Content from

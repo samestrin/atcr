@@ -404,6 +404,10 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 			out.ToolsDegradedReason = r.ToolsDegradedReason
 		}
 		out.ResponseTruncated = out.ResponseTruncated || r.ResponseTruncated
+		// Same reason, same shape: reading only g[0]'s flag let a clean chunk 1 hide a
+		// salvaged chunk 2, and parseFindings refuses findings on this flag — so an
+		// unfolded salvage sent chunk 2's abandoned reasoning to the pool as real.
+		out.Salvaged = out.Salvaged || r.Salvaged
 		// Count every chunk that returned prose no parser could use; reading only
 		// g[0]'s flag hid a later chunk's failure from status.json.
 		if r.UnparseableResponse {

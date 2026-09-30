@@ -401,12 +401,20 @@ func (c *Client) CompleteWithMeta(ctx context.Context, inv Invocation) (Completi
 	salvaged := false
 	if content == "" {
 		// Reasoning model that ran out of output budget mid-thought: salvage the
-		// chain-of-thought so the reviewer still contributes instead of returning
-		// an empty review. Truncated (captured above) is preserved so the caller
-		// still knows this salvaged content is partial, and Salvaged is set so a
-		// caller that trusts Content as a statement/verdict/cacheable review can
+		// chain-of-thought so the reply is DIAGNOSABLE (it reaches review.md, the
+		// transcript, and doctor's hint) instead of being indistinguishable from a
+		// dead call. Truncated (captured above) is preserved so the caller still
+		// knows this salvaged content is partial, and Salvaged is set so a caller
+		// that trusts Content as a statement/verdict/finding/cacheable review can
 		// refuse it — on a stop-reason reply Truncated is FALSE here, which is
 		// exactly the silent case (TD internal/llmclient/client.go:394).
+		//
+		// As of sprint 35.16.11.2.2.4 T6, EVERY such caller refuses it: verify
+		// (verify/invoke.go), each debate seat (debate/protocol.go), the diff cache
+		// and now findings parsing (fanout/engine.go). So this no longer means "the
+		// reviewer still contributes a partial review" — that was this block's
+		// original stated purpose and it is deliberately reversed, because a draft
+		// the model abandoned counted as a real finding is worse than no finding.
 		content = reasoningOf(ch.Message.ReasoningContent, ch.Message.Reasoning)
 		salvaged = content != ""
 	}

@@ -652,3 +652,135 @@ func TestInvokeAgent_PreservesOuterCallIdentity(t *testing.T) {
 	assert.Equal(t, hookobs.Call{RunID: "2026-07-25_main", AgentName: "security-reviewer", Stage: "review"},
 		calls[0], "the engine must add the agent name without disturbing run or stage")
 }
+
+// --- T6 (sprint 35.16.11.2.2.4): refuse a salvaged reply as findings ----------
+
+// The salvage path (llmclient/client.go:401-411) promotes a reply's
+// chain-of-thought into Content when the provider returns empty content. Verify
+// (verify/invoke.go:150) and every debate seat (debate/protocol.go:157) already
+// refuse it; the diff cache refuses it (engine.go:1195). The findings lane had no
+// guard at all, so a DRAFT finding written inside abandoned reasoning could be
+// parsed and written to the pool as real. parseFindings is the single choke point
+// both ParsedFindingCount and findingsFor share, so one guard there covers both.
+func TestResult_ParseFindings_SalvagedReplyYieldsNoFindings(t *testing.T) {
+	// Well-formed on purpose: pre-fix this content parses to one finding, which is
+	// what makes its refusal the thing under test rather than a parsing accident.
+	const draft = "HIGH|a.go:1|draft finding from abandoned reasoning|f|correctness|5|e"
+
+	t.Run("unchunked", func(t *testing.T) {
+		assert.Equal(t, 1, (&Result{Content: draft}).ParsedFindingCount(),
+			"the same content without the Salvaged marker really does parse to one finding")
+
+		// Fresh Result per assertion: ParsedFindingCount memoizes on first use.
+		assert.Equal(t, 0, (&Result{Content: draft, Salvaged: true}).ParsedFindingCount(),
+			"a salvaged reply's reasoning must not be counted as findings")
+
+		fr := findingsFor(Result{Agent: "bruce", Status: StatusOK, Content: draft, Salvaged: true}, nil)
+		assert.Empty(t, fr.Findings,
+			"findingsFor must see the guard too, not just the count gate — it is the path to the pool")
+	})
+
+	t.Run("chunked with salvage on a later chunk", func(t *testing.T) {
+		// The guard sits ABOVE the chunkContents branch, so a merged result whose
+		// Salvaged flag was folded up from chunk 2..N is refused whole. Without the
+		// fold in mergeResultGroup this flag would never be true here.
+		r := Result{
+			Agent:         "bruce",
+			Status:        StatusOK,
+			Content:       "clean chunk\n" + draft,
+			chunkContents: []string{"clean chunk", draft},
+			Salvaged:      true,
+		}
+		assert.Equal(t, 0, r.ParsedFindingCount(), "no chunk of a salvaged result is parsed")
+		assert.Empty(t, findingsFor(r, nil).Findings)
+	})
+}
+
+// THE BOUNDARY, and the whole reason the guard reads Salvaged ONLY. Verify and
+// debate check ResponseTruncated too, because a verdict or a statement is either
+// whole or worthless. Findings are not: a truncated review's partial findings are
+// real, and the truncation-failover gate (engine.go:876-877) is built to tell
+// truncated-with-findings (keep) from truncated-with-nothing (fail over). Adding
+// ResponseTruncated here would zero the count for EVERY truncated review and fire
+// that gate on reviews that did raise findings. Pinned so the next reader cannot
+// quietly "fix" the asymmetry with invoke.go/protocol.go.
+func TestResult_ParseFindings_TruncatedButNotSalvagedKeepsItsFindings(t *testing.T) {
+	const real = "MEDIUM|b.go:2|real finding from a cut-off review|f|correctness|2|e"
+	r := Result{Agent: "bruce", Status: StatusOK, Content: real, ResponseTruncated: true}
+
+	assert.Equal(t, 1, r.ParsedFindingCount(),
+		"a truncated-but-not-salvaged reply's partial findings are real and must survive")
+	fr := findingsFor(r, nil)
+	require.Len(t, fr.Findings, 1)
+	assert.Equal(t, "real finding from a cut-off review", fr.Findings[0].Problem)
+}
+
+// No regression on the ordinary row: neither flag set, findings parse as before.
+func TestResult_ParseFindings_UnflaggedReplyIsUnaffected(t *testing.T) {
+	const real = "LOW|c.go:3|ordinary finding|f|correctness|1|e"
+	assert.Equal(t, 1, (&Result{Content: real}).ParsedFindingCount())
+	assert.Len(t, findingsFor(Result{Agent: "bruce", Status: StatusOK, Content: real}, nil).Findings, 1)
+}
+
+// The two halves composing: chunk 1 clean, chunk 2 salvaged. The fold in
+// mergeResultGroup makes the merged result Salvaged, and the parseFindings guard
+// then refuses it. Without the fold, reading only g[0]'s flag would leave the
+// merged result unmarked and chunk 2's abandoned reasoning would reach the pool —
+// the same bug the existing ResponseTruncated fold was added to close.
+func TestMergeResultGroup_SalvagedLaterChunkYieldsNoFindings(t *testing.T) {
+	g := []Result{
+		{Agent: "bruce", Status: StatusOK, Content: "MEDIUM|b.go:2|real finding|f|correctness|2|e"},
+		{Agent: "bruce", Status: StatusOK, Content: "HIGH|a.go:1|draft|f|correctness|5|e", Salvaged: true},
+	}
+	merged := mergeResultGroup(g, nil)
+
+	require.True(t, merged.Salvaged, "a salvage in any chunk must mark the whole persona")
+	assert.Equal(t, 0, merged.ParsedFindingCount(),
+		"a persona with a salvaged chunk contributes no findings at all")
+	assert.Empty(t, findingsFor(merged, nil).Findings)
+}
+
+// PINNED, not asserted-unchanged (task-06 Test Strategy): the guard necessarily
+// MOVES what a salvaged row means downstream, so both shapes are recorded here.
+//
+// Salvage does NOT imply truncation — client.go:399-411 salvages inside the
+// content == "" branch on ANY finish reason, so a stop-reason reply with empty
+// content and reasoning present is salvaged with ResponseTruncated false. The two
+// shapes therefore land in different places and must not be collapsed.
+func TestInvokeSlot_SalvagedReply_ContributesNoFindings(t *testing.T) {
+	t.Run("salvaged, not truncated: recorded unparseable", func(t *testing.T) {
+		// StatusOK survives (only findings are refused, not the call), the count is
+		// zero, and the reasoning is not the clean-review sentinel — so the row reads
+		// unparseable, which ReviewerOutcome ranks above clean. Intended: "reviewed
+		// and found nothing" and "emitted reasoning no parser should trust" score the
+		// same and this marker is the only thing that tells them apart.
+		e := NewEngine(&metaTruncatingCompleter{
+			content:  "HIGH|a.go:1|draft from abandoned reasoning|f|correctness|5|e",
+			salvaged: true,
+		}, WithTruncationFailover())
+		r := e.invokeSlot(context.Background(), Slot{Primary: Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "m"}}})
+
+		assert.Equal(t, StatusOK, r.Status)
+		require.True(t, r.Salvaged)
+		assert.Equal(t, 0, r.ParsedFindingCount(), "the draft inside salvaged reasoning is refused")
+		assert.True(t, r.UnparseableResponse, "salvaged reasoning is not the clean-review sentinel")
+	})
+
+	t.Run("salvaged and truncated: demoted to failover", func(t *testing.T) {
+		// Zero findings now trips the truncation-failover gate, where before the
+		// guard this reply could pass it on the strength of its draft row. The cost
+		// is one backup-model call; the alternative is a draft counted as real.
+		e := NewEngine(&metaTruncatingCompleter{
+			content:   "HIGH|a.go:1|draft from abandoned reasoning|f|correctness|5|e",
+			salvaged:  true,
+			truncated: true,
+		}, WithTruncationFailover())
+		r := e.invokeSlot(context.Background(), Slot{Primary: Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "m"}}})
+
+		assert.Equal(t, 0, r.ParsedFindingCount())
+		assert.Equal(t, StatusFailed, r.Status, "a salvaged reply with nothing parseable is a runaway")
+		assert.ErrorIs(t, r.Err, errTruncatedZeroFindings)
+		assert.False(t, r.UnparseableResponse,
+			"the unparseable marker is gated on StatusOK, so the failover path never sets it")
+	})
+}

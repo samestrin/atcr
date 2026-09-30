@@ -364,6 +364,12 @@ func TestResult_ParsedFindingCount_CountsOnlyCompleteJSONFindings(t *testing.T) 
 // and NOT truncated — caching it would replay one model's raw reasoning as a
 // clean review on a later same-diff run. The cache gate must read the Salvaged
 // marker, not just ResponseTruncated.
+//
+// Scoped to CACHING only. Since T6 (sprint 35.16.11.2.2.4) parseFindings refuses a
+// salvaged reply outright, so this row now contributes zero findings as well — the
+// salvage no longer "still contributes a partial review" anywhere. StatusOK below
+// records that the CALL succeeded, not that its content is usable. See
+// TestInvokeSlot_SalvagedReply_ContributesNoFindings.
 func TestCache_DoesNotCacheSalvagedReply(t *testing.T) {
 	cache := &memCache{m: map[string]string{}}
 	c := &metaTruncatingCompleter{content: "CHAIN OF THOUGHT ONLY", salvaged: true}
@@ -371,7 +377,7 @@ func TestCache_DoesNotCacheSalvagedReply(t *testing.T) {
 	slot := Slot{Primary: Agent{Name: "bruce", CacheKey: "k1", Invocation: llmclient.Invocation{Model: "m"}}}
 
 	r := e.invokeSlot(context.Background(), slot)
-	assert.Equal(t, StatusOK, r.Status, "the salvage still contributes; only caching is refused")
+	assert.Equal(t, StatusOK, r.Status, "the call still succeeded; this gate only refuses to cache")
 	assert.True(t, r.Salvaged, "the Salvaged marker must ride the Result")
 
 	_, cached := cache.m["k1"]
