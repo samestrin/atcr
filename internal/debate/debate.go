@@ -622,9 +622,9 @@ func anySeatHalted(halted, seats []string) bool {
 }
 
 // judgeHalted reports whether the judge seat is among the halted seats. A halted
-// judge yields no ruling at all; a halted proposer/challenger with no statement
-// yields a one-sided one, which debateOne also records unresolved (reason
-// seat_halted).
+// judge yields no ruling at all; a proposer/challenger with no statement yields a
+// one-sided one, which debateOne also records unresolved — reason seat_halted
+// when that seat halted, seat_silent when it ran clean and said nothing.
 func judgeHalted(halted []string) bool {
 	for _, h := range halted {
 		if h == LabelJudge {
