@@ -93,6 +93,22 @@ func TestBuildSlots_ToolLoopAgentReservesReplayedReasoning(t *testing.T) {
 	assert.Equal(t, defaultMaxTokens, a.ReservedOutputTokens, "the recorded output cap is unchanged")
 }
 
+// A range-less review (baseline --all/--dir, diff ingestion) has no head to
+// snapshot, so the tool harness is never wired and a tool+FC agent degrades to
+// single-shot: it replays nothing, so it keeps the plain output-cap reservation.
+func TestBuildSlots_RangeLessToolAgentKeepsPlainReserve(t *testing.T) {
+	cfg := sizingRosterConfig()
+	greta := cfg.Registry.Agents["greta"]
+	greta.Tools = true
+	greta.SupportsFC = true
+	cfg.Registry.Agents["greta"] = greta
+
+	a, _, err := buildOneAgent(cfg, "greta", oversizedBlocksPayload(), ReviewRange{}, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, payload.EffectiveByteBudget("unlisted-small-model", nil, defaultMaxTokens), a.EffectiveBudget,
+		"no range head means no tool loop, so no replayed-reasoning reserve")
+}
+
 func TestBuildSlots_ToolsWithoutFunctionCallingKeepsPlainReserve(t *testing.T) {
 	cfg := sizingRosterConfig()
 	greta := cfg.Registry.Agents["greta"]
