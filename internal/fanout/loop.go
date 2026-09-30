@@ -45,17 +45,23 @@ func replayedReasoningBytes(m llmclient.Message) int64 {
 // deliberate replay channel and ride through unchanged, as does the nil Content a
 // pure tool-call turn carries.
 //
-// A turn whose Content was ENTIRELY reasoning strips to blank, and blank becomes
-// nil, not "". That is the one shape this function puts back on the wire, and
-// llmclient.Message's own contract reserves content:null for the assistant
-// tool-call turn "distinctly from an empty string" (chat.go, pinned by
-// TestChat_ToolResultMessageShape) because OpenAI requires it. Replaying "" risks
-// a strict validator's 400 or an empty text block in a LiteLLM-to-Anthropic
-// translation, either of which fails the whole agent.
+// ANY Content that is blank after the strip becomes nil, not "" — including one
+// that arrived empty, which is a shape OpenAI-compatible providers do send on a
+// tool-call turn with no think block in it at all. So this normalizes slightly
+// more than it strips, deliberately: llmclient.Message's own contract reserves
+// content:null for the assistant tool-call turn "distinctly from an empty string"
+// (chat.go) because OpenAI requires it, and TestChat_RoleToolMessageSerialization
+// (internal/llmclient/chat_test.go:117) pins that on the request side. Replaying
+// "" risks a strict validator's 400 or an empty text block in a
+// LiteLLM-to-Anthropic translation, either of which fails the whole agent. This is
+// the only one of this sprint's strip sites whose output goes back on the wire, so
+// it is the only place the distinction can break.
 //
-// SplitThink returns a substring, so the stripped answer would otherwise keep the
+// SplitThink returns a substring, so a STRIPPED answer would otherwise keep the
 // whole original reply — draft included — alive in its backing array for the life
-// of the loop. Clone drops it, which is what the strip is for.
+// of the loop. Clone drops it. Only when something was actually removed: when the
+// strip was a no-op, which is the common case, answer IS the original and copying
+// it buys nothing.
 func historyMessage(m llmclient.Message) llmclient.Message {
 	if m.Content == nil {
 		return m
@@ -65,7 +71,9 @@ func historyMessage(m llmclient.Message) llmclient.Message {
 		m.Content = nil
 		return m
 	}
-	answer = strings.Clone(answer)
+	if len(answer) != len(*m.Content) {
+		answer = strings.Clone(answer)
+	}
 	m.Content = &answer
 	return m
 }

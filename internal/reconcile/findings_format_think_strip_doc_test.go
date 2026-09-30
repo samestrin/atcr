@@ -36,7 +36,12 @@ func TestFindingsFormatDoc_StatesTheThinkStrip(t *testing.T) {
 		for _, want := range []string{
 			"opens with `<think>` and never closes it",
 			"`</thinking>`",
-			"any finding after it is lost",
+			// The two ways a closer goes missing land differently, and the doc
+			// must keep saying so: a complete reply with a variant closer is
+			// recorded unparseable, a cut-off one fails over instead.
+			"any finding after the block is lost",
+			"recorded `unparseable_response`",
+			"failed over to its backup model",
 		} {
 			assert.Contains(t, doc, want,
 				"findings-format.md must state the unclosed-opener loss: missing %q", want)

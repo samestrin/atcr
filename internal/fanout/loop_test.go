@@ -515,7 +515,8 @@ func TestToolLoop_ReplayedHistoryKeepsQuotedTags(t *testing.T) {
 // A tool-call turn whose whole Content was reasoning strips to blank, and blank
 // must replay as content:null, NOT "". llmclient.Message reserves the pointer for
 // exactly that distinction ("which OpenAI requires", chat.go), and
-// TestChat_ToolResultMessageShape pins it on the request side. Replaying "" risks
+// TestChat_RoleToolMessageSerialization (internal/llmclient/chat_test.go:117)
+// pins it on the request side. Replaying "" risks
 // a strict validator's 400 or an empty text block in a LiteLLM-to-Anthropic
 // translation — either fails the whole agent. This is the only shape this strip
 // puts back on the wire, so it is the only place the distinction can break.
@@ -524,6 +525,11 @@ func TestToolLoop_ThinkOnlyTurnReplaysAsNullContent(t *testing.T) {
 		"closed pair, nothing after":       "<think>I should read f1.go</think>",
 		"whitespace remainder":             "<think>I should read f1.go</think>\n\n  ",
 		"unclosed opener, cut mid-thought": "<think>I should read f1.go",
+		// Not a think block at all. The guard keys on "blank after the strip",
+		// so it also normalizes the empty content an OpenAI-compatible provider
+		// sends on a plain tool-call turn. That is slightly wider than stripping
+		// and is pinned here deliberately rather than left as a side effect.
+		"already empty, no think markup": "",
 	}
 	for name, content := range cases {
 		t.Run(name, func(t *testing.T) {

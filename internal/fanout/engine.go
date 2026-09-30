@@ -499,10 +499,10 @@ type Result struct {
 	// recordAgentOutcome falls back to the Turns-based count.
 	CallRecords []llmclient.CallRecord
 
-	// parsedFindingCount caches the number of findings produced by
-	// stream.ParseModelOutput(Content) so the truncation-failover gate and
-	// findingsFor can share a single parse instead of each parsing the content
-	// independently (TD-019).
+	// parsedFindingCount caches the number of findings parseFindings reads —
+	// stream.ParseModelOutput over the think-STRIPPED content, per chunk for a
+	// merged result — so the truncation-failover gate and findingsFor can share a
+	// single parse instead of each parsing the content independently (TD-019).
 	parsedFindingCount    int
 	parsedFindingCountSet bool
 
@@ -532,17 +532,30 @@ type Result struct {
 // alternative eats a real finding whose text quotes the tag — and a reviewer
 // reviewing THIS code writes exactly that. Same limit TD-008 records for debate.
 //
-// A LEADING opener with no canonical closer — cut off mid-thought, or closed with
-// a variant like </thinking> — takes the whole reply as reasoning, so a real
-// finding after it is lost and the reviewer scores unparseable. That is a bigger
-// blast radius than the same helper edge costs elsewhere (a whole review and a
-// trust prior, against one verdict), and it is accepted rather than fixed: the
-// only available remedy is to re-parse the raw content when the strip yields
-// nothing, and the raw parse of a reply cut off mid-draft returns the DRAFT —
-// reintroducing the exact bug this strip exists to stop. That remedy was tested
-// and rejected at the sprint 35.16.11.2.2.4 Phase 2 review for the verify lane;
-// it is rejected here on the same evidence. Pinned by
-// TestResult_ParseFindings_UnclosedLeadingOpenerLosesTheReply.
+// A LEADING opener with no canonical closer takes the whole reply as reasoning.
+// The two ways that happens end differently, so do not collapse them:
+//
+//   - Closed with a variant spelling (</thinking>): the reply is complete, a real
+//     finding after the block is LOST, and the slot scores unparseable — a whole
+//     review and a reviewer trust prior, where the same helper edge costs one
+//     verdict at TD-002.
+//   - Cut off mid-thought: there is no finding after the block to lose, and the
+//     cut means finish_reason=length, so ResponseTruncated is set and the gate
+//     above demotes the slot to StatusFailed/errTruncatedZeroFindings. Real
+//     reviews always enable that failover (review.go), so this costs a backup
+//     call, NOT an unparseable mark — the UnparseableResponse block below is
+//     gated on StatusOK and never runs for it.
+//
+// Accepted, not fixed. The only remedy available INSIDE this lane is to re-parse
+// the raw content when the strip yields nothing, and the raw parse of a reply cut
+// off mid-draft returns the DRAFT — reintroducing the exact bug this strip exists
+// to stop. That remedy was tested and rejected at the sprint 35.16.11.2.2.4 Phase 2
+// review for the verify lane; it is rejected here on the same evidence. The variant
+// half could only be closed by matching variant tags, which llmclient.SplitThink
+// rejects outright and says why ("guessing at variants is how a strip starts eating
+// answer text") — so it is not available here either. Pinned by
+// TestResult_ParseFindings_UnclosedLeadingOpenerLosesTheReply and
+// TestInvokeSlot_TruncatedThinkOnlyReply_DemotesToFailover.
 func (r *Result) parseFindings() []stream.Finding {
 	if r.chunkContents == nil {
 		answer, _ := llmclient.SplitThink(r.Content)
@@ -556,8 +569,9 @@ func (r *Result) parseFindings() []stream.Finding {
 	return out
 }
 
-// ParsedFindingCount returns the number of parseable findings in r.Content,
-// computing and caching the count on first use.
+// ParsedFindingCount returns the number of parseable findings in r's output after
+// parseFindings strips a leading <think> run, so the counted text is not r.Content
+// itself. It computes and caches the count on first use.
 func (r *Result) ParsedFindingCount() int {
 	if r.Content == "" {
 		return 0
@@ -896,7 +910,8 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 		// clean review. Demote it to StatusFailed so the loop descends to the next
 		// agent in the chain. A truncated response that still parsed >=1 finding stays
 		// StatusOK (its ResponseTruncated marker is preserved for status.json).
-		// NOTE: this gate keys on the RAW parsed count, whereas the run-level
+		// NOTE: this gate keys on the pre-grounding parsed count (of the
+		// think-stripped content), whereas the run-level
 		// truncated_zero_findings tally (artifacts.go) keys on the GROUNDED
 		// FindingsCount; a response that raw-parses >=1 finding later dropped as
 		// ungrounded/below-min-severity stays StatusOK here yet is tallied there. That

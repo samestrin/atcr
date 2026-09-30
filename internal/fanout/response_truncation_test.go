@@ -460,9 +460,12 @@ func TestResult_ParseFindings_LeavesContentUnstripped(t *testing.T) {
 }
 
 // ACCEPTED LOSS, pinned so it is a decision on the record rather than a surprise.
-// A LEADING <think> with no canonical closer — cut off mid-thought, or closed with
-// a variant like </thinking> — makes the whole reply reasoning, so a real finding
-// after it is lost and the reviewer is scored unparseable.
+// A LEADING <think> with no canonical closer makes the whole reply reasoning. Where
+// that lands depends on WHY the closer is missing: a variant spelling
+// (</thinking>) loses a real finding that follows and scores the slot unparseable,
+// while a reply cut off mid-thought has no following finding and is demoted by the
+// truncation-failover gate instead — see
+// TestInvokeSlot_TruncatedThinkOnlyReply_DemotesToFailover for that half.
 //
 // Not fixed, because the only remedy available is to re-parse the raw content when
 // the strip yields nothing, and the raw parse of a reply cut off mid-draft returns
