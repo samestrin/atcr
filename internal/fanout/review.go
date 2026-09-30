@@ -2861,12 +2861,12 @@ func sizingToken(effectiveBudget int64, maxLines int) string {
 	return fmt.Sprintf("%d:%d", effectiveBudget, maxLines)
 }
 
-// CacheKeyInputs is everything diffCacheKey folds into the tuning token besides
+// cacheKeyInputs is everything diffCacheKey folds into the tuning token besides
 // the prompt: the agent's model config, its sizing, and its thinking
 // declaration. Named fields replace the positional list, where two adjacent
 // strings (thinking, thinking_level) could be transposed and still compile.
 // Each call site builds it from its OWN agent's values.
-type CacheKeyInputs struct {
+type cacheKeyInputs struct {
 	Model            string
 	BaseURL          string
 	Temperature      *float64
@@ -2916,7 +2916,7 @@ type CacheKeyInputs struct {
 //
 // min_severity/max_findings are deterministic post-LLM filters and are correctly NOT
 // in the key.
-func diffCacheKey(prompt string, in CacheKeyInputs) string {
+func diffCacheKey(prompt string, in cacheKeyInputs) string {
 	temp := "default"
 	if in.Temperature != nil {
 		temp = strconv.FormatFloat(*in.Temperature, 'g', -1, 64)
@@ -3121,7 +3121,7 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 		// keys each chunk independently because its prompt (and thus this hash)
 		// differs per chunk; the sizing token additionally distinguishes two sizing
 		// regimes that render identical prompt text.
-		CacheKey: diffCacheKey(prompt, CacheKeyInputs{
+		CacheKey: diffCacheKey(prompt, cacheKeyInputs{
 			Model:            ac.Model,
 			BaseURL:          prov.BaseURL,
 			Temperature:      ac.Temperature,
@@ -3735,7 +3735,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		// keeps it off both its primary's cache entry and its own un-refit form's:
 		// the prompt is hashed, so a re-sized payload is a different key by
 		// construction, and the sizing token additionally separates the two budgets.
-		CacheKey: diffCacheKey(fbPrompt, CacheKeyInputs{
+		CacheKey: diffCacheKey(fbPrompt, cacheKeyInputs{
 			Model:            ac.Model,
 			BaseURL:          prov.BaseURL,
 			Temperature:      ac.Temperature,
