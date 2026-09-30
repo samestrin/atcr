@@ -131,9 +131,17 @@ func TestDocs_ContextWindowRowDoesNotRestateTheSkepticClamp(t *testing.T) {
 		"absence of the old formula is not the fix — the row must actually POINT at the one description of the clamp")
 }
 
-// docLineContaining returns the single line of doc containing want. Mirrors
-// docTableRow's "one line is the unit that drifts" rationale, and fails loudly on
-// more than one match so a decoy sentence cannot pin the guard to the wrong line.
+// docLineContaining returns the single line of doc containing want, failing loudly
+// on any count other than one so a decoy sentence cannot pin the guard to the
+// wrong line.
+//
+// It shares docTableRow's "one line is the unit that drifts" rationale but NOT its
+// strictness, and an earlier version of this comment claimed otherwise, crediting
+// docTableRow with an ambiguity check it does not have: docTableRow returns the
+// FIRST match with no count at all. The strict-count contract here matches
+// docBullet and findBulletLines instead. Being the package's strict locator, it is
+// also the one every call site shares — a second, first-match copy of this scan
+// (docLineWith) was deleted rather than kept beside it.
 func docLineContaining(t *testing.T, doc, want string) string {
 	t.Helper()
 	var matches []string
@@ -143,7 +151,14 @@ func docLineContaining(t *testing.T, doc, want string) string {
 		}
 	}
 	if len(matches) != 1 {
-		t.Fatalf("docs has %d lines containing %q — the guard must pin exactly one", len(matches), want)
+		// Name the DOCUMENT: the callers run this over several docs/*.md files from
+		// one helper, so "docs has 2 lines" left the reader guessing which file to
+		// open. And say what the two counts MEAN rather than blaming a "decoy": zero
+		// is the anchor having drifted or been reworded, more than one is the anchor
+		// no longer identifying one paragraph. Neither is a test defect.
+		t.Fatalf("%s: %d lines contain %q — the guard must pin exactly one line "+
+			"(0 = the anchor drifted or was reworded; >1 = the anchor is too generic to "+
+			"identify a single paragraph)", t.Name(), len(matches), want)
 	}
 	return matches[0]
 }
@@ -326,9 +341,19 @@ func TestDocs_CrossExaminationStatesTheThinkStrip(t *testing.T) {
 // debate transcript row was corrected during the phase and these two were not,
 // which is the asymmetry this guard exists to prevent recurring.
 func TestDocs_ParsingSentencesDoNotPromiseTheRawReply(t *testing.T) {
+	// One anchor per document: "Parsing is defensive" alone is generic enough that
+	// an overview line, a cross-reference, or a second lane's parsing paragraph
+	// gives docLineContaining two matches and turns this guard into a hard failure
+	// naming no culprit. Each anchor below additionally pins the SECTION, so it
+	// identifies one paragraph rather than one sentence that could be restated.
 	for _, tc := range []struct{ doc, anchor string }{
-		{"verification.md", "Parsing is defensive"},
-		{"cross-examination.md", "Parsing is defensive"},
+		// The anchors deliberately differ. "Parsing is defensive" alone is a sentence
+		// two documents share, so a future overview line, cross-reference, or second
+		// lane's parsing paragraph makes the count 2 and the guard fails for a
+		// legitimate edit. Each anchor now spans the sentence AND the clause that
+		// makes it this document's, which cannot be restated on an unrelated line.
+		{"verification.md", "Parsing is defensive. The parser unmarshals the JSON"},
+		{"cross-examination.md", "Parsing is defensive (the same contract as the verify stage)"},
 	} {
 		t.Run(tc.doc, func(t *testing.T) {
 			doc := readDoc(t, tc.doc)

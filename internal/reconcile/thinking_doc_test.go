@@ -187,19 +187,6 @@ func documentedValues(t *testing.T, row string) []string {
 	return out
 }
 
-// docLineWith returns the one line of doc that contains marker. Every asserted
-// phrase must sit on that line, so no phrase can straddle a hard wrap.
-func docLineWith(t *testing.T, doc, marker string) string {
-	t.Helper()
-	for _, line := range strings.Split(doc, "\n") {
-		if strings.Contains(line, marker) {
-			return line
-		}
-	}
-	t.Fatalf("no line containing %q in docs/registry.md", marker)
-	return ""
-}
-
 // styleTable returns the style table: the lines after the **Thinking styles.**
 // intro, up to the first blank line after the table.
 func styleTable(t *testing.T, doc string) string {
@@ -287,13 +274,13 @@ func TestRegistryDoc_ThinkingStyleTable(t *testing.T) {
 		assertStates(t, "style table row for `"+style+"`", docRow(t, table, "`"+style+"`"), must)
 	}
 
-	intro := docLineWith(t, doc, "**Thinking styles.**")
+	intro := docLineContaining(t, doc, "**Thinking styles.**")
 	assertStates(t, "thinking styles intro", intro, musts{
 		{"no default style", "a thinking key without a style is a load error"},
 		{"no inference from the model id", "the honored field differs per model and the id does not predict it"},
 	})
 
-	budgets := docLineWith(t, doc, "**Thinking budgets.**")
+	budgets := docLineContaining(t, doc, "**Thinking budgets.**")
 	for _, level := range registry.ThinkingLevels() {
 		want := "`" + level + "` = " + strconv.Itoa(registry.ThinkingBudgetTokens(registry.ThinkingOn, level, registry.ThinkingStyleQwen))
 		if !strings.Contains(budgets, want) {
@@ -390,7 +377,7 @@ func TestRegistryDoc_GLMClearThinkingSpellingMatchesWire(t *testing.T) {
 	row := docRow(t, doc, "`preserve_thinking`")
 	require.Contains(t, row, compact, "the preserve_thinking row must carry the compact wire spelling")
 	require.NotContains(t, row, spaced, "the preserve_thinking row must not carry a spaced variant")
-	glmLine := docLineWith(t, styleTable(t, doc), "`glm`")
+	glmLine := docLineContaining(t, styleTable(t, doc), "`glm`")
 	require.Contains(t, glmLine, compact, "the glm style row must spell clear_thinking exactly as the wire does, matching the preserve_thinking row")
 	require.NotContains(t, glmLine, spaced, "the glm style row must not carry a spaced variant")
 }
@@ -398,7 +385,7 @@ func TestRegistryDoc_GLMClearThinkingSpellingMatchesWire(t *testing.T) {
 // AC 07-01 Scenario 3: the max_tokens interaction.
 func TestRegistryDoc_ThinkingMaxTokensAndProseNote(t *testing.T) {
 	doc := readRepoFile(t, "../../docs/registry.md")
-	maxTokensNote := docLineWith(t, doc, "**Thinking and `max_tokens`.**")
+	maxTokensNote := docLineContaining(t, doc, "**Thinking and `max_tokens`.**")
 	assertStates(t, "thinking and max_tokens note", maxTokensNote, []struct{ token, why string }{
 		{"thinking tokens count against the output cap on most providers", "raising max_tokens alone does not stop a runaway thinker"},
 		{"`thinking: off` is the first fix for a model that truncates with zero findings", "archer ran to about 100k tokens with no findings"},
@@ -432,7 +419,7 @@ func TestRegistryDoc_ThinkingMaxTokensAndProseNote(t *testing.T) {
 	// paragraphs, not substrings buried mid-paragraph.
 	require.True(t, strings.HasPrefix(maxTokensNote, "**Thinking and `max_tokens`.**"),
 		"the max_tokens note must lead its own paragraph")
-	proseNote := docLineWith(t, doc, "**Thinking and prose in the reply.**")
+	proseNote := docLineContaining(t, doc, "**Thinking and prose in the reply.**")
 	require.True(t, strings.HasPrefix(proseNote, "**Thinking and prose in the reply.**"),
 		"the prose-in-reply note must lead its own paragraph")
 	// TD docs/registry.md:260: the thinking row and the reasoning_effort style row
@@ -455,7 +442,7 @@ func TestRegistryDoc_ThinkingMaxTokensAndProseNote(t *testing.T) {
 	})
 	require.NotContains(t, proseNote, "handful of tokens", "the note must not claim an unmeasured token count")
 	require.NotContains(t, proseNote, "in the same runs", "the note must not merge the prose panel run with the JSON-mode probe runs")
-	assertStates(t, "prose-in-reply note", docLineWith(t, doc, "**Thinking and prose in the reply.**"), []struct{ token, why string }{
+	assertStates(t, "prose-in-reply note", docLineContaining(t, doc, "**Thinking and prose in the reply.**"), []struct{ token, why string }{
 		// Claim 4: the prose must WARN that JSON mode drops the persona output
 		// rule, not merely describe the consequence after the fact.
 		{"Warning: JSON mode swaps the persona's `## Output Format` section", "the JSON-mode consequence must be framed as a warning before it is explained"},
@@ -463,7 +450,7 @@ func TestRegistryDoc_ThinkingMaxTokensAndProseNote(t *testing.T) {
 	})
 	// Sprint 35.16.11.2.2.1: LiteLLM's modify_params hides a missing-reasoning
 	// failure instead of raising it, so the doc names the silent failure mode.
-	assertStates(t, "modify_params warning", docLineWith(t, doc, "**Thinking and LiteLLM `modify_params`.**"), []struct{ token, why string }{
+	assertStates(t, "modify_params warning", docLineContaining(t, doc, "**Thinking and LiteLLM `modify_params`.**"), []struct{ token, why string }{
 		{"`modify_params=True`", "the proxy setting that causes it"},
 		{"silently turns thinking off for that turn", "the specific failure mode, not a generic caveat"},
 		{"instead of returning the provider's 400", "the visible failure it replaces"},
@@ -487,7 +474,7 @@ func TestRegistryDoc_ThinkingMaxTokensAndProseNote(t *testing.T) {
 func TestRegistryDoc_ThinkingDoctorVerdict(t *testing.T) {
 	doc := readRepoFile(t, "../../docs/registry.md")
 	section := docSection(t, doc, "### Thinking verdict")
-	intro := docLineWith(t, section, "declares `thinking` or `thinking_level`")
+	intro := docLineContaining(t, section, "declares `thinking` or `thinking_level`")
 	assertStates(t, "thinking verdict intro", intro, []struct{ token, why string }{
 		{"`reasoning_tokens > 0` or non-empty reasoning content", "the either-signal rule: some upstreams never report reasoning_tokens"},
 		{"a `reasoning_content` or `reasoning` field, or inline `<think>` text in the content", "every signal reasoningSignal reads"},
@@ -517,10 +504,10 @@ func TestRegistryDoc_ThinkingDoctorVerdict(t *testing.T) {
 		{"A lone `</think>` with no opener anywhere counts as a signal", "HasThinkMarkup's no-opener branch: a reasoning template can put the opener in the prompt, reversing the old stray-closer-is-noise rule"},
 		{"a block counts wherever it sits in the content", "detection is position-blind, unlike the review lanes' leading-only SplitThink: the probe prompt contains no tag, so a trailing block is the runaway thinker"},
 	})
-	assertStates(t, "doctor JSON schema", docLineWith(t, doc, "`thinking_status` (`"), []struct{ token, why string }{
+	assertStates(t, "doctor JSON schema", docLineContaining(t, doc, "`thinking_status` (`"), []struct{ token, why string }{
 		{"did not fail permanently", "a placed call is necessary but not sufficient: auth_failed, not_found, and network_error rows get no thinking fields"},
 	})
-	assertStates(t, "thinking verdict warning line", docLineWith(t, section, "The HINT column labels"), []struct{ token, why string }{
+	assertStates(t, "thinking verdict warning line", docLineContaining(t, section, "The HINT column labels"), []struct{ token, why string }{
 		{"one warning line for each declared polarity of `" + doctor.ThinkingNotHonored + "`", "the not-honored remedy differs by polarity (TD cli/doctor.go:255)"},
 		{"one warning line for `" + doctor.ThinkingUnverified + "`", "--json prints no warning lines and honored prints none"},
 	})
@@ -557,7 +544,7 @@ func TestRegistryDoc_ThinkingDoctorVerdict(t *testing.T) {
 	assertStates(t, "thinking verdict unverified row", unverified, []struct{ token, why string }{
 		{"Permanent failures", "auth_failed, not_found, and network_error repeat identically, so they get no verdict rather than unverified"},
 	})
-	assertStates(t, "doctor JSON schema", docLineWith(t, doc, "`thinking_status` (`"), []struct{ token, why string }{
+	assertStates(t, "doctor JSON schema", docLineContaining(t, doc, "`thinking_status` (`"), []struct{ token, why string }{
 		{"`thinking_status` (`" + doctor.ThinkingHonored + "`, `" + doctor.ThinkingNotHonored + "`, or `" + doctor.ThinkingUnverified + "`)", "the JSON field's values are the doctor constants"},
 		{"`thinking_detail`", "the verdict's reason rides beside it in --json"},
 		{"`thinking_declared`", "the declared polarity (off/on/level) rides beside the verdict so remedies can be split without parsing detail prose"},
