@@ -311,6 +311,15 @@ func joinChunkContents(contents []string) string {
 // by the same model. When chunks fell back to different models, pick the modal
 // (most frequent) model, tie-breaking by first appearance, instead of joining them
 // into a composite value that would never match another persona's key.
+//
+// NOT IDEMPOTENT: g must hold RAW per-chunk results, never an already-merged one.
+// out := g[0] inherits a merged element's OR-folded Salvaged, and the loop then
+// records that persona-wide bit as the flag for the joined content, so re-merging a
+// merged persona marks its single joined bin salvaged and parseFindings refuses
+// every finding it had. Not reachable today — mergeChunkResults is the one caller
+// and a single-element group short-circuits before here — so this is a documented
+// precondition rather than a guard, to keep the merge free of a defensive branch no
+// path exercises.
 func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	out := g[0] // inherit stable per-slot identity (Agent, PayloadMode, constraints); Model is re-derived below
 	out.Err = nil
@@ -343,11 +352,13 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	isSerial := serialSet[out.Agent]
 
 	var contents []string
-	// Kept index-aligned with contents (appended in the same branch below) so
-	// parseFindings can refuse ONLY the bins the client salvaged. The persona-wide
-	// out.Salvaged folded further down is for status and the diff cache; it cannot
-	// say WHICH bin salvaged, and refusing on it would discard a clean sibling
-	// bin's committed findings.
+	// Kept index-aligned with contents by appending in the SAME branch below, which
+	// is what makes the per-bin refusal in parseFindings possible: the persona-wide
+	// out.Salvaged folded further down cannot say WHICH bin salvaged, and refusing on
+	// it would discard a clean sibling bin's committed findings. Misalignment is not
+	// benign — parseFindings falls back to refusing everything — so a bin skipped
+	// here must be skipped in contents too. Pinned by
+	// TestMergeResultGroup_EmptyChunkKeepsSalvageFlagsAligned.
 	var salvagedFlags []bool
 	var firstErr error
 	okCount := 0
@@ -411,13 +422,19 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 			out.ToolsDegradedReason = r.ToolsDegradedReason
 		}
 		out.ResponseTruncated = out.ResponseTruncated || r.ResponseTruncated
-		// Same reason, same shape: reading only g[0]'s flag let a clean chunk 1 hide a
-		// salvaged chunk 2, so the diff cache would store a persona whose content is
-		// part abandoned reasoning and replay it on a later same-diff run.
+		// Same shape as the line above, and the same reason for OR-ing rather than
+		// reading g[0]: a clean bin 0 must not be able to hide a salvaged bin 2.
 		//
-		// This persona-wide bit is for status and the cache ONLY. parseFindings does
-		// NOT refuse on it — it reads the index-aligned chunkSalvaged above, so a
-		// salvaged bin does not discard a clean sibling bin's committed findings.
+		// Be honest about the reach of this bit: on a MERGED result it currently has
+		// no consumer. parseFindings does not refuse on it (it reads the
+		// index-aligned chunkSalvaged above, except in the fail-closed branch), and
+		// the diff cache never sees a merged result — the store gate lives in
+		// invokeCachedSingleShot and runs per chunk slot, BEFORE this merge, on the
+		// raw per-chunk flag. statusFor does not emit it either. The fold is kept so
+		// the merged Result stays a truthful description of the persona it
+		// represents, because a false negative here is the kind of thing a later
+		// consumer inherits silently; do not justify it with a cache or status
+		// consumer that does not exist.
 		out.Salvaged = out.Salvaged || r.Salvaged
 		// Count every chunk that returned prose no parser could use; reading only
 		// g[0]'s flag hid a later chunk's failure from status.json.

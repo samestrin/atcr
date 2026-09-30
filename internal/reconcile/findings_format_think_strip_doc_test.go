@@ -60,6 +60,13 @@ func TestFindingsFormatDoc_StatesTheThinkStrip(t *testing.T) {
 			"a draft the model abandoned",
 			"that refusal is per chunk",
 			"sibling chunks' findings are kept",
+			// Where the refused bin is COUNTED depends on why it salvaged, and the
+			// doc has to keep both halves: a stop-reason salvage stays ok and is
+			// unparseable, a length-cutoff one fails over and is unreviewed.
+			"stop-reason salvage stays `ok`",
+			"counted in `unparseable_chunks`",
+			"fails over to the backup model",
+			"counted in `unreviewed_chunks`",
 		} {
 			flat := strings.ReplaceAll(want, "\n", " ")
 			assert.True(t, strings.Contains(doc, want) || strings.Contains(doc, flat),

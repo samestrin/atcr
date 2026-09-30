@@ -571,7 +571,7 @@ type Result struct {
 // Content when the provider returned empty content, so every "finding" in it is a
 // draft the model never committed to. Verify (verify/invoke.go's Salvaged guard),
 // every debate seat (debate/protocol.go's driveSeat halt) and the diff cache (the
-// store gate at the bottom of this file) already refuse it; this was the last lane
+// store gate in invokeCachedSingleShot) already refuse it; this was the last lane
 // that did not.
 //
 // The guard reads Salvaged ONLY — deliberately NOT ResponseTruncated || Salvaged,
@@ -591,10 +591,10 @@ type Result struct {
 //
 // The refusal is PER CHUNK, not per persona. Each bin of a chunked review is its
 // own API call, so one bin can salvage while its siblings return committed
-// findings; mergeResultGroup OR-folds Salvaged into one persona-wide bit for status
-// and the cache, and refusing on that bit would discard those siblings' real
-// findings, mark the persona unparseable for findings it did produce, and falsify
-// docs/findings-format.md's chunk contract. So the chunked branch below reads
+// findings; mergeResultGroup OR-folds Salvaged into one persona-wide bit that
+// describes the persona but names no bin, and refusing on that bit would discard
+// those siblings' real findings, mark the persona unparseable for findings it did
+// produce, and falsify docs/findings-format.md's chunk contract. So the branch below reads
 // chunkSalvaged, skipping only the salvaged bins. Pinned by
 // TestMergeResultGroup_SalvagedLaterChunkKeepsSiblingFindings. (Found by the 4.1.A
 // adversarial review; decided 2026-09-30 by the user at the Phase 4 gate, which

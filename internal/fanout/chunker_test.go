@@ -472,11 +472,16 @@ func TestMergeResultGroup_AggregatesResponseTruncated(t *testing.T) {
 	})
 }
 
-// The Salvaged sibling of the fold above (T6, sprint 35.16.11.2.2.4). Salvaged was
-// the one per-chunk flag mergeResultGroup never folded, so a clean chunk 1 beside a
-// salvaged chunk 2 merged to Salvaged == false and the parseFindings guard never
-// fired — chunk 2's abandoned reasoning reached the pool. Same failure the
-// ResponseTruncated fold was added to close, same out.X = out.X || r.X shape.
+// The Salvaged sibling of the fold above (T6, sprint 35.16.11.2.2.4): Salvaged was
+// the one per-chunk flag mergeResultGroup never folded, so a merged persona could
+// report Salvaged == false while one of its bins had salvaged. Same out.X = out.X ||
+// r.X shape as the ResponseTruncated fold.
+//
+// What this pins is the MARKER's OR semantics and nothing more. The findings refusal
+// is NOT downstream of this bit — parseFindings reads the per-bin chunkSalvaged
+// slice, so folding it neither drops nor saves a finding. That separation is the
+// point of the per-bin design and is pinned by
+// TestMergeResultGroup_SalvagedLaterChunkKeepsSiblingFindings in engine_test.go.
 func TestMergeResultGroup_AggregatesSalvaged(t *testing.T) {
 	t.Run("later chunk salvaged is preserved", func(t *testing.T) {
 		g := []Result{

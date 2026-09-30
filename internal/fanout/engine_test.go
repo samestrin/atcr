@@ -659,7 +659,7 @@ func TestInvokeAgent_PreservesOuterCallIdentity(t *testing.T) {
 // promotes a reply's chain-of-thought into Content when the provider returns empty
 // content. Verify (verify/invoke.go:150) and every debate seat
 // (debate/protocol.go:157) already refuse it; the diff cache refuses it (the store
-// gate in invokeSingleShot). The findings lane had no
+// gate in invokeCachedSingleShot). The findings lane had no
 // guard at all, so a DRAFT finding written inside abandoned reasoning could be
 // parsed and written to the pool as real. parseFindings is the single choke point
 // both ParsedFindingCount and findingsFor share, so one guard there covers both.
@@ -787,6 +787,68 @@ func TestMergeResultGroup_SalvagedLaterChunkKeepsSiblingFindings(t *testing.T) {
 	assert.Equal(t, 1, merged.UnparseableChunks, "the salvaged bin is still counted as unparseable")
 	assert.False(t, merged.UnparseableResponse,
 		"a persona is not scored unparseable for findings it did produce")
+}
+
+// THE INVARIANT THE WHOLE PER-BIN DESIGN RESTS ON, and it was unpinned until the
+// Phase 4 gate asked for it. chunkSalvaged and chunkContents must stay index-aligned,
+// which mergeResultGroup achieves by appending to both inside the SAME
+// non-empty-content branch. Hoisting the flag append out of that branch leaves the
+// whole suite green but misaligns the slices whenever a bin returns empty content —
+// and misalignment is not benign: parseFindings reads the lengths as a mismatch,
+// falls back to the persona-wide bit, and refuses EVERYTHING, silently dropping the
+// clean bin's real findings. So the empty bin in the middle is the point.
+func TestMergeResultGroup_EmptyChunkKeepsSalvageFlagsAligned(t *testing.T) {
+	g := []Result{
+		{Agent: "bruce", Status: StatusOK, Content: "MEDIUM|b.go:2|real finding|f|correctness|2|e"},
+		{Agent: "bruce", Status: StatusOK, Content: "   "}, // dropped from BOTH slices
+		{Agent: "bruce", Status: StatusOK, Content: "HIGH|a.go:1|draft|f|correctness|5|e", Salvaged: true},
+	}
+	merged := mergeResultGroup(g, nil)
+
+	require.Len(t, merged.chunkContents, 2, "the whitespace-only bin contributes no content")
+	require.Equal(t, []bool{false, true}, merged.chunkSalvaged,
+		"the flags must drop the same bin the contents did, or every index after it names the wrong bin")
+	assert.Equal(t, 1, merged.ParsedFindingCount(),
+		"misalignment would make parseFindings fail closed and lose this finding")
+	assert.Equal(t, "real finding", findingsFor(merged, nil).Findings[0].Problem)
+}
+
+// The doc's two halves, at the merge level. docs/findings-format.md says where a
+// refused bin is counted depends on WHY it salvaged, so both arms are pinned:
+// a stop-reason salvage stays ok and lands in unparseable_chunks, while a
+// length-cutoff salvage was already demoted to StatusFailed by the failover gate
+// and lands in unreviewed_chunks instead. Getting this wrong is how the published
+// sentence silently stops matching the code.
+func TestMergeResultGroup_SalvagedChunkCountedByWhyItSalvaged(t *testing.T) {
+	clean := Result{Agent: "bruce", Status: StatusOK, Content: "MEDIUM|b.go:2|real finding|f|correctness|2|e"}
+
+	t.Run("stop-reason salvage is unparseable", func(t *testing.T) {
+		// StatusOK with content nothing could parse: invokeSlot's marker block sets
+		// UnparseableResponse, and mergeResultGroup counts it.
+		merged := mergeResultGroup([]Result{clean, {
+			Agent: "bruce", Status: StatusOK, Content: "chain of thought only",
+			Salvaged: true, UnparseableResponse: true,
+		}}, nil)
+
+		assert.Equal(t, 1, merged.UnparseableChunks)
+		assert.Equal(t, 0, merged.UnreviewedChunks)
+		assert.Equal(t, 1, merged.ParsedFindingCount(), "the clean bin still contributes")
+	})
+
+	t.Run("length-cutoff salvage is unreviewed, not unparseable", func(t *testing.T) {
+		// The failover gate already demoted this bin to StatusFailed, so the
+		// UnparseableResponse block (gated on StatusOK) never ran for it and
+		// UnreviewedChunks counts it as len(g) - okCount instead.
+		merged := mergeResultGroup([]Result{clean, {
+			Agent: "bruce", Status: StatusFailed, Content: "chain of thought only",
+			Salvaged: true, ResponseTruncated: true, Err: errTruncatedZeroFindings,
+		}}, nil)
+
+		assert.Equal(t, 0, merged.UnparseableChunks,
+			"a failed bin never reaches the unparseable marker — it is gated on StatusOK")
+		assert.Equal(t, 1, merged.UnreviewedChunks)
+		assert.Equal(t, 1, merged.ParsedFindingCount(), "the clean bin still contributes")
+	})
 }
 
 // The other half of the same fold: every bin salvaged means the persona really does
