@@ -408,3 +408,36 @@ func TestRun_ZeroBudgetHintOnASalvagedMarkerDoesNotClaimTheMarkerWasAbsent(t *te
 	assert.NotContains(t, hint, "re-probe the marker", "re-probing cannot turn reasoning into content")
 	assert.Contains(t, hint, "repoint the agent", "the salvage remedy must survive the zero-budget verdict")
 }
+
+// TD internal/doctor/run.go:337: a salvaged reply whose reasoning did NOT carry
+// the marker classifies as the marker-absent warning with the salvage note
+// appended — but under a zero input budget zeroBudgetVerdict replaces the hint
+// wholesale (markerInReasoning is false, so the append branch never fires) and
+// the salvage note is dropped: the operator sees a plain marker-absent row and
+// never learns the reply was reasoning-only. The note must survive alongside
+// the budget remedy.
+func TestRun_ZeroBudgetHintOnASalvagedMarkerAbsentKeepsTheSalvageNote(t *testing.T) {
+	t.Setenv("ATCR_DOCTOR_KEY", "k")
+	tiny := 1
+	reg := regWith(
+		map[string]registry.Provider{"p": {APIKeyEnv: "ATCR_DOCTOR_KEY", BaseURL: "https://api.example/v1"}},
+		map[string]registry.AgentConfig{"a": {Provider: "p", Model: "m", ContextWindowTokens: &tiny}},
+	)
+	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a"}})
+	require.NoError(t, err)
+
+	fake := newFake(nil)
+	fake.metaFn = func(inv llmclient.Invocation) (llmclient.Completion, error) {
+		return llmclient.Completion{Content: "no marker here", Salvaged: true}, nil
+	}
+
+	rep := Run(context.Background(), fake, res, Options{Nonce: testNonce, MaxTokens: 111, MaxTokensSet: true})
+
+	require.Len(t, rep.Agents, 1)
+	require.Equal(t, StatusOKWarning, rep.Agents[0].Status, "precondition: the zero-budget verdict fires")
+
+	hint := rep.Agents[0].Hint
+	assert.Contains(t, hint, "no input budget", "precondition: the zero-budget verdict text is present")
+	assert.Contains(t, hint, "reasoning was salvaged",
+		"the salvage note must survive the zero-budget verdict — the reply carried no content and the operator must know it")
+}
