@@ -481,12 +481,16 @@ func TestRunDebate_StripsThinkBlocksFromSeatContent(t *testing.T) {
 	const realRuling = `{"outcome":"uphold","settled_severity":"HIGH","reasoning":"evidence holds"}`
 	for _, tc := range []struct {
 		name, reply, wantStatement string
+		// absent is the reasoning text this row's strip removed; "" means the
+		// row removed nothing and there is no literal to forbid.
+		absent string
 	}{
 		{
 			// CHANGE-DETECTING (the RED case): the sole row with a LEADING tag.
 			name:          "a leading closed think block is removed",
 			reply:         "<think>draft notes</think>real statement text",
 			wantStatement: "real statement text",
+			absent:        "draft notes",
 		},
 		{
 			// NO-REGRESSION GUARD for the 2026-09-30 leading-only reversal:
@@ -522,14 +526,22 @@ func TestRunDebate_StripsThinkBlocksFromSeatContent(t *testing.T) {
 
 			assert.Empty(t, rec.Halted, "the strip is additive: it must not change any seat's status")
 			assert.Equal(t, tc.wantStatement, rec.ProposerStatement)
-			if !strings.Contains(tc.wantStatement, "<think>") {
-				// Only assert prompt cleanliness where the statement itself is
-				// clean — the quoted-tag row is SUPPOSED to forward its tags.
+
+			// Only rows that actually removed text forbid a literal. Rows whose
+			// reply is identity (no leading tag) have nothing to forbid.
+			if tc.absent != "" {
 				for _, inv := range cc.invocations() {
-					assert.NotContains(t, inv.Prompt, "draft notes",
+					assert.NotContains(t, inv.Prompt, tc.absent,
 						"a seat's removed reasoning must never reach another seat's prompt")
 				}
 			}
+			// Positive companion: the loop above can only prove the reasoning did
+			// NOT arrive, so a strip that dropped the statement entirely would
+			// satisfy it. Assert the stripped statement reached the challenger.
+			invs := cc.invocations()
+			require.GreaterOrEqual(t, len(invs), 2, "proposer and challenger both ran")
+			assert.Contains(t, invs[1].Prompt, tc.wantStatement,
+				"the stripped statement must reach the challenger's prompt, not just vanish")
 		})
 	}
 
