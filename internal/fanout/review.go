@@ -2869,6 +2869,21 @@ func sizingToken(effectiveBudget int64, maxLines int) string {
 // response_format, a per-agent declaration like the others), sizing, then the
 // thinking declaration as one block. Each call site builds it from its OWN
 // agent's values.
+//
+// Zero values are meaningful, not missing initialization — every one carries
+// tested semantics that diffCacheKey itself interprets, so there is nothing to
+// validate at construction (TD internal/fanout/review.go:2864, clarified
+// 2026-09-29: documented, not constructor-gated):
+//
+//   - Temperature nil = unset (the literal default temperature); a set pointer
+//     formats into the token. MaxTokens 0 (or the embedded default) = unset.
+//   - Sizing "" (or "0:0") = unsized — no per-agent sizing was applied.
+//   - ResponseFormat "" = default (no declared JSON output mode).
+//   - Thinking/ThinkingLevel "" = undeclared; ThinkingStyle "" = not sent (its
+//     clause is gated on registry.ThinkingDeclared, and a style alone sends no
+//     field); PreserveThinking "" = not sent (gated on registry.ThinkingEnabled).
+//   - Model and BaseURL are always set by production builders; BaseURL "" only
+//     occurs in bare test constructions and collapses to the pre-backend token.
 type cacheKeyInputs struct {
 	Model            string
 	BaseURL          string
