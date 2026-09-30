@@ -565,6 +565,13 @@ type Result struct {
 //     reviews always enable that failover (review.go), so this costs a backup
 //     call, NOT an unparseable mark — the UnparseableResponse block below is
 //     gated on StatusOK and never runs for it.
+//   - Cut off WITHOUT the provider labelling it "length" (finish_reason "stop"
+//     or an empty/unreported reason), or served by a completer that never sets
+//     ResponseTruncated: no failover fires, so the whole reply lands in the
+//     unparseable arm — the same total loss as the variant arm above. This is
+//     the third arm of the case split; the enumeration is not exhaustive
+//     without it, and the accepted cost is stated at its true size only when it
+//     is on the record.
 //
 // Accepted, not fixed. The only remedy available INSIDE this lane is to re-parse
 // the raw content when the strip yields nothing, and the raw parse of a reply cut
