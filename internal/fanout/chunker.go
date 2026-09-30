@@ -276,6 +276,11 @@ func promoteDiffTruncation(r Result) Result {
 // changing one requires changing both. An HTML comment so rendered markdown
 // hides it, and it carries no backtick/tilde run a fence scanner could read as
 // a marker.
+//
+// Engine-owned framing: model content may never produce this literal on a line
+// of its own — joinChunkContents neutralises any chunk output line that does
+// before splicing real boundaries, so a forged marker cannot reshape how
+// reconcile splits the merged review.md.
 const chunkBoundaryLine = "<!-- atcr:chunk-boundary -->"
 
 // joinChunkContents newline-joins chunk outputs, inserting chunkBoundaryLine
