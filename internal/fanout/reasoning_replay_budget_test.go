@@ -73,7 +73,7 @@ func TestLoop_UnsizedAgentNeverTripsOnReasoning(t *testing.T) {
 }
 
 // A tool-loop agent's payload is sized to leave room for the output cap plus
-// reasoningReplayReserveCaps caps of replayed reasoning; a non-tool agent keeps
+// payload.ReasoningReplayReserveCaps caps of replayed reasoning; a non-tool agent keeps
 // the plain output-cap reservation.
 func TestBuildSlots_ToolLoopAgentReservesReplayedReasoning(t *testing.T) {
 	cfg := sizingRosterConfig()
@@ -85,7 +85,7 @@ func TestBuildSlots_ToolLoopAgentReservesReplayedReasoning(t *testing.T) {
 	a, _, err := buildOneAgent(cfg, "greta", oversizedBlocksPayload(), ReviewRange{Base: "a", Head: "b"}, "", "")
 	require.NoError(t, err)
 
-	want := payload.EffectiveByteBudget("unlisted-small-model", nil, defaultMaxTokens*(1+reasoningReplayReserveCaps))
+	want := payload.EffectiveByteBudget("unlisted-small-model", nil, defaultMaxTokens*(1+payload.ReasoningReplayReserveCaps))
 	require.Positive(t, want, "precondition: the 32k window still funds a payload after the reserve")
 	assert.Equal(t, want, a.EffectiveBudget)
 	assert.Less(t, a.EffectiveBudget, payload.EffectiveByteBudget("unlisted-small-model", nil, defaultMaxTokens),

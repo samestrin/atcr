@@ -417,7 +417,9 @@ const zeroBudgetRemedy = "lower its max_tokens, or raise (or drop) its context_w
 
 // zeroBudgetVerdict reports the warning doctor owes an agent whose resolved window funds
 // NO input budget once its resolved output cap and the fixed prompt overhead are
-// reserved. It returns ok=false when there is nothing to say.
+// reserved — plus, when toolLoop is true, the replayed-reasoning reserve review sizes a
+// tool-loop agent with (payload.SizingOutputTokens), so doctor and review judge the
+// same budget. It returns ok=false when there is nothing to say.
 //
 // doctor is the only surface holding both operands, and it printed them side by side
 // without comparing them — so an agent `atcr review` cannot size a payload for reported
@@ -480,8 +482,16 @@ func zeroBudgetVerdict(model string, window, maxTokens, probeMaxTokens int, stat
 	if !healthy(status) || maxTokens <= 0 || window <= 0 {
 		return "", "", false
 	}
-	if payload.EffectiveByteBudget(model, &window, maxTokens) > 0 {
+	if payload.EffectiveByteBudget(model, &window, payload.SizingOutputTokens(toolLoop, maxTokens)) > 0 {
 		return "", "", false
+	}
+	// A tool-loop agent is sized with the replayed-reasoning reserve on top of
+	// its cap, so the hint names it: the window the operator sees can hold the
+	// cap alone, and "no input budget" would otherwise read as a wrong sum.
+	reserveClause := ""
+	if toolLoop {
+		reserveClause = fmt.Sprintf(", the %d-token replayed-reasoning reserve its tool loop holds back (%d× that cap)",
+			maxTokens*payload.ReasoningReplayReserveCaps, payload.ReasoningReplayReserveCaps)
 	}
 	lead := "endpoint is healthy, but"
 	if status == StatusOKWarning {
@@ -520,10 +530,10 @@ func zeroBudgetVerdict(model string, window, maxTokens, probeMaxTokens int, stat
 	}
 	return StatusOKWarning, fmt.Sprintf(
 		"%s the resolved window (%d tokens) leaves no input budget once the %d-token output cap `atcr review` will "+
-			"resolve for this agent%s and the fixed prompt overhead are reserved — review will ship "+
+			"resolve for this agent%s%s and the fixed prompt overhead are reserved — review will ship "+
 			"only the smallest single file, or refuse the run outright under on_overflow fail/fallback. Do NOT raise the "+
 			"cap here: it is reserved out of this same window. Remedy: %s%s",
-		lead, window, maxTokens, disclaimer, zeroBudgetRemedy, probeRemedy), true
+		lead, window, maxTokens, disclaimer, reserveClause, zeroBudgetRemedy, probeRemedy), true
 }
 
 // smallWindowClause reports the tool-lane consequences doctor owes an agent

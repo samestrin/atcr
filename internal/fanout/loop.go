@@ -25,28 +25,6 @@ const defaultMaxTurns = 10
 // memory.
 const sigHistoryDepth = 3
 
-// reasoningReplayReserveCaps is how many output caps of replayed reasoning a
-// tool-loop agent's input budget holds back at sizing time (sizingOutputTokens).
-// Every assistant turn's reasoning rides every later request, and a thinking
-// model can spend its whole output cap on reasoning in one turn, so a payload
-// sized to fill the window overflows it on turn 2. With a reserve of two caps the
-// loop trips once replayed reasoning passes one cap: at that check it holds at
-// most one cap, the next turn adds at most one more, so no request — the final
-// answer included — carries more reasoning than was reserved. Replay itself is
-// never trimmed: providers reject a continuation turn whose reasoning is missing.
-const reasoningReplayReserveCaps = 2
-
-// sizingOutputTokens is the token reservation a payload is sized against: the
-// output cap, plus the replayed-reasoning reserve when the agent will run the
-// tool loop (tools requested on a function-calling model). A single-shot or
-// degraded agent replays nothing, so it keeps the plain output-cap reservation.
-func sizingOutputTokens(toolLoop bool, maxTokens int) int {
-	if !toolLoop {
-		return maxTokens
-	}
-	return maxTokens * (1 + reasoningReplayReserveCaps)
-}
-
 // replayedReasoningBytes is the reasoning an assistant turn adds to every later
 // request: the bytes of each reasoning member history() kept.
 func replayedReasoningBytes(m llmclient.Message) int64 {
@@ -103,7 +81,7 @@ type toolLoop struct {
 	malformedPrev bool
 
 	// reasoningBytes is the reasoning replayed on every later request so far
-	// (see reasoningReplayReserveCaps).
+	// (see payload.ReasoningReplayReserveCaps).
 	reasoningBytes int64
 
 	// tr records the per-turn transcript (tool_calls, tool_results, final). nil
@@ -257,7 +235,7 @@ func (l *toolLoop) run(ctx context.Context) Result {
 		// reserve sizing held back. Only a sized agent (funded budget, resolved
 		// cap) had that reserve taken; an unsized one has nothing to trip on.
 		if l.agent.EffectiveBudget > 0 && l.agent.ResolvedMaxTokens > 0 &&
-			l.reasoningBytes > payload.TokensToBytes(l.agent.ResolvedMaxTokens*(reasoningReplayReserveCaps-1)) {
+			l.reasoningBytes > payload.TokensToBytes(l.agent.ResolvedMaxTokens*(payload.ReasoningReplayReserveCaps-1)) {
 			l.res.addTripped(budgetReasoningReplay)
 			return l.requestFinalAnswer(ctx)
 		}
