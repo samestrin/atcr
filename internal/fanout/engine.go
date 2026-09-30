@@ -525,11 +525,24 @@ type Result struct {
 // seeing raw output. r.Content and r.chunkContents are read, never reassigned, so
 // review.md still writes the raw reply.
 //
-// The strip is leading-only (see llmclient.SplitThink), so a block placed AFTER
-// the answer still reaches the parser and its draft findings still count. That is
-// the accepted limit of the leading-only rule in this lane — the same one TD-008
-// records for the debate lane — and it is the price of not eating a real finding
-// whose text quotes the tag.
+// Two accepted limits, both the price of a strip that cannot read minds:
+//
+// A block placed AFTER the answer still reaches the parser, so its draft findings
+// still count. The strip is leading-only (see llmclient.SplitThink), because the
+// alternative eats a real finding whose text quotes the tag — and a reviewer
+// reviewing THIS code writes exactly that. Same limit TD-008 records for debate.
+//
+// A LEADING opener with no canonical closer — cut off mid-thought, or closed with
+// a variant like </thinking> — takes the whole reply as reasoning, so a real
+// finding after it is lost and the reviewer scores unparseable. That is a bigger
+// blast radius than the same helper edge costs elsewhere (a whole review and a
+// trust prior, against one verdict), and it is accepted rather than fixed: the
+// only available remedy is to re-parse the raw content when the strip yields
+// nothing, and the raw parse of a reply cut off mid-draft returns the DRAFT —
+// reintroducing the exact bug this strip exists to stop. That remedy was tested
+// and rejected at the sprint 35.16.11.2.2.4 Phase 2 review for the verify lane;
+// it is rejected here on the same evidence. Pinned by
+// TestResult_ParseFindings_UnclosedLeadingOpenerLosesTheReply.
 func (r *Result) parseFindings() []stream.Finding {
 	if r.chunkContents == nil {
 		answer, _ := llmclient.SplitThink(r.Content)

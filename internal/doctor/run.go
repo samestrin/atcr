@@ -1040,7 +1040,14 @@ func reasoningSignal(comp llmclient.Completion) string {
 // inlineThinking reports non-blank reasoning text in the content. It is a thin
 // wrapper over llmclient.HasThinkMarkup, which owns every tag rule; see its doc
 // comment. Doctor keeps no tag matching of its own, so the probe and the review
-// lanes can never disagree about what a think block looks like.
+// lanes can never disagree about what a think block LOOKS LIKE.
+//
+// They can still disagree about what to DO with one, and since sprint
+// 35.16.11.2.2.4 they do: the review lane strips a leading block before parsing
+// (fanout.Result.parseFindings), while responseFormatCall's bare-object check
+// above reads raw content, so `<think>ok</think>{"findings":[]}` is a clean review
+// to the review lane and response_format_not_honored to this probe. Doctor verdict
+// semantics were out of scope for that sprint; filed as TD.
 //
 // It reads the DETECTOR, not llmclient.SplitThink's leading-only strip: this
 // prompt provably contains no tag, so a block after the marker is not the model

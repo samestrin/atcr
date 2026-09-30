@@ -449,10 +449,65 @@ func TestInvokeSlot_ThinkOnlyReply_IsUnparseable(t *testing.T) {
 }
 
 // The strip must never reassign r.Content: review.md writes the raw reply
-// (artifacts.go), and plan.md's Rollback Plan keeps it that way.
+// (artifacts.go), and plan.md's Rollback Plan keeps it that way. The count
+// assertion is deliberately absent — it is 1 with or without the strip, so it
+// would discriminate nothing here; the sibling draft test covers the count.
 func TestResult_ParseFindings_LeavesContentUnstripped(t *testing.T) {
 	const content = "<think>draft</think>\nMEDIUM|b.go:2|real|f|correctness|2|e"
 	r := &Result{Content: content}
-	assert.Equal(t, 1, r.ParsedFindingCount())
+	_ = r.ParsedFindingCount() // force the parse, which is what could mutate Content
 	assert.Equal(t, content, r.Content, "the raw reply must survive for review.md")
+}
+
+// ACCEPTED LOSS, pinned so it is a decision on the record rather than a surprise.
+// A LEADING <think> with no canonical closer — cut off mid-thought, or closed with
+// a variant like </thinking> — makes the whole reply reasoning, so a real finding
+// after it is lost and the reviewer is scored unparseable.
+//
+// Not fixed, because the only remedy available is to re-parse the raw content when
+// the strip yields nothing, and the raw parse of a reply cut off mid-draft returns
+// the DRAFT — the exact bug the strip exists to stop. That remedy was tested and
+// rejected for the verify lane at this sprint's Phase 2 review; the third case
+// below is the evidence it fails here too. Filed as TD for the blast radius.
+func TestResult_ParseFindings_UnclosedLeadingOpenerLosesTheReply(t *testing.T) {
+	t.Run("unclosed opener swallows a real finding after it", func(t *testing.T) {
+		const c = "<think>\nreasoning about the diff\nHIGH|a.go:1|real finding|f|correctness|5|e"
+		assert.Equal(t, 1, len(parseRawFindings(c)), "the raw reply really does hold one finding")
+		assert.Equal(t, 0, (&Result{Content: c}).ParsedFindingCount(), "and the strip loses it")
+	})
+	t.Run("variant closer is not a closer", func(t *testing.T) {
+		const c = "<think>reasoning</thinking>\nHIGH|a.go:1|real|f|correctness|5|e"
+		assert.Equal(t, 0, (&Result{Content: c}).ParsedFindingCount())
+	})
+	t.Run("why the raw fallback is rejected: raw returns the draft", func(t *testing.T) {
+		// A reply cut off mid-thought has no real answer, only the draft. Falling
+		// back to the raw parse here would promote that draft to a real finding.
+		const c = "<think>\nHIGH|a.go:1|draft|f|correctness|5|e"
+		require.Len(t, parseRawFindings(c), 1, "the raw parse sees the DRAFT")
+		assert.Equal(t, "draft", parseRawFindings(c)[0].Problem)
+		assert.Equal(t, 0, (&Result{Content: c}).ParsedFindingCount(), "the strip correctly drops it")
+	})
+}
+
+// parseRawFindings is the unstripped parse, used only to show what the strip gives
+// up in TestResult_ParseFindings_UnclosedLeadingOpenerLosesTheReply.
+func parseRawFindings(content string) []stream.Finding {
+	return stream.ParseModelOutput([]byte(content))
+}
+
+// A truncated reply whose content is only a leading think block now demotes to
+// StatusFailed and burns a backup-model call, where before the strip its draft row
+// parsed and the slot stayed StatusOK. That is the intended reading of the task's
+// Risk Mitigation ("pin that outcome, do not special-case it away"), but the
+// failover cost is real, so it is recorded here rather than discovered in a run.
+func TestInvokeSlot_TruncatedThinkOnlyReply_DemotesToFailover(t *testing.T) {
+	e := NewEngine(&metaTruncatingCompleter{
+		content:   "<think>\nHIGH|a.go:1|draft|f|correctness|5|e\n",
+		truncated: true,
+	}, WithTruncationFailover())
+	r := e.invokeSlot(context.Background(), Slot{Primary: Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "m"}}})
+
+	assert.Equal(t, 0, r.ParsedFindingCount())
+	assert.Equal(t, StatusFailed, r.Status, "a truncated think-only reply is a runaway, not a clean review")
+	assert.ErrorIs(t, r.Err, errTruncatedZeroFindings)
 }

@@ -603,11 +603,19 @@ func extractSection(lines []string, idx int) (text, section string) {
 	// output, like a ```json block: mask it in both views so it elides, and bound
 	// it below exactly as jsonOpen/jsonClose bound a fenced block. The spans come
 	// from the parser's own scan of THIS chunk's lines: the segment rebase above
-	// bounds lines to the chunk the anchor sits in, the same text
-	// Result.parseFindings read for that chunk, so they cannot drift from what
-	// the parser read. (Before chunk delimiting this held only for single-call
-	// personas — a joined multi-chunk scan could mask a chunk the parser never
-	// read together with this one.)
+	// bounds lines to the chunk the anchor sits in. (Before chunk delimiting this
+	// held only for single-call personas — a joined multi-chunk scan could mask a
+	// chunk the parser never read together with this one.)
+	//
+	// One accepted drift, since sprint 35.16.11.2.2.4: this scan reads review.md,
+	// which is the RAW reply, while Result.parseFindings now parses the reply with
+	// a leading <think> block stripped off. So for a reply that opens with such a
+	// block, a finding-shaped line INSIDE it is masked and bounds the excerpt here
+	// although the parser never read it, and conversely BareValueSpans can report
+	// nothing where the parser read a value. The damage is a degraded justification
+	// excerpt, never a wrong finding — findings come from the parser, not from this
+	// scan. Filed as TD rather than fixed: stripping here would make the excerpt
+	// stop matching the review.md a reader is pointed at by source_report.
 	spans := stream.BareValueSpans([]byte(strings.Join(lines, "\n")))
 	if len(spans) > 0 {
 		strict = append([]bool(nil), strict...)
