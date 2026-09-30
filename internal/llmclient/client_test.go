@@ -1157,7 +1157,8 @@ func TestCompleteWithMeta_MarksReasoningSalvage(t *testing.T) {
 	c := fastRetry(srv.Client())
 	comp, err := c.CompleteWithMeta(context.Background(), Invocation{BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "review"})
 	require.NoError(t, err)
-	assert.Equal(t, reasoning, comp.Content, "the salvage still contributes the reasoning")
+	assert.Equal(t, reasoning, comp.Content,
+		"the salvage puts the reasoning in Content — a wire fact, not a claim that any lane treats it as a review")
 	assert.True(t, comp.Salvaged, "a stop-reason reasoning salvage must be marked")
 	assert.False(t, comp.Truncated, "stop-reason salvage is not a length cutoff — the marker must be distinct")
 	// Reasoning keeps its own documented contract: reported independently of the salvage.

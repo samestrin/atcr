@@ -350,8 +350,9 @@ type Completion struct {
 	// StatusOK, not truncated, with chain-of-thought standing in for a review.
 	// Deliberately DISTINCT from Truncated, which is the finish_reason=length
 	// marker with its own consumer set; callers that trust Content as a statement
-	// (the debate seats), a verdict (the skeptic), or a cacheable review (the
-	// engine's diff cache) must check this flag (TD internal/llmclient/client.go:394).
+	// (the debate seats), a verdict (the skeptic), a finding (fanout's findings
+	// parser) or a cacheable review (the engine's diff cache) must check this flag
+	// (TD internal/llmclient/client.go:394).
 	Salvaged bool
 	// Reasoning is the model's reasoning_content, reported on its own whether
 	// or not Content is empty. The empty-Content salvage still copies it into

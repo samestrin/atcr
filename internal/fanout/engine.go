@@ -393,7 +393,9 @@ type Result struct {
 	// reasoning as a purported review. The diff cache refuses to store it (a
 	// later same-diff run would replay the reasoning as a clean review), and
 	// consumers that trust Content as a statement or verdict (debate seats,
-	// the skeptic) must read it (TD internal/llmclient/client.go:394).
+	// the skeptic) must read it (TD internal/llmclient/client.go:394). So does
+	// this package's own findings parser: parseFindings refuses a salvaged
+	// reply outright (T6, sprint 35.16.11.2.2.4).
 	Salvaged bool
 
 	// UnparseableResponse marks a StatusOK reviewer response that carried content
@@ -557,26 +559,34 @@ type Result struct {
 // TestResult_ParseFindings_UnclosedLeadingOpenerLosesTheReply and
 // TestInvokeSlot_TruncatedThinkOnlyReply_DemotesToFailover.
 //
-// A SALVAGED reply yields nothing. The salvage (llmclient/client.go:401-411) puts a
-// reply's abandoned chain-of-thought into Content when the provider returned empty
-// content, so every "finding" in it is a draft the model never committed to. Verify
-// (verify/invoke.go:150), every debate seat (debate/protocol.go:157) and the diff
-// cache (below) already refuse it; this was the last lane that did not.
+// A SALVAGED reply yields nothing. The salvage (the empty-content branch of
+// llmclient.CompleteWithMeta) puts a reply's abandoned chain-of-thought into
+// Content when the provider returned empty content, so every "finding" in it is a
+// draft the model never committed to. Verify (verify/invoke.go's Salvaged guard),
+// every debate seat (debate/protocol.go's driveSeat halt) and the diff cache (the
+// store gate at the bottom of this file) already refuse it; this was the last lane
+// that did not.
 //
 // The guard reads Salvaged ONLY — deliberately NOT ResponseTruncated || Salvaged,
 // which is what invoke.go and protocol.go check. Do not add ResponseTruncated to
 // make the lanes symmetric; the asymmetry is the point. A verdict or a debate
 // statement is whole or worthless, so truncation destroys it. Findings are not: a
-// truncated review's partial findings are real ones, and the truncation-failover
-// gate below exists to tell truncated-with-findings (keep) from
+// truncated review's partial findings are real ones, and the truncationFailover
+// gate in invokeSlot exists to tell truncated-with-findings (keep) from
 // truncated-with-nothing (fail over). Zeroing the count for every truncated reply
 // would fire that gate on reviews that did raise findings, discard the partial
 // findings the diff cache deliberately re-fetches rather than throws away, and
-// change what ReviewerOutcome records for those rows. Salvaged alone is also
-// sufficient: the salvage is what put reasoning in Content, so it is always set on
-// the shape this refuses. Pinned by
-// TestResult_ParseFindings_TruncatedButNotSalvagedKeepsItsFindings; if the
-// asymmetry ever looks wrong, file it as debt rather than widening the guard here.
+// change what ReviewerOutcome records for those rows. ResponseTruncated is also
+// unnecessary here: the salvage is what puts reasoning in Content, so a reply whose
+// content is ONLY abandoned reasoning always carries Salvaged, truncated or not.
+// Pinned by TestResult_ParseFindings_TruncatedButNotSalvagedKeepsItsFindings; if
+// the asymmetry ever looks wrong, file it as debt rather than widening the guard.
+//
+// SCOPE, and it is wider than one reply: for a MERGED chunked result the flag is
+// persona-wide (mergeResultGroup OR-folds it), so a salvage in ONE chunk refuses
+// every chunk — including a sibling chunk's real, committed findings. That loss is
+// under review and recorded at TD-017; do not read this comment as saying the
+// refused content is always only reasoning.
 func (r *Result) parseFindings() []stream.Finding {
 	if r.Salvaged {
 		return nil
@@ -595,7 +605,8 @@ func (r *Result) parseFindings() []stream.Finding {
 
 // ParsedFindingCount returns the number of parseable findings in r's output after
 // parseFindings strips a leading <think> run, so the counted text is not r.Content
-// itself. It computes and caches the count on first use.
+// itself. It is 0 for a salvaged reply, which parseFindings refuses outright
+// whatever its content. It computes and caches the count on first use.
 func (r *Result) ParsedFindingCount() int {
 	if r.Content == "" {
 		return 0
@@ -965,6 +976,16 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 		// present, nothing parseable — is left alone: routing that through
 		// failover would spend the backup model on every plausible clean review.
 		// It is recorded instead, just below.
+		//
+		// A SALVAGED reply is one shape that rationale does NOT cover, and it is
+		// still left alone. Its content is non-empty (the salvage filled it), so
+		// this gate misses it; and when the salvage came back on a stop reason it
+		// is not truncated either, so the gate above misses it too. Since T6 it
+		// provably contributes zero findings, so unlike a plausible clean review
+		// there is nothing to spend the backup call against — the reviewer is
+		// simply lost for the run, recorded unparseable. Deliberate for now,
+		// because widening failover is a behavior change this sprint's In Scope
+		// does not cover; filed as TD-018.
 		if e.truncationFailover && r.Status == StatusOK && r.Content == "" {
 			r.Status = StatusFailed
 			r.Err = errEmptyResponse

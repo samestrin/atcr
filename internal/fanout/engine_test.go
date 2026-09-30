@@ -655,10 +655,11 @@ func TestInvokeAgent_PreservesOuterCallIdentity(t *testing.T) {
 
 // --- T6 (sprint 35.16.11.2.2.4): refuse a salvaged reply as findings ----------
 
-// The salvage path (llmclient/client.go:401-411) promotes a reply's
-// chain-of-thought into Content when the provider returns empty content. Verify
-// (verify/invoke.go:150) and every debate seat (debate/protocol.go:157) already
-// refuse it; the diff cache refuses it (engine.go:1195). The findings lane had no
+// The salvage path (the empty-content branch of llmclient.CompleteWithMeta)
+// promotes a reply's chain-of-thought into Content when the provider returns empty
+// content. Verify (verify/invoke.go:150) and every debate seat
+// (debate/protocol.go:157) already refuse it; the diff cache refuses it (the store
+// gate in invokeSingleShot). The findings lane had no
 // guard at all, so a DRAFT finding written inside abandoned reasoning could be
 // parsed and written to the pool as real. parseFindings is the single choke point
 // both ParsedFindingCount and findingsFor share, so one guard there covers both.
@@ -699,7 +700,7 @@ func TestResult_ParseFindings_SalvagedReplyYieldsNoFindings(t *testing.T) {
 // THE BOUNDARY, and the whole reason the guard reads Salvaged ONLY. Verify and
 // debate check ResponseTruncated too, because a verdict or a statement is either
 // whole or worthless. Findings are not: a truncated review's partial findings are
-// real, and the truncation-failover gate (engine.go:876-877) is built to tell
+// real, and the truncationFailover gate in invokeSlot is built to tell
 // truncated-with-findings (keep) from truncated-with-nothing (fail over). Adding
 // ResponseTruncated here would zero the count for EVERY truncated review and fire
 // that gate on reviews that did raise findings. Pinned so the next reader cannot
@@ -743,8 +744,8 @@ func TestMergeResultGroup_SalvagedLaterChunkYieldsNoFindings(t *testing.T) {
 // PINNED, not asserted-unchanged (task-06 Test Strategy): the guard necessarily
 // MOVES what a salvaged row means downstream, so both shapes are recorded here.
 //
-// Salvage does NOT imply truncation — client.go:399-411 salvages inside the
-// content == "" branch on ANY finish reason, so a stop-reason reply with empty
+// Salvage does NOT imply truncation — llmclient.CompleteWithMeta salvages inside
+// its content == "" branch on ANY finish reason, so a stop-reason reply with empty
 // content and reasoning present is salvaged with ResponseTruncated false. The two
 // shapes therefore land in different places and must not be collapsed.
 func TestInvokeSlot_SalvagedReply_ContributesNoFindings(t *testing.T) {

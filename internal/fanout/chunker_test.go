@@ -486,6 +486,9 @@ func TestMergeResultGroup_AggregatesSalvaged(t *testing.T) {
 		merged := mergeResultGroup(g, nil)
 		assert.True(t, merged.Salvaged, "any salvaged chunk must mark the whole persona as salvaged")
 	})
+	// Boundary pin, not a reproduction: this one already passed before the fold,
+	// because out := g[0] inherits chunk 0's flag. It is here so a later refactor
+	// that replaces the inherit cannot drop the first-chunk case silently.
 	t.Run("first chunk salvaged is preserved", func(t *testing.T) {
 		g := []Result{
 			{Agent: "reviewer", Status: StatusOK, Salvaged: true},
@@ -494,6 +497,7 @@ func TestMergeResultGroup_AggregatesSalvaged(t *testing.T) {
 		merged := mergeResultGroup(g, nil)
 		assert.True(t, merged.Salvaged, "any salvaged chunk must mark the whole persona as salvaged")
 	})
+	// No-regression pin: the fold must not fabricate a marker.
 	t.Run("no salvage stays false", func(t *testing.T) {
 		g := []Result{
 			{Agent: "reviewer", Status: StatusOK, Salvaged: false},
