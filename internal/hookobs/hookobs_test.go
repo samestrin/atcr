@@ -943,18 +943,35 @@ func TestWrap_PreserveThinkingGatedOnThinkingEnabled(t *testing.T) {
 // TD row internal/fanout/review.go:2945: a thinking_style with neither
 // thinking nor thinking_level sends no thinking field, so the record must not
 // report one. The echo is gated on registry.ThinkingDeclared, doctor's rule.
+// TD internal/hookobs/hookobs_test.go:899: the gate lives in the shared
+// base() helper, so the pin drives all four entry points — a gate later
+// lifted into a single path would fail here instead of silently un-gating
+// the Chat path.
 func TestWrap_StyleAloneRecordsNoThinkingStyle(t *testing.T) {
-	srv := chatServer(t, http.StatusOK, okCompletion)
-	inv := testInvocation(t, srv)
-	inv.ThinkingStyle = "qwen"
-	obs := &recordingObserver{}
-	ctx := observedCtx(obs, &bytes.Buffer{})
+	calls := map[string]func(ctx context.Context, c Client, inv llmclient.Invocation){
+		"Complete": func(ctx context.Context, c Client, inv llmclient.Invocation) { _, _ = c.Complete(ctx, inv) },
+		"CompleteWithUsage": func(ctx context.Context, c Client, inv llmclient.Invocation) {
+			_, _, _, _ = c.CompleteWithUsage(ctx, inv)
+		},
+		"CompleteWithMeta": func(ctx context.Context, c Client, inv llmclient.Invocation) { _, _ = c.CompleteWithMeta(ctx, inv) },
+		"Chat": func(ctx context.Context, c Client, inv llmclient.Invocation) {
+			_, _ = c.Chat(ctx, inv, []llmclient.Message{{Role: "user", Content: strPtr("hi")}}, nil)
+		},
+	}
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			srv := chatServer(t, http.StatusOK, okCompletion)
+			inv := testInvocation(t, srv)
+			inv.ThinkingStyle = "qwen"
+			obs := &recordingObserver{}
+			ctx := observedCtx(obs, &bytes.Buffer{})
 
-	_, err := Wrap(ctx, llmclient.New()).CompleteWithMeta(ctx, inv)
-	require.NoError(t, err)
+			call(ctx, Wrap(ctx, llmclient.New()), inv)
 
-	require.Len(t, obs.calls(), 1)
-	assert.Empty(t, obs.calls()[0].ThinkingStyle)
+			require.Len(t, obs.calls(), 1)
+			assert.Empty(t, obs.calls()[0].ThinkingStyle)
+		})
+	}
 }
 
 // Sprint 35.16.11.2.2 TD-015: an enabled anthropic declaration sends no
