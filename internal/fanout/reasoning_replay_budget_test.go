@@ -73,6 +73,40 @@ func TestLoop_UnsizedAgentNeverTripsOnReasoning(t *testing.T) {
 	assert.Equal(t, "final answer", r.Content)
 }
 
+// A sized agent whose reserve closed its budget is recorded with EffectiveBudget
+// 0 but still runs the loop under chunk/truncate; the resolved window, not the
+// byte budget, says it was sized, so the trip still applies.
+func TestLoop_ZeroBudgetSizedAgentStillTripsOnReasoning(t *testing.T) {
+	const maxTokens = 100
+	cc, d := reasoningLoop(int(payload.TokensToBytes(maxTokens)) + 1)
+	a := sizedToolAgent(maxTokens)
+	a.EffectiveBudget = 0
+
+	r := toolEngine(cc, d).invokeAgent(context.Background(), a)
+	require.Equal(t, StatusOK, r.Status)
+	assert.Contains(t, r.TrippedBudgets, budgetReasoningReplay)
+}
+
+// Each half of the sized signal is required: a resolved window with no resolved
+// cap, or a cap with no resolved window, has no reserve to trip against.
+func TestLoop_PartiallySizedAgentNeverTripsOnReasoning(t *testing.T) {
+	for name, mutate := range map[string]func(*Agent){
+		"no resolved cap":    func(a *Agent) { a.ResolvedMaxTokens = 0 },
+		"no resolved window": func(a *Agent) { a.ResolvedWindow = 0; a.EffectiveBudget = 0 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			const maxTokens = 100
+			cc, d := reasoningLoop(1 << 20)
+			a := sizedToolAgent(maxTokens)
+			mutate(&a)
+
+			r := toolEngine(cc, d).invokeAgent(context.Background(), a)
+			require.Equal(t, StatusOK, r.Status)
+			assert.NotContains(t, r.TrippedBudgets, budgetReasoningReplay)
+		})
+	}
+}
+
 // A tool-loop agent's payload is sized to leave room for the output cap plus
 // payload.ReasoningReplayReserveCaps caps of replayed reasoning; a non-tool agent keeps
 // the plain output-cap reservation.
