@@ -928,3 +928,25 @@ func TestResult_ParseFindings_MemoizesTheParsedSlice(t *testing.T) {
 		t.Fatalf("parseFindings must memoize the parsed slice across calls on the same Result; got two separate parses")
 	}
 }
+
+// TestInvokeSlot_SalvagedSentinelShapedReply_IsNotACleanReview is the complement
+// of the non-sentinel subtest in TestInvokeSlot_SalvagedReply_ContributesNoFindings:
+// a salvaged reply whose promoted reasoning is literally the clean-review
+// sentinel ("NO FINDINGS") must not score as a genuine clean review. A salvaged
+// reply has ParsedFindingCount 0 by construction, so control reaches the
+// sentinel gate; if the gate read the sentinel-shaped salvage, the slot would be
+// recorded StatusOK with zero findings and no marker — the silent false
+// no-issues-found. A reply the design declares uncommitted (T6) cannot be a
+// committed no-findings report whatever its text.
+func TestInvokeSlot_SalvagedSentinelShapedReply_IsNotACleanReview(t *testing.T) {
+	e := NewEngine(&metaTruncatingCompleter{
+		content:  "NO FINDINGS",
+		salvaged: true,
+	}, WithTruncationFailover())
+	r := e.invokeSlot(context.Background(), Slot{Primary: Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "m"}}})
+
+	assert.Equal(t, StatusOK, r.Status)
+	require.True(t, r.Salvaged)
+	assert.True(t, r.UnparseableResponse,
+		"a salvaged reply is never a committed clean review, sentinel-shaped or not")
+}
