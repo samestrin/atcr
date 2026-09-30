@@ -11,7 +11,9 @@ const thinkOpen, thinkClose = "<think>", "</think>"
 // returning the answer text and the reasoning that was removed. It strips only
 // a LEADING run — a run of <think>…</think> pairs at the start of the content
 // (whitespace between them allowed), or a trailing unclosed opener that begins
-// that run. Everything else is the answer: a tag that appears after real answer
+// that run — unless a closer-like token follows the unclosed opener, in which
+// case nothing is stripped (see the unclosed-opener branch). Everything else is
+// the answer: a tag that appears after real answer
 // text has started, and a bare </think> with no opener anywhere, are both left
 // in place.
 //
@@ -59,12 +61,13 @@ const thinkOpen, thinkClose = "<think>", "</think>"
 //
 // Matching is on the exact lowercase literals only. A variant opener or closer
 // (<THINK>, <think type=x>, </thinking>) is not recognized as a tag, because
-// guessing at variants is how a strip starts eating answer text; a variant
-// closer therefore reads as "the leading opener was never closed". A variant
-// OPENER likewise means the content is not thinking markup at all: it survives
+// guessing at variants is how a strip starts eating answer text. A variant
+// OPENER means the content is not thinking markup at all: it survives
 // whole, draft object and all, so a first-match parser takes the draft — the
 // accepted cost of refusing to guess at variants (pinned by the variant-opener
-// row in TestSplitThink).
+// row in TestSplitThink). A variant CLOSER after an unclosed opener is the one
+// variant acted on, and only in the conservative direction: the run falls back
+// to stripping nothing rather than classifying the whole answer as reasoning.
 //
 // The two returns are NOT a partition of the input: the tag bytes, the
 // whitespace before the leading run, and the whitespace between consumed pairs
@@ -88,6 +91,18 @@ func SplitThink(content string) (answer, reasoning string) {
 		rest = lead[len(thinkOpen):]
 		end := strings.Index(rest, thinkClose)
 		if end < 0 {
+			// The run ends in an unclosed opener. If a closer-LIKE token follows —
+			// anything beginning with the closer constant minus its final byte, i.e.
+			// a variant closer such as </thinking> — the opener was real but its
+			// closer was spelled differently, so fall back to stripping NOTHING:
+			// returning the reply whole beats classifying the entire answer as
+			// reasoning (TD-002, 2026-09-30 — supersedes the accepted-loss this
+			// branch shipped with; an exact closer here would already have matched
+			// end above). A reply genuinely cut off mid-thought has no closer-like
+			// token and stays the everything-is-reasoning case below.
+			if strings.Contains(rest, thinkClose[:len(thinkClose)-1]) {
+				return content, ""
+			}
 			// The run ends in an unclosed opener: the reply was cut off
 			// mid-thought, so everything after the opener is reasoning.
 			thought.WriteString(rest)

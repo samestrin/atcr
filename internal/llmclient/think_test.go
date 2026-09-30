@@ -73,6 +73,12 @@ func TestSplitThink(t *testing.T) {
 		// opener is reasoning.
 		{name: "leading pair then unclosed opener", content: "<think>a</think><think>b",
 			wantAnswer: "", wantReasoning: "ab", wantSignal: true},
+		// An unclosed opener followed by a closer-LIKE token (a variant closer
+		// such as </thinking>): the opener was real but its closer was spelled
+		// differently, so the strip falls back to stripping nothing - returning
+		// the reply whole beats classifying the entire answer as reasoning.
+		{name: "unclosed opener followed by a variant closer strips nothing", content: "\x3cthink\x3ereasoning\x3c/thinking\x3eREAL ANSWER",
+			wantAnswer: "\x3cthink\x3ereasoning\x3c/thinking\x3eREAL ANSWER", wantReasoning: "", wantSignal: false},
 		// The doctor probe's marker survives the strip. Doctor's own marker check
 		// reads the raw content (classify, internal/doctor/run.go:732), so this
 		// pins the helper's behavior, not a doctor coupling.
@@ -154,17 +160,14 @@ func TestHasThinkMarkup_BroaderThanSplitThink(t *testing.T) {
 // TestSplitThink_AcceptedLossyEdges pins the inputs on which the strip gets the
 // boundary wrong, so the blast radius stays visible to whoever wires a lane onto
 // the helper and a later narrowing is a deliberate change with a failing test
-// rather than a silent one. Filed as TD-002 and TD-022.
+// rather than a silent one. Filed as TD-022. TD-002's variant-closer case was
+// fixed on 2026-09-30 — an unclosed opener followed by a closer-like token now
+// strips nothing — and moved to TestSplitThink as a normal row.
 //
 // TD-001's case — a bare </think> with no opener taking the whole prefix — is
 // no longer here: the rule that caused it was removed on 2026-09-30 and its
 // inputs now appear in TestSplitThink as survive-whole rows.
 func TestSplitThink_AcceptedLossyEdges(t *testing.T) {
-	// TD-002: a variant closer is not a closer, so the leading opener reads as
-	// unclosed and everything after it is reasoning. Loses real answer text.
-	answer, reasoning := SplitThink("<think>reasoning</thinking>REAL ANSWER")
-	assert.Empty(t, answer, "a variant closer leaves the opener unclosed")
-	assert.Equal(t, "reasoning</thinking>REAL ANSWER", reasoning)
 
 	// TD-022, the opposite direction: reasoning that QUOTES the closer cuts its
 	// own block early, so the tail of the reasoning survives into the answer and
@@ -175,7 +178,7 @@ func TestSplitThink_AcceptedLossyEdges(t *testing.T) {
 	const quotedCloserInsideTheBlock = `<think>the code searches for </think> in the content. ` +
 		`Draft: {"verdict":"confirmed","reasoning":"draft, wrong"} no wait</think>` +
 		`{"verdict":"refuted","reasoning":"real answer"}`
-	answer, reasoning = SplitThink(quotedCloserInsideTheBlock)
+	answer, reasoning := SplitThink(quotedCloserInsideTheBlock)
 	assert.Equal(t, "the code searches for ", reasoning,
 		"the run ends at the quoted closer, so only the prefix is taken as reasoning")
 	assert.Contains(t, answer, `{"verdict":"confirmed"`,
