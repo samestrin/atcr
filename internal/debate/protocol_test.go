@@ -471,32 +471,42 @@ func TestRunDebate_SalvagedStopReasonSeatHaltsAndIsNotForwarded(t *testing.T) {
 // Leading-only, so the quoted-tag row is not incidental coverage: a debate about
 // think-tag handling has seats that cite both tags mid-sentence, and an eager
 // strip would delete the statement being argued.
+//
+// Only the FIRST row is a RED case for the production strip. The rest carry no
+// LEADING think tag, so SplitThink is the identity on them and they pass with or
+// without the wiring — each is labeled below as the regression guard it is, so
+// this table is not read as four independent wiring cases. The exhaustive tag
+// table is owned by internal/llmclient/think_test.go.
 func TestRunDebate_StripsThinkBlocksFromSeatContent(t *testing.T) {
 	const realRuling = `{"outcome":"uphold","settled_severity":"HIGH","reasoning":"evidence holds"}`
 	for _, tc := range []struct {
 		name, reply, wantStatement string
 	}{
 		{
+			// CHANGE-DETECTING (the RED case): the sole row with a LEADING tag.
 			name:          "a leading closed think block is removed",
 			reply:         "<think>draft notes</think>real statement text",
 			wantStatement: "real statement text",
 		},
 		{
-			// A bare closer is NOT stripped (2026-09-30). A seat arguing about
-			// think-tag handling names the closer in prose, and the old rule
-			// deleted its whole argument up to that point.
+			// NO-REGRESSION GUARD for the 2026-09-30 leading-only reversal:
+			// identity under the strip, failing only if a bare closer is stripped
+			// again. A seat arguing about think-tag handling names the closer in
+			// prose, and the old rule deleted its whole argument.
 			name:          "a bare closer with no opener is left in place",
 			reply:         "draft</think>real statement",
 			wantStatement: "draft</think>real statement",
 		},
 		{
+			// NO-REGRESSION GUARD for the same reversal: the old rule ate this
+			// statement's prefix.
 			name:          "a statement naming only the bare closer keeps its whole prefix",
 			reply:         "the code never looks for </think> at all",
 			wantStatement: "the code never looks for </think> at all",
 		},
 		{
-			// No-regression row: passes with or without the production strip.
-			// It guards the leading-only rule, not the wiring.
+			// NO-REGRESSION GUARD: passes with or without the production strip.
+			// It guards the leading-only scope, not the wiring.
 			name:          "tags quoted after real answer text come back byte-identical",
 			reply:         "x.go:1 mishandles <think> and </think>",
 			wantStatement: "x.go:1 mishandles <think> and </think>",
