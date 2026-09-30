@@ -1,10 +1,12 @@
 package debate
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	reclib "github.com/samestrin/atcr/reconcile"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +19,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
 )
@@ -892,6 +895,38 @@ func TestRunDebate_BlankArguingSeatIsUnresolvedEvenWhenNotHalted(t *testing.T) {
 		assert.Equal(t, ReasonSeatSilent, df.Items[0].Reason,
 			"not every silent seat halted, so the stronger claim would be a lie about the challenger")
 	})
+}
+
+// TestRunDebate_SilentSeatPathDisclosesPerSeatCause pins the operator-facing
+// disclosure on the silent-seat path: the reason token alone (seat_silent /
+// seat_halted) cannot say WHICH seat went quiet or why — that detail was written
+// only into the per-item transcript, leaving debate.json with an empty Reasoning
+// and stdout with nothing. The path must surface the same seatSilenceNotes the
+// transcript gets, and warn, so an inline-reasoning seat blanking every item is
+// visible in a run's output.
+func TestRunDebate_SilentSeatPathDisclosesPerSeatCause(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	ctx := log.NewContext(context.Background(), logger)
+
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: ""}, // proposer runs clean, says nothing
+		{content: "challenger attacks"},
+		{content: `{"outcome":"uphold","settled_severity":"HIGH","reasoning":"evidence holds"}`},
+	}}
+	res, err := runDebate(ctx, dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	require.Equal(t, 1, res.Unresolved)
+
+	var df DebateFile
+	raw, _ := os.ReadFile(filepath.Join(dir, reconciledSubdir, DebateJSON))
+	require.NoError(t, json.Unmarshal(raw, &df))
+	assert.Equal(t, ReasonSeatSilent, df.Items[0].Reason)
+	assert.Contains(t, df.Items[0].Reasoning, "proposer",
+		"debate.json must carry the per-seat cause the transcript already gets, not an empty Reasoning")
+	assert.Contains(t, logBuf.String(), "silent",
+		"the silent-seat path must warn so a seat that blanks every item is visible in run output")
 }
 
 // TestSeatSilenceNotes_LabelsEachSeatForItself pins the per-seat labelling the
