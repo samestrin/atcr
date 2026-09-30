@@ -220,3 +220,39 @@ func ChunkMaxLines(model string, declared *int, outputTokens int) int {
 	}
 	return maxLines
 }
+
+// TokensToBytes converts a token count to bytes at the same conservative
+// ~3.5 B/token ratio EffectiveByteBudget uses, rounding down. A caller that
+// budgets bytes against a token reservation (the tool loop's replayed-reasoning
+// trip) uses it so the two sides of that reservation cannot disagree on the
+// ratio. A negative count converts to 0.
+func TokensToBytes(tokens int) int64 {
+	if tokens <= 0 {
+		return 0
+	}
+	return int64(tokens) * conservativeBytesPerTokenNum / conservativeBytesPerTokenDen
+}
+
+// ReasoningReplayReserveCaps is how many output caps of replayed reasoning a
+// tool-loop agent's input budget holds back at sizing time. Every assistant
+// turn's reasoning rides every later request, and a thinking model can spend its
+// whole output cap on reasoning in one turn, so a payload sized to fill the
+// window overflows it on turn 2. With a reserve of two caps the tool loop trips
+// once replayed reasoning passes one cap: at that check it holds at most one cap,
+// the next turn adds at most one more, so no request — the final answer included
+// — carries more reasoning than was reserved. Replay itself is never trimmed:
+// providers reject a continuation turn whose reasoning is missing.
+const ReasoningReplayReserveCaps = 2
+
+// SizingOutputTokens is the token reservation a payload is sized against: the
+// output cap, plus the replayed-reasoning reserve when the agent runs the tool
+// loop (its lane requests tools and its own model declares function calling). A
+// single-shot or degraded agent replays nothing and keeps the plain output-cap
+// reservation. It lives here, not in internal/fanout, so review's sizing and
+// doctor's zero-budget pre-flight apply one rule and cannot disagree.
+func SizingOutputTokens(toolLoop bool, outputTokens int) int {
+	if !toolLoop {
+		return outputTokens
+	}
+	return outputTokens * (1 + ReasoningReplayReserveCaps)
+}

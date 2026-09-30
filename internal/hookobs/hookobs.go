@@ -36,6 +36,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/circuitbreaker"
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/registry"
 )
 
 // Invocation is one observed model call. It mirrors the exported
@@ -89,6 +90,8 @@ type Invocation struct {
 	// Thinking, ThinkingLevel, ThinkingStyle, and PreserveThinking are the
 	// agent's declared thinking keys, copied verbatim (empty when undeclared),
 	// so a record can answer "what reasoning setting was this call made under".
+	// ThinkingStyle is empty unless Thinking or ThinkingLevel is set: a style
+	// alone sends no field (registry.ThinkingDeclared).
 	Thinking         string
 	ThinkingLevel    string
 	ThinkingStyle    string
@@ -352,6 +355,23 @@ func (o *observingClient) base(ctx context.Context, inv llmclient.Invocation, st
 		provider = endpoint
 	}
 	c := CallFrom(ctx)
+	// A style alone sends no thinking field, so it is not echoed (doctor's
+	// rule, TD row internal/fanout/review.go:2945). Every site that sets the
+	// style, and the cli.ModelInvocation copy, inherits this one gate.
+	style := inv.ThinkingStyle
+	if !registry.ThinkingDeclared(inv.Thinking, inv.ThinkingLevel) {
+		style = ""
+	}
+	// preserve_thinking renders on the wire only when thinking is enabled
+	// (newThinkingFields sends it only under on), so it is gated the same way:
+	// a record must not report a preserve flag for a body that carried neither
+	// it nor the style that would explain it (TD internal/hookobs/hookobs.go:377).
+	// registry.validateThinking already rejects preserve-with-thinking-off at
+	// load, so this only binds hand-built invocations.
+	preserve := inv.PreserveThinking
+	if !registry.ThinkingEnabled(inv.Thinking, inv.ThinkingLevel) {
+		preserve = ""
+	}
 	return Invocation{
 		RunID:            c.RunID,
 		AgentName:        c.AgentName,
@@ -364,8 +384,8 @@ func (o *observingClient) base(ctx context.Context, inv llmclient.Invocation, st
 		ResponseFormat:   inv.ResponseFormat,
 		Thinking:         inv.Thinking,
 		ThinkingLevel:    inv.ThinkingLevel,
-		ThinkingStyle:    inv.ThinkingStyle,
-		PreserveThinking: inv.PreserveThinking,
+		ThinkingStyle:    style,
+		PreserveThinking: preserve,
 		// The temperature the request carried, which a declared thinking
 		// setting can drop (anthropic thinking on sends none).
 		Temperature: copyFloat64(llmclient.SentTemperature(inv)),

@@ -328,25 +328,29 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 			if !agentPath {
 				snippet = readFixSnippet(ctx, disp, f.File, f.Line)
 			}
-			generate := func(smellRetry string) (out, warn string, truncated bool) {
+			generate := func(smellRetry string) (out, warn string, truncated, salvaged bool) {
 				if agentPath {
 					// Agent mode (Epic 7.4): drive the read-only tool loop, reusing the
 					// dispatcher the skeptics use. invokeExecutor never errors — a failure
 					// (provider error, tripped budget, parse failure) comes back as warn.
-					return invokeExecutor(ctx, ex, prov, *f, cc, disp, sharedTimeoutSecs, smellRetry)
+					o, w, tr := invokeExecutor(ctx, ex, prov, *f, cc, disp, sharedTimeoutSecs, smellRetry)
+					return o, w, tr, false
 				}
 				prompt := buildFixPrompt(*f, snippet, ex, smellRetry)
 				o, tr, salv, err := callExecutor(ctx, complete, prov, ex, prompt, sharedTimeoutSecs)
 				if err != nil && !tr {
-					return "", "fix generation failed: " + err.Error(), false
+					return "", "fix generation failed: " + err.Error(), false, false
 				}
 				// A salvaged reply carries chain-of-thought, not a patch (the skeptic
 				// lane collapses the same shape to reasoning_salvaged). Return it as a
-				// named failure so no reasoning text lands in the Fix column.
+				// named failure so no reasoning text lands in the Fix column. The
+				// salvage flag rides separately (not folded into warn) because its
+				// postCheck branch carries the prior-tier Fix guard the generic warn
+				// branch must not grow (TD internal/verify/executor.go:346).
 				if salv {
-					return "", "fix generation salvaged reasoning (empty content); the chain-of-thought is not a patch", false
+					return "", "fix generation salvaged reasoning (empty content); the chain-of-thought is not a patch", tr, true
 				}
-				return o, "", tr
+				return o, "", tr, false
 			}
 			// postCheck applies the shared failure classification to ONE generation
 			// round: transport failure, truncation, empty completion, self-decline. It
@@ -355,7 +359,21 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 			// must run the identical checks over its own output (Epic 35.3) — a retry
 			// that comes back truncated or declined must fail exactly as a first attempt
 			// would, not slip past as content.
-			postCheck := func(out, warn string, truncated bool) (string, bool) {
+			postCheck := func(out, warn string, truncated, salvaged bool) (string, bool) {
+				// Salvage gets its own classification BEFORE the generic warn branch:
+				// it carries the same hasAnyFixAttribution guard as truncation and
+				// empty-completion, so a later tier's salvaged reply cannot stamp a
+				// failure warning beside an earlier tier's generated Fix, and its log
+				// class is distinct from executor_fix_failed (a provider/transport
+				// error) — a salvage is a content-shape outcome, not a transport one
+				// (TD internal/verify/executor.go:346).
+				if salvaged {
+					logPipelineWarning(log.FromContext(ctx), "executor_salvaged_reasoning", fmt.Sprintf("%s:%d", f.File, f.Line))
+					if !hasAnyFixAttribution(f.Evidence) {
+						f.FixWarning = warn
+					}
+					return "", false
+				}
 				if warn != "" {
 					logPipelineWarning(log.FromContext(ctx), "executor_fix_failed", fmt.Sprintf("%s:%d: %s", f.File, f.Line, warn))
 					f.FixWarning = warn

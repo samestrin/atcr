@@ -309,6 +309,30 @@ func TestNewCompleter_ObservesRealInvocation(t *testing.T) {
 	assert.Equal(t, 11, obs.got[0].PromptTokens)
 }
 
+// TestNewCompleter_StyleAloneRecordsNoThinkingStyle pins that the exported
+// record inherits the hookobs gate: a style with no thinking or level sent no
+// thinking field, so cli.ModelInvocation reports no style.
+func TestNewCompleter_StyleAloneRecordsNoThinkingStyle(t *testing.T) {
+	srv := chatServer(t, http.StatusOK, okCompletion)
+	t.Setenv("ATCR_HOOKS_TEST_KEY", "sk-test-not-a-real-key")
+	obs := &recordingObserver{}
+	ctx := withHooks(context.Background(), Hooks{ModelInvocation: obs}, &bytes.Buffer{})
+
+	mc, ok := newCompleter(ctx).(fanout.MetaCompleter)
+	require.True(t, ok)
+	_, err := mc.CompleteWithMeta(ctx, llmclient.Invocation{
+		BaseURL:       srv.URL,
+		APIKeyEnv:     "ATCR_HOOKS_TEST_KEY",
+		Model:         "test/model-a",
+		Prompt:        "review this diff",
+		ThinkingStyle: "qwen",
+	})
+	require.NoError(t, err)
+
+	require.Len(t, obs.got, 1)
+	assert.Empty(t, obs.got[0].ThinkingStyle)
+}
+
 // --- AC 01-03: default behaviour compatibility -----------------------------
 
 // TestMainWithHooks_ZeroHooks_MatchesMain is AC 01-03's regression gate: with

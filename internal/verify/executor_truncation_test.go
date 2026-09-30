@@ -148,3 +148,21 @@ func TestGenerateFixes_SnippetSalvaged_NoFixReasonNamed(t *testing.T) {
 	assert.Empty(t, f.Fix, "a salvaged (reasoning-only) reply must NOT be recorded as a patch")
 	assert.Contains(t, f.FixWarning, "salvaged", "the FixWarning must name the salvage reason, not a generic failure")
 }
+
+// TD internal/verify/executor.go:346: a salvaged snippet-path reply is classified
+// through the generic warn branch, which — unlike the truncation and
+// empty-completion branches — has no hasAnyFixAttribution guard. A later tier
+// whose reply salvages therefore stamps a failure warning beside an earlier
+// tier's generated Fix: the Fix+FixWarning state postCheck's own comments call
+// forbidden. The salvage case must carry the same prior-tier guard.
+func TestGenerateFixes_SnippetSalvaged_PreservesPriorTierFix(t *testing.T) {
+	findings := []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified,
+		Fix:      "an earlier tier's good fix",
+		Evidence: "Found by bruce; fix by sonnet", // sonnet = a different tier than execConfig's opus
+	}}
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), &salvagingExecutor{}, nil, okDispatcher(), 0)
+	f := findings[0]
+	assert.Equal(t, "an earlier tier's good fix", f.Fix)
+	assert.Empty(t, f.FixWarning, "a salvaged later-tier reply must not warn over an earlier tier's generated fix")
+}

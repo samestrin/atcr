@@ -24,20 +24,20 @@ func TestRun_ThinkingDeclaredPolarity(t *testing.T) {
 	res := thinkingTarget(t, registry.ThinkingOff, "", registry.ThinkingStyleQwen)
 	agent, _, _ := runThinking(t, res, thinks, nil, llmclient.Completion{}, nil)
 	assert.Equal(t, ThinkingNotHonored, agent.ThinkingStatus)
-	assert.Equal(t, registry.ThinkingOff, agent.ThinkingDeclared)
+	assert.Equal(t, registry.ThinkingOff, agent.ThinkingPolarity)
 
 	// level: implies on, serializes as the LEVEL, not a boolean.
 	res = thinkingTarget(t, registry.ThinkingOn, registry.ThinkingLevelLow, registry.ThinkingStyleQwen)
 	agent, _, _ = runThinking(t, res, silent, nil, thinks, nil)
 	assert.Equal(t, ThinkingHonored, agent.ThinkingStatus)
-	assert.Equal(t, registry.ThinkingLevelLow, agent.ThinkingDeclared)
+	assert.Equal(t, registry.ThinkingLevelLow, agent.ThinkingPolarity)
 
 	// on with no level: a signal on the declared call itself is what makes it
 	// honored (a reported 0 short-circuits before any control call). Polarity "on".
 	res = thinkingTarget(t, registry.ThinkingOn, "", registry.ThinkingStyleQwen)
 	agent, _, _ = runThinking(t, res, thinks, nil, llmclient.Completion{}, nil)
 	assert.Equal(t, ThinkingHonored, agent.ThinkingStatus)
-	assert.Equal(t, registry.ThinkingOn, agent.ThinkingDeclared)
+	assert.Equal(t, registry.ThinkingOn, agent.ThinkingPolarity)
 
 	// Undeclared agent: no probe, no polarity.
 	res, err := Resolve(regWith(
@@ -47,5 +47,25 @@ func TestRun_ThinkingDeclaredPolarity(t *testing.T) {
 	require.NoError(t, err)
 	agent, _, _ = runThinking(t, res, silent, nil, llmclient.Completion{}, nil)
 	assert.Empty(t, agent.ThinkingStatus)
-	assert.Empty(t, agent.ThinkingDeclared)
+	assert.Empty(t, agent.ThinkingPolarity)
+}
+
+// TD internal/registry/config.go:261: the declared-ness rule must have one
+// definition. Target.declaresThinking delegates to registry.ThinkingDeclared,
+// so a future change to the rule (e.g. preserve_thinking gaining declared
+// status) cannot leave the diagnostic disagreeing with the behavior it
+// diagnoses. The table covers every input shape both predicates can receive.
+func TestTarget_DeclaresThinkingMatchesRegistryPredicate(t *testing.T) {
+	for _, tc := range [][2]string{
+		{"", ""},
+		{"on", ""},
+		{"off", ""},
+		{"", "low"},
+		{"on", "low"},
+		{"off", "low"},
+	} {
+		assert.Equal(t, registry.ThinkingDeclared(tc[0], tc[1]),
+			Target{Thinking: tc[0], ThinkingLevel: tc[1]}.declaresThinking(),
+			"declaresThinking(%q, %q) diverged from registry.ThinkingDeclared", tc[0], tc[1])
+	}
 }

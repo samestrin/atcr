@@ -51,7 +51,11 @@ type thinkingObject struct {
 // (an unknown style, thinking value, level, or preserve value) is never
 // guessed at: nothing is sent.
 func newThinkingFields(thinking, level, style, preserve string) thinkingFields {
-	if thinking == "" && level == "" {
+	// The declared-ness gate is the registry predicate, not a hand-written
+	// copy: this check IS the wire rule the cache key and the telemetry echo
+	// mirror, so it must share one definition with them or the three can
+	// silently disagree (TD internal/llmclient/thinking.go:54).
+	if !registry.ThinkingDeclared(thinking, level) {
 		return thinkingFields{}
 	}
 	if thinking != "" && thinking != registry.ThinkingOn && thinking != registry.ThinkingOff {

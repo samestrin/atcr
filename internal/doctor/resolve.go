@@ -89,6 +89,14 @@ type AgentTarget struct {
 	// built-in default). Recovering what review will use therefore requires the
 	// declaration to survive the override somewhere, and this is that somewhere.
 	DeclaredMaxTokens int
+	// ToolLoop reports that `atcr review` runs this agent in the tool loop, so it
+	// sizes the agent's payload with the replayed-reasoning reserve
+	// (payload.SizingOutputTokens). The lane decides tools — a fallback inherits
+	// its primary's, as review's buildFallbackAgent does — and the agent's OWN
+	// model decides function calling. An agent reached through several lanes is
+	// true when any of them runs it in the loop: the row is per agent, and that
+	// reservation is the one that can close its budget.
+	ToolLoop bool
 }
 
 // Resolution is the deduplicated invocation plan for a roster: the distinct
@@ -191,7 +199,7 @@ func ResolveWithCap(reg *registry.Registry, proj *registry.ProjectConfig, overri
 		return idx, nil
 	}
 
-	addAgent := func(name string, serial bool) error {
+	addAgent := func(name string, serial, laneTools bool) error {
 		ac, ok := reg.Agents[name]
 		if !ok {
 			return fmt.Errorf("agent %q not found in registry", name)
@@ -200,7 +208,16 @@ func ResolveWithCap(reg *registry.Registry, proj *registry.ProjectConfig, overri
 		if err != nil {
 			return fmt.Errorf("agent %q %w", name, err)
 		}
-		if !agentSeen[name] {
+		toolLoop := laneTools && ac.SupportsFC
+		if agentSeen[name] {
+			if toolLoop {
+				for i := range res.Agents {
+					if res.Agents[i].Agent == name {
+						res.Agents[i].ToolLoop = true
+					}
+				}
+			}
+		} else {
 			agentSeen[name] = true
 			window, windowSrc := payload.ResolveContextWindow(ac.Model, ac.ContextWindowTokens)
 			declaredCap := 0
@@ -215,6 +232,7 @@ func ResolveWithCap(reg *registry.Registry, proj *registry.ProjectConfig, overri
 				ContextWindowTokens: window,
 				WindowSource:        windowSrc,
 				DeclaredMaxTokens:   declaredCap,
+				ToolLoop:            toolLoop,
 			})
 		}
 		return nil
@@ -225,12 +243,13 @@ func ResolveWithCap(reg *registry.Registry, proj *registry.ProjectConfig, overri
 	walk := func(start string, serial bool) error {
 		seen := map[string]bool{}
 		var path []string
+		laneTools := reg.Agents[start].Tools
 		for node := start; node != "" && !seen[node]; node = reg.Agents[node].Fallback {
 			seen[node] = true
 			path = append(path, node)
 			// Only the listed head carries the lane marker; fallback steps are
 			// invoked identically (once per target) regardless of lane.
-			if err := addAgent(node, serial && node == start); err != nil {
+			if err := addAgent(node, serial && node == start, laneTools); err != nil {
 				return err
 			}
 		}

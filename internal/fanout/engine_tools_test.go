@@ -27,6 +27,7 @@ type chatTurn struct {
 	delay       time.Duration
 	callRecords []llmclient.CallRecord // per-turn HTTP attempt telemetry (Epic 4.11)
 	truncated   bool                   // final content turn hit finish_reason=length (Epic 19.5)
+	reasoning   string                 // reasoning_content the turn carries, replayed on later turns
 }
 
 // scriptedChat implements both Completer (single-shot) and ChatCompleter
@@ -96,6 +97,10 @@ func (s *scriptedChat) Chat(ctx context.Context, _ llmclient.Invocation, message
 		return &llmclient.ChatResponse{CallRecords: turn.callRecords}, turn.err
 	}
 	msg := llmclient.Message{Role: "assistant", ToolCalls: turn.toolCalls}
+	if turn.reasoning != "" {
+		raw, _ := json.Marshal(turn.reasoning)
+		msg.ReasoningContent = raw
+	}
 	fr := "stop"
 	if len(turn.toolCalls) > 0 {
 		fr = "tool_calls"
