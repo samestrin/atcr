@@ -31,6 +31,27 @@ func replayedReasoningBytes(m llmclient.Message) int64 {
 	return int64(len(m.ReasoningContent) + len(m.Reasoning) + len(m.ReasoningDetails) + len(m.ThinkingBlocks))
 }
 
+// historyMessage is the form of an assistant turn that is safe to re-send as
+// conversation history: inline <think> reasoning stripped off its Content. Without
+// it, a model that reasons inline gets its own discarded draft replayed back as
+// settled prior output on every later turn.
+//
+// Content is a *string that the returned copy would otherwise SHARE with the
+// caller's message, so the strip allocates a new one. Stripping in place would
+// also strip l.res.Content — the raw reply review.md writes — which is outside
+// this strip's scope. Only Content is touched: the reasoning members
+// (ReasoningContent, Reasoning, ReasoningDetails, ThinkingBlocks) are a separate,
+// deliberate replay channel and ride through unchanged, as does the nil Content a
+// pure tool-call turn carries.
+func historyMessage(m llmclient.Message) llmclient.Message {
+	if m.Content == nil {
+		return m
+	}
+	answer, _ := llmclient.SplitThink(*m.Content)
+	m.Content = &answer
+	return m
+}
+
 // Loop-control messages. These are static (no per-call allocation) and are
 // appended to the conversation to steer a thrashing or budget-exhausted model.
 const (
@@ -174,7 +195,7 @@ func (l *toolLoop) run(ctx context.Context) Result {
 		l.res.Turns++
 		l.res.addUsage(resp.Usage)
 		l.res.addCallRecords(resp.CallRecords)
-		l.messages = append(l.messages, resp.Message)
+		l.messages = append(l.messages, historyMessage(resp.Message))
 		l.reasoningBytes += replayedReasoningBytes(resp.Message)
 
 		// Final message (no tool_calls): the model finished within budget.

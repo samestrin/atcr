@@ -395,3 +395,101 @@ func TestToolLoop_FallbackCarriesNoPrimaryReasoning(t *testing.T) {
 		assert.Empty(t, reasoningOn(m), "fallback request message %d", j)
 	}
 }
+
+// --- T5 (sprint 35.16.11.2.2.4): strip <think> from replayed history ---------
+
+// runWireToolLoopContent drives the real toolLoop against a server whose
+// tool-call turn carries CONTENT as well as a tool_call — the shape
+// runWireToolLoopInv cannot produce, because its template hardcodes
+// "content":null. turnContent supplies the assistant content per turn (1-based);
+// turn 2 answers with finish_reason=stop, so the loop ends there with turn 2's
+// content as the result. It returns every captured request body and the Result.
+func runWireToolLoopContent(t *testing.T, turnContent func(turn int) string) ([]string, Result) {
+	t.Helper()
+	var (
+		mu     sync.Mutex
+		bodies []string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, string(b))
+		turn := len(bodies)
+		mu.Unlock()
+		content, _ := json.Marshal(turnContent(turn))
+		if turn == 1 {
+			_, _ = fmt.Fprintf(w, `{"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":%s,`+
+				`"reasoning_content":"separate channel",`+
+				`"tool_calls":[{"id":"c1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"f.go\"}"}}]}}]}`,
+				content)
+			return
+		}
+		_, _ = fmt.Fprintf(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":%s}}]}`, content)
+	}))
+	defer srv.Close()
+	t.Setenv("ATCR_TEST_KEY", "k")
+
+	d := newFakeDispatcher()
+	d.byName["read_file"] = tools.ToolResult{Content: "x"}
+	a := toolAgent("a", 10, 0)
+	a.Invocation = llmclient.Invocation{Model: "m", BaseURL: srv.URL, APIKeyEnv: "ATCR_TEST_KEY"}
+
+	r := toolEngine(llmclient.New(llmclient.WithHTTPClient(srv.Client())), d).invokeAgent(context.Background(), a)
+	require.Equal(t, StatusOK, r.Status)
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, bodies, 2, "one tool turn plus the final answer turn")
+	return append([]string(nil), bodies...), r
+}
+
+// AC3: a model that reasons inline must not have its own discarded draft replayed
+// back to it as settled prior output. The history entry carries the stripped
+// answer; the reasoning-carrier field it arrived in is untouched.
+//
+// This ALSO pins the aliasing guard, which is the real bug risk: Message.Content
+// is a *string shared by the history entry and resp.Message, so an in-place strip
+// would silently also strip l.res.Content (loop.go:190, :353) and therefore the
+// raw review.md artifact. A test that only checked the history entry would pass
+// against that bug; the r.Content assertion is what catches it.
+func TestToolLoop_ReplayedHistoryCarriesNoThinkBlock(t *testing.T) {
+	const finalRaw = "<think>second draft</think>real answer"
+	bodies, r := runWireToolLoopContent(t, func(turn int) string {
+		if turn == 1 {
+			return "<think>draft reasoning</think>keep going"
+		}
+		return finalRaw
+	})
+
+	msgs := wireMessages(t, bodies[1])
+	require.Len(t, msgs, 3, "prompt, assistant tool call, tool result")
+	// Decoded, not matched against the raw body: encoding/json escapes '<' on the
+	// wire, so a raw-body search for the literal tag passes even against the bug.
+	var replayed string
+	require.NoError(t, json.Unmarshal(msgs[1]["content"], &replayed))
+	assert.Equal(t, "keep going", replayed,
+		"the replayed assistant turn must carry the stripped answer")
+	assert.NotContains(t, replayed, "think", "no think markup may reach the wire as history")
+	assert.Equal(t, map[string]string{"reasoning_content": `"separate channel"`}, reasoningOn(msgs[1]),
+		"the separate reasoning channel is a deliberate replay channel and must be untouched")
+
+	assert.Equal(t, finalRaw, r.Content,
+		"l.res.Content must still be the RAW reply — review.md writes it unstripped")
+}
+
+// The leading-only rule at this lane's call site: a turn whose answer merely
+// quotes the tags is replayed byte-identical.
+func TestToolLoop_ReplayedHistoryKeepsQuotedTags(t *testing.T) {
+	const quoted = "loop.go replays history without stripping <think> or </think>"
+	bodies, _ := runWireToolLoopContent(t, func(turn int) string {
+		if turn == 1 {
+			return quoted
+		}
+		return "done"
+	})
+
+	msgs := wireMessages(t, bodies[1])
+	require.Len(t, msgs, 3)
+	var got string
+	require.NoError(t, json.Unmarshal(msgs[1]["content"], &got))
+	assert.Equal(t, quoted, got, "an answer that merely names the tags must be replayed unchanged")
+}
