@@ -543,7 +543,14 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 		}
 		// The single reason token cannot describe a mixed pair, so the
 		// transcript note labels each seat for itself.
-		tr.RecordRuling(RulingEvent{Outcome: OutcomeUnresolved, Reasoning: "no statement: " + strings.Join(seatSilenceNotes(rec.Halted, silent), ", ")})
+		notes := seatSilenceNotes(rec.Halted, silent)
+		tr.RecordRuling(RulingEvent{Outcome: OutcomeUnresolved, Reasoning: "no statement: " + strings.Join(notes, ", ")})
+		// The token in debate.json says only seat_silent/seat_halted; put the
+		// per-seat cause next to it and warn, so a seat that blanks every item
+		// (an inline-reasoning endpoint, most often) is visible to the operator
+		// instead of surfacing as a bare Unresolved count.
+		ir.Reasoning = "no statement: " + strings.Join(notes, ", ")
+		log.FromContext(ctx).Warn("debate: silent arguing seat(s), item unresolved", "seats", strings.Join(notes, ", "))
 		return ir
 	}
 
