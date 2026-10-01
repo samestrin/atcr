@@ -776,7 +776,15 @@ func invokeExecutor(ctx context.Context, ex *registry.ExecutorConfig, prov regis
 		}
 		return "", b.String(), res.ResponseTruncated
 	}
-	fix, err := parseExecutorResponse(res.Content)
+	// A thinking endpoint can finish cleanly and still draft a fix envelope inside
+	// a leading inline thinking block before writing the real one. parseExecutorResponse
+	// takes the FIRST balanced object (extractJSONObject, no key filter, no
+	// iteration), so without a strip the DRAFT patch is returned as the fix and
+	// --auto-fix writes it to disk — a wrong patch applied to files, not merely a
+	// mis-scored verdict. Apply the same leading-only strip the verify lane uses;
+	// internal/llmclient owns every tag rule.
+	answer, _ := llmclient.SplitThink(res.Content)
+	fix, err := parseExecutorResponse(answer)
 	if err != nil {
 		return "", "agent_mode parse error: " + err.Error(), res.ResponseTruncated
 	}
