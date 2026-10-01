@@ -185,8 +185,10 @@ func SplitThink(content string) (answer string, reasoning Reasoning) {
 
 // HasThinkMarkup reports whether the content carries inline think markup holding
 // text ANYWHERE in it: a <think>…</think> pair with non-blank inner text at any
-// position, a trailing unclosed opener with a non-blank remainder, or a lone
-// </think> with no opener and non-blank text before it. An empty pair is not
+// position, a trailing unclosed opener with a non-blank remainder, or a </think>
+// with NO OPENER BEFORE IT and non-blank text before it. That last rule is
+// positional and is re-applied to the remainder after each consumed pair, so
+// neither a later opener nor an earlier empty pair can hide a mid-thought reply. An empty pair is not
 // markup holding text — that is what a hybrid chat template emits when thinking
 // is correctly off.
 //
@@ -221,21 +223,23 @@ func SplitThink(content string) (answer string, reasoning Reasoning) {
 // It lives beside SplitThink on the same tag constants so internal/llmclient
 // stays the repo's only place that knows what a think tag looks like.
 func HasThinkMarkup(content string) bool {
-	if !strings.Contains(content, thinkOpen) {
-		// No opener anywhere: a lone closer still marks a reply that started
-		// mid-thought, so the text before it is reasoning.
-		if end := strings.Index(content, thinkClose); end >= 0 {
-			return strings.TrimSpace(content[:end]) != ""
-		}
-		return false
-	}
 	rest := content
 	for {
-		start := strings.Index(rest, thinkOpen)
-		if start < 0 {
+		open := strings.Index(rest, thinkOpen)
+		closer := strings.Index(rest, thinkClose)
+		// The lone-closer rule is POSITIONAL: what makes a closer "lone" is that no
+		// opener precedes it, not that no opener exists anywhere. Gating it on the
+		// whole content let ANY later opener suppress the signal — an empty pair
+		// included — so a mid-thought reply that then emitted an empty pair reported
+		// clean, which is exactly the hybrid-template shape the empty-pair rule below
+		// exists to defend against (TD internal/doctor/run.go:1055).
+		if closer >= 0 && (open < 0 || closer < open) {
+			return strings.TrimSpace(rest[:closer]) != ""
+		}
+		if open < 0 {
 			return false
 		}
-		rest = rest[start+len(thinkOpen):]
+		rest = rest[open+len(thinkOpen):]
 		end := strings.Index(rest, thinkClose)
 		if end < 0 {
 			// Left open: everything after the opener is reasoning-in-progress.
@@ -244,7 +248,9 @@ func HasThinkMarkup(content string) bool {
 		if strings.TrimSpace(rest[:end]) != "" {
 			return true
 		}
-		// An empty pair must not hide a real block after it: keep scanning.
+		// An empty pair must not hide a real block after it — nor a mid-thought
+		// closer, which is why the loop re-enters at the positional rule above
+		// instead of only looking for the next opener.
 		rest = rest[end+len(thinkClose):]
 	}
 }
