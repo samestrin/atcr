@@ -94,6 +94,33 @@ func TestRunDebate_SilentProposerShortCircuitsRemainingSeats(t *testing.T) {
 	assert.Contains(t, silentArguingSeats(rec), LabelProposer)
 }
 
+// TestRunDebate_ThinkOnlyProposerShortCircuitsRemainingSeats is the row above's
+// REAL input. SplitThink keeps the whitespace AFTER the consumed run (think.go's
+// "the answer is everything from the first byte after the last consumed closer"),
+// so the routine inline-reasoning reply `<think>…</think>\n` strips to "\n", not
+// "". An exact `== ""` short-circuit misses it and pays two full tool loops for
+// an outcome silentArguingSeats — which TrimSpaces — has already decided.
+//
+// The sibling test above cannot catch this: its stub returns the empty string
+// exactly, so the guard it pins is satisfied by the mock rather than by any reply
+// a provider actually sends.
+func TestRunDebate_ThinkOnlyProposerShortCircuitsRemainingSeats(t *testing.T) {
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "<think>reasoning about the finding</think>\n"}, // strips to "\n"
+		{content: "challenger attacks"},
+		{content: `{"outcome":"uphold","settled_severity":"HIGH","reasoning":"evidence holds"}`},
+	}}
+	rec := RunDebate(context.Background(), debateItem(), fcCast(), cc, &fakeDispatcher{}, nil)
+
+	assert.Len(t, cc.invocations(), 1,
+		"a think-only proposer is blank after the strip — the challenger and judge must not be invoked")
+	assert.Empty(t, rec.ChallengerStatement)
+	assert.Empty(t, rec.JudgeRaw)
+	assert.Equal(t, []string{LabelProposer}, rec.Suppressed,
+		"the strip emptied the reply, so the seat is suppressed rather than merely silent")
+	assert.Contains(t, silentArguingSeats(rec), LabelProposer)
+}
+
 func TestRunDebate_DrivesThreeTurnsInOrder(t *testing.T) {
 	cc := &fakeChatCompleter{turns: []chatTurn{
 		{content: "proposer defends"},
