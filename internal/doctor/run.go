@@ -24,7 +24,7 @@ import (
 // back in visible content; the rest are failure or warning classes.
 const (
 	StatusOK            = "ok"             // marker found in response content
-	StatusOKWarning     = "ok_warning"     // HTTP 200 but marker absent/empty
+	StatusOKWarning     = "ok_warning"     // HTTP 200 but marker absent/empty, or found only in reasoning the review lane cannot use (salvaged or think-block)
 	StatusAuthFailed    = "auth_failed"    // 401/403
 	StatusNotFound      = "not_found"      // 404 (model or base_url)
 	StatusRateLimited   = "rate_limited"   // 429
@@ -52,7 +52,10 @@ func healthy(status string) bool { return status == StatusOK || status == Status
 // thinkingProbeWorthwhile reports that a thinking verdict is meaningful on a row
 // with this endpoint status: healthy rows always, and failed rows only when the
 // failure is transient (rate limit, provider 5xx, timeout) so a re-run could reach
-// a verdict. Permanent failures — auth, bad model name, transport — repeat
+// a verdict — or when the verdict needs no re-run at all: StatusProviderError
+// also covers permanent 4xx (400/422), which probeThinking resolves to
+// not_honored via its control call, so those rows are probed too. Permanent
+// failures — auth, bad model name, transport — repeat
 // identically, and an unverified verdict on them only buries the real cause.
 func thinkingProbeWorthwhile(status string) bool {
 	switch status {
@@ -317,6 +320,9 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 			// same way and bury the real cause") those rows get no thinking verdict at
 			// all rather than a second, competing warning. Transient classes — 429, a
 			// 5xx, a timeout — keep unverified: a retry really can reach a verdict.
+			// The 4xx members of provider_error (400/422) are permanent, but
+			// probeThinking resolves them to not_honored via its control call — a
+			// verdict that needs no retry — so they are probed too.
 			// A cut-off reply is the exception: its empty-completion error classifies
 			// as network_error, yet it is the runaway thinker the verdict exists to
 			// name, so it still gets one carrying the cut-off remedy.
@@ -1022,17 +1028,6 @@ func thinkingDeclaration(t Target) string {
 // registry spells it: "off", the declared level (a level implies on), or "on".
 // "" when the target declares no thinking or no verdict was reached, so the
 // field stays omitted exactly when ThinkingStatus is (TD cli/doctor.go:255).
-// thinkingPreserveForm returns the target's declared preserve_thinking value
-// when a verdict was reached, "" otherwise — mirroring thinkingDeclaredForm's
-// omission rule so the field is present exactly when the verdict can name the
-// flag as a culprit.
-func thinkingPreserveForm(t Target, status string) string {
-	if status == "" || !t.declaresThinking() {
-		return ""
-	}
-	return t.PreserveThinking
-}
-
 func thinkingDeclaredForm(t Target, status string) string {
 	if status == "" || !t.declaresThinking() {
 		return ""
@@ -1044,6 +1039,17 @@ func thinkingDeclaredForm(t Target, status string) string {
 		return t.ThinkingLevel
 	}
 	return registry.ThinkingOn
+}
+
+// thinkingPreserveForm returns the target's declared preserve_thinking value
+// when a verdict was reached, "" otherwise — mirroring thinkingDeclaredForm's
+// omission rule so the field is present exactly when the verdict can name the
+// flag as a culprit.
+func thinkingPreserveForm(t Target, status string) string {
+	if status == "" || !t.declaresThinking() {
+		return ""
+	}
+	return t.PreserveThinking
 }
 
 // reasoningSignal describes the reasoning a reply carried, or "" when it carried

@@ -55,7 +55,7 @@ var rosterCategories = []string{
 	"duplication", "invariant", "bloat",
 }
 
-// baseCategories is the six-word list at personas/_base.md:44 — the only
+// baseCategories is the six-word list at personas/_base.md:45 — the only
 // enumeration that existed anywhere before this epic, and a resolution fallback
 // no shipped persona reaches.
 var baseCategories = []string{
@@ -127,10 +127,10 @@ func TestObservedCategories_MatchesItsDocumentedCount(t *testing.T) {
 }
 
 // TestCategories_BaseWordsAreAccountedFor enforces the same for the six words
-// personas/_base.md:44 offers, so closing the vocabulary never removes one that
+// personas/_base.md:45 offers, so closing the vocabulary never removes one that
 // was already on offer.
 func TestCategories_BaseWordsAreAccountedFor(t *testing.T) {
-	assertAccountedFor(t, baseCategories, "personas/_base.md:44")
+	assertAccountedFor(t, baseCategories, "personas/_base.md:45")
 }
 
 // assertAccountedFor fails for any word that is neither a member nor a recorded

@@ -2933,8 +2933,10 @@ type cacheKeyInputs struct {
 // max_tokens to fix an empty review would otherwise replay the cached empty review
 // and read the setting as inert — defeating the field's own documented motivation.
 //
-// A cap EQUAL to defaultMaxTokens collapses to the pre-existing token, so every
-// on-disk entry written by an agent that never declared a cap stays valid.
+// A cap EQUAL to defaultMaxTokens collapses to the pre-existing token. That
+// backward-compat property held only before the kv=2 key-version bump below;
+// since the bump, every on-disk entry written by an older binary is invalidated
+// exactly once (a one-time miss), regardless of cap.
 //
 // min_severity/max_findings are deterministic post-LLM filters and are correctly NOT
 // in the key.
@@ -2960,7 +2962,8 @@ func diffCacheKey(prompt string, in cacheKeyInputs) string {
 	}
 	// Same NUL-separated append, same backward-compat rule: the embedded default
 	// collapses to the token above (and so does a 0, which resolveMaxTokens treats as
-	// "unset"), so no key written before the cap became per-agent is invalidated.
+	// "unset"). Before the kv=2 bump, no key written before the cap became per-agent
+	// was invalidated; since the bump, all older entries are invalidated once anyway.
 	if in.MaxTokens > 0 && in.MaxTokens != defaultMaxTokens {
 		tuning = tuning + "\x00mt=" + strconv.Itoa(in.MaxTokens)
 	}

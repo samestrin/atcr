@@ -854,10 +854,12 @@ var recordRe = regexp.MustCompile(`^(CRITICAL|HIGH|MEDIUM|LOW)\|`)
 // several into one excerpt and stamps one finding's reasoning onto its neighbour.
 //
 // It matches the PRODUCING PARSER EXACTLY, and the exactness is the whole contract.
-// fanout writes review.md as a byte-identical copy of the content it hands to
-// stream.ParseModelOutput, so a line the parser calls prose IS prose — and ending a
-// block on it truncates a reviewer's narrative with no marker to show it happened.
-// That loss is permanent: localdebt persists Justification into an append-only store
+// For a SINGLE-CALL persona, fanout writes review.md as a byte-identical copy of
+// the content it hands to stream.ParseModelOutput, so a line the parser calls
+// prose IS prose — and ending a block on it truncates a reviewer's narrative
+// with no marker to show it happened. A chunked persona's review.md is the
+// marker-joined chunk outputs (joinChunkContents), and parsing runs per chunk,
+// so the byte-identity holds within each marker-bounded segment. That loss is permanent: localdebt persists Justification into an append-only store
 // whose id excludes it, so the first reconcile is the only one that can be right.
 //
 // Hence all three of the parser's conditions, not just the first:
@@ -881,11 +883,13 @@ func isFindingRecordStart(s string) bool {
 }
 
 // fenceMask reports, per line, whether it sits INSIDE a fenced code block, in TWO
-// views. strict matches the toggle-then-continue order in
-// stream.ParseModelOutput's fence switch byte-for-byte: fence markers are OUTSIDE,
-// and an UNTERMINATED fence masks to EOF, exactly as the parser's bare `inFence =
-// !inFence` skips every line below a dangling opener. released is identical except
-// that the run below a dangling opener is un-masked.
+// views. strict mirrors the state machine in stream.ParseModelOutput's fence
+// switch: fence markers are OUTSIDE, a marker closes a fence only via
+// closesFence (same character, run at least as long as the opener), a later
+// ```json line while inside a cut-off ```json block opens the NEXT chunk rather
+// than closing this one, and a dangling ```json block masks to EOF — exactly as
+// the parser's switch reads those shapes. released is identical except that the
+// tail below a dangling NON-json opener is un-masked.
 //
 // balanced is a third, disjoint signal: it marks the MARKER lines of every
 // TERMINATED pair (both views leave markers themselves unmasked, so no mask can

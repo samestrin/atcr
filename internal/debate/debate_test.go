@@ -339,9 +339,9 @@ func TestRunDebate_JudgeHaltedIsUnresolved(t *testing.T) {
 	assert.Equal(t, "judge_halted", df.Items[0].Reason)
 }
 
-// A halted proposer or challenger made no case, so a judge ruling against that
-// side is not a debate outcome: the item must record unresolved, not the ruling
-// (TD internal/debate/protocol.go:156).
+// A proposer or challenger that returned nothing made no case, so a judge
+// ruling against that side is not a debate outcome: the item must record
+// unresolved, not the ruling (TD internal/debate/protocol.go:156).
 func TestRunDebate_ArguingSeatHaltedIsUnresolved(t *testing.T) {
 	for _, tc := range []struct {
 		name  string

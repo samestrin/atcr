@@ -379,9 +379,10 @@ type AgentStatus struct {
 	// Per-agent usage (Epic 3.3 scorecard): the model id and provider-reported
 	// token counts, persisted so the reconcile-time scorecard emitter can source
 	// per-reviewer model/tokens (and derive cost) from a separate process.
-	// omitempty so a zero-usage run (a failed agent, or a fake completer in tests
-	// that reports no usage) keeps status.json byte-identical to the pre-3.3
-	// shape; statusFor only sets them when real usage was reported.
+	// omitempty so a failed, zero-usage run keeps status.json byte-identical to
+	// the pre-3.3 shape. statusFor records Model on every completed OK slot —
+	// usage reported or not, so the per-model trust path can read it — and sets
+	// the token counts only when real usage was reported.
 	Model     string `json:"model,omitempty"`
 	TokensIn  int    `json:"tokens_in,omitempty"`
 	TokensOut int    `json:"tokens_out,omitempty"`

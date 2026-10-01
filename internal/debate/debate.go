@@ -528,9 +528,11 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 		//
 		// Two ways to arrive here, kept apart in the reason so an operator
 		// reading debate.json is never told a seat halted when it did not: the
-		// seat halted (tripped budget, provider error) and returned nothing, or
-		// it ran clean and had nothing to say — an empty reply, or one that was
-		// entirely think markup that driveSeat stripped.
+		// seat halted on a provider error and returned nothing, or it ran clean
+		// and had nothing to say — an empty reply, or one that was entirely think
+		// markup that driveSeat stripped. (A seat halted by a tripped budget is
+		// NOT in this set: it still returns its forced final answer, so its
+		// statement is non-empty and it made its case.)
 		// ReasonSeatHalted is the stronger claim, so it is reserved for the case
 		// where EVERY silent seat really halted. A mixed pair — a halted
 		// proposer plus a clean-but-blank challenger — reports the weaker

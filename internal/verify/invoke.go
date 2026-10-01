@@ -458,9 +458,11 @@ func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool) (agent fanout.
 // for an undeclared agent (a nil stays nil, per the reserve-vs-send distinction
 // in reservedOutputTokens) — so the request carried budget_tokens: 8192 with no
 // max_tokens, the provider's own default cap applied (4096 through LiteLLM),
-// and EVERY call for that agent 400ed. The load-time guard cannot catch it: it
-// only warns, and it compares the budget against the registry's default rather
-// than the cap this lane actually sends.
+// and EVERY call for that agent 400ed. That misfit can no longer reach this
+// lane: the load-time guard now rejects an anthropic budget not below
+// max_tokens as a load error (registry validateThinking), and thinkingWire
+// below always sends a cap when a budget is on the wire. What follows is the
+// historical failure that motivated both.
 //
 // The rule here is: a thinking budget buys a cap. When the declaration sends a
 // budget (anthropic style, thinking on — the only style whose budget shares
@@ -473,8 +475,10 @@ func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool) (agent fanout.
 // stays nil and the provider default applies, exactly as before.
 func thinkingWire(c registry.AgentConfig) (maxTokens *int, thinking, thinkingLevel string) {
 	// Anthropic style only: its budget_tokens is the one whose value shares
-	// max_tokens (the registry's own budget warning is scoped the same way).
-	// The qwen style's thinking_budget is a separate provider parameter.
+	// max_tokens, so a misfit is a guaranteed 400. The registry's own budget
+	// warning does NOT cover this case — it fires only for the qwen style,
+	// whose thinking_budget shares its cap too but is not load-checked; the
+	// anthropic misfit is a hard load error in validateThinking instead.
 	if c.ThinkingStyle != registry.ThinkingStyleAnthropic {
 		return c.MaxTokens, c.Thinking, c.ThinkingLevel
 	}
