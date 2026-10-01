@@ -190,6 +190,14 @@ func SplitThink(content string) (answer string, reasoning Reasoning) {
 // markup holding text — that is what a hybrid chat template emits when thinking
 // is correctly off.
 //
+// On content that is ENTIRELY markup the two functions therefore disagree by
+// design: SplitThink consumes the leading empty pair (or bare opener) and
+// returns an empty answer, while this detector returns false. Neither is wrong —
+// the strip answers "what do I remove", the detector "did it think", and an
+// empty pair is removable yet carries no signal. Both sides are pinned
+// (TestSplitThink and TestHasThinkMarkup) so the divergence cannot drift into an
+// accident.
+//
 // This is a DETECTION question, deliberately broader than SplitThink's strip.
 // The two are different questions and cannot share one answer. A strip must be
 // leading-only or it eats real answer text that merely quotes the tag (a
