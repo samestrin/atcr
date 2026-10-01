@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -1066,8 +1067,14 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 					r.UnparseableResponse = true
 					// Distinct signal (TD engine.go:533): the strip consumed the WHOLE
 					// reply as reasoning — content was entirely a think run, not merely
-					// garbled. An empty answer here means SplitThink took everything.
-					if answer == "" {
+					// garbled.
+					//
+					// Blank is TrimSpace-blank, matching loop.go's historyMessage and
+					// debate's silentArguingSeats. SplitThink keeps the whitespace after
+					// the run it consumed, so the routine `<think>…</think>\n` shape
+					// returns "\n"; an exact `== ""` test read that as an answer and
+					// dropped the signal on the commonest input it has.
+					if strings.TrimSpace(answer) == "" {
 						r.ThinkSuppressed = true
 					}
 				}
