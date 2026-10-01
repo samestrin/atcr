@@ -87,7 +87,20 @@ func ReviewerOutcome(a AgentStatus, raisedCount int) string {
 	// budget.go separately calls identical ledger delivery load-bearing for
 	// fairness across reviewers — that is a real, still-open tradeoff this arm
 	// does not resolve, only chooses not to reclassify as incomplete.
-	case a.UnreviewedChunks > 0 || a.Truncated:
+	// Salvaged sits with the other data-integrity signals, and BELOW
+	// ResponseTruncated for the same reason payload truncation does: a cut-off
+	// reply names the sharper cause.
+	//
+	// It needs its own arm because no signal above sees it. A salvaged reply is
+	// StatusOK with content (the client promoted reasoning into it), so the failed
+	// and truncated arms miss it; parseFindings refuses it, so it is not
+	// unparseable either. For a CHUNKED persona the gap is worse: UnreviewedChunks
+	// counts non-OK bins, and a salvaged bin is OK, so one refused bin beside a
+	// clean sibling fell through to "findings" — a healthy, fully-covered
+	// classification for a reviewer that provably contributed nothing from that
+	// bin, and "findings" is trust-eligible, so it fed the reviewer's durable
+	// prior as a clean run (TD internal/fanout/revieweroutcome.go:90).
+	case a.UnreviewedChunks > 0 || a.Truncated || a.Salvaged:
 		return "incomplete"
 	case raisedCount > 0:
 		return "findings"
