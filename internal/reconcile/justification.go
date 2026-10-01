@@ -10,6 +10,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/samestrin/atcr/internal/llmclient"
+
 	"github.com/samestrin/atcr/internal/stream"
 )
 
@@ -83,6 +85,16 @@ type reviewNarrative struct {
 	relPath string
 	leaf    string
 	lines   []string
+	// draftLines is the number of leading lines that lie inside a leading inline
+	// reasoning run. buildAnchorIndex skips them, so a file:line the model wrote in
+	// a draft it DISCARDED can never be matched as the citation for a finding.
+	//
+	// Counted rather than stripped: source_report.line is a pointer into the
+	// artifact a reader opens, so rebasing the lines would make the excerpt stop
+	// matching the document it points at (the decision recorded in
+	// justification_think_parity_test.go). Excluding the lines keeps every published
+	// line number true of review.md as written.
+	draftLines int
 }
 
 // narrativeMatch is the best-effort correlation of a finding to a review.md
@@ -179,9 +191,10 @@ func collectReviewNarratives(sourcesDir, reviewDir string) []reviewNarrative {
 			return nil
 		}
 		out = append(out, reviewNarrative{
-			relPath: filepath.ToSlash(rel),
-			leaf:    filepath.Base(filepath.Dir(path)),
-			lines:   strings.Split(string(data), "\n"),
+			relPath:    filepath.ToSlash(rel),
+			leaf:       filepath.Base(filepath.Dir(path)),
+			lines:      strings.Split(string(data), "\n"),
+			draftLines: leadingDraftLines(string(data)),
 		})
 		return nil
 	})
@@ -213,10 +226,41 @@ func buildAnchorIndex(narratives []reviewNarrative) anchorIndex {
 	idx := make(anchorIndex)
 	for ni := range narratives {
 		for li, lt := range narratives[ni].lines {
+			// Lines inside a leading reasoning run are skipped: they are the model's
+			// DISCARDED draft, and beatsMatch breaks equal-tier ties toward the
+			// earliest line — so a draft citation at the top of the file outranked the
+			// real prose below it and was published as the reviewer's justification
+			// (TD internal/reconcile/justification.go:322).
+			if li < narratives[ni].draftLines {
+				continue
+			}
 			indexLineFiles(idx, lt, ni, li)
 		}
 	}
 	return idx
+}
+
+// leadingDraftLines reports how many leading lines of a review.md lie inside a
+// leading inline reasoning run, using the same strip the findings parser applies
+// (llmclient owns every tag rule). 0 when the reply carries no leading run.
+//
+// A run that ends mid-line makes that line count as draft too: it holds text from
+// both sides, and admitting it would admit a draft citation. Losing a real citation
+// that shares the boundary line is the cheaper error — a missing excerpt degrades a
+// field, while a forged one publishes invented prose as the reviewer's reasoning.
+func leadingDraftLines(raw string) int {
+	answer, _ := llmclient.SplitThink(raw)
+	if len(answer) == len(raw) {
+		return 0
+	}
+	// SplitThink's answer is always a SUFFIX of the input (its documented contract,
+	// fuzz-pinned), so the removed prefix is exactly this long.
+	prefix := raw[:len(raw)-len(answer)]
+	n := strings.Count(prefix, "\n")
+	if !strings.HasSuffix(prefix, "\n") {
+		n++
+	}
+	return n
 }
 
 // indexLineFiles records, for line lt at position (ni,li), each distinct file
@@ -645,13 +689,20 @@ func extractSection(lines []string, idx int) (text, section string) {
 	// it, so no later reconcile can replace the value. (Reachable by a
 	// prompt-injected reviewer reply, which can put a chosen file:line in the draft.)
 	//
-	// Separate TD row, not fixed here: excluding in-block lines from buildAnchorIndex
-	// changes anchor MATCHING, so it reaches matchNarrative and the tiebreak plus the
-	// three test files that pin them — beyond a localized fix. The parity choice
-	// below is DECIDED in favour of following the artifact (pinned by
-	// TestExtractSection_FollowsTheRawArtifactWhileTheParserReadsStripped): stripping
-	// here would make the excerpt stop matching the review.md a reader is pointed at
-	// by source_report.
+	// FIXED for the ANCHOR half (TD internal/reconcile/justification.go:322):
+	// buildAnchorIndex now skips the lines inside a leading reasoning run
+	// (reviewNarrative.draftLines), so a draft citation can no longer be matched at
+	// all and the earliest-line tiebreak has nothing in the block to prefer. What
+	// remains is the EXCERPT half described above — recordAt/isFindingRecordStart and
+	// stream.BareValueSpans still read the raw lines, so an in-block record-shaped
+	// line still bounds an excerpt anchored below it. That is excerpt quality only,
+	// which is the cost the parity decision accepts.
+	//
+	// The parity choice below stays DECIDED in favour of following the artifact
+	// (pinned by TestExtractSection_FollowsTheRawArtifactWhileTheParserReadsStripped),
+	// and the anchor fix is deliberately compatible with it: the lines are EXCLUDED
+	// from matching, never renumbered, so every published source_report.line is still
+	// true of the review.md a reader opens.
 	spans := stream.BareValueSpans([]byte(strings.Join(lines, "\n")))
 	if len(spans) > 0 {
 		strict = append([]bool(nil), strict...)
