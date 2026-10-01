@@ -8,30 +8,30 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestSplitThink pins every tag shape the strip contract names. wantSignal
-// documents the strip's own blank-run rule — a consumed run that held only
-// whitespace yields no reasoning worth reporting — and is derived from
-// wantReasoning, so it restates the table rather than adding coverage.
+// TestSplitThink pins every tag shape the strip contract names. The table's
+// own blank-run rule — a consumed run that held only whitespace yields no
+// reasoning worth reporting — is pinned once in
+// TestSplitThink_BlankRunYieldsNoReasoningSignal rather than restated as a
+// per-row column derived from wantReasoning.
 func TestSplitThink(t *testing.T) {
 	cases := []struct {
 		name          string
 		content       string
 		wantAnswer    string
 		wantReasoning string
-		wantSignal    bool
 	}{
-		{name: "empty content", content: "", wantAnswer: "", wantReasoning: "", wantSignal: false},
-		{name: "no tags at all", content: "just an answer", wantAnswer: "just an answer", wantReasoning: "", wantSignal: false},
+		{name: "empty content", content: "", wantAnswer: "", wantReasoning: ""},
+		{name: "no tags at all", content: "just an answer", wantAnswer: "just an answer", wantReasoning: ""},
 		{name: "closed pair with text", content: "<think>plan the reply</think>answer",
-			wantAnswer: "answer", wantReasoning: "plan the reply", wantSignal: true},
+			wantAnswer: "answer", wantReasoning: "plan the reply"},
 		// Whitespace before the leading run is dropped from BOTH returns, which is
 		// why the two are not a partition of the input.
 		{name: "whitespace before the leading run", content: "\n\n<think>a</think>answer",
-			wantAnswer: "answer", wantReasoning: "a", wantSignal: true},
+			wantAnswer: "answer", wantReasoning: "a"},
 		// An empty pair is what a hybrid chat template emits when thinking is
 		// correctly off: stripped, but not a signal.
 		{name: "empty pair", content: "<think>\n\n</think>answer",
-			wantAnswer: "answer", wantReasoning: "\n\n", wantSignal: false},
+			wantAnswer: "answer", wantReasoning: "\n\n"},
 		// Content that is ONLY an empty pair: the strip consumes the leading run
 		// and returns an empty answer, while HasThinkMarkup reports false (an
 		// empty pair holds no text). The divergence is deliberate — the strip
@@ -39,80 +39,80 @@ func TestSplitThink(t *testing.T) {
 		// here and in TestHasThinkMarkup so a future alignment in either
 		// direction fails a test first (TD row think.go:108).
 		{name: "empty pair as the entire content", content: "<think>\n\n</think>",
-			wantAnswer: "", wantReasoning: "\n\n", wantSignal: false},
+			wantAnswer: "", wantReasoning: "\n\n"},
 		// An empty first pair must not hide a real block after it: both pairs are
 		// leading, so both are consumed.
 		{name: "multiple leading pairs", content: "<think></think><think>real reasoning</think>answer",
-			wantAnswer: "answer", wantReasoning: "real reasoning", wantSignal: true},
+			wantAnswer: "answer", wantReasoning: "real reasoning"},
 		{name: "whitespace between leading pairs", content: "<think>a</think>\n<think>b</think>answer",
-			wantAnswer: "answer", wantReasoning: "ab", wantSignal: true},
+			wantAnswer: "answer", wantReasoning: "ab"},
 		// Any Unicode space between pairs, not just ASCII: a template that joins
 		// its blocks with a non-breaking space still has a leading run.
 		{name: "unicode space between leading pairs", content: "<think>a</think> <think>b</think>answer",
-			wantAnswer: "answer", wantReasoning: "ab", wantSignal: true},
+			wantAnswer: "answer", wantReasoning: "ab"},
 		{name: "open-only with text", content: "<think>still going",
-			wantAnswer: "", wantReasoning: "still going", wantSignal: true},
+			wantAnswer: "", wantReasoning: "still going"},
 		{name: "open-only with blank remainder", content: "<think>   ",
-			wantAnswer: "", wantReasoning: "   ", wantSignal: false},
+			wantAnswer: "", wantReasoning: "   "},
 		// A bare closer with no opener is NOT stripped (2026-09-30, reversing the
 		// rule this helper shipped with). Reading it as a mid-thought reply was
 		// position-blind and unbounded, so an answer that merely NAMES the closer
 		// lost its whole prefix. The detector keeps the rule; the strip does not.
 		{name: "lone closer with no opener is left alone", content: "draft</think>answer",
-			wantAnswer: "draft</think>answer", wantReasoning: "", wantSignal: false},
+			wantAnswer: "draft</think>answer", wantReasoning: ""},
 		// The shape that forced the reversal: a real verdict naming the bare
 		// closer used to strip down to ` at all"}` and parse as malformed.
 		{name: "a keyed JSON answer naming the bare closer survives whole",
 			content:       `{"verdict":"confirmed","reasoning":"never looks for </think>"}`,
 			wantAnswer:    `{"verdict":"confirmed","reasoning":"never looks for </think>"}`,
-			wantReasoning: "", wantSignal: false},
+			wantReasoning: ""},
 		// Proves a downstream JSON-object parser (verdict, ruling) sees only the
 		// real answer once T2/T3 apply this helper.
 		{name: "draft JSON object inside a leading block", content: `<think>{"verdict":"fail"}</think>{"verdict":"pass"}`,
-			wantAnswer: `{"verdict":"pass"}`, wantReasoning: `{"verdict":"fail"}`, wantSignal: true},
+			wantAnswer: `{"verdict":"pass"}`, wantReasoning: `{"verdict":"fail"}`},
 		// Leading-only scope: a tag after real answer text is a reviewer quoting
 		// the tag, so the content is returned byte-for-byte unchanged.
 		{name: "quoted tag after answer text", content: "answer text mentions <think> and </think> in a finding",
-			wantAnswer: "answer text mentions <think> and </think> in a finding", wantReasoning: "", wantSignal: false},
+			wantAnswer: "answer text mentions <think> and </think> in a finding", wantReasoning: ""},
 		{name: "leading pair then a later closer reference", content: "<think>plan</think>real answer with a </think> reference",
-			wantAnswer: "real answer with a </think> reference", wantReasoning: "plan", wantSignal: true},
+			wantAnswer: "real answer with a </think> reference", wantReasoning: "plan"},
 		{name: "leading pair then a later opener", content: "<think>plan</think>answer <think>quoted",
-			wantAnswer: "answer <think>quoted", wantReasoning: "plan", wantSignal: true},
+			wantAnswer: "answer <think>quoted", wantReasoning: "plan"},
 		// A nested opener INSIDE the run is the one shape balance separates: the
 		// run consumes to the matching closer, so no stray closer reaches the
 		// answer. The reasoning keeps the inner pair's raw bytes (the span
 		// between the outer opener and its matching closer is taken verbatim).
 		{name: "nested opener consumes to the matching closer", content: "\x3cthink\x3eouter \x3cthink\x3einner\x3c/think\x3e\x3c/think\x3eanswer",
-			wantAnswer: "answer", wantReasoning: "outer \x3cthink\x3einner\x3c/think\x3e", wantSignal: true},
+			wantAnswer: "answer", wantReasoning: "outer \x3cthink\x3einner\x3c/think\x3e"},
 		// A leading run that ends in an unclosed opener: everything after that
 		// opener is reasoning.
 		{name: "leading pair then unclosed opener", content: "<think>a</think><think>b",
-			wantAnswer: "", wantReasoning: "ab", wantSignal: true},
+			wantAnswer: "", wantReasoning: "ab"},
 		// An unclosed opener followed by a closer-LIKE token (a variant closer
 		// such as </thinking>): the opener was real but its closer was spelled
 		// differently, so the strip falls back to stripping nothing - returning
 		// the reply whole beats classifying the entire answer as reasoning.
 		{name: "unclosed opener followed by a variant closer strips nothing", content: "\x3cthink\x3ereasoning\x3c/thinking\x3eREAL ANSWER",
-			wantAnswer: "\x3cthink\x3ereasoning\x3c/thinking\x3eREAL ANSWER", wantReasoning: "", wantSignal: false},
+			wantAnswer: "\x3cthink\x3ereasoning\x3c/thinking\x3eREAL ANSWER", wantReasoning: ""},
 		// The doctor probe's marker survives the strip. Doctor's own marker check
 		// reads the raw content (classify, internal/doctor/run.go:732), so this
 		// pins the helper's behavior, not a doctor coupling.
 		{name: "marker survives a leading pair", content: "<think>plan the reply</think>\nATCR-MARKER",
-			wantAnswer: "\nATCR-MARKER", wantReasoning: "plan the reply", wantSignal: true},
+			wantAnswer: "\nATCR-MARKER", wantReasoning: "plan the reply"},
 		{name: "marker survives an unstripped lone closer", content: "planning the reply</think>\nATCR-MARKER",
-			wantAnswer: "planning the reply</think>\nATCR-MARKER", wantReasoning: "", wantSignal: false},
+			wantAnswer: "planning the reply</think>\nATCR-MARKER", wantReasoning: ""},
 		// Whitespace AFTER the run is kept: a stripped answer may begin with `\n`.
 		// Pins the doc's asymmetry sentence — a future TrimLeft on the answer path
 		// cannot land silently. (The marker row above happens to show it; this row
 		// names the contract.)
 		{name: "whitespace after the run survives into the answer", content: "<think>plan</think>\n\n answer",
-			wantAnswer: "\n\n answer", wantReasoning: "plan", wantSignal: true},
+			wantAnswer: "\n\n answer", wantReasoning: "plan"},
 		// A variant opener is not thinking markup (doc comment: matching is on the
 		// exact lowercase literals). The content survives whole — draft object and
 		// all — so a first-match parser takes the draft. That spoof is the accepted
 		// cost of refusing to guess at variants.
 		{name: "variant opener means not thinking markup", content: `<THINK>{"verdict":"draft"}</THINK>{"verdict":"real"}`,
-			wantAnswer: `<THINK>{"verdict":"draft"}</THINK>{"verdict":"real"}`, wantReasoning: "", wantSignal: false},
+			wantAnswer: `<THINK>{"verdict":"draft"}</THINK>{"verdict":"real"}`, wantReasoning: ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -121,8 +121,21 @@ func TestSplitThink(t *testing.T) {
 			// reasoning is the named Reasoning type (non-interchangeable with the
 			// answer by design); convert for the string-literal comparisons.
 			assert.Equal(t, tc.wantReasoning, string(reasoning), "reasoning")
-			assert.Equal(t, tc.wantSignal, strings.TrimSpace(string(reasoning)) != "", "reasoning is a signal")
 		})
+	}
+}
+
+// TestSplitThink_BlankRunYieldsNoReasoningSignal pins the table's blank-run
+// rule once, on the two inputs whose consumed run holds only whitespace, rather
+// than restating it as a per-row column derived from wantReasoning.
+func TestSplitThink_BlankRunYieldsNoReasoningSignal(t *testing.T) {
+	for _, content := range []string{
+		" thinking   ",                 // unclosed opener, blank remainder
+		" thinking\n\n responseanswer", // empty pair
+	} {
+		_, reasoning := SplitThink(content)
+		assert.Empty(t, strings.TrimSpace(string(reasoning)),
+			"a whitespace-only consumed run must yield no reasoning signal: %q", content)
 	}
 }
 
