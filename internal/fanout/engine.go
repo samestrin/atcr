@@ -996,7 +996,14 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 			// A truncated reply whose content was WHOLLY a think run fails
 			// identically on every chain member (same tag habit) — count it so the
 			// end-of-walk line can name the wasted spend (TD engine.go:602).
-			if answer, _ := llmclient.SplitThink(r.Content); answer == "" {
+			//
+			// Two preconditions, both load-bearing. `r.Content != ""` first:
+			// SplitThink("") returns ("", ""), so an EMPTY reply would otherwise be
+			// counted as wholly-reasoning — and "the provider returned nothing" and
+			// "the model spent the reply thinking" have opposite remedies. Then
+			// TrimSpace, because SplitThink keeps the whitespace after the run it
+			// consumed, so the routine `<think>…</think>\n` shape returns "\n".
+			if answer, _ := llmclient.SplitThink(r.Content); r.Content != "" && strings.TrimSpace(answer) == "" {
 				thinkOnlyAttempts++
 			}
 			log.FromContext(ctx).Warn("reviewer response truncated with zero findings; failing over",
