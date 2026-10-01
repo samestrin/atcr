@@ -95,7 +95,14 @@ const thinkOpen, thinkClose = "<think>", "</think>"
 // channel, populated by reasoningOf/reasoningText — so a caller that wants the
 // removed text must keep it itself.
 func SplitThink(content string) (answer string, reasoning Reasoning) {
+	// The reasoning is assembled lazily: the first consumed pair's text is a
+	// contiguous slice of the input and is kept as one, so the overwhelmingly
+	// common single-pair strip never allocates the Builder. The Builder is
+	// promoted only when a SECOND pair is consumed and the pieces must be
+	// concatenated (every current call site discards the reasoning, so the
+	// common case must not pay for a throwaway buffer).
 	var thought strings.Builder
+	firstReasoning, sawFirst, promoted := "", false, false
 	rest, stripped := content, false
 	for {
 		lead := strings.TrimLeftFunc(rest, unicode.IsSpace)
@@ -119,15 +126,31 @@ func SplitThink(content string) (answer string, reasoning Reasoning) {
 				return content, ""
 			}
 			// The run ends in an unclosed opener: the reply was cut off
-			// mid-thought, so everything after the opener is reasoning.
+			// mid-thought, so everything after the opener is reasoning. A
+			// pair may already have been consumed — concatenate, never replace
+			// (the lazy path kept the first piece outside the Builder).
+			if sawFirst {
+				thought.WriteString(firstReasoning)
+			}
 			thought.WriteString(rest)
 			return "", Reasoning(thought.String())
 		}
-		thought.WriteString(rest[:end])
+		if !sawFirst {
+			firstReasoning, sawFirst = rest[:end], true
+		} else {
+			if !promoted {
+				thought.WriteString(firstReasoning)
+				promoted = true
+			}
+			thought.WriteString(rest[:end])
+		}
 		rest = rest[end+len(thinkClose):]
 	}
 	if stripped {
-		return rest, Reasoning(thought.String())
+		if promoted {
+			return rest, Reasoning(thought.String())
+		}
+		return rest, Reasoning(firstReasoning)
 	}
 	// Nothing led, so nothing is removed. This covers both an opener quoted
 	// inside the answer and a bare closer with no opener anywhere: neither is a

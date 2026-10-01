@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestSplitThink pins every tag shape the strip contract names. wantSignal
@@ -193,6 +194,23 @@ func TestSplitThink_AcceptedLossyEdges(t *testing.T) {
 		"the discarded draft survives into the answer ahead of the real verdict")
 	assert.Contains(t, answer, "</think>",
 		"the real closer is left behind in the answer, which is the visible tell")
+}
+
+// The one-pair shape — by far the most common — must not pay a Builder
+// allocation for reasoning that every current call site discards with `_`:
+// the reasoning of a single consumed pair is a contiguous slice of the input.
+func TestSplitThink_NoBuilderAllocForSinglePair(t *testing.T) {
+	content := "<think>reasoning text</think>answer"
+	answer, reasoning := SplitThink(content)
+	require.Equal(t, "answer", answer)
+	require.Equal(t, "reasoning text", string(reasoning))
+	allocs := testing.AllocsPerRun(100, func() {
+		a, r := SplitThink(content)
+		if len(a) < 0 || len(r) < 0 {
+			t.Fatal("unreachable")
+		}
+	})
+	assert.Zero(t, allocs, "single-pair strip allocated a throwaway reasoning buffer")
 }
 
 // SplitThink returns strings only. The signature already makes reaching the
