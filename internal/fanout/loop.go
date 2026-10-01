@@ -54,17 +54,13 @@ func replayedReasoningBytes(m llmclient.Message) int64 {
 // deliberate replay channel and ride through unchanged, as does the nil Content a
 // pure tool-call turn carries.
 //
-// ANY Content that is blank after the strip becomes nil, not "" — including one
-// that arrived empty, which is a shape OpenAI-compatible providers do send on a
-// tool-call turn with no think block in it at all. So this normalizes slightly
-// more than it strips, deliberately: llmclient.Message's own contract reserves
-// content:null for the assistant tool-call turn "distinctly from an empty string"
-// (chat.go) because OpenAI requires it, and TestChat_RoleToolMessageSerialization
-// (internal/llmclient/chat_test.go, named not numbered) pins that on the request side. Replaying
-// "" risks a strict validator's 400 or an empty text block in a
-// LiteLLM-to-Anthropic translation, either of which fails the whole agent. This is
-// the only one of this sprint's strip sites whose output goes back on the wire, so
-// it is the only place the distinction can break.
+// Content that is blank BECAUSE the strip removed a leading think run becomes
+// nil, not "" — the canonical assistant tool-call turn shape (llmclient.Message's
+// contract reserves content:null for it, chat.go; pinned on the request side by
+// TestChat_RoleToolMessageSerialization). A content that was ALREADY blank with
+// no think markup in it replays as the empty string — the pre-sprint wire shape;
+// narrowing per TD loop.go:70, this sprint changes the wire only for turns it
+// actually stripped.
 //
 // SplitThink returns a substring, so a STRIPPED answer would otherwise keep the
 // whole original reply — draft included — alive in its backing array for the life
@@ -76,7 +72,14 @@ func historyMessage(m llmclient.Message) llmclient.Message {
 		return m
 	}
 	answer, _ := llmclient.SplitThink(*m.Content)
-	if strings.TrimSpace(answer) == "" {
+	// Nil only when the strip actually REMOVED something (a leading think run
+	// consumed the whole content). A genuinely-empty content — no think markup at
+	// all — replays as the empty string, exactly the pre-sprint wire shape: this
+	// sprint is a think-stripping sprint, and changing the wire shape of a turn it
+	// did not strip is out of scope (TD loop.go:70). The strip's removal is
+	// detected by length: SplitThink returns a substring of the original, so a
+	// no-op strip returns content unchanged.
+	if len(answer) < len(*m.Content) && strings.TrimSpace(answer) == "" {
 		m.Content = nil
 		return m
 	}

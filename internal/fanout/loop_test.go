@@ -548,21 +548,24 @@ func TestToolLoop_TrailingThinkBlockIsReplayed(t *testing.T) {
 // A tool-call turn whose whole Content was reasoning strips to blank, and blank
 // must replay as content:null, NOT "". llmclient.Message reserves the pointer for
 // exactly that distinction ("which OpenAI requires", chat.go), and
-// TestChat_RoleToolMessageSerialization (internal/llmclient/chat_test.go, named
-// not cited by line)
-// pins it on the request side. Replaying "" risks
-// a strict validator's 400 or an empty text block in a LiteLLM-to-Anthropic
-// translation — either fails the whole agent. This is the only shape this strip
-// puts back on the wire, so it is the only place the distinction can break.
+// TestChat_RoleToolMessageSerialization (internal/llmclient/chat_test.go) pins it
+// on the request side. TD loop.go:70 narrowed the guard so ONLY a stripped turn
+// (the strip removed something) takes the null shape — a genuinely-empty content
+// keeps the pre-sprint empty-string replay, since changing the wire shape of a
+// turn the sprint did not strip is out of scope and the validator-risk rationale
+// for it was speculative, never verified against a real proxy.
 func TestToolLoop_ThinkOnlyTurnReplaysAsNullContent(t *testing.T) {
 	cases := map[string]string{
 		"closed pair, nothing after":       "<think>I should read f1.go</think>",
 		"whitespace remainder":             "<think>I should read f1.go</think>\n\n  ",
 		"unclosed opener, cut mid-thought": "<think>I should read f1.go",
-		// Not a think block at all. The guard keys on "blank after the strip",
-		// so it also normalizes the empty content an OpenAI-compatible provider
-		// sends on a plain tool-call turn. That is slightly wider than stripping
-		// and is pinned here deliberately rather than left as a side effect.
+		// Not a think block at all. TD loop.go:70 narrowed the guard: only a strip
+		// that actually removed something can nil the content, so a genuinely-empty
+		// content replays as the empty string — the pre-sprint wire shape. This
+		// subtest asserts the empty string REPLAYS (the wire body carries "" not
+		// null); the null-shape assertion below cannot hold for it, so it is
+		// excluded from the null assertion and checked separately in
+		// TestToolLoop_GenuinelyEmptyContent_ReplaysAsEmptyString.
 		"already empty, no think markup": "",
 	}
 	for name, content := range cases {
@@ -575,6 +578,11 @@ func TestToolLoop_ThinkOnlyTurnReplaysAsNullContent(t *testing.T) {
 			})
 			msgs := wireMessages(t, bodies[1])
 			require.Len(t, msgs, 3, "prompt, assistant tool call, tool result")
+			if name == "already empty, no think markup" {
+				assert.Equal(t, `""`, string(msgs[1]["content"]),
+					"no think markup: the pre-sprint wire shape (empty string) is restored, not null")
+				return
+			}
 			assert.Equal(t, "null", string(msgs[1]["content"]),
 				"a turn that was entirely reasoning must take the canonical content:null shape")
 		})

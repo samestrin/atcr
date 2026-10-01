@@ -17,6 +17,7 @@ package fanout
 // think-only turn must still take the canonical content:null shape.
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -54,8 +55,11 @@ func TestToolLoop_WhitespaceOnlyNoThinkMarkup_ReplaysAsEmptyString(t *testing.T)
 	msgs := wireMessages(t, bodies[1])
 	require.Len(t, msgs, 3)
 
-	assert.Equal(t, `""`, string(msgs[1]["content"]),
+	assert.NotEqual(t, "null", string(msgs[1]["content"]),
 		"whitespace-only content with no markup replays as a string, not null — the strip removed nothing")
+	var replayed string
+	require.NoError(t, json.Unmarshal(msgs[1]["content"], &replayed))
+	assert.Equal(t, "   \n\t  ", replayed, "the whitespace replays verbatim")
 }
 
 // TestToolLoop_ThinkOnlyTurnStillReplaysAsNull is the shape the sprint DID mean to change:
