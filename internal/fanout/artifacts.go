@@ -410,6 +410,7 @@ func statusFor(r Result, fr findingsResult) AgentStatus {
 		DroppedByGrounding:     fr.Ungrounded,
 		ResponseTruncated:      r.ResponseTruncated,
 		UnparseableResponse:    r.UnparseableResponse,
+		ThinkSuppressed:        r.ThinkSuppressed,
 		UnparseableChunks:      r.UnparseableChunks,
 		CacheHit:               r.CacheHit,
 		UnreviewedChunks:       r.UnreviewedChunks,

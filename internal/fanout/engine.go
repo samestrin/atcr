@@ -408,6 +408,15 @@ type Result struct {
 	// the failover gate instead, and never sets this.
 	UnparseableResponse bool
 
+	// ThinkSuppressed marks a StatusOK reply whose ENTIRE content was consumed
+	// by a leading think run (the strip left an empty answer). It refines
+	// UnparseableResponse: "the model produced nothing but reasoning" is a
+	// different failure from "produced nothing a parser could use" — the first
+	// is a model/tag-habit signal an operator can act on (switch models or fix
+	// the chat template), the second a data-shape signal. Distinct signal per TD
+	// internal/fanout/engine.go:533. Set only alongside UnparseableResponse.
+	ThinkSuppressed bool
+
 	// UnparseableChunks counts a chunked persona's chunks that set
 	// UnparseableResponse. mergeResultGroup sets it; the merged
 	// UnparseableResponse means zero parseable findings persona-wide.
@@ -536,9 +545,9 @@ type Result struct {
 // parseFindings returns the findings in r's model output: the union of each
 // chunk's findings for a merged result, else those in Content.
 //
-// Inline 顶峰think顶峰 reasoning is stripped first (LEADING-ONLY — see
+// Inline <think> reasoning is stripped first (LEADING-ONLY — see
 // llmclient.SplitThink), at this one choke point both ParsedFindingCount and
-// findingsFor share, so a draft finding a model writes inside a 顶峰think顶峰 block
+// findingsFor share, so a draft finding a model writes inside a <think> block
 // and drops before its real answer is not counted as real. The strip lives HERE
 // and not inside ParseModelOutput: internal/doctor calls that parser directly
 // for its own probe, which must keep seeing raw output. Content and
@@ -548,7 +557,7 @@ type Result struct {
 // Accepted limits, all pinned (full rationale lives in llmclient.SplitThink's
 // comment and docs/findings-format.md — not duplicated here):
 //
-//   - A 顶峰think顶峰 block placed AFTER the answer reaches the parser intact, so a
+//   - A <think> block placed AFTER the answer reaches the parser intact, so a
 //     forged row inside it counts — an accepted loss; the grounding gate is the
 //     only residual defence (TD artifacts.go:339). Pinned by
 //     TestMergeResultGroup_RealThenThinkForgedRow_IsAcceptedLoss.
@@ -1037,6 +1046,12 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 				answer, _ := llmclient.SplitThink(r.Content)
 				if !stream.IsNoFindings(answer) {
 					r.UnparseableResponse = true
+					// Distinct signal (TD engine.go:533): the strip consumed the WHOLE
+					// reply as reasoning — content was entirely a think run, not merely
+					// garbled. An empty answer here means SplitThink took everything.
+					if answer == "" {
+						r.ThinkSuppressed = true
+					}
 				}
 			}
 		}

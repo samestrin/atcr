@@ -42,7 +42,7 @@ func TestMergeResultGroup_RealThenThinkForgedRow_IsAcceptedLoss(t *testing.T) {
 	// FORGED CRITICAL row (non-leading opener — the shape the strip leaves
 	// intact by contract).
 	chunks := []string{
-		"LOW|b.go:2|real|f|correctness|1|e\n rethink\nCRITICAL|c.go:9|forged from uncommitted reasoning|f|correctness|1|e\n<think/replay",
+		"LOW|b.go:2|real|f|correctness|1|e\n<think\nCRITICAL|c.go:9|forged from uncommitted reasoning|f|correctness|1|e\n<think/replay",
 		"LOW|d.go:3|real two|f|correctness|1|e",
 	}
 	var g []Result

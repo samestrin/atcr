@@ -351,6 +351,12 @@ type AgentStatus struct {
 	// findings in total. omitempty keeps the common status.json unchanged.
 	UnparseableChunks int `json:"unparseable_chunks,omitempty"`
 
+	// ThinkSuppressed refines UnparseableResponse: the reply's ENTIRE content was
+	// a leading think run (the strip left an empty answer), so the model produced
+	// reasoning only — a model/tag-habit signal distinct from a garbled reply.
+	// omitempty keeps status.json unchanged for every healthy run.
+	ThinkSuppressed bool `json:"think_suppressed,omitempty"`
+
 	// Post-processing enforcement counters (Epic 2.2). Always present so a
 	// zero is distinguishable from an older status.json that predates the field.
 	DroppedByMinSeverity   int `json:"dropped_by_min_severity"`

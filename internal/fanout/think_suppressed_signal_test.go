@@ -32,7 +32,7 @@ func (s *stubCompleter) Complete(_ context.Context, _ llmclient.Invocation) (str
 // ThinkSuppressed signal: a StatusOK reply whose leading think run swallowed
 // the whole content is "content was entirely reasoning", not "garbled".
 func TestInvokeSlot_ThinkOnlyReply_SetsDistinctSuppressedSignal(t *testing.T) {
-	e := NewEngine(&stubCompleter{content: "顶峰think顶峰\nreasoning about the diff"}, nil)
+	e := NewEngine(&stubCompleter{content: "<think>\nreasoning about the diff"})
 	r := e.invokeSlot(context.Background(), Slot{Primary: Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "m"}}})
 
 	assert.Equal(t, StatusOK, r.Status)
@@ -45,7 +45,7 @@ func TestInvokeSlot_ThinkOnlyReply_SetsDistinctSuppressedSignal(t *testing.T) {
 // TestInvokeSlot_GarbledReply_DoesNotSetThinkSuppressed is the complement: a
 // reply with no think markup that parses to nothing keeps the generic bit only.
 func TestInvokeSlot_GarbledReply_DoesNotSetThinkSuppressed(t *testing.T) {
-	e := NewEngine(&stubCompleter{content: "verdict pending"}, nil)
+	e := NewEngine(&stubCompleter{content: "verdict pending"})
 	r := e.invokeSlot(context.Background(), Slot{Primary: Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "m"}}})
 
 	assert.Equal(t, StatusOK, r.Status)
