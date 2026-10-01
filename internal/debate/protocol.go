@@ -46,6 +46,22 @@ type Record struct {
 	// (timeout, tripped budget, provider error). A halted judge yields no
 	// trustworthy ruling; the integration stage records the item unresolved.
 	Halted []string
+
+	// Asked names every seat that was actually given a turn. RunDebate
+	// short-circuits the challenger and judge on a clean-blank proposer, so a
+	// blank ChallengerStatement means "never asked" there, not "ran and said
+	// nothing" — and only the seats that were asked can carry a cause. Without
+	// this, a suppressed proposer always pairs with an unasked challenger and the
+	// uniform-cause test below can never hold.
+	Asked []string
+
+	// Suppressed names any seat that ran CLEAN and returned a blank statement
+	// only because driveSeat's strip removed the whole reply. Disjoint from
+	// Halted by construction (runTurn records it only on a StatusOK turn) and
+	// distinct from a genuinely empty reply: the seat said something, and what it
+	// said was reasoning. Carried on the Record because the distinction is only
+	// available at the strip, while the reason token is chosen in debateOne.
+	Suppressed []string
 }
 
 // RunDebate drives the bounded three-turn exchange for one already-cast item and
@@ -112,8 +128,16 @@ func newSentinel() string {
 // to rec.Halted and returns "".
 func (rec *Record) runTurn(ctx context.Context, seat Caster, turn int, prompt string, cc fanout.ChatCompleter, disp Dispatcher, tr *Transcript) string {
 	content, reasoning, status := driveSeat(ctx, seat, prompt, cc, disp)
+	rec.Asked = append(rec.Asked, seat.Label)
 	if status != fanout.StatusOK {
 		rec.Halted = append(rec.Halted, seat.Label)
+	} else if strings.TrimSpace(content) == "" && strings.TrimSpace(string(reasoning)) != "" {
+		// A clean turn whose statement is blank only because the strip consumed
+		// the reply. Non-blank reasoning is the proof: SplitThink returns it only
+		// when it actually removed a leading run, so a genuinely empty reply
+		// cannot reach here. Recorded on the OK branch alone, which is what keeps
+		// Suppressed and Halted disjoint (TD internal/debate/debate.go:524).
+		rec.Suppressed = append(rec.Suppressed, seat.Label)
 	}
 	tr.RecordTurn(TurnEvent{
 		Role:      seat.Label,

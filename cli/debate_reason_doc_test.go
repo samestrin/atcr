@@ -82,13 +82,14 @@ func TestDocs_DebateReasonTokensMatchTheConstants(t *testing.T) {
 	seatBullet := docBullet(t, doc, "Per-seat budgets")
 	vocabRow := docTableRow(t, doc, "reconciled/debate.json")
 
-	for _, reason := range []string{debate.ReasonSeatHalted, debate.ReasonSeatSilent} {
+	for _, reason := range []string{debate.ReasonSeatHalted, debate.ReasonSeatSilent, debate.ReasonSeatSuppressed} {
 		assert.Contains(t, seatBullet, "`"+reason+"`",
 			"the Per-seat budgets bullet must publish the CURRENT constant %q — a rename in internal/debate that leaves the bullet behind is exactly what a literal-only guard misses", reason)
 	}
 	for _, reason := range []string{
 		debate.ReasonSeatHalted,
 		debate.ReasonSeatSilent,
+		debate.ReasonSeatSuppressed,
 		debate.ReasonJudgeHalted,
 		debate.ReasonUnparseableRuling,
 		debate.ReasonEmptyRuling,

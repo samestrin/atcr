@@ -297,12 +297,14 @@ func TestDocs_CrossExaminationStatesTheSilentSeatRule(t *testing.T) {
 	// rest of the vocabulary moved to the reconciled/debate.json Artifacts row and
 	// is pinned there by
 	// TestDocs_CrossExaminationPublishesTheUnresolvedReasonVocabulary.
-	for _, reason := range []string{"seat_halted", "seat_silent"} {
+	for _, reason := range []string{"seat_halted", "seat_silent", "seat_suppressed"} {
 		assert.Contains(t, bullet, "`"+reason+"`",
 			"a reason string that appears in debate.json and in no document is a reason an operator cannot look up")
 	}
-	assert.Contains(t, bullet, "every silent seat halted",
-		"the two reasons are kept apart on purpose, and the rule that picks between them is what an operator needs: a mixed pair reports the weaker one")
+	assert.Contains(t, bullet, "every seat that was asked halted",
+		"the three reasons are kept apart on purpose, and the rule that picks between them is what an operator needs: a mixed pair reports the weakest one, and a seat the run never reached is not a cause")
+	assert.Contains(t, bullet, "entirely inline `<think>` reasoning",
+		"seat_suppressed must publish WHY the statement was blank: the seat answered and the strip removed the answer, which a bare seat_silent hides")
 	// The FULL vocabulary enumeration moved to the reconciled/debate.json Artifacts
 	// row: it is a fact about that artifact, not about budgets, and the bullet was
 	// carrying 1361 characters and 15 substring constraints because of it. The
@@ -336,7 +338,7 @@ func TestDocs_CrossExaminationPublishesTheUnresolvedReasonVocabulary(t *testing.
 	// TestDocs_DebateReasonTokensMatchTheConstants. Same split the benchmark
 	// outcome vocabulary uses for the same reason.
 	for _, reason := range []string{
-		"seat_halted", "seat_silent",
+		"seat_halted", "seat_silent", "seat_suppressed",
 		"judge_halted", "unparseable_ruling", "empty_ruling",
 		"harness_unavailable", "context_cancelled", "no_cluster_decision",
 		"no_resolvable_proposer", "insufficient_distinct_models",

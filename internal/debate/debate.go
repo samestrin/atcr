@@ -538,14 +538,28 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 		// proposer plus a clean-but-blank challenger — reports the weaker
 		// ReasonSeatSilent, which is true of both, rather than asserting a halt
 		// that one of them did not have.
+		// Three tokens now, and the precedence is "only claim what is true of
+		// every silent seat THAT WAS ASKED". seat_halted and seat_suppressed are
+		// both stronger claims than seat_silent, so each is reserved for a uniform
+		// cause; any mixture falls back to seat_silent, which is true of all three.
+		//
+		// Scoped to the asked seats because RunDebate short-circuits the remaining
+		// turns on a clean-blank proposer: the challenger's blank statement there
+		// is "never given a turn", and counting it as a cause would make every
+		// suppressed proposer read as a mixture and report seat_silent — the exact
+		// collapse this token exists to undo.
+		blamed := seatsAsked(rec.Asked, silent)
 		ir.Outcome = OutcomeUnresolved
 		ir.Reason = ReasonSeatSilent
-		if allSeatsHalted(rec.Halted, silent) {
+		switch {
+		case allSeatsIn(rec.Halted, blamed):
 			ir.Reason = ReasonSeatHalted
+		case allSeatsIn(rec.Suppressed, blamed):
+			ir.Reason = ReasonSeatSuppressed
 		}
 		// The single reason token cannot describe a mixed pair, so the
 		// transcript note labels each seat for itself.
-		notes := seatSilenceNotes(rec.Halted, silent)
+		notes := seatSilenceNotes(rec.Halted, rec.Suppressed, silent)
 		tr.RecordRuling(RulingEvent{Outcome: OutcomeUnresolved, Reasoning: "no statement: " + strings.Join(notes, ", ")})
 		// The token in debate.json says only seat_silent/seat_halted; put the
 		// per-seat cause next to it and warn, so a seat that blanks every item
@@ -632,16 +646,37 @@ func silentArguingSeats(rec Record) []string {
 	return silent
 }
 
-// allSeatsHalted reports whether EVERY named seat halted. The reason token is
-// keyed on all, not any: on a mixed pair, claiming seat_halted would be false of
-// the seat that ran clean. Callers only pass non-empty seat lists (debateOne
-// invokes it inside its silent-seat guard), so an empty list is a programming
-// error rather than a case to answer — matching the harness_unavailable arm's
-// documented defensive posture is unnecessary here because the loop over an
-// empty list vacuously reports true, which only an empty silent set can trigger.
-func allSeatsHalted(halted, seats []string) bool {
+// seatsAsked narrows a silent-seat list to the seats that were actually given a
+// turn. A seat RunDebate never reached carries no cause — it is not evidence of
+// anything, so it must not dilute a uniform one (TD internal/debate/debate.go:524).
+// An empty result is unreachable from debateOne's guard: the guard fires only on a
+// blank statement, and a statement can only be blank if its seat was asked or the
+// proposer short-circuit fired, which leaves the proposer itself asked and blank.
+func seatsAsked(asked, seats []string) []string {
+	out := make([]string, 0, len(seats))
 	for _, s := range seats {
-		if !slices.Contains(halted, s) {
+		if slices.Contains(asked, s) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// allSeatsIn reports whether EVERY named seat appears in cause. Each reason token
+// stronger than seat_silent is keyed on all, not any: on a mixed pair, claiming
+// seat_halted would be false of the seat that ran clean, and claiming
+// seat_suppressed would be false of the seat that was genuinely empty. Callers
+// only pass non-empty seat lists (debateOne invokes it inside its silent-seat
+// guard), so an empty list is a programming error rather than a case to answer —
+// matching the harness_unavailable arm's documented defensive posture is
+// unnecessary here because the loop over an empty list vacuously reports true,
+// which only an empty silent set can trigger.
+//
+// Named for the set membership rather than for one cause because debateOne now
+// asks it twice, once per stronger token (TD internal/debate/debate.go:524).
+func allSeatsIn(cause, seats []string) bool {
+	for _, s := range seats {
+		if !slices.Contains(cause, s) {
 			return false
 		}
 	}
@@ -649,13 +684,20 @@ func allSeatsHalted(halted, seats []string) bool {
 }
 
 // seatSilenceNotes labels each silent seat with its own cause for the transcript,
-// which the single reason token cannot do on a mixed pair.
-func seatSilenceNotes(halted, seats []string) []string {
+// which the single reason token cannot do on a mixed pair. Three causes: halted
+// (the engine failed), suppressed (it ran clean and the strip ate its whole
+// reply), and silent (it ran clean and genuinely said nothing). halted wins a tie
+// because a halted turn never reaches the suppression branch in runTurn — the
+// ordering states that invariant rather than relying on it.
+func seatSilenceNotes(halted, suppressed, seats []string) []string {
 	notes := make([]string, 0, len(seats))
 	for _, s := range seats {
 		cause := "silent"
-		if slices.Contains(halted, s) {
+		switch {
+		case slices.Contains(halted, s):
 			cause = "halted"
+		case slices.Contains(suppressed, s):
+			cause = "suppressed"
 		}
 		notes = append(notes, s+" "+cause)
 	}
