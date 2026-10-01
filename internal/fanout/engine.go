@@ -536,94 +536,41 @@ type Result struct {
 // parseFindings returns the findings in r's model output: the union of each
 // chunk's findings for a merged result, else those in Content.
 //
-// Inline <think> reasoning is stripped first. stream.ParseModelOutput scans every
-// line identically to prose, so a draft finding a model writes inside a <think>
-// block and then drops before its real answer would otherwise be counted and
-// written to the pool as real. The strip lives HERE, at the one choke point both
-// ParsedFindingCount and findingsFor share, and not inside ParseModelOutput:
-// internal/doctor calls that parser directly for its own probe, which must keep
-// seeing raw output. r.Content and r.chunkContents are read, never reassigned, so
-// review.md still writes the raw reply.
+// Inline 顶峰think顶峰 reasoning is stripped first (LEADING-ONLY — see
+// llmclient.SplitThink), at this one choke point both ParsedFindingCount and
+// findingsFor share, so a draft finding a model writes inside a 顶峰think顶峰 block
+// and drops before its real answer is not counted as real. The strip lives HERE
+// and not inside ParseModelOutput: internal/doctor calls that parser directly
+// for its own probe, which must keep seeing raw output. Content and
+// chunkContents are read, never reassigned, so review.md still writes the raw
+// reply.
 //
-// Two accepted limits, both the price of a strip that cannot read minds:
+// Accepted limits, all pinned (full rationale lives in llmclient.SplitThink's
+// comment and docs/findings-format.md — not duplicated here):
 //
-// A block placed AFTER the answer still reaches the parser, so its draft findings
-// still count. The strip is leading-only (see llmclient.SplitThink), because the
-// alternative eats a real finding whose text quotes the tag — and a reviewer
-// reviewing THIS code writes exactly that. Same limit TD-008 records for debate.
-//
-// A LEADING opener with no canonical closer takes the whole reply as reasoning.
-// The two ways that happens end differently, so do not collapse them:
-//
-//   - Closed with a variant spelling (</thinking>): the reply is complete, a real
-//     finding after the block is LOST, and the slot scores unparseable — a whole
-//     review and a reviewer trust prior, where the same helper edge costs one
-//     verdict at TD-002.
-//   - Cut off mid-thought: there is no finding after the block to lose, and the
-//     cut means finish_reason=length, so ResponseTruncated is set and the gate
-//     above demotes the slot to StatusFailed/errTruncatedZeroFindings. Real
-//     reviews always enable that failover (review.go), so this costs a backup
-//     call, NOT an unparseable mark — the UnparseableResponse block below is
-//     gated on StatusOK and never runs for it.
-//   - Cut off WITHOUT the provider labelling it "length" (finish_reason "stop"
-//     or an empty/unreported reason), or served by a completer that never sets
-//     ResponseTruncated: no failover fires, so the whole reply lands in the
-//     unparseable arm — the same total loss as the variant arm above. This is
-//     the third arm of the case split; the enumeration is not exhaustive
-//     without it, and the accepted cost is stated at its true size only when it
-//     is on the record.
-//
-// Accepted, not fixed. The only remedy available INSIDE this lane is to re-parse
-// the raw content when the strip yields nothing, and the raw parse of a reply cut
-// off mid-draft returns the DRAFT — reintroducing the exact bug this strip exists
-// to stop. That remedy was tested and rejected at the sprint 35.16.11.2.2.4 Phase 2
-// review for the verify lane; it is rejected here on the same evidence. The variant
-// half could only be closed by matching variant tags, which llmclient.SplitThink
-// rejects outright and says why ("guessing at variants is how a strip starts eating
-// answer text") — so it is not available here either. Pinned by
-// TestResult_ParseFindings_UnclosedLeadingOpenerLosesTheReply and
-// TestInvokeSlot_TruncatedThinkOnlyReply_DemotesToFailover.
-//
-// A SALVAGED reply yields nothing. The salvage (the empty-content branch of
-// llmclient.CompleteWithMeta) puts a reply's abandoned chain-of-thought into
-// Content when the provider returned empty content, so every "finding" in it is a
-// draft the model never committed to. Verify (verify/invoke.go's Salvaged guard),
-// every debate seat (debate/protocol.go's driveSeat halt) and the diff cache (the
-// store gate in invokeCachedSingleShot) already refuse it; this was the last lane
-// that did not.
-//
-// The guard reads Salvaged ONLY — deliberately NOT ResponseTruncated || Salvaged,
-// which is what invoke.go and protocol.go check. Do not add ResponseTruncated to
-// make the lanes symmetric; the asymmetry is the point. A verdict or a debate
-// statement is whole or worthless, so truncation destroys it. Findings are not: a
-// truncated review's partial findings are real ones, and the truncationFailover
-// gate in invokeSlot exists to tell truncated-with-findings (keep) from
-// truncated-with-nothing (fail over). Zeroing the count for every truncated reply
-// would fire that gate on reviews that did raise findings, discard the partial
-// findings the diff cache deliberately re-fetches rather than throws away, and
-// change what ReviewerOutcome records for those rows. ResponseTruncated is also
-// unnecessary here: the salvage is what puts reasoning in Content, so a reply whose
-// content is ONLY abandoned reasoning always carries Salvaged, truncated or not.
-// Pinned by TestResult_ParseFindings_TruncatedButNotSalvagedKeepsItsFindings; if
-// the asymmetry ever looks wrong, file it as debt rather than widening the guard.
-//
-// The refusal is PER CHUNK, not per persona. Each bin of a chunked review is its
-// own API call, so one bin can salvage while its siblings return committed
-// findings; mergeResultGroup OR-folds Salvaged into one persona-wide bit that
-// describes the persona but names no bin, and refusing on that bit would discard
-// those siblings' real findings, mark the persona unparseable for findings it did
-// produce, and falsify docs/findings-format.md's chunk contract. So the branch below reads
-// chunkSalvaged, skipping only the salvaged bins. Pinned by
-// TestMergeResultGroup_SalvagedLaterChunkKeepsSiblingFindings. (Found by the 4.1.A
-// adversarial review; decided 2026-09-30 by the user at the Phase 4 gate, which
-// RESOLVES TD-017 inside the sprint rather than deferring it.)
-//
-// The strip is LEADING-ONLY, so a think block placed after a real finding row
-// reaches this parser intact and a forged row inside it counts as a finding.
-// That is an explicit ACCEPTED LOSS (the grounding gate is the only residual
-// defence), pinned by TestMergeResultGroup_RealThenThinkForgedRow_IsAcceptedLoss
-// — TD artifacts.go:339; do not describe the pre-parse strip as closing the
-// non-leading spoofing position.
+//   - A 顶峰think顶峰 block placed AFTER the answer reaches the parser intact, so a
+//     forged row inside it counts — an accepted loss; the grounding gate is the
+//     only residual defence (TD artifacts.go:339). Pinned by
+//     TestMergeResultGroup_RealThenThinkForgedRow_IsAcceptedLoss.
+//   - A LEADING opener with no canonical closer takes the whole reply as
+//     reasoning (variant-closer, cut-off, and unlabelled-cut arms alike): the
+//     real-finding loss and the failover-vs-unparseable split are stated in
+//     full at llmclient.SplitThink and pinned by
+//     TestResult_ParseFindings_UnclosedLeadingOpenerLosesTheReply and
+//     TestInvokeSlot_TruncatedThinkOnlyReply_DemotesToFailover. Re-parsing the
+//     raw content instead would return the DRAFT — tested and rejected at the
+//     sprint 35.16.11.2.2.4 Phase 2 review.
+//   - A SALVAGED reply yields nothing, PER CHUNK (chunkSalvaged, not the
+//     persona-wide OR-fold — a salvaged bin must not discard its siblings'
+//     real findings, which would falsify docs/findings-format.md's chunk
+//     contract). Deliberately NOT ResponseTruncated || Salvaged like the
+//     verify/debate lanes: a truncated review's partial findings are real ones,
+//     and the truncationFailover gate exists to separate them from
+//     truncated-with-nothing. Pinned by
+//     TestResult_ParseFindings_TruncatedButNotSalvagedKeepsItsFindings and
+//     TestMergeResultGroup_SalvagedLaterChunkKeepsSiblingFindings; if the
+//     asymmetry ever looks wrong, file it as debt rather than widening the
+//     guard.
 func (r *Result) parseFindings() []stream.Finding {
 	if r.parsedFindingsSet {
 		return r.parsedFindings
