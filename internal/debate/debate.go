@@ -625,6 +625,27 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 		return ir
 	}
 
+	// The strip in driveSeat is leading-only, so a block that sits AFTER the
+	// judge's answer reaches here intact. parseRuling takes the FIRST
+	// outcome-keyed object it finds, and on a reply whose real answer is prose the
+	// draft object inside that block is the ONLY one — so it would become the
+	// debate's ruling. Refuse the reply rather than parse it: a wrong ruling is
+	// durable (it writes a verdict onto the finding), while an unresolved item
+	// leaves the pre-debate verdict standing and is disclosed by its own token.
+	//
+	// Accepted cost, in the safe direction: the detector is position-blind, so a
+	// judge whose reasoning QUOTES a think tag is refused too. That costs one
+	// unresolved item on a reply this repo does produce (findings here discuss
+	// think handling), and withholdExhausted stops it recurring forever.
+	if llmclient.HasThinkMarkup(rec.JudgeRaw) {
+		ir.Outcome = OutcomeUnresolved
+		ir.Reason = ReasonJudgeThinkMarkup
+		ir.Reasoning = "judge reply carries inline think markup; ruling refused"
+		tr.RecordRuling(RulingEvent{Outcome: OutcomeUnresolved, Reasoning: ir.Reasoning})
+		log.FromContext(ctx).Warn("debate: judge reply carries inline think markup, ruling refused", "judge", cast.Judge.Agent)
+		return ir
+	}
+
 	ruling := parseRuling(rec.JudgeRaw)
 	tr.RecordRuling(RulingEvent{
 		Outcome:         ruling.Outcome,
