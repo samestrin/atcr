@@ -506,7 +506,7 @@ func TestRegistryDoc_ThinkingDoctorVerdict(t *testing.T) {
 	// assertions green while the code contradicts the doc. The behavioral anchors
 	// immediately after them are the half that fails on a detector revert.
 	assertStates(t, "thinking verdict intro", intro, []struct{ token, why string }{
-		{"A lone `</think>` with no opener anywhere counts as a signal too when non-blank text precedes it", "HasThinkMarkup's no-opener branch: a reasoning template can put the opener in the prompt, reversing the old stray-closer-is-noise rule — and the qualifier is load-bearing, because that branch requires non-blank text BEFORE the closer, so an unqualified sentence publishes a rule the detector does not apply"},
+		{"A `</think>` with no opener BEFORE it counts as a signal too when non-blank text precedes it", "HasThinkMarkup's lone-closer branch: a reasoning template can put the opener in the prompt, reversing the old stray-closer-is-noise rule. Two qualifiers are load-bearing: the branch requires non-blank text BEFORE the closer, and the rule is POSITIONAL — \"no opener anywhere\" published a rule the detector stopped applying, under which any later opener (an empty pair included) hid a mid-thought reply"},
 		{"a block counts wherever it sits in the content", "detection is position-blind, unlike the review lanes' leading-only SplitThink: the probe prompt contains no tag, so a trailing block is the runaway thinker"},
 	})
 
@@ -522,6 +522,11 @@ func TestRegistryDoc_ThinkingDoctorVerdict(t *testing.T) {
 		"a lone closer with non-blank text before it marks a reply that started mid-thought, which is the opposite of the old stray-closer-is-noise rule")
 	assert.False(t, llmclient.HasThinkMarkup("   </think>"),
 		"the carve-out: a closer with nothing but whitespace before it is what a correctly-off hybrid template emits, so it is not markup holding text")
+	// And the rule is POSITIONAL: a later opener does not revoke it. Gating it on
+	// "no opener anywhere" is what let an empty trailing pair report a visibly
+	// mid-thought reply as clean (TD internal/doctor/run.go:1055).
+	assert.True(t, llmclient.HasThinkMarkup("mid-thought, only a closer</think>answer<think></think>"),
+		"a closer with no opener BEFORE it is still lone, whatever follows it")
 
 	// Rule 2 — position-blind. A block AFTER answer text is a signal to the
 	// detector even though SplitThink leaves it in place, which is the asymmetry
