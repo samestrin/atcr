@@ -74,8 +74,8 @@ func TestSplitThink(t *testing.T) {
 		// run consumes to the matching closer, so no stray closer reaches the
 		// answer. The reasoning keeps the inner pair's raw bytes (the span
 		// between the outer opener and its matching closer is taken verbatim).
-		{name: "nested opener consumes to the matching closer", content: "Ҍӆouter Ҍӆinnerҍӆҍӆanswer",
-			wantAnswer: "answer", wantReasoning: "outer Ҍӆinnerҍӆ", wantSignal: true},
+		{name: "nested opener consumes to the matching closer", content: "\x3cthink\x3eouter \x3cthink\x3einner\x3c/think\x3e\x3c/think\x3eanswer",
+			wantAnswer: "answer", wantReasoning: "outer \x3cthink\x3einner\x3c/think\x3e", wantSignal: true},
 		// A leading run that ends in an unclosed opener: everything after that
 		// opener is reasoning.
 		{name: "leading pair then unclosed opener", content: "<think>a</think><think>b",

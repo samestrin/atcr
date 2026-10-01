@@ -52,7 +52,9 @@ const thinkOpen, thinkClose = "<think>", "</think>"
 // Malformed markup never errors and never panics: it degrades to stripping the
 // leading run only, or to stripping nothing.
 //
-// Each pair in the run ends at the FIRST </think> after its opener. So reasoning
+// Each pair in the run ends at the FIRST </think> after its opener — unless a NESTED opener intervenes, in which case balance
+// picks the matching closer (openers outnumbering closers keep the run going),
+// so nesting never leaves a stray closer in the answer. So reasoning
 // that QUOTES the closer cuts its own block early, and the tail of that reasoning
 // survives into the answer — a draft object in that tail can then win a
 // first-match parse. That loss is accepted, not overlooked (2026-09-30, sprint
@@ -111,7 +113,29 @@ func SplitThink(content string) (answer string, reasoning Reasoning) {
 		}
 		stripped = true
 		rest = lead[len(thinkOpen):]
-		end := strings.Index(rest, thinkClose)
+		// Consume to the MATCHING closer: a nested opener inside the run means the
+		// next closer belongs to that inner block, so openers outnumbering closers
+		// keep the run going until the balance returns to zero. The scan reads
+		// slices only, and a single matching span stays contiguous, so the
+		// no-alloc single-pair path is unchanged.
+		depth, offset, end := 1, 0, -1
+		for {
+			tail := rest[offset:]
+			nextClose := strings.Index(tail, thinkClose)
+			if nextClose < 0 {
+				break
+			}
+			if nextOpen := strings.Index(tail, thinkOpen); nextOpen >= 0 && nextOpen < nextClose {
+				depth++
+				offset += nextOpen + len(thinkOpen)
+				continue
+			}
+			if depth--; depth == 0 {
+				end = offset + nextClose
+				break
+			}
+			offset += nextClose + len(thinkClose)
+		}
 		if end < 0 {
 			// The run ends in an unclosed opener. If a closer-LIKE token follows —
 			// anything beginning with the closer constant minus its final byte, i.e.
