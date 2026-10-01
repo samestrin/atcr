@@ -98,6 +98,10 @@ func TestDocs_DebateReasonTokensMatchTheConstants(t *testing.T) {
 		debate.ReasonNoClusterDecision,
 		debate.ReasonNoProposer,
 		debate.ReasonInsufficientModels,
+		// An overflow reason rather than an unresolved one, but it reaches the same
+		// artifact and the row's own rule covers it: a token no document publishes
+		// is one an operator cannot look up.
+		debate.OverflowAttemptsExhausted,
 	} {
 		assert.Contains(t, vocabRow, "`"+reason+"`",
 			"the debate.json artifact row must publish the CURRENT constant %q — the bullet defers the complete vocabulary to this row, so a missing token leaves an operator without a lookup", reason)
