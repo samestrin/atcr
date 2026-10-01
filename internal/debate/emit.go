@@ -60,22 +60,28 @@ type ruleApply struct {
 
 // ItemResult is one debated item's recorded outcome (reconciled/debate.json).
 type ItemResult struct {
-	File              string `json:"file"`
-	Line              int    `json:"line"`
-	Kind              string `json:"kind"`
-	Problem           string `json:"problem,omitempty"`
-	Outcome           string `json:"outcome"`
-	Reason            string `json:"reason,omitempty"`
-	OriginalSeverity  string `json:"original_severity,omitempty"`
-	SettledSeverity   string `json:"settled_severity,omitempty"`
-	ClusterDecision   string `json:"cluster_decision,omitempty"`
-	ChallengeSurvived bool   `json:"challenge_survived,omitempty"`
-	SingleModel       bool   `json:"single_model,omitempty"`
-	Proposer          string `json:"proposer,omitempty"`
-	Challenger        string `json:"challenger,omitempty"`
-	Judge             string `json:"judge,omitempty"`
-	Reasoning         string `json:"reasoning,omitempty"`
-	Transcript        string `json:"transcript,omitempty"`
+	File    string `json:"file"`
+	Line    int    `json:"line"`
+	Kind    string `json:"kind"`
+	Problem string `json:"problem,omitempty"`
+	Outcome string `json:"outcome"`
+	Reason  string `json:"reason,omitempty"`
+	// UnresolvedAttempts counts the runs that reached this item and left it
+	// unresolved, carried forward across runs. An unresolved item writes no
+	// Verification, so filterAlreadyDebated cannot see it and it re-enters the
+	// radar on every run; this count is the only record of how many times the
+	// three seats have already been paid for it.
+	UnresolvedAttempts int    `json:"unresolved_attempts,omitempty"`
+	OriginalSeverity   string `json:"original_severity,omitempty"`
+	SettledSeverity    string `json:"settled_severity,omitempty"`
+	ClusterDecision    string `json:"cluster_decision,omitempty"`
+	ChallengeSurvived  bool   `json:"challenge_survived,omitempty"`
+	SingleModel        bool   `json:"single_model,omitempty"`
+	Proposer           string `json:"proposer,omitempty"`
+	Challenger         string `json:"challenger,omitempty"`
+	Judge              string `json:"judge,omitempty"`
+	Reasoning          string `json:"reasoning,omitempty"`
+	Transcript         string `json:"transcript,omitempty"`
 }
 
 // OverflowItem is a disputed item that matched a trigger but exceeded the
@@ -86,7 +92,17 @@ type OverflowItem struct {
 	Line     int    `json:"line"`
 	Kind     string `json:"kind"`
 	Severity string `json:"severity"`
+	// Reason names why the item was not debated when it is something other than
+	// the max_items cap. Empty means the cap, which is the original and still the
+	// common case, so an existing record is byte-identical.
+	Reason string `json:"reason,omitempty"`
 }
+
+// OverflowAttemptsExhausted is the Reason recorded on an item withheld because a
+// prior run already left it unresolved maxUnresolvedAttempts times. It is an
+// overflow reason, not one of the unresolved reason tokens in cast.go: the item
+// was never debated this run, so it has no outcome of its own to explain.
+const OverflowAttemptsExhausted = "unresolved_attempts_exhausted"
 
 // DebateFile is the reconciled/debate.json document: every debated item's ruling
 // plus the recorded overflow.

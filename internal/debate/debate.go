@@ -24,6 +24,15 @@ import (
 	"github.com/samestrin/atcr/internal/tools"
 )
 
+// maxUnresolvedAttempts is how many runs may leave one item unresolved before a
+// later run withholds it instead of re-casting three seats for it. An unresolved
+// item writes no Verification, so filterAlreadyDebated cannot see it and it
+// re-enters the radar on every run; a seat that reasons inline blanks its
+// statement on every one of them, so without a ceiling the re-debate loop never
+// converges and each pass re-pays three seats plus their tool loops. Withholding
+// is disclosed as overflow-style skipped work, never silent.
+const maxUnresolvedAttempts = 3
+
 // ErrNoReconciledFindings is returned when reviewDir has no reconciled
 // findings.json — the caller renders "run 'atcr reconcile' first" guidance. It
 // wraps os.ErrNotExist so errors.Is keeps working.

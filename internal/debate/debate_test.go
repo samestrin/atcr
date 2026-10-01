@@ -1077,3 +1077,74 @@ func TestSeatSilenceNotes_LabelsEachSeatForItself(t *testing.T) {
 	assert.False(t, allSeatsIn([]string{LabelProposer}, []string{LabelProposer, LabelChallenger}),
 		"a suppressed proposer plus a genuinely-silent challenger must not report seat_suppressed")
 }
+
+// An item left unresolved maxUnresolvedAttempts times must stop re-entering the
+// radar. It writes no Verification, so filterAlreadyDebated cannot see it: the
+// recorded attempt count is the only thing that can end the loop, and the skip is
+// disclosed as overflow-style skipped work rather than silently dropped.
+func TestRunDebate_ExhaustedUnresolvedItemIsWithheldAndDisclosed(t *testing.T) {
+	f := splitFinding()
+	dir := reviewDirWith(t, []reconcile.JSONFinding{f})
+	require.NoError(t, writeDebateFile(dir, DebateFile{
+		SchemaVersion: DebateSchemaVersion,
+		Items: []ItemResult{{
+			File: f.File, Line: f.Line, Kind: reconcile.KindSeveritySplit, Problem: f.Problem,
+			Outcome: OutcomeUnresolved, Reason: ReasonSeatSilent,
+			UnresolvedAttempts: maxUnresolvedAttempts,
+		}},
+	}))
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "p"}, {content: "c"}, {content: `{"outcome":"uphold","settled_severity":"HIGH"}`},
+	}}
+	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.Selected, "an item that burned its unresolved attempts must not be re-debated")
+	assert.Equal(t, 1, res.Overflow, "the withheld item must be counted as skipped work")
+
+	df, found, err := ReadDebateFile(dir)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Len(t, df.Overflow, 1)
+	assert.Equal(t, OverflowAttemptsExhausted, df.Overflow[0].Reason,
+		"the disclosure must name the ceiling, not read as a max_items overflow")
+	assert.Equal(t, f.File, df.Overflow[0].File)
+}
+
+// The count has to carry forward across runs or the ceiling is never reached. A
+// legacy record written before the field existed counts as the one attempt it
+// provably was, not as zero.
+func TestRunDebate_UnresolvedAttemptsCarryForward(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		prior int
+		want  int
+	}{
+		{"legacy record with no recorded count", 0, 2},
+		{"recorded count", 2, 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := splitFinding()
+			dir := reviewDirWith(t, []reconcile.JSONFinding{f})
+			require.NoError(t, writeDebateFile(dir, DebateFile{
+				SchemaVersion: DebateSchemaVersion,
+				Items: []ItemResult{{
+					File: f.File, Line: f.Line, Kind: reconcile.KindSeveritySplit, Problem: f.Problem,
+					Outcome: OutcomeUnresolved, Reason: ReasonSeatSilent,
+					UnresolvedAttempts: tc.prior,
+				}},
+			}))
+			// A blank proposer statement: this run also ends unresolved.
+			cc := &fakeChatCompleter{turns: []chatTurn{
+				{content: "   "}, {content: "c"}, {content: `{"outcome":"uphold"}`},
+			}}
+			res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+			require.NoError(t, err)
+			require.Equal(t, 1, res.Unresolved)
+
+			df, _, err := ReadDebateFile(dir)
+			require.NoError(t, err)
+			require.Len(t, df.Items, 1)
+			assert.Equal(t, tc.want, df.Items[0].UnresolvedAttempts)
+		})
+	}
+}
