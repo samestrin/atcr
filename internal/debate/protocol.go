@@ -92,7 +92,13 @@ func RunDebate(ctx context.Context, item reconcile.DisagreementItem, cast Cast, 
 	// A HALTED proposer is excluded: its halt must keep flowing through the
 	// full-run path so the seat_halted/judge_halted reason tokens stay truthful
 	// about which engines actually failed.
-	if rec.ProposerStatement == "" && !slices.Contains(rec.Halted, cast.Proposer.Label) {
+	//
+	// Blank is TrimSpace-blank, the same test silentArguingSeats and runTurn's
+	// suppression branch apply. SplitThink keeps the whitespace after the run it
+	// consumed, so the inline-reasoning shape this guard names — `<think>…</think>\n`
+	// — arrives as "\n". An exact `== ""` test missed it and paid both remaining
+	// tool loops on exactly the endpoint class the guard was written for.
+	if strings.TrimSpace(rec.ProposerStatement) == "" && !slices.Contains(rec.Halted, cast.Proposer.Label) {
 		return rec
 	}
 
