@@ -352,11 +352,16 @@ type AgentStatus struct {
 	UnparseableChunks int `json:"unparseable_chunks,omitempty"`
 
 	// Salvaged records that the client promoted reasoning into Content because the
-	// reply carried no answer — so parseFindings refused the content and this
-	// agent's findings count is a REFUSAL, not an empty review. Without it,
+	// reply carried no answer — so parseFindings refused that content, and a zero
+	// findings count here is a REFUSAL, not an empty review. Without it,
 	// status.json is byte-identical to a reviewer that emitted garbled prose
 	// (unparseable_response true, unparseable_chunks 1), and a reviewer can lose
-	// its entire contribution invisibly. omitempty keeps a clean run unchanged.
+	// its entire contribution invisibly.
+	//
+	// For a chunked persona it is an OR-fold over the bins, so it can be true
+	// beside a non-zero findings count: one bin was refused and its siblings were
+	// kept. SalvagedChunks below is what tells the two apart.
+	// omitempty keeps a clean run unchanged.
 	Salvaged bool `json:"salvaged,omitempty"`
 
 	// SalvagedChunks names WHICH bins of a chunked persona salvaged, by index. The

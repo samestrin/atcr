@@ -77,3 +77,24 @@ func TestWritePool_WarnsAboutSalvagedReplies(t *testing.T) {
 	assert.Contains(t, out, "drafter", "the warning must name the agent whose contribution was refused")
 	assert.NotContains(t, out, "bruce", "a clean agent is not a salvage")
 }
+
+// A chunked persona's Salvaged bit is an OR-fold over its bins, so one refused bin
+// sets it beside a sibling bin that landed real findings. The disclosure must not
+// then claim the reviewer contributed nothing — that is false of exactly the case the
+// per-bin refusal exists to protect.
+func TestWritePool_SalvagedBinBesideRealFindingsIsNotReportedAsTotalLoss(t *testing.T) {
+	merged := mergeResultGroup([]Result{
+		{Agent: "bruce", Status: StatusOK, Content: "MEDIUM|b.go:2|real finding|f|correctness|2|e"},
+		{Agent: "bruce", Status: StatusOK, Content: "HIGH|a.go:1|draft|f|correctness|5|e", Salvaged: true},
+	}, nil)
+	pool := filepath.Join(t.TempDir(), "pool")
+	var err error
+	out := captureWarnLog(t, func(ctx context.Context) {
+		_, err = writePool(ctx, pool, []Result{merged}, nil, "")
+	})
+	require.NoError(t, err)
+	assert.Contains(t, out, "bruce")
+	assert.Contains(t, out, "chunk 1 refused", "the warning must name the bin, not the whole persona")
+	assert.NotContains(t, out, "contributed nothing",
+		"bruce landed a real finding from its clean bin")
+}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/log"
@@ -218,20 +219,43 @@ func salvagedChunkIndices(r Result) []int {
 	return out
 }
 
-// tallySalvaged counts the agents whose reply was salvaged, and names them. Derived
-// from the per-agent statuses for the same reason tallyTruncatedZeroFindings is: the
-// resume path rebuilds the pool from these very records, and deriving the tally in
-// only one of the two writers is how a resumed review silently loses it.
+// tallySalvaged counts the agents whose reply was salvaged and labels each with what
+// the salvage actually cost it. Derived from the per-agent statuses for the same
+// reason tallyTruncatedZeroFindings is: the resume path rebuilds the pool from these
+// very records, and deriving the tally in only one of the two writers is how a
+// resumed review silently loses it.
+//
+// The label matters because the persona-wide Salvaged bit is an OR-fold over a
+// chunked persona's bins: one refused bin beside a bin that landed real findings sets
+// it. Reporting every salvage as "contributed nothing" would therefore be false of
+// exactly the case the per-bin refusal was built to protect.
 func tallySalvaged(statuses []AgentStatus) (int, []string) {
 	count := 0
 	agents := make([]string, 0, len(statuses))
 	for _, st := range statuses {
-		if st.Salvaged {
-			count++
-			agents = append(agents, st.Agent)
+		if !st.Salvaged {
+			continue
 		}
+		count++
+		agents = append(agents, st.Agent+salvageCost(st))
 	}
 	return count, agents
+}
+
+// salvageCost names what one agent lost to the salvage: everything, or the specific
+// bins that were refused.
+func salvageCost(st AgentStatus) string {
+	if st.FindingsCount == 0 {
+		return " (contributed nothing)"
+	}
+	if len(st.SalvagedChunks) == 0 {
+		return ""
+	}
+	idx := make([]string, 0, len(st.SalvagedChunks))
+	for _, i := range st.SalvagedChunks {
+		idx = append(idx, strconv.Itoa(i))
+	}
+	return " (chunk " + strings.Join(idx, "/") + " refused, its siblings kept)"
 }
 
 // warnSalvaged emits the run-level salvage warning, or nothing at 0.
@@ -257,7 +281,7 @@ func warnSalvaged(ctx context.Context, count int, agents []string) {
 		return
 	}
 	log.FromContext(ctx).Warn(
-		fmt.Sprintf("%d reviewer(s) returned a salvaged reply (no answer, reasoning promoted into the content) and contributed nothing to the pool.", count),
+		fmt.Sprintf("%d reviewer(s) returned a salvaged reply — no answer, reasoning promoted into the content — so it was refused rather than parsed. Each agent below says what that cost it.", count),
 		"agents", strings.Join(agents, ", "),
 		"remedy", salvagedRemedy)
 }
