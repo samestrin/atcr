@@ -494,3 +494,22 @@ func TestBuildExecutorAgentPrompt_ContainsFindingAndSchema(t *testing.T) {
 	assert.Contains(t, block, "plaintext password", "finding problem must sit inside the sentinel block")
 	assert.Contains(t, block, "use bcrypt", "finding fix must sit inside the sentinel block")
 }
+
+// TestInvokeExecutor_StripsThinkBeforeParsingTheFix pins the same strip the verify
+// lane applies, at the executor's parse call site (executor.go:779).
+//
+// parseExecutorResponse takes the FIRST balanced object via extractJSONObject — with
+// no key filter and no iteration — so it is WEAKER than parseVerdict/parseRuling: a
+// thinking endpoint that drafts a fix envelope inside a leading BLOCK and then
+// writes the real one would have the DRAFT patch returned as the fix and written to
+// disk by --auto-fix. Blast radius is higher than the verdict case: a wrong patch is
+// applied to files, not merely mis-scored.
+func TestInvokeExecutor_StripsThinkBeforeParsingTheFix(t *testing.T) {
+	t.Parallel()
+	raw := `<think>{"fix": "DRAFT: delete the validation", "explanation": "draft, wrong"}</think>{"fix": "REAL: add a bounds check", "explanation": "real answer"}`
+	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
+		eligibleFinding()[0], finalChat(raw), okDispatcher(), 0, "")
+	assert.Equal(t, "", warn)
+	assert.Equal(t, "REAL: add a bounds check", fix,
+		"the draft fix inside the leading block must not be shipped as the patch")
+}
