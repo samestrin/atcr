@@ -339,7 +339,7 @@ func TestDocs_CrossExaminationPublishesTheUnresolvedReasonVocabulary(t *testing.
 	// outcome vocabulary uses for the same reason.
 	for _, reason := range []string{
 		"seat_halted", "seat_silent", "seat_suppressed",
-		"judge_halted", "unparseable_ruling", "empty_ruling",
+		"judge_halted", "unparseable_ruling", "empty_ruling", "judge_think_markup",
 		"harness_unavailable", "context_cancelled", "no_cluster_decision",
 		"no_resolvable_proposer", "insufficient_distinct_models",
 	} {

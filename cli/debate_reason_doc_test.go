@@ -96,6 +96,7 @@ func TestDocs_DebateReasonTokensMatchTheConstants(t *testing.T) {
 		debate.ReasonHarnessUnavailable,
 		debate.ReasonContextCancelled,
 		debate.ReasonNoClusterDecision,
+		debate.ReasonJudgeThinkMarkup,
 		debate.ReasonNoProposer,
 		debate.ReasonInsufficientModels,
 		// An overflow reason rather than an unresolved one, but it reaches the same
