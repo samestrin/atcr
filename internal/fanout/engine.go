@@ -997,13 +997,17 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 			// identically on every chain member (same tag habit) — count it so the
 			// end-of-walk line can name the wasted spend (TD engine.go:602).
 			//
-			// Two preconditions, both load-bearing. `r.Content != ""` first:
-			// SplitThink("") returns ("", ""), so an EMPTY reply would otherwise be
-			// counted as wholly-reasoning — and "the provider returned nothing" and
-			// "the model spent the reply thinking" have opposite remedies. Then
-			// TrimSpace, because SplitThink keeps the whitespace after the run it
-			// consumed, so the routine `<think>…</think>\n` shape returns "\n".
-			if answer, _ := llmclient.SplitThink(r.Content); r.Content != "" && strings.TrimSpace(answer) == "" {
+			// Two preconditions, both load-bearing, and they are the same pair
+			// historyMessage uses (loop.go). The strip must have REMOVED something —
+			// detected by length, since SplitThink returns a substring of its input,
+			// so a no-op strip returns it unchanged. That rules out two replies that
+			// carry no think markup at all and would otherwise qualify: the empty one
+			// (SplitThink("") returns ("", "")) and the whitespace-only one. Both mean
+			// "the provider sent nothing usable", which has a different remedy from
+			// "the model spent the reply thinking". Then TrimSpace, because SplitThink
+			// keeps the whitespace after the run it consumed, so the routine
+			// `<think>…</think>\n` shape returns "\n".
+			if answer, _ := llmclient.SplitThink(r.Content); len(answer) < len(r.Content) && strings.TrimSpace(answer) == "" {
 				thinkOnlyAttempts++
 			}
 			log.FromContext(ctx).Warn("reviewer response truncated with zero findings; failing over",
@@ -1081,7 +1085,11 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 					// the run it consumed, so the routine `<think>…</think>\n` shape
 					// returns "\n"; an exact `== ""` test read that as an answer and
 					// dropped the signal on the commonest input it has.
-					if strings.TrimSpace(answer) == "" {
+					//
+					// Paired with the length test for the same reason as the chain-walk
+					// counter above: TrimSpace alone would also claim a whitespace-only
+					// reply, which carries no think markup and is a different failure.
+					if len(answer) < len(r.Content) && strings.TrimSpace(answer) == "" {
 						r.ThinkSuppressed = true
 					}
 				}

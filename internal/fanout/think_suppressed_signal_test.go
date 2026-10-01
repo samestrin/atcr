@@ -78,3 +78,17 @@ func TestInvokeSlot_GarbledReply_DoesNotSetThinkSuppressed(t *testing.T) {
 	assert.True(t, r.UnparseableResponse)
 	assert.False(t, r.ThinkSuppressed, "no think markup — not a think suppression")
 }
+
+// TestInvokeSlot_WhitespaceOnlyReply_DoesNotSetThinkSuppressed guards the edge
+// the TrimSpace fix opens if it is applied alone. A reply of pure whitespace is
+// ALSO TrimSpace-blank, but the strip removed nothing from it — it carries no
+// think markup, so it is "the provider sent nothing usable", a different failure
+// with a different remedy. The length test is what keeps the two apart.
+func TestInvokeSlot_WhitespaceOnlyReply_DoesNotSetThinkSuppressed(t *testing.T) {
+	e := NewEngine(&stubCompleter{content: "   \n  "})
+	r := e.invokeSlot(context.Background(), Slot{Primary: Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "m"}}})
+
+	assert.Equal(t, StatusOK, r.Status)
+	assert.False(t, r.ThinkSuppressed,
+		"the strip removed nothing — a blank reply is not a suppressed one")
+}
