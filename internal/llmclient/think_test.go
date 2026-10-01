@@ -40,6 +40,17 @@ func TestSplitThink(t *testing.T) {
 		// direction fails a test first (TD row think.go:108).
 		{name: "empty pair as the entire content", content: "<think>\n\n</think>",
 			wantAnswer: "", wantReasoning: "\n\n"},
+		// A RESUMED run: text between two pairs ends the leading run, so only the
+		// FIRST pair is consumed and the answer BEGINS with the draft object. The
+		// strip deliberately does not reach further — text after a leading run is the
+		// answer, and eating it is how a strip deletes real content. The defense is
+		// the per-lane refusal of an answer that still carries markup, not a wider
+		// strip (TD internal/llmclient/think.go:80; verify, debate and executor each
+		// pin their own refusal).
+		{name: "resumed run leaves the draft at the front of the answer",
+			content:       `<think>r1</think>{"verdict":"confirmed"}<think>r2</think>{"verdict":"refuted"}`,
+			wantAnswer:    `{"verdict":"confirmed"}<think>r2</think>{"verdict":"refuted"}`,
+			wantReasoning: "r1"},
 		// An empty first pair must not hide a real block after it: both pairs are
 		// leading, so both are consumed.
 		{name: "multiple leading pairs", content: "<think></think><think>real reasoning</think>answer",
