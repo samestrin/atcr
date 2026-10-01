@@ -112,6 +112,13 @@ func TestRun_ThinkingVerdict(t *testing.T) {
 	// of on a reasoning channel, and a proxy can still report 0 reasoning tokens.
 	inlineThink := llmclient.Completion{Content: "<think>plan the reply</think>\n" + Marker(testNonce)}
 	withEmptyThink := llmclient.Completion{Content: "<think>\n\n</think>\n" + Marker(testNonce)}
+	// Two hybrid-template shapes the detector must not miss: a reply that started
+	// mid-thought and then emitted an empty pair, and one whose empty FIRST pair is
+	// followed by a mid-thought closer. Both are visibly reasoning inline on a
+	// `thinking: off` target, and a false-clean verdict is the direction that stops
+	// the operator investigating (TD internal/doctor/run.go:1055).
+	midThoughtThenEmptyPair := llmclient.Completion{Content: "draft reasoning</think>" + Marker(testNonce) + "<think></think>"}
+	emptyPairThenMidThought := llmclient.Completion{Content: "<think></think>draft reasoning</think>" + Marker(testNonce)}
 	inlineThinkReportedZero := inlineThink
 	inlineThinkReportedZero.Usage = llmclient.UsageData{ReasoningTokensReported: true}
 
@@ -185,6 +192,10 @@ func TestRun_ThinkingVerdict(t *testing.T) {
 		{name: "on with level, silent, control thinks", thinking: "on", level: "high", style: "qwen", declared: silent, control: thinks,
 			wantStatus: ThinkingHonored, wantCalls: 2},
 		{name: "off, inline think tags", thinking: "off", style: "qwen", declared: inlineThink,
+			wantStatus: ThinkingNotHonored, wantCalls: 1, wantDetail: []string{"inline <think> reasoning in the content"}},
+		{name: "off, mid-thought closer then a trailing empty pair", thinking: "off", style: "qwen", declared: midThoughtThenEmptyPair,
+			wantStatus: ThinkingNotHonored, wantCalls: 1, wantDetail: []string{"inline <think> reasoning in the content"}},
+		{name: "off, empty first pair then a mid-thought closer", thinking: "off", style: "qwen", declared: emptyPairThenMidThought,
 			wantStatus: ThinkingNotHonored, wantCalls: 1, wantDetail: []string{"inline <think> reasoning in the content"}},
 		{name: "off, reported zero but inline think tags", thinking: "off", style: "qwen", declared: inlineThinkReportedZero,
 			wantStatus: ThinkingNotHonored, wantCalls: 1},

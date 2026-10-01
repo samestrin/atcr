@@ -166,11 +166,16 @@ func TestHasThinkMarkup(t *testing.T) {
 		{name: "pair after answer text", content: "answer <think>x</think> more", want: true},
 		{name: "unclosed opener after answer text", content: "ATCR-OK-n\n<think>let me double check", want: true},
 		{name: "empty pair after answer text is still not a signal", content: "answer <think></think> more", want: false},
-		// Accepted limit: the lone-closer rule is gated on no opener ANYWHERE, so a
-		// later empty pair suppresses the mid-thought signal. Pinned as false rather
-		// than fixed — it matches doctor's pre-migration behavior, and a template
-		// that starts mid-thought and then emits an empty pair is not a real shape.
-		{name: "lone closer then a later empty pair", content: "draft</think>answer<think></think>", want: false},
+		// The lone-closer rule is POSITIONAL: a closer with no opener BEFORE it marks
+		// a reply that started mid-thought, whatever appears later. Gating it on "no
+		// opener anywhere" let any later opener — an empty pair included — suppress a
+		// real mid-thought signal, which is the hybrid-template shape the empty-pair
+		// row above exists to defend (TD internal/doctor/run.go:1055).
+		{name: "lone closer then a later empty pair", content: "draft</think>answer<think></think>", want: true},
+		// The mirror shape: an empty FIRST pair must not hide a mid-thought closer in
+		// the remainder either. The rule is re-applied after each consumed pair.
+		{name: "empty pair then a mid-thought closer", content: "<think></think>draft</think>answer", want: true},
+		{name: "empty pair then a blank-prefixed closer", content: "<think></think>  </think>answer", want: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
