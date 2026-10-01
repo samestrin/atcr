@@ -263,15 +263,8 @@ func TestSplitThink_NoBuilderAllocForSinglePair(t *testing.T) {
 	assert.Zero(t, allocs, "single-pair strip allocated a throwaway reasoning buffer")
 }
 
-// SplitThink returns strings only. The signature already makes reaching the
-// reasoning channel unrepresentable, so this documents the contract rather than
-// guarding it; it does catch a future signature change to a *Completion.
-func TestSplitThink_DoesNotTouchTheReasoningChannel(t *testing.T) {
-	comp := Completion{Content: "<think>plan</think>answer"}
-	answer, reasoning := SplitThink(comp.Content)
-
-	assert.Equal(t, "answer", answer)
-	assert.Equal(t, "plan", string(reasoning))
-	assert.Equal(t, "<think>plan</think>answer", comp.Content, "the caller's content is not mutated")
-	assert.Empty(t, comp.Reasoning, "SplitThink never writes Completion.Reasoning")
-}
+// The reasoning channel (Completion.Reasoning) is populated by reasoningOf /
+// reasoningText underneath the client, not by SplitThink, which takes and
+// returns strings only. The signature makes reaching that field unrepresentable,
+// so no test here can guard it - the coverage that matters lives with the client
+// (client_test.go). This test was deleted on 2026-10-01 for that reason.
