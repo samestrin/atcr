@@ -85,16 +85,21 @@ type reviewNarrative struct {
 	relPath string
 	leaf    string
 	lines   []string
-	// draftLines is the number of leading lines that lie inside a leading inline
-	// reasoning run. buildAnchorIndex skips them, so a file:line the model wrote in
-	// a draft it DISCARDED can never be matched as the citation for a finding.
+	// draftLines is the set of 0-based lines that lie inside a refused leading
+	// reasoning run — one run PER CHUNK SEGMENT, mirroring the per-chunk parse
+	// (see draftLineSet). buildAnchorIndex skips them, so a file:line the model
+	// wrote in a draft it DISCARDED can never be matched as the citation for a
+	// finding.
+	//
+	// A set rather than a count: a chunked review.md can carry a refused run at the
+	// head of EVERY bin, and a leading count can only describe the first one.
 	//
 	// Counted rather than stripped: source_report.line is a pointer into the
 	// artifact a reader opens, so rebasing the lines would make the excerpt stop
 	// matching the document it points at (the decision recorded in
 	// justification_think_parity_test.go). Excluding the lines keeps every published
 	// line number true of review.md as written.
-	draftLines int
+	draftLines map[int]struct{}
 }
 
 // narrativeMatch is the best-effort correlation of a finding to a review.md
@@ -194,7 +199,7 @@ func collectReviewNarratives(sourcesDir, reviewDir string) []reviewNarrative {
 			relPath:    filepath.ToSlash(rel),
 			leaf:       filepath.Base(filepath.Dir(path)),
 			lines:      strings.Split(string(data), "\n"),
-			draftLines: leadingDraftLines(string(data)),
+			draftLines: draftLineSet(string(data)),
 		})
 		return nil
 	})
@@ -231,7 +236,7 @@ func buildAnchorIndex(narratives []reviewNarrative) anchorIndex {
 			// earliest line — so a draft citation at the top of the file outranked the
 			// real prose below it and was published as the reviewer's justification
 			// (TD internal/reconcile/justification.go:322).
-			if li < narratives[ni].draftLines {
+			if _, draft := narratives[ni].draftLines[li]; draft {
 				continue
 			}
 			indexLineFiles(idx, lt, ni, li)
@@ -240,9 +245,45 @@ func buildAnchorIndex(narratives []reviewNarrative) anchorIndex {
 	return idx
 }
 
-// leadingDraftLines reports how many leading lines of a review.md lie inside a
-// leading inline reasoning run, using the same strip the findings parser applies
-// (llmclient owns every tag rule). 0 when the reply carries no leading run.
+// draftLineSet reports which 0-based lines of a review.md lie inside a refused
+// leading reasoning run — the set buildAnchorIndex excludes from the candidate
+// anchors.
+//
+// PER CHUNK SEGMENT, because the findings parser is per chunk. review.md is the
+// marker-joined concatenation of a chunked persona's bins (fanout's
+// joinChunkContents), and Result.parseFindings calls SplitThink once per bin, so
+// EACH bin can open with a run the parser refused. Scanning the joined file once
+// finds only the first bin's run: a draft citation at the head of chunk 2 was
+// indexed as an ordinary candidate and, since beatsMatch breaks equal-tier ties
+// toward the earliest line, could outrank the real prose and be published as the
+// reviewer's justification (TD internal/reconcile/justification.go:197). Every
+// other scan here is already segment-scoped via chunkSegmentBounds for exactly
+// this reason; this one was not.
+//
+// An unchunked review.md has no marker, which is the single-segment case.
+func draftLineSet(raw string) map[int]struct{} {
+	lines := strings.Split(raw, "\n")
+	out := make(map[int]struct{})
+	start := 0
+	for i := 0; i <= len(lines); i++ {
+		// A segment ends at a boundary marker or at end of input.
+		if i < len(lines) && lines[i] != chunkBoundaryLine {
+			continue
+		}
+		if n := leadingDraftLines(strings.Join(lines[start:i], "\n")); n > 0 {
+			for d := start; d < start+n && d < i; d++ {
+				out[d] = struct{}{}
+			}
+		}
+		start = i + 1
+	}
+	return out
+}
+
+// leadingDraftLines reports how many leading lines of ONE chunk segment lie
+// inside a leading inline reasoning run, using the same strip the findings parser
+// applies (llmclient owns every tag rule). 0 when the segment carries no leading
+// run. Call it through draftLineSet, which supplies the segments.
 //
 // A run that ends mid-line makes that line count as draft too: it holds text from
 // both sides, and admitting it would admit a draft citation. Losing a real citation
@@ -690,8 +731,9 @@ func extractSection(lines []string, idx int) (text, section string) {
 	// prompt-injected reviewer reply, which can put a chosen file:line in the draft.)
 	//
 	// FIXED for the ANCHOR half (TD internal/reconcile/justification.go:322):
-	// buildAnchorIndex now skips the lines inside a leading reasoning run
-	// (reviewNarrative.draftLines), so a draft citation can no longer be matched at
+	// buildAnchorIndex now skips the lines inside a refused leading reasoning run,
+	// one per chunk segment (reviewNarrative.draftLines / draftLineSet), so a draft
+	// citation can no longer be matched at
 	// all and the earliest-line tiebreak has nothing in the block to prefer. What
 	// remains is the EXCERPT half described above — recordAt/isFindingRecordStart and
 	// stream.BareValueSpans still read the raw lines, so an in-block record-shaped
@@ -706,10 +748,12 @@ func extractSection(lines []string, idx int) (text, section string) {
 	//
 	// Residual, scoped to what the strip itself can see: the exclusion covers a
 	// LEADING run, because that is the run llmclient.SplitThink defines and the only
-	// one the findings parser refuses. A block the model opens after real prose is
-	// still indexed, so a citation inside it can still win an equal-tier tiebreak —
-	// bounded differently, though, since such a block is not at the top of the file
-	// and no longer beats the prose above it on line order.
+	// one the findings parser refuses. Leading PER CHUNK SEGMENT, not per file — the
+	// parser reads each bin separately, so each bin's own opening run is excluded
+	// (draftLineSet). A block the model opens after real prose is still indexed, so
+	// a citation inside it can still win an equal-tier tiebreak — bounded
+	// differently, though, since such a block is not at the top of its segment and
+	// no longer beats the prose above it on line order.
 	spans := stream.BareValueSpans([]byte(strings.Join(lines, "\n")))
 	if len(spans) > 0 {
 		strict = append([]bool(nil), strict...)
