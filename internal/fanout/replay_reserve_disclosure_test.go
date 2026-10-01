@@ -41,6 +41,28 @@ func TestBuildSlots_ZeroBudgetWarningNamesTheReplayReserve(t *testing.T) {
 		"a tool-loop agent's warning must name the reserve, or the window-vs-cap sum reads as if it fits")
 }
 
+// TestBuildSlots_SingleShotZeroBudgetWarningNamesNoReserve is the other arm, and
+// the one that was unpinned: nothing stopped the clause being printed for an agent
+// that reserves nothing. A single-shot agent is sized by its output cap alone, so a
+// warning naming a replayed-reasoning reserve would send the operator to lower a
+// number the run never held back.
+func TestBuildSlots_SingleShotZeroBudgetWarningNamesNoReserve(t *testing.T) {
+	cfg := declaredWindowRoster(t, 1)
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.ReviewStrategy = "chunked"
+	diff := diffOfNFiles(4, 100)
+	payloads := map[string]modePayload{"blocks": {Text: diff, FileCount: 4}}
+
+	var err error
+	out := captureStderr(t, func() {
+		_, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, "leaves no input budget once the", "precondition: the zero-budget warning must fire")
+	assert.NotContains(t, out, "replayed-reasoning reserve",
+		"a single-shot agent replays nothing — naming a reserve here describes a reservation it never made")
+}
+
 // And the sizing record must report the reservation actually held back, not the bare
 // output cap: an operator reconciling resolved_window against reserved_output_tokens
 // otherwise computes a budget the run never had.
