@@ -180,20 +180,39 @@ func TestHasThinkMarkup(t *testing.T) {
 }
 
 // The detector answers a different question than the strip, so a caller cannot
-// substitute one for the other. This pins the divergence itself: on these inputs
-// the strip finds nothing to remove while the detector still reports thinking.
-func TestHasThinkMarkup_BroaderThanSplitThink(t *testing.T) {
+// substitute one for the other, and neither predicate implies the other. This
+// pins the divergence: on the first set the strip finds nothing to remove while
+// the detector still reports thinking; on the second (the reverse, which the old
+// name TestHasThinkMarkup_BroaderThanSplitThink wrongly excluded) the strip acts
+// while the detector denies. Inputs compose the tag constants so the angle
+// brackets are never hand-typed.
+func TestHasThinkMarkup_AndSplitThink_AreIndependent(t *testing.T) {
+	// Direction 1: the strip leaves the tag in place, the detector still reports it.
 	for _, content := range []string{
-		"answer <think>x</think> more",
-		"ATCR-OK-n\n<think>let me double check",
+		"answer " + thinkOpen + "x" + thinkClose + " more",
+		"ATCR-OK-n\n" + thinkOpen + "let me double check",
 		// The bare closer joined this list on 2026-09-30: the strip stopped
 		// removing it, the detector still reports it.
-		"draft</think>answer",
+		"draft" + thinkClose + "answer",
 	} {
 		answer, reasoning := SplitThink(content)
 		assert.Equal(t, content, answer, "the strip leaves a non-leading tag in place")
 		assert.Empty(t, reasoning, "the strip removes nothing")
 		assert.True(t, HasThinkMarkup(content), "the detector still reports thinking")
+	}
+
+	// Direction 2 (the reverse): the strip consumes the leading run while the
+	// detector, which requires NON-BLANK markup holding text, denies it. The
+	// detector is therefore not a superset of the strip - the name this test used
+	// to carry asserted an invariant that is false.
+	for _, content := range []string{
+		thinkOpen,                       // unclosed opener, blank remainder
+		thinkOpen + "   ",               // unclosed opener, whitespace remainder
+		thinkOpen + "\n\n" + thinkClose, // empty pair as the entire content
+	} {
+		answer, _ := SplitThink(content)
+		assert.Empty(t, answer, "the strip consumes a leading run with no answer text")
+		assert.False(t, HasThinkMarkup(content), "the detector denies markup that holds no text")
 	}
 }
 
