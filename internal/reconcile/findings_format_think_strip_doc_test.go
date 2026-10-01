@@ -62,7 +62,7 @@ func TestFindingsFormatDoc_StatesTheThinkStrip(t *testing.T) {
 		answer, reasoning := llmclient.SplitThink("<think>draft</think>Real answer.")
 		assert.Equal(t, "Real answer.", answer,
 			"the leading think run is what T4's strip removes; a doc claiming so must fail when the strip stops removing it")
-		assert.Equal(t, "draft", reasoning,
+		assert.Equal(t, llmclient.Reasoning("draft"), reasoning,
 			"the removed run is returned as reasoning, not dropped on the floor")
 
 		nonLeading, nonLeadingRemoved := llmclient.SplitThink("Real answer. <think>quoted</think>")
@@ -96,7 +96,7 @@ func TestFindingsFormatDoc_StatesTheThinkStrip(t *testing.T) {
 		cutOff, cutOffReasoning := llmclient.SplitThink("<think>cut off mid-thought")
 		assert.Empty(t, cutOff,
 			"a reply cut off inside an unclosed opener has no answer text once the run is taken as reasoning")
-		assert.Equal(t, "cut off mid-thought", cutOffReasoning,
+		assert.Equal(t, llmclient.Reasoning("cut off mid-thought"), cutOffReasoning,
 			"everything after the unclosed opener is reasoning, which is what makes the doc's loss real")
 	})
 
@@ -243,7 +243,7 @@ func TestProvidersDoc_SalvageYieldsNoFindings(t *testing.T) {
 		stripped, removed := llmclient.SplitThink("<think>reasoning</think>Answer body.")
 		assert.Equal(t, "Answer body.", stripped,
 			"a leading run is stripped from the content before parsing, which is what this bullet promises")
-		assert.Equal(t, "reasoning", removed,
+		assert.Equal(t, llmclient.Reasoning("reasoning"), removed,
 			"the strip is not a no-op: it removes the run rather than passing the reply through")
 		kept, _ := llmclient.SplitThink("Answer body. <think>a quoted tag</think>")
 		assert.Equal(t, "Answer body. <think>a quoted tag</think>", kept,
