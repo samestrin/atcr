@@ -92,6 +92,15 @@ type OverflowItem struct {
 	Line     int    `json:"line"`
 	Kind     string `json:"kind"`
 	Severity string `json:"severity"`
+	// Problem completes the File+Line+Problem triple a finding is keyed by, so a
+	// withheld record can be matched back to its item on the next run. Two
+	// findings can share a location, so File+Line alone is not an identity.
+	Problem string `json:"problem,omitempty"`
+	// UnresolvedAttempts carries the recorded attempt count onto the withheld
+	// record. Without it the count lives only on a debated item, so the run that
+	// withholds an item erases the history that withheld it and the next run
+	// re-debates it — the ceiling would hold for exactly one run.
+	UnresolvedAttempts int `json:"unresolved_attempts,omitempty"`
 	// Reason names why the item was not debated when it is something other than
 	// the max_items cap. Empty means the cap, which is the original and still the
 	// common case, so an existing record is byte-identical.
@@ -308,11 +317,47 @@ func ReadDebateFile(reviewDir string) (df DebateFile, found bool, err error) {
 	return df, true, nil
 }
 
+// priorUnresolvedAttempts returns, per finding key, how many prior runs reached
+// the item and left it unresolved. It reads both the debated items and the
+// withheld overflow records: a withheld item has no item entry in the run that
+// withheld it, so reading items alone would reset the count every other run.
+//
+// A recorded zero on an unresolved item is a record written before the count
+// existed, so it counts as the one attempt it provably was rather than as none.
+func priorUnresolvedAttempts(reviewDir string) map[FindingKey]int {
+	df, found, err := ReadDebateFile(reviewDir)
+	if err != nil || !found {
+		return nil
+	}
+	out := map[FindingKey]int{}
+	for _, it := range df.Items {
+		if it.Outcome != OutcomeUnresolved {
+			continue
+		}
+		n := it.UnresolvedAttempts
+		if n < 1 {
+			n = 1
+		}
+		out[FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}] = n
+	}
+	for _, ov := range df.Overflow {
+		if ov.Reason != OverflowAttemptsExhausted {
+			continue
+		}
+		n := ov.UnresolvedAttempts
+		if n < maxUnresolvedAttempts {
+			n = maxUnresolvedAttempts
+		}
+		out[FindingKey{File: ov.File, Line: ov.Line, Problem: ov.Problem}] = n
+	}
+	return out
+}
+
 // overflowItems projects the selector's overflow into the recorded shape.
 func overflowItems(items []reconcile.DisagreementItem) []OverflowItem {
 	out := make([]OverflowItem, 0, len(items))
 	for _, it := range items {
-		out = append(out, OverflowItem{File: it.File, Line: it.Line, Kind: it.Kind, Severity: it.Severity})
+		out = append(out, OverflowItem{File: it.File, Line: it.Line, Kind: it.Kind, Severity: it.Severity, Problem: it.Problem})
 	}
 	return out
 }

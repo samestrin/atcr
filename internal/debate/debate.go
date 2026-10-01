@@ -175,6 +175,14 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// provider calls. Overturned findings are already excluded (refuted) by the radar;
 	// unresolved items are intentionally retried (roles may have been configured since).
 	df.Items = filterAlreadyDebated(df.Items, findings)
+	// Idempotency, the unresolved half: an unresolved item writes no Verification,
+	// so the filter above cannot see it and it re-enters the radar on every run.
+	// Withhold the ones that already burned maxUnresolvedAttempts and disclose
+	// them as skipped work, so a never-converging item stops re-paying three seats
+	// instead of looping forever.
+	attempts := priorUnresolvedAttempts(reviewDir)
+	var withheld []OverflowItem
+	df.Items, withheld = withholdExhausted(ctx, df.Items, attempts)
 	sel := SelectItems(df, cfg)
 
 	// Build the harness only when there is work (mirrors verify): a run with
@@ -283,6 +291,12 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 
 	var mergeClusters []reclib.AmbiguousCluster
 	for _, oc := range outcomes {
+		if oc.ir.Outcome == OutcomeUnresolved {
+			// Carry the count forward on the record itself: this is the only place
+			// an unresolved item's history is written, and the ceiling is only
+			// reachable if each run adds its own attempt to the prior total.
+			oc.ir.UnresolvedAttempts = attempts[FindingKey{File: oc.ir.File, Line: oc.ir.Line, Problem: oc.ir.Problem}] + 1
+		}
 		items = append(items, oc.ir)
 		tally(&res, oc.ir)
 		if oc.apply {
@@ -322,7 +336,7 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	debatePath, debateBytes, err := computeDebateBytes(reviewDir, DebateFile{
 		SchemaVersion: DebateSchemaVersion,
 		Items:         items,
-		Overflow:      overflowItems(sel.Overflow),
+		Overflow:      append(overflowItems(sel.Overflow), withheld...),
 	})
 	if err != nil {
 		return Result{}, err
@@ -448,9 +462,38 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	}
 
 	res.Selected = len(sel.Selected)
-	res.Overflow = len(sel.Overflow)
+	res.Overflow = len(sel.Overflow) + len(withheld)
 	res.DurationMs = int(time.Since(start).Milliseconds())
 	return res, nil
+}
+
+// withholdExhausted splits items into the ones still worth debating and the ones a
+// prior run already left unresolved maxUnresolvedAttempts times. The second group
+// comes back as overflow records so the run DISCLOSES what it withheld: a silent
+// drop would read as "nothing was disputed", which is the opposite of the truth.
+//
+// It runs before SelectItems so a withheld item does not consume a max_items slot
+// that a debatable item could use.
+func withholdExhausted(ctx context.Context, items []reconcile.DisagreementItem, attempts map[FindingKey]int) ([]reconcile.DisagreementItem, []OverflowItem) {
+	if len(attempts) == 0 {
+		return items, nil
+	}
+	kept := make([]reconcile.DisagreementItem, 0, len(items))
+	var withheld []OverflowItem
+	for _, it := range items {
+		n := attempts[FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}]
+		if n < maxUnresolvedAttempts {
+			kept = append(kept, it)
+			continue
+		}
+		withheld = append(withheld, OverflowItem{
+			File: it.File, Line: it.Line, Kind: it.Kind, Severity: it.Severity,
+			Problem: it.Problem, Reason: OverflowAttemptsExhausted, UnresolvedAttempts: n,
+		})
+		log.FromContext(ctx).Warn("debate: item withheld, unresolved attempts exhausted",
+			"file", it.File, "line", it.Line, "attempts", n)
+	}
+	return kept, withheld
 }
 
 // filterAlreadyDebated removes radar items whose finding a prior debate already
