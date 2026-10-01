@@ -922,10 +922,17 @@ func TestRunDebate_TranscriptRecordsTheStrippedReasoning(t *testing.T) {
 // T3 strip opened, and both must resolve the same way or the guard is keyed on
 // the wrong fact.
 func TestRunDebate_BlankArguingSeatIsUnresolvedEvenWhenNotHalted(t *testing.T) {
-	for _, tc := range []struct{ name, reply string }{
-		{"plain empty reply", ""},
-		{"whitespace-only reply", "   \n  "},
-		{"reply that was entirely a think block", "<think>only reasoning</think>"},
+	// wantReason separates the two ways an arguing seat leaves no statement. A
+	// genuinely empty reply said nothing; a think-only reply SAID something the
+	// strip removed, and TD internal/debate/debate.go:524 is that collapsing the
+	// two lets any seat veto the item with one `<think>` token and no trace —
+	// the seat prompt carries reviewer-authored finding text quoting the diff, so
+	// a second-order injection reaches it. The outcome is unresolved either way;
+	// only the recorded reason tells the operator which happened.
+	for _, tc := range []struct{ name, reply, wantReason string }{
+		{"plain empty reply", "", ReasonSeatSilent},
+		{"whitespace-only reply", "   \n  ", ReasonSeatSilent},
+		{"reply that was entirely a think block", "<think>only reasoning</think>", ReasonSeatSuppressed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
@@ -947,7 +954,8 @@ func TestRunDebate_BlankArguingSeatIsUnresolvedEvenWhenNotHalted(t *testing.T) {
 			var df DebateFile
 			raw, _ := os.ReadFile(filepath.Join(dir, reconciledSubdir, DebateJSON))
 			require.NoError(t, json.Unmarshal(raw, &df))
-			assert.Equal(t, ReasonSeatSilent, df.Items[0].Reason)
+			assert.Equal(t, tc.wantReason, df.Items[0].Reason,
+				"a statement the strip emptied must not be reported as a seat that had nothing to say")
 		})
 	}
 

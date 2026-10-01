@@ -44,9 +44,20 @@ const (
 // (the convention in CLAUDE.md, per justification_record_boundary_test.go) —
 // internal/reconcile/ asserts bare string literals there instead, because it
 // cannot import internal/debate without an import cycle.
+// ReasonSeatSuppressed is the third token, and it is a security disclosure, not a
+// nicety: driveSeat's strip blanks a statement on a LEADING `<think>` alone (an
+// unclosed opener needs no closer), and silentArguingSeats turns a blank arguing
+// statement into a hard unresolved before the judge's ruling is read. Collapsed
+// into seat_silent, that let any arguing seat veto the item by emitting one token
+// — reachable by second-order injection, since the seat prompt embeds
+// reviewer-authored finding text quoting the diff under review. The veto itself is
+// not removed here (rejecting the reply would change debate semantics beyond this
+// row); it is made VISIBLE, so a roster blanking every item on an inline-reasoning
+// endpoint reads as suppression rather than as three seats with nothing to say.
 const (
-	ReasonSeatHalted = "seat_halted"
-	ReasonSeatSilent = "seat_silent"
+	ReasonSeatHalted     = "seat_halted"
+	ReasonSeatSilent     = "seat_silent"
+	ReasonSeatSuppressed = "seat_suppressed"
 )
 
 // Caster is one filled debate seat: the label, the backing registry agent, and
