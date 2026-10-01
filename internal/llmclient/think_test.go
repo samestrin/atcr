@@ -32,6 +32,14 @@ func TestSplitThink(t *testing.T) {
 		// correctly off: stripped, but not a signal.
 		{name: "empty pair", content: "<think>\n\n</think>answer",
 			wantAnswer: "answer", wantReasoning: "\n\n", wantSignal: false},
+		// Content that is ONLY an empty pair: the strip consumes the leading run
+		// and returns an empty answer, while HasThinkMarkup reports false (an
+		// empty pair holds no text). The divergence is deliberate — the strip
+		// answers "what do I remove", the detector "did it think" — and is pinned
+		// here and in TestHasThinkMarkup so a future alignment in either
+		// direction fails a test first (TD row think.go:108).
+		{name: "empty pair as the entire content", content: "<think>\n\n</think>",
+			wantAnswer: "", wantReasoning: "\n\n", wantSignal: false},
 		// An empty first pair must not hide a real block after it: both pairs are
 		// leading, so both are consumed.
 		{name: "multiple leading pairs", content: "<think></think><think>real reasoning</think>answer",
@@ -131,6 +139,10 @@ func TestHasThinkMarkup(t *testing.T) {
 		{name: "no tags at all", content: "just an answer", want: false},
 		{name: "leading pair with text", content: "<think>plan</think>answer", want: true},
 		{name: "empty leading pair", content: "<think>\n\n</think>answer", want: false},
+		// Entirely-markup content: the strip consumes it, the detector denies it.
+		// Deliberate divergence, pinned here and in TestSplitThink (TD row
+		// think.go:108).
+		{name: "empty pair as the entire content", content: "<think>\n\n</think>", want: false},
 		{name: "empty pair then a real block", content: "<think></think><think>real</think>answer", want: true},
 		{name: "unclosed leading opener with text", content: "<think>still going", want: true},
 		{name: "unclosed leading opener with blank remainder", content: "<think>   ", want: false},
