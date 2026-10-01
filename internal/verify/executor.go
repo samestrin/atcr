@@ -791,7 +791,13 @@ func invokeExecutor(ctx context.Context, ex *registry.ExecutorConfig, prov regis
 	// by --auto-fix. Masked, for the reason the verify lane states: tags inside a
 	// JSON string value are the model DISCUSSING think handling and must keep
 	// parsing (TD internal/llmclient/think.go:80).
-	if llmclient.HasThinkMarkup(maskJSONStrings(answer)) {
+	//
+	// HasEnclosingThinkBlock, the same predicate invoke.go uses and for the same
+	// reason: a draft needs an opener to sit in. HasThinkMarkup's bare-closer rule
+	// is doctor's, and adopting it here refused a VALID fix from any reply whose
+	// prose named </think> — dropping the repair entirely, which is a worse outcome
+	// here than in the verify lane (TD internal/verify/executor.go:794).
+	if llmclient.HasEnclosingThinkBlock(maskJSONStrings(answer)) {
 		return "", "agent_mode refused: think markup outside a JSON string survived the strip, so the first fix envelope may be a draft the model discarded", res.ResponseTruncated
 	}
 	fix, err := parseExecutorResponse(answer)
