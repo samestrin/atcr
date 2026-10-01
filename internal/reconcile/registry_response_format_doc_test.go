@@ -11,7 +11,7 @@ import (
 //
 // Doctor's response_format probe checks the RAW reply (its bare-object test
 // reads the first byte of the unstripped content), while the review lane strips
-// a leading inline `৽…ʙʙʙ` block before `parseFindings` runs. An endpoint that
+// a leading inline `<think>` block before `parseFindings` runs. An endpoint that
 // reasons inline and wraps its JSON object in a leading block therefore reads
 // as `not_honored` to doctor while the review lane parses the same reply fine —
 // an operator who follows the doc's "do not declare it" remedy drops a working
@@ -21,7 +21,7 @@ func TestDocs_ResponseFormatNotHonoredDisclosesTheThinkStrip(t *testing.T) {
 	doc := readDoc(t, "registry.md")
 	line := docLineContaining(t, doc, "`not_honored` means the provider rejected the request")
 
-	assert.Contains(t, line, "leading inline `৽…ʙʙʙ`",
+	assert.Contains(t, line, "leading inline `<think>`",
 		"the cause list must name the inline-think shape that triggers the false negative")
 	assert.Contains(t, line, "the probe checks the RAW reply",
 		"the caveat must state the divergence: doctor tests raw content, the review lane parses think-stripped content")
