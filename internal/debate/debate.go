@@ -561,10 +561,13 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 		// transcript note labels each seat for itself.
 		notes := seatSilenceNotes(rec.Halted, rec.Suppressed, silent)
 		tr.RecordRuling(RulingEvent{Outcome: OutcomeUnresolved, Reasoning: "no statement: " + strings.Join(notes, ", ")})
-		// The token in debate.json says only seat_silent/seat_halted; put the
-		// per-seat cause next to it and warn, so a seat that blanks every item
-		// (an inline-reasoning endpoint, most often) is visible to the operator
-		// instead of surfacing as a bare Unresolved count.
+		// The token in debate.json names one cause for the whole item and goes
+		// weak on a mixture; put the per-seat cause next to it and warn, so a seat
+		// that blanks every item (an inline-reasoning endpoint, most often) is
+		// visible to the operator instead of surfacing as a bare Unresolved count.
+		// The notes carry `suppressed` per seat even when the item-level token
+		// fell back to seat_silent, which is the only place a mixture's detail
+		// survives.
 		ir.Reasoning = "no statement: " + strings.Join(notes, ", ")
 		log.FromContext(ctx).Warn("debate: silent arguing seat(s), item unresolved", "seats", strings.Join(notes, ", "))
 		return ir
@@ -707,7 +710,12 @@ func seatSilenceNotes(halted, suppressed, seats []string) []string {
 // judgeHalted reports whether the judge seat is among the halted seats. A halted
 // judge yields no ruling at all; a proposer/challenger with no statement yields a
 // one-sided one, which debateOne also records unresolved — reason seat_halted
-// when that seat halted, seat_silent when it ran clean and said nothing.
+// when that seat halted, seat_suppressed when the strip emptied its reply, and
+// seat_silent when it ran clean and genuinely said nothing (or on a mixture).
+//
+// Keyed on Halted alone, with no suppression arm: a judge that replies with only
+// a think block leaves JudgeRaw blank, and parseRuling already reports that as
+// the distinct empty_ruling token rather than as a halt.
 func judgeHalted(halted []string) bool {
 	return slices.Contains(halted, LabelJudge)
 }
