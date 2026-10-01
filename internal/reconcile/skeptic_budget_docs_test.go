@@ -292,20 +292,62 @@ func TestDocs_CrossExaminationStatesTheSilentSeatRule(t *testing.T) {
 	// this guard therefore lives in cli/, which can import both: see
 	// TestDocs_DebateReasonTokensMatchTheConstants. Same split the benchmark
 	// outcome vocabulary uses for the same reason.
-	for _, reason := range []string{"seat_halted", "seat_silent", "no_resolvable_proposer", "insufficient_distinct_models"} {
+	// The two SEAT tokens only: they are this bullet's subject, because the rule
+	// that picks between them is per-seat behavior the budgets bullet owns. The
+	// rest of the vocabulary moved to the reconciled/debate.json Artifacts row and
+	// is pinned there by
+	// TestDocs_CrossExaminationPublishesTheUnresolvedReasonVocabulary.
+	for _, reason := range []string{"seat_halted", "seat_silent"} {
 		assert.Contains(t, bullet, "`"+reason+"`",
 			"a reason string that appears in debate.json and in no document is a reason an operator cannot look up")
 	}
 	assert.Contains(t, bullet, "every silent seat halted",
 		"the two reasons are kept apart on purpose, and the rule that picks between them is what an operator needs: a mixed pair reports the weaker one")
+	// The FULL vocabulary enumeration moved to the reconciled/debate.json Artifacts
+	// row: it is a fact about that artifact, not about budgets, and the bullet was
+	// carrying 1361 characters and 15 substring constraints because of it. The
+	// two SEAT tokens stay here, because the rule that picks between them is
+	// per-seat behavior this bullet owns.
+}
 
-	// The list used to claim completeness while omitting four reasons the code
-	// writes. A falsely-complete enumeration is worse than none, because a
-	// reader stops looking.
-	for _, reason := range []string{"context_cancelled", "no_cluster_decision", "harness_unavailable", "unparseable_ruling", "judge_halted"} {
-		assert.Contains(t, bullet, "`"+reason+"`",
-			"the bullet enumerates debate.json's unresolved reasons, so an omitted one reads as a reason that cannot occur")
+// TestDocs_CrossExaminationPublishesTheUnresolvedReasonVocabulary pins the
+// reconciled/debate.json row of the Artifacts table against the vocabulary
+// internal/debate records.
+//
+// The enumeration used to live in the **Per-seat budgets** bullet, which is a
+// COST CONTROLS bullet: it grew to 1361 characters carrying the complete
+// unresolved-reason vocabulary, and two tests asserted against that one line, so
+// the guard itself pressured a future editor to keep the content misplaced. A
+// vocabulary is a property of the artifact that records it, so it belongs with
+// the reconciled/debate.json row.
+//
+// The completeness argument is unchanged, and is why a row-scoped guard is worth
+// having: the list once claimed completeness while omitting reasons the code
+// writes, and a falsely-complete enumeration is worse than none because a reader
+// stops looking.
+func TestDocs_CrossExaminationPublishesTheUnresolvedReasonVocabulary(t *testing.T) {
+	doc := readDoc(t, "cross-examination.md")
+	row := docTableRow(t, doc, "reconciled/debate.json")
+
+	// Reason tokens as LITERALS here, deliberately. internal/debate imports
+	// internal/reconcile, so this package cannot import it back to anchor on
+	// debate.ReasonSeatHalted — the cycle forbids it. The code-anchored half of
+	// this guard therefore lives in cli/, which can import both: see
+	// TestDocs_DebateReasonTokensMatchTheConstants. Same split the benchmark
+	// outcome vocabulary uses for the same reason.
+	for _, reason := range []string{
+		"seat_halted", "seat_silent",
+		"judge_halted", "unparseable_ruling", "empty_ruling",
+		"harness_unavailable", "context_cancelled", "no_cluster_decision",
+		"no_resolvable_proposer", "insufficient_distinct_models",
+	} {
+		assert.Contains(t, row, "`"+reason+"`",
+			"the debate.json artifact row publishes the unresolved-reason vocabulary, so an omitted one reads as a reason that cannot occur")
 	}
+	assert.Contains(t, row, "unresolved",
+		"the row must say these are the UNRESOLVED reasons — they explain a ruling that is absent, not the quality of one that was made")
+	assert.Contains(t, row, "must appear here",
+		"the row is the home of the vocabulary, so it must state the obligation that keeps it complete rather than leaving the list to drift")
 }
 
 // TestDocs_CrossExaminationStatesTheThinkStrip pins the transcript row against
