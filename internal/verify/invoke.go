@@ -171,6 +171,24 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 	// client.go:169). That is deliberate: Completion.Reasoning stays the only
 	// reasoning channel, and this reply did not populate it.
 	answer, _ := llmclient.SplitThink(res.Content)
+	// A fourth guard, reached only by a reply the strip left untouched. The strip
+	// is LEADING-ONLY, so one character of prose before the block defeats it: the
+	// reply `Let me check.\n<block>{draft}</block>\n{real}` keeps the draft as its
+	// first verdict-keyed object and parseVerdict would grade the discarded draft
+	// as the skeptic's answer — charged to reviewer precision as a full read.
+	//
+	// Refuse to parse when the reply carries markup the strip could not remove.
+	// The discrimination runs on the string-masked copy: a tag sequence that
+	// appears only INSIDE a JSON string value is the skeptic QUOTING the tag while
+	// judging think-handling code, and must keep parsing (that reply is the
+	// likeliest input in this repo); a tag sequence that survives masking encloses
+	// real reply text, so the object after it is a draft. Masking is what keeps
+	// the guard from reversing the leading-only design it exists to defend.
+	if answer == res.Content && llmclient.HasThinkMarkup(maskJSONStrings(res.Content)) {
+		logger.Warn("skeptic failed", "skeptic", skeptic.Name, "class", "think_markup_after_answer")
+		logger.Debug("skeptic failure detail", "skeptic", skeptic.Name, "class", "think_markup_after_answer", "detail", "think markup outside a JSON string is not leading, so the first verdict-keyed object may be a discarded draft")
+		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "think_markup_after_answer", Skeptic: skeptic.Name}, res.TrippedBudgets, nil
+	}
 	v, _ := parseVerdict(answer)
 	v.Skeptic = skeptic.Name
 	if v.Verdict == verdictUnverifiable {
@@ -561,6 +579,42 @@ func failureClass(res fanout.Result) string {
 // detail — which can carry provider error bodies and path-bearing context — is
 // held to Debug so it does not leak at the default level (mirrors the path-at-
 // debug discipline used across the engine wiring).
+// maskJSONStrings blanks the contents of every JSON double-quoted string literal
+// in s, preserving length and every byte outside a literal. String-awareness
+// mirrors extractJSONObject: a backslash escapes the next byte, and an unclosed
+// literal masks to end of input. The result is used only for tag DETECTION — a
+// think tag that survives the mask is markup enclosing reply text, while a tag
+// that appears solely inside a string value is a quotation of the tag and must
+// not be read as thinking.
+func maskJSONStrings(s string) string {
+	b := []byte(s)
+	inStr, escaped := false, false
+	for i := 0; i < len(b); i++ {
+		c := b[i]
+		if !inStr {
+			if c == '"' {
+				inStr = true
+			}
+			continue
+		}
+		if escaped {
+			escaped = false
+			b[i] = ' '
+			continue
+		}
+		switch c {
+		case '\\':
+			escaped = true
+			b[i] = ' '
+		case '"':
+			inStr = false
+		default:
+			b[i] = ' '
+		}
+	}
+	return string(b)
+}
+
 func logSkepticFailure(logger *slog.Logger, skeptic, class, detail string) {
 	detail = strings.ReplaceAll(detail, "\n", " ")
 	logger.Warn("skeptic failed", "skeptic", skeptic, "class", class)
