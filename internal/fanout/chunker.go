@@ -278,15 +278,17 @@ func promoteDiffTruncation(r Result) Result {
 // a marker.
 //
 // Engine-owned framing: model content may never produce this literal on a line
-// of its own — joinChunkContents neutralises any chunk output line that does
-// before splicing real boundaries, so a forged marker cannot reshape how
-// reconcile splits the merged review.md.
+// of its own. Two writers enforce that, because review.md has two producers.
+// joinChunkContents neutralises any chunk output line that does before splicing
+// real boundaries; writeAgentArtifacts neutralises an UNCHUNKED agent's reply,
+// which the join never sees. Either gap passes a forged marker through and lets
+// it reshape how reconcile splits the merged review.md.
 const chunkBoundaryLine = "<!-- atcr:chunk-boundary -->"
 
 // joinChunkContents newline-joins chunk outputs, inserting chunkBoundaryLine
 // between them when more than one chunk produced content. Fewer than two
-// content chunks join exactly as before, so a single-call persona's review.md
-// is byte-identical to its model output.
+// content chunks insert no delimiter, so a single-call persona's review.md is
+// its model output — neutralised, which is the one way it can differ.
 //
 // The delimiter is engine-owned framing that model content may never produce:
 // internal/reconcile's chunkSegmentBounds splits the joined text on exact line
@@ -298,12 +300,17 @@ const chunkBoundaryLine = "<!-- atcr:chunk-boundary -->"
 // inserts itself survive verbatim. Pinned by
 // TestJoinChunkContents_ModelForgedBoundaryIsNeutralised.
 func joinChunkContents(contents []string) string {
-	if len(contents) < 2 {
-		return strings.Join(contents, "\n")
-	}
+	// Neutralise FIRST, for every length. The short-circuit below inserts no
+	// delimiter of its own, which is exactly why it must still run: a one-element
+	// join — the ordinary outcome when a persona's payload fits a single chunk —
+	// would otherwise pass a model-issued delimiter through untouched, and every
+	// exact match in that output is a forgery by construction.
 	neutralised := make([]string, len(contents))
 	for i, c := range contents {
 		neutralised[i] = neutraliseChunkBoundary(c)
+	}
+	if len(neutralised) < 2 {
+		return strings.Join(neutralised, "\n")
 	}
 	return strings.Join(neutralised, "\n"+chunkBoundaryLine+"\n")
 }

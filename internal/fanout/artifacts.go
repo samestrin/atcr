@@ -483,7 +483,18 @@ func writeAgentArtifacts(poolDir, dir string, r Result, fr findingsResult) error
 	if err := os.MkdirAll(agentDir, 0o755); err != nil {
 		return fmt.Errorf("creating agent dir for '%s': %w", r.Agent, err)
 	}
-	if err := atomicWriteFile(filepath.Join(agentDir, reviewFile), []byte(r.Content)); err != nil {
+	// An UNCHUNKED agent's review.md is the raw reply, so the join never ran and
+	// nothing neutralised a model-issued chunkBoundaryLine in it. Neutralise here,
+	// but ONLY on that path: a chunked agent's Content already came through
+	// joinChunkContents, which neutralised the model's copies and then inserted
+	// the engine's REAL delimiters — and the two are byte-identical at this point,
+	// so neutralising again would destroy the framing chunkSegmentBounds needs.
+	// chunkContents == nil is the same unchunked test parseFindings uses.
+	content := r.Content
+	if r.chunkContents == nil {
+		content = neutraliseChunkBoundary(content)
+	}
+	if err := atomicWriteFile(filepath.Join(agentDir, reviewFile), []byte(content)); err != nil {
 		return fmt.Errorf("writing review.md for '%s': %w", r.Agent, err)
 	}
 	if err := writeFindings(filepath.Join(agentDir, findingsFile), fr.Findings); err != nil {
