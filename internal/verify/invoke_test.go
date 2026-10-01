@@ -1906,3 +1906,24 @@ func TestInvokeSkeptic_RefusesAVerdictParsedFromNonLeadingThinkMarkup(t *testing
 		assert.Equal(t, "the handler drops text between <think> and </think>", v.Notes)
 	})
 }
+
+// TestInvokeSkeptic_NamesAThinkOnlyReplyInTheNote pins the note a think-only reply
+// records. parseVerdict's Notes field is documented to "preserve the raw text" for
+// diagnosis, but the strip feeds it the blank answer: a reply that is one unclosed
+// <think> opener yielded Notes "empty_response" and logged class "malformed_output",
+// although the provider returned a full content-bearing reply. The raw text must
+// stay recoverable (verify invoke.go:175).
+func TestInvokeSkeptic_NamesAThinkOnlyReplyInTheNote(t *testing.T) {
+	t.Parallel()
+	body := "I think the finding is real but I ran out of room"
+	raw := "<think>" + body
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	assert.Equal(t, verdictUnverifiable, v.Verdict,
+		"nothing outside the block is an answer, so no verdict may be charged to reviewer precision")
+	assert.NotEqual(t, "empty_response", v.Notes,
+		"the provider returned a content-bearing reply — the note must not claim it was empty")
+	assert.Contains(t, v.Notes, body,
+		"the raw reasoning must stay recoverable from the note")
+}
