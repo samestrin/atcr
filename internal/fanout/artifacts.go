@@ -67,6 +67,14 @@ type PoolSummary struct {
 	// "does this run contain any substitution worth reconciling" signal without
 	// walking every Agents entry.
 	FallbackCount int `json:"fallback_count"`
+	// SalvagedCount is the run-level tally of agents whose reply was salvaged —
+	// the client found no answer and promoted the reasoning channel into Content,
+	// so parseFindings refused it and the agent contributed nothing. Like
+	// TruncatedZeroFindings and FallbackCount it is ALWAYS present, so a 0 is
+	// distinguishable from an older summary.json that predates the field. Derived
+	// from the per-agent statuses (tallySalvaged) rather than from the results, so
+	// writePool and the resume path's RebuildPool cannot drift.
+	SalvagedCount int `json:"salvaged_count"`
 	// FailureMarker is true only when writeFailureSummary produced this record
 	// after a WritePool I/O fault, never when WritePool wrote a real run. It
 	// makes the summary unambiguously a best-effort marker: a write-phase
