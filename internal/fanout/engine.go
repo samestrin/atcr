@@ -927,6 +927,7 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 // by name still follows the slot — only the coverage tag follows the server.
 func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 	start := time.Now()
+	thinkOnlyAttempts := 0
 	chain := append([]Agent{s.Primary}, s.Fallbacks...)
 	var last Result
 	for i, a := range chain {
@@ -980,6 +981,12 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 			r.ParsedFindingCount() == 0 {
 			r.Status = StatusFailed
 			r.Err = errTruncatedZeroFindings
+			// A truncated reply whose content was WHOLLY a think run fails
+			// identically on every chain member (same tag habit) — count it so the
+			// end-of-walk line can name the wasted spend (TD engine.go:602).
+			if answer, _ := llmclient.SplitThink(r.Content); answer == "" {
+				thinkOnlyAttempts++
+			}
 			log.FromContext(ctx).Warn("reviewer response truncated with zero findings; failing over",
 				"agent", a.Name, "model", a.Invocation.Model)
 		}
@@ -1056,6 +1063,15 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 			}
 		}
 		if r.Status == StatusOK {
+			// Think-only reply: every chain member that reasons inline fails
+			// identically (the backup models are usually the same family with the
+			// same tag habit), so count how many attempts a wholly-reasoning reply
+			// burned. The failover cost itself is pinned accepted loss (sprint-plan
+			// §4.2, TD engine.go:602); this is that FIX's stated minimum — the
+			// operator must SEE the wasted spend.
+			if r.ThinkSuppressed {
+				thinkOnlyAttempts++
+			}
 			r.DurationMS = time.Since(start).Milliseconds()
 			// The coverage evidence this slot produced is the SERVING agent's, not
 			// the slot's (Epic 35.16.5.4 T3). For the primary and for a fallback that
@@ -1088,6 +1104,15 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 	// diagnosability fields. The last attempt may have been a fallback with its own
 	// budget/window, but the slot is reported under the primary's name, so the
 	// sizing signal must describe the primary's regime.
+	//
+	// The walk is over: if think-only replies burned attempts, say so in one warn
+	// line — N backup calls bought zero findings because the replies were wholly
+	// reasoning (TD engine.go:602). The failover cost stays pinned accepted loss;
+	// this only makes it visible instead of discoverable by diffing status.json.
+	if thinkOnlyAttempts > 0 {
+		log.FromContext(ctx).Warn("think-only replies exhausted the fallback chain: the walk bought zero findings",
+			"agent", s.Primary.Name, "attempts", len(chain), "think_only_attempts", thinkOnlyAttempts)
+	}
 	last.Agent = s.Primary.Name
 	last.PayloadMode = s.Primary.PayloadMode
 	last.Truncation = s.Primary.Truncation

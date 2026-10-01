@@ -21,31 +21,42 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/log"
 )
 
-// thinkOnlyCompleter returns the same think-only reply for every chain member.
+// thinkOnlyCompleter returns the same TRUNCATED think-only reply for every
+// chain member — the waste shape: truncation demotes the reply, the chain
+// descends, and every member fails identically because it reasons inline.
 type thinkOnlyCompleter struct{ content string }
 
 func (s *thinkOnlyCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
 	return s.content, nil
 }
 
+func (s *thinkOnlyCompleter) CompleteWithMeta(_ context.Context, _ llmclient.Invocation) (llmclient.Completion, error) {
+	return llmclient.Completion{Content: s.content, Truncated: true}, nil
+}
+
 func TestInvokeSlot_ThinkOnlyChain_LogsTheWastedWalk(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
-	e := NewEngine(&thinkOnlyCompleter{content: "<think\ncareful reasoning, no findings ever"},
+	e := NewEngine(&thinkOnlyCompleter{content: "<think>\ncareful reasoning, no findings ever"},
 		WithLogger(logger), WithTruncationFailover())
 
 	slot := Slot{
 		Primary:   Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "thinker-primary"}},
 		Fallbacks: []Agent{{Name: "bruce", Invocation: llmclient.Invocation{Model: "thinker-backup-a"}}, {Name: "bruce", Invocation: llmclient.Invocation{Model: "thinker-backup-b"}}},
 	}
-	r := e.invokeSlot(context.Background(), slot)
+	// The walk's warn lines go to the CONTEXT logger (log.FromContext), which
+	// ExecuteReview seeds — WithLogger alone is the invokeAgent-scoped path.
+	ctx := log.NewContext(context.Background(), logger)
+	r := e.invokeSlot(ctx, slot)
 
-	require.True(t, r.UnparseableResponse, "the last member still records unparseable")
+	require.ErrorIs(t, r.Err, errTruncatedZeroFindings,
+		"a truncated think-only reply demotes to the truncated-zero-findings failure")
 	out := buf.String()
 	require.Contains(t, out, "think-only",
 		"the chain-walk cost log must name the think-only cause")
-	require.Contains(t, out, "3",
-		"the log must state how many attempts were spent (3 chain members)")
+	require.Contains(t, out, "think_only_attempts=3",
+		"the log must state that all 3 chain members were think-only")
 }
