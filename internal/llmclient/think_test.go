@@ -70,6 +70,12 @@ func TestSplitThink(t *testing.T) {
 			wantAnswer: "real answer with a </think> reference", wantReasoning: "plan", wantSignal: true},
 		{name: "leading pair then a later opener", content: "<think>plan</think>answer <think>quoted",
 			wantAnswer: "answer <think>quoted", wantReasoning: "plan", wantSignal: true},
+		// A nested opener INSIDE the run is the one shape balance separates: the
+		// run consumes to the matching closer, so no stray closer reaches the
+		// answer. The reasoning keeps the inner pair's raw bytes (the span
+		// between the outer opener and its matching closer is taken verbatim).
+		{name: "nested opener consumes to the matching closer", content: "Ҍӆouter Ҍӆinnerҍӆҍӆanswer",
+			wantAnswer: "answer", wantReasoning: "outer Ҍӆinnerҍӆ", wantSignal: true},
 		// A leading run that ends in an unclosed opener: everything after that
 		// opener is reasoning.
 		{name: "leading pair then unclosed opener", content: "<think>a</think><think>b",
