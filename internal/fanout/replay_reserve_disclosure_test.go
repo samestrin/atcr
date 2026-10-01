@@ -51,9 +51,12 @@ func TestBuildOneAgent_ReservedOutputTokensIncludesTheReplayReserve(t *testing.T
 	require.Positive(t, agent.EffectiveBudget, "precondition: a funded agent records its reservation")
 
 	cap := maxTokensFor(cfg, cfg.Registry.Agents["greta"])
-	assert.Equal(t, payload.SizingOutputTokens(true, cap), agent.ReservedOutputTokens,
-		"a tool-loop agent holds back the cap PLUS the replay reserve")
-	assert.Greater(t, agent.ReservedOutputTokens, cap, "precondition: the reserve is more than the cap alone")
+	assert.Equal(t, cap, agent.ReservedOutputTokens,
+		"reserved_output_tokens stays the resolved output cap, as its own test pins it")
+	assert.Equal(t, cap*payload.ReasoningReplayReserveCaps, agent.ReasoningReserveTokens,
+		"the EXTRA reserve a tool-loop agent holds back must be recorded, or the record understates it")
+	assert.Equal(t, payload.SizingOutputTokens(true, cap), agent.ReservedOutputTokens+agent.ReasoningReserveTokens,
+		"the two together must equal the reservation the payload was sized against")
 }
 
 // A single-shot agent replays nothing, so its record and its warning are unchanged.
@@ -62,4 +65,5 @@ func TestBuildOneAgent_SingleShotReservationIsTheCapAlone(t *testing.T) {
 	agent, _, err := buildOneAgent(cfg, "greta", oversizedBlocksPayload(), ReviewRange{Base: "a", Head: "b"}, "", "")
 	require.NoError(t, err)
 	assert.Equal(t, maxTokensFor(cfg, cfg.Registry.Agents["greta"]), agent.ReservedOutputTokens)
+	assert.Zero(t, agent.ReasoningReserveTokens, "a single-shot agent replays nothing, so it reserves nothing extra")
 }

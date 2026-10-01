@@ -177,7 +177,15 @@ type Agent struct {
 	EffectiveBudget      int64
 	ResolvedWindow       int
 	ReservedOutputTokens int
-	DegradationAction    string
+	// ReasoningReserveTokens is the EXTRA output-token reservation a tool-loop
+	// agent's sizing holds back for replayed reasoning, on top of
+	// ReservedOutputTokens. 0 for a single-shot agent (it replays nothing) and for an
+	// unfunded one. Separate from ReservedOutputTokens because that field's value is
+	// the resolved output cap and is pinned as such; the two are read together to
+	// recover the reservation the payload was actually sized against
+	// (TD internal/fanout/review.go:3103).
+	ReasoningReserveTokens int
+	DegradationAction      string
 
 	// ResolvedMaxTokens is the output cap resolved for this agent, recorded
 	// UNCONDITIONALLY whenever the agent was sized — unlike ReservedOutputTokens,
@@ -470,8 +478,11 @@ type Result struct {
 	EffectiveBudget      int64
 	ResolvedWindow       int
 	ReservedOutputTokens int
-	ChunkCount           int
-	DegradationAction    string
+	// ReasoningReserveTokens mirrors Agent.ReasoningReserveTokens: the extra
+	// output-token reservation a tool-loop agent held back for replayed reasoning.
+	ReasoningReserveTokens int
+	ChunkCount             int
+	DegradationAction      string
 
 	// ResolvedMaxTokens is the output cap resolved for this agent, recorded
 	// UNCONDITIONALLY whenever the agent was sized — unlike ReservedOutputTokens,
@@ -1122,6 +1133,7 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 	last.EffectiveBudget = s.Primary.EffectiveBudget
 	last.ResolvedWindow = s.Primary.ResolvedWindow
 	last.ReservedOutputTokens = s.Primary.ReservedOutputTokens
+	last.ReasoningReserveTokens = s.Primary.ReasoningReserveTokens
 	last.ResolvedMaxTokens = s.Primary.ResolvedMaxTokens
 	last.ChunkCount = s.Primary.ChunkTotal
 	last.DegradationAction = s.Primary.DegradationAction
@@ -1202,6 +1214,7 @@ func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
 	r.EffectiveBudget = a.EffectiveBudget
 	r.ResolvedWindow = a.ResolvedWindow
 	r.ReservedOutputTokens = a.ReservedOutputTokens
+	r.ReasoningReserveTokens = a.ReasoningReserveTokens
 	r.ResolvedMaxTokens = a.ResolvedMaxTokens
 	r.ChunkCount = a.ChunkTotal
 	r.DegradationAction = a.DegradationAction

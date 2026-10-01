@@ -1,5 +1,7 @@
 package payload
 
+import "fmt"
+
 // Per-agent payload sizing (Epic 19.10 F2/F3). Once each model's full context
 // window is known (ContextWindowTokens, F1), the reviewer must size the input
 // payload so estimated input tokens fit inside `window - output cap - overhead`,
@@ -250,6 +252,23 @@ const ReasoningReplayReserveCaps = 2
 // single-shot or degraded agent replays nothing and keeps the plain output-cap
 // reservation. It lives here, not in internal/fanout, so review's sizing and
 // doctor's zero-budget pre-flight apply one rule and cannot disagree.
+// ReasoningReserveClause names the replayed-reasoning reserve a tool-loop agent's
+// sizing holds back on top of its output cap, as a clause to append after a message
+// has named that cap. It returns "" for a single-shot agent, which reserves nothing
+// extra and must not be told about a reserve it never paid.
+//
+// It lives here beside SizingOutputTokens, the rule it describes, so doctor's
+// zero-budget hint and review's zero-budget warnings cannot word the same reservation
+// differently — review previously named only the unreserved cap, which made the
+// window-vs-cap arithmetic on screen look like it fit (TD internal/fanout/review.go:3103).
+func ReasoningReserveClause(toolLoop bool, outputTokens int) string {
+	if !toolLoop {
+		return ""
+	}
+	return fmt.Sprintf(", the %d-token replayed-reasoning reserve its tool loop holds back (%d× that cap)",
+		outputTokens*ReasoningReplayReserveCaps, ReasoningReplayReserveCaps)
+}
+
 func SizingOutputTokens(toolLoop bool, outputTokens int) int {
 	if !toolLoop {
 		return outputTokens

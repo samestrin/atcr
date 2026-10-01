@@ -1866,7 +1866,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// toolLoop mirrors the runtime choice: the harness is wired only when the
 		// range has a head (Run), so a range-less review (baseline, diff ingestion)
 		// degrades a tool agent to single-shot and it replays no reasoning.
-		toolLoop := ac.Tools && ac.SupportsFC && rng.Head != ""
+		toolLoop := toolLoopAgent(ac, rng)
 		agentBudget := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, payload.SizingOutputTokens(toolLoop, agentMaxTokens))
 		// agentWindow is the same resolution, in tokens. Both are resolved ONCE here
 		// and referenced everywhere below: this pair was previously recomputed inline
@@ -2289,8 +2289,11 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					}
 				}
 				if warnOversized {
-					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap and the fixed prompt overhead are reserved (effective budget 0); chunking at the %d-line floor (may overflow) rather than sizing to the window — %s\n",
-						name, agentWindow, agentMaxTokens, ml, zeroBudgetRemedy)
+					// The reserve clause comes from the same helper doctor's zero-budget
+					// hint uses: naming only the unreserved cap made the window-vs-cap
+					// sum on screen look like it fit (TD internal/fanout/review.go:3103).
+					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap%s and the fixed prompt overhead are reserved (effective budget 0); chunking at the %d-line floor (may overflow) rather than sizing to the window — %s\n",
+						name, agentWindow, agentMaxTokens, payload.ReasoningReserveClause(toolLoop, agentMaxTokens), ml, zeroBudgetRemedy)
 				}
 			}
 			chunks := chunkDiff(mp.Text, ml)
@@ -2641,8 +2644,8 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				// operator's next action is to change one of the two declarations, and
 				// "effective budget 0" alone does not say which number to change or
 				// what it has to clear.
-				fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap and the fixed prompt overhead are reserved (effective budget 0); sending only the smallest file (%s) instead of the whole payload — %s\n",
-					name, agentWindow, agentMaxTokens, smallest.Path, zeroBudgetRemedy)
+				fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap%s and the fixed prompt overhead are reserved (effective budget 0); sending only the smallest file (%s) instead of the whole payload — %s\n",
+					name, agentWindow, agentMaxTokens, payload.ReasoningReserveClause(toolLoop, agentMaxTokens), smallest.Path, zeroBudgetRemedy)
 			}
 		}
 		if appliedBudget > 0 && len(mp.Entries) > 0 {
@@ -2845,6 +2848,20 @@ const (
 	// model can hold, because no smaller framing was available.
 	degradationOverflow = "overflow"
 )
+
+// toolLoopAgent reports whether this agent will actually run the tool loop, which
+// is what puts the replayed-reasoning reserve on top of its output cap: its lane
+// requests tools, its model declares function calling, and the range has a head (the
+// harness is wired only there — a range-less review degrades a tool agent to
+// single-shot, and it then replays nothing).
+//
+// One predicate, because three places need the same answer: the sizing above, the
+// zero-budget warnings, and renderAgent's reservation record. Two of them used to
+// derive it independently and the record did not derive it at all (TD
+// internal/fanout/review.go:3103).
+func toolLoopAgent(ac registry.AgentConfig, rng ReviewRange) bool {
+	return ac.Tools && ac.SupportsFC && rng.Head != ""
+}
 
 type agentSizing struct {
 	effectiveBudget int64 // per-agent input byte budget the payload was sized to (0 = unsized)
@@ -3109,8 +3126,18 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 	// reservation follows the budget, the quantity that pays for it.
 	agentMaxTokens := maxTokensFor(cfg, ac)
 	reservedOut := 0
+	// reasoningReserve is the EXTRA reservation a tool-loop agent's sizing holds back
+	// on top of reservedOut. It is recorded separately rather than folded into
+	// reserved_output_tokens, whose value is pinned as the output cap by
+	// TestBuildSlots_ToolLoopAgentReservesReplayedReasoning — so an operator
+	// reconciling resolved_window against the record reads the two together and gets
+	// the budget the run actually had (TD internal/fanout/review.go:3103).
+	reasoningReserve := 0
 	if sz.effectiveBudget > 0 {
 		reservedOut = agentMaxTokens
+		if toolLoopAgent(ac, rng) {
+			reasoningReserve = agentMaxTokens * payload.ReasoningReplayReserveCaps
+		}
 	}
 	return Agent{
 		Name:     name,
@@ -3139,15 +3166,16 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 		// invokeAgent can scale the deadline by ChunkTotal and stamp the
 		// diagnosability fields onto the Result. chunkMaxLines is kept for
 		// buildFallbackAgent to reuse this slot's chunk regime.
-		ChunkTotal:           sz.chunkTotal,
-		EffectiveBudget:      sz.effectiveBudget,
-		ResolvedWindow:       sz.resolvedWindow,
-		ReservedOutputTokens: reservedOut,
-		ResolvedMaxTokens:    agentMaxTokens,
-		DegradationAction:    sz.action,
-		chunkMaxLines:        sz.maxLines,
-		swap:                 formatSwap,
-		payloadStart:         payloadStart,
+		ChunkTotal:             sz.chunkTotal,
+		EffectiveBudget:        sz.effectiveBudget,
+		ResolvedWindow:         sz.resolvedWindow,
+		ReservedOutputTokens:   reservedOut,
+		ReasoningReserveTokens: reasoningReserve,
+		ResolvedMaxTokens:      agentMaxTokens,
+		DegradationAction:      sz.action,
+		chunkMaxLines:          sz.maxLines,
+		swap:                   formatSwap,
+		payloadStart:           payloadStart,
 		// Diff-cache key (Epic 5.2): derived from the full rendered prompt + model
 		// + temperature + the per-agent sizing token (Epic 19.10 F7, see
 		// diffCacheKey). Tool agents carry a key too but the engine never caches them

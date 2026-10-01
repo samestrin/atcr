@@ -522,12 +522,13 @@ func statusFor(r Result, fr findingsResult) AgentStatus {
 		// Agent — no recomputation of sizing/chunk/overflow math here. All zero/empty
 		// for an unsized agent (bare fixture, pre-19.10 run), so the AgentStatus
 		// omitempty tags keep status.json/summary.json byte-identical for those runs.
-		EffectiveBudget:      r.EffectiveBudget,
-		ResolvedWindow:       r.ResolvedWindow,
-		ReservedOutputTokens: r.ReservedOutputTokens,
-		ResolvedMaxTokens:    r.ResolvedMaxTokens,
-		ChunkCount:           r.ChunkCount,
-		DegradationAction:    r.DegradationAction,
+		EffectiveBudget:        r.EffectiveBudget,
+		ResolvedWindow:         r.ResolvedWindow,
+		ReservedOutputTokens:   r.ReservedOutputTokens,
+		ReasoningReserveTokens: r.ReasoningReserveTokens,
+		ResolvedMaxTokens:      r.ResolvedMaxTokens,
+		ChunkCount:             r.ChunkCount,
+		DegradationAction:      r.DegradationAction,
 	}
 	// Normalized HERE, not only in WriteStatus. Both published views of this record
 	// are built from statusFor, but only status.json passes through WriteStatus —

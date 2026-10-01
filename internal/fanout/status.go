@@ -515,6 +515,14 @@ type AgentStatus struct {
 	EffectiveBudget      int64 `json:"effective_budget,omitempty"`
 	ResolvedWindow       int   `json:"resolved_window,omitempty"`
 	ReservedOutputTokens int   `json:"reserved_output_tokens,omitempty"`
+	// ReasoningReserveTokens is the EXTRA output-token reservation a tool-loop
+	// agent's sizing held back for replayed reasoning, on top of
+	// reserved_output_tokens — which stays the resolved output cap. Read the two
+	// together to recover what the payload was really sized against: the cap alone
+	// made resolved_window minus the reservation look like a budget the run never had
+	// (TD internal/fanout/review.go:3103). Absent for a single-shot agent, which
+	// replays nothing.
+	ReasoningReserveTokens int `json:"reasoning_reserve_tokens,omitempty"`
 	// ResolvedMaxTokens is the output cap this agent RESOLVED to, present on every
 	// sized record. ReservedOutputTokens above is what the budget could actually fund,
 	// so it is 0 on the zero-budget arm — the one record where the cap is the cause of

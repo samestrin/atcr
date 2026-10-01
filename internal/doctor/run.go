@@ -496,11 +496,10 @@ func zeroBudgetVerdict(model string, window, maxTokens, probeMaxTokens int, stat
 	// A tool-loop agent is sized with the replayed-reasoning reserve on top of
 	// its cap, so the hint names it: the window the operator sees can hold the
 	// cap alone, and "no input budget" would otherwise read as a wrong sum.
-	reserveClause := ""
-	if toolLoop {
-		reserveClause = fmt.Sprintf(", the %d-token replayed-reasoning reserve its tool loop holds back (%d× that cap)",
-			maxTokens*payload.ReasoningReplayReserveCaps, payload.ReasoningReplayReserveCaps)
-	}
+	// One wording for both lanes: review's zero-budget warnings print the same
+	// clause from the same helper, so doctor cannot describe a reservation review
+	// states differently (TD internal/fanout/review.go:3103).
+	reserveClause := payload.ReasoningReserveClause(toolLoop, maxTokens)
 	lead := "endpoint is healthy, but"
 	if status == StatusOKWarning {
 		// Contradict the marker-absent remedy explicitly. An operator who reads only the
