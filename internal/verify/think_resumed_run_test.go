@@ -105,3 +105,33 @@ func TestInvokeSkeptic_StillRefusesABlockAfterAnswerText(t *testing.T) {
 		"prose before the block defeats the leading-only strip, so the draft inside it is still first")
 	assert.Equal(t, "think_markup_after_answer", v.Notes)
 }
+
+// TestInvokeExecutor_ProseNamingTheCloserStillParses is the executor's half of
+// the bare-closer defeat, where the cost is higher than a mis-scored verdict: the
+// refusal drops a VALID fix, postCheck logs executor_fix_failed, and the finding
+// goes unrepaired. A closer named in prose opens no block, so the envelope after
+// it is the committed fix, not a draft. Masking cannot save it — masking only
+// blanks JSON string values, and this closer is outside the object entirely.
+func TestInvokeExecutor_ProseNamingTheCloserStillParses(t *testing.T) {
+	t.Parallel()
+	raw := "The executor lane never scans for </think>.\n" +
+		`{"fix": "REAL: add a bounds check", "explanation": "real answer"}`
+	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
+		eligibleFinding()[0], finalChat(raw), okDispatcher(), 0, "")
+	assert.Equal(t, "", warn, "prose naming the closer opens no block, so nothing encloses the fix")
+	assert.Equal(t, "REAL: add a bounds check", fix)
+}
+
+// And the refusal must still fire on a real block that encloses a draft envelope
+// after answer text — the shape the guard exists for, and the one with the worst
+// blast radius since --auto-fix writes the returned patch to disk.
+func TestInvokeExecutor_StillRefusesABlockAfterAnswerText(t *testing.T) {
+	t.Parallel()
+	raw := "Let me plan.\n" +
+		`<think>{"fix": "DRAFT: delete the validation", "explanation": "draft"}</think>` + "\n" +
+		`{"fix": "REAL: add a bounds check", "explanation": "real answer"}`
+	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
+		eligibleFinding()[0], finalChat(raw), okDispatcher(), 0, "")
+	assert.Empty(t, fix, "prose before the block defeats the leading-only strip, so the draft is still first")
+	assert.Contains(t, warn, "think markup")
+}
