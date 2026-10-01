@@ -776,6 +776,8 @@ func RebuildPool(ctx context.Context, poolDir string, roster []string) (Summary,
 	// contributed nothing — and dropped the console signal the tally exists to reach.
 	truncatedZeroFindings, truncatedZeroAgents := tallyTruncatedZeroFindings(statuses)
 	warnTruncatedZeroFindings(ctx, truncatedZeroFindings, truncatedZeroAgents, true)
+	salvagedCount, salvagedAgents := tallySalvaged(statuses)
+	warnSalvaged(ctx, salvagedCount, salvagedAgents)
 	ps := PoolSummary{
 		Agents:                statuses,
 		Total:                 sum.Total,
@@ -784,6 +786,7 @@ func RebuildPool(ctx context.Context, poolDir string, roster []string) (Summary,
 		Partial:               sum.Partial,
 		TotalFindings:         len(merged),
 		TruncatedZeroFindings: truncatedZeroFindings,
+		SalvagedCount:         salvagedCount,
 		// From sum, which summarizeStatuses now tallies — the same source Total/
 		// Succeeded/Failed come from, so the substitution count cannot drift from the
 		// statuses published beside it in this very struct.

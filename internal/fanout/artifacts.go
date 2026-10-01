@@ -160,6 +160,8 @@ func writePool(ctx context.Context, poolDir string, results []Result, changed pa
 	groundingEnabled := len(changed) > 0
 	truncatedZeroFindings, truncatedZeroAgents := tallyTruncatedZeroFindings(statuses)
 	warnTruncatedZeroFindings(ctx, truncatedZeroFindings, truncatedZeroAgents, false)
+	salvagedCount, salvagedAgents := tallySalvaged(statuses)
+	warnSalvaged(ctx, salvagedCount, salvagedAgents)
 	ps := PoolSummary{
 		Agents:                  statuses,
 		Total:                   sum.Total,
@@ -169,6 +171,7 @@ func writePool(ctx context.Context, poolDir string, results []Result, changed pa
 		TotalFindings:           len(merged),
 		TruncatedZeroFindings:   truncatedZeroFindings,
 		FallbackCount:           sum.FallbackCount,
+		SalvagedCount:           salvagedCount,
 		GroundingEnabled:        &groundingEnabled,
 		GroundingDisabledReason: groundingDisabledReason,
 	}
@@ -196,6 +199,72 @@ func tallyTruncatedZeroFindings(statuses []AgentStatus) (int, []string) {
 	}
 	return count, agents
 }
+
+// salvagedChunkIndices returns the indices of a chunked persona's salvaged bins, or
+// nil for an unchunked agent (whose persona-wide Salvaged bit already says
+// everything there is to say). Derived from chunkSalvaged — the slice parseFindings
+// itself refuses by — so the published indices name exactly the bins that were
+// dropped, and a misaligned pair publishes nothing rather than a wrong index.
+func salvagedChunkIndices(r Result) []int {
+	if len(r.chunkSalvaged) != len(r.chunkContents) {
+		return nil
+	}
+	var out []int
+	for i, salvaged := range r.chunkSalvaged {
+		if salvaged {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// tallySalvaged counts the agents whose reply was salvaged, and names them. Derived
+// from the per-agent statuses for the same reason tallyTruncatedZeroFindings is: the
+// resume path rebuilds the pool from these very records, and deriving the tally in
+// only one of the two writers is how a resumed review silently loses it.
+func tallySalvaged(statuses []AgentStatus) (int, []string) {
+	count := 0
+	agents := make([]string, 0, len(statuses))
+	for _, st := range statuses {
+		if st.Salvaged {
+			count++
+			agents = append(agents, st.Agent)
+		}
+	}
+	return count, agents
+}
+
+// warnSalvaged emits the run-level salvage warning, or nothing at 0.
+//
+// A salvaged reply is a reviewer that lost its ENTIRE contribution: the client found
+// no answer, promoted the reasoning channel into Content, and parseFindings refused
+// it. In status.json that was byte-identical to a reviewer which emitted garbled
+// prose, and on the console it was nothing at all — so a whole seat could go missing
+// from a review that reported success.
+//
+// Through the context logger, for the reason warnTruncatedZeroFindings states at
+// length: cli.Main binds it to the caller-supplied stderr, and a ctx carrying no
+// logger has asked for no output.
+//
+// This is the operator-facing half of TD internal/fanout/artifacts.go:395. The row
+// asked for the line at parseFindings' refusal sites; it is emitted HERE instead,
+// from the derived statuses, because parseFindings is a memoized method on Result
+// with no context — it would have to be plumbed a logger and would then log once per
+// Result lineage rather than once per agent. Same facts, named agent included, at the
+// site that already owns this exact pattern.
+func warnSalvaged(ctx context.Context, count int, agents []string) {
+	if count == 0 {
+		return
+	}
+	log.FromContext(ctx).Warn(
+		fmt.Sprintf("%d reviewer(s) returned a salvaged reply (no answer, reasoning promoted into the content) and contributed nothing to the pool.", count),
+		"agents", strings.Join(agents, ", "),
+		"remedy", salvagedRemedy)
+}
+
+// salvagedRemedy is the operator action for a salvaged reply. One constant, so the
+// fresh and resumed paths cannot state different fixes for the same condition.
+const salvagedRemedy = "The model answered on its reasoning channel only. Declare thinking: off for the agent, or repoint it to a model that separates its answer from its reasoning; a salvaged reply is refused rather than parsed, because every finding in it is a draft the model did not commit to."
 
 // warnTruncatedZeroFindings emits the run-level runaway warning, or nothing at 0.
 //
@@ -419,6 +488,8 @@ func statusFor(r Result, fr findingsResult) AgentStatus {
 		ResponseTruncated:      r.ResponseTruncated,
 		UnparseableResponse:    r.UnparseableResponse,
 		ThinkSuppressed:        r.ThinkSuppressed,
+		Salvaged:               r.Salvaged,
+		SalvagedChunks:         salvagedChunkIndices(r),
 		UnparseableChunks:      r.UnparseableChunks,
 		CacheHit:               r.CacheHit,
 		UnreviewedChunks:       r.UnreviewedChunks,
