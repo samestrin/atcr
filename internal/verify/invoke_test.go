@@ -1927,3 +1927,25 @@ func TestInvokeSkeptic_NamesAThinkOnlyReplyInTheNote(t *testing.T) {
 	assert.Contains(t, v.Notes, body,
 		"the raw reasoning must stay recoverable from the note")
 }
+
+// TestInvokeSkeptic_ThinkOnlyReplyLogsItsOwnClass pins the log class for a
+// think-only reply. The provider returned a full, well-formed reply that happened
+// to be entirely reasoning; classing that "malformed_output" false-alarms every
+// operator alerting on malformed skeptic output. The distinct class names the shape.
+func TestInvokeSkeptic_ThinkOnlyReplyLogsItsOwnClass(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	ctx := log.NewContext(context.Background(), logger)
+
+	raw := "<think>" + "I think the finding is real but I ran out of room"
+	v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+	require.NoError(t, err)
+	require.Equal(t, verdictUnverifiable, v.Verdict)
+
+	out := buf.String()
+	assert.Contains(t, out, "class=think_only_reply",
+		"a think-only reply must not be classed malformed_output")
+	assert.NotContains(t, out, "class=malformed_output",
+		"the misleading class must be gone for this shape")
+}

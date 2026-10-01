@@ -191,8 +191,22 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 	}
 	v, _ := parseVerdict(answer)
 	v.Skeptic = skeptic.Name
+	if v.Verdict == verdictUnverifiable && v.Notes == "empty_response" && strings.TrimSpace(res.Content) != "" {
+		// The strip removed everything, so parseVerdict saw a blank answer and
+		// named it "empty_response" — but the provider returned a content-bearing
+		// reply (an unclosed opener, a think-only reply). Notes is documented to
+		// "preserve the raw text" for diagnosis, so keep the raw reply recoverable:
+		// an operator can then tell a think-only reply from a genuinely empty one.
+		v.Notes = "think_only_reply: " + truncateForNotes(res.Content)
+	}
 	if v.Verdict == verdictUnverifiable {
-		logSkepticFailure(logger, skeptic.Name, "malformed_output", v.Notes)
+		class := "malformed_output"
+		if strings.HasPrefix(v.Notes, "think_only_reply:") {
+			// The provider returned a full reply that was entirely reasoning; calling
+			// that "malformed output" false-alarms the same alerts as a garbage reply.
+			class = "think_only_reply"
+		}
+		logSkepticFailure(logger, skeptic.Name, class, v.Notes)
 	}
 	if len(res.TrippedBudgets) > 0 {
 		// Reached only via the derived-ceiling exemption: the read was truncated

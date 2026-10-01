@@ -148,13 +148,11 @@ func TestInvokeSkeptic_StripsThinkBeforeParsingTheVerdict(t *testing.T) {
 	// asymmetry the Phase 2 gate flagged: an unpinned accepted outcome is
 	// indistinguishable from an unnoticed one.
 	//
-	// ACCEPTED, not correct-in-every-respect: unverifiable IS the right verdict
-	// for a reply with no answer in it, but the NOTE is wrong — the provider
-	// returned a full content-bearing reply and the record says "empty_response",
-	// and logSkepticFailure classes it "malformed_output". Filed as TD-005; the
-	// test exists so a later fix to that note is a deliberate change with a
-	// failing test rather than a silent one.
-	t.Run("a think-only reply is unverifiable, and its note is knowingly wrong", func(t *testing.T) {
+	// TD-005 resolved: the note now names the think-only reply and keeps the raw
+	// text recoverable, instead of the misleading "empty_response" (which called a
+	// content-bearing reply empty and logged class "malformed_output"). This test
+	// was the deliberate-change pin; it flipped with the fix.
+	t.Run("a think-only reply is unverifiable, and its note names the reply", func(t *testing.T) {
 		t.Parallel()
 		v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt",
 			finalChat("<think>I think the finding is real but I ran out of room</think>"), okDispatcher(), false)
@@ -162,8 +160,8 @@ func TestInvokeSkeptic_StripsThinkBeforeParsingTheVerdict(t *testing.T) {
 		require.NotNil(t, v)
 		assert.Equal(t, verdictUnverifiable, v.Verdict,
 			"nothing outside the think block is an answer, so no verdict may be charged to reviewer precision")
-		assert.Equal(t, "empty_response", v.Notes,
-			"the ACCEPTED-but-wrong note: the reply was not empty, and the stripped reasoning is kept nowhere (TD-005)")
+		assert.Equal(t, "think_only_reply: <think>I think the finding is real but I ran out of room</think>", v.Notes,
+			"the note must name the shape and preserve the raw reply for diagnosis (TD-005)")
 	})
 
 	t.Run("a verdict that quotes the tags after real text is untouched", func(t *testing.T) {
