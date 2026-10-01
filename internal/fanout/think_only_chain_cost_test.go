@@ -60,3 +60,48 @@ func TestInvokeSlot_ThinkOnlyChain_LogsTheWastedWalk(t *testing.T) {
 	require.Contains(t, out, "think_only_attempts=3",
 		"the log must state that all 3 chain members were think-only")
 }
+
+// TestInvokeSlot_ThinkOnlyChain_CountsTheClosedTrailingNewlineShape pins the
+// ROUTINE input the test above cannot reach. SplitThink keeps the whitespace
+// after the run it consumed, so a model that CLOSES its block and emits a
+// newline yields "\n". An exact `answer == ""` test reads that as an answer and
+// the chain-walk warn never fires — on the commonest inline-reasoning shape
+// there is, which is the spend this log exists to make visible.
+func TestInvokeSlot_ThinkOnlyChain_CountsTheClosedTrailingNewlineShape(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	e := NewEngine(&thinkOnlyCompleter{content: "<think>careful reasoning, no findings ever</think>\n"},
+		WithLogger(logger), WithTruncationFailover())
+
+	slot := Slot{
+		Primary:   Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "thinker-primary"}},
+		Fallbacks: []Agent{{Name: "bruce", Invocation: llmclient.Invocation{Model: "thinker-backup-a"}}, {Name: "bruce", Invocation: llmclient.Invocation{Model: "thinker-backup-b"}}},
+	}
+	ctx := log.NewContext(context.Background(), logger)
+	r := e.invokeSlot(ctx, slot)
+
+	require.ErrorIs(t, r.Err, errTruncatedZeroFindings)
+	require.Contains(t, buf.String(), "think_only_attempts=3",
+		"a closed think block followed by a newline is still a wholly-reasoning reply")
+}
+
+// TestInvokeSlot_EmptyContentChain_IsNotCountedAsThinkOnly is the complement and
+// the second half of the same defect: SplitThink("") returns ("", ""), so an
+// empty-content reply satisfied the old `answer == ""` test and was reported as
+// wholly-reasoning. "The provider returned nothing" and "the model spent the whole
+// reply thinking" have opposite remedies, so they must not share a counter.
+func TestInvokeSlot_EmptyContentChain_IsNotCountedAsThinkOnly(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	e := NewEngine(&thinkOnlyCompleter{content: ""}, WithLogger(logger), WithTruncationFailover())
+
+	slot := Slot{
+		Primary:   Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "thinker-primary"}},
+		Fallbacks: []Agent{{Name: "bruce", Invocation: llmclient.Invocation{Model: "thinker-backup-a"}}},
+	}
+	ctx := log.NewContext(context.Background(), logger)
+	e.invokeSlot(ctx, slot)
+
+	require.NotContains(t, buf.String(), "think_only_attempts",
+		"an empty reply carries no think markup — it must not be reported as wholly-reasoning")
+}
