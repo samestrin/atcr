@@ -617,6 +617,13 @@ type Result struct {
 // TestMergeResultGroup_SalvagedLaterChunkKeepsSiblingFindings. (Found by the 4.1.A
 // adversarial review; decided 2026-09-30 by the user at the Phase 4 gate, which
 // RESOLVES TD-017 inside the sprint rather than deferring it.)
+//
+// The strip is LEADING-ONLY, so a think block placed after a real finding row
+// reaches this parser intact and a forged row inside it counts as a finding.
+// That is an explicit ACCEPTED LOSS (the grounding gate is the only residual
+// defence), pinned by TestMergeResultGroup_RealThenThinkForgedRow_IsAcceptedLoss
+// — TD artifacts.go:339; do not describe the pre-parse strip as closing the
+// non-leading spoofing position.
 func (r *Result) parseFindings() []stream.Finding {
 	if r.parsedFindingsSet {
 		return r.parsedFindings
