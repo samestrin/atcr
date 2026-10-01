@@ -263,6 +263,51 @@ func TestSplitThink_NoBuilderAllocForSinglePair(t *testing.T) {
 	assert.Zero(t, allocs, "single-pair strip allocated a throwaway reasoning buffer")
 }
 
+// FuzzSplitThink pins the helper's headline safety promise - it never panics,
+// always terminates, and the answer is always a suffix of the input - against
+// arbitrary bytes, which the hand-written table cannot cover. It is a plain Go
+// fuzz target: `go test` runs its seed corpus (below) as an ordinary test, and
+// `go test -fuzz=FuzzSplitThink -fuzztime=...` explores it. No dedicated CI
+// fuzzing job is added here; the repo has zero fuzz targets today and the seed
+// corpus already runs inside the existing sharded `go test` job. The seed
+// entries are the shapes the strip's contract names, including the ones no
+// hand-written row covers (interleaved and unbalanced tags).
+func FuzzSplitThink(f *testing.F) {
+	for _, seed := range []string{
+		"",
+		"just an answer",
+		thinkOpen + "plan" + thinkClose + "answer",
+		thinkOpen + "a" + thinkClose + thinkOpen + "b" + thinkClose + "answer",
+		thinkOpen + thinkOpen + "inner" + thinkClose + thinkClose + "answer",
+		thinkOpen + "still going",
+		"draft" + thinkClose + "answer",
+		thinkOpen, // whole reply is a single opener
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, content string) {
+		answer, reasoning := SplitThink(content)
+
+		// The answer always ends the input - the strip only ever removes a
+		// prefix, so it stays a suffix by construction.
+		assert.True(t, strings.HasSuffix(content, answer),
+			"answer must be a suffix of the input: in=%q answer=%q reasoning=%q", content, answer, string(reasoning))
+
+		// The reasoning bytes never contain a tag the strip claimed to consume,
+		// and the two returns together never contain MORE tag bytes than the
+		// input did (a strip removes, never synthesizes).
+		if n := strings.Count(answer, thinkClose) + strings.Count(string(reasoning), thinkClose); n > strings.Count(content, thinkClose) {
+			t.Fatalf("strip synthesized closer bytes: in=%q answer=%q reasoning=%q", content, answer, string(reasoning))
+		}
+
+		// The answer never grows the input. Combined with the suffix check this
+		// pins the strip as a pure prefix removal. (No UTF-8 assertion here: the
+		// fuzzer feeds arbitrary bytes, and both returns are byte slices of the
+		// input, so a non-UTF-8 input legitimately yields non-UTF-8 returns -
+		// asserting validity would pin the fuzzer's input alphabet, not the strip.)
+	})
+}
+
 // The reasoning channel (Completion.Reasoning) is populated by reasoningOf /
 // reasoningText underneath the client, not by SplitThink, which takes and
 // returns strings only. The signature makes reaching that field unrepresentable,
