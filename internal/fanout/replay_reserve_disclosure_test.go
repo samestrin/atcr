@@ -110,3 +110,43 @@ func TestBuildFallbackAgent_RecordsTheReplayReserve(t *testing.T) {
 	assert.Equal(t, fb.ReservedOutputTokens*payload.ReasoningReplayReserveCaps, fb.ReasoningReserveTokens,
 		"the fallback inherits the tool lane, so it holds back the same replay reserve")
 }
+
+// TestBuildFallbackAgent_RefitArmRecordsTheReplayReserve covers the SECOND write
+// site. buildFallbackAgent sets the reserve twice: once on the inherited-payload
+// path (the test above) and again inside the re-fit arm, which re-derives the
+// reservation from the budget the re-packed payload was actually sized to. Only
+// the first was exercised, so a re-fit tool-loop fallback could record a wrong or
+// absent reserve with nothing catching it — and the re-fit record is precisely the
+// one whose arithmetic an operator cannot reconstruct from the slot's own sizing.
+func TestBuildFallbackAgent_RefitArmRecordsTheReplayReserve(t *testing.T) {
+	cfg := refitRoster(t, 128000, OverflowTruncate)
+	// Make the pair a tool-loop pair: the primary requests tools, and the fallback's
+	// own model declares function calling, which is what fbToolLoop keys on.
+	g := cfg.Registry.Agents["greta"]
+	g.Tools, g.SupportsFC = true, true
+	cfg.Registry.Agents["greta"] = g
+	k := cfg.Registry.Agents["kai"]
+	k.SupportsFC = true
+	// A declared window large enough that the re-fit still has a budget to fit
+	// into once the tool-loop reserve is held back, but smaller than greta's, so
+	// the inherited payload genuinely overflows it and the re-fit arm runs.
+	kw := 64000
+	k.ContextWindowTokens = &kw
+	cfg.Registry.Agents["kai"] = k
+
+	slot := buildRefitSlot(t, cfg)
+	primary, fb := slot.Primary, slot.Fallbacks[0]
+
+	require.True(t, primary.Tools, "precondition: the primary requests tools")
+	require.Equal(t, degradationTruncate, fb.DegradationAction,
+		"precondition: this fallback must have taken the RE-FIT arm and found a smaller framing")
+	require.Positive(t, fb.EffectiveBudget, "precondition: the re-fit payload is funded")
+
+	assert.Positive(t, fb.ReasoningReserveTokens,
+		"a re-fit tool-loop fallback still holds back the replay reserve — recording none understates it")
+	assert.Equal(t, fb.ReservedOutputTokens*payload.ReasoningReplayReserveCaps, fb.ReasoningReserveTokens,
+		"the re-fit arm must derive the reserve from the SAME cap it recorded as reserved_output_tokens")
+	assert.Equal(t, payload.SizingOutputTokens(true, fb.ReservedOutputTokens),
+		fb.ReservedOutputTokens+fb.ReasoningReserveTokens,
+		"the two together must equal the reservation the re-fit payload was sized against")
+}
