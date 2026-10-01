@@ -838,9 +838,73 @@ func TestRunDebate_TranscriptRecordsTheStrippedStatement(t *testing.T) {
 	}
 	assert.NotContains(t, string(raw), "\\u003cthink",
 		"the transcript is the audit artifact — an escaped think tag reaching it means the strip missed a consumer")
-	assert.NotContains(t, string(raw), "draft attack, discarded")
+	// The removed draft is now RECORDED on the turn's reasoning field, by design
+	// (TD internal/debate/protocol.go:177) — so it must not appear inside the
+	// statement, which is the only place it would re-enter the exchange.
+	assert.NotContains(t, string(raw), "\"statement\":\"draft attack, discarded")
 	assert.Contains(t, string(raw), "the attack stands",
 		"the real statement must survive; a strip that ate it would pass the assertions above vacuously")
+}
+
+// TD internal/debate/protocol.go:177 (ops) — the removed reasoning must be
+// recoverable from an artifact. driveSeat discards SplitThink's second return, so
+// before this change the stripped bytes existed nowhere on disk: TurnEvent.Statement
+// was the only durable record of what a seat said, and a strip that ate real text
+// was undiagnosable from the transcript — the artifact a human audits a debate with.
+//
+// The reasoning now rides the turn event. This asserts the STRIPPED text is
+// recorded for the seat it was removed from, that the statement itself stays
+// stripped (no draft leaks back into the exchange), and that a reply with no
+// leading think run records no reasoning at all.
+func TestRunDebate_TranscriptRecordsTheStrippedReasoning(t *testing.T) {
+	const draft = "draft notes, discarded"
+	for _, tc := range []struct {
+		name          string
+		reply         string
+		wantStatement string
+		wantReasoning string
+	}{
+		{"a leading think run records its removed text", "<think>" + draft + "</think>real statement", "real statement", draft},
+		{"a reply with no leading run records none", "plain statement", "plain statement", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+			cc := &fakeChatCompleter{turns: []chatTurn{
+				{content: tc.reply},
+				{content: "challenger attacks"},
+				{content: `{"outcome":"uphold","settled_severity":"HIGH","reasoning":"evidence holds"}`},
+			}}
+			_, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+			require.NoError(t, err)
+
+			paths, err := filepath.Glob(filepath.Join(dir, debateSubdir, "*", "transcript.jsonl"))
+			require.NoError(t, err)
+			require.Len(t, paths, 1)
+			raw, err := os.ReadFile(paths[0])
+			require.NoError(t, err)
+
+			var proposer *TurnEvent
+			for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+				var ev TurnEvent
+				if err := json.Unmarshal([]byte(line), &ev); err != nil || ev.Event != "turn" {
+					continue
+				}
+				if ev.Role == LabelProposer {
+					e := ev
+					proposer = &e
+				}
+			}
+			require.NotNil(t, proposer, "the proposer turn must be recorded")
+			assert.Equal(t, tc.wantStatement, proposer.Statement,
+				"the statement stays stripped — the recorded reasoning must not re-enter the exchange")
+			assert.Equal(t, tc.wantReasoning, proposer.Reasoning,
+				"the removed bytes must be recoverable from the transcript, or a mis-strip cannot be diagnosed")
+			if tc.wantReasoning != "" {
+				assert.NotContains(t, proposer.Reasoning, "</think>",
+					"only the inner reasoning text is recorded, not the tag bytes")
+			}
+		})
+	}
 }
 
 // TestRunDebate_BlankArguingSeatIsUnresolvedEvenWhenNotHalted closes a hole that
