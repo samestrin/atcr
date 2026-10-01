@@ -34,6 +34,13 @@ const (
 	ReasonHarnessUnavailable = "harness_unavailable"
 	ReasonContextCancelled   = "context_cancelled"
 	ReasonNoClusterDecision  = "no_cluster_decision"
+	// ReasonJudgeThinkMarkup is recorded when the judge's reply still carries
+	// inline think markup after the leading-run strip. parseRuling takes the FIRST
+	// outcome-keyed object it finds, so a draft ruling inside a block that sits
+	// AFTER the answer is the only object on a reply whose real answer is prose —
+	// and it would become the debate's ruling. That is a wrong result, not a
+	// missing one, so the reply is refused instead of parsed.
+	ReasonJudgeThinkMarkup = "judge_think_markup"
 )
 
 // Unresolved reasons recorded when an arguing seat left no statement, so the

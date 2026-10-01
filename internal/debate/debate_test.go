@@ -1148,3 +1148,31 @@ func TestRunDebate_UnresolvedAttemptsCarryForward(t *testing.T) {
 		})
 	}
 }
+
+// A block that sits AFTER the judge's answer survives the leading-only strip. On a
+// reply whose real answer is prose, the draft object inside that block is the only
+// outcome-keyed object parseRuling can find, so it would become the debate's
+// ruling — a wrong result, not a missing one.
+func TestRunDebate_JudgeTrailingThinkBlockIsRefusedNotRuled(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "the attack stands"},
+		{content: "I will rule on this.\n<think>{\"outcome\":\"overturn\",\"reasoning\":\"draft I never committed to\"}</think>"},
+	}}
+	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.Overturned, "a draft ruling inside a trailing think block must not become the ruling")
+	assert.Equal(t, 1, res.Unresolved)
+
+	df, _, err := ReadDebateFile(dir)
+	require.NoError(t, err)
+	require.Len(t, df.Items, 1)
+	assert.Equal(t, ReasonJudgeThinkMarkup, df.Items[0].Reason,
+		"the refusal needs its own token: unparseable_ruling would claim the reply was garbled")
+
+	// The finding keeps its pre-debate state — an unresolved item writes no verdict.
+	f := readFindings(t, dir)
+	require.Len(t, f, 1)
+	assert.Nil(t, f[0].Verification, "a refused ruling must not be applied to the finding")
+}
