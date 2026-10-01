@@ -5,8 +5,9 @@ import (
 	"time"
 )
 
-// The disposition-reason vocabulary is CLOSED and has exactly five members
-// (sprint 36.0 C24; grown 3→5 by the TD-041 clarification of 2026-09-22). AC
+// The disposition-reason vocabulary is CLOSED and has exactly six members
+// (sprint 36.0 C24; grown 3→5 by the TD-041 clarification of 2026-09-22, then
+// to six when the consensus and era causes above joined). AC
 // 06-05 pinned it closed so cli/personas.go's renderer can rely on a known,
 // finite label set; it originally enumerated two members, C24 grew it to three
 // for TD-032, and TD-041 grew it to five for the two exclusion causes the walk
@@ -14,12 +15,12 @@ import (
 // property the AC protects is "closed and finite", not any particular
 // cardinality, so the renderer's guarantee is unchanged.
 //
-// READ THE SPLIT BEFORE ADDING A FOURTH. Two of the three name a record that was
-// DROPPED from the trust tally. The third names a record that was KEPT. They
-// share one vocabulary because both answer the maintainer's question — "why does
-// this lens's score rest on these cases?" — and a reader who assumes every label
-// is an exclusion will mis-add the counts. ReasonExcludes is the predicate that
-// tells them apart; Reasons' own doc comment states the invariant.
+// READ THE SPLIT BEFORE ADDING A SEVENTH. Four of the six name a record that
+// was DROPPED from the trust tally. The other two name a record that was KEPT.
+// They share one vocabulary because both answer the maintainer's question — "why
+// does this lens's score rest on these cases?" — and a reader who assumes every
+// label is an exclusion will mis-add the counts. ReasonExcludes is the predicate
+// that tells them apart; Reasons' own doc comment states the invariant.
 const (
 	// ReasonOutcomeIneligible: the run's outcome was one of truncated,
 	// incomplete, unparseable, failed or unknown, so the lens never got a fair
@@ -90,7 +91,7 @@ const (
 // order. It is the single enumeration every renderer and test reads, so a fourth
 // member is one edit rather than several that can diverge.
 //
-// TestScoreReasons_IsAClosedThreeMemberVocabulary pins both the membership and
+// TestScoreReasons_IsAClosedSixMemberVocabulary pins both the membership and
 // the count, so growing the set is a deliberate step with a failing test in
 // front of it — which is what AC 06-05's "closed vocabulary, not a free-form
 // string" actually requires.
@@ -126,26 +127,19 @@ func ReasonExcludes(reason string) bool {
 // why". It is a COMPANION to the priors map, never merged into it: TrustPriors
 // keeps returning map[string]float64 so reconcile/consensus.go's trustExempt and
 // demoteByTrust need no call-site change (D3/D4).
-//
-// WHAT IT DOES NOT EXPLAIN, stated here rather than left for a reader to
-// discover from a number that does not add up. The trust filter chain has four
-// links that drop records, and this surface names only the two this sprint's
-// SCORING added (the outcome gate and the opportunity gate). Records dropped by
-// strictRuns (not measured at --consensus strict) and by unresolvedEraRuns (an
-// older raised-denominator definition than the lens's newest) are era and
-// consensus plumbing that predates this sprint, they are in no AC's reason
-// vocabulary, and they are counted in NEITHER Counted nor Excluded. So a lens
-// that ran forty times can legitimately report Counted 3 + Excluded 5. Filed as
-// TD-041.
 type PersonaScoreDetail struct {
 	// Counted is the number of records that survived the whole chain and fed
 	// this lens's rate.
 	Counted int
 
-	// Excluded is the number of records the outcome gate or the opportunity gate
-	// dropped. It equals the sum of the Reasons entries whose label satisfies
-	// ReasonExcludes — and NOT the sum of all Reasons entries, because
-	// ReasonNoRecognizedCategory annotates a record that was kept.
+	// Excluded is the number of records the chain dropped, for any of the four
+	// exclusion causes: the outcome gate (ReasonOutcomeIneligible), the
+	// opportunity gate (ReasonNotInOpportunitySet), a non-strict consensus level
+	// (ReasonConsensusNotStrict), or a superseded era definition
+	// (ReasonSupersededEra). It equals the sum of the Reasons entries whose label
+	// satisfies ReasonExcludes — and NOT the sum of all Reasons entries, because
+	// ReasonNoRecognizedCategory and ReasonNotOpportunityScoped annotate records
+	// that were kept.
 	Excluded int
 
 	// Reasons maps a member of ScoreReasons() to the number of this lens's

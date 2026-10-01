@@ -15,12 +15,11 @@ package fanout
 // and asserts every literal in THIS file equals its benchmark.Outcome*
 // counterpart. If that test is deleted, this file can drift in silence.
 //
-// It does NOT reach internal/scorecard's own copy of the four eligible values
-// (trust.go), which are unexported and invisible to cli. Those are pinned only
-// indirectly, by internal/scorecard's independently-written literals plus its
-// coercion test. Filed as TD: the durable fix is for internal/benchmark to
-// export the vocabulary as a slice both sides iterate, so a tenth value cannot
-// be added without every site changing.
+// internal/scorecard's own copy of the four eligible values (trust.go) is
+// reachable through scorecard.EligibleOutcomes(), and
+// TestScorecardEligibleOutcomes_MatchBenchmarkConstants (cli/fanout_outcome_parity_test.go)
+// pins those four directly against the benchmark constants — the TD that asked
+// for an exported slice both sides iterate is closed on the scorecard side.
 //
 // Relocated here from cli/benchmark_run.go by sprint 36.0 (AC 02-02) so the
 // benchmark path and the reconcile path classify identically instead of one
