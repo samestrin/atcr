@@ -1912,7 +1912,7 @@ func TestInvokeSkeptic_RefusesAVerdictParsedFromNonLeadingThinkMarkup(t *testing
 // diagnosis, but the strip feeds it the blank answer: a reply that is one unclosed
 // <think> opener yielded Notes "empty_response" and logged class "malformed_output",
 // although the provider returned a full content-bearing reply. The raw text must
-// stay recoverable (verify invoke.go:175).
+// stay recoverable (the note-rewrite in invokeSkeptic, after parseVerdict).
 func TestInvokeSkeptic_NamesAThinkOnlyReplyInTheNote(t *testing.T) {
 	t.Parallel()
 	body := "I think the finding is real but I ran out of room"
