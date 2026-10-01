@@ -567,7 +567,17 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 	ir.ClusterDecision = ruling.ClusterDecision
 	ir.ChallengeSurvived = ruling.ChallengeSurvived()
 	if ruling.Outcome == OutcomeUnresolved {
+		// Two distinct failures share the unresolved OUTCOME, so they must not
+		// share the operator-facing reason token: a reply that was ABSENT is
+		// not one that was unparseable. After the think strip an absent judge
+		// reply is the routine outcome on an inline-reasoning endpoint, so
+		// collapsing it into unparseable_ruling hid the misconfiguration the
+		// token exists to name. The finer diagnosis still travels in
+		// ir.Reasoning on both branches.
 		ir.Reason = ReasonUnparseableRuling
+		if ruling.Reasoning == EmptyRulingReasoning {
+			ir.Reason = ReasonEmptyRuling
+		}
 	}
 	if ruling.Outcome == OutcomeSplit {
 		// A split with no settled_severity settles nothing: record no settled
