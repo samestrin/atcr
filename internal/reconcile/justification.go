@@ -703,6 +703,13 @@ func extractSection(lines []string, idx int) (text, section string) {
 	// and the anchor fix is deliberately compatible with it: the lines are EXCLUDED
 	// from matching, never renumbered, so every published source_report.line is still
 	// true of the review.md a reader opens.
+	//
+	// Residual, scoped to what the strip itself can see: the exclusion covers a
+	// LEADING run, because that is the run llmclient.SplitThink defines and the only
+	// one the findings parser refuses. A block the model opens after real prose is
+	// still indexed, so a citation inside it can still win an equal-tier tiebreak —
+	// bounded differently, though, since such a block is not at the top of the file
+	// and no longer beats the prose above it on line order.
 	spans := stream.BareValueSpans([]byte(strings.Join(lines, "\n")))
 	if len(spans) > 0 {
 		strict = append([]bool(nil), strict...)
