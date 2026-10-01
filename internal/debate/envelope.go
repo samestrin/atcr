@@ -23,6 +23,13 @@ const (
 	ClusterSeparate = "separate"
 )
 
+// EmptyRulingReasoning is parseRuling's diagnostic Reasoning for an ABSENT judge
+// reply (empty or whitespace-only after the strip). debateOne keys the
+// operator-facing ReasonEmptyRuling token on this exact value, so the two must
+// stay one string: it is the only signal distinguishing "the judge said nothing"
+// from "the judge said something unparseable".
+const EmptyRulingReasoning = "empty_response"
+
 // Ruling is the parsed judge envelope for one debated item. Outcome is always one
 // of the four constants above (never empty). SettledSeverity is the severity the
 // finding should carry after the ruling (canonical upper-case, or "" when the
@@ -66,7 +73,7 @@ func (r Ruling) ChallengeSurvived() bool {
 // first balanced {...} object carrying an "outcome" key.
 func parseRuling(response string) Ruling {
 	if strings.TrimSpace(response) == "" {
-		return Ruling{Outcome: OutcomeUnresolved, Reasoning: "empty_response"}
+		return Ruling{Outcome: OutcomeUnresolved, Reasoning: EmptyRulingReasoning}
 	}
 
 	rest := response

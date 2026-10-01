@@ -40,6 +40,7 @@ func TestDocs_DebateReasonTokensMatchTheConstants(t *testing.T) {
 		debate.ReasonSeatSilent,
 		debate.ReasonJudgeHalted,
 		debate.ReasonUnparseableRuling,
+		debate.ReasonEmptyRuling,
 		debate.ReasonHarnessUnavailable,
 		debate.ReasonContextCancelled,
 		debate.ReasonNoClusterDecision,

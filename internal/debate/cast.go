@@ -30,6 +30,7 @@ const (
 const (
 	ReasonJudgeHalted        = "judge_halted"
 	ReasonUnparseableRuling  = "unparseable_ruling"
+	ReasonEmptyRuling        = "empty_ruling"
 	ReasonHarnessUnavailable = "harness_unavailable"
 	ReasonContextCancelled   = "context_cancelled"
 	ReasonNoClusterDecision  = "no_cluster_decision"

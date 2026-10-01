@@ -910,6 +910,47 @@ func TestRunDebate_BlankArguingSeatIsUnresolvedEvenWhenNotHalted(t *testing.T) {
 	})
 }
 
+// TD internal/debate/debate.go:563 — the operator-facing reason token must name the
+// real diagnosis, not a coarser one. parseRuling already distinguishes an ABSENT
+// reply ("empty_response", envelope.go:69) from a garbled one, and debateOne
+// flattened both into `unparseable_ruling`. After the think strip an absent judge
+// reply is the ROUTINE outcome on an inline-reasoning endpoint — exactly the
+// misconfiguration the token is supposed to name — so the collapsed token hides
+// the one case an operator most needs to see.
+//
+// The outcome is unchanged (both are unresolved); only the recorded Reason differs.
+func TestRunDebate_EmptyJudgeReplyRecordsEmptyRulingNotUnparseable(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		judgeReply    string
+		wantReason    string
+		wantReasoning string
+	}{
+		{"an absent reply records empty_ruling", "", ReasonEmptyRuling, EmptyRulingReasoning},
+		{"an entirely-think reply records empty_ruling", "<think>only reasoning</think>", ReasonEmptyRuling, EmptyRulingReasoning},
+		{"a garbled reply still records unparseable_ruling", "I cannot decide.", ReasonUnparseableRuling, "malformed_output: I cannot decide."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+			cc := &fakeChatCompleter{turns: []chatTurn{
+				{content: "proposer defends"},
+				{content: "challenger attacks"},
+				{content: tc.judgeReply},
+			}}
+			res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+			require.NoError(t, err)
+			assert.Equal(t, 1, res.Unresolved)
+
+			var df DebateFile
+			raw, _ := os.ReadFile(filepath.Join(dir, reconciledSubdir, DebateJSON))
+			require.NoError(t, json.Unmarshal(raw, &df))
+			assert.Equal(t, tc.wantReason, df.Items[0].Reason)
+			assert.Equal(t, tc.wantReasoning, df.Items[0].Reasoning,
+				"the finer diagnosis must still reach the operator, on both tokens")
+		})
+	}
+}
+
 // TestRunDebate_SilentSeatPathDisclosesPerSeatCause pins the operator-facing
 // disclosure on the silent-seat path: the reason token alone (seat_silent /
 // seat_halted) cannot say WHICH seat went quiet or why — that detail was written
