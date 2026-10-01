@@ -171,11 +171,18 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 	// client.go:169). That is deliberate: Completion.Reasoning stays the only
 	// reasoning channel, and this reply did not populate it.
 	answer, _ := llmclient.SplitThink(res.Content)
-	// A fourth guard, reached only by a reply the strip left untouched. The strip
-	// is LEADING-ONLY, so one character of prose before the block defeats it: the
+	// A fourth guard, on whatever markup SURVIVES the strip. The strip is
+	// LEADING-ONLY, so one character of prose before the block defeats it: the
 	// reply `Let me check.\n<block>{draft}</block>\n{real}` keeps the draft as its
 	// first verdict-keyed object and parseVerdict would grade the discarded draft
 	// as the skeptic's answer — charged to reviewer precision as a full read.
+	//
+	// Keyed on the STRIPPED answer, not on "the strip removed nothing". A RESUMED
+	// run — `<block>r1</block>{draft}<block>r2</block>{real}` — ends the leading run
+	// at the draft, so the strip DOES remove something and the draft is still the
+	// first object. Gating on equality let that shape through, and it is the
+	// cross-channel spoof succeeding outright rather than merely surviving
+	// (TD internal/llmclient/think.go:80).
 	//
 	// Refuse to parse when the reply carries markup the strip could not remove.
 	// The discrimination runs on the string-masked copy: a tag sequence that
@@ -184,7 +191,7 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 	// likeliest input in this repo); a tag sequence that survives masking encloses
 	// real reply text, so the object after it is a draft. Masking is what keeps
 	// the guard from reversing the leading-only design it exists to defend.
-	if answer == res.Content && llmclient.HasThinkMarkup(maskJSONStrings(res.Content)) {
+	if llmclient.HasThinkMarkup(maskJSONStrings(answer)) {
 		logger.Warn("skeptic failed", "skeptic", skeptic.Name, "class", "think_markup_after_answer")
 		logger.Debug("skeptic failure detail", "skeptic", skeptic.Name, "class", "think_markup_after_answer", "detail", "think markup outside a JSON string is not leading, so the first verdict-keyed object may be a discarded draft")
 		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "think_markup_after_answer", Skeptic: skeptic.Name}, res.TrippedBudgets, nil

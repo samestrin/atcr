@@ -784,6 +784,16 @@ func invokeExecutor(ctx context.Context, ex *registry.ExecutorConfig, prov regis
 	// mis-scored verdict. Apply the same leading-only strip the verify lane uses;
 	// internal/llmclient owns every tag rule.
 	answer, _ := llmclient.SplitThink(res.Content)
+	// And refuse what the strip could not remove. The strip is leading-only, so a
+	// RESUMED run — `<block>r1</block>{draft}<block>r2</block>{real}` — leaves the
+	// draft envelope at the FRONT of the answer, and this parser takes the first
+	// balanced object with no key filter: the draft patch would be written to disk
+	// by --auto-fix. Masked, for the reason the verify lane states: tags inside a
+	// JSON string value are the model DISCUSSING think handling and must keep
+	// parsing (TD internal/llmclient/think.go:80).
+	if llmclient.HasThinkMarkup(maskJSONStrings(answer)) {
+		return "", "agent_mode refused: think markup outside a JSON string survived the strip, so the first fix envelope may be a draft the model discarded", res.ResponseTruncated
+	}
 	fix, err := parseExecutorResponse(answer)
 	if err != nil {
 		return "", "agent_mode parse error: " + err.Error(), res.ResponseTruncated
