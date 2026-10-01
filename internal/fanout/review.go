@@ -3472,7 +3472,13 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// all three with its own bulk-sized record (ChunkTotal 1, chunkMaxLines 0, and
 	// the re-fit's own truncate/overflow action).
 	fbMaxTokens := maxTokensFor(cfg, ac)
-	fbBudget := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, payload.SizingOutputTokens(primary.Tools && ac.SupportsFC && refit.rng.Head != "", fbMaxTokens))
+	// Bound ONCE and reused by the sizing, both reservation records, and the re-fit
+	// arm below. A fallback takes `tools` from its primary but declares function
+	// calling for itself, so this is not toolLoopAgent's predicate — it was inline
+	// here while the record derived nothing at all, which is how the reserve got
+	// sized and then not reported (TD internal/fanout/review.go:3103).
+	fbToolLoop := primary.Tools && ac.SupportsFC && refit.rng.Head != ""
+	fbBudget := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, payload.SizingOutputTokens(fbToolLoop, fbMaxTokens))
 	fbWindow := payload.ContextWindowTokens(ac.Model, ac.ContextWindowTokens)
 	// Gate the reservation on the BUDGET, not the window. ContextWindowTokens never
 	// returns 0 by contract (contextwindow.go), so a window test is a dead branch —
@@ -3481,9 +3487,12 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// and no effective_budget field at all (omitempty on the zero budget). The
 	// budget is the quantity that actually funds the output cap, so an agent whose
 	// window cannot fund it now honestly reports reserving nothing.
-	fbReserved := 0
+	fbReserved, fbReasoningReserve := 0, 0
 	if fbBudget > 0 {
 		fbReserved = fbMaxTokens
+		if fbToolLoop {
+			fbReasoningReserve = fbMaxTokens * payload.ReasoningReplayReserveCaps
+		}
 	}
 	// Epic 35.16.5.1 AC4: resolving the fallback's OWN window above is only half the
 	// guarantee. The prompt it inherits was sized to the PRIMARY's window, so a
@@ -3669,9 +3678,12 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 				// gating on fbBudget here would re-create the self-contradictory
 				// record 35.16.5.1 removed: effective_budget absent (0, omitempty)
 				// beside reserved_output_tokens 8192.
-				fbReserved = 0
+				fbReserved, fbReasoningReserve = 0, 0
 				if fbSizingBudget > 0 {
 					fbReserved = fbMaxTokens
+					if fbToolLoop {
+						fbReasoningReserve = fbMaxTokens * payload.ReasoningReplayReserveCaps
+					}
 				}
 				// It also marks the agent as re-packed, which is what stops baseline
 				// coverage from inferring "every slot succeeded → the whole payload was
@@ -3762,16 +3774,17 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		// A re-fit fallback (Epic 35.16.5.4 T4) instead records ONE payload of its
 		// own — ChunkTotal 1, the bulk maxLines sentinel, and the budget its payload
 		// was really sized to — because the slot's split is not the one it follows.
-		ChunkTotal:           fbChunkTotal,
-		EffectiveBudget:      fbSizingBudget,
-		ResolvedWindow:       fbWindow,
-		ReservedOutputTokens: fbReserved,
-		ResolvedMaxTokens:    fbMaxTokens,
-		DegradationAction:    fbDegradation,
-		chunkMaxLines:        fbMaxLines,
-		swap:                 fbSwap,
-		payloadStart:         fbPayloadStart,
-		rePacked:             refitted,
+		ChunkTotal:             fbChunkTotal,
+		EffectiveBudget:        fbSizingBudget,
+		ResolvedWindow:         fbWindow,
+		ReservedOutputTokens:   fbReserved,
+		ReasoningReserveTokens: fbReasoningReserve,
+		ResolvedMaxTokens:      fbMaxTokens,
+		DegradationAction:      fbDegradation,
+		chunkMaxLines:          fbMaxLines,
+		swap:                   fbSwap,
+		payloadStart:           fbPayloadStart,
+		rePacked:               refitted,
 		// The coverage tag of the payload this agent actually reviews (Epic
 		// 35.16.5.4 T3): the primary's chunk when it ships the inherited payload,
 		// the kept subset when it re-fit.

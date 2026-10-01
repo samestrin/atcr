@@ -67,3 +67,24 @@ func TestBuildOneAgent_SingleShotReservationIsTheCapAlone(t *testing.T) {
 	assert.Equal(t, maxTokensFor(cfg, cfg.Registry.Agents["greta"]), agent.ReservedOutputTokens)
 	assert.Zero(t, agent.ReasoningReserveTokens, "a single-shot agent replays nothing, so it reserves nothing extra")
 }
+
+// The fallback agent sizes with the same reserve (a fallback takes `tools` from its
+// primary), so its record must carry it too — sizing with a reservation and
+// reporting none is the same understatement, one agent further down the chain.
+func TestBuildFallbackAgent_RecordsTheReplayReserve(t *testing.T) {
+	cfg := toolLoopGretaRoster(t, 128000)
+	k := cfg.Registry.Agents["kai"]
+	k.SupportsFC = true
+	cfg.Registry.Agents["kai"] = k
+
+	rng := ReviewRange{Base: "a", Head: "b"}
+	primary, _, err := buildOneAgent(cfg, "greta", oversizedBlocksPayload(), rng, "", "")
+	require.NoError(t, err)
+	require.True(t, primary.Tools, "precondition: the primary requests tools")
+
+	fb, _, err := buildFallbackAgent(cfg, primary, "kai", false, fallbackRefit{rng: rng})
+	require.NoError(t, err)
+	require.Positive(t, fb.EffectiveBudget, "precondition: the fallback is funded")
+	assert.Equal(t, fb.ReservedOutputTokens*payload.ReasoningReplayReserveCaps, fb.ReasoningReserveTokens,
+		"the fallback inherits the tool lane, so it holds back the same replay reserve")
+}
