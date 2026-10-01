@@ -313,9 +313,10 @@ func TestDocs_CrossExaminationStatesTheSilentSeatRule(t *testing.T) {
 //
 // The row called the transcript "the replayable per-item exchange" while
 // driveSeat began stripping leading <think> markup and keeping no copy of the raw
-// reply, so the transcript stopped being replayable in the literal sense. A
-// mis-strip is undiagnosable from the artifact, which is exactly the fact the row
-// now has to carry.
+// reply, so the transcript stopped being replayable in the literal sense. The row
+// now carries both facts: the statement is the stripped one, and the removed
+// reasoning is recorded on the turn's own `reasoning` field (TD
+// internal/debate/protocol.go:177), which is what makes a mis-strip diagnosable.
 func TestDocs_CrossExaminationStatesTheThinkStrip(t *testing.T) {
 	doc := readDoc(t, "cross-examination.md")
 	row := docTableRow(t, doc, "debate/<item-id>/transcript.jsonl")
@@ -324,8 +325,10 @@ func TestDocs_CrossExaminationStatesTheThinkStrip(t *testing.T) {
 		"the row must name the markup that is removed, or a reader cannot tell the recorded statement from the raw reply")
 	assert.Contains(t, row, "stripped",
 		"the transformation has to be stated, not implied by 'as later seats saw it' alone")
-	assert.Contains(t, row, "kept nowhere",
-		"the load-bearing consequence: the removed bytes are unrecoverable, so a mis-strip cannot be diagnosed from this artifact")
+	assert.Contains(t, row, "reasoning",
+		"the removed text is now recorded on the turn's reasoning field, so the row must name it, or the artifact is described as losing bytes it keeps")
+	assert.NotContains(t, row, "the removed text is kept nowhere",
+		"the removed text IS kept, on the turn's reasoning field; that it is unrecoverable was true before TD internal/debate/protocol.go:177 and is false now")
 	assert.NotContains(t, row, "The replayable per-item exchange",
 		"the unqualified claim is what drifted — the file no longer holds the raw reply")
 }
@@ -363,8 +366,17 @@ func TestDocs_ParsingSentencesDoNotPromiseTheRawReply(t *testing.T) {
 				"the raw reply is NOT preserved once the think strip runs ahead of the parser — this is the exact phrase that went stale")
 			assert.Contains(t, line, "<think>",
 				"a reader cannot tell the recorded text from the reply unless the sentence names what is removed")
-			assert.Contains(t, line, "kept nowhere",
-				"the load-bearing consequence: the stripped bytes are unrecoverable, so the notes are not a faithful record of the reply")
+			// The two lanes now differ on where the removed bytes go: verify keeps
+			// them nowhere (the skeptic lane has no reasoning channel), while debate
+			// records them on the turn's reasoning field. Pin each document's own
+			// claim rather than one lane's disposition.
+			if tc.doc == "verification.md" {
+				assert.Contains(t, line, "kept nowhere",
+					"the skeptic lane genuinely keeps the stripped bytes nowhere, so its parsing sentence must keep saying so")
+			} else {
+				assert.Contains(t, line, "removed reasoning",
+					"the debate lane now records the removed reasoning, so its sentence must not still claim it is destroyed")
+			}
 		})
 	}
 }

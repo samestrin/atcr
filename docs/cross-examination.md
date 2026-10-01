@@ -70,7 +70,7 @@ The judge returns a strict, parseable envelope:
 - `split` — real, but at a different severity; `settled_severity` replaces severity-max.
 - `cluster_decision` — for a gray-zone cluster only: whether the pair should `merge` or stay `separate`.
 
-Parsing is defensive (the same contract as the verify stage): the parser scans for a `{...}` object so a verdict in markdown fences or prose is recovered; an out-of-enum outcome, an empty response, or unparseable output degrades to `unresolved` with the parsed text preserved — the statement **after** a leading `<think>` reasoning block is stripped, since the raw reply is kept nowhere — and it never forges an `uphold` or `overturn`. An unknown `settled_severity` is dropped rather than failing the ruling.
+Parsing is defensive (the same contract as the verify stage): the parser scans for a `{...}` object so a verdict in markdown fences or prose is recovered; an out-of-enum outcome, an empty response, or unparseable output degrades to `unresolved` with the parsed text preserved — the statement with its leading `<think>` reasoning block removed, and that removed reasoning is kept nowhere — and it never forges an `uphold` or `overturn`. An unknown `settled_severity` is dropped rather than failing the ruling.
 
 ## Integration and Confidence
 
@@ -111,7 +111,7 @@ A debated item costs at least three provider calls (one per seat), each with a t
 | `reconciled/debate.json` | Every debated item's ruling (`outcome`, `settled_severity`, `cluster_decision`, `challenge_survived`, `single_model`, the cast, `reasoning`) plus the recorded `overflow`. |
 | `reconciled/findings.json` | Each debated single-finding gains/overwrites its `verification` block with the judge's verdict and `challenge_survived`; a split overwrites the severity. |
 | `reconciled/manifest.json` | `"debate"` appended to `stages` (idempotent). |
-| `debate/<item-id>/transcript.jsonl` | The per-item exchange: one `turn` event per seat, then the `ruling` event. Each `turn` carries the seat's statement as later seats saw it — leading `<think>` reasoning markup is stripped before a statement reaches another seat's prompt, `debate.json`, or this file, and the removed text is kept nowhere. |
+| `debate/<item-id>/transcript.jsonl` | The per-item exchange: one `turn` event per seat, then the `ruling` event. Each `turn` carries the seat's statement as later seats saw it — leading `<think>` reasoning markup is stripped before a statement reaches another seat's prompt, `debate.json`, or this file; the removed text is recorded on the turn's own `reasoning` field (`omitempty`, absent when the reply had no leading think run), so a `statement` that reads blank can be told apart from one the strip emptied. |
 
 The report gains a **Contested findings** section listing each ruling with a one-line rationale, the severity transition for splits, the judge, any single-model-fallback disclosure, and the overflow count.
 

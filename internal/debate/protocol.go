@@ -111,7 +111,7 @@ func newSentinel() string {
 // transcript, and returns the seat's statement. A halted seat appends its label
 // to rec.Halted and returns "".
 func (rec *Record) runTurn(ctx context.Context, seat Caster, turn int, prompt string, cc fanout.ChatCompleter, disp Dispatcher, tr *Transcript) string {
-	content, status := driveSeat(ctx, seat, prompt, cc, disp)
+	content, reasoning, status := driveSeat(ctx, seat, prompt, cc, disp)
 	if status != fanout.StatusOK {
 		rec.Halted = append(rec.Halted, seat.Label)
 	}
@@ -121,6 +121,7 @@ func (rec *Record) runTurn(ctx context.Context, seat Caster, turn int, prompt st
 		Model:     seat.Config.Model,
 		Turn:      turn,
 		Statement: content,
+		Reasoning: string(reasoning),
 		Status:    nonOKStatus(status),
 	})
 	return content
@@ -145,9 +146,9 @@ func (rec *Record) runTurn(ctx context.Context, seat Caster, turn int, prompt st
 // design question, not a mechanical port. Until it is answered, the operator is
 // warned instead: internal/doctor's smallWindowClause names this lane explicitly
 // alongside the verification one.
-func driveSeat(ctx context.Context, seat Caster, prompt string, cc fanout.ChatCompleter, disp Dispatcher) (string, string) {
+func driveSeat(ctx context.Context, seat Caster, prompt string, cc fanout.ChatCompleter, disp Dispatcher) (string, llmclient.Reasoning, string) {
 	if cc == nil {
-		return "", fanout.StatusFailed
+		return "", "", fanout.StatusFailed
 	}
 	logger := log.FromContext(ctx)
 	agent := buildDebateAgent(seat, prompt)
@@ -158,7 +159,7 @@ func driveSeat(ctx context.Context, seat Caster, prompt string, cc fanout.ChatCo
 	engine := fanout.NewEngine(cc, opts...)
 	results := engine.Run(ctx, []fanout.Slot{{Primary: agent}})
 	if len(results) == 0 {
-		return "", fanout.StatusFailed
+		return "", "", fanout.StatusFailed
 	}
 	r := results[0]
 	// A truncated or salvaged reply carries only the salvaged chain-of-thought,
@@ -175,7 +176,7 @@ func driveSeat(ctx context.Context, seat Caster, prompt string, cc fanout.ChatCo
 	// content, reasoning promoted to Content, ResponseTruncated FALSE — the
 	// truncation gate above never fires on it (TD internal/llmclient/client.go:394).
 	if r.ResponseTruncated || r.Salvaged {
-		return "", fanout.StatusFailed
+		return "", "", fanout.StatusFailed
 	}
 	// An endpoint that reasons inline puts a <think> block in Content even on a
 	// clean reply, which the guard above never sees. This is the one choke point
@@ -190,10 +191,12 @@ func driveSeat(ctx context.Context, seat Caster, prompt string, cc fanout.ChatCo
 	// block placed AFTER the answer is forwarded verbatim, including to the
 	// judge, where parseRuling can then read a draft ruling out of it (TD-008).
 	//
-	// The removed reasoning is dropped and reaches no channel at all: this lane
-	// has none — fanout.Result carries no reasoning field — so nothing on rec or
-	// a Ruling could hold it even if a caller wanted to. Nothing keeps the raw
-	// reply either, so the transcript records the stripped statement (TD-009).
+	// The removed reasoning is no longer dropped: it is returned to runTurn and
+	// recorded on the turn's `reasoning` field, so a statement that reads blank
+	// can be told apart from one the strip emptied, and a mis-strip is
+	// diagnosable from the transcript (TD internal/debate/protocol.go:177). The
+	// RAW reply is still kept nowhere — only the inner reasoning of the stripped
+	// run is retained (TD-009, amended 2026-09-30).
 	//
 	// Deliberately additive AT THE SEAT STATUS LEVEL ONLY: a seat's status is
 	// still derived from the engine result, not from whether the strip emptied
@@ -204,11 +207,11 @@ func driveSeat(ctx context.Context, seat Caster, prompt string, cc fanout.ChatCo
 	// unresolved item before the judge rules, so a think-only proposer flips the
 	// item from the judge's uphold to unresolved (pinned at debate_test.go in the
 	// RunDebate table, "forced answer was entirely a think block").
-	statement, _ := llmclient.SplitThink(r.Content)
+	statement, reasoning := llmclient.SplitThink(r.Content)
 	if r.Status != fanout.StatusOK || len(r.TrippedBudgets) > 0 {
-		return statement, fanout.StatusFailed
+		return statement, reasoning, fanout.StatusFailed
 	}
-	return statement, fanout.StatusOK
+	return statement, reasoning, fanout.StatusOK
 }
 
 // nonOKStatus returns the status string only when it is not StatusOK, so a clean
