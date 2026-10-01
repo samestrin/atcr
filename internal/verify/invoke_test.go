@@ -1865,3 +1865,44 @@ func TestInvokeSkeptic_SalvagedModelResponse(t *testing.T) {
 	assert.Equal(t, "reasoning_salvaged", v.Notes, "the named note must carry the salvage reason")
 	assert.Empty(t, tripped, "a salvage is not a budget trip")
 }
+
+// TestInvokeSkeptic_RefusesAVerdictParsedFromNonLeadingThinkMarkup pins the third
+// guard at the call site: markup the leading-only strip could not remove must not
+// be parsed at all.
+//
+// invokeSkeptic strips a LEADING <think> run, which leaves the cross-channel spoof live
+// one character of prose away from the front of the reply. Reproduced on the
+// pre-fix call site: `"Let me check.\n<think>{draft confirmed}</think>\n{real refuted}"`
+// returned verdict "confirmed" carrying the DRAFT's notes — the verdict the model
+// discarded was graded as the skeptic's answer and charged to reviewer precision
+// as a full read.
+func TestInvokeSkeptic_RefusesAVerdictParsedFromNonLeadingThinkMarkup(t *testing.T) {
+	t.Parallel()
+
+	t.Run("prose before the block does not let the discarded draft win", func(t *testing.T) {
+		t.Parallel()
+		raw := "Let me check.\n" +
+			`<think>{"verdict": "confirmed", "reasoning": "draft, wrong"}</think>` +
+			"\n" + `{"verdict": "refuted", "reasoning": "real answer"}`
+		v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+		require.NoError(t, err)
+		require.NotNil(t, v)
+		assert.Equal(t, verdictUnverifiable, v.Verdict,
+			"a draft the model discarded must not be graded as the skeptic's answer")
+		assert.Equal(t, "think_markup_after_answer", v.Notes)
+	})
+
+	t.Run("a verdict quoting both tags inside a JSON string still parses", func(t *testing.T) {
+		t.Parallel()
+		// The companion the fix must not break: the tags sit INSIDE the answer
+		// string, so this is the skeptic quoting its subject matter, not markup
+		// enclosing a draft object.
+		raw := `{"verdict": "confirmed", "reasoning": "the handler drops text between <think> and </think>"}`
+		v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+		require.NoError(t, err)
+		require.NotNil(t, v)
+		assert.Equal(t, verdictConfirmed, v.Verdict,
+			"quoting both tags inside the answer string is not thinking and must not be refused")
+		assert.Equal(t, "the handler drops text between <think> and </think>", v.Notes)
+	})
+}
