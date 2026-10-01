@@ -506,7 +506,7 @@ func TestRegistryDoc_ThinkingDoctorVerdict(t *testing.T) {
 	// assertions green while the code contradicts the doc. The behavioral anchors
 	// immediately after them are the half that fails on a detector revert.
 	assertStates(t, "thinking verdict intro", intro, []struct{ token, why string }{
-		{"A lone `</think>` with no opener anywhere counts as a signal", "HasThinkMarkup's no-opener branch: a reasoning template can put the opener in the prompt, reversing the old stray-closer-is-noise rule"},
+		{"A lone `</think>` with no opener anywhere counts as a signal too when non-blank text precedes it", "HasThinkMarkup's no-opener branch: a reasoning template can put the opener in the prompt, reversing the old stray-closer-is-noise rule — and the qualifier is load-bearing, because that branch requires non-blank text BEFORE the closer, so an unqualified sentence publishes a rule the detector does not apply"},
 		{"a block counts wherever it sits in the content", "detection is position-blind, unlike the review lanes' leading-only SplitThink: the probe prompt contains no tag, so a trailing block is the runaway thinker"},
 	})
 
