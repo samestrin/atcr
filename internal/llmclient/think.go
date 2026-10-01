@@ -198,8 +198,14 @@ func SplitThink(content string) (answer string, reasoning Reasoning) {
 // (TestSplitThink and TestHasThinkMarkup) so the divergence cannot drift into an
 // accident.
 //
-// This is a DETECTION question, deliberately broader than SplitThink's strip.
-// The two are different questions and cannot share one answer. A strip must be
+// This is a DETECTION question, and NEITHER predicate implies the other: the
+// detector is broader for a tag after answer text (the strip refuses it) but
+// NARROWER for content that is entirely markup with a blank body, where
+// HasThinkMarkup is false while SplitThink still consumes the leading run
+// (`<think>` alone, `<think>   `, and an empty pair as the whole content are the
+// three inputs where the strip is the broader one; see
+// TestHasThinkMarkup_AndSplitThink_AreIndependent). The two are different
+// questions and cannot share one answer. A strip must be
 // leading-only or it eats real answer text that merely quotes the tag (a
 // reviewer writing a finding about <think> handling). A detector must be
 // position-blind, because its caller — the doctor thinking probe — sends a fixed
