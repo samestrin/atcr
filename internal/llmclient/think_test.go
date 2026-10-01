@@ -329,3 +329,56 @@ func FuzzSplitThink(f *testing.F) {
 // returns strings only. The signature makes reaching that field unrepresentable,
 // so no test here can guard it - the coverage that matters lives with the client
 // (client_test.go). This test was deleted on 2026-10-01 for that reason.
+
+// TestHasEnclosingThinkBlock pins the predicate the verify and executor refusals
+// key on, and in particular its ONE deliberate difference from HasThinkMarkup:
+// a bare closer opens no block, so it encloses nothing and cannot hide a draft.
+func TestHasEnclosingThinkBlock(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{"pair holding text", "answer <think>draft</think> more", true},
+		{"pair at the front", "<think>draft</think>answer", true},
+		{"unclosed opener with a remainder", "answer <think>still going", true},
+		{"resumed run: second pair after a draft", `{"a":1}<think>no wait</think>{"b":2}`, true},
+		{"empty pair holds nothing", "answer <think></think> more", false},
+		{"empty pair does not hide a later real one", "<think></think>x<think>draft</think>", true},
+		{"unclosed opener with a blank remainder", "answer <think>   ", false},
+		{"no markup at all", `{"verdict":"confirmed"}`, false},
+
+		// The difference from HasThinkMarkup, stated as cases so it cannot drift
+		// back by accident. Each of these IS markup to the detector and is NOT an
+		// enclosure here.
+		{"bare closer after prose", "never searches for </think>.\n{\"v\":1}", false},
+		{"bare closer alone", "</think>", false},
+		{"bare closer then prose, still no opener", "prose </think> then more prose", false},
+		// But a bare closer must not SUPPRESS a real block that follows it: the
+		// scan is opener-anchored, so it simply walks past the stray closer.
+		{"bare closer does not hide a later real block", "prose </think> then <think>r</think>", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, HasEnclosingThinkBlock(tc.content))
+		})
+	}
+}
+
+// TestHasEnclosingThinkBlock_IsNarrowerThanHasThinkMarkup states the relationship
+// as a property rather than as prose: every enclosure is markup, and the bare
+// closer is the witness that the converse fails. If the two ever coincide, one of
+// them has silently taken the other's rules.
+func TestHasEnclosingThinkBlock_IsNarrowerThanHasThinkMarkup(t *testing.T) {
+	for _, c := range []string{
+		"answer <think>draft</think> more",
+		"answer <think>still going",
+		"<think></think>x<think>draft</think>",
+	} {
+		if HasEnclosingThinkBlock(c) {
+			assert.True(t, HasThinkMarkup(c), "content=%q: every enclosure is also markup", c)
+		}
+	}
+	const bare = "never searches for </think>.\n{\"v\":1}"
+	assert.True(t, HasThinkMarkup(bare), "the detector keeps the bare-closer rule for doctor's verdict")
+	assert.False(t, HasEnclosingThinkBlock(bare), "the enclosure predicate drops it — no opener, no draft")
+}

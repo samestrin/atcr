@@ -191,7 +191,14 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 	// likeliest input in this repo); a tag sequence that survives masking encloses
 	// real reply text, so the object after it is a draft. Masking is what keeps
 	// the guard from reversing the leading-only design it exists to defend.
-	if llmclient.HasThinkMarkup(maskJSONStrings(answer)) {
+	//
+	// HasEnclosingThinkBlock, not HasThinkMarkup: the question here is whether a
+	// BLOCK could be hiding a discarded draft, and a draft needs an opener to sit
+	// in. HasThinkMarkup's bare-closer rule belongs to doctor's thinking verdict —
+	// adopting it here threw away a committed verdict from any reply whose PROSE
+	// named </think>, which masking cannot catch because masking only blanks JSON
+	// string values (TD internal/verify/invoke.go:194).
+	if llmclient.HasEnclosingThinkBlock(maskJSONStrings(answer)) {
 		logger.Warn("skeptic failed", "skeptic", skeptic.Name, "class", "think_markup_after_answer")
 		logger.Debug("skeptic failure detail", "skeptic", skeptic.Name, "class", "think_markup_after_answer", "detail", "think markup outside a JSON string is not leading, so the first verdict-keyed object may be a discarded draft")
 		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "think_markup_after_answer", Skeptic: skeptic.Name}, res.TrippedBudgets, nil

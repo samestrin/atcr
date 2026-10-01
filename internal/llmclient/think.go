@@ -183,6 +183,52 @@ func SplitThink(content string) (answer string, reasoning Reasoning) {
 	return content, ""
 }
 
+// HasEnclosingThinkBlock reports whether the content carries an OPENER-ANCHORED
+// think block holding text: a <think>…</think> pair with non-blank inner text, or
+// a trailing unclosed <think> with a non-blank remainder. It is HasThinkMarkup
+// minus the bare-closer rule, and the difference is the whole point.
+//
+// Use this to decide whether a reply might be hiding a DISCARDED DRAFT before its
+// committed answer. A draft needs a block to sit in, and a block needs an opener;
+// a lone </think> opens nothing, so no object after it is enclosed by anything and
+// none of them can be a draft. If anything, a lone closer means the reply started
+// mid-thought because a chat template put the opener in the prompt — in which case
+// the object AFTER it is the committed answer, the exact opposite of a draft.
+//
+// The verify and executor lanes refuse a reply this returns true for, because
+// their strip is leading-only: one character of prose before a block defeats it
+// and leaves the draft inside it as the first keyed object a parser will take.
+// They previously called HasThinkMarkup, which inherited the bare-closer rule and
+// therefore threw away a committed verdict from any reply whose PROSE merely named
+// </think> — the likeliest input in this repo, since findings here discuss think
+// handling directly. SplitThink's own doc records that rule being reversed for the
+// STRIP on 2026-09-30 for the same reason; this is the same reversal for the
+// refusal that re-adopted it.
+//
+// HasThinkMarkup keeps the bare-closer rule, and must: its consumer is doctor's
+// thinking verdict, which asks "did this model think at all" from a fixed prompt
+// containing no tag. That is a detection question, not an enclosure question.
+func HasEnclosingThinkBlock(content string) bool {
+	rest := content
+	for {
+		open := strings.Index(rest, thinkOpen)
+		if open < 0 {
+			return false
+		}
+		rest = rest[open+len(thinkOpen):]
+		end := strings.Index(rest, thinkClose)
+		if end < 0 {
+			// Left open: everything after the opener is reasoning-in-progress.
+			return strings.TrimSpace(rest) != ""
+		}
+		if strings.TrimSpace(rest[:end]) != "" {
+			return true
+		}
+		// An empty pair holds no draft, but must not hide a later block that does.
+		rest = rest[end+len(thinkClose):]
+	}
+}
+
 // HasThinkMarkup reports whether the content carries inline think markup holding
 // text ANYWHERE in it: a <think>…</think> pair with non-blank inner text at any
 // position, a trailing unclosed opener with a non-blank remainder, or a </think>
