@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -188,6 +189,19 @@ func collectReviewNarratives(sourcesDir, reviewDir string) []reviewNarrative {
 		if rerr != nil {
 			return nil
 		}
+		// A SALVAGED reply is not a narrative. The provider returned no content and
+		// the client promoted the model's chain-of-thought into it, so every lane
+		// refuses it — parseFindings reads no findings from it at all. The leading-run
+		// exclusion below cannot catch it: promoted reasoning carries no <think> tags,
+		// so SplitThink returns it unchanged and the whole file is indexed. Since
+		// matchNarrative ranks by tier before reviewer, one reasoning line citing the
+		// exact FILE:LINE then outranks a real reviewer's prose and is published as
+		// the finding's provenance — into localdebt's append-only store, where no
+		// later reconcile can replace it (TD internal/reconcile/justification.go:225).
+		if sourceSalvaged(path) {
+			slog.Debug("skipping salvaged review.md", "path", path)
+			return nil
+		}
 		rel, rerr := filepath.Rel(reviewDir, path)
 		if rerr != nil {
 			// Cannot express the path relative to the review dir (e.g. different
@@ -205,6 +219,30 @@ func collectReviewNarratives(sourcesDir, reviewDir string) []reviewNarrative {
 	})
 	sort.Slice(out, func(i, j int) bool { return out[i].relPath < out[j].relPath })
 	return out
+}
+
+// sourceSalvaged reports whether the status.json sibling of a review.md marks
+// the slot salvaged. Same shape and same decoupling as discover.go's
+// readSourceFallback: only the one field is decoded, so reconcile does not import
+// internal/fanout's AgentStatus.
+//
+// FAIL-OPEN, the opposite of readSourceFallback's posture, and deliberately: a
+// missing, unreadable, or malformed status.json means "nothing says this reply was
+// salvaged", and withholding a real reviewer's justification on a read error would
+// trade a rare forged excerpt for a common missing one. Only an explicit
+// salvaged:true withholds.
+func sourceSalvaged(reviewPath string) bool {
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(reviewPath), statusFileName))
+	if err != nil {
+		return false
+	}
+	var st struct {
+		Salvaged bool `json:"salvaged"`
+	}
+	if err := json.Unmarshal(data, &st); err != nil {
+		return false
+	}
+	return st.Salvaged
 }
 
 // anchorRef locates one review.md line that carries a file:line anchor: the
