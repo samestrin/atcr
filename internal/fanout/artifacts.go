@@ -253,12 +253,28 @@ func tallySalvaged(statuses []AgentStatus) (int, []string) {
 
 // salvageCost names what one agent lost to the salvage: everything, or the specific
 // bins that were refused.
+//
+// The total-loss arm keys on the BIN INDEX, never on FindingsCount. FindingsCount is
+// the POST-grounding, post-min_severity published count (statusFor reads
+// fr.Findings), so a chunked persona whose clean sibling raised findings that the
+// grounding gate or the floor then dropped reports 0 — and a zero-keyed arm called
+// that a total salvage, discarded the bin detail, and sent the operator to
+// salvagedRemedy for a loss the gate caused, where declaring thinking: off changes
+// nothing (TD internal/fanout/artifacts.go:248). A bin index is the only field that
+// says WHICH bins were refused, so it is the only one that can answer what the
+// salvage cost.
 func salvageCost(st AgentStatus) string {
-	if st.FindingsCount == 0 {
-		return " (contributed nothing)"
-	}
+	// No bin index at all: the unchunked persona, whose entire reply was promoted
+	// reasoning, so the salvage did cost it everything.
 	if len(st.SalvagedChunks) == 0 {
+		if st.FindingsCount == 0 {
+			return " (contributed nothing)"
+		}
 		return ""
+	}
+	// A bin index that names every bin is the same total loss, spelled per bin.
+	if st.ChunkCount > 0 && len(st.SalvagedChunks) >= st.ChunkCount {
+		return " (contributed nothing)"
 	}
 	idx := make([]string, 0, len(st.SalvagedChunks))
 	for _, i := range st.SalvagedChunks {
