@@ -618,8 +618,12 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 			ir.Reason = ReasonSeatSuppressed
 		}
 		// The single reason token cannot describe a mixed pair, so the
-		// transcript note labels each seat for itself.
-		notes := seatSilenceNotes(rec.Halted, rec.Suppressed, silent)
+		// transcript note labels each seat for itself. Scoped to the SEATS ASKED,
+		// the same narrowing the token above just used: on the short-circuit the
+		// challenger was never invoked, and rendering "challenger silent" into
+		// report.md, the transcript and the operator warn would state a cause for a
+		// seat that had no turn to go silent on (TD internal/debate/debate.go:614).
+		notes := seatSilenceNotes(rec.Halted, rec.Suppressed, blamed)
 		tr.RecordRuling(RulingEvent{Outcome: OutcomeUnresolved, Reasoning: "no statement: " + strings.Join(notes, ", ")})
 		// The token in debate.json names one cause for the whole item and goes
 		// weak on a mixture; put the per-seat cause next to it and warn, so a seat
