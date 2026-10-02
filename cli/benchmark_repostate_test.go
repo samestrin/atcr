@@ -2824,8 +2824,20 @@ func TestSlotUnmeasuredReason(t *testing.T) {
 	}{
 		{"failed call", fanout.AgentStatus{Status: fanout.StatusFailed}, benchmark.SlotFailureCall},
 		{"timed out call", fanout.AgentStatus{Status: fanout.StatusTimeout}, benchmark.SlotFailureTimeout},
-		{"salvaged OK slot", fanout.AgentStatus{Status: fanout.StatusOK, Salvaged: true}, benchmark.SlotFailureUnmeasuredOK},
+		{"wholly salvaged OK slot", fanout.AgentStatus{Status: fanout.StatusOK, Salvaged: true}, benchmark.SlotFailureUnmeasuredOK},
 		{"think-suppressed OK slot", fanout.AgentStatus{Status: fanout.StatusOK, ThinkSuppressed: true}, benchmark.SlotFailureUnmeasuredOK},
+		{
+			name: "partially salvaged chunked slot is still scored",
+			// One refused bin of eight: the other seven contributed real findings, so
+			// the row has signal and must not be written out of the score.
+			st:   fanout.AgentStatus{Status: fanout.StatusOK, Salvaged: true, SalvagedChunks: []int{3}, ChunkCount: 8},
+			want: "",
+		},
+		{
+			name: "chunked slot with every bin salvaged is unmeasured",
+			st:   fanout.AgentStatus{Status: fanout.StatusOK, Salvaged: true, SalvagedChunks: []int{0, 1}, ChunkCount: 2},
+			want: benchmark.SlotFailureUnmeasuredOK,
+		},
 		{"healthy OK slot", fanout.AgentStatus{Status: fanout.StatusOK}, ""},
 		{"OK slot with findings", fanout.AgentStatus{Status: fanout.StatusOK, FindingsCount: 3}, ""},
 	} {

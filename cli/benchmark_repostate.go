@@ -132,7 +132,11 @@ func slotUnmeasuredReason(a fanout.AgentStatus) string {
 	if a.Status != fanout.StatusOK {
 		return benchmark.SlotFailureReasonForStatus(a.Status)
 	}
-	if a.Salvaged || a.ThinkSuppressed {
+	// A partial salvage is NOT unmeasured: the clean siblings' findings are parsed and
+	// reconciled, so the row has real signal and must be scored. Same per-bin rule the
+	// outcome classifier applies, through the same exported predicate, so the score and
+	// the label cannot drift on which salvages count (TD internal/scorecard/trust.go:1019).
+	if fanout.WholePersonaSalvaged(a) || a.ThinkSuppressed {
 		return benchmark.SlotFailureUnmeasuredOK
 	}
 	return ""

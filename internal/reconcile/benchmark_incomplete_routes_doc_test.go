@@ -53,7 +53,7 @@ func TestBenchmarkDoc_IncompleteRoutesMatchTheClassifier(t *testing.T) {
 	})
 
 	t.Run("the classifier really does fold all three routes into incomplete", func(t *testing.T) {
-		assert.Contains(t, code, "a.UnreviewedChunks > 0 || a.Truncated || a.Salvaged",
+		assert.Contains(t, code, "a.UnreviewedChunks > 0 || a.Truncated || WholePersonaSalvaged(a)",
 			"docs/benchmark.md's `incomplete` row describes this predicate; a changed predicate must re-open the row")
 
 		// And the three routes reach that arm at all: each must map to incomplete,
@@ -66,7 +66,7 @@ func TestBenchmarkDoc_IncompleteRoutesMatchTheClassifier(t *testing.T) {
 		}{
 			{"chunked bins failed", fanout.AgentStatus{Status: fanout.StatusOK, UnreviewedChunks: 1}, "the chunked route"},
 			{"payload shed", fanout.AgentStatus{Status: fanout.StatusOK, Truncated: true}, "the byte-budget route"},
-			{"salvaged reply", fanout.AgentStatus{Status: fanout.StatusOK, Salvaged: true}, "the salvage route"},
+			{"wholly salvaged reply", fanout.AgentStatus{Status: fanout.StatusOK, Salvaged: true}, "the whole-persona salvage route"},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				assert.Equal(t, "incomplete", fanout.ReviewerOutcome(tc.st, 0), tc.why)
