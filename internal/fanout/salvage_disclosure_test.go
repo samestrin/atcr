@@ -163,3 +163,41 @@ func readRepoFile(t *testing.T, path string) string {
 	require.NoErrorf(t, err, "reading %s: if it moved, update this guard to follow it", path)
 	return string(b)
 }
+
+// A PARTIAL salvage whose sibling's findings were then dropped by the grounding
+// gate or the min_severity floor reaches salvageCost with FindingsCount 0, so the
+// "contributed nothing" arm fired, discarded the SalvagedChunks detail and blamed
+// the salvage for a loss the gate caused — sending the operator to salvagedRemedy
+// ("declare thinking: off / repoint the model"), which would not change that
+// outcome. FindingsCount is POST-grounding (statusFor reads fr.Findings), so it
+// cannot answer what the SALVAGE cost (TD internal/fanout/artifacts.go:248).
+func TestSalvageCost_DoesNotBlameTheSalvageForAPostGroundingZero(t *testing.T) {
+	// A chunked persona: bin 1 refused, bin 0 clean. The clean bin's finding was
+	// then dropped downstream, so the published count is 0 while the refusal is
+	// still only partial.
+	st := AgentStatus{
+		Agent:          "bruce",
+		Salvaged:       true,
+		SalvagedChunks: []int{1},
+		FindingsCount:  0, // post-grounding
+	}
+	cost := salvageCost(st)
+	assert.NotContains(t, cost, "contributed nothing",
+		"the salvage cost one BIN, not the persona; a post-grounding zero must not be attributed to it")
+	assert.Contains(t, cost, "chunk 1",
+		"and the bin detail must survive, which is what the early return discarded")
+
+	// A whole-persona salvage has no bin index and DID lose everything, so that
+	// case keeps the total-loss wording.
+	whole := salvageCost(AgentStatus{Agent: "dax", Salvaged: true, FindingsCount: 0})
+	assert.Contains(t, whole, "contributed nothing")
+
+	// A chunked persona whose every bin salvaged is also a total loss.
+	every := salvageCost(AgentStatus{Agent: "kai", Salvaged: true, SalvagedChunks: []int{0, 1}, ChunkCount: 2, FindingsCount: 0})
+	assert.Contains(t, every, "contributed nothing",
+		"every bin refused is a whole-persona loss, whatever the index says")
+
+	// Partial salvage with surviving findings keeps its existing wording.
+	partial := salvageCost(AgentStatus{Agent: "otto", Salvaged: true, SalvagedChunks: []int{1}, FindingsCount: 5})
+	assert.Equal(t, " (chunk 1 refused, its siblings kept)", partial)
+}
