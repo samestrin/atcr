@@ -234,8 +234,8 @@ func collectReviewNarratives(sourcesDir, reviewDir string) []reviewNarrative {
 	return out
 }
 
-// sourceSalvaged reports whether the status.json sibling of a review.md marks
-// the slot salvaged. Same shape and same decoupling as discover.go's
+// sourceSalvage reports whether the status.json sibling of a review.md marks
+// the slot salvaged, and which of a chunked persona's bins were refused. Same shape and same decoupling as discover.go's
 // readSourceFallback: only the one field is decoded, so reconcile does not import
 // internal/fanout's AgentStatus.
 //
@@ -279,6 +279,18 @@ func sourceSalvage(reviewPath string) (salvaged bool, chunks []int) {
 // CONTENT-BEARING bin, in order, separated by chunkBoundaryLine, and
 // salvagedChunkIndices derives its indices from chunkSalvaged — the slice written
 // beside that same filtered bin list. So segment k is bin k.
+//
+// That correspondence DEPENDS on the engine owning the delimiter: a bin whose own
+// content carried a byte-equal line would split into two segments and shift every
+// later index, excluding the wrong bin. fanout neutralises model-issued copies at
+// both review.md producers (joinChunkContents and writeAgentArtifacts) precisely
+// so this holds; if that guard is ever removed, this walk is wrong rather than
+// merely imprecise.
+//
+// Walked forward rather than through chunkSegmentBounds, which maps a LINE to its
+// segment — the inverse of the segment-index-to-lines direction needed here.
+// extractSection still uses it to clamp the published excerpt, so an anchor in a
+// clean bin cannot quote a refused neighbour.
 //
 // A whole segment, not just its leading run: a salvaged reply is promoted
 // chain-of-thought end to end and carries no <think> tags at all, which is
