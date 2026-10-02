@@ -502,3 +502,40 @@ func TestLoadContested_SplitsOverflowByCause(t *testing.T) {
 	assert.Equal(t, 2, cr.Overflow, "the cap overflows keep their own count")
 	assert.Equal(t, 1, cr.Withheld, "and the exhausted records theirs, since their remedies differ")
 }
+
+// loadContested must carry the withheld items LIST and the attempt count onto the
+// report view, not just their count. On the run that withholds an item it writes no
+// ItemResult, so the ruling that described it for three runs vanishes; the count
+// alone would leave an operator with a bare integer and no idea WHICH item went
+// dark (TD cli/report.go:284).
+func TestLoadContested_ListsWithheldItemsWithTheirCountdown(t *testing.T) {
+	dir := t.TempDir()
+	recon := filepath.Join(dir, "reconciled")
+	require.NoError(t, os.MkdirAll(recon, 0o755))
+	df := debate.DebateFile{
+		SchemaVersion: debate.DebateSchemaVersion,
+		Items: []debate.ItemResult{{
+			File: "kept.go", Line: 1, Outcome: "unresolved",
+			Reason: "insufficient_distinct_models", UnresolvedAttempts: 2,
+		}},
+		Overflow: []debate.OverflowItem{
+			{File: "gone.go", Line: 42, Kind: "finding", Severity: "HIGH", Problem: "leaks the token",
+				Reason: debate.OverflowAttemptsExhausted, UnresolvedAttempts: 3},
+		},
+	}
+	raw, err := json.Marshal(df)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(recon, debate.DebateJSON), raw, 0o644))
+
+	cr := loadContested(dir)
+	require.Len(t, cr.WithheldItems, 1, "the withheld item is listed, not just counted")
+	assert.Equal(t, "gone.go", cr.WithheldItems[0].File)
+	assert.Equal(t, 42, cr.WithheldItems[0].Line)
+	assert.Equal(t, "HIGH", cr.WithheldItems[0].Severity)
+	assert.Equal(t, "leaks the token", cr.WithheldItems[0].Problem)
+	assert.Equal(t, 3, cr.WithheldItems[0].UnresolvedAttempts)
+	assert.Equal(t, debate.MaxUnresolvedAttempts, cr.UnresolvedAttemptsCeiling,
+		"the ceiling comes from the debate package, so the countdown cannot drift from the gate")
+	require.Len(t, cr.Items, 1)
+	assert.Equal(t, 2, cr.Items[0].UnresolvedAttempts, "a still-debated item carries its countdown too")
+}

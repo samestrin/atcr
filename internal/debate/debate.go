@@ -33,6 +33,12 @@ import (
 // is disclosed as overflow-style skipped work, never silent.
 const maxUnresolvedAttempts = 3
 
+// MaxUnresolvedAttempts is the exported ceiling, so a presentation layer can
+// render a withheld item's countdown ("attempt 3 of 3") without duplicating the
+// constant — the report and the withhold gate must agree on the number by
+// construction, not by coincidence.
+const MaxUnresolvedAttempts = maxUnresolvedAttempts
+
 // ErrNoReconciledFindings is returned when reviewDir has no reconciled
 // findings.json — the caller renders "run 'atcr reconcile' first" guidance. It
 // wraps os.ErrNotExist so errors.Is keeps working.
