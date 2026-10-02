@@ -187,3 +187,62 @@ func TestPriorUnresolvedAttemptsWarnsOnMalformedFile(t *testing.T) {
 	assert.Contains(t, buf.String(), DebateJSON,
 		"and the warning must name the artifact that could not be read")
 }
+
+// A CAP-overflow record must carry the prior attempt count too, not only a
+// withheld one. runDebate replaces debate.json wholesale each run, and an item
+// unresolved in run N that lands in sel.Overflow in run N+1 (the ordinary
+// max_items cap) had its counter reset to zero — so in run N+2 the ceiling that
+// exists to stop the re-debate loop had forgotten the attempts it was counting.
+// Reachable whenever higher-priority items enter the radar between runs (TD
+// internal/debate/emit.go:359).
+func TestOverflowItems_CarriesPriorAttemptsOntoACapOverflow(t *testing.T) {
+	key := FindingKey{File: "a.go", Line: 1, Problem: "p"}
+	got := overflowItems(
+		[]reconcile.DisagreementItem{{File: "a.go", Line: 1, Kind: "severity_split", Severity: "MEDIUM", Problem: "p"}},
+		map[FindingKey]int{key: 2},
+	)
+	require.Len(t, got, 1)
+	assert.Equal(t, 2, got[0].UnresolvedAttempts,
+		"a cap overflow preserves the history instead of resetting it")
+	assert.Empty(t, got[0].Reason,
+		"a cap overflow is still not an exhausted record — the Reason stays empty, as it was")
+
+	// An item with no recorded attempts keeps 0, so nothing is invented.
+	none := overflowItems(
+		[]reconcile.DisagreementItem{{File: "b.go", Line: 2, Problem: "q"}},
+		map[FindingKey]int{key: 2},
+	)
+	require.Len(t, none, 1)
+	assert.Zero(t, none[0].UnresolvedAttempts)
+}
+
+// And the READER must honour a cap-overflow record, or carrying the count onto it
+// changes nothing: the previous loop skipped every overflow entry whose Reason was
+// not OverflowAttemptsExhausted, so a cap overflow still reported zero prior
+// attempts on the next run.
+func TestPriorUnresolvedAttempts_ReadsACapOverflowRecord(t *testing.T) {
+	dir := t.TempDir()
+	writeDebateFileFixture(t, dir, DebateFile{
+		SchemaVersion: DebateSchemaVersion,
+		Overflow: []OverflowItem{{
+			File: "a.go", Line: 1, Kind: "severity_split", Severity: "MEDIUM", Problem: "p",
+			UnresolvedAttempts: 2, // Reason empty: the ordinary max_items cap
+		}},
+	})
+
+	got := priorUnresolvedAttempts(context.Background(), dir)
+	assert.Equal(t, 2, got[FindingKey{File: "a.go", Line: 1, Problem: "p"}],
+		"a cap-overflow record carries the history forward, so the reader must read it")
+
+	// A withheld record is still floored to the ceiling — it was withheld BECAUSE
+	// the ceiling was reached, so a lower count can only be a pre-count record.
+	dir2 := t.TempDir()
+	writeDebateFileFixture(t, dir2, DebateFile{
+		SchemaVersion: DebateSchemaVersion,
+		Overflow: []OverflowItem{{
+			File: "b.go", Line: 2, Problem: "q", Reason: OverflowAttemptsExhausted, UnresolvedAttempts: 0,
+		}},
+	})
+	got2 := priorUnresolvedAttempts(context.Background(), dir2)
+	assert.Equal(t, maxUnresolvedAttempts, got2[FindingKey{File: "b.go", Line: 2, Problem: "q"}])
+}
