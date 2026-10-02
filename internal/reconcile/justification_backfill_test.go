@@ -93,3 +93,50 @@ func TestReExtractJustification(t *testing.T) {
 			"returning ok=true here would blank a stored justification that no later reconcile can replace")
 	})
 }
+
+// The replay path must apply the SAME exclusions the producer does, or the replay
+// set can exceed the stamp set: a file the producer would never have stamped from
+// would become an authoritative candidate for the replay (localdebt/backfill.go's
+// stated invariant). Two are missing today — the salvaged-source skip and the
+// draftLineSet exclusion — so a pre-existing forged justification survives a
+// backfill as Unchanged and the operator is told the store is clean.
+func TestReExtractJustification_AppliesTheProducerExclusions(t *testing.T) {
+	op := "\x3cthink\x3e"
+	cl := "\x3c/think\x3e"
+	dir := t.TempDir()
+
+	anchored := "\n- **internal/thing.go:42** the real narrative explaining the defect.\n"
+
+	t.Run("a salvaged source with no bin index yields no replay excerpt", func(t *testing.T) {
+		p := filepath.Join(dir, "salvaged.md")
+		require.NoError(t, os.WriteFile(p, []byte("## Findings\n"+anchored), 0o600))
+		// No salvaged_chunks: an unchunked persona whose whole reply is promoted
+		// reasoning. collectReviewNarratives withholds it entirely, so it is not a
+		// document the stamp could have come from.
+		require.NoError(t, os.WriteFile(filepath.Join(dir, statusFileName),
+			[]byte(`{"salvaged":true}`), 0o600))
+
+		// Line 3 is the anchored narrative line, so the only reason to refuse is the
+		// salvaged status the producer honours.
+		text, _, ok, err := ReExtractJustification(p, "internal/thing.go", 42, 3)
+		require.NoError(t, err)
+		assert.False(t, ok, "a source the producer refuses must not authorise a replay rewrite")
+		assert.Empty(t, text)
+	})
+
+	t.Run("a draft citation inside a leading think run is not an anchor", func(t *testing.T) {
+		p := filepath.Join(dir, "draft.md")
+		body := op + "considering internal/thing.go:42\nstill drafting\n" + cl + "\n" +
+			"- internal/thing.go:43 something else entirely\n"
+		require.NoError(t, os.WriteFile(p, []byte(body), 0o600))
+		require.NoError(t, os.Remove(filepath.Join(dir, statusFileName)))
+
+		// Line 1 carries the anchor, but it lives inside the leading run the
+		// findings parser refused — the model DISCARDED it. Publishing it as the
+		// finding's provenance is the damage draftLineSet exists to prevent.
+		text, _, ok, err := ReExtractJustification(p, "internal/thing.go", 42, 1)
+		require.NoError(t, err)
+		assert.False(t, ok, "a draft-run line must not authorise a replay rewrite")
+		assert.Empty(t, text)
+	})
+}
