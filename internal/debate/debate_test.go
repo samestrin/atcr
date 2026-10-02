@@ -1058,7 +1058,9 @@ func TestRunDebate_SilentSeatPathDisclosesPerSeatCause(t *testing.T) {
 // TestSeatSilenceNotes_LabelsEachSeatForItself pins the per-seat labelling the
 // single reason token cannot carry. Without it a mixed pair rendered as
 // "seat halted: proposer,challenger" — telling an operator the challenger
-// halted when it had run clean.
+// halted when it had run clean. Suppressed outranks halted on a tie: the two
+// facts are independent and the strip is the one that removed the statement
+// (TD internal/debate/protocol.go:231).
 func TestSeatSilenceNotes_LabelsEachSeatForItself(t *testing.T) {
 	assert.Equal(t, []string{"proposer halted", "challenger silent"},
 		seatSilenceNotes([]string{LabelProposer}, nil, []string{LabelProposer, LabelChallenger}))
@@ -1071,9 +1073,9 @@ func TestSeatSilenceNotes_LabelsEachSeatForItself(t *testing.T) {
 	// fall back to the weaker seat_silent token (TD internal/debate/debate.go:524).
 	assert.Equal(t, []string{"proposer suppressed", "challenger silent"},
 		seatSilenceNotes(nil, []string{LabelProposer}, []string{LabelProposer, LabelChallenger}))
-	assert.Equal(t, []string{"proposer halted"},
+	assert.Equal(t, []string{"proposer suppressed"},
 		seatSilenceNotes([]string{LabelProposer}, []string{LabelProposer}, []string{LabelProposer}),
-		"halted wins a tie: a halted turn never reaches runTurn's suppression branch, so the sets are disjoint in practice")
+		"suppressed wins a tie: the sets are NOT disjoint (a budget-tripped seat whose forced answer was all think markup is both), and the strip is what explains the missing statement")
 	assert.False(t, allSeatsIn([]string{LabelProposer}, []string{LabelProposer, LabelChallenger}),
 		"a suppressed proposer plus a genuinely-silent challenger must not report seat_suppressed")
 }
