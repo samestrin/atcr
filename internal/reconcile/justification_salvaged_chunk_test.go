@@ -117,13 +117,26 @@ func TestSalvagedSegmentLines(t *testing.T) {
 	// Segment 0 = line 0, delimiter = line 1, segment 1 = line 2, etc.
 	raw := chunkedReview("zero", "one", "two")
 
-	assert.Equal(t, map[int]struct{}{0: {}}, salvagedSegmentLines(raw, []int{0}))
-	assert.Equal(t, map[int]struct{}{4: {}}, salvagedSegmentLines(raw, []int{2}))
-	assert.Equal(t, map[int]struct{}{0: {}, 4: {}}, salvagedSegmentLines(raw, []int{0, 2}))
-	assert.Empty(t, salvagedSegmentLines(raw, nil),
-		"no named bin excludes nothing — the fail-open direction")
-	assert.Empty(t, salvagedSegmentLines(raw, []int{9}),
-		"an out-of-range bin index names no segment and must not panic")
+	assertSegLines := func(bins []int, want map[int]struct{}) {
+		t.Helper()
+		got, desynced := salvagedSegmentLines(raw, bins)
+		assert.False(t, desynced, "every named bin is accountable in a three-segment reply")
+		assert.Equal(t, want, got)
+	}
+	assertSegLines([]int{0}, map[int]struct{}{0: {}})
+	assertSegLines([]int{2}, map[int]struct{}{4: {}})
+	assertSegLines([]int{0, 2}, map[int]struct{}{0: {}, 4: {}})
+
+	nilLines, nilDesynced := salvagedSegmentLines(raw, nil)
+	assert.Empty(t, nilLines, "no named bin excludes nothing — the unchunked persona")
+	assert.False(t, nilDesynced, "and names no desync")
+
+	// An out-of-range index no longer excludes nothing silently: it is a desynced
+	// pair, and the caller withholds the whole file on it
+	// (TD internal/reconcile/justification.go:303).
+	oorLines, oorDesynced := salvagedSegmentLines(raw, []int{9})
+	assert.Empty(t, oorLines, "an unaccountable index still names no segment and must not panic")
+	assert.True(t, oorDesynced, "but it must be REPORTED, not treated as a clean reply")
 }
 
 // TestSalvagedSegmentLines_MultiLineSegmentExcludesEveryLine guards the one
@@ -133,8 +146,13 @@ func TestSalvagedSegmentLines_MultiLineSegmentExcludesEveryLine(t *testing.T) {
 	t.Parallel()
 	raw := chunkedReview("a\nb\nc", "d\ne")
 
-	assert.Equal(t, map[int]struct{}{0: {}, 1: {}, 2: {}}, salvagedSegmentLines(raw, []int{0}))
-	assert.Equal(t, map[int]struct{}{4: {}, 5: {}}, salvagedSegmentLines(raw, []int{1}))
+	zero, zeroDesynced := salvagedSegmentLines(raw, []int{0})
+	assert.False(t, zeroDesynced)
+	assert.Equal(t, map[int]struct{}{0: {}, 1: {}, 2: {}}, zero)
+
+	one, oneDesynced := salvagedSegmentLines(raw, []int{1})
+	assert.False(t, oneDesynced)
+	assert.Equal(t, map[int]struct{}{4: {}, 5: {}}, one)
 }
 
 // TestSourceSalvage_ReadsBothFields pins the decode. The bit alone cannot
@@ -238,4 +256,72 @@ func TestExcludedAnchorLines_IgnoresBinsWhenNothingWasRefused(t *testing.T) {
 	// And honours it when the bit really was set.
 	assert.Equal(t, map[int]struct{}{0: {}}, excludedAnchorLines(raw, []int{0}),
 		"a real refusal still excludes its bin's segment")
+}
+
+// TestStampJustifications_BinIndexNamingNoSegmentWithholdsWholeFile is the
+// desync case, and the one input shape on which the per-bin narrowing was
+// strictly WORSE than the whole-file skip it replaced.
+//
+// The bit is set and the list names bin 1, but the review.md has a single
+// segment — so there is no bin 1 to exclude, the forward walk excluded nothing,
+// and every line of a promoted chain-of-thought became a candidate anchor.
+// matchNarrative ranks by tier before reviewer, so that reasoning line outranks a
+// real reviewer's prose and is published as the finding's provenance into
+// localdebt's append-only store, where no later reconcile can replace it.
+//
+// A list the content cannot account for is evidence the pair is desynced, not
+// evidence that nothing was refused — fanout never writes one (salvagedChunkIndices
+// returns nil on misalignment, and joinChunkContents emits exactly one segment per
+// bin). Fail CLOSED here, mirroring parseFindings' own misalignment arm at
+// internal/fanout/engine.go:612 (TD internal/reconcile/justification.go:303).
+func TestStampJustifications_BinIndexNamingNoSegmentWithholdsWholeFile(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeReview(t, reviewDir, "dax", ""+
+		"Let me think about this.\n"+
+		"Maybe **`internal/auth/token.go:42`** is the spot. Still weighing it.\n")
+	writeSalvagedChunkStatus(t, reviewDir, "dax", []int{1})
+
+	jf := []JSONFinding{{File: "internal/auth/token.go", Line: 42, Reviewers: []string{"dax"}}}
+	stampJustifications(jf, reviewDir)
+
+	assert.Empty(t, jf[0].Justification,
+		"a bin index the content cannot account for means the pair is desynced; withhold rather than publish reasoning")
+	assert.Nil(t, jf[0].SourceReport,
+		"and emit no source_report back-reference into a reply that may be promoted reasoning")
+}
+
+// TestSalvagedSegmentLines_ReportsDesync pins the signal the caller withholds
+// on, separately from the lines it excludes, so a future caller cannot read the
+// empty map as "nothing was refused".
+func TestSalvagedSegmentLines_ReportsDesync(t *testing.T) {
+	t.Parallel()
+	raw := chunkedReview("zero", "one")
+
+	lines, desynced := salvagedSegmentLines(raw, []int{1})
+	assert.False(t, desynced, "bin 1 of a two-segment reply is accountable")
+	assert.Equal(t, map[int]struct{}{2: {}}, lines)
+
+	_, desynced = salvagedSegmentLines(raw, []int{2})
+	assert.True(t, desynced, "one past the last segment is a desynced pair")
+
+	_, desynced = salvagedSegmentLines(raw, []int{9})
+	assert.True(t, desynced, "far out of range is the same desync, not a no-op")
+
+	_, desynced = salvagedSegmentLines(raw, []int{-1})
+	assert.True(t, desynced, "a negative index names no segment either")
+
+	_, desynced = salvagedSegmentLines(raw, []int{0, 7})
+	assert.True(t, desynced, "ONE unaccountable index in an otherwise valid list is still a desync")
+
+	lines, desynced = salvagedSegmentLines(raw, nil)
+	assert.False(t, desynced, "no named bin is not a desync — it is the unchunked persona")
+	assert.Empty(t, lines)
+
+	// A single-segment review.md is the shape that produced the defect: bin 0 is
+	// accountable, anything above it is not.
+	single := "only one segment here"
+	_, desynced = salvagedSegmentLines(single, []int{0})
+	assert.False(t, desynced)
+	_, desynced = salvagedSegmentLines(single, []int{1})
+	assert.True(t, desynced, "the proven defect input must now report desync")
 }

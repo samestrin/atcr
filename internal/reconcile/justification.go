@@ -300,9 +300,9 @@ func sourceSalvage(reviewPath string) (salvaged bool, chunks []int) {
 // the fail-open direction this file takes everywhere: a needless unexcluded
 // candidate that still has to win a tier comparison, never a silent withholding
 // of a real reviewer's prose.
-func salvagedSegmentLines(raw string, bins []int) map[int]struct{} {
+func salvagedSegmentLines(raw string, bins []int) (map[int]struct{}, bool) {
 	if len(bins) == 0 {
-		return nil
+		return nil, false
 	}
 	refused := make(map[int]struct{}, len(bins))
 	for _, b := range bins {
@@ -324,14 +324,17 @@ func salvagedSegmentLines(raw string, bins []int) map[int]struct{} {
 		seg++
 		start = i + 1
 	}
-	return out
+	// STUB (RED): always reports "accountable" so the new tests fail on the
+	// assertion rather than on a compile error. Replaced in the GREEN commit.
+	return out, false
 }
 
 // excludedAnchorLines is the union buildAnchorIndex skips: the refused leading
 // run of each chunk segment, plus every line of a salvaged bin.
 func excludedAnchorLines(raw string, salvagedBins []int) map[int]struct{} {
 	out := draftLineSet(raw)
-	for l := range salvagedSegmentLines(raw, salvagedBins) {
+	lines, _ := salvagedSegmentLines(raw, salvagedBins)
+	for l := range lines {
 		out[l] = struct{}{}
 	}
 	return out
