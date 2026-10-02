@@ -344,7 +344,7 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	debatePath, debateBytes, err := computeDebateBytes(reviewDir, DebateFile{
 		SchemaVersion: DebateSchemaVersion,
 		Items:         items,
-		Overflow:      append(overflowItems(sel.Overflow), withheld...),
+		Overflow:      append(overflowItems(sel.Overflow, attempts), withheld...),
 	})
 	if err != nil {
 		return Result{}, err

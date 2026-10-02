@@ -363,23 +363,44 @@ func priorUnresolvedAttempts(ctx context.Context, reviewDir string) map[FindingK
 		out[FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}] = n
 	}
 	for _, ov := range df.Overflow {
-		if ov.Reason != OverflowAttemptsExhausted {
-			continue
-		}
 		n := ov.UnresolvedAttempts
-		if n < maxUnresolvedAttempts {
+		// Only a WITHHELD record is floored: it was withheld BECAUSE the ceiling was
+		// reached, so a count below the ceiling can only be a pre-count record.
+		if ov.Reason == OverflowAttemptsExhausted && n < maxUnresolvedAttempts {
 			n = maxUnresolvedAttempts
+		}
+		// A CAP-overflow record is read too, not skipped: runDebate replaces
+		// debate.json wholesale, so an item unresolved in run N and overflowed by the
+		// max_items cap in run N+1 appears only as this record — skipping it reset
+		// the counter and un-armed the ceiling (TD internal/debate/emit.go:359).
+		//
+		// A ZERO still contributes nothing, which is the distinction that keeps the
+		// carry honest: an ordinary cap overflow on an item nobody ever tried is not
+		// evidence of an attempt, and counting it would withhold an item that has
+		// never been debated. Only a count the writer actually carried is read.
+		if n < 1 {
+			continue
 		}
 		out[FindingKey{File: ov.File, Line: ov.Line, Problem: ov.Problem}] = n
 	}
 	return out
 }
 
-// overflowItems projects the selector's overflow into the recorded shape.
-func overflowItems(items []reconcile.DisagreementItem) []OverflowItem {
+// overflowItems projects the selector's overflow into the recorded shape,
+// carrying each item's prior attempt count. runDebate replaces debate.json
+// wholesale each run, so without the carry a cap-overflowed item loses the history
+// that would eventually withhold it: an item unresolved in run N and overflowed by
+// the max_items cap in run N+1 reset to zero, and the ceiling stopped counting —
+// reachable whenever higher-priority items enter the radar between runs (TD
+// internal/debate/emit.go:359). Reason stays empty: a cap overflow is not an
+// exhausted record, and its remedy (raise debate.max_items) is the opposite one.
+func overflowItems(items []reconcile.DisagreementItem, attempts map[FindingKey]int) []OverflowItem {
 	out := make([]OverflowItem, 0, len(items))
 	for _, it := range items {
-		out = append(out, OverflowItem{File: it.File, Line: it.Line, Kind: it.Kind, Severity: it.Severity, Problem: it.Problem})
+		out = append(out, OverflowItem{
+			File: it.File, Line: it.Line, Kind: it.Kind, Severity: it.Severity, Problem: it.Problem,
+			UnresolvedAttempts: attempts[FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}],
+		})
 	}
 	return out
 }
