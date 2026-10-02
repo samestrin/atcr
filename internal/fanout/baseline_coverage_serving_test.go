@@ -729,6 +729,8 @@ func TestMergeChunkResults_PromotedZeroBudgetDoesNotLeaveAnInheritedCapBehind(t 
 			ResolvedWindow:       200000,
 			ReservedOutputTokens: 8192,
 			ResolvedMaxTokens:    8192,
+			// The tool-loop primary's extra replay reservation, inherited via out := g[0].
+			ReasoningReserveTokens: 16384,
 		},
 		{
 			Agent: "greta", Status: StatusOK, Content: "c1",
@@ -756,6 +758,11 @@ func TestMergeChunkResults_PromotedZeroBudgetDoesNotLeaveAnInheritedCapBehind(t 
 		"the cap must be zeroed with its reservation: chunk 0's 8192 did not close this "+
 			"budget, and publishing it beside an absent reservation names the wrong number "+
 			"as the one to lower")
+	assert.Zero(t, out.ReasoningReserveTokens,
+		"the reasoning reserve goes with the other two: status.go documents it as the EXTRA "+
+			"reservation on top of reserved_output_tokens, so with that one force-zeroed an "+
+			"inherited 16384 leaves a reserve sitting on top of nothing — the exact "+
+			"self-contradictory record this arm exists to prevent (TD internal/fanout/chunker.go:709)")
 }
 
 // The ordinary case must keep its cap: a non-zero promoted budget leaves the reservation
