@@ -426,6 +426,14 @@ type Result struct {
 	// internal/fanout/engine.go:533. Set only alongside UnparseableResponse.
 	ThinkSuppressed bool
 
+	// ThinkOnlyAttempts counts the chain members whose reply was wholly a leading
+	// think run on THIS walk. Accumulated on the Result rather than only in a local,
+	// because the gate that demotes a TRUNCATED think-only reply increments a local
+	// and then the StatusOK block — which unconditionally returns — swallowed the
+	// non-truncated arm entirely, so the walk-level warning could never fire for the
+	// finish_reason=stop shape it was written for (TD internal/fanout/engine.go:1083).
+	ThinkOnlyAttempts int
+
 	// UnparseableChunks counts a chunked persona's chunks that set
 	// UnparseableResponse. mergeResultGroup sets it; the merged
 	// UnparseableResponse means zero parseable findings persona-wide.
@@ -1009,6 +1017,7 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 			// `<think>…</think>\n` shape returns "\n".
 			if answer, _ := llmclient.SplitThink(r.Content); len(answer) < len(r.Content) && strings.TrimSpace(answer) == "" {
 				thinkOnlyAttempts++
+				r.ThinkOnlyAttempts++
 			}
 			log.FromContext(ctx).Warn("reviewer response truncated with zero findings; failing over",
 				"agent", a.Name, "model", a.Invocation.Model)
@@ -1091,6 +1100,11 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 					// reply, which carries no think markup and is a different failure.
 					if len(answer) < len(r.Content) && strings.TrimSpace(answer) == "" {
 						r.ThinkSuppressed = true
+						// Counted BOTH ways: on the Result so the fact survives, and in
+						// the walk-level local so the warning below this block's return
+						// reports the same total the truncated path would.
+						r.ThinkOnlyAttempts++
+						thinkOnlyAttempts++
 					}
 				}
 			}
@@ -1119,6 +1133,16 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 				log.FromContext(ctx).Warn("baseline coverage: the serving agent's tag differs from its primary's without the re-pack flag set — promoting to re-packed (fail-open) rather than trusting a possibly-stale tag",
 					"agent", a.Name, "slot", s.Primary.Name)
 				r.servedRePacked = true
+			}
+			// This block RETURNS, so the after-loop warning cannot see an increment
+			// made here. Warn from HERE when the final, untruncated reply was wholly a
+			// think run and earlier attempts were too — the finish_reason=stop shape,
+			// where nothing demotes the reply and the walk simply ends. Emitting from
+			// this site rather than deferring the return is what keeps the warning
+			// attached to the walk it describes (TD internal/fanout/engine.go:1083).
+			if thinkOnlyAttempts > 0 && r.ThinkSuppressed {
+				log.FromContext(ctx).Warn("think-only replies exhausted the fallback chain: the walk bought zero findings",
+					"agent", s.Primary.Name, "attempts", len(chain), "think_only_attempts", thinkOnlyAttempts)
 			}
 			return r
 		}

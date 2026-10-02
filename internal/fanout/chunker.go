@@ -391,6 +391,10 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	out.parsedFindings = nil
 	out.parsedFindingsSet = false
 	out.UnparseableChunks = 0 // counted below over every chunk, g[0] included
+	// ThinkOnlyAttempts is a PER-WALK diagnostic and the merged record describes a
+	// different walk; leaving g[0]'s value would attribute one chunk's wasted spend to
+	// the whole persona. Summed with the other chunk-level counts below.
+	out.ThinkOnlyAttempts = 0
 	// Chunk-level serving identity does not survive the collapse: the merged
 	// Result is a persona record, so inheriting chunk 0's served tag would name
 	// only its files as if they were the persona's reviewed set — beside a
@@ -492,6 +496,9 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 		if r.UnparseableResponse {
 			out.UnparseableChunks++
 		}
+		// Same reasoning as UnparseableChunks: a persona's wasted think-only spend is
+		// the SUM over its chunks, not g[0]'s.
+		out.ThinkOnlyAttempts += r.ThinkOnlyAttempts
 		// FIRST NON-ZERO across the group, not g[0]'s. The diff-wide shed is a property
 		// of the PAYLOAD — every chunk of a persona is rendered from the same
 		// modePayload, so the value is identical wherever it appears and the first
