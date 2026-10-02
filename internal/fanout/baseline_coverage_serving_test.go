@@ -794,3 +794,44 @@ func TestMergeChunkResults_PromotedNonZeroBudgetKeepsTheInheritedCap(t *testing.
 	assert.Equal(t, 8192, out.ResolvedMaxTokens,
 		"the cap belongs to the model named on this record, like resolved_window beside it")
 }
+
+// The window/reservation/cap are stamped as a MATCHED SET from one serving agent,
+// and mergeResultGroup re-derives all of them from g[bestServedIdx]. The reasoning
+// reserve was left out of that block, so it kept chunk 0's value while the other
+// four moved to the majority-serving chunk — publishing the fallback's model,
+// window and cap beside the PRIMARY's reasoning_reserve_tokens, which status.go:519
+// tells the reader to read together (TD internal/fanout/chunker.go:555).
+func TestMergeResultGroup_ReasoningReserveMovesWithTheModel(t *testing.T) {
+	t.Parallel()
+	g := []Result{
+		{
+			Agent: "greta", Status: StatusOK, Content: "c0",
+			Model: "primary-model", DegradationAction: degradationChunk,
+			EffectiveBudget: 400000, ResolvedWindow: 200000,
+			ReservedOutputTokens: 8192, ResolvedMaxTokens: 8192,
+			ReasoningReserveTokens: 16384, // the tool-loop primary's replay reserve
+		},
+		{
+			// The majority-serving chunk: a different agent, no replay reserve.
+			Agent: "greta", Status: StatusOK, Content: "c1", Model: "backup-model",
+			DegradationAction: degradationTruncate, EffectiveBudget: 71680, ResolvedWindow: 32768,
+			ReservedOutputTokens: 4096, ResolvedMaxTokens: 4096,
+			servedRePacked: true,
+		},
+		{
+			Agent: "greta", Status: StatusOK, Content: "c2", Model: "backup-model",
+			DegradationAction: degradationChunk, EffectiveBudget: 71680, ResolvedWindow: 32768,
+			ReservedOutputTokens: 4096, ResolvedMaxTokens: 4096,
+		},
+	}
+
+	merged := mergeChunkResults(g, nil)
+	require.Len(t, merged, 1)
+	out := merged[0]
+
+	require.Equal(t, "backup-model", out.Model, "precondition: the majority-serving chunk names the model")
+	require.Equal(t, 4096, out.ReservedOutputTokens, "precondition: the reservation moved with it")
+	assert.Zero(t, out.ReasoningReserveTokens,
+		"the reasoning reserve is part of the matched set: publishing chunk 0's 16384 beside "+
+			"the backup's model and reservation attributes a reservation the serving agent never held")
+}
