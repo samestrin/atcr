@@ -50,11 +50,41 @@ func ReExtractJustification(path, file string, line, anchorLine int) (text, sect
 	if err != nil {
 		return "", "", false, fmt.Errorf("reading review narrative %s: %w", path, err)
 	}
+	// The producer's refusal exclusions, applied at the replay too. ReExtractJustification
+	// already replicates the size cap and the anchorTier floor for this reason, and
+	// the replay set must not exceed the stamp set: a file collectReviewNarratives
+	// would refuse is one the stamp cannot have come from, so it must not yield an
+	// authoritative excerpt here either (TD internal/reconcile/justification_backfill.go:38).
+	//
+	// A SALVAGED reply is not a narrative — it is promoted chain-of-thought, and no
+	// lane reads findings from it. Withheld whole only when no bin index narrows it,
+	// exactly as the producer decides: a bin list means the untouched segments are
+	// real prose.
+	salvaged, salvagedBins := sourceSalvage(path)
+	if salvaged && len(salvagedBins) == 0 {
+		return "", "", false, nil
+	}
+	if !salvaged {
+		salvagedBins = nil
+	}
 	lines := strings.Split(string(b), "\n")
+	// And the draft-line exclusion, per chunk segment — the same set
+	// buildAnchorIndex skips. A file:line the model wrote inside a reasoning run the
+	// findings parser REFUSED is the model's discarded draft, and publishing it as a
+	// finding's provenance is the damage draftLineSet exists to prevent.
+	excluded, desynced := excludedAnchorLines(string(b), salvagedBins)
+	if desynced {
+		// The named bins match no segment in this review.md, so nothing says which
+		// lines were refused. Withhold, mirroring the producer.
+		return "", "", false, nil
+	}
 	idx := anchorLine - 1 // SourceReport.Line is 1-based; extractSection indexes from 0
 	if idx < 0 || idx >= len(lines) {
 		// The file changed length since the stamp. Not an error — this candidate is
 		// simply not the document the excerpt came from.
+		return "", "", false, nil
+	}
+	if _, draft := excluded[idx]; draft {
 		return "", "", false, nil
 	}
 	if anchorTier(lines[idx], file, line) < minAnchorTier {
