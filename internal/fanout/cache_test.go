@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -808,4 +809,50 @@ func TestBuildAgents_EveryKeyedFieldChangesTheCacheKey(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The diff-cache gate is `StatusOK && !ResponseTruncated && !Salvaged`, but
+// ThinkSuppressed is computed LATER in invokeSlot — after invokeCachedSingleShot
+// has already Put. So a reply whose entire content is a leading think run at
+// finish_reason=stop (not truncated, not salvaged) was CACHED, and every later
+// same-diff run re-served a reviewer that provably contributes nothing, losing even
+// the chance of different sampling (TD internal/fanout/engine.go:1319).
+func TestEngine_ThinkSuppressedReplyIsNotCached(t *testing.T) {
+	store := cache.NewStore(filepath.Join(t.TempDir(), "cache"), 0)
+	f := newThoughtOnlyFake()
+	slot := cacheableSlot("reviewer", "m", "prompt p")
+
+	r1 := NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{slot})
+	require.True(t, r1[0].ThinkSuppressed, "precondition: the reply is wholly a think run")
+
+	// A second run must call live rather than replay the useless reply.
+	r2 := NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{slot})
+	assert.False(t, r2[0].CacheHit,
+		"a think-suppressed reply contributes nothing, so caching it re-serves a useless reviewer forever")
+	assert.Equal(t, 2, f.callCount("m"))
+}
+
+// newThoughtOnlyFake returns a completer whose reply is entirely a leading think
+// run, untruncated, so it is StatusOK and not Salvaged — the shape the cache gate
+// could not see.
+func newThoughtOnlyFake() *thoughtOnlyFake {
+	return &thoughtOnlyFake{calls: map[string]int{}}
+}
+
+type thoughtOnlyFake struct {
+	mu    sync.Mutex
+	calls map[string]int
+}
+
+func (f *thoughtOnlyFake) Complete(_ context.Context, inv llmclient.Invocation) (string, error) {
+	f.mu.Lock()
+	f.calls[inv.Model]++
+	f.mu.Unlock()
+	return "\x3cthink\x3ereasoning only, no answer\x3c/think\x3e", nil
+}
+
+func (f *thoughtOnlyFake) callCount(model string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls[model]
 }
