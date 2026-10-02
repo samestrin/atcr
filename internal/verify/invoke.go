@@ -640,8 +640,17 @@ const (
 )
 
 // classifyUnopenedCloser decides which part of a STRIPPED answer to parse when a
-// </think> appears that no <think> opened. Shared by both lanes so the skeptic
-// and the executor cannot drift on it.
+// </think> appears that no <think> opened. Shared by both lanes, so neither can
+// drift on the RULE.
+//
+// It cannot hold them together on the ENVELOPE, though, and that distinction is
+// load-bearing: each lane passes its own hasEnvelope, and the two did drift
+// there. parseVerdict iterated candidate objects for its key while
+// parseExecutorResponse took only the first, so a decoy object in front of the
+// patch made the committed section look empty on the executor lane alone and the
+// abandoned draft was returned as the fix (TD internal/verify/executor.go:916).
+// Both predicates iterate now. A new lane added here must supply one that does
+// the same, or it inherits the rule and not the protection.
 //
 // Such a closer is the one tag shape neither earlier guard acts on, both
 // deliberately: SplitThink leaves it in place and HasEnclosingThinkBlock does not

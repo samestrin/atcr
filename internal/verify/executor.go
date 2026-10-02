@@ -906,13 +906,16 @@ func buildExecutorAgentPromptWithSentinel(finding reconcile.JSONFinding, sentine
 	return b.String()
 }
 
-// parseExecutorResponse extracts the fix from the executor's agent-mode JSON response
-// {"fix": "...", "explanation": "..."}. It reuses extractJSONObject (verdict.go) so a
-// fenced or prose-wrapped object is still located. The fix field is required and must
-// be non-empty after trimming; explanation is advisory and ignored. A pointer
-// distinguishes a missing "fix" key from an empty value, mirroring parseVerdict.
 // carriesFixEnvelope is the envelope test classifyUnopenedCloser needs for the
-// executor lane.
+// executor lane: it is parseExecutorResponse's own verdict on the text, so the
+// predicate and the parser it guards cannot disagree about what an envelope is.
+//
+// That identity is the fix for TD internal/verify/executor.go:916. While
+// parseExecutorResponse stopped at the FIRST balanced object, this predicate
+// reported "no envelope" for any committed section that stated WHERE it was
+// fixing before stating WHAT the fix was — classifyUnopenedCloser then fell back
+// to the whole answer and the abandoned draft was returned as the patch. The
+// iteration now lives in the parser, so both halves gained it at once.
 func carriesFixEnvelope(s string) bool {
 	_, err := parseExecutorResponse(s)
 	return err == nil
@@ -922,11 +925,18 @@ func carriesFixEnvelope(s string) bool {
 // answer, and reports whether the reply was ambiguous about which fix it
 // committed to. The production path and the tests both call it.
 //
-// Same three-way rule as the verify lane's verdictFromAnswer
-// (classifyUnopenedCloser owns it, so the two lanes cannot drift), and the stakes
-// here are higher: parseExecutorResponse takes the FIRST balanced object with no
-// key filter and no iteration, so an abandoned draft becomes a patch --auto-fix
-// writes to tracked source rather than merely a mis-scored verdict.
+// Same three-way rule as the verify lane's verdictFromAnswer. Two things have to
+// match for the lanes not to drift, and only one of them is shared:
+// classifyUnopenedCloser owns the RULE, but each lane supplies its own
+// `hasEnvelope` predicate — and that is where they did drift. parseVerdict
+// iterated candidate objects for its key while parseExecutorResponse took the
+// first object with no key filter, so a decoy object in front of the patch made
+// the committed section look empty on this lane only
+// (TD internal/verify/executor.go:916). Both predicates iterate now;
+// TestBothLanesAgreeOnTheDecoyShape is what says so if one stops.
+//
+// The stakes here are the higher of the two: an abandoned draft becomes a patch
+// --auto-fix writes to tracked source, rather than merely a mis-scored verdict.
 func executorFixFromAnswer(answer string) (fix string, ambiguous bool, err error) {
 	section, text := classifyUnopenedCloser(answer, carriesFixEnvelope)
 	if section == sectionAmbiguous {
@@ -936,23 +946,71 @@ func executorFixFromAnswer(answer string) (fix string, ambiguous bool, err error
 	return parsed, false, perr
 }
 
+// parseExecutorResponse extracts the fix from the executor's agent-mode JSON response
+// {"fix": "...", "explanation": "..."}. It reuses extractJSONObject (verdict.go) so a
+// fenced or prose-wrapped object is still located. The fix field is required and must
+// be non-empty after trimming; explanation is advisory and ignored. A pointer
+// distinguishes a missing "fix" key from an empty value, mirroring parseVerdict.
+//
+// Candidate objects are ITERATED for the key, the same way and for the same
+// reason parseVerdict iterates for "verdict": a decoy brace pair before the real
+// envelope — a Go `struct{}` in a quoted snippet, a `${VAR}`, or the executor
+// stating the file and line it is about to patch — must not be read as the
+// answer. Taking only the first object made this parser strictly weaker than the
+// verdict lane's, and carriesFixEnvelope is defined as this call, so the weakness
+// reached the unopened-closer rule as a false "no envelope here"
+// (TD internal/verify/executor.go:916).
+//
+// All four failure diagnostics stay distinguishable through the loop, because
+// they mean different things to the operator reading them in a FixWarning: a
+// present-but-empty "fix" is the shape a model produces when it has nothing to
+// offer (the decline contract at buildExecutorAgentPrompt), unparseable JSON is a
+// truncated or malformed reply, a missing key is a reply that was never an
+// envelope, and no object at all is prose. They are reported most-specific
+// first, so adding the iteration costs no diagnostic precision — a single
+// malformed object still reports as malformed rather than as a missing key.
 func parseExecutorResponse(response string) (string, error) {
-	obj := extractJSONObject(response)
-	if obj == "" {
+	var sawObject, sawEmptyFix bool
+	var malformed error
+	rest := response
+	for {
+		obj := extractJSONObject(rest)
+		if obj == "" {
+			// Unbalanced leading brace: step past it and retry, exactly as
+			// parseVerdict does, so one stray `{` cannot hide the envelope after it.
+			next := strings.IndexByte(rest, '{')
+			if next < 0 {
+				break
+			}
+			rest = rest[next+1:]
+			continue
+		}
+		sawObject = true
+		var candidate struct {
+			Fix *string `json:"fix"`
+		}
+		switch err := json.Unmarshal([]byte(obj), &candidate); {
+		case err != nil:
+			if malformed == nil {
+				malformed = err
+			}
+		case candidate.Fix != nil:
+			if fix := strings.TrimSpace(*candidate.Fix); fix != "" {
+				return fix, nil
+			}
+			sawEmptyFix = true
+		}
+		idx := strings.Index(rest, obj)
+		rest = rest[idx+len(obj):]
+	}
+	switch {
+	case sawEmptyFix:
+		return "", fmt.Errorf("response %q field is empty", "fix")
+	case malformed != nil:
+		return "", fmt.Errorf("malformed JSON: %w", malformed)
+	case sawObject:
+		return "", fmt.Errorf("response missing required %q field", "fix")
+	default:
 		return "", fmt.Errorf("no JSON object found in response")
 	}
-	var candidate struct {
-		Fix *string `json:"fix"`
-	}
-	if err := json.Unmarshal([]byte(obj), &candidate); err != nil {
-		return "", fmt.Errorf("malformed JSON: %w", err)
-	}
-	if candidate.Fix == nil {
-		return "", fmt.Errorf("response missing required %q field", "fix")
-	}
-	fix := strings.TrimSpace(*candidate.Fix)
-	if fix == "" {
-		return "", fmt.Errorf("response %q field is empty", "fix")
-	}
-	return fix, nil
 }

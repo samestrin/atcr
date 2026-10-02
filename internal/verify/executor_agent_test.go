@@ -498,11 +498,14 @@ func TestBuildExecutorAgentPrompt_ContainsFindingAndSchema(t *testing.T) {
 // TestInvokeExecutor_StripsThinkBeforeParsingTheFix pins the same strip the verify
 // lane applies, at the executor's parse call site (executor.go:779).
 //
-// parseExecutorResponse takes the FIRST balanced object via extractJSONObject — with
-// no key filter and no iteration — so it is WEAKER than parseVerdict/parseRuling: a
-// thinking endpoint that drafts a fix envelope inside a leading BLOCK and then
-// writes the real one would have the DRAFT patch returned as the fix and written to
-// disk by --auto-fix. Blast radius is higher than the verdict case: a wrong patch is
+// parseExecutorResponse now iterates candidate balanced objects for the "fix" key,
+// the way parseVerdict/parseRuling iterate for theirs (it did not until
+// TD internal/verify/executor.go:916 was fixed), so a decoy object no longer masks
+// the envelope. It still takes the FIRST object that carries a usable key, which is
+// why the strip at the call site remains necessary: a thinking endpoint that drafts
+// a fix envelope inside a leading BLOCK and then writes the real one would
+// otherwise have the DRAFT patch returned as the fix and written to disk by
+// --auto-fix. Blast radius is higher than the verdict case: a wrong patch is
 // applied to files, not merely mis-scored.
 func TestInvokeExecutor_StripsThinkBeforeParsingTheFix(t *testing.T) {
 	t.Parallel()
