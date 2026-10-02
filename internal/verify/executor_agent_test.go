@@ -513,3 +513,39 @@ func TestInvokeExecutor_StripsThinkBeforeParsingTheFix(t *testing.T) {
 	assert.Equal(t, "REAL: add a bounds check", fix,
 		"the draft fix inside the leading block must not be shipped as the patch")
 }
+
+// TestParseExecutorResponse_SkipsDecoyObjectBeforeTheFix pins the iteration this
+// parser gained to match parseVerdict's. A reply that states WHERE it is fixing
+// before stating WHAT the fix is was previously rejected outright: the first
+// balanced object carried no "fix" key and the scan stopped there. That weakness
+// is also what let a decoy object mask an envelope from carriesFixEnvelope
+// (TD internal/verify/executor.go:916).
+func TestParseExecutorResponse_SkipsDecoyObjectBeforeTheFix(t *testing.T) {
+	fix, err := parseExecutorResponse(
+		`{"file":"internal/auth/token.go","line":42}` + "\n" +
+			`{"fix":"add a bounds check","explanation":"real"}`)
+	require.NoError(t, err)
+	assert.Equal(t, "add a bounds check", fix,
+		"a decoy object before the envelope must be skipped, not treated as the answer")
+}
+
+// TestParseExecutorResponse_FirstFixKeyWins guards the direction the iteration
+// must NOT change: once an object carries a usable "fix", it is the answer. The
+// scan skips objects that lack the key; it does not go hunting for a later one.
+func TestParseExecutorResponse_FirstFixKeyWins(t *testing.T) {
+	fix, err := parseExecutorResponse(
+		`{"fix":"FIRST","explanation":"a"}` + "\n" + `{"fix":"SECOND","explanation":"b"}`)
+	require.NoError(t, err)
+	assert.Equal(t, "FIRST", fix, "the first usable envelope is the answer, as before")
+}
+
+// TestParseExecutorResponse_EmptyFixStillErrorsPastADecoy keeps the empty-value
+// diagnostic reachable through the new loop: an object WITH the key and an empty
+// value is a distinct outcome from no key at all, and the prompt's decline
+// contract depends on the difference.
+func TestParseExecutorResponse_EmptyFixStillErrorsPastADecoy(t *testing.T) {
+	_, err := parseExecutorResponse(`{"line":42}` + "\n" + `{"fix":"   "}`)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "empty",
+		"a present-but-empty fix must still report emptiness, not a missing key")
+}

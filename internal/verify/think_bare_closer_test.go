@@ -238,3 +238,79 @@ func TestInvokeExecutor_AmbiguousUnopenedCloserRefuses(t *testing.T) {
 	assert.Contains(t, warn, "both sides",
 		"the warning must name the ambiguity so an operator knows the reply shape caused it")
 }
+
+// --- the envelope predicate, which classifyUnopenedCloser does NOT own ---
+//
+// classifyUnopenedCloser is shared by both lanes, but the `hasEnvelope` function
+// it takes is not, and that is where the two lanes diverged. The skeptic's
+// parseVerdict ITERATES candidate balanced objects for a `verdict` key;
+// parseExecutorResponse took only the first object with no key filter. So an
+// executor reply whose committed section opens with a location or plan object
+// before the patch read as "no envelope here", classifyUnopenedCloser fell back
+// to sectionWholeAnswer, and the ABANDONED DRAFT was returned as the patch —
+// written to tracked source under --auto-fix
+// (TD internal/verify/executor.go:916).
+
+// TestExecutorFixFromAnswer_DecoyObjectBeforeTheFixIsStillAnEnvelope is the
+// proven defect input. A location object between the closer and the patch is as
+// ordinary a reply shape as the draft-before-closer one the rule was built for,
+// and the byte-identical shape on the skeptic lane was already refused — so this
+// is the same defect the round-2 blocker named, closed only where it was pointed.
+func TestExecutorFixFromAnswer_DecoyObjectBeforeTheFixIsStillAnEnvelope(t *testing.T) {
+	t.Parallel()
+	answer := `Reading the file. {"fix":"DRAFT-PATCH","explanation":"draft"}` + "\n" +
+		`</think>` + "\n" +
+		`{"file":"internal/auth/token.go","line":42}` + "\n" +
+		`{"fix":"REAL-PATCH","explanation":"real"}`
+
+	fix, ambiguous, err := executorFixFromAnswer(answer)
+
+	assert.True(t, ambiguous,
+		"a decoy object in front of the patch must not make the committed section look empty")
+	assert.NoError(t, err)
+	assert.Empty(t, fix)
+	assert.NotEqual(t, "DRAFT-PATCH", fix,
+		"the abandoned draft is the one patch that must never reach tracked source")
+}
+
+// TestBothLanesAgreeOnTheDecoyShape states the symmetry the two "cannot drift"
+// comments assert. Same tag structure, same decoy, one lane each — if the
+// predicates ever diverge again this is the test that says so.
+func TestBothLanesAgreeOnTheDecoyShape(t *testing.T) {
+	t.Parallel()
+	verdictAnswer := `Checking. {"verdict":"refuted","reasoning":"DRAFT"}` + "\n" +
+		`</think>` + "\n" +
+		`{"file":"internal/auth/token.go","line":42}` + "\n" +
+		`{"verdict":"confirmed","reasoning":"REAL"}`
+	fixAnswer := `Checking. {"fix":"DRAFT-PATCH","explanation":"draft"}` + "\n" +
+		`</think>` + "\n" +
+		`{"file":"internal/auth/token.go","line":42}` + "\n" +
+		`{"fix":"REAL-PATCH","explanation":"real"}`
+
+	_, verdictAmbiguous := verdictFromAnswer(verdictAnswer)
+	_, fixAmbiguous, _ := executorFixFromAnswer(fixAnswer)
+
+	assert.True(t, verdictAmbiguous, "skeptic lane refuses the decoy shape")
+	assert.Equal(t, verdictAmbiguous, fixAmbiguous,
+		"the lanes share classifyUnopenedCloser but not the envelope predicate; they must still agree")
+}
+
+// TestExecutorFixFromAnswer_DecoyBeforeTheFixOnACleanResumeKeepsTheFix is the
+// availability half, and the reason the predicate had to gain iteration rather
+// than the caller gaining a special case. Nothing precedes the closer, so there
+// is no competing candidate: the committed section holds a plan object AND the
+// patch, and the patch must be found rather than dropped as "missing fix field".
+func TestExecutorFixFromAnswer_DecoyBeforeTheFixOnACleanResumeKeepsTheFix(t *testing.T) {
+	t.Parallel()
+	answer := `weighing two approaches` + "\n" +
+		`</think>` + "\n" +
+		`{"file":"internal/auth/token.go","line":42}` + "\n" +
+		`{"fix":"REAL-PATCH","explanation":"real"}`
+
+	fix, ambiguous, err := executorFixFromAnswer(answer)
+
+	require.False(t, ambiguous)
+	require.NoError(t, err)
+	assert.Equal(t, "REAL-PATCH", fix,
+		"a plan object in front of the patch must not cost the repair")
+}
