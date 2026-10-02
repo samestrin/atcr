@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/samestrin/atcr/internal/llmclient"
@@ -104,4 +105,55 @@ func TestInvokeSlot_EmptyContentChain_IsNotCountedAsThinkOnly(t *testing.T) {
 
 	require.NotContains(t, buf.String(), "think_only_attempts",
 		"an empty reply carries no think markup — it must not be reported as wholly-reasoning")
+}
+
+// A NON-TRUNCATED think-only chain. The gate-1 increment for a StatusOK reply sits
+// inside the `if r.Status == StatusOK { ... }` block, and that block unconditionally
+// RETURNS — so every increment there is immediately followed by the walk ending, and
+// the after-loop warning could never observe one. Only the truncated-failover
+// increment could reach it, so a chain whose last attempt was an untruncated
+// think-only reply (finish_reason=stop, the shape elsewhere called "the dangerous
+// one") produced no warning at all however many attempts preceded it (TD
+// internal/fanout/engine.go:1083).
+type untruncatedThinkOnlyCompleter struct{ content string }
+
+func (s *untruncatedThinkOnlyCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
+	return s.content, nil
+}
+
+func (s *untruncatedThinkOnlyCompleter) CompleteWithMeta(_ context.Context, _ llmclient.Invocation) (llmclient.Completion, error) {
+	// Truncated stays FALSE: nothing demotes this reply, so the walk returns out of
+	// the StatusOK block before the warning.
+	return llmclient.Completion{Content: s.content}, nil
+}
+
+func TestInvokeSlot_ThinkOnlyChainWithANonTruncatedAnswerWarns(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	e := NewEngine(&untruncatedThinkOnlyCompleter{content: "\x3cthink\x3ereasoning only, no answer\x3c/think\x3e"},
+		WithLogger(logger))
+
+	slot := Slot{Primary: Agent{Name: "archer", Invocation: llmclient.Invocation{Model: "m"}}}
+	ctx := log.NewContext(context.Background(), logger)
+	r := e.invokeSlot(ctx, slot)
+
+	require.True(t, r.ThinkSuppressed,
+		"precondition: the reply is wholly reasoning, so the think-only fact holds")
+	out := buf.String()
+	require.Contains(t, out, "think-only",
+		"an untruncated think-only reply is the same wasted spend and must be warned about")
+	require.Contains(t, out, "think_only_attempts=1",
+		"and the count must survive the StatusOK early return to reach the warning")
+}
+
+// The merged record must SUM ThinkOnlyAttempts over its chunks, the way it sums
+// UnparseableChunks: reading only g[0] would attribute one chunk's wasted spend to
+// the whole persona and hide a later chunk's.
+func TestMergeResultGroup_SumsThinkOnlyAttempts(t *testing.T) {
+	merged := mergeResultGroup([]Result{
+		{Agent: "greta", Status: StatusOK, Content: "c0", ThinkOnlyAttempts: 2},
+		{Agent: "greta", Status: StatusOK, Content: "c1", ThinkOnlyAttempts: 1},
+	}, nil)
+	assert.Equal(t, 3, merged.ThinkOnlyAttempts,
+		"the persona's think-only spend is the sum over its chunks")
 }
