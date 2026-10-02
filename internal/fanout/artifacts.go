@@ -75,6 +75,15 @@ type PoolSummary struct {
 	// distinguishable from an older summary.json that predates the field. Derived
 	// from the per-agent statuses (tallySalvaged) rather than from the results, so
 	// writePool and the resume path's RebuildPool cannot drift.
+	//
+	// ON THE RESUME PATH ONLY, a 0 can undercount. RebuildPool derives the tally
+	// from per-agent status.json files, and an agent completed by a binary that
+	// predates the `salvaged` key has no value to unmarshal — it reads false, and no
+	// marker on this record says whether that false was MEASURED or merely ABSENT.
+	// So a resumed run's 0 is trustworthy only for the agents this build actually
+	// re-ran; a pre-upgrade agent that salvaged is invisible to it. WritePool (the
+	// non-resumed writer) has no such gap, because it derives from live Results (TD
+	// internal/fanout/resume.go:789).
 	SalvagedCount int `json:"salvaged_count"`
 	// FailureMarker is true only when writeFailureSummary produced this record
 	// after a WritePool I/O fault, never when WritePool wrote a real run. It

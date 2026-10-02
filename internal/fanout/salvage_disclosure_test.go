@@ -137,3 +137,29 @@ func captureWarn(t *testing.T, fn func(context.Context)) string {
 	fn(log.NewContext(context.Background(), logger))
 	return buf.String()
 }
+
+// The SalvagedCount contract carries a resume-path limitation that had to be
+// STATED rather than silently inherited: the field is not-omitempty precisely so a
+// 0 reads as a measurement, but on the resume path the count is derived from
+// per-agent status.json files and an agent completed by a pre-upgrade binary has no
+// `salvaged` key — it unmarshals false and tallySalvaged cannot see it. The record
+// then publishes a measured-looking 0 that is unmeasured for that subset.
+//
+// Pinned as a doc-vs-code guard on the field's own contract comment, because the
+// limitation is a property of the DERIVATION, not of any value the field can hold.
+func TestPoolSummary_SalvagedCountDocumentsTheResumeGap(t *testing.T) {
+	src := readRepoFile(t, "artifacts.go")
+	assert.Contains(t, src, "ON THE RESUME PATH ONLY, a 0 can undercount",
+		"the SalvagedCount contract must state the resume-path gap; the not-omitempty tag reads as unconditional otherwise")
+	assert.Contains(t, src, "pre-upgrade agent that salvaged is invisible to it",
+		"and it must name the concrete failure mode, so the limitation is actionable")
+}
+
+// readRepoFile reads a repo file by path relative to this package, failing the test
+// rather than the package if it has moved.
+func readRepoFile(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	require.NoErrorf(t, err, "reading %s: if it moved, update this guard to follow it", path)
+	return string(b)
+}
