@@ -1,14 +1,18 @@
 package fanout
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/samestrin/atcr/internal/log"
 )
 
 // TD internal/fanout/artifacts.go:395 — Result.Salvaged reached NO artifact, so a
@@ -97,4 +101,39 @@ func TestWritePool_SalvagedBinBesideRealFindingsIsNotReportedAsTotalLoss(t *test
 	assert.Contains(t, out, "chunk 1 refused", "the warning must name the bin, not the whole persona")
 	assert.NotContains(t, out, "contributed nothing",
 		"bruce landed a real finding from its clean bin")
+}
+
+// warnSalvaged must distinguish a fresh run from a resume rebuild, the way its
+// sibling warnTruncatedZeroFindings already does. RebuildPool tallies the UNION of
+// all on-disk statuses, and a salvaged agent stays StatusOK so agentCompleted marks
+// it done, filterPendingSlots never re-runs it and its status.json is never
+// rewritten — so every subsequent resume re-prints the same salvage as though it
+// were new, with no restatement marker (TD internal/fanout/resume.go:780).
+func TestWarnSalvaged_DistinguishesTheResumeRestatement(t *testing.T) {
+	fresh := captureWarn(t, func(ctx context.Context) {
+		warnSalvaged(ctx, 1, []string{"drafter (contributed nothing)"}, false)
+	})
+	cumulative := captureWarn(t, func(ctx context.Context) {
+		warnSalvaged(ctx, 1, []string{"drafter (contributed nothing)"}, true)
+	})
+
+	require.NotEmpty(t, fresh)
+	require.NotEmpty(t, cumulative)
+	assert.NotEqual(t, fresh, cumulative,
+		"a resume rebuild reports a cumulative tally, so it must read differently from a fresh run")
+	assert.Contains(t, cumulative, "cumulative",
+		"the resumed wording must mark itself as a restatement, matching warnTruncatedZeroFindings")
+
+	// Silent at 0 in both modes — the shared contract with its sibling.
+	assert.Empty(t, captureWarn(t, func(ctx context.Context) { warnSalvaged(ctx, 0, nil, true) }))
+}
+
+// captureWarn runs fn with a context carrying an in-memory logger and returns the
+// captured output.
+func captureWarn(t *testing.T, fn func(context.Context)) string {
+	t.Helper()
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	fn(log.NewContext(context.Background(), logger))
+	return buf.String()
 }
