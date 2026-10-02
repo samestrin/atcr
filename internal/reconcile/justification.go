@@ -198,7 +198,8 @@ func collectReviewNarratives(sourcesDir, reviewDir string) []reviewNarrative {
 		// exact FILE:LINE then outranks a real reviewer's prose and is published as
 		// the finding's provenance — into localdebt's append-only store, where no
 		// later reconcile can replace it (TD internal/reconcile/justification.go:225).
-		if sourceSalvaged(path) {
+		salvaged, salvagedBins := sourceSalvage(path)
+		if salvaged && len(salvagedBins) == 0 {
 			slog.Debug("skipping salvaged review.md", "path", path)
 			return nil
 		}
@@ -213,7 +214,7 @@ func collectReviewNarratives(sourcesDir, reviewDir string) []reviewNarrative {
 			relPath:    filepath.ToSlash(rel),
 			leaf:       filepath.Base(filepath.Dir(path)),
 			lines:      strings.Split(string(data), "\n"),
-			draftLines: draftLineSet(string(data)),
+			draftLines: excludedAnchorLines(string(data), salvagedBins),
 		})
 		return nil
 	})
@@ -231,18 +232,37 @@ func collectReviewNarratives(sourcesDir, reviewDir string) []reviewNarrative {
 // salvaged", and withholding a real reviewer's justification on a read error would
 // trade a rare forged excerpt for a common missing one. Only an explicit
 // salvaged:true withholds.
-func sourceSalvaged(reviewPath string) bool {
+func sourceSalvage(reviewPath string) (salvaged bool, chunks []int) {
 	data, err := os.ReadFile(filepath.Join(filepath.Dir(reviewPath), statusFileName))
 	if err != nil {
-		return false
+		return false, nil
 	}
 	var st struct {
 		Salvaged bool `json:"salvaged"`
 	}
 	if err := json.Unmarshal(data, &st); err != nil {
-		return false
+		return false, nil
 	}
-	return st.Salvaged
+	// STUB — ignores salvaged_chunks, replaced in GREEN.
+	return st.Salvaged, nil
+}
+
+// salvagedSegmentLines returns every 0-based line of a chunked review.md that
+// belongs to a salvaged bin.
+//
+// STUB — wrong on purpose, replaced in GREEN.
+func salvagedSegmentLines(raw string, bins []int) map[int]struct{} {
+	return nil
+}
+
+// excludedAnchorLines is the union buildAnchorIndex skips: the refused leading
+// run of each chunk segment, plus every line of a salvaged bin.
+func excludedAnchorLines(raw string, salvagedBins []int) map[int]struct{} {
+	out := draftLineSet(raw)
+	for l := range salvagedSegmentLines(raw, salvagedBins) {
+		out[l] = struct{}{}
+	}
+	return out
 }
 
 // anchorRef locates one review.md line that carries a file:line anchor: the
