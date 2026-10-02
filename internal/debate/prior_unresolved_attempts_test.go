@@ -85,3 +85,52 @@ func TestPriorUnresolvedAttempts_IgnoresACapOverflowRecord(t *testing.T) {
 	assert.NotContains(t, got, FindingKey{File: "c.go", Line: 3, Problem: "never debated, just over the cap"},
 		"a cap overflow records no attempt — counting it would withhold an item nobody tried")
 }
+
+// TestPriorUnresolvedAttempts_DoesNotFloorAnEnvironmentalRecord closes the
+// second half of the same defect, one file over.
+//
+// Once runDebate declines to count an environmental reason, it writes
+// UnresolvedAttempts 0 on that item. The floor here was written when a recorded
+// zero could only mean "a record older than the field", and read literally it
+// hands that attempt straight back — so a Ctrl-C'd run would still walk the item
+// to the ceiling, through the reader instead of the writer. The floor must apply
+// only to a reason that counts.
+func TestPriorUnresolvedAttempts_DoesNotFloorAnEnvironmentalRecord(t *testing.T) {
+	for _, reason := range []string{
+		ReasonContextCancelled, ReasonHarnessUnavailable, ReasonInsufficientModels, ReasonNoProposer,
+	} {
+		t.Run(reason, func(t *testing.T) {
+			dir := t.TempDir()
+			writeDebateFileFixture(t, dir, DebateFile{
+				SchemaVersion: DebateSchemaVersion,
+				Items: []ItemResult{{
+					File: "a.go", Line: 7, Problem: "interrupted finding",
+					Outcome: OutcomeUnresolved, Reason: reason, UnresolvedAttempts: 0,
+				}},
+			})
+
+			got := priorUnresolvedAttempts(dir)
+			assert.Zero(t, got[FindingKey{File: "a.go", Line: 7, Problem: "interrupted finding"}],
+				"an environmental failure spent no attempt — the reader must not grant one")
+		})
+	}
+}
+
+// And the floor must still do its original job for an ITEM-EVIDENCE record whose
+// count predates the field: that zero really does mean "one attempt, unrecorded".
+func TestPriorUnresolvedAttempts_StillFloorsAnItemEvidenceRecord(t *testing.T) {
+	dir := t.TempDir()
+	writeDebateFileFixture(t, dir, DebateFile{
+		SchemaVersion: DebateSchemaVersion,
+		Items: []ItemResult{
+			{File: "a.go", Line: 7, Problem: "legacy record", Outcome: OutcomeUnresolved, Reason: ReasonSeatSilent},
+			{File: "b.go", Line: 9, Problem: "legacy record, no reason at all", Outcome: OutcomeUnresolved},
+		},
+	})
+
+	got := priorUnresolvedAttempts(dir)
+	assert.Equal(t, 1, got[FindingKey{File: "a.go", Line: 7, Problem: "legacy record"}],
+		"a real attempt that predates the field still counts as the one it provably was")
+	assert.Equal(t, 1, got[FindingKey{File: "b.go", Line: 9, Problem: "legacy record, no reason at all"}],
+		"an absent reason defaults to counting, exactly as the writer's deny-list does")
+}
