@@ -295,7 +295,20 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 			// Carry the count forward on the record itself: this is the only place
 			// an unresolved item's history is written, and the ceiling is only
 			// reachable if each run adds its own attempt to the prior total.
-			oc.ir.UnresolvedAttempts = attempts[FindingKey{File: oc.ir.File, Line: oc.ir.Line, Problem: oc.ir.Problem}] + 1
+			//
+			// Gated on the REASON: an environmental failure consumes no attempt
+			// (countsTowardWithholding). The prior total is still carried forward
+			// unchanged, so an interrupted run neither advances the ceiling nor
+			// erases the history earlier real attempts earned.
+			//
+			// Read here, after wg.Wait(), because this is where ir.Reason is final:
+			// the per-item goroutine can still reassign it (ReasonNoClusterDecision)
+			// up to the point it stores into outcomes[idx].
+			prior := attempts[FindingKey{File: oc.ir.File, Line: oc.ir.Line, Problem: oc.ir.Problem}]
+			if countsTowardWithholding(oc.ir.Reason) {
+				prior++
+			}
+			oc.ir.UnresolvedAttempts = prior
 		}
 		items = append(items, oc.ir)
 		tally(&res, oc.ir)
@@ -778,6 +791,39 @@ func seatSilenceNotes(halted, suppressed, seats []string) []string {
 		notes = append(notes, s+" "+cause)
 	}
 	return notes
+}
+
+// countsTowardWithholding reports whether an unresolved item's reason is
+// evidence about the ITEM, and so may consume one of its three attempts toward
+// the withholding ceiling.
+//
+// The ceiling is permanent once reached: withholdExhausted drops the item before
+// SelectItems, and priorUnresolvedAttempts floors a withheld record back up on
+// every read, so the count never falls. There is no flag, no expiry, and no exit
+// but hand-editing debate.json. A count that permanent may only be spent on
+// evidence the item itself produced.
+//
+// The four reasons below are environmental — the debate never ran, for a cause
+// outside the item. Counting them meant three interrupted runs permanently
+// withheld every disputed item in the review, and it contradicted this stage's
+// own stated contract ("unresolved items are intentionally retried — roles may
+// have been configured since") for exactly the two roster reasons that contract
+// names. Downstream, a withheld item can never earn a confirmed verdict, so
+// under --require-verified it can never gate CI again (reconcile/gate.go).
+//
+// A DENY-list, deliberately, not an allow-list of the item-evidence reasons. The
+// two differ only on a reason this function has never heard of, and there the
+// defaults are not symmetric: counting an unknown reason over-applies a ceiling
+// an operator can see and diagnose, while NOT counting it silently disables the
+// ceiling and restores the unbounded re-debate loop. New reasons in this stage
+// have overwhelmingly been item evidence (every token added this sprint was), so
+// the deny-list is also the likelier-correct default, not merely the safer one.
+func countsTowardWithholding(reason string) bool {
+	switch reason {
+	case ReasonContextCancelled, ReasonHarnessUnavailable, ReasonInsufficientModels, ReasonNoProposer:
+		return false
+	}
+	return true
 }
 
 // judgeHalted reports whether the judge seat is among the halted seats. A halted

@@ -335,7 +335,14 @@ func priorUnresolvedAttempts(reviewDir string) map[FindingKey]int {
 			continue
 		}
 		n := it.UnresolvedAttempts
-		if n < 1 {
+		// The floor exists for a record written before the count did, where a zero
+		// means "one attempt, unrecorded". Since runDebate started declining to
+		// count environmental reasons, a zero has a SECOND meaning — "this run
+		// spent no attempt" — and flooring that one hands the attempt straight
+		// back, walking an interrupted item to the ceiling through the reader
+		// instead of the writer. Same predicate as the writer, so the two cannot
+		// disagree about which reasons the ceiling is allowed to spend.
+		if n < 1 && countsTowardWithholding(it.Reason) {
 			n = 1
 		}
 		out[FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}] = n
