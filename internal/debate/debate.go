@@ -304,11 +304,9 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 			// Read here, after wg.Wait(), because this is where ir.Reason is final:
 			// the per-item goroutine can still reassign it (ReasonNoClusterDecision)
 			// up to the point it stores into outcomes[idx].
-			prior := attempts[FindingKey{File: oc.ir.File, Line: oc.ir.Line, Problem: oc.ir.Problem}]
-			if countsTowardWithholding(oc.ir.Reason) {
-				prior++
-			}
-			oc.ir.UnresolvedAttempts = prior
+			oc.ir.UnresolvedAttempts = carryUnresolvedAttempts(
+				attempts[FindingKey{File: oc.ir.File, Line: oc.ir.Line, Problem: oc.ir.Problem}],
+				oc.ir.Reason)
 		}
 		items = append(items, oc.ir)
 		tally(&res, oc.ir)
@@ -794,11 +792,26 @@ func seatSilenceNotes(halted, suppressed, seats []string) []string {
 }
 
 // carryUnresolvedAttempts returns the attempt total to record on an unresolved
-// item.
+// item: the prior total, plus THIS run's attempt only when the reason is
+// evidence about the item (countsTowardWithholding).
 //
-// STUB — wrong on purpose, replaced in GREEN.
+// The prior total is carried forward unchanged otherwise, so an interrupted run
+// neither advances the ceiling nor erases the history earlier real attempts
+// earned.
+//
+// A named function rather than a branch inlined at the one call site, because
+// the branch is only testable if it can be CALLED. While it was inline, the test
+// that claimed to cover "the writer and the reader" re-implemented this
+// arithmetic in its own body — so the assertion was guaranteed by the test's copy
+// of the predicate, and replacing the writer's gate with an unconditional
+// `prior+1` left `go test ./...` green across the whole repo. The reader's half
+// (emit.go's floor) was pinned the whole time; this half was not
+// (TD internal/debate/debate.go:308).
 func carryUnresolvedAttempts(prior int, reason string) int {
-	return prior + 1
+	if countsTowardWithholding(reason) {
+		return prior + 1
+	}
+	return prior
 }
 
 // countsTowardWithholding reports whether an unresolved item's reason is
