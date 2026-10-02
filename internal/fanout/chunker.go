@@ -563,6 +563,12 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 		out.ResolvedWindow = src.ResolvedWindow
 		out.ReservedOutputTokens = src.ReservedOutputTokens
 		out.ResolvedMaxTokens = src.ResolvedMaxTokens
+		// The reasoning reserve belongs to the SAME matched set (status.go:519
+		// documents it as read together with reserved_output_tokens). Left out of
+		// this block it kept g[0]'s value, so a persona whose majority-serving chunk
+		// was a no-replay fallback published that agent's model, window and cap beside
+		// the PRIMARY's reasoning_reserve_tokens (TD internal/fanout/chunker.go:555).
+		out.ReasoningReserveTokens = src.ReasoningReserveTokens
 	}
 	promoteRePackedDegradation(&out, g)
 	if len(fallbackFromSet) > 0 {
