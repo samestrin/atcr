@@ -590,9 +590,12 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 		// reading debate.json is never told a seat halted when it did not: the
 		// seat halted on a provider error and returned nothing, or it ran clean
 		// and had nothing to say — an empty reply, or one that was entirely think
-		// markup that driveSeat stripped. (A seat halted by a tripped budget is
-		// NOT in this set: it still returns its forced final answer, so its
-		// statement is non-empty and it made its case.)
+		// markup that driveSeat stripped. A seat halted by a tripped budget is
+		// normally NOT in this set — it still returns its forced final answer, so its
+		// statement is non-empty and it made its case — but it IS in the set when that
+		// forced answer was itself entirely a leading think run, because then the strip
+		// removed a non-empty statement. Suppressed is recorded for it and outranks
+		// halted, the same correction TD internal/debate/protocol.go:231 made.
 		// ReasonSeatHalted is the stronger claim, so it is reserved for the case
 		// where EVERY silent seat really halted. A mixed pair — a halted
 		// proposer plus a clean-but-blank challenger — reports the weaker
@@ -611,11 +614,19 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 		blamed := seatsAsked(rec.Asked, silent)
 		ir.Outcome = OutcomeUnresolved
 		ir.Reason = ReasonSeatSilent
+		// Suppressed outranks halted, because the two are independent facts and the
+		// strip is the one that caused the SILENCE. A budget-tripped seat whose forced
+		// final answer was entirely think markup halts AND was suppressed, and
+		// reporting seat_halted there named a provider/budget problem for a statement
+		// the strip had removed — the exact confusion the third token exists to end,
+		// on the one input class it was written for (TD internal/debate/protocol.go:231).
+		// A seat that halted with genuinely empty content has no Suppressed entry, so
+		// this ordering only redirects the cases where the strip really was the cause.
 		switch {
-		case allSeatsIn(rec.Halted, blamed):
-			ir.Reason = ReasonSeatHalted
 		case allSeatsIn(rec.Suppressed, blamed):
 			ir.Reason = ReasonSeatSuppressed
+		case allSeatsIn(rec.Halted, blamed):
+			ir.Reason = ReasonSeatHalted
 		}
 		// The single reason token cannot describe a mixed pair, so the
 		// transcript note labels each seat for itself. Scoped to the SEATS ASKED,
@@ -810,20 +821,24 @@ func carriesRuling(s string) bool {
 }
 
 // seatSilenceNotes labels each silent seat with its own cause for the transcript,
-// which the single reason token cannot do on a mixed pair. Three causes: halted
-// (the engine failed), suppressed (it ran clean and the strip ate its whole
-// reply), and silent (it ran clean and genuinely said nothing). halted wins a tie
-// because a halted turn never reaches the suppression branch in runTurn — the
-// ordering states that invariant rather than relying on it.
+// which the single reason token cannot do on a mixed pair. Three causes: suppressed
+// (something was said and the strip removed all of it), halted (the engine failed),
+// and silent (it ran clean and genuinely said nothing).
+//
+// suppressed outranks halted, matching the token precedence in debateOne and for
+// the same reason: the two are independent, a budget-tripped seat can be both, and
+// the strip is what explains the absence of a statement. Halted used to win on the
+// premise that a halted turn never reached the suppression branch; that premise is
+// false — recordTurnCause records both (TD internal/debate/protocol.go:231).
 func seatSilenceNotes(halted, suppressed, seats []string) []string {
 	notes := make([]string, 0, len(seats))
 	for _, s := range seats {
 		cause := "silent"
 		switch {
-		case slices.Contains(halted, s):
-			cause = "halted"
 		case slices.Contains(suppressed, s):
 			cause = "suppressed"
+		case slices.Contains(halted, s):
+			cause = "halted"
 		}
 		notes = append(notes, s+" "+cause)
 	}
