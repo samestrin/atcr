@@ -180,7 +180,7 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// Withhold the ones that already burned maxUnresolvedAttempts and disclose
 	// them as skipped work, so a never-converging item stops re-paying three seats
 	// instead of looping forever.
-	attempts := priorUnresolvedAttempts(reviewDir)
+	attempts := priorUnresolvedAttempts(ctx, reviewDir)
 	var withheld []OverflowItem
 	df.Items, withheld = withholdExhausted(ctx, df.Items, attempts)
 	sel := SelectItems(df, cfg)

@@ -1,6 +1,7 @@
 package debate
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 
 	"github.com/samestrin/atcr/internal/atomicfs"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 )
 
@@ -324,9 +326,22 @@ func ReadDebateFile(reviewDir string) (df DebateFile, found bool, err error) {
 //
 // A recorded zero on an unresolved item is a record written before the count
 // existed, so it counts as the one attempt it provably was rather than as none.
-func priorUnresolvedAttempts(reviewDir string) map[FindingKey]int {
+func priorUnresolvedAttempts(ctx context.Context, reviewDir string) map[FindingKey]int {
 	df, found, err := ReadDebateFile(reviewDir)
-	if err != nil || !found {
+	if err != nil {
+		// WARN, and NOT for the absent case below. A parse error silently resets
+		// every attempt counter, which silently disables the withholding ceiling this
+		// read exists to enforce and re-debates the items for up to three more runs.
+		// The direction is safe and it self-heals, but it is the one tolerant read in
+		// the stage that did not warn, while debate.go warns for ambiguous.json and
+		// priorDebateRulings documents the same posture for itself (TD
+		// internal/debate/emit.go:328).
+		log.FromContext(ctx).Warn("debate: debate.json unreadable; prior unresolved attempts were reset, so the withholding ceiling restarts for every disputed item",
+			"err", err.Error())
+		return nil
+	}
+	if !found {
+		// Absent is the routine "never ran the debate stage" shape, not corruption.
 		return nil
 	}
 	out := map[FindingKey]int{}
