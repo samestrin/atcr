@@ -198,10 +198,22 @@ func collectReviewNarratives(sourcesDir, reviewDir string) []reviewNarrative {
 		// exact FILE:LINE then outranks a real reviewer's prose and is published as
 		// the finding's provenance — into localdebt's append-only store, where no
 		// later reconcile can replace it (TD internal/reconcile/justification.go:225).
+		//
+		// Withheld WHOLE only when no bin index narrows it: that is the unchunked
+		// persona, whose entire reply is promoted reasoning. When salvaged_chunks
+		// names bins, only those segments are excluded below, because the clean
+		// siblings are real prose and their findings ship — withholding them too
+		// stripped provenance off real findings, permanently
+		// (TD internal/reconcile/justification.go:201).
 		salvaged, salvagedBins := sourceSalvage(path)
 		if salvaged && len(salvagedBins) == 0 {
 			slog.Debug("skipping salvaged review.md", "path", path)
 			return nil
+		}
+		if !salvaged {
+			// A bin list without the bit is not a refusal record; ignore it rather
+			// than let a hand-edited status.json withhold a healthy narrative.
+			salvagedBins = nil
 		}
 		rel, rerr := filepath.Rel(reviewDir, path)
 		if rerr != nil {
@@ -232,27 +244,75 @@ func collectReviewNarratives(sourcesDir, reviewDir string) []reviewNarrative {
 // salvaged", and withholding a real reviewer's justification on a read error would
 // trade a rare forged excerpt for a common missing one. Only an explicit
 // salvaged:true withholds.
+// BOTH fields, because the bit alone is ambiguous. internal/fanout/status.go
+// says so outright: for a chunked persona `salvaged` is an OR-fold over the bins,
+// "so it can be true beside a non-zero findings count: one bin was refused and
+// its siblings were kept. SalvagedChunks below is what tells the two apart."
+// Reading only the bit made a one-bin refusal byte-indistinguishable from a
+// whole-persona one, and withholding the whole narrative on it stripped
+// justification and source_report off the clean bins' real findings — which
+// parseFindings keeps (engine.go) and docs/findings-format.md publishes as kept.
+// localdebt seeds seen[id] for every open id, so that loss is permanent
+// (TD internal/reconcile/justification.go:201).
 func sourceSalvage(reviewPath string) (salvaged bool, chunks []int) {
 	data, err := os.ReadFile(filepath.Join(filepath.Dir(reviewPath), statusFileName))
 	if err != nil {
 		return false, nil
 	}
 	var st struct {
-		Salvaged bool `json:"salvaged"`
+		Salvaged bool  `json:"salvaged"`
+		Chunks   []int `json:"salvaged_chunks"`
 	}
 	if err := json.Unmarshal(data, &st); err != nil {
 		return false, nil
 	}
-	// STUB — ignores salvaged_chunks, replaced in GREEN.
-	return st.Salvaged, nil
+	return st.Salvaged, st.Chunks
 }
 
 // salvagedSegmentLines returns every 0-based line of a chunked review.md that
-// belongs to a salvaged bin.
+// belongs to a SALVAGED bin — the lines buildAnchorIndex must not offer as
+// candidate anchors, so a refused bin's promoted reasoning cannot be published as
+// a finding's provenance while its clean siblings still can.
 //
-// STUB — wrong on purpose, replaced in GREEN.
+// Per segment, mirroring draftLineSet, and the bin↔segment correspondence is what
+// makes that sound: fanout's joinChunkContents emits one segment per
+// CONTENT-BEARING bin, in order, separated by chunkBoundaryLine, and
+// salvagedChunkIndices derives its indices from chunkSalvaged — the slice written
+// beside that same filtered bin list. So segment k is bin k.
+//
+// A whole segment, not just its leading run: a salvaged reply is promoted
+// chain-of-thought end to end and carries no <think> tags at all, which is
+// exactly why leadingDraftLines cannot see it.
+//
+// An out-of-range or absent bin index names no segment and excludes nothing —
+// the fail-open direction this file takes everywhere: a needless unexcluded
+// candidate that still has to win a tier comparison, never a silent withholding
+// of a real reviewer's prose.
 func salvagedSegmentLines(raw string, bins []int) map[int]struct{} {
-	return nil
+	if len(bins) == 0 {
+		return nil
+	}
+	refused := make(map[int]struct{}, len(bins))
+	for _, b := range bins {
+		refused[b] = struct{}{}
+	}
+	out := make(map[int]struct{})
+	lines := strings.Split(raw, "\n")
+	seg, start := 0, 0
+	for i := 0; i <= len(lines); i++ {
+		// A segment ends at a boundary marker or at end of input.
+		if i < len(lines) && lines[i] != chunkBoundaryLine {
+			continue
+		}
+		if _, bad := refused[seg]; bad {
+			for d := start; d < i; d++ {
+				out[d] = struct{}{}
+			}
+		}
+		seg++
+		start = i + 1
+	}
+	return out
 }
 
 // excludedAnchorLines is the union buildAnchorIndex skips: the refused leading
