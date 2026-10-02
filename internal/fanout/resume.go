@@ -821,6 +821,13 @@ func summarizeStatuses(sts []AgentStatus) Summary {
 		if st.FallbackUsed {
 			s.FallbackCount++
 		}
+		// And the contributed-nothing tally, for the same reason: the baseline
+		// write-back names this cause on the resume path too, and deriving it in
+		// only one of the two producers is how a resumed run loses it. Mirrors
+		// summarize()'s StatusOK guard, so a failed slot is not double-counted.
+		if st.Status == StatusOK && (st.Salvaged || st.ThinkSuppressed) {
+			s.ContributedNothingCount++
+		}
 	}
 	s.Partial = s.Failed > 0 && s.Succeeded > 0
 	return s

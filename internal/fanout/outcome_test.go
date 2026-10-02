@@ -225,3 +225,20 @@ func TestSummarize_ContributedNothingCount(t *testing.T) {
 	zero := summarize([]Result{{Status: StatusOK}})
 	assert.Equal(t, 0, zero.ContributedNothingCount, "a clean run reports 0, not a spurious count")
 }
+
+// The resume path rebuilds the Summary from per-agent statuses instead of live
+// results, so it must tally the contributed-nothing cause too. Deriving it in only
+// one producer is how a resumed run silently loses a diagnostic the live run
+// reports — the same failure mode the UnreviewedChunks and FallbackCount threading
+// above already documents.
+func TestSummarizeStatuses_ContributedNothingCount(t *testing.T) {
+	s := summarizeStatuses([]AgentStatus{
+		{Agent: "a", Status: StatusOK},
+		{Agent: "b", Status: StatusOK, Salvaged: true},
+		{Agent: "c", Status: StatusOK, ThinkSuppressed: true},
+		{Agent: "d", Status: StatusFailed},
+		{Agent: "e", Status: StatusFailed, Salvaged: true}, // failed, so not counted
+	})
+	assert.Equal(t, 2, s.ContributedNothingCount,
+		"the resume rebuild must tally the same cause the live summarize() does, and skip failed slots")
+}
