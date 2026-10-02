@@ -115,8 +115,10 @@ type ModelInvocation struct {
 	//
 	// Deliberately NOT the wire body: replayed assistant reasoning
 	// (reasoning_content, reasoning, reasoning_details, thinking_blocks) is
-	// omitted from these records even though thinking-declaring agents send it
-	// on every tool-loop turn after the first. A consumer reconstructing or
+	// omitted from these records even though any tool-loop agent whose provider
+	// returned reasoning sends it on every tool-loop turn after the first —
+	// declared thinking or not (docs/registry.md, "Reasoning replay"): replay
+	// is independent of any thinking declaration. A consumer reconstructing or
 	// replaying the exchange from Messages builds a SMALLER request than the
 	// one that actually left the process — and the omitted members are the
 	// most sensitive content in it. Redact accordingly, and do not treat this

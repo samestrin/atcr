@@ -169,13 +169,17 @@ func TestResume_AXIAllCompleteSeverityColumnsSum(t *testing.T) {
 
 	// The fresh run's own payload reports the truth we compare against.
 	_, freshOut, _ := execCmdSplit(t, "review", "--axi", "--base", "HEAD^")
-	// (fresh run is consumed; the resume path re-reconciles the same dir)
+	// (the resume path re-reconciles the same dir)
 
 	code, stdout, _ := execCmdSplit(t, "review", "--resume", "latest", "--axi", "--base", "HEAD^")
 	require.Equal(t, 0, code, "AllComplete resume exits 0")
 	total, bySeverity := parseReviewSummaryRow(t, stdout)
-	_ = freshOut
-	require.Greater(t, total, int64(0), "fixture review must produce findings")
+	freshTotal, freshBy := parseReviewSummaryRow(t, freshOut)
+	require.Greater(t, freshTotal, int64(0), "fixture review must produce findings")
+	assert.Equal(t, freshTotal, total,
+		"resume must report the same findings_total as the fresh run")
+	assert.Equal(t, freshBy, bySeverity,
+		"resume must report the same per-severity counts as the fresh run")
 	sum := bySeverity["CRITICAL"] + bySeverity["HIGH"] + bySeverity["MEDIUM"] + bySeverity["LOW"]
 	assert.Equal(t, total, sum,
 		"severity columns must sum to findings_total on the already-complete resume path")

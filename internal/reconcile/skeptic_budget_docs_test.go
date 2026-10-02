@@ -131,6 +131,38 @@ func TestDocs_ContextWindowRowDoesNotRestateTheSkepticClamp(t *testing.T) {
 		"absence of the old formula is not the fix — the row must actually POINT at the one description of the clamp")
 }
 
+// docLineContaining returns the single line of doc containing want, failing loudly
+// on any count other than one so a decoy sentence cannot pin the guard to the
+// wrong line.
+//
+// It shares docTableRow's "one line is the unit that drifts" rationale but NOT its
+// strictness, and an earlier version of this comment claimed otherwise, crediting
+// docTableRow with an ambiguity check it does not have: docTableRow returns the
+// FIRST match with no count at all. The strict-count contract here matches
+// docBullet and findBulletLines instead. Being the package's strict locator, it is
+// also the one every call site shares — a second, first-match copy of this scan
+// (docLineWith) was deleted rather than kept beside it.
+func docLineContaining(t *testing.T, doc, want string) string {
+	t.Helper()
+	var matches []string
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.Contains(line, want) {
+			matches = append(matches, line)
+		}
+	}
+	if len(matches) != 1 {
+		// Name the DOCUMENT: the callers run this over several docs/*.md files from
+		// one helper, so "docs has 2 lines" left the reader guessing which file to
+		// open. And say what the two counts MEAN rather than blaming a "decoy": zero
+		// is the anchor having drifted or been reworded, more than one is the anchor
+		// no longer identifying one paragraph. Neither is a test defect.
+		t.Fatalf("%s: %d lines contain %q — the guard must pin exactly one line "+
+			"(0 = the anchor drifted or was reworded; >1 = the anchor is too generic to "+
+			"identify a single paragraph)", t.Name(), len(matches), want)
+	}
+	return matches[0]
+}
+
 // findBulletLines returns every "- " line of doc containing want. Split out of
 // docBullet so the match-count contract is unit-testable: a second, earlier
 // bullet mentioning the same substring (a summary or changelog-style line) must
@@ -234,6 +266,163 @@ func TestDocs_CrossExaminationPerSeatBudgetsMatchTheDebateLane(t *testing.T) {
 		"the asymmetry with the skeptic lane is only discoverable if the clamp that does NOT apply here is named")
 	assert.Contains(t, bullet, "skeptic",
 		"naming the lane that behaves differently is what makes the asymmetry findable")
+}
+
+// TestDocs_CrossExaminationStatesTheSilentSeatRule pins the same bullet against
+// internal/debate/debate.go's silentArguingSeats + debateOne.
+//
+// The bullet said only a HALTED arguing seat with no statement yields unresolved,
+// which is what the code did — and the code was wrong: silentArguingSeats keyed
+// on rec.Halted, so a StatusOK seat that returned nothing sailed past the guard
+// and its one-sided ruling was recorded as a real contested outcome. Both the
+// guard and the sentence were corrected together (sprint 35.16.11.2.2.4 Phase 2),
+// so the doc needs a guard of its own or it can silently revert to describing the
+// hole as the rule.
+func TestDocs_CrossExaminationStatesTheSilentSeatRule(t *testing.T) {
+	doc := readDoc(t, "cross-examination.md")
+	bullet := docBullet(t, doc, "Per-seat budgets")
+
+	assert.Contains(t, bullet, "whether or not it halted",
+		"the qualifier IS the correction: without it the sentence describes the pre-fix behaviour, in which a clean-but-blank seat produced a fake contested ruling")
+	assert.NotContains(t, bullet, "and so does a halted arguing seat",
+		"the old narrower wording must never come back — it is the hole, stated as the rule")
+	// Reason tokens as LITERALS here, deliberately. internal/debate imports
+	// internal/reconcile, so this package cannot import it back to anchor on
+	// debate.ReasonSeatHalted — the cycle forbids it. The code-anchored half of
+	// this guard therefore lives in cli/, which can import both: see
+	// TestDocs_DebateReasonTokensMatchTheConstants. Same split the benchmark
+	// outcome vocabulary uses for the same reason.
+	// The two SEAT tokens only: they are this bullet's subject, because the rule
+	// that picks between them is per-seat behavior the budgets bullet owns. The
+	// rest of the vocabulary moved to the reconciled/debate.json Artifacts row and
+	// is pinned there by
+	// TestDocs_CrossExaminationPublishesTheUnresolvedReasonVocabulary.
+	for _, reason := range []string{"seat_halted", "seat_silent", "seat_suppressed"} {
+		assert.Contains(t, bullet, "`"+reason+"`",
+			"a reason string that appears in debate.json and in no document is a reason an operator cannot look up")
+	}
+	assert.Contains(t, bullet, "every seat that was asked halted",
+		"the three reasons are kept apart on purpose, and the rule that picks between them is what an operator needs: a mixed pair reports the weakest one, and a seat the run never reached is not a cause")
+	assert.Contains(t, bullet, "entirely inline `<think>` reasoning",
+		"seat_suppressed must publish WHY the statement was blank: the seat answered and the strip removed the answer, which a bare seat_silent hides")
+	// The FULL vocabulary enumeration moved to the reconciled/debate.json Artifacts
+	// row: it is a fact about that artifact, not about budgets, and the bullet was
+	// carrying 1361 characters and 15 substring constraints because of it. The
+	// two SEAT tokens stay here, because the rule that picks between them is
+	// per-seat behavior this bullet owns.
+}
+
+// TestDocs_CrossExaminationPublishesTheUnresolvedReasonVocabulary pins the
+// reconciled/debate.json row of the Artifacts table against the vocabulary
+// internal/debate records.
+//
+// The enumeration used to live in the **Per-seat budgets** bullet, which is a
+// COST CONTROLS bullet: it grew to 1361 characters carrying the complete
+// unresolved-reason vocabulary, and two tests asserted against that one line, so
+// the guard itself pressured a future editor to keep the content misplaced. A
+// vocabulary is a property of the artifact that records it, so it belongs with
+// the reconciled/debate.json row.
+//
+// The completeness argument is unchanged, and is why a row-scoped guard is worth
+// having: the list once claimed completeness while omitting reasons the code
+// writes, and a falsely-complete enumeration is worse than none because a reader
+// stops looking.
+func TestDocs_CrossExaminationPublishesTheUnresolvedReasonVocabulary(t *testing.T) {
+	doc := readDoc(t, "cross-examination.md")
+	row := docTableRow(t, doc, "reconciled/debate.json")
+
+	// Reason tokens as LITERALS here, deliberately. internal/debate imports
+	// internal/reconcile, so this package cannot import it back to anchor on
+	// debate.ReasonSeatHalted — the cycle forbids it. The code-anchored half of
+	// this guard therefore lives in cli/, which can import both: see
+	// TestDocs_DebateReasonTokensMatchTheConstants. Same split the benchmark
+	// outcome vocabulary uses for the same reason.
+	for _, reason := range []string{
+		"seat_halted", "seat_silent", "seat_suppressed",
+		"judge_halted", "unparseable_ruling", "empty_ruling", "judge_think_markup",
+		"harness_unavailable", "context_cancelled", "no_cluster_decision",
+		"no_resolvable_proposer", "insufficient_distinct_models",
+	} {
+		assert.Contains(t, row, "`"+reason+"`",
+			"the debate.json artifact row publishes the unresolved-reason vocabulary, so an omitted one reads as a reason that cannot occur")
+	}
+	assert.Contains(t, row, "unresolved",
+		"the row must say these are the UNRESOLVED reasons — they explain a ruling that is absent, not the quality of one that was made")
+	assert.Contains(t, row, "must appear here",
+		"the row is the home of the vocabulary, so it must state the obligation that keeps it complete rather than leaving the list to drift")
+}
+
+// TestDocs_CrossExaminationStatesTheThinkStrip pins the transcript row against
+// internal/debate/protocol.go's driveSeat.
+//
+// The row called the transcript "the replayable per-item exchange" while
+// driveSeat began stripping leading <think> markup and keeping no copy of the raw
+// reply, so the transcript stopped being replayable in the literal sense. The row
+// now carries both facts: the statement is the stripped one, and the removed
+// reasoning is recorded on the turn's own `reasoning` field (TD
+// internal/debate/protocol.go:177), which is what makes a mis-strip diagnosable.
+func TestDocs_CrossExaminationStatesTheThinkStrip(t *testing.T) {
+	doc := readDoc(t, "cross-examination.md")
+	row := docTableRow(t, doc, "debate/<item-id>/transcript.jsonl")
+
+	assert.Contains(t, row, "<think>",
+		"the row must name the markup that is removed, or a reader cannot tell the recorded statement from the raw reply")
+	assert.Contains(t, row, "stripped",
+		"the transformation has to be stated, not implied by 'as later seats saw it' alone")
+	assert.Contains(t, row, "reasoning",
+		"the removed text is now recorded on the turn's reasoning field, so the row must name it, or the artifact is described as losing bytes it keeps")
+	assert.NotContains(t, row, "the removed text is kept nowhere",
+		"the removed text IS kept, on the turn's reasoning field; that it is unrecoverable was true before TD internal/debate/protocol.go:177 and is false now")
+	assert.NotContains(t, row, "The replayable per-item exchange",
+		"the unqualified claim is what drifted — the file no longer holds the raw reply")
+}
+
+// TestDocs_ParsingSentencesDoNotPromiseTheRawReply pins both lanes' defensive
+// parsing sentences against internal/verify/invoke.go and internal/debate/debate.go.
+//
+// Both promised the diagnostic notes carry "the raw text preserved". Phase 2 of
+// sprint 35.16.11.2.2.4 made that false in both lanes: the parsers now receive
+// the reply AFTER llmclient.SplitThink removes a leading <think> block, and the
+// removed bytes are kept nowhere — so a reply that was entirely reasoning reads
+// as empty_response and the operator sees none of what the model said. The
+// debate transcript row was corrected during the phase and these two were not,
+// which is the asymmetry this guard exists to prevent recurring.
+func TestDocs_ParsingSentencesDoNotPromiseTheRawReply(t *testing.T) {
+	// One anchor per document: "Parsing is defensive" alone is generic enough that
+	// an overview line, a cross-reference, or a second lane's parsing paragraph
+	// gives docLineContaining two matches and turns this guard into a hard failure
+	// naming no culprit. Each anchor below additionally pins the SECTION, so it
+	// identifies one paragraph rather than one sentence that could be restated.
+	for _, tc := range []struct{ doc, anchor string }{
+		// The anchors deliberately differ. "Parsing is defensive" alone is a sentence
+		// two documents share, so a future overview line, cross-reference, or second
+		// lane's parsing paragraph makes the count 2 and the guard fails for a
+		// legitimate edit. Each anchor now spans the sentence AND the clause that
+		// makes it this document's, which cannot be restated on an unrelated line.
+		{"verification.md", "Parsing is defensive. The parser unmarshals the JSON"},
+		{"cross-examination.md", "Parsing is defensive (the same contract as the verify stage)"},
+	} {
+		t.Run(tc.doc, func(t *testing.T) {
+			doc := readDoc(t, tc.doc)
+			line := docLineContaining(t, doc, tc.anchor)
+
+			assert.NotContains(t, line, "raw text preserved",
+				"the raw reply is NOT preserved once the think strip runs ahead of the parser — this is the exact phrase that went stale")
+			assert.Contains(t, line, "<think>",
+				"a reader cannot tell the recorded text from the reply unless the sentence names what is removed")
+			// The two lanes now differ on where the removed bytes go: verify keeps
+			// them nowhere (the skeptic lane has no reasoning channel), while debate
+			// records them on the turn's reasoning field. Pin each document's own
+			// claim rather than one lane's disposition.
+			if tc.doc == "verification.md" {
+				assert.Contains(t, line, "kept nowhere",
+					"the skeptic lane genuinely keeps the stripped bytes nowhere, so its parsing sentence must keep saying so")
+			} else {
+				assert.Contains(t, line, "removed reasoning",
+					"the debate lane now records the removed reasoning, so its sentence must not still claim it is destroyed")
+			}
+		})
+	}
 }
 
 // TestFindBulletLines_RequiresExactlyOneMatch pins the helper docBullet is built

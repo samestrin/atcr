@@ -30,6 +30,27 @@ func TestZeroBudgetVerdict_ToolLoopAgentCountsTheReasoningReserve(t *testing.T) 
 	assert.False(t, fired, "a single-shot agent on the same window keeps its input budget")
 }
 
+// TestZeroBudgetVerdict_SingleShotHintNamesNoReserve is the arm the reserve-clause
+// gate left unpinned. doctor shares one helper with review precisely so the two
+// cannot word the reservation differently — but nothing asserted the EMPTY arm, so
+// a single-shot agent's hint could name a replayed-reasoning reserve it never paid
+// and both lanes would stay green. A hint that overstates the reservation sends the
+// operator to lower a number the run never held back.
+func TestZeroBudgetVerdict_SingleShotHintNamesNoReserve(t *testing.T) {
+	// A window too small for the cap alone, so the hint fires for a single-shot agent.
+	const window, cap = 4096, 10000
+	_, hint, fired := zeroBudgetVerdict("m", window, cap, cap, StatusOK, false)
+	require.True(t, fired, "precondition: the window cannot fund the cap, so the hint must fire")
+	assert.NotContains(t, hint, "replayed-reasoning reserve",
+		"a single-shot agent replays nothing — the hint must not name a reserve")
+	assert.Contains(t, hint, zeroBudgetRemedy, "the remedy is still named")
+
+	_, toolHint, toolFired := zeroBudgetVerdict("m", window, cap, cap, StatusOK, true)
+	require.True(t, toolFired)
+	assert.Contains(t, toolHint, "replayed-reasoning reserve",
+		"and the tool-loop arm still names it, so the two arms are genuinely distinguished")
+}
+
 // Resolve marks an agent as running the tool loop only when its LANE requests
 // tools (a fallback inherits the primary's tools, as review's buildFallbackAgent
 // does) and the agent's OWN model declares function calling.

@@ -58,8 +58,9 @@ package scorecard
 // lens that raised out-of-remit findings answers false here while
 // opportunityDisposition keeps it (dispCounted). That divergence is deliberate
 // — the drop was narrowed to raised-nothing lenses after the
-// trust.go:1087-1101 probe showed the strict rule blacked out path-anchored
-// installs — and opportunityDisposition, not this predicate, is the authority
+// opportunityDisposition probe (trust.go) showed the strict rule blacked out
+// path-anchored installs — and opportunityDisposition, not this predicate, is
+// the authority
 // on what the chain actually does.
 //
 // The input slice is read only — never sorted, deduped, or rewritten in place.

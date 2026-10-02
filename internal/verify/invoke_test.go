@@ -1865,3 +1865,87 @@ func TestInvokeSkeptic_SalvagedModelResponse(t *testing.T) {
 	assert.Equal(t, "reasoning_salvaged", v.Notes, "the named note must carry the salvage reason")
 	assert.Empty(t, tripped, "a salvage is not a budget trip")
 }
+
+// TestInvokeSkeptic_RefusesAVerdictParsedFromNonLeadingThinkMarkup pins the third
+// guard at the call site: markup the leading-only strip could not remove must not
+// be parsed at all.
+//
+// invokeSkeptic strips a LEADING <think> run, which leaves the cross-channel spoof live
+// one character of prose away from the front of the reply. Reproduced on the
+// pre-fix call site: `"Let me check.\n<think>{draft confirmed}</think>\n{real refuted}"`
+// returned verdict "confirmed" carrying the DRAFT's notes — the verdict the model
+// discarded was graded as the skeptic's answer and charged to reviewer precision
+// as a full read.
+func TestInvokeSkeptic_RefusesAVerdictParsedFromNonLeadingThinkMarkup(t *testing.T) {
+	t.Parallel()
+
+	t.Run("prose before the block does not let the discarded draft win", func(t *testing.T) {
+		t.Parallel()
+		raw := "Let me check.\n" +
+			`<think>{"verdict": "confirmed", "reasoning": "draft, wrong"}</think>` +
+			"\n" + `{"verdict": "refuted", "reasoning": "real answer"}`
+		v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+		require.NoError(t, err)
+		require.NotNil(t, v)
+		assert.Equal(t, verdictUnverifiable, v.Verdict,
+			"a draft the model discarded must not be graded as the skeptic's answer")
+		assert.Equal(t, "think_markup_after_answer", v.Notes)
+	})
+
+	t.Run("a verdict quoting both tags inside a JSON string still parses", func(t *testing.T) {
+		t.Parallel()
+		// The companion the fix must not break: the tags sit INSIDE the answer
+		// string, so this is the skeptic quoting its subject matter, not markup
+		// enclosing a draft object.
+		raw := `{"verdict": "confirmed", "reasoning": "the handler drops text between <think> and </think>"}`
+		v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+		require.NoError(t, err)
+		require.NotNil(t, v)
+		assert.Equal(t, verdictConfirmed, v.Verdict,
+			"quoting both tags inside the answer string is not thinking and must not be refused")
+		assert.Equal(t, "the handler drops text between <think> and </think>", v.Notes)
+	})
+}
+
+// TestInvokeSkeptic_NamesAThinkOnlyReplyInTheNote pins the note a think-only reply
+// records. parseVerdict's Notes field is documented to "preserve the raw text" for
+// diagnosis, but the strip feeds it the blank answer: a reply that is one unclosed
+// <think> opener yielded Notes "empty_response" and logged class "malformed_output",
+// although the provider returned a full content-bearing reply. The raw text must
+// stay recoverable (the note-rewrite in invokeSkeptic, after parseVerdict).
+func TestInvokeSkeptic_NamesAThinkOnlyReplyInTheNote(t *testing.T) {
+	t.Parallel()
+	body := "I think the finding is real but I ran out of room"
+	raw := "<think>" + body
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	assert.Equal(t, verdictUnverifiable, v.Verdict,
+		"nothing outside the block is an answer, so no verdict may be charged to reviewer precision")
+	assert.NotEqual(t, "empty_response", v.Notes,
+		"the provider returned a content-bearing reply — the note must not claim it was empty")
+	assert.Contains(t, v.Notes, body,
+		"the raw reasoning must stay recoverable from the note")
+}
+
+// TestInvokeSkeptic_ThinkOnlyReplyLogsItsOwnClass pins the log class for a
+// think-only reply. The provider returned a full, well-formed reply that happened
+// to be entirely reasoning; classing that "malformed_output" false-alarms every
+// operator alerting on malformed skeptic output. The distinct class names the shape.
+func TestInvokeSkeptic_ThinkOnlyReplyLogsItsOwnClass(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	ctx := log.NewContext(context.Background(), logger)
+
+	raw := "<think>" + "I think the finding is real but I ran out of room"
+	v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+	require.NoError(t, err)
+	require.Equal(t, verdictUnverifiable, v.Verdict)
+
+	out := buf.String()
+	assert.Contains(t, out, "class=think_only_reply",
+		"a think-only reply must not be classed malformed_output")
+	assert.NotContains(t, out, "class=malformed_output",
+		"the misleading class must be gone for this shape")
+}

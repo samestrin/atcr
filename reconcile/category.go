@@ -4,7 +4,7 @@ package reconcile
 //
 // Before this epic no enumeration reached any reviewer: every persona prompt
 // asked only for "one lowercase word", and the sole list in the tree
-// (personas/_base.md:44, six words) sits at persona-resolution levels 4-5, a
+// (personas/_base.md:45, six words) sits at persona-resolution levels 4-5, a
 // fallback no shipped persona reaches. The 35.16.2 dry-run measured the
 // consequence — 72.3% of findings (154 of 213) used a word the scorer did not
 // recognise, across 34 distinct categories, while `maintainability` appeared in

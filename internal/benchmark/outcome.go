@@ -47,10 +47,16 @@ const (
 	// incomplete by construction.
 	OutcomeTruncated = "truncated"
 
-	// OutcomeIncomplete marks a reviewer that saw only a FRACTION of the diff,
-	// by either route its INPUT can be cut short:
+	// OutcomeIncomplete marks a reviewer whose contribution covers only a FRACTION
+	// of the diff, by any of the routes that cut it short:
 	//   - chunking: fanout.AgentStatus.UnreviewedChunks counts the bins that failed
 	//     while the persona still reported StatusOK;
+	//   - salvage: fanout.AgentStatus.Salvaged marks a reply the provider returned
+	//     with no content, whose reasoning the client promoted into it. Every lane
+	//     refuses such a reply, so it contributes nothing — and it is StatusOK with
+	//     content, so none of the signals above catch it. For a chunked persona the
+	//     refusal is per bin (SalvagedChunks names which), and a salvaged bin is
+	//     StatusOK, so UnreviewedChunks does not count it either;
 	//   - payload truncation: fanout.AgentStatus.Truncated marks a byte-budget shed,
 	//     by any of THREE routes — a per-agent shed to fit the model's window, a
 	//     re-fit fallback under on_overflow=truncate, or the DIFF-WIDE shed
@@ -61,7 +67,7 @@ const (
 	//     diff can carry two sections for one path, so a listed path may still be
 	//     present via its other occurrence (fanout.droppedPathsExcept documents the
 	//     index-keyed contract).
-	// Publishing either case as "clean" would assert "reviewed the whole diff and
+	// Publishing any of these as "clean" would assert "reviewed the whole diff and
 	// correctly found nothing" about a reviewer that never saw most of it — a
 	// positive false claim, the exact class this vocabulary exists to prevent.
 	// Data-integrity, same class as truncated. Note OutcomeTruncated is the

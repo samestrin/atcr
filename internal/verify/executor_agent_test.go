@@ -494,3 +494,61 @@ func TestBuildExecutorAgentPrompt_ContainsFindingAndSchema(t *testing.T) {
 	assert.Contains(t, block, "plaintext password", "finding problem must sit inside the sentinel block")
 	assert.Contains(t, block, "use bcrypt", "finding fix must sit inside the sentinel block")
 }
+
+// TestInvokeExecutor_StripsThinkBeforeParsingTheFix pins the same strip the verify
+// lane applies, at the executor's parse call site (executor.go:779).
+//
+// parseExecutorResponse now iterates candidate balanced objects for the "fix" key,
+// the way parseVerdict/parseRuling iterate for theirs (it did not until
+// TD internal/verify/executor.go:916 was fixed), so a decoy object no longer masks
+// the envelope. It still takes the FIRST object that carries a usable key, which is
+// why the strip at the call site remains necessary: a thinking endpoint that drafts
+// a fix envelope inside a leading BLOCK and then writes the real one would
+// otherwise have the DRAFT patch returned as the fix and written to disk by
+// --auto-fix. Blast radius is higher than the verdict case: a wrong patch is
+// applied to files, not merely mis-scored.
+func TestInvokeExecutor_StripsThinkBeforeParsingTheFix(t *testing.T) {
+	t.Parallel()
+	raw := `<think>{"fix": "DRAFT: delete the validation", "explanation": "draft, wrong"}</think>{"fix": "REAL: add a bounds check", "explanation": "real answer"}`
+	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
+		eligibleFinding()[0], finalChat(raw), okDispatcher(), 0, "")
+	assert.Equal(t, "", warn)
+	assert.Equal(t, "REAL: add a bounds check", fix,
+		"the draft fix inside the leading block must not be shipped as the patch")
+}
+
+// TestParseExecutorResponse_SkipsDecoyObjectBeforeTheFix pins the iteration this
+// parser gained to match parseVerdict's. A reply that states WHERE it is fixing
+// before stating WHAT the fix is was previously rejected outright: the first
+// balanced object carried no "fix" key and the scan stopped there. That weakness
+// is also what let a decoy object mask an envelope from carriesFixEnvelope
+// (TD internal/verify/executor.go:916).
+func TestParseExecutorResponse_SkipsDecoyObjectBeforeTheFix(t *testing.T) {
+	fix, err := parseExecutorResponse(
+		`{"file":"internal/auth/token.go","line":42}` + "\n" +
+			`{"fix":"add a bounds check","explanation":"real"}`)
+	require.NoError(t, err)
+	assert.Equal(t, "add a bounds check", fix,
+		"a decoy object before the envelope must be skipped, not treated as the answer")
+}
+
+// TestParseExecutorResponse_FirstFixKeyWins guards the direction the iteration
+// must NOT change: once an object carries a usable "fix", it is the answer. The
+// scan skips objects that lack the key; it does not go hunting for a later one.
+func TestParseExecutorResponse_FirstFixKeyWins(t *testing.T) {
+	fix, err := parseExecutorResponse(
+		`{"fix":"FIRST","explanation":"a"}` + "\n" + `{"fix":"SECOND","explanation":"b"}`)
+	require.NoError(t, err)
+	assert.Equal(t, "FIRST", fix, "the first usable envelope is the answer, as before")
+}
+
+// TestParseExecutorResponse_EmptyFixStillErrorsPastADecoy keeps the empty-value
+// diagnostic reachable through the new loop: an object WITH the key and an empty
+// value is a distinct outcome from no key at all, and the prompt's decline
+// contract depends on the difference.
+func TestParseExecutorResponse_EmptyFixStillErrorsPastADecoy(t *testing.T) {
+	_, err := parseExecutorResponse(`{"line":42}` + "\n" + `{"fix":"   "}`)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "empty",
+		"a present-but-empty fix must still report emptiness, not a missing key")
+}

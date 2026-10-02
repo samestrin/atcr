@@ -338,7 +338,7 @@ func TestClosedStatusRank_FiveTermChain(t *testing.T) {
 // `deferred` is not. Gating closability on IsClosedStatus instead would leave a
 // deferred item permanently unactionable — refused as already closed while every
 // other view still showed it as outstanding work.
-func TestIsSettledStatus_ResolvedAndWontfixOnly(t *testing.T) {
+func TestIsSettledStatus_ResolvedWontfixUnreproducibleOnly(t *testing.T) {
 	for _, s := range []string{
 		"resolved", "wontfix", "RESOLVED", " wontfix ",
 		// unreproducible reached a determination, so the item is done.

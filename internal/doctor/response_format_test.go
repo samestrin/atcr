@@ -221,6 +221,45 @@ func TestRun_ResponseFormatProbeWarnsWhenTheReplyIsNotABareObject(t *testing.T) 
 	}
 }
 
+// TD internal/doctor/run.go:958: the review lane parses the reply with a leading
+// think block stripped off (fanout.Result.parseFindings), so a JSON-mode reply
+// that OPENS with such a block is a clean review to the lane doctor pre-flights.
+// Checking the raw content called that declaration broken.
+func TestResponseFormatProbeStripsALeadingThinkBlockBeforeTheBareObjectCheck(t *testing.T) {
+	for name, content := range map[string]string{
+		"leading think block then a findings object": "<think>checked it</think>" + oneFinding,
+		"leading think block then a clean object":    "<think>checked it</think>" + `{"findings":[]}`,
+		"empty leading think block then an object":   "<think></think>" + oneFinding,
+	} {
+		t.Run(name, func(t *testing.T) {
+			a, _ := runDeclared(t, false, reply(content))
+			assert.Equal(t, ResponseFormatHonored, a.ResponseFormatStatus,
+				"the lane strips the block before parsing, so the probe must read the same operand")
+		})
+	}
+}
+
+// The strip must not invent an object: when only the think block carries one, the
+// reply the lane parses really is not a bare object.
+func TestResponseFormatProbeStillWarnsWhenOnlyTheThinkBlockCarriesTheObject(t *testing.T) {
+	a, _ := runDeclared(t, false, reply("<think>"+oneFinding+"</think>"))
+	assert.Equal(t, ResponseFormatNotHonored, a.ResponseFormatStatus)
+}
+
+// doctor-vs-review agreement (TD internal/doctor/run.go:958): the reply the probe
+// passes on must be the reply the review lane actually parses - one operand, one
+// verdict. Pinned through the lane's own parse so the two lanes cannot drift again.
+func TestResponseFormatProbeAndTheReviewLaneReadTheSameOperand(t *testing.T) {
+	content := "<think>checked it</think>" + `{"findings":[]}`
+	lane := &fanout.Result{Content: content}
+	require.Equal(t, 0, lane.ParsedFindingCount(),
+		"the lane parses the STRIPPED object, so it reads this reply as a clean review")
+
+	a, _ := runDeclared(t, false, reply(content))
+	assert.Equal(t, ResponseFormatHonored, a.ResponseFormatStatus,
+		"doctor must agree with the lane it pre-flights: a reply the lane reads must not report a broken declaration")
+}
+
 // A bare object the parser cannot read as findings is valid JSON, but not the
 // {"findings":[...]} object the review lane needs.
 func TestRun_ResponseFormatProbeWarnsOnAnObjectThatIsNotFindings(t *testing.T) {

@@ -31,6 +31,12 @@ type TurnEvent struct {
 	TS        string `json:"ts"`
 	Statement string `json:"statement"`
 	Status    string `json:"status,omitempty"` // non-OK when the seat halted (timeout/budget/error)
+	// Reasoning is the text driveSeat's think strip REMOVED from this seat's
+	// reply (the inner reasoning, not the tag bytes), empty when the reply had
+	// no leading think run. It is recorded so a mis-strip is diagnosable: the
+	// statement alone cannot tell an empty reply from one the strip emptied.
+	// TD internal/debate/protocol.go:177.
+	Reasoning string `json:"reasoning,omitempty"`
 }
 
 // RulingEvent is the judge's parsed ruling, appended after the three turns so the

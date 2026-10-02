@@ -397,8 +397,10 @@ func IsSuppressingStatus(status string) bool {
 }
 
 // IsSettledStatus reports whether an item needs no further action: it was fixed
-// (resolved) or dismissed (wontfix). It is the third of the three status
-// predicates, and the distinction from IsClosedStatus is `deferred`.
+// (resolved), dismissed (wontfix), or determined to have nothing to fix
+// (unreproducible). It is the third of the three status predicates, and the
+// distinction from IsClosedStatus is `deferred` — closed but not settled — and
+// its sibling `attempts-exhausted`, which is likewise closed-but-live.
 //
 // `deferred` carries a terminal status marker, so IsClosedStatus is true for it —
 // but "not now" is not "done". A deferred item is still live debt: it counts in

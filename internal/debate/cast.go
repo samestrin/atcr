@@ -23,6 +23,50 @@ const (
 	ReasonInsufficientModels = "insufficient_distinct_models"
 )
 
+// Unresolved reasons recorded across a debate run, published in
+// docs/cross-examination.md and asserted there by
+// cli/debate_reason_doc_test.go. The full published vocabulary lives in this
+// block so a rename the guard catches has exactly one site to update.
+const (
+	ReasonJudgeHalted        = "judge_halted"
+	ReasonUnparseableRuling  = "unparseable_ruling"
+	ReasonEmptyRuling        = "empty_ruling"
+	ReasonHarnessUnavailable = "harness_unavailable"
+	ReasonContextCancelled   = "context_cancelled"
+	ReasonNoClusterDecision  = "no_cluster_decision"
+	// ReasonJudgeThinkMarkup is recorded when the judge's reply still carries
+	// inline think markup after the leading-run strip. parseRuling takes the FIRST
+	// outcome-keyed object it finds, so a draft ruling inside a block that sits
+	// AFTER the answer is the only object on a reply whose real answer is prose —
+	// and it would become the debate's ruling. That is a wrong result, not a
+	// missing one, so the reply is refused instead of parsed.
+	ReasonJudgeThinkMarkup = "judge_think_markup"
+)
+
+// Unresolved reasons recorded when an arguing seat left no statement, so the
+// judge ruled on one side only. Two tokens, not one, because an operator reading
+// debate.json must never be told a seat halted when it ran clean and simply had
+// nothing to say. Constants rather than literals so the docs drift guard in
+// cli/debate_reason_doc_test.go can assert the published list against the code
+// (the convention in CLAUDE.md, per justification_record_boundary_test.go) —
+// internal/reconcile/ asserts bare string literals there instead, because it
+// cannot import internal/debate without an import cycle.
+// ReasonSeatSuppressed is the third token, and it is a security disclosure, not a
+// nicety: driveSeat's strip blanks a statement on a LEADING `<think>` alone (an
+// unclosed opener needs no closer), and silentArguingSeats turns a blank arguing
+// statement into a hard unresolved before the judge's ruling is read. Collapsed
+// into seat_silent, that let any arguing seat veto the item by emitting one token
+// — reachable by second-order injection, since the seat prompt embeds
+// reviewer-authored finding text quoting the diff under review. The veto itself is
+// not removed here (rejecting the reply would change debate semantics beyond this
+// row); it is made VISIBLE, so a roster blanking every item on an inline-reasoning
+// endpoint reads as suppression rather than as three seats with nothing to say.
+const (
+	ReasonSeatHalted     = "seat_halted"
+	ReasonSeatSilent     = "seat_silent"
+	ReasonSeatSuppressed = "seat_suppressed"
+)
+
 // Caster is one filled debate seat: the label, the backing registry agent, and
 // the resolved provider/config needed to invoke it through the tool loop.
 type Caster struct {

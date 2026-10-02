@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/llmclient"
@@ -651,4 +652,330 @@ func TestInvokeAgent_PreservesOuterCallIdentity(t *testing.T) {
 	require.Len(t, calls, 1)
 	assert.Equal(t, hookobs.Call{RunID: "2026-07-25_main", AgentName: "security-reviewer", Stage: "review"},
 		calls[0], "the engine must add the agent name without disturbing run or stage")
+}
+
+// --- T6 (sprint 35.16.11.2.2.4): refuse a salvaged reply as findings ----------
+//
+// TEST MAP: parseFindings/ParsedFindingCount's cases are split across three files,
+// each covering one layer. The strip and content-preservation cases live in
+// response_truncation_test.go (TestResult_ParseFindings_*); the merge-level,
+// per-bin ones in chunker_test.go (TestMergeResultGroup_*Salvaged*); and the
+// invokeSlot/salvage cases HERE. The split is deliberate (each file already owns
+// its layer) but was unnamed — change parseFindings and you must touch all three.
+// Fixtures (draft/real finding rows, "fresh Result per assertion: ParsedFindingCount
+// memoizes") are duplicated across the halves rather than shared.
+
+// The salvage path (the empty-content branch of llmclient.CompleteWithMeta)
+// promotes a reply's chain-of-thought into Content when the provider returns empty
+// content. Verify (verify/invoke.go:150) and every debate seat
+// (debate/protocol.go:157) already refuse it; the diff cache refuses it (the store
+// gate in invokeCachedSingleShot). The findings lane had no
+// guard at all, so a DRAFT finding written inside abandoned reasoning could be
+// parsed and written to the pool as real. parseFindings is the single choke point
+// both ParsedFindingCount and findingsFor share, so one guard there covers both.
+func TestResult_ParseFindings_SalvagedReplyYieldsNoFindings(t *testing.T) {
+	// Well-formed on purpose: pre-fix this content parses to one finding, which is
+	// what makes its refusal the thing under test rather than a parsing accident.
+	const draft = "HIGH|a.go:1|draft finding from abandoned reasoning|f|correctness|5|e"
+	// A committed finding from a bin that did NOT salvage, for the per-chunk cases.
+	const real = "MEDIUM|b.go:2|real finding|f|correctness|2|e"
+
+	t.Run("unchunked", func(t *testing.T) {
+		assert.Equal(t, 1, (&Result{Content: draft}).ParsedFindingCount(),
+			"the same content without the Salvaged marker really does parse to one finding")
+
+		// Fresh Result per assertion: ParsedFindingCount memoizes on first use.
+		assert.Equal(t, 0, (&Result{Content: draft, Salvaged: true}).ParsedFindingCount(),
+			"a salvaged reply's reasoning must not be counted as findings")
+
+		fr := findingsFor(Result{Agent: "bruce", Status: StatusOK, Content: draft, Salvaged: true}, nil)
+		assert.Empty(t, fr.Findings,
+			"findingsFor must see the guard too, not just the count gate — it is the path to the pool")
+	})
+
+	t.Run("chunked, only the salvaged bin is refused", func(t *testing.T) {
+		// Built THROUGH mergeResultGroup so the fixture is a shape the chunked path
+		// really emits — hand-setting chunkContents beside a stale Content pins
+		// parseFindings against a Result no code produces. The refusal is per chunk:
+		// bin 2 salvaged, so its draft is dropped, but bin 1's committed finding
+		// survives. chunkSalvaged is index-aligned with chunkContents by construction
+		// (chunkBin).
+		merged := mergeResultGroup([]Result{
+			{Agent: "bruce", Status: StatusOK, Content: real},
+			{Agent: "bruce", Status: StatusOK, Content: draft, Salvaged: true},
+		}, nil)
+		require.Equal(t, []bool{false, true}, merged.chunkSalvaged)
+		assert.Equal(t, 1, merged.ParsedFindingCount(), "the clean bin's finding must survive its sibling's salvage")
+		fr := findingsFor(merged, nil)
+		require.Len(t, fr.Findings, 1)
+		assert.Equal(t, "real finding", fr.Findings[0].Problem)
+	})
+
+	t.Run("chunked, every bin salvaged yields nothing", func(t *testing.T) {
+		merged := mergeResultGroup([]Result{
+			{Agent: "bruce", Status: StatusOK, Content: draft, Salvaged: true},
+			{Agent: "bruce", Status: StatusOK, Content: draft, Salvaged: true},
+		}, nil)
+		require.Equal(t, []bool{true, true}, merged.chunkSalvaged)
+		assert.Equal(t, 0, merged.ParsedFindingCount())
+		assert.Empty(t, findingsFor(merged, nil).Findings)
+	})
+
+	t.Run("chunked with no per-chunk flags fails closed", func(t *testing.T) {
+		// Deliberately a shape mergeResultGroup does NOT emit: some other assembling
+		// path left the per-chunk flags absent while the persona-wide bit is set, so
+		// the result cannot say WHICH bin salvaged. Refusing the whole result is the
+		// safe reading: it never parses salvaged reasoning as a finding.
+		r := Result{
+			Agent:         "bruce",
+			Status:        StatusOK,
+			Content:       real + "\n" + draft,
+			chunkContents: []string{real, draft},
+			Salvaged:      true,
+		}
+		assert.Equal(t, 0, r.ParsedFindingCount(), "without per-chunk flags the persona-wide bit refuses everything")
+		assert.Empty(t, findingsFor(r, nil).Findings)
+	})
+
+	t.Run("chunked, mismatched flags with NO salvage parses every bin", func(t *testing.T) {
+		// The COMPLEMENTARY half of the length-mismatch branch, previously unpinned: a
+		// future change that stopped OR-folding Salvaged in mergeResultGroup would
+		// silently turn the fail-closed guard above into a fail-open one with the suite
+		// still green. Here the flags are misaligned AND no bin is marked salvaged, so
+		// there is no reasoning to protect and parsing every bin is the correct
+		// reading — the guard exists to refuse SALVAGED content, not to reject
+		// misaligned shapes for their own sake. Pinned so that reading is a decision on
+		// the record.
+		r := Result{
+			Agent:         "bruce",
+			Status:        StatusOK,
+			Content:       real + "\n" + draft,
+			chunkContents: []string{real, draft},
+			chunkSalvaged: []bool{false}, // misaligned on purpose
+			Salvaged:      false,
+		}
+		assert.Equal(t, 2, r.ParsedFindingCount(),
+			"with no salvage recorded there is nothing to refuse, so both bins parse")
+		assert.Len(t, findingsFor(r, nil).Findings, 2)
+	})
+}
+
+// THE BOUNDARY, and the whole reason the guard reads Salvaged ONLY. Verify and
+// debate check ResponseTruncated too, because a verdict or a statement is either
+// whole or worthless. Findings are not: a truncated review's partial findings are
+// real, and the truncationFailover gate in invokeSlot is built to tell
+// truncated-with-findings (keep) from truncated-with-nothing (fail over). Adding
+// ResponseTruncated here would zero the count for EVERY truncated review and fire
+// that gate on reviews that did raise findings. Pinned so the next reader cannot
+// quietly "fix" the asymmetry with invoke.go/protocol.go.
+func TestResult_ParseFindings_TruncatedButNotSalvagedKeepsItsFindings(t *testing.T) {
+	const real = "MEDIUM|b.go:2|real finding from a cut-off review|f|correctness|2|e"
+	r := Result{Agent: "bruce", Status: StatusOK, Content: real, ResponseTruncated: true}
+
+	assert.Equal(t, 1, r.ParsedFindingCount(),
+		"a truncated-but-not-salvaged reply's partial findings are real and must survive")
+	fr := findingsFor(r, nil)
+	require.Len(t, fr.Findings, 1)
+	assert.Equal(t, "real finding from a cut-off review", fr.Findings[0].Problem)
+}
+
+// No regression on the ordinary row: neither flag set, findings parse as before.
+func TestResult_ParseFindings_UnflaggedReplyIsUnaffected(t *testing.T) {
+	const real = "LOW|c.go:3|ordinary finding|f|correctness|1|e"
+	assert.Equal(t, 1, (&Result{Content: real}).ParsedFindingCount())
+	assert.Len(t, findingsFor(Result{Agent: "bruce", Status: StatusOK, Content: real}, nil).Findings, 1)
+}
+
+// The whole thing composing, end to end, and the row the 4.1.A review was filed
+// over. Bin 1 returned a committed finding; bin 2 salvaged. The merged persona must
+// keep bin 1's finding and drop bin 2's draft.
+//
+// Refusing on the persona-wide fold instead would discard bin 1's real finding,
+// score the persona unparseable for a finding it did produce, and falsify
+// docs/findings-format.md's chunk contract ("one garbled chunk beside a chunk with
+// findings is counted there without marking the persona unparseable"). Both
+// assertions on UnparseableResponse below exist to pin that the contract holds.
+func TestMergeResultGroup_SalvagedLaterChunkKeepsSiblingFindings(t *testing.T) {
+	g := []Result{
+		{Agent: "bruce", Status: StatusOK, Content: "MEDIUM|b.go:2|real finding|f|correctness|2|e"},
+		{Agent: "bruce", Status: StatusOK, Content: "HIGH|a.go:1|draft|f|correctness|5|e",
+			Salvaged: true, UnparseableResponse: true},
+	}
+	merged := mergeResultGroup(g, nil)
+
+	require.True(t, merged.Salvaged,
+		"the persona-wide bit still records that a salvage happened, for status and the cache")
+	require.Equal(t, []bool{false, true}, merged.chunkSalvaged,
+		"the per-chunk flags must stay index-aligned with the chunk contents")
+
+	assert.Equal(t, 1, merged.ParsedFindingCount(), "bin 1's committed finding must survive")
+	fr := findingsFor(merged, nil)
+	require.Len(t, fr.Findings, 1)
+	assert.Equal(t, "real finding", fr.Findings[0].Problem)
+	assert.Equal(t, "b.go", fr.Findings[0].File)
+
+	assert.Equal(t, 1, merged.UnparseableChunks, "the salvaged bin is still counted as unparseable")
+	assert.False(t, merged.UnparseableResponse,
+		"a persona is not scored unparseable for findings it did produce")
+}
+
+// THE INVARIANT THE WHOLE PER-BIN DESIGN RESTS ON, and it was unpinned until the
+// Phase 4 gate asked for it. chunkSalvaged and chunkContents must stay index-aligned,
+// which mergeResultGroup achieves by appending to both inside the SAME
+// non-empty-content branch. Hoisting the flag append out of that branch leaves the
+// whole suite green but misaligns the slices whenever a bin returns empty content —
+// and misalignment is not benign: parseFindings reads the lengths as a mismatch,
+// falls back to the persona-wide bit, and refuses EVERYTHING, silently dropping the
+// clean bin's real findings. So the empty bin in the middle is the point.
+func TestMergeResultGroup_EmptyChunkKeepsSalvageFlagsAligned(t *testing.T) {
+	g := []Result{
+		{Agent: "bruce", Status: StatusOK, Content: "MEDIUM|b.go:2|real finding|f|correctness|2|e"},
+		{Agent: "bruce", Status: StatusOK, Content: "   "}, // dropped from BOTH slices
+		{Agent: "bruce", Status: StatusOK, Content: "HIGH|a.go:1|draft|f|correctness|5|e", Salvaged: true},
+	}
+	merged := mergeResultGroup(g, nil)
+
+	require.Len(t, merged.chunkContents, 2, "the whitespace-only bin contributes no content")
+	require.Equal(t, []bool{false, true}, merged.chunkSalvaged,
+		"the flags must drop the same bin the contents did, or every index after it names the wrong bin")
+	assert.Equal(t, 1, merged.ParsedFindingCount(),
+		"misalignment would make parseFindings fail closed and lose this finding")
+	assert.Equal(t, "real finding", findingsFor(merged, nil).Findings[0].Problem)
+}
+
+// The doc's two halves, at the merge level. docs/findings-format.md says where a
+// refused bin is counted depends on WHY it salvaged, so both arms are pinned:
+// a stop-reason salvage stays ok and lands in unparseable_chunks, while a
+// length-cutoff salvage was already demoted to StatusFailed by the failover gate
+// and lands in unreviewed_chunks instead. Getting this wrong is how the published
+// sentence silently stops matching the code.
+func TestMergeResultGroup_SalvagedChunkCountedByWhyItSalvaged(t *testing.T) {
+	clean := Result{Agent: "bruce", Status: StatusOK, Content: "MEDIUM|b.go:2|real finding|f|correctness|2|e"}
+
+	t.Run("stop-reason salvage is unparseable", func(t *testing.T) {
+		// StatusOK with content nothing could parse: invokeSlot's marker block sets
+		// UnparseableResponse, and mergeResultGroup counts it.
+		merged := mergeResultGroup([]Result{clean, {
+			Agent: "bruce", Status: StatusOK, Content: "chain of thought only",
+			Salvaged: true, UnparseableResponse: true,
+		}}, nil)
+
+		assert.Equal(t, 1, merged.UnparseableChunks)
+		assert.Equal(t, 0, merged.UnreviewedChunks)
+		assert.Equal(t, 1, merged.ParsedFindingCount(), "the clean bin still contributes")
+	})
+
+	t.Run("length-cutoff salvage is unreviewed, not unparseable", func(t *testing.T) {
+		// The failover gate already demoted this bin to StatusFailed, so the
+		// UnparseableResponse block (gated on StatusOK) never ran for it and
+		// UnreviewedChunks counts it as len(g) - okCount instead.
+		merged := mergeResultGroup([]Result{clean, {
+			Agent: "bruce", Status: StatusFailed, Content: "chain of thought only",
+			Salvaged: true, ResponseTruncated: true, Err: errTruncatedZeroFindings,
+		}}, nil)
+
+		assert.Equal(t, 0, merged.UnparseableChunks,
+			"a failed bin never reaches the unparseable marker — it is gated on StatusOK")
+		assert.Equal(t, 1, merged.UnreviewedChunks)
+		assert.Equal(t, 1, merged.ParsedFindingCount(), "the clean bin still contributes")
+	})
+}
+
+// The other half of the same fold: every bin salvaged means the persona really does
+// contribute nothing, and it IS scored unparseable.
+func TestMergeResultGroup_AllChunksSalvagedYieldsNoFindings(t *testing.T) {
+	g := []Result{
+		{Agent: "bruce", Status: StatusOK, Content: "HIGH|a.go:1|draft one|f|correctness|5|e",
+			Salvaged: true, UnparseableResponse: true},
+		{Agent: "bruce", Status: StatusOK, Content: "HIGH|a.go:2|draft two|f|correctness|5|e",
+			Salvaged: true, UnparseableResponse: true},
+	}
+	merged := mergeResultGroup(g, nil)
+
+	assert.Equal(t, 0, merged.ParsedFindingCount())
+	assert.Empty(t, findingsFor(merged, nil).Findings)
+	assert.True(t, merged.UnparseableResponse, "no bin produced anything a parser could use")
+}
+
+// PINNED, not asserted-unchanged (task-06 Test Strategy): the guard necessarily
+// MOVES what a salvaged row means downstream, so both shapes are recorded here.
+//
+// Salvage does NOT imply truncation — llmclient.CompleteWithMeta salvages inside
+// its content == "" branch on ANY finish reason, so a stop-reason reply with empty
+// content and reasoning present is salvaged with ResponseTruncated false. The two
+// shapes therefore land in different places and must not be collapsed.
+func TestInvokeSlot_SalvagedReply_ContributesNoFindings(t *testing.T) {
+	t.Run("salvaged, not truncated: recorded unparseable", func(t *testing.T) {
+		// StatusOK survives (only findings are refused, not the call), the count is
+		// zero, and the reasoning is not the clean-review sentinel — so the row reads
+		// unparseable, which ReviewerOutcome ranks above clean. Intended: "reviewed
+		// and found nothing" and "emitted reasoning no parser should trust" score the
+		// same and this marker is the only thing that tells them apart.
+		e := NewEngine(&metaTruncatingCompleter{
+			content:  "HIGH|a.go:1|draft from abandoned reasoning|f|correctness|5|e",
+			salvaged: true,
+		}, WithTruncationFailover())
+		r := e.invokeSlot(context.Background(), Slot{Primary: Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "m"}}})
+
+		assert.Equal(t, StatusOK, r.Status)
+		require.True(t, r.Salvaged)
+		assert.Equal(t, 0, r.ParsedFindingCount(), "the draft inside salvaged reasoning is refused")
+		assert.True(t, r.UnparseableResponse, "salvaged reasoning is not the clean-review sentinel")
+	})
+
+	t.Run("salvaged and truncated: demoted to failover", func(t *testing.T) {
+		// Zero findings now trips the truncation-failover gate, where before the
+		// guard this reply could pass it on the strength of its draft row. The cost
+		// is one backup-model call; the alternative is a draft counted as real.
+		e := NewEngine(&metaTruncatingCompleter{
+			content:   "HIGH|a.go:1|draft from abandoned reasoning|f|correctness|5|e",
+			salvaged:  true,
+			truncated: true,
+		}, WithTruncationFailover())
+		r := e.invokeSlot(context.Background(), Slot{Primary: Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "m"}}})
+
+		assert.Equal(t, 0, r.ParsedFindingCount())
+		assert.Equal(t, StatusFailed, r.Status, "a salvaged reply with nothing parseable is a runaway")
+		assert.ErrorIs(t, r.Err, errTruncatedZeroFindings)
+		assert.False(t, r.UnparseableResponse,
+			"the unparseable marker is gated on StatusOK, so the failover path never sets it")
+	})
+}
+
+// TestResult_ParseFindings_MemoizesTheParsedSlice pins the slice cache: a
+// second parseFindings call on the same Result must return the cached slice
+// (shared backing array), not re-run SplitThink + ParseModelOutput. The
+// truncation-failover gate parses via ParsedFindingCount and findingsFor parses
+// again for every result that HAS findings — caching the slice is what makes
+// the two share one parse instead of only the zero case sharing one.
+func TestResult_ParseFindings_MemoizesTheParsedSlice(t *testing.T) {
+	r := &Result{Content: "HIGH|a.go:1|x|f|correctness|1|e\nLOW|b.go:2|y|f|correctness|1|e"}
+	first := r.parseFindings()
+	require.NotEmpty(t, first)
+	second := r.parseFindings()
+	if unsafe.SliceData(first) != unsafe.SliceData(second) {
+		t.Fatalf("parseFindings must memoize the parsed slice across calls on the same Result; got two separate parses")
+	}
+}
+
+// TestInvokeSlot_SalvagedSentinelShapedReply_IsNotACleanReview is the complement
+// of the non-sentinel subtest in TestInvokeSlot_SalvagedReply_ContributesNoFindings:
+// a salvaged reply whose promoted reasoning is literally the clean-review
+// sentinel ("NO FINDINGS") must not score as a genuine clean review. A salvaged
+// reply has ParsedFindingCount 0 by construction, so control reaches the
+// sentinel gate; if the gate read the sentinel-shaped salvage, the slot would be
+// recorded StatusOK with zero findings and no marker — the silent false
+// no-issues-found. A reply the design declares uncommitted (T6) cannot be a
+// committed no-findings report whatever its text.
+func TestInvokeSlot_SalvagedSentinelShapedReply_IsNotACleanReview(t *testing.T) {
+	e := NewEngine(&metaTruncatingCompleter{
+		content:  "NO FINDINGS",
+		salvaged: true,
+	}, WithTruncationFailover())
+	r := e.invokeSlot(context.Background(), Slot{Primary: Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "m"}}})
+
+	assert.Equal(t, StatusOK, r.Status)
+	require.True(t, r.Salvaged)
+	assert.True(t, r.UnparseableResponse,
+		"a salvaged reply is never a committed clean review, sentinel-shaped or not")
 }

@@ -1,3 +1,28 @@
+## [35.32.0] - 2026-10-02
+
+*Sprint 35.16.11.2.2.4 — think block stripping.*
+
+### Added
+
+- `llmclient.SplitThink` strips a leading inline `<think>…</think>` block from reply content, and `llmclient.HasThinkMarkup` detects think markup at any position. Doctor's inline-think detection now calls them, so no second tag parser remains.
+- A reply that the client salvaged from the reasoning channel is disclosed in `status.json`, the pool `summary.json` (`salvaged_count`), the per-bin `salvaged_chunks` indices and a console warning.
+- `seat_suppressed` records a debate seat whose statement the strip emptied, so it is not read as silence.
+
+### Changed
+
+- Verdicts, rulings, findings, the clean-review `NO FINDINGS` check, the executor fix envelope, reused debate statements and tool-loop history are parsed from the answer after the leading think block, so a draft written inside the block no longer wins.
+- A salvaged reply yields no findings, verdict, ruling or cache entry. For a chunked review the refusal is per chunk, so clean sibling chunks keep their findings.
+- The verify and executor lanes refuse a reply whose answer still carries think markup after the leading strip. The judge does the same.
+- Reconcile no longer takes justification provenance from a salvaged `review.md` or from a leading draft block.
+
+### Fixed
+
+- Doctor and review now agree on a reply that is wholly reasoning, and a think-only reply is named as such instead of `empty_response` or `malformed_output`.
+- An item that burned its unresolved attempts is withheld and disclosed as skipped work. Environmental reasons spend no attempt.
+- `docs/findings-format.md`, `docs/registry.md`, `docs/providers.md`, `docs/verification.md` and `docs/cross-examination.md` describe the leading-only strip and the salvage refusal.
+
+*Shipped via /execute-sprint (sprint 35.16.11.2.2.4)*
+
 ## [35.31.0] - 2026-09-29
 
 *Epic 35.16.11.2.2.3 — diffcachekey cachekeyinputs struct.*

@@ -46,8 +46,10 @@ import (
 // package applies no masking beyond stripping credentials from the endpoint.
 // One deliberate omission: Messages flattens away the replayed assistant
 // reasoning members (reasoning_content, reasoning, reasoning_details,
-// thinking_blocks) that a thinking-declaring agent sends on every tool-loop
-// turn after the first — so the record is NOT a byte-faithful wire body, and
+// thinking_blocks) that any tool-loop agent whose provider returned reasoning
+// sends on every tool-loop turn after the first — declared thinking or not
+// (replay is independent of thinking declaration; docs/registry.md,
+// "Reasoning replay") — so the record is NOT a byte-faithful wire body, and
 // its most sensitive content (chain-of-thought) is present on the wire but
 // absent from Messages.
 type Invocation struct {

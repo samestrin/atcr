@@ -101,13 +101,6 @@ func Discover(sourcesDir string, allow []string) ([]Source, error) {
 				continue
 			}
 			readable++
-			// Stamp fallback provenance (Epic 19.10 F5) from the leaf's sibling
-			// status.json: when the slot that produced this findings.txt was served
-			// by a litellm fallback model, mark every one of its findings with that
-			// SERVED model so reconcile's distinct-reviewer count can de-weight it.
-			// Fail-closed: a missing/unreadable/malformed status.json (or one with
-			// fallback_used false) leaves FallbackModel empty — the finding counts as
-			// an independent voice, mirroring the PathValid unvalidated default.
 			// The host file is model-written, so its reviewer field is not trusted:
 			// naming a pool agent there would count the host's findings as that
 			// agent's corroboration (TD-040).
@@ -116,6 +109,13 @@ func Discover(sourcesDir string, allow []string) ([]Source, error) {
 					res.Findings[i].Reviewer = hostSource
 				}
 			}
+			// Stamp fallback provenance (Epic 19.10 F5) from the leaf's sibling
+			// status.json: when the slot that produced this findings.txt was served
+			// by a litellm fallback model, mark every one of its findings with that
+			// SERVED model so reconcile's distinct-reviewer count can de-weight it.
+			// Fail-closed: a missing/unreadable/malformed status.json (or one with
+			// fallback_used false) leaves FallbackModel empty — the finding counts as
+			// an independent voice, mirroring the PathValid unvalidated default.
 			if fbModel := readSourceFallback(f); fbModel != "" {
 				for i := range res.Findings {
 					res.Findings[i].FallbackModel = fbModel

@@ -472,6 +472,47 @@ func TestMergeResultGroup_AggregatesResponseTruncated(t *testing.T) {
 	})
 }
 
+// The Salvaged sibling of the fold above (T6, sprint 35.16.11.2.2.4): Salvaged was
+// the one per-chunk flag mergeResultGroup never folded, so a merged persona could
+// report Salvaged == false while one of its bins had salvaged. Same out.X = out.X ||
+// r.X shape as the ResponseTruncated fold.
+//
+// What this pins is the MARKER's OR semantics and nothing more. The findings refusal
+// is NOT downstream of this bit — parseFindings reads the per-bin chunkSalvaged
+// slice, so folding it neither drops nor saves a finding. That separation is the
+// point of the per-bin design and is pinned by
+// TestMergeResultGroup_SalvagedLaterChunkKeepsSiblingFindings in engine_test.go.
+func TestMergeResultGroup_AggregatesSalvaged(t *testing.T) {
+	t.Run("later chunk salvaged is preserved", func(t *testing.T) {
+		g := []Result{
+			{Agent: "reviewer", Status: StatusOK, Salvaged: false},
+			{Agent: "reviewer", Status: StatusOK, Salvaged: true},
+		}
+		merged := mergeResultGroup(g, nil)
+		assert.True(t, merged.Salvaged, "any salvaged chunk must mark the whole persona as salvaged")
+	})
+	// Boundary pin, not a reproduction: this one already passed before the fold,
+	// because out := g[0] inherits chunk 0's flag. It is here so a later refactor
+	// that replaces the inherit cannot drop the first-chunk case silently.
+	t.Run("first chunk salvaged is preserved", func(t *testing.T) {
+		g := []Result{
+			{Agent: "reviewer", Status: StatusOK, Salvaged: true},
+			{Agent: "reviewer", Status: StatusOK, Salvaged: false},
+		}
+		merged := mergeResultGroup(g, nil)
+		assert.True(t, merged.Salvaged, "any salvaged chunk must mark the whole persona as salvaged")
+	})
+	// No-regression pin: the fold must not fabricate a marker.
+	t.Run("no salvage stays false", func(t *testing.T) {
+		g := []Result{
+			{Agent: "reviewer", Status: StatusOK, Salvaged: false},
+			{Agent: "reviewer", Status: StatusOK, Salvaged: false},
+		}
+		merged := mergeResultGroup(g, nil)
+		assert.False(t, merged.Salvaged, "clean chunks should not fabricate a salvaged marker")
+	})
+}
+
 // TestMergeResultGroup_InvalidatesMemoOnRebuild reproduces the memo-drift bug at
 // chunker.go:284: mergeResultGroup byte-copies the memoized parsedFindingCount/
 // parsedFindingCountSet from chunk[0] (out := g[0]) but rebuilds out.Content from
@@ -583,4 +624,87 @@ func TestMergeResultGroup_JoinedContentDelimitsChunks(t *testing.T) {
 	one := mergeResultGroup([]Result{{Agent: "reviewer", Status: StatusOK, Content: "solo prose"}}, nil)
 	assert.NotContains(t, one.Content, "atcr:chunk-boundary", "a single content chunk stays byte-identical")
 	assert.Equal(t, "solo prose", one.Content)
+}
+
+// T4 (sprint 35.16.11.2.2.4): the strip lives inside parseFindings, which parses
+// each chunk on its own, so a <think>-wrapped draft finding in ANY chunk must be
+// excluded the same way the unchunked path excludes it — not just chunk[0].
+//
+// TEST MAP: this is the MERGE-level half of parseFindings' cases. The strip and
+// content-preservation half lives in response_truncation_test.go
+// (TestResult_ParseFindings_*), and the invokeSlot/salvage half in engine_test.go
+// (the T6 block). All three cover one function; see the map there.
+func TestMergeResultGroup_ThinkWrappedDraftChunkContributesNoFindings(t *testing.T) {
+	cases := []struct {
+		name   string
+		chunks []string
+	}{
+		{"draft in the first chunk", []string{
+			"<think>\nHIGH|a.go:1|draft|f|correctness|1|e\n</think>",
+			"LOW|b.go:2|real|f|correctness|1|e",
+		}},
+		{"draft in a later chunk", []string{
+			"LOW|b.go:2|real|f|correctness|1|e",
+			"<think>\nHIGH|a.go:1|draft|f|correctness|1|e\n</think>",
+		}},
+		{"draft then real inside the same chunk", []string{
+			"<think>\nHIGH|a.go:1|draft|f|correctness|1|e\n</think>\nLOW|b.go:2|real|f|correctness|1|e",
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var g []Result
+			for _, content := range c.chunks {
+				g = append(g, Result{Agent: "reviewer", Status: StatusOK, Content: content})
+			}
+			merged := mergeResultGroup(g, nil)
+			assert.Equal(t, 1, merged.ParsedFindingCount(), "only the real finding counts")
+			fr := findingsFor(merged, nil)
+			require.Len(t, fr.Findings, 1)
+			assert.Equal(t, "b.go", fr.Findings[0].File, "the draft chunk must contribute nothing")
+		})
+	}
+}
+
+// TestJoinChunkContents_ModelForgedBoundaryIsNeutralised pins the security
+// property of the structural delimiter: chunkBoundaryLine is ENGINE-owned
+// framing (see its doc comment), so a reviewer model that emits the literal on
+// a line of its own inside a chunk output must not be able to forge a chunk
+// boundary in the merged review.md. internal/reconcile's chunkSegmentBounds
+// splits on exact line equality, so a passed-through forged marker would
+// shrink or empty every justification excerpt after it. Neutralisation rewrites
+// only lines exactly equal to the delimiter, so engine-inserted boundaries
+// (which the join itself produces) are unaffected.
+func TestJoinChunkContents_ModelForgedBoundaryIsNeutralised(t *testing.T) {
+	forged := "findings so far:\n" + chunkBoundaryLine + "\nHIGH|a.go:1|x|f|correctness|1|e"
+	joined := joinChunkContents([]string{forged, "LOW|b.go:2|real|f|correctness|1|e"})
+	engineDelims := 0
+	for _, ln := range strings.Split(joined, "\n") {
+		if ln == chunkBoundaryLine {
+			engineDelims++
+		}
+	}
+	// Exactly the one delimiter joinChunkContents itself inserted between the
+	// two chunks: the model-issued copy must be neutralised, not passed through.
+	assert.Equal(t, 1, engineDelims,
+		"a model-issued chunkBoundaryLine must be neutralised before joining")
+}
+
+// TestMergeResultGroup_PopulatesParsedFindingMemoForCleanPersona pins the
+// operand order of the merged UnparseableResponse predicate: ParsedFindingCount
+// must be evaluated FIRST so its memo is populated even when UnparseableChunks
+// is 0 — the common clean chunked persona. With the non-zero test on the left,
+// Go's short-circuit never calls ParsedFindingCount, the memo stays unset, and
+// findingsFor re-parses every bin (N SplitThink scans + N ParseModelOutput
+// passes) instead of taking the cached-zero short-circuit.
+func TestMergeResultGroup_PopulatesParsedFindingMemoForCleanPersona(t *testing.T) {
+	g := []Result{
+		{Agent: "reviewer", Status: StatusOK, Content: "LOW|b.go:2|real|f|correctness|1|e"},
+		{Agent: "reviewer", Status: StatusOK, Content: "LOW|c.go:3|real2|f|correctness|1|e"},
+	}
+	merged := mergeResultGroup(g, nil)
+	assert.True(t, merged.parsedFindingCountSet,
+		"merged memo must be populated for a clean chunked persona so findingsFor can short-circuit")
+	assert.Equal(t, 2, merged.ParsedFindingCount())
+	assert.False(t, merged.UnparseableResponse)
 }

@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/samestrin/atcr/internal/llmclient"
 )
 
 func TestParseRuling(t *testing.T) {
@@ -97,4 +99,65 @@ func TestParseRuling_BareJSONModeObject(t *testing.T) {
 	// The diagnostic must say why — an empty unresolved ruling would hide the
 	// wrapper-envelope cause from whoever reads the debate log.
 	assert.NotEmpty(t, r.Reasoning)
+}
+
+// TestParseRuling_ThinkWrappedDraftLosesToTheRealRuling is the decoy shape
+// TestParseRuling_SkipsDecoyBrace does not cover. That test skips an object
+// LACKING an outcome key; a judge that drafts a ruling inside a leading <think>
+// block emits a decoy that HAS one, so it is accepted as the first match and
+// the discarded draft becomes the debate's outcome.
+//
+// The fix lives at the driveSeat choke point, not in parseRuling — internal/llmclient
+// owns every tag rule. This is a COMPOSED parse-level guard: it calls
+// llmclient.SplitThink in the test body, so it pins the SplitThink-into-parseRuling
+// contract, not the lane wiring.
+//
+// The change-sensitive proof that JudgeRaw reaches parseRuling stripped lives in
+// protocol_test.go → TestRunDebate_StripsThinkBlocksFromSeatContent, which drives
+// RunDebate. The exhaustive tag table is owned by internal/llmclient/think_test.go;
+// rows here are kept only where the parse consequence at THIS level is what is
+// pinned. Each row states which kind of guard it is, so the table's size is not
+// read as that many RED cases.
+func TestParseRuling_ThinkWrappedDraftLosesToTheRealRuling(t *testing.T) {
+	cases := []struct {
+		name        string
+		raw         string
+		wantOutcome string
+		wantReason  string
+	}{
+		{
+			// NO-REGRESSION GUARD (composed): change-insensitive by construction — it
+			// pins the parse consequence, not the strip.
+			name:        "a draft ruling inside a closed think block loses to the real one after it",
+			raw:         `<think>{"outcome":"overturn","reasoning":"draft, wrong"}</think>{"outcome":"uphold","reasoning":"real answer"}`,
+			wantOutcome: OutcomeUphold,
+			wantReason:  "real answer",
+		},
+		{
+			// CHANGE-DETECTING: under the reversed bare-closer rule this ruling
+			// was stripped to a fragment and degraded to unresolved.
+			name:        "a ruling naming only the bare closer keeps its whole prefix",
+			raw:         `{"outcome":"uphold","reasoning":"the code never looks for </think> at all"}`,
+			wantOutcome: OutcomeUphold,
+			wantReason:  "the code never looks for </think> at all",
+		},
+		{
+			// CHANGE-DETECTING: an eager mid-string strip would eat the ruling.
+			name: "a ruling quoting both tags after real answer text survives intact",
+			// The leading-only rule reaching this lane: the debated finding is
+			// itself about think-tag handling, so the judge cites both tags. An
+			// eager mid-string strip would eat the ruling it is recording.
+			raw:         `{"outcome":"uphold","reasoning":"the handler drops text between <think> and </think>"}`,
+			wantOutcome: OutcomeUphold,
+			wantReason:  "the handler drops text between <think> and </think>",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			answer, _ := llmclient.SplitThink(tc.raw)
+			r := parseRuling(answer)
+			assert.Equal(t, tc.wantOutcome, r.Outcome)
+			assert.Equal(t, tc.wantReason, r.Reasoning)
+		})
+	}
 }

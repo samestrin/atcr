@@ -80,7 +80,7 @@ func uncoveredBaselineFiles(ctx context.Context, slots []Slot, results []Result,
 	// coherent middle.
 	allOK := len(results) == len(slots)
 	for _, r := range results {
-		if r.Status != StatusOK || r.servedRePacked {
+		if r.Status != StatusOK || r.servedRePacked || contributedNothing(r) {
 			allOK = false
 			break
 		}
@@ -96,7 +96,7 @@ func uncoveredBaselineFiles(ctx context.Context, slots []Slot, results []Result,
 		if i >= len(results) {
 			break
 		}
-		if results[i].Status != StatusOK {
+		if results[i].Status != StatusOK || contributedNothing(results[i]) {
 			continue
 		}
 		// The tag of the agent that SERVED this slot (Epic 35.16.5.4 T3b), not the
@@ -163,6 +163,30 @@ func servedCoverage(ctx context.Context, s Slot, r Result) []string {
 
 // allUncovered returns every reviewed path as uncovered — the fail-open answer when
 // no coverage evidence exists at all.
+// contributedNothing reports a StatusOK result that provably yielded no findings
+// because a lane REFUSED its content, rather than because the reviewer read the
+// files and found nothing. The distinction is the whole basis of the baseline
+// index: "reviewed and clean" is recordable, "never actually read" is not.
+//
+// Both signals are StatusOK with non-empty content, so every other test in this
+// file misses them. A SALVAGED reply is the provider returning no content with the
+// client promoting reasoning into it — parseFindings refuses it outright. A
+// THINK-SUPPRESSED reply is one the strip consumed entirely, which parses to
+// nothing by construction. Before this, such a slot passed the all-OK
+// short-circuit (or the per-slot pass below) and its files were committed to the
+// persistent index as reviewed, so the next incremental scan skipped them: a file
+// nothing ever read, never read again — the failure this file's per-slot
+// attribution exists to prevent, reached by a route it did not know about.
+//
+// DELIBERATELY COARSE for a chunked persona: Salvaged is an OR-fold over its bins,
+// so one refused bin beside a clean sibling withholds coverage for ALL the slot's
+// files. That over-re-reviews, which is this file's stated fail-open direction —
+// a needless re-scan, never a silent skip. Per-bin file attribution would need the
+// bin→file mapping the slot tag does not carry.
+func contributedNothing(r Result) bool {
+	return r.Salvaged || r.ThinkSuppressed
+}
+
 func allUncovered(reviewed map[string]string) map[string]struct{} {
 	out := make(map[string]struct{}, len(reviewed))
 	for p := range reviewed {

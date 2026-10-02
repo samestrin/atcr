@@ -633,7 +633,9 @@ const (
 //
 // The choice is final. A caller that selected findings.toon must never retry
 // findings.txt when the read or parse fails: that would hide a v2 writer bug
-// behind lossy data.
+// behind lossy data. The sole exception is ReadPoolFindings' re-selection when
+// findings.toon is deleted between selection and read — the file is then
+// absent, not a failed read, and hiding that would report a missing pool.
 func SelectFindingsFile(dir string) (string, error) {
 	toon := filepath.Join(dir, findingsFileV2)
 	if ok, err := regularFindingsFile(toon); ok || err != nil {
@@ -679,7 +681,9 @@ func (e *FindingsParseError) Unwrap() error { return e.Err }
 // selection error when neither file exists (errors.Is(err, fs.ErrNotExist)),
 // the OS error when the selected file cannot be read, and a
 // *FindingsParseError when it does not parse. It never falls back to
-// findings.txt after selecting findings.toon.
+// findings.txt after selecting findings.toon — except when findings.toon
+// vanished between selection and read (deleted after selection): it then
+// selects again rather than report a missing pool.
 func ReadPoolFindings(dir string) (ParseResult, error) {
 	path, err := SelectFindingsFile(dir)
 	if err != nil {

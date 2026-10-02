@@ -27,8 +27,10 @@ type Contested struct {
 }
 
 // ContestedReport is the full contested-findings view: the per-item rulings plus
-// the count of disputed items that exceeded the debate cap and were not debated
-// (disclosed, never silent).
+// the count of disputed items that were not debated at all (disclosed, never
+// silent). That count covers both withholding causes — the debate cap and an item
+// that already exhausted its unresolved attempts — because it is read from the
+// length of debate.json's overflow list, which records both.
 type ContestedReport struct {
 	Items    []Contested
 	Overflow int
@@ -94,7 +96,7 @@ func writeContestedSection(b *bytes.Buffer, cr ContestedReport) {
 		}
 	}
 	if cr.Overflow > 0 {
-		fmt.Fprintf(b, "\n_%d disputed item(s) exceeded the debate cap and were not debated (recorded in debate.json)._\n", cr.Overflow)
+		fmt.Fprintf(b, "\n_%d disputed item(s) were not debated — the debate cap, or unresolved attempts already exhausted (each recorded with its reason in debate.json)._\n", cr.Overflow)
 	}
 }
 
