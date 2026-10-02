@@ -202,3 +202,26 @@ func TestOutcome_FormatFailuresSkipsOKRows(t *testing.T) {
 	})
 	assert.Equal(t, "bad (real)", out)
 }
+
+// TestSummarize_ContributedNothingCount verifies the run-level tally of succeeded
+// slots that provably contributed nothing (salvaged, or think-suppressed). It is a
+// sibling of FallbackCount and UnreviewedChunks, computed in the same single pass,
+// because the baseline write-back's operator signal needs it: covered == 0 with
+// UnreviewedChunks == 0 is reachable ONLY through this cause, and without the count
+// the two operator lines have no way to name it.
+func TestSummarize_ContributedNothingCount(t *testing.T) {
+	results := []Result{
+		{Agent: "a", Status: StatusOK},                        // real contribution
+		{Agent: "b", Status: StatusOK, Salvaged: true},        // refused whole
+		{Agent: "c", Status: StatusOK, ThinkSuppressed: true}, // strip ate the reply
+		{Agent: "d", Status: StatusFailed, Err: errors.New("boom")},
+		{Agent: "e", Status: StatusOK, Salvaged: true, ThinkSuppressed: true}, // counted once
+	}
+	s, err := Outcome(results)
+	require.NoError(t, err)
+	assert.Equal(t, 3, s.ContributedNothingCount,
+		"each succeeding result that contributed nothing is counted exactly once, and a failed one is not")
+
+	zero := summarize([]Result{{Status: StatusOK}})
+	assert.Equal(t, 0, zero.ContributedNothingCount, "a clean run reports 0, not a spurious count")
+}

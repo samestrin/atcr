@@ -1018,3 +1018,71 @@ func TestCommitBaselineWriteback_GuardsWriteNothing(t *testing.T) {
 	commitBaselineWriteback(context.Background(), true, prep, okResult())
 	assert.FileExists(t, payload.FileHashIndexPath("."))
 }
+
+// The baseline coverage lines name "unreviewed_chunks" beside the claim, but
+// `excluded > 0` is now reachable with EVERY slot StatusOK and UnreviewedChunks ==
+// 0: contributedNothing withholds coverage for a salvaged or think-suppressed
+// reply, which is a succeeded slot (TD cli/review.go:256). The operator then reads
+// "no file was covered by a succeeded chunk" next to a counter saying zero chunks
+// were unreviewed, with the real cause named nowhere — and warnSalvaged's remedy
+// (turn off inline reasoning / repoint the model) is the opposite of raising a
+// budget. The cause must be named, and the slot count must sit beside the claim.
+func TestCommitBaselineWriteback_NamesTheContributedNothingCause(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	cfg, err := fanout.LoadReviewConfig(".", registry.CLIOverrides{})
+	require.NoError(t, err)
+	req := fanout.ReviewRequest{
+		Repo: ".", Root: ".",
+		Branch: "main", Date: "2026-07-27", TimeSuffix: "000000", StartedAt: time.Now(),
+	}
+	prep, err := fanout.PrepareReviewFromRepo(context.Background(), cfg, req)
+	require.NoError(t, err)
+
+	// A SALVAGED reply: the provider returns empty content with reasoning_content
+	// set, so the client promotes the chain-of-thought and every lane refuses it.
+	// The result is a persona that saw the whole diff, reported ok, and
+	// contributed nothing — so uncoveredBaselineFiles withholds its coverage while
+	// UnreviewedChunks stays 0. Nothing else reproduces that pair.
+	salvageSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{
+			"finish_reason": "stop",
+			"message":       map[string]string{"role": "assistant", "content": "", "reasoning_content": "I will consider a.txt:1 ..."},
+		}}})
+	}))
+	t.Cleanup(salvageSrv.Close)
+	liveReviewConfig(t, salvageSrv.URL, "bruce")
+
+	cfg2, err := fanout.LoadReviewConfig(".", registry.CLIOverrides{})
+	require.NoError(t, err)
+	prep, err = fanout.PrepareReviewFromRepo(context.Background(), cfg2, req)
+	require.NoError(t, err)
+
+	res, err := fanout.ExecuteReview(context.Background(), newCompleter(context.Background()), prep)
+	require.NoError(t, err, "a salvaged persona is still a succeeded run")
+	require.Positive(t, res.Summary.Succeeded)
+	require.Zero(t, res.Summary.UnreviewedChunks,
+		"a salvaged slot is StatusOK, so it is not an unreviewed chunk — the counter the old message pointed at")
+	require.Positive(t, res.Summary.ContributedNothingCount,
+		"the cause must be tallied, or the operator lines still cannot name it")
+
+	var buf bytes.Buffer
+	logger, err := log.New("debug", "json", &buf)
+	require.NoError(t, err)
+	ctx := log.NewContext(context.Background(), logger)
+
+	commitBaselineWriteback(ctx, true, prep, res)
+
+	out := buf.String()
+	assert.Contains(t, out, "contributed_nothing_slots",
+		"the operator must be told the withheld coverage came from slots that contributed nothing")
+	assert.Contains(t, out, "unreviewed_chunks",
+		"the existing counter stays beside the claim")
+	assert.Contains(t, out, "salvaged or think-suppressed",
+		"the two causes must be named, since neither is what 'unreviewed_chunks' implies")
+}

@@ -257,11 +257,21 @@ func commitBaselineWriteback(ctx context.Context, baseline bool, prep *fanout.Pr
 		// Nothing was covered: CommitBaselineIndex skipped the write entirely, so the
 		// index is frozen at its prior state and the next scan re-reads the whole
 		// scope. Without this line that outcome is indistinguishable from a clean run.
+		//
+		// "unreviewed_chunks" alone MISLEADS here: a salvaged or think-suppressed slot
+		// is StatusOK and reported nothing, so it is not an unreviewed chunk, and a run
+		// can reach this arm with every chunk OK and that counter at zero. Naming the
+		// cause is the difference between the operator turning off inline reasoning and
+		// the operator raising a budget that was never the problem.
 		log.FromContext(ctx).Warn("baseline scan: no file was covered by a succeeded chunk, so the file-hash index was left untouched and the next run re-scans the whole scope",
-			"excluded_files", excluded, "unreviewed_chunks", result.Summary.UnreviewedChunks)
+			"excluded_files", excluded, "unreviewed_chunks", result.Summary.UnreviewedChunks,
+			"contributed_nothing_slots", result.Summary.ContributedNothingCount,
+			"cause", "a salvaged or think-suppressed reply contributed nothing while still reporting ok")
 	case excluded > 0:
 		log.FromContext(ctx).Warn("baseline scan: partial coverage; only the files covered by succeeded chunks were recorded, so the next run re-scans the rest",
-			"recorded_files", recorded, "excluded_files", excluded, "unreviewed_chunks", result.Summary.UnreviewedChunks)
+			"recorded_files", recorded, "excluded_files", excluded, "unreviewed_chunks", result.Summary.UnreviewedChunks,
+			"contributed_nothing_slots", result.Summary.ContributedNothingCount,
+			"cause", "a salvaged or think-suppressed reply contributed nothing while still reporting ok")
 	default:
 		log.FromContext(ctx).Debug("baseline scan: file-hash index updated",
 			"recorded_files", recorded, "excluded_files", excluded)
