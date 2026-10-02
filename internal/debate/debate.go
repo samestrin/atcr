@@ -641,11 +641,18 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 	// durable (it writes a verdict onto the finding), while an unresolved item
 	// leaves the pre-debate verdict standing and is disclosed by its own token.
 	//
-	// Accepted cost, in the safe direction: the detector is position-blind, so a
-	// judge whose reasoning QUOTES a think tag is refused too. That costs one
-	// unresolved item on a reply this repo does produce (findings here discuss
-	// think handling), and withholdExhausted stops it recurring forever.
-	if llmclient.HasThinkMarkup(rec.JudgeRaw) {
+	// The DETECTION question, asked the way the verify and executor lanes ask it:
+	// mask the JSON string values first, then ask the enclosure predicate. Masking
+	// means a judge that merely QUOTES a think tag while ruling on think-handling
+	// code — the likeliest input in this repo — keeps its ruling instead of being
+	// refused as markup. HasThinkMarkup is doctor's detection question,
+	// position-blind by design, and reusing it here made the three lanes disagree
+	// about what counts as markup in a reply that quotes the tag (TD
+	// internal/debate/debate.go:640). HasEnclosingThinkBlock is the enclosure
+	// question this site actually asks: is there a BLOCK a discarded draft ruling
+	// could sit in, so that parseRuling's first keyed object is the draft rather
+	// than the answer.
+	if llmclient.HasEnclosingThinkBlock(llmclient.MaskJSONStrings(rec.JudgeRaw)) {
 		ir.Outcome = OutcomeUnresolved
 		ir.Reason = ReasonJudgeThinkMarkup
 		ir.Reasoning = "judge reply carries inline think markup; ruling refused"
@@ -654,7 +661,29 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 		return ir
 	}
 
-	ruling := parseRuling(rec.JudgeRaw)
+	// The one tag shape neither guard above acts on: a </think> no  thinking opened.
+	// SplitThink leaves it in place and HasEnclosingThinkBlock does not refuse on
+	// it, both deliberately, so the envelope BEFORE it can still be an abandoned
+	// draft. llmclient owns the shared rule; this lane supplies the envelope
+	// predicate its own parser needs. On an ambiguous pair neither envelope is
+	// trusted — a wrong ruling writes a durable verdict onto the finding, while an
+	// unresolved item leaves the pre-debate verdict standing (TD
+	// internal/debate/debate.go:653).
+	judgeText := rec.JudgeRaw
+	section, text := llmclient.ClassifyUnopenedCloser(rec.JudgeRaw, carriesRuling)
+	switch section {
+	case llmclient.SectionAmbiguous:
+		ir.Outcome = OutcomeUnresolved
+		ir.Reason = ReasonJudgeThinkMarkup
+		ir.Reasoning = "judge reply has a ruling envelope on both sides of a </think> no  thinking opened; neither is provably committed"
+		tr.RecordRuling(RulingEvent{Outcome: OutcomeUnresolved, Reasoning: ir.Reasoning})
+		log.FromContext(ctx).Warn("debate: judge reply ambiguous around an unopened think closer, ruling refused", "judge", cast.Judge.Agent)
+		return ir
+	case llmclient.SectionAfterCloser:
+		judgeText = text
+	}
+
+	ruling := parseRuling(judgeText)
 	tr.RecordRuling(RulingEvent{
 		Outcome:         ruling.Outcome,
 		SettledSeverity: ruling.SettledSeverity,
@@ -765,6 +794,15 @@ func allSeatsIn(cause, seats []string) bool {
 		}
 	}
 	return true
+}
+
+// carriesRuling reports whether text parses to a real judge ruling, as opposed to
+// parseRuling's "nothing usable here" diagnostics. It is the envelope test
+// classifyUnopenedCloser needs for the debate lane: only an outcome-keyed object
+// counts, so a closer quoted in prose is not treated as a boundary that splits
+// two envelopes.
+func carriesRuling(s string) bool {
+	return parseRuling(s).Outcome != OutcomeUnresolved
 }
 
 // seatSilenceNotes labels each silent seat with its own cause for the transcript,

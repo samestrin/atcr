@@ -205,9 +205,12 @@ func SplitThink(content string) (answer string, reasoning Reasoning) {
 // STRIP on 2026-09-30 for the same reason; this is the same reversal for the
 // refusal that re-adopted it.
 //
-// HasThinkMarkup keeps the bare-closer rule, and must: its consumer is doctor's
-// thinking verdict, which asks "did this model think at all" from a fixed prompt
-// containing no tag. That is a detection question, not an enclosure question.
+// HasThinkMarkup keeps the bare-closer rule, and must: it answers doctor's
+// detection question ("did this model think at all"), not the enclosure question
+// the verify, executor and debate lanes share. Its consumers are doctor's thinking
+// verdict and the run-level thinking probe behind it — both send a fixed prompt
+// containing no tag, so a block after the answer there is not a quote, it is the
+// runaway thinker the verdict exists to name.
 func HasEnclosingThinkBlock(content string) bool {
 	rest := content
 	for {
@@ -263,8 +266,9 @@ func HasEnclosingThinkBlock(content string) bool {
 //
 // The offset indexes BYTES, so content[i:] is the committed section. A caller
 // that needs tags inside JSON string values ignored computes the offset on a
-// masked copy and slices the unmasked original at it — verify's maskJSONStrings
-// blanks bytes in place and preserves length, so the two stay aligned.
+// masked copy and slices the unmasked original at it — MaskJSONStrings blanks
+// bytes in place and preserves length, so the two stay aligned. ClassifyUnopenedCloser
+// is that pattern packaged for every lane.
 func IndexAfterUnopenedCloser(content string) int {
 	depth, last := 0, -1
 	for i := 0; i < len(content); {
@@ -284,6 +288,108 @@ func IndexAfterUnopenedCloser(content string) int {
 		}
 	}
 	return last
+}
+
+// MaskJSONStrings blanks every byte inside a JSON double-quoted string literal in
+// s, preserving length and every byte outside a literal. String-awareness is the
+// same rule extractJSONObject uses: a backslash escapes the next byte, and an
+// unclosed literal masks to end of input.
+//
+// The result is for tag DETECTION only, never for parsing: a think tag that
+// survives the mask is markup enclosing reply text, while one that appears solely
+// inside a string value is a model QUOTING the tag (the likeliest input in this
+// repo, where findings discuss think handling) and must not be read as thinking.
+// Because the output is byte-aligned with the input, an offset computed on the
+// masked copy is valid in the unmasked original — which is what lets a caller
+// mask for detection and slice the original for parsing.
+//
+// It lives here, not in a lane, because internal/llmclient owns every tag rule:
+// three lanes now share one definition of where a tag counts.
+func MaskJSONStrings(s string) string {
+	b := []byte(s)
+	inStr, escaped := false, false
+	for i := 0; i < len(b); i++ {
+		c := b[i]
+		if !inStr {
+			if c == '"' {
+				inStr = true
+			}
+			continue
+		}
+		if escaped {
+			escaped = false
+			b[i] = ' '
+			continue
+		}
+		switch c {
+		case '\\':
+			escaped = true
+			b[i] = ' '
+		case '"':
+			inStr = false
+		default:
+			b[i] = ' '
+		}
+	}
+	return string(b)
+}
+
+// CloserSection names which part of a STRIPPED answer holds the committed
+// envelope when the reply carries a  response that no  thinking opened.
+type CloserSection int
+
+const (
+	// SectionWholeAnswer: no unopened closer, or nothing after it parses. The
+	// answer is read end to end.
+	SectionWholeAnswer CloserSection = iota
+	// SectionAfterCloser: only the text AFTER the closer carries an envelope, so
+	// the reply began mid-thought and that text is the committed section.
+	SectionAfterCloser
+	// SectionAmbiguous: BOTH sides carry one. Nothing in the tag structure says
+	// which is committed, so neither may be used.
+	SectionAmbiguous
+)
+
+// ClassifyUnopenedCloser decides which part of a stripped answer to parse when a
+// </think> appears that no  thinking opened. It is shared by every lane, so no
+// lane can drift on the RULE; each lane still supplies its own hasEnvelope,
+// because what counts as an envelope entirely depends on that lane's parser.
+//
+// Such a closer is the one tag shape neither earlier guard acts on, both
+// deliberately: SplitThink leaves it in place and HasEnclosingThinkBlock does not
+// refuse on it (IndexAfterUnopenedCloser documents why). What falls between them
+// is the envelope BEFORE the closer — reasoning the model abandoned if the reply
+// really did start mid-thought — which a first-match parser takes as the answer.
+//
+// Three outcomes, because the structure genuinely supports three cases and only
+// two of them have a safe default:
+//
+//	{draft} </think> {real}   → ambiguous: so does {real} … "</think>" {example}
+//	         </think> {real}   → after-closer: nothing before it to confuse
+//	{real} … prose "</think>"  → whole answer: the suffix holds no envelope
+//
+// The ambiguous case is REFUSED by the caller rather than resolved. Taking the
+// last section would let a quoted example override a real answer; taking the
+// first is the defect this rule exists to close. The two shapes have identical
+// tag structure, so no positional rule separates them.
+//
+// The offset is computed on the MASKED copy, so a closer quoted inside a JSON
+// string value is not a boundary, and sliced out of the UNMASKED answer so the
+// envelope reaches the parser intact. MaskJSONStrings blanks in place and
+// preserves length, so one offset is valid in both.
+func ClassifyUnopenedCloser(answer string, hasEnvelope func(string) bool) (CloserSection, string) {
+	i := IndexAfterUnopenedCloser(MaskJSONStrings(answer))
+	if i < 0 || i > len(answer) {
+		return SectionWholeAnswer, answer
+	}
+	suffix := answer[i:]
+	if !hasEnvelope(suffix) {
+		return SectionWholeAnswer, answer
+	}
+	if hasEnvelope(answer[:i]) {
+		return SectionAmbiguous, suffix
+	}
+	return SectionAfterCloser, suffix
 }
 
 // HasThinkMarkup reports whether the content carries inline think markup holding

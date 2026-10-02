@@ -679,18 +679,15 @@ const (
 // envelope reaches the parser intact. maskJSONStrings blanks bytes in place and
 // preserves length, so one offset is valid in both.
 func classifyUnopenedCloser(answer string, hasEnvelope func(string) bool) (closerSection, string) {
-	i := llmclient.IndexAfterUnopenedCloser(maskJSONStrings(answer))
-	if i < 0 || i > len(answer) {
-		return sectionWholeAnswer, answer
+	section, text := llmclient.ClassifyUnopenedCloser(answer, hasEnvelope)
+	switch section {
+	case llmclient.SectionAfterCloser:
+		return sectionAfterCloser, text
+	case llmclient.SectionAmbiguous:
+		return sectionAmbiguous, text
+	default:
+		return sectionWholeAnswer, text
 	}
-	suffix := answer[i:]
-	if !hasEnvelope(suffix) {
-		return sectionWholeAnswer, answer
-	}
-	if hasEnvelope(answer[:i]) {
-		return sectionAmbiguous, suffix
-	}
-	return sectionAfterCloser, suffix
 }
 
 // carriesVerdict reports whether text parses to a real verdict, as opposed to
@@ -718,32 +715,7 @@ func verdictFromAnswer(answer string) (v *reclib.Verification, ambiguous bool) {
 }
 
 func maskJSONStrings(s string) string {
-	b := []byte(s)
-	inStr, escaped := false, false
-	for i := 0; i < len(b); i++ {
-		c := b[i]
-		if !inStr {
-			if c == '"' {
-				inStr = true
-			}
-			continue
-		}
-		if escaped {
-			escaped = false
-			b[i] = ' '
-			continue
-		}
-		switch c {
-		case '\\':
-			escaped = true
-			b[i] = ' '
-		case '"':
-			inStr = false
-		default:
-			b[i] = ' '
-		}
-	}
-	return string(b)
+	return llmclient.MaskJSONStrings(s)
 }
 
 func logSkepticFailure(logger *slog.Logger, skeptic, class, detail string) {
