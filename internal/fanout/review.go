@@ -3135,9 +3135,15 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 	reasoningReserve := 0
 	if sz.effectiveBudget > 0 {
 		reservedOut = agentMaxTokens
-		if toolLoopAgent(ac, rng) {
-			reasoningReserve = agentMaxTokens * payload.ReasoningReplayReserveCaps
-		}
+	}
+	// Recorded UNCONDITIONALLY for a tool-loop agent, the way ResolvedMaxTokens was
+	// added, and NOT under the budget gate above. Gating it meant the ZERO-budget
+	// record — the one record where the reserve is what caused the degradation —
+	// omitted the very number that explains it, leaving an operator to recompute the
+	// window-vs-cap arithmetic and conclude the window should have funded the run
+	// (TD internal/fanout/review.go:3136).
+	if toolLoopAgent(ac, rng) {
+		reasoningReserve = agentMaxTokens * payload.ReasoningReplayReserveCaps
 	}
 	return Agent{
 		Name:     name,
