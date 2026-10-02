@@ -150,3 +150,26 @@ func TestBuildFallbackAgent_RefitArmRecordsTheReplayReserve(t *testing.T) {
 		fb.ReservedOutputTokens+fb.ReasoningReserveTokens,
 		"the two together must equal the reservation the re-fit payload was sized against")
 }
+
+// The reserve was gated on `sz.effectiveBudget > 0` mirroring reservedOut, so on the
+// ZERO-budget arm nothing on the record said a reserve was held — the one record
+// where the reserve is what caused the degradation. A tool-loop agent with window
+// 20000 and cap 8192 computes 20000 - 3*8192 - 4096 < 0, so the budget is 0, and the
+// published record showed resolved_window 20000, resolved_max_tokens 8192 and both
+// reservations absent — an operator recomputing 20000-8192-4096=7712 concludes the
+// window should have funded it. ResolvedMaxTokens was added unconditionally for
+// exactly this reason; the reserve did not inherit that precedent (TD
+// internal/fanout/review.go:3136).
+func TestBuildOneAgent_ZeroBudgetToolLoopAgentStillStatesItsReserve(t *testing.T) {
+	cfg := toolLoopGretaRoster(t, 1) // a window that cannot fund even one cap
+	agent, _, err := buildOneAgent(cfg, "greta", oversizedBlocksPayload(), ReviewRange{Base: "a", Head: "b"}, "", "")
+	require.NoError(t, err)
+
+	cap := maxTokensFor(cfg, cfg.Registry.Agents["greta"])
+	require.Zero(t, agent.EffectiveBudget, "precondition: the zero-budget arm is what fires")
+	assert.Zero(t, agent.ReservedOutputTokens,
+		"precondition: the reservation stays absent beside a zero budget — that pairing is the contract")
+	assert.Equal(t, cap*payload.ReasoningReplayReserveCaps, agent.ReasoningReserveTokens,
+		"a zero-budget record must still state the arithmetic that produced it: the reserve a tool-loop "+
+			"agent held back is the number an operator needs to see, and this is its only arm")
+}
