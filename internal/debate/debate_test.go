@@ -1200,3 +1200,52 @@ func TestRunDebate_ResumedThinkRunSpoofIsRefused(t *testing.T) {
 	require.Len(t, df.Items, 1)
 	assert.Equal(t, ReasonJudgeThinkMarkup, df.Items[0].Reason)
 }
+
+// A judge whose reasoning VALUE merely QUOTES the closer is naming the tag, not
+// carrying a draft inside it — and this repo produces that reply constantly,
+// since findings here discuss think handling. The guard must not throw the
+// ruling away: the tag sits inside a JSON string, so masking removes it before
+// the enclosure test ever sees it. Before this, the position-blind
+// HasThinkMarkup applied to the RAW reply refused the whole ruling as
+// judge_think_markup, which counts toward withholding and could permanently
+// withhold the item.
+func TestRunDebate_JudgeQuotingCloserInsideJSONValueKeepsItsRuling(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "the attack stands"},
+		{content: `{"outcome":"uphold","reasoning":"the code never looks for  </think> at all"}`},
+	}}
+	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Upheld, "a judge that merely QUOTES the closer inside a JSON value committed its ruling")
+	assert.Equal(t, 0, res.Unresolved, "a quoted tag inside a JSON string is not markup the strip could not remove")
+
+	df, _, err := ReadDebateFile(dir)
+	require.NoError(t, err)
+	require.Len(t, df.Items, 1)
+	assert.NotEqual(t, ReasonJudgeThinkMarkup, df.Items[0].Reason,
+		"a quoted tag inside a JSON string must not be refused as unrunnable markup")
+}
+
+// The other half: an UNOPENED closer with a ruling envelope on BOTH sides is the
+// shape no positional rule can resolve — taking the first object would let a
+// discarded draft become the debate's ruling. It stays refused.
+func TestRunDebate_UnopenedCloserWithRulingOnBothSidesIsRefused(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "the attack stands"},
+		{content: `{"outcome":"overturn","reasoning":"draft never committed"} </think> {"outcome":"uphold","reasoning":"real answer"}`},
+	}}
+	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.Overturned, "the abandoned draft before a bare closer must not become the ruling")
+	assert.Equal(t, 0, res.Upheld, "nor may either envelope be trusted when both sides carry one")
+	assert.Equal(t, 1, res.Unresolved)
+
+	df, _, err := ReadDebateFile(dir)
+	require.NoError(t, err)
+	require.Len(t, df.Items, 1)
+	assert.Equal(t, ReasonJudgeThinkMarkup, df.Items[0].Reason)
+}
