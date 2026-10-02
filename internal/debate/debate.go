@@ -294,12 +294,9 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		if oc.ir.Outcome == OutcomeUnresolved {
 			// Carry the count forward on the record itself: this is the only place
 			// an unresolved item's history is written, and the ceiling is only
-			// reachable if each run adds its own attempt to the prior total.
-			//
-			// Gated on the REASON: an environmental failure consumes no attempt
-			// (countsTowardWithholding). The prior total is still carried forward
-			// unchanged, so an interrupted run neither advances the ceiling nor
-			// erases the history earlier real attempts earned.
+			// reachable if each run adds its own attempt to the prior total. The
+			// reason gate that decides whether THIS run adds one lives in
+			// carryUnresolvedAttempts.
 			//
 			// Read here, after wg.Wait(), because this is where ir.Reason is final:
 			// the per-item goroutine can still reassign it (ReasonNoClusterDecision)
