@@ -83,6 +83,14 @@ func TestCountsTowardWithholding_DenyListIsExactlyTheEnvironmentalFour(t *testin
 // record must now carry no attempt.
 func TestRunDebate_InterruptedRunSpendsNoAttempt(t *testing.T) {
 	// Three consecutive interrupted runs, each reading the previous one's record.
+	//
+	// The arithmetic runs through carryUnresolvedAttempts — the SAME function
+	// runDebate's writer arm calls. An earlier version of this test re-implemented
+	// the `if countsTowardWithholding(...)` branch in its own body, so its
+	// assertion was guaranteed by the test's copy rather than by the production
+	// line: the writer's gate could be replaced with an unconditional `prior+1`
+	// and the whole repo stayed green. Mutation-checked after this change
+	// (TD internal/debate/debate.go:308).
 	prior := map[FindingKey]int{}
 	key := FindingKey{File: "a.go", Line: 7, Problem: "disputed finding"}
 	for round := 1; round <= 3; round++ {
@@ -90,11 +98,7 @@ func TestRunDebate_InterruptedRunSpendsNoAttempt(t *testing.T) {
 			File: key.File, Line: key.Line, Problem: key.Problem,
 			Outcome: OutcomeUnresolved, Reason: ReasonContextCancelled,
 		}
-		if countsTowardWithholding(ir.Reason) {
-			ir.UnresolvedAttempts = prior[key] + 1
-		} else {
-			ir.UnresolvedAttempts = prior[key]
-		}
+		ir.UnresolvedAttempts = carryUnresolvedAttempts(prior[key], ir.Reason)
 		prior[key] = ir.UnresolvedAttempts
 	}
 	assert.Zero(t, prior[key], "three interrupted runs must leave the item with no attempts spent")
@@ -112,9 +116,7 @@ func TestRunDebate_ThreeItemEvidenceFailuresStillWithhold(t *testing.T) {
 	prior := map[FindingKey]int{}
 	key := FindingKey{File: "a.go", Line: 7, Problem: "disputed finding"}
 	for round := 1; round <= maxUnresolvedAttempts; round++ {
-		if countsTowardWithholding(ReasonSeatSilent) {
-			prior[key]++
-		}
+		prior[key] = carryUnresolvedAttempts(prior[key], ReasonSeatSilent)
 	}
 	assert.Equal(t, maxUnresolvedAttempts, prior[key])
 
@@ -124,4 +126,46 @@ func TestRunDebate_ThreeItemEvidenceFailuresStillWithhold(t *testing.T) {
 	assert.Empty(t, kept, "three real failures still reach the ceiling")
 	assert.Len(t, withheld, 1)
 	assert.Equal(t, OverflowAttemptsExhausted, withheld[0].Reason)
+}
+
+// TestCarryUnresolvedAttempts is the writer arm's arithmetic, pinned directly.
+//
+// runDebate's unresolved branch is the only place an item's attempt history is
+// written, and the three-strike ceiling is permanent once reached — so the gate
+// deciding whether THIS run spends one is as load-bearing as the reader's floor
+// in emit.go. The reader half was already pinned; this half was not, and the
+// test that claimed to cover "the writer and the reader" re-implemented the
+// writer's branch instead of calling it.
+func TestCarryUnresolvedAttempts(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		prior  int
+		reason string
+		want   int
+	}{
+		// Environmental: the prior total is carried forward UNCHANGED, so an
+		// interrupted run neither advances the ceiling nor erases the history
+		// earlier real attempts earned.
+		{"interruption spends nothing", 0, ReasonContextCancelled, 0},
+		{"interruption preserves earned history", 2, ReasonHarnessUnavailable, 2},
+		{"roster failure spends nothing", 1, ReasonInsufficientModels, 1},
+		{"no proposer spends nothing", 1, ReasonNoProposer, 1},
+
+		// Item evidence: this run's attempt is added to the prior total.
+		{"a silent seat spends one", 0, ReasonSeatSilent, 1},
+		{"a halted judge spends one", 1, ReasonJudgeHalted, 2},
+		{"the last real failure reaches the ceiling", 2, ReasonSeatSuppressed, 3},
+
+		// An unrecorded reason counts, matching the deny-list's stated default:
+		// over-applying a ceiling is visible and diagnosable, silently disabling
+		// it is not.
+		{"an unrecorded reason counts", 0, "", 1},
+		{"an unknown reason counts", 1, "some_future_reason", 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, carryUnresolvedAttempts(tc.prior, tc.reason))
+		})
+	}
 }

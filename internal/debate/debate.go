@@ -793,6 +793,14 @@ func seatSilenceNotes(halted, suppressed, seats []string) []string {
 	return notes
 }
 
+// carryUnresolvedAttempts returns the attempt total to record on an unresolved
+// item.
+//
+// STUB — wrong on purpose, replaced in GREEN.
+func carryUnresolvedAttempts(prior int, reason string) int {
+	return prior + 1
+}
+
 // countsTowardWithholding reports whether an unresolved item's reason is
 // evidence about the ITEM, and so may consume one of its three attempts toward
 // the withholding ceiling.
