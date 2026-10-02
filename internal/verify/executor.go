@@ -800,7 +800,7 @@ func invokeExecutor(ctx context.Context, ex *registry.ExecutorConfig, prov regis
 	if llmclient.HasEnclosingThinkBlock(maskJSONStrings(answer)) {
 		return "", "agent_mode refused: think markup outside a JSON string survived the strip, so the first fix envelope may be a draft the model discarded", res.ResponseTruncated
 	}
-	fix, err := parseExecutorResponse(answer)
+	fix, err := executorFixFromAnswer(answer)
 	if err != nil {
 		return "", "agent_mode parse error: " + err.Error(), res.ResponseTruncated
 	}
@@ -911,8 +911,22 @@ func buildExecutorAgentPromptWithSentinel(finding reconcile.JSONFinding, sentine
 // executorFixFromAnswer parses the committed fix out of a STRIPPED executor
 // answer. The production path and the tests both call it.
 //
-// STUB — current (defective) behaviour, replaced in GREEN.
+// Same rule as the verify lane's verdictFromAnswer, and for a costlier reason: a
+// bare </think> that no <think> opened can leave an abandoned DRAFT envelope as
+// the first balanced object, and parseExecutorResponse takes the first one with
+// no key filter and no iteration — so --auto-fix would write the discarded patch
+// to tracked source. Neither guard above sees it (llmclient.IndexAfterUnopenedCloser
+// documents why both abstentions are deliberate).
+//
+// The suffix is taken only when it actually yields a fix, so a reply whose
+// envelope comes first and whose trailing prose merely names the closer keeps
+// its repair instead of losing it.
 func executorFixFromAnswer(answer string) (string, error) {
+	if i := llmclient.IndexAfterUnopenedCloser(maskJSONStrings(answer)); i >= 0 && i <= len(answer) {
+		if fix, err := parseExecutorResponse(answer[i:]); err == nil {
+			return fix, nil
+		}
+	}
 	return parseExecutorResponse(answer)
 }
 

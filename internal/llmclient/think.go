@@ -232,9 +232,58 @@ func HasEnclosingThinkBlock(content string) bool {
 // IndexAfterUnopenedCloser returns the offset just past the LAST </think> that
 // no <think> opened, or -1 when the content carries no such closer.
 //
-// STUB — wrong on purpose, replaced in GREEN.
+// An UNOPENED closer is the one tag shape neither of this file's other two
+// routines acts on, and both abstentions are deliberate. SplitThink leaves it in
+// place (decided 2026-09-30, see its doc) because a reply that merely NAMES the
+// closer is the likeliest input in this repo and the old rule destroyed its whole
+// prefix. HasEnclosingThinkBlock does not refuse on it because a lone closer
+// encloses nothing, so no object after it can be a draft. Both are right. What
+// falls between them is the object BEFORE such a closer: if the reply really did
+// start mid-thought — a chat template having put the opener in the prompt — that
+// object is reasoning the model abandoned, and a first-match parser takes it as
+// the answer. That is the gap this offset closes.
+//
+// It returns a BOUNDARY, not a verdict, and that is what keeps the mid-thought
+// reading from being a guess. A caller tries the text after the offset and keeps
+// the whole answer when that text carries no envelope — so the two shapes are
+// separated by evidence rather than by interpretation:
+//
+//	{draft} </think> {real}   → the suffix parses, so the suffix is the answer
+//	{real} … prose "</think>" → the suffix parses to nothing, so the whole
+//	                             answer stands and the 2026-09-30 reversal holds
+//
+// The LAST unopened closer wins: a reply can resume mid-thought more than once,
+// and only the final committed section is the answer.
+//
+// Openers are matched by BALANCE, not by position, so an ordinary leading run
+// (`<think>r</think>…`) and a nested one are not mistaken for a resume — only a
+// closer with no opener left to match it counts. Matching is on the same exact
+// lowercase literals SplitThink uses; a variant spelling is not a tag here
+// either, for the reason stated there.
+//
+// The offset indexes BYTES, so content[i:] is the committed section. A caller
+// that needs tags inside JSON string values ignored computes the offset on a
+// masked copy and slices the unmasked original at it — verify's maskJSONStrings
+// blanks bytes in place and preserves length, so the two stay aligned.
 func IndexAfterUnopenedCloser(content string) int {
-	return -1
+	depth, last := 0, -1
+	for i := 0; i < len(content); {
+		switch {
+		case strings.HasPrefix(content[i:], thinkOpen):
+			depth++
+			i += len(thinkOpen)
+		case strings.HasPrefix(content[i:], thinkClose):
+			if depth == 0 {
+				last = i + len(thinkClose)
+			} else {
+				depth--
+			}
+			i += len(thinkClose)
+		default:
+			i++
+		}
+	}
+	return last
 }
 
 // HasThinkMarkup reports whether the content carries inline think markup holding

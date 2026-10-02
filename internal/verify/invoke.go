@@ -203,7 +203,7 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 		logger.Debug("skeptic failure detail", "skeptic", skeptic.Name, "class", "think_markup_after_answer", "detail", "think markup outside a JSON string is not leading, so the first verdict-keyed object may be a discarded draft")
 		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "think_markup_after_answer", Skeptic: skeptic.Name}, res.TrippedBudgets, nil
 	}
-	v, _ := parseVerdict(answer)
+	v := verdictFromAnswer(answer)
 	v.Skeptic = skeptic.Name
 	if v.Verdict == verdictUnverifiable && v.Notes == "empty_response" && strings.TrimSpace(res.Content) != "" {
 		// The strip removed everything, so parseVerdict saw a blank answer and
@@ -618,8 +618,30 @@ func failureClass(res fanout.Result) string {
 // answer. The production path and the tests both call it, so the behaviour
 // pinned is the behaviour that ships.
 //
-// STUB — current (defective) behaviour, replaced in GREEN.
+// A bare </think> that no <think> opened means the reply may have started
+// mid-thought, in which case the verdict BEFORE it is a draft the model
+// abandoned — and parseVerdict takes the first verdict-keyed object, so that
+// draft would be graded as the answer. Neither guard above catches it: the strip
+// leaves such a closer in place and HasEnclosingThinkBlock does not refuse on it,
+// both deliberately (llmclient.IndexAfterUnopenedCloser documents why).
+//
+// Prefer the suffix, but only on EVIDENCE that it is one: a reply whose envelope
+// comes first and whose trailing prose merely names the closer has no verdict
+// after it, and skipping to that suffix would destroy a real verdict — the exact
+// regression the 2026-09-30 reversal removed. So the suffix is taken only when it
+// actually parses to a verdict, and the whole answer stands otherwise.
+//
+// The offset is computed on the MASKED copy so a closer quoted inside a JSON
+// string value is not a boundary, and sliced out of the unmasked answer so the
+// envelope reaches the parser intact. maskJSONStrings blanks bytes in place, so
+// the two strings are the same length and the offset is valid in both.
 func verdictFromAnswer(answer string) *reclib.Verification {
+	if i := llmclient.IndexAfterUnopenedCloser(maskJSONStrings(answer)); i >= 0 && i <= len(answer) {
+		if committed, err := parseVerdict(answer[i:]); err == nil && committed.Notes != "empty_response" &&
+			!strings.HasPrefix(committed.Notes, "malformed_output:") {
+			return committed
+		}
+	}
 	v, _ := parseVerdict(answer)
 	return v
 }
