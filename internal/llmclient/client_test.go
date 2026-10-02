@@ -54,11 +54,13 @@ func TestComplete_Success(t *testing.T) {
 	assert.Equal(t, "findings here", out)
 }
 
-func TestComplete_FallsBackToReasoningWhenContentEmpty(t *testing.T) {
+func TestComplete_RefusesReasoningSalvageWhenContentEmpty(t *testing.T) {
 	// A reasoning model that exhausts its output budget mid-thought returns an
-	// empty content with the chain-of-thought in reasoning_content. The reviewer
-	// must salvage the reasoning (its draft findings are recoverable downstream)
-	// rather than contribute an empty review.
+	// empty content with the chain-of-thought in reasoning_content. The narrow
+	// Complete path has no Salvaged field, so handing that draft back as content
+	// would make it indistinguishable from a real review — a lane that parses it
+	// counts an abandoned draft as a finding. It must refuse instead. Callers that
+	// want the draft for diagnosis use CompleteWithMeta and check Salvaged.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		resp := chatResponse{}
 		resp.Choices = append(resp.Choices, chatChoice{Message: message{Role: "assistant", Content: "", ReasoningContent: "HIGH|a.go:1|bug|fix|correctness|5|evidence|greta"}})
@@ -70,16 +72,15 @@ func TestComplete_FallsBackToReasoningWhenContentEmpty(t *testing.T) {
 	out, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
 		BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "review this",
 	})
-	require.NoError(t, err)
-	assert.Contains(t, out, "HIGH|a.go:1|bug")
+	require.ErrorIs(t, err, ErrSalvagedReply)
+	assert.Empty(t, out, "the salvaged draft must not be returned as content")
 }
 
-func TestComplete_FallsBackToReasoningKeyWhenContentEmpty(t *testing.T) {
+func TestComplete_RefusesReasoningKeySalvageWhenContentEmpty(t *testing.T) {
 	// OpenRouter and newer vLLM carry the chain-of-thought under the "reasoning"
-	// key instead of reasoning_content. A cut-off thinking reply from such a
-	// provider must be salvaged exactly like the reasoning_content form —
-	// otherwise the same truncated reply salvages on DashScope/DeepSeek-style
-	// providers but hard-fails with "empty completion" here.
+	// key instead of reasoning_content. The refusal must cover that form too, or
+	// the same reply hard-fails on one provider shape and silently leaks its draft
+	// on the other.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		resp := chatResponse{}
 		resp.Choices = append(resp.Choices, chatChoice{Message: message{Role: "assistant", Content: "", Reasoning: "HIGH|a.go:1|bug|fix|correctness|5|evidence|greta"}})
@@ -91,8 +92,34 @@ func TestComplete_FallsBackToReasoningKeyWhenContentEmpty(t *testing.T) {
 	out, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
 		BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "review this",
 	})
-	require.NoError(t, err)
-	assert.Contains(t, out, "HIGH|a.go:1|bug")
+	require.ErrorIs(t, err, ErrSalvagedReply)
+	assert.Empty(t, out)
+}
+
+// The decode of both reasoning channels still works — the Meta path, which owns
+// the Salvaged marker, returns the salvaged content and the flag together.
+func TestCompleteWithMeta_SalvagesBothReasoningKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"reasoning_content", `{"choices":[{"message":{"role":"assistant","content":"","reasoning_content":"draft greta"},"finish_reason":"stop"}]}`},
+		{"reasoning", `{"choices":[{"message":{"role":"assistant","content":"","reasoning":"draft greta"},"finish_reason":"stop"}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				respondJSON(w, tc.body)
+			}))
+			defer srv.Close()
+			t.Setenv("TEST_KEY", testKey)
+			comp, err := fastRetry(srv.Client()).CompleteWithMeta(context.Background(), Invocation{
+				BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "review this",
+			})
+			require.NoError(t, err)
+			assert.True(t, comp.Salvaged)
+			assert.Contains(t, comp.Content, "draft greta")
+		})
+	}
 }
 
 func TestComplete_ContentWinsOverReasoning(t *testing.T) {

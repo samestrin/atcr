@@ -311,6 +311,17 @@ type CallRecord struct {
 	Duration    time.Duration
 }
 
+// ErrSalvagedReply marks a reasoning-salvage reply that a caller on the narrow
+// (non-Meta) path cannot be trusted with. The empty-content salvage promotes the
+// model's chain-of-thought into Content, and a stop-reason salvage is NOT
+// truncated, so on Complete/CompleteWithUsage it is indistinguishable from a real
+// answer — a lane that parses it takes an abandoned draft as a finding, and the
+// executor lane writes that draft to disk as a patch. Those two signatures have no
+// Salvaged field to carry the distinction, so they refuse the reply instead of
+// returning it (TD internal/llmclient/client.go:415). Callers that need the
+// salvaged content for diagnosis use CompleteWithMeta and inspect Completion.Salvaged.
+var ErrSalvagedReply = errors.New("provider returned empty content; the salvaged chain-of-thought is not an answer")
+
 // Complete invokes the provider and returns the assistant message content.
 // Retries on 429/5xx and transport-level errors with tuned backoff; other
 // non-2xx statuses and parse failures fail immediately. The API key value
@@ -327,9 +338,23 @@ func (c *Client) Complete(ctx context.Context, inv Invocation) (string, error) {
 // paths return an empty UsageData, never partial counts. The CallRecord slice is
 // surfaced on every path that reached dispatch — including error paths — so a
 // mid-flight timeout still reports its wire attempt; it is nil only when no HTTP
-// attempt was made (key/marshal failure, or a circuit-open fail-fast).
+// attempt was made (key/marshal failure, or a circuit-open fail-fast). A
+// reasoning-salvage reply is refused with ErrSalvagedReply: this signature cannot
+// report Completion.Salvaged, so returning the promoted chain-of-thought would
+// make an abandoned draft look like a real answer (TD internal/llmclient/client.go:415).
 func (c *Client) CompleteWithUsage(ctx context.Context, inv Invocation) (string, UsageData, []CallRecord, error) {
 	comp, err := c.CompleteWithMeta(ctx, inv)
+	if err != nil {
+		return comp.Content, comp.Usage, comp.CallRecords, err
+	}
+	if comp.Salvaged {
+		// Fail CLOSED: this four-value signature cannot report Salvaged, so
+		// returning the promoted chain-of-thought here would make an abandoned
+		// draft look like a real answer. Preserve the CallRecords (the call
+		// reached dispatch, per the contract above) but return empty UsageData,
+		// matching every other error path.
+		return "", UsageData{}, comp.CallRecords, ErrSalvagedReply
+	}
 	return comp.Content, comp.Usage, comp.CallRecords, err
 }
 
@@ -415,8 +440,14 @@ func (c *Client) CompleteWithMeta(ctx context.Context, inv Invocation) (Completi
 		//
 		// As of sprint 35.16.11.2.2.4 T6, EVERY such caller refuses it: verify
 		// (verify/invoke.go), each debate seat (debate/protocol.go), the diff cache
-		// and now findings parsing (fanout/engine.go). So this no longer means "the
-		// reviewer still contributes a partial review" — that was this block's
+		// and now findings parsing (fanout/engine.go). As of the client.go:415 TD
+		// fix, the refusal no longer DEPENDS on each caller remembering: the two
+		// narrow paths (Complete, CompleteWithUsage) cannot carry the Salvaged
+		// marker, so they return ErrSalvagedReply rather than the promoted draft —
+		// a wrapper that forgets CompleteWithMeta now fails closed instead of
+		// silently parsing abandoned chain-of-thought as findings (and, in the
+		// executor lane, writing it to disk as a patch). So this no longer means
+		// "the reviewer still contributes a partial review" — that was this block's
 		// original stated purpose and it is deliberately reversed, because a draft
 		// the model abandoned counted as a real finding is worse than no finding.
 		content = reasoningOf(ch.Message.ReasoningContent, ch.Message.Reasoning)
