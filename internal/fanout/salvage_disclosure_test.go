@@ -200,4 +200,12 @@ func TestSalvageCost_DoesNotBlameTheSalvageForAPostGroundingZero(t *testing.T) {
 	// Partial salvage with surviving findings keeps its existing wording.
 	partial := salvageCost(AgentStatus{Agent: "otto", Salvaged: true, SalvagedChunks: []int{1}, FindingsCount: 5})
 	assert.Equal(t, " (chunk 1 refused, its siblings kept)", partial)
+
+	// The no-bin-index, nonzero-findings arm: an unchunked persona whose reply
+	// salvaged but which still landed findings. It costs the persona nothing extra,
+	// so it renders NO suffix — armed here rather than left as the one branch with no
+	// test (TD internal/fanout/artifacts.go:252).
+	kept := salvageCost(AgentStatus{Agent: "greta", Salvaged: true, FindingsCount: 4})
+	assert.Empty(t, kept,
+		"an unchunked salvage that still produced findings loses nothing, so it adds no label")
 }
