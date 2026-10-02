@@ -299,7 +299,18 @@ func loadContested(reviewDir string) report.ContestedReport {
 			ClusterDecision:   it.ClusterDecision,
 		})
 	}
-	return report.ContestedReport{Items: items, Overflow: len(df.Overflow)}
+	// Split the overflow list by cause, so the report can give each its own remedy:
+	// a cap overflow is recoverable by raising debate.max_items, a withheld item is
+	// not (withholdExhausted runs before selection).
+	overflow, withheld := 0, 0
+	for _, ov := range df.Overflow {
+		if ov.Reason == debate.OverflowAttemptsExhausted {
+			withheld++
+			continue
+		}
+		overflow++
+	}
+	return report.ContestedReport{Items: items, Overflow: overflow, Withheld: withheld}
 }
 
 // readReconciledFindings wraps the shared reconcile loader with the CLI's

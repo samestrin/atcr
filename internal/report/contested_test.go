@@ -105,10 +105,25 @@ func TestWriteContestedSection_RendersRulings(t *testing.T) {
 	assert.Contains(t, out, "Overturned")
 	assert.Contains(t, out, "insufficient_distinct_models")
 	assert.Contains(t, out, "Rationale: evidence holds")
-	assert.Contains(t, out, "2 disputed item(s) were not debated")
-	// The prose must not name the cap as the only cause: debate.json's overflow
-	// list also holds items withheld for exhausted unresolved attempts.
-	assert.Contains(t, out, "unresolved attempts already exhausted")
+	assert.Contains(t, out, "2 disputed item(s) were not debated: the debate cap was reached")
+	// The two causes have OPPOSITE remedies and opposite permanence, so they are
+	// rendered separately rather than collapsed into one integer: raising
+	// debate.max_items recovers a cap overflow and recovers a withheld item at NO
+	// cap value (TD internal/report/contested.go:98).
+	assert.NotContains(t, out, "withheld",
+		"a cap-only report must not mention withholding")
+}
+
+func TestWriteContestedSection_RendersTheWithheldCauseSeparately(t *testing.T) {
+	var b bytes.Buffer
+	writeContestedSection(&b, ContestedReport{Overflow: 2, Withheld: 5})
+	out := b.String()
+
+	assert.Contains(t, out, "2 disputed item(s) were not debated: the debate cap was reached")
+	assert.Contains(t, out, "5 disputed item(s) were withheld")
+	assert.Contains(t, out, "Raising the cap will NOT recover them",
+		"the withheld half needs its own remedy: an operator who reads '7 not debated' and raises "+
+			"max_items concludes all seven will now be debated, which is false for five of them")
 }
 
 func TestWriteContestedSection_SingleModelDisclosed(t *testing.T) {

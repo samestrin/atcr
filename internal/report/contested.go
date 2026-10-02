@@ -27,17 +27,27 @@ type Contested struct {
 }
 
 // ContestedReport is the full contested-findings view: the per-item rulings plus
-// the count of disputed items that were not debated at all (disclosed, never
-// silent). That count covers both withholding causes — the debate cap and an item
-// that already exhausted its unresolved attempts — because it is read from the
-// length of debate.json's overflow list, which records both.
+// the counts of disputed items that were not debated at all (disclosed, never
+// silent). The two causes are counted SEPARATELY because they have opposite
+// remedies and opposite permanence — see the fields.
 type ContestedReport struct {
-	Items    []Contested
+	Items []Contested
+	// Overflow is the cap-overflow count: items that matched a trigger and exceeded
+	// debate.max_items. Raising the cap debates them, so its remedy is a flag change.
 	Overflow int
+	// Withheld is the attempts-exhausted count: items a prior run left unresolved
+	// maxUnresolvedAttempts times. Its remedy is the opposite — withholdExhausted
+	// runs BEFORE SelectItems, so NO cap value recovers them. Kept apart from Overflow
+	// because a single conflated integer told an operator that raising max_items would
+	// debate all seven of them, which is false for every withheld one (TD
+	// internal/report/contested.go:98).
+	Withheld int
 }
 
 // HasContent reports whether the contested view has anything to render.
-func (c ContestedReport) HasContent() bool { return len(c.Items) > 0 || c.Overflow > 0 }
+func (c ContestedReport) HasContent() bool {
+	return len(c.Items) > 0 || c.Overflow > 0 || c.Withheld > 0
+}
 
 // RenderMarkdownWithContested writes the standard markdown report with both the
 // disagreement radar and the contested-findings section (Epic 6.0). When the
@@ -95,8 +105,14 @@ func writeContestedSection(b *bytes.Buffer, cr ContestedReport) {
 			fmt.Fprintf(b, "- Rationale: %s\n", escTrunc(c.Reasoning))
 		}
 	}
+	// Rendered SEPARATELY, each with its own remedy, because the two have opposite
+	// permanence: a cap overflow is recovered by raising debate.max_items, while a
+	// withheld item is not recovered at ANY cap value.
 	if cr.Overflow > 0 {
-		fmt.Fprintf(b, "\n_%d disputed item(s) were not debated — the debate cap, or unresolved attempts already exhausted (each recorded with its reason in debate.json)._\n", cr.Overflow)
+		fmt.Fprintf(b, "\n_%d disputed item(s) were not debated: the debate cap was reached. Raise debate.max_items to debate them (each recorded with its reason in debate.json)._\n", cr.Overflow)
+	}
+	if cr.Withheld > 0 {
+		fmt.Fprintf(b, "\n_%d disputed item(s) were withheld: they reached the unresolved-attempt ceiling in prior runs. Raising the cap will NOT recover them — withholdExhausted runs before selection (each recorded with its reason in debate.json)._\n", cr.Withheld)
 	}
 }
 

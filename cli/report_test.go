@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/debate"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/report"
 	"github.com/stretchr/testify/assert"
@@ -475,4 +476,29 @@ func TestResolveOutputPath_FailsOpenWhenParentAbsent(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, filepath.IsAbs(got), "absent parent falls open to the absolute path, got %q", got)
 	require.Equal(t, target, got)
+}
+
+// loadContested must split the overflow list by CAUSE. The report renders each with
+// its own remedy, so a conflated count made it promise that raising debate.max_items
+// would debate items that withholdExhausted had already permanently removed from
+// selection (TD internal/report/contested.go:98).
+func TestLoadContested_SplitsOverflowByCause(t *testing.T) {
+	dir := t.TempDir()
+	recon := filepath.Join(dir, "reconciled")
+	require.NoError(t, os.MkdirAll(recon, 0o755))
+	df := debate.DebateFile{
+		SchemaVersion: debate.DebateSchemaVersion,
+		Overflow: []debate.OverflowItem{
+			{File: "a.go", Line: 1, Problem: "cap overflow"},
+			{File: "b.go", Line: 2, Problem: "cap overflow too"},
+			{File: "c.go", Line: 3, Problem: "withheld", Reason: debate.OverflowAttemptsExhausted},
+		},
+	}
+	raw, err := json.Marshal(df)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(recon, debate.DebateJSON), raw, 0o644))
+
+	cr := loadContested(dir)
+	assert.Equal(t, 2, cr.Overflow, "the cap overflows keep their own count")
+	assert.Equal(t, 1, cr.Withheld, "and the exhausted records theirs, since their remedies differ")
 }
