@@ -162,7 +162,7 @@ func writePool(ctx context.Context, poolDir string, results []Result, changed pa
 	truncatedZeroFindings, truncatedZeroAgents := tallyTruncatedZeroFindings(statuses)
 	warnTruncatedZeroFindings(ctx, truncatedZeroFindings, truncatedZeroAgents, false)
 	salvagedCount, salvagedAgents := tallySalvaged(statuses)
-	warnSalvaged(ctx, salvagedCount, salvagedAgents)
+	warnSalvaged(ctx, salvagedCount, salvagedAgents, false)
 	ps := PoolSummary{
 		Agents:                  statuses,
 		Total:                   sum.Total,
@@ -276,12 +276,23 @@ func salvageCost(st AgentStatus) string {
 // with no context — it would have to be plumbed a logger and would then log once per
 // Result lineage rather than once per agent. Same facts, named agent included, at the
 // site that already owns this exact pattern.
-func warnSalvaged(ctx context.Context, count int, agents []string) {
+func warnSalvaged(ctx context.Context, count int, agents []string, cumulative bool) {
 	if count == 0 {
 		return
 	}
+	// Same wording split warnTruncatedZeroFindings uses, for the same reason: a
+	// salvaged agent stays StatusOK, so agentCompleted marks it done, the resume
+	// never re-runs it and its status.json is never rewritten — every later resume
+	// re-prints the same salvage, and without the marker an operator reads each
+	// re-print as a fresh failure (TD internal/fanout/resume.go:780).
+	scope := "to the pool"
+	restatement := ""
+	if cumulative {
+		scope = "to the pool across this review, including agents this resume did not re-run"
+		restatement = " This restates the review's cumulative tally rather than reporting a new failure."
+	}
 	log.FromContext(ctx).Warn(
-		fmt.Sprintf("%d reviewer(s) returned a salvaged reply — no answer, reasoning promoted into the content — so it was refused rather than parsed. Each agent below says what that cost it.", count),
+		fmt.Sprintf("%d reviewer(s) returned a salvaged reply — no answer, reasoning promoted into the content — so it was refused rather than parsed %s.%s Each agent below says what that cost it.", count, scope, restatement),
 		"agents", strings.Join(agents, ", "),
 		"remedy", salvagedRemedy)
 }
