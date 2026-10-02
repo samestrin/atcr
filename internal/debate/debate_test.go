@@ -1249,3 +1249,33 @@ func TestRunDebate_UnopenedCloserWithRulingOnBothSidesIsRefused(t *testing.T) {
 	require.Len(t, df.Items, 1)
 	assert.Equal(t, ReasonJudgeThinkMarkup, df.Items[0].Reason)
 }
+
+// On the clean-blank-proposer short-circuit the challenger is never given a turn,
+// so its blank statement means "not asked" — not "went silent". seatSilenceNotes
+// was handed the UNFILTERED list, so report.md (report/contested.go), the
+// transcript RulingEvent and the operator warn log all rendered "challenger
+// silent" about a seat that was never invoked. debate.go reasons about exactly
+// this for the TOKEN two lines earlier and then handed the human-readable note the
+// unfiltered list (TD internal/debate/debate.go:614).
+func TestRunDebate_ShortCircuitDoesNotCallTheUnaskedChallengerSilent(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	ctx := log.NewContext(context.Background(), logger)
+
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	cc := &fakeChatCompleter{turns: []chatTurn{{content: ""}}} // proposer runs clean and blank
+	res, err := runDebate(ctx, dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	require.Equal(t, 1, res.Unresolved)
+
+	var df DebateFile
+	raw, _ := os.ReadFile(filepath.Join(dir, reconciledSubdir, DebateJSON))
+	require.NoError(t, json.Unmarshal(raw, &df))
+	require.Len(t, df.Items, 1)
+	assert.Contains(t, df.Items[0].Reasoning, "proposer",
+		"the seat that went blank must still be named")
+	assert.NotContains(t, df.Items[0].Reasoning, "challenger",
+		"the challenger was never given a turn, so it cannot be reported as silent")
+	assert.NotContains(t, logBuf.String(), "challenger",
+		"and the operator warn must not accuse an un-asked seat either")
+}
