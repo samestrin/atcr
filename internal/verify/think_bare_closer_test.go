@@ -1,10 +1,15 @@
 package verify
 
 import (
+	"bytes"
+	"context"
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/samestrin/atcr/internal/log"
 )
 
 // A reply that carries a bare </think> — one no <think> opened — may have
@@ -161,4 +166,75 @@ func TestExecutorFixFromAnswer_NoCloserIsUnchanged(t *testing.T) {
 	require.False(t, ambiguous)
 	require.NoError(t, err)
 	assert.Equal(t, "ONLY-PATCH", fix)
+}
+
+// --- the production arms, driven end to end ---
+//
+// Every test above calls verdictFromAnswer / executorFixFromAnswer directly, so
+// each proves the RULE and none proves the ARM that ships. The two tests below
+// drive invokeSkeptic and invokeExecutor themselves, because what a consumer
+// actually reads is decided there and nowhere else: the logged failure class, the
+// Notes token every downstream reader keys on, and — on the executor lane — the
+// empty fix that stops --auto-fix writing a draft patch to tracked source.
+//
+// That gap was not theoretical. Neutralising either `if ambiguous {` arm left
+// `go test ./...` green across the whole repo, which is the same shape as the row
+// filed against internal/debate/debate.go:308: a test that re-proves the
+// predicate beside the branch instead of through it
+// (TD internal/verify/invoke.go:207, internal/verify/executor.go:804).
+
+// TestInvokeSkeptic_AmbiguousUnopenedCloserRefuses pins the skeptic arm through
+// the production path. The reply has to clear three earlier guards to reach it,
+// and does: StatusOK and not truncated (the fake answers in one clean turn), not
+// salvaged, and HasEnclosingThinkBlock false because a lone closer encloses
+// nothing. Grading the draft here is durable damage — a draft `refuted` clears
+// internal/reconcile/gate.go at any severity and is charged to the reviewer's
+// survived_skeptic_rate — so the arm's disclosure is the deliverable, not an
+// implementation detail.
+func TestInvokeSkeptic_AmbiguousUnopenedCloserRefuses(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
+
+	cc := finalChat(`Checking the call sites. {"verdict":"refuted","reasoning":"DRAFT"}` + "\n" +
+		`</think>` + "\n" +
+		`{"verdict":"confirmed","reasoning":"REAL"}`)
+
+	v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", cc, okDispatcher(), false)
+
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	assert.Equal(t, verdictUnverifiable, v.Verdict,
+		"neither envelope is provably committed, so the lane must grade neither")
+	assert.Equal(t, "ambiguous_unopened_closer", v.Notes,
+		"the Notes token is the only record of WHY this collapsed; gate.go and the scorecard read it")
+	assert.Equal(t, "skeptic-1", v.Skeptic)
+	assert.NotEqual(t, verdictRefuted, v.Verdict,
+		"the draft verdict must never reach the gate as a disproof")
+
+	out := buf.String()
+	assert.Contains(t, out, "class=ambiguous_unopened_closer",
+		"the refusal must be disclosed under its own class, not folded into a generic failure")
+}
+
+// TestInvokeExecutor_AmbiguousUnopenedCloserRefuses pins the executor arm through
+// the production path. The empty fix is the load-bearing half: invokeExecutor's
+// only other empty-fix returns are a parse error and a provider failure, and a
+// non-empty return here would be a patch written to tracked source under
+// --auto-fix.
+func TestInvokeExecutor_AmbiguousUnopenedCloserRefuses(t *testing.T) {
+	t.Parallel()
+	cc := finalChat(`Reading the file. {"fix":"DRAFT-PATCH","explanation":"draft"}` + "\n" +
+		`</think>` + "\n" +
+		`{"fix":"REAL-PATCH","explanation":"real"}`)
+
+	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
+		eligibleFinding()[0], cc, okDispatcher(), 0, "")
+
+	assert.Empty(t, fix, "applying either patch would be a guess written to tracked source")
+	assert.NotEqual(t, "DRAFT-PATCH", fix, "the abandoned draft must never be returned as the patch")
+	assert.Contains(t, warn, "agent_mode refused",
+		"the decline must read as a refusal, not as a parse error or a provider failure")
+	assert.Contains(t, warn, "both sides",
+		"the warning must name the ambiguity so an operator knows the reply shape caused it")
 }
