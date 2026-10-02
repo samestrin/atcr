@@ -1098,7 +1098,7 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 					// Paired with the length test for the same reason as the chain-walk
 					// counter above: TrimSpace alone would also claim a whitespace-only
 					// reply, which carries no think markup and is a different failure.
-					if len(answer) < len(r.Content) && strings.TrimSpace(answer) == "" {
+					if thinkSuppressedContent(r.Content) {
 						r.ThinkSuppressed = true
 						// Counted BOTH ways: on the Result so the fact survives, and in
 						// the walk-level local so the warning below this block's return
@@ -1299,6 +1299,19 @@ func (e *Engine) dispatchAgent(ctx context.Context, a Agent) Result {
 	return e.invokeCachedSingleShot(ctx, a)
 }
 
+// thinkSuppressedContent reports whether a raw reply is entirely a leading think
+// run — the same test invokeSlot applies when it sets ThinkSuppressed, hoisted here
+// so the cache gate can consult it BEFORE the reply is stored. Two callers, one
+// predicate: a reply this returns true for must never be cached, and must be
+// recorded think-suppressed rather than unparseable.
+func thinkSuppressedContent(content string) bool {
+	if content == "" {
+		return false
+	}
+	answer, _ := llmclient.SplitThink(content)
+	return len(answer) < len(content) && strings.TrimSpace(answer) == ""
+}
+
 // invokeCachedSingleShot wraps the single-shot path with the diff cache (Epic
 // 5.2). It is the only cache integration point: tool agents (live or degraded)
 // never reach it. With no cache wired, or an agent with no cache key, it is a
@@ -1353,7 +1366,12 @@ func (e *Engine) invokeCachedSingleShot(ctx context.Context, a Agent) Result {
 	// all-clean the epic prevents). A truncated-with-findings response is likewise
 	// skipped so its partial content is re-fetched fresh rather than replayed as
 	// clean. Only a clean, complete StatusOK result is cacheable.
-	if r.Status == StatusOK && !r.ResponseTruncated && !r.Salvaged {
+	// A reply whose ENTIRE content is a leading think run contributes nothing, and
+	// that fact is only visible from the strip — invokeSlot computes ThinkSuppressed
+	// later, so the gate could not see it. Cache it and every later same-diff run
+	// re-serves a reviewer that provably produced nothing, losing even the chance of
+	// different sampling (TD internal/fanout/engine.go:1319).
+	if r.Status == StatusOK && !r.ResponseTruncated && !r.Salvaged && !thinkSuppressedContent(r.Content) {
 		if err := e.cache.Put(key, r.Content); err != nil {
 			// A write fault only forfeits the future speed-up; the live result is
 			// already correct, so the review proceeds.
