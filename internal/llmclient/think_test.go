@@ -272,7 +272,7 @@ func TestSplitThink_NoBuilderAllocForSinglePair(t *testing.T) {
 	require.Equal(t, "reasoning text", string(reasoning))
 	allocs := testing.AllocsPerRun(100, func() {
 		a, r := SplitThink(content)
-		if len(a) < 0 || len(r) < 0 {
+		if a == "" && len(r) == 0 {
 			t.Fatal("unreachable")
 		}
 	})

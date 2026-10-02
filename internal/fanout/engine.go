@@ -1096,15 +1096,6 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 			}
 		}
 		if r.Status == StatusOK {
-			// Think-only reply: every chain member that reasons inline fails
-			// identically (the backup models are usually the same family with the
-			// same tag habit), so count how many attempts a wholly-reasoning reply
-			// burned. The failover cost itself is pinned accepted loss (sprint-plan
-			// §4.2, TD engine.go:602); this is that FIX's stated minimum — the
-			// operator must SEE the wasted spend.
-			if r.ThinkSuppressed {
-				thinkOnlyAttempts++
-			}
 			r.DurationMS = time.Since(start).Milliseconds()
 			// The coverage evidence this slot produced is the SERVING agent's, not
 			// the slot's (Epic 35.16.5.4 T3). For the primary and for a fallback that
