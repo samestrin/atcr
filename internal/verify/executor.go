@@ -961,6 +961,15 @@ func executorFixFromAnswer(answer string) (fix string, ambiguous bool, err error
 // reached the unopened-closer rule as a false "no envelope here"
 // (TD internal/verify/executor.go:916).
 //
+// The first object carrying a usable "fix" wins; the scan skips objects without
+// the key rather than hunting for a better one. So the iteration widens one
+// accepted loss it cannot close: a reply that QUOTES an example envelope — "reply
+// like {"fix": ...}" — is now reachable past a decoy, where before the decoy
+// masked it. No key-based parser can tell a quoted example from a committed
+// answer, which is the same reasoning parseVerdict's own tolerance records, and
+// the exposure was already open whenever the example came first. The strip at the
+// call site and classifyUnopenedCloser are what bound it; this parser does not.
+//
 // All four failure diagnostics stay distinguishable through the loop, because
 // they mean different things to the operator reading them in a FixWarning: a
 // present-but-empty "fix" is the shape a model produces when it has nothing to
