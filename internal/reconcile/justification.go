@@ -330,6 +330,16 @@ func sourceSalvage(reviewPath string) (salvaged bool, chunks []int) {
 // writeAgentArtifacts performs. Fail CLOSED, mirroring parseFindings' own
 // misalignment arm (internal/fanout/engine.go:612), which refuses the bins rather
 // than guessing which half is current.
+//
+// A bounds check catches only the detectable half, and that residual is worth
+// naming: a desynced pair whose index happens to land IN range — status.json says
+// bin 1 of 2 while the review.md beside it was re-chunked into 3 segments —
+// excludes segment 1 of the wrong partition and is indistinguishable from a
+// healthy pair here. Separating those would need the bin COUNT or a content hash
+// on the record, which is a status.json schema change rather than a reader fix.
+// The direction of the remaining error is unchanged from a healthy run (one
+// segment excluded, one not), so it is a wrong exclusion rather than a widened
+// one.
 // Returns (lines to exclude, desynced).
 func salvagedSegmentLines(raw string, bins []int) (map[int]struct{}, bool) {
 	if len(bins) == 0 {
