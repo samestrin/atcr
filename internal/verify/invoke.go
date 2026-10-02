@@ -203,7 +203,16 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 		logger.Debug("skeptic failure detail", "skeptic", skeptic.Name, "class", "think_markup_after_answer", "detail", "think markup outside a JSON string is not leading, so the first verdict-keyed object may be a discarded draft")
 		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "think_markup_after_answer", Skeptic: skeptic.Name}, res.TrippedBudgets, nil
 	}
-	v := verdictFromAnswer(answer)
+	v, ambiguous := verdictFromAnswer(answer)
+	if ambiguous {
+		// A bare </think> with an envelope on BOTH sides. Neither is provably the
+		// committed one, and grading the wrong one is durable: a draft `refuted`
+		// clears the CI gate at any severity (internal/reconcile/gate.go) and is
+		// charged to the reviewer's survived_skeptic_rate.
+		logSkepticFailure(logger, skeptic.Name, "ambiguous_unopened_closer",
+			"a </think> no <think> opened has a verdict envelope on both sides; neither is provably committed")
+		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "ambiguous_unopened_closer", Skeptic: skeptic.Name}, res.TrippedBudgets, nil
+	}
 	v.Skeptic = skeptic.Name
 	if v.Verdict == verdictUnverifiable && v.Notes == "empty_response" && strings.TrimSpace(res.Content) != "" {
 		// The strip removed everything, so parseVerdict saw a blank answer and
@@ -614,36 +623,89 @@ func failureClass(res fanout.Result) string {
 // think tag that survives the mask is markup enclosing reply text, while a tag
 // that appears solely inside a string value is a quotation of the tag and must
 // not be read as thinking.
-// verdictFromAnswer parses the committed verdict out of a STRIPPED skeptic
-// answer. The production path and the tests both call it, so the behaviour
-// pinned is the behaviour that ships.
+// closerSection names which part of a stripped answer holds the committed
+// envelope when the reply carries a bare </think>.
+type closerSection int
+
+const (
+	// sectionWholeAnswer: no unopened closer, or nothing after it parses. The
+	// answer is read end to end, exactly as before this rule existed.
+	sectionWholeAnswer closerSection = iota
+	// sectionAfterCloser: only the text AFTER the closer carries an envelope, so
+	// the reply began mid-thought and that text is the committed answer.
+	sectionAfterCloser
+	// sectionAmbiguous: BOTH sides carry one. Nothing in the tag structure says
+	// which is committed, so neither is used.
+	sectionAmbiguous
+)
+
+// classifyUnopenedCloser decides which part of a STRIPPED answer to parse when a
+// </think> appears that no <think> opened. Shared by both lanes so the skeptic
+// and the executor cannot drift on it.
 //
-// A bare </think> that no <think> opened means the reply may have started
-// mid-thought, in which case the verdict BEFORE it is a draft the model
-// abandoned — and parseVerdict takes the first verdict-keyed object, so that
-// draft would be graded as the answer. Neither guard above catches it: the strip
-// leaves such a closer in place and HasEnclosingThinkBlock does not refuse on it,
-// both deliberately (llmclient.IndexAfterUnopenedCloser documents why).
+// Such a closer is the one tag shape neither earlier guard acts on, both
+// deliberately: SplitThink leaves it in place and HasEnclosingThinkBlock does not
+// refuse on it (llmclient.IndexAfterUnopenedCloser documents why). What falls
+// between them is the envelope BEFORE the closer — reasoning the model abandoned
+// if the reply really did start mid-thought — which a first-match parser takes as
+// the answer.
 //
-// Prefer the suffix, but only on EVIDENCE that it is one: a reply whose envelope
-// comes first and whose trailing prose merely names the closer has no verdict
-// after it, and skipping to that suffix would destroy a real verdict — the exact
-// regression the 2026-09-30 reversal removed. So the suffix is taken only when it
-// actually parses to a verdict, and the whole answer stands otherwise.
+// Three outcomes, because the structure genuinely supports three cases and only
+// two of them have a safe default:
 //
-// The offset is computed on the MASKED copy so a closer quoted inside a JSON
-// string value is not a boundary, and sliced out of the unmasked answer so the
-// envelope reaches the parser intact. maskJSONStrings blanks bytes in place, so
-// the two strings are the same length and the offset is valid in both.
-func verdictFromAnswer(answer string) *reclib.Verification {
-	if i := llmclient.IndexAfterUnopenedCloser(maskJSONStrings(answer)); i >= 0 && i <= len(answer) {
-		if committed, err := parseVerdict(answer[i:]); err == nil && committed.Notes != "empty_response" &&
-			!strings.HasPrefix(committed.Notes, "malformed_output:") {
-			return committed
-		}
+//	{draft} </think> {real}      → ambiguous: so does {real} … "</think>" {example}
+//	         </think> {real}      → after-closer: nothing before it to confuse
+//	{real} … prose "</think>"     → whole answer: the suffix holds no envelope
+//
+// The ambiguous case is REFUSED by the caller rather than resolved. Taking the
+// last section would let a quoted example override a real verdict; taking the
+// first is the defect this rule exists to close. The two shapes have identical
+// tag structure, so no positional rule separates them — the same reasoning
+// SplitThink's doc records for its own accepted loss. An unverifiable verdict and
+// a declined fix are both disclosed outcomes; a silently wrong one is not.
+//
+// The offset is computed on the MASKED copy, so a closer quoted inside a JSON
+// string value is not a boundary (the model discussing think handling — the
+// likeliest input in this repo), and sliced out of the UNMASKED answer so the
+// envelope reaches the parser intact. maskJSONStrings blanks bytes in place and
+// preserves length, so one offset is valid in both.
+func classifyUnopenedCloser(answer string, hasEnvelope func(string) bool) (closerSection, string) {
+	i := llmclient.IndexAfterUnopenedCloser(maskJSONStrings(answer))
+	if i < 0 || i > len(answer) {
+		return sectionWholeAnswer, answer
 	}
-	v, _ := parseVerdict(answer)
-	return v
+	suffix := answer[i:]
+	if !hasEnvelope(suffix) {
+		return sectionWholeAnswer, answer
+	}
+	if hasEnvelope(answer[:i]) {
+		return sectionAmbiguous, suffix
+	}
+	return sectionAfterCloser, suffix
+}
+
+// carriesVerdict reports whether text parses to a real verdict, as opposed to
+// one of parseVerdict's two "nothing usable here" diagnostics. It is the
+// envelope test classifyUnopenedCloser needs for the skeptic lane.
+func carriesVerdict(s string) bool {
+	v, err := parseVerdict(s)
+	if err != nil || v == nil {
+		return false
+	}
+	return v.Notes != "empty_response" && !strings.HasPrefix(v.Notes, "malformed_output:")
+}
+
+// verdictFromAnswer parses the committed verdict out of a STRIPPED skeptic
+// answer, and reports whether the reply was ambiguous about which verdict it
+// committed to. The production path and the tests both call it, so the behaviour
+// pinned is the behaviour that ships.
+func verdictFromAnswer(answer string) (v *reclib.Verification, ambiguous bool) {
+	section, text := classifyUnopenedCloser(answer, carriesVerdict)
+	if section == sectionAmbiguous {
+		return nil, true
+	}
+	parsed, _ := parseVerdict(text)
+	return parsed, false
 }
 
 func maskJSONStrings(s string) string {

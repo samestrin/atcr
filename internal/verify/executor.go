@@ -800,7 +800,10 @@ func invokeExecutor(ctx context.Context, ex *registry.ExecutorConfig, prov regis
 	if llmclient.HasEnclosingThinkBlock(maskJSONStrings(answer)) {
 		return "", "agent_mode refused: think markup outside a JSON string survived the strip, so the first fix envelope may be a draft the model discarded", res.ResponseTruncated
 	}
-	fix, err := executorFixFromAnswer(answer)
+	fix, ambiguous, err := executorFixFromAnswer(answer)
+	if ambiguous {
+		return "", "agent_mode refused: a </think> no <think> opened has a fix envelope on both sides, so neither is provably the patch the model committed to", res.ResponseTruncated
+	}
 	if err != nil {
 		return "", "agent_mode parse error: " + err.Error(), res.ResponseTruncated
 	}
@@ -908,26 +911,29 @@ func buildExecutorAgentPromptWithSentinel(finding reconcile.JSONFinding, sentine
 // fenced or prose-wrapped object is still located. The fix field is required and must
 // be non-empty after trimming; explanation is advisory and ignored. A pointer
 // distinguishes a missing "fix" key from an empty value, mirroring parseVerdict.
+// carriesFixEnvelope is the envelope test classifyUnopenedCloser needs for the
+// executor lane.
+func carriesFixEnvelope(s string) bool {
+	_, err := parseExecutorResponse(s)
+	return err == nil
+}
+
 // executorFixFromAnswer parses the committed fix out of a STRIPPED executor
-// answer. The production path and the tests both call it.
+// answer, and reports whether the reply was ambiguous about which fix it
+// committed to. The production path and the tests both call it.
 //
-// Same rule as the verify lane's verdictFromAnswer, and for a costlier reason: a
-// bare </think> that no <think> opened can leave an abandoned DRAFT envelope as
-// the first balanced object, and parseExecutorResponse takes the first one with
-// no key filter and no iteration — so --auto-fix would write the discarded patch
-// to tracked source. Neither guard above sees it (llmclient.IndexAfterUnopenedCloser
-// documents why both abstentions are deliberate).
-//
-// The suffix is taken only when it actually yields a fix, so a reply whose
-// envelope comes first and whose trailing prose merely names the closer keeps
-// its repair instead of losing it.
-func executorFixFromAnswer(answer string) (string, error) {
-	if i := llmclient.IndexAfterUnopenedCloser(maskJSONStrings(answer)); i >= 0 && i <= len(answer) {
-		if fix, err := parseExecutorResponse(answer[i:]); err == nil {
-			return fix, nil
-		}
+// Same three-way rule as the verify lane's verdictFromAnswer
+// (classifyUnopenedCloser owns it, so the two lanes cannot drift), and the stakes
+// here are higher: parseExecutorResponse takes the FIRST balanced object with no
+// key filter and no iteration, so an abandoned draft becomes a patch --auto-fix
+// writes to tracked source rather than merely a mis-scored verdict.
+func executorFixFromAnswer(answer string) (fix string, ambiguous bool, err error) {
+	section, text := classifyUnopenedCloser(answer, carriesFixEnvelope)
+	if section == sectionAmbiguous {
+		return "", true, nil
 	}
-	return parseExecutorResponse(answer)
+	parsed, perr := parseExecutorResponse(text)
+	return parsed, false, perr
 }
 
 func parseExecutorResponse(response string) (string, error) {
