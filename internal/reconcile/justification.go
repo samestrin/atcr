@@ -222,11 +222,21 @@ func collectReviewNarratives(sourcesDir, reviewDir string) []reviewNarrative {
 			// source_report.path, whose documented contract is review-dir-relative.
 			return nil
 		}
+		excluded, desynced := excludedAnchorLines(string(data), salvagedBins)
+		if desynced {
+			// A named bin that matches no segment in this review.md: the pair came
+			// from different states, so nothing here says which lines were refused.
+			// Withhold the whole file — the bit is set, so the unexcluded remainder
+			// may be promoted reasoning, and publishing it is permanent.
+			slog.Debug("skipping salvaged review.md with unaccountable chunk index",
+				"path", path, "salvaged_chunks", salvagedBins)
+			return nil
+		}
 		out = append(out, reviewNarrative{
 			relPath:    filepath.ToSlash(rel),
 			leaf:       filepath.Base(filepath.Dir(path)),
 			lines:      strings.Split(string(data), "\n"),
-			draftLines: excludedAnchorLines(string(data), salvagedBins),
+			draftLines: excluded,
 		})
 		return nil
 	})
@@ -296,10 +306,31 @@ func sourceSalvage(reviewPath string) (salvaged bool, chunks []int) {
 // chain-of-thought end to end and carries no <think> tags at all, which is
 // exactly why leadingDraftLines cannot see it.
 //
-// An out-of-range or absent bin index names no segment and excludes nothing —
-// the fail-open direction this file takes everywhere: a needless unexcluded
-// candidate that still has to win a tier comparison, never a silent withholding
-// of a real reviewer's prose.
+// An ABSENT bin list excludes nothing, which is the unchunked persona and is
+// handled by the caller's whole-file arm. An UNACCOUNTABLE index — one naming no
+// segment in this content — is reported as desynced instead, and the caller
+// withholds the whole file on it.
+//
+// This file fails OPEN almost everywhere, on the reasoning that a needless
+// unexcluded candidate still has to win a tier comparison while a needless
+// withholding costs a real reviewer its prose. That reasoning holds only while
+// the salvage BIT is clear. With the bit set, the content is not a real
+// reviewer's prose — it is promoted chain-of-thought — so fail-open here is the
+// forged-provenance direction, and it was strictly worse than the whole-file skip
+// this narrowing replaced: an unaccountable index excluded nothing, every
+// reasoning line became a candidate anchor, and matchNarrative's tier-before-
+// reviewer ordering published it into localdebt's append-only store permanently
+// (TD internal/reconcile/justification.go:303).
+//
+// fanout never writes such a pair: salvagedChunkIndices returns nil on
+// misalignment and joinChunkContents emits exactly one segment per bin. So an
+// index the content cannot account for is evidence the review.md and the
+// status.json came from different states — a hand-edited status.json, an imported
+// sources/ subtree, or a kill between the three independent writes
+// writeAgentArtifacts performs. Fail CLOSED, mirroring parseFindings' own
+// misalignment arm (internal/fanout/engine.go:612), which refuses the bins rather
+// than guessing which half is current.
+// Returns (lines to exclude, desynced).
 func salvagedSegmentLines(raw string, bins []int) (map[int]struct{}, bool) {
 	if len(bins) == 0 {
 		return nil, false
@@ -324,20 +355,36 @@ func salvagedSegmentLines(raw string, bins []int) (map[int]struct{}, bool) {
 		seg++
 		start = i + 1
 	}
-	// STUB (RED): always reports "accountable" so the new tests fail on the
-	// assertion rather than on a compile error. Replaced in the GREEN commit.
+	// seg is now the segment COUNT, so any named index outside [0, seg) named
+	// nothing. Checked after the walk rather than before it, because the count is
+	// a property of the content and is not known until the walk ends.
+	for b := range refused {
+		if b < 0 || b >= seg {
+			return nil, true
+		}
+	}
 	return out, false
 }
 
 // excludedAnchorLines is the union buildAnchorIndex skips: the refused leading
 // run of each chunk segment, plus every line of a salvaged bin.
-func excludedAnchorLines(raw string, salvagedBins []int) map[int]struct{} {
+//
+// The second return is salvagedSegmentLines' desync signal, passed straight
+// through: a bin list the content cannot account for cannot be narrowed by, so
+// the caller withholds the whole narrative instead of indexing part of it. It is
+// returned rather than folded into the map because "exclude no lines" and
+// "exclude every line" are both representable there and a caller reading only the
+// map would take the first for the second.
+func excludedAnchorLines(raw string, salvagedBins []int) (map[int]struct{}, bool) {
+	lines, desynced := salvagedSegmentLines(raw, salvagedBins)
+	if desynced {
+		return nil, true
+	}
 	out := draftLineSet(raw)
-	lines, _ := salvagedSegmentLines(raw, salvagedBins)
 	for l := range lines {
 		out[l] = struct{}{}
 	}
-	return out
+	return out, false
 }
 
 // anchorRef locates one review.md line that carries a file:line anchor: the

@@ -251,11 +251,20 @@ func TestExcludedAnchorLines_IgnoresBinsWhenNothingWasRefused(t *testing.T) {
 	raw := chunkedReview("zero", "one")
 
 	// collectReviewNarratives passes nil once the guard has cleared the list.
-	assert.Empty(t, excludedAnchorLines(raw, nil),
-		"no refusal on record excludes no line")
+	none, noneDesynced := excludedAnchorLines(raw, nil)
+	assert.Empty(t, none, "no refusal on record excludes no line")
+	assert.False(t, noneDesynced, "and is not a desynced pair")
+
 	// And honours it when the bit really was set.
-	assert.Equal(t, map[int]struct{}{0: {}}, excludedAnchorLines(raw, []int{0}),
+	bin0, bin0Desynced := excludedAnchorLines(raw, []int{0})
+	assert.Equal(t, map[int]struct{}{0: {}}, bin0,
 		"a real refusal still excludes its bin's segment")
+	assert.False(t, bin0Desynced)
+
+	// An unaccountable index propagates the desync rather than excluding nothing.
+	oor, oorDesynced := excludedAnchorLines(raw, []int{5})
+	assert.True(t, oorDesynced, "the caller must learn it cannot narrow by this list")
+	assert.Nil(t, oor, "and must not be handed a partial exclusion set to index by")
 }
 
 // TestStampJustifications_BinIndexNamingNoSegmentWithholdsWholeFile is the
