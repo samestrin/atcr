@@ -40,6 +40,20 @@ func TestFindingsFormatDoc_ExcerptProvenanceClaimsMatchTheCode(t *testing.T) {
 			"the doc's neutralisation exception is only true while a writer still neutralises the delimiter")
 	})
 
+	t.Run("the anchor half of the raw-vs-stripped disagreement is stated", func(t *testing.T) {
+		line := docLineContaining(t, doc, "- `justification` — the narrative section extracted")
+		assert.Contains(t, line, "durable one",
+			"the doc disclosed only the elision half, which is excerpt quality; the anchor half is what persists")
+		assert.Contains(t, line, "buildAnchorIndex",
+			"and it must name the mechanism that actually closes it, not just describe the risk")
+
+		// Code anchor: the exclusion the disclosure depends on. If the draft-line
+		// skip leaves buildAnchorIndex, the doc claim becomes a promise nothing keeps.
+		justification := readRepoFile(t, "../../internal/reconcile/justification.go")
+		assert.Contains(t, justification, "if _, draft := narratives[ni].draftLines[li]; draft {",
+			"the anchor-half disclosure is only true while buildAnchorIndex still skips refused-run lines")
+	})
+
 	t.Run("the salvaged-source omission cause is stated", func(t *testing.T) {
 		line := docLineContaining(t, doc, "- `justification` — the narrative section extracted")
 		assert.Contains(t, line, "omitted when the source's `status.json` says the reply was salvaged",
