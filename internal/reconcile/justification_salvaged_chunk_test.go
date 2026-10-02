@@ -173,3 +173,69 @@ func TestSourceSalvage_ReadsBothFields(t *testing.T) {
 	assert.False(t, salvaged)
 	assert.Empty(t, chunks)
 }
+
+// writeChunkStatusWithoutSalvageBit names bins but does NOT set the bit — the
+// shape a hand-edited status.json produces, and the one the `!salvaged` guard
+// exists for. internal/fanout never writes it: salvagedChunkIndices derives the
+// list from chunkSalvaged, so a non-empty list always arrives with the OR-fold
+// set. That is exactly why no test reached the guard.
+func writeChunkStatusWithoutSalvageBit(t *testing.T, reviewDir, leaf string, bins []int) {
+	t.Helper()
+	dir := filepath.Join(reviewDir, "sources", leaf)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	parts := make([]string, 0, len(bins))
+	for _, b := range bins {
+		parts = append(parts, strconv.Itoa(b))
+	}
+	body := `{"agent":"` + leaf + `","status":"ok","salvaged_chunks":[` +
+		strings.Join(parts, ",") + `]}`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "status.json"), []byte(body), 0o644))
+}
+
+// TestStampJustifications_ChunkIndicesWithoutTheBitDoNotWithhold pins the
+// `if !salvaged { salvagedBins = nil }` guard through stampJustifications.
+//
+// A bin list without the bit is not a refusal record. Honouring it would let a
+// hand-edited status.json strip justification and source_report off a HEALTHY
+// reviewer's findings — the same permanent provenance loss as the defect this
+// file's first test covers, in the opposite direction, and unrecoverable for the
+// same reason: localdebt seeds seen[id] for every open id.
+//
+// The finding's only anchor sits in segment 0, which is the bin the list names,
+// so the assertion fails the moment the guard stops clearing the list. Neither
+// sibling test reaches it — both write the bit — which is why neutralising the
+// guard left the whole repo green (TD internal/reconcile/justification.go:213).
+func TestStampJustifications_ChunkIndicesWithoutTheBitDoNotWithhold(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeReview(t, reviewDir, "dax", chunkedReview(
+		"## Findings\n\nThe signature check at `internal/auth/token.go:42` accepts an unsigned token.",
+		"## Findings\n\nUnrelated: `internal/log/sink.go:9` drops the writer.",
+	))
+	writeChunkStatusWithoutSalvageBit(t, reviewDir, "dax", []int{0})
+
+	jf := []JSONFinding{{File: "internal/auth/token.go", Line: 42, Reviewers: []string{"dax"}}}
+	stampJustifications(jf, reviewDir)
+
+	require.NotEmpty(t, jf[0].Justification,
+		"a bin list with no salvage bit is not a refusal; the narrative must still supply provenance")
+	assert.Contains(t, jf[0].Justification, "accepts an unsigned token",
+		"the excerpt must come from the bin the unbacked list named")
+	require.NotNil(t, jf[0].SourceReport,
+		"a healthy narrative must keep its source_report back-reference")
+}
+
+// TestExcludedAnchorLines_IgnoresBinsWhenNothingWasRefused pins the same guard
+// one level down, at the function that consumes the cleared list. Paired with
+// the case where the bit IS set, so the test states the discrimination rather
+// than just one side of it.
+func TestExcludedAnchorLines_IgnoresBinsWhenNothingWasRefused(t *testing.T) {
+	t.Parallel()
+	raw := chunkedReview("zero", "one")
+
+	// collectReviewNarratives passes nil once the guard has cleared the list.
+	assert.Empty(t, excludedAnchorLines(raw, nil),
+		"no refusal on record excludes no line")
+	// And honours it when the bit really was set.
+	assert.Equal(t, map[int]struct{}{0: {}}, excludedAnchorLines(raw, []int{0}),
+		"a real refusal still excludes its bin's segment")
+}
