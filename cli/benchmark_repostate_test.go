@@ -2810,3 +2810,31 @@ func TestExecuteRepoStateBenchmarkRun_RetentionLineCountsFailedSlots(t *testing.
 	assert.Contains(t, logs.String(), "failed_reviewers=1")
 	assert.Regexp(t, `retained_dirs=[1-9]`, logs.String())
 }
+
+// slotUnmeasuredReason draws the line the score, the covered set and the outcome
+// tally must all respect. A non-OK slot is a failed call; an OK slot that provably
+// contributed nothing is a SUCCEEDED call that produced nothing usable, and it was
+// being scored as a genuine miss while the classifier called the same row
+// "incomplete" (TD cli/benchmark_repostate.go:561).
+func TestSlotUnmeasuredReason(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		st   fanout.AgentStatus
+		want string
+	}{
+		{"failed call", fanout.AgentStatus{Status: fanout.StatusFailed}, benchmark.SlotFailureCall},
+		{"timed out call", fanout.AgentStatus{Status: fanout.StatusTimeout}, benchmark.SlotFailureTimeout},
+		{"salvaged OK slot", fanout.AgentStatus{Status: fanout.StatusOK, Salvaged: true}, benchmark.SlotFailureUnmeasuredOK},
+		{"think-suppressed OK slot", fanout.AgentStatus{Status: fanout.StatusOK, ThinkSuppressed: true}, benchmark.SlotFailureUnmeasuredOK},
+		{"healthy OK slot", fanout.AgentStatus{Status: fanout.StatusOK}, ""},
+		{"OK slot with findings", fanout.AgentStatus{Status: fanout.StatusOK, FindingsCount: 3}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, slotUnmeasuredReason(tc.st))
+			if tc.want != "" {
+				assert.True(t, benchmark.ValidSlotFailureReason(tc.want),
+					"the producer must never write a reason the export boundary rejects")
+			}
+		})
+	}
+}

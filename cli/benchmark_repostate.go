@@ -112,6 +112,32 @@ func checkRepoStateFlags(suiteFormat, checkpointPath string) error {
 // has already been paid for in full, and this one stops the bill. Off by default for
 // the reason the work-dir arm's comment gives: a general cap would take the abort
 // decision away from the operator.
+// slotUnmeasuredReason returns the slot-failure reason when a reviewer's slot must be
+// SKIPPED from the score, the covered set and the outcome tally together, or "" when
+// the slot should be scored normally.
+//
+// Two shapes qualify, and they are different facts. A non-OK status is a call that
+// did not succeed. An OK status that provably contributed NOTHING — a salvaged reply,
+// whose content the client promoted from the model's reasoning channel, or a
+// think-suppressed one whose whole reply the strip removed — is a call that succeeded
+// and produced nothing usable. Before this the second shape fell through: the row was
+// scored with an empty categorical projection and charged a genuine recall-0 miss,
+// while the outcome classifier tallied the same row "incomplete", so the score half
+// asserted a missed defect the label denied — the self-contradiction
+// docs/benchmark.md forbids for this tier (TD cli/benchmark_repostate.go:561).
+//
+// Extracted as a function so the decision is testable without a live panel: the
+// end-to-end path needs a provider that emits the salvage shape.
+func slotUnmeasuredReason(a fanout.AgentStatus) string {
+	if a.Status != fanout.StatusOK {
+		return benchmark.SlotFailureReasonForStatus(a.Status)
+	}
+	if a.Salvaged || a.ThinkSuppressed {
+		return benchmark.SlotFailureUnmeasuredOK
+	}
+	return ""
+}
+
 func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, completer fanout.Completer, suitePath string, generatedAt time.Time, maxConsecutiveFailures int) (rr *benchmark.RunResult, retainedWorkDir string, err error) {
 	m, err := benchmark.LoadRepoState(suitePath)
 	if err != nil {
@@ -535,13 +561,24 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			// an OK slot is never skipped). If a producer of that pair ever appears, the
 			// predicate here and that reason mapping must move together — unify both
 			// sides in the same change, never this one alone.
-			if a.Status != fanout.StatusOK {
+			// The skip covers an OK slot that provably contributed NOTHING, not only a
+			// non-OK one. A salvaged or think-suppressed reply is StatusOK and the
+			// classifier tallies it "incomplete", so scoring it here charged a genuine
+			// recall-0 miss while the label said the reviewer never saw the material —
+			// the self-contradiction docs/benchmark.md forbids, crossing the export
+			// boundary unflagged because the only self-contradiction gate covers
+			// ungrounded-vs-grounding_enabled (TD cli/benchmark_repostate.go:561).
+			//
+			// Score, covered set and outcome tally move TOGETHER here, as the block
+			// below requires: an unmeasured slot is skipped from all three or the export
+			// tamper check reads the run as malformed.
+			if unmeasuredReason := slotUnmeasuredReason(a); unmeasuredReason != "" {
 				slotFailures[key] = append(slotFailures[key], benchmark.SlotFailure{
 					CaseID: c.ID,
-					Reason: benchmark.SlotFailureReasonForStatus(a.Status),
+					Reason: unmeasuredReason,
 				})
-				log.FromContext(ctx).Warn("reviewer slot failed; recorded as unmeasured for this case",
-					"case", c.ID, "agent", a.Agent, "status", a.Status, "err", a.Error)
+				log.FromContext(ctx).Warn("reviewer slot unmeasured for this case; recorded instead of scored",
+					"case", c.ID, "agent", a.Agent, "status", a.Status, "reason", unmeasuredReason, "err", a.Error)
 				continue
 			}
 

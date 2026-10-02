@@ -55,6 +55,20 @@ const (
 	// transport failure about a slot that may have failed some other way, and the
 	// export validator would accept it because the spelling is legal.
 	SlotFailureUnknownStatus = "call_status_unknown"
+
+	// SlotFailureUnmeasuredOK marks a slot whose status was OK and which nevertheless
+	// provably contributed NOTHING to the case — a salvaged reply (Content promoted
+	// from the model's reasoning channel) or a think-suppressed one. It needs its own
+	// value because no other reason fits: the call succeeded, so SlotFailureCall and
+	// SlotFailureTimeout would each assert a failure that did not happen, and
+	// SlotFailureUnknownStatus claims the status was unrecognized when it was OK.
+	//
+	// Its existence is the point. The repo-state runner's unmeasured skip keys on
+	// `Status != StatusOK`, and an OK-but-worthless slot is OK — so scoring charged it
+	// a genuine recall-0 miss while the outcome classifier tallied the same row as
+	// "incomplete", letting score and label disagree across the export boundary
+	// (TD cli/benchmark_repostate.go:561).
+	SlotFailureUnmeasuredOK = "unmeasured_salvaged_ok"
 )
 
 // SlotFailure records one reviewer that could not be shown one case, and why.
@@ -83,7 +97,7 @@ type SlotFailure struct {
 // carrying none cannot have come from the producer.
 func ValidSlotFailureReason(s string) bool {
 	switch s {
-	case SlotFailureCall, SlotFailureTimeout, SlotFailureUnknownStatus:
+	case SlotFailureCall, SlotFailureTimeout, SlotFailureUnknownStatus, SlotFailureUnmeasuredOK:
 		return true
 	}
 	return false

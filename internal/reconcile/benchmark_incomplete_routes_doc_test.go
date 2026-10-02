@@ -39,6 +39,19 @@ func TestBenchmarkDoc_IncompleteRoutesMatchTheClassifier(t *testing.T) {
 		}
 	})
 
+	t.Run("the slot-failure reason for an OK-but-unmeasured slot is published", func(t *testing.T) {
+		line := docLineContaining(t, doc, "`{\"model\", \"persona\", \"case_id\", \"reason\"}`")
+		assert.Contains(t, line, "unmeasured_salvaged_ok",
+			"an OK slot that contributed nothing is skipped from the score, so the published reason list must name it")
+
+		// Code anchor: the constant the sentence describes, and its storable status.
+		slotFailure := readRepoFile(t, "../../internal/benchmark/slot_failure.go")
+		assert.Contains(t, slotFailure, `SlotFailureUnmeasuredOK = "unmeasured_salvaged_ok"`,
+			"the doc's reason value must be the one the producer writes")
+		assert.Contains(t, slotFailure, "case SlotFailureCall, SlotFailureTimeout, SlotFailureUnknownStatus, SlotFailureUnmeasuredOK:",
+			"and it must be admitted by the export trust boundary, or the runner writes an unexportable artifact")
+	})
+
 	t.Run("the classifier really does fold all three routes into incomplete", func(t *testing.T) {
 		assert.Contains(t, code, "a.UnreviewedChunks > 0 || a.Truncated || a.Salvaged",
 			"docs/benchmark.md's `incomplete` row describes this predicate; a changed predicate must re-open the row")
