@@ -188,6 +188,15 @@ func driveSeat(ctx context.Context, seat Caster, prompt string, cc fanout.ChatCo
 	}
 	engine := fanout.NewEngine(cc, opts...)
 	results := engine.Run(ctx, []fanout.Slot{{Primary: agent}})
+	// CONTRACT-ONLY arm, documented rather than faked. Engine.Run makes one result
+	// per dispatched slot and cannot be constructed with a substitute inside this
+	// function, so no completer — fake or real — can reach a zero-length return;
+	// pinning it with a mock would only assert the mock. It stays as the same
+	// fail-closed fallback the sibling defensive guards are, and its contract is
+	// pinned where it can actually be exercised, on Engine.Run itself
+	// (TestDriveSeat_EngineRunAlwaysAnswersAOneSlotDispatch). If that contract ever
+	// breaks, this arm becomes live and the test goes red (TD
+	// internal/debate/protocol.go:186).
 	if len(results) == 0 {
 		return "", "", fanout.StatusFailed
 	}
