@@ -310,9 +310,11 @@ func scanModelOutput(data []byte) ([]Finding, []LineSpan) {
 		// explaining the format — are examples, never real findings, yet they carry
 		// a leading severity token and would otherwise parse as findings and inflate
 		// the count with rows whose cited files do not exist. Skip everything between
-		// fences. Mirrors internal/verify/syntaxguard's fence handling; a fence
-		// marker is a line whose first non-space content is a run of >=3 backticks
-		// or tildes.
+		// fences. A fence marker here is a line whose first non-space content is a
+		// run of >=3 backticks or tildes. This is NOT the same rule
+		// internal/verify/syntaxguard's fenceRe applies: that regexp matches
+		// backticks only, with no character/length closing rule and no JSON
+		// exception.
 		// The one exception is a ```json fence: that is the output itself. As in
 		// CommonMark, a fence closes only on a marker of its own character (` or ~)
 		// at least as long as its opener, so a ```json example quoted inside a

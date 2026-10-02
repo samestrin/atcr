@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/samestrin/atcr/internal/llmclient"
@@ -29,6 +30,64 @@ const sigHistoryDepth = 3
 // request: the bytes of each reasoning member history() kept.
 func replayedReasoningBytes(m llmclient.Message) int64 {
 	return int64(len(m.ReasoningContent) + len(m.Reasoning) + len(m.ReasoningDetails) + len(m.ThinkingBlocks))
+}
+
+// historyMessage is the form of an assistant turn that is safe to re-send as
+// conversation history: inline <think> reasoning stripped off its Content. Without
+// it, a model that reasons inline gets its own discarded draft replayed back as
+// settled prior output on every later turn.
+//
+// LEADING-ONLY, and that limit is the whole point of naming it: SplitThink strips
+// a leading run and nothing else, so a think block placed AFTER a preamble is not
+// seen, the strip is a no-op, and the reply -- abandoned draft included -- replays
+// verbatim and re-enters the model's own assistant history as settled output. That
+// is an ACCEPTED LOSS, not a guarantee: llmclient.HasThinkMarkup is position-blind
+// but is not used here, because dropping a mid-content block risks eating a real
+// answer that quotes the tag. Pinned by TestToolLoop_TrailingThinkBlockIsReplayed
+// so the gap is on the record rather than implied closed by this comment.
+//
+// Content is a *string that the returned copy would otherwise SHARE with the
+// caller's message, so the strip allocates a new one. Stripping in place would
+// also strip l.res.Content — the raw reply review.md writes — which is outside
+// this strip's scope. Only Content is touched: the reasoning members
+// (ReasoningContent, Reasoning, ReasoningDetails, ThinkingBlocks) are a separate,
+// deliberate replay channel and ride through unchanged, as does the nil Content a
+// pure tool-call turn carries.
+//
+// Content that is blank BECAUSE the strip removed a leading think run becomes
+// nil, not "" — the canonical assistant tool-call turn shape (llmclient.Message's
+// contract reserves content:null for it, chat.go; pinned on the request side by
+// TestChat_RoleToolMessageSerialization). A content that was ALREADY blank with
+// no think markup in it replays as the empty string — the pre-sprint wire shape;
+// narrowing per TD loop.go:70, this sprint changes the wire only for turns it
+// actually stripped.
+//
+// SplitThink returns a substring, so a STRIPPED answer would otherwise keep the
+// whole original reply — draft included — alive in its backing array for the life
+// of the loop. Clone drops it. Only when something was actually removed: when the
+// strip was a no-op, which is the common case, answer IS the original and copying
+// it buys nothing.
+func historyMessage(m llmclient.Message) llmclient.Message {
+	if m.Content == nil {
+		return m
+	}
+	answer, _ := llmclient.SplitThink(*m.Content)
+	// Nil only when the strip actually REMOVED something (a leading think run
+	// consumed the whole content). A genuinely-empty content — no think markup at
+	// all — replays as the empty string, exactly the pre-sprint wire shape: this
+	// sprint is a think-stripping sprint, and changing the wire shape of a turn it
+	// did not strip is out of scope (TD loop.go:70). The strip's removal is
+	// detected by length: SplitThink returns a substring of the original, so a
+	// no-op strip returns content unchanged.
+	if len(answer) < len(*m.Content) && strings.TrimSpace(answer) == "" {
+		m.Content = nil
+		return m
+	}
+	if len(answer) != len(*m.Content) {
+		answer = strings.Clone(answer)
+	}
+	m.Content = &answer
+	return m
 }
 
 // Loop-control messages. These are static (no per-call allocation) and are
@@ -174,10 +233,19 @@ func (l *toolLoop) run(ctx context.Context) Result {
 		l.res.Turns++
 		l.res.addUsage(resp.Usage)
 		l.res.addCallRecords(resp.CallRecords)
-		l.messages = append(l.messages, resp.Message)
 		l.reasoningBytes += replayedReasoningBytes(resp.Message)
 
 		// Final message (no tool_calls): the model finished within budget.
+		//
+		// Checked BEFORE the history append so no historyMessage runs on a reply that
+		// is never replayed. The append used to sit above this branch and ran on the
+		// final turn too, producing two costs for a message that is abandoned four
+		// lines later: a full SplitThink scan plus a strings.Clone of the loop's
+		// largest reply (the whole review), and an l.messages ending in an assistant
+		// entry with content null and no tool_calls — an invalid OpenAI chat message,
+		// unsent only by the accident of the immediate return. That is the same
+		// "one append away" hazard the forced-final-answer path calls out explicitly
+		// below.
 		if len(resp.Message.ToolCalls) == 0 {
 			// A model that reached this loop was declared function-calling-capable
 			// (supports_function_calling=true gated entry in invokeAgent). If it never
@@ -194,6 +262,10 @@ func (l *toolLoop) run(ctx context.Context) Result {
 			l.tr.RecordFinal(l.res.Turns, l.res.Content)
 			return l.finalize(StatusOK, nil)
 		}
+
+		// Only a turn that WILL be replayed enters history, so historyMessage's strip
+		// and clone are paid exactly when they buy something.
+		l.messages = append(l.messages, historyMessage(resp.Message))
 
 		// Record the requested tool_calls before deciding whether to execute them,
 		// so the transcript is a faithful record even when the turn is skipped by a
@@ -350,6 +422,9 @@ func (l *toolLoop) requestFinalAnswer(ctx context.Context) Result {
 	// attempts are real and must count toward the agent's usage and call telemetry.
 	l.res.addUsage(resp.Usage)
 	l.res.addCallRecords(resp.CallRecords)
+	// Raw, and no historyMessage: this reply is deliberately never appended to
+	// l.messages — the forced final answer ends the loop, so nothing replays it.
+	// A later change that does append it must route through historyMessage.
 	l.res.Content = derefContent(resp.Message.Content)
 	// A truncated forced final-answer is still cut off; surface it (Epic 19.5).
 	l.res.ResponseTruncated = resp.Truncated

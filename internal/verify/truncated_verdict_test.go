@@ -99,3 +99,73 @@ func TestAggregateVerdicts_CarriesTruncationFromTheVotersThatCount(t *testing.T)
 		assert.True(t, got.Truncated)
 	})
 }
+
+// TestInvokeSkeptic_StripsThinkBeforeParsingTheVerdict pins the WIRING — the
+// SplitThink call in invokeSkeptic — not the helper.
+//
+// Every row is change-sensitive at the CALL SITE; none is a byte-for-byte
+// duplicate of a parser-table row, which is what two rows this function used to
+// carry (a lone closer, and both tags quoted after real text) had become: they
+// exercised llmclient.SplitThink + parseVerdict, both already covered in their own
+// tables, and survived replacing the call with `answer := res.Content`. Half the
+// function thus read as per-lane coverage while surviving deletion of the feature
+// it claimed to guard. A modification that drops the strip must fail every row
+// below.
+//
+// A thinking endpoint that finished cleanly, drafted a verdict inside a LEADING
+// <think> run, discarded it, and wrote the real verdict after arrives StatusOK,
+// untruncated, unsalvaged, with the draft as the first verdict-keyed object.
+func TestInvokeSkeptic_StripsThinkBeforeParsingTheVerdict(t *testing.T) {
+	t.Parallel()
+
+	t.Run("the real verdict after a leading think block wins", func(t *testing.T) {
+		t.Parallel()
+		raw := `<think>{"verdict": "confirmed", "reasoning": "draft, wrong"}</think>{"verdict": "refuted", "reasoning": "real answer"}`
+		v, tripped, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+		require.NoError(t, err)
+		require.NotNil(t, v)
+		require.Empty(t, tripped, "precondition: nothing tripped, so the parse path is what is under test")
+		assert.Equal(t, verdictRefuted, v.Verdict,
+			"the draft inside <think> must not outrank the answer the model actually gave")
+		assert.Equal(t, "real answer", v.Notes)
+	})
+
+	t.Run("a leading run of two think blocks yields the trailing answer", func(t *testing.T) {
+		t.Parallel()
+		raw := `<think>{"verdict": "confirmed", "reasoning": "draft one"}</think><think>{"verdict": "unverifiable", "reasoning": "draft two"}</think>{"verdict": "refuted", "reasoning": "real answer"}`
+		v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+		require.NoError(t, err)
+		require.NotNil(t, v)
+		assert.Equal(t, verdictRefuted, v.Verdict,
+			"the whole leading run must be consumed, not just the first block")
+		assert.Equal(t, "real answer", v.Notes)
+	})
+
+	t.Run("a decoy brace pair after the leading run does not redirect the parse", func(t *testing.T) {
+		t.Parallel()
+		// The leading run holds the draft; a BRACED decoy that carries no verdict
+		// key follows it before the real object. With the strip the parser scans
+		// from the real object and skips the decoy; without it the draft inside the
+		// run is the first keyed object and wins.
+		raw := `<think>{"verdict": "confirmed", "reasoning": "draft, wrong"}</think>` + "\n" +
+			`{ a decoy brace pair with no verdict key }` + "\n" +
+			`{"verdict": "refuted", "reasoning": "real answer"}`
+		v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+		require.NoError(t, err)
+		require.NotNil(t, v)
+		assert.Equal(t, verdictRefuted, v.Verdict,
+			"the draft must be consumed and the decoy skipped before the real verdict")
+		assert.Equal(t, "real answer", v.Notes)
+	})
+
+	t.Run("a draft unverifiable does not outrank the real confirmed", func(t *testing.T) {
+		t.Parallel()
+		raw := `<think>{"verdict": "unverifiable", "reasoning": "draft, undecided"}</think>{"verdict": "confirmed", "reasoning": "real answer"}`
+		v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+		require.NoError(t, err)
+		require.NotNil(t, v)
+		assert.Equal(t, verdictConfirmed, v.Verdict,
+			"the real verdict after the leading run is the skeptic's answer")
+		assert.Equal(t, "real answer", v.Notes)
+	})
+}

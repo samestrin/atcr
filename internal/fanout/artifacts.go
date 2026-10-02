@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/log"
@@ -46,9 +47,10 @@ type PoolSummary struct {
 	// agents that contributed nothing to the merged pool; a truncated agent that
 	// kept >=1 GROUNDED finding is NOT counted (its partial findings landed).
 	// NOTE: this tally is a DIFFERENT signal from the per-attempt
-	// truncation-failover guard (engine.go invokeSlot), which demotes on the RAW
-	// parsed count before grounding. A truncated response that raw-parses >=1
-	// finding but has them all dropped as ungrounded/below-min-severity stays
+	// truncation-failover guard (engine.go invokeSlot), which demotes on the
+	// pre-grounding parsed count (of the think-stripped content). A truncated
+	// response whose think-stripped content pre-grounds >=1 finding but has them
+	// all dropped as ungrounded/below-min-severity stays
 	// StatusOK (the guard does not fire) yet is counted here. Reconciling the two
 	// is deferred TD, not addressed in this epic. Always present so a 0 is
 	// distinguishable from an older summary.json that predates the field.
@@ -66,6 +68,14 @@ type PoolSummary struct {
 	// "does this run contain any substitution worth reconciling" signal without
 	// walking every Agents entry.
 	FallbackCount int `json:"fallback_count"`
+	// SalvagedCount is the run-level tally of agents whose reply was salvaged —
+	// the client found no answer and promoted the reasoning channel into Content,
+	// so parseFindings refused it and the agent contributed nothing. Like
+	// TruncatedZeroFindings and FallbackCount it is ALWAYS present, so a 0 is
+	// distinguishable from an older summary.json that predates the field. Derived
+	// from the per-agent statuses (tallySalvaged) rather than from the results, so
+	// writePool and the resume path's RebuildPool cannot drift.
+	SalvagedCount int `json:"salvaged_count"`
 	// FailureMarker is true only when writeFailureSummary produced this record
 	// after a WritePool I/O fault, never when WritePool wrote a real run. It
 	// makes the summary unambiguously a best-effort marker: a write-phase
@@ -151,6 +161,8 @@ func writePool(ctx context.Context, poolDir string, results []Result, changed pa
 	groundingEnabled := len(changed) > 0
 	truncatedZeroFindings, truncatedZeroAgents := tallyTruncatedZeroFindings(statuses)
 	warnTruncatedZeroFindings(ctx, truncatedZeroFindings, truncatedZeroAgents, false)
+	salvagedCount, salvagedAgents := tallySalvaged(statuses)
+	warnSalvaged(ctx, salvagedCount, salvagedAgents)
 	ps := PoolSummary{
 		Agents:                  statuses,
 		Total:                   sum.Total,
@@ -160,6 +172,7 @@ func writePool(ctx context.Context, poolDir string, results []Result, changed pa
 		TotalFindings:           len(merged),
 		TruncatedZeroFindings:   truncatedZeroFindings,
 		FallbackCount:           sum.FallbackCount,
+		SalvagedCount:           salvagedCount,
 		GroundingEnabled:        &groundingEnabled,
 		GroundingDisabledReason: groundingDisabledReason,
 	}
@@ -187,6 +200,95 @@ func tallyTruncatedZeroFindings(statuses []AgentStatus) (int, []string) {
 	}
 	return count, agents
 }
+
+// salvagedChunkIndices returns the indices of a chunked persona's salvaged bins, or
+// nil for an unchunked agent (whose persona-wide Salvaged bit already says
+// everything there is to say). Derived from chunkSalvaged — the slice parseFindings
+// itself refuses by — so the published indices name exactly the bins that were
+// dropped, and a misaligned pair publishes nothing rather than a wrong index.
+func salvagedChunkIndices(r Result) []int {
+	if len(r.chunkSalvaged) != len(r.chunkContents) {
+		return nil
+	}
+	var out []int
+	for i, salvaged := range r.chunkSalvaged {
+		if salvaged {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// tallySalvaged counts the agents whose reply was salvaged and labels each with what
+// the salvage actually cost it. Derived from the per-agent statuses for the same
+// reason tallyTruncatedZeroFindings is: the resume path rebuilds the pool from these
+// very records, and deriving the tally in only one of the two writers is how a
+// resumed review silently loses it.
+//
+// The label matters because the persona-wide Salvaged bit is an OR-fold over a
+// chunked persona's bins: one refused bin beside a bin that landed real findings sets
+// it. Reporting every salvage as "contributed nothing" would therefore be false of
+// exactly the case the per-bin refusal was built to protect.
+func tallySalvaged(statuses []AgentStatus) (int, []string) {
+	count := 0
+	agents := make([]string, 0, len(statuses))
+	for _, st := range statuses {
+		if !st.Salvaged {
+			continue
+		}
+		count++
+		agents = append(agents, st.Agent+salvageCost(st))
+	}
+	return count, agents
+}
+
+// salvageCost names what one agent lost to the salvage: everything, or the specific
+// bins that were refused.
+func salvageCost(st AgentStatus) string {
+	if st.FindingsCount == 0 {
+		return " (contributed nothing)"
+	}
+	if len(st.SalvagedChunks) == 0 {
+		return ""
+	}
+	idx := make([]string, 0, len(st.SalvagedChunks))
+	for _, i := range st.SalvagedChunks {
+		idx = append(idx, strconv.Itoa(i))
+	}
+	return " (chunk " + strings.Join(idx, "/") + " refused, its siblings kept)"
+}
+
+// warnSalvaged emits the run-level salvage warning, or nothing at 0.
+//
+// A salvaged reply is a reviewer that lost its ENTIRE contribution: the client found
+// no answer, promoted the reasoning channel into Content, and parseFindings refused
+// it. In status.json that was byte-identical to a reviewer which emitted garbled
+// prose, and on the console it was nothing at all — so a whole seat could go missing
+// from a review that reported success.
+//
+// Through the context logger, for the reason warnTruncatedZeroFindings states at
+// length: cli.Main binds it to the caller-supplied stderr, and a ctx carrying no
+// logger has asked for no output.
+//
+// This is the operator-facing half of TD internal/fanout/artifacts.go:395. The row
+// asked for the line at parseFindings' refusal sites; it is emitted HERE instead,
+// from the derived statuses, because parseFindings is a memoized method on Result
+// with no context — it would have to be plumbed a logger and would then log once per
+// Result lineage rather than once per agent. Same facts, named agent included, at the
+// site that already owns this exact pattern.
+func warnSalvaged(ctx context.Context, count int, agents []string) {
+	if count == 0 {
+		return
+	}
+	log.FromContext(ctx).Warn(
+		fmt.Sprintf("%d reviewer(s) returned a salvaged reply — no answer, reasoning promoted into the content — so it was refused rather than parsed. Each agent below says what that cost it.", count),
+		"agents", strings.Join(agents, ", "),
+		"remedy", salvagedRemedy)
+}
+
+// salvagedRemedy is the operator action for a salvaged reply. One constant, so the
+// fresh and resumed paths cannot state different fixes for the same condition.
+const salvagedRemedy = "The model answered on its reasoning channel only. Declare thinking: off for the agent, or repoint it to a model that separates its answer from its reasoning; a salvaged reply is refused rather than parsed, because every finding in it is a draft the model did not commit to."
 
 // warnTruncatedZeroFindings emits the run-level runaway warning, or nothing at 0.
 //
@@ -381,7 +483,18 @@ func writeAgentArtifacts(poolDir, dir string, r Result, fr findingsResult) error
 	if err := os.MkdirAll(agentDir, 0o755); err != nil {
 		return fmt.Errorf("creating agent dir for '%s': %w", r.Agent, err)
 	}
-	if err := atomicWriteFile(filepath.Join(agentDir, reviewFile), []byte(r.Content)); err != nil {
+	// An UNCHUNKED agent's review.md is the raw reply, so the join never ran and
+	// nothing neutralised a model-issued chunkBoundaryLine in it. Neutralise here,
+	// but ONLY on that path: a chunked agent's Content already came through
+	// joinChunkContents, which neutralised the model's copies and then inserted
+	// the engine's REAL delimiters — and the two are byte-identical at this point,
+	// so neutralising again would destroy the framing chunkSegmentBounds needs.
+	// chunkContents == nil is the same unchunked test parseFindings uses.
+	content := r.Content
+	if r.chunkContents == nil {
+		content = neutraliseChunkBoundary(content)
+	}
+	if err := atomicWriteFile(filepath.Join(agentDir, reviewFile), []byte(content)); err != nil {
 		return fmt.Errorf("writing review.md for '%s': %w", r.Agent, err)
 	}
 	if err := writeFindings(filepath.Join(agentDir, findingsFile), fr.Findings); err != nil {
@@ -409,6 +522,9 @@ func statusFor(r Result, fr findingsResult) AgentStatus {
 		DroppedByGrounding:     fr.Ungrounded,
 		ResponseTruncated:      r.ResponseTruncated,
 		UnparseableResponse:    r.UnparseableResponse,
+		ThinkSuppressed:        r.ThinkSuppressed,
+		Salvaged:               r.Salvaged,
+		SalvagedChunks:         salvagedChunkIndices(r),
 		UnparseableChunks:      r.UnparseableChunks,
 		CacheHit:               r.CacheHit,
 		UnreviewedChunks:       r.UnreviewedChunks,
@@ -417,12 +533,13 @@ func statusFor(r Result, fr findingsResult) AgentStatus {
 		// Agent — no recomputation of sizing/chunk/overflow math here. All zero/empty
 		// for an unsized agent (bare fixture, pre-19.10 run), so the AgentStatus
 		// omitempty tags keep status.json/summary.json byte-identical for those runs.
-		EffectiveBudget:      r.EffectiveBudget,
-		ResolvedWindow:       r.ResolvedWindow,
-		ReservedOutputTokens: r.ReservedOutputTokens,
-		ResolvedMaxTokens:    r.ResolvedMaxTokens,
-		ChunkCount:           r.ChunkCount,
-		DegradationAction:    r.DegradationAction,
+		EffectiveBudget:        r.EffectiveBudget,
+		ResolvedWindow:         r.ResolvedWindow,
+		ReservedOutputTokens:   r.ReservedOutputTokens,
+		ReasoningReserveTokens: r.ReasoningReserveTokens,
+		ResolvedMaxTokens:      r.ResolvedMaxTokens,
+		ChunkCount:             r.ChunkCount,
+		DegradationAction:      r.DegradationAction,
 	}
 	// Normalized HERE, not only in WriteStatus. Both published views of this record
 	// are built from statusFor, but only status.json passes through WriteStatus —

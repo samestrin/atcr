@@ -351,6 +351,31 @@ type AgentStatus struct {
 	// findings in total. omitempty keeps the common status.json unchanged.
 	UnparseableChunks int `json:"unparseable_chunks,omitempty"`
 
+	// Salvaged records that the client promoted reasoning into Content because the
+	// reply carried no answer — so parseFindings refused that content, and a zero
+	// findings count here is a REFUSAL, not an empty review. Without it,
+	// status.json is byte-identical to a reviewer that emitted garbled prose
+	// (unparseable_response true, unparseable_chunks 1), and a reviewer can lose
+	// its entire contribution invisibly.
+	//
+	// For a chunked persona it is an OR-fold over the bins, so it can be true
+	// beside a non-zero findings count: one bin was refused and its siblings were
+	// kept. SalvagedChunks below is what tells the two apart.
+	// omitempty keeps a clean run unchanged.
+	Salvaged bool `json:"salvaged,omitempty"`
+
+	// SalvagedChunks names WHICH bins of a chunked persona salvaged, by index. The
+	// persona-wide Salvaged bit above cannot say, and parseFindings refuses per
+	// bin, so the bit alone leaves an operator unable to tell a one-bin refusal
+	// from a whole-persona one. Absent for an unchunked agent.
+	SalvagedChunks []int `json:"salvaged_chunks,omitempty"`
+
+	// ThinkSuppressed refines UnparseableResponse: the reply's ENTIRE content was
+	// a leading think run (the strip left an empty answer), so the model produced
+	// reasoning only — a model/tag-habit signal distinct from a garbled reply.
+	// omitempty keeps status.json unchanged for every healthy run.
+	ThinkSuppressed bool `json:"think_suppressed,omitempty"`
+
 	// Post-processing enforcement counters (Epic 2.2). Always present so a
 	// zero is distinguishable from an older status.json that predates the field.
 	DroppedByMinSeverity   int `json:"dropped_by_min_severity"`
@@ -379,9 +404,10 @@ type AgentStatus struct {
 	// Per-agent usage (Epic 3.3 scorecard): the model id and provider-reported
 	// token counts, persisted so the reconcile-time scorecard emitter can source
 	// per-reviewer model/tokens (and derive cost) from a separate process.
-	// omitempty so a zero-usage run (a failed agent, or a fake completer in tests
-	// that reports no usage) keeps status.json byte-identical to the pre-3.3
-	// shape; statusFor only sets them when real usage was reported.
+	// omitempty so a failed, zero-usage run keeps status.json byte-identical to
+	// the pre-3.3 shape. statusFor records Model on every completed OK slot —
+	// usage reported or not, so the per-model trust path can read it — and sets
+	// the token counts only when real usage was reported.
 	Model     string `json:"model,omitempty"`
 	TokensIn  int    `json:"tokens_in,omitempty"`
 	TokensOut int    `json:"tokens_out,omitempty"`
@@ -489,6 +515,14 @@ type AgentStatus struct {
 	EffectiveBudget      int64 `json:"effective_budget,omitempty"`
 	ResolvedWindow       int   `json:"resolved_window,omitempty"`
 	ReservedOutputTokens int   `json:"reserved_output_tokens,omitempty"`
+	// ReasoningReserveTokens is the EXTRA output-token reservation a tool-loop
+	// agent's sizing held back for replayed reasoning, on top of
+	// reserved_output_tokens — which stays the resolved output cap. Read the two
+	// together to recover what the payload was really sized against: the cap alone
+	// made resolved_window minus the reservation look like a budget the run never had
+	// (TD internal/fanout/review.go:3103). Absent for a single-shot agent, which
+	// replays nothing.
+	ReasoningReserveTokens int `json:"reasoning_reserve_tokens,omitempty"`
 	// ResolvedMaxTokens is the output cap this agent RESOLVED to, present on every
 	// sized record. ReservedOutputTokens above is what the budget could actually fund,
 	// so it is 0 on the zero-budget arm — the one record where the cap is the cause of

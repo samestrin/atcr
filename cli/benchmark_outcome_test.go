@@ -27,9 +27,9 @@ type perModelCompleter map[string]func() (string, error)
 func (p perModelCompleter) Complete(_ context.Context, inv llmclient.Invocation) (string, error) {
 	fn, ok := p[inv.Model]
 	if !ok {
-		// Unmapped model: returns empty content, which fanout's truncation
-		// failover (engine.go:710, applied unconditionally by ExecuteReview)
-		// demotes to StatusFailed — so a typo'd key fails loudly, never
+		// Unmapped model: returns empty content, which fanout's truncationFailover
+		// gate in invokeSlot (enabled via WithTruncationFailover) demotes to
+		// StatusFailed — so a typo'd key fails loudly, never
 		// silently classifies as a clean review.
 		return "", nil
 	}
@@ -352,6 +352,28 @@ func TestReviewerOutcome_Precedence(t *testing.T) {
 		{
 			name:   "response truncation outranks payload truncation",
 			status: fanout.AgentStatus{Status: fanout.StatusOK, ResponseTruncated: true, Truncated: true},
+			want:   benchmark.OutcomeTruncated,
+		},
+		// A salvaged reply is a data-integrity signal and must rank with the others.
+		// A salvaged BIN stays StatusOK, so UnreviewedChunks (which counts non-OK
+		// bins) stays 0 and nothing above catches it — a chunked persona with one
+		// refused bin beside a clean sibling published "findings", a healthy
+		// fully-covered classification, and fed the reviewer's durable trust prior
+		// as a clean run.
+		{
+			name:   "salvaged with nothing raised is NOT clean",
+			status: fanout.AgentStatus{Status: fanout.StatusOK, Salvaged: true},
+			want:   benchmark.OutcomeIncomplete,
+		},
+		{
+			name:        "salvaged outranks findings",
+			status:      fanout.AgentStatus{Status: fanout.StatusOK, Salvaged: true, SalvagedChunks: []int{1}},
+			raisedCount: 1,
+			want:        benchmark.OutcomeIncomplete,
+		},
+		{
+			name:   "response truncation outranks salvaged",
+			status: fanout.AgentStatus{Status: fanout.StatusOK, Salvaged: true, ResponseTruncated: true},
 			want:   benchmark.OutcomeTruncated,
 		},
 		{

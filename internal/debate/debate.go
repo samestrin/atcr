@@ -8,6 +8,7 @@ import (
 	reclib "github.com/samestrin/atcr/reconcile"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +23,15 @@ import (
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/tools"
 )
+
+// maxUnresolvedAttempts is how many runs may leave one item unresolved before a
+// later run withholds it instead of re-casting three seats for it. An unresolved
+// item writes no Verification, so filterAlreadyDebated cannot see it and it
+// re-enters the radar on every run; a seat that reasons inline blanks its
+// statement on every one of them, so without a ceiling the re-debate loop never
+// converges and each pass re-pays three seats plus their tool loops. Withholding
+// is disclosed as overflow-style skipped work, never silent.
+const maxUnresolvedAttempts = 3
 
 // ErrNoReconciledFindings is returned when reviewDir has no reconciled
 // findings.json — the caller renders "run 'atcr reconcile' first" guidance. It
@@ -165,6 +175,14 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// provider calls. Overturned findings are already excluded (refuted) by the radar;
 	// unresolved items are intentionally retried (roles may have been configured since).
 	df.Items = filterAlreadyDebated(df.Items, findings)
+	// Idempotency, the unresolved half: an unresolved item writes no Verification,
+	// so the filter above cannot see it and it re-enters the radar on every run.
+	// Withhold the ones that already burned maxUnresolvedAttempts and disclose
+	// them as skipped work, so a never-converging item stops re-paying three seats
+	// instead of looping forever.
+	attempts := priorUnresolvedAttempts(reviewDir)
+	var withheld []OverflowItem
+	df.Items, withheld = withholdExhausted(ctx, df.Items, attempts)
 	sel := SelectItems(df, cfg)
 
 	// Build the harness only when there is work (mirrors verify): a run with
@@ -225,9 +243,9 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 			var ir ItemResult
 			switch {
 			case harnessFailed:
-				ir = ItemResult{File: it.File, Line: it.Line, Kind: it.Kind, Problem: it.Problem, OriginalSeverity: it.Severity, Outcome: OutcomeUnresolved, Reason: "harness_unavailable"}
+				ir = ItemResult{File: it.File, Line: it.Line, Kind: it.Kind, Problem: it.Problem, OriginalSeverity: it.Severity, Outcome: OutcomeUnresolved, Reason: ReasonHarnessUnavailable}
 			case ctx.Err() != nil:
-				ir = ItemResult{File: it.File, Line: it.Line, Kind: it.Kind, Problem: it.Problem, OriginalSeverity: it.Severity, Outcome: OutcomeUnresolved, Reason: "context_cancelled"}
+				ir = ItemResult{File: it.File, Line: it.Line, Kind: it.Kind, Problem: it.Problem, OriginalSeverity: it.Severity, Outcome: OutcomeUnresolved, Reason: ReasonContextCancelled}
 			default:
 				ir = debateOne(ctx, debateDir, it, cfg, reg, cc, disp)
 			}
@@ -253,7 +271,7 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 					// Empty or unparseable cluster decision on a real gray-zone item:
 					// record a distinct reason so the no-decision case is auditable
 					// rather than silently treated as separate.
-					oc.ir.Reason = "no_cluster_decision"
+					oc.ir.Reason = ReasonNoClusterDecision
 				}
 			default:
 				oc.apply = true
@@ -273,6 +291,20 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 
 	var mergeClusters []reclib.AmbiguousCluster
 	for _, oc := range outcomes {
+		if oc.ir.Outcome == OutcomeUnresolved {
+			// Carry the count forward on the record itself: this is the only place
+			// an unresolved item's history is written, and the ceiling is only
+			// reachable if each run adds its own attempt to the prior total. The
+			// reason gate that decides whether THIS run adds one lives in
+			// carryUnresolvedAttempts.
+			//
+			// Read here, after wg.Wait(), because this is where ir.Reason is final:
+			// the per-item goroutine can still reassign it (ReasonNoClusterDecision)
+			// up to the point it stores into outcomes[idx].
+			oc.ir.UnresolvedAttempts = carryUnresolvedAttempts(
+				attempts[FindingKey{File: oc.ir.File, Line: oc.ir.Line, Problem: oc.ir.Problem}],
+				oc.ir.Reason)
+		}
 		items = append(items, oc.ir)
 		tally(&res, oc.ir)
 		if oc.apply {
@@ -312,7 +344,7 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	debatePath, debateBytes, err := computeDebateBytes(reviewDir, DebateFile{
 		SchemaVersion: DebateSchemaVersion,
 		Items:         items,
-		Overflow:      overflowItems(sel.Overflow),
+		Overflow:      append(overflowItems(sel.Overflow), withheld...),
 	})
 	if err != nil {
 		return Result{}, err
@@ -438,9 +470,38 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	}
 
 	res.Selected = len(sel.Selected)
-	res.Overflow = len(sel.Overflow)
+	res.Overflow = len(sel.Overflow) + len(withheld)
 	res.DurationMs = int(time.Since(start).Milliseconds())
 	return res, nil
+}
+
+// withholdExhausted splits items into the ones still worth debating and the ones a
+// prior run already left unresolved maxUnresolvedAttempts times. The second group
+// comes back as overflow records so the run DISCLOSES what it withheld: a silent
+// drop would read as "nothing was disputed", which is the opposite of the truth.
+//
+// It runs before SelectItems so a withheld item does not consume a max_items slot
+// that a debatable item could use.
+func withholdExhausted(ctx context.Context, items []reconcile.DisagreementItem, attempts map[FindingKey]int) ([]reconcile.DisagreementItem, []OverflowItem) {
+	if len(attempts) == 0 {
+		return items, nil
+	}
+	kept := make([]reconcile.DisagreementItem, 0, len(items))
+	var withheld []OverflowItem
+	for _, it := range items {
+		n := attempts[FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}]
+		if n < maxUnresolvedAttempts {
+			kept = append(kept, it)
+			continue
+		}
+		withheld = append(withheld, OverflowItem{
+			File: it.File, Line: it.Line, Kind: it.Kind, Severity: it.Severity,
+			Problem: it.Problem, Reason: OverflowAttemptsExhausted, UnresolvedAttempts: n,
+		})
+		log.FromContext(ctx).Warn("debate: item withheld, unresolved attempts exhausted",
+			"file", it.File, "line", it.Line, "attempts", n)
+	}
+	return kept, withheld
 }
 
 // filterAlreadyDebated removes radar items whose finding a prior debate already
@@ -516,17 +577,80 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 
 	if judgeHalted(rec.Halted) {
 		ir.Outcome = OutcomeUnresolved
-		ir.Reason = "judge_halted"
+		ir.Reason = ReasonJudgeHalted
 		tr.RecordRuling(RulingEvent{Outcome: OutcomeUnresolved, Reasoning: "judge halted"})
 		return ir
 	}
 	if silent := silentArguingSeats(rec); len(silent) > 0 {
-		// A halted proposer or challenger with no statement made no case, so the
-		// judge ruled on one side only. Recording that as an uphold or overturn
-		// would read as a contested ruling that never happened.
+		// A proposer or challenger with no statement made no case, so the judge
+		// ruled on one side only. Recording that as an uphold or overturn would
+		// read as a contested ruling that never happened.
+		//
+		// Two ways to arrive here, kept apart in the reason so an operator
+		// reading debate.json is never told a seat halted when it did not: the
+		// seat halted on a provider error and returned nothing, or it ran clean
+		// and had nothing to say — an empty reply, or one that was entirely think
+		// markup that driveSeat stripped. (A seat halted by a tripped budget is
+		// NOT in this set: it still returns its forced final answer, so its
+		// statement is non-empty and it made its case.)
+		// ReasonSeatHalted is the stronger claim, so it is reserved for the case
+		// where EVERY silent seat really halted. A mixed pair — a halted
+		// proposer plus a clean-but-blank challenger — reports the weaker
+		// ReasonSeatSilent, which is true of both, rather than asserting a halt
+		// that one of them did not have.
+		// Three tokens now, and the precedence is "only claim what is true of
+		// every silent seat THAT WAS ASKED". seat_halted and seat_suppressed are
+		// both stronger claims than seat_silent, so each is reserved for a uniform
+		// cause; any mixture falls back to seat_silent, which is true of all three.
+		//
+		// Scoped to the asked seats because RunDebate short-circuits the remaining
+		// turns on a clean-blank proposer: the challenger's blank statement there
+		// is "never given a turn", and counting it as a cause would make every
+		// suppressed proposer read as a mixture and report seat_silent — the exact
+		// collapse this token exists to undo.
+		blamed := seatsAsked(rec.Asked, silent)
 		ir.Outcome = OutcomeUnresolved
-		ir.Reason = "seat_halted"
-		tr.RecordRuling(RulingEvent{Outcome: OutcomeUnresolved, Reasoning: "seat halted: " + strings.Join(silent, ",")})
+		ir.Reason = ReasonSeatSilent
+		switch {
+		case allSeatsIn(rec.Halted, blamed):
+			ir.Reason = ReasonSeatHalted
+		case allSeatsIn(rec.Suppressed, blamed):
+			ir.Reason = ReasonSeatSuppressed
+		}
+		// The single reason token cannot describe a mixed pair, so the
+		// transcript note labels each seat for itself.
+		notes := seatSilenceNotes(rec.Halted, rec.Suppressed, silent)
+		tr.RecordRuling(RulingEvent{Outcome: OutcomeUnresolved, Reasoning: "no statement: " + strings.Join(notes, ", ")})
+		// The token in debate.json names one cause for the whole item and goes
+		// weak on a mixture; put the per-seat cause next to it and warn, so a seat
+		// that blanks every item (an inline-reasoning endpoint, most often) is
+		// visible to the operator instead of surfacing as a bare Unresolved count.
+		// The notes carry `suppressed` per seat even when the item-level token
+		// fell back to seat_silent, which is the only place a mixture's detail
+		// survives.
+		ir.Reasoning = "no statement: " + strings.Join(notes, ", ")
+		log.FromContext(ctx).Warn("debate: silent arguing seat(s), item unresolved", "seats", strings.Join(notes, ", "))
+		return ir
+	}
+
+	// The strip in driveSeat is leading-only, so a block that sits AFTER the
+	// judge's answer reaches here intact. parseRuling takes the FIRST
+	// outcome-keyed object it finds, and on a reply whose real answer is prose the
+	// draft object inside that block is the ONLY one — so it would become the
+	// debate's ruling. Refuse the reply rather than parse it: a wrong ruling is
+	// durable (it writes a verdict onto the finding), while an unresolved item
+	// leaves the pre-debate verdict standing and is disclosed by its own token.
+	//
+	// Accepted cost, in the safe direction: the detector is position-blind, so a
+	// judge whose reasoning QUOTES a think tag is refused too. That costs one
+	// unresolved item on a reply this repo does produce (findings here discuss
+	// think handling), and withholdExhausted stops it recurring forever.
+	if llmclient.HasThinkMarkup(rec.JudgeRaw) {
+		ir.Outcome = OutcomeUnresolved
+		ir.Reason = ReasonJudgeThinkMarkup
+		ir.Reasoning = "judge reply carries inline think markup; ruling refused"
+		tr.RecordRuling(RulingEvent{Outcome: OutcomeUnresolved, Reasoning: ir.Reasoning})
+		log.FromContext(ctx).Warn("debate: judge reply carries inline think markup, ruling refused", "judge", cast.Judge.Agent)
 		return ir
 	}
 
@@ -543,7 +667,17 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 	ir.ClusterDecision = ruling.ClusterDecision
 	ir.ChallengeSurvived = ruling.ChallengeSurvived()
 	if ruling.Outcome == OutcomeUnresolved {
-		ir.Reason = "unparseable_ruling"
+		// Two distinct failures share the unresolved OUTCOME, so they must not
+		// share the operator-facing reason token: a reply that was ABSENT is
+		// not one that was unparseable. After the think strip an absent judge
+		// reply is the routine outcome on an inline-reasoning endpoint, so
+		// collapsing it into unparseable_ruling hid the misconfiguration the
+		// token exists to name. The finer diagnosis still travels in
+		// ir.Reasoning on both branches.
+		ir.Reason = ReasonUnparseableRuling
+		if ruling.Reasoning == EmptyRulingReasoning {
+			ir.Reason = ReasonEmptyRuling
+		}
 	}
 	if ruling.Outcome == OutcomeSplit {
 		// A split with no settled_severity settles nothing: record no settled
@@ -572,33 +706,155 @@ func splitSeverity(ir ItemResult) string {
 	return ""
 }
 
-// silentArguingSeats returns the halted proposer/challenger seats that left no
+// silentArguingSeats returns the proposer/challenger seats that left no
 // statement. A seat halted by a tripped budget still returns its forced final
-// answer, which the next seats saw, so only an empty statement means that side
+// answer, which the next seats saw, so only an EMPTY statement means that side
 // made no case.
+//
+// Keyed on the statement, not on rec.Halted: a seat that said nothing made no
+// case whether or not the engine halted it. Keying on Halted alone made a
+// StatusOK seat with empty content invisible here, so the judge's one-sided
+// ruling was recorded as a real outcome — and, being written with
+// ChallengeSurvived true, filterAlreadyDebated then skipped that finding on
+// every later run, making the fake win durable. driveSeat's think strip added a
+// second way to reach the same blank (a reply that was entirely think markup),
+// which is how the pre-existing hole was found.
 func silentArguingSeats(rec Record) []string {
 	var silent []string
-	for _, h := range rec.Halted {
-		switch {
-		case h == LabelProposer && strings.TrimSpace(rec.ProposerStatement) == "",
-			h == LabelChallenger && strings.TrimSpace(rec.ChallengerStatement) == "":
-			silent = append(silent, h)
-		}
+	if strings.TrimSpace(rec.ProposerStatement) == "" {
+		silent = append(silent, LabelProposer)
+	}
+	if strings.TrimSpace(rec.ChallengerStatement) == "" {
+		silent = append(silent, LabelChallenger)
 	}
 	return silent
 }
 
-// judgeHalted reports whether the judge seat is among the halted seats. A halted
-// judge yields no ruling at all; a halted proposer/challenger with no statement
-// yields a one-sided one, which debateOne also records unresolved (reason
-// seat_halted).
-func judgeHalted(halted []string) bool {
-	for _, h := range halted {
-		if h == LabelJudge {
-			return true
+// seatsAsked narrows a silent-seat list to the seats that were actually given a
+// turn. A seat RunDebate never reached carries no cause — it is not evidence of
+// anything, so it must not dilute a uniform one (TD internal/debate/debate.go:524).
+// An empty result is unreachable from debateOne's guard: the guard fires only on a
+// blank statement, and a statement can only be blank if its seat was asked or the
+// proposer short-circuit fired, which leaves the proposer itself asked and blank.
+func seatsAsked(asked, seats []string) []string {
+	out := make([]string, 0, len(seats))
+	for _, s := range seats {
+		if slices.Contains(asked, s) {
+			out = append(out, s)
 		}
 	}
-	return false
+	return out
+}
+
+// allSeatsIn reports whether EVERY named seat appears in cause. Each reason token
+// stronger than seat_silent is keyed on all, not any: on a mixed pair, claiming
+// seat_halted would be false of the seat that ran clean, and claiming
+// seat_suppressed would be false of the seat that was genuinely empty. Callers
+// only pass non-empty seat lists (debateOne invokes it inside its silent-seat
+// guard), so an empty list is a programming error rather than a case to answer —
+// matching the harness_unavailable arm's documented defensive posture is
+// unnecessary here because the loop over an empty list vacuously reports true,
+// which only an empty silent set can trigger.
+//
+// Named for the set membership rather than for one cause because debateOne now
+// asks it twice, once per stronger token (TD internal/debate/debate.go:524).
+func allSeatsIn(cause, seats []string) bool {
+	for _, s := range seats {
+		if !slices.Contains(cause, s) {
+			return false
+		}
+	}
+	return true
+}
+
+// seatSilenceNotes labels each silent seat with its own cause for the transcript,
+// which the single reason token cannot do on a mixed pair. Three causes: halted
+// (the engine failed), suppressed (it ran clean and the strip ate its whole
+// reply), and silent (it ran clean and genuinely said nothing). halted wins a tie
+// because a halted turn never reaches the suppression branch in runTurn — the
+// ordering states that invariant rather than relying on it.
+func seatSilenceNotes(halted, suppressed, seats []string) []string {
+	notes := make([]string, 0, len(seats))
+	for _, s := range seats {
+		cause := "silent"
+		switch {
+		case slices.Contains(halted, s):
+			cause = "halted"
+		case slices.Contains(suppressed, s):
+			cause = "suppressed"
+		}
+		notes = append(notes, s+" "+cause)
+	}
+	return notes
+}
+
+// carryUnresolvedAttempts returns the attempt total to record on an unresolved
+// item: the prior total, plus THIS run's attempt only when the reason is
+// evidence about the item (countsTowardWithholding).
+//
+// The prior total is carried forward unchanged otherwise, so an interrupted run
+// neither advances the ceiling nor erases the history earlier real attempts
+// earned.
+//
+// A named function rather than a branch inlined at the one call site, because
+// the branch is only testable if it can be CALLED. While it was inline, the test
+// that claimed to cover "the writer and the reader" re-implemented this
+// arithmetic in its own body — so the assertion was guaranteed by the test's copy
+// of the predicate, and replacing the writer's gate with an unconditional
+// `prior+1` left `go test ./...` green across the whole repo. The reader's half
+// (emit.go's floor) was pinned the whole time; this half was not
+// (TD internal/debate/debate.go:308).
+func carryUnresolvedAttempts(prior int, reason string) int {
+	if countsTowardWithholding(reason) {
+		return prior + 1
+	}
+	return prior
+}
+
+// countsTowardWithholding reports whether an unresolved item's reason is
+// evidence about the ITEM, and so may consume one of its three attempts toward
+// the withholding ceiling.
+//
+// The ceiling is permanent once reached: withholdExhausted drops the item before
+// SelectItems, and priorUnresolvedAttempts floors a withheld record back up on
+// every read, so the count never falls. There is no flag, no expiry, and no exit
+// but hand-editing debate.json. A count that permanent may only be spent on
+// evidence the item itself produced.
+//
+// The four reasons below are environmental — the debate never ran, for a cause
+// outside the item. Counting them meant three interrupted runs permanently
+// withheld every disputed item in the review, and it contradicted this stage's
+// own stated contract ("unresolved items are intentionally retried — roles may
+// have been configured since") for exactly the two roster reasons that contract
+// names. Downstream, a withheld item can never earn a confirmed verdict, so
+// under --require-verified it can never gate CI again (reconcile/gate.go).
+//
+// A DENY-list, deliberately, not an allow-list of the item-evidence reasons. The
+// two differ only on a reason this function has never heard of, and there the
+// defaults are not symmetric: counting an unknown reason over-applies a ceiling
+// an operator can see and diagnose, while NOT counting it silently disables the
+// ceiling and restores the unbounded re-debate loop. New reasons in this stage
+// have overwhelmingly been item evidence (every token added this sprint was), so
+// the deny-list is also the likelier-correct default, not merely the safer one.
+func countsTowardWithholding(reason string) bool {
+	switch reason {
+	case ReasonContextCancelled, ReasonHarnessUnavailable, ReasonInsufficientModels, ReasonNoProposer:
+		return false
+	}
+	return true
+}
+
+// judgeHalted reports whether the judge seat is among the halted seats. A halted
+// judge yields no ruling at all; a proposer/challenger with no statement yields a
+// one-sided one, which debateOne also records unresolved — reason seat_halted
+// when that seat halted, seat_suppressed when the strip emptied its reply, and
+// seat_silent when it ran clean and genuinely said nothing (or on a mixture).
+//
+// Keyed on Halted alone, with no suppression arm: a judge that replies with only
+// a think block leaves JudgeRaw blank, and parseRuling already reports that as
+// the distinct empty_ruling token rather than as a halt.
+func judgeHalted(halted []string) bool {
+	return slices.Contains(halted, LabelJudge)
 }
 
 // tally accumulates per-outcome counts into the run Result.

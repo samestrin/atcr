@@ -166,3 +166,21 @@ func TestGenerateFixes_SnippetSalvaged_PreservesPriorTierFix(t *testing.T) {
 	assert.Equal(t, "an earlier tier's good fix", f.Fix)
 	assert.Empty(t, f.FixWarning, "a salvaged later-tier reply must not warn over an earlier tier's generated fix")
 }
+
+// TD internal/verify/executor.go:371 — the executor_salvaged_reasoning log class was
+// unasserted: deleting its logPipelineWarning call left `go test ./internal/verify/`
+// green, so the log-class split the commit was for was not pinned. A salvage is a
+// content-shape outcome, not a transport one, so it must NOT report as
+// executor_fix_failed.
+func TestGenerateFixes_SnippetSalvaged_LogsItsOwnClass(t *testing.T) {
+	ctx, buf := ceilingCtx()
+	findings := []reconcile.JSONFinding{truncFinding()}
+	generateFixes(ctx, findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), &salvagingExecutor{}, nil, okDispatcher(), 0)
+
+	out := buf.String()
+	assert.Contains(t, out, "executor_salvaged_reasoning",
+		"a salvaged reply must be logged under its own class")
+	assert.NotContains(t, out, "executor_fix_failed",
+		"a salvage is a content-shape outcome; reporting it as a provider/transport failure is the collapse the split undid")
+	assert.Contains(t, out, "a.go:1", "the detail must name the finding the salvage cost")
+}

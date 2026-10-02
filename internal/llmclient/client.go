@@ -159,8 +159,9 @@ type message struct {
 	// it out of request bodies, where this struct is also used.
 	ReasoningContent reasoningText `json:"reasoning_content,omitempty"`
 	// Reasoning is the same chain-of-thought under the key OpenRouter and newer
-	// vLLM use. Read only for the reported reasoning signal (see reasoningOf),
-	// never for the salvage above.
+	// vLLM use. Read via reasoningOf both for the reported reasoning signal AND
+	// as the empty-content salvage fallback above: a provider sending only the
+	// reasoning key does drive the salvage (same precedence as reasoning_content).
 	Reasoning reasoningText `json:"reasoning,omitempty"`
 }
 
@@ -350,8 +351,9 @@ type Completion struct {
 	// StatusOK, not truncated, with chain-of-thought standing in for a review.
 	// Deliberately DISTINCT from Truncated, which is the finish_reason=length
 	// marker with its own consumer set; callers that trust Content as a statement
-	// (the debate seats), a verdict (the skeptic), or a cacheable review (the
-	// engine's diff cache) must check this flag (TD internal/llmclient/client.go:394).
+	// (the debate seats), a verdict (the skeptic), a finding (fanout's findings
+	// parser) or a cacheable review (the engine's diff cache) must check this flag
+	// (TD internal/llmclient/client.go:394).
 	Salvaged bool
 	// Reasoning is the model's reasoning_content, reported on its own whether
 	// or not Content is empty. The empty-Content salvage still copies it into
@@ -401,12 +403,22 @@ func (c *Client) CompleteWithMeta(ctx context.Context, inv Invocation) (Completi
 	salvaged := false
 	if content == "" {
 		// Reasoning model that ran out of output budget mid-thought: salvage the
-		// chain-of-thought so the reviewer still contributes instead of returning
-		// an empty review. Truncated (captured above) is preserved so the caller
-		// still knows this salvaged content is partial, and Salvaged is set so a
-		// caller that trusts Content as a statement/verdict/cacheable review can
+		// chain-of-thought so the reply is DIAGNOSABLE (it reaches review.md and
+		// doctor's hint) instead of being indistinguishable from a dead call. NOT
+		// the transcript: only the tool loop writes one (fanout/loop.go), and
+		// ChatResponse carries no Salvaged field, so a salvaged reply is always a
+		// single-shot reply and has no transcript to appear in. Truncated (captured above) is preserved so the caller still
+		// knows this salvaged content is partial, and Salvaged is set so a caller
+		// that trusts Content as a statement/verdict/finding/cacheable review can
 		// refuse it — on a stop-reason reply Truncated is FALSE here, which is
 		// exactly the silent case (TD internal/llmclient/client.go:394).
+		//
+		// As of sprint 35.16.11.2.2.4 T6, EVERY such caller refuses it: verify
+		// (verify/invoke.go), each debate seat (debate/protocol.go), the diff cache
+		// and now findings parsing (fanout/engine.go). So this no longer means "the
+		// reviewer still contributes a partial review" — that was this block's
+		// original stated purpose and it is deliberately reversed, because a draft
+		// the model abandoned counted as a real finding is worse than no finding.
 		content = reasoningOf(ch.Message.ReasoningContent, ch.Message.Reasoning)
 		salvaged = content != ""
 	}

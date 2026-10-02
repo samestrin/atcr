@@ -24,7 +24,7 @@ import (
 // back in visible content; the rest are failure or warning classes.
 const (
 	StatusOK            = "ok"             // marker found in response content
-	StatusOKWarning     = "ok_warning"     // HTTP 200 but marker absent/empty
+	StatusOKWarning     = "ok_warning"     // HTTP 200 but marker absent/empty, or found only in reasoning the review lane cannot use (salvaged or think-block)
 	StatusAuthFailed    = "auth_failed"    // 401/403
 	StatusNotFound      = "not_found"      // 404 (model or base_url)
 	StatusRateLimited   = "rate_limited"   // 429
@@ -52,7 +52,10 @@ func healthy(status string) bool { return status == StatusOK || status == Status
 // thinkingProbeWorthwhile reports that a thinking verdict is meaningful on a row
 // with this endpoint status: healthy rows always, and failed rows only when the
 // failure is transient (rate limit, provider 5xx, timeout) so a re-run could reach
-// a verdict. Permanent failures — auth, bad model name, transport — repeat
+// a verdict — or when the verdict needs no re-run at all: StatusProviderError
+// also covers permanent 4xx (400/422), which probeThinking resolves to
+// not_honored via its control call, so those rows are probed too. Permanent
+// failures — auth, bad model name, transport — repeat
 // identically, and an unverified verdict on them only buries the real cause.
 func thinkingProbeWorthwhile(status string) bool {
 	switch status {
@@ -270,8 +273,10 @@ type probeResult struct {
 	thinkingStatus string
 	thinkingDetail string
 	// markerInReasoning reports a StatusOKWarning whose marker WAS found, but only in
-	// salvaged reasoning — so consumers that read StatusOKWarning as "marker absent"
-	// can tell the two apart.
+	// reasoning the review lane cannot use — salvaged chain-of-thought (the salvaged
+	// field names that case) or a leading inline think block the lane strips before
+	// parsing — so consumers that read StatusOKWarning as "marker absent" can tell
+	// the two apart.
 	markerInReasoning bool
 	// salvaged reports that the reply carried no content and its reasoning was
 	// promoted into Content — set on BOTH classify salvage branches, so the
@@ -315,6 +320,9 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 			// same way and bury the real cause") those rows get no thinking verdict at
 			// all rather than a second, competing warning. Transient classes — 429, a
 			// 5xx, a timeout — keep unverified: a retry really can reach a verdict.
+			// The 4xx members of provider_error (400/422) are permanent, but
+			// probeThinking resolves them to not_honored via its control call — a
+			// verdict that needs no retry — so they are probed too.
 			// A cut-off reply is the exception: its empty-completion error classifies
 			// as network_error, yet it is the runaway thinker the verdict exists to
 			// name, so it still gets one carrying the cut-off remedy.
@@ -488,11 +496,10 @@ func zeroBudgetVerdict(model string, window, maxTokens, probeMaxTokens int, stat
 	// A tool-loop agent is sized with the replayed-reasoning reserve on top of
 	// its cap, so the hint names it: the window the operator sees can hold the
 	// cap alone, and "no input budget" would otherwise read as a wrong sum.
-	reserveClause := ""
-	if toolLoop {
-		reserveClause = fmt.Sprintf(", the %d-token replayed-reasoning reserve its tool loop holds back (%d× that cap)",
-			maxTokens*payload.ReasoningReplayReserveCaps, payload.ReasoningReplayReserveCaps)
-	}
+	// One wording for both lanes: review's zero-budget warnings print the same
+	// clause from the same helper, so doctor cannot describe a reservation review
+	// states differently (TD internal/fanout/review.go:3103).
+	reserveClause := payload.ReasoningReserveClause(toolLoop, maxTokens)
 	lead := "endpoint is healthy, but"
 	if status == StatusOKWarning {
 		// Contradict the marker-absent remedy explicitly. An operator who reads only the
@@ -749,6 +756,23 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 					salvaged:          true,
 				}
 			}
+			// The review lane parses the reply with a leading think block stripped
+			// off (fanout.Result.parseFindings), so a marker that lives only inside
+			// that block is invisible to the lane this probe pre-flights. Reading
+			// raw content reported a clean StatusOK for exactly that shape - the
+			// pre-flight calling a healthy endpoint an agent whose every review will
+			// be discarded (TD internal/doctor/run.go:737). Mirror the salvaged
+			// branch above: a StatusOKWarning naming the channel the marker was
+			// found in, so a consumer that reads StatusOKWarning as "marker absent"
+			// can still tell the two apart.
+			if answer, _ := llmclient.SplitThink(stripped); !strings.Contains(answer, Marker(nonce)) {
+				return probeResult{
+					status:            StatusOKWarning,
+					latencyMS:         latencyMS,
+					hint:              "the nonce marker was found only inside inline <think> reasoning, which the review lane strips before parsing - inline reasoning is not an answer; repoint the agent to a model that answers with content",
+					markerInReasoning: true,
+				}
+			}
 			return probeResult{status: StatusOK, latencyMS: latencyMS}
 		}
 		// The remedy names the knob that capped THIS probe. Which one that is depends on
@@ -954,7 +978,15 @@ func responseFormatCall(ctx context.Context, c Completer, tgt Target, opts Optio
 	// JSON mode guarantees one bare object. The parser alone is not enough: it also
 	// reads a fenced block or prose around the value, which is exactly what a model
 	// produces when the provider drops response_format.
-	s := strings.TrimSpace(content)
+	//
+	// Read the same operand the review lane reads: it parses the reply with a leading
+	// think block stripped off (fanout.Result.parseFindings), so a JSON-mode reply
+	// that OPENS with such a block is a clean review to the lane this probe
+	// pre-flights. Checking the raw content called that declaration broken, a false
+	// misdiagnosis on exactly the thinking-inline endpoints doctor exists to check
+	// (TD internal/doctor/run.go:958).
+	answer, _ := llmclient.SplitThink(content)
+	s := strings.TrimSpace(answer)
 	if s == "" || s[0] != '{' || !json.Valid([]byte(s)) {
 		if len(toolDefs) > 0 {
 			return ResponseFormatNotHonored, "declared " + declared + ", but the reply was neither a tool call nor a bare JSON object; the provider likely ignored response_format"
@@ -995,17 +1027,6 @@ func thinkingDeclaration(t Target) string {
 // registry spells it: "off", the declared level (a level implies on), or "on".
 // "" when the target declares no thinking or no verdict was reached, so the
 // field stays omitted exactly when ThinkingStatus is (TD cli/doctor.go:255).
-// thinkingPreserveForm returns the target's declared preserve_thinking value
-// when a verdict was reached, "" otherwise — mirroring thinkingDeclaredForm's
-// omission rule so the field is present exactly when the verdict can name the
-// flag as a culprit.
-func thinkingPreserveForm(t Target, status string) string {
-	if status == "" || !t.declaresThinking() {
-		return ""
-	}
-	return t.PreserveThinking
-}
-
 func thinkingDeclaredForm(t Target, status string) string {
 	if status == "" || !t.declaresThinking() {
 		return ""
@@ -1017,6 +1038,17 @@ func thinkingDeclaredForm(t Target, status string) string {
 		return t.ThinkingLevel
 	}
 	return registry.ThinkingOn
+}
+
+// thinkingPreserveForm returns the target's declared preserve_thinking value
+// when a verdict was reached, "" otherwise — mirroring thinkingDeclaredForm's
+// omission rule so the field is present exactly when the verdict can name the
+// flag as a culprit.
+func thinkingPreserveForm(t Target, status string) string {
+	if status == "" || !t.declaresThinking() {
+		return ""
+	}
+	return t.PreserveThinking
 }
 
 // reasoningSignal describes the reasoning a reply carried, or "" when it carried
@@ -1037,32 +1069,31 @@ func reasoningSignal(comp llmclient.Completion) string {
 	return strings.Join(parts, " and ")
 }
 
-// inlineThinking reports non-blank reasoning text in the content: any
-// <think>…</think> pair carrying text, or a trailing unclosed <think> after its
-// opener. It scans EVERY pair — an empty first pair is what a hybrid chat
-// template emits when thinking is off, and a template that emits one can emit
-// a real block after it. Text requires an opener: the doctor's marker prompt
-// contains no <think>, so a stray closer with none is template noise, never
-// the model's answer being misread as reasoning.
+// inlineThinking reports non-blank reasoning text in the content. It is a thin
+// wrapper over llmclient.HasThinkMarkup, which owns every tag rule; see its doc
+// comment. Doctor keeps no tag matching of its own.
+//
+// HasThinkMarkup and llmclient.SplitThink share the tag LITERALS but not the tag
+// RULES, so the probe and the review lane can disagree about what a think block
+// LOOKS LIKE, not merely about what to do with one. The live disagreement is the
+// bare closer: a lone </think> with text before it is markup to the detector
+// (position-blind — HasThinkMarkup) and no tag at all to the strip, which is
+// leading-only and leaves it in place (SplitThink). That rule difference is what
+// flipped this probe's verdict when doctor adopted the detector; it is pinned by
+// TestInlineThinkingDivergesFromTheStripOnABareCloser, so narrowing either side is
+// a deliberate change with a failing test.
+//
+// The two BEHAVIOURAL divergences the same sprint opened are closed, each by
+// reading the operand the review lane reads: responseFormatCall strips a leading
+// block before its bare-object check (TD internal/doctor/run.go:958) and classify
+// now checks the marker against the stripped answer (TD internal/doctor/run.go:737).
+// A reply the review lane parses as clean is no longer a probe failure here.
+//
+// It reads the DETECTOR, not llmclient.SplitThink's leading-only strip: this
+// prompt provably contains no tag, so a block after the marker is not the model
+// quoting one — it is the runaway thinker the verdict exists to name.
 func inlineThinking(content string) bool {
-	const open, close = "<think>", "</think>"
-	rest := content
-	for {
-		start := strings.Index(rest, open)
-		if start < 0 {
-			return false // no opener anywhere: no signal
-		}
-		rest = rest[start+len(open):]
-		end := strings.Index(rest, close)
-		if end < 0 {
-			// Left open: everything after the opener is reasoning-in-progress.
-			return strings.TrimSpace(rest) != ""
-		}
-		if strings.TrimSpace(rest[:end]) != "" {
-			return true
-		}
-		rest = rest[end+len(close):]
-	}
+	return llmclient.HasThinkMarkup(content)
 }
 
 // probeThinking classifies whether the provider honored the target's thinking

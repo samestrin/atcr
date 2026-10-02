@@ -112,6 +112,13 @@ func TestRun_ThinkingVerdict(t *testing.T) {
 	// of on a reasoning channel, and a proxy can still report 0 reasoning tokens.
 	inlineThink := llmclient.Completion{Content: "<think>plan the reply</think>\n" + Marker(testNonce)}
 	withEmptyThink := llmclient.Completion{Content: "<think>\n\n</think>\n" + Marker(testNonce)}
+	// Two hybrid-template shapes the detector must not miss: a reply that started
+	// mid-thought and then emitted an empty pair, and one whose empty FIRST pair is
+	// followed by a mid-thought closer. Both are visibly reasoning inline on a
+	// `thinking: off` target, and a false-clean verdict is the direction that stops
+	// the operator investigating (TD internal/doctor/run.go:1055).
+	midThoughtThenEmptyPair := llmclient.Completion{Content: "draft reasoning</think>" + Marker(testNonce) + "<think></think>"}
+	emptyPairThenMidThought := llmclient.Completion{Content: "<think></think>draft reasoning</think>" + Marker(testNonce)}
 	inlineThinkReportedZero := inlineThink
 	inlineThinkReportedZero.Usage = llmclient.UsageData{ReasoningTokensReported: true}
 
@@ -186,6 +193,10 @@ func TestRun_ThinkingVerdict(t *testing.T) {
 			wantStatus: ThinkingHonored, wantCalls: 2},
 		{name: "off, inline think tags", thinking: "off", style: "qwen", declared: inlineThink,
 			wantStatus: ThinkingNotHonored, wantCalls: 1, wantDetail: []string{"inline <think> reasoning in the content"}},
+		{name: "off, mid-thought closer then a trailing empty pair", thinking: "off", style: "qwen", declared: midThoughtThenEmptyPair,
+			wantStatus: ThinkingNotHonored, wantCalls: 1, wantDetail: []string{"inline <think> reasoning in the content"}},
+		{name: "off, empty first pair then a mid-thought closer", thinking: "off", style: "qwen", declared: emptyPairThenMidThought,
+			wantStatus: ThinkingNotHonored, wantCalls: 1, wantDetail: []string{"inline <think> reasoning in the content"}},
 		{name: "off, reported zero but inline think tags", thinking: "off", style: "qwen", declared: inlineThinkReportedZero,
 			wantStatus: ThinkingNotHonored, wantCalls: 1},
 		// An empty think pair or blank reasoning is what a hybrid template emits
@@ -199,14 +210,39 @@ func TestRun_ThinkingVerdict(t *testing.T) {
 		// An opener followed only by whitespace carries no reasoning: no signal.
 		{name: "off, unclosed think with blank remainder", thinking: "off", style: "qwen", declared: llmclient.Completion{Content: "<think>   "}, control: thinks,
 			wantStatus: ThinkingHonored, wantCalls: 2, notDetail: []string{"inline <think> reasoning in the content"}},
-		// A stray closing tag with no opener can only be template noise on this
-		// probe (the marker prompt contains no <think>), so it is not a signal —
-		// the model's actual answer must not be counted as reasoning.
-		{name: "off, closing tag only", thinking: "off", style: "qwen", declared: llmclient.Completion{Content: "planning the reply</think>\n" + Marker(testNonce)}, control: thinks,
-			wantStatus: ThinkingHonored, wantCalls: 2, notDetail: []string{"inline <think> reasoning in the content"}},
+		// A closing tag with no opener anywhere IS a signal: a reasoning-style chat
+		// template can put the opener in the prompt, so the reply starts mid-thought
+		// and carries only the closer, and the text before it is reasoning.
+		// (classify reads the raw content for the marker, so this detection never
+		// touches marker validation.)
+		{name: "off, closing tag only", thinking: "off", style: "qwen", declared: llmclient.Completion{Content: "planning the reply</think>\n" + Marker(testNonce)},
+			wantStatus: ThinkingNotHonored, wantCalls: 1, wantDetail: []string{"inline <think> reasoning in the content"}},
+		// Detection is position-blind, unlike the review lanes' leading-only strip:
+		// this prompt contains no tag, so a block after the answer is not the model
+		// quoting one. Phase 1 review decision, 2026-09-30.
+		{name: "off, think pair after answer text", thinking: "off", style: "qwen", declared: llmclient.Completion{Content: "answer <think>x</think> more\n" + Marker(testNonce)},
+			wantStatus: ThinkingNotHonored, wantCalls: 1, wantDetail: []string{"inline <think> reasoning in the content"}},
+		// The runaway thinker probeThinking exists to name: the model answers, then
+		// keeps thinking until the cap cuts it off. A leading-only rule would miss it.
+		{name: "off, unclosed think block after the answer", thinking: "off", style: "qwen", declared: llmclient.Completion{Truncated: true, Content: Marker(testNonce) + "\n<think>let me double check"},
+			wantStatus: ThinkingNotHonored, wantCalls: 1, wantDetail: []string{"inline <think> reasoning in the content"}},
 		// An empty first pair must not hide a real think block after it.
 		{name: "off, empty pair then real think block", thinking: "off", style: "qwen", declared: llmclient.Completion{Content: "<think></think><think>real reasoning</think>answer"},
 			wantStatus: ThinkingNotHonored, wantCalls: 1, wantDetail: []string{"inline <think> reasoning in the content"}},
+		// The sprint's flip gave up this direction, so pin it: an ANSWER that mentions a
+		// tag the detector must NOT count stays out of the reasoning signal. Here the
+		// answer names a VARIANT closer (</thinking>, the spelling SplitThink's doc calls
+		// out), which is a tag to neither helper, so the reply is judged on its
+		// reasoning channels alone and the control call carries the verdict.
+		{name: "off, answer mentions a variant closer", thinking: "off", style: "qwen",
+			declared: llmclient.Completion{Content: "I never look for </thinking> markers\n" + Marker(testNonce)}, control: thinks,
+			wantStatus: ThinkingHonored, wantCalls: 2, notDetail: []string{"inline <think> reasoning in the content"}},
+		// The control-call skip under `thinking: on` is deliberate: a lone closer IS a
+		// signal to the position-blind detector, and a signal on the declared call
+		// decides alone, so no control call is placed.
+		{name: "on, closing tag only, signal decides alone", thinking: "on", style: "qwen",
+			declared:   llmclient.Completion{Content: "planning the reply</think>\n" + Marker(testNonce)},
+			wantStatus: ThinkingHonored, wantCalls: 1},
 		// An empty reply cut off at the cap is the runaway thinker the verdict exists
 		// to name: it classifies as network_error, yet must still get a verdict that
 		// carries the cut-off remedy (TD internal/doctor/run.go:994).

@@ -276,17 +276,71 @@ func promoteDiffTruncation(r Result) Result {
 // changing one requires changing both. An HTML comment so rendered markdown
 // hides it, and it carries no backtick/tilde run a fence scanner could read as
 // a marker.
+//
+// Engine-owned framing: model content may never produce this literal on a line
+// of its own. Two writers enforce that, because review.md has two producers.
+// joinChunkContents neutralises any chunk output line that does before splicing
+// real boundaries; writeAgentArtifacts neutralises an UNCHUNKED agent's reply,
+// which the join never sees. Either gap passes a forged marker through and lets
+// it reshape how reconcile splits the merged review.md.
 const chunkBoundaryLine = "<!-- atcr:chunk-boundary -->"
 
 // joinChunkContents newline-joins chunk outputs, inserting chunkBoundaryLine
 // between them when more than one chunk produced content. Fewer than two
-// content chunks join exactly as before, so a single-call persona's review.md
-// is byte-identical to its model output.
+// content chunks insert no delimiter, so a single-call persona's review.md is
+// its model output — neutralised, which is the one way it can differ.
+//
+// The delimiter is engine-owned framing that model content may never produce:
+// internal/reconcile's chunkSegmentBounds splits the joined text on exact line
+// equality with chunkBoundaryLine, so a chunk carrying the literal on a line of
+// its own would let a reviewer model forge a boundary in review.md and shrink
+// or empty every justification excerpt after it. Lines exactly equal to the
+// delimiter are therefore neutralised (annotated, so they can no longer match
+// the split predicate) before joining; only the delimiters this function
+// inserts itself survive verbatim. Pinned by
+// TestJoinChunkContents_ModelForgedBoundaryIsNeutralised.
 func joinChunkContents(contents []string) string {
-	if len(contents) < 2 {
-		return strings.Join(contents, "\n")
+	// Neutralise FIRST, for every length. The short-circuit below inserts no
+	// delimiter of its own, which is exactly why it must still run: a one-element
+	// join — the ordinary outcome when a persona's payload fits a single chunk —
+	// would otherwise pass a model-issued delimiter through untouched, and every
+	// exact match in that output is a forgery by construction.
+	neutralised := make([]string, len(contents))
+	for i, c := range contents {
+		neutralised[i] = neutraliseChunkBoundary(c)
 	}
-	return strings.Join(contents, "\n"+chunkBoundaryLine+"\n")
+	if len(neutralised) < 2 {
+		return strings.Join(neutralised, "\n")
+	}
+	return strings.Join(neutralised, "\n"+chunkBoundaryLine+"\n")
+}
+
+// neutraliseChunkBoundary rewrites any line of content exactly equal to
+// chunkBoundaryLine so it can no longer be read as a chunk boundary by an
+// exact-line-equality splitter, while staying a visible HTML comment in the
+// rendered markdown. Only the exact literal matches — near-miss lines were
+// never boundaries and are left untouched.
+func neutraliseChunkBoundary(content string) string {
+	if !strings.Contains(content, chunkBoundaryLine) {
+		return content
+	}
+	neutral := "<!-- atcr:chunk-boundary (model-issued copy; not a chunk delimiter) -->"
+	lines := strings.Split(content, "\n")
+	for i, ln := range lines {
+		if ln == chunkBoundaryLine {
+			lines[i] = neutral
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// chunkBin is one content-bearing chunk output of a merge group, captured with
+// its salvage flag at the moment the bin was emitted. Holding the pair in one
+// value keeps the derived chunkContents/chunkSalvaged slices aligned by
+// construction instead of by two appends sharing a branch.
+type chunkBin struct {
+	content  string
+	salvaged bool
 }
 
 // mergeResultGroup folds N chunk results for one persona into a single result.
@@ -311,6 +365,11 @@ func joinChunkContents(contents []string) string {
 // by the same model. When chunks fell back to different models, pick the modal
 // (most frequent) model, tie-breaking by first appearance, instead of joining them
 // into a composite value that would never match another persona's key.
+//
+// NOT IDEMPOTENT: g must hold RAW per-chunk results — re-merging an
+// already-merged element makes parseFindings refuse the persona wholesale.
+// Unreachable today: mergeChunkResults is the only caller and single-element
+// groups short-circuit before here.
 func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	out := g[0] // inherit stable per-slot identity (Agent, PayloadMode, constraints); Model is re-derived below
 	out.Err = nil
@@ -329,6 +388,8 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	// produced. Reset so ParsedFindingCount recomputes from the merged content.
 	out.parsedFindingCount = 0
 	out.parsedFindingCountSet = false
+	out.parsedFindings = nil
+	out.parsedFindingsSet = false
 	out.UnparseableChunks = 0 // counted below over every chunk, g[0] included
 	// Chunk-level serving identity does not survive the collapse: the merged
 	// Result is a persona record, so inheriting chunk 0's served tag would name
@@ -342,7 +403,15 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 
 	isSerial := serialSet[out.Agent]
 
-	var contents []string
+	// One struct per emitted bin holds content and salvage flag TOGETHER, so the
+	// index alignment the per-bin refusal in parseFindings depends on is
+	// unrepresentable to break — a bin and its flag are appended in a single
+	// statement, not by two appends whose pairing a refactor could split. (The
+	// persona-wide out.Salvaged folded further down cannot say WHICH bin salvaged,
+	// and refusing on it would discard a clean sibling bin's committed findings —
+	// so a bin skipped here must be skipped in the join too. Pinned by
+	// TestMergeResultGroup_EmptyChunkKeepsSalvageFlagsAligned.)
+	var bins []chunkBin
 	var firstErr error
 	okCount := 0
 	anyOK, sawTimeout, allCacheHit := false, false, true
@@ -364,7 +433,7 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 			servedModelPrimary[k] = servedModelPrimary[k] || !r.FallbackUsed
 		}
 		if strings.TrimSpace(r.Content) != "" {
-			contents = append(contents, r.Content)
+			bins = append(bins, chunkBin{content: r.Content, salvaged: r.Salvaged})
 		}
 		out.TokensIn += r.TokensIn
 		out.TokensOut += r.TokensOut
@@ -404,6 +473,20 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 			out.ToolsDegradedReason = r.ToolsDegradedReason
 		}
 		out.ResponseTruncated = out.ResponseTruncated || r.ResponseTruncated
+		// Same shape as the line above, and the same reason for OR-ing rather than
+		// reading g[0]: a clean bin 0 must not be able to hide a salvaged bin 2. The
+		// fold is computed from the GROUP only — out starts from g[0], but g[0] is
+		// looped below like every other element, so no element's bit is double-counted
+		// and no re-merge can inherit a stale persona-wide value.
+		//
+		// The fold's consumers today: parseFindings's misalignment fail-closed branch
+		// (the only code that READS a merged result's Salvaged) and the persona-level
+		// record itself — the merged Result must truthfully describe the persona it
+		// represents, because a false negative here is the kind of thing a later
+		// consumer inherits silently. The diff cache gate is NOT a consumer: it lives
+		// in invokeCachedSingleShot and runs per chunk slot, BEFORE this merge, on the
+		// raw per-chunk flag.
+		out.Salvaged = out.Salvaged || r.Salvaged
 		// Count every chunk that returned prose no parser could use; reading only
 		// g[0]'s flag hid a later chunk's failure from status.json.
 		if r.UnparseableResponse {
@@ -434,13 +517,24 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 			}
 		}
 	}
+	var contents []string
+	var salvagedFlags []bool
+	for _, b := range bins {
+		contents = append(contents, b.content)
+		salvagedFlags = append(salvagedFlags, b.salvaged)
+	}
 	out.Content = joinChunkContents(contents)
 	out.chunkContents = contents
+	out.chunkSalvaged = salvagedFlags
 	// The persona-level flag keeps its documented meaning: content with zero
 	// parseable findings in total. One garbled chunk beside a chunk with findings
 	// is only counted, so the persona is not scored unparseable or dropped from
 	// trust for findings it did produce.
-	out.UnparseableResponse = out.UnparseableChunks > 0 && out.ParsedFindingCount() == 0
+	// ParsedFindingCount FIRST: the memo must be populated even when
+	// UnparseableChunks is 0 (the common clean chunked persona), so findingsFor's
+	// cached-zero short-circuit can fire instead of re-parsing every bin. The
+	// predicate's value is identical either way; only the memo's reach differs.
+	out.UnparseableResponse = out.ParsedFindingCount() == 0 && out.UnparseableChunks > 0
 	out.CacheHit = allCacheHit
 	// Model names the model that served most of the persona's successful chunks,
 	// not chunk 0's: a chunk 0 that failed over to a backup would otherwise record

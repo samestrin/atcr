@@ -1119,7 +1119,7 @@ func opportunityUnions(records []Record) map[string]map[string]struct{} {
 // across every reviewer's CategoriesRaised. Unioning across the whole store
 // instead would make every lens permanently in-remit after one broad run.
 //
-// THREE KINDS OF RECORD ARE NEVER JUDGED, and each would be a distinct silent
+// FOUR KINDS OF RECORD ARE NEVER JUDGED, and each would be a distinct silent
 // failure:
 //
 //   - AGGREGATES pass through, matching eligibleOutcomeRuns and unresolvedEraRuns

@@ -1866,7 +1866,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// toolLoop mirrors the runtime choice: the harness is wired only when the
 		// range has a head (Run), so a range-less review (baseline, diff ingestion)
 		// degrades a tool agent to single-shot and it replays no reasoning.
-		toolLoop := ac.Tools && ac.SupportsFC && rng.Head != ""
+		toolLoop := toolLoopAgent(ac, rng)
 		agentBudget := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, payload.SizingOutputTokens(toolLoop, agentMaxTokens))
 		// agentWindow is the same resolution, in tokens. Both are resolved ONCE here
 		// and referenced everywhere below: this pair was previously recomputed inline
@@ -2289,8 +2289,11 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					}
 				}
 				if warnOversized {
-					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap and the fixed prompt overhead are reserved (effective budget 0); chunking at the %d-line floor (may overflow) rather than sizing to the window — %s\n",
-						name, agentWindow, agentMaxTokens, ml, zeroBudgetRemedy)
+					// The reserve clause comes from the same helper doctor's zero-budget
+					// hint uses: naming only the unreserved cap made the window-vs-cap
+					// sum on screen look like it fit (TD internal/fanout/review.go:3103).
+					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap%s and the fixed prompt overhead are reserved (effective budget 0); chunking at the %d-line floor (may overflow) rather than sizing to the window — %s\n",
+						name, agentWindow, agentMaxTokens, payload.ReasoningReserveClause(toolLoop, agentMaxTokens), ml, zeroBudgetRemedy)
 				}
 			}
 			chunks := chunkDiff(mp.Text, ml)
@@ -2641,8 +2644,8 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				// operator's next action is to change one of the two declarations, and
 				// "effective budget 0" alone does not say which number to change or
 				// what it has to clear.
-				fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap and the fixed prompt overhead are reserved (effective budget 0); sending only the smallest file (%s) instead of the whole payload — %s\n",
-					name, agentWindow, agentMaxTokens, smallest.Path, zeroBudgetRemedy)
+				fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap%s and the fixed prompt overhead are reserved (effective budget 0); sending only the smallest file (%s) instead of the whole payload — %s\n",
+					name, agentWindow, agentMaxTokens, payload.ReasoningReserveClause(toolLoop, agentMaxTokens), smallest.Path, zeroBudgetRemedy)
 			}
 		}
 		if appliedBudget > 0 && len(mp.Entries) > 0 {
@@ -2846,6 +2849,20 @@ const (
 	degradationOverflow = "overflow"
 )
 
+// toolLoopAgent reports whether this agent will actually run the tool loop, which
+// is what puts the replayed-reasoning reserve on top of its output cap: its lane
+// requests tools, its model declares function calling, and the range has a head (the
+// harness is wired only there — a range-less review degrades a tool agent to
+// single-shot, and it then replays nothing).
+//
+// One predicate, because three places need the same answer: the sizing above, the
+// zero-budget warnings, and renderAgent's reservation record. Two of them used to
+// derive it independently and the record did not derive it at all (TD
+// internal/fanout/review.go:3103).
+func toolLoopAgent(ac registry.AgentConfig, rng ReviewRange) bool {
+	return ac.Tools && ac.SupportsFC && rng.Head != ""
+}
+
 type agentSizing struct {
 	effectiveBudget int64 // per-agent input byte budget the payload was sized to (0 = unsized)
 	// ContextWindowTokens(model, declared) — the window in tokens, from the
@@ -2933,8 +2950,10 @@ type cacheKeyInputs struct {
 // max_tokens to fix an empty review would otherwise replay the cached empty review
 // and read the setting as inert — defeating the field's own documented motivation.
 //
-// A cap EQUAL to defaultMaxTokens collapses to the pre-existing token, so every
-// on-disk entry written by an agent that never declared a cap stays valid.
+// A cap EQUAL to defaultMaxTokens collapses to the pre-existing token. That
+// backward-compat property held only before the kv=2 key-version bump below;
+// since the bump, every on-disk entry written by an older binary is invalidated
+// exactly once (a one-time miss), regardless of cap.
 //
 // min_severity/max_findings are deterministic post-LLM filters and are correctly NOT
 // in the key.
@@ -2960,7 +2979,8 @@ func diffCacheKey(prompt string, in cacheKeyInputs) string {
 	}
 	// Same NUL-separated append, same backward-compat rule: the embedded default
 	// collapses to the token above (and so does a 0, which resolveMaxTokens treats as
-	// "unset"), so no key written before the cap became per-agent is invalidated.
+	// "unset"). Before the kv=2 bump, no key written before the cap became per-agent
+	// was invalidated; since the bump, all older entries are invalidated once anyway.
 	if in.MaxTokens > 0 && in.MaxTokens != defaultMaxTokens {
 		tuning = tuning + "\x00mt=" + strconv.Itoa(in.MaxTokens)
 	}
@@ -3106,8 +3126,18 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 	// reservation follows the budget, the quantity that pays for it.
 	agentMaxTokens := maxTokensFor(cfg, ac)
 	reservedOut := 0
+	// reasoningReserve is the EXTRA reservation a tool-loop agent's sizing holds back
+	// on top of reservedOut. It is recorded separately rather than folded into
+	// reserved_output_tokens, whose value is pinned as the output cap by
+	// TestBuildSlots_ToolLoopAgentReservesReplayedReasoning — so an operator
+	// reconciling resolved_window against the record reads the two together and gets
+	// the budget the run actually had (TD internal/fanout/review.go:3103).
+	reasoningReserve := 0
 	if sz.effectiveBudget > 0 {
 		reservedOut = agentMaxTokens
+		if toolLoopAgent(ac, rng) {
+			reasoningReserve = agentMaxTokens * payload.ReasoningReplayReserveCaps
+		}
 	}
 	return Agent{
 		Name:     name,
@@ -3136,15 +3166,16 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 		// invokeAgent can scale the deadline by ChunkTotal and stamp the
 		// diagnosability fields onto the Result. chunkMaxLines is kept for
 		// buildFallbackAgent to reuse this slot's chunk regime.
-		ChunkTotal:           sz.chunkTotal,
-		EffectiveBudget:      sz.effectiveBudget,
-		ResolvedWindow:       sz.resolvedWindow,
-		ReservedOutputTokens: reservedOut,
-		ResolvedMaxTokens:    agentMaxTokens,
-		DegradationAction:    sz.action,
-		chunkMaxLines:        sz.maxLines,
-		swap:                 formatSwap,
-		payloadStart:         payloadStart,
+		ChunkTotal:             sz.chunkTotal,
+		EffectiveBudget:        sz.effectiveBudget,
+		ResolvedWindow:         sz.resolvedWindow,
+		ReservedOutputTokens:   reservedOut,
+		ReasoningReserveTokens: reasoningReserve,
+		ResolvedMaxTokens:      agentMaxTokens,
+		DegradationAction:      sz.action,
+		chunkMaxLines:          sz.maxLines,
+		swap:                   formatSwap,
+		payloadStart:           payloadStart,
 		// Diff-cache key (Epic 5.2): derived from the full rendered prompt + model
 		// + temperature + the per-agent sizing token (Epic 19.10 F7, see
 		// diffCacheKey). Tool agents carry a key too but the engine never caches them
@@ -3441,7 +3472,13 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// all three with its own bulk-sized record (ChunkTotal 1, chunkMaxLines 0, and
 	// the re-fit's own truncate/overflow action).
 	fbMaxTokens := maxTokensFor(cfg, ac)
-	fbBudget := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, payload.SizingOutputTokens(primary.Tools && ac.SupportsFC && refit.rng.Head != "", fbMaxTokens))
+	// Bound ONCE and reused by the sizing, both reservation records, and the re-fit
+	// arm below. A fallback takes `tools` from its primary but declares function
+	// calling for itself, so this is not toolLoopAgent's predicate — it was inline
+	// here while the record derived nothing at all, which is how the reserve got
+	// sized and then not reported (TD internal/fanout/review.go:3103).
+	fbToolLoop := primary.Tools && ac.SupportsFC && refit.rng.Head != ""
+	fbBudget := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, payload.SizingOutputTokens(fbToolLoop, fbMaxTokens))
 	fbWindow := payload.ContextWindowTokens(ac.Model, ac.ContextWindowTokens)
 	// Gate the reservation on the BUDGET, not the window. ContextWindowTokens never
 	// returns 0 by contract (contextwindow.go), so a window test is a dead branch —
@@ -3450,9 +3487,12 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// and no effective_budget field at all (omitempty on the zero budget). The
 	// budget is the quantity that actually funds the output cap, so an agent whose
 	// window cannot fund it now honestly reports reserving nothing.
-	fbReserved := 0
+	fbReserved, fbReasoningReserve := 0, 0
 	if fbBudget > 0 {
 		fbReserved = fbMaxTokens
+		if fbToolLoop {
+			fbReasoningReserve = fbMaxTokens * payload.ReasoningReplayReserveCaps
+		}
 	}
 	// Epic 35.16.5.1 AC4: resolving the fallback's OWN window above is only half the
 	// guarantee. The prompt it inherits was sized to the PRIMARY's window, so a
@@ -3638,9 +3678,12 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 				// gating on fbBudget here would re-create the self-contradictory
 				// record 35.16.5.1 removed: effective_budget absent (0, omitempty)
 				// beside reserved_output_tokens 8192.
-				fbReserved = 0
+				fbReserved, fbReasoningReserve = 0, 0
 				if fbSizingBudget > 0 {
 					fbReserved = fbMaxTokens
+					if fbToolLoop {
+						fbReasoningReserve = fbMaxTokens * payload.ReasoningReplayReserveCaps
+					}
 				}
 				// It also marks the agent as re-packed, which is what stops baseline
 				// coverage from inferring "every slot succeeded → the whole payload was
@@ -3731,16 +3774,17 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		// A re-fit fallback (Epic 35.16.5.4 T4) instead records ONE payload of its
 		// own — ChunkTotal 1, the bulk maxLines sentinel, and the budget its payload
 		// was really sized to — because the slot's split is not the one it follows.
-		ChunkTotal:           fbChunkTotal,
-		EffectiveBudget:      fbSizingBudget,
-		ResolvedWindow:       fbWindow,
-		ReservedOutputTokens: fbReserved,
-		ResolvedMaxTokens:    fbMaxTokens,
-		DegradationAction:    fbDegradation,
-		chunkMaxLines:        fbMaxLines,
-		swap:                 fbSwap,
-		payloadStart:         fbPayloadStart,
-		rePacked:             refitted,
+		ChunkTotal:             fbChunkTotal,
+		EffectiveBudget:        fbSizingBudget,
+		ResolvedWindow:         fbWindow,
+		ReservedOutputTokens:   fbReserved,
+		ReasoningReserveTokens: fbReasoningReserve,
+		ResolvedMaxTokens:      fbMaxTokens,
+		DegradationAction:      fbDegradation,
+		chunkMaxLines:          fbMaxLines,
+		swap:                   fbSwap,
+		payloadStart:           fbPayloadStart,
+		rePacked:               refitted,
 		// The coverage tag of the payload this agent actually reviews (Epic
 		// 35.16.5.4 T3): the primary's chunk when it ships the inherited payload,
 		// the kept subset when it re-fit.

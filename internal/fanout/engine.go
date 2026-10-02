@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -177,7 +178,15 @@ type Agent struct {
 	EffectiveBudget      int64
 	ResolvedWindow       int
 	ReservedOutputTokens int
-	DegradationAction    string
+	// ReasoningReserveTokens is the EXTRA output-token reservation a tool-loop
+	// agent's sizing holds back for replayed reasoning, on top of
+	// ReservedOutputTokens. 0 for a single-shot agent (it replays nothing) and for an
+	// unfunded one. Separate from ReservedOutputTokens because that field's value is
+	// the resolved output cap and is pinned as such; the two are read together to
+	// recover the reservation the payload was actually sized against
+	// (TD internal/fanout/review.go:3103).
+	ReasoningReserveTokens int
+	DegradationAction      string
 
 	// ResolvedMaxTokens is the output cap resolved for this agent, recorded
 	// UNCONDITIONALLY whenever the agent was sized — unlike ReservedOutputTokens,
@@ -393,7 +402,9 @@ type Result struct {
 	// reasoning as a purported review. The diff cache refuses to store it (a
 	// later same-diff run would replay the reasoning as a clean review), and
 	// consumers that trust Content as a statement or verdict (debate seats,
-	// the skeptic) must read it (TD internal/llmclient/client.go:394).
+	// the skeptic) must read it (TD internal/llmclient/client.go:394). So does
+	// this package's own findings parser: parseFindings refuses a salvaged
+	// reply outright (T6, sprint 35.16.11.2.2.4).
 	Salvaged bool
 
 	// UnparseableResponse marks a StatusOK reviewer response that carried content
@@ -405,6 +416,15 @@ type Result struct {
 	// opposite things. The unambiguous shape (no content at all) is handled by
 	// the failover gate instead, and never sets this.
 	UnparseableResponse bool
+
+	// ThinkSuppressed marks a StatusOK reply whose ENTIRE content was consumed
+	// by a leading think run (the strip left an empty answer). It refines
+	// UnparseableResponse: "the model produced nothing but reasoning" is a
+	// different failure from "produced nothing a parser could use" — the first
+	// is a model/tag-habit signal an operator can act on (switch models or fix
+	// the chat template), the second a data-shape signal. Distinct signal per TD
+	// internal/fanout/engine.go:533. Set only alongside UnparseableResponse.
+	ThinkSuppressed bool
 
 	// UnparseableChunks counts a chunked persona's chunks that set
 	// UnparseableResponse. mergeResultGroup sets it; the merged
@@ -459,8 +479,11 @@ type Result struct {
 	EffectiveBudget      int64
 	ResolvedWindow       int
 	ReservedOutputTokens int
-	ChunkCount           int
-	DegradationAction    string
+	// ReasoningReserveTokens mirrors Agent.ReasoningReserveTokens: the extra
+	// output-token reservation a tool-loop agent held back for replayed reasoning.
+	ReasoningReserveTokens int
+	ChunkCount             int
+	DegradationAction      string
 
 	// ResolvedMaxTokens is the output cap resolved for this agent, recorded
 	// UNCONDITIONALLY whenever the agent was sized — unlike ReservedOutputTokens,
@@ -499,35 +522,124 @@ type Result struct {
 	// recordAgentOutcome falls back to the Turns-based count.
 	CallRecords []llmclient.CallRecord
 
-	// parsedFindingCount caches the number of findings produced by
-	// stream.ParseModelOutput(Content) so the truncation-failover gate and
-	// findingsFor can share a single parse instead of each parsing the content
-	// independently (TD-019).
+	// parsedFindingCount caches the number of findings parseFindings reads —
+	// stream.ParseModelOutput over the think-STRIPPED content, per chunk for a
+	// merged result — so the truncation-failover gate and findingsFor can share a
+	// single parse instead of each parsing the content independently (TD-019).
 	parsedFindingCount    int
 	parsedFindingCountSet bool
+
+	// parsedFindings is the parsed findings SLICE behind parsedFindingCount, so
+	// the gate's parse and findingsFor's parse are literally the same one —
+	// every result that HAS findings runs ParseModelOutput once, not twice (once
+	// via ParsedFindingCount at the gate, once via parseFindings in findingsFor).
+	// The cached slice is returned by reference: findingsFor mutates it in place
+	// (Reviewer stamping, and enforceConstraints' severity sort on a cap) — both
+	// idempotent against the cache, since every consumer of this Result lineage
+	// stamps the same Agent and re-derives downstream output from the slice.
+	parsedFindings    []stream.Finding
+	parsedFindingsSet bool
 
 	// chunkContents holds the non-empty chunk outputs mergeResultGroup joined
 	// into Content. parseFindings parses each one on its own, so a chunk cut off
 	// inside a ```json block or an unfenced array cannot swallow the next
 	// chunk's findings (TD-048). Nil for an unchunked result.
 	chunkContents []string
+
+	// chunkSalvaged is chunkContents' salvage flags, same length and same order,
+	// written by mergeResultGroup. Salvaged is a PER-CHUNK wire fact (each bin is
+	// its own API call) that the merged Result flattens into one persona-wide bit,
+	// so parseFindings needs this to refuse only the bins the client salvaged
+	// rather than the whole persona. Nil for an unchunked result.
+	chunkSalvaged []bool
 }
 
 // parseFindings returns the findings in r's model output: the union of each
 // chunk's findings for a merged result, else those in Content.
+//
+// Inline <think> reasoning is stripped first (LEADING-ONLY — see
+// llmclient.SplitThink), at this one choke point both ParsedFindingCount and
+// findingsFor share, so a draft finding a model writes inside a <think> block
+// and drops before its real answer is not counted as real. The strip lives HERE
+// and not inside ParseModelOutput: internal/doctor calls that parser directly
+// for its own probe, which must keep seeing raw output. Content and
+// chunkContents are read, never reassigned, so review.md still writes the raw
+// reply.
+//
+// Accepted limits, all pinned (full rationale lives in llmclient.SplitThink's
+// comment and docs/findings-format.md — not duplicated here):
+//
+//   - A <think> block placed AFTER the answer reaches the parser intact, so a
+//     forged row inside it counts — an accepted loss; the grounding gate is the
+//     only residual defence (TD artifacts.go:339). Pinned by
+//     TestMergeResultGroup_RealThenThinkForgedRow_IsAcceptedLoss.
+//   - A LEADING opener with no canonical closer takes the whole reply as
+//     reasoning (variant-closer, cut-off, and unlabelled-cut arms alike): the
+//     real-finding loss and the failover-vs-unparseable split are stated in
+//     full at llmclient.SplitThink and pinned by
+//     TestResult_ParseFindings_UnclosedLeadingOpenerLosesTheReply and
+//     TestInvokeSlot_TruncatedThinkOnlyReply_DemotesToFailover. Re-parsing the
+//     raw content instead would return the DRAFT — tested and rejected at the
+//     sprint 35.16.11.2.2.4 Phase 2 review.
+//   - A SALVAGED reply yields nothing, PER CHUNK (chunkSalvaged, not the
+//     persona-wide OR-fold — a salvaged bin must not discard its siblings'
+//     real findings, which would falsify docs/findings-format.md's chunk
+//     contract). Deliberately NOT ResponseTruncated || Salvaged like the
+//     verify/debate lanes: a truncated review's partial findings are real ones,
+//     and the truncationFailover gate exists to separate them from
+//     truncated-with-nothing. Pinned by
+//     TestResult_ParseFindings_TruncatedButNotSalvagedKeepsItsFindings and
+//     TestMergeResultGroup_SalvagedLaterChunkKeepsSiblingFindings; if the
+//     asymmetry ever looks wrong, file it as debt rather than widening the
+//     guard.
 func (r *Result) parseFindings() []stream.Finding {
-	if r.chunkContents == nil {
-		return stream.ParseModelOutput([]byte(r.Content))
+	if r.parsedFindingsSet {
+		return r.parsedFindings
 	}
 	var out []stream.Finding
-	for _, c := range r.chunkContents {
-		out = append(out, stream.ParseModelOutput([]byte(c))...)
+	if r.chunkContents == nil {
+		if r.Salvaged {
+			return r.cacheParsedFindings(nil)
+		}
+		answer, _ := llmclient.SplitThink(r.Content)
+		return r.cacheParsedFindings(stream.ParseModelOutput([]byte(answer)))
 	}
+	// mergeResultGroup writes chunkSalvaged beside chunkContents, so the lengths
+	// agree for every Result the chunked path produces. If they ever do not, there
+	// is no way to tell WHICH bin salvaged, so the persona-wide bit refuses the
+	// whole result: fail closed, never parse salvaged reasoning as findings.
+	perChunk := len(r.chunkSalvaged) == len(r.chunkContents)
+	if !perChunk && r.Salvaged {
+		return r.cacheParsedFindings(nil)
+	}
+	for i, c := range r.chunkContents {
+		if perChunk && r.chunkSalvaged[i] {
+			continue
+		}
+		answer, _ := llmclient.SplitThink(c)
+		out = append(out, stream.ParseModelOutput([]byte(answer))...)
+	}
+	return r.cacheParsedFindings(out)
+}
+
+// cacheParsedFindings stores the parse result on both memos (count and slice)
+// and returns it, so a later ParsedFindingCount or findingsFor call on this
+// Result lineage reuses the parse instead of repeating it.
+func (r *Result) cacheParsedFindings(out []stream.Finding) []stream.Finding {
+	r.parsedFindings = out
+	r.parsedFindingsSet = true
+	r.parsedFindingCount = len(out)
+	r.parsedFindingCountSet = true
 	return out
 }
 
-// ParsedFindingCount returns the number of parseable findings in r.Content,
-// computing and caching the count on first use.
+// ParsedFindingCount returns the number of parseable findings in r's output after
+// parseFindings strips a leading <think> run, so the counted text is not r.Content
+// itself. It is 0 for an UNCHUNKED salvaged reply, which parseFindings refuses
+// outright; for a chunked one it excludes only the salvaged bins, so a persona
+// with one salvaged bin beside a clean sibling returns a NON-ZERO count (see
+// parseFindings and TestMergeResultGroup_SalvagedLaterChunkKeepsSiblingFindings).
+// It computes and caches the count on first use.
 func (r *Result) ParsedFindingCount() int {
 	if r.Content == "" {
 		return 0
@@ -827,6 +939,7 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 // by name still follows the slot — only the coverage tag follows the server.
 func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 	start := time.Now()
+	thinkOnlyAttempts := 0
 	chain := append([]Agent{s.Primary}, s.Fallbacks...)
 	var last Result
 	for i, a := range chain {
@@ -861,14 +974,17 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 			}
 		}
 		// Truncation failover (Epic 19.5): a reviewer response that hit
-		// finish_reason=length with zero RAW parsed findings (stream.ParseModelOutput,
-		// before grounding) is a runaway that would otherwise be recorded as a silent
+		// finish_reason=length with zero pre-grounding parsed findings
+		// (stream.ParseModelOutput over the think-stripped content, before grounding)
+		// is a runaway that would otherwise be recorded as a silent
 		// clean review. Demote it to StatusFailed so the loop descends to the next
 		// agent in the chain. A truncated response that still parsed >=1 finding stays
 		// StatusOK (its ResponseTruncated marker is preserved for status.json).
-		// NOTE: this gate keys on the RAW parsed count, whereas the run-level
+		// NOTE: this gate keys on the pre-grounding parsed count (of the
+		// think-stripped content), whereas the run-level
 		// truncated_zero_findings tally (artifacts.go) keys on the GROUNDED
-		// FindingsCount; a response that raw-parses >=1 finding later dropped as
+		// FindingsCount; a response whose think-stripped content pre-grounds >=1
+		// finding later dropped as
 		// ungrounded/below-min-severity stays StatusOK here yet is tallied there. That
 		// divergence is deferred TD (no ChangedLines at this call site to ground
 		// against), not reconciled in this epic. Applied per attempt, so a truncated
@@ -877,6 +993,23 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 			r.ParsedFindingCount() == 0 {
 			r.Status = StatusFailed
 			r.Err = errTruncatedZeroFindings
+			// A truncated reply whose content was WHOLLY a think run fails
+			// identically on every chain member (same tag habit) — count it so the
+			// end-of-walk line can name the wasted spend (TD engine.go:602).
+			//
+			// Two preconditions, both load-bearing, and they are the same pair
+			// historyMessage uses (loop.go). The strip must have REMOVED something —
+			// detected by length, since SplitThink returns a substring of its input,
+			// so a no-op strip returns it unchanged. That rules out two replies that
+			// carry no think markup at all and would otherwise qualify: the empty one
+			// (SplitThink("") returns ("", "")) and the whitespace-only one. Both mean
+			// "the provider sent nothing usable", which has a different remedy from
+			// "the model spent the reply thinking". Then TrimSpace, because SplitThink
+			// keeps the whitespace after the run it consumed, so the routine
+			// `<think>…</think>\n` shape returns "\n".
+			if answer, _ := llmclient.SplitThink(r.Content); len(answer) < len(r.Content) && strings.TrimSpace(answer) == "" {
+				thinkOnlyAttempts++
+			}
 			log.FromContext(ctx).Warn("reviewer response truncated with zero findings; failing over",
 				"agent", a.Name, "model", a.Invocation.Model)
 		}
@@ -896,6 +1029,16 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 		// present, nothing parseable — is left alone: routing that through
 		// failover would spend the backup model on every plausible clean review.
 		// It is recorded instead, just below.
+		//
+		// A SALVAGED reply is one shape that rationale does NOT cover, and it is
+		// still left alone. Its content is non-empty (the salvage filled it), so
+		// this gate misses it; and when the salvage came back on a stop reason it
+		// is not truncated either, so the gate above misses it too. Since T6 it
+		// provably contributes zero findings, so unlike a plausible clean review
+		// there is nothing to spend the backup call against — the reviewer is
+		// simply lost for the run, recorded unparseable. Deliberate for now,
+		// because widening failover is a behavior change this sprint's In Scope
+		// does not cover; filed as TD-018.
 		if e.truncationFailover && r.Status == StatusOK && r.Content == "" {
 			r.Status = StatusFailed
 			r.Err = errEmptyResponse
@@ -910,9 +1053,47 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 		// The clean-review sentinel is excluded: it IS the specified way to report
 		// nothing, so flagging it would mark every clean review as anomalous and
 		// destroy the distinction this marker exists to draw.
-		if r.Status == StatusOK && r.Content != "" && r.ParsedFindingCount() == 0 &&
-			!stream.IsNoFindings(r.Content) {
-			r.UnparseableResponse = true
+		//
+		// The sentinel is matched against STRIPPED content, for the same reason
+		// parseFindings parses stripped content. IsNoFindings returns false on any
+		// text besides the sentinel, so a clean review from a thinking-inline model
+		// ("<think>checked every file</think>\nNO FINDINGS") would read as prose no
+		// parser could use — and ReviewerOutcome ranks unparseable ABOVE clean, so
+		// the false flag would reach the scorecard and the reviewer's trust prior.
+		// Stripped into a local: r.Content stays raw for review.md.
+		//
+		// A SALVAGED reply never reaches the sentinel read: it is uncommitted
+		// reasoning by design (T6), so it cannot be a committed no-findings report
+		// whatever its text — and its ParsedFindingCount is 0 by construction, so a
+		// sentinel-shaped salvage ("NO FINDINGS" on the reasoning channel) would
+		// otherwise score as a genuine clean review. Recorded unparseable, not
+		// failed over (TD-018 keeps widening failover out of scope). Pinned by
+		// TestInvokeSlot_SalvagedSentinelShapedReply_IsNotACleanReview.
+		if r.Status == StatusOK && r.Content != "" && r.ParsedFindingCount() == 0 {
+			if r.Salvaged {
+				r.UnparseableResponse = true
+			} else {
+				answer, _ := llmclient.SplitThink(r.Content)
+				if !stream.IsNoFindings(answer) {
+					r.UnparseableResponse = true
+					// Distinct signal (TD engine.go:533): the strip consumed the WHOLE
+					// reply as reasoning — content was entirely a think run, not merely
+					// garbled.
+					//
+					// Blank is TrimSpace-blank, matching loop.go's historyMessage and
+					// debate's silentArguingSeats. SplitThink keeps the whitespace after
+					// the run it consumed, so the routine `<think>…</think>\n` shape
+					// returns "\n"; an exact `== ""` test read that as an answer and
+					// dropped the signal on the commonest input it has.
+					//
+					// Paired with the length test for the same reason as the chain-walk
+					// counter above: TrimSpace alone would also claim a whitespace-only
+					// reply, which carries no think markup and is a different failure.
+					if len(answer) < len(r.Content) && strings.TrimSpace(answer) == "" {
+						r.ThinkSuppressed = true
+					}
+				}
+			}
 		}
 		if r.Status == StatusOK {
 			r.DurationMS = time.Since(start).Milliseconds()
@@ -947,6 +1128,15 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 	// diagnosability fields. The last attempt may have been a fallback with its own
 	// budget/window, but the slot is reported under the primary's name, so the
 	// sizing signal must describe the primary's regime.
+	//
+	// The walk is over: if think-only replies burned attempts, say so in one warn
+	// line — N backup calls bought zero findings because the replies were wholly
+	// reasoning (TD engine.go:602). The failover cost stays pinned accepted loss;
+	// this only makes it visible instead of discoverable by diffing status.json.
+	if thinkOnlyAttempts > 0 {
+		log.FromContext(ctx).Warn("think-only replies exhausted the fallback chain: the walk bought zero findings",
+			"agent", s.Primary.Name, "attempts", len(chain), "think_only_attempts", thinkOnlyAttempts)
+	}
 	last.Agent = s.Primary.Name
 	last.PayloadMode = s.Primary.PayloadMode
 	last.Truncation = s.Primary.Truncation
@@ -956,6 +1146,7 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 	last.EffectiveBudget = s.Primary.EffectiveBudget
 	last.ResolvedWindow = s.Primary.ResolvedWindow
 	last.ReservedOutputTokens = s.Primary.ReservedOutputTokens
+	last.ReasoningReserveTokens = s.Primary.ReasoningReserveTokens
 	last.ResolvedMaxTokens = s.Primary.ResolvedMaxTokens
 	last.ChunkCount = s.Primary.ChunkTotal
 	last.DegradationAction = s.Primary.DegradationAction
@@ -1036,6 +1227,7 @@ func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
 	r.EffectiveBudget = a.EffectiveBudget
 	r.ResolvedWindow = a.ResolvedWindow
 	r.ReservedOutputTokens = a.ReservedOutputTokens
+	r.ReasoningReserveTokens = a.ReasoningReserveTokens
 	r.ResolvedMaxTokens = a.ResolvedMaxTokens
 	r.ChunkCount = a.ChunkTotal
 	r.DegradationAction = a.DegradationAction

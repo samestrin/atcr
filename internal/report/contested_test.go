@@ -105,7 +105,10 @@ func TestWriteContestedSection_RendersRulings(t *testing.T) {
 	assert.Contains(t, out, "Overturned")
 	assert.Contains(t, out, "insufficient_distinct_models")
 	assert.Contains(t, out, "Rationale: evidence holds")
-	assert.Contains(t, out, "exceeded the debate cap")
+	assert.Contains(t, out, "2 disputed item(s) were not debated")
+	// The prose must not name the cap as the only cause: debate.json's overflow
+	// list also holds items withheld for exhausted unresolved attempts.
+	assert.Contains(t, out, "unresolved attempts already exhausted")
 }
 
 func TestWriteContestedSection_SingleModelDisclosed(t *testing.T) {
@@ -122,5 +125,5 @@ func TestWriteContestedSection_OverflowOnlyStillRenders(t *testing.T) {
 	writeContestedSection(&b, ContestedReport{Overflow: 3})
 	out := b.String()
 	assert.Contains(t, out, "## Contested findings")
-	assert.Contains(t, out, "3 disputed item(s) exceeded")
+	assert.Contains(t, out, "3 disputed item(s) were not debated")
 }

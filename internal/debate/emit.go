@@ -60,22 +60,28 @@ type ruleApply struct {
 
 // ItemResult is one debated item's recorded outcome (reconciled/debate.json).
 type ItemResult struct {
-	File              string `json:"file"`
-	Line              int    `json:"line"`
-	Kind              string `json:"kind"`
-	Problem           string `json:"problem,omitempty"`
-	Outcome           string `json:"outcome"`
-	Reason            string `json:"reason,omitempty"`
-	OriginalSeverity  string `json:"original_severity,omitempty"`
-	SettledSeverity   string `json:"settled_severity,omitempty"`
-	ClusterDecision   string `json:"cluster_decision,omitempty"`
-	ChallengeSurvived bool   `json:"challenge_survived,omitempty"`
-	SingleModel       bool   `json:"single_model,omitempty"`
-	Proposer          string `json:"proposer,omitempty"`
-	Challenger        string `json:"challenger,omitempty"`
-	Judge             string `json:"judge,omitempty"`
-	Reasoning         string `json:"reasoning,omitempty"`
-	Transcript        string `json:"transcript,omitempty"`
+	File    string `json:"file"`
+	Line    int    `json:"line"`
+	Kind    string `json:"kind"`
+	Problem string `json:"problem,omitempty"`
+	Outcome string `json:"outcome"`
+	Reason  string `json:"reason,omitempty"`
+	// UnresolvedAttempts counts the runs that reached this item and left it
+	// unresolved, carried forward across runs. An unresolved item writes no
+	// Verification, so filterAlreadyDebated cannot see it and it re-enters the
+	// radar on every run; this count is the only record of how many times the
+	// three seats have already been paid for it.
+	UnresolvedAttempts int    `json:"unresolved_attempts,omitempty"`
+	OriginalSeverity   string `json:"original_severity,omitempty"`
+	SettledSeverity    string `json:"settled_severity,omitempty"`
+	ClusterDecision    string `json:"cluster_decision,omitempty"`
+	ChallengeSurvived  bool   `json:"challenge_survived,omitempty"`
+	SingleModel        bool   `json:"single_model,omitempty"`
+	Proposer           string `json:"proposer,omitempty"`
+	Challenger         string `json:"challenger,omitempty"`
+	Judge              string `json:"judge,omitempty"`
+	Reasoning          string `json:"reasoning,omitempty"`
+	Transcript         string `json:"transcript,omitempty"`
 }
 
 // OverflowItem is a disputed item that matched a trigger but exceeded the
@@ -86,7 +92,26 @@ type OverflowItem struct {
 	Line     int    `json:"line"`
 	Kind     string `json:"kind"`
 	Severity string `json:"severity"`
+	// Problem completes the File+Line+Problem triple a finding is keyed by, so a
+	// withheld record can be matched back to its item on the next run. Two
+	// findings can share a location, so File+Line alone is not an identity.
+	Problem string `json:"problem,omitempty"`
+	// UnresolvedAttempts carries the recorded attempt count onto the withheld
+	// record. Without it the count lives only on a debated item, so the run that
+	// withholds an item erases the history that withheld it and the next run
+	// re-debates it — the ceiling would hold for exactly one run.
+	UnresolvedAttempts int `json:"unresolved_attempts,omitempty"`
+	// Reason names why the item was not debated when it is something other than
+	// the max_items cap. Empty means the cap, which is the original and still the
+	// common case, so an existing record is byte-identical.
+	Reason string `json:"reason,omitempty"`
 }
+
+// OverflowAttemptsExhausted is the Reason recorded on an item withheld because a
+// prior run already left it unresolved maxUnresolvedAttempts times. It is an
+// overflow reason, not one of the unresolved reason tokens in cast.go: the item
+// was never debated this run, so it has no outcome of its own to explain.
+const OverflowAttemptsExhausted = "unresolved_attempts_exhausted"
 
 // DebateFile is the reconciled/debate.json document: every debated item's ruling
 // plus the recorded overflow.
@@ -292,11 +317,54 @@ func ReadDebateFile(reviewDir string) (df DebateFile, found bool, err error) {
 	return df, true, nil
 }
 
+// priorUnresolvedAttempts returns, per finding key, how many prior runs reached
+// the item and left it unresolved. It reads both the debated items and the
+// withheld overflow records: a withheld item has no item entry in the run that
+// withheld it, so reading items alone would reset the count every other run.
+//
+// A recorded zero on an unresolved item is a record written before the count
+// existed, so it counts as the one attempt it provably was rather than as none.
+func priorUnresolvedAttempts(reviewDir string) map[FindingKey]int {
+	df, found, err := ReadDebateFile(reviewDir)
+	if err != nil || !found {
+		return nil
+	}
+	out := map[FindingKey]int{}
+	for _, it := range df.Items {
+		if it.Outcome != OutcomeUnresolved {
+			continue
+		}
+		n := it.UnresolvedAttempts
+		// The floor exists for a record written before the count did, where a zero
+		// means "one attempt, unrecorded". Since runDebate started declining to
+		// count environmental reasons, a zero has a SECOND meaning — "this run
+		// spent no attempt" — and flooring that one hands the attempt straight
+		// back, walking an interrupted item to the ceiling through the reader
+		// instead of the writer. Same predicate as the writer, so the two cannot
+		// disagree about which reasons the ceiling is allowed to spend.
+		if n < 1 && countsTowardWithholding(it.Reason) {
+			n = 1
+		}
+		out[FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}] = n
+	}
+	for _, ov := range df.Overflow {
+		if ov.Reason != OverflowAttemptsExhausted {
+			continue
+		}
+		n := ov.UnresolvedAttempts
+		if n < maxUnresolvedAttempts {
+			n = maxUnresolvedAttempts
+		}
+		out[FindingKey{File: ov.File, Line: ov.Line, Problem: ov.Problem}] = n
+	}
+	return out
+}
+
 // overflowItems projects the selector's overflow into the recorded shape.
 func overflowItems(items []reconcile.DisagreementItem) []OverflowItem {
 	out := make([]OverflowItem, 0, len(items))
 	for _, it := range items {
-		out = append(out, OverflowItem{File: it.File, Line: it.Line, Kind: it.Kind, Severity: it.Severity})
+		out = append(out, OverflowItem{File: it.File, Line: it.Line, Kind: it.Kind, Severity: it.Severity, Problem: it.Problem})
 	}
 	return out
 }

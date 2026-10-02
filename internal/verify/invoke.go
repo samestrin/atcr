@@ -153,10 +153,83 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "reasoning_salvaged", Skeptic: skeptic.Name}, res.TrippedBudgets, nil
 	}
 
-	v, _ := parseVerdict(res.Content)
+	// A third guard, independent of the two above and reached only by a reply
+	// that passed both: a thinking endpoint can finish cleanly (StatusOK, not
+	// truncated, not salvaged) and still put a DRAFT verdict object inside a
+	// leading <think> block before writing its real one. parseVerdict takes the
+	// first balanced verdict-keyed object, and the draft is a well-formed one —
+	// so its decoy-brace tolerance (which skips objects lacking the key) does
+	// not reject it, and the discarded draft would be graded as the skeptic's
+	// answer and charged to reviewer precision as a full read.
+	//
+	// Strip into a local: res.Content stays the raw reply. internal/llmclient
+	// owns every tag rule (leading-only, so a verdict quoting BOTH tags after
+	// real answer text survives whole). The inline reasoning is dropped here
+	// and reaches no channel at all — fanout.Result carries no reasoning field,
+	// and on the endpoints observed so far one that reasons inline leaves
+	// Completion.Reasoning empty (a proxy COULD populate both; reasoningOf,
+	// client.go:169). That is deliberate: Completion.Reasoning stays the only
+	// reasoning channel, and this reply did not populate it.
+	answer, _ := llmclient.SplitThink(res.Content)
+	// A fourth guard, on whatever markup SURVIVES the strip. The strip is
+	// LEADING-ONLY, so one character of prose before the block defeats it: the
+	// reply `Let me check.\n<block>{draft}</block>\n{real}` keeps the draft as its
+	// first verdict-keyed object and parseVerdict would grade the discarded draft
+	// as the skeptic's answer — charged to reviewer precision as a full read.
+	//
+	// Keyed on the STRIPPED answer, not on "the strip removed nothing". A RESUMED
+	// run — `<block>r1</block>{draft}<block>r2</block>{real}` — ends the leading run
+	// at the draft, so the strip DOES remove something and the draft is still the
+	// first object. Gating on equality let that shape through, and it is the
+	// cross-channel spoof succeeding outright rather than merely surviving
+	// (TD internal/llmclient/think.go:80).
+	//
+	// Refuse to parse when the reply carries markup the strip could not remove.
+	// The discrimination runs on the string-masked copy: a tag sequence that
+	// appears only INSIDE a JSON string value is the skeptic QUOTING the tag while
+	// judging think-handling code, and must keep parsing (that reply is the
+	// likeliest input in this repo); a tag sequence that survives masking encloses
+	// real reply text, so the object after it is a draft. Masking is what keeps
+	// the guard from reversing the leading-only design it exists to defend.
+	//
+	// HasEnclosingThinkBlock, not HasThinkMarkup: the question here is whether a
+	// BLOCK could be hiding a discarded draft, and a draft needs an opener to sit
+	// in. HasThinkMarkup's bare-closer rule belongs to doctor's thinking verdict —
+	// adopting it here threw away a committed verdict from any reply whose PROSE
+	// named </think>, which masking cannot catch because masking only blanks JSON
+	// string values (TD internal/verify/invoke.go:194).
+	if llmclient.HasEnclosingThinkBlock(maskJSONStrings(answer)) {
+		logger.Warn("skeptic failed", "skeptic", skeptic.Name, "class", "think_markup_after_answer")
+		logger.Debug("skeptic failure detail", "skeptic", skeptic.Name, "class", "think_markup_after_answer", "detail", "think markup outside a JSON string is not leading, so the first verdict-keyed object may be a discarded draft")
+		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "think_markup_after_answer", Skeptic: skeptic.Name}, res.TrippedBudgets, nil
+	}
+	v, ambiguous := verdictFromAnswer(answer)
+	if ambiguous {
+		// A bare </think> with an envelope on BOTH sides. Neither is provably the
+		// committed one, and grading the wrong one is durable: a draft `refuted`
+		// clears the CI gate at any severity (internal/reconcile/gate.go) and is
+		// charged to the reviewer's survived_skeptic_rate.
+		logSkepticFailure(logger, skeptic.Name, "ambiguous_unopened_closer",
+			"a </think> no <think> opened has a verdict envelope on both sides; neither is provably committed")
+		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "ambiguous_unopened_closer", Skeptic: skeptic.Name}, res.TrippedBudgets, nil
+	}
 	v.Skeptic = skeptic.Name
+	if v.Verdict == verdictUnverifiable && v.Notes == "empty_response" && strings.TrimSpace(res.Content) != "" {
+		// The strip removed everything, so parseVerdict saw a blank answer and
+		// named it "empty_response" — but the provider returned a content-bearing
+		// reply (an unclosed opener, a think-only reply). Notes is documented to
+		// "preserve the raw text" for diagnosis, so keep the raw reply recoverable:
+		// an operator can then tell a think-only reply from a genuinely empty one.
+		v.Notes = "think_only_reply: " + truncateForNotes(res.Content)
+	}
 	if v.Verdict == verdictUnverifiable {
-		logSkepticFailure(logger, skeptic.Name, "malformed_output", v.Notes)
+		class := "malformed_output"
+		if strings.HasPrefix(v.Notes, "think_only_reply:") {
+			// The provider returned a full reply that was entirely reasoning; calling
+			// that "malformed output" false-alarms the same alerts as a garbage reply.
+			class = "think_only_reply"
+		}
+		logSkepticFailure(logger, skeptic.Name, class, v.Notes)
 	}
 	if len(res.TrippedBudgets) > 0 {
 		// Reached only via the derived-ceiling exemption: the read was truncated
@@ -440,9 +513,11 @@ func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool) (agent fanout.
 // for an undeclared agent (a nil stays nil, per the reserve-vs-send distinction
 // in reservedOutputTokens) — so the request carried budget_tokens: 8192 with no
 // max_tokens, the provider's own default cap applied (4096 through LiteLLM),
-// and EVERY call for that agent 400ed. The load-time guard cannot catch it: it
-// only warns, and it compares the budget against the registry's default rather
-// than the cap this lane actually sends.
+// and EVERY call for that agent 400ed. That misfit can no longer reach this
+// lane: the load-time guard now rejects an anthropic budget not below
+// max_tokens as a load error (registry validateThinking), and thinkingWire
+// below always sends a cap when a budget is on the wire. What follows is the
+// historical failure that motivated both.
 //
 // The rule here is: a thinking budget buys a cap. When the declaration sends a
 // budget (anthropic style, thinking on — the only style whose budget shares
@@ -455,8 +530,10 @@ func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool) (agent fanout.
 // stays nil and the provider default applies, exactly as before.
 func thinkingWire(c registry.AgentConfig) (maxTokens *int, thinking, thinkingLevel string) {
 	// Anthropic style only: its budget_tokens is the one whose value shares
-	// max_tokens (the registry's own budget warning is scoped the same way).
-	// The qwen style's thinking_budget is a separate provider parameter.
+	// max_tokens, so a misfit is a guaranteed 400. The registry's own budget
+	// warning does NOT cover this case — it fires only for the qwen style,
+	// whose thinking_budget shares its cap too but is not load-checked; the
+	// anthropic misfit is a hard load error in validateThinking instead.
 	if c.ThinkingStyle != registry.ThinkingStyleAnthropic {
 		return c.MaxTokens, c.Thinking, c.ThinkingLevel
 	}
@@ -539,6 +616,136 @@ func failureClass(res fanout.Result) string {
 // detail — which can carry provider error bodies and path-bearing context — is
 // held to Debug so it does not leak at the default level (mirrors the path-at-
 // debug discipline used across the engine wiring).
+// maskJSONStrings blanks the contents of every JSON double-quoted string literal
+// in s, preserving length and every byte outside a literal. String-awareness
+// mirrors extractJSONObject: a backslash escapes the next byte, and an unclosed
+// literal masks to end of input. The result is used only for tag DETECTION — a
+// think tag that survives the mask is markup enclosing reply text, while a tag
+// that appears solely inside a string value is a quotation of the tag and must
+// not be read as thinking.
+// closerSection names which part of a stripped answer holds the committed
+// envelope when the reply carries a bare </think>.
+type closerSection int
+
+const (
+	// sectionWholeAnswer: no unopened closer, or nothing after it parses. The
+	// answer is read end to end, exactly as before this rule existed.
+	sectionWholeAnswer closerSection = iota
+	// sectionAfterCloser: only the text AFTER the closer carries an envelope, so
+	// the reply began mid-thought and that text is the committed answer.
+	sectionAfterCloser
+	// sectionAmbiguous: BOTH sides carry one. Nothing in the tag structure says
+	// which is committed, so neither is used.
+	sectionAmbiguous
+)
+
+// classifyUnopenedCloser decides which part of a STRIPPED answer to parse when a
+// </think> appears that no <think> opened. Shared by both lanes, so neither can
+// drift on the RULE.
+//
+// It cannot hold them together on the ENVELOPE, though, and that distinction is
+// load-bearing: each lane passes its own hasEnvelope, and the two did drift
+// there. parseVerdict iterated candidate objects for its key while
+// parseExecutorResponse took only the first, so a decoy object in front of the
+// patch made the committed section look empty on the executor lane alone and the
+// abandoned draft was returned as the fix (TD internal/verify/executor.go:916).
+// Both predicates iterate now. A new lane added here must supply one that does
+// the same, or it inherits the rule and not the protection.
+//
+// Such a closer is the one tag shape neither earlier guard acts on, both
+// deliberately: SplitThink leaves it in place and HasEnclosingThinkBlock does not
+// refuse on it (llmclient.IndexAfterUnopenedCloser documents why). What falls
+// between them is the envelope BEFORE the closer — reasoning the model abandoned
+// if the reply really did start mid-thought — which a first-match parser takes as
+// the answer.
+//
+// Three outcomes, because the structure genuinely supports three cases and only
+// two of them have a safe default:
+//
+//	{draft} </think> {real}      → ambiguous: so does {real} … "</think>" {example}
+//	         </think> {real}      → after-closer: nothing before it to confuse
+//	{real} … prose "</think>"     → whole answer: the suffix holds no envelope
+//
+// The ambiguous case is REFUSED by the caller rather than resolved. Taking the
+// last section would let a quoted example override a real verdict; taking the
+// first is the defect this rule exists to close. The two shapes have identical
+// tag structure, so no positional rule separates them — the same reasoning
+// SplitThink's doc records for its own accepted loss. An unverifiable verdict and
+// a declined fix are both disclosed outcomes; a silently wrong one is not.
+//
+// The offset is computed on the MASKED copy, so a closer quoted inside a JSON
+// string value is not a boundary (the model discussing think handling — the
+// likeliest input in this repo), and sliced out of the UNMASKED answer so the
+// envelope reaches the parser intact. maskJSONStrings blanks bytes in place and
+// preserves length, so one offset is valid in both.
+func classifyUnopenedCloser(answer string, hasEnvelope func(string) bool) (closerSection, string) {
+	i := llmclient.IndexAfterUnopenedCloser(maskJSONStrings(answer))
+	if i < 0 || i > len(answer) {
+		return sectionWholeAnswer, answer
+	}
+	suffix := answer[i:]
+	if !hasEnvelope(suffix) {
+		return sectionWholeAnswer, answer
+	}
+	if hasEnvelope(answer[:i]) {
+		return sectionAmbiguous, suffix
+	}
+	return sectionAfterCloser, suffix
+}
+
+// carriesVerdict reports whether text parses to a real verdict, as opposed to
+// one of parseVerdict's two "nothing usable here" diagnostics. It is the
+// envelope test classifyUnopenedCloser needs for the skeptic lane.
+func carriesVerdict(s string) bool {
+	v, err := parseVerdict(s)
+	if err != nil || v == nil {
+		return false
+	}
+	return v.Notes != "empty_response" && !strings.HasPrefix(v.Notes, "malformed_output:")
+}
+
+// verdictFromAnswer parses the committed verdict out of a STRIPPED skeptic
+// answer, and reports whether the reply was ambiguous about which verdict it
+// committed to. The production path and the tests both call it, so the behaviour
+// pinned is the behaviour that ships.
+func verdictFromAnswer(answer string) (v *reclib.Verification, ambiguous bool) {
+	section, text := classifyUnopenedCloser(answer, carriesVerdict)
+	if section == sectionAmbiguous {
+		return nil, true
+	}
+	parsed, _ := parseVerdict(text)
+	return parsed, false
+}
+
+func maskJSONStrings(s string) string {
+	b := []byte(s)
+	inStr, escaped := false, false
+	for i := 0; i < len(b); i++ {
+		c := b[i]
+		if !inStr {
+			if c == '"' {
+				inStr = true
+			}
+			continue
+		}
+		if escaped {
+			escaped = false
+			b[i] = ' '
+			continue
+		}
+		switch c {
+		case '\\':
+			escaped = true
+			b[i] = ' '
+		case '"':
+			inStr = false
+		default:
+			b[i] = ' '
+		}
+	}
+	return string(b)
+}
+
 func logSkepticFailure(logger *slog.Logger, skeptic, class, detail string) {
 	detail = strings.ReplaceAll(detail, "\n", " ")
 	logger.Warn("skeptic failed", "skeptic", skeptic, "class", class)

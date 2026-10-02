@@ -177,6 +177,64 @@ func TestParseVerdict_UnbalancedLeadingBraceFollowedByValidEnvelope(t *testing.T
 	assert.Equal(t, "no evidence", v.Notes)
 }
 
+// TestParseVerdict_IsTagUnaware pins parseVerdict's own contract: it is a
+// POSITION-BLIND, tag-unaware first-match parser. It scans for the first balanced
+// object carrying a "verdict" key and does not know what a think tag is.
+//
+// This is deliberately not a think-handling test — internal/llmclient owns every
+// tag rule, and the invoke.go call site owns the strip and the non-leading refusal.
+// What this pins is WHY that call site must exist: given markup-wrapped input,
+// parseVerdict alone takes whatever keyed object comes first, so a draft inside a
+// leading block would be graded as the skeptic's answer. The rows below are the
+// parser's real behavior on those inputs; if parseVerdict ever grows tag awareness,
+// these fail on purpose.
+func TestParseVerdict_IsTagUnaware(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		response    string
+		wantVerdict string
+		wantNotes   string
+	}{
+		{
+			// The parser takes the DRAFT: this is the vulnerability the invoke.go
+			// guard neutralises before the call.
+			name:        "a draft verdict inside a leading block is what the parser alone takes",
+			response:    `<think>{"verdict": "confirmed", "reasoning": "draft, wrong"}</think>{"verdict": "refuted", "reasoning": "real answer"}`,
+			wantVerdict: verdictConfirmed,
+			wantNotes:   "draft, wrong",
+		},
+		{
+			// No opener: the parser skips the stray closer text and reads the object.
+			name:        "a lone closer with no opener does not stop the parse",
+			response:    `draft</think>{"verdict": "refuted", "reasoning": "real answer"}`,
+			wantVerdict: verdictRefuted,
+			wantNotes:   "real answer",
+		},
+		{
+			name:        "tags quoted inside a reasoning string are preserved verbatim",
+			response:    `{"verdict": "confirmed", "reasoning": "the code never looks for </think> at all"}`,
+			wantVerdict: verdictConfirmed,
+			wantNotes:   "the code never looks for </think> at all",
+		},
+		{
+			name:        "both tags quoted after real answer text survive intact",
+			response:    `{"verdict": "confirmed", "reasoning": "the handler drops text between <think> and </think>"}`,
+			wantVerdict: verdictConfirmed,
+			wantNotes:   "the handler drops text between <think> and </think>",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			v, err := parseVerdict(tt.response)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantVerdict, v.Verdict)
+			assert.Equal(t, tt.wantNotes, v.Notes)
+		})
+	}
+}
+
 // Sprint 35.16.11.2.1 AC 03-02: under response_format json_object the API returns
 // a bare object with no fence and no prose, although the skeptic prompt asks for
 // a fenced one. The parser must read that shape, which is why this lane needs no

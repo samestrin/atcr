@@ -982,7 +982,8 @@ func withFindingsPath(err error) error {
 
 // reviewerModel resolves a reviewer's model id, preferring the usage-reported
 // value in the pool summary and falling back to the configured model when the
-// provider reported no usage (e.g. a stub completer leaves AgentStatus.Model empty).
+// slot recorded no model at all (a failed slot with no usage — statusFor
+// records Model on every completed OK slot, usage reported or not).
 //
 // The usage-reported Model wins even when FallbackUsed is set. On the chunked path
 // mergeResultGroup sets the merged Model to the model that served most of the

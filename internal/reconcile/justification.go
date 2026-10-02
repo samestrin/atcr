@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -9,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/samestrin/atcr/internal/llmclient"
 
 	"github.com/samestrin/atcr/internal/stream"
 )
@@ -83,6 +86,21 @@ type reviewNarrative struct {
 	relPath string
 	leaf    string
 	lines   []string
+	// draftLines is the set of 0-based lines that lie inside a refused leading
+	// reasoning run — one run PER CHUNK SEGMENT, mirroring the per-chunk parse
+	// (see draftLineSet). buildAnchorIndex skips them, so a file:line the model
+	// wrote in a draft it DISCARDED can never be matched as the citation for a
+	// finding.
+	//
+	// A set rather than a count: a chunked review.md can carry a refused run at the
+	// head of EVERY bin, and a leading count can only describe the first one.
+	//
+	// Counted rather than stripped: source_report.line is a pointer into the
+	// artifact a reader opens, so rebasing the lines would make the excerpt stop
+	// matching the document it points at (the decision recorded in
+	// justification_think_parity_test.go). Excluding the lines keeps every published
+	// line number true of review.md as written.
+	draftLines map[int]struct{}
 }
 
 // narrativeMatch is the best-effort correlation of a finding to a review.md
@@ -171,6 +189,32 @@ func collectReviewNarratives(sourcesDir, reviewDir string) []reviewNarrative {
 		if rerr != nil {
 			return nil
 		}
+		// A SALVAGED reply is not a narrative. The provider returned no content and
+		// the client promoted the model's chain-of-thought into it, so every lane
+		// refuses it — parseFindings reads no findings from it at all. The leading-run
+		// exclusion below cannot catch it: promoted reasoning carries no <think> tags,
+		// so SplitThink returns it unchanged and the whole file is indexed. Since
+		// matchNarrative ranks by tier before reviewer, one reasoning line citing the
+		// exact FILE:LINE then outranks a real reviewer's prose and is published as
+		// the finding's provenance — into localdebt's append-only store, where no
+		// later reconcile can replace it (TD internal/reconcile/justification.go:225).
+		//
+		// Withheld WHOLE only when no bin index narrows it: that is the unchunked
+		// persona, whose entire reply is promoted reasoning. When salvaged_chunks
+		// names bins, only those segments are excluded below, because the clean
+		// siblings are real prose and their findings ship — withholding them too
+		// stripped provenance off real findings, permanently
+		// (TD internal/reconcile/justification.go:201).
+		salvaged, salvagedBins := sourceSalvage(path)
+		if salvaged && len(salvagedBins) == 0 {
+			slog.Debug("skipping salvaged review.md", "path", path)
+			return nil
+		}
+		if !salvaged {
+			// A bin list without the bit is not a refusal record; ignore it rather
+			// than let a hand-edited status.json withhold a healthy narrative.
+			salvagedBins = nil
+		}
 		rel, rerr := filepath.Rel(reviewDir, path)
 		if rerr != nil {
 			// Cannot express the path relative to the review dir (e.g. different
@@ -178,15 +222,179 @@ func collectReviewNarratives(sourcesDir, reviewDir string) []reviewNarrative {
 			// source_report.path, whose documented contract is review-dir-relative.
 			return nil
 		}
+		excluded, desynced := excludedAnchorLines(string(data), salvagedBins)
+		if desynced {
+			// A named bin that matches no segment in this review.md: the pair came
+			// from different states, so nothing here says which lines were refused.
+			// Withhold the whole file — the bit is set, so the unexcluded remainder
+			// may be promoted reasoning, and publishing it is permanent.
+			slog.Debug("skipping salvaged review.md with unaccountable chunk index",
+				"path", path, "salvaged_chunks", salvagedBins)
+			return nil
+		}
 		out = append(out, reviewNarrative{
-			relPath: filepath.ToSlash(rel),
-			leaf:    filepath.Base(filepath.Dir(path)),
-			lines:   strings.Split(string(data), "\n"),
+			relPath:    filepath.ToSlash(rel),
+			leaf:       filepath.Base(filepath.Dir(path)),
+			lines:      strings.Split(string(data), "\n"),
+			draftLines: excluded,
 		})
 		return nil
 	})
 	sort.Slice(out, func(i, j int) bool { return out[i].relPath < out[j].relPath })
 	return out
+}
+
+// sourceSalvage reports whether the status.json sibling of a review.md marks
+// the slot salvaged, and which of a chunked persona's bins were refused. Same shape and same decoupling as discover.go's
+// readSourceFallback: only the one field is decoded, so reconcile does not import
+// internal/fanout's AgentStatus.
+//
+// FAIL-OPEN, the opposite of readSourceFallback's posture, and deliberately: a
+// missing, unreadable, or malformed status.json means "nothing says this reply was
+// salvaged", and withholding a real reviewer's justification on a read error would
+// trade a rare forged excerpt for a common missing one. Only an explicit
+// salvaged:true withholds.
+// BOTH fields, because the bit alone is ambiguous. internal/fanout/status.go
+// says so outright: for a chunked persona `salvaged` is an OR-fold over the bins,
+// "so it can be true beside a non-zero findings count: one bin was refused and
+// its siblings were kept. SalvagedChunks below is what tells the two apart."
+// Reading only the bit made a one-bin refusal byte-indistinguishable from a
+// whole-persona one, and withholding the whole narrative on it stripped
+// justification and source_report off the clean bins' real findings — which
+// parseFindings keeps (engine.go) and docs/findings-format.md publishes as kept.
+// localdebt seeds seen[id] for every open id, so that loss is permanent
+// (TD internal/reconcile/justification.go:201).
+func sourceSalvage(reviewPath string) (salvaged bool, chunks []int) {
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(reviewPath), statusFileName))
+	if err != nil {
+		return false, nil
+	}
+	var st struct {
+		Salvaged bool  `json:"salvaged"`
+		Chunks   []int `json:"salvaged_chunks"`
+	}
+	if err := json.Unmarshal(data, &st); err != nil {
+		return false, nil
+	}
+	return st.Salvaged, st.Chunks
+}
+
+// salvagedSegmentLines returns every 0-based line of a chunked review.md that
+// belongs to a SALVAGED bin — the lines buildAnchorIndex must not offer as
+// candidate anchors, so a refused bin's promoted reasoning cannot be published as
+// a finding's provenance while its clean siblings still can.
+//
+// Per segment, mirroring draftLineSet, and the bin↔segment correspondence is what
+// makes that sound: fanout's joinChunkContents emits one segment per
+// CONTENT-BEARING bin, in order, separated by chunkBoundaryLine, and
+// salvagedChunkIndices derives its indices from chunkSalvaged — the slice written
+// beside that same filtered bin list. So segment k is bin k.
+//
+// That correspondence DEPENDS on the engine owning the delimiter: a bin whose own
+// content carried a byte-equal line would split into two segments and shift every
+// later index, excluding the wrong bin. fanout neutralises model-issued copies at
+// both review.md producers (joinChunkContents and writeAgentArtifacts) precisely
+// so this holds; if that guard is ever removed, this walk is wrong rather than
+// merely imprecise.
+//
+// Walked forward rather than through chunkSegmentBounds, which maps a LINE to its
+// segment — the inverse of the segment-index-to-lines direction needed here.
+// extractSection still uses it to clamp the published excerpt, so an anchor in a
+// clean bin cannot quote a refused neighbour.
+//
+// A whole segment, not just its leading run: a salvaged reply is promoted
+// chain-of-thought end to end and carries no <think> tags at all, which is
+// exactly why leadingDraftLines cannot see it.
+//
+// An ABSENT bin list excludes nothing, which is the unchunked persona and is
+// handled by the caller's whole-file arm. An UNACCOUNTABLE index — one naming no
+// segment in this content — is reported as desynced instead, and the caller
+// withholds the whole file on it.
+//
+// This file fails OPEN almost everywhere, on the reasoning that a needless
+// unexcluded candidate still has to win a tier comparison while a needless
+// withholding costs a real reviewer its prose. That reasoning holds only while
+// the salvage BIT is clear. With the bit set, the content is not a real
+// reviewer's prose — it is promoted chain-of-thought — so fail-open here is the
+// forged-provenance direction, and it was strictly worse than the whole-file skip
+// this narrowing replaced: an unaccountable index excluded nothing, every
+// reasoning line became a candidate anchor, and matchNarrative's tier-before-
+// reviewer ordering published it into localdebt's append-only store permanently
+// (TD internal/reconcile/justification.go:303).
+//
+// fanout never writes such a pair: salvagedChunkIndices returns nil on
+// misalignment and joinChunkContents emits exactly one segment per bin. So an
+// index the content cannot account for is evidence the review.md and the
+// status.json came from different states — a hand-edited status.json, an imported
+// sources/ subtree, or a kill between the three independent writes
+// writeAgentArtifacts performs. Fail CLOSED, mirroring parseFindings' own
+// misalignment arm (internal/fanout/engine.go:612), which refuses the bins rather
+// than guessing which half is current.
+//
+// A bounds check catches only the detectable half, and that residual is worth
+// naming: a desynced pair whose index happens to land IN range — status.json says
+// bin 1 of 2 while the review.md beside it was re-chunked into 3 segments —
+// excludes segment 1 of the wrong partition and is indistinguishable from a
+// healthy pair here. Separating those would need the bin COUNT or a content hash
+// on the record, which is a status.json schema change rather than a reader fix.
+// The direction of the remaining error is unchanged from a healthy run (one
+// segment excluded, one not), so it is a wrong exclusion rather than a widened
+// one.
+// Returns (lines to exclude, desynced).
+func salvagedSegmentLines(raw string, bins []int) (map[int]struct{}, bool) {
+	if len(bins) == 0 {
+		return nil, false
+	}
+	refused := make(map[int]struct{}, len(bins))
+	for _, b := range bins {
+		refused[b] = struct{}{}
+	}
+	out := make(map[int]struct{})
+	lines := strings.Split(raw, "\n")
+	seg, start := 0, 0
+	for i := 0; i <= len(lines); i++ {
+		// A segment ends at a boundary marker or at end of input.
+		if i < len(lines) && lines[i] != chunkBoundaryLine {
+			continue
+		}
+		if _, bad := refused[seg]; bad {
+			for d := start; d < i; d++ {
+				out[d] = struct{}{}
+			}
+		}
+		seg++
+		start = i + 1
+	}
+	// seg is now the segment COUNT, so any named index outside [0, seg) named
+	// nothing. Checked after the walk rather than before it, because the count is
+	// a property of the content and is not known until the walk ends.
+	for b := range refused {
+		if b < 0 || b >= seg {
+			return nil, true
+		}
+	}
+	return out, false
+}
+
+// excludedAnchorLines is the union buildAnchorIndex skips: the refused leading
+// run of each chunk segment, plus every line of a salvaged bin.
+//
+// The second return is salvagedSegmentLines' desync signal, passed straight
+// through: a bin list the content cannot account for cannot be narrowed by, so
+// the caller withholds the whole narrative instead of indexing part of it. It is
+// returned rather than folded into the map because "exclude no lines" and
+// "exclude every line" are both representable there and a caller reading only the
+// map would take the first for the second.
+func excludedAnchorLines(raw string, salvagedBins []int) (map[int]struct{}, bool) {
+	lines, desynced := salvagedSegmentLines(raw, salvagedBins)
+	if desynced {
+		return nil, true
+	}
+	out := draftLineSet(raw)
+	for l := range lines {
+		out[l] = struct{}{}
+	}
+	return out, false
 }
 
 // anchorRef locates one review.md line that carries a file:line anchor: the
@@ -213,10 +421,77 @@ func buildAnchorIndex(narratives []reviewNarrative) anchorIndex {
 	idx := make(anchorIndex)
 	for ni := range narratives {
 		for li, lt := range narratives[ni].lines {
+			// Lines inside a leading reasoning run are skipped: they are the model's
+			// DISCARDED draft, and beatsMatch breaks equal-tier ties toward the
+			// earliest line — so a draft citation at the top of the file outranked the
+			// real prose below it and was published as the reviewer's justification
+			// (TD internal/reconcile/justification.go:322).
+			if _, draft := narratives[ni].draftLines[li]; draft {
+				continue
+			}
 			indexLineFiles(idx, lt, ni, li)
 		}
 	}
 	return idx
+}
+
+// draftLineSet reports which 0-based lines of a review.md lie inside a refused
+// leading reasoning run — the set buildAnchorIndex excludes from the candidate
+// anchors.
+//
+// PER CHUNK SEGMENT, because the findings parser is per chunk. review.md is the
+// marker-joined concatenation of a chunked persona's bins (fanout's
+// joinChunkContents), and Result.parseFindings calls SplitThink once per bin, so
+// EACH bin can open with a run the parser refused. Scanning the joined file once
+// finds only the first bin's run: a draft citation at the head of chunk 2 was
+// indexed as an ordinary candidate and, since beatsMatch breaks equal-tier ties
+// toward the earliest line, could outrank the real prose and be published as the
+// reviewer's justification (TD internal/reconcile/justification.go:197). Every
+// other scan here is already segment-scoped via chunkSegmentBounds for exactly
+// this reason; this one was not.
+//
+// An unchunked review.md has no marker, which is the single-segment case.
+func draftLineSet(raw string) map[int]struct{} {
+	lines := strings.Split(raw, "\n")
+	out := make(map[int]struct{})
+	start := 0
+	for i := 0; i <= len(lines); i++ {
+		// A segment ends at a boundary marker or at end of input.
+		if i < len(lines) && lines[i] != chunkBoundaryLine {
+			continue
+		}
+		if n := leadingDraftLines(strings.Join(lines[start:i], "\n")); n > 0 {
+			for d := start; d < start+n && d < i; d++ {
+				out[d] = struct{}{}
+			}
+		}
+		start = i + 1
+	}
+	return out
+}
+
+// leadingDraftLines reports how many leading lines of ONE chunk segment lie
+// inside a leading inline reasoning run, using the same strip the findings parser
+// applies (llmclient owns every tag rule). 0 when the segment carries no leading
+// run. Call it through draftLineSet, which supplies the segments.
+//
+// A run that ends mid-line makes that line count as draft too: it holds text from
+// both sides, and admitting it would admit a draft citation. Losing a real citation
+// that shares the boundary line is the cheaper error — a missing excerpt degrades a
+// field, while a forged one publishes invented prose as the reviewer's reasoning.
+func leadingDraftLines(raw string) int {
+	answer, _ := llmclient.SplitThink(raw)
+	if len(answer) == len(raw) {
+		return 0
+	}
+	// SplitThink's answer is always a SUFFIX of the input (its documented contract,
+	// fuzz-pinned), so the removed prefix is exactly this long.
+	prefix := raw[:len(raw)-len(answer)]
+	n := strings.Count(prefix, "\n")
+	if !strings.HasSuffix(prefix, "\n") {
+		n++
+	}
+	return n
 }
 
 // indexLineFiles records, for line lt at position (ni,li), each distinct file
@@ -603,11 +878,72 @@ func extractSection(lines []string, idx int) (text, section string) {
 	// output, like a ```json block: mask it in both views so it elides, and bound
 	// it below exactly as jsonOpen/jsonClose bound a fenced block. The spans come
 	// from the parser's own scan of THIS chunk's lines: the segment rebase above
-	// bounds lines to the chunk the anchor sits in, the same text
-	// Result.parseFindings read for that chunk, so they cannot drift from what
-	// the parser read. (Before chunk delimiting this held only for single-call
-	// personas — a joined multi-chunk scan could mask a chunk the parser never
-	// read together with this one.)
+	// bounds lines to the chunk the anchor sits in. (Before chunk delimiting this
+	// held only for single-call personas — a joined multi-chunk scan could mask a
+	// chunk the parser never read together with this one.)
+	//
+	// One accepted drift, since sprint 35.16.11.2.2.4. THREE readers below disagree
+	// with the parser for a reply that opens with a leading <think> block, because
+	// all three read review.md (the RAW reply) while Result.parseFindings parses the
+	// reply with that block stripped off. They are distinct mechanisms and diverge on
+	// different inputs, so they are named separately rather than described as one
+	// scan:
+	//
+	//   - fenceMask (called immediately below) is the LARGEST divergence, and the
+	//     one whose consequence is not merely a worse excerpt. A ```` ```json ````
+	//     opener INSIDE the stripped block — a draft findings block, the likeliest
+	//     thing a model writes in its reasoning — is read here as a dangling json
+	//     opener, and fenceMask masks the whole rest of the chunk in BOTH views. The
+	//     section walk-up then finds no heading at all, so source_report.section comes
+	//     back empty and the excerpt collapses to nothing for EVERY finding anchored
+	//     in that chunk — a whole-review loss, not a per-line one. The parser, reading
+	//     stripped content, never saw that fence.
+	//   - recordAt / isFindingRecordStart: a finding-shaped line inside the block
+	//     bounds the excerpt here although the parser never emitted it. That bounding
+	//     is isFindingRecordStart's, not BareValueSpans' — the two are separate scans
+	//     and conflating them is what this comment previously did.
+	//   - stream.BareValueSpans (below) reads the same raw lines, so it can report an
+	//     unfenced JSON value the parser never read, or report nothing where the
+	//     parser read one. It bounds by unfenced JSON VALUES only; record-shaped
+	//     lines are the bullet above.
+	//
+	// THE DAMAGE IS WIDER THAN A DEGRADED EXCERPT, and the earlier form of this
+	// comment said otherwise. buildAnchorIndex and matchNarrative are built from
+	// these SAME raw lines, with no exclusion for the stripped block, so a FILE:LINE
+	// reference written inside it is a candidate anchor like any other. When such a
+	// line wins the match, the finding ships with justification text drawn from the
+	// model's ABANDONED draft reasoning and a source_report.line pointing into the
+	// block the findings parser deliberately refused. That is a wrong PROVENANCE for
+	// a published field, not merely excerpt quality — and it is the content this
+	// sprint exists to keep out of the record. It cannot be corrected later either:
+	// localdebt persists Justification into an append-only store whose id excludes
+	// it, so no later reconcile can replace the value. (Reachable by a
+	// prompt-injected reviewer reply, which can put a chosen file:line in the draft.)
+	//
+	// FIXED for the ANCHOR half (TD internal/reconcile/justification.go:322):
+	// buildAnchorIndex now skips the lines inside a refused leading reasoning run,
+	// one per chunk segment (reviewNarrative.draftLines / draftLineSet), so a draft
+	// citation can no longer be matched at
+	// all and the earliest-line tiebreak has nothing in the block to prefer. What
+	// remains is the EXCERPT half described above — recordAt/isFindingRecordStart and
+	// stream.BareValueSpans still read the raw lines, so an in-block record-shaped
+	// line still bounds an excerpt anchored below it. That is excerpt quality only,
+	// which is the cost the parity decision accepts.
+	//
+	// The parity choice below stays DECIDED in favour of following the artifact
+	// (pinned by TestExtractSection_FollowsTheRawArtifactWhileTheParserReadsStripped),
+	// and the anchor fix is deliberately compatible with it: the lines are EXCLUDED
+	// from matching, never renumbered, so every published source_report.line is still
+	// true of the review.md a reader opens.
+	//
+	// Residual, scoped to what the strip itself can see: the exclusion covers a
+	// LEADING run, because that is the run llmclient.SplitThink defines and the only
+	// one the findings parser refuses. Leading PER CHUNK SEGMENT, not per file — the
+	// parser reads each bin separately, so each bin's own opening run is excluded
+	// (draftLineSet). A block the model opens after real prose is still indexed, so
+	// a citation inside it can still win an equal-tier tiebreak — bounded
+	// differently, though, since such a block is not at the top of its segment and
+	// no longer beats the prose above it on line order.
 	spans := stream.BareValueSpans([]byte(strings.Join(lines, "\n")))
 	if len(spans) > 0 {
 		strict = append([]bool(nil), strict...)
@@ -810,10 +1146,12 @@ var recordRe = regexp.MustCompile(`^(CRITICAL|HIGH|MEDIUM|LOW)\|`)
 // several into one excerpt and stamps one finding's reasoning onto its neighbour.
 //
 // It matches the PRODUCING PARSER EXACTLY, and the exactness is the whole contract.
-// fanout writes review.md as a byte-identical copy of the content it hands to
-// stream.ParseModelOutput, so a line the parser calls prose IS prose — and ending a
-// block on it truncates a reviewer's narrative with no marker to show it happened.
-// That loss is permanent: localdebt persists Justification into an append-only store
+// For a SINGLE-CALL persona, fanout writes review.md as a byte-identical copy of
+// the content it hands to stream.ParseModelOutput, so a line the parser calls
+// prose IS prose — and ending a block on it truncates a reviewer's narrative
+// with no marker to show it happened. A chunked persona's review.md is the
+// marker-joined chunk outputs (joinChunkContents), and parsing runs per chunk,
+// so the byte-identity holds within each marker-bounded segment. That loss is permanent: localdebt persists Justification into an append-only store
 // whose id excludes it, so the first reconcile is the only one that can be right.
 //
 // Hence all three of the parser's conditions, not just the first:
@@ -837,11 +1175,13 @@ func isFindingRecordStart(s string) bool {
 }
 
 // fenceMask reports, per line, whether it sits INSIDE a fenced code block, in TWO
-// views. strict matches the toggle-then-continue order in
-// stream.ParseModelOutput's fence switch byte-for-byte: fence markers are OUTSIDE,
-// and an UNTERMINATED fence masks to EOF, exactly as the parser's bare `inFence =
-// !inFence` skips every line below a dangling opener. released is identical except
-// that the run below a dangling opener is un-masked.
+// views. strict mirrors the state machine in stream.ParseModelOutput's fence
+// switch: fence markers are OUTSIDE, a marker closes a fence only via
+// closesFence (same character, run at least as long as the opener), a later
+// ```json line while inside a cut-off ```json block opens the NEXT chunk rather
+// than closing this one, and a dangling ```json block masks to EOF — exactly as
+// the parser's switch reads those shapes. released is identical except that the
+// tail below a dangling NON-json opener is un-masked.
 //
 // balanced is a third, disjoint signal: it marks the MARKER lines of every
 // TERMINATED pair (both views leave markers themselves unmasked, so no mask can

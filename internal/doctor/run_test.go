@@ -12,6 +12,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/stream"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -632,6 +633,78 @@ func TestClassify_ContentMarkerStillOK(t *testing.T) {
 	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "K"}
 	got := classify(Marker(testNonce), nil, testNonce, 5, tgt, MaxTokensSourceDefault, false)
 	assert.Equal(t, StatusOK, got.status)
+}
+
+// inlineThinking's doc comment claims the two helpers share the tag LITERALS but
+// not the tag RULES, and names the bare closer as the live disagreement. Pin both
+// halves against the live code, so the comment cannot drift back to the false
+// "can never disagree about what a think block LOOKS LIKE".
+func TestInlineThinkingDivergesFromTheStripOnABareCloser(t *testing.T) {
+	content := "planning the reply</think>\n" + Marker(testNonce)
+	assert.True(t, inlineThinking(content),
+		"the detector is position-blind: a lone closer with text before it is markup")
+	answer, _ := llmclient.SplitThink(content)
+	assert.Equal(t, content, answer,
+		"the strip is leading-only: a bare closer is not a tag, so nothing is removed")
+}
+
+// The two behavioural divergences the sprint opened are closed, and the comment
+// now says so. Pin the doctor-vs-lane agreement that closed them: content whose
+// leading block is stripped to a readable object must have NO caller here reading
+// the raw reply for shape.
+func TestDoctorReadsTheLaneOperandForShapeChecks(t *testing.T) {
+	content := "<think>checked it</think>" + `{"findings":[]}`
+	answer, _ := llmclient.SplitThink(content)
+	require.NotEqual(t, content, answer, "the leading block must be stripped for this pin to mean anything")
+	assert.True(t, stream.IsNoFindings(answer), "the lane reads a clean review from the stripped operand")
+	assert.False(t, inlineThinking(answer), "the stripped operand carries no markup to report")
+}
+
+// TD internal/doctor/run.go:737: the review lane parses a leading <think> block
+// stripped off (fanout.Result.parseFindings), so a marker that lives only inside
+// that block is invisible to the lane doctor pre-flights. classify reads raw
+// content, so it used to report the clean StatusOK that means "marker present,
+// nothing wrong" - the pre-flight calling a healthy endpoint an agent whose every
+// review will be discarded. It must carry the marker-in-reasoning shape instead,
+// the same one the salvaged branch two lines below already uses.
+func TestClassify_MarkerOnlyInsideLeadingThinkBlockWarns(t *testing.T) {
+	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "K"}
+	for _, tc := range []struct {
+		name    string
+		content string
+	}{
+		{"closed leading think block", "<think>the marker " + Marker(testNonce) + " belongs to the reasoning</think>"},
+		{"unclosed leading think block", "<think>running out of budget before the marker " + Marker(testNonce)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := classify(tc.content, nil, testNonce, 5, tgt, MaxTokensSourceDefault, false)
+			assert.Equal(t, StatusOKWarning, got.status,
+				"a marker the review lane strips before parsing is not a clean OK")
+			assert.True(t, got.markerInReasoning,
+				"the marker WAS found, so the result must use the marker-in-reasoning shape")
+			assert.Contains(t, got.hint, "inline <think> reasoning",
+				"the hint must name the channel the marker was found in")
+
+			// Agreement with the lane doctor pre-flights: the same content yields no
+			// usable findings once the leading block is stripped, exactly as
+			// fanout.Result.parseFindings reads it.
+			answer, _ := llmclient.SplitThink(tc.content)
+			require.NotContains(t, answer, Marker(testNonce),
+				"the lane's strip removes the marker, so doctor and the lane agree")
+			assert.Empty(t, stream.ParseModelOutput([]byte(answer)),
+				"the stripped answer yields zero usable findings")
+		})
+	}
+}
+
+// A marker in the ANSWER after a leading think run stays a clean StatusOK: the
+// lane strips the run and still reads the marker, so doctor and lane agree.
+func TestClassify_MarkerAfterLeadingThinkRunStillOK(t *testing.T) {
+	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "K"}
+	got := classify("<think>let me plan</think>"+Marker(testNonce), nil, testNonce, 5, tgt, MaxTokensSourceDefault, false)
+	assert.Equal(t, StatusOK, got.status,
+		"the marker survives the lane's strip, so the reply is usable")
+	assert.False(t, got.markerInReasoning)
 }
 
 // TD internal/doctor/run.go:704: a salvaged reply WITHOUT the marker must still
