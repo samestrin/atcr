@@ -722,6 +722,13 @@ func promoteRePackedDegradation(out *Result, g []Result) {
 		// would point the operator at a cap that closed nothing. Zeroed, omitempty says
 		// the honest thing — this merged record cannot name the cap.
 		out.ResolvedMaxTokens = 0
+		// And the reasoning reserve, which the invariant names by implication:
+		// status.go documents it as the EXTRA reservation ON TOP OF
+		// reserved_output_tokens, so leaving it inherited here publishes a
+		// reserve sitting on top of a field this same arm just zeroed — the
+		// self-contradictory-record class this block exists to prevent, and the one
+		// member of the triple that was missed (TD internal/fanout/chunker.go:709).
+		out.ReasoningReserveTokens = 0
 	}
 	if len(dropped) > 0 {
 		paths := make([]string, 0, len(dropped))
