@@ -908,6 +908,14 @@ func buildExecutorAgentPromptWithSentinel(finding reconcile.JSONFinding, sentine
 // fenced or prose-wrapped object is still located. The fix field is required and must
 // be non-empty after trimming; explanation is advisory and ignored. A pointer
 // distinguishes a missing "fix" key from an empty value, mirroring parseVerdict.
+// executorFixFromAnswer parses the committed fix out of a STRIPPED executor
+// answer. The production path and the tests both call it.
+//
+// STUB — current (defective) behaviour, replaced in GREEN.
+func executorFixFromAnswer(answer string) (string, error) {
+	return parseExecutorResponse(answer)
+}
+
 func parseExecutorResponse(response string) (string, error) {
 	obj := extractJSONObject(response)
 	if obj == "" {

@@ -229,6 +229,14 @@ func HasEnclosingThinkBlock(content string) bool {
 	}
 }
 
+// IndexAfterUnopenedCloser returns the offset just past the LAST </think> that
+// no <think> opened, or -1 when the content carries no such closer.
+//
+// STUB — wrong on purpose, replaced in GREEN.
+func IndexAfterUnopenedCloser(content string) int {
+	return -1
+}
+
 // HasThinkMarkup reports whether the content carries inline think markup holding
 // text ANYWHERE in it: a <think>…</think> pair with non-blank inner text at any
 // position, a trailing unclosed opener with a non-blank remainder, or a </think>

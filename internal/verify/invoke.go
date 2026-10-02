@@ -614,6 +614,16 @@ func failureClass(res fanout.Result) string {
 // think tag that survives the mask is markup enclosing reply text, while a tag
 // that appears solely inside a string value is a quotation of the tag and must
 // not be read as thinking.
+// verdictFromAnswer parses the committed verdict out of a STRIPPED skeptic
+// answer. The production path and the tests both call it, so the behaviour
+// pinned is the behaviour that ships.
+//
+// STUB — current (defective) behaviour, replaced in GREEN.
+func verdictFromAnswer(answer string) *reclib.Verification {
+	v, _ := parseVerdict(answer)
+	return v
+}
+
 func maskJSONStrings(s string) string {
 	b := []byte(s)
 	inStr, escaped := false, false
