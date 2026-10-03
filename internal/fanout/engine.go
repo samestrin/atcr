@@ -1456,6 +1456,22 @@ func (e *Engine) invokeSingleShot(ctx context.Context, a Agent) Result {
 	if err != nil {
 		r.Err = err
 		r.Status = classifyStatus(err)
+		// The narrow signatures cannot carry Completion.Salvaged, so a salvaged
+		// reply arrives as ErrSalvagedReply. Without this the disclosure channel
+		// reports ZERO on that path — salvaged:false, salvaged_count 0, no warning,
+		// WholePersonaSalvaged false — and a reviewer whose whole reply was promoted
+		// reasoning is indistinguishable from one that hit a transport failure
+		// (TD internal/fanout/engine.go:1433).
+		if errors.Is(err, llmclient.ErrSalvagedReply) {
+			r.Salvaged = true
+		}
+		// Status stays StatusFailed, so the slot still walks the fallback chain —
+		// deliberately unchanged here. Flipping StatusOK on an error return would
+		// alter failover semantics (a paid backup would no longer be tried), which
+		// is a behavior change beyond restoring the disclosure. The divergence from
+		// the Meta path (StatusOK + Salvaged) is latent: every production completer
+		// is hookobs-wrapped and implements CompleteWithMeta, which the selector
+		// above asserts first, so no production path takes this arm.
 		return r
 	}
 	r.Content = content
