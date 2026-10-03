@@ -124,6 +124,33 @@ func TestReExtractJustification_AppliesTheProducerExclusions(t *testing.T) {
 		assert.Empty(t, text)
 	})
 
+	// The third exclusion, and the one that shipped unexercised: a status.json naming
+	// bins the review.md cannot account for. Mutation gives no evidence here —
+	// removing the arm leaves `desynced` unused and fails the BUILD, not a test — so
+	// the arm needs a reachable input or nothing pins it at all.
+	t.Run("a salvaged bin index the content cannot account for yields no replay excerpt", func(t *testing.T) {
+		p := filepath.Join(dir, "desynced.md")
+		require.NoError(t, os.WriteFile(p, []byte("## Findings\n"+anchored), 0o600))
+		// One segment (no boundary marker), so bin 3 names nothing. fanout never
+		// writes such a pair, which is exactly why it is evidence the review.md and
+		// the status.json came from different states. The bin list is non-empty, so
+		// the whole-file salvaged arm above does NOT fire — this reaches the desync
+		// arm specifically.
+		require.NoError(t, os.WriteFile(filepath.Join(dir, statusFileName),
+			[]byte(`{"salvaged":true,"salvaged_chunks":[3]}`), 0o600))
+
+		// Line 3 is the anchored narrative line, so the only reason to refuse is the
+		// desync. Withhold, mirroring the producer — and withhold as ok=false, not as
+		// an error: err is reserved for "the source is gone or unreadable".
+		text, section, ok, err := ReExtractJustification(p, "internal/thing.go", 42, 3)
+		require.NoError(t, err,
+			"a desynced pair is a mismatch, not an unreadable source — collapsing the two "+
+				"would make a pruned review dir indistinguishable from this")
+		assert.False(t, ok, "a bin list the content cannot account for must not authorise a replay rewrite")
+		assert.Empty(t, text)
+		assert.Empty(t, section)
+	})
+
 	t.Run("a draft citation inside a leading think run is not an anchor", func(t *testing.T) {
 		p := filepath.Join(dir, "draft.md")
 		body := op + "considering internal/thing.go:42\nstill drafting\n" + cl + "\n" +
