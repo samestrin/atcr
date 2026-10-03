@@ -1086,3 +1086,35 @@ func TestCommitBaselineWriteback_NamesTheContributedNothingCause(t *testing.T) {
 	assert.Contains(t, out, "salvaged or think-suppressed",
 		"the two causes must be named, since neither is what 'unreviewed_chunks' implies")
 }
+
+// The baseline-coverage warning's `cause` attribute is a CONSTANT string on both
+// arms whenever excluded > 0, with no gate on ContributedNothingCount. So a run
+// whose exclusion came purely from failed chunks (UnreviewedChunks > 0), or from a
+// servedRePacked slot that reviewed only a subset, still prints "a salvaged or
+// think-suppressed reply contributed nothing while still reporting ok" — inverting
+// the comment's stated intent and telling the operator, on every partial-coverage
+// run, to turn off inline reasoning for a slot that did contribute.
+func TestBaselineWithheldCause_NamesTheCauseThatActuallyFired(t *testing.T) {
+	assert.Equal(t,
+		"a salvaged or think-suppressed reply contributed nothing while still reporting ok",
+		baselineWithheldCause(fanout.Summary{ContributedNothingCount: 2}),
+		"the salvage wording is correct only when a slot actually contributed nothing")
+
+	assert.NotContains(t, baselineWithheldCause(fanout.Summary{UnreviewedChunks: 3}), "inline reasoning",
+		"a run whose exclusion came from failed chunks must not tell the operator to turn off inline reasoning")
+	assert.NotContains(t, baselineWithheldCause(fanout.Summary{UnreviewedChunks: 3}), "salvaged or think-suppressed",
+		"failed chunks are not a salvage; naming that cause sends the operator to the wrong remedy")
+
+	assert.NotContains(t, baselineWithheldCause(fanout.Summary{}), "salvaged or think-suppressed",
+		"with every slot OK and nothing contributed-nothing, the remaining all-OK path is a re-packed slot — "+
+			"it must be named rather than left to the salvage wording")
+}
+
+// ContributedNothingCount > 0 takes precedence: when several causes are present the
+// counter that the surrounding comment is about is the one to name, so the operator
+// sees the remedy the comment promises.
+func TestBaselineWithheldCause_ContributedNothingOutranksOtherCauses(t *testing.T) {
+	got := baselineWithheldCause(fanout.Summary{ContributedNothingCount: 1, UnreviewedChunks: 5})
+	assert.Contains(t, got, "contributed nothing")
+	assert.NotContains(t, got, "failed chunks")
+}
