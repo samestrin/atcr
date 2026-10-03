@@ -121,6 +121,30 @@ func SlotFailureReasonForStatus(status string) string {
 
 // SlotFailureIsInfrastructure reports whether a slot-failure reason names a slot the
 // infrastructure LOST, as opposed to one it measured and found worthless.
+//
+// The array carries two genuinely different facts, and every consumer that counts it
+// as a failure tally needs to know which. Three members are losses: the call did not
+// succeed, hit the deadline, or came back on a status this build cannot read — in
+// each case nothing was measured because nothing arrived. SlotFailureUnmeasuredOK is
+// the opposite fact: the call SUCCEEDED (its own doc says so) and the reply provably
+// contributed nothing, so the slot was measured and found worthless.
+//
+// Named rather than left to each consumer because the consumers were already
+// getting it wrong from a shared premise. `caseFailureExitGate`'s comment asserted
+// "A slot failure IS an infrastructure failure", which was true for the original
+// three and became false the moment the fourth was minted — making a HEALTHY panel
+// exit non-zero in CI whenever a reviewer habitually answers on its reasoning
+// channel (TD cli/benchmark.go:311).
+//
+// Fail-closed on anything it does not recognize, including the empty string: an
+// unreadable reason is not evidence that infrastructure failed, and claiming it is
+// would re-create the same false positive for a reason a newer producer wrote.
+// ValidSlotFailureReason rejects those at the export boundary; this predicate simply
+// declines to vouch for them.
 func SlotFailureIsInfrastructure(reason string) bool {
-	return true // STUB — replaced in GREEN
+	switch reason {
+	case SlotFailureCall, SlotFailureTimeout, SlotFailureUnknownStatus:
+		return true
+	}
+	return false
 }
