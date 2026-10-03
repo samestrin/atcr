@@ -88,8 +88,8 @@ func TestWritePool_WarnsAboutSalvagedReplies(t *testing.T) {
 // per-bin refusal exists to protect.
 func TestWritePool_SalvagedBinBesideRealFindingsIsNotReportedAsTotalLoss(t *testing.T) {
 	merged := mergeResultGroup([]Result{
-		{Agent: "bruce", Status: StatusOK, Content: "MEDIUM|b.go:2|real finding|f|correctness|2|e"},
-		{Agent: "bruce", Status: StatusOK, Content: "HIGH|a.go:1|draft|f|correctness|5|e", Salvaged: true},
+		{Agent: "bruce", Status: StatusOK, ChunkCount: 2, Content: "MEDIUM|b.go:2|real finding|f|correctness|2|e"},
+		{Agent: "bruce", Status: StatusOK, ChunkCount: 2, Content: "HIGH|a.go:1|draft|f|correctness|5|e", Salvaged: true},
 	}, nil)
 	pool := filepath.Join(t.TempDir(), "pool")
 	var err error
@@ -174,11 +174,14 @@ func readRepoFile(t *testing.T, path string) string {
 func TestSalvageCost_DoesNotBlameTheSalvageForAPostGroundingZero(t *testing.T) {
 	// A chunked persona: bin 1 refused, bin 0 clean. The clean bin's finding was
 	// then dropped downstream, so the published count is 0 while the refusal is
-	// still only partial.
+	// still only partial. ChunkCount is supplied because a chunked persona HAS a
+	// denominator — leaving it absent makes the record indistinguishable from an
+	// unattributable refusal, which WholePersonaSalvaged fail-closes to a whole loss.
 	st := AgentStatus{
 		Agent:          "bruce",
 		Salvaged:       true,
 		SalvagedChunks: []int{1},
+		ChunkCount:     2,
 		FindingsCount:  0, // post-grounding
 	}
 	cost := salvageCost(st)
@@ -198,7 +201,7 @@ func TestSalvageCost_DoesNotBlameTheSalvageForAPostGroundingZero(t *testing.T) {
 		"every bin refused is a whole-persona loss, whatever the index says")
 
 	// Partial salvage with surviving findings keeps its existing wording.
-	partial := salvageCost(AgentStatus{Agent: "otto", Salvaged: true, SalvagedChunks: []int{1}, FindingsCount: 5})
+	partial := salvageCost(AgentStatus{Agent: "otto", Salvaged: true, SalvagedChunks: []int{1}, ChunkCount: 4, FindingsCount: 5})
 	assert.Equal(t, " (chunk 1 refused, its siblings kept)", partial)
 
 	// The no-bin-index, nonzero-findings arm: an unchunked persona whose reply
@@ -208,4 +211,30 @@ func TestSalvageCost_DoesNotBlameTheSalvageForAPostGroundingZero(t *testing.T) {
 	kept := salvageCost(AgentStatus{Agent: "greta", Salvaged: true, FindingsCount: 4})
 	assert.Empty(t, kept,
 		"an unchunked salvage that still produced findings loses nothing, so it adds no label")
+}
+
+// salvageCost and WholePersonaSalvaged must agree on the SAME AgentStatus. With a
+// non-empty SalvagedChunks and ChunkCount ABSENT, WholePersonaSalvaged
+// (revieweroutcome.go:180) returns true — fail-closed, since an index that cannot be
+// compared against a total is an unmeasurable claim — while salvageCost's
+// `ChunkCount > 0 &&` guard fell through to the index list and rendered
+// "siblings kept". So the console salvage warning contradicted the repo-state runner
+// for one record: the warning said the persona kept its siblings' findings while the
+// runner dropped that slot entirely. They carry the identical doc sentence ("a bin
+// index that names every bin is the same total loss, spelled per bin") precisely
+// because they are meant to answer the same question (TD internal/fanout/artifacts.go:276).
+func TestSalvageCost_AgreesWithWholePersonaSalvagedWhenChunkCountIsAbsent(t *testing.T) {
+	st := AgentStatus{Agent: "kai", Salvaged: true, SalvagedChunks: []int{0, 2}, FindingsCount: 0}
+
+	require.True(t, WholePersonaSalvaged(st),
+		"precondition: an index with no denominator is a whole-persona loss (fail-closed)")
+	assert.Contains(t, salvageCost(st), "contributed nothing",
+		"salvageCost must NOT claim the siblings were kept when the predicate it mirrors says the loss was whole")
+
+	// And the complementary agreement: with an explicit denominator that the index
+	// does not cover, both must call it partial.
+	partial := AgentStatus{Agent: "otto", Salvaged: true, SalvagedChunks: []int{1}, ChunkCount: 4, FindingsCount: 3}
+	require.False(t, WholePersonaSalvaged(partial))
+	assert.Contains(t, salvageCost(partial), "siblings kept",
+		"a genuinely partial salvage keeps its bin detail and its siblings-kept wording")
 }

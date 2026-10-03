@@ -264,16 +264,27 @@ func tallySalvaged(statuses []AgentStatus) (int, []string) {
 // says WHICH bins were refused, so it is the only one that can answer what the
 // salvage cost.
 func salvageCost(st AgentStatus) string {
-	// No bin index at all: the unchunked persona, whose entire reply was promoted
-	// reasoning, so the salvage did cost it everything.
+	// No bin index at all: the unchunked persona. It is a total loss only when it
+	// landed NOTHING — FindingsCount is POST-grounding (statusFor reads fr.Findings),
+	// so a zero-keyed arm here called a salvage that cleared the gate a total loss,
+	// discarded the detail and sent the operator to SalvagedRemedy for a loss the gate
+	// caused where declaring thinking: off changes nothing (TD
+	// internal/fanout/artifacts.go:248).
 	if len(st.SalvagedChunks) == 0 {
 		if st.FindingsCount == 0 {
 			return " (contributed nothing)"
 		}
 		return ""
 	}
-	// A bin index that names every bin is the same total loss, spelled per bin.
-	if st.ChunkCount > 0 && len(st.SalvagedChunks) >= st.ChunkCount {
+	// With a bin index present, the total-loss decision routes through
+	// WholePersonaSalvaged rather than being re-derived here, so the console warning
+	// cannot drift from the predicate the repo-state runner uses on the SAME record.
+	// It keyed on a re-implemented `ChunkCount > 0 &&` guard, which disagreed with
+	// WholePersonaSalvaged on an index with no denominator: the warning said
+	// "siblings kept" while the runner dropped that slot as a whole-persona loss.
+	// One predicate for that decision, two renderings (TD
+	// internal/fanout/artifacts.go:276).
+	if WholePersonaSalvaged(st) {
 		return " (contributed nothing)"
 	}
 	idx := make([]string, 0, len(st.SalvagedChunks))
