@@ -292,8 +292,20 @@ func IndexAfterUnopenedCloser(content string) int {
 
 // MaskJSONStrings blanks every byte inside a JSON double-quoted string literal in
 // s, preserving length and every byte outside a literal. String-awareness is the
-// same rule extractJSONObject uses: a backslash escapes the next byte, and an
-// unclosed literal masks to end of input.
+// same rule extractJSONObject uses: a backslash escapes the next byte.
+//
+// An UNBALANCED quote count returns s UNCHANGED. The mask is a quote-pairing state
+// machine with no JSON-validity check, so once a literal is left open its in/out-of
+// -string state is a guess — and the guess runs to end of input, blanking every
+// think tag after the stray quote. Every consumer asks a fail-closed DETECTION
+// question ("is there markup here that could hide a discarded draft?"), so a mask
+// that hides the markup makes all three lanes ADMIT the reply they exist to refuse;
+// in the debate lane that admission is durable, because applyRulings writes the
+// draft verdict onto the finding (TD internal/debate/debate.go:676). Returning the
+// input untouched says "nothing trustworthy to report" instead of reporting a
+// guess, which leaves every tag visible and sends the detection sites to refusal.
+// Same remedy internal/reconcile applies to its fence mask, for the same reason: a
+// dangling delimiter must not poison the rest of the document.
 //
 // The result is for tag DETECTION only, never for parsing: a think tag that
 // survives the mask is markup enclosing reply text, while one that appears solely
@@ -330,6 +342,13 @@ func MaskJSONStrings(s string) string {
 		default:
 			b[i] = ' '
 		}
+	}
+	if inStr {
+		// A literal was left open, so everything blanked after the stray quote was
+		// blanked on a guess. Discard the whole masked copy rather than publish the
+		// part that happens to be right: a caller cannot tell which half is which,
+		// and length is preserved trivially by returning the original.
+		return s
 	}
 	return string(b)
 }
