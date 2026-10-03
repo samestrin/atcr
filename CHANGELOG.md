@@ -1,3 +1,17 @@
+## [Technical Debt] - 2026-10-03
+
+### Fixed
+
+- The benchmark exit gate counts only infrastructure slot failures, so a healthy panel is no longer failed by unmeasured-OK slots, and an OK-but-unmeasured slot is skipped from the repo-state score.
+- Think-suppression now folds across bins, and the score is gated on a whole-persona test, so a persona-wide suppression no longer drops a scored row. The numerator-absent arm fails closed when `UnparseableChunks` was never populated.
+- A think-suppressed reply is excluded from the diff cache, and the think-only count reaches the walk-level warning on an untruncated walk.
+- The reasoning reserve is recorded for a tool-loop agent even with a zero budget, moves with the matched set, and is no longer inherited by a re-derived merged record.
+- The total-loss salvage arm keys on the bin index, and the salvage arm is narrowed to a whole-persona refusal so partial salvage stays trust-eligible. The narrow `Complete` path refuses a reasoning salvage instead of returning a draft.
+- Seat suppression is recorded regardless of status and outranks `halted`, so a budget-tripped suppressed seat is no longer reported as halted.
+- The JSON-string mask returns its input unchanged when the quote count is unbalanced, so a draft ruling is no longer admitted.
+- Withheld items list their attempt countdown, and the contested overflow count splits by cause with its own remedy.
+- Added tests for the uncovered guards across debate, fanout, reconcile and report, and removed an unreachable salvage append and a redundant empty-content guard.
+
 ## [35.32.0] - 2026-10-02
 
 *Sprint 35.16.11.2.2.4 — think block stripping.*
