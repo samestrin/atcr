@@ -824,6 +824,9 @@ func TestEngine_ThinkSuppressedReplyIsNotCached(t *testing.T) {
 
 	r1 := NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{slot})
 	require.True(t, r1[0].ThinkSuppressed, "precondition: the reply is wholly a think run")
+	require.Positive(t, f.metaCallCount(),
+		"the fake must implement CompleteWithMeta, which the engine asserts FIRST: a Complete-only fake "+
+			"exercises a degraded path production never takes, leaving the shipped path unpinned")
 
 	// A second run must call live rather than replay the useless reply.
 	r2 := NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{slot})
@@ -842,13 +845,35 @@ func newThoughtOnlyFake() *thoughtOnlyFake {
 type thoughtOnlyFake struct {
 	mu    sync.Mutex
 	calls map[string]int
+	// metaCalls counts calls through the MetaCompleter arm, which the engine
+	// asserts FIRST. Production completers all implement it, so the test must
+	// drive this arm to pin the path that actually ships (TD
+	// internal/fanout/cache_test.go:822).
+	metaCalls int
 }
 
 func (f *thoughtOnlyFake) Complete(_ context.Context, inv llmclient.Invocation) (string, error) {
 	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls[inv.Model]++
-	f.mu.Unlock()
 	return "\x3cthink\x3ereasoning only, no answer\x3c/think\x3e", nil
+}
+
+// CompleteWithMeta makes the fake a MetaCompleter, so invokeSingleShot takes the
+// production arm. Truncated and Salvaged are both false — the untruncated,
+// non-salvaged shape the cache gate could not see.
+func (f *thoughtOnlyFake) CompleteWithMeta(_ context.Context, inv llmclient.Invocation) (llmclient.Completion, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls[inv.Model]++
+	f.metaCalls++
+	return llmclient.Completion{Content: "\x3cthink\x3ereasoning only, no answer\x3c/think\x3e"}, nil
+}
+
+func (f *thoughtOnlyFake) metaCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.metaCalls
 }
 
 func (f *thoughtOnlyFake) callCount(model string) int {
