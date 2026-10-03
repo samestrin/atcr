@@ -41,6 +41,14 @@ func TestCaseFailureExitGate_UnmeasuredOKSlotsAreNotInfrastructureFailures(t *te
 	assert.NoError(t, caseFailureExitGate(run(benchmark.SlotFailureUnmeasuredOK, 10), false, 0),
 		"--max-case-failures=0 counts infrastructure losses, and there were none")
 
+	// A nil run-result is the no-run case and must stay silent. Called out because
+	// splitting the old `rr == nil || (...)` compound into its own statement turned a
+	// covered expression into an uncovered one — the cumulative review caught it.
+	assert.NoError(t, caseFailureExitGate(nil, true, -1),
+		"no run-result means no run; the strict flags have nothing to judge")
+	assert.NoError(t, caseFailureExitGate(nil, false, 0),
+		"and the threshold form must not read a missing run-result as a failure either")
+
 	// The gate must still fire on the real thing — the regression direction that
 	// matters, since an over-narrow predicate would let a dead provider exit 0.
 	require.Error(t, caseFailureExitGate(run(benchmark.SlotFailureCall, 1), true, -1),

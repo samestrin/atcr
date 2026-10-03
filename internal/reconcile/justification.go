@@ -185,12 +185,14 @@ func stampJustifications(jf []JSONFinding, reviewDir string) {
 		slog.Warn("justifications stamped", append(attrs,
 			"note", "findings matched an anchor whose section was entirely quoted; extractSection suppresses those, so this is not format drift")...)
 	default:
-		attrs := []any{"matched", matched, "total", len(jf)}
-		if salvageSkipped > 0 {
-			attrs = append(attrs, "salvage_skipped", salvageSkipped)
-		}
-		slog.Warn("justifications stamped", append(attrs,
-			"note", "review.md narratives exist but matched zero findings; possible format drift")...)
+		// No salvage_skipped append here, and none is reachable: arriving in this arm
+		// means matched == 0 and elided == 0, and the arm above fires on exactly
+		// `salvageSkipped > 0 && elided == 0` — so salvageSkipped is ALWAYS 0 by the
+		// time control reaches this line. One stood here and was dead code: an
+		// uncovered line no test could pin, because no input can produce it
+		// (TD internal/reconcile/justification.go:168).
+		slog.Warn("justifications stamped", "matched", matched, "total", len(jf),
+			"note", "review.md narratives exist but matched zero findings; possible format drift")
 	}
 }
 
