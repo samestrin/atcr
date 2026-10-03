@@ -1304,10 +1304,15 @@ func (e *Engine) dispatchAgent(ctx context.Context, a Agent) Result {
 // so the cache gate can consult it BEFORE the reply is stored. Two callers, one
 // predicate: a reply this returns true for must never be cached, and must be
 // recorded think-suppressed rather than unparseable.
+// No empty-content guard, deliberately. One stood here and was redundant: an empty
+// reply already answers false through the length test, because SplitThink("")
+// returns ("", "") and `0 < 0` is false. It was an uncovered line that SURVIVED
+// mutation — deleting it left the suite green — which is the signature of an arm
+// that cannot change an answer, so no test could ever have pinned it. Deleting it
+// and stating the equivalence is the honest close; keeping it would mean keeping a
+// line the suite can never exercise (TD internal/fanout/engine.go:1309). The
+// equivalence itself IS pinned, by TestThinkSuppressedContent's empty case.
 func thinkSuppressedContent(content string) bool {
-	if content == "" {
-		return false
-	}
 	answer, _ := llmclient.SplitThink(content)
 	return len(answer) < len(content) && strings.TrimSpace(answer) == ""
 }
