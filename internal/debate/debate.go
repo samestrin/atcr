@@ -583,7 +583,18 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 
 	if judgeHalted(rec.Halted) {
 		ir.Outcome = OutcomeUnresolved
+		// Suppressed outranks halted, the same precedence the arguing seats apply
+		// (see silentArguingSeats' switch). The judge can be BOTH: a budget-tripped
+		// seat whose forced final answer was entirely a leading think run halts AND
+		// was suppressed, and the STRIP is what removed the ruling — reporting
+		// judge_halted there sends the operator after a budget for a reply the strip
+		// ate (TD internal/debate/debate.go:919). A judge that halted with genuinely
+		// empty content has no Suppressed entry, so this only redirects the cases
+		// where the strip really was the cause.
 		ir.Reason = ReasonJudgeHalted
+		if slices.Contains(rec.Suppressed, LabelJudge) {
+			ir.Reason = ReasonJudgeSuppressed
+		}
 		tr.RecordRuling(RulingEvent{Outcome: OutcomeUnresolved, Reasoning: "judge halted"})
 		return ir
 	}
@@ -913,9 +924,13 @@ func countsTowardWithholding(reason string) bool {
 // when that seat halted, seat_suppressed when the strip emptied its reply, and
 // seat_silent when it ran clean and genuinely said nothing (or on a mixture).
 //
-// Keyed on Halted alone, with no suppression arm: a judge that replies with only
-// a think block leaves JudgeRaw blank, and parseRuling already reports that as
-// the distinct empty_ruling token rather than as a halt.
+// It reports the HALT alone, and the caller applies the suppression precedence on
+// top: a judge that is both halted and suppressed (a budget-tripped seat whose
+// forced final answer was all think markup) must report judge_suppressed, the same
+// way an arguing seat reports seat_suppressed, so the two seat kinds cannot disagree
+// about one input class (TD internal/debate/debate.go:919). A judge that ran clean
+// with only a think block leaves JudgeRaw blank, which parseRuling reports as the
+// distinct empty_ruling token rather than as a halt.
 func judgeHalted(halted []string) bool {
 	return slices.Contains(halted, LabelJudge)
 }

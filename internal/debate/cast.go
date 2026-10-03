@@ -67,6 +67,15 @@ const (
 	ReasonSeatSuppressed = "seat_suppressed"
 )
 
+// ReasonJudgeSuppressed is the judge's twin of ReasonSeatSuppressed, and it exists
+// for the same disclosure reason. The judge seat can be BOTH halted and suppressed
+// (a budget-tripped judge whose forced final answer was entirely a leading think run),
+// and the STRIP is what removed the ruling — so the two seat kinds must apply one
+// precedence rather than disagreeing on the same input class. Reporting judge_halted
+// there names an engine/budget problem for a ruling the strip ate (TD
+// internal/debate/debate.go:919).
+const ReasonJudgeSuppressed = "judge_suppressed"
+
 // Caster is one filled debate seat: the label, the backing registry agent, and
 // the resolved provider/config needed to invoke it through the tool loop.
 type Caster struct {

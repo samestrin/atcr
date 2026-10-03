@@ -1398,3 +1398,41 @@ func TestRunDebate_SeatThatHaltedAndWasSuppressedReportsSuppressed(t *testing.T)
 	assert.NotContains(t, df.Items[0].Reasoning, LabelProposer+" halted",
 		"one cause per seat, and for this input the strip is the cause")
 }
+
+// The judge seat must apply the SAME precedence the arguing seats do. judgeHalted
+// gives Halted absolute precedence (it is the first guard in debateOne), while
+// silentArguingSeats gives Suppressed precedence, so one input class yields
+// seat_suppressed on a proposer and judge_halted on a judge. A judge whose budget
+// tripped AND whose forced final answer was entirely think markup is BOTH, and the
+// STRIP is what removed the ruling — reporting judge_halted names a budget problem
+// for a reply the strip ate (TD internal/debate/debate.go:919).
+//
+// The clean-blank judge is deliberately NOT folded in: it never halted, so it keeps
+// its distinct empty_ruling token, which the halt guard does not pre-empt.
+func TestRunDebate_SeatThatHaltedAndWasSuppressed_ReportsSuppressedForTheJudge(t *testing.T) {
+	call := []llmclient.ToolCall{{ID: "1", Type: "function", Function: llmclient.FunctionCall{Name: "read_file", Arguments: json.RawMessage(`{"path":"a.go"}`)}}}
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	reg := debateRoster()
+	judge := reg.Agents["carol"]
+	one := 1
+	judge.MaxTurns = &one
+	reg.Agents["carol"] = judge
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "challenger attacks"},
+		{toolCalls: call}, // the judge's only turn asks for a tool: max_turns trips
+		// The FORCED final answer, entirely a leading think run. The judge halted
+		// (status is not OK) AND the strip emptied its ruling.
+		{content: "\x3cthink\x3eran out mid-thought\x3c/think\x3e"},
+	}}
+	res, err := runDebate(context.Background(), dir, reg, Options{}, harness(cc))
+	require.NoError(t, err)
+	require.Equal(t, 1, res.Unresolved, "precondition: a strip-emptied judge reply is no ruling")
+
+	df, _, err := ReadDebateFile(dir)
+	require.NoError(t, err)
+	require.Len(t, df.Items, 1)
+	assert.Equal(t, ReasonJudgeSuppressed, df.Items[0].Reason,
+		"the strip is what removed the ruling, so suppressed outranks halted for the judge too: "+
+			"judge_halted here would send the operator after a budget for a reply the strip ate")
+}

@@ -91,6 +91,7 @@ func TestDocs_DebateReasonTokensMatchTheConstants(t *testing.T) {
 		debate.ReasonSeatSilent,
 		debate.ReasonSeatSuppressed,
 		debate.ReasonJudgeHalted,
+		debate.ReasonJudgeSuppressed,
 		debate.ReasonUnparseableRuling,
 		debate.ReasonEmptyRuling,
 		debate.ReasonHarnessUnavailable,
