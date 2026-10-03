@@ -98,6 +98,11 @@ func summarize(results []Result) Summary {
 		// StatusOK to mirror contributedNothing's call sites: a FAILED slot is already
 		// counted by the status tallies, and double-counting it would overstate the
 		// cause space the operator is asked to explain.
+		//
+		// contributedNothing routes through the whole-persona predicates, so a chunked
+		// persona with one refused bin of eight that still shipped its siblings'
+		// findings is NOT counted — the same per-bin rule the benchmark path applies
+		// (TD internal/fanout/outcome.go:102).
 		if r.Status == StatusOK && contributedNothing(r) {
 			s.ContributedNothingCount++
 		}

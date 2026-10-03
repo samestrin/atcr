@@ -242,3 +242,43 @@ func TestSummarizeStatuses_ContributedNothingCount(t *testing.T) {
 	assert.Equal(t, 2, s.ContributedNothingCount,
 		"the resume rebuild must tally the same cause the live summarize() does, and skip failed slots")
 }
+
+// A chunked persona has its Salvaged and ThinkSuppressed bits OR-folded over its
+// bins (chunker.go), so one refused bin beside seven that landed real findings sets
+// the persona-wide bit. summarize() runs on MERGED results (artifacts.go runs after
+// mergeChunkResults), so tallying the RAW flag counts that persona as having
+// "contributed nothing" even though its other bins were parsed, reconciled and
+// shipped — and the operator warning at cli/review.go:268 tells them to turn off
+// inline reasoning for a slot that did contribute.
+//
+// The per-bin rule already exists as WholePersonaSalvaged / WholePersonaThinkSuppressed,
+// reached through the AgentStatus view. summarize must route through the same
+// predicates so the count agrees with the benchmark path's slotUnmeasuredReason
+// (cli/benchmark_repostate.go), which answers the same question from the same record.
+func TestSummarize_ContributedNothingCount_PartialChunkedLossIsNotContributedNothing(t *testing.T) {
+	partialSalvage := Result{
+		Agent: "chunked-salvage", Status: StatusOK, Salvaged: true, ChunkCount: 8,
+		chunkContents: make([]string, 8),
+		chunkSalvaged: []bool{true, false, false, false, false, false, false, false},
+	}
+	// UnparseableChunks names the bins the strip ate; a partial suppression keeps
+	// signal from its siblings, so it too is not a whole-persona loss.
+	partialSuppressed := Result{
+		Agent: "chunked-think", Status: StatusOK, ThinkSuppressed: true,
+		ChunkCount: 8, UnparseableChunks: 1,
+	}
+	whole := Result{Agent: "unchunked", Status: StatusOK, Salvaged: true}
+
+	s := summarize([]Result{partialSalvage, partialSuppressed, whole})
+	assert.Equal(t, 1, s.ContributedNothingCount,
+		"only the unchunked whole-persona loss counts; a chunked persona with one bad bin of eight kept its signal")
+
+	statuses := []AgentStatus{
+		{Agent: "chunked-salvage", Status: StatusOK, Salvaged: true, ChunkCount: 8, SalvagedChunks: []int{0}},
+		{Agent: "chunked-think", Status: StatusOK, ThinkSuppressed: true, ChunkCount: 8, UnparseableChunks: 1},
+		{Agent: "unchunked", Status: StatusOK, Salvaged: true},
+	}
+	rs := summarizeStatuses(statuses)
+	assert.Equal(t, 1, rs.ContributedNothingCount,
+		"the resume path must apply the same per-bin rule, or a resumed run drifts from the live one")
+}
