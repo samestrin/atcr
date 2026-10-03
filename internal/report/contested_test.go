@@ -184,3 +184,30 @@ func TestWriteContestedSection_RendersTheAttemptCountdownOnARuling(t *testing.T)
 	assert.Contains(t, b.String(), "attempt 2 of 3",
 		"an unresolved ruling shows its attempt countdown against the ceiling")
 }
+
+// TestWriteContestedSection_OverflowItemsAreListedNotJustCounted: a cap-overflowed
+// item produces no Contested ruling either, and it may already carry attempts toward
+// the withholding ceiling — the exact fact the carry onto debate.json exists to
+// preserve. Rendering only the Overflow integer hid it, so an operator raising
+// debate.max_items could not tell a freshly-discovered item from one about to be
+// withheld (TD cli/report.go:321).
+func TestWriteContestedSection_OverflowItemsAreListedNotJustCounted(t *testing.T) {
+	cr := ContestedReport{
+		Overflow:                  2,
+		UnresolvedAttemptsCeiling: 3,
+		OverflowItems: []Overflow{
+			{File: "a.go", Line: 7, Severity: "HIGH", Problem: "leaks the token", UnresolvedAttempts: 2},
+			{File: "b.go", Line: 9, Severity: "LOW", Problem: "never tried"},
+		},
+	}
+	var b bytes.Buffer
+	writeContestedSection(&b, cr)
+	out := b.String()
+
+	assert.Contains(t, out, "Items not debated (cap reached)", "cap-overflow items get their own listed section")
+	assert.Contains(t, out, "a.go:7", "the item's location is listed")
+	assert.Contains(t, out, "leaks the token", "the item's problem survives")
+	assert.Contains(t, out, "attempt 2 of 3",
+		"the carried countdown is shown, so an item near the ceiling is not mistaken for a fresh one")
+	assert.Contains(t, out, "b.go:9", "an item with no carried count is still listed")
+}

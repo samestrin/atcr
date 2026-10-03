@@ -539,3 +539,36 @@ func TestLoadContested_ListsWithheldItemsWithTheirCountdown(t *testing.T) {
 	require.Len(t, cr.Items, 1)
 	assert.Equal(t, 2, cr.Items[0].UnresolvedAttempts, "a still-debated item carries its countdown too")
 }
+
+// The cap-overflow carry on debate.json's Overflow records is READ by the next run
+// (priorUnresolvedAttempts), but the report discarded it: only the Overflow integer
+// rendered, so an operator raising debate.max_items could not see that one of the
+// cap-overflowed items had already accrued attempts toward the withholding ceiling.
+// Carrying it onto a listing, the way WithheldItems does, keeps the countdown
+// visible for exactly the items the carry was written for (TD cli/report.go:321).
+func TestLoadContested_ListsCapOverflowItemsWithTheirCountdown(t *testing.T) {
+	dir := t.TempDir()
+	recon := filepath.Join(dir, "reconciled")
+	require.NoError(t, os.MkdirAll(recon, 0o755))
+	df := debate.DebateFile{
+		SchemaVersion: debate.DebateSchemaVersion,
+		Overflow: []debate.OverflowItem{
+			{File: "a.go", Line: 7, Kind: "finding", Severity: "HIGH", Problem: "leaks the token", UnresolvedAttempts: 2},
+			{File: "b.go", Line: 9, Kind: "finding", Severity: "LOW", Problem: "never tried"},
+			{File: "c.go", Line: 3, Problem: "withheld", Reason: debate.OverflowAttemptsExhausted, UnresolvedAttempts: 3},
+		},
+	}
+	raw, err := json.Marshal(df)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(recon, debate.DebateJSON), raw, 0o644))
+
+	cr := loadContested(dir)
+	assert.Equal(t, 2, cr.Overflow, "the cap overflows keep their own count")
+	require.Len(t, cr.OverflowItems, 2, "the cap-overflowed items are LISTED, not just counted")
+	assert.Equal(t, "a.go", cr.OverflowItems[0].File)
+	assert.Equal(t, 2, cr.OverflowItems[0].UnresolvedAttempts,
+		"the carry reaches the report, so an item near the ceiling is visible before it is withheld")
+	assert.Equal(t, "b.go", cr.OverflowItems[1].File)
+	assert.Zero(t, cr.OverflowItems[1].UnresolvedAttempts, "an item nobody tried still carries no count")
+	require.Len(t, cr.WithheldItems, 1, "the withheld item stays in its own list")
+}

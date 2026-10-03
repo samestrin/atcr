@@ -308,6 +308,7 @@ func loadContested(reviewDir string) report.ContestedReport {
 	// integer is all that is left (TD cli/report.go:284).
 	overflow, withheld := 0, 0
 	var withheldItems []report.Withheld
+	var overflowItems []report.Overflow
 	for _, ov := range df.Overflow {
 		if ov.Reason == debate.OverflowAttemptsExhausted {
 			withheld++
@@ -319,10 +320,19 @@ func loadContested(reviewDir string) report.ContestedReport {
 			continue
 		}
 		overflow++
+		// The cap-overflow half is LISTED too. Its recorded attempt count is what the
+		// carry onto debate.json exists to preserve, so an item already partway to
+		// the withholding ceiling stays visible on the run whose cap dropped it
+		// (TD cli/report.go:321).
+		overflowItems = append(overflowItems, report.Overflow{
+			File: ov.File, Line: ov.Line, Severity: ov.Severity,
+			Problem: ov.Problem, UnresolvedAttempts: ov.UnresolvedAttempts,
+		})
 	}
 	return report.ContestedReport{
 		Items: items, Overflow: overflow, Withheld: withheld,
 		WithheldItems:             withheldItems,
+		OverflowItems:             overflowItems,
 		UnresolvedAttemptsCeiling: debate.MaxUnresolvedAttempts,
 	}
 }
