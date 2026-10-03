@@ -214,7 +214,35 @@ func ValidReviewerOutcome(s string) bool {
 }
 
 // WholePersonaThinkSuppressed reports whether a think-suppressed status cost the
-// persona its WHOLE contribution.
+// persona its WHOLE contribution, as opposed to one bin the strip ate beside bins
+// that committed real findings. The think-suppression twin of WholePersonaSalvaged,
+// deliberately shaped the same way so the two cannot drift on what "contributed
+// nothing" means.
+//
+// `ThinkSuppressed` is an OR-fold over a chunked persona's bins (chunker.go), so it
+// cannot say WHICH bin the strip ate. No per-bin index is needed to find out:
+// ThinkSuppressed is documented as set only alongside UnparseableResponse
+// (engine.go:420-427), so `UnparseableChunks` already counts the bins that produced
+// nothing a parser could use and `ChunkCount` is the denominator. A persona with
+// bins left over has signal — their findings are parsed, reconciled and shipped —
+// so it got a fair attempt and must keep its score and its trust standing.
+//
+// Reusing those two fields rather than minting a ThinkSuppressedChunks index is the
+// point: the record already carries the answer, and a new status.json key would pay
+// a cross-version compatibility cost for information that is already on disk.
+//
+// Fail-closed when the denominator is absent, exactly as WholePersonaSalvaged is:
+// an index that cannot be compared against a total is an unmeasurable claim, and the
+// safe direction is to withhold coverage rather than grant it (TD
+// internal/scorecard/trust.go:1019).
 func WholePersonaThinkSuppressed(a AgentStatus) bool {
-	return a.ThinkSuppressed // STUB — replaced in GREEN
+	if !a.ThinkSuppressed {
+		return false
+	}
+	if a.ChunkCount <= 0 {
+		// No denominator: the unchunked persona, whose entire reply the strip
+		// consumed. Either way nothing narrows it, so it is whole.
+		return true
+	}
+	return a.UnparseableChunks >= a.ChunkCount
 }

@@ -132,11 +132,17 @@ func slotUnmeasuredReason(a fanout.AgentStatus) string {
 	if a.Status != fanout.StatusOK {
 		return benchmark.SlotFailureReasonForStatus(a.Status)
 	}
-	// A partial salvage is NOT unmeasured: the clean siblings' findings are parsed and
+	// A partial loss is NOT unmeasured: the clean siblings' findings are parsed and
 	// reconciled, so the row has real signal and must be scored. Same per-bin rule the
-	// outcome classifier applies, through the same exported predicate, so the score and
-	// the label cannot drift on which salvages count (TD internal/scorecard/trust.go:1019).
-	if fanout.WholePersonaSalvaged(a) || a.ThinkSuppressed {
+	// outcome classifier applies, through the same exported predicates, so the score and
+	// the label cannot drift on which losses count (TD internal/scorecard/trust.go:1019).
+	//
+	// BOTH halves go through a whole-persona predicate. Reading `a.ThinkSuppressed`
+	// raw here was the sibling signal left open inside this very expression: it is an
+	// OR-fold over the persona's bins, so one bin the strip ate dropped a row whose
+	// other seven landed real findings — the exact over-withholding WholePersonaSalvaged
+	// was introduced to stop (TD internal/fanout/chunker.go:493).
+	if fanout.WholePersonaSalvaged(a) || fanout.WholePersonaThinkSuppressed(a) {
 		return benchmark.SlotFailureUnmeasuredOK
 	}
 	return ""

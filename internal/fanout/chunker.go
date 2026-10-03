@@ -496,6 +496,16 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 		if r.UnparseableResponse {
 			out.UnparseableChunks++
 		}
+		// Folded for the same reason as Salvaged, and it was the one member of that
+		// pair left out. ThinkSuppressed refines UnparseableResponse (engine.go:420),
+		// so a suppressed bin is already counted just above — but the persona-level
+		// FLAG was inherited from g[0], which cut both ways: a suppressed chunk 0 spoke
+		// for seven clean siblings, and a suppressed LATER bin was invisible, so
+		// Summary.ContributedNothingCount and summarizeStatuses undercounted it
+		// (TD internal/fanout/chunker.go:493). The flag now answers "did the strip eat
+		// any bin"; WholePersonaThinkSuppressed answers the different question a score
+		// needs, using UnparseableChunks over ChunkCount as the denominator.
+		out.ThinkSuppressed = out.ThinkSuppressed || r.ThinkSuppressed
 		// Same reasoning as UnparseableChunks: a persona's wasted think-only spend is
 		// the SUM over its chunks, not g[0]'s.
 		out.ThinkOnlyAttempts += r.ThinkOnlyAttempts
