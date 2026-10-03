@@ -118,3 +118,9 @@ func SlotFailureReasonForStatus(status string) string {
 	}
 	return SlotFailureUnknownStatus
 }
+
+// SlotFailureIsInfrastructure reports whether a slot-failure reason names a slot the
+// infrastructure LOST, as opposed to one it measured and found worthless.
+func SlotFailureIsInfrastructure(reason string) bool {
+	return true // STUB — replaced in GREEN
+}
