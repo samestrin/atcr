@@ -1436,3 +1436,36 @@ func TestRunDebate_SeatThatHaltedAndWasSuppressed_ReportsSuppressedForTheJudge(t
 		"the strip is what removed the ruling, so suppressed outranks halted for the judge too: "+
 			"judge_halted here would send the operator after a budget for a reply the strip ate")
 }
+
+// The ambiguous-closer Reasoning string ships to the operator: ir.Reasoning reaches
+// debate.json's `reasoning` field, and internal/report/contested.go renders it as
+// "- Rationale: ..." in report.md, which a user reads. The literal must name the tag
+// INTACT — the pre-existing verify twins (internal/verify/invoke.go, executor.go) both
+// read "a `</think>` no `<think>` opened", and a version that dropped the opener's
+// brackets reads as "no thinking opened", which names an English word rather than a
+// tag (TD internal/debate/debate.go:699).
+func TestRunDebate_AmbiguousCloserReasoningNamesTheTagIntact(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	// A bare closer with a ruling envelope on BOTH sides: neither is provably
+	// committed, so debateOne refuses with the ambiguous token.
+	judge := `{"outcome":"uphold","reasoning":"before"} ` + "\x3c/think\x3e" +
+		` {"outcome":"overturn","reasoning":"after"}`
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "challenger attacks"},
+		{content: judge},
+	}}
+	_, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+
+	df, _, err := ReadDebateFile(dir)
+	require.NoError(t, err)
+	require.Len(t, df.Items, 1)
+	require.Equal(t, ReasonJudgeThinkMarkup, df.Items[0].Reason,
+		"precondition: an ambiguous unopened closer is refused under the think-markup token")
+	assert.Contains(t, df.Items[0].Reasoning, "a \x3c/think\x3e no \x3cthink\x3e opened",
+		"the reasoning names the tag shape intact — a mangled opener reads as the English word 'thinking' "+
+			"and a user reading report.md cannot tell which tag is meant")
+	assert.NotContains(t, df.Items[0].Reasoning, "no  thinking opened",
+		"the escaped/mangled shape must not ship to report.md")
+}

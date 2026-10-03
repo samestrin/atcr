@@ -368,7 +368,7 @@ func MaskJSONStrings(s string) string {
 }
 
 // CloserSection names which part of a STRIPPED answer holds the committed
-// envelope when the reply carries a  response that no  thinking opened.
+// envelope when the reply carries a  response that no <think> opened.
 type CloserSection int
 
 const (
@@ -384,7 +384,7 @@ const (
 )
 
 // ClassifyUnopenedCloser decides which part of a stripped answer to parse when a
-// </think> appears that no  thinking opened. It is shared by every lane, so no
+// </think> appears that no <think> opened. It is shared by every lane, so no
 // lane can drift on the RULE; each lane still supplies its own hasEnvelope,
 // because what counts as an envelope entirely depends on that lane's parser.
 //

@@ -693,7 +693,7 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 		return ir
 	}
 
-	// The one tag shape neither guard above acts on: a </think> no  thinking opened.
+	// The one tag shape neither guard above acts on: a </think> no <think> opened.
 	// SplitThink leaves it in place and HasEnclosingThinkBlock does not refuse on
 	// it, both deliberately, so the envelope BEFORE it can still be an abandoned
 	// draft. llmclient owns the shared rule; this lane supplies the envelope
@@ -707,7 +707,7 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 	case llmclient.SectionAmbiguous:
 		ir.Outcome = OutcomeUnresolved
 		ir.Reason = ReasonJudgeThinkMarkup
-		ir.Reasoning = "judge reply has a ruling envelope on both sides of a </think> no  thinking opened; neither is provably committed"
+		ir.Reasoning = "judge reply has a ruling envelope on both sides of a </think> no <think> opened; neither is provably committed"
 		tr.RecordRuling(RulingEvent{Outcome: OutcomeUnresolved, Reasoning: ir.Reasoning})
 		log.FromContext(ctx).Warn("debate: judge reply ambiguous around an unopened think closer, ruling refused", "judge", cast.Judge.Agent)
 		return ir
