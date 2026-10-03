@@ -1317,3 +1317,84 @@ func TestRunDebate_UnbalancedQuoteBeforeAThinkBlockStillRefusesTheDraft(t *testi
 	require.Len(t, df.Items, 1)
 	assert.Equal(t, ReasonJudgeThinkMarkup, df.Items[0].Reason)
 }
+
+// The third arm of the unopened-closer classification, and the one that shipped
+// unexercised in this lane. SplitThink leaves a bare `</think>` in place and
+// HasEnclosingThinkBlock does not refuse on it, both deliberately — so what falls
+// between them is a reply that began MID-THOUGHT: there is no draft before the
+// closer, only the tail of reasoning, and the committed ruling is the object after
+// it. Taking the whole answer would hand parseRuling that reasoning tail.
+//
+// Its two siblings are pinned (the ambiguous refusal, and the masked quoted tag);
+// this is the branch that resolves rather than refuses, so leaving it unpinned meant
+// nothing proved the lane could still RULE on the shape (TD internal/debate/debate.go:703).
+func TestRunDebate_UnopenedCloserWithRulingOnlyAfterItKeepsThatRuling(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	// No envelope before the closer: the reply opens mid-reasoning and commits after.
+	judge := `was still weighing the severity here ` + "\x3c/think\x3e" +
+		` {"outcome":"uphold","reasoning":"the attack does not land"}`
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "the attack stands"},
+		{content: judge},
+	}}
+	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Upheld,
+		"with no envelope before the bare closer there is nothing to confuse, so the object after it IS the ruling")
+	assert.Equal(t, 0, res.Unresolved,
+		"refusing here would discard a committed ruling over a closer that opened nothing")
+
+	df, _, err := ReadDebateFile(dir)
+	require.NoError(t, err)
+	require.Len(t, df.Items, 1)
+	assert.Equal(t, OutcomeUphold, df.Items[0].Outcome)
+	assert.NotEqual(t, ReasonJudgeThinkMarkup, df.Items[0].Reason)
+	assert.Equal(t, "the attack does not land", df.Items[0].Reasoning,
+		"the reasoning must come from the committed object, not from the reasoning tail before the closer")
+}
+
+// A seat can be BOTH halted and suppressed, and which of the two gets PUBLISHED is
+// the whole point of the precedence flip. recordTurnCause records both facts (that
+// much is pinned by TestRunTurn_RecordsSuppressedEvenWhenTheSeatAlsoHalted), and
+// TestRunDebate_BudgetTrippedSeatWithStatementKeepsRuling already drives this exact
+// input end-to-end — but it asserts only the COUNTS, so swapping the two switch arms
+// in debateOne left the whole suite green. The token an operator reads out of
+// debate.json was unpinned (TD internal/debate/debate.go:632).
+//
+// Suppressed must win. The two states have opposite remedies — raise
+// tool_budget_bytes versus turn off inline reasoning on that endpoint — and the
+// STRIP is what caused the absence of a statement here: the seat did produce a
+// forced final answer, and the strip removed all of it. Reporting seat_halted names
+// a budget problem for a statement the strip ate.
+func TestRunDebate_SeatThatHaltedAndWasSuppressedReportsSuppressed(t *testing.T) {
+	call := []llmclient.ToolCall{{ID: "1", Type: "function", Function: llmclient.FunctionCall{Name: "read_file", Arguments: json.RawMessage(`{"path":"a.go"}`)}}}
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	reg := debateRoster()
+	a := reg.Agents["alice"]
+	one := 1
+	a.MaxTurns = &one
+	reg.Agents["alice"] = a
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{toolCalls: call}, // the proposer's only turn asks for a tool: max_turns trips
+		// The FORCED final answer, entirely a leading think run. The seat halted
+		// (status is not OK) AND the strip emptied its statement.
+		{content: "\x3cthink\x3eran out mid-thought\x3c/think\x3e"},
+		{content: "challenger attacks"},
+		{content: `{"outcome":"uphold","reasoning":"defense holds"}`},
+	}}
+	res, err := runDebate(context.Background(), dir, reg, Options{}, harness(cc))
+	require.NoError(t, err)
+	require.Equal(t, 1, res.Unresolved, "precondition: a strip-emptied forced answer is no case")
+
+	df, _, err := ReadDebateFile(dir)
+	require.NoError(t, err)
+	require.Len(t, df.Items, 1)
+	assert.Equal(t, ReasonSeatSuppressed, df.Items[0].Reason,
+		"the strip is what removed the statement, so suppressed outranks halted: seat_halted here would send "+
+			"the operator after a budget for a reply the strip ate")
+	assert.Contains(t, df.Items[0].Reasoning, LabelProposer+" suppressed",
+		"the per-seat transcript note must agree with the token, since seatSilenceNotes carries the same flip")
+	assert.NotContains(t, df.Items[0].Reasoning, LabelProposer+" halted",
+		"one cause per seat, and for this input the strip is the cause")
+}
