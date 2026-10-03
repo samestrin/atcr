@@ -381,7 +381,18 @@ func priorUnresolvedAttempts(ctx context.Context, reviewDir string) map[FindingK
 		if n < 1 {
 			continue
 		}
-		out[FindingKey{File: ov.File, Line: ov.Line, Problem: ov.Problem}] = n
+		// MAX, not overwrite. The items loop above may already have written a HIGHER
+		// count for this same key, and the deleted `ov.Reason != ...` filter used to
+		// make an overlap impossible BY CONSTRUCTION; with the filter gone, leaving
+		// this an unconditional write would let a lower overflow count walk the
+		// ceiling backward. Disjoint today (withholdExhausted removes withheld items
+		// before SelectItems, and BuildDisagreements yields at most one radar item per
+		// finding), but that invariant is held two files away, so take the max and
+		// restore the by-construction safety (TD internal/debate/emit.go:384).
+		key := FindingKey{File: ov.File, Line: ov.Line, Problem: ov.Problem}
+		if n > out[key] {
+			out[key] = n
+		}
 	}
 	return out
 }

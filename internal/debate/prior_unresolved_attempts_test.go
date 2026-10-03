@@ -246,3 +246,30 @@ func TestPriorUnresolvedAttempts_ReadsACapOverflowRecord(t *testing.T) {
 	got2 := priorUnresolvedAttempts(context.Background(), dir2)
 	assert.Equal(t, maxUnresolvedAttempts, got2[FindingKey{File: "b.go", Line: 2, Problem: "q"}])
 }
+
+// TestPriorUnresolvedAttempts_OverflowNeverLowersAnItemsCount: the Overflow loop
+// writes out[key] unconditionally, so a cap-overflow record carrying a LOWER count
+// than the same key's df.Items entry would overwrite it downward and walk the
+// ceiling backward. Deleted filter aside, the loop must take the MAX: a hand-built
+// (or future) file where one key appears in both places must not lose the higher
+// history (TD internal/debate/emit.go:384).
+func TestPriorUnresolvedAttempts_OverflowNeverLowersAnItemsCount(t *testing.T) {
+	dir := t.TempDir()
+	writeDebateFileFixture(t, dir, DebateFile{
+		SchemaVersion: DebateSchemaVersion,
+		Items: []ItemResult{{
+			File: "a.go", Line: 7, Problem: "same finding",
+			Outcome: OutcomeUnresolved, Reason: "unparseable_ruling", UnresolvedAttempts: 2,
+		}},
+		Overflow: []OverflowItem{{
+			File: "a.go", Line: 7, Problem: "same finding",
+			UnresolvedAttempts: 1,
+		}},
+	})
+
+	got := priorUnresolvedAttempts(context.Background(), dir)
+
+	key := FindingKey{File: "a.go", Line: 7, Problem: "same finding"}
+	assert.Equal(t, 2, got[key],
+		"the overflow loop must not lower a count the items loop already read — the higher history wins")
+}
