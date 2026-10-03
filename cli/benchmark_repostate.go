@@ -219,7 +219,8 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		// is spelled.
 		retentionAttrs := func() []any {
 			attrs := []any{"path", tmp, "failed_cases", len(caseFailures),
-				"failed_slots", failedSlotCount(slotFailures), "failed_reviewers", len(slotFailures),
+				"failed_slots", failedSlotCount(slotFailures), "unmeasured_slots", unmeasuredSlotCount(slotFailures),
+				"failed_reviewers", len(slotFailures),
 				"retained_dirs", retainedDirCount(tmp)}
 			return append(attrs, retainedSizeAttrs(tmp)...)
 		}
@@ -235,7 +236,14 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		// below and destroyed every review dir, including the status.json holding the
 		// failure the operator would need to diagnose it. The two are one condition:
 		// whatever went unmeasured, the paid artifacts are the only record of why.
-		if len(caseFailures) > 0 || len(slotFailures) > 0 {
+		//
+		// Only the INFRASTRUCTURE half of slotFailures triggers retention, via
+		// retainForSlotFailures: an unmeasured_salvaged_ok slot is a call that
+		// SUCCEEDED and contributed nothing, which a reviewer that habitually answers
+		// on its reasoning channel produces on EVERY run — so counting it here made
+		// every scheduled run retain a full work dir that nothing reclaims, and the
+		// line labelled it failed_slots=N on a clean panel (TD cli/benchmark_repostate.go:232).
+		if len(caseFailures) > 0 || retainForSlotFailures(slotFailures) {
 			// The retained BYTES are reported, not just the path. Retention is
 			// unbounded and unconditional on a partial run by design — the artifacts
 			// are the only copy of a paid panel, so capping or pruning them would
@@ -901,12 +909,53 @@ func summarizeCaseFailureReasons(failures []benchmark.CaseFailure) string {
 // failedSlotCount is the number of failed reviewer SLOTS: the map is keyed by
 // reviewer and each value lists that reviewer's failed cases, so len(m) would
 // count reviewers — one dead provider on a 200-case suite is 200 slots, not 1.
+//
+// Only INFRASTRUCTURE-class slots count. An unmeasured_salvaged_ok slot is a call
+// that SUCCEEDED, so folding it in reports a clean panel as failed_slots=N and (via
+// retainForSlotFailures, which reads the same predicate) retains a work dir nothing
+// reclaims. It is reported under its own key by unmeasuredSlotCount.
 func failedSlotCount(m map[reviewerKey][]benchmark.SlotFailure) int {
 	n := 0
 	for _, v := range m {
-		n += len(v)
+		for _, sf := range v {
+			if benchmark.SlotFailureIsInfrastructure(sf.Reason) {
+				n++
+			}
+		}
 	}
 	return n
+}
+
+// unmeasuredSlotCount is the number of OK slots that were measured and found
+// worthless (SlotFailureUnmeasuredOK). Reported beside failed_slots so the
+// shortfall stays visible without being miscalled a failure.
+func unmeasuredSlotCount(m map[reviewerKey][]benchmark.SlotFailure) int {
+	n := 0
+	for _, v := range m {
+		for _, sf := range v {
+			if sf.Reason == benchmark.SlotFailureUnmeasuredOK {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// retainForSlotFailures reports whether any recorded slot failure justifies keeping
+// the paid work dir. Only an INFRASTRUCTURE loss does: its status.json is the only
+// record of why the slot died, whereas an unmeasured_salvaged_ok slot's cause is
+// already fully described in the run-result and recur on every run for a reviewer
+// that answers on its reasoning channel — retaining for it would accumulate a full
+// work dir per scheduled run with nothing to diagnose.
+func retainForSlotFailures(m map[reviewerKey][]benchmark.SlotFailure) bool {
+	for _, v := range m {
+		for _, sf := range v {
+			if benchmark.SlotFailureIsInfrastructure(sf.Reason) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // retainedDirCount is how many retained repo-state work dirs sit beside

@@ -2750,11 +2750,15 @@ func TestRetainedSizeAttrs_UnmeasuredRootIsFlaggedNotZero(t *testing.T) {
 
 // failed_slots counts failed slots, not the reviewers they belong to: one dead
 // provider on a 3-case suite is 3 unmeasured slots (atcr review 2026-09-23,
-// benchmark_repostate.go:201).
+// benchmark_repostate.go:201). Only infrastructure-class slots count — an
+// unmeasured_salvaged_ok slot is reported separately (see
+// TestSlotFailureBreakdown_SeparatesFailuresFromUnmeasuredOK).
 func TestFailedSlotCount_SumsSlotsAcrossReviewers(t *testing.T) {
 	m := map[reviewerKey][]benchmark.SlotFailure{
-		{}:               {{CaseID: "c1"}, {CaseID: "c2"}, {CaseID: "c3"}},
-		{persona: "dax"}: {{CaseID: "c1"}},
+		{}: {{CaseID: "c1", Reason: benchmark.SlotFailureCall},
+			{CaseID: "c2", Reason: benchmark.SlotFailureTimeout},
+			{CaseID: "c3", Reason: benchmark.SlotFailureUnknownStatus}},
+		{persona: "dax"}: {{CaseID: "c1", Reason: benchmark.SlotFailureCall}},
 	}
 	assert.Equal(t, 4, failedSlotCount(m))
 	assert.Zero(t, failedSlotCount(nil))
@@ -2864,4 +2868,39 @@ func TestSlotUnmeasuredReason(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The retention trigger must count only INFRASTRUCTURE-class slot failures. With
+// unmeasured_salvaged_ok in the vocabulary, a reviewer that habitually answers on
+// its reasoning channel makes EVERY scheduled run "partial", so every run would
+// accumulate a full work dir that nothing reclaims — and the line would label it
+// failed_slots=N on a clean panel. Same root predicate as the exit gate
+// (cli/benchmark.go:311), reached through the same shared SlotFailureIsInfrastructure.
+func TestRetainForSlotFailures_IgnoresUnmeasuredOKSlots(t *testing.T) {
+	unmeasuredOnly := map[reviewerKey][]benchmark.SlotFailure{
+		{}: {{CaseID: "c1", Reason: benchmark.SlotFailureUnmeasuredOK},
+			{CaseID: "c2", Reason: benchmark.SlotFailureUnmeasuredOK}},
+	}
+	assert.False(t, retainForSlotFailures(unmeasuredOnly),
+		"a slot the call SUCCEEDED on, whose reply merely contributed nothing, is a coverage shortfall — not a reason to retain a full paid work dir forever")
+
+	infra := map[reviewerKey][]benchmark.SlotFailure{
+		{}: {{CaseID: "c1", Reason: benchmark.SlotFailureCall}},
+	}
+	assert.True(t, retainForSlotFailures(infra),
+		"a slot the infrastructure LOST is a reason to retain the diagnosis")
+
+	assert.False(t, retainForSlotFailures(nil))
+}
+
+// The retention line must not call an unmeasured-ok slot a failed one: on a clean
+// panel where a reviewer always salvages, failed_slots must read 0 and the
+// unmeasured count must carry the shortfall under its own key.
+func TestSlotFailureBreakdown_SeparatesFailuresFromUnmeasuredOK(t *testing.T) {
+	m := map[reviewerKey][]benchmark.SlotFailure{
+		{}:               {{CaseID: "c1", Reason: benchmark.SlotFailureCall}, {CaseID: "c2", Reason: benchmark.SlotFailureTimeout}},
+		{persona: "dax"}: {{CaseID: "c1", Reason: benchmark.SlotFailureUnmeasuredOK}},
+	}
+	assert.Equal(t, 2, failedSlotCount(m), "failed_slots must count only the infrastructure losses")
+	assert.Equal(t, 1, unmeasuredSlotCount(m), "unmeasured_slots carries the OK-but-worthless shortfall")
 }
