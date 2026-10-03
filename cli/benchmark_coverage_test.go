@@ -1140,3 +1140,65 @@ func TestValidateSlotFailures_RejectsBlankFields(t *testing.T) {
 		assert.Contains(t, err.Error(), "blank model or persona")
 	}
 }
+
+// The `unshown` label and its remedy are FALSE for an unmeasured_salvaged_ok slot.
+// The contract comment says "the case ran and the rest of the panel scored it; THIS
+// reviewer was not shown it", and the remedy says "re-running will not help ... the
+// reviewer WAS shown the case and replied ok" — so for unmeasured-ok the reviewer was
+// shown the case and the remedy is the agent's thinking setting or a different model,
+// not the provider, and a re-run CAN differ (internal/fanout/engine.go:1370).
+func TestCheckCoverage_UnmeasuredOKSlotGetsItsOwnLabelAndRemedy(t *testing.T) {
+	rr := benchmark.RunResult{
+		SuiteCaseIDs: []string{"case-01", "case-02"},
+		Reviewers:    []scorecard.PublicRecord{{Model: "m", Persona: "p", Runs: 1}},
+		Coverage: []benchmark.ReviewerCoverage{
+			{Model: "m", Persona: "p", CaseIDs: []string{"case-01"}},
+		},
+		SlotFailures: []benchmark.SlotFailure{
+			{Model: "m", Persona: "p", CaseID: "case-02", Reason: benchmark.SlotFailureUnmeasuredOK},
+		},
+	}
+
+	err := checkCoverage(io.Discard, rr, "rr.json", false)
+	require.Error(t, err)
+	msg := err.Error()
+
+	assert.Contains(t, msg, "unmeasured_ok case-02 ("+benchmark.SlotFailureUnmeasuredOK+")",
+		"an OK-but-worthless slot needs its own label: `unshown` claims the reviewer was never shown a case it did run")
+	assert.NotContains(t, msg, "unshown case-02",
+		"the reviewer WAS shown the case and replied ok, so `unshown` is false")
+
+	assert.NotContains(t, msg, "investigate the provider behind",
+		"the call succeeded, so the provider is not the thing to investigate — re-running CAN differ")
+	assert.Contains(t, msg, "thinking",
+		"the remedy must point at the agent's thinking declaration or a different model")
+}
+
+// An infrastructure slot still gets its provider remedy, and the two classes coexist
+// on one run without either borrowing the other's wording.
+func TestCheckCoverage_InfrastructureAndUnmeasuredOKKeepSeparateRemedies(t *testing.T) {
+	rr := benchmark.RunResult{
+		SuiteCaseIDs: []string{"case-01", "case-02", "case-03"},
+		Reviewers: []scorecard.PublicRecord{
+			{Model: "m1", Persona: "p1", Runs: 1},
+			{Model: "m2", Persona: "p2", Runs: 1},
+		},
+		Coverage: []benchmark.ReviewerCoverage{
+			{Model: "m1", Persona: "p1", CaseIDs: []string{"case-01"}},
+			{Model: "m2", Persona: "p2", CaseIDs: []string{"case-01"}},
+		},
+		SlotFailures: []benchmark.SlotFailure{
+			{Model: "m1", Persona: "p1", CaseID: "case-02", Reason: benchmark.SlotFailureTimeout},
+			{Model: "m2", Persona: "p2", CaseID: "case-03", Reason: benchmark.SlotFailureUnmeasuredOK},
+		},
+	}
+
+	err := checkCoverage(io.Discard, rr, "rr.json", false)
+	require.Error(t, err)
+	msg := err.Error()
+
+	assert.Contains(t, msg, "investigate the provider behind m1/p1",
+		"the infrastructure row still gets the provider remedy")
+	assert.NotContains(t, msg, "investigate the provider behind m2/p2",
+		"the unmeasured-ok row must not be told to investigate a provider that answered fine")
+}

@@ -259,7 +259,7 @@ func tallySalvaged(statuses []AgentStatus) (int, []string) {
 // fr.Findings), so a chunked persona whose clean sibling raised findings that the
 // grounding gate or the floor then dropped reports 0 — and a zero-keyed arm called
 // that a total salvage, discarded the bin detail, and sent the operator to
-// salvagedRemedy for a loss the gate caused, where declaring thinking: off changes
+// SalvagedRemedy for a loss the gate caused, where declaring thinking: off changes
 // nothing (TD internal/fanout/artifacts.go:248). A bin index is the only field that
 // says WHICH bins were refused, so it is the only one that can answer what the
 // salvage cost.
@@ -319,12 +319,14 @@ func warnSalvaged(ctx context.Context, count int, agents []string, cumulative bo
 	log.FromContext(ctx).Warn(
 		fmt.Sprintf("%d reviewer(s) returned a salvaged reply — no answer, reasoning promoted into the content — so it was refused rather than parsed %s.%s Each agent below says what that cost it.", count, scope, restatement),
 		"agents", strings.Join(agents, ", "),
-		"remedy", salvagedRemedy)
+		"remedy", SalvagedRemedy)
 }
 
-// salvagedRemedy is the operator action for a salvaged reply. One constant, so the
-// fresh and resumed paths cannot state different fixes for the same condition.
-const salvagedRemedy = "The model answered on its reasoning channel only. Declare thinking: off for the agent, or repoint it to a model that separates its answer from its reasoning; a salvaged reply is refused rather than parsed, because every finding in it is a draft the model did not commit to."
+// SalvagedRemedy is the operator action for a salvaged reply. One constant, so the
+// fresh and resumed paths cannot state different fixes for the same condition. It is
+// EXPORTED so the benchmark-coverage diagnostic's `unmeasured_ok` remedy can reuse it
+// rather than restating the same advice in a second place that could drift.
+const SalvagedRemedy = "The model answered on its reasoning channel only. Declare thinking: off for the agent, or repoint it to a model that separates its answer from its reasoning; a salvaged reply is refused rather than parsed, because every finding in it is a draft the model did not commit to."
 
 // warnTruncatedZeroFindings emits the run-level runaway warning, or nothing at 0.
 //
