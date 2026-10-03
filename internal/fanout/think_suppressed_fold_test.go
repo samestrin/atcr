@@ -74,6 +74,15 @@ func TestWholePersonaThinkSuppressed(t *testing.T) {
 		"chunk count absent on a chunked-looking record — withhold rather than guess": {
 			AgentStatus{ThinkSuppressed: true, UnparseableChunks: 3}, true,
 		},
+		// mergeChunkResults short-circuits a one-element group (chunker.go:237) without
+		// entering mergeResultGroup, which is the only writer of UnparseableChunks — and a
+		// re-fit fallback stamps ChunkTotal=1, which engine.go copies to ChunkCount. So a
+		// persona whose WHOLE reply the strip ate arrives here with the numerator never
+		// populated, not with a measured zero. Withhold, exactly as the absent-denominator
+		// arm above and as WholePersonaSalvaged's absent-bin-index arm do.
+		"numerator never populated — one-element group, so 0 means unmeasured not measured-zero": {
+			AgentStatus{ThinkSuppressed: true, ChunkCount: 1, UnparseableChunks: 0}, true,
+		},
 	} {
 		assert.Equal(t, tc.want, WholePersonaThinkSuppressed(tc.st), name)
 	}
