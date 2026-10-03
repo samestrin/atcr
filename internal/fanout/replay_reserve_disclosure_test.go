@@ -173,3 +173,61 @@ func TestBuildOneAgent_ZeroBudgetToolLoopAgentStillStatesItsReserve(t *testing.T
 		"a zero-budget record must still state the arithmetic that produced it: the reserve a tool-loop "+
 			"agent held back is the number an operator needs to see, and this is its only arm")
 }
+
+// The ZERO-budget disclosure must reach the FALLBACK render too. buildFallbackAgent
+// gates fbReasoningReserve on fbBudget > 0, but fbBudget is sized with
+// payload.SizingOutputTokens(fbToolLoop, fbMaxTokens) — the reserve is exactly what
+// closed that budget — so on the zero-budget fallback the record omits (omitempty)
+// the very number that explains it, while the identical condition on a PRIMARY is
+// disclosed unconditionally (TD internal/fanout/review.go:3497).
+func TestBuildFallbackAgent_ZeroBudgetToolLoopStillStatesItsReserve(t *testing.T) {
+	cfg := toolLoopGretaRoster(t, 128000)
+	k := cfg.Registry.Agents["kai"]
+	k.SupportsFC = true
+	zero := 1 // a window that cannot fund even one cap, so the fallback budget closes at 0
+	k.ContextWindowTokens = &zero
+	k.Model = "unlisted-backup-model"
+	cfg.Registry.Agents["kai"] = k
+
+	rng := ReviewRange{Base: "a", Head: "b"}
+	primary, _, err := buildOneAgent(cfg, "greta", oversizedBlocksPayload(), rng, "", "")
+	require.NoError(t, err)
+	require.True(t, primary.Tools, "precondition: the primary requests tools")
+
+	fb, _, err := buildFallbackAgent(cfg, primary, "kai", false, fallbackRefit{rng: rng})
+	require.NoError(t, err)
+	require.Zero(t, fb.EffectiveBudget, "precondition: the zero-budget fallback arm is what fires")
+	assert.Zero(t, fb.ReservedOutputTokens,
+		"precondition: the reservation stays absent beside a zero budget")
+
+	cap := maxTokensFor(cfg, cfg.Registry.Agents["kai"])
+	assert.Equal(t, cap*payload.ReasoningReplayReserveCaps, fb.ReasoningReserveTokens,
+		"a zero-budget FALLBACK record must state the arithmetic that produced it, exactly as the primary does: "+
+			"a consumer reading reasoning_reserve_tokens absent concludes the agent held back no reserve")
+}
+
+// And the RE-FIT render must disclose it on its zero-budget arm too. refitFallbackPayload
+// returns ok=true even when the applied budget is <= 0 (it keeps the smallest entry),
+// so fbSizingBudget can be 0 — again the record the reserve explains, since the re-fit
+// budget already has the reserve subtracted out. Both fallback sites must match the
+// primary's unconditional rule (TD internal/fanout/review.go:3688).
+func TestBuildFallbackAgent_RefitZeroBudgetStillStatesItsReserve(t *testing.T) {
+	cfg := refitRoster(t, 128000, OverflowTruncate)
+	g := cfg.Registry.Agents["greta"]
+	g.Tools, g.SupportsFC = true, true
+	cfg.Registry.Agents["greta"] = g
+	k := cfg.Registry.Agents["kai"]
+	k.SupportsFC = true
+	zero := 1 // the fallback's window funds no input budget, so fbSizingBudget closes at 0
+	k.ContextWindowTokens = &zero
+	cfg.Registry.Agents["kai"] = k
+
+	slot := buildRefitSlot(t, cfg)
+	primary, fb := slot.Primary, slot.Fallbacks[0]
+
+	require.True(t, primary.Tools, "precondition: the primary requests tools")
+	require.Zero(t, fb.EffectiveBudget, "precondition: the zero-budget re-fit arm is what fires")
+	cap := maxTokensFor(cfg, cfg.Registry.Agents["kai"])
+	assert.Equal(t, cap*payload.ReasoningReplayReserveCaps, fb.ReasoningReserveTokens,
+		"the re-fit arm's zero-budget record must state the reserve that closed the budget, not omit it")
+}
