@@ -2838,6 +2838,21 @@ func TestSlotUnmeasuredReason(t *testing.T) {
 			st:   fanout.AgentStatus{Status: fanout.StatusOK, Salvaged: true, SalvagedChunks: []int{0, 1}, ChunkCount: 2},
 			want: benchmark.SlotFailureUnmeasuredOK,
 		},
+		{
+			name: "partially think-suppressed chunked slot is still scored",
+			// The same per-bin rule the salvage arm above applies. One bin eaten by
+			// the strip out of eight leaves seven that landed real findings, so the
+			// row has signal; dropping it from the score, the covered set and the
+			// outcome tally is the over-withholding WholePersonaSalvaged was added to
+			// stop, left open on the sibling signal (TD internal/fanout/chunker.go:493).
+			st:   fanout.AgentStatus{Status: fanout.StatusOK, ThinkSuppressed: true, ChunkCount: 8, UnparseableChunks: 1},
+			want: "",
+		},
+		{
+			name: "chunked slot with every bin producing nothing is unmeasured",
+			st:   fanout.AgentStatus{Status: fanout.StatusOK, ThinkSuppressed: true, ChunkCount: 2, UnparseableChunks: 2},
+			want: benchmark.SlotFailureUnmeasuredOK,
+		},
 		{"healthy OK slot", fanout.AgentStatus{Status: fanout.StatusOK}, ""},
 		{"OK slot with findings", fanout.AgentStatus{Status: fanout.StatusOK, FindingsCount: 3}, ""},
 	} {

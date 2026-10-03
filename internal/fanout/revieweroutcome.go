@@ -212,3 +212,9 @@ func ValidReviewerOutcome(s string) bool {
 	}
 	return false
 }
+
+// WholePersonaThinkSuppressed reports whether a think-suppressed status cost the
+// persona its WHOLE contribution.
+func WholePersonaThinkSuppressed(a AgentStatus) bool {
+	return a.ThinkSuppressed // STUB — replaced in GREEN
+}
