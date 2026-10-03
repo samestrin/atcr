@@ -244,5 +244,16 @@ func WholePersonaThinkSuppressed(a AgentStatus) bool {
 		// consumed. Either way nothing narrows it, so it is whole.
 		return true
 	}
+	if a.UnparseableChunks == 0 {
+		// No numerator either. UnparseableChunks is written in exactly one place,
+		// mergeResultGroup (chunker.go), and mergeChunkResults short-circuits a
+		// one-element group without entering it — while a re-fit fallback stamps
+		// ChunkTotal=1, which engine.go copies to ChunkCount. So 0 here carries two
+		// incompatible meanings: "never populated" and "zero bins were unparseable".
+		// A numerator that was never populated cannot narrow the loss, so the safe
+		// direction is the same one WholePersonaSalvaged takes for an absent bin
+		// index: withhold coverage rather than grant it.
+		return true
+	}
 	return a.UnparseableChunks >= a.ChunkCount
 }
