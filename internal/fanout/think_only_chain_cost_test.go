@@ -226,3 +226,52 @@ func TestInvokeSlot_MultiAttemptThinkOnlyKeepsTheChainWording(t *testing.T) {
 	require.Contains(t, out, "think_only_attempts=",
 		"the wasted spend must be counted on the line")
 }
+
+// ThinkOnlyAttempts' doc says it "counts the chain members whose reply was wholly a
+// leading think run on THIS walk", but the returned Result carried AT MOST 1: r is
+// fresh per chain member (invokeSlot calls invokeAgent per attempt), the truncated-arm
+// increment lands on a Result immediately demoted to StatusFailed, and the all-failed
+// return stamped the primary's fields onto `last` without summing earlier members. So
+// the field under-reported the walk, and chunker.go's sum over it under-reported the
+// persona. The walk total is the LOCAL; carry it onto the returned Result at every
+// exit so the field means what its doc says (TD internal/fanout/engine.go:429).
+func TestInvokeSlot_ReturnsTheWalkTotalThinkOnlyAttempts(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	e := NewEngine(&thinkOnlyCompleter{content: "\x3cthink\x3ecareful reasoning, no findings ever\x3c/think\x3e"},
+		WithLogger(logger), WithTruncationFailover())
+
+	slot := Slot{
+		Primary: Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "thinker-primary"}},
+		Fallbacks: []Agent{
+			{Name: "bruce", Invocation: llmclient.Invocation{Model: "thinker-backup-a"}},
+			{Name: "bruce", Invocation: llmclient.Invocation{Model: "thinker-backup-b"}},
+		},
+	}
+	ctx := log.NewContext(context.Background(), logger)
+	r := e.invokeSlot(ctx, slot)
+
+	require.ErrorIs(t, r.Err, errTruncatedZeroFindings, "precondition: the whole chain failed")
+	assert.Equal(t, 3, r.ThinkOnlyAttempts,
+		"all three chain members were think-only, so the returned Result must carry the WALK total, "+
+			"not the last member's at-most-one")
+}
+
+// The StatusOK early-return arm carries the walk total too: an earlier truncated
+// think-only attempt followed by a non-truncated think-only final reply.
+func TestInvokeSlot_StatusOKReturnCarriesTheWalkTotal(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	e := NewEngine(&truncatedThenCleanThinkOnlyCompleter{}, WithLogger(logger), WithTruncationFailover())
+
+	slot := Slot{
+		Primary:   Agent{Name: "archer", Invocation: llmclient.Invocation{Model: "m"}},
+		Fallbacks: []Agent{{Name: "archer", Invocation: llmclient.Invocation{Model: "b"}}},
+	}
+	ctx := log.NewContext(context.Background(), logger)
+	r := e.invokeSlot(ctx, slot)
+
+	require.True(t, r.ThinkSuppressed, "precondition: the final reply is wholly reasoning")
+	assert.Equal(t, 2, r.ThinkOnlyAttempts,
+		"one earlier truncated attempt plus the final non-truncated one is a walk total of 2")
+}

@@ -1155,6 +1155,11 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 				log.FromContext(ctx).Warn("the reply was a think-only run, so the walk bought zero findings",
 					"agent", s.Primary.Name, "attempts", len(chain), "think_only_attempts", thinkOnlyAttempts)
 			}
+			// Carry the WALK total onto the returned Result. `r` is fresh per chain
+			// member, so its own ThinkOnlyAttempts counts at most this member; the
+			// local is the only real total, and the field's doc promises exactly that
+			// (TD internal/fanout/engine.go:429).
+			r.ThinkOnlyAttempts = thinkOnlyAttempts
 			return r
 		}
 		last = r
@@ -1185,6 +1190,10 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 	last.ResolvedMaxTokens = s.Primary.ResolvedMaxTokens
 	last.ChunkCount = s.Primary.ChunkTotal
 	last.DegradationAction = s.Primary.DegradationAction
+	// Same reason as the StatusOK exit above: the returned Result must describe the
+	// WALK, so stamp the local total rather than leaving `last`'s at-most-one
+	// (TD internal/fanout/engine.go:429).
+	last.ThinkOnlyAttempts = thinkOnlyAttempts
 	last.DurationMS = time.Since(start).Milliseconds()
 	return last
 }
