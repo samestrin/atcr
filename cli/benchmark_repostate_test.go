@@ -2904,3 +2904,46 @@ func TestSlotFailureBreakdown_SeparatesFailuresFromUnmeasuredOK(t *testing.T) {
 	assert.Equal(t, 2, failedSlotCount(m), "failed_slots must count only the infrastructure losses")
 	assert.Equal(t, 1, unmeasuredSlotCount(m), "unmeasured_slots carries the OK-but-worthless shortfall")
 }
+
+// The slot warning's wording is FALSE for an unmeasured_salvaged_ok slot: it says
+// "the case ran, but one reviewer could not be shown it", when that reviewer WAS shown
+// the case and answered ok. The per-slot reason line below already carries the true
+// cause, so the class must be split like checkCoverage's `unshown`/`unmeasured_ok`.
+func TestWarnCaseFailures_UnmeasuredOKSlotIsNotCalledUnshown(t *testing.T) {
+	var buf bytes.Buffer
+	rr := &benchmark.RunResult{
+		SuiteCaseIDs: []string{"case-01", "case-02"},
+		SlotFailures: []benchmark.SlotFailure{
+			{Model: "m", Persona: "p", CaseID: "case-02", Reason: benchmark.SlotFailureUnmeasuredOK},
+		},
+	}
+
+	warnCaseFailures(&buf, rr, "")
+	out := buf.String()
+
+	assert.NotContains(t, out, "could not be shown it",
+		"the reviewer WAS shown the case and replied ok — the unshown wording asserts the opposite")
+	assert.Contains(t, out, "unmeasured_salvaged_ok",
+		"the reason recorded per slot is the honest cause and stays on the line")
+}
+
+// An infrastructure slot keeps the unshown wording, and a run carrying both classes
+// reports each under its own sentence rather than merging them.
+func TestWarnCaseFailures_InfrastructureSlotKeepsTheUnshownWording(t *testing.T) {
+	var buf bytes.Buffer
+	rr := &benchmark.RunResult{
+		SuiteCaseIDs: []string{"case-01", "case-02", "case-03"},
+		SlotFailures: []benchmark.SlotFailure{
+			{Model: "m1", Persona: "p1", CaseID: "case-02", Reason: benchmark.SlotFailureTimeout},
+			{Model: "m2", Persona: "p2", CaseID: "case-03", Reason: benchmark.SlotFailureUnmeasuredOK},
+		},
+	}
+
+	warnCaseFailures(&buf, rr, "")
+	out := buf.String()
+
+	assert.Contains(t, out, "could not be shown it",
+		"the infrastructure slot keeps the unshown wording")
+	assert.Contains(t, out, "unmeasured_salvaged_ok",
+		"the unmeasured-ok slot is still named, with its reason")
+}

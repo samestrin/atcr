@@ -1377,25 +1377,34 @@ func warnCaseFailures(w io.Writer, rr *benchmark.RunResult, retainedWorkDir stri
 	// row is short by it. Folding the two lists together would tell an operator a case
 	// went unmeasured when it was measured by everyone else on the panel.
 	//
+	// Split by class, because the two say opposite things about the reviewer. An
+	// infrastructure slot was NOT SHOWN the case; an unmeasured_salvaged_ok slot WAS
+	// shown it and answered ok, so the unshown wording would assert the opposite. The
+	// per-slot reason line already names the true cause, and each class gets its own
+	// sentence so neither is described by the other's claim (TD cli/benchmark_repostate.go:1313).
+	//
 	// Capped on the same terms as the case list above, and for the same reason — one
 	// dead provider on a 200-case suite produces 200 slot failures, which would scroll
 	// the recall summary this warning exists to qualify off the terminal.
-	if len(rr.SlotFailures) > 0 {
+	var infraSlots, unmeasuredOKSlots []benchmark.SlotFailure
+	for _, sf := range rr.SlotFailures {
+		if sf.Reason == benchmark.SlotFailureUnmeasuredOK {
+			unmeasuredOKSlots = append(unmeasuredOKSlots, sf)
+			continue
+		}
+		infraSlots = append(infraSlots, sf)
+	}
+	if len(infraSlots) > 0 {
 		fmt.Fprintf(&msg, "warning: %d reviewer slot(s) were UNMEASURED — the case ran, but one reviewer could not be "+
 			"shown it, so that reviewer's row is short by it rather than scored a miss:\n",
-			len(rr.SlotFailures))
-		namedSlots := rr.SlotFailures
-		if len(namedSlots) > maxNamedFailedCases {
-			namedSlots = namedSlots[:maxNamedFailedCases]
-		}
-		for _, sf := range namedSlots {
-			fmt.Fprintf(&msg, "  %s/%s on %s: %s\n",
-				stripTerminalControlRunes(sf.Model), stripTerminalControlRunes(sf.Persona),
-				stripTerminalControlRunes(sf.CaseID), stripTerminalControlRunes(sf.Reason))
-		}
-		if overflow := len(rr.SlotFailures) - len(namedSlots); overflow > 0 {
-			fmt.Fprintf(&msg, "  ... and %d more\n", overflow)
-		}
+			len(infraSlots))
+		writeSlotFailures(&msg, infraSlots)
+	}
+	if len(unmeasuredOKSlots) > 0 {
+		fmt.Fprintf(&msg, "warning: %d reviewer slot(s) were UNMEASURED — the case ran and the reviewer WAS shown it, "+
+			"but its reply contributed nothing, so that reviewer's row is short by it rather than scored a miss:\n",
+			len(unmeasuredOKSlots))
+		writeSlotFailures(&msg, unmeasuredOKSlots)
 	}
 	if retainedWorkDir != "" {
 		fmt.Fprintf(&msg, "  The work dir is retained at %s — the scored cases' review artifacts "+
@@ -1410,4 +1419,22 @@ func warnCaseFailures(w io.Writer, rr *benchmark.RunResult, retainedWorkDir stri
 			"are there for inspection or manual rescoring.\n")
 	}
 	_, _ = io.WriteString(w, msg.String())
+}
+
+// writeSlotFailures renders one capped list of slot failures, with an overflow count.
+// Factored out of warnCaseFailures so the infrastructure and unmeasured-ok classes
+// share the cap and the terminal-safety stripping rather than each re-deriving them.
+func writeSlotFailures(msg *strings.Builder, slots []benchmark.SlotFailure) {
+	named := slots
+	if len(named) > maxNamedFailedCases {
+		named = named[:maxNamedFailedCases]
+	}
+	for _, sf := range named {
+		fmt.Fprintf(msg, "  %s/%s on %s: %s\n",
+			stripTerminalControlRunes(sf.Model), stripTerminalControlRunes(sf.Persona),
+			stripTerminalControlRunes(sf.CaseID), stripTerminalControlRunes(sf.Reason))
+	}
+	if overflow := len(slots) - len(named); overflow > 0 {
+		fmt.Fprintf(msg, "  ... and %d more\n", overflow)
+	}
 }
