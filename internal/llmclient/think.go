@@ -294,18 +294,26 @@ func IndexAfterUnopenedCloser(content string) int {
 // s, preserving length and every byte outside a literal. String-awareness is the
 // same rule extractJSONObject uses: a backslash escapes the next byte.
 //
-// An UNBALANCED quote count returns s UNCHANGED. The mask is a quote-pairing state
-// machine with no JSON-validity check, so once a literal is left open its in/out-of
-// -string state is a guess — and the guess runs to end of input, blanking every
-// think tag after the stray quote. Every consumer asks a fail-closed DETECTION
-// question ("is there markup here that could hide a discarded draft?"), so a mask
-// that hides the markup makes all three lanes ADMIT the reply they exist to refuse;
-// in the debate lane that admission is durable, because applyRulings writes the
-// draft verdict onto the finding (TD internal/debate/debate.go:676). Returning the
-// input untouched says "nothing trustworthy to report" instead of reporting a
-// guess, which leaves every tag visible and sends the detection sites to refusal.
-// Same remedy internal/reconcile applies to its fence mask, for the same reason: a
-// dangling delimiter must not poison the rest of the document.
+// A `"` only OPENS a literal where JSON can actually begin one — immediately after
+// `{`, `[`, `,`, `:`, or at the very start of the input. A quote anywhere else is
+// prose (an inch mark, a quotation in a sentence) and does NOT toggle the mask.
+//
+// That position rule is the whole fix. Pairing every `"` from offset 0 with no
+// JSON-validity check made the in/out-of-string state a guess as soon as ONE stray
+// prose quote appeared, and the wrong guess ran to end of input — so a think pair
+// QUOTED inside an earlier, cleanly-closed JSON string value was un-masked and read
+// as markup: refusal on legal input (`{"verdict":"confirmed","reasoning":"…
+// <think>draft</think> …"} note: a 6" gap`), and a TRUNCATED reply is odd-quoted by
+// construction. Discarding the whole masked copy on an unbalanced count did not help
+// — it published the raw reply, un-masking those same cleanly-closed literals.
+//
+// Restricting the opener to JSON position keeps the ambiguous region from ever
+// forming: a lone prose quote is ignored, every real string value is masked (so a
+// tag confined to a value stays hidden), and a tag that is genuine markup — outside
+// any literal — stays visible so every detection site still refuses it. That last
+// property is load-bearing: HasEnclosingThinkBlock must see the abandoned draft in
+// `He said "… <think>{draft}</think> {real}` or parseRuling takes the draft as the
+// committed ruling and applyRulings writes it onto the finding durably.
 //
 // The result is for tag DETECTION only, never for parsing: a think tag that
 // survives the mask is markup enclosing reply text, while one that appears solely
@@ -320,11 +328,21 @@ func IndexAfterUnopenedCloser(content string) int {
 func MaskJSONStrings(s string) string {
 	b := []byte(s)
 	inStr, escaped := false, false
+	// openCtx reports whether the byte just consumed leaves JSON in a position where
+	// a string literal may begin. It starts true: a bare JSON string is a valid
+	// document, so a leading `"` opens a literal.
+	openCtx := true
 	for i := 0; i < len(b); i++ {
 		c := b[i]
 		if !inStr {
-			if c == '"' {
+			switch {
+			case c == '"' && openCtx:
 				inStr = true
+				openCtx = false
+			case c == ' ' || c == '\t' || c == '\n' || c == '\r':
+				// Whitespace neither opens nor closes a JSON position.
+			default:
+				openCtx = c == '{' || c == '[' || c == ',' || c == ':'
 			}
 			continue
 		}
@@ -339,16 +357,12 @@ func MaskJSONStrings(s string) string {
 			b[i] = ' '
 		case '"':
 			inStr = false
+			// A value just closed, so the next `"` is not itself a valid opener; only
+			// an intervening `,`/`:` (or another container) restores JSON position.
+			openCtx = false
 		default:
 			b[i] = ' '
 		}
-	}
-	if inStr {
-		// A literal was left open, so everything blanked after the stray quote was
-		// blanked on a guess. Discard the whole masked copy rather than publish the
-		// part that happens to be right: a caller cannot tell which half is which,
-		// and length is preserved trivially by returning the original.
-		return s
 	}
 	return string(b)
 }
