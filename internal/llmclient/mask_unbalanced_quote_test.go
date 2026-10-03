@@ -16,9 +16,9 @@ import (
 //
 // The remedy is the one internal/reconcile already applies to its fence mask
 // (TestFenceMask_UnterminatedFenceDoesNotMaskTheTail): a dangling delimiter must not
-// poison the rest of the document. Here that means the mask reports nothing rather
-// than reporting a guess — it returns the input unchanged, so every tag stays
-// visible and the detection sites refuse.
+// poison the rest of the document. Here that means a quote only opens a literal where
+// JSON can begin one, so a stray prose quote never enters the mask at all and the
+// think tags that follow stay visible for the detection sites to refuse.
 func TestMaskJSONStrings_UnbalancedQuoteDoesNotHideMarkup(t *testing.T) {
 	t.Parallel()
 
@@ -32,12 +32,12 @@ func TestMaskJSONStrings_UnbalancedQuoteDoesNotHideMarkup(t *testing.T) {
 		"precondition: the raw reply really does carry an enclosing think block")
 
 	assert.True(t, HasEnclosingThinkBlock(MaskJSONStrings(raw)),
-		"an unbalanced quote count must not blank the think tags: the mask's in-string state is a guess "+
-			"at that point, and hiding the markup makes every detection site admit the draft it exists to refuse")
+		"a stray prose quote must not blank the think tags: it opens no literal, so the markup stays "+
+			"visible and every detection site refuses the draft it exists to catch")
 
-	assert.Equal(t, raw, MaskJSONStrings(raw),
-		"with the quote count unbalanced the mask has nothing trustworthy to say, so it must return the "+
-			"input untouched rather than blank a region it only guessed was a literal")
+	assert.Equal(t, len(raw), len(MaskJSONStrings(raw)),
+		"the unbalanced arm must preserve length: ClassifyUnopenedCloser slices the unmasked original at an "+
+			"offset computed on the masked copy, so the two must stay byte-aligned")
 }
 
 // The inch-mark reproduction: an otherwise-clean JSON reply whose reasoning value
@@ -81,19 +81,22 @@ func TestMaskJSONStrings_TruncatedReplyKeepsAnEarlierQuotedTagMasked(t *testing.
 	assert.Len(t, MaskJSONStrings(truncated), len(truncated))
 }
 
-// The complement: when the unterminated literal itself carries a think pair, that
-// suffix is a genuine guess and MUST stay raw so detection refuses. This is the arm
-// the prefix mask deliberately keeps.
-func TestMaskJSONStrings_UnterminatedTailStillExposesItsThinkPair(t *testing.T) {
+// The complement: a quote opened in JSON position whose literal is never closed masks
+// the literal's tail to end-of-input, so a think pair quoted inside it stays HIDDEN
+// and the lane parses — the truncated-reply shape (`{...,"other":"unfinished`). Only
+// a quote in JSON position opens a literal; a prose quote does not, which is the arm
+// TestMaskJSONStrings_UnbalancedQuoteDoesNotHideMarkup pins.
+func TestMaskJSONStrings_UnterminatedLiteralKeepsItsQuotedTagHidden(t *testing.T) {
 	t.Parallel()
 
-	// The only literal is the open one, so there is no balanced prefix to mask —
-	// the whole tag-carrying region is the ambiguous suffix.
-	raw := `he said "trust me ` + "\x3cthink\x3e" + `draft` + "\x3c/think\x3e" + ` ok`
+	raw := `{"reasoning":"trust me ` + "\x3cthink\x3e" + `draft` + "\x3c/think\x3e" + ` ok`
 
-	assert.True(t, HasEnclosingThinkBlock(MaskJSONStrings(raw)),
-		"the tag is inside the unterminated literal, so it stays visible and detection refuses — "+
-			"the mask must not blank a region whose in-string state is only a guess")
+	assert.True(t, HasEnclosingThinkBlock(raw),
+		"precondition: the raw reply carries the quoted think pair")
+
+	assert.False(t, HasEnclosingThinkBlock(MaskJSONStrings(raw)),
+		"the pair sit inside a JSON-position literal, so it is a quote and stays masked even when the "+
+			"literal is never closed — the truncated reply is cut mid-string by construction")
 
 	assert.Len(t, MaskJSONStrings(raw), len(raw))
 }
