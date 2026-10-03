@@ -1281,3 +1281,39 @@ func TestRunDebate_ShortCircuitDoesNotCallTheUnaskedChallengerSilent(t *testing.
 	assert.NotContains(t, logBuf.String(), "challenger",
 		"and the operator warn must not accuse an un-asked seat either")
 }
+
+// The mask is a quote-pairing state machine with no JSON-validity check, so an ODD
+// number of `"` before a post-answer think block inverts its in/out-of-string state
+// and blanks that block's TAGS. HasEnclosingThinkBlock then sees nothing to refuse,
+// ClassifyUnopenedCloser (which masks too) finds no boundary, and parseRuling takes
+// the ABANDONED DRAFT as the committed ruling.
+//
+// That outcome is durable, which is what makes it the worst shape in this lane:
+// applyRulings writes the draft verdict onto the finding, reconcile/gate.go then
+// reads `refuted` as "a skeptic disproved it", and isRefutedJSON drops the finding
+// from the radar permanently. debate.go's own guard comment names avoiding exactly
+// this as its reason for existing (TD internal/debate/debate.go:676).
+func TestRunDebate_UnbalancedQuoteBeforeAThinkBlockStillRefusesTheDraft(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	// The lone `"` after `He said` is the whole defect: it opens a literal that
+	// never closes, so a length-only mask blanks every tag that follows it.
+	judge := `He said "it is fine. ` +
+		"\x3cthink\x3e" + `{"outcome":"overturn","reasoning":"draft never committed"}` + "\x3c/think\x3e" +
+		` {"outcome":"uphold","reasoning":"real answer"}`
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "the attack stands"},
+		{content: judge},
+	}}
+	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.Overturned,
+		"the draft inside the think block must never become the ruling just because an unbalanced quote hid its tags")
+	assert.Equal(t, 1, res.Unresolved,
+		"with the mask untrustworthy the enclosure test must run on the raw reply and refuse it")
+
+	df, _, err := ReadDebateFile(dir)
+	require.NoError(t, err)
+	require.Len(t, df.Items, 1)
+	assert.Equal(t, ReasonJudgeThinkMarkup, df.Items[0].Reason)
+}
