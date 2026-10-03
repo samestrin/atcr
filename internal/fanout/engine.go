@@ -1136,12 +1136,23 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 			}
 			// This block RETURNS, so the after-loop warning cannot see an increment
 			// made here. Warn from HERE when the final, untruncated reply was wholly a
-			// think run and earlier attempts were too — the finish_reason=stop shape,
-			// where nothing demotes the reply and the walk simply ends. Emitting from
-			// this site rather than deferring the return is what keeps the warning
-			// attached to the walk it describes (TD internal/fanout/engine.go:1083).
-			if thinkOnlyAttempts > 0 && r.ThinkSuppressed {
+			// think run — the finish_reason=stop shape, where nothing demotes the reply
+			// and the walk simply ends. Emitting from this site rather than deferring
+			// the return is what keeps the warning attached to the walk it describes
+			// (TD internal/fanout/engine.go:1083).
+			//
+			// The guard used to read `thinkOnlyAttempts > 0 && r.ThinkSuppressed`,
+			// whose first conjunct is DEAD: the block that sets r.ThinkSuppressed
+			// increments thinkOnlyAttempts two lines earlier, so the count is always
+			// at least 1 here. That made a single-shot agent with no fallbacks report
+			// "exhausted the fallback chain" for one reply — a false claim, since no
+			// chain was walked. Branch on the count instead, so the wording matches
+			// what happened (TD internal/fanout/engine.go:1143).
+			if thinkOnlyAttempts > 1 {
 				log.FromContext(ctx).Warn("think-only replies exhausted the fallback chain: the walk bought zero findings",
+					"agent", s.Primary.Name, "attempts", len(chain), "think_only_attempts", thinkOnlyAttempts)
+			} else if r.ThinkSuppressed {
+				log.FromContext(ctx).Warn("the reply was a think-only run, so the walk bought zero findings",
 					"agent", s.Primary.Name, "attempts", len(chain), "think_only_attempts", thinkOnlyAttempts)
 			}
 			return r
