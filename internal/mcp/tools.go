@@ -112,9 +112,15 @@ type DebateArgs struct {
 }
 
 // DebateResult is the atcr_debate summary: the per-outcome tally, the recorded
-// overflow count, the wall-clock duration, and — when failOn was given — the gate
-// status. Artifacts (debate.json, re-emitted findings.json, transcripts) are
-// always written regardless of the gate outcome.
+// overflow and withheld counts, the wall-clock duration, and — when failOn was given
+// — the gate status. Artifacts (debate.json, re-emitted findings.json, transcripts)
+// are always written regardless of the gate outcome.
+//
+// Overflow and Withheld are published SEPARATELY because they carry opposite remedies:
+// raising debate.max_items recovers a cap overflow, while a withheld item is not
+// recoverable at any cap value (withholdExhausted runs before selection). A single
+// conflated integer drew exactly the wrong conclusion for the withheld half
+// (TD internal/mcp/handlers.go:871).
 type DebateResult struct {
 	ReviewID   string      `json:"review_id"`
 	Selected   int         `json:"selected"`
@@ -123,6 +129,7 @@ type DebateResult struct {
 	Split      int         `json:"split"`
 	Unresolved int         `json:"unresolved"`
 	Overflow   int         `json:"overflow"`
+	Withheld   int         `json:"withheld"`
 	DurationMs int         `json:"durationMs"`
 	GateStatus *GateStatus `json:"gateStatus,omitempty"`
 }

@@ -1101,7 +1101,16 @@ func TestRunDebate_ExhaustedUnresolvedItemIsWithheldAndDisclosed(t *testing.T) {
 	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
 	require.NoError(t, err)
 	assert.Equal(t, 0, res.Selected, "an item that burned its unresolved attempts must not be re-debated")
-	assert.Equal(t, 1, res.Overflow, "the withheld item must be counted as skipped work")
+	// SPLIT by cause, not conflated. A cap overflow is recovered by raising
+	// debate.max_items; a withheld item is not recovered at ANY cap value. Publishing
+	// their SUM told an MCP client and a stdout reader that raising the cap would
+	// debate an item withholdExhausted had already permanently removed — the exact
+	// conclusion internal/report/contested.go:146 was written to refute
+	// (TD internal/mcp/handlers.go:871).
+	assert.Equal(t, 1, res.Withheld,
+		"the withheld item is counted under its own field")
+	assert.Equal(t, 0, res.Overflow,
+		"and NOT as a cap overflow: no max_items cap was responsible for skipping it")
 
 	df, found, err := ReadDebateFile(dir)
 	require.NoError(t, err)

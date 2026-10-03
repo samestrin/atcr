@@ -912,8 +912,8 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 			}
 			if !axiMode { // gated under --axi: stdout stays payload-only
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-					"debated %d item(s): %d upheld, %d overturned, %d split, %d unresolved (%d overflow)\n",
-					dres.Selected, dres.Upheld, dres.Overturned, dres.Split, dres.Unresolved, dres.Overflow)
+					"debated %d item(s): %d upheld, %d overturned, %d split, %d unresolved (%d overflow, %d withheld)\n",
+					dres.Selected, dres.Upheld, dres.Overturned, dres.Split, dres.Unresolved, dres.Overflow, dres.Withheld)
 			}
 		}
 

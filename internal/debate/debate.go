@@ -58,7 +58,16 @@ type Result struct {
 	Overturned int
 	Split      int
 	Unresolved int
-	Overflow   int
+	// Overflow is the CAP-overflow count: items that matched a trigger and exceeded
+	// debate.max_items. Raising the cap debates them, so its remedy is a flag change.
+	Overflow int
+	// Withheld is the attempts-exhausted count: items a prior run left unresolved
+	// maxUnresolvedAttempts times. Its remedy is the OPPOSITE — withholdExhausted runs
+	// before SelectItems, so NO cap value recovers them. Kept separate from Overflow
+	// because their SUM told an MCP client and a stdout reader that raising
+	// max_items would debate an item forever removed from selection
+	// (TD internal/mcp/handlers.go:871).
+	Withheld   int
 	DurationMs int
 }
 
@@ -476,7 +485,11 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	}
 
 	res.Selected = len(sel.Selected)
-	res.Overflow = len(sel.Overflow) + len(withheld)
+	// Split by cause, not conflated: a cap overflow is recoverable by raising
+	// debate.max_items, a withheld item is not recoverable at any cap value
+	// (TD internal/mcp/handlers.go:871).
+	res.Overflow = len(sel.Overflow)
+	res.Withheld = len(withheld)
 	res.DurationMs = int(time.Since(start).Milliseconds())
 	return res, nil
 }

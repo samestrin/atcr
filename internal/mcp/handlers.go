@@ -869,6 +869,7 @@ func (e *engine) handleDebate(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 		Split:      res.Split,
 		Unresolved: res.Unresolved,
 		Overflow:   res.Overflow,
+		Withheld:   res.Withheld,
 		DurationMs: res.DurationMs,
 	}
 	if threshold != "" {
