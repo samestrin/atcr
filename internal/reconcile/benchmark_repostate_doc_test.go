@@ -632,3 +632,23 @@ func TestBenchmarkDoc_ExportRejectionExampleMatchesTheEmittedLine(t *testing.T) 
 	assert.Contains(t, coverage, "Re-running will not help the `unshown` cases",
 		"the slot remedy the doc quotes must be the one the gate emits")
 }
+
+// The retention line's fields must keep the split the code makes: to test what
+// failed, an operator greps for failed_slots=N, so an unmeasured-ok shortfall must
+// not land there. Asserted BIDIRECTIONALLY — the doc must name failed_slots as the
+// infrastructure count and unmeasured_slots beside it, and the code must route the
+// two through the shared predicate (TD cli/benchmark_repostate.go:232).
+func TestBenchmarkDoc_RetentionLineSplitsFailedFromUnmeasured(t *testing.T) {
+	doc := readRepoFile(t, "../../docs/benchmark.md")
+	code := readRepoFile(t, "../../cli/benchmark_repostate.go")
+
+	assert.Contains(t, doc, "unmeasured_slots",
+		"the retention line must document the unmeasured-ok shortfall under its own key, not under failed_slots")
+	assert.Contains(t, doc, "failed_slots",
+		"the retention line must still document failed_slots")
+
+	assert.Contains(t, code, `"unmeasured_slots", unmeasuredSlotCount(slotFailures)`,
+		"the retention line must emit the unmeasured_slots key the doc names")
+	assert.Contains(t, code, "benchmark.SlotFailureIsInfrastructure(sf.Reason)",
+		"failedSlotCount must count only infrastructure-class reasons, or a clean panel reports failed_slots=N")
+}

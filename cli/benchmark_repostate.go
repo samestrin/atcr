@@ -220,7 +220,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		retentionAttrs := func() []any {
 			attrs := []any{"path", tmp, "failed_cases", len(caseFailures),
 				"failed_slots", failedSlotCount(slotFailures), "unmeasured_slots", unmeasuredSlotCount(slotFailures),
-				"failed_reviewers", len(slotFailures),
+				"failed_reviewers", failedReviewerCount(slotFailures),
 				"retained_dirs", retainedDirCount(tmp)}
 			return append(attrs, retainedSizeAttrs(tmp)...)
 		}
@@ -935,6 +935,23 @@ func unmeasuredSlotCount(m map[reviewerKey][]benchmark.SlotFailure) int {
 		for _, sf := range v {
 			if sf.Reason == benchmark.SlotFailureUnmeasuredOK {
 				n++
+			}
+		}
+	}
+	return n
+}
+
+// failedReviewerCount is how many reviewers own at least one INFRASTRUCTURE-class
+// slot failure — the identity counterpart of failedSlotCount, scoped the same way so
+// the two keys cannot read 1 and 0 on the same run, which would tell an operator a
+// reviewer failed when no call did.
+func failedReviewerCount(m map[reviewerKey][]benchmark.SlotFailure) int {
+	n := 0
+	for _, v := range m {
+		for _, sf := range v {
+			if benchmark.SlotFailureIsInfrastructure(sf.Reason) {
+				n++
+				break
 			}
 		}
 	}
