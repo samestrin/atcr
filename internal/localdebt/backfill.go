@@ -40,20 +40,22 @@ type BackfillResult struct {
 	// subtracted, never added, so this field keeps its historical meaning as the full
 	// observation count and no existing consumer loses a row.
 	Unresolved int
-	// PolicyUnrepairable carves the policy half out of Unresolved. ReExtractJustification
-	// refuses a candidate both because "this file is not the one" and because the
-	// producer's own policy excludes it — a review.md over the size cap, a symlink, a
-	// wholly-salvaged reply, a desynced bin list, a draft anchor line. The refusal is
-	// right in every case (the replay set may not exceed the stamp set), but the two
-	// classes call for opposite operator actions: a missing review.md can be restored,
-	// while a policy refusal cannot be repaired from the tree at all — NOT even when
-	// the tree is fully intact. Summed into one integer the operator cannot tell which
-	// remedy applies, and cli/debt_resolve.go's SCOPE paragraph inherited the same
-	// conflation.
+	// PolicyUnrepairable carves the "the file is there and still cannot help" half out
+	// of Unresolved. ReExtractJustification returns ok=false both because no candidate
+	// survives at the record's own source_report path and because a candidate WAS there
+	// yet yielded no excerpt — the producer's policy exclusions (over the size cap, a
+	// symlink, a wholly-salvaged reply, a desynced bin list, a draft anchor line), a
+	// namesake whose anchor does not match, or a section that is pure quoted example.
+	// Each refusal is right (the replay set may not exceed the stamp set), but the two
+	// classes call for opposite operator actions: an absent review.md may be restorable,
+	// while restoring a file cannot fix any of the second class — not even with the tree
+	// fully intact. Summed into one integer the operator cannot tell which remedy
+	// applies, and cli/debt_resolve.go's SCOPE paragraph inherited the same conflation.
 	//
-	// It counts a record whose OWN source_report path holds a readable review.md that
-	// the producer's policy declined. A record whose review.md is absent contributes to
-	// Unresolved instead, so `Unresolved - PolicyUnrepairable` is the missing-tree class.
+	// It counts a record whose OWN source_report path holds a present, regular
+	// review.md that yielded no excerpt. A record whose review.md is absent contributes
+	// to Unresolved instead, so `Unresolved - PolicyUnrepairable` is the absent-tree
+	// class.
 	PolicyUnrepairable int
 	Ambiguous          int // several surviving candidates disagreed, so none was written
 
@@ -380,8 +382,8 @@ func replayCandidates(reviewRoot string, rec Record) (replayResult, error) {
 	if err != nil {
 		return replayResult{}, fmt.Errorf("searching %s for review narratives: %w", reviewRoot, err)
 	}
-	// A refusal with the record's own review.md PRESENT is unrepairable by restoring
-	// a file; only an absent tree is. ``policyRefused`` is therefore "the path exists
+	// A refusal with the record's own review.md PRESENT cannot be fixed by restoring
+	// a file; only an absent tree can. ``policyRefused`` is therefore "the path exists
 	// (and is a regular file) yet yielded no excerpt", which is the operator-facing
 	// half of the split (TD cli/debt_resolve.go:81).
 	return replayResult{texts: out, policyRefused: policyRefused || (ownPathPresent && len(out) == 0)}, nil
