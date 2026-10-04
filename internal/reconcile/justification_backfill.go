@@ -50,7 +50,14 @@ func ReExtractJustification(path, file string, line, anchorLine int) (text, sect
 	//
 	// Not an error — a refused candidate is simply not one the stamp could have come
 	// from, so the caller should try another.
-	declined, raw, salvagedBins, err := reviewPolicy(path)
+	// And the draft-line exclusion, per chunk segment — the same set buildAnchorIndex
+	// skips. A file:line the model wrote inside a reasoning run the findings parser
+	// REFUSED is the model's discarded draft, and publishing it as a finding's
+	// provenance is the damage draftLineSet exists to prevent. The SET is file-level,
+	// so reviewPolicy hands it back rather than being recomputed here — it already had
+	// to derive it to reach the desync verdict. Only its CONSUMPTION is per record,
+	// against this call's anchor.
+	declined, raw, excluded, err := reviewPolicy(path)
 	if err != nil {
 		return "", "", false, err
 	}
@@ -58,13 +65,6 @@ func ReExtractJustification(path, file string, line, anchorLine int) (text, sect
 		return "", "", false, nil
 	}
 	lines := strings.Split(raw, "\n")
-	// And the draft-line exclusion, per chunk segment — the same set
-	// buildAnchorIndex skips. A file:line the model wrote inside a reasoning run the
-	// findings parser REFUSED is the model's discarded draft, and publishing it as a
-	// finding's provenance is the damage draftLineSet exists to prevent. Recomputed
-	// here rather than returned by reviewPolicy because only the DESYNC verdict is
-	// file-level; the excluded set is consumed per record, against this call's anchor.
-	excluded, _ := excludedAnchorLines(raw, salvagedBins)
 	idx := anchorLine - 1 // SourceReport.Line is 1-based; extractSection indexes from 0
 	if idx < 0 || idx >= len(lines) {
 		// The file changed length since the stamp. Not an error — this candidate is
@@ -130,11 +130,12 @@ func ReviewPolicyDeclinesFile(path string) (bool, error) {
 // exported predicate and ReExtractJustification's own gate so the two cannot drift —
 // a policy arm added here reaches both callers at once.
 //
-// It also returns what it already had to read: the raw content and the resolved
-// salvaged-bin list, so ReExtractJustification does not pay a second stat+read to get
-// them. That is the whole reason this is a separate helper rather than the exported
-// predicate being called directly.
-func reviewPolicy(path string) (declined bool, raw string, salvagedBins []int, err error) {
+// It also returns what it already had to derive: the raw content and the excluded
+// draft-anchor set, so ReExtractJustification pays neither a second stat+read nor a
+// second excludedAnchorLines pass. That is the whole reason this is a separate helper
+// rather than the exported predicate being called directly — and it leaves one call
+// site per computation, so neither can drift from the policy verdict built on it.
+func reviewPolicy(path string) (declined bool, raw string, excluded map[int]struct{}, err error) {
 	// The producer's size cap: collectReviewNarratives skips any review.md over
 	// maxReviewBytes, so a file it would never have stamped from must not yield an
 	// authoritative excerpt either.
@@ -162,8 +163,9 @@ func reviewPolicy(path string) (declined bool, raw string, salvagedBins []int, e
 	}
 	// A DESYNCED bin list names no segment in this review.md, so nothing says which
 	// lines were refused. Withhold, mirroring the producer.
-	if _, desynced := excludedAnchorLines(string(b), bins); desynced {
+	lines, desynced := excludedAnchorLines(string(b), bins)
+	if desynced {
 		return true, "", nil, nil
 	}
-	return false, string(b), bins, nil
+	return false, string(b), lines, nil
 }
