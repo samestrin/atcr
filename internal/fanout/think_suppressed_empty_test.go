@@ -1,9 +1,12 @@
 package fanout
 
 import (
+	"os"
+	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // thinkSuppressedContent's empty-content guard was uncovered AND survived mutation:
@@ -49,4 +52,31 @@ func TestThinkSuppressedContent_EmptyReplyIsNotAThinkSuppressionGroundToRefuseAC
 	t.Parallel()
 	assert.False(t, thinkSuppressedContent(""),
 		"the diff-cache gate reads this predicate; an empty reply must not be declined on think-suppression grounds")
+}
+
+// The predicate must have exactly ONE definition. InvokeSlot's truncated-failover
+// arm carried its own inline copy of the same length+TrimSpace test while the
+// function's doc claimed "two callers, one predicate" — so a later edit to
+// thinkSuppressedContent would leave that arm testing the OLD rule, and the two
+// would disagree about which replies count as think-only without any test noticing
+// (TD internal/fanout/engine.go:1018).
+//
+// A drift test, not a behavioural one: the behaviour is already covered, and what
+// needs pinning is the STRUCTURAL rule that the inline copy was removed. Read the
+// source rather than asserting on a call — a re-inlined copy would still ship the
+// call elsewhere and pass a call-count check.
+func TestThinkSuppressedContent_HasNoInlineCopyInInvokeSlot(t *testing.T) {
+	t.Parallel()
+	src, err := os.ReadFile("engine.go")
+	require.NoError(t, err)
+	// The inline copy's tell: a SplitThink call whose result feeds a hand-written
+	// length + TrimSpace test. thinkSuppressedContent's own body is the only place
+	// that shape may now appear.
+	body := string(src)
+	inline := regexp.MustCompile(`(?m)if answer, _ := llmclient\.SplitThink\(`)
+	assert.NotRegexp(t, inline, body,
+		"invokeSlot must call thinkSuppressedContent rather than carrying its own copy of the predicate — "+
+			"an inline copy drifts silently from the hoisted one it claims to share")
+	assert.Contains(t, body, "if thinkSuppressedContent(r.Content) {",
+		"the truncated-failover arm must route through the shared predicate")
 }

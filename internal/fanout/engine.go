@@ -1005,17 +1005,15 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 			// identically on every chain member (same tag habit) — count it so the
 			// end-of-walk line can name the wasted spend (TD engine.go:602).
 			//
-			// Two preconditions, both load-bearing, and they are the same pair
-			// historyMessage uses (loop.go). The strip must have REMOVED something —
-			// detected by length, since SplitThink returns a substring of its input,
-			// so a no-op strip returns it unchanged. That rules out two replies that
-			// carry no think markup at all and would otherwise qualify: the empty one
-			// (SplitThink("") returns ("", "")) and the whitespace-only one. Both mean
-			// "the provider sent nothing usable", which has a different remedy from
-			// "the model spent the reply thinking". Then TrimSpace, because SplitThink
-			// keeps the whitespace after the run it consumed, so the routine
-			// `<think>…</think>\n` shape returns "\n".
-			if answer, _ := llmclient.SplitThink(r.Content); len(answer) < len(r.Content) && strings.TrimSpace(answer) == "" {
+			// The test itself lives in thinkSuppressedContent, which is the SAME
+			// predicate the StatusOK block and the cache gate apply. Three callers,
+			// one predicate. It was inlined here as a copy while that function's doc
+			// claimed "two callers, one predicate", so a later edit to the predicate
+			// would have left this arm testing the old rule — the divergence the
+			// hoist exists to make impossible (TD internal/fanout/engine.go:1018).
+			// The empty/whitespace-only exclusions the old inline comment spelled
+			// out are stated on the predicate's own doc.
+			if thinkSuppressedContent(r.Content) {
 				thinkOnlyAttempts++
 				r.ThinkOnlyAttempts++
 			}
@@ -1320,10 +1318,12 @@ func (e *Engine) dispatchAgent(ctx context.Context, a Agent) Result {
 }
 
 // thinkSuppressedContent reports whether a raw reply is entirely a leading think
-// run — the same test invokeSlot applies when it sets ThinkSuppressed, hoisted here
-// so the cache gate can consult it BEFORE the reply is stored. Two callers, one
-// predicate: a reply this returns true for must never be cached, and must be
-// recorded think-suppressed rather than unparseable.
+// run — the test invokeSlot applies when it sets ThinkSuppressed, hoisted here so
+// the cache gate can consult it BEFORE the reply is stored. Three callers, one
+// predicate: the StatusOK block that records the flag, the truncated-failover arm
+// that counts the wasted spend, and the cache gate. A reply this returns true for
+// must never be cached, and must be recorded think-suppressed rather than
+// unparseable.
 // No empty-content guard, deliberately. One stood here and was redundant: an empty
 // reply already answers false through the length test, because SplitThink("")
 // returns ("", "") and `0 < 0` is false. It was an uncovered line that SURVIVED
