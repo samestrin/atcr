@@ -1058,9 +1058,9 @@ func TestRunDebate_SilentSeatPathDisclosesPerSeatCause(t *testing.T) {
 // TestSeatSilenceNotes_LabelsEachSeatForItself pins the per-seat labelling the
 // single reason token cannot carry. Without it a mixed pair rendered as
 // "seat halted: proposer,challenger" — telling an operator the challenger
-// halted when it had run clean. Suppressed outranks halted on a tie: the two
-// facts are independent and the strip is the one that removed the statement
-// (TD internal/debate/protocol.go:231).
+// halted when it had run clean. The two facts are independent and a seat can be
+// both, so a seat in both slices names both causes rather than letting one arm
+// win (TD internal/debate/protocol.go:231, TD internal/report/contested.go:115).
 func TestSeatSilenceNotes_LabelsEachSeatForItself(t *testing.T) {
 	assert.Equal(t, []string{"proposer halted", "challenger silent"},
 		seatSilenceNotes([]string{LabelProposer}, nil, []string{LabelProposer, LabelChallenger}))
@@ -1073,9 +1073,9 @@ func TestSeatSilenceNotes_LabelsEachSeatForItself(t *testing.T) {
 	// fall back to the weaker seat_silent token (TD internal/debate/debate.go:524).
 	assert.Equal(t, []string{"proposer suppressed", "challenger silent"},
 		seatSilenceNotes(nil, []string{LabelProposer}, []string{LabelProposer, LabelChallenger}))
-	assert.Equal(t, []string{"proposer suppressed"},
+	assert.Equal(t, []string{"proposer suppressed, halted"},
 		seatSilenceNotes([]string{LabelProposer}, []string{LabelProposer}, []string{LabelProposer}),
-		"suppressed wins a tie: the sets are NOT disjoint (a budget-tripped seat whose forced answer was all think markup is both), and the strip is what explains the missing statement")
+		"the sets are NOT disjoint (a budget-tripped seat whose forced answer was all think markup is both), and each cause carries its own remedy, so the note keeps both")
 	assert.False(t, allSeatsIn([]string{LabelProposer}, []string{LabelProposer, LabelChallenger}),
 		"a suppressed proposer plus a genuinely-silent challenger must not report seat_suppressed")
 }
@@ -1477,4 +1477,33 @@ func TestRunDebate_AmbiguousCloserReasoningNamesTheTagIntact(t *testing.T) {
 			"and a user reading report.md cannot tell which tag is meant")
 	assert.NotContains(t, df.Items[0].Reasoning, "no  thinking opened",
 		"the escaped/mangled shape must not ship to report.md")
+}
+
+// Under non-disjointness a seat can be BOTH halted and suppressed. seatSilenceNotes is
+// a one-cause-per-seat switch, so it recorded only "suppressed" and dropped the halt —
+// but the halt is real (the seat tripped its tool_budget_bytes) and carries its own
+// remedy (raise tool_budget_bytes), which docs/cross-examination.md:105 flags. The
+// comment calls seatSilenceNotes "the only place a mixture's detail survives", so it
+// must carry BOTH causes for a seat that is in both slices (TD internal/report/contested.go:115).
+func TestSeatSilenceNotes_NamesBothCausesForASeatThatHaltedAndWasSuppressed(t *testing.T) {
+	// one seat, both halted and suppressed
+	assert.Equal(t, []string{"proposer suppressed, halted"},
+		seatSilenceNotes([]string{LabelProposer}, []string{LabelProposer}, []string{LabelProposer}),
+		"a seat that halted AND was suppressed must report both causes, not just the stronger one")
+
+	// A genuinely mixed pair: one clean-suppressed seat and one halted-and-suppressed
+	// seat. The strong token now covers both, so the per-seat detail is where the
+	// difference must survive.
+	assert.Equal(t, []string{"proposer suppressed, halted", "challenger suppressed"},
+		seatSilenceNotes([]string{LabelProposer}, []string{LabelProposer, LabelChallenger},
+			[]string{LabelProposer, LabelChallenger}),
+		"each seat keeps its own accurate label even when the item-level token is uniform")
+
+	// The single-cause arms are unchanged.
+	assert.Equal(t, []string{"proposer suppressed"},
+		seatSilenceNotes(nil, []string{LabelProposer}, []string{LabelProposer}))
+	assert.Equal(t, []string{"proposer halted"},
+		seatSilenceNotes([]string{LabelProposer}, nil, []string{LabelProposer}))
+	assert.Equal(t, []string{"proposer silent"},
+		seatSilenceNotes(nil, nil, []string{LabelProposer}))
 }

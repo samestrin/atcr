@@ -850,27 +850,32 @@ func carriesRuling(s string) bool {
 	return parseRuling(s).Outcome != OutcomeUnresolved
 }
 
-// seatSilenceNotes labels each silent seat with its own cause for the transcript,
+// seatSilenceNotes labels each silent seat with its own causes for the transcript,
 // which the single reason token cannot do on a mixed pair. Three causes: suppressed
 // (something was said and the strip removed all of it), halted (the engine failed),
 // and silent (it ran clean and genuinely said nothing).
 //
-// suppressed outranks halted, matching the token precedence in debateOne and for
-// the same reason: the two are independent, a budget-tripped seat can be both, and
-// the strip is what explains the absence of a statement. Halted used to win on the
-// premise that a halted turn never reached the suppression branch; that premise is
-// false — recordTurnCause records both (TD internal/debate/protocol.go:231).
+// A seat can be BOTH suppressed and halted — a budget-tripped seat whose forced final
+// answer was entirely think markup — and both facts carry their own remedy (raise
+// tool_budget_bytes vs turn off inline reasoning). So the note names BOTH, in the
+// precedence order the token uses (suppressed first), rather than a one-cause switch
+// that dropped the halt. This function is the only place a mixture's detail survives;
+// under non-disjointness a single-arm switch made it lossy
+// (TD internal/report/contested.go:115).
 func seatSilenceNotes(halted, suppressed, seats []string) []string {
 	notes := make([]string, 0, len(seats))
 	for _, s := range seats {
-		cause := "silent"
-		switch {
-		case slices.Contains(suppressed, s):
-			cause = "suppressed"
-		case slices.Contains(halted, s):
-			cause = "halted"
+		causes := make([]string, 0, 2)
+		if slices.Contains(suppressed, s) {
+			causes = append(causes, "suppressed")
 		}
-		notes = append(notes, s+" "+cause)
+		if slices.Contains(halted, s) {
+			causes = append(causes, "halted")
+		}
+		if len(causes) == 0 {
+			causes = append(causes, "silent")
+		}
+		notes = append(notes, s+" "+strings.Join(causes, ", "))
 	}
 	return notes
 }
