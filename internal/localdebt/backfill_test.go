@@ -1082,3 +1082,55 @@ func TestBackfillJustifications_SeparatesPolicyRefusalsFromMissingTrees(t *testi
 	assert.Zero(t, res.Rewritten, "neither class may be rewritten")
 	assert.Zero(t, res.Ambiguous)
 }
+
+// A NAMESAKE in an unrelated review must not be read as the record's own file.
+//
+// PolicyUnrepairable's whole contract is "the file is there and still cannot help, so
+// restoring one will not fix it" — and cli/debt_resolve.go's SCOPE paragraph tells the
+// operator exactly that. Deriving it from "some candidate at this relative path was
+// present and nothing matched" cannot support the claim: SourceReport.Path is
+// review-dir-RELATIVE and pathHasSuffix is review-dir-UNSCOPED, so every review
+// directory in the tree holds a same-named candidate (BackfillJustifications' own doc,
+// backfill.go:141-146). With .atcr/reviews/ holding many reviews for the same agent,
+// that made the pruned-tree count read near zero and sent the operator away from the
+// one remedy that would have worked (TD internal/localdebt/backfill.go:389).
+//
+// The provable claim is narrower and path-independent: a candidate the producer's
+// FILE-LEVEL policy would refuse to stamp from at all — over the size cap, a wholly
+// salvaged reply, a desynced bin list — is unrepairable wherever it sits. A namesake
+// that is an ordinary, in-cap review.md whose anchor simply does not match is a
+// MISMATCH, and says nothing about whether the record's own tree survives.
+func TestBackfillJustifications_NamesakeInAnotherReviewIsNotAPolicyRefusal(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	reviewRoot := filepath.Join(root, "reviews")
+	require.NoError(t, os.MkdirAll(store, 0o750))
+
+	rec := `{"schema_version":3,"id":"aaaa0001","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
+		`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
+		`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+		`"justification":"- **internal/thing.go:42** a stale excerpt nothing can replay.",` +
+		`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":8}}`
+
+	// The record's OWN review is gone. An UNRELATED review (sprint-b) happens to hold
+	// the same relative path, with an ordinary in-cap review.md that does not carry
+	// this record's anchor — a mismatch, not a policy refusal.
+	other := filepath.Join(reviewRoot, "sprint-b", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+	require.NoError(t, os.MkdirAll(other, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(other, "review.md"),
+		[]byte("# some other review\n\n- **internal/other.go:9** an unrelated narrative.\n"), 0o600))
+
+	writeShard(t, store, "2026-08", rec)
+
+	res, err := BackfillJustifications(store, reviewRoot, false)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, res.Scanned)
+	assert.Equal(t, 1, res.Unresolved, "nothing yielded an excerpt, so the observation count stands")
+	assert.Zero(t, res.PolicyUnrepairable,
+		"the only candidate is a namesake in an unrelated review that the producer's policy would "+
+			"have stamped from quite happily — it simply does not carry this record's anchor, so it is "+
+			"no evidence that restoring the record's own review.md cannot help")
+	assert.Equal(t, 1, res.Unresolved-res.PolicyUnrepairable,
+		"the record's own tree is pruned, so it belongs wholly to the missing-tree class")
+}
