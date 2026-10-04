@@ -1202,3 +1202,51 @@ func TestCheckCoverage_InfrastructureAndUnmeasuredOKKeepSeparateRemedies(t *test
 	assert.NotContains(t, msg, "investigate the provider behind m2/p2",
 		"the unmeasured-ok row must not be told to investigate a provider that answered fine")
 }
+
+// appendUnique exists for exactly one shape, and nothing pinned it: a reviewer with
+// SEVERAL slot failures of the same class must be named ONCE in the shortfall
+// diagnostic. The loop walks each reviewer's failures per CASE, so a provider that
+// dies on four cases produces four entries for one identity — and the pre-appendUnique
+// code appended the name once per entry.
+//
+// Both halves of the row were true: lines 921-923 had zero coverage in a full
+// `go test ./cli/... ./internal/...` run, and replacing the whole body with a bare
+// `return append(s, v)` left ./cli/... green (TD cli/benchmark_coverage.go:921).
+func TestCheckCoverage_AReviewerWithManySlotFailuresOfOneClassIsNamedOnce(t *testing.T) {
+	// One identity, four cases, all lost to the same infrastructure reason.
+	rr := benchmark.RunResult{SuiteCaseIDs: []string{"case-01", "case-02", "case-03", "case-04"}}
+	rr.Reviewers = append(rr.Reviewers, scorecard.PublicRecord{Model: "m-dead", Persona: "p", Runs: 0})
+	rr.Coverage = append(rr.Coverage, benchmark.ReviewerCoverage{Model: "m-dead", Persona: "p"})
+	for _, id := range rr.SuiteCaseIDs {
+		rr.SlotFailures = append(rr.SlotFailures, benchmark.SlotFailure{
+			Model: "m-dead", Persona: "p", CaseID: id, Reason: benchmark.SlotFailureCall,
+		})
+	}
+
+	err := checkCoverage(io.Discard, rr, "rr.json", false)
+	require.Error(t, err)
+	msg := err.Error()
+
+	// The provider-remedy clause lists the identities to investigate. Four failures of
+	// one class are ONE thing to investigate, so the name belongs there once.
+	_, remedy, found := strings.Cut(msg, "investigate the provider behind ")
+	require.True(t, found, "precondition: the infrastructure remedy clause is present")
+	assert.Equal(t, 1, strings.Count(remedy, "m-dead/p"),
+		"a reviewer with several slot failures of ONE class is one identity to investigate, so it "+
+			"must be named once — repeating it per failed case is what appendUnique exists to prevent")
+}
+
+// The direct unit case, covering the three inputs the helper can receive. The
+// already-present arm is the one that had no coverage at all.
+func TestAppendUnique(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, []string{"a"}, appendUnique(nil, "a"),
+		"empty slice: the value is appended")
+	assert.Equal(t, []string{"a", "b"}, appendUnique([]string{"a"}, "b"),
+		"absent: the value is appended, preserving first-seen order")
+	assert.Equal(t, []string{"a", "b"}, appendUnique([]string{"a", "b"}, "a"),
+		"already present: the slice is returned unchanged, and the EARLIER position is kept")
+	assert.Equal(t, []string{"a", "b"}, appendUnique([]string{"a", "b"}, "b"),
+		"already present at the tail: still unchanged, so a repeat never double-appends")
+}
