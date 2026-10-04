@@ -30,14 +30,32 @@ type BackfillResult struct {
 	// Unresolved counts records no review.md yielded an excerpt for. It does NOT
 	// mean the file is gone. ReExtractJustification returns (ok=false, err=nil) both
 	// for "this file is not the one" and for the producer's own POLICY exclusions — a
-	// review.md over the size cap, or one that is not a regular file — and
-	// replayCandidates cannot tell the two apart, so a review.md present and readable
-	// at the record's own source_report path lands here too. The label an operator
-	// reads must therefore describe the OBSERVATION (nothing yielded an excerpt), not
-	// infer a cause ("no surviving review.md"), which sent them to restore a file that
-	// was already there.
+	// review.md over the size cap, or one that is not a regular file — so a review.md
+	// present and readable at the record's own source_report path lands here too. The
+	// label an operator reads must therefore describe the OBSERVATION (nothing yielded
+	// an excerpt), not infer a cause ("no surviving review.md"), which sent them to
+	// restore a file that was already there.
+	//
+	// PolicyUnrepairable splits the policy half out of this count; the two are
+	// subtracted, never added, so this field keeps its historical meaning as the full
+	// observation count and no existing consumer loses a row.
 	Unresolved int
-	Ambiguous  int // several surviving candidates disagreed, so none was written
+	// PolicyUnrepairable carves the policy half out of Unresolved. ReExtractJustification
+	// refuses a candidate both because "this file is not the one" and because the
+	// producer's own policy excludes it — a review.md over the size cap, a symlink, a
+	// wholly-salvaged reply, a desynced bin list, a draft anchor line. The refusal is
+	// right in every case (the replay set may not exceed the stamp set), but the two
+	// classes call for opposite operator actions: a missing review.md can be restored,
+	// while a policy refusal cannot be repaired from the tree at all — NOT even when
+	// the tree is fully intact. Summed into one integer the operator cannot tell which
+	// remedy applies, and cli/debt_resolve.go's SCOPE paragraph inherited the same
+	// conflation.
+	//
+	// It counts a record whose OWN source_report path holds a readable review.md that
+	// the producer's policy declined. A record whose review.md is absent contributes to
+	// Unresolved instead, so `Unresolved - PolicyUnrepairable` is the missing-tree class.
+	PolicyUnrepairable int
+	Ambiguous          int // several surviving candidates disagreed, so none was written
 
 	// SkippedRationaleBearing counts effective records the fold filter suppressed
 	// because the record may hold an operator-typed rationale this pass must not
@@ -217,16 +235,21 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 				continue
 			}
 			res.Scanned++
-			texts, err := replayCandidates(reviewRoot, r)
+			cands, err := replayCandidates(reviewRoot, r)
 			if err != nil {
 				return err
 			}
+			texts := cands.texts
 			switch {
 			case len(texts) == 0:
 				// See BackfillResult.Unresolved: this covers a pruned review tree AND
-				// a review.md the replay declined by policy. Both are reported the
-				// same way because replayCandidates cannot distinguish them.
+				// a review.md the replay declined by policy. The COUNT is split so the
+				// operator can tell which remedy applies; only the policy half is
+				// unrepairable with the tree intact.
 				res.Unresolved++
+				if cands.policyRefused {
+					res.PolicyUnrepairable++
+				}
 			case len(texts) > 1:
 				res.Ambiguous++
 			case texts[0] == r.Justification:
@@ -295,14 +318,27 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 	return res, nil
 }
 
+// replayResult reports what one record's replay search found. `texts` is the
+// DISTINCT set of excerpts the surviving candidates yielded. `policyRefused` is set
+// when the record's OWN source_report path holds a present, regular review.md that
+// the producer's policy declined — the one signal that separates an unrepairable
+// refusal from a pruned tree, and the one an operator needs to pick a remedy
+// (TD cli/debt_resolve.go:81).
+type replayResult struct {
+	texts         []string
+	policyRefused bool
+}
+
 // replayCandidates returns the DISTINCT excerpts every surviving review.md under
 // reviewRoot yields for rec's anchor. Distinct rather than one-per-file: two copies
 // of the same review (a re-run, a backup) agree, and treating that as ambiguity would
 // decline a repair that has only one answer.
-func replayCandidates(reviewRoot string, rec Record) ([]string, error) {
+func replayCandidates(reviewRoot string, rec Record) (replayResult, error) {
 	rel := filepath.FromSlash(rec.SourceReport.Path)
 	var out []string
 	seen := map[string]bool{}
+	ownPathPresent := false
+	policyRefused := false
 	err := filepath.WalkDir(reviewRoot, func(p string, d fs.DirEntry, walkErr error) error {
 		// An unreadable file or subtree is SKIPPED, not fatal: reviewRoot is an open
 		// tree — the same resilience stance collectReviewNarratives takes over
@@ -316,9 +352,19 @@ func replayCandidates(reviewRoot string, rec Record) ([]string, error) {
 		// ReExtractJustification's os.ReadFile would FOLLOW a link. A file the
 		// producer would never have stamped from must not become an authoritative
 		// candidate for the replay — the replay set may not exceed the stamp set.
-		if !d.Type().IsRegular() || !pathHasSuffix(p, rel) {
+		if !pathHasSuffix(p, rel) {
 			return nil
 		}
+		// The stamp set is keyed on a REGULAR file: the producer refuses a symlink,
+		// FIFO or device named review.md, so all three are policy refusals rather
+		// than an absent tree and must not be filed under the "restore the file"
+		// remedy either. Recorded before ReExtractJustification so the presence is
+		// the walk's observation, independent of whatever the replay then decides.
+		if !d.Type().IsRegular() {
+			policyRefused = true
+			return nil
+		}
+		ownPathPresent = true
 		text, _, ok, rerr := reconcile.ReExtractJustification(p, rec.File, rec.Line, rec.SourceReport.Line)
 		if rerr != nil || !ok {
 			// rerr here is "this candidate is unreadable", not "the backfill
@@ -332,9 +378,13 @@ func replayCandidates(reviewRoot string, rec Record) ([]string, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("searching %s for review narratives: %w", reviewRoot, err)
+		return replayResult{}, fmt.Errorf("searching %s for review narratives: %w", reviewRoot, err)
 	}
-	return out, nil
+	// A refusal with the record's own review.md PRESENT is unrepairable by restoring
+	// a file; only an absent tree is. ``policyRefused`` is therefore "the path exists
+	// (and is a regular file) yet yielded no excerpt", which is the operator-facing
+	// half of the split (TD cli/debt_resolve.go:81).
+	return replayResult{texts: out, policyRefused: policyRefused || (ownPathPresent && len(out) == 0)}, nil
 }
 
 // replacement pairs the stale justification a record carries with the excerpt

@@ -77,6 +77,16 @@ import (
 // reason PersistForReconcile dedupes. So: this function is correct for records written
 // after the emission landed, and correct for older ones only once the backfill has
 // been run against a tree that still holds their review.md files.
+//
+// That "still holds their review.md files" clause is necessary but NOT sufficient,
+// and the backfill now says so: a record whose review.md the producer's POLICY
+// excludes — over the size cap, a symlink, a wholly-salvaged reply, a desynced bin
+// list, or an anchor line the model discarded — is declined by the replay EVEN WITH
+// THE TREE INTACT, so no backfill run can ever repair it. Those records keep their
+// marker-free excerpt permanently and this function still returns false for them,
+// exactly as for a pruned tree. The two are now distinguishable in the backfill's
+// report: `unresolved` counts both, and `policy unrepairable` names the half that
+// restoring a file cannot fix (BackfillResult.PolicyUnrepairable).
 func isRecordedRationale(justification string) bool {
 	inFence := false
 	var openC byte

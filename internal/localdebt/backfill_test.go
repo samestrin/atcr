@@ -1025,3 +1025,60 @@ func TestBackfillJustifications_IdGateProtectsRationaleTrailLineOnRegression(t *
 	assert.Equal(t, reason, got[2]["justification"],
 		"the effective open line keeps its stored text too — the whole id is out of the pass's scope")
 }
+
+// TD cli/debt_resolve.go:81 — a policy refusal must be distinguishable from a pruned
+// review tree.
+//
+// ReExtractJustification returns ok=false, err=nil for BOTH "no review.md survives at
+// this path" and "the producer's policy excludes this file" (over the 1 MiB cap, a
+// symlink, a wholly-salvaged reply, a desynced bin list, a draft anchor line). Both
+// landed in Unresolved, which this result's own doc says a caller must read as an
+// OBSERVATION rather than a cause — but the CLI label and the debt_resolve SCOPE
+// paragraph both read it as "restore the file", which is impossible for the policy
+// half. The replay set may not exceed the stamp set, so the refusals stay; only the
+// REPORTING splits.
+//
+// The observable is a distinct counter, not the wording: a caller cannot recover the
+// split from an integer that already summed the two.
+func TestBackfillJustifications_SeparatesPolicyRefusalsFromMissingTrees(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	reviewRoot := filepath.Join(root, "reviews")
+	require.NoError(t, os.MkdirAll(store, 0o750))
+
+	// Two records, one per class, each otherwise identical in every column the pass
+	// reads — so the counter they land in is the ONLY thing that differs.
+	rec := func(id, srPath string) string {
+		return `{"schema_version":3,"id":"` + id + `","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
+			`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p-` + id + `","fix":"f","category":"correctness",` +
+			`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+			`"justification":"- **internal/thing.go:42** a stale excerpt nothing can replay.",` +
+			`"source_report":{"path":"` + srPath + `","line":8}}`
+	}
+
+	// MISSING: the source_report names a review.md no directory holds.
+	// POLICY: the review.md IS present and readable at its own path, over the size cap
+	// so the producer's policy excludes it. A whole-file arm of the cap, so the
+	// narrative body never matters.
+	rd := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+	require.NoError(t, os.MkdirAll(rd, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"),
+		[]byte(strings.Repeat("padding to clear the producer's 1 MiB cap\n", 1<<16)), 0o600))
+
+	writeShard(t, store, "2026-08",
+		rec("aaaa0001", "sources/pool/raw/agent/gone/review.md"),
+		rec("aaaa0002", "sources/pool/raw/agent/dax/review.md"))
+
+	res, err := BackfillJustifications(store, reviewRoot, false)
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, res.Scanned)
+	assert.Equal(t, 2, res.Unresolved,
+		"both records yielded no excerpt, so the observation count is unchanged")
+	assert.Equal(t, 1, res.PolicyUnrepairable,
+		"the over-cap review.md is PRESENT at its own path — its refusal is by policy, not absence")
+	assert.Equal(t, 1, res.Unresolved-res.PolicyUnrepairable,
+		"the orphan's review.md survives nowhere, so it alone is the missing-tree class")
+	assert.Zero(t, res.Rewritten, "neither class may be rewritten")
+	assert.Zero(t, res.Ambiguous)
+}
