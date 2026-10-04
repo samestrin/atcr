@@ -1134,3 +1134,58 @@ func TestBackfillJustifications_NamesakeInAnotherReviewIsNotAPolicyRefusal(t *te
 	assert.Equal(t, 1, res.Unresolved-res.PolicyUnrepairable,
 		"the record's own tree is pruned, so it belongs wholly to the missing-tree class")
 }
+
+// A NON-REGULAR candidate is a policy refusal, and this is the test the guard never
+// had. internal/reconcile's collectReviewNarratives deliberately excludes symlinks,
+// FIFOs and devices named review.md — and ReExtractJustification's os.ReadFile would
+// FOLLOW a link, so a file the producer would never have stamped from must not become
+// an authoritative candidate: the replay set may not exceed the stamp set.
+//
+// Deleting the `policyRefused = true` line left ./internal/localdebt/... and ./cli/...
+// fully green, so nothing pinned the one behaviour the guard exists for. A later edit
+// could silently route all three non-regular kinds back under the "restore the file"
+// remedy with the suite still passing (TD internal/localdebt/backfill.go:366).
+//
+// The symlink stands for the class. It is the only one of the three that is portable
+// to create in a test and the only one reachable by ordinary means (a FIFO needs
+// mkfifo, a device node needs root), and all three take the identical code path —
+// d.Type().IsRegular() is false for every one of them.
+func TestBackfillJustifications_SymlinkCandidateIsAPolicyRefusalNotAnAbsentTree(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	reviewRoot := filepath.Join(root, "reviews")
+	require.NoError(t, os.MkdirAll(store, 0o750))
+
+	rec := `{"schema_version":3,"id":"aaaa0001","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
+		`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
+		`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+		`"justification":"- **internal/thing.go:42** a stale excerpt nothing can replay.",` +
+		`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":3}}`
+
+	// The target is a REAL review.md that carries the record's anchor, so the only
+	// thing standing between the replay and a successful excerpt is the symlink — if
+	// the guard were absent, os.ReadFile would follow it and the record would resolve.
+	// That is what makes this a guard test rather than a coincidence.
+	target := filepath.Join(root, "elsewhere", "review.md")
+	require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o750))
+	require.NoError(t, os.WriteFile(target,
+		[]byte("# review\n\n- **internal/thing.go:42** the narrative a follow would have stamped.\n"), 0o600))
+
+	rd := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+	require.NoError(t, os.MkdirAll(rd, 0o750))
+	require.NoError(t, os.Symlink(target, filepath.Join(rd, "review.md")))
+
+	writeShard(t, store, "2026-08", rec)
+
+	res, err := BackfillJustifications(store, reviewRoot, false)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, res.Scanned)
+	assert.Zero(t, res.Rewritten,
+		"the symlink must never yield an authoritative excerpt — following it would let the replay "+
+			"stamp from a file the producer refused, so the replay set would exceed the stamp set")
+	assert.Equal(t, 1, res.Unresolved, "nothing yielded an excerpt, so the observation count stands")
+	assert.Equal(t, 1, res.PolicyUnrepairable,
+		"a symlink named review.md is refused by policy wherever it sits, so restoring a file cannot "+
+			"fix it and the operator must not be sent looking for one")
+}
