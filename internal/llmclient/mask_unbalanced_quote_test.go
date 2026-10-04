@@ -6,24 +6,29 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// MaskJSONStrings pairs `"` bytes from offset 0 with no JSON-validity check, so an
-// ODD number of quotes before a think block inverts the in/out-of-string state and
-// blanks that block's TAGS. Every consumer of the mask asks a fail-closed detection
-// question — "is there markup here that could be hiding a discarded draft?" — so a
-// mask that hides the markup makes all three lanes ADMIT a reply they exist to
-// refuse. In the debate lane that admission is durable: parseRuling takes the draft
-// and applyRulings writes it onto the finding.
+// A prose quote at a NON-JSON position opens no literal, so the think tags after it
+// stay visible and every detection site refuses the draft they exist to catch.
 //
-// The remedy is the one internal/reconcile already applies to its fence mask
-// (TestFenceMask_UnterminatedFenceDoesNotMaskTheTail): a dangling delimiter must not
-// poison the rest of the document. Here that means a quote only opens a literal where
-// JSON can begin one, so a stray prose quote never enters the mask at all and the
-// think tags that follow stay visible for the detection sites to refuse.
-func TestMaskJSONStrings_UnbalancedQuoteDoesNotHideMarkup(t *testing.T) {
+// The claim is deliberately scoped to that position, and the scope is the point. This
+// case was written as `UnbalancedQuoteDoesNotHideMarkup` and asserted the property for
+// any stray quote — but its fixture's `"` follows a LETTER (`He said "`), which is not
+// a JSON position, so the quote cannot open a literal BY CONSTRUCTION. The assertion
+// was guaranteed by the fixture's byte position rather than by the code, and it
+// certified a property across the whole input space while the real hole went untested:
+// a quote after `,` `:` `{` `[` or at the start of input DOES open a literal, and the
+// mask then swallows the opener while the closer survives.
+//
+// Mutating the position gate away does fail this case, which is what made the
+// over-broad wording actively misleading rather than merely thin — it reported green
+// on a property it never exercised. The other positions now live in
+// TestMaskJSONStrings_ProseQuoteAtJSONPositionMustNotSplitAThinkPair, and the
+// fail-closed arm they drive is in MaskJSONStrings itself
+// (TD internal/llmclient/mask_unbalanced_quote_test.go:1).
+func TestMaskJSONStrings_ProseQuoteAtANonJSONPositionOpensNoLiteral(t *testing.T) {
 	t.Parallel()
 
-	// One unpaired `"` opens a literal that never closes. Everything after it —
-	// including the think tags — would be blanked by a length-only mask.
+	// The `"` follows `d` — not `{`, `[`, `,`, `:` or start-of-input — so openCtx is
+	// false and no literal opens. Nothing after it is masked.
 	raw := `He said "it is fine. ` +
 		"\x3cthink\x3e" + `{"outcome":"overturn","reasoning":"draft"}` + "\x3c/think\x3e" +
 		` {"outcome":"uphold","reasoning":"real"}`
@@ -32,11 +37,11 @@ func TestMaskJSONStrings_UnbalancedQuoteDoesNotHideMarkup(t *testing.T) {
 		"precondition: the raw reply really does carry an enclosing think block")
 
 	assert.True(t, HasEnclosingThinkBlock(MaskJSONStrings(raw)),
-		"a stray prose quote must not blank the think tags: it opens no literal, so the markup stays "+
-			"visible and every detection site refuses the draft it exists to catch")
+		"a prose quote at a non-JSON position must not blank the think tags: it opens no literal, so the "+
+			"markup stays visible and every detection site refuses the draft it exists to catch")
 
 	assert.Equal(t, len(raw), len(MaskJSONStrings(raw)),
-		"the unbalanced arm must preserve length: ClassifyUnopenedCloser slices the unmasked original at an "+
+		"length must be preserved on every arm: ClassifyUnopenedCloser slices the unmasked original at an "+
 			"offset computed on the masked copy, so the two must stay byte-aligned")
 }
 

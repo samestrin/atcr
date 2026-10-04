@@ -22,8 +22,11 @@ import (
 // so the pin is on the behaviour an operator sees: the refusal note in the verify
 // lane and the dropped repair in the executor lane.
 
-// The refusal the mask exists to preserve: a reply with an unbalanced prose quote
-// BEFORE a real post-answer think block. The block encloses a discarded draft, so
+// The refusal the mask exists to preserve: a reply with a prose quote at a NON-JSON
+// position before a real post-answer think block. The quote follows a LETTER, so it
+// opens no literal and every tag after it stays visible — that is this case's whole
+// scope, and the comma/colon positions that DO open one are covered by the siblings
+// below. The block encloses a discarded draft, so
 // HasEnclosingThinkBlock must see it and the lane must refuse — if the mask hid the
 // block's tags the first keyed object would be read as the committed verdict, which
 // reconcile/gate.go then trusts durably.
@@ -40,6 +43,27 @@ func TestInvokeSkeptic_UnbalancedQuoteBeforeAPostAnswerThinkBlockStillRefusesThe
 	assert.Equal(t, "think_markup_after_answer", v.Notes)
 }
 
+// The position the case above cannot reach. A COMMA-introduced prose quotation sits at
+// a JSON position, so it opens a literal; the mask runs to the next `"` — supplied by
+// the draft verdict object itself — and stops mid-block, swallowing the opener while
+// the closer survives. The lane then admitted the reply and read the DRAFT as the
+// committed verdict, which reconcile/gate.go trusts durably: a draft `refuted` clears
+// the gate at any severity and is charged to the reviewer's survived_skeptic_rate
+// (TD internal/llmclient/mask_unbalanced_quote_test.go:1).
+func TestInvokeSkeptic_CommaIntroducedQuoteBeforeAPostAnswerThinkBlockStillRefusesTheDraft(t *testing.T) {
+	t.Parallel()
+	raw := "The finding claims, \"the guard is missing\n" +
+		"\x3cthink\x3e" + `{"verdict":"refuted","reasoning":"draft, wrong"}` + "\x3c/think\x3e" +
+		"\nThat was scratch work. " + `{"verdict":"confirmed","reasoning":"real answer"}`
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	assert.Equal(t, verdictUnverifiable, v.Verdict,
+		"a comma-introduced quote opens a literal, so the mask swallowed the block's opener and the "+
+			"lane admitted the draft as the committed verdict")
+	assert.Equal(t, "think_markup_after_answer", v.Notes)
+}
+
 // The executor twin, where a false admission is worse than in the verify lane: the
 // first balanced object is returned as the fix and --auto-fix writes it to disk.
 // A false REFUSAL is also costly here — it drops a valid repair entirely — which is
@@ -52,6 +76,23 @@ func TestInvokeExecutor_UnbalancedQuoteBeforeAPostAnswerThinkBlockStillDropsTheR
 	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
 		eligibleFinding()[0], finalChat(raw), okDispatcher(), 0, "")
 	assert.Empty(t, fix, "the draft patch must never be returned as the fix")
+	assert.Contains(t, warn, "think markup",
+		"the refusal must name its cause, so an operator is not left with a silent empty fix")
+}
+
+// The executor twin of the comma position, where a false admission is worst: the first
+// balanced object is returned as the fix and --auto-fix writes it to disk, so the
+// model's discarded DRAFT patch would be applied to the tree
+// (TD internal/llmclient/mask_unbalanced_quote_test.go:1).
+func TestInvokeExecutor_CommaIntroducedQuoteBeforeAPostAnswerThinkBlockStillDropsTheRepair(t *testing.T) {
+	t.Parallel()
+	raw := "The finding claims, \"the guard is missing\n" +
+		"\x3cthink\x3e" + `{"fix":"DRAFT: delete the validation","explanation":"draft, wrong"}` + "\x3c/think\x3e" +
+		"\nThat was scratch work. " + `{"fix":"REAL: add a bounds check","explanation":"real answer"}`
+	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
+		eligibleFinding()[0], finalChat(raw), okDispatcher(), 0, "")
+	assert.Empty(t, fix,
+		"the draft patch must never be returned as the fix -- --auto-fix would write it to the tree")
 	assert.Contains(t, warn, "think markup",
 		"the refusal must name its cause, so an operator is not left with a silent empty fix")
 }

@@ -1304,8 +1304,10 @@ func TestRunDebate_ShortCircuitDoesNotCallTheUnaskedChallengerSilent(t *testing.
 // this as its reason for existing (TD internal/debate/debate.go:676).
 func TestRunDebate_UnbalancedQuoteBeforeAThinkBlockStillRefusesTheDraft(t *testing.T) {
 	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
-	// The lone `"` after `He said` is the whole defect: it opens a literal that
-	// never closes, so a length-only mask blanks every tag that follows it.
+	// The lone `"` after `He said` follows a LETTER, so it is at no JSON position and
+	// opens nothing — every tag after it stays visible. That is this case's whole
+	// scope; the positions where a prose quote DOES open a literal are covered by the
+	// sibling below.
 	judge := `He said "it is fine. ` +
 		"\x3cthink\x3e" + `{"outcome":"overturn","reasoning":"draft never committed"}` + "\x3c/think\x3e" +
 		` {"outcome":"uphold","reasoning":"real answer"}`
@@ -1320,6 +1322,44 @@ func TestRunDebate_UnbalancedQuoteBeforeAThinkBlockStillRefusesTheDraft(t *testi
 		"the draft inside the think block must never become the ruling just because an unbalanced quote hid its tags")
 	assert.Equal(t, 1, res.Unresolved,
 		"with the mask untrustworthy the enclosure test must run on the raw reply and refuse it")
+
+	df, _, err := ReadDebateFile(dir)
+	require.NoError(t, err)
+	require.Len(t, df.Items, 1)
+	assert.Equal(t, ReasonJudgeThinkMarkup, df.Items[0].Reason)
+}
+
+// The position the case above cannot reach, and the one that shipped admitting a
+// draft. A prose quote introduced by a COMMA — the ordinary way English introduces
+// quoted speech — sits at a JSON position, so it DOES open a literal. The mask then
+// runs to the next `"`, which the draft ruling object supplies by construction, and
+// stops mid-block: the opener is swallowed while the closer survives.
+// HasEnclosingThinkBlock saw no block, the lane admitted the reply, and parseRuling
+// took the draft as the committed ruling — which applyRulings writes onto the finding
+// durably (TD internal/llmclient/mask_unbalanced_quote_test.go:1).
+func TestRunDebate_CommaIntroducedQuoteBeforeAThinkBlockStillRefusesTheDraft(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	// NO ruling object after the block, deliberately. With one there, the surviving
+	// `</think>` becomes an unopened closer whose prefix AND suffix both carry a
+	// ruling, so ClassifyUnopenedCloser returns SectionAmbiguous and the lane refuses
+	// by a DIFFERENT route — the test would pass with the mask fix reverted and prove
+	// nothing. Here the suffix carries no envelope, so the draft is the only ruling
+	// object and parseRuling takes it. That is the reachable hole.
+	judge := "The proposer wrote, \"the guard is missing\n" +
+		"\x3cthink\x3e" + `{"outcome":"overturn","reasoning":"draft never committed"}` + "\x3c/think\x3e" +
+		"\nthat was my scratch reasoning, nothing committed."
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "the attack stands"},
+		{content: judge},
+	}}
+	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.Overturned,
+		"the draft must never become the ruling just because a comma-introduced prose quote opened a "+
+			"literal and the mask swallowed the block's opener")
+	assert.Equal(t, 1, res.Unresolved,
+		"the mask split a think pair, so it is discarded and the enclosure test refuses the raw reply")
 
 	df, _, err := ReadDebateFile(dir)
 	require.NoError(t, err)
