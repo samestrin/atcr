@@ -52,10 +52,28 @@ type BackfillResult struct {
 	// fully intact. Summed into one integer the operator cannot tell which remedy
 	// applies, and cli/debt_resolve.go's SCOPE paragraph inherited the same conflation.
 	//
-	// It counts a record whose OWN source_report path holds a present, regular
-	// review.md that yielded no excerpt. A record whose review.md is absent contributes
-	// to Unresolved instead, so `Unresolved - PolicyUnrepairable` is the absent-tree
-	// class.
+	// It counts a record for which the producer's policy PROVABLY declines a matching
+	// candidate: a non-regular file (symlink, FIFO, device) at the record's relative
+	// path, or one ReviewPolicyDeclinesFile refuses outright — over the size cap, a
+	// wholly salvaged reply, a desynced bin list. Those three are FILE-level, so the
+	// answer holds wherever the candidate sits.
+	//
+	// It deliberately does NOT count "a candidate was present and nothing matched".
+	// That reading was the defect: pathHasSuffix is review-dir-UNSCOPED and
+	// SourceReport.Path is review-dir-RELATIVE, so any review in the tree supplies a
+	// namesake and a genuinely pruned tree reported as unrepairable — the operator was
+	// told not to restore the one file that would have fixed it
+	// (TD internal/localdebt/backfill.go:389).
+	//
+	// The record's own review dir is not derivable from the record (RunID is
+	// `<ReconciledAt>-<base(reviewDir)>`, and that base is `multi-agent` for nearly
+	// every review), so the scoped claim is unavailable and this narrower one is what
+	// the evidence supports. The cost is an UNDER-count: a record-level unrepairable —
+	// chiefly an anchor line the producer refused as a draft — lands in the absent-tree
+	// half instead. That direction is the safe one: it sends the operator to look for a
+	// file, which wastes a minute, rather than telling them not to, which loses the
+	// repair. `Unresolved - PolicyUnrepairable` is therefore "absent tree, or a
+	// record-level refusal this pass cannot attribute".
 	PolicyUnrepairable int
 	Ambiguous          int // several surviving candidates disagreed, so none was written
 
@@ -339,7 +357,6 @@ func replayCandidates(reviewRoot string, rec Record) (replayResult, error) {
 	rel := filepath.FromSlash(rec.SourceReport.Path)
 	var out []string
 	seen := map[string]bool{}
-	ownPathPresent := false
 	policyRefused := false
 	err := filepath.WalkDir(reviewRoot, func(p string, d fs.DirEntry, walkErr error) error {
 		// An unreadable file or subtree is SKIPPED, not fatal: reviewRoot is an open
@@ -366,11 +383,20 @@ func replayCandidates(reviewRoot string, rec Record) (replayResult, error) {
 			policyRefused = true
 			return nil
 		}
-		ownPathPresent = true
 		text, _, ok, rerr := reconcile.ReExtractJustification(p, rec.File, rec.Line, rec.SourceReport.Line)
 		if rerr != nil || !ok {
 			// rerr here is "this candidate is unreadable", not "the backfill
 			// failed" — another candidate may still resolve the record.
+			//
+			// Ask the policy why, rather than inferring it from presence. A refusal
+			// the producer's FILE-LEVEL policy explains is unrepairable wherever the
+			// file sits; a candidate that merely fails to carry this record's anchor
+			// is a namesake and says nothing about the record's own tree. Only the
+			// former may set policyRefused — see ReviewPolicyDeclinesFile. A probe
+			// error is not evidence either way, so it leaves the flag alone.
+			if declined, perr := reconcile.ReviewPolicyDeclinesFile(p); perr == nil && declined {
+				policyRefused = true
+			}
 			return nil
 		}
 		if !seen[text] {
@@ -382,11 +408,20 @@ func replayCandidates(reviewRoot string, rec Record) (replayResult, error) {
 	if err != nil {
 		return replayResult{}, fmt.Errorf("searching %s for review narratives: %w", reviewRoot, err)
 	}
-	// A refusal with the record's own review.md PRESENT cannot be fixed by restoring
-	// a file; only an absent tree can. ``policyRefused`` is therefore "the path exists
-	// (and is a regular file) yet yielded no excerpt", which is the operator-facing
-	// half of the split (TD cli/debt_resolve.go:81).
-	return replayResult{texts: out, policyRefused: policyRefused || (ownPathPresent && len(out) == 0)}, nil
+	// `policyRefused` is "the producer's policy would refuse this candidate at all",
+	// never "a file was present and nothing matched". The weaker reading was the
+	// defect: pathHasSuffix is review-dir-UNSCOPED and SourceReport.Path is
+	// review-dir-RELATIVE, so ANY review in the tree supplies a namesake and a pruned
+	// tree read as unrepairable — telling the operator not to restore the one file
+	// that would have fixed it (TD internal/localdebt/backfill.go:389).
+	//
+	// What remains is provable without knowing which review dir the candidate belongs
+	// to: a non-regular file at a matching path, and the file-level arms
+	// ReviewPolicyDeclinesFile names. The record's own dir is NOT derivable from the
+	// record — RunID is `<ReconciledAt>-<base(reviewDir)>` and that base is
+	// `multi-agent` for nearly every review — so a scoped answer is not on offer here
+	// and a narrower, honest claim is the right trade (TD cli/debt_resolve.go:81).
+	return replayResult{texts: out, policyRefused: policyRefused}, nil
 }
 
 // replacement pairs the stale justification a record carries with the excerpt

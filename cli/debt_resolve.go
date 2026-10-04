@@ -84,9 +84,18 @@ import (
 // list, or an anchor line the model discarded — is declined by the replay EVEN WITH
 // THE TREE INTACT, so no backfill run can ever repair it. Those records keep their
 // marker-free excerpt permanently and this function still returns false for them,
-// exactly as for a pruned tree. The two are now distinguishable in the backfill's
-// report: `unresolved` counts both, and `policy unrepairable` names the half that
-// restoring a file cannot fix (BackfillResult.PolicyUnrepairable).
+// exactly as for a pruned tree. The two are distinguishable in the backfill's report:
+// `unresolved` counts both, and `policy unrepairable` names the half that restoring a
+// file cannot fix.
+//
+// That second count is a PROVABLE SUBSET, not the whole class. It carries only the
+// FILE-level refusals — a non-regular file, over the size cap, a wholly-salvaged
+// reply, a desynced bin list — because those hold wherever the candidate sits and the
+// record's own review dir is not derivable from the record. A record-level refusal,
+// chiefly an anchor line the model discarded, is equally unrepairable but lands in the
+// absent-tree half; the alternative read every namesake as a policy refusal and told
+// the operator not to restore a file that restoring would fix
+// (BackfillResult.PolicyUnrepairable, TD internal/localdebt/backfill.go:389).
 func isRecordedRationale(justification string) bool {
 	inFence := false
 	var openC byte

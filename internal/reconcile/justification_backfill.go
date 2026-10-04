@@ -35,6 +35,55 @@ import (
 // the one, its section is pure quoted example, or it is larger than the producer
 // would ever have stamped from" (try another candidate). Collapsing them would make a
 // pruned review dir indistinguishable from a mismatch.
+// ReviewPolicyDeclinesFile reports whether the producer's FILE-LEVEL policy would
+// refuse to stamp any excerpt from this review.md at all — it is over the size cap, it
+// is a wholly salvaged reply (promoted chain-of-thought, which no lane reads findings
+// from), or its bin list names segments the document does not contain.
+//
+// It answers a different question from ReExtractJustification's ok=false, and the
+// difference is the one an operator acts on. ok=false also covers "this candidate is
+// simply not the one" — a namesake whose anchor does not match, a file that changed
+// length, a section that is pure quoted example. Those say nothing about whether the
+// record's own review.md survives, so a caller that treats them as a policy refusal
+// tells the operator not to bother restoring a file that restoring would fix
+// (TD internal/localdebt/backfill.go:389).
+//
+// The three arms here are FILE-level and therefore PATH-INDEPENDENT, which is what
+// makes the answer trustworthy from a review-dir-unscoped walk: a file the policy
+// refuses is refused wherever it sits, so the caller does not need to establish which
+// review directory the candidate belongs to — the question SourceReport.Path cannot
+// answer (see the anchor note on ReExtractJustification below).
+//
+// The record-level arms are deliberately NOT included. A draft anchor line is
+// unrepairable too, but it is a property of one record's anchor rather than of the
+// file, so reporting it would need the anchor and would re-introduce the scoping
+// question this predicate exists to avoid.
+//
+// A read error is reported rather than swallowed: "I could not look" is not evidence
+// of a policy refusal, and the caller must not record one on it.
+func ReviewPolicyDeclinesFile(path string) (bool, error) {
+	if fi, serr := os.Stat(path); serr != nil {
+		return false, fmt.Errorf("stat review narrative %s: %w", path, serr)
+	} else if fi.Size() > maxReviewBytes {
+		return true, nil
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false, fmt.Errorf("reading review narrative %s: %w", path, err)
+	}
+	salvaged, salvagedBins := sourceSalvage(path)
+	if salvaged && len(salvagedBins) == 0 {
+		return true, nil
+	}
+	if !salvaged {
+		salvagedBins = nil
+	}
+	if _, desynced := excludedAnchorLines(string(b), salvagedBins); desynced {
+		return true, nil
+	}
+	return false, nil
+}
+
 func ReExtractJustification(path, file string, line, anchorLine int) (text, section string, ok bool, err error) {
 	// path is a review.md the caller located by walking a directory it chose; the
 	// operator is deliberately replaying their own reviews, so there is no
