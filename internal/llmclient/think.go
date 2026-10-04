@@ -315,6 +315,26 @@ func IndexAfterUnopenedCloser(content string) int {
 // `He said "… <think>{draft}</think> {real}` or parseRuling takes the draft as the
 // committed ruling and applyRulings writes it onto the finding durably.
 //
+// The position rule is necessary but NOT sufficient, and the residue has its own
+// fail-closed arm below. A prose quote that lands ON a JSON position — after `,` or
+// `:`, which is how English introduces quoted speech — does open a literal, and the
+// mask then runs to the next `"`. The draft ruling inside a think block SUPPLIES that
+// quote by construction, since any object parseRuling can read is quoted. So the mask
+// stops mid-block, swallowing the opener while the closer survives, and a reply whose
+// draft would have been refused is admitted instead (TD internal/llmclient/think.go:328).
+//
+// The discriminator is NOT the quote count. `inStr` is false at end-of-input on every
+// such reply, because the draft's own quotes re-balance it, so an unbalanced-count
+// bail-out never fires for this class — and restoring one would also un-mask the
+// cleanly quoted pair in a truncated reply, which is the decision
+// TestMaskJSONStrings_UnterminatedLiteralKeepsItsQuotedTagHidden pins.
+//
+// It is directional: masking that removes MORE OPENERS THAN CLOSERS has demonstrably
+// cut a pair in half, so the in/out-of-string state was a guess and the whole masked
+// copy is discarded. A genuinely quoted pair loses both halves together and stays
+// masked. The reverse asymmetry — a hidden closer beside a surviving opener — needs no
+// arm: the opener is still visible, so HasEnclosingThinkBlock refuses the reply anyway.
+//
 // The result is for tag DETECTION only, never for parsing: a think tag that
 // survives the mask is markup enclosing reply text, while one that appears solely
 // inside a string value is a model QUOTING the tag (the likeliest input in this
@@ -364,7 +384,16 @@ func MaskJSONStrings(s string) string {
 			b[i] = ' '
 		}
 	}
-	return string(b)
+	masked := string(b)
+	// Fail-closed arm: the mask hid an opener whose closer survived, so it cut a pair
+	// in half and its boundary was a guess. Return the input untouched — every tag
+	// stays visible and the detection sites refuse, which is the safe direction.
+	// Length is preserved trivially by returning the original.
+	if strings.Count(s, thinkOpen)-strings.Count(masked, thinkOpen) >
+		strings.Count(s, thinkClose)-strings.Count(masked, thinkClose) {
+		return s
+	}
+	return masked
 }
 
 // CloserSection names which part of a STRIPPED answer holds the committed
