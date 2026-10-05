@@ -99,3 +99,31 @@ func TestGenerateFixes_AgentRefusal_WarnsWhenThereIsNoPriorFix(t *testing.T) {
 	assert.Contains(t, f.FixWarning, "both sides",
 		"and it must name the reply shape that caused it")
 }
+
+// TD internal/verify/executor.go:411: the refusal arm returns before the
+// `if truncated` branch and discards the bool, yet invokeExecutor returns
+// res.ResponseTruncated on BOTH refusal paths. A reply cut off on
+// finish_reason=length carrying the ambiguous-closer shape therefore produced
+// exactly one record — class=executor_agent_refused — with nothing saying the
+// response was cut off, so the operator was told the model made a shape mistake
+// when a token cap was the real cause. A truncated reply is a LIKELY producer of
+// unbalanced think markup, so the two causes must both be observable.
+func TestGenerateFixes_AgentRefusal_TruncationStaysObservable(t *testing.T) {
+	ctx, buf := ceilingCtx()
+	findings := eligibleFinding()
+
+	cc := &fakeChatCompleter{turns: []chatTurn{{content: ambiguousAgentReply(), truncated: true}}}
+	generateFixes(ctx, findings, agentExecConfig(), execRegistry("MEDIUM"),
+		&recordingExecutor{}, cc, okDispatcher(), 0)
+
+	out := buf.String()
+	assert.Contains(t, out, "executor_agent_refused",
+		"the refusal class still names the reply shape")
+	assert.Contains(t, out, "executor_truncated_fix",
+		"the truncation that likely CAUSED the shape must be observable too, not discarded")
+
+	f := findings[0]
+	assert.Empty(t, f.Fix, "the refused patch is still not adopted")
+	assert.Contains(t, f.FixWarning, "truncat",
+		"the operator-facing warning must name the truncation, not present the shape mistake alone")
+}
