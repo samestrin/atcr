@@ -96,3 +96,17 @@ func TestGenerateFixes_ProviderFailure_PreservesClusterMergedPriorTierFix(t *tes
 	assert.Empty(t, f.FixWarning,
 		"a cluster-merged prior-tier fix must be protected too, not just a \"; \"-joined one")
 }
+
+// The over-admission half of the widened predicate (item 16's PREDICATE check): a
+// bare "/" must NOT be a segment boundary, or a path like "path/to/fix by hand"
+// reads as an attribution and the guard silently suppresses a warning that should
+// have been stamped. Multi-character joins only.
+func TestHasAnyFixAttribution_DoesNotSplitOnABareSlash(t *testing.T) {
+	for _, tc := range []struct{ evidence, why string }{
+		{"path/to/fix by hand", "a slash inside a path is not the \" / \" join"},
+		{"see docs/fix by design", "nor is a slash inside a directory name"},
+		{"a/b/c", "no attribution at all"},
+	} {
+		assert.False(t, hasAnyFixAttribution(tc.evidence), tc.why)
+	}
+}

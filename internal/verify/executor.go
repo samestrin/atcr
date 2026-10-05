@@ -761,13 +761,39 @@ func hasFixAttribution(evidence, name string) bool {
 // hasFixAttribution it matches whole tokens, so prose merely containing the
 // prefix mid-sentence ("reviewer suggested a fix by hand") does not qualify.
 func hasAnyFixAttribution(evidence string) bool {
-	for _, seg := range strings.Split(evidence, "; ") {
+	// Split on EVERY delimiter this field is actually assembled with, not just
+	// "; ": appendFixAttribution joins with "; " but returns a BARE attribution for
+	// empty Evidence, and internal/reconcile/merge.go's joinEvidence clusters with
+	// " / ". Splitting on only one of them left "Found by kai / fix by sonnet" as a
+	// single segment that failed the prefix test, so the guard saw no prior fix and
+	// the refusal/salvage/truncation/empty arms stamped a FixWarning beside a real
+	// generated fix — the emit.go:158 violation it exists to prevent
+	// (TD internal/verify/executor.go:748).
+	// The separators are the MULTI-character joins Evidence is actually assembled
+	// with: "; " (appendFixAttribution) and " / " (reconcile's joinEvidence). A
+	// bare "/" is deliberately NOT a separator — splitting on it would make
+	// "path/to/fix by hand" a match, and a false positive here withholds a warning
+	// that should have been stamped, trading a wrong warning for a silent one.
+	segs := strings.Split(evidence, evidenceSeparatorAlt)
+	out := make([]string, 0, len(segs))
+	for _, seg := range segs {
+		out = append(out, strings.Split(seg, evidenceSeparatorPrimary)...)
+	}
+	for _, seg := range out {
 		if strings.HasPrefix(strings.TrimSpace(seg), fixAttributionPrefix) {
 			return true
 		}
 	}
 	return false
 }
+
+// evidenceSeparatorPrimary / evidenceSeparatorAlt are the two joins Evidence is
+// assembled with: appendFixAttribution uses "; " and reconcile's joinEvidence
+// uses " / ". Kept as named constants so the guard and the producers cannot drift.
+const (
+	evidenceSeparatorPrimary = "; "
+	evidenceSeparatorAlt     = " / "
+)
 
 // appendFixAttribution appends "fix by <name>" to a finding's Evidence, joining
 // with the existing separator. It is idempotent: an Evidence already carrying the
