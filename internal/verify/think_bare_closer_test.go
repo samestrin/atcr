@@ -652,3 +652,31 @@ func TestInvokeSkeptic_WholeAnswerGradeRecordsNoDiscard(t *testing.T) {
 	assert.NotContains(t, buf.String(), "verdict_after_unopened_closer",
 		"no closer, nothing discarded — the record must not fire on an ordinary reply")
 }
+
+// TD internal/verify/invoke.go:781 (observability): discardedPrefix — the only
+// record that a grade was taken from a post-closer fragment with the prefix
+// dropped — reached nobody. It was emitted solely via a logger.Debug line that is
+// suppressed at the default level, and deliberately NOT written onto the returned
+// Verification, so an operator reading verification.json, findings.json or
+// report.md could not distinguish a whole-answer grade from a fragment grade —
+// the exact gap TD invoke.go:683 filed. The discard must survive into the
+// artifact, not just a log channel that is off by default.
+func TestInvokeSkeptic_FragmentGradeIsRecordedOnTheVerification(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
+
+	// Nothing usable before the closer, so the section is unambiguously the suffix.
+	answer := `still weighing whether the guard holds` + "\n" +
+		`A reply that resumed mid-thought.` + "\u003c/think\u003e" + "\n" +
+		`{"verdict":"confirmed","reasoning":"REAL"}`
+
+	v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", finalChat(answer), okDispatcher(), false)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	require.Equal(t, verdictConfirmed, v.Verdict, "the committed verdict after the closer is graded")
+	assert.Contains(t, v.Notes, "after_unopened_closer",
+		"the fragment grade must be recorded on the durable Verification, not only at Debug level")
+	assert.Contains(t, v.Notes, "REAL",
+		"and the graded reasoning itself stays readable beside the marker")
+}
