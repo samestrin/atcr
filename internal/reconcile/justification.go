@@ -380,6 +380,16 @@ func sourceSalvage(reviewPath string) (salvaged bool, chunks []int) {
 // one.
 // Returns (lines to exclude, desynced).
 func salvagedSegmentLines(raw string, bins []int) (map[int]struct{}, bool) {
+	// Allocation FAST PATH, not a guard — labelled because it reads like one and a
+	// future reader should not mistake a green mutation here for an untested guard.
+	// With no bins, `refused` is empty, so the walk below sets nothing and the
+	// out-of-range check iterates nothing: the function returns an empty map and
+	// false by the ordinary path. Deleting these three lines changes no observable
+	// behaviour (a nil map and an empty map are identical to every caller's
+	// comma-ok lookup and len), which the two `salvagedSegmentLines(raw, nil)` cases
+	// assert with assert.Empty precisely because either is correct. It stays for the
+	// skipped allocation and the split, Split being the expensive part
+	// (TD internal/reconcile/justification.go:383).
 	if len(bins) == 0 {
 		return nil, false
 	}
