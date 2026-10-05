@@ -257,14 +257,49 @@ func commitBaselineWriteback(ctx context.Context, baseline bool, prep *fanout.Pr
 		// Nothing was covered: CommitBaselineIndex skipped the write entirely, so the
 		// index is frozen at its prior state and the next scan re-reads the whole
 		// scope. Without this line that outcome is indistinguishable from a clean run.
+		//
+		// "unreviewed_chunks" alone MISLEADS here: a salvaged or think-suppressed slot
+		// is StatusOK and reported nothing, so it is not an unreviewed chunk, and a run
+		// can reach this arm with every chunk OK and that counter at zero. Naming the
+		// cause is the difference between the operator turning off inline reasoning and
+		// the operator raising a budget that was never the problem.
 		log.FromContext(ctx).Warn("baseline scan: no file was covered by a succeeded chunk, so the file-hash index was left untouched and the next run re-scans the whole scope",
-			"excluded_files", excluded, "unreviewed_chunks", result.Summary.UnreviewedChunks)
+			"excluded_files", excluded, "unreviewed_chunks", result.Summary.UnreviewedChunks,
+			"contributed_nothing_slots", result.Summary.ContributedNothingCount,
+			"cause", baselineWithheldCause(result.Summary))
 	case excluded > 0:
 		log.FromContext(ctx).Warn("baseline scan: partial coverage; only the files covered by succeeded chunks were recorded, so the next run re-scans the rest",
-			"recorded_files", recorded, "excluded_files", excluded, "unreviewed_chunks", result.Summary.UnreviewedChunks)
+			"recorded_files", recorded, "excluded_files", excluded, "unreviewed_chunks", result.Summary.UnreviewedChunks,
+			"contributed_nothing_slots", result.Summary.ContributedNothingCount,
+			"cause", baselineWithheldCause(result.Summary))
 	default:
 		log.FromContext(ctx).Debug("baseline scan: file-hash index updated",
 			"recorded_files", recorded, "excluded_files", excluded)
+	}
+}
+
+// baselineWithheldCause names WHY the baseline write-back withheld a coverage set,
+// so the operator is pointed at the remedy that actually applies.
+//
+// It is selected, not constant. The two arms above previously hard-coded the salvage
+// wording whenever excluded > 0, so a run whose exclusion came purely from failed
+// chunks, or from a slot that re-packed its payload and reviewed only a subset,
+// still told the operator to turn off inline reasoning — the opposite of the
+// comment's stated intent, and on every partial-coverage run (TD cli/review.go:269).
+//
+// Ordered by the counter the caller publishes beside it: when a slot really did
+// contribute nothing the salvage remedy is right, and that wins over the others
+// because it is the cause the surrounding comment exists to name. With no
+// contributed-nothing slot and no unreviewed chunks, every slot reported ok, which
+// leaves the re-packed subset as the only reason a file can go uncovered.
+func baselineWithheldCause(s fanout.Summary) string {
+	switch {
+	case s.ContributedNothingCount > 0:
+		return "a salvaged or think-suppressed reply contributed nothing while still reporting ok"
+	case s.UnreviewedChunks > 0:
+		return "failed chunks left files unreviewed while the persona still reported ok"
+	default:
+		return "a slot re-packed its payload and reviewed only a subset of its tagged files"
 	}
 }
 
@@ -877,8 +912,8 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 			}
 			if !axiMode { // gated under --axi: stdout stays payload-only
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-					"debated %d item(s): %d upheld, %d overturned, %d split, %d unresolved (%d overflow)\n",
-					dres.Selected, dres.Upheld, dres.Overturned, dres.Split, dres.Unresolved, dres.Overflow)
+					"debated %d item(s): %d upheld, %d overturned, %d split, %d unresolved (%d overflow, %d withheld)\n",
+					dres.Selected, dres.Upheld, dres.Overturned, dres.Split, dres.Unresolved, dres.Overflow, dres.Withheld)
 			}
 		}
 

@@ -88,3 +88,60 @@ func TestCompleteWithUsage_StillReturnsContentAndUsage(t *testing.T) {
 	assert.Equal(t, 10, usage.PromptTokens)
 	assert.Equal(t, 5, usage.CompletionTokens)
 }
+
+// The narrow Complete/CompleteWithUsage paths carry NO Salvaged flag, so returning
+// the promoted chain-of-thought as content makes it indistinguishable from a real
+// answer — a wrapper that forgets CompleteWithMeta silently re-enables parsing
+// abandoned reasoning as findings, and in the executor lane as a patch written to
+// disk. The fix is to refuse the salvage on the narrow path: returning an error is
+// the only signal those two signatures can carry (TD internal/llmclient/client.go:415).
+func TestComplete_RefusesAReasoningSalvageOnTheNarrowPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		respondJSON(w, `{"choices":[{"message":{"role":"assistant","content":"","reasoning_content":"draft thought, no answer"},"finish_reason":"stop"}]}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	c := fastRetry(srv.Client())
+	inv := Invocation{BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "p"}
+
+	_, err := c.Complete(context.Background(), inv)
+	require.Error(t, err, "a stop-reason salvage must not be handed back as content on the narrow path")
+	assert.ErrorIs(t, err, ErrSalvagedReply, "the refusal is a distinct, testable error")
+
+	_, usage, records, cuErr := c.CompleteWithUsage(context.Background(), inv)
+	require.Error(t, cuErr, "CompleteWithUsage cannot carry Salvaged either, so it must refuse too")
+	assert.ErrorIs(t, cuErr, ErrSalvagedReply)
+	assert.Equal(t, UsageData{}, usage, "the empty-UsageData-on-error contract still holds")
+	assert.NotEmpty(t, records, "the call reached dispatch, so its CallRecords are still surfaced")
+}
+
+// The Meta path is where the marker lives, so it must STILL return the salvaged
+// Completion — the fix refuses only the two narrow wrappers, not the signal itself.
+func TestCompleteWithMeta_StillReturnsASalvageAfterTheNarrowPathRefusesIt(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		respondJSON(w, `{"choices":[{"message":{"role":"assistant","content":"","reasoning_content":"draft thought, no answer"},"finish_reason":"stop"}]}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	c := fastRetry(srv.Client())
+	comp, err := c.CompleteWithMeta(context.Background(), Invocation{BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "p"})
+	require.NoError(t, err, "the Meta path owns the signal and must not refuse it")
+	assert.True(t, comp.Salvaged)
+	assert.Equal(t, "draft thought, no answer", comp.Content)
+}
+
+// A normal content-bearing reply is untouched by the refusal.
+func TestComplete_ReturnsANormalReply(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		respondJSON(w, `{"choices":[{"message":{"role":"assistant","content":"a real review"},"finish_reason":"stop"}]}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	c := fastRetry(srv.Client())
+	content, err := c.Complete(context.Background(), Invocation{BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "p"})
+	require.NoError(t, err)
+	assert.Equal(t, "a real review", content)
+}

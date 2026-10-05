@@ -777,7 +777,7 @@ func RebuildPool(ctx context.Context, poolDir string, roster []string) (Summary,
 	truncatedZeroFindings, truncatedZeroAgents := tallyTruncatedZeroFindings(statuses)
 	warnTruncatedZeroFindings(ctx, truncatedZeroFindings, truncatedZeroAgents, true)
 	salvagedCount, salvagedAgents := tallySalvaged(statuses)
-	warnSalvaged(ctx, salvagedCount, salvagedAgents)
+	warnSalvaged(ctx, salvagedCount, salvagedAgents, true)
 	ps := PoolSummary{
 		Agents:                statuses,
 		Total:                 sum.Total,
@@ -820,6 +820,17 @@ func summarizeStatuses(sts []AgentStatus) Summary {
 		// twice in one file. Fail-closed like summarize(): only an explicit true counts.
 		if st.FallbackUsed {
 			s.FallbackCount++
+		}
+		// And the contributed-nothing tally, for the same reason: the baseline
+		// write-back names this cause on the resume path too, and deriving it in
+		// only one of the two producers is how a resumed run loses it. Mirrors
+		// summarize()'s StatusOK guard, so a failed slot is not double-counted.
+		//
+		// Routes through the whole-persona predicates rather than the raw OR-fold
+		// flags, so a chunked persona with one bad bin of eight keeps its signal and
+		// the resumed run agrees with the live one (TD internal/fanout/outcome.go:102).
+		if st.Status == StatusOK && (WholePersonaSalvaged(st) || WholePersonaThinkSuppressed(st)) {
+			s.ContributedNothingCount++
 		}
 	}
 	s.Partial = s.Failed > 0 && s.Succeeded > 0

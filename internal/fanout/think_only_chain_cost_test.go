@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/samestrin/atcr/internal/llmclient"
@@ -104,4 +105,173 @@ func TestInvokeSlot_EmptyContentChain_IsNotCountedAsThinkOnly(t *testing.T) {
 
 	require.NotContains(t, buf.String(), "think_only_attempts",
 		"an empty reply carries no think markup — it must not be reported as wholly-reasoning")
+}
+
+// A NON-TRUNCATED think-only chain. The gate-1 increment for a StatusOK reply sits
+// inside the `if r.Status == StatusOK { ... }` block, and that block unconditionally
+// RETURNS — so every increment there is immediately followed by the walk ending, and
+// the after-loop warning could never observe one. Only the truncated-failover
+// increment could reach it, so a chain whose last attempt was an untruncated
+// think-only reply (finish_reason=stop, the shape elsewhere called "the dangerous
+// one") produced no warning at all however many attempts preceded it (TD
+// internal/fanout/engine.go:1083).
+type untruncatedThinkOnlyCompleter struct{ content string }
+
+func (s *untruncatedThinkOnlyCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
+	return s.content, nil
+}
+
+func (s *untruncatedThinkOnlyCompleter) CompleteWithMeta(_ context.Context, _ llmclient.Invocation) (llmclient.Completion, error) {
+	// Truncated stays FALSE: nothing demotes this reply, so the walk returns out of
+	// the StatusOK block before the warning.
+	return llmclient.Completion{Content: s.content}, nil
+}
+
+func TestInvokeSlot_ThinkOnlyChainWithANonTruncatedAnswerWarns(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	e := NewEngine(&untruncatedThinkOnlyCompleter{content: "\x3cthink\x3ereasoning only, no answer\x3c/think\x3e"},
+		WithLogger(logger))
+
+	slot := Slot{Primary: Agent{Name: "archer", Invocation: llmclient.Invocation{Model: "m"}}}
+	ctx := log.NewContext(context.Background(), logger)
+	r := e.invokeSlot(ctx, slot)
+
+	require.True(t, r.ThinkSuppressed,
+		"precondition: the reply is wholly reasoning, so the think-only fact holds")
+	out := buf.String()
+	require.Contains(t, out, "think-only",
+		"an untruncated think-only reply is the same wasted spend and must be warned about")
+	require.Contains(t, out, "think_only_attempts=1",
+		"and the count must survive the StatusOK early return to reach the warning")
+}
+
+// The merged record must SUM ThinkOnlyAttempts over its chunks, the way it sums
+// UnparseableChunks: reading only g[0] would attribute one chunk's wasted spend to
+// the whole persona and hide a later chunk's.
+func TestMergeResultGroup_SumsThinkOnlyAttempts(t *testing.T) {
+	merged := mergeResultGroup([]Result{
+		{Agent: "greta", Status: StatusOK, Content: "c0", ThinkOnlyAttempts: 2},
+		{Agent: "greta", Status: StatusOK, Content: "c1", ThinkOnlyAttempts: 1},
+	}, nil)
+	assert.Equal(t, 3, merged.ThinkOnlyAttempts,
+		"the persona's think-only spend is the sum over its chunks")
+}
+
+// The StatusOK-block warning's guard is `thinkOnlyAttempts > 0 && r.ThinkSuppressed`,
+// but the block that sets r.ThinkSuppressed increments thinkOnlyAttempts two lines
+// later, so the first conjunct can never be false when the second is true — it is
+// dead, and the comment's stated intent ("earlier attempts were too") cannot be
+// expressed by it. So a single-shot agent with NO fallbacks and one think-suppressed
+// reply printed "think-only replies exhausted the fallback chain", a false claim: no
+// chain was walked and no backup was bought (TD internal/fanout/engine.go:1143).
+func TestInvokeSlot_SingleAttemptThinkOnlyDoesNotClaimAChainWasExhausted(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	e := NewEngine(&untruncatedThinkOnlyCompleter{content: "\x3cthink\x3ereasoning only, no answer\x3c/think\x3e"},
+		WithLogger(logger))
+
+	// One agent, no fallbacks: nothing to exhaust.
+	slot := Slot{Primary: Agent{Name: "archer", Invocation: llmclient.Invocation{Model: "m"}}}
+	ctx := log.NewContext(context.Background(), logger)
+	r := e.invokeSlot(ctx, slot)
+	require.True(t, r.ThinkSuppressed, "precondition: the reply is wholly reasoning")
+
+	out := buf.String()
+	require.Contains(t, out, "think-only",
+		"the wasted spend is still worth warning about")
+	assert.NotContains(t, out, "exhausted the fallback chain",
+		"a single attempt exhausted no chain — the wording must describe what actually happened")
+	assert.Contains(t, out, "zero findings",
+		"the honest framing is that the walk bought zero findings")
+}
+
+// A completer whose FIRST call is a TRUNCATED think-only reply (so the chain
+// descends and the truncated arm counts one attempt) and whose SUBSEQUENT calls are
+// NON-truncated think-only replies (so the walk returns out of the StatusOK block).
+// That is the only shape that drives the >1 arm of the StatusOK-block warning: at
+// least one earlier attempt was think-only AND the final reply was too.
+type truncatedThenCleanThinkOnlyCompleter struct{ calls int }
+
+func (c *truncatedThenCleanThinkOnlyCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
+	c.calls++
+	if c.calls == 1 {
+		return "\x3cthink\x3ereasoning only, no answer\x3c/think\x3e", nil
+	}
+	return "\x3cthink\x3ereasoning only, no answer\x3c/think\x3e", nil
+}
+
+func (c *truncatedThenCleanThinkOnlyCompleter) CompleteWithMeta(_ context.Context, _ llmclient.Invocation) (llmclient.Completion, error) {
+	c.calls++
+	return llmclient.Completion{Content: "\x3cthink\x3ereasoning only, no answer\x3c/think\x3e", Truncated: c.calls == 1}, nil
+}
+
+// The multi-attempt arm keeps the chain wording, and the warning must still say how
+// many attempts were think-only, because that is the wasted spend an operator reads.
+func TestInvokeSlot_MultiAttemptThinkOnlyKeepsTheChainWording(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	e := NewEngine(&truncatedThenCleanThinkOnlyCompleter{}, WithLogger(logger), WithTruncationFailover())
+
+	slot := Slot{
+		Primary:   Agent{Name: "archer", Invocation: llmclient.Invocation{Model: "m"}},
+		Fallbacks: []Agent{{Name: "archer", Invocation: llmclient.Invocation{Model: "b"}}},
+	}
+	ctx := log.NewContext(context.Background(), logger)
+	e.invokeSlot(ctx, slot)
+
+	out := buf.String()
+	require.Contains(t, out, "exhausted the fallback chain",
+		"an earlier attempt WAS think-only, so the chain-really-was-walked wording is honest here")
+	require.Contains(t, out, "think_only_attempts=",
+		"the wasted spend must be counted on the line")
+}
+
+// ThinkOnlyAttempts' doc says it "counts the chain members whose reply was wholly a
+// leading think run on THIS walk", but the returned Result carried AT MOST 1: r is
+// fresh per chain member (invokeSlot calls invokeAgent per attempt), the truncated-arm
+// increment lands on a Result immediately demoted to StatusFailed, and the all-failed
+// return stamped the primary's fields onto `last` without summing earlier members. So
+// the field under-reported the walk, and chunker.go's sum over it under-reported the
+// persona. The walk total is the LOCAL; carry it onto the returned Result at every
+// exit so the field means what its doc says (TD internal/fanout/engine.go:429).
+func TestInvokeSlot_ReturnsTheWalkTotalThinkOnlyAttempts(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	e := NewEngine(&thinkOnlyCompleter{content: "\x3cthink\x3ecareful reasoning, no findings ever\x3c/think\x3e"},
+		WithLogger(logger), WithTruncationFailover())
+
+	slot := Slot{
+		Primary: Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "thinker-primary"}},
+		Fallbacks: []Agent{
+			{Name: "bruce", Invocation: llmclient.Invocation{Model: "thinker-backup-a"}},
+			{Name: "bruce", Invocation: llmclient.Invocation{Model: "thinker-backup-b"}},
+		},
+	}
+	ctx := log.NewContext(context.Background(), logger)
+	r := e.invokeSlot(ctx, slot)
+
+	require.ErrorIs(t, r.Err, errTruncatedZeroFindings, "precondition: the whole chain failed")
+	assert.Equal(t, 3, r.ThinkOnlyAttempts,
+		"all three chain members were think-only, so the returned Result must carry the WALK total, "+
+			"not the last member's at-most-one")
+}
+
+// The StatusOK early-return arm carries the walk total too: an earlier truncated
+// think-only attempt followed by a non-truncated think-only final reply.
+func TestInvokeSlot_StatusOKReturnCarriesTheWalkTotal(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	e := NewEngine(&truncatedThenCleanThinkOnlyCompleter{}, WithLogger(logger), WithTruncationFailover())
+
+	slot := Slot{
+		Primary:   Agent{Name: "archer", Invocation: llmclient.Invocation{Model: "m"}},
+		Fallbacks: []Agent{{Name: "archer", Invocation: llmclient.Invocation{Model: "b"}}},
+	}
+	ctx := log.NewContext(context.Background(), logger)
+	r := e.invokeSlot(ctx, slot)
+
+	require.True(t, r.ThinkSuppressed, "precondition: the final reply is wholly reasoning")
+	assert.Equal(t, 2, r.ThinkOnlyAttempts,
+		"one earlier truncated attempt plus the final non-truncated one is a walk total of 2")
 }

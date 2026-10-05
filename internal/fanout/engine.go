@@ -426,6 +426,14 @@ type Result struct {
 	// internal/fanout/engine.go:533. Set only alongside UnparseableResponse.
 	ThinkSuppressed bool
 
+	// ThinkOnlyAttempts counts the chain members whose reply was wholly a leading
+	// think run on THIS walk. Accumulated on the Result rather than only in a local,
+	// because the gate that demotes a TRUNCATED think-only reply increments a local
+	// and then the StatusOK block — which unconditionally returns — swallowed the
+	// non-truncated arm entirely, so the walk-level warning could never fire for the
+	// finish_reason=stop shape it was written for (TD internal/fanout/engine.go:1083).
+	ThinkOnlyAttempts int
+
 	// UnparseableChunks counts a chunked persona's chunks that set
 	// UnparseableResponse. mergeResultGroup sets it; the merged
 	// UnparseableResponse means zero parseable findings persona-wide.
@@ -997,18 +1005,17 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 			// identically on every chain member (same tag habit) — count it so the
 			// end-of-walk line can name the wasted spend (TD engine.go:602).
 			//
-			// Two preconditions, both load-bearing, and they are the same pair
-			// historyMessage uses (loop.go). The strip must have REMOVED something —
-			// detected by length, since SplitThink returns a substring of its input,
-			// so a no-op strip returns it unchanged. That rules out two replies that
-			// carry no think markup at all and would otherwise qualify: the empty one
-			// (SplitThink("") returns ("", "")) and the whitespace-only one. Both mean
-			// "the provider sent nothing usable", which has a different remedy from
-			// "the model spent the reply thinking". Then TrimSpace, because SplitThink
-			// keeps the whitespace after the run it consumed, so the routine
-			// `<think>…</think>\n` shape returns "\n".
-			if answer, _ := llmclient.SplitThink(r.Content); len(answer) < len(r.Content) && strings.TrimSpace(answer) == "" {
+			// The test itself lives in thinkSuppressedContent, which is the SAME
+			// predicate the StatusOK block and the cache gate apply. Three callers,
+			// one predicate. It was inlined here as a copy while that function's doc
+			// claimed "two callers, one predicate", so a later edit to the predicate
+			// would have left this arm testing the old rule — the divergence the
+			// hoist exists to make impossible (TD internal/fanout/engine.go:1018).
+			// The empty/whitespace-only exclusions the old inline comment spelled
+			// out are stated on the predicate's own doc.
+			if thinkSuppressedContent(r.Content) {
 				thinkOnlyAttempts++
+				r.ThinkOnlyAttempts++
 			}
 			log.FromContext(ctx).Warn("reviewer response truncated with zero findings; failing over",
 				"agent", a.Name, "model", a.Invocation.Model)
@@ -1089,8 +1096,13 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 					// Paired with the length test for the same reason as the chain-walk
 					// counter above: TrimSpace alone would also claim a whitespace-only
 					// reply, which carries no think markup and is a different failure.
-					if len(answer) < len(r.Content) && strings.TrimSpace(answer) == "" {
+					if thinkSuppressedContent(r.Content) {
 						r.ThinkSuppressed = true
+						// Counted BOTH ways: on the Result so the fact survives, and in
+						// the walk-level local so the warning below this block's return
+						// reports the same total the truncated path would.
+						r.ThinkOnlyAttempts++
+						thinkOnlyAttempts++
 					}
 				}
 			}
@@ -1120,6 +1132,32 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 					"agent", a.Name, "slot", s.Primary.Name)
 				r.servedRePacked = true
 			}
+			// This block RETURNS, so the after-loop warning cannot see an increment
+			// made here. Warn from HERE when the final, untruncated reply was wholly a
+			// think run — the finish_reason=stop shape, where nothing demotes the reply
+			// and the walk simply ends. Emitting from this site rather than deferring
+			// the return is what keeps the warning attached to the walk it describes
+			// (TD internal/fanout/engine.go:1083).
+			//
+			// The guard used to read `thinkOnlyAttempts > 0 && r.ThinkSuppressed`,
+			// whose first conjunct is DEAD: the block that sets r.ThinkSuppressed
+			// increments thinkOnlyAttempts two lines earlier, so the count is always
+			// at least 1 here. That made a single-shot agent with no fallbacks report
+			// "exhausted the fallback chain" for one reply — a false claim, since no
+			// chain was walked. Branch on the count instead, so the wording matches
+			// what happened (TD internal/fanout/engine.go:1143).
+			if thinkOnlyAttempts > 1 {
+				log.FromContext(ctx).Warn("think-only replies exhausted the fallback chain: the walk bought zero findings",
+					"agent", s.Primary.Name, "attempts", len(chain), "think_only_attempts", thinkOnlyAttempts)
+			} else if r.ThinkSuppressed {
+				log.FromContext(ctx).Warn("the reply was a think-only run, so the walk bought zero findings",
+					"agent", s.Primary.Name, "attempts", len(chain), "think_only_attempts", thinkOnlyAttempts)
+			}
+			// Carry the WALK total onto the returned Result. `r` is fresh per chain
+			// member, so its own ThinkOnlyAttempts counts at most this member; the
+			// local is the only real total, and the field's doc promises exactly that
+			// (TD internal/fanout/engine.go:429).
+			r.ThinkOnlyAttempts = thinkOnlyAttempts
 			return r
 		}
 		last = r
@@ -1150,6 +1188,10 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 	last.ResolvedMaxTokens = s.Primary.ResolvedMaxTokens
 	last.ChunkCount = s.Primary.ChunkTotal
 	last.DegradationAction = s.Primary.DegradationAction
+	// Same reason as the StatusOK exit above: the returned Result must describe the
+	// WALK, so stamp the local total rather than leaving `last`'s at-most-one
+	// (TD internal/fanout/engine.go:429).
+	last.ThinkOnlyAttempts = thinkOnlyAttempts
 	last.DurationMS = time.Since(start).Milliseconds()
 	return last
 }
@@ -1275,6 +1317,26 @@ func (e *Engine) dispatchAgent(ctx context.Context, a Agent) Result {
 	return e.invokeCachedSingleShot(ctx, a)
 }
 
+// thinkSuppressedContent reports whether a raw reply is entirely a leading think
+// run — the test invokeSlot applies when it sets ThinkSuppressed, hoisted here so
+// the cache gate can consult it BEFORE the reply is stored. Three callers, one
+// predicate: the StatusOK block that records the flag, the truncated-failover arm
+// that counts the wasted spend, and the cache gate. A reply this returns true for
+// must never be cached, and must be recorded think-suppressed rather than
+// unparseable.
+// No empty-content guard, deliberately. One stood here and was redundant: an empty
+// reply already answers false through the length test, because SplitThink("")
+// returns ("", "") and `0 < 0` is false. It was an uncovered line that SURVIVED
+// mutation — deleting it left the suite green — which is the signature of an arm
+// that cannot change an answer, so no test could ever have pinned it. Deleting it
+// and stating the equivalence is the honest close; keeping it would mean keeping a
+// line the suite can never exercise (TD internal/fanout/engine.go:1309). The
+// equivalence itself IS pinned, by TestThinkSuppressedContent's empty case.
+func thinkSuppressedContent(content string) bool {
+	answer, _ := llmclient.SplitThink(content)
+	return len(answer) < len(content) && strings.TrimSpace(answer) == ""
+}
+
 // invokeCachedSingleShot wraps the single-shot path with the diff cache (Epic
 // 5.2). It is the only cache integration point: tool agents (live or degraded)
 // never reach it. With no cache wired, or an agent with no cache key, it is a
@@ -1329,7 +1391,12 @@ func (e *Engine) invokeCachedSingleShot(ctx context.Context, a Agent) Result {
 	// all-clean the epic prevents). A truncated-with-findings response is likewise
 	// skipped so its partial content is re-fetched fresh rather than replayed as
 	// clean. Only a clean, complete StatusOK result is cacheable.
-	if r.Status == StatusOK && !r.ResponseTruncated && !r.Salvaged {
+	// A reply whose ENTIRE content is a leading think run contributes nothing, and
+	// that fact is only visible from the strip — invokeSlot computes ThinkSuppressed
+	// later, so the gate could not see it. Cache it and every later same-diff run
+	// re-serves a reviewer that provably produced nothing, losing even the chance of
+	// different sampling (TD internal/fanout/engine.go:1319).
+	if r.Status == StatusOK && !r.ResponseTruncated && !r.Salvaged && !thinkSuppressedContent(r.Content) {
 		if err := e.cache.Put(key, r.Content); err != nil {
 			// A write fault only forfeits the future speed-up; the live result is
 			// already correct, so the review proceeds.
@@ -1389,6 +1456,22 @@ func (e *Engine) invokeSingleShot(ctx context.Context, a Agent) Result {
 	if err != nil {
 		r.Err = err
 		r.Status = classifyStatus(err)
+		// The narrow signatures cannot carry Completion.Salvaged, so a salvaged
+		// reply arrives as ErrSalvagedReply. Without this the disclosure channel
+		// reports ZERO on that path — salvaged:false, salvaged_count 0, no warning,
+		// WholePersonaSalvaged false — and a reviewer whose whole reply was promoted
+		// reasoning is indistinguishable from one that hit a transport failure
+		// (TD internal/fanout/engine.go:1433).
+		if errors.Is(err, llmclient.ErrSalvagedReply) {
+			r.Salvaged = true
+		}
+		// Status stays StatusFailed, so the slot still walks the fallback chain —
+		// deliberately unchanged here. Flipping StatusOK on an error return would
+		// alter failover semantics (a paid backup would no longer be tried), which
+		// is a behavior change beyond restoring the disclosure. The divergence from
+		// the Meta path (StatusOK + Salvaged) is latent: every production completer
+		// is hookobs-wrapped and implements CompleteWithMeta, which the selector
+		// above asserts first, so no production path takes this arm.
 		return r
 	}
 	r.Content = content

@@ -58,7 +58,7 @@ func TestIndexAfterUnopenedCloser(t *testing.T) {
 // TestIndexAfterUnopenedCloser_OffsetIsSliceableOnTheInput guards the property
 // the callers depend on: the return is a byte offset INTO the content, so
 // content[i:] is the committed section. The lanes compute the offset on a
-// maskJSONStrings copy (same length, bytes blanked in place) and slice the
+// MaskJSONStrings copy (same length, bytes blanked in place) and slice the
 // unmasked answer at it, so an off-by-one here would hand a parser a truncated
 // envelope.
 func TestIndexAfterUnopenedCloser_OffsetIsSliceableOnTheInput(t *testing.T) {

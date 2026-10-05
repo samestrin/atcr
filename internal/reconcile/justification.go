@@ -126,8 +126,16 @@ func stampJustifications(jf []JSONFinding, reviewDir string) {
 	if reviewDir == "" || len(jf) == 0 {
 		return
 	}
-	narratives := collectReviewNarratives(filepath.Join(reviewDir, sourcesSubdir), reviewDir)
+	narratives, salvageSkipped := collectReviewNarratives(filepath.Join(reviewDir, sourcesSubdir), reviewDir)
 	if len(narratives) == 0 {
+		// Every source was refused. Without this the run returns before ANY
+		// diagnostic, so a reviewer whose whole reply was salvaged reads as a review
+		// directory with nothing to match against — the silent corner the stale
+		// format-drift message was already bad enough at.
+		if salvageSkipped > 0 {
+			slog.Warn("justifications stamped", "matched", 0, "total", len(jf), "salvage_skipped", salvageSkipped,
+				"note", "every source review.md was skipped as salvaged (promoted chain-of-thought); there was no narrative to match, so this is not format drift")
+		}
 		return
 	}
 	// Pre-index every narrative line once so each finding scans only the lines
@@ -149,17 +157,42 @@ func stampJustifications(jf []JSONFinding, reviewDir string) {
 	}
 	switch {
 	case matched > 0:
-		slog.Debug("justifications stamped", "matched", matched, "total", len(jf))
+		// The salvage skip is reported even on a matched run: it is a cause of
+		// shortfall an operator can only discover from the review dir otherwise, and
+		// the counter is the only observable the skip has.
+		attrs := []any{"matched", matched, "total", len(jf)}
+		if salvageSkipped > 0 {
+			attrs = append(attrs, "salvage_skipped", salvageSkipped)
+		}
+		slog.Debug("justifications stamped", attrs...)
+	case salvageSkipped > 0 && elided == 0:
+		// A shortfall with a named cause outranks the drift message. The parser
+		// worked, and the reviewer's reply was refused by the producer, so sending
+		// the operator after a parser problem is the same cost the elided arm exists
+		// to avoid (TD internal/reconcile/justification.go:161).
+		slog.Warn("justifications stamped", "matched", matched, "total", len(jf), "salvage_skipped", salvageSkipped,
+			"note", "review.md narratives existed but their source reply was salvaged (promoted chain-of-thought), which every lane refuses; this is not format drift")
 	case elided > 0:
 		// Anchors matched; every candidate section was pure quoted example. Naming
 		// this "possible format drift" sent an operator hunting for a parser problem
 		// that is not there — the parser worked, the reviewer fenced its findings.
 		// Report the elided count even when it is not the whole shortfall: it is the
 		// part with an explanation, and the remainder is the drift case below.
-		slog.Warn("justifications stamped", "matched", matched, "total", len(jf), "elided", elided,
-			"note", "findings matched an anchor whose section was entirely quoted; extractSection suppresses those, so this is not format drift")
+		attrs := []any{"matched", matched, "total", len(jf), "elided", elided}
+		if salvageSkipped > 0 {
+			attrs = append(attrs, "salvage_skipped", salvageSkipped)
+		}
+		slog.Warn("justifications stamped", append(attrs,
+			"note", "findings matched an anchor whose section was entirely quoted; extractSection suppresses those, so this is not format drift")...)
 	default:
-		slog.Warn("justifications stamped", "matched", matched, "total", len(jf), "note", "review.md narratives exist but matched zero findings; possible format drift")
+		// No salvage_skipped append here, and none is reachable: arriving in this arm
+		// means matched == 0 and elided == 0, and the arm above fires on exactly
+		// `salvageSkipped > 0 && elided == 0` — so salvageSkipped is ALWAYS 0 by the
+		// time control reaches this line. One stood here and was dead code: an
+		// uncovered line no test could pin, because no input can produce it
+		// (TD internal/reconcile/justification.go:168).
+		slog.Warn("justifications stamped", "matched", matched, "total", len(jf),
+			"note", "review.md narratives exist but matched zero findings; possible format drift")
 	}
 }
 
@@ -167,8 +200,7 @@ func stampJustifications(jf []JSONFinding, reviewDir string) {
 // sorted by review-dir-relative path (deterministic ordering so findings.json is
 // reproducible run to run). Unreadable files/subtrees are skipped, not fatal —
 // sources/ is an open extension point, same resilience stance as Discover.
-func collectReviewNarratives(sourcesDir, reviewDir string) []reviewNarrative {
-	var out []reviewNarrative
+func collectReviewNarratives(sourcesDir, reviewDir string) (out []reviewNarrative, salvageSkipped int) {
 	_ = filepath.WalkDir(sourcesDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			if d != nil && d.IsDir() {
@@ -207,6 +239,11 @@ func collectReviewNarratives(sourcesDir, reviewDir string) []reviewNarrative {
 		// (TD internal/reconcile/justification.go:201).
 		salvaged, salvagedBins := sourceSalvage(path)
 		if salvaged && len(salvagedBins) == 0 {
+			// COUNTED, not merely logged at Debug: a shortfall this skip caused is
+			// otherwise reported as possible format drift (or, when it was the only
+			// source, not reported at all), sending the operator after a parser
+			// problem that is not there (TD internal/reconcile/justification.go:161).
+			salvageSkipped++
 			slog.Debug("skipping salvaged review.md", "path", path)
 			return nil
 		}
@@ -228,6 +265,7 @@ func collectReviewNarratives(sourcesDir, reviewDir string) []reviewNarrative {
 			// from different states, so nothing here says which lines were refused.
 			// Withhold the whole file — the bit is set, so the unexcluded remainder
 			// may be promoted reasoning, and publishing it is permanent.
+			salvageSkipped++
 			slog.Debug("skipping salvaged review.md with unaccountable chunk index",
 				"path", path, "salvaged_chunks", salvagedBins)
 			return nil
@@ -241,7 +279,7 @@ func collectReviewNarratives(sourcesDir, reviewDir string) []reviewNarrative {
 		return nil
 	})
 	sort.Slice(out, func(i, j int) bool { return out[i].relPath < out[j].relPath })
-	return out
+	return out, salvageSkipped
 }
 
 // sourceSalvage reports whether the status.json sibling of a review.md marks

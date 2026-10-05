@@ -55,6 +55,20 @@ const (
 	// transport failure about a slot that may have failed some other way, and the
 	// export validator would accept it because the spelling is legal.
 	SlotFailureUnknownStatus = "call_status_unknown"
+
+	// SlotFailureUnmeasuredOK marks a slot whose status was OK and which nevertheless
+	// provably contributed NOTHING to the case — a salvaged reply (Content promoted
+	// from the model's reasoning channel) or a think-suppressed one. It needs its own
+	// value because no other reason fits: the call succeeded, so SlotFailureCall and
+	// SlotFailureTimeout would each assert a failure that did not happen, and
+	// SlotFailureUnknownStatus claims the status was unrecognized when it was OK.
+	//
+	// Its existence is the point. The repo-state runner's unmeasured skip keys on
+	// `Status != StatusOK`, and an OK-but-worthless slot is OK — so scoring charged it
+	// a genuine recall-0 miss while the outcome classifier tallied the same row as
+	// "incomplete", letting score and label disagree across the export boundary
+	// (TD cli/benchmark_repostate.go:561).
+	SlotFailureUnmeasuredOK = "unmeasured_salvaged_ok"
 )
 
 // SlotFailure records one reviewer that could not be shown one case, and why.
@@ -83,7 +97,7 @@ type SlotFailure struct {
 // carrying none cannot have come from the producer.
 func ValidSlotFailureReason(s string) bool {
 	switch s {
-	case SlotFailureCall, SlotFailureTimeout, SlotFailureUnknownStatus:
+	case SlotFailureCall, SlotFailureTimeout, SlotFailureUnknownStatus, SlotFailureUnmeasuredOK:
 		return true
 	}
 	return false
@@ -103,4 +117,34 @@ func SlotFailureReasonForStatus(status string) string {
 		return SlotFailureTimeout
 	}
 	return SlotFailureUnknownStatus
+}
+
+// SlotFailureIsInfrastructure reports whether a slot-failure reason names a slot the
+// infrastructure LOST, as opposed to one it measured and found worthless.
+//
+// The array carries two genuinely different facts, and every consumer that counts it
+// as a failure tally needs to know which. Three members are losses: the call did not
+// succeed, hit the deadline, or came back on a status this build cannot read — in
+// each case nothing was measured because nothing arrived. SlotFailureUnmeasuredOK is
+// the opposite fact: the call SUCCEEDED (its own doc says so) and the reply provably
+// contributed nothing, so the slot was measured and found worthless.
+//
+// Named rather than left to each consumer because the consumers were already
+// getting it wrong from a shared premise. `caseFailureExitGate`'s comment asserted
+// "A slot failure IS an infrastructure failure", which was true for the original
+// three and became false the moment the fourth was minted — making a HEALTHY panel
+// exit non-zero in CI whenever a reviewer habitually answers on its reasoning
+// channel (TD cli/benchmark.go:311).
+//
+// Fail-closed on anything it does not recognize, including the empty string: an
+// unreadable reason is not evidence that infrastructure failed, and claiming it is
+// would re-create the same false positive for a reason a newer producer wrote.
+// ValidSlotFailureReason rejects those at the export boundary; this predicate simply
+// declines to vouch for them.
+func SlotFailureIsInfrastructure(reason string) bool {
+	switch reason {
+	case SlotFailureCall, SlotFailureTimeout, SlotFailureUnknownStatus:
+		return true
+	}
+	return false
 }

@@ -1140,3 +1140,113 @@ func TestValidateSlotFailures_RejectsBlankFields(t *testing.T) {
 		assert.Contains(t, err.Error(), "blank model or persona")
 	}
 }
+
+// The `unshown` label and its remedy are FALSE for an unmeasured_salvaged_ok slot.
+// The contract comment says "the case ran and the rest of the panel scored it; THIS
+// reviewer was not shown it", and the remedy says "re-running will not help ... the
+// reviewer WAS shown the case and replied ok" — so for unmeasured-ok the reviewer was
+// shown the case and the remedy is the agent's thinking setting or a different model,
+// not the provider, and a re-run CAN differ (internal/fanout/engine.go:1370).
+func TestCheckCoverage_UnmeasuredOKSlotGetsItsOwnLabelAndRemedy(t *testing.T) {
+	rr := benchmark.RunResult{
+		SuiteCaseIDs: []string{"case-01", "case-02"},
+		Reviewers:    []scorecard.PublicRecord{{Model: "m", Persona: "p", Runs: 1}},
+		Coverage: []benchmark.ReviewerCoverage{
+			{Model: "m", Persona: "p", CaseIDs: []string{"case-01"}},
+		},
+		SlotFailures: []benchmark.SlotFailure{
+			{Model: "m", Persona: "p", CaseID: "case-02", Reason: benchmark.SlotFailureUnmeasuredOK},
+		},
+	}
+
+	err := checkCoverage(io.Discard, rr, "rr.json", false)
+	require.Error(t, err)
+	msg := err.Error()
+
+	assert.Contains(t, msg, "unmeasured_ok case-02 ("+benchmark.SlotFailureUnmeasuredOK+")",
+		"an OK-but-worthless slot needs its own label: `unshown` claims the reviewer was never shown a case it did run")
+	assert.NotContains(t, msg, "unshown case-02",
+		"the reviewer WAS shown the case and replied ok, so `unshown` is false")
+
+	assert.NotContains(t, msg, "investigate the provider behind",
+		"the call succeeded, so the provider is not the thing to investigate — re-running CAN differ")
+	assert.Contains(t, msg, "thinking",
+		"the remedy must point at the agent's thinking declaration or a different model")
+}
+
+// An infrastructure slot still gets its provider remedy, and the two classes coexist
+// on one run without either borrowing the other's wording.
+func TestCheckCoverage_InfrastructureAndUnmeasuredOKKeepSeparateRemedies(t *testing.T) {
+	rr := benchmark.RunResult{
+		SuiteCaseIDs: []string{"case-01", "case-02", "case-03"},
+		Reviewers: []scorecard.PublicRecord{
+			{Model: "m1", Persona: "p1", Runs: 1},
+			{Model: "m2", Persona: "p2", Runs: 1},
+		},
+		Coverage: []benchmark.ReviewerCoverage{
+			{Model: "m1", Persona: "p1", CaseIDs: []string{"case-01"}},
+			{Model: "m2", Persona: "p2", CaseIDs: []string{"case-01"}},
+		},
+		SlotFailures: []benchmark.SlotFailure{
+			{Model: "m1", Persona: "p1", CaseID: "case-02", Reason: benchmark.SlotFailureTimeout},
+			{Model: "m2", Persona: "p2", CaseID: "case-03", Reason: benchmark.SlotFailureUnmeasuredOK},
+		},
+	}
+
+	err := checkCoverage(io.Discard, rr, "rr.json", false)
+	require.Error(t, err)
+	msg := err.Error()
+
+	assert.Contains(t, msg, "investigate the provider behind m1/p1",
+		"the infrastructure row still gets the provider remedy")
+	assert.NotContains(t, msg, "investigate the provider behind m2/p2",
+		"the unmeasured-ok row must not be told to investigate a provider that answered fine")
+}
+
+// appendUnique exists for exactly one shape, and nothing pinned it: a reviewer with
+// SEVERAL slot failures of the same class must be named ONCE in the shortfall
+// diagnostic. The loop walks each reviewer's failures per CASE, so a provider that
+// dies on four cases produces four entries for one identity — and the pre-appendUnique
+// code appended the name once per entry.
+//
+// Both halves of the row were true: lines 921-923 had zero coverage in a full
+// `go test ./cli/... ./internal/...` run, and replacing the whole body with a bare
+// `return append(s, v)` left ./cli/... green (TD cli/benchmark_coverage.go:921).
+func TestCheckCoverage_AReviewerWithManySlotFailuresOfOneClassIsNamedOnce(t *testing.T) {
+	// One identity, four cases, all lost to the same infrastructure reason.
+	rr := benchmark.RunResult{SuiteCaseIDs: []string{"case-01", "case-02", "case-03", "case-04"}}
+	rr.Reviewers = append(rr.Reviewers, scorecard.PublicRecord{Model: "m-dead", Persona: "p", Runs: 0})
+	rr.Coverage = append(rr.Coverage, benchmark.ReviewerCoverage{Model: "m-dead", Persona: "p"})
+	for _, id := range rr.SuiteCaseIDs {
+		rr.SlotFailures = append(rr.SlotFailures, benchmark.SlotFailure{
+			Model: "m-dead", Persona: "p", CaseID: id, Reason: benchmark.SlotFailureCall,
+		})
+	}
+
+	err := checkCoverage(io.Discard, rr, "rr.json", false)
+	require.Error(t, err)
+	msg := err.Error()
+
+	// The provider-remedy clause lists the identities to investigate. Four failures of
+	// one class are ONE thing to investigate, so the name belongs there once.
+	_, remedy, found := strings.Cut(msg, "investigate the provider behind ")
+	require.True(t, found, "precondition: the infrastructure remedy clause is present")
+	assert.Equal(t, 1, strings.Count(remedy, "m-dead/p"),
+		"a reviewer with several slot failures of ONE class is one identity to investigate, so it "+
+			"must be named once — repeating it per failed case is what appendUnique exists to prevent")
+}
+
+// The direct unit case, covering the three inputs the helper can receive. The
+// already-present arm is the one that had no coverage at all.
+func TestAppendUnique(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, []string{"a"}, appendUnique(nil, "a"),
+		"empty slice: the value is appended")
+	assert.Equal(t, []string{"a", "b"}, appendUnique([]string{"a"}, "b"),
+		"absent: the value is appended, preserving first-seen order")
+	assert.Equal(t, []string{"a", "b"}, appendUnique([]string{"a", "b"}, "a"),
+		"already present: the slice is returned unchanged, and the EARLIER position is kept")
+	assert.Equal(t, []string{"a", "b"}, appendUnique([]string{"a", "b"}, "b"),
+		"already present at the tail: still unchanged, so a repeat never double-appends")
+}

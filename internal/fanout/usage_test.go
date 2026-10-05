@@ -113,3 +113,35 @@ func TestReadPoolSummary_RoundTrip(t *testing.T) {
 	_, err = ReadPoolSummary(t.TempDir())
 	assert.ErrorIs(t, err, os.ErrNotExist)
 }
+
+// salvagedUsageErrCompleter implements only UsageCompleter (no MetaCompleter) and
+// refuses a salvage with ErrSalvagedReply, exactly as *llmclient.Client's
+// CompleteWithUsage does for a promoted-reasoning reply.
+type salvagedUsageErrCompleter struct{}
+
+func (salvagedUsageErrCompleter) Complete(context.Context, llmclient.Invocation) (string, error) {
+	return "", llmclient.ErrSalvagedReply
+}
+
+func (salvagedUsageErrCompleter) CompleteWithUsage(context.Context, llmclient.Invocation) (string, llmclient.UsageData, []llmclient.CallRecord, error) {
+	return "", llmclient.UsageData{}, nil, llmclient.ErrSalvagedReply
+}
+
+// On the UsageCompleter-only path a salvage arrives as ErrSalvagedReply (the narrow
+// signature cannot carry Completion.Salvaged). classifyStatus had no case for it, so
+// Status became StatusFailed with Salvaged=false — and the ENTIRE disclosure channel
+// reported zero: salvaged:false in status.json, salvaged_count 0, warnSalvaged silent,
+// WholePersonaSalvaged false. A reviewer whose whole reply was promoted reasoning was
+// then indistinguishable from one that hit a transport failure, which is the exact
+// distinction the salvage channel exists to make (TD internal/fanout/engine.go:1433).
+func TestSingleShot_UsageOnlySalvageStillDisclosesTheSalvage(t *testing.T) {
+	e := NewEngine(salvagedUsageErrCompleter{})
+	r := e.invokeAgent(context.Background(), Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "m"}})
+
+	require.ErrorIs(t, r.Err, llmclient.ErrSalvagedReply, "precondition: the narrow path refuses the salvage")
+	assert.True(t, r.Salvaged,
+		"the salvage disclosure must survive the degraded path, or an operator cannot tell a promoted-reasoning "+
+			"reply from a transport failure")
+	assert.True(t, WholePersonaSalvaged(statusFor(r, findingsResult{})),
+		"and the derived predicate must see it, so the console warning and the coverage decision agree")
+}

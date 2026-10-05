@@ -302,24 +302,40 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 // a systemically broken run. Both are evaluated, so passing both means either can
 // fail the run.
 func caseFailureExitGate(rr *benchmark.RunResult, failOnAny bool, maxFailures int) error {
-	// A slot failure IS an infrastructure failure (internal/benchmark/slot_failure.go):
-	// one reviewer lost one case the rest of the panel scored. Both flags' help
-	// promises a non-zero exit when a case was lost to an infrastructure failure, so
-	// slot failures fold into the same trigger — otherwise a run that lost reviewer
-	// SLOTS exits 0 and checkCoverage then hard-rejects the same run-result the CI
-	// step just accepted.
-	if rr == nil || (len(rr.CaseFailures) == 0 && len(rr.SlotFailures) == 0) {
+	// An INFRASTRUCTURE slot failure folds into the same trigger: one reviewer lost
+	// one case the rest of the panel scored. Both flags' help promises a non-zero
+	// exit when a case was lost to an infrastructure failure, so counting those here
+	// is what stops a run that lost reviewer SLOTS from exiting 0 while checkCoverage
+	// hard-rejects the same run-result the CI step just accepted.
+	//
+	// Only the infrastructure half, via benchmark.SlotFailureIsInfrastructure. The
+	// array also carries SlotFailureUnmeasuredOK, whose whole point is that the call
+	// SUCCEEDED and the reply contributed nothing — folding that in made a reviewer
+	// which habitually answers on its reasoning channel produce one entry per case
+	// and fail a HEALTHY panel, under a message asserting infrastructure failures
+	// that did not happen (TD cli/benchmark.go:311). An unmeasured-ok slot is a
+	// coverage shortfall, which the export diagnostic reports; it is not a loss.
+	if rr == nil {
 		return nil
 	}
-	failed, suite := len(rr.CaseFailures)+len(rr.SlotFailures), len(rr.SuiteCaseIDs)
+	lostSlots := 0
+	for _, sf := range rr.SlotFailures {
+		if benchmark.SlotFailureIsInfrastructure(sf.Reason) {
+			lostSlots++
+		}
+	}
+	if len(rr.CaseFailures) == 0 && lostSlots == 0 {
+		return nil
+	}
+	failed, suite := len(rr.CaseFailures)+lostSlots, len(rr.SuiteCaseIDs)
 	if failOnAny {
 		return fmt.Errorf("%d infrastructure failure(s) (%d lost case(s), %d lost reviewer slot(s)) on a %d-case suite and --fail-on-case-failure is set; "+
-			"the run-result was still written and records which cases are missing", failed, len(rr.CaseFailures), len(rr.SlotFailures), suite)
+			"the run-result was still written and records which cases are missing", failed, len(rr.CaseFailures), lostSlots, suite)
 	}
 	if maxFailures >= 0 && failed > maxFailures {
 		return fmt.Errorf("%d infrastructure failure(s) (%d lost case(s), %d lost reviewer slot(s)) on a %d-case suite, more than the %d allowed by "+
 			"--max-case-failures; the run-result was still written and records which cases are missing",
-			failed, len(rr.CaseFailures), len(rr.SlotFailures), suite, maxFailures)
+			failed, len(rr.CaseFailures), lostSlots, suite, maxFailures)
 	}
 	return nil
 }

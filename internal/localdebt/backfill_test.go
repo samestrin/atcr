@@ -1025,3 +1025,167 @@ func TestBackfillJustifications_IdGateProtectsRationaleTrailLineOnRegression(t *
 	assert.Equal(t, reason, got[2]["justification"],
 		"the effective open line keeps its stored text too — the whole id is out of the pass's scope")
 }
+
+// TD cli/debt_resolve.go:81 — a policy refusal must be distinguishable from a pruned
+// review tree.
+//
+// ReExtractJustification returns ok=false, err=nil for BOTH "no review.md survives at
+// this path" and "the producer's policy excludes this file" (over the 1 MiB cap, a
+// symlink, a wholly-salvaged reply, a desynced bin list, a draft anchor line). Both
+// landed in Unresolved, which this result's own doc says a caller must read as an
+// OBSERVATION rather than a cause — but the CLI label and the debt_resolve SCOPE
+// paragraph both read it as "restore the file", which is impossible for the policy
+// half. The replay set may not exceed the stamp set, so the refusals stay; only the
+// REPORTING splits.
+//
+// The observable is a distinct counter, not the wording: a caller cannot recover the
+// split from an integer that already summed the two.
+func TestBackfillJustifications_SeparatesPolicyRefusalsFromMissingTrees(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	reviewRoot := filepath.Join(root, "reviews")
+	require.NoError(t, os.MkdirAll(store, 0o750))
+
+	// Two records, one per class, each otherwise identical in every column the pass
+	// reads — so the counter they land in is the ONLY thing that differs.
+	rec := func(id, srPath string) string {
+		return `{"schema_version":3,"id":"` + id + `","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
+			`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p-` + id + `","fix":"f","category":"correctness",` +
+			`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+			`"justification":"- **internal/thing.go:42** a stale excerpt nothing can replay.",` +
+			`"source_report":{"path":"` + srPath + `","line":8}}`
+	}
+
+	// MISSING: the source_report names a review.md no directory holds.
+	// POLICY: the review.md IS present and readable at its own path, over the size cap
+	// so the producer's policy excludes it. A whole-file arm of the cap, so the
+	// narrative body never matters.
+	rd := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+	require.NoError(t, os.MkdirAll(rd, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"),
+		[]byte(strings.Repeat("padding to clear the producer's 1 MiB cap\n", 1<<16)), 0o600))
+
+	writeShard(t, store, "2026-08",
+		rec("aaaa0001", "sources/pool/raw/agent/gone/review.md"),
+		rec("aaaa0002", "sources/pool/raw/agent/dax/review.md"))
+
+	res, err := BackfillJustifications(store, reviewRoot, false)
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, res.Scanned)
+	assert.Equal(t, 2, res.Unresolved,
+		"both records yielded no excerpt, so the observation count is unchanged")
+	assert.Equal(t, 1, res.PolicyUnrepairable,
+		"the over-cap review.md is PRESENT at its own path — its refusal is by policy, not absence")
+	assert.Equal(t, 1, res.Unresolved-res.PolicyUnrepairable,
+		"the orphan's review.md survives nowhere, so it alone is the missing-tree class")
+	assert.Zero(t, res.Rewritten, "neither class may be rewritten")
+	assert.Zero(t, res.Ambiguous)
+}
+
+// A NAMESAKE in an unrelated review must not be read as the record's own file.
+//
+// PolicyUnrepairable's whole contract is "the file is there and still cannot help, so
+// restoring one will not fix it" — and cli/debt_resolve.go's SCOPE paragraph tells the
+// operator exactly that. Deriving it from "some candidate at this relative path was
+// present and nothing matched" cannot support the claim: SourceReport.Path is
+// review-dir-RELATIVE and pathHasSuffix is review-dir-UNSCOPED, so every review
+// directory in the tree holds a same-named candidate (BackfillJustifications' own doc,
+// backfill.go:141-146). With .atcr/reviews/ holding many reviews for the same agent,
+// that made the pruned-tree count read near zero and sent the operator away from the
+// one remedy that would have worked (TD internal/localdebt/backfill.go:389).
+//
+// The provable claim is narrower and path-independent: a candidate the producer's
+// FILE-LEVEL policy would refuse to stamp from at all — over the size cap, a wholly
+// salvaged reply, a desynced bin list — is unrepairable wherever it sits. A namesake
+// that is an ordinary, in-cap review.md whose anchor simply does not match is a
+// MISMATCH, and says nothing about whether the record's own tree survives.
+func TestBackfillJustifications_NamesakeInAnotherReviewIsNotAPolicyRefusal(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	reviewRoot := filepath.Join(root, "reviews")
+	require.NoError(t, os.MkdirAll(store, 0o750))
+
+	rec := `{"schema_version":3,"id":"aaaa0001","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
+		`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
+		`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+		`"justification":"- **internal/thing.go:42** a stale excerpt nothing can replay.",` +
+		`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":8}}`
+
+	// The record's OWN review is gone. An UNRELATED review (sprint-b) happens to hold
+	// the same relative path, with an ordinary in-cap review.md that does not carry
+	// this record's anchor — a mismatch, not a policy refusal.
+	other := filepath.Join(reviewRoot, "sprint-b", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+	require.NoError(t, os.MkdirAll(other, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(other, "review.md"),
+		[]byte("# some other review\n\n- **internal/other.go:9** an unrelated narrative.\n"), 0o600))
+
+	writeShard(t, store, "2026-08", rec)
+
+	res, err := BackfillJustifications(store, reviewRoot, false)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, res.Scanned)
+	assert.Equal(t, 1, res.Unresolved, "nothing yielded an excerpt, so the observation count stands")
+	assert.Zero(t, res.PolicyUnrepairable,
+		"the only candidate is a namesake in an unrelated review that the producer's policy would "+
+			"have stamped from quite happily — it simply does not carry this record's anchor, so it is "+
+			"no evidence that restoring the record's own review.md cannot help")
+	assert.Equal(t, 1, res.Unresolved-res.PolicyUnrepairable,
+		"the record's own tree is pruned, so it belongs wholly to the missing-tree class")
+}
+
+// A NON-REGULAR candidate is a policy refusal, and this is the test the guard never
+// had. internal/reconcile's collectReviewNarratives deliberately excludes symlinks,
+// FIFOs and devices named review.md — and ReExtractJustification's os.ReadFile would
+// FOLLOW a link, so a file the producer would never have stamped from must not become
+// an authoritative candidate: the replay set may not exceed the stamp set.
+//
+// Deleting the `policyRefused = true` line left ./internal/localdebt/... and ./cli/...
+// fully green, so nothing pinned the one behaviour the guard exists for. A later edit
+// could silently route all three non-regular kinds back under the "restore the file"
+// remedy with the suite still passing (TD internal/localdebt/backfill.go:366).
+//
+// The symlink stands for the class. It is the only one of the three that is portable
+// to create in a test and the only one reachable by ordinary means (a FIFO needs
+// mkfifo, a device node needs root), and all three take the identical code path —
+// d.Type().IsRegular() is false for every one of them.
+func TestBackfillJustifications_SymlinkCandidateIsAPolicyRefusalNotAnAbsentTree(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	reviewRoot := filepath.Join(root, "reviews")
+	require.NoError(t, os.MkdirAll(store, 0o750))
+
+	rec := `{"schema_version":3,"id":"aaaa0001","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
+		`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
+		`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+		`"justification":"- **internal/thing.go:42** a stale excerpt nothing can replay.",` +
+		`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":3}}`
+
+	// The target is a REAL review.md that carries the record's anchor, so the only
+	// thing standing between the replay and a successful excerpt is the symlink — if
+	// the guard were absent, os.ReadFile would follow it and the record would resolve.
+	// That is what makes this a guard test rather than a coincidence.
+	target := filepath.Join(root, "elsewhere", "review.md")
+	require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o750))
+	require.NoError(t, os.WriteFile(target,
+		[]byte("# review\n\n- **internal/thing.go:42** the narrative a follow would have stamped.\n"), 0o600))
+
+	rd := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+	require.NoError(t, os.MkdirAll(rd, 0o750))
+	require.NoError(t, os.Symlink(target, filepath.Join(rd, "review.md")))
+
+	writeShard(t, store, "2026-08", rec)
+
+	res, err := BackfillJustifications(store, reviewRoot, false)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, res.Scanned)
+	assert.Zero(t, res.Rewritten,
+		"the symlink must never yield an authoritative excerpt — following it would let the replay "+
+			"stamp from a file the producer refused, so the replay set would exceed the stamp set")
+	assert.Equal(t, 1, res.Unresolved, "nothing yielded an excerpt, so the observation count stands")
+	assert.Equal(t, 1, res.PolicyUnrepairable,
+		"a symlink named review.md is refused by policy wherever it sits, so restoring a file cannot "+
+			"fix it and the operator must not be sent looking for one")
+}

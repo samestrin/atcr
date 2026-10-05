@@ -105,10 +105,25 @@ func TestWriteContestedSection_RendersRulings(t *testing.T) {
 	assert.Contains(t, out, "Overturned")
 	assert.Contains(t, out, "insufficient_distinct_models")
 	assert.Contains(t, out, "Rationale: evidence holds")
-	assert.Contains(t, out, "2 disputed item(s) were not debated")
-	// The prose must not name the cap as the only cause: debate.json's overflow
-	// list also holds items withheld for exhausted unresolved attempts.
-	assert.Contains(t, out, "unresolved attempts already exhausted")
+	assert.Contains(t, out, "2 disputed item(s) were not debated: the debate cap was reached")
+	// The two causes have OPPOSITE remedies and opposite permanence, so they are
+	// rendered separately rather than collapsed into one integer: raising
+	// debate.max_items recovers a cap overflow and recovers a withheld item at NO
+	// cap value (TD internal/report/contested.go:98).
+	assert.NotContains(t, out, "withheld",
+		"a cap-only report must not mention withholding")
+}
+
+func TestWriteContestedSection_RendersTheWithheldCauseSeparately(t *testing.T) {
+	var b bytes.Buffer
+	writeContestedSection(&b, ContestedReport{Overflow: 2, Withheld: 5})
+	out := b.String()
+
+	assert.Contains(t, out, "2 disputed item(s) were not debated: the debate cap was reached")
+	assert.Contains(t, out, "5 disputed item(s) were withheld")
+	assert.Contains(t, out, "Raising the cap will NOT recover them",
+		"the withheld half needs its own remedy: an operator who reads '7 not debated' and raises "+
+			"max_items concludes all seven will now be debated, which is false for five of them")
 }
 
 func TestWriteContestedSection_SingleModelDisclosed(t *testing.T) {
@@ -126,4 +141,73 @@ func TestWriteContestedSection_OverflowOnlyStillRenders(t *testing.T) {
 	out := b.String()
 	assert.Contains(t, out, "## Contested findings")
 	assert.Contains(t, out, "3 disputed item(s) were not debated")
+}
+
+// TestWriteContestedSection_WithheldItemsAreListedNotJustCounted: on the run that
+// withholds an item it produces no ItemResult, so it has no Contested ruling — its
+// diagnosis vanishes and only an integer grows. A withheld item must therefore be
+// LISTED with its location, reason, and attempt countdown, so the transition from
+// fully-described to withheld is visible rather than silent (TD cli/report.go:284).
+func TestWriteContestedSection_WithheldItemsAreListedNotJustCounted(t *testing.T) {
+	cr := ContestedReport{
+		Withheld:                  1,
+		UnresolvedAttemptsCeiling: 3,
+		WithheldItems: []Withheld{{
+			File: "a.go", Line: 42, Severity: "HIGH", Problem: "leaks the token",
+			Reason: "unresolved_attempts_exhausted", UnresolvedAttempts: 3,
+		}},
+	}
+	var b bytes.Buffer
+	writeContestedSection(&b, cr)
+	out := b.String()
+
+	assert.Contains(t, out, "Withheld items", "withheld items get their own listed section")
+	assert.Contains(t, out, "a.go:42", "the withheld item's location is listed")
+	assert.Contains(t, out, "leaks the token", "the withheld item's problem survives")
+	assert.Contains(t, out, "attempt 3 of 3", "the countdown is shown, not just the fact of withholding")
+}
+
+// TestWriteContestedSection_RendersTheAttemptCountdownOnARuling: a debated item
+// carried forward across runs records UnresolvedAttempts; surfacing it lets an
+// operator see "attempt 2 of 3" before the run that finally withholds it, rather
+// than only learning of the ceiling after the item has already vanished.
+func TestWriteContestedSection_RendersTheAttemptCountdownOnARuling(t *testing.T) {
+	cr := ContestedReport{
+		UnresolvedAttemptsCeiling: 3,
+		Items: []Contested{{
+			File: "b.go", Line: 7, Outcome: "unresolved", OriginalSeverity: "HIGH",
+			Reason: "insufficient_distinct_models", UnresolvedAttempts: 2,
+		}},
+	}
+	var b bytes.Buffer
+	writeContestedSection(&b, cr)
+	assert.Contains(t, b.String(), "attempt 2 of 3",
+		"an unresolved ruling shows its attempt countdown against the ceiling")
+}
+
+// TestWriteContestedSection_OverflowItemsAreListedNotJustCounted: a cap-overflowed
+// item produces no Contested ruling either, and it may already carry attempts toward
+// the withholding ceiling — the exact fact the carry onto debate.json exists to
+// preserve. Rendering only the Overflow integer hid it, so an operator raising
+// debate.max_items could not tell a freshly-discovered item from one about to be
+// withheld (TD cli/report.go:321).
+func TestWriteContestedSection_OverflowItemsAreListedNotJustCounted(t *testing.T) {
+	cr := ContestedReport{
+		Overflow:                  2,
+		UnresolvedAttemptsCeiling: 3,
+		OverflowItems: []Overflow{
+			{File: "a.go", Line: 7, Severity: "HIGH", Problem: "leaks the token", UnresolvedAttempts: 2},
+			{File: "b.go", Line: 9, Severity: "LOW", Problem: "never tried"},
+		},
+	}
+	var b bytes.Buffer
+	writeContestedSection(&b, cr)
+	out := b.String()
+
+	assert.Contains(t, out, "Items not debated (cap reached)", "cap-overflow items get their own listed section")
+	assert.Contains(t, out, "a.go:7", "the item's location is listed")
+	assert.Contains(t, out, "leaks the token", "the item's problem survives")
+	assert.Contains(t, out, "attempt 2 of 3",
+		"the carried countdown is shown, so an item near the ceiling is not mistaken for a fresh one")
+	assert.Contains(t, out, "b.go:9", "an item with no carried count is still listed")
 }

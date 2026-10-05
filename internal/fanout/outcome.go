@@ -41,6 +41,17 @@ type Summary struct {
 	// a run with any unreviewed chunk must NOT record its files as reviewed, or the
 	// unreviewed ones would be silently skipped on the next run (Sprint 35.0 5.5.A).
 	UnreviewedChunks int
+	// ContributedNothingCount is the run-level tally of SUCCEEDED results that
+	// provably contributed nothing — a salvaged reply (the client promoted the
+	// model's chain-of-thought) or a think-suppressed one (the strip ate the whole
+	// reply). Both are StatusOK, so no failed-slot counter sees them, and neither is
+	// counted in UnreviewedChunks; but both are withheld from baseline coverage by
+	// uncoveredBaselineFiles' contributedNothing test. It exists so the baseline
+	// write-back's operator signal can NAME that cause: `excluded > 0` with every
+	// slot OK and UnreviewedChunks == 0 is reachable only through this path, and
+	// before this the two warning lines left the operator reading an unreviewed-chunk
+	// counter that said zero (TD cli/review.go:256).
+	ContributedNothingCount int
 }
 
 // Outcome aggregates results into a Summary and decides the run-level error.
@@ -82,6 +93,19 @@ func summarize(results []Result) Summary {
 		// Accumulate per-persona partial-coverage so the baseline write-back can tell a
 		// fully-reviewed run from one where some chunks failed under an OK persona.
 		s.UnreviewedChunks += r.UnreviewedChunks
+		// Tally succeeded slots that provably contributed nothing, so the baseline
+		// write-back can name the cause of a withheld coverage set. Guarded on
+		// StatusOK to mirror contributedNothing's call sites: a FAILED slot is already
+		// counted by the status tallies, and double-counting it would overstate the
+		// cause space the operator is asked to explain.
+		//
+		// contributedNothing routes through the whole-persona predicates, so a chunked
+		// persona with one refused bin of eight that still shipped its siblings'
+		// findings is NOT counted — the same per-bin rule the benchmark path applies
+		// (TD internal/fanout/outcome.go:102).
+		if r.Status == StatusOK && contributedNothing(r) {
+			s.ContributedNothingCount++
+		}
 	}
 	s.Partial = s.Failed > 0 && s.Succeeded > 0
 	return s

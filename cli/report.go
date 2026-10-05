@@ -286,20 +286,55 @@ func loadContested(reviewDir string) report.ContestedReport {
 	items := make([]report.Contested, 0, len(df.Items))
 	for _, it := range df.Items {
 		items = append(items, report.Contested{
-			File:              it.File,
-			Line:              it.Line,
-			Outcome:           it.Outcome,
-			OriginalSeverity:  it.OriginalSeverity,
-			SettledSeverity:   it.SettledSeverity,
-			Judge:             it.Judge,
-			Reasoning:         it.Reasoning,
-			Reason:            it.Reason,
-			ChallengeSurvived: it.ChallengeSurvived,
-			SingleModel:       it.SingleModel,
-			ClusterDecision:   it.ClusterDecision,
+			File:               it.File,
+			Line:               it.Line,
+			Outcome:            it.Outcome,
+			OriginalSeverity:   it.OriginalSeverity,
+			SettledSeverity:    it.SettledSeverity,
+			Judge:              it.Judge,
+			Reasoning:          it.Reasoning,
+			Reason:             it.Reason,
+			ChallengeSurvived:  it.ChallengeSurvived,
+			SingleModel:        it.SingleModel,
+			ClusterDecision:    it.ClusterDecision,
+			UnresolvedAttempts: it.UnresolvedAttempts,
 		})
 	}
-	return report.ContestedReport{Items: items, Overflow: len(df.Overflow)}
+	// Split the overflow list by cause, so the report can give each its own remedy:
+	// a cap overflow is recoverable by raising debate.max_items, a withheld item is
+	// not (withholdExhausted runs before selection). The withheld half is also
+	// LISTED, not merely counted: on the run that withholds an item it has no
+	// ItemResult, so without the listing its diagnosis vanishes and a conflated
+	// integer is all that is left (TD cli/report.go:284).
+	overflow, withheld := 0, 0
+	var withheldItems []report.Withheld
+	var overflowItems []report.Overflow
+	for _, ov := range df.Overflow {
+		if ov.Reason == debate.OverflowAttemptsExhausted {
+			withheld++
+			withheldItems = append(withheldItems, report.Withheld{
+				File: ov.File, Line: ov.Line, Severity: ov.Severity,
+				Problem: ov.Problem, Reason: ov.Reason,
+				UnresolvedAttempts: ov.UnresolvedAttempts,
+			})
+			continue
+		}
+		overflow++
+		// The cap-overflow half is LISTED too. Its recorded attempt count is what the
+		// carry onto debate.json exists to preserve, so an item already partway to
+		// the withholding ceiling stays visible on the run whose cap dropped it
+		// (TD cli/report.go:321).
+		overflowItems = append(overflowItems, report.Overflow{
+			File: ov.File, Line: ov.Line, Severity: ov.Severity,
+			Problem: ov.Problem, UnresolvedAttempts: ov.UnresolvedAttempts,
+		})
+	}
+	return report.ContestedReport{
+		Items: items, Overflow: overflow, Withheld: withheld,
+		WithheldItems:             withheldItems,
+		OverflowItems:             overflowItems,
+		UnresolvedAttemptsCeiling: debate.MaxUnresolvedAttempts,
+	}
 }
 
 // readReconciledFindings wraps the shared reconcile loader with the CLI's

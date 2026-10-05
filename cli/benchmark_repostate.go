@@ -112,6 +112,42 @@ func checkRepoStateFlags(suiteFormat, checkpointPath string) error {
 // has already been paid for in full, and this one stops the bill. Off by default for
 // the reason the work-dir arm's comment gives: a general cap would take the abort
 // decision away from the operator.
+// slotUnmeasuredReason returns the slot-failure reason when a reviewer's slot must be
+// SKIPPED from the score, the covered set and the outcome tally together, or "" when
+// the slot should be scored normally.
+//
+// Two shapes qualify, and they are different facts. A non-OK status is a call that
+// did not succeed. An OK status that provably contributed NOTHING — a salvaged reply,
+// whose content the client promoted from the model's reasoning channel, or a
+// think-suppressed one whose whole reply the strip removed — is a call that succeeded
+// and produced nothing usable. Before this the second shape fell through: the row was
+// scored with an empty categorical projection and charged a genuine recall-0 miss,
+// while the outcome classifier tallied the same row "incomplete", so the score half
+// asserted a missed defect the label denied — the self-contradiction
+// docs/benchmark.md forbids for this tier (TD cli/benchmark_repostate.go:561).
+//
+// Extracted as a function so the decision is testable without a live panel: the
+// end-to-end path needs a provider that emits the salvage shape.
+func slotUnmeasuredReason(a fanout.AgentStatus) string {
+	if a.Status != fanout.StatusOK {
+		return benchmark.SlotFailureReasonForStatus(a.Status)
+	}
+	// A partial loss is NOT unmeasured: the clean siblings' findings are parsed and
+	// reconciled, so the row has real signal and must be scored. Same per-bin rule the
+	// outcome classifier applies, through the same exported predicates, so the score and
+	// the label cannot drift on which losses count (TD internal/scorecard/trust.go:1019).
+	//
+	// BOTH halves go through a whole-persona predicate. Reading `a.ThinkSuppressed`
+	// raw here was the sibling signal left open inside this very expression: it is an
+	// OR-fold over the persona's bins, so one bin the strip ate dropped a row whose
+	// other seven landed real findings — the exact over-withholding WholePersonaSalvaged
+	// was introduced to stop (TD internal/fanout/chunker.go:493).
+	if fanout.WholePersonaSalvaged(a) || fanout.WholePersonaThinkSuppressed(a) {
+		return benchmark.SlotFailureUnmeasuredOK
+	}
+	return ""
+}
+
 func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, completer fanout.Completer, suitePath string, generatedAt time.Time, maxConsecutiveFailures int) (rr *benchmark.RunResult, retainedWorkDir string, err error) {
 	m, err := benchmark.LoadRepoState(suitePath)
 	if err != nil {
@@ -183,7 +219,8 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		// is spelled.
 		retentionAttrs := func() []any {
 			attrs := []any{"path", tmp, "failed_cases", len(caseFailures),
-				"failed_slots", failedSlotCount(slotFailures), "failed_reviewers", len(slotFailures),
+				"failed_slots", failedSlotCount(slotFailures), "unmeasured_slots", unmeasuredSlotCount(slotFailures),
+				"failed_reviewers", failedReviewerCount(slotFailures),
 				"retained_dirs", retainedDirCount(tmp)}
 			return append(attrs, retainedSizeAttrs(tmp)...)
 		}
@@ -199,7 +236,14 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		// below and destroyed every review dir, including the status.json holding the
 		// failure the operator would need to diagnose it. The two are one condition:
 		// whatever went unmeasured, the paid artifacts are the only record of why.
-		if len(caseFailures) > 0 || len(slotFailures) > 0 {
+		//
+		// Only the INFRASTRUCTURE half of slotFailures triggers retention, via
+		// retainForSlotFailures: an unmeasured_salvaged_ok slot is a call that
+		// SUCCEEDED and contributed nothing, which a reviewer that habitually answers
+		// on its reasoning channel produces on EVERY run — so counting it here made
+		// every scheduled run retain a full work dir that nothing reclaims, and the
+		// line labelled it failed_slots=N on a clean panel (TD cli/benchmark_repostate.go:232).
+		if len(caseFailures) > 0 || retainForSlotFailures(slotFailures) {
 			// The retained BYTES are reported, not just the path. Retention is
 			// unbounded and unconditional on a partial run by design — the artifacts
 			// are the only copy of a paid panel, so capping or pruning them would
@@ -535,13 +579,24 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			// an OK slot is never skipped). If a producer of that pair ever appears, the
 			// predicate here and that reason mapping must move together — unify both
 			// sides in the same change, never this one alone.
-			if a.Status != fanout.StatusOK {
+			// The skip covers an OK slot that provably contributed NOTHING, not only a
+			// non-OK one. A salvaged or think-suppressed reply is StatusOK and the
+			// classifier tallies it "incomplete", so scoring it here charged a genuine
+			// recall-0 miss while the label said the reviewer never saw the material —
+			// the self-contradiction docs/benchmark.md forbids, crossing the export
+			// boundary unflagged because the only self-contradiction gate covers
+			// ungrounded-vs-grounding_enabled (TD cli/benchmark_repostate.go:561).
+			//
+			// Score, covered set and outcome tally move TOGETHER here, as the block
+			// below requires: an unmeasured slot is skipped from all three or the export
+			// tamper check reads the run as malformed.
+			if unmeasuredReason := slotUnmeasuredReason(a); unmeasuredReason != "" {
 				slotFailures[key] = append(slotFailures[key], benchmark.SlotFailure{
 					CaseID: c.ID,
-					Reason: benchmark.SlotFailureReasonForStatus(a.Status),
+					Reason: unmeasuredReason,
 				})
-				log.FromContext(ctx).Warn("reviewer slot failed; recorded as unmeasured for this case",
-					"case", c.ID, "agent", a.Agent, "status", a.Status, "err", a.Error)
+				log.FromContext(ctx).Warn("reviewer slot unmeasured for this case; recorded instead of scored",
+					"case", c.ID, "agent", a.Agent, "status", a.Status, "reason", unmeasuredReason, "err", a.Error)
 				continue
 			}
 
@@ -854,12 +909,70 @@ func summarizeCaseFailureReasons(failures []benchmark.CaseFailure) string {
 // failedSlotCount is the number of failed reviewer SLOTS: the map is keyed by
 // reviewer and each value lists that reviewer's failed cases, so len(m) would
 // count reviewers — one dead provider on a 200-case suite is 200 slots, not 1.
+//
+// Only INFRASTRUCTURE-class slots count. An unmeasured_salvaged_ok slot is a call
+// that SUCCEEDED, so folding it in reports a clean panel as failed_slots=N and (via
+// retainForSlotFailures, which reads the same predicate) retains a work dir nothing
+// reclaims. It is reported under its own key by unmeasuredSlotCount.
 func failedSlotCount(m map[reviewerKey][]benchmark.SlotFailure) int {
 	n := 0
 	for _, v := range m {
-		n += len(v)
+		for _, sf := range v {
+			if benchmark.SlotFailureIsInfrastructure(sf.Reason) {
+				n++
+			}
+		}
 	}
 	return n
+}
+
+// unmeasuredSlotCount is the number of OK slots that were measured and found
+// worthless (SlotFailureUnmeasuredOK). Reported beside failed_slots so the
+// shortfall stays visible without being miscalled a failure.
+func unmeasuredSlotCount(m map[reviewerKey][]benchmark.SlotFailure) int {
+	n := 0
+	for _, v := range m {
+		for _, sf := range v {
+			if sf.Reason == benchmark.SlotFailureUnmeasuredOK {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// failedReviewerCount is how many reviewers own at least one INFRASTRUCTURE-class
+// slot failure — the identity counterpart of failedSlotCount, scoped the same way so
+// the two keys cannot read 1 and 0 on the same run, which would tell an operator a
+// reviewer failed when no call did.
+func failedReviewerCount(m map[reviewerKey][]benchmark.SlotFailure) int {
+	n := 0
+	for _, v := range m {
+		for _, sf := range v {
+			if benchmark.SlotFailureIsInfrastructure(sf.Reason) {
+				n++
+				break
+			}
+		}
+	}
+	return n
+}
+
+// retainForSlotFailures reports whether any recorded slot failure justifies keeping
+// the paid work dir. Only an INFRASTRUCTURE loss does: its status.json is the only
+// record of why the slot died, whereas an unmeasured_salvaged_ok slot's cause is
+// already fully described in the run-result and recur on every run for a reviewer
+// that answers on its reasoning channel — retaining for it would accumulate a full
+// work dir per scheduled run with nothing to diagnose.
+func retainForSlotFailures(m map[reviewerKey][]benchmark.SlotFailure) bool {
+	for _, v := range m {
+		for _, sf := range v {
+			if benchmark.SlotFailureIsInfrastructure(sf.Reason) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // retainedDirCount is how many retained repo-state work dirs sit beside
@@ -1264,25 +1377,34 @@ func warnCaseFailures(w io.Writer, rr *benchmark.RunResult, retainedWorkDir stri
 	// row is short by it. Folding the two lists together would tell an operator a case
 	// went unmeasured when it was measured by everyone else on the panel.
 	//
+	// Split by class, because the two say opposite things about the reviewer. An
+	// infrastructure slot was NOT SHOWN the case; an unmeasured_salvaged_ok slot WAS
+	// shown it and answered ok, so the unshown wording would assert the opposite. The
+	// per-slot reason line already names the true cause, and each class gets its own
+	// sentence so neither is described by the other's claim (TD cli/benchmark_repostate.go:1313).
+	//
 	// Capped on the same terms as the case list above, and for the same reason — one
 	// dead provider on a 200-case suite produces 200 slot failures, which would scroll
 	// the recall summary this warning exists to qualify off the terminal.
-	if len(rr.SlotFailures) > 0 {
+	var infraSlots, unmeasuredOKSlots []benchmark.SlotFailure
+	for _, sf := range rr.SlotFailures {
+		if sf.Reason == benchmark.SlotFailureUnmeasuredOK {
+			unmeasuredOKSlots = append(unmeasuredOKSlots, sf)
+			continue
+		}
+		infraSlots = append(infraSlots, sf)
+	}
+	if len(infraSlots) > 0 {
 		fmt.Fprintf(&msg, "warning: %d reviewer slot(s) were UNMEASURED — the case ran, but one reviewer could not be "+
 			"shown it, so that reviewer's row is short by it rather than scored a miss:\n",
-			len(rr.SlotFailures))
-		namedSlots := rr.SlotFailures
-		if len(namedSlots) > maxNamedFailedCases {
-			namedSlots = namedSlots[:maxNamedFailedCases]
-		}
-		for _, sf := range namedSlots {
-			fmt.Fprintf(&msg, "  %s/%s on %s: %s\n",
-				stripTerminalControlRunes(sf.Model), stripTerminalControlRunes(sf.Persona),
-				stripTerminalControlRunes(sf.CaseID), stripTerminalControlRunes(sf.Reason))
-		}
-		if overflow := len(rr.SlotFailures) - len(namedSlots); overflow > 0 {
-			fmt.Fprintf(&msg, "  ... and %d more\n", overflow)
-		}
+			len(infraSlots))
+		writeSlotFailures(&msg, infraSlots)
+	}
+	if len(unmeasuredOKSlots) > 0 {
+		fmt.Fprintf(&msg, "warning: %d reviewer slot(s) were UNMEASURED — the case ran and the reviewer WAS shown it, "+
+			"but its reply contributed nothing, so that reviewer's row is short by it rather than scored a miss:\n",
+			len(unmeasuredOKSlots))
+		writeSlotFailures(&msg, unmeasuredOKSlots)
 	}
 	if retainedWorkDir != "" {
 		fmt.Fprintf(&msg, "  The work dir is retained at %s — the scored cases' review artifacts "+
@@ -1297,4 +1419,22 @@ func warnCaseFailures(w io.Writer, rr *benchmark.RunResult, retainedWorkDir stri
 			"are there for inspection or manual rescoring.\n")
 	}
 	_, _ = io.WriteString(w, msg.String())
+}
+
+// writeSlotFailures renders one capped list of slot failures, with an overflow count.
+// Factored out of warnCaseFailures so the infrastructure and unmeasured-ok classes
+// share the cap and the terminal-safety stripping rather than each re-deriving them.
+func writeSlotFailures(msg *strings.Builder, slots []benchmark.SlotFailure) {
+	named := slots
+	if len(named) > maxNamedFailedCases {
+		named = named[:maxNamedFailedCases]
+	}
+	for _, sf := range named {
+		fmt.Fprintf(msg, "  %s/%s on %s: %s\n",
+			stripTerminalControlRunes(sf.Model), stripTerminalControlRunes(sf.Persona),
+			stripTerminalControlRunes(sf.CaseID), stripTerminalControlRunes(sf.Reason))
+	}
+	if overflow := len(slots) - len(named); overflow > 0 {
+		fmt.Fprintf(msg, "  ... and %d more\n", overflow)
+	}
 }

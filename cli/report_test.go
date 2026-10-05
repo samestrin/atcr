@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/debate"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/report"
 	"github.com/stretchr/testify/assert"
@@ -475,4 +476,99 @@ func TestResolveOutputPath_FailsOpenWhenParentAbsent(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, filepath.IsAbs(got), "absent parent falls open to the absolute path, got %q", got)
 	require.Equal(t, target, got)
+}
+
+// loadContested must split the overflow list by CAUSE. The report renders each with
+// its own remedy, so a conflated count made it promise that raising debate.max_items
+// would debate items that withholdExhausted had already permanently removed from
+// selection (TD internal/report/contested.go:98).
+func TestLoadContested_SplitsOverflowByCause(t *testing.T) {
+	dir := t.TempDir()
+	recon := filepath.Join(dir, "reconciled")
+	require.NoError(t, os.MkdirAll(recon, 0o755))
+	df := debate.DebateFile{
+		SchemaVersion: debate.DebateSchemaVersion,
+		Overflow: []debate.OverflowItem{
+			{File: "a.go", Line: 1, Problem: "cap overflow"},
+			{File: "b.go", Line: 2, Problem: "cap overflow too"},
+			{File: "c.go", Line: 3, Problem: "withheld", Reason: debate.OverflowAttemptsExhausted},
+		},
+	}
+	raw, err := json.Marshal(df)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(recon, debate.DebateJSON), raw, 0o644))
+
+	cr := loadContested(dir)
+	assert.Equal(t, 2, cr.Overflow, "the cap overflows keep their own count")
+	assert.Equal(t, 1, cr.Withheld, "and the exhausted records theirs, since their remedies differ")
+}
+
+// loadContested must carry the withheld items LIST and the attempt count onto the
+// report view, not just their count. On the run that withholds an item it writes no
+// ItemResult, so the ruling that described it for three runs vanishes; the count
+// alone would leave an operator with a bare integer and no idea WHICH item went
+// dark (TD cli/report.go:284).
+func TestLoadContested_ListsWithheldItemsWithTheirCountdown(t *testing.T) {
+	dir := t.TempDir()
+	recon := filepath.Join(dir, "reconciled")
+	require.NoError(t, os.MkdirAll(recon, 0o755))
+	df := debate.DebateFile{
+		SchemaVersion: debate.DebateSchemaVersion,
+		Items: []debate.ItemResult{{
+			File: "kept.go", Line: 1, Outcome: "unresolved",
+			Reason: "insufficient_distinct_models", UnresolvedAttempts: 2,
+		}},
+		Overflow: []debate.OverflowItem{
+			{File: "gone.go", Line: 42, Kind: "finding", Severity: "HIGH", Problem: "leaks the token",
+				Reason: debate.OverflowAttemptsExhausted, UnresolvedAttempts: 3},
+		},
+	}
+	raw, err := json.Marshal(df)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(recon, debate.DebateJSON), raw, 0o644))
+
+	cr := loadContested(dir)
+	require.Len(t, cr.WithheldItems, 1, "the withheld item is listed, not just counted")
+	assert.Equal(t, "gone.go", cr.WithheldItems[0].File)
+	assert.Equal(t, 42, cr.WithheldItems[0].Line)
+	assert.Equal(t, "HIGH", cr.WithheldItems[0].Severity)
+	assert.Equal(t, "leaks the token", cr.WithheldItems[0].Problem)
+	assert.Equal(t, 3, cr.WithheldItems[0].UnresolvedAttempts)
+	assert.Equal(t, debate.MaxUnresolvedAttempts, cr.UnresolvedAttemptsCeiling,
+		"the ceiling comes from the debate package, so the countdown cannot drift from the gate")
+	require.Len(t, cr.Items, 1)
+	assert.Equal(t, 2, cr.Items[0].UnresolvedAttempts, "a still-debated item carries its countdown too")
+}
+
+// The cap-overflow carry on debate.json's Overflow records is READ by the next run
+// (priorUnresolvedAttempts), but the report discarded it: only the Overflow integer
+// rendered, so an operator raising debate.max_items could not see that one of the
+// cap-overflowed items had already accrued attempts toward the withholding ceiling.
+// Carrying it onto a listing, the way WithheldItems does, keeps the countdown
+// visible for exactly the items the carry was written for (TD cli/report.go:321).
+func TestLoadContested_ListsCapOverflowItemsWithTheirCountdown(t *testing.T) {
+	dir := t.TempDir()
+	recon := filepath.Join(dir, "reconciled")
+	require.NoError(t, os.MkdirAll(recon, 0o755))
+	df := debate.DebateFile{
+		SchemaVersion: debate.DebateSchemaVersion,
+		Overflow: []debate.OverflowItem{
+			{File: "a.go", Line: 7, Kind: "finding", Severity: "HIGH", Problem: "leaks the token", UnresolvedAttempts: 2},
+			{File: "b.go", Line: 9, Kind: "finding", Severity: "LOW", Problem: "never tried"},
+			{File: "c.go", Line: 3, Problem: "withheld", Reason: debate.OverflowAttemptsExhausted, UnresolvedAttempts: 3},
+		},
+	}
+	raw, err := json.Marshal(df)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(recon, debate.DebateJSON), raw, 0o644))
+
+	cr := loadContested(dir)
+	assert.Equal(t, 2, cr.Overflow, "the cap overflows keep their own count")
+	require.Len(t, cr.OverflowItems, 2, "the cap-overflowed items are LISTED, not just counted")
+	assert.Equal(t, "a.go", cr.OverflowItems[0].File)
+	assert.Equal(t, 2, cr.OverflowItems[0].UnresolvedAttempts,
+		"the carry reaches the report, so an item near the ceiling is visible before it is withheld")
+	assert.Equal(t, "b.go", cr.OverflowItems[1].File)
+	assert.Zero(t, cr.OverflowItems[1].UnresolvedAttempts, "an item nobody tried still carries no count")
+	require.Len(t, cr.WithheldItems, 1, "the withheld item stays in its own list")
 }

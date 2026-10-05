@@ -157,3 +157,128 @@ func TestExtractSection_ReleasedTailAlwaysCarriesProseBesideTheMarker(t *testing
 	require.NotEmpty(t, rest, "the marker must never be the excerpt's only content")
 	require.NotEqual(t, "```", strings.TrimSpace(text))
 }
+
+// A shortfall caused by the SALVAGE refusal is a third explanation, and at the
+// default log level it is currently invisible: the skip is logged at Debug, and
+// when the only source was salvaged the run returns before any diagnostic at all.
+// The operator reads "possible format drift" — or, in the every-source case,
+// nothing — and goes hunting a parser problem that is not there. This is the same
+// defect the elided arm was written to fix, on the newest skip (TD
+// internal/reconcile/justification.go:161).
+func TestStampJustifications_SalvageSkipIsNamedNotBlamedOnDrift(t *testing.T) {
+	t.Run("a salvaged source beside matched findings is counted", func(t *testing.T) {
+		reviewDir := t.TempDir()
+		// The salvaged source: an unchunked persona whose content is promoted
+		// reasoning, so the producer refuses it whole.
+		writeSalvagedChunkStatus(t, reviewDir, "dax", nil)
+		writeReview(t, reviewDir, "dax", "Maybe **`internal/auth/token.go:42`** is the spot.")
+		// A healthy sibling that really does anchor a different finding.
+		writeReview(t, reviewDir, "host", "## Findings\n\nThe signature check at `internal/other.go:7` accepts an unsigned token.\n")
+
+		jf := []JSONFinding{{File: "internal/other.go", Line: 7, Problem: "unsigned", Reviewers: []string{"host"}}}
+		h := captureStampLogs(t, jf, reviewDir)
+
+		require.NotEmpty(t, jf[0].Justification, "the healthy sibling must still stamp")
+		skipped, ok := h.attr("salvage_skipped")
+		require.True(t, ok, "the salvage skip must be reported, not left at Debug")
+		require.Equal(t, int64(1), skipped.Int64())
+	})
+
+	t.Run("every source salvaged still produces a diagnostic", func(t *testing.T) {
+		reviewDir := t.TempDir()
+		writeSalvagedChunkStatus(t, reviewDir, "dax", nil)
+		writeReview(t, reviewDir, "dax", "Maybe **`internal/auth/token.go:42`** is the spot.")
+
+		jf := []JSONFinding{{File: "internal/auth/token.go", Line: 42, Problem: "JWT sig", Reviewers: []string{"dax"}}}
+		h := captureStampLogs(t, jf, reviewDir)
+
+		require.Empty(t, jf[0].Justification)
+		require.NotEmpty(t, h.records,
+			"an every-source-salvaged run must not return silently: today it reads as 'no narratives at all'")
+	})
+}
+
+// The salvage-named arm itself — `case salvageSkipped > 0 && elided == 0` — was
+// uncovered AND survived mutation: replacing its guard with `case false:` left the
+// package green, because the existing cases reach the matched arm and the
+// no-narratives early return instead. Nothing proved the arm ever fires, which is
+// the one thing it exists to do (TD internal/reconcile/justification.go:168).
+//
+// Reaching it needs all three conditions at once: a source the salvage skip
+// refused, a surviving narrative that anchors NOTHING (so matched is 0), and no
+// elided section (so the quoted-example arm does not claim the shortfall first).
+func TestStampJustifications_SalvageNamedArmOutranksTheDriftMessage(t *testing.T) {
+	reviewDir := t.TempDir()
+	// Refused whole: an unchunked persona whose content is promoted reasoning.
+	writeSalvagedChunkStatus(t, reviewDir, "dax", nil)
+	writeReview(t, reviewDir, "dax", "Maybe **`internal/auth/token.go:42`** is the spot.")
+	// A healthy sibling whose prose anchors nothing, and carries no fenced block —
+	// so the elided counter stays 0 and this shortfall has exactly one explanation.
+	writeReview(t, reviewDir, "host", "# Host review\n\nNothing here references the finding's file at all.\n")
+
+	jf := []JSONFinding{{File: "internal/auth/token.go", Line: 42, Problem: "JWT sig", Reviewers: []string{"dax"}}}
+	h := captureStampLogs(t, jf, reviewDir)
+
+	require.Empty(t, jf[0].Justification, "precondition: nothing matched")
+
+	note, ok := h.note(slog.LevelWarn)
+	require.True(t, ok, "a zero-match run must warn")
+	require.Contains(t, note, "was salvaged",
+		"the named cause outranks the drift message: the parser worked and the producer refused the reply")
+	require.NotContains(t, note, "possible format drift",
+		"accusing format drift here sends the operator after a parser bug that is not there — the same cost "+
+			"the elided arm exists to avoid")
+
+	skipped, ok := h.attr("salvage_skipped")
+	require.True(t, ok, "the counter is the only observable the skip has")
+	require.Equal(t, int64(1), skipped.Int64())
+}
+
+// The other two arms must carry the salvage_skipped attribute too. Both appends were
+// uncovered, so a shortfall that is PARTLY explained by the skip reported only its
+// other half — the elided count, or the drift message — and the operator never
+// learned a source had been refused at all.
+func TestStampJustifications_SalvageCountRidesTheElidedAndDriftArms(t *testing.T) {
+	t.Run("elided arm keeps the salvage count beside its own", func(t *testing.T) {
+		reviewDir := t.TempDir()
+		writeSalvagedChunkStatus(t, reviewDir, "dax", nil)
+		writeReview(t, reviewDir, "dax", "Maybe **`internal/auth/token.go:42`** is the spot.")
+		// Anchors the finding, but every candidate section is a quoted example, so
+		// extractSection suppresses it and the elided counter fires.
+		writeReview(t, reviewDir, "host", "# Host review\n\n"+
+			"## Findings\n\n"+
+			"```\n"+
+			"internal/auth/token.go:42 HIGH JWT signature not verified\n"+
+			"```\n")
+
+		jf := []JSONFinding{{File: "internal/auth/token.go", Line: 42, Problem: "JWT sig", Reviewers: []string{"host", "dax"}}}
+		h := captureStampLogs(t, jf, reviewDir)
+
+		note, ok := h.note(slog.LevelWarn)
+		require.True(t, ok)
+		require.Contains(t, note, "entirely quoted", "the elided arm still names the condition that occurred")
+
+		elided, ok := h.attr("elided")
+		require.True(t, ok)
+		require.Equal(t, int64(1), elided.Int64())
+
+		skipped, ok := h.attr("salvage_skipped")
+		require.True(t, ok, "a shortfall with TWO causes must report both, not just the one that won the arm")
+		require.Equal(t, int64(1), skipped.Int64())
+	})
+
+	t.Run("matched arm keeps the salvage count at Debug", func(t *testing.T) {
+		reviewDir := t.TempDir()
+		writeSalvagedChunkStatus(t, reviewDir, "dax", nil)
+		writeReview(t, reviewDir, "dax", "Maybe **`internal/other.go:7`** is the spot.")
+		writeReview(t, reviewDir, "host", "## Findings\n\nThe check at `internal/other.go:7` accepts an unsigned token.\n")
+
+		jf := []JSONFinding{{File: "internal/other.go", Line: 7, Problem: "unsigned", Reviewers: []string{"host"}}}
+		h := captureStampLogs(t, jf, reviewDir)
+
+		require.NotEmpty(t, jf[0].Justification, "precondition: the healthy sibling stamped")
+		skipped, ok := h.attr("salvage_skipped")
+		require.True(t, ok, "the skip is a cause of shortfall an operator can otherwise only find by hand")
+		require.Equal(t, int64(1), skipped.Int64())
+	})
+}

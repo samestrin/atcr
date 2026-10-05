@@ -1,6 +1,7 @@
 package debate
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 
 	"github.com/samestrin/atcr/internal/atomicfs"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 )
 
@@ -324,9 +326,22 @@ func ReadDebateFile(reviewDir string) (df DebateFile, found bool, err error) {
 //
 // A recorded zero on an unresolved item is a record written before the count
 // existed, so it counts as the one attempt it provably was rather than as none.
-func priorUnresolvedAttempts(reviewDir string) map[FindingKey]int {
+func priorUnresolvedAttempts(ctx context.Context, reviewDir string) map[FindingKey]int {
 	df, found, err := ReadDebateFile(reviewDir)
-	if err != nil || !found {
+	if err != nil {
+		// WARN, and NOT for the absent case below. A parse error silently resets
+		// every attempt counter, which silently disables the withholding ceiling this
+		// read exists to enforce and re-debates the items for up to three more runs.
+		// The direction is safe and it self-heals, but it is the one tolerant read in
+		// the stage that did not warn, while debate.go warns for ambiguous.json and
+		// priorDebateRulings documents the same posture for itself (TD
+		// internal/debate/emit.go:328).
+		log.FromContext(ctx).Warn("debate: debate.json unreadable; prior unresolved attempts were reset, so the withholding ceiling restarts for every disputed item",
+			"err", err.Error())
+		return nil
+	}
+	if !found {
+		// Absent is the routine "never ran the debate stage" shape, not corruption.
 		return nil
 	}
 	out := map[FindingKey]int{}
@@ -348,23 +363,55 @@ func priorUnresolvedAttempts(reviewDir string) map[FindingKey]int {
 		out[FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}] = n
 	}
 	for _, ov := range df.Overflow {
-		if ov.Reason != OverflowAttemptsExhausted {
-			continue
-		}
 		n := ov.UnresolvedAttempts
-		if n < maxUnresolvedAttempts {
+		// Only a WITHHELD record is floored: it was withheld BECAUSE the ceiling was
+		// reached, so a count below the ceiling can only be a pre-count record.
+		if ov.Reason == OverflowAttemptsExhausted && n < maxUnresolvedAttempts {
 			n = maxUnresolvedAttempts
 		}
-		out[FindingKey{File: ov.File, Line: ov.Line, Problem: ov.Problem}] = n
+		// A CAP-overflow record is read too, not skipped: runDebate replaces
+		// debate.json wholesale, so an item unresolved in run N and overflowed by the
+		// max_items cap in run N+1 appears only as this record — skipping it reset
+		// the counter and un-armed the ceiling (TD internal/debate/emit.go:359).
+		//
+		// A ZERO still contributes nothing, which is the distinction that keeps the
+		// carry honest: an ordinary cap overflow on an item nobody ever tried is not
+		// evidence of an attempt, and counting it would withhold an item that has
+		// never been debated. Only a count the writer actually carried is read.
+		if n < 1 {
+			continue
+		}
+		// MAX, not overwrite. The items loop above may already have written a HIGHER
+		// count for this same key, and the deleted `ov.Reason != ...` filter used to
+		// make an overlap impossible BY CONSTRUCTION; with the filter gone, leaving
+		// this an unconditional write would let a lower overflow count walk the
+		// ceiling backward. Disjoint today (withholdExhausted removes withheld items
+		// before SelectItems, and BuildDisagreements yields at most one radar item per
+		// finding), but that invariant is held two files away, so take the max and
+		// restore the by-construction safety (TD internal/debate/emit.go:384).
+		key := FindingKey{File: ov.File, Line: ov.Line, Problem: ov.Problem}
+		if n > out[key] {
+			out[key] = n
+		}
 	}
 	return out
 }
 
-// overflowItems projects the selector's overflow into the recorded shape.
-func overflowItems(items []reconcile.DisagreementItem) []OverflowItem {
+// overflowItems projects the selector's overflow into the recorded shape,
+// carrying each item's prior attempt count. runDebate replaces debate.json
+// wholesale each run, so without the carry a cap-overflowed item loses the history
+// that would eventually withhold it: an item unresolved in run N and overflowed by
+// the max_items cap in run N+1 reset to zero, and the ceiling stopped counting —
+// reachable whenever higher-priority items enter the radar between runs (TD
+// internal/debate/emit.go:359). Reason stays empty: a cap overflow is not an
+// exhausted record, and its remedy (raise debate.max_items) is the opposite one.
+func overflowItems(items []reconcile.DisagreementItem, attempts map[FindingKey]int) []OverflowItem {
 	out := make([]OverflowItem, 0, len(items))
 	for _, it := range items {
-		out = append(out, OverflowItem{File: it.File, Line: it.Line, Kind: it.Kind, Severity: it.Severity, Problem: it.Problem})
+		out = append(out, OverflowItem{
+			File: it.File, Line: it.Line, Kind: it.Kind, Severity: it.Severity, Problem: it.Problem,
+			UnresolvedAttempts: attempts[FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}],
+		})
 	}
 	return out
 }
