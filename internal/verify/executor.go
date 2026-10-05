@@ -306,10 +306,20 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 			// generateFixes owns FixReview end-to-end, mirroring FixWarning: every
 			// early return below (second HARD reject, truncation, empty completion,
 			// self-decline, transport failure) leaves the finding without a new fix,
-			// so a FixReview from a PRIOR run must be cleared up front — otherwise a
-			// withheld patch could render beside a stale acceptance annotation. The
-			// success path re-derives it unconditionally at the end of the goroutine.
-			f.FixReview = ""
+			// so a FixReview from a PRIOR run must be cleared — otherwise a
+			// withheld patch could render beside a stale acceptance annotation.
+			//
+			// Guarded by hasAnyFixAttribution, exactly as the FixWarning stamps in
+			// those arms are: when Evidence carries an earlier tier's "fix by <name>",
+			// the fix is NOT withheld — it is PRESERVED — so its NEEDS_REVIEW
+			// annotation must survive with it. Clearing unconditionally stripped the
+			// annotation off all four preservation arms (refusal, salvage, truncation,
+			// empty-completion) and shipped a smell-flagged fix unflagged
+			// (TD internal/verify/executor.go:409). The success path still re-derives
+			// it unconditionally at the end of the goroutine.
+			if !hasAnyFixAttribution(f.Evidence) {
+				f.FixReview = ""
+			}
 			// Two fix-generation paths share one set of post-processing rules below
 			// (empty-check, diff-smell gate, attribution, syntax guard): out carries the
 			// raw fix text; warn carries a non-empty failure reason that short-circuits
