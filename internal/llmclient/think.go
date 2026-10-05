@@ -329,19 +329,29 @@ func IndexAfterUnopenedCloser(content string) int {
 // cleanly quoted pair in a truncated reply, which is the decision
 // TestMaskJSONStrings_UnterminatedLiteralKeepsItsQuotedTagHidden pins.
 //
-// The discriminator is a SURVIVING CLOSER beside a swallowed opener. That is what a
-// cut pair leaves behind, and it is the residue the arm refuses: the in/out-of-string
-// state was a guess, so the whole masked copy is discarded. Three shapes are
-// deliberately NOT it, and the arm must leave each one masked:
+// The discriminator is the SHAPE OF THE BLANKED RUN, not the tag counts and not a
+// surviving closer. A run that swallowed an opener and then a `{` or `[` ended at the
+// opening quote of a KEY inside the draft, which is only possible if the mask swallowed
+// the brace that opened that draft — so its boundary was a guess, and the whole masked
+// copy is discarded. A surviving closer is kept as a second, independent trigger for
+// the brace-free replies the run shape cannot reach.
 //
-//   - A genuinely quoted pair loses both halves together, so no closer survives.
+// Four shapes are deliberately NOT it, and the arm must leave each one masked:
+//
+//   - A genuinely quoted pair loses both halves together and holds no container.
 //   - A LONE opener named inside a cleanly-closed value removes one opener and zero
 //     closers — the same count asymmetry a cut pair shows — while cutting nothing.
 //     Acting on the counts alone un-hid a tag the model had only quoted, and all three
 //     lanes then refused a reply the position rule calls legal
 //     (TD internal/llmclient/think.go:392).
+//   - A brace that sits BEFORE the quoted opener, in the same value or an earlier one.
+//     That is ordinary value text; the run really did end at its own terminator.
 //   - The reverse asymmetry — a hidden closer beside a surviving opener — needs no arm
 //     either: the opener is still visible, so HasEnclosingThinkBlock refuses anyway.
+//
+// A surviving closer alone is NOT the discriminator, and reading it as one admitted a
+// cut pair whenever none survived: an unclosed block, a variant-spelled closer, or a
+// closer swallowed by a later literal (TD internal/llmclient/think.go:406).
 //
 // The result is for tag DETECTION only, never for parsing: a think tag that
 // survives the mask is markup enclosing reply text, while one that appears solely
@@ -360,6 +370,10 @@ func MaskJSONStrings(s string) string {
 	// a string literal may begin. It starts true: a bare JSON string is a valid
 	// document, so a leading `"` opens a literal.
 	openCtx := true
+	// cutPair records that some blanked run swallowed a think OPENER and then a `{` or
+	// `[`. runHasOpener tracks the opener within the run currently open, and resets with
+	// each literal, so a brace in an EARLIER value cannot be attributed to a later tag.
+	cutPair, runHasOpener := false, false
 	for i := 0; i < len(b); i++ {
 		c := b[i]
 		if !inStr {
@@ -367,6 +381,7 @@ func MaskJSONStrings(s string) string {
 			case c == '"' && openCtx:
 				inStr = true
 				openCtx = false
+				runHasOpener = false
 			case c == ' ' || c == '\t' || c == '\n' || c == '\r':
 				// Whitespace neither opens nor closes a JSON position.
 			default:
@@ -378,6 +393,15 @@ func MaskJSONStrings(s string) string {
 			escaped = false
 			b[i] = ' '
 			continue
+		}
+		// Measured on the ORIGINAL s: the bytes behind i are already blanked, so the tag
+		// is only recognisable ahead of the cursor. A container char AFTER an opener in
+		// the same run is the cut-pair signature — see the arm below for why the order
+		// matters and why a brace before the opener is not it.
+		if strings.HasPrefix(s[i:], thinkOpen) {
+			runHasOpener = true
+		} else if runHasOpener && (c == '{' || c == '[') {
+			cutPair = true
 		}
 		switch c {
 		case '\\':
@@ -393,19 +417,36 @@ func MaskJSONStrings(s string) string {
 		}
 	}
 	masked := string(b)
-	// Fail-closed arm: the mask hid an opener whose closer SURVIVED, so it cut a pair
-	// in half and its boundary was a guess. Return the input untouched — every tag
-	// stays visible and the detection sites refuse, which is the safe direction.
-	// Length is preserved trivially by returning the original.
+	// Fail-closed arm: the mask's boundary was a guess, so the whole masked copy is
+	// discarded. Return the input untouched — every tag stays visible and the detection
+	// sites refuse, which is the safe direction. Length is preserved on both arms.
 	//
-	// The surviving closer is the discriminator, not the removal counts on their own.
-	// A reply that merely NAMES a lone opener inside a cleanly-closed value removes one
-	// opener and zero closers, exactly as a split pair does, while cutting nothing: with
-	// no closer left visible there is no half-pair to protect, and discarding the mask
-	// only un-hides a tag the model quoted.
-	if strings.Contains(masked, thinkClose) &&
-		strings.Count(s, thinkOpen)-strings.Count(masked, thinkOpen) >
-			strings.Count(s, thinkClose)-strings.Count(masked, thinkClose) {
+	// TWO independent signatures, because neither subsumes the other.
+	//
+	//  1. A CUT RUN — the blanked run swallowed an opener and THEN a `{` or `[`. A
+	//     string value may legitimately hold a brace, but a run that ends at the opening
+	//     quote of a KEY inside the draft must have swallowed the `{` that opened that
+	//     draft, so the quote the mask took for this value's terminator was really that
+	//     key's opener. This is the only signature available when NO closer survives:
+	//     the model never closed the block, closed it with a variant spelling (not a tag
+	//     here, so strings.Count never counts it), or its closer was itself swallowed by
+	//     a later literal. Order is load-bearing — a brace BEFORE the opener is ordinary
+	//     value text and nothing was cut.
+	//
+	//  2. A SURVIVING CLOSER beside a swallowed opener. Kept, because it fires on a
+	//     reply signature 1 cannot reach: a quoted opener in a brace-free value beside a
+	//     closer that is genuine markup. Dropping it would widen what the lanes admit.
+	//
+	// Neither fires on the three shapes the arm must leave masked: a genuinely quoted
+	// pair loses both halves and holds no container; a LONE opener named inside a
+	// cleanly-closed value removes one opener and zero closers, exactly as a cut pair
+	// does, while cutting nothing (TD internal/llmclient/think.go:392); and the reverse
+	// asymmetry needs no arm, since the opener stays visible and HasEnclosingThinkBlock
+	// refuses anyway.
+	if cutPair ||
+		(strings.Contains(masked, thinkClose) &&
+			strings.Count(s, thinkOpen)-strings.Count(masked, thinkOpen) >
+				strings.Count(s, thinkClose)-strings.Count(masked, thinkClose)) {
 		return s
 	}
 	return masked
