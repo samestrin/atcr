@@ -182,7 +182,7 @@ func TestExecutorFixFromAnswer_NoCloserIsUnchanged(t *testing.T) {
 // `go test ./...` green across the whole repo, which is the same shape as the row
 // filed against internal/debate/debate.go:308: a test that re-proves the
 // predicate beside the branch instead of through it
-// (TD internal/verify/invoke.go:207, internal/verify/executor.go:804).
+// (TD internal/verify/invoke.go:218, internal/verify/executor.go:804).
 
 // TestInvokeSkeptic_AmbiguousUnopenedCloserRefuses pins the skeptic arm through
 // the production path. The reply has to clear three earlier guards to reach it,

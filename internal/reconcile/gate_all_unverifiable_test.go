@@ -169,7 +169,8 @@ func TestAllUnverifiableCollapse_NamesResponseTruncated(t *testing.T) {
 // TD internal/reconcile/gate.go:216: ambiguous_unopened_closer is a THIRD path to
 // the same wall, and the one the message was most misleading about. A reply
 // carrying a </think> no <think> opened, with a verdict envelope on both sides, is
-// refused by the skeptic lane (internal/verify/invoke.go:207) and collapses to
+// refused by the skeptic lane (internal/verify/invoke.go:218's `if ambiguous` arm,
+// whose refusal return is :225) and collapses to
 // unverifiable with no window fault and no truncation — so neither cause the
 // message already named applies, and doctor's thinking verdict can only name the
 // markup (and only for agents that declare thinking or thinking_level), never the
