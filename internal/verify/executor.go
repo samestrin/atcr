@@ -416,14 +416,16 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 					return "", false
 				}
 				// Transport and parse failures only, now that the refusal arm above has
-				// taken the content-shape declines. This stamp is still unguarded, so it
-				// remains the one known violation of the emit.go:158 invariant: a later
-				// tier whose provider dies writes a FixWarning beside an earlier tier's
-				// generated Fix. Narrowed, not closed — do not read the arm above as having
-				// settled it (TD internal/verify/executor.go:415).
+				// taken the content-shape declines. Guarded by hasAnyFixAttribution like
+				// every sibling arm, so a later tier whose provider dies cannot write a
+				// FixWarning beside an earlier tier's generated Fix — the emit.go:158
+				// invariant, which this branch used to violate (TD
+				// internal/verify/executor.go:377).
 				if warn != "" {
 					logPipelineWarning(log.FromContext(ctx), "executor_fix_failed", fmt.Sprintf("%s:%d: %s", f.File, f.Line, warn))
-					f.FixWarning = warn
+					if !hasAnyFixAttribution(f.Evidence) {
+						f.FixWarning = warn
+					}
 					return "", false
 				}
 				// Response truncation (Epic 19.5): a fix cut off on finish_reason=length is
