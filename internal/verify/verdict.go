@@ -89,7 +89,12 @@ func parseVerdict(response string) (*reclib.Verification, error) {
 		normVerdict := strings.ToLower(strings.TrimSpace(*candidate.Verdict))
 		switch normVerdict {
 		case verdictConfirmed, verdictRefuted, verdictUnverifiable:
-			result = &reclib.Verification{Verdict: normVerdict, Notes: candidate.Reasoning}
+			// Notes rides into findings.json, verification.json and
+			// DisagreementItem.Detail, and Reasoning is MODEL-CONTROLLED text, so the
+			// documented notesRawCap must apply here too — it used to cover only the
+			// three diagnostic Notes, leaving the runaway case it was written for
+			// unbounded (TD internal/verify/verdict.go:61).
+			result = &reclib.Verification{Verdict: normVerdict, Notes: truncateForNotes(candidate.Reasoning)}
 			return true
 		default:
 			// An out-of-enum value is NOT necessarily the committed verdict: it is
