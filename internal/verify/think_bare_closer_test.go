@@ -322,6 +322,31 @@ func TestExecutorFixFromAnswer_DecoyBeforeTheFixOnACleanResumeKeepsTheFix(t *tes
 		"a plan object in front of the patch must not cost the repair")
 }
 
+// TestVerdictFromAnswer_DecoyBeforeTheVerdictOnACleanResumeKeepsTheVerdict is the
+// SKEPTIC twin of the executor case above — the availability half that had no
+// counterpart because it would have failed. TD internal/verify/think_bare_closer_test.go:578:
+// the two "both lanes agree" tests exercised only the AMBIGUOUS shape, where the
+// lanes cannot diverge (the predicate's answer is discarded in favour of a
+// refusal), while on THIS clean-resume shape they did: the executor returned
+// REAL-PATCH and the skeptic returned unverifiable. With parseVerdict now
+// iterating past a decoy, the committed verdict is recovered on the skeptic lane
+// too, so the twins finally agree on the shape that matters.
+func TestVerdictFromAnswer_DecoyBeforeTheVerdictOnACleanResumeKeepsTheVerdict(t *testing.T) {
+	t.Parallel()
+	answer := `weighing two approaches` + "\n" +
+		closerTag() + "\n" +
+		`{"file":"internal/auth/token.go","line":42}` + "\n" +
+		`{"verdict":"confirmed","reasoning":"REAL"}`
+
+	v, ambiguous, _ := verdictFromAnswer(answer)
+
+	require.False(t, ambiguous, "only the suffix carries an envelope")
+	require.NotNil(t, v)
+	assert.Equal(t, verdictConfirmed, v.Verdict,
+		"a plan object in front of the verdict must not cost the verdict")
+	assert.Equal(t, "REAL", v.Notes)
+}
+
 // --- the THIRD "nothing usable here" diagnostic the predicate missed ---
 //
 // carriesVerdict excluded two of parseVerdict's three such diagnostics —
@@ -634,30 +659,6 @@ func TestVerdictFromAnswer_DecoyBeforeTheRealVerdictIsStillAnEnvelope(t *testing
 		assert.NotEqual(t, verdictRefuted, v.Verdict,
 			"grading the abandoned draft is the durable damage: a draft refuted never blocks the gate")
 	}
-}
-
-// TestBothLanesAgreeOnTheOutOfEnumDecoyShape is the drift guard for the doc claim
-// that both predicates iterate. The executor half was already pinned by
-// TestExecutorFixFromAnswer_DecoyObjectBeforeTheFixIsStillAnEnvelope; this asserts
-// the skeptic half reaches the same answer on the byte-equivalent shape, so the two
-// cannot diverge again without a failure that says so.
-func TestBothLanesAgreeOnTheOutOfEnumDecoyShape(t *testing.T) {
-	t.Parallel()
-	verdictAnswer := `{"verdict":"refuted","reasoning":"DRAFT"}` + "\n" +
-		`</think>` + "\n" +
-		`An example is {"verdict":"maybe"}.` + "\n" +
-		`{"verdict":"confirmed","reasoning":"REAL"}`
-	fixAnswer := `{"fix":"DRAFT-PATCH","explanation":"draft"}` + "\n" +
-		`</think>` + "\n" +
-		`{"file":"internal/auth/token.go","line":42}` + "\n" +
-		`{"fix":"REAL-PATCH","explanation":"real"}`
-
-	_, verdictAmbiguous, _ := verdictFromAnswer(verdictAnswer)
-	_, fixAmbiguous, _ := executorFixFromAnswer(fixAnswer)
-
-	assert.True(t, fixAmbiguous, "the executor lane iterates past a decoy — the round-2 fix")
-	assert.Equal(t, fixAmbiguous, verdictAmbiguous,
-		"and the skeptic lane must too, or classifyUnopenedCloser's shared-invariant doc is false")
 }
 
 // TestInvokeSkeptic_AfterCloserGradeRecordsTheDiscardedPrefix closes the half of
