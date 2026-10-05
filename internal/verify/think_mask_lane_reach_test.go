@@ -127,3 +127,37 @@ func TestInvokeExecutor_QuotedTagWithATrailingUnbalancedQuoteStillParses(t *test
 	assert.Equal(t, "REAL: add a bounds check", fix,
 		"a valid fix must not be dropped because a prose quote followed it")
 }
+
+// The lane reach of the OTHER direction: the fail-closed arm must not fire on a reply
+// that merely names a LONE OPENER inside a string value. No closer survives the mask,
+// so no pair was split — but the removal counts look identical to a split pair, and
+// acting on them discards a mask that was correct. The skeptic then reads the quoted
+// tag as markup and throws away a committed verdict
+// (TD internal/llmclient/think.go:392).
+func TestInvokeSkeptic_LoneQuotedThinkOpenerInAValueStillParses(t *testing.T) {
+	t.Parallel()
+	raw := `{"verdict":"confirmed","reasoning":"the model emitted a bare ` +
+		"\x3cthink\x3e" + ` opener and never closed it"}`
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	assert.Equal(t, verdictConfirmed, v.Verdict,
+		"a lone opener inside a cleanly-closed literal is the model quoting the tag, not markup — "+
+			"refusing it discards a real verdict and charges the reviewer's survived_skeptic_rate for it")
+}
+
+// Executor twin, where the false refusal costs the whole repair: the fix is dropped,
+// postCheck logs executor_fix_failed, and the finding goes unrepaired. A fix string
+// that NAMES the opener is the ordinary shape for this repo's own think-handling
+// findings (TD internal/llmclient/think.go:392).
+func TestInvokeExecutor_LoneQuotedThinkOpenerInAValueStillReturnsTheFix(t *testing.T) {
+	t.Parallel()
+	raw := `{"fix":"REAL: add a bounds check","explanation":"strip the ` +
+		"\x3cthink\x3e" + ` prefix before parsing"}`
+	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
+		eligibleFinding()[0], finalChat(raw), okDispatcher(), 0, "")
+	assert.Equal(t, "", warn,
+		"no closer survived the mask, so nothing was split and nothing encloses the fix")
+	assert.Equal(t, "REAL: add a bounds check", fix,
+		"a valid repair must not be dropped because the explanation named a think opener")
+}

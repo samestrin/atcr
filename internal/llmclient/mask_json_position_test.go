@@ -95,3 +95,42 @@ func TestMaskJSONStrings_QuotedPairLosesBothHalvesAndStaysMasked(t *testing.T) {
 			"%s: a tag confined to a string value is a model quoting the tag, not markup", name)
 	}
 }
+
+// The shape the directional arm admits by accident, and the one it must not act on: a
+// reply that quotes a LONE OPENER inside a cleanly-closed string value. There is no
+// pair here, so nothing was cut in half — yet the mask removes one `<think>` and zero
+// `</think>`, which satisfies "more openers than closers" exactly as a split pair does.
+// The two are indistinguishable on removal counts alone.
+//
+// The discriminator the arm actually needs is whether a CLOSER SURVIVED the mask. A
+// split pair leaves one visible beside the swallowed opener — that is the dangerous
+// residue the arm exists for. A lone quoted opener leaves none, so discarding the mask
+// buys nothing and costs the reply: the tag becomes visible, every detection site reads
+// it as markup, and all three lanes refuse a reply that is legal by the position rule's
+// own definition. This is the likeliest input in this repo, where findings discuss
+// think handling (TD internal/llmclient/think.go:392).
+func TestMaskJSONStrings_LoneQuotedOpenerIsNotASplitPairAndStaysMasked(t *testing.T) {
+	t.Parallel()
+
+	for name, raw := range map[string]string{
+		"opener named in a fix string": `{"fix":"strip the ` + thinkOpen +
+			` prefix before parsing","explanation":"the strip is leading-only"}`,
+		"opener named in a reasoning string": `{"verdict":"confirmed","reasoning":"the model emitted a bare ` +
+			thinkOpen + ` opener and never closed it"}`,
+		"two lone openers, still no closer": `{"a":"first ` + thinkOpen + ` here","b":"second ` +
+			thinkOpen + ` there"}`,
+	} {
+		masked := MaskJSONStrings(raw)
+
+		require.Len(t, masked, len(raw),
+			"%s: ClassifyUnopenedCloser slices the unmasked original at an offset computed on the "+
+				"masked copy, so the two must stay byte-aligned here too", name)
+
+		assert.False(t, strings.Contains(masked, thinkOpen),
+			"%s: the opener sits inside a cleanly-closed string value — no closer survived the mask, "+
+				"so no pair was split and the fail-closed arm has nothing to protect", name)
+		assert.False(t, HasEnclosingThinkBlock(masked),
+			"%s: discarding the mask here refuses a legal reply — the executor lane drops the repair, "+
+				"the skeptic lane returns unverifiable, and the debate lane returns unresolved", name)
+	}
+}

@@ -1367,6 +1367,36 @@ func TestRunDebate_CommaIntroducedQuoteBeforeAThinkBlockStillRefusesTheDraft(t *
 	assert.Equal(t, ReasonJudgeThinkMarkup, df.Items[0].Reason)
 }
 
+// The opposite direction of the same arm, and the one it must NOT act on. A judge that
+// merely NAMES a `<think>` opener inside its reasoning string has quoted the tag, not
+// emitted markup: the literal is cleanly closed, no closer survives the mask, and no
+// pair was split. The removal counts nonetheless read "more openers than closers",
+// identical to a split pair, so a count-only arm discards a mask that was correct and
+// the lane refuses a committed ruling. A judge ruling on this repo's own think-handling
+// findings produces exactly this reply (TD internal/llmclient/think.go:392).
+func TestRunDebate_JudgeNamingALoneThinkOpenerKeepsItsRuling(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	judge := `{"outcome":"uphold","reasoning":"the reviewer is right that a bare ` +
+		"\x3cthink\x3e" + ` opener is never stripped"}`
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "the attack stands"},
+		{content: judge},
+	}}
+	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Upheld,
+		"the opener is inside a cleanly-closed value, so the mask hides it and the object IS the ruling")
+	assert.Equal(t, 0, res.Unresolved,
+		"refusing here discards a committed ruling over a tag the judge only quoted")
+
+	df, _, err := ReadDebateFile(dir)
+	require.NoError(t, err)
+	require.Len(t, df.Items, 1)
+	assert.Equal(t, OutcomeUphold, df.Items[0].Outcome)
+	assert.NotEqual(t, ReasonJudgeThinkMarkup, df.Items[0].Reason)
+}
+
 // The third arm of the unopened-closer classification, and the one that shipped
 // unexercised in this lane. SplitThink leaves a bare `</think>` in place and
 // HasEnclosingThinkBlock does not refuse on it, both deliberately — so what falls
