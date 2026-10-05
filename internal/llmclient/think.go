@@ -385,12 +385,19 @@ func MaskJSONStrings(s string) string {
 		}
 	}
 	masked := string(b)
-	// Fail-closed arm: the mask hid an opener whose closer survived, so it cut a pair
+	// Fail-closed arm: the mask hid an opener whose closer SURVIVED, so it cut a pair
 	// in half and its boundary was a guess. Return the input untouched — every tag
 	// stays visible and the detection sites refuse, which is the safe direction.
 	// Length is preserved trivially by returning the original.
-	if strings.Count(s, thinkOpen)-strings.Count(masked, thinkOpen) >
-		strings.Count(s, thinkClose)-strings.Count(masked, thinkClose) {
+	//
+	// The surviving closer is the discriminator, not the removal counts on their own.
+	// A reply that merely NAMES a lone opener inside a cleanly-closed value removes one
+	// opener and zero closers, exactly as a split pair does, while cutting nothing: with
+	// no closer left visible there is no half-pair to protect, and discarding the mask
+	// only un-hides a tag the model quoted.
+	if strings.Contains(masked, thinkClose) &&
+		strings.Count(s, thinkOpen)-strings.Count(masked, thinkOpen) >
+			strings.Count(s, thinkClose)-strings.Count(masked, thinkClose) {
 		return s
 	}
 	return masked
