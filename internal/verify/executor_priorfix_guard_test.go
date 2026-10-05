@@ -53,3 +53,46 @@ func TestGenerateFixes_ProviderFailure_WarnsWhenThereIsNoPriorFix(t *testing.T) 
 	assert.Contains(t, f.FixWarning, "fix generation failed",
 		"with no prior fix to protect, the transport failure is the only record the finding carries")
 }
+
+// TD internal/verify/executor.go:748: hasAnyFixAttribution split Evidence on the
+// literal "; " and required a segment to START with "fix by ". But
+// appendFixAttribution yields a BARE "fix by <name>" when Evidence was empty, and
+// internal/reconcile/merge.go's joinEvidence re-joins clustered findings with
+// " / " — so a cluster-merged "Found by kai / fix by sonnet" is ONE segment that
+// fails the prefix test. The guard then reports "no prior tier fix" over a real
+// generated fix, and the refusal/salvage/truncation/empty arms stamp a FixWarning
+// beside it — the exact emit.go:158 violation the guard exists to prevent.
+func TestHasAnyFixAttribution_RecognisesClusterMergedEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		evidence string
+		want     bool
+		why      string
+	}{
+		{"Found by kai / fix by sonnet", true, "reconcile's joinEvidence delimiter is \" / \", not \"; \""},
+		{"fix by sonnet", true, "a bare attribution, the shape appendFixAttribution returns for empty Evidence"},
+		{"Found by bruce; fix by sonnet", true, "the original \"; \" delimiter must keep working"},
+		{"Found by kai / found by bruce", false, "no attribution anywhere"},
+		{"reviewer suggested a fix by hand", false, "prose merely containing the phrase mid-sentence is not an attribution"},
+		{"Found by kai / fix by sonnet / found by bruce", true, "an attribution in the middle of a cluster-merged chain"},
+	} {
+		assert.Equal(t, tc.want, hasAnyFixAttribution(tc.evidence), tc.why)
+	}
+}
+
+// The consumer trace: the guard must actually protect the crossed-tier case on the
+// cluster-merged evidence shape joinEvidence produces.
+func TestGenerateFixes_ProviderFailure_PreservesClusterMergedPriorTierFix(t *testing.T) {
+	findings := []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified,
+		Fix:      "an earlier tier's good fix",
+		Evidence: "Found by kai / fix by sonnet", // joinEvidence's delimiter, sonnet != opus
+	}}
+
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"),
+		&recordingExecutor{err: errors.New("provider boom")}, nil, okDispatcher(), 0)
+
+	f := findings[0]
+	assert.Equal(t, "an earlier tier's good fix", f.Fix)
+	assert.Empty(t, f.FixWarning,
+		"a cluster-merged prior-tier fix must be protected too, not just a \"; \"-joined one")
+}
