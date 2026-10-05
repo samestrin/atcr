@@ -1,13 +1,19 @@
 package debate
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/reconcile"
 )
 
 // writeDebateFileFixture writes df to dir's reconciled/debate.json.
@@ -39,7 +45,7 @@ func TestPriorUnresolvedAttempts_CarriesTheWithheldOverflowRecord(t *testing.T) 
 		}},
 	})
 
-	got := priorUnresolvedAttempts(dir)
+	got := priorUnresolvedAttempts(context.Background(), dir)
 
 	key := FindingKey{File: "a.go", Line: 7, Problem: "withheld finding"}
 	require.Contains(t, got, key, "a withheld record is the only carrier of its own history")
@@ -61,7 +67,7 @@ func TestPriorUnresolvedAttempts_FloorsAPreCountWithheldRecord(t *testing.T) {
 		}},
 	})
 
-	got := priorUnresolvedAttempts(dir)
+	got := priorUnresolvedAttempts(context.Background(), dir)
 
 	key := FindingKey{File: "b.go", Line: 11, Problem: "legacy withheld finding"}
 	assert.Equal(t, maxUnresolvedAttempts, got[key],
@@ -80,7 +86,7 @@ func TestPriorUnresolvedAttempts_IgnoresACapOverflowRecord(t *testing.T) {
 		}},
 	})
 
-	got := priorUnresolvedAttempts(dir)
+	got := priorUnresolvedAttempts(context.Background(), dir)
 
 	assert.NotContains(t, got, FindingKey{File: "c.go", Line: 3, Problem: "never debated, just over the cap"},
 		"a cap overflow records no attempt — counting it would withhold an item nobody tried")
@@ -109,7 +115,7 @@ func TestPriorUnresolvedAttempts_DoesNotFloorAnEnvironmentalRecord(t *testing.T)
 				}},
 			})
 
-			got := priorUnresolvedAttempts(dir)
+			got := priorUnresolvedAttempts(context.Background(), dir)
 			assert.Zero(t, got[FindingKey{File: "a.go", Line: 7, Problem: "interrupted finding"}],
 				"an environmental failure spent no attempt — the reader must not grant one")
 		})
@@ -128,9 +134,142 @@ func TestPriorUnresolvedAttempts_StillFloorsAnItemEvidenceRecord(t *testing.T) {
 		},
 	})
 
-	got := priorUnresolvedAttempts(dir)
+	got := priorUnresolvedAttempts(context.Background(), dir)
 	assert.Equal(t, 1, got[FindingKey{File: "a.go", Line: 7, Problem: "legacy record"}],
 		"a real attempt that predates the field still counts as the one it provably was")
 	assert.Equal(t, 1, got[FindingKey{File: "b.go", Line: 9, Problem: "legacy record, no reason at all"}],
 		"an absent reason defaults to counting, exactly as the writer's deny-list does")
+}
+
+// A malformed debate.json must be VISIBLE. Direction is safe — returning nil
+// resets every attempt counter, so the next run re-debates the items and
+// self-heals after at most three extra debates — but this is the one tolerant read
+// in the stage that does not warn, while debate.go warns for ambiguous.json and
+// priorDebateRulings documents the same tolerant posture. Silently resetting the
+// counters also silently disables the ceiling the read exists to enforce.
+func TestPriorUnresolvedAttempts_SkipsMalformedFileWithAnError(t *testing.T) {
+	dir := t.TempDir()
+	recon := filepath.Join(dir, reconciledSubdir)
+	require.NoError(t, os.MkdirAll(recon, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(recon, DebateJSON), []byte("{not json"), 0o644))
+
+	// The absent-file case stays silent: a review that never ran the debate stage is
+	// the routine shape, not a corruption.
+	empty := t.TempDir()
+	assert.Nil(t, priorUnresolvedAttempts(context.Background(), empty),
+		"an absent debate.json is 'never ran the stage', not a parse failure")
+}
+
+// The parse-error warning is the point: assert it reaches the operator at Warn
+// (not Debug), so a corrupted artifact is diagnosable at the default level. Driven
+// through runDebate rather than the helper directly, because the warning is the
+// stage's operator surface and only the run path installs the context logger.
+func TestPriorUnresolvedAttemptsWarnsOnMalformedFile(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	ctx := log.NewContext(context.Background(), logger)
+
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	recon := filepath.Join(dir, reconciledSubdir)
+	require.NoError(t, os.MkdirAll(recon, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(recon, DebateJSON), []byte("{not json"), 0o644))
+
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "the attack stands"},
+		{content: `{"outcome":"uphold","settled_severity":"HIGH","reasoning":"evidence holds"}`},
+	}}
+	_, err := runDebate(ctx, dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+
+	assert.Contains(t, buf.String(), "level=WARN",
+		"a corrupted debate.json must be visible at the default log level, like the sibling tolerant reads")
+	assert.Contains(t, buf.String(), DebateJSON,
+		"and the warning must name the artifact that could not be read")
+}
+
+// A CAP-overflow record must carry the prior attempt count too, not only a
+// withheld one. runDebate replaces debate.json wholesale each run, and an item
+// unresolved in run N that lands in sel.Overflow in run N+1 (the ordinary
+// max_items cap) had its counter reset to zero — so in run N+2 the ceiling that
+// exists to stop the re-debate loop had forgotten the attempts it was counting.
+// Reachable whenever higher-priority items enter the radar between runs (TD
+// internal/debate/emit.go:359).
+func TestOverflowItems_CarriesPriorAttemptsOntoACapOverflow(t *testing.T) {
+	key := FindingKey{File: "a.go", Line: 1, Problem: "p"}
+	got := overflowItems(
+		[]reconcile.DisagreementItem{{File: "a.go", Line: 1, Kind: "severity_split", Severity: "MEDIUM", Problem: "p"}},
+		map[FindingKey]int{key: 2},
+	)
+	require.Len(t, got, 1)
+	assert.Equal(t, 2, got[0].UnresolvedAttempts,
+		"a cap overflow preserves the history instead of resetting it")
+	assert.Empty(t, got[0].Reason,
+		"a cap overflow is still not an exhausted record — the Reason stays empty, as it was")
+
+	// An item with no recorded attempts keeps 0, so nothing is invented.
+	none := overflowItems(
+		[]reconcile.DisagreementItem{{File: "b.go", Line: 2, Problem: "q"}},
+		map[FindingKey]int{key: 2},
+	)
+	require.Len(t, none, 1)
+	assert.Zero(t, none[0].UnresolvedAttempts)
+}
+
+// And the READER must honour a cap-overflow record, or carrying the count onto it
+// changes nothing: the previous loop skipped every overflow entry whose Reason was
+// not OverflowAttemptsExhausted, so a cap overflow still reported zero prior
+// attempts on the next run.
+func TestPriorUnresolvedAttempts_ReadsACapOverflowRecord(t *testing.T) {
+	dir := t.TempDir()
+	writeDebateFileFixture(t, dir, DebateFile{
+		SchemaVersion: DebateSchemaVersion,
+		Overflow: []OverflowItem{{
+			File: "a.go", Line: 1, Kind: "severity_split", Severity: "MEDIUM", Problem: "p",
+			UnresolvedAttempts: 2, // Reason empty: the ordinary max_items cap
+		}},
+	})
+
+	got := priorUnresolvedAttempts(context.Background(), dir)
+	assert.Equal(t, 2, got[FindingKey{File: "a.go", Line: 1, Problem: "p"}],
+		"a cap-overflow record carries the history forward, so the reader must read it")
+
+	// A withheld record is still floored to the ceiling — it was withheld BECAUSE
+	// the ceiling was reached, so a lower count can only be a pre-count record.
+	dir2 := t.TempDir()
+	writeDebateFileFixture(t, dir2, DebateFile{
+		SchemaVersion: DebateSchemaVersion,
+		Overflow: []OverflowItem{{
+			File: "b.go", Line: 2, Problem: "q", Reason: OverflowAttemptsExhausted, UnresolvedAttempts: 0,
+		}},
+	})
+	got2 := priorUnresolvedAttempts(context.Background(), dir2)
+	assert.Equal(t, maxUnresolvedAttempts, got2[FindingKey{File: "b.go", Line: 2, Problem: "q"}])
+}
+
+// TestPriorUnresolvedAttempts_OverflowNeverLowersAnItemsCount: the Overflow loop
+// writes out[key] unconditionally, so a cap-overflow record carrying a LOWER count
+// than the same key's df.Items entry would overwrite it downward and walk the
+// ceiling backward. Deleted filter aside, the loop must take the MAX: a hand-built
+// (or future) file where one key appears in both places must not lose the higher
+// history (TD internal/debate/emit.go:384).
+func TestPriorUnresolvedAttempts_OverflowNeverLowersAnItemsCount(t *testing.T) {
+	dir := t.TempDir()
+	writeDebateFileFixture(t, dir, DebateFile{
+		SchemaVersion: DebateSchemaVersion,
+		Items: []ItemResult{{
+			File: "a.go", Line: 7, Problem: "same finding",
+			Outcome: OutcomeUnresolved, Reason: "unparseable_ruling", UnresolvedAttempts: 2,
+		}},
+		Overflow: []OverflowItem{{
+			File: "a.go", Line: 7, Problem: "same finding",
+			UnresolvedAttempts: 1,
+		}},
+	})
+
+	got := priorUnresolvedAttempts(context.Background(), dir)
+
+	key := FindingKey{File: "a.go", Line: 7, Problem: "same finding"}
+	assert.Equal(t, 2, got[key],
+		"the overflow loop must not lower a count the items loop already read — the higher history wins")
 }

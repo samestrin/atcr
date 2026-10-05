@@ -839,3 +839,43 @@ func TestDebtBackfillPartialReportStaysSilentOnAnEmptyChangeSet(t *testing.T) {
 	assert.Empty(t, stdout.String(), "no partial-write report on stdout")
 	assert.Empty(t, stderr.String(), "no partial-write report on stderr")
 }
+
+// TD cli/debt_resolve.go:81 — the CLI surface must state the SPLIT the backfill now
+// computes. Before this, both the policy refusal and the pruned tree printed one
+// lumped "unresolved (no surviving review.md)" label whose documented remedy is
+// "restore the file" — impossible for a review.md that is present but over the
+// producer's size cap.
+func TestDebtBackfillJustifications_UnresolvedSplitsPolicyFromPrunedTree(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	reviewRoot := filepath.Join(root, "reviews")
+	require.NoError(t, os.MkdirAll(store, 0o750))
+
+	rec := func(id, srPath string) string {
+		return `{"schema_version":3,"id":"` + id + `","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
+			`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p-` + id + `","fix":"f","category":"correctness",` +
+			`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+			`"justification":"- **internal/thing.go:42** a stale excerpt nothing can replay.",` +
+			`"source_report":{"path":"` + srPath + `","line":8}}`
+	}
+
+	rd := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+	require.NoError(t, os.MkdirAll(rd, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"),
+		[]byte(strings.Repeat("padding to clear the producer's 1 MiB cap\n", 1<<16)), 0o600))
+
+	require.NoError(t, os.WriteFile(filepath.Join(store, "2026-08.jsonl"), []byte(
+		rec("bbbb0001", "sources/pool/raw/agent/gone/review.md")+"\n"+
+			rec("bbbb0002", "sources/pool/raw/agent/dax/review.md")+"\n"), 0o600))
+
+	code, out := execCmdCapture(t, "debt", "backfill-justifications",
+		"--store", store, "--review-root", reviewRoot, "--dry-run")
+	require.Equal(t, 0, code, out)
+
+	require.Contains(t, out, "2 unresolved", "premise: both records yielded no excerpt")
+	require.Contains(t, out, "1 review tree pruned")
+	require.Contains(t, out, "1 declined by policy",
+		"the over-cap review.md is PRESENT at its own path, so the label must send the operator to policy, not to restore a file")
+	assert.NotContains(t, out, "no surviving review.md",
+		"the lumped label is what conflated the two remedies")
+}

@@ -33,6 +33,12 @@ import (
 // is disclosed as overflow-style skipped work, never silent.
 const maxUnresolvedAttempts = 3
 
+// MaxUnresolvedAttempts is the exported ceiling, so a presentation layer can
+// render a withheld item's countdown ("attempt 3 of 3") without duplicating the
+// constant — the report and the withhold gate must agree on the number by
+// construction, not by coincidence.
+const MaxUnresolvedAttempts = maxUnresolvedAttempts
+
 // ErrNoReconciledFindings is returned when reviewDir has no reconciled
 // findings.json — the caller renders "run 'atcr reconcile' first" guidance. It
 // wraps os.ErrNotExist so errors.Is keeps working.
@@ -52,7 +58,16 @@ type Result struct {
 	Overturned int
 	Split      int
 	Unresolved int
-	Overflow   int
+	// Overflow is the CAP-overflow count: items that matched a trigger and exceeded
+	// debate.max_items. Raising the cap debates them, so its remedy is a flag change.
+	Overflow int
+	// Withheld is the attempts-exhausted count: items a prior run left unresolved
+	// maxUnresolvedAttempts times. Its remedy is the OPPOSITE — withholdExhausted runs
+	// before SelectItems, so NO cap value recovers them. Kept separate from Overflow
+	// because their SUM told an MCP client and a stdout reader that raising
+	// max_items would debate an item forever removed from selection
+	// (TD internal/mcp/handlers.go:871).
+	Withheld   int
 	DurationMs int
 }
 
@@ -180,7 +195,7 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// Withhold the ones that already burned maxUnresolvedAttempts and disclose
 	// them as skipped work, so a never-converging item stops re-paying three seats
 	// instead of looping forever.
-	attempts := priorUnresolvedAttempts(reviewDir)
+	attempts := priorUnresolvedAttempts(ctx, reviewDir)
 	var withheld []OverflowItem
 	df.Items, withheld = withholdExhausted(ctx, df.Items, attempts)
 	sel := SelectItems(df, cfg)
@@ -344,7 +359,7 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	debatePath, debateBytes, err := computeDebateBytes(reviewDir, DebateFile{
 		SchemaVersion: DebateSchemaVersion,
 		Items:         items,
-		Overflow:      append(overflowItems(sel.Overflow), withheld...),
+		Overflow:      append(overflowItems(sel.Overflow, attempts), withheld...),
 	})
 	if err != nil {
 		return Result{}, err
@@ -470,7 +485,11 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	}
 
 	res.Selected = len(sel.Selected)
-	res.Overflow = len(sel.Overflow) + len(withheld)
+	// Split by cause, not conflated: a cap overflow is recoverable by raising
+	// debate.max_items, a withheld item is not recoverable at any cap value
+	// (TD internal/mcp/handlers.go:871).
+	res.Overflow = len(sel.Overflow)
+	res.Withheld = len(withheld)
 	res.DurationMs = int(time.Since(start).Milliseconds())
 	return res, nil
 }
@@ -577,7 +596,18 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 
 	if judgeHalted(rec.Halted) {
 		ir.Outcome = OutcomeUnresolved
+		// Suppressed outranks halted, the same precedence the arguing seats apply
+		// (see silentArguingSeats' switch). The judge can be BOTH: a budget-tripped
+		// seat whose forced final answer was entirely a leading think run halts AND
+		// was suppressed, and the STRIP is what removed the ruling — reporting
+		// judge_halted there sends the operator after a budget for a reply the strip
+		// ate (TD internal/debate/debate.go:919). A judge that halted with genuinely
+		// empty content has no Suppressed entry, so this only redirects the cases
+		// where the strip really was the cause.
 		ir.Reason = ReasonJudgeHalted
+		if slices.Contains(rec.Suppressed, LabelJudge) {
+			ir.Reason = ReasonJudgeSuppressed
+		}
 		tr.RecordRuling(RulingEvent{Outcome: OutcomeUnresolved, Reasoning: "judge halted"})
 		return ir
 	}
@@ -590,9 +620,12 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 		// reading debate.json is never told a seat halted when it did not: the
 		// seat halted on a provider error and returned nothing, or it ran clean
 		// and had nothing to say — an empty reply, or one that was entirely think
-		// markup that driveSeat stripped. (A seat halted by a tripped budget is
-		// NOT in this set: it still returns its forced final answer, so its
-		// statement is non-empty and it made its case.)
+		// markup that driveSeat stripped. A seat halted by a tripped budget is
+		// normally NOT in this set — it still returns its forced final answer, so its
+		// statement is non-empty and it made its case — but it IS in the set when that
+		// forced answer was itself entirely a leading think run, because then the strip
+		// removed a non-empty statement. Suppressed is recorded for it and outranks
+		// halted, the same correction TD internal/debate/protocol.go:231 made.
 		// ReasonSeatHalted is the stronger claim, so it is reserved for the case
 		// where EVERY silent seat really halted. A mixed pair — a halted
 		// proposer plus a clean-but-blank challenger — reports the weaker
@@ -611,15 +644,27 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 		blamed := seatsAsked(rec.Asked, silent)
 		ir.Outcome = OutcomeUnresolved
 		ir.Reason = ReasonSeatSilent
+		// Suppressed outranks halted, because the two are independent facts and the
+		// strip is the one that caused the SILENCE. A budget-tripped seat whose forced
+		// final answer was entirely think markup halts AND was suppressed, and
+		// reporting seat_halted there named a provider/budget problem for a statement
+		// the strip had removed — the exact confusion the third token exists to end,
+		// on the one input class it was written for (TD internal/debate/protocol.go:231).
+		// A seat that halted with genuinely empty content has no Suppressed entry, so
+		// this ordering only redirects the cases where the strip really was the cause.
 		switch {
-		case allSeatsIn(rec.Halted, blamed):
-			ir.Reason = ReasonSeatHalted
 		case allSeatsIn(rec.Suppressed, blamed):
 			ir.Reason = ReasonSeatSuppressed
+		case allSeatsIn(rec.Halted, blamed):
+			ir.Reason = ReasonSeatHalted
 		}
 		// The single reason token cannot describe a mixed pair, so the
-		// transcript note labels each seat for itself.
-		notes := seatSilenceNotes(rec.Halted, rec.Suppressed, silent)
+		// transcript note labels each seat for itself. Scoped to the SEATS ASKED,
+		// the same narrowing the token above just used: on the short-circuit the
+		// challenger was never invoked, and rendering "challenger silent" into
+		// report.md, the transcript and the operator warn would state a cause for a
+		// seat that had no turn to go silent on (TD internal/debate/debate.go:614).
+		notes := seatSilenceNotes(rec.Halted, rec.Suppressed, blamed)
 		tr.RecordRuling(RulingEvent{Outcome: OutcomeUnresolved, Reasoning: "no statement: " + strings.Join(notes, ", ")})
 		// The token in debate.json names one cause for the whole item and goes
 		// weak on a mixture; put the per-seat cause next to it and warn, so a seat
@@ -641,11 +686,18 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 	// durable (it writes a verdict onto the finding), while an unresolved item
 	// leaves the pre-debate verdict standing and is disclosed by its own token.
 	//
-	// Accepted cost, in the safe direction: the detector is position-blind, so a
-	// judge whose reasoning QUOTES a think tag is refused too. That costs one
-	// unresolved item on a reply this repo does produce (findings here discuss
-	// think handling), and withholdExhausted stops it recurring forever.
-	if llmclient.HasThinkMarkup(rec.JudgeRaw) {
+	// The DETECTION question, asked the way the verify and executor lanes ask it:
+	// mask the JSON string values first, then ask the enclosure predicate. Masking
+	// means a judge that merely QUOTES a think tag while ruling on think-handling
+	// code — the likeliest input in this repo — keeps its ruling instead of being
+	// refused as markup. HasThinkMarkup is doctor's detection question,
+	// position-blind by design, and reusing it here made the three lanes disagree
+	// about what counts as markup in a reply that quotes the tag (TD
+	// internal/debate/debate.go:640). HasEnclosingThinkBlock is the enclosure
+	// question this site actually asks: is there a BLOCK a discarded draft ruling
+	// could sit in, so that parseRuling's first keyed object is the draft rather
+	// than the answer.
+	if llmclient.HasEnclosingThinkBlock(llmclient.MaskJSONStrings(rec.JudgeRaw)) {
 		ir.Outcome = OutcomeUnresolved
 		ir.Reason = ReasonJudgeThinkMarkup
 		ir.Reasoning = "judge reply carries inline think markup; ruling refused"
@@ -654,7 +706,29 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 		return ir
 	}
 
-	ruling := parseRuling(rec.JudgeRaw)
+	// The one tag shape neither guard above acts on: a </think> no <think> opened.
+	// SplitThink leaves it in place and HasEnclosingThinkBlock does not refuse on
+	// it, both deliberately, so the envelope BEFORE it can still be an abandoned
+	// draft. llmclient owns the shared rule; this lane supplies the envelope
+	// predicate its own parser needs. On an ambiguous pair neither envelope is
+	// trusted — a wrong ruling writes a durable verdict onto the finding, while an
+	// unresolved item leaves the pre-debate verdict standing (TD
+	// internal/debate/debate.go:653).
+	judgeText := rec.JudgeRaw
+	section, text := llmclient.ClassifyUnopenedCloser(rec.JudgeRaw, carriesRuling)
+	switch section {
+	case llmclient.SectionAmbiguous:
+		ir.Outcome = OutcomeUnresolved
+		ir.Reason = ReasonJudgeThinkMarkup
+		ir.Reasoning = "judge reply has a ruling envelope on both sides of a </think> no <think> opened; neither is provably committed"
+		tr.RecordRuling(RulingEvent{Outcome: OutcomeUnresolved, Reasoning: ir.Reasoning})
+		log.FromContext(ctx).Warn("debate: judge reply ambiguous around an unopened think closer, ruling refused", "judge", cast.Judge.Agent)
+		return ir
+	case llmclient.SectionAfterCloser:
+		judgeText = text
+	}
+
+	ruling := parseRuling(judgeText)
 	tr.RecordRuling(RulingEvent{
 		Outcome:         ruling.Outcome,
 		SettledSeverity: ruling.SettledSeverity,
@@ -767,23 +841,41 @@ func allSeatsIn(cause, seats []string) bool {
 	return true
 }
 
-// seatSilenceNotes labels each silent seat with its own cause for the transcript,
-// which the single reason token cannot do on a mixed pair. Three causes: halted
-// (the engine failed), suppressed (it ran clean and the strip ate its whole
-// reply), and silent (it ran clean and genuinely said nothing). halted wins a tie
-// because a halted turn never reaches the suppression branch in runTurn — the
-// ordering states that invariant rather than relying on it.
+// carriesRuling reports whether text parses to a real judge ruling, as opposed to
+// parseRuling's "nothing usable here" diagnostics. It is the envelope test
+// classifyUnopenedCloser needs for the debate lane: only an outcome-keyed object
+// counts, so a closer quoted in prose is not treated as a boundary that splits
+// two envelopes.
+func carriesRuling(s string) bool {
+	return parseRuling(s).Outcome != OutcomeUnresolved
+}
+
+// seatSilenceNotes labels each silent seat with its own causes for the transcript,
+// which the single reason token cannot do on a mixed pair. Three causes: suppressed
+// (something was said and the strip removed all of it), halted (the engine failed),
+// and silent (it ran clean and genuinely said nothing).
+//
+// A seat can be BOTH suppressed and halted — a budget-tripped seat whose forced final
+// answer was entirely think markup — and both facts carry their own remedy (raise
+// tool_budget_bytes vs turn off inline reasoning). So the note names BOTH, in the
+// precedence order the token uses (suppressed first), rather than a one-cause switch
+// that dropped the halt. This function is the only place a mixture's detail survives;
+// under non-disjointness a single-arm switch made it lossy
+// (TD internal/report/contested.go:115).
 func seatSilenceNotes(halted, suppressed, seats []string) []string {
 	notes := make([]string, 0, len(seats))
 	for _, s := range seats {
-		cause := "silent"
-		switch {
-		case slices.Contains(halted, s):
-			cause = "halted"
-		case slices.Contains(suppressed, s):
-			cause = "suppressed"
+		causes := make([]string, 0, 2)
+		if slices.Contains(suppressed, s) {
+			causes = append(causes, "suppressed")
 		}
-		notes = append(notes, s+" "+cause)
+		if slices.Contains(halted, s) {
+			causes = append(causes, "halted")
+		}
+		if len(causes) == 0 {
+			causes = append(causes, "silent")
+		}
+		notes = append(notes, s+" "+strings.Join(causes, ", "))
 	}
 	return notes
 }
@@ -850,9 +942,13 @@ func countsTowardWithholding(reason string) bool {
 // when that seat halted, seat_suppressed when the strip emptied its reply, and
 // seat_silent when it ran clean and genuinely said nothing (or on a mixture).
 //
-// Keyed on Halted alone, with no suppression arm: a judge that replies with only
-// a think block leaves JudgeRaw blank, and parseRuling already reports that as
-// the distinct empty_ruling token rather than as a halt.
+// It reports the HALT alone, and the caller applies the suppression precedence on
+// top: a judge that is both halted and suppressed (a budget-tripped seat whose
+// forced final answer was all think markup) must report judge_suppressed, the same
+// way an arguing seat reports seat_suppressed, so the two seat kinds cannot disagree
+// about one input class (TD internal/debate/debate.go:919). A judge that ran clean
+// with only a think block leaves JudgeRaw blank, which parseRuling reports as the
+// distinct empty_ruling token rather than as a halt.
 func judgeHalted(halted []string) bool {
 	return slices.Contains(halted, LabelJudge)
 }

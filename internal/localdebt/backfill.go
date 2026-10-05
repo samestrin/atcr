@@ -30,14 +30,52 @@ type BackfillResult struct {
 	// Unresolved counts records no review.md yielded an excerpt for. It does NOT
 	// mean the file is gone. ReExtractJustification returns (ok=false, err=nil) both
 	// for "this file is not the one" and for the producer's own POLICY exclusions — a
-	// review.md over the size cap, or one that is not a regular file — and
-	// replayCandidates cannot tell the two apart, so a review.md present and readable
-	// at the record's own source_report path lands here too. The label an operator
-	// reads must therefore describe the OBSERVATION (nothing yielded an excerpt), not
-	// infer a cause ("no surviving review.md"), which sent them to restore a file that
-	// was already there.
+	// review.md over the size cap, or one that is not a regular file — so a review.md
+	// present and readable at the record's own source_report path lands here too. The
+	// label an operator reads must therefore describe the OBSERVATION (nothing yielded
+	// an excerpt), not infer a cause ("no surviving review.md"), which sent them to
+	// restore a file that was already there.
+	//
+	// PolicyUnrepairable splits the policy half out of this count; the two are
+	// subtracted, never added, so this field keeps its historical meaning as the full
+	// observation count and no existing consumer loses a row.
 	Unresolved int
-	Ambiguous  int // several surviving candidates disagreed, so none was written
+	// PolicyUnrepairable carves the "the file is there and still cannot help" half out
+	// of Unresolved. ReExtractJustification returns ok=false both because no candidate
+	// survives at the record's own source_report path and because a candidate WAS there
+	// yet yielded no excerpt — the producer's policy exclusions (over the size cap, a
+	// symlink, a wholly-salvaged reply, a desynced bin list, a draft anchor line), a
+	// namesake whose anchor does not match, or a section that is pure quoted example.
+	// Each refusal is right (the replay set may not exceed the stamp set), but the two
+	// classes call for opposite operator actions: an absent review.md may be restorable,
+	// while restoring a file cannot fix any of the second class — not even with the tree
+	// fully intact. Summed into one integer the operator cannot tell which remedy
+	// applies, and cli/debt_resolve.go's SCOPE paragraph inherited the same conflation.
+	//
+	// It counts a record for which the producer's policy PROVABLY declines a matching
+	// candidate: a non-regular file (symlink, FIFO, device) at the record's relative
+	// path, or one ReviewPolicyDeclinesFile refuses outright — over the size cap, a
+	// wholly salvaged reply, a desynced bin list. Those three are FILE-level, so the
+	// answer holds wherever the candidate sits.
+	//
+	// It deliberately does NOT count "a candidate was present and nothing matched".
+	// That reading was the defect: pathHasSuffix is review-dir-UNSCOPED and
+	// SourceReport.Path is review-dir-RELATIVE, so any review in the tree supplies a
+	// namesake and a genuinely pruned tree reported as unrepairable — the operator was
+	// told not to restore the one file that would have fixed it
+	// (TD internal/localdebt/backfill.go:389).
+	//
+	// The record's own review dir is not derivable from the record (RunID is
+	// `<ReconciledAt>-<base(reviewDir)>`, and that base is `multi-agent` for nearly
+	// every review), so the scoped claim is unavailable and this narrower one is what
+	// the evidence supports. The cost is an UNDER-count: a record-level unrepairable —
+	// chiefly an anchor line the producer refused as a draft — lands in the absent-tree
+	// half instead. That direction is the safe one: it sends the operator to look for a
+	// file, which wastes a minute, rather than telling them not to, which loses the
+	// repair. `Unresolved - PolicyUnrepairable` is therefore "absent tree, or a
+	// record-level refusal this pass cannot attribute".
+	PolicyUnrepairable int
+	Ambiguous          int // several surviving candidates disagreed, so none was written
 
 	// SkippedRationaleBearing counts effective records the fold filter suppressed
 	// because the record may hold an operator-typed rationale this pass must not
@@ -217,16 +255,21 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 				continue
 			}
 			res.Scanned++
-			texts, err := replayCandidates(reviewRoot, r)
+			cands, err := replayCandidates(reviewRoot, r)
 			if err != nil {
 				return err
 			}
+			texts := cands.texts
 			switch {
 			case len(texts) == 0:
 				// See BackfillResult.Unresolved: this covers a pruned review tree AND
-				// a review.md the replay declined by policy. Both are reported the
-				// same way because replayCandidates cannot distinguish them.
+				// a review.md the replay declined by policy. The COUNT is split so the
+				// operator can tell which remedy applies; only the policy half is
+				// unrepairable with the tree intact.
 				res.Unresolved++
+				if cands.policyRefused {
+					res.PolicyUnrepairable++
+				}
 			case len(texts) > 1:
 				res.Ambiguous++
 			case texts[0] == r.Justification:
@@ -295,14 +338,26 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 	return res, nil
 }
 
+// replayResult reports what one record's replay search found. `texts` is the
+// DISTINCT set of excerpts the surviving candidates yielded. `policyRefused` is set
+// when the record's OWN source_report path holds a present, regular review.md that
+// the producer's policy declined — the one signal that separates an unrepairable
+// refusal from a pruned tree, and the one an operator needs to pick a remedy
+// (TD cli/debt_resolve.go:81).
+type replayResult struct {
+	texts         []string
+	policyRefused bool
+}
+
 // replayCandidates returns the DISTINCT excerpts every surviving review.md under
 // reviewRoot yields for rec's anchor. Distinct rather than one-per-file: two copies
 // of the same review (a re-run, a backup) agree, and treating that as ambiguity would
 // decline a repair that has only one answer.
-func replayCandidates(reviewRoot string, rec Record) ([]string, error) {
+func replayCandidates(reviewRoot string, rec Record) (replayResult, error) {
 	rel := filepath.FromSlash(rec.SourceReport.Path)
 	var out []string
 	seen := map[string]bool{}
+	policyRefused := false
 	err := filepath.WalkDir(reviewRoot, func(p string, d fs.DirEntry, walkErr error) error {
 		// An unreadable file or subtree is SKIPPED, not fatal: reviewRoot is an open
 		// tree — the same resilience stance collectReviewNarratives takes over
@@ -316,13 +371,32 @@ func replayCandidates(reviewRoot string, rec Record) ([]string, error) {
 		// ReExtractJustification's os.ReadFile would FOLLOW a link. A file the
 		// producer would never have stamped from must not become an authoritative
 		// candidate for the replay — the replay set may not exceed the stamp set.
-		if !d.Type().IsRegular() || !pathHasSuffix(p, rel) {
+		if !pathHasSuffix(p, rel) {
+			return nil
+		}
+		// The stamp set is keyed on a REGULAR file: the producer refuses a symlink,
+		// FIFO or device named review.md, so all three are policy refusals rather
+		// than an absent tree and must not be filed under the "restore the file"
+		// remedy either. Recorded before ReExtractJustification so the presence is
+		// the walk's observation, independent of whatever the replay then decides.
+		if !d.Type().IsRegular() {
+			policyRefused = true
 			return nil
 		}
 		text, _, ok, rerr := reconcile.ReExtractJustification(p, rec.File, rec.Line, rec.SourceReport.Line)
 		if rerr != nil || !ok {
 			// rerr here is "this candidate is unreadable", not "the backfill
 			// failed" — another candidate may still resolve the record.
+			//
+			// Ask the policy why, rather than inferring it from presence. A refusal
+			// the producer's FILE-LEVEL policy explains is unrepairable wherever the
+			// file sits; a candidate that merely fails to carry this record's anchor
+			// is a namesake and says nothing about the record's own tree. Only the
+			// former may set policyRefused — see ReviewPolicyDeclinesFile. A probe
+			// error is not evidence either way, so it leaves the flag alone.
+			if declined, perr := reconcile.ReviewPolicyDeclinesFile(p); perr == nil && declined {
+				policyRefused = true
+			}
 			return nil
 		}
 		if !seen[text] {
@@ -332,9 +406,22 @@ func replayCandidates(reviewRoot string, rec Record) ([]string, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("searching %s for review narratives: %w", reviewRoot, err)
+		return replayResult{}, fmt.Errorf("searching %s for review narratives: %w", reviewRoot, err)
 	}
-	return out, nil
+	// `policyRefused` is "the producer's policy would refuse this candidate at all",
+	// never "a file was present and nothing matched". The weaker reading was the
+	// defect: pathHasSuffix is review-dir-UNSCOPED and SourceReport.Path is
+	// review-dir-RELATIVE, so ANY review in the tree supplies a namesake and a pruned
+	// tree read as unrepairable — telling the operator not to restore the one file
+	// that would have fixed it (TD internal/localdebt/backfill.go:389).
+	//
+	// What remains is provable without knowing which review dir the candidate belongs
+	// to: a non-regular file at a matching path, and the file-level arms
+	// ReviewPolicyDeclinesFile names. The record's own dir is NOT derivable from the
+	// record — RunID is `<ReconciledAt>-<base(reviewDir)>` and that base is
+	// `multi-agent` for nearly every review — so a scoped answer is not on offer here
+	// and a narrower, honest claim is the right trade (TD cli/debt_resolve.go:81).
+	return replayResult{texts: out, policyRefused: policyRefused}, nil
 }
 
 // replacement pairs the stale justification a record carries with the excerpt

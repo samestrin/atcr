@@ -3135,9 +3135,15 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 	reasoningReserve := 0
 	if sz.effectiveBudget > 0 {
 		reservedOut = agentMaxTokens
-		if toolLoopAgent(ac, rng) {
-			reasoningReserve = agentMaxTokens * payload.ReasoningReplayReserveCaps
-		}
+	}
+	// Recorded UNCONDITIONALLY for a tool-loop agent, the way ResolvedMaxTokens was
+	// added, and NOT under the budget gate above. Gating it meant the ZERO-budget
+	// record — the one record where the reserve is what caused the degradation —
+	// omitted the very number that explains it, leaving an operator to recompute the
+	// window-vs-cap arithmetic and conclude the window should have funded the run
+	// (TD internal/fanout/review.go:3136).
+	if toolLoopAgent(ac, rng) {
+		reasoningReserve = agentMaxTokens * payload.ReasoningReplayReserveCaps
 	}
 	return Agent{
 		Name:     name,
@@ -3490,9 +3496,16 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	fbReserved, fbReasoningReserve := 0, 0
 	if fbBudget > 0 {
 		fbReserved = fbMaxTokens
-		if fbToolLoop {
-			fbReasoningReserve = fbMaxTokens * payload.ReasoningReplayReserveCaps
-		}
+	}
+	// Recorded UNCONDITIONALLY for a tool-loop fallback, mirroring the primary
+	// render (review.go:3145) and for the same reason: fbBudget is sized with
+	// SizingOutputTokens(fbToolLoop, fbMaxTokens), so the reserve is exactly what
+	// closed a zero budget — the one record where it is the CAUSE of the
+	// degradation. Gating it left reasoning_reserve_tokens absent (omitempty) on that
+	// record while the identical condition on a primary disclosed it, so a consumer
+	// read "this agent held back no reserve" (TD internal/fanout/review.go:3497).
+	if fbToolLoop {
+		fbReasoningReserve = fbMaxTokens * payload.ReasoningReplayReserveCaps
 	}
 	// Epic 35.16.5.1 AC4: resolving the fallback's OWN window above is only half the
 	// guarantee. The prompt it inherits was sized to the PRIMARY's window, so a
@@ -3681,9 +3694,13 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 				fbReserved, fbReasoningReserve = 0, 0
 				if fbSizingBudget > 0 {
 					fbReserved = fbMaxTokens
-					if fbToolLoop {
-						fbReasoningReserve = fbMaxTokens * payload.ReasoningReplayReserveCaps
-					}
+				}
+				// Ungated for the same reason as the inherited-payload site above and the
+				// primary render: the re-fit budget already has the reserve subtracted out,
+				// so a zero fbSizingBudget is the record the reserve explains
+				// (TD internal/fanout/review.go:3688).
+				if fbToolLoop {
+					fbReasoningReserve = fbMaxTokens * payload.ReasoningReplayReserveCaps
 				}
 				// It also marks the agent as re-packed, which is what stops baseline
 				// coverage from inferring "every slot succeeded → the whole payload was

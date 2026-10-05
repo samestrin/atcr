@@ -55,12 +55,15 @@ type Record struct {
 	// uniform-cause test below can never hold.
 	Asked []string
 
-	// Suppressed names any seat that ran CLEAN and returned a blank statement
-	// only because driveSeat's strip removed the whole reply. Disjoint from
-	// Halted by construction (runTurn records it only on a StatusOK turn) and
-	// distinct from a genuinely empty reply: the seat said something, and what it
-	// said was reasoning. Carried on the Record because the distinction is only
-	// available at the strip, while the reason token is chosen in debateOne.
+	// Suppressed names any seat whose blank statement is the STRIP's doing: the
+	// reply said something and driveSeat removed all of it. NOT disjoint from Halted
+	// — they are independent facts (one about the engine, one about the strip), and a
+	// budget-tripped seat whose forced final answer was entirely a leading think run
+	// is both, so the token precedence in debateOne has to choose between them rather
+	// than relying on disjointness (TD internal/debate/protocol.go:231). Distinct from
+	// a genuinely empty reply: there the seat said nothing at all. Carried on the
+	// Record because the distinction is only available at the strip, while the reason
+	// token is chosen in debateOne.
 	Suppressed []string
 }
 
@@ -129,22 +132,36 @@ func newSentinel() string {
 	return hex.EncodeToString(b[:])
 }
 
+// recordTurnCause classifies one seat's turn into rec.Halted and rec.Suppressed.
+//
+// The two are INDEPENDENT facts, not branches of one condition. Halted is a
+// statement about the ENGINE (the turn did not run clean); Suppressed is a
+// statement about the STRIP (the reply said something and all of it was
+// reasoning). A budget-tripped seat whose forced final answer is entirely a
+// leading think run is BOTH, and recording Suppressed only on the StatusOK branch
+// made that seat report seat_halted — the disclosure seat_suppressed exists to
+// make visible, with the opposite remedy (TD internal/debate/protocol.go:231).
+//
+// Non-blank reasoning is the proof of suppression: SplitThink returns it only when
+// it actually removed a leading run, so a genuinely empty reply cannot qualify.
+// The token precedence in debateOne then decides which claim to publish, so
+// recording the fact here does not by itself change any token.
+func (rec *Record) recordTurnCause(label, content, reasoning, status string) {
+	if status != fanout.StatusOK {
+		rec.Halted = append(rec.Halted, label)
+	}
+	if strings.TrimSpace(content) == "" && strings.TrimSpace(reasoning) != "" {
+		rec.Suppressed = append(rec.Suppressed, label)
+	}
+}
+
 // runTurn drives one seat through the tool loop, records the turn to the
 // transcript, and returns the seat's statement. A halted seat appends its label
 // to rec.Halted and returns "".
 func (rec *Record) runTurn(ctx context.Context, seat Caster, turn int, prompt string, cc fanout.ChatCompleter, disp Dispatcher, tr *Transcript) string {
 	content, reasoning, status := driveSeat(ctx, seat, prompt, cc, disp)
 	rec.Asked = append(rec.Asked, seat.Label)
-	if status != fanout.StatusOK {
-		rec.Halted = append(rec.Halted, seat.Label)
-	} else if strings.TrimSpace(content) == "" && strings.TrimSpace(string(reasoning)) != "" {
-		// A clean turn whose statement is blank only because the strip consumed
-		// the reply. Non-blank reasoning is the proof: SplitThink returns it only
-		// when it actually removed a leading run, so a genuinely empty reply
-		// cannot reach here. Recorded on the OK branch alone, which is what keeps
-		// Suppressed and Halted disjoint (TD internal/debate/debate.go:524).
-		rec.Suppressed = append(rec.Suppressed, seat.Label)
-	}
+	rec.recordTurnCause(seat.Label, content, string(reasoning), status)
 	tr.RecordTurn(TurnEvent{
 		Role:      seat.Label,
 		Agent:     seat.Agent,
@@ -188,6 +205,15 @@ func driveSeat(ctx context.Context, seat Caster, prompt string, cc fanout.ChatCo
 	}
 	engine := fanout.NewEngine(cc, opts...)
 	results := engine.Run(ctx, []fanout.Slot{{Primary: agent}})
+	// CONTRACT-ONLY arm, documented rather than faked. Engine.Run makes one result
+	// per dispatched slot and cannot be constructed with a substitute inside this
+	// function, so no completer — fake or real — can reach a zero-length return;
+	// pinning it with a mock would only assert the mock. It stays as the same
+	// fail-closed fallback the sibling defensive guards are, and its contract is
+	// pinned where it can actually be exercised, on Engine.Run itself
+	// (TestDriveSeat_EngineRunAlwaysAnswersAOneSlotDispatch). If that contract ever
+	// breaks, this arm becomes live and the test goes red (TD
+	// internal/debate/protocol.go:186).
 	if len(results) == 0 {
 		return "", "", fanout.StatusFailed
 	}

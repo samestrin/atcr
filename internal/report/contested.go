@@ -24,20 +24,83 @@ type Contested struct {
 	ChallengeSurvived bool
 	SingleModel       bool
 	ClusterDecision   string // merge | separate (gray-zone only)
+	// UnresolvedAttempts is how many runs reached this item and left it unresolved,
+	// carried forward across runs. Surfaced so an operator sees the countdown
+	// ("attempt 2 of 3") BEFORE the run that withholds the item, rather than only
+	// learning of the ceiling after its ruling has already vanished.
+	UnresolvedAttempts int
+}
+
+// Withheld is one disputed item that was NOT debated this run because a prior run
+// already left it unresolved at the ceiling. Unlike a Contested ruling it has no
+// outcome, so without its own listing the item would go from fully-described (a
+// ruling with its reason and per-seat rationale) to a single incremented integer
+// (TD cli/report.go:284).
+type Withheld struct {
+	File               string
+	Line               int
+	Severity           string
+	Problem            string
+	Reason             string
+	UnresolvedAttempts int
+}
+
+// Overflow is one disputed item that was NOT debated this run because the
+// max_items cap was reached. It has no ruling of its own, and — like Withheld — no
+// listing would reduce it to a bare increment on the Overflow count.
+//
+// Unlike a withheld item it CAN be recovered by raising the cap, but it may already
+// have accrued attempts toward the withholding ceiling on earlier runs: those are
+// carried onto debate.json's Overflow records so a later cap overflow does not reset
+// the history, and they must render here or an operator raising the cap cannot see
+// that one of these items is close to being withheld (TD cli/report.go:321).
+type Overflow struct {
+	File               string
+	Line               int
+	Severity           string
+	Problem            string
+	UnresolvedAttempts int
 }
 
 // ContestedReport is the full contested-findings view: the per-item rulings plus
-// the count of disputed items that were not debated at all (disclosed, never
-// silent). That count covers both withholding causes — the debate cap and an item
-// that already exhausted its unresolved attempts — because it is read from the
-// length of debate.json's overflow list, which records both.
+// the counts of disputed items that were not debated at all (disclosed, never
+// silent). The two causes are counted SEPARATELY because they have opposite
+// remedies and opposite permanence — see the fields.
 type ContestedReport struct {
-	Items    []Contested
+	Items []Contested
+	// Overflow is the cap-overflow count: items that matched a trigger and exceeded
+	// debate.max_items. Raising the cap debates them, so its remedy is a flag change.
 	Overflow int
+	// Withheld is the attempts-exhausted count: items a prior run left unresolved
+	// maxUnresolvedAttempts times. Its remedy is the opposite — withholdExhausted
+	// runs BEFORE SelectItems, so NO cap value recovers them. Kept apart from Overflow
+	// because a single conflated integer told an operator that raising max_items would
+	// debate all seven of them, which is false for every withheld one (TD
+	// internal/report/contested.go:98).
+	Withheld int
+	// WithheldItems lists the withheld items themselves. The count discloses how
+	// many; the list preserves WHICH, so an item that disappears from the debated
+	// set is still identified rather than reduced to a number (TD cli/report.go:284).
+	WithheldItems []Withheld
+	// OverflowItems lists the cap-overflowed items themselves, for the same reason
+	// WithheldItems exists: the count discloses how many, the list preserves WHICH.
+	// Each carries its recorded attempt count so an item already partway to the
+	// withholding ceiling stays visible on the run whose cap dropped it — the count
+	// is written to debate.json precisely so it survives a cap overflow, and without
+	// this listing it renders nowhere (TD cli/report.go:321).
+	OverflowItems []Overflow
+	// UnresolvedAttemptsCeiling is the attempt ceiling an item must reach to be
+	// withheld, so a countdown can render as "attempt N of ceiling" rather than a
+	// bare count. Zero means unknown (a caller that did not supply it), in which
+	// case the countdown falls back to a bare count.
+	UnresolvedAttemptsCeiling int
 }
 
 // HasContent reports whether the contested view has anything to render.
-func (c ContestedReport) HasContent() bool { return len(c.Items) > 0 || c.Overflow > 0 }
+func (c ContestedReport) HasContent() bool {
+	return len(c.Items) > 0 || c.Overflow > 0 || c.Withheld > 0 ||
+		len(c.WithheldItems) > 0 || len(c.OverflowItems) > 0
+}
 
 // RenderMarkdownWithContested writes the standard markdown report with both the
 // disagreement radar and the contested-findings section (Epic 6.0). When the
@@ -94,10 +157,78 @@ func writeContestedSection(b *bytes.Buffer, cr ContestedReport) {
 		if c.Reasoning != "" {
 			fmt.Fprintf(b, "- Rationale: %s\n", escTrunc(c.Reasoning))
 		}
+		if c.UnresolvedAttempts > 0 {
+			fmt.Fprintf(b, "- %s\n", attemptCountdown(c.UnresolvedAttempts, cr.UnresolvedAttemptsCeiling))
+		}
 	}
+	// Rendered SEPARATELY, each with its own remedy, because the two have opposite
+	// permanence: a cap overflow is recovered by raising debate.max_items, while a
+	// withheld item is not recovered at ANY cap value.
 	if cr.Overflow > 0 {
-		fmt.Fprintf(b, "\n_%d disputed item(s) were not debated — the debate cap, or unresolved attempts already exhausted (each recorded with its reason in debate.json)._\n", cr.Overflow)
+		fmt.Fprintf(b, "\n_%d disputed item(s) were not debated: the debate cap was reached. Raise debate.max_items to debate them (each recorded with its reason in debate.json)._\n", cr.Overflow)
 	}
+	if cr.Withheld > 0 {
+		fmt.Fprintf(b, "\n_%d disputed item(s) were withheld: they reached the unresolved-attempt ceiling in prior runs. Raising the cap will NOT recover them — withholdExhausted runs before selection (each recorded with its reason in debate.json)._\n", cr.Withheld)
+	}
+	// The withheld items are LISTED below their count. A count alone is how an item
+	// goes from fully-described to invisible in one step: it produces no Contested
+	// ruling on the run that withholds it, so its diagnosis (the unresolved reason
+	// and per-seat rationale it carried for three runs) vanishes and is replaced by
+	// +1 on an integer. The listing keeps the item identified across that step
+	// (TD cli/report.go:284).
+	if len(cr.WithheldItems) > 0 {
+		b.WriteString("\n### Withheld items\n")
+		for i, w := range cr.WithheldItems {
+			fmt.Fprintf(b, "\n%d. %s%s\n", i+1, codeSpan(w.File, w.Line), withheldSeverity(w.Severity))
+			if w.Problem != "" {
+				fmt.Fprintf(b, "- Problem: %s\n", escTrunc(w.Problem))
+			}
+			if w.Reason != "" {
+				fmt.Fprintf(b, "- Withheld: %s.\n", escTrunc(w.Reason))
+			}
+			if w.UnresolvedAttempts > 0 {
+				fmt.Fprintf(b, "- %s\n", attemptCountdown(w.UnresolvedAttempts, cr.UnresolvedAttemptsCeiling))
+			}
+		}
+	}
+	// The cap-overflowed items are LISTED too, on the same terms. Raising the cap will
+	// recover them, so the remedy differs — but an item that was already partway to
+	// the withholding ceiling must not read as freshly discovered just because the cap
+	// dropped it this run. The carried count is the only thing that shows it
+	// (TD cli/report.go:321).
+	if len(cr.OverflowItems) > 0 {
+		b.WriteString("\n### Items not debated (cap reached)\n")
+		for i, o := range cr.OverflowItems {
+			fmt.Fprintf(b, "\n%d. %s%s\n", i+1, codeSpan(o.File, o.Line), withheldSeverity(o.Severity))
+			if o.Problem != "" {
+				fmt.Fprintf(b, "- Problem: %s\n", escTrunc(o.Problem))
+			}
+			if o.UnresolvedAttempts > 0 {
+				fmt.Fprintf(b, "- %s\n", attemptCountdown(o.UnresolvedAttempts, cr.UnresolvedAttemptsCeiling))
+			}
+		}
+	}
+}
+
+// attemptCountdown renders an item's carried-forward unresolved attempt count, as
+// "attempt N of M" when the ceiling is known and a bare "attempt N" otherwise — so
+// an operator sees how close an item is to being withheld before the run that
+// finally withholds it. It is deliberately not capped at the ceiling: a count
+// above it (a legacy record) still renders honestly.
+func attemptCountdown(attempts, ceiling int) string {
+	if ceiling > 0 {
+		return fmt.Sprintf("Unresolved attempts: attempt %d of %d.", attempts, ceiling)
+	}
+	return fmt.Sprintf("Unresolved attempts: attempt %d.", attempts)
+}
+
+// withheldSeverity renders the withheld item's severity in the same " (SEV)" shape
+// a ruling uses, so the two lists read alike.
+func withheldSeverity(sev string) string {
+	if sev == "" {
+		return ""
+	}
+	return fmt.Sprintf(" (%s)", esc(sev))
 }
 
 // severityTransition renders the severity change a split produced, e.g.

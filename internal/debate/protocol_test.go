@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
@@ -630,4 +631,53 @@ func TestRunDebate_ThinkOnlyReplyFromAnOKSeatIsAcceptedAsBlank(t *testing.T) {
 		assert.Equal(t, OutcomeUnresolved, r.Outcome)
 		assert.Equal(t, "empty_response", r.Reasoning)
 	})
+}
+
+// The `len(results) == 0` arm in driveSeat is a CONTRACT-ONLY guard: Engine.Run
+// makes one result per dispatched slot, so no completer can reach it and no fake can
+// either — the engine is constructed inside driveSeat. Rather than invent a fake
+// that cannot exist, pin the CONTRACT the guard defends: for the same one-slot input
+// the arm is written for, Engine.Run never returns an empty slice, so the guard is a
+// belt-and-braces fallback rather than a live behavioural gap (TD
+// internal/debate/protocol.go:186). If a future change to Engine.Run breaks that,
+// this fails and the arm stops being merely defensive.
+func TestDriveSeat_EngineRunAlwaysAnswersAOneSlotDispatch(t *testing.T) {
+	t.Parallel()
+	cc := &fakeChatCompleter{turns: []chatTurn{{content: "a statement"}}}
+	agent := fanout.Agent{Name: "seat", Invocation: llmclient.Invocation{Model: "m"}}
+	got := fanout.NewEngine(cc).Run(context.Background(), []fanout.Slot{{Primary: agent}})
+	assert.Len(t, got, 1,
+		"one dispatched slot must yield exactly one result, which is the contract the zero-result guard in driveSeat stands behind")
+}
+
+// A seat that trips tool_budget_bytes and whose FORCED FINAL ANSWER is entirely a
+// leading think run comes back with an empty statement and StatusFailed. The
+// Suppressed marker was recorded only on the StatusOK branch, so that seat entered
+// Halted, never Suppressed, and reported seat_halted — while the real cause was the
+// strip, the exact disclosure seat_suppressed exists to make visible. The two
+// states have opposite remedies (raise the budget / fix the provider vs turn off
+// inline reasoning on that endpoint) and were indistinguishable in debate.json (TD
+// internal/debate/protocol.go:231).
+func TestRunTurn_RecordsSuppressedEvenWhenTheSeatAlsoHalted(t *testing.T) {
+	// A budget-tripped seat: non-OK status, blank statement, and a leading run the
+	// strip removed. The status is a SEPARATE fact from the cause of the blank.
+	halted := &Record{}
+	halted.recordTurnCause(LabelProposer, " \n", "only reasoning, no answer", fanout.StatusFailed)
+	assert.Contains(t, halted.Suppressed, LabelProposer,
+		"a strip-emptied reply is suppression regardless of the seat's status: the status is a separate fact")
+	assert.Contains(t, halted.Halted, LabelProposer,
+		"and the halt is still recorded, for the token precedence to weigh")
+
+	// A genuinely empty reply with NO removed reasoning is not suppression — nothing
+	// was stripped, so there is no disclosure to make.
+	empty := &Record{}
+	empty.recordTurnCause(LabelProposer, "", "", fanout.StatusFailed)
+	assert.NotContains(t, empty.Suppressed, LabelProposer,
+		"an empty reply with no removed reasoning said nothing; it was not suppressed")
+
+	// A clean seat that genuinely said nothing is neither.
+	silent := &Record{}
+	silent.recordTurnCause(LabelProposer, "   ", "", fanout.StatusOK)
+	assert.NotContains(t, silent.Suppressed, LabelProposer)
+	assert.NotContains(t, silent.Halted, LabelProposer)
 }

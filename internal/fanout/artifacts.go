@@ -75,6 +75,15 @@ type PoolSummary struct {
 	// distinguishable from an older summary.json that predates the field. Derived
 	// from the per-agent statuses (tallySalvaged) rather than from the results, so
 	// writePool and the resume path's RebuildPool cannot drift.
+	//
+	// ON THE RESUME PATH ONLY, a 0 can undercount. RebuildPool derives the tally
+	// from per-agent status.json files, and an agent completed by a binary that
+	// predates the `salvaged` key has no value to unmarshal — it reads false, and no
+	// marker on this record says whether that false was MEASURED or merely ABSENT.
+	// So a resumed run's 0 is trustworthy only for the agents this build actually
+	// re-ran; a pre-upgrade agent that salvaged is invisible to it. WritePool (the
+	// non-resumed writer) has no such gap, because it derives from live Results (TD
+	// internal/fanout/resume.go:789).
 	SalvagedCount int `json:"salvaged_count"`
 	// FailureMarker is true only when writeFailureSummary produced this record
 	// after a WritePool I/O fault, never when WritePool wrote a real run. It
@@ -162,7 +171,7 @@ func writePool(ctx context.Context, poolDir string, results []Result, changed pa
 	truncatedZeroFindings, truncatedZeroAgents := tallyTruncatedZeroFindings(statuses)
 	warnTruncatedZeroFindings(ctx, truncatedZeroFindings, truncatedZeroAgents, false)
 	salvagedCount, salvagedAgents := tallySalvaged(statuses)
-	warnSalvaged(ctx, salvagedCount, salvagedAgents)
+	warnSalvaged(ctx, salvagedCount, salvagedAgents, false)
 	ps := PoolSummary{
 		Agents:                  statuses,
 		Total:                   sum.Total,
@@ -244,12 +253,39 @@ func tallySalvaged(statuses []AgentStatus) (int, []string) {
 
 // salvageCost names what one agent lost to the salvage: everything, or the specific
 // bins that were refused.
+//
+// The total-loss arm keys on the BIN INDEX, never on FindingsCount. FindingsCount is
+// the POST-grounding, post-min_severity published count (statusFor reads
+// fr.Findings), so a chunked persona whose clean sibling raised findings that the
+// grounding gate or the floor then dropped reports 0 — and a zero-keyed arm called
+// that a total salvage, discarded the bin detail, and sent the operator to
+// SalvagedRemedy for a loss the gate caused, where declaring thinking: off changes
+// nothing (TD internal/fanout/artifacts.go:248). A bin index is the only field that
+// says WHICH bins were refused, so it is the only one that can answer what the
+// salvage cost.
 func salvageCost(st AgentStatus) string {
-	if st.FindingsCount == 0 {
-		return " (contributed nothing)"
-	}
+	// No bin index at all: the unchunked persona. It is a total loss only when it
+	// landed NOTHING — FindingsCount is POST-grounding (statusFor reads fr.Findings),
+	// so a zero-keyed arm here called a salvage that cleared the gate a total loss,
+	// discarded the detail and sent the operator to SalvagedRemedy for a loss the gate
+	// caused where declaring thinking: off changes nothing (TD
+	// internal/fanout/artifacts.go:248).
 	if len(st.SalvagedChunks) == 0 {
+		if st.FindingsCount == 0 {
+			return " (contributed nothing)"
+		}
 		return ""
+	}
+	// With a bin index present, the total-loss decision routes through
+	// WholePersonaSalvaged rather than being re-derived here, so the console warning
+	// cannot drift from the predicate the repo-state runner uses on the SAME record.
+	// It keyed on a re-implemented `ChunkCount > 0 &&` guard, which disagreed with
+	// WholePersonaSalvaged on an index with no denominator: the warning said
+	// "siblings kept" while the runner dropped that slot as a whole-persona loss.
+	// One predicate for that decision, two renderings (TD
+	// internal/fanout/artifacts.go:276).
+	if WholePersonaSalvaged(st) {
+		return " (contributed nothing)"
 	}
 	idx := make([]string, 0, len(st.SalvagedChunks))
 	for _, i := range st.SalvagedChunks {
@@ -276,19 +312,32 @@ func salvageCost(st AgentStatus) string {
 // with no context — it would have to be plumbed a logger and would then log once per
 // Result lineage rather than once per agent. Same facts, named agent included, at the
 // site that already owns this exact pattern.
-func warnSalvaged(ctx context.Context, count int, agents []string) {
+func warnSalvaged(ctx context.Context, count int, agents []string, cumulative bool) {
 	if count == 0 {
 		return
 	}
+	// Same wording split warnTruncatedZeroFindings uses, for the same reason: a
+	// salvaged agent stays StatusOK, so agentCompleted marks it done, the resume
+	// never re-runs it and its status.json is never rewritten — every later resume
+	// re-prints the same salvage, and without the marker an operator reads each
+	// re-print as a fresh failure (TD internal/fanout/resume.go:780).
+	scope := "to the pool"
+	restatement := ""
+	if cumulative {
+		scope = "to the pool across this review, including agents this resume did not re-run"
+		restatement = " This restates the review's cumulative tally rather than reporting a new failure."
+	}
 	log.FromContext(ctx).Warn(
-		fmt.Sprintf("%d reviewer(s) returned a salvaged reply — no answer, reasoning promoted into the content — so it was refused rather than parsed. Each agent below says what that cost it.", count),
+		fmt.Sprintf("%d reviewer(s) returned a salvaged reply — no answer, reasoning promoted into the content — so it was refused rather than parsed %s.%s Each agent below says what that cost it.", count, scope, restatement),
 		"agents", strings.Join(agents, ", "),
-		"remedy", salvagedRemedy)
+		"remedy", SalvagedRemedy)
 }
 
-// salvagedRemedy is the operator action for a salvaged reply. One constant, so the
-// fresh and resumed paths cannot state different fixes for the same condition.
-const salvagedRemedy = "The model answered on its reasoning channel only. Declare thinking: off for the agent, or repoint it to a model that separates its answer from its reasoning; a salvaged reply is refused rather than parsed, because every finding in it is a draft the model did not commit to."
+// SalvagedRemedy is the operator action for a salvaged reply. One constant, so the
+// fresh and resumed paths cannot state different fixes for the same condition. It is
+// EXPORTED so the benchmark-coverage diagnostic's `unmeasured_ok` remedy can reuse it
+// rather than restating the same advice in a second place that could drift.
+const SalvagedRemedy = "The model answered on its reasoning channel only. Declare thinking: off for the agent, or repoint it to a model that separates its answer from its reasoning; a salvaged reply is refused rather than parsed, because every finding in it is a draft the model did not commit to."
 
 // warnTruncatedZeroFindings emits the run-level runaway warning, or nothing at 0.
 //

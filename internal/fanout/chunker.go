@@ -391,6 +391,10 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	out.parsedFindings = nil
 	out.parsedFindingsSet = false
 	out.UnparseableChunks = 0 // counted below over every chunk, g[0] included
+	// ThinkOnlyAttempts is a PER-WALK diagnostic and the merged record describes a
+	// different walk; leaving g[0]'s value would attribute one chunk's wasted spend to
+	// the whole persona. Summed with the other chunk-level counts below.
+	out.ThinkOnlyAttempts = 0
 	// Chunk-level serving identity does not survive the collapse: the merged
 	// Result is a persona record, so inheriting chunk 0's served tag would name
 	// only its files as if they were the persona's reviewed set — beside a
@@ -492,6 +496,19 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 		if r.UnparseableResponse {
 			out.UnparseableChunks++
 		}
+		// Folded for the same reason as Salvaged, and it was the one member of that
+		// pair left out. ThinkSuppressed refines UnparseableResponse (engine.go:420),
+		// so a suppressed bin is already counted just above — but the persona-level
+		// FLAG was inherited from g[0], which cut both ways: a suppressed chunk 0 spoke
+		// for seven clean siblings, and a suppressed LATER bin was invisible, so
+		// Summary.ContributedNothingCount and summarizeStatuses undercounted it
+		// (TD internal/fanout/chunker.go:493). The flag now answers "did the strip eat
+		// any bin"; WholePersonaThinkSuppressed answers the different question a score
+		// needs, using UnparseableChunks over ChunkCount as the denominator.
+		out.ThinkSuppressed = out.ThinkSuppressed || r.ThinkSuppressed
+		// Same reasoning as UnparseableChunks: a persona's wasted think-only spend is
+		// the SUM over its chunks, not g[0]'s.
+		out.ThinkOnlyAttempts += r.ThinkOnlyAttempts
 		// FIRST NON-ZERO across the group, not g[0]'s. The diff-wide shed is a property
 		// of the PAYLOAD — every chunk of a persona is rendered from the same
 		// modePayload, so the value is identical wherever it appears and the first
@@ -563,6 +580,12 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 		out.ResolvedWindow = src.ResolvedWindow
 		out.ReservedOutputTokens = src.ReservedOutputTokens
 		out.ResolvedMaxTokens = src.ResolvedMaxTokens
+		// The reasoning reserve belongs to the SAME matched set (status.go:519
+		// documents it as read together with reserved_output_tokens). Left out of
+		// this block it kept g[0]'s value, so a persona whose majority-serving chunk
+		// was a no-replay fallback published that agent's model, window and cap beside
+		// the PRIMARY's reasoning_reserve_tokens (TD internal/fanout/chunker.go:555).
+		out.ReasoningReserveTokens = src.ReasoningReserveTokens
 	}
 	promoteRePackedDegradation(&out, g)
 	if len(fallbackFromSet) > 0 {
@@ -722,6 +745,13 @@ func promoteRePackedDegradation(out *Result, g []Result) {
 		// would point the operator at a cap that closed nothing. Zeroed, omitempty says
 		// the honest thing — this merged record cannot name the cap.
 		out.ResolvedMaxTokens = 0
+		// And the reasoning reserve, which the invariant names by implication:
+		// status.go documents it as the EXTRA reservation ON TOP OF
+		// reserved_output_tokens, so leaving it inherited here publishes a
+		// reserve sitting on top of a field this same arm just zeroed — the
+		// self-contradictory-record class this block exists to prevent, and the one
+		// member of the triple that was missed (TD internal/fanout/chunker.go:709).
+		out.ReasoningReserveTokens = 0
 	}
 	if len(dropped) > 0 {
 		paths := make([]string, 0, len(dropped))

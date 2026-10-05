@@ -221,3 +221,21 @@ func TestRunResultSlotFailuresRoundTrip(t *testing.T) {
 	assert.Equal(t, "case-02", back.SlotFailures[0].CaseID)
 	assert.Equal(t, SlotFailureCall, back.SlotFailures[0].Reason)
 }
+
+// A SALVAGED slot is StatusOK, so the repo-state runner's unmeasured skip — which
+// keys on a.Status != StatusOK — never fired for it. The row was then scored with an
+// empty categorical projection (charged as a genuine recall-0 miss) while the very
+// same row was tallied as "incomplete" by the classifier: the score half now asserts
+// a missed defect that docs/benchmark.md forbids ("a transient infrastructure
+// failure recorded as a genuine missed defect"), and the pair crosses the export
+// boundary unflagged (TD cli/benchmark_repostate.go:561). The reason vocabulary needs
+// an entry for an OK slot that was provably unmeasured.
+func TestSlotFailureReason_SalvagedOKSlotHasAStorableReason(t *testing.T) {
+	r := SlotFailureUnmeasuredOK
+	assert.True(t, ValidSlotFailureReason(r),
+		"the producer must never write a reason the export boundary rejects")
+	assert.NotEqual(t, SlotFailureCall, r,
+		"a salvaged slot is not a failed call — asserting a transport failure about it would be legal and wrong")
+	assert.Contains(t, r, "salvag",
+		"the reason must name the cause an operator can act on")
+}

@@ -94,13 +94,17 @@ func ReviewerOutcome(a AgentStatus, raisedCount int) string {
 	// It needs its own arm because no signal above sees it. A salvaged reply is
 	// StatusOK with content (the client promoted reasoning into it), so the failed
 	// and truncated arms miss it; parseFindings refuses it, so it is not
-	// unparseable either. For a CHUNKED persona the gap is worse: UnreviewedChunks
-	// counts non-OK bins, and a salvaged bin is OK, so one refused bin beside a
-	// clean sibling fell through to "findings" — a healthy, fully-covered
-	// classification for a reviewer that provably contributed nothing from that
-	// bin, and "findings" is trust-eligible, so it fed the reviewer's durable
-	// prior as a clean run (TD internal/fanout/revieweroutcome.go:90).
-	case a.UnreviewedChunks > 0 || a.Truncated || a.Salvaged:
+	// unparseable either.
+	//
+	// WHOLE-PERSONA ONLY, via WholePersonaSalvaged. The refusal is PER BIN —
+	// parseFindings skips only the refused bin and keeps its siblings' findings — so
+	// keying this arm on the persona-wide OR-fold made one refused bin of eight
+	// classify the entire persona "incomplete". internal/scorecard's outcomeEligible
+	// excludes "incomplete", so that dropped a lens which produced seven bins of real
+	// findings from the trust tally: the same leak the per-bin refusal was built to
+	// stop one layer down (TD internal/scorecard/trust.go:1019 and
+	// internal/fanout/revieweroutcome.go:90).
+	case a.UnreviewedChunks > 0 || a.Truncated || WholePersonaSalvaged(a):
 		return "incomplete"
 	case raisedCount > 0:
 		return "findings"
@@ -143,6 +147,42 @@ func ReviewerOutcome(a AgentStatus, raisedCount int) string {
 	}
 }
 
+// WholePersonaSalvaged reports whether a salvaged status cost the persona its WHOLE
+// contribution, as opposed to one refused bin beside bins that committed real
+// findings.
+//
+// The distinction is already on disk. `Salvaged` is an OR-fold over a chunked
+// persona's bins (internal/fanout/status.go), so it cannot say which bin refused;
+// `SalvagedChunks` names them, and `ChunkCount` says how many there were. A salvaged
+// status with no bin index is the unchunked persona, whose entire reply is promoted
+// chain-of-thought — a whole-persona refusal. A bin index covering every bin is the
+// same loss, spelled per bin. Anything less is a PARTIAL loss: the clean siblings'
+// findings are parsed, reconciled and shipped, so the persona got a fair attempt and
+// must keep its trust standing (TD internal/scorecard/trust.go:1019).
+//
+// Deliberately no new outcome value. The vocabulary is fail-closed across versions
+// at the export boundary (ValidReviewerOutcome, benchmark.ValidOutcome), and the
+// per-bin signal already exists — minting a value here would pay that cost for
+// information the record already carries.
+func WholePersonaSalvaged(a AgentStatus) bool {
+	if !a.Salvaged {
+		return false
+	}
+	if len(a.SalvagedChunks) == 0 {
+		// No bin index: the unchunked persona, or a chunked one whose refusal the
+		// producer could not attribute. Either way nothing narrows it, so it is whole.
+		return true
+	}
+	// A bin index that names every bin is the whole-persona loss. ChunkCount is the
+	// denominator; when it is absent the index cannot be compared against a total, so
+	// the safe direction is to withhold coverage (trust eligibility) rather than grant
+	// it on an unmeasurable claim.
+	if a.ChunkCount <= 0 {
+		return true
+	}
+	return len(a.SalvagedChunks) >= a.ChunkCount
+}
+
 // ReviewerOutcomePrecedence returns ReviewerOutcome's precedence, highest first
 // — the order of its switch, stated once as data so a consumer that must rank
 // two outcomes (scorecard's repeated-agent dedup) derives the rank instead of
@@ -171,4 +211,49 @@ func ValidReviewerOutcome(s string) bool {
 		return true
 	}
 	return false
+}
+
+// WholePersonaThinkSuppressed reports whether a think-suppressed status cost the
+// persona its WHOLE contribution, as opposed to one bin the strip ate beside bins
+// that committed real findings. The think-suppression twin of WholePersonaSalvaged,
+// deliberately shaped the same way so the two cannot drift on what "contributed
+// nothing" means.
+//
+// `ThinkSuppressed` is an OR-fold over a chunked persona's bins (chunker.go), so it
+// cannot say WHICH bin the strip ate. No per-bin index is needed to find out:
+// ThinkSuppressed is documented as set only alongside UnparseableResponse
+// (engine.go:420-427), so `UnparseableChunks` already counts the bins that produced
+// nothing a parser could use and `ChunkCount` is the denominator. A persona with
+// bins left over has signal — their findings are parsed, reconciled and shipped —
+// so it got a fair attempt and must keep its score and its trust standing.
+//
+// Reusing those two fields rather than minting a ThinkSuppressedChunks index is the
+// point: the record already carries the answer, and a new status.json key would pay
+// a cross-version compatibility cost for information that is already on disk.
+//
+// Fail-closed when the denominator is absent, exactly as WholePersonaSalvaged is:
+// an index that cannot be compared against a total is an unmeasurable claim, and the
+// safe direction is to withhold coverage rather than grant it (TD
+// internal/scorecard/trust.go:1019).
+func WholePersonaThinkSuppressed(a AgentStatus) bool {
+	if !a.ThinkSuppressed {
+		return false
+	}
+	if a.ChunkCount <= 0 {
+		// No denominator: the unchunked persona, whose entire reply the strip
+		// consumed. Either way nothing narrows it, so it is whole.
+		return true
+	}
+	if a.UnparseableChunks == 0 {
+		// No numerator either. UnparseableChunks is written in exactly one place,
+		// mergeResultGroup (chunker.go), and mergeChunkResults short-circuits a
+		// one-element group without entering it — while a re-fit fallback stamps
+		// ChunkTotal=1, which engine.go copies to ChunkCount. So 0 here carries two
+		// incompatible meanings: "never populated" and "zero bins were unparseable".
+		// A numerator that was never populated cannot narrow the loss, so the safe
+		// direction is the same one WholePersonaSalvaged takes for an absent bin
+		// index: withhold coverage rather than grant it.
+		return true
+	}
+	return a.UnparseableChunks >= a.ChunkCount
 }

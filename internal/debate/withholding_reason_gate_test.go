@@ -65,7 +65,7 @@ func TestCountsTowardWithholding_DenyListIsExactlyTheEnvironmentalFour(t *testin
 	denied := 0
 	for _, r := range []string{
 		ReasonContextCancelled, ReasonHarnessUnavailable, ReasonInsufficientModels, ReasonNoProposer,
-		ReasonSeatHalted, ReasonSeatSilent, ReasonSeatSuppressed, ReasonJudgeHalted,
+		ReasonSeatHalted, ReasonSeatSilent, ReasonSeatSuppressed, ReasonJudgeHalted, ReasonJudgeSuppressed,
 		ReasonUnparseableRuling, ReasonEmptyRuling, ReasonJudgeThinkMarkup, ReasonNoClusterDecision,
 	} {
 		if !countsTowardWithholding(r) {

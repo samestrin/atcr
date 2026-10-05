@@ -2750,11 +2750,15 @@ func TestRetainedSizeAttrs_UnmeasuredRootIsFlaggedNotZero(t *testing.T) {
 
 // failed_slots counts failed slots, not the reviewers they belong to: one dead
 // provider on a 3-case suite is 3 unmeasured slots (atcr review 2026-09-23,
-// benchmark_repostate.go:201).
+// benchmark_repostate.go:201). Only infrastructure-class slots count — an
+// unmeasured_salvaged_ok slot is reported separately (see
+// TestSlotFailureBreakdown_SeparatesFailuresFromUnmeasuredOK).
 func TestFailedSlotCount_SumsSlotsAcrossReviewers(t *testing.T) {
 	m := map[reviewerKey][]benchmark.SlotFailure{
-		{}:               {{CaseID: "c1"}, {CaseID: "c2"}, {CaseID: "c3"}},
-		{persona: "dax"}: {{CaseID: "c1"}},
+		{}: {{CaseID: "c1", Reason: benchmark.SlotFailureCall},
+			{CaseID: "c2", Reason: benchmark.SlotFailureTimeout},
+			{CaseID: "c3", Reason: benchmark.SlotFailureUnknownStatus}},
+		{persona: "dax"}: {{CaseID: "c1", Reason: benchmark.SlotFailureCall}},
 	}
 	assert.Equal(t, 4, failedSlotCount(m))
 	assert.Zero(t, failedSlotCount(nil))
@@ -2809,4 +2813,137 @@ func TestExecuteRepoStateBenchmarkRun_RetentionLineCountsFailedSlots(t *testing.
 	assert.Contains(t, logs.String(), "failed_slots=2")
 	assert.Contains(t, logs.String(), "failed_reviewers=1")
 	assert.Regexp(t, `retained_dirs=[1-9]`, logs.String())
+}
+
+// slotUnmeasuredReason draws the line the score, the covered set and the outcome
+// tally must all respect. A non-OK slot is a failed call; an OK slot that provably
+// contributed nothing is a SUCCEEDED call that produced nothing usable, and it was
+// being scored as a genuine miss while the classifier called the same row
+// "incomplete" (TD cli/benchmark_repostate.go:561).
+func TestSlotUnmeasuredReason(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		st   fanout.AgentStatus
+		want string
+	}{
+		{"failed call", fanout.AgentStatus{Status: fanout.StatusFailed}, benchmark.SlotFailureCall},
+		{"timed out call", fanout.AgentStatus{Status: fanout.StatusTimeout}, benchmark.SlotFailureTimeout},
+		{"wholly salvaged OK slot", fanout.AgentStatus{Status: fanout.StatusOK, Salvaged: true}, benchmark.SlotFailureUnmeasuredOK},
+		{"think-suppressed OK slot", fanout.AgentStatus{Status: fanout.StatusOK, ThinkSuppressed: true}, benchmark.SlotFailureUnmeasuredOK},
+		{
+			name: "partially salvaged chunked slot is still scored",
+			// One refused bin of eight: the other seven contributed real findings, so
+			// the row has signal and must not be written out of the score.
+			st:   fanout.AgentStatus{Status: fanout.StatusOK, Salvaged: true, SalvagedChunks: []int{3}, ChunkCount: 8},
+			want: "",
+		},
+		{
+			name: "chunked slot with every bin salvaged is unmeasured",
+			st:   fanout.AgentStatus{Status: fanout.StatusOK, Salvaged: true, SalvagedChunks: []int{0, 1}, ChunkCount: 2},
+			want: benchmark.SlotFailureUnmeasuredOK,
+		},
+		{
+			name: "partially think-suppressed chunked slot is still scored",
+			// The same per-bin rule the salvage arm above applies. One bin eaten by
+			// the strip out of eight leaves seven that landed real findings, so the
+			// row has signal; dropping it from the score, the covered set and the
+			// outcome tally is the over-withholding WholePersonaSalvaged was added to
+			// stop, left open on the sibling signal (TD internal/fanout/chunker.go:493).
+			st:   fanout.AgentStatus{Status: fanout.StatusOK, ThinkSuppressed: true, ChunkCount: 8, UnparseableChunks: 1},
+			want: "",
+		},
+		{
+			name: "chunked slot with every bin producing nothing is unmeasured",
+			st:   fanout.AgentStatus{Status: fanout.StatusOK, ThinkSuppressed: true, ChunkCount: 2, UnparseableChunks: 2},
+			want: benchmark.SlotFailureUnmeasuredOK,
+		},
+		{"healthy OK slot", fanout.AgentStatus{Status: fanout.StatusOK}, ""},
+		{"OK slot with findings", fanout.AgentStatus{Status: fanout.StatusOK, FindingsCount: 3}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, slotUnmeasuredReason(tc.st))
+			if tc.want != "" {
+				assert.True(t, benchmark.ValidSlotFailureReason(tc.want),
+					"the producer must never write a reason the export boundary rejects")
+			}
+		})
+	}
+}
+
+// The retention trigger must count only INFRASTRUCTURE-class slot failures. With
+// unmeasured_salvaged_ok in the vocabulary, a reviewer that habitually answers on
+// its reasoning channel makes EVERY scheduled run "partial", so every run would
+// accumulate a full work dir that nothing reclaims — and the line would label it
+// failed_slots=N on a clean panel. Same root predicate as the exit gate
+// (cli/benchmark.go:311), reached through the same shared SlotFailureIsInfrastructure.
+func TestRetainForSlotFailures_IgnoresUnmeasuredOKSlots(t *testing.T) {
+	unmeasuredOnly := map[reviewerKey][]benchmark.SlotFailure{
+		{}: {{CaseID: "c1", Reason: benchmark.SlotFailureUnmeasuredOK},
+			{CaseID: "c2", Reason: benchmark.SlotFailureUnmeasuredOK}},
+	}
+	assert.False(t, retainForSlotFailures(unmeasuredOnly),
+		"a slot the call SUCCEEDED on, whose reply merely contributed nothing, is a coverage shortfall — not a reason to retain a full paid work dir forever")
+
+	infra := map[reviewerKey][]benchmark.SlotFailure{
+		{}: {{CaseID: "c1", Reason: benchmark.SlotFailureCall}},
+	}
+	assert.True(t, retainForSlotFailures(infra),
+		"a slot the infrastructure LOST is a reason to retain the diagnosis")
+
+	assert.False(t, retainForSlotFailures(nil))
+}
+
+// The retention line must not call an unmeasured-ok slot a failed one: on a clean
+// panel where a reviewer always salvages, failed_slots must read 0 and the
+// unmeasured count must carry the shortfall under its own key.
+func TestSlotFailureBreakdown_SeparatesFailuresFromUnmeasuredOK(t *testing.T) {
+	m := map[reviewerKey][]benchmark.SlotFailure{
+		{}:               {{CaseID: "c1", Reason: benchmark.SlotFailureCall}, {CaseID: "c2", Reason: benchmark.SlotFailureTimeout}},
+		{persona: "dax"}: {{CaseID: "c1", Reason: benchmark.SlotFailureUnmeasuredOK}},
+	}
+	assert.Equal(t, 2, failedSlotCount(m), "failed_slots must count only the infrastructure losses")
+	assert.Equal(t, 1, unmeasuredSlotCount(m), "unmeasured_slots carries the OK-but-worthless shortfall")
+}
+
+// The slot warning's wording is FALSE for an unmeasured_salvaged_ok slot: it says
+// "the case ran, but one reviewer could not be shown it", when that reviewer WAS shown
+// the case and answered ok. The per-slot reason line below already carries the true
+// cause, so the class must be split like checkCoverage's `unshown`/`unmeasured_ok`.
+func TestWarnCaseFailures_UnmeasuredOKSlotIsNotCalledUnshown(t *testing.T) {
+	var buf bytes.Buffer
+	rr := &benchmark.RunResult{
+		SuiteCaseIDs: []string{"case-01", "case-02"},
+		SlotFailures: []benchmark.SlotFailure{
+			{Model: "m", Persona: "p", CaseID: "case-02", Reason: benchmark.SlotFailureUnmeasuredOK},
+		},
+	}
+
+	warnCaseFailures(&buf, rr, "")
+	out := buf.String()
+
+	assert.NotContains(t, out, "could not be shown it",
+		"the reviewer WAS shown the case and replied ok — the unshown wording asserts the opposite")
+	assert.Contains(t, out, "unmeasured_salvaged_ok",
+		"the reason recorded per slot is the honest cause and stays on the line")
+}
+
+// An infrastructure slot keeps the unshown wording, and a run carrying both classes
+// reports each under its own sentence rather than merging them.
+func TestWarnCaseFailures_InfrastructureSlotKeepsTheUnshownWording(t *testing.T) {
+	var buf bytes.Buffer
+	rr := &benchmark.RunResult{
+		SuiteCaseIDs: []string{"case-01", "case-02", "case-03"},
+		SlotFailures: []benchmark.SlotFailure{
+			{Model: "m1", Persona: "p1", CaseID: "case-02", Reason: benchmark.SlotFailureTimeout},
+			{Model: "m2", Persona: "p2", CaseID: "case-03", Reason: benchmark.SlotFailureUnmeasuredOK},
+		},
+	}
+
+	warnCaseFailures(&buf, rr, "")
+	out := buf.String()
+
+	assert.Contains(t, out, "could not be shown it",
+		"the infrastructure slot keeps the unshown wording")
+	assert.Contains(t, out, "unmeasured_salvaged_ok",
+		"the unmeasured-ok slot is still named, with its reason")
 }

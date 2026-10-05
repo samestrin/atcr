@@ -2969,3 +2969,32 @@ func TestOpportunitySetRuns_KeepsWhatItCannotJudge(t *testing.T) {
 	assert.Len(t, opportunitySetRuns([]Record{preEra}, union), 1, "a pre-v2 record is never judged")
 	assert.Len(t, opportunitySetRuns([]Record{agg}, union), 1, "an aggregate record is never judged")
 }
+
+// The outcome the scorecard stores for a partially-salvaged chunked persona must be
+// the ELIGIBLE one, or the lens loses its whole trust record over one refused bin.
+// The classification itself lives in internal/fanout (this package cannot import it
+// without closing the C5 cycle), so this pins the CONSEQUENCE at the trust boundary:
+// the value fanout now stamps for a partial salvage — "findings" — is eligible, while
+// "incomplete" is not. A reversion at the fanout arm that stamped one-bin-of-eight as
+// "incomplete" would strip every subsequent run of a working lens from the priors map
+// (TD internal/scorecard/trust.go:1019).
+func TestOutcomeEligible_PartialSalvageKeepsTheLensStanding(t *testing.T) {
+	// Partial salvage: the siblings' findings survive, so the lens got a fair attempt.
+	partial := reviewer_(runIDAt(time.Now(), "ps-001"), "greta", "m1", 3, 0)
+	partial.Outcome = outcomeFindings
+	assert.True(t, outcomeEligible(partial),
+		"a persona that produced real findings from its clean bins must stay trust-eligible")
+
+	// Whole-persona refusal: no fair attempt, so ineligible.
+	whole := reviewer_(runIDAt(time.Now(), "ps-002"), "greta", "m1", 0, 0)
+	whole.Outcome = "incomplete"
+	assert.False(t, outcomeEligible(whole),
+		"a persona whose whole contribution was refused must not feed the trust prior")
+
+	// And the boundary only passes eligible records through, so the two records above
+	// do not merely differ on a predicate nobody consults.
+	kept := eligibleOutcomeRuns([]Record{partial, whole})
+	require.Len(t, kept, 1)
+	assert.Equal(t, partial.Outcome, kept[0].Outcome,
+		"the partial-salvage record is the one that survives the gate")
+}

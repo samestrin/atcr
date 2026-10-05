@@ -163,6 +163,7 @@ func servedCoverage(ctx context.Context, s Slot, r Result) []string {
 
 // allUncovered returns every reviewed path as uncovered — the fail-open answer when
 // no coverage evidence exists at all.
+//
 // contributedNothing reports a StatusOK result that provably yielded no findings
 // because a lane REFUSED its content, rather than because the reviewer read the
 // files and found nothing. The distinction is the whole basis of the baseline
@@ -178,13 +179,32 @@ func servedCoverage(ctx context.Context, s Slot, r Result) []string {
 // nothing ever read, never read again — the failure this file's per-slot
 // attribution exists to prevent, reached by a route it did not know about.
 //
-// DELIBERATELY COARSE for a chunked persona: Salvaged is an OR-fold over its bins,
-// so one refused bin beside a clean sibling withholds coverage for ALL the slot's
-// files. That over-re-reviews, which is this file's stated fail-open direction —
-// a needless re-scan, never a silent skip. Per-bin file attribution would need the
-// bin→file mapping the slot tag does not carry.
+// It routes through the whole-persona predicates rather than reading the raw OR-fold
+// flags, because the two consumers want different questions answered. On the RAW
+// pre-merge results this file reads, a single-chunk result has no bin index, so the
+// predicates resolve to the same answer the raw flags gave. On the MERGED results
+// summarize() reads (artifacts.go runs after mergeChunkResults), a chunked persona
+// with one refused bin of eight keeps its signal and is no longer tallied as having
+// contributed nothing — agreeing with cli/benchmark_repostate.go's slotUnmeasuredReason,
+// which answers the same question from the same record (TD internal/fanout/outcome.go:102).
 func contributedNothing(r Result) bool {
-	return r.Salvaged || r.ThinkSuppressed
+	return WholePersonaSalvaged(resultStatus(r)) || WholePersonaThinkSuppressed(resultStatus(r))
+}
+
+// resultStatus projects a Result onto the AgentStatus view the whole-persona
+// predicates read, using the same derivation statusFor publishes: the bin index
+// names WHICH bins salvaged, and the merged Result already carries ChunkCount and
+// UnparseableChunks. Only the fields the predicates consult are populated; the rest
+// of AgentStatus is irrelevant to the question "did this persona contribute
+// anything".
+func resultStatus(r Result) AgentStatus {
+	return AgentStatus{
+		Salvaged:          r.Salvaged,
+		SalvagedChunks:    salvagedChunkIndices(r),
+		ThinkSuppressed:   r.ThinkSuppressed,
+		UnparseableChunks: r.UnparseableChunks,
+		ChunkCount:        r.ChunkCount,
+	}
 }
 
 func allUncovered(reviewed map[string]string) map[string]struct{} {

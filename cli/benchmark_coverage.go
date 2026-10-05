@@ -8,6 +8,7 @@ import (
 	"unicode"
 
 	"github.com/samestrin/atcr/internal/benchmark"
+	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/scorecard"
 )
 
@@ -467,11 +468,21 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 	// one. That distinction is the point: a case-level shortfall hits every row
 	// equally, so the rows stay comparable to EACH OTHER and only the suite is short,
 	// while a slot-level one makes one row's denominator differ from its peers'.
-	var slotShortRows []string
+	//
+	// Split into the two slot classes the remedy must not conflate: an infrastructure
+	// loss (the call did not arrive) points at the provider, while an
+	// unmeasured_salvaged_ok slot WAS shown the case and answered ok, so its remedy is
+	// the agent's thinking declaration and a re-run CAN differ
+	// (TD cli/benchmark_coverage.go:794).
+	var slotShortRows, unmeasuredOKRows []string
 	for _, k := range shortKeys {
-		if len(slotFailed[k]) > 0 {
-			slotShortRows = append(slotShortRows,
-				stripTerminalControlRunes(k.model)+"/"+stripTerminalControlRunes(k.persona))
+		for _, reason := range slotFailed[k] {
+			name := stripTerminalControlRunes(k.model) + "/" + stripTerminalControlRunes(k.persona)
+			if reason == benchmark.SlotFailureUnmeasuredOK {
+				unmeasuredOKRows = appendUnique(unmeasuredOKRows, name)
+				continue
+			}
+			slotShortRows = appendUnique(slotShortRows, name)
 		}
 	}
 
@@ -501,7 +512,8 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		// every slot is the only one with runs 0 and an empty covered set, and the
 		// closing sentence points the operator at that shape rather than asserting
 		// nothing on the submission carries it.
-		if len(slotShortRows) > 0 {
+		if len(slotShortRows) > 0 || len(unmeasuredOKRows) > 0 {
+			rows := append(append([]string{}, slotShortRows...), unmeasuredOKRows...)
 			msg += fmt.Sprintf(
 				"  note: %s lost individual reviewer slots, so each one's corroboration_rate is "+
 					"averaged over only the cases that reviewer was shown and is not penalised for the rest. "+
@@ -509,7 +521,7 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 					"reviewer was shown some cases, and 0.00 where every slot failed and it was shown none. "+
 					"The all-slots-lost row is distinguishable by its shape, not by the rate: runs 0 with an empty "+
 					"case_ids array (runs is always published and a covered set is always an array).\n",
-				strings.Join(slotShortRows, ", "))
+				strings.Join(rows, ", "))
 		}
 		_, _ = fmt.Fprint(w, msg)
 		return nil
@@ -532,6 +544,14 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		// that reviewer's provider, not the suite.
 		remedy += ". Re-running will not help the `unshown` cases — those ran and the rest of the panel scored them; " +
 			"investigate the provider behind " + strings.Join(slotShortRows, ", ") + " instead"
+	}
+	if len(unmeasuredOKRows) > 0 {
+		// The opposite instruction, for the opposite cause: the call SUCCEEDED, so the
+		// provider is not at fault and a re-run CAN sample differently
+		// (internal/fanout/engine.go:1370). One remedy constant, shared with the
+		// run-path warn lines so the two cannot state different fixes.
+		remedy += ". For the `unmeasured_ok` rows (" + strings.Join(unmeasuredOKRows, ", ") +
+			") a re-run CAN differ: " + unmeasuredOKRemedy
 	}
 	return fmt.Errorf("run-result %s has reviewer row(s) scored over less than the full %d-case suite: %s; %s",
 		path, len(suite), strings.Join(short, "; "), remedy)
@@ -783,16 +803,21 @@ func summarizeMissing(missing []string) string {
 	return fmt.Sprintf("%s and %d more", strings.Join(safe, ", "), len(missing)-maxNamedMissingCases)
 }
 
-// describeMissing splits one row's shortfall into the three things it can be, and
-// says which.
+// describeMissing splits one row's shortfall into the things it can be, and says
+// which.
 //
 // They call for different responses, and each label names a different actor:
 //
 //   - `unmeasured` — the CASE never ran, for anybody (rr.CaseFailures). Whether a
 //     re-run helps depends on the reason, which is why the reason is printed.
 //   - `unshown` — the case ran and the rest of the panel scored it; THIS reviewer
-//     was not shown it (rr.SlotFailures). Re-running the case would not have helped
-//     the other reviewers, who already have it.
+//     was not shown it (rr.SlotFailures, an infrastructure reason). Re-running the
+//     case would not have helped the other reviewers, who already have it.
+//   - `unmeasured_ok` — the reviewer WAS shown the case and replied ok, but the
+//     reply provably contributed nothing (a salvaged or think-suppressed slot,
+//     SlotFailureUnmeasuredOK). Distinct from `unshown` on both halves: the reviewer
+//     saw the case, and the remedy is the agent's thinking declaration rather than
+//     the provider — a re-run CAN sample differently.
 //   - `missing` — accounted for by neither: the row claims a suite it was not scored
 //     over. That is the shape the original "re-run the missing cases" instruction was
 //     written for, and before the slot skip existed it was reachable only by
@@ -801,7 +826,9 @@ func summarizeMissing(missing []string) string {
 // Collapsing any pair loses the distinction that picks the remedy. Labelling a slot
 // shortfall `missing` told an operator to re-run cases that ran perfectly and made one
 // flaky provider read as a hand-assembled file; labelling it `unmeasured` would claim
-// the case never ran while the surviving reviewers' rows visibly contain it.
+// the case never ran while the surviving reviewers' rows visibly contain it — and
+// folding `unmeasured_ok` into `unshown` sent the operator to the provider for a call
+// that succeeded (TD cli/benchmark_coverage.go:794).
 //
 // All three halves route through summarizeMissing, so each inherits the per-row cap and
 // the control-rune stripping described there rather than re-deriving them — the
@@ -830,7 +857,7 @@ func summarizeMissing(missing []string) string {
 // identity-scoped projection, and passing the whole run's slot failures would attach
 // one reviewer's excuse to another's short row.
 func describeMissing(missing []string, failed, slotFailed map[string]string) string {
-	var unexplained, unmeasured, unshown []string
+	var unexplained, unmeasured, unshown, unmeasuredOK []string
 	for _, id := range missing {
 		// Case-level first: a case NOBODY was shown is the stronger statement, and the
 		// producer cannot record both for one (reviewer, case) pair — a failed case is
@@ -842,6 +869,13 @@ func describeMissing(missing []string, failed, slotFailed map[string]string) str
 			continue
 		}
 		if reason, ok := slotFailed[id]; ok {
+			// The unmeasured-ok class is a THIRD thing, not a flavour of `unshown`: the
+			// reviewer was shown the case and replied ok, so `unshown`'s "was not shown
+			// it" and its provider remedy are both false (TD cli/benchmark_coverage.go:794).
+			if reason == benchmark.SlotFailureUnmeasuredOK {
+				unmeasuredOK = append(unmeasuredOK, fmt.Sprintf("%s (%s)", id, reason))
+				continue
+			}
 			unshown = append(unshown, fmt.Sprintf("%s (%s)", id, reason))
 			continue
 		}
@@ -857,6 +891,9 @@ func describeMissing(missing []string, failed, slotFailed map[string]string) str
 	if len(unshown) > 0 {
 		parts = append(parts, "unshown "+summarizeMissing(unshown))
 	}
+	if len(unmeasuredOK) > 0 {
+		parts = append(parts, "unmeasured_ok "+summarizeMissing(unmeasuredOK))
+	}
 	// " / ", not "; ": checkCoverage joins distinct short ROWS with "; ", and a
 	// multi-short-row run is the normal case on a large roster. Using one delimiter at
 	// two nesting levels fragments a single reviewer row into two for a reader — and
@@ -871,6 +908,23 @@ func describeMissing(missing []string, failed, slotFailed map[string]string) str
 // rendering of the id and everything after it in the same text node on the board,
 // and a zero-width rune makes two different ids render identically, defeating the
 // documented SET comparison at the human layer even while it holds programmatically.
+// unmeasuredOKRemedy is the operator action for a slot that was shown the case and
+// answered ok, yet contributed nothing. It reuses fanout.SalvagedRemedy — the run
+// path's own remedy for that condition — so the two surfaces cannot state different
+// fixes for the same cause.
+const unmeasuredOKRemedy = fanout.SalvagedRemedy
+
+// appendUnique appends v to s only if not already present, preserving first-seen
+// order. A reviewer with several slot failures of one class must be named once.
+func appendUnique(s []string, v string) []string {
+	for _, existing := range s {
+		if existing == v {
+			return s
+		}
+	}
+	return append(s, v)
+}
+
 func firstNonPrintingRune(s string) (rune, bool) {
 	for _, r := range s {
 		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {

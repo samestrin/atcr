@@ -1058,7 +1058,9 @@ func TestRunDebate_SilentSeatPathDisclosesPerSeatCause(t *testing.T) {
 // TestSeatSilenceNotes_LabelsEachSeatForItself pins the per-seat labelling the
 // single reason token cannot carry. Without it a mixed pair rendered as
 // "seat halted: proposer,challenger" — telling an operator the challenger
-// halted when it had run clean.
+// halted when it had run clean. The two facts are independent and a seat can be
+// both, so a seat in both slices names both causes rather than letting one arm
+// win (TD internal/debate/protocol.go:231, TD internal/report/contested.go:115).
 func TestSeatSilenceNotes_LabelsEachSeatForItself(t *testing.T) {
 	assert.Equal(t, []string{"proposer halted", "challenger silent"},
 		seatSilenceNotes([]string{LabelProposer}, nil, []string{LabelProposer, LabelChallenger}))
@@ -1071,9 +1073,9 @@ func TestSeatSilenceNotes_LabelsEachSeatForItself(t *testing.T) {
 	// fall back to the weaker seat_silent token (TD internal/debate/debate.go:524).
 	assert.Equal(t, []string{"proposer suppressed", "challenger silent"},
 		seatSilenceNotes(nil, []string{LabelProposer}, []string{LabelProposer, LabelChallenger}))
-	assert.Equal(t, []string{"proposer halted"},
+	assert.Equal(t, []string{"proposer suppressed, halted"},
 		seatSilenceNotes([]string{LabelProposer}, []string{LabelProposer}, []string{LabelProposer}),
-		"halted wins a tie: a halted turn never reaches runTurn's suppression branch, so the sets are disjoint in practice")
+		"the sets are NOT disjoint (a budget-tripped seat whose forced answer was all think markup is both), and each cause carries its own remedy, so the note keeps both")
 	assert.False(t, allSeatsIn([]string{LabelProposer}, []string{LabelProposer, LabelChallenger}),
 		"a suppressed proposer plus a genuinely-silent challenger must not report seat_suppressed")
 }
@@ -1099,7 +1101,16 @@ func TestRunDebate_ExhaustedUnresolvedItemIsWithheldAndDisclosed(t *testing.T) {
 	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
 	require.NoError(t, err)
 	assert.Equal(t, 0, res.Selected, "an item that burned its unresolved attempts must not be re-debated")
-	assert.Equal(t, 1, res.Overflow, "the withheld item must be counted as skipped work")
+	// SPLIT by cause, not conflated. A cap overflow is recovered by raising
+	// debate.max_items; a withheld item is not recovered at ANY cap value. Publishing
+	// their SUM told an MCP client and a stdout reader that raising the cap would
+	// debate an item withholdExhausted had already permanently removed — the exact
+	// conclusion internal/report/contested.go:146 was written to refute
+	// (TD internal/mcp/handlers.go:871).
+	assert.Equal(t, 1, res.Withheld,
+		"the withheld item is counted under its own field")
+	assert.Equal(t, 0, res.Overflow,
+		"and NOT as a cap overflow: no max_items cap was responsible for skipping it")
 
 	df, found, err := ReadDebateFile(dir)
 	require.NoError(t, err)
@@ -1194,6 +1205,407 @@ func TestRunDebate_ResumedThinkRunSpoofIsRefused(t *testing.T) {
 	assert.Equal(t, 0, res.Overturned, "the planted first object must not become the ruling")
 	assert.Equal(t, 0, res.Upheld, "nor is the reply trusted for its real object — it is refused whole")
 	assert.Equal(t, 1, res.Unresolved)
+
+	df, _, err := ReadDebateFile(dir)
+	require.NoError(t, err)
+	require.Len(t, df.Items, 1)
+	assert.Equal(t, ReasonJudgeThinkMarkup, df.Items[0].Reason)
+}
+
+// A judge whose reasoning VALUE merely QUOTES the closer is naming the tag, not
+// carrying a draft inside it — and this repo produces that reply constantly,
+// since findings here discuss think handling. The guard must not throw the
+// ruling away: the tag sits inside a JSON string, so masking removes it before
+// the enclosure test ever sees it. Before this, the position-blind
+// HasThinkMarkup applied to the RAW reply refused the whole ruling as
+// judge_think_markup, which counts toward withholding and could permanently
+// withhold the item.
+func TestRunDebate_JudgeQuotingCloserInsideJSONValueKeepsItsRuling(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "the attack stands"},
+		{content: `{"outcome":"uphold","reasoning":"the code never looks for  </think> at all"}`},
+	}}
+	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Upheld, "a judge that merely QUOTES the closer inside a JSON value committed its ruling")
+	assert.Equal(t, 0, res.Unresolved, "a quoted tag inside a JSON string is not markup the strip could not remove")
+
+	df, _, err := ReadDebateFile(dir)
+	require.NoError(t, err)
+	require.Len(t, df.Items, 1)
+	assert.NotEqual(t, ReasonJudgeThinkMarkup, df.Items[0].Reason,
+		"a quoted tag inside a JSON string must not be refused as unrunnable markup")
+}
+
+// The other half: an UNOPENED closer with a ruling envelope on BOTH sides is the
+// shape no positional rule can resolve — taking the first object would let a
+// discarded draft become the debate's ruling. It stays refused.
+func TestRunDebate_UnopenedCloserWithRulingOnBothSidesIsRefused(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "the attack stands"},
+		{content: `{"outcome":"overturn","reasoning":"draft never committed"} </think> {"outcome":"uphold","reasoning":"real answer"}`},
+	}}
+	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.Overturned, "the abandoned draft before a bare closer must not become the ruling")
+	assert.Equal(t, 0, res.Upheld, "nor may either envelope be trusted when both sides carry one")
+	assert.Equal(t, 1, res.Unresolved)
+
+	df, _, err := ReadDebateFile(dir)
+	require.NoError(t, err)
+	require.Len(t, df.Items, 1)
+	assert.Equal(t, ReasonJudgeThinkMarkup, df.Items[0].Reason)
+}
+
+// On the clean-blank-proposer short-circuit the challenger is never given a turn,
+// so its blank statement means "not asked" — not "went silent". seatSilenceNotes
+// was handed the UNFILTERED list, so report.md (report/contested.go), the
+// transcript RulingEvent and the operator warn log all rendered "challenger
+// silent" about a seat that was never invoked. debate.go reasons about exactly
+// this for the TOKEN two lines earlier and then handed the human-readable note the
+// unfiltered list (TD internal/debate/debate.go:614).
+func TestRunDebate_ShortCircuitDoesNotCallTheUnaskedChallengerSilent(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	ctx := log.NewContext(context.Background(), logger)
+
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	cc := &fakeChatCompleter{turns: []chatTurn{{content: ""}}} // proposer runs clean and blank
+	res, err := runDebate(ctx, dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	require.Equal(t, 1, res.Unresolved)
+
+	var df DebateFile
+	raw, _ := os.ReadFile(filepath.Join(dir, reconciledSubdir, DebateJSON))
+	require.NoError(t, json.Unmarshal(raw, &df))
+	require.Len(t, df.Items, 1)
+	assert.Contains(t, df.Items[0].Reasoning, "proposer",
+		"the seat that went blank must still be named")
+	assert.NotContains(t, df.Items[0].Reasoning, "challenger",
+		"the challenger was never given a turn, so it cannot be reported as silent")
+	assert.NotContains(t, logBuf.String(), "challenger",
+		"and the operator warn must not accuse an un-asked seat either")
+}
+
+// The mask is a quote-pairing state machine with no JSON-validity check, so an ODD
+// number of `"` before a post-answer think block inverts its in/out-of-string state
+// and blanks that block's TAGS. HasEnclosingThinkBlock then sees nothing to refuse,
+// ClassifyUnopenedCloser (which masks too) finds no boundary, and parseRuling takes
+// the ABANDONED DRAFT as the committed ruling.
+//
+// That outcome is durable, which is what makes it the worst shape in this lane:
+// applyRulings writes the draft verdict onto the finding, reconcile/gate.go then
+// reads `refuted` as "a skeptic disproved it", and isRefutedJSON drops the finding
+// from the radar permanently. debate.go's own guard comment names avoiding exactly
+// this as its reason for existing (TD internal/debate/debate.go:676).
+func TestRunDebate_UnbalancedQuoteBeforeAThinkBlockStillRefusesTheDraft(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	// The lone `"` after `He said` follows a LETTER, so it is at no JSON position and
+	// opens nothing — every tag after it stays visible. That is this case's whole
+	// scope; the positions where a prose quote DOES open a literal are covered by the
+	// sibling below.
+	judge := `He said "it is fine. ` +
+		"\x3cthink\x3e" + `{"outcome":"overturn","reasoning":"draft never committed"}` + "\x3c/think\x3e" +
+		` {"outcome":"uphold","reasoning":"real answer"}`
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "the attack stands"},
+		{content: judge},
+	}}
+	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.Overturned,
+		"the draft inside the think block must never become the ruling just because an unbalanced quote hid its tags")
+	assert.Equal(t, 1, res.Unresolved,
+		"with the mask untrustworthy the enclosure test must run on the raw reply and refuse it")
+
+	df, _, err := ReadDebateFile(dir)
+	require.NoError(t, err)
+	require.Len(t, df.Items, 1)
+	assert.Equal(t, ReasonJudgeThinkMarkup, df.Items[0].Reason)
+}
+
+// The position the case above cannot reach, and the one that shipped admitting a
+// draft. A prose quote introduced by a COMMA — the ordinary way English introduces
+// quoted speech — sits at a JSON position, so it DOES open a literal. The mask then
+// runs to the next `"`, which the draft ruling object supplies by construction, and
+// stops mid-block: the opener is swallowed while the closer survives.
+// HasEnclosingThinkBlock saw no block, the lane admitted the reply, and parseRuling
+// took the draft as the committed ruling — which applyRulings writes onto the finding
+// durably (TD internal/llmclient/mask_unbalanced_quote_test.go:1).
+func TestRunDebate_CommaIntroducedQuoteBeforeAThinkBlockStillRefusesTheDraft(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	// NO ruling object after the block, deliberately. With one there, the surviving
+	// `</think>` becomes an unopened closer whose prefix AND suffix both carry a
+	// ruling, so ClassifyUnopenedCloser returns SectionAmbiguous and the lane refuses
+	// by a DIFFERENT route — the test would pass with the mask fix reverted and prove
+	// nothing. Here the suffix carries no envelope, so the draft is the only ruling
+	// object and parseRuling takes it. That is the reachable hole.
+	judge := "The proposer wrote, \"the guard is missing\n" +
+		"\x3cthink\x3e" + `{"outcome":"overturn","reasoning":"draft never committed"}` + "\x3c/think\x3e" +
+		"\nthat was my scratch reasoning, nothing committed."
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "the attack stands"},
+		{content: judge},
+	}}
+	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.Overturned,
+		"the draft must never become the ruling just because a comma-introduced prose quote opened a "+
+			"literal and the mask swallowed the block's opener")
+	assert.Equal(t, 1, res.Unresolved,
+		"the mask split a think pair, so it is discarded and the enclosure test refuses the raw reply")
+
+	df, _, err := ReadDebateFile(dir)
+	require.NoError(t, err)
+	require.Len(t, df.Items, 1)
+	assert.Equal(t, ReasonJudgeThinkMarkup, df.Items[0].Reason)
+}
+
+// The opposite direction of the same arm, and the one it must NOT act on. A judge that
+// merely NAMES a `<think>` opener inside its reasoning string has quoted the tag, not
+// emitted markup: the literal is cleanly closed, no closer survives the mask, and no
+// pair was split. The removal counts nonetheless read "more openers than closers",
+// identical to a split pair, so a count-only arm discards a mask that was correct and
+// the lane refuses a committed ruling. A judge ruling on this repo's own think-handling
+// findings produces exactly this reply (TD internal/llmclient/think.go:392).
+func TestRunDebate_JudgeNamingALoneThinkOpenerKeepsItsRuling(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	judge := `{"outcome":"uphold","reasoning":"the reviewer is right that a bare ` +
+		"\x3cthink\x3e" + ` opener is never stripped"}`
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "the attack stands"},
+		{content: judge},
+	}}
+	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Upheld,
+		"the opener is inside a cleanly-closed value, so the mask hides it and the object IS the ruling")
+	assert.Equal(t, 0, res.Unresolved,
+		"refusing here discards a committed ruling over a tag the judge only quoted")
+
+	df, _, err := ReadDebateFile(dir)
+	require.NoError(t, err)
+	require.Len(t, df.Items, 1)
+	assert.Equal(t, OutcomeUphold, df.Items[0].Outcome)
+	assert.NotEqual(t, ReasonJudgeThinkMarkup, df.Items[0].Reason)
+}
+
+// The third arm of the unopened-closer classification, and the one that shipped
+// unexercised in this lane. SplitThink leaves a bare `</think>` in place and
+// HasEnclosingThinkBlock does not refuse on it, both deliberately — so what falls
+// between them is a reply that began MID-THOUGHT: there is no draft before the
+// closer, only the tail of reasoning, and the committed ruling is the object after
+// it. Taking the whole answer would hand parseRuling that reasoning tail.
+//
+// Its two siblings are pinned (the ambiguous refusal, and the masked quoted tag);
+// this is the branch that resolves rather than refuses, so leaving it unpinned meant
+// nothing proved the lane could still RULE on the shape (TD internal/debate/debate.go:703).
+func TestRunDebate_UnopenedCloserWithRulingOnlyAfterItKeepsThatRuling(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	// No envelope before the closer: the reply opens mid-reasoning and commits after.
+	judge := `was still weighing the severity here ` + "\x3c/think\x3e" +
+		` {"outcome":"uphold","reasoning":"the attack does not land"}`
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "the attack stands"},
+		{content: judge},
+	}}
+	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Upheld,
+		"with no envelope before the bare closer there is nothing to confuse, so the object after it IS the ruling")
+	assert.Equal(t, 0, res.Unresolved,
+		"refusing here would discard a committed ruling over a closer that opened nothing")
+
+	df, _, err := ReadDebateFile(dir)
+	require.NoError(t, err)
+	require.Len(t, df.Items, 1)
+	assert.Equal(t, OutcomeUphold, df.Items[0].Outcome)
+	assert.NotEqual(t, ReasonJudgeThinkMarkup, df.Items[0].Reason)
+	assert.Equal(t, "the attack does not land", df.Items[0].Reasoning,
+		"the reasoning must come from the committed object, not from the reasoning tail before the closer")
+}
+
+// A seat can be BOTH halted and suppressed, and which of the two gets PUBLISHED is
+// the whole point of the precedence flip. recordTurnCause records both facts (that
+// much is pinned by TestRunTurn_RecordsSuppressedEvenWhenTheSeatAlsoHalted), and
+// TestRunDebate_BudgetTrippedSeatWithStatementKeepsRuling already drives this exact
+// input end-to-end — but it asserts only the COUNTS, so swapping the two switch arms
+// in debateOne left the whole suite green. The token an operator reads out of
+// debate.json was unpinned (TD internal/debate/debate.go:632).
+//
+// Suppressed must win. The two states have opposite remedies — raise
+// tool_budget_bytes versus turn off inline reasoning on that endpoint — and the
+// STRIP is what caused the absence of a statement here: the seat did produce a
+// forced final answer, and the strip removed all of it. Reporting seat_halted names
+// a budget problem for a statement the strip ate.
+func TestRunDebate_SeatThatHaltedAndWasSuppressedReportsSuppressed(t *testing.T) {
+	call := []llmclient.ToolCall{{ID: "1", Type: "function", Function: llmclient.FunctionCall{Name: "read_file", Arguments: json.RawMessage(`{"path":"a.go"}`)}}}
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	reg := debateRoster()
+	a := reg.Agents["alice"]
+	one := 1
+	a.MaxTurns = &one
+	reg.Agents["alice"] = a
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{toolCalls: call}, // the proposer's only turn asks for a tool: max_turns trips
+		// The FORCED final answer, entirely a leading think run. The seat halted
+		// (status is not OK) AND the strip emptied its statement.
+		{content: "\x3cthink\x3eran out mid-thought\x3c/think\x3e"},
+		{content: "challenger attacks"},
+		{content: `{"outcome":"uphold","reasoning":"defense holds"}`},
+	}}
+	res, err := runDebate(context.Background(), dir, reg, Options{}, harness(cc))
+	require.NoError(t, err)
+	require.Equal(t, 1, res.Unresolved, "precondition: a strip-emptied forced answer is no case")
+
+	df, _, err := ReadDebateFile(dir)
+	require.NoError(t, err)
+	require.Len(t, df.Items, 1)
+	assert.Equal(t, ReasonSeatSuppressed, df.Items[0].Reason,
+		"the strip is what removed the statement, so suppressed outranks halted: seat_halted here would send "+
+			"the operator after a budget for a reply the strip ate")
+	assert.Contains(t, df.Items[0].Reasoning, LabelProposer+" suppressed",
+		"the per-seat transcript note must agree with the token, since seatSilenceNotes carries the same flip")
+	assert.NotContains(t, df.Items[0].Reasoning, LabelProposer+" halted",
+		"one cause per seat, and for this input the strip is the cause")
+}
+
+// The judge seat must apply the SAME precedence the arguing seats do. judgeHalted
+// gives Halted absolute precedence (it is the first guard in debateOne), while
+// silentArguingSeats gives Suppressed precedence, so one input class yields
+// seat_suppressed on a proposer and judge_halted on a judge. A judge whose budget
+// tripped AND whose forced final answer was entirely think markup is BOTH, and the
+// STRIP is what removed the ruling — reporting judge_halted names a budget problem
+// for a reply the strip ate (TD internal/debate/debate.go:919).
+//
+// The clean-blank judge is deliberately NOT folded in: it never halted, so it keeps
+// its distinct empty_ruling token, which the halt guard does not pre-empt.
+func TestRunDebate_SeatThatHaltedAndWasSuppressed_ReportsSuppressedForTheJudge(t *testing.T) {
+	call := []llmclient.ToolCall{{ID: "1", Type: "function", Function: llmclient.FunctionCall{Name: "read_file", Arguments: json.RawMessage(`{"path":"a.go"}`)}}}
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	reg := debateRoster()
+	judge := reg.Agents["carol"]
+	one := 1
+	judge.MaxTurns = &one
+	reg.Agents["carol"] = judge
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "challenger attacks"},
+		{toolCalls: call}, // the judge's only turn asks for a tool: max_turns trips
+		// The FORCED final answer, entirely a leading think run. The judge halted
+		// (status is not OK) AND the strip emptied its ruling.
+		{content: "\x3cthink\x3eran out mid-thought\x3c/think\x3e"},
+	}}
+	res, err := runDebate(context.Background(), dir, reg, Options{}, harness(cc))
+	require.NoError(t, err)
+	require.Equal(t, 1, res.Unresolved, "precondition: a strip-emptied judge reply is no ruling")
+
+	df, _, err := ReadDebateFile(dir)
+	require.NoError(t, err)
+	require.Len(t, df.Items, 1)
+	assert.Equal(t, ReasonJudgeSuppressed, df.Items[0].Reason,
+		"the strip is what removed the ruling, so suppressed outranks halted for the judge too: "+
+			"judge_halted here would send the operator after a budget for a reply the strip ate")
+}
+
+// The ambiguous-closer Reasoning string ships to the operator: ir.Reasoning reaches
+// debate.json's `reasoning` field, and internal/report/contested.go renders it as
+// "- Rationale: ..." in report.md, which a user reads. The literal must name the tag
+// INTACT — the pre-existing verify twins (internal/verify/invoke.go, executor.go) both
+// read "a `</think>` no `<think>` opened", and a version that dropped the opener's
+// brackets reads as "no thinking opened", which names an English word rather than a
+// tag (TD internal/debate/debate.go:699).
+func TestRunDebate_AmbiguousCloserReasoningNamesTheTagIntact(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	// A bare closer with a ruling envelope on BOTH sides: neither is provably
+	// committed, so debateOne refuses with the ambiguous token.
+	judge := `{"outcome":"uphold","reasoning":"before"} ` + "\x3c/think\x3e" +
+		` {"outcome":"overturn","reasoning":"after"}`
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "challenger attacks"},
+		{content: judge},
+	}}
+	_, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+
+	df, _, err := ReadDebateFile(dir)
+	require.NoError(t, err)
+	require.Len(t, df.Items, 1)
+	require.Equal(t, ReasonJudgeThinkMarkup, df.Items[0].Reason,
+		"precondition: an ambiguous unopened closer is refused under the think-markup token")
+	assert.Contains(t, df.Items[0].Reasoning, "a \x3c/think\x3e no \x3cthink\x3e opened",
+		"the reasoning names the tag shape intact — a mangled opener reads as the English word 'thinking' "+
+			"and a user reading report.md cannot tell which tag is meant")
+	assert.NotContains(t, df.Items[0].Reasoning, "no  thinking opened",
+		"the escaped/mangled shape must not ship to report.md")
+}
+
+// Under non-disjointness a seat can be BOTH halted and suppressed. seatSilenceNotes is
+// a one-cause-per-seat switch, so it recorded only "suppressed" and dropped the halt —
+// but the halt is real (the seat tripped its tool_budget_bytes) and carries its own
+// remedy (raise tool_budget_bytes), which docs/cross-examination.md:105 flags. The
+// comment calls seatSilenceNotes "the only place a mixture's detail survives", so it
+// must carry BOTH causes for a seat that is in both slices (TD internal/report/contested.go:115).
+func TestSeatSilenceNotes_NamesBothCausesForASeatThatHaltedAndWasSuppressed(t *testing.T) {
+	// one seat, both halted and suppressed
+	assert.Equal(t, []string{"proposer suppressed, halted"},
+		seatSilenceNotes([]string{LabelProposer}, []string{LabelProposer}, []string{LabelProposer}),
+		"a seat that halted AND was suppressed must report both causes, not just the stronger one")
+
+	// A genuinely mixed pair: one clean-suppressed seat and one halted-and-suppressed
+	// seat. The strong token now covers both, so the per-seat detail is where the
+	// difference must survive.
+	assert.Equal(t, []string{"proposer suppressed, halted", "challenger suppressed"},
+		seatSilenceNotes([]string{LabelProposer}, []string{LabelProposer, LabelChallenger},
+			[]string{LabelProposer, LabelChallenger}),
+		"each seat keeps its own accurate label even when the item-level token is uniform")
+
+	// The single-cause arms are unchanged.
+	assert.Equal(t, []string{"proposer suppressed"},
+		seatSilenceNotes(nil, []string{LabelProposer}, []string{LabelProposer}))
+	assert.Equal(t, []string{"proposer halted"},
+		seatSilenceNotes([]string{LabelProposer}, nil, []string{LabelProposer}))
+	assert.Equal(t, []string{"proposer silent"},
+		seatSilenceNotes(nil, nil, []string{LabelProposer}))
+}
+
+// The route the surviving-closer discriminator misses, in the debate lane. Same split as
+// TestRunDebate_CommaIntroducedQuoteBeforeAThinkBlockStillRefusesTheDraft, but the judge
+// never closes the block — so no `</think>` survives the mask to signal that a pair was
+// cut, and the removal counts read exactly as a legitimately quoted lone opener does.
+//
+// No ruling object after the block, deliberately, for the reason the sibling test states:
+// with one, ClassifyUnopenedCloser could refuse by the ambiguous-closer route instead and
+// the test would pass with the mask fix reverted. With no closer at all there is no
+// unopened-closer route either, so the enclosure guard at internal/debate/debate.go:700
+// is the ONLY thing standing between the draft and a durable verdict
+// (TD internal/llmclient/think.go:406).
+func TestRunDebate_SplitPairWithNoSurvivingCloserStillRefusesTheDraft(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	judge := "The proposer wrote, \"the guard is missing\n" +
+		"\x3cthink\x3e" + `{"outcome":"overturn","reasoning":"draft never committed"}` +
+		"\nthat was my scratch reasoning, nothing committed."
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "the attack stands"},
+		{content: judge},
+	}}
+	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.Overturned,
+		"the blanked run spans the draft's own `{`, so the mask's boundary was a guess — the draft must "+
+			"not become the ruling merely because no closer survived to prove the pair was cut")
+	assert.Equal(t, 1, res.Unresolved,
+		"the mask cut a pair, so it is discarded and the enclosure test refuses the raw reply")
 
 	df, _, err := ReadDebateFile(dir)
 	require.NoError(t, err)

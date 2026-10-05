@@ -205,9 +205,12 @@ func SplitThink(content string) (answer string, reasoning Reasoning) {
 // STRIP on 2026-09-30 for the same reason; this is the same reversal for the
 // refusal that re-adopted it.
 //
-// HasThinkMarkup keeps the bare-closer rule, and must: its consumer is doctor's
-// thinking verdict, which asks "did this model think at all" from a fixed prompt
-// containing no tag. That is a detection question, not an enclosure question.
+// HasThinkMarkup keeps the bare-closer rule, and must: it answers doctor's
+// detection question ("did this model think at all"), not the enclosure question
+// the verify, executor and debate lanes share. Its consumers are doctor's thinking
+// verdict and the run-level thinking probe behind it — both send a fixed prompt
+// containing no tag, so a block after the answer there is not a quote, it is the
+// runaway thinker the verdict exists to name.
 func HasEnclosingThinkBlock(content string) bool {
 	rest := content
 	for {
@@ -263,8 +266,9 @@ func HasEnclosingThinkBlock(content string) bool {
 //
 // The offset indexes BYTES, so content[i:] is the committed section. A caller
 // that needs tags inside JSON string values ignored computes the offset on a
-// masked copy and slices the unmasked original at it — verify's maskJSONStrings
-// blanks bytes in place and preserves length, so the two stay aligned.
+// masked copy and slices the unmasked original at it — MaskJSONStrings blanks
+// bytes in place and preserves length, so the two stay aligned. ClassifyUnopenedCloser
+// is that pattern packaged for every lane.
 func IndexAfterUnopenedCloser(content string) int {
 	depth, last := 0, -1
 	for i := 0; i < len(content); {
@@ -284,6 +288,226 @@ func IndexAfterUnopenedCloser(content string) int {
 		}
 	}
 	return last
+}
+
+// MaskJSONStrings blanks every byte inside a JSON double-quoted string literal in
+// s, preserving length and every byte outside a literal. String-awareness is the
+// same rule extractJSONObject uses: a backslash escapes the next byte.
+//
+// A `"` only OPENS a literal where JSON can actually begin one — immediately after
+// `{`, `[`, `,`, `:`, or at the very start of the input. A quote anywhere else is
+// prose (an inch mark, a quotation in a sentence) and does NOT toggle the mask.
+//
+// That position rule is the whole fix. Pairing every `"` from offset 0 with no
+// JSON-validity check made the in/out-of-string state a guess as soon as ONE stray
+// prose quote appeared, and the wrong guess ran to end of input — so a think pair
+// QUOTED inside an earlier, cleanly-closed JSON string value was un-masked and read
+// as markup: refusal on legal input (`{"verdict":"confirmed","reasoning":"…
+// <think>draft</think> …"} note: a 6" gap`), and a TRUNCATED reply is odd-quoted by
+// construction. Discarding the whole masked copy on an unbalanced count did not help
+// — it published the raw reply, un-masking those same cleanly-closed literals.
+//
+// Restricting the opener to JSON position keeps the ambiguous region from ever
+// forming: a lone prose quote is ignored, every real string value is masked (so a
+// tag confined to a value stays hidden), and a tag that is genuine markup — outside
+// any literal — stays visible so every detection site still refuses it. That last
+// property is load-bearing: HasEnclosingThinkBlock must see the abandoned draft in
+// `He said "… <think>{draft}</think> {real}` or parseRuling takes the draft as the
+// committed ruling and applyRulings writes it onto the finding durably.
+//
+// The position rule is necessary but NOT sufficient, and the residue has its own
+// fail-closed arm below. A prose quote that lands ON a JSON position — after `,` or
+// `:`, which is how English introduces quoted speech — does open a literal, and the
+// mask then runs to the next `"`. The draft ruling inside a think block SUPPLIES that
+// quote by construction, since any object parseRuling can read is quoted. So the mask
+// stops mid-block, swallowing the opener while the closer survives, and a reply whose
+// draft would have been refused is admitted instead (TD internal/llmclient/think.go:328).
+//
+// The discriminator is NOT the quote count. `inStr` is false at end-of-input on every
+// such reply, because the draft's own quotes re-balance it, so an unbalanced-count
+// bail-out never fires for this class — and restoring one would also un-mask the
+// cleanly quoted pair in a truncated reply, which is the decision
+// TestMaskJSONStrings_UnterminatedLiteralKeepsItsQuotedTagHidden pins.
+//
+// The discriminator is the SHAPE OF THE BLANKED RUN, not the tag counts and not a
+// surviving closer. A run that swallowed an opener and then a `{` or `[` ended at the
+// opening quote of a KEY inside the draft, which is only possible if the mask swallowed
+// the brace that opened that draft — so its boundary was a guess, and the whole masked
+// copy is discarded. A surviving closer is kept as a second, independent trigger for
+// the brace-free replies the run shape cannot reach.
+//
+// Four shapes are deliberately NOT it, and the arm must leave each one masked:
+//
+//   - A genuinely quoted pair loses both halves together and holds no container.
+//   - A LONE opener named inside a cleanly-closed value removes one opener and zero
+//     closers — the same count asymmetry a cut pair shows — while cutting nothing.
+//     Acting on the counts alone un-hid a tag the model had only quoted, and all three
+//     lanes then refused a reply the position rule calls legal
+//     (TD internal/llmclient/think.go:392).
+//   - A brace that sits BEFORE the quoted opener, in the same value or an earlier one.
+//     That is ordinary value text; the run really did end at its own terminator.
+//   - The reverse asymmetry — a hidden closer beside a surviving opener — needs no arm
+//     either: the opener is still visible, so HasEnclosingThinkBlock refuses anyway.
+//
+// A surviving closer alone is NOT the discriminator, and reading it as one admitted a
+// cut pair whenever none survived: an unclosed block, a variant-spelled closer, or a
+// closer swallowed by a later literal (TD internal/llmclient/think.go:406).
+//
+// The result is for tag DETECTION only, never for parsing: a think tag that
+// survives the mask is markup enclosing reply text, while one that appears solely
+// inside a string value is a model QUOTING the tag (the likeliest input in this
+// repo, where findings discuss think handling) and must not be read as thinking.
+// Because the output is byte-aligned with the input, an offset computed on the
+// masked copy is valid in the unmasked original — which is what lets a caller
+// mask for detection and slice the original for parsing.
+//
+// It lives here, not in a lane, because internal/llmclient owns every tag rule:
+// three lanes now share one definition of where a tag counts.
+func MaskJSONStrings(s string) string {
+	b := []byte(s)
+	inStr, escaped := false, false
+	// openCtx reports whether the byte just consumed leaves JSON in a position where
+	// a string literal may begin. It starts true: a bare JSON string is a valid
+	// document, so a leading `"` opens a literal.
+	openCtx := true
+	// cutPair records that some blanked run swallowed a think OPENER and then a `{` or
+	// `[`. runHasOpener tracks the opener within the run currently open, and resets with
+	// each literal, so a brace in an EARLIER value cannot be attributed to a later tag.
+	cutPair, runHasOpener := false, false
+	for i := 0; i < len(b); i++ {
+		c := b[i]
+		if !inStr {
+			switch {
+			case c == '"' && openCtx:
+				inStr = true
+				openCtx = false
+				runHasOpener = false
+			case c == ' ' || c == '\t' || c == '\n' || c == '\r':
+				// Whitespace neither opens nor closes a JSON position.
+			default:
+				openCtx = c == '{' || c == '[' || c == ',' || c == ':'
+			}
+			continue
+		}
+		if escaped {
+			escaped = false
+			b[i] = ' '
+			continue
+		}
+		// Measured on the ORIGINAL s: the bytes behind i are already blanked, so the tag
+		// is only recognisable ahead of the cursor. A container char AFTER an opener in
+		// the same run is the cut-pair signature — see the arm below for why the order
+		// matters and why a brace before the opener is not it.
+		if strings.HasPrefix(s[i:], thinkOpen) {
+			runHasOpener = true
+		} else if runHasOpener && (c == '{' || c == '[') {
+			cutPair = true
+		}
+		switch c {
+		case '\\':
+			escaped = true
+			b[i] = ' '
+		case '"':
+			inStr = false
+			// A value just closed, so the next `"` is not itself a valid opener; only
+			// an intervening `,`/`:` (or another container) restores JSON position.
+			openCtx = false
+		default:
+			b[i] = ' '
+		}
+	}
+	masked := string(b)
+	// Fail-closed arm: the mask's boundary was a guess, so the whole masked copy is
+	// discarded. Return the input untouched — every tag stays visible and the detection
+	// sites refuse, which is the safe direction. Length is preserved on both arms.
+	//
+	// TWO independent signatures, because neither subsumes the other.
+	//
+	//  1. A CUT RUN — the blanked run swallowed an opener and THEN a `{` or `[`. A
+	//     string value may legitimately hold a brace, but a run that ends at the opening
+	//     quote of a KEY inside the draft must have swallowed the `{` that opened that
+	//     draft, so the quote the mask took for this value's terminator was really that
+	//     key's opener. This is the only signature available when NO closer survives:
+	//     the model never closed the block, closed it with a variant spelling (not a tag
+	//     here, so strings.Count never counts it), or its closer was itself swallowed by
+	//     a later literal. Order is load-bearing — a brace BEFORE the opener is ordinary
+	//     value text and nothing was cut.
+	//
+	//  2. A SURVIVING CLOSER beside a swallowed opener. Kept, because it fires on a
+	//     reply signature 1 cannot reach: a quoted opener in a brace-free value beside a
+	//     closer that is genuine markup. Dropping it would widen what the lanes admit.
+	//
+	// Neither fires on the three shapes the arm must leave masked: a genuinely quoted
+	// pair loses both halves and holds no container; a LONE opener named inside a
+	// cleanly-closed value removes one opener and zero closers, exactly as a cut pair
+	// does, while cutting nothing (TD internal/llmclient/think.go:392); and the reverse
+	// asymmetry needs no arm, since the opener stays visible and HasEnclosingThinkBlock
+	// refuses anyway.
+	if cutPair ||
+		(strings.Contains(masked, thinkClose) &&
+			strings.Count(s, thinkOpen)-strings.Count(masked, thinkOpen) >
+				strings.Count(s, thinkClose)-strings.Count(masked, thinkClose)) {
+		return s
+	}
+	return masked
+}
+
+// CloserSection names which part of a STRIPPED answer holds the committed
+// envelope when the reply carries a  response that no <think> opened.
+type CloserSection int
+
+const (
+	// SectionWholeAnswer: no unopened closer, or nothing after it parses. The
+	// answer is read end to end.
+	SectionWholeAnswer CloserSection = iota
+	// SectionAfterCloser: only the text AFTER the closer carries an envelope, so
+	// the reply began mid-thought and that text is the committed section.
+	SectionAfterCloser
+	// SectionAmbiguous: BOTH sides carry one. Nothing in the tag structure says
+	// which is committed, so neither may be used.
+	SectionAmbiguous
+)
+
+// ClassifyUnopenedCloser decides which part of a stripped answer to parse when a
+// </think> appears that no <think> opened. It is shared by every lane, so no
+// lane can drift on the RULE; each lane still supplies its own hasEnvelope,
+// because what counts as an envelope entirely depends on that lane's parser.
+//
+// Such a closer is the one tag shape neither earlier guard acts on, both
+// deliberately: SplitThink leaves it in place and HasEnclosingThinkBlock does not
+// refuse on it (IndexAfterUnopenedCloser documents why). What falls between them
+// is the envelope BEFORE the closer — reasoning the model abandoned if the reply
+// really did start mid-thought — which a first-match parser takes as the answer.
+//
+// Three outcomes, because the structure genuinely supports three cases and only
+// two of them have a safe default:
+//
+//	{draft} </think> {real}   → ambiguous: so does {real} … "</think>" {example}
+//	         </think> {real}   → after-closer: nothing before it to confuse
+//	{real} … prose "</think>"  → whole answer: the suffix holds no envelope
+//
+// The ambiguous case is REFUSED by the caller rather than resolved. Taking the
+// last section would let a quoted example override a real answer; taking the
+// first is the defect this rule exists to close. The two shapes have identical
+// tag structure, so no positional rule separates them.
+//
+// The offset is computed on the MASKED copy, so a closer quoted inside a JSON
+// string value is not a boundary, and sliced out of the UNMASKED answer so the
+// envelope reaches the parser intact. MaskJSONStrings blanks in place and
+// preserves length, so one offset is valid in both.
+func ClassifyUnopenedCloser(answer string, hasEnvelope func(string) bool) (CloserSection, string) {
+	i := IndexAfterUnopenedCloser(MaskJSONStrings(answer))
+	if i < 0 || i > len(answer) {
+		return SectionWholeAnswer, answer
+	}
+	suffix := answer[i:]
+	if !hasEnvelope(suffix) {
+		return SectionWholeAnswer, answer
+	}
+	if hasEnvelope(answer[:i]) {
+		return SectionAmbiguous, suffix
+	}
+	return SectionAfterCloser, suffix
 }
 
 // HasThinkMarkup reports whether the content carries inline think markup holding

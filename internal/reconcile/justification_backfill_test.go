@@ -93,3 +93,77 @@ func TestReExtractJustification(t *testing.T) {
 			"returning ok=true here would blank a stored justification that no later reconcile can replace")
 	})
 }
+
+// The replay path must apply the SAME exclusions the producer does, or the replay
+// set can exceed the stamp set: a file the producer would never have stamped from
+// would become an authoritative candidate for the replay (localdebt/backfill.go's
+// stated invariant). Two are missing today — the salvaged-source skip and the
+// draftLineSet exclusion — so a pre-existing forged justification survives a
+// backfill as Unchanged and the operator is told the store is clean.
+func TestReExtractJustification_AppliesTheProducerExclusions(t *testing.T) {
+	op := "\x3cthink\x3e"
+	cl := "\x3c/think\x3e"
+	dir := t.TempDir()
+
+	anchored := "\n- **internal/thing.go:42** the real narrative explaining the defect.\n"
+
+	t.Run("a salvaged source with no bin index yields no replay excerpt", func(t *testing.T) {
+		p := filepath.Join(dir, "salvaged.md")
+		require.NoError(t, os.WriteFile(p, []byte("## Findings\n"+anchored), 0o600))
+		// No salvaged_chunks: an unchunked persona whose whole reply is promoted
+		// reasoning. collectReviewNarratives withholds it entirely, so it is not a
+		// document the stamp could have come from.
+		require.NoError(t, os.WriteFile(filepath.Join(dir, statusFileName),
+			[]byte(`{"salvaged":true}`), 0o600))
+
+		// Line 3 is the anchored narrative line, so the only reason to refuse is the
+		// salvaged status the producer honours.
+		text, _, ok, err := ReExtractJustification(p, "internal/thing.go", 42, 3)
+		require.NoError(t, err)
+		assert.False(t, ok, "a source the producer refuses must not authorise a replay rewrite")
+		assert.Empty(t, text)
+	})
+
+	// The third exclusion, and the one that shipped unexercised: a status.json naming
+	// bins the review.md cannot account for. Mutation gives no evidence here —
+	// removing the arm leaves `desynced` unused and fails the BUILD, not a test — so
+	// the arm needs a reachable input or nothing pins it at all.
+	t.Run("a salvaged bin index the content cannot account for yields no replay excerpt", func(t *testing.T) {
+		p := filepath.Join(dir, "desynced.md")
+		require.NoError(t, os.WriteFile(p, []byte("## Findings\n"+anchored), 0o600))
+		// One segment (no boundary marker), so bin 3 names nothing. fanout never
+		// writes such a pair, which is exactly why it is evidence the review.md and
+		// the status.json came from different states. The bin list is non-empty, so
+		// the whole-file salvaged arm above does NOT fire — this reaches the desync
+		// arm specifically.
+		require.NoError(t, os.WriteFile(filepath.Join(dir, statusFileName),
+			[]byte(`{"salvaged":true,"salvaged_chunks":[3]}`), 0o600))
+
+		// Line 3 is the anchored narrative line, so the only reason to refuse is the
+		// desync. Withhold, mirroring the producer — and withhold as ok=false, not as
+		// an error: err is reserved for "the source is gone or unreadable".
+		text, section, ok, err := ReExtractJustification(p, "internal/thing.go", 42, 3)
+		require.NoError(t, err,
+			"a desynced pair is a mismatch, not an unreadable source — collapsing the two "+
+				"would make a pruned review dir indistinguishable from this")
+		assert.False(t, ok, "a bin list the content cannot account for must not authorise a replay rewrite")
+		assert.Empty(t, text)
+		assert.Empty(t, section)
+	})
+
+	t.Run("a draft citation inside a leading think run is not an anchor", func(t *testing.T) {
+		p := filepath.Join(dir, "draft.md")
+		body := op + "considering internal/thing.go:42\nstill drafting\n" + cl + "\n" +
+			"- internal/thing.go:43 something else entirely\n"
+		require.NoError(t, os.WriteFile(p, []byte(body), 0o600))
+		require.NoError(t, os.Remove(filepath.Join(dir, statusFileName)))
+
+		// Line 1 carries the anchor, but it lives inside the leading run the
+		// findings parser refused — the model DISCARDED it. Publishing it as the
+		// finding's provenance is the damage draftLineSet exists to prevent.
+		text, _, ok, err := ReExtractJustification(p, "internal/thing.go", 42, 1)
+		require.NoError(t, err)
+		assert.False(t, ok, "a draft-run line must not authorise a replay rewrite")
+		assert.Empty(t, text)
+	})
+}
