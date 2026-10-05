@@ -38,6 +38,7 @@ func parseVerdict(response string) (*reclib.Verification, error) {
 	// degrade the verdict to unverifiable. On extractJSONObject returning ""
 	// (unbalanced leading brace), advance past the first '{' and retry.
 	rest := response
+	var invalidEnum *string
 	for {
 		obj := extractJSONObject(rest)
 		if obj == "" {
@@ -48,6 +49,10 @@ func parseVerdict(response string) (*reclib.Verification, error) {
 			rest = rest[next+1:]
 			continue
 		}
+		// Advance past this object BEFORE any decision on it: every branch below
+		// either returns or continues, and a continue that left rest unadvanced
+		// would spin forever.
+		rest = rest[strings.Index(rest, obj)+len(obj):]
 		// Use a pointer for Verdict so json.Unmarshal can distinguish a present
 		// key (even empty) from an absent key — avoids a second unmarshal pass.
 		var candidate struct {
@@ -60,14 +65,31 @@ func parseVerdict(response string) (*reclib.Verification, error) {
 			case verdictConfirmed, verdictRefuted, verdictUnverifiable:
 				return &reclib.Verification{Verdict: normVerdict, Notes: candidate.Reasoning}, nil
 			default:
-				return &reclib.Verification{
-					Verdict: verdictUnverifiable,
-					Notes:   "invalid_verdict: " + truncateForNotes(*candidate.Verdict) + " (raw: " + truncateForNotes(response) + ")",
-				}, nil
+				// An out-of-enum value is NOT necessarily the committed verdict: it is
+				// just as often a quoted example ahead of the real one. Do not
+				// short-circuit — remember it and keep walking, so a committed verdict
+				// sitting behind a quoted out-of-enum example is still graded. This is
+				// the exact walk carriesVerdict (internal/verify/invoke.go) already does,
+				// and the divergence between the two was a real defect: the predicate
+				// selected a section its own grader then refused to read, losing the
+				// committed verdict to `unverifiable` and embedding only the fragment
+				// (TD internal/verify/invoke.go:782).
+				if invalidEnum == nil {
+					v := truncateForNotes(*candidate.Verdict)
+					invalidEnum = &v
+				}
+				continue
 			}
 		}
-		idx := strings.Index(rest, obj)
-		rest = rest[idx+len(obj):]
+	}
+
+	if invalidEnum != nil {
+		// No usable verdict anywhere; report the FIRST out-of-enum value with the full
+		// raw text, exactly as the short-circuit used to.
+		return &reclib.Verification{
+			Verdict: verdictUnverifiable,
+			Notes:   "invalid_verdict: " + *invalidEnum + " (raw: " + truncateForNotes(response) + ")",
+		}, nil
 	}
 
 	return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "malformed_output: " + truncateForNotes(response)}, nil
