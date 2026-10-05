@@ -9,9 +9,10 @@ import (
 )
 
 // An agent-mode refusal is a CONTENT-SHAPE decline, and until this change
-// postCheck had no way to say so. invokeExecutor's two refusals — think markup
-// that survived the strip (executor.go:800) and a bare </think> with a fix
-// envelope on both sides (executor.go:804) — come back as a warn with
+// postCheck had no way to say so. invokeExecutor's two refusals — its
+// HasEnclosingThinkBlock arm (think markup that survived the strip) and its
+// executorFixFromAnswer ambiguous arm (a bare </think> with a fix envelope on both
+// sides), the two sites that open their warn with agentRefusalPrefix — come back with
 // salvaged=false, so they bypassed the salvage arm and landed in the generic
 // `if warn != "" {` branch. Two consequences, both tested below:
 //

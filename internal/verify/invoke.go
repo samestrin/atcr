@@ -203,7 +203,18 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 		logger.Debug("skeptic failure detail", "skeptic", skeptic.Name, "class", "think_markup_after_answer", "detail", "think markup outside a JSON string is not leading, so the first verdict-keyed object may be a discarded draft")
 		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "think_markup_after_answer", Skeptic: skeptic.Name}, res.TrippedBudgets, nil
 	}
-	v, ambiguous := verdictFromAnswer(answer)
+	v, ambiguous, discardedPrefix := verdictFromAnswer(answer)
+	if discardedPrefix > 0 {
+		// The reply began mid-thought, so the verdict was taken from the text AFTER a
+		// bare </think> and the draft ahead of it was dropped. Debug, not Warn: this
+		// is a SUCCESSFUL grade and the shape is legitimate (a chat template put the
+		// opener in the prompt), so warning on it would train the reader to ignore the
+		// class. But it must be recorded somewhere — the dropped text is kept nowhere,
+		// and without this line an operator cannot tell this grade from one read end to
+		// end, nor see that anything was removed (TD internal/verify/invoke.go:683).
+		logger.Debug("skeptic answer taken after a bare closer", "skeptic", skeptic.Name,
+			"class", "verdict_after_unopened_closer", "discarded_prefix_bytes", discardedPrefix)
+	}
 	if ambiguous {
 		// A bare </think> with an envelope on BOTH sides. Neither is provably the
 		// committed one, and grading the wrong one is durable: a draft `refuted`
@@ -677,17 +688,33 @@ func classifyUnopenedCloser(answer string, hasEnvelope func(string) bool) (close
 	}
 }
 
-// carriesVerdict reports whether text parses to a real verdict, as opposed to
-// one of parseVerdict's three "nothing usable here" diagnostics. It is the
-// envelope test classifyUnopenedCloser needs for the skeptic lane.
+// carriesVerdict reports whether text holds a USABLE verdict anywhere in it, as
+// opposed to only parseVerdict's three "nothing usable here" diagnostics. It is
+// the envelope test classifyUnopenedCloser needs for the skeptic lane.
 //
-// All THREE must be excluded, and invalid_verdict: is the one that is easy to
-// miss: unlike the other two it comes back from an object that DID carry a
-// verdict key, just holding a value outside the enum (verdict.go:65). Counting
-// it as an envelope made a quoted out-of-enum example look like a committed
-// answer, so a real verdict followed by prose naming </think> and such an
+// Two things are load-bearing, and the second is what makes this more than a call
+// to parseVerdict.
+//
+// First, all THREE diagnostics must be excluded, and invalid_verdict: is the one
+// that is easy to miss: unlike the other two it comes back from an object that DID
+// carry a verdict key, just holding a value outside the enum (verdict.go:65).
+// Counting it as an envelope made a quoted out-of-enum example look like a
+// committed answer, so a real verdict followed by prose naming </think> and such an
 // example collapsed to AMBIGUOUS — availability lost on exactly the reply shape
 // this repo's own reviewers produce (TD internal/verify/invoke.go:701).
+//
+// Second, the walk must ITERATE rather than ask parseVerdict about the text as a
+// whole. parseVerdict short-circuits on the FIRST object carrying a verdict key,
+// in-enum or not, so delegating the question to it answers "is the first
+// verdict-keyed object usable" — and a committed verdict sitting BEHIND a quoted
+// out-of-enum example then read as no envelope at all, collapsing the section to
+// the whole answer and grading the abandoned pre-closer draft. That is the decoy
+// defect the round-2 blocker closed on the executor lane
+// (TD internal/verify/executor.go:916), reappearing on the skeptic lane through the
+// fix for the first point above. It is the worse direction of the two: a draft
+// `refuted` never blocks the gate (reconcile.IsFailing), so a disclosed refusal was
+// replaced by a silently wrong verdict. classifyUnopenedCloser's "Both predicates
+// iterate now" is the invariant this half upholds.
 //
 // Narrowing AMBIGUOUS does not move the CI gate in only one direction, and the
 // exception is worth stating because it looks like a weakening: under the DEFAULT
@@ -698,14 +725,39 @@ func classifyUnopenedCloser(answer string, hasEnvelope func(string) bool) (close
 // pinned by TestCarriesVerdict_RecoveredVerdictReachesTheGateAsItself, which
 // asserts both directions against reconcile.IsFailing rather than describing them.
 func carriesVerdict(s string) bool {
-	v, err := parseVerdict(s)
+	// The candidate walk mirrors parseVerdict's own (extractJSONObject, advancing
+	// past the first '{' when the leading brace is unbalanced), but the DECISION is
+	// delegated per object so the two cannot disagree on what a usable verdict is.
+	rest := s
+	for {
+		obj := extractJSONObject(rest)
+		if obj == "" {
+			next := strings.IndexByte(rest, '{')
+			if next < 0 {
+				return false
+			}
+			rest = rest[next+1:]
+			continue
+		}
+		if usableVerdict(parseVerdict(obj)) {
+			return true
+		}
+		rest = rest[strings.Index(rest, obj)+len(obj):]
+	}
+}
+
+// usableVerdict reports whether a parseVerdict result is a real verdict rather
+// than one of its three "nothing usable here" diagnostics. Split out so
+// carriesVerdict's per-candidate test and the diagnostics it rejects stay in one
+// place; it takes parseVerdict's pair directly so no caller can forget the error.
+func usableVerdict(v *reclib.Verification, err error) bool {
 	// Contract-only arm, kept not covered: parseVerdict returns a non-nil
 	// Verification on every path and its own doc records that the error "is always
 	// nil today", so neither half is reachable by construction. It guards the
 	// CONTRACT rather than an observed input — if parseVerdict ever grows a real
 	// error return, this predicate must read false, not dereference nil. Same
-	// class as internal/fanout/artifacts.go:252 and internal/debate/protocol.go:186
-	// (TD internal/verify/invoke.go:698).
+	// class as the arms behind TD internal/fanout/artifacts.go:252 and
+	// TD internal/debate/protocol.go:186 (TD internal/verify/invoke.go:698).
 	if err != nil || v == nil {
 		return false
 	}
@@ -726,13 +778,22 @@ func carriesVerdict(s string) bool {
 // unverified while the arm it describes was genuinely uncovered, which is the cost
 // of stating a coverage claim without pointing at its proof
 // (TD internal/verify/invoke.go:706).
-func verdictFromAnswer(answer string) (v *reclib.Verification, ambiguous bool) {
+func verdictFromAnswer(answer string) (v *reclib.Verification, ambiguous bool, discardedPrefix int) {
 	section, text := classifyUnopenedCloser(answer, carriesVerdict)
 	if section == sectionAmbiguous {
-		return nil, true
+		return nil, true, 0
 	}
 	parsed, _ := parseVerdict(text)
-	return parsed, false
+	// discardedPrefix is how many bytes were dropped ahead of the committed section,
+	// and it exists only so the caller can RECORD the drop. On sectionAfterCloser the
+	// reply began mid-thought and the abandoned pre-closer draft is kept nowhere —
+	// docs/verification.md says so of the whole lane — which left an operator unable
+	// to tell a whole-answer grade from one taken out of a fragment, with no record
+	// that anything was removed. The text itself is deliberately NOT carried: it is a
+	// draft the model discarded, and retaining it in a Verification would put a
+	// withdrawn verdict back into the artifacts. A length is enough to see the split
+	// happened and how much it cost (TD internal/verify/invoke.go:683).
+	return parsed, false, len(answer) - len(text)
 }
 
 // maskJSONStrings blanks the contents of every JSON double-quoted string literal

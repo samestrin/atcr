@@ -394,10 +394,14 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 				// warn branch, for the two reasons the salvage arm above was split out:
 				// the class must not read as a provider/transport error for a reply that
 				// arrived intact, and the FixWarning stamp needs the same
-				// hasAnyFixAttribution guard its four sibling arms carry. Without it a
-				// later tier's refusal lands a warning beside an earlier tier's generated
-				// Fix — the "a good Fix never carries a FixWarning" invariant stated at
-				// internal/reconcile/emit.go:158.
+				// hasAnyFixAttribution guard the salvage, truncation and empty-completion
+				// arms carry. Those THREE are the siblings: the self-decline and the two
+				// pre-dispatch ceiling skips guard on the weaker `f.Fix == ""` instead, a
+				// distinction :420 below documents as load-bearing because `f.Fix == ""`
+				// cannot tell a reviewer's own suggestion from an earlier tier's generated
+				// fix. Without a guard here a later tier's refusal lands a warning beside
+				// that generated Fix — the "a good Fix never carries a FixWarning"
+				// invariant stated at internal/reconcile/emit.go:158.
 				//
 				// The class is deliberately NOT executor_salvaged_reasoning: that one
 				// names the snippet-path reasoning salvage and is pinned by the
@@ -411,6 +415,12 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 					}
 					return "", false
 				}
+				// Transport and parse failures only, now that the refusal arm above has
+				// taken the content-shape declines. This stamp is still unguarded, so it
+				// remains the one known violation of the emit.go:158 invariant: a later
+				// tier whose provider dies writes a FixWarning beside an earlier tier's
+				// generated Fix. Narrowed, not closed — do not read the arm above as having
+				// settled it (TD internal/verify/executor.go:415).
 				if warn != "" {
 					logPipelineWarning(log.FromContext(ctx), "executor_fix_failed", fmt.Sprintf("%s:%d: %s", f.File, f.Line, warn))
 					f.FixWarning = warn

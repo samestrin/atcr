@@ -40,7 +40,7 @@ func TestVerdictFromAnswer_EnvelopeOnBothSidesIsRefused(t *testing.T) {
 		`</think>` + "\n" +
 		`{"verdict":"confirmed","reasoning":"REAL"}`
 
-	v, ambiguous := verdictFromAnswer(answer)
+	v, ambiguous, _ := verdictFromAnswer(answer)
 
 	assert.True(t, ambiguous,
 		"an envelope on both sides of an unopened closer is not resolvable from tag structure")
@@ -56,7 +56,7 @@ func TestVerdictFromAnswer_OnlyAfterTheCloserTakesTheSuffix(t *testing.T) {
 		`</think>` + "\n" +
 		`{"verdict":"confirmed","reasoning":"REAL"}`
 
-	v, ambiguous := verdictFromAnswer(answer)
+	v, ambiguous, _ := verdictFromAnswer(answer)
 
 	require.False(t, ambiguous)
 	require.NotNil(t, v)
@@ -74,7 +74,7 @@ func TestVerdictFromAnswer_TrailingProseNamingCloserKeepsItsVerdict(t *testing.T
 	answer := `{"verdict":"confirmed","reasoning":"REAL"}` + "\n" +
 		`Note: SplitThink never scans for a bare </think>.`
 
-	v, ambiguous := verdictFromAnswer(answer)
+	v, ambiguous, _ := verdictFromAnswer(answer)
 
 	require.False(t, ambiguous)
 	require.NotNil(t, v)
@@ -90,7 +90,7 @@ func TestVerdictFromAnswer_CloserInsideAJSONStringIsNotABoundary(t *testing.T) {
 	t.Parallel()
 	answer := `{"verdict":"confirmed","reasoning":"the strip never looks for </think>"}`
 
-	v, ambiguous := verdictFromAnswer(answer)
+	v, ambiguous, _ := verdictFromAnswer(answer)
 
 	require.False(t, ambiguous)
 	require.NotNil(t, v)
@@ -101,7 +101,7 @@ func TestVerdictFromAnswer_CloserInsideAJSONStringIsNotABoundary(t *testing.T) {
 // must be inert when the shape it keys on is absent.
 func TestVerdictFromAnswer_NoCloserIsUnchanged(t *testing.T) {
 	t.Parallel()
-	v, ambiguous := verdictFromAnswer(`{"verdict":"refuted","reasoning":"legit"}`)
+	v, ambiguous, _ := verdictFromAnswer(`{"verdict":"refuted","reasoning":"legit"}`)
 
 	require.False(t, ambiguous)
 	require.NotNil(t, v)
@@ -288,7 +288,7 @@ func TestBothLanesAgreeOnTheDecoyShape(t *testing.T) {
 		`{"file":"internal/auth/token.go","line":42}` + "\n" +
 		`{"fix":"REAL-PATCH","explanation":"real"}`
 
-	_, verdictAmbiguous := verdictFromAnswer(verdictAnswer)
+	_, verdictAmbiguous, _ := verdictFromAnswer(verdictAnswer)
 	_, fixAmbiguous, _ := executorFixFromAnswer(fixAnswer)
 
 	assert.True(t, verdictAmbiguous, "skeptic lane refuses the decoy shape")
@@ -360,7 +360,7 @@ func TestVerdictFromAnswer_OutOfEnumExampleAfterTheCloserKeepsTheVerdict(t *test
 		`A reply that ends on </think> began mid-thought.` + "\n" +
 		`An out-of-enum verdict is written {"verdict":"maybe"} and parses to nothing usable.`
 
-	v, ambiguous := verdictFromAnswer(answer)
+	v, ambiguous, _ := verdictFromAnswer(answer)
 
 	require.False(t, ambiguous,
 		"the suffix holds no usable verdict, so the tag structure is whole-answer and nothing is ambiguous")
@@ -398,7 +398,7 @@ func TestVerdictFromAnswer_UnusableSuffixFallsBackToWholeAnswerForAllThree(t *te
 		"malformed_output": `not an object at all`,
 		"empty_response":   ``,
 	} {
-		v, ambiguous := verdictFromAnswer(draft + suffix)
+		v, ambiguous, _ := verdictFromAnswer(draft + suffix)
 
 		require.False(t, ambiguous, name+": an unusable suffix carries no envelope, so nothing is ambiguous")
 		require.NotNil(t, v)
@@ -440,7 +440,7 @@ func TestVerdictFromAnswer_ADiagnosticNoteNeverQuotesOnlyTheFragment(t *testing.
 	} {
 		answer := prefix + "\n</think>\n" + suffix
 		section, _ := classifyUnopenedCloser(answer, carriesVerdict)
-		v, _ := verdictFromAnswer(answer)
+		v, _, _ := verdictFromAnswer(answer)
 
 		require.Equal(t, sectionWholeAnswer, section,
 			name+": an unusable suffix is not an envelope, so the whole answer is read")
@@ -453,7 +453,7 @@ func TestVerdictFromAnswer_ADiagnosticNoteNeverQuotesOnlyTheFragment(t *testing.
 	// truncate: a usable verdict's Notes is the model's reasoning, not a raw embed.
 	answer := prefix + "\n</think>\n" + `{"verdict":"confirmed","reasoning":"REAL"}`
 	section, _ := classifyUnopenedCloser(answer, carriesVerdict)
-	v, ambiguous := verdictFromAnswer(answer)
+	v, ambiguous, _ := verdictFromAnswer(answer)
 
 	require.Equal(t, sectionAfterCloser, section, "a real verdict after a lone closer IS the committed section")
 	require.False(t, ambiguous)
@@ -483,29 +483,163 @@ func TestCarriesVerdict_RecoveredVerdictReachesTheGateAsItself(t *testing.T) {
 	t.Parallel()
 	const quoted = "\nAn out-of-enum example is written {\"verdict\":\"maybe\"}, which parses to nothing.\n"
 
+	// The baseline, stated once rather than re-asserted per row: whatever the real
+	// verdict was, the pre-fix AMBIGUOUS collapse graded it `unverifiable`, and the
+	// default gate BLOCKS on that. It is asserted here because it is what makes the
+	// per-row results below a change rather than a description — but it does not
+	// depend on the rows, so folding it into the loop would only make it look like it
+	// did.
+	require.True(t,
+		reconcile.IsFailing("HIGH", "", &reconcile.Verification{Verdict: verdictUnverifiable}, "MEDIUM", false),
+		"the pre-fix collapse graded unverifiable, which the default gate blocks on — the baseline both rows move from")
+
 	for _, tc := range []struct {
-		verdict      string
-		blocksBefore bool
-		blocksAfter  bool
-		why          string
+		verdict     string
+		blocksAfter bool
+		why         string
 	}{
-		{"confirmed", true, true, "a recovered confirmed blocks either way — and is the only one that blocks under --require-verified"},
-		{"refuted", true, false, "a recovered refuted STOPS blocking: the skeptic disproved the finding, which is what the gate is told to honour"},
+		{"confirmed", true, "a recovered confirmed still blocks — and is the only verdict that blocks under --require-verified"},
+		{"refuted", false, "a recovered refuted STOPS blocking: the skeptic disproved the finding, which is what the gate is told to honour"},
 	} {
 		answer := `{"verdict":"` + tc.verdict + `","reasoning":"REAL"}` +
 			"\nA reply ending on </think> began mid-thought." + quoted
 
-		v, ambiguous := verdictFromAnswer(answer)
+		v, ambiguous, _ := verdictFromAnswer(answer)
 
 		require.False(t, ambiguous, tc.verdict+": the quoted example is not an envelope")
 		require.NotNil(t, v)
 		require.Equal(t, tc.verdict, v.Verdict, tc.verdict+": the real verdict must be recovered intact")
 
-		// What the gate did BEFORE the fix: the same reply graded unverifiable.
-		before := reconcile.IsFailing("HIGH", "", &reconcile.Verification{Verdict: verdictUnverifiable}, "MEDIUM", false)
-		after := reconcile.IsFailing("HIGH", "", v, "MEDIUM", false)
-
-		assert.Equal(t, tc.blocksBefore, before, "the pre-fix AMBIGUOUS collapse always blocked the default gate")
-		assert.Equal(t, tc.blocksAfter, after, tc.why)
+		assert.Equal(t, tc.blocksAfter,
+			reconcile.IsFailing("HIGH", "", v, "MEDIUM", false), tc.why)
 	}
+}
+
+// --- the predicate must ITERATE, not judge the first object ---
+//
+// Excluding invalid_verdict: is only half an envelope test. parseVerdict
+// short-circuits on the FIRST object carrying a verdict key — in-enum or not — so
+// delegating the whole question to it answers "is the first verdict-keyed object
+// usable", not "does this text hold a usable verdict". A post-closer section whose
+// committed verdict sits BEHIND a quoted out-of-enum example therefore read as
+// empty, classifyUnopenedCloser fell back to the whole answer, and the abandoned
+// pre-closer draft was graded.
+//
+// That is strictly worse than the bug the exclusion fixed: a `refuted` draft never
+// blocks CI (reconcile.IsFailing:104), so a disclosed AMBIGUOUS refusal was
+// replaced by a silently wrong verdict — the one outcome classifyUnopenedCloser's
+// doc says the rule exists to prevent.
+//
+// It is also the SAME defect, in the same predicate pair, that the round-2 blocker
+// closed on the executor lane (TD internal/verify/executor.go:916): a decoy object
+// in front of the real envelope made the committed section look empty. The doc's
+// "Both predicates iterate now" is the invariant, and these tests are what hold the
+// skeptic half of it.
+
+// TestCarriesVerdict_IteratesPastAnOutOfEnumObject pins the predicate directly.
+func TestCarriesVerdict_IteratesPastAnOutOfEnumObject(t *testing.T) {
+	t.Parallel()
+
+	assert.True(t, carriesVerdict(`An example is {"verdict":"maybe"}, and my answer is `+
+		`{"verdict":"confirmed","reasoning":"REAL"}`),
+		"an out-of-enum object in FRONT of the real verdict must not make the section look empty")
+	assert.True(t, carriesVerdict(`{"file":"a.go","line":1}`+"\n"+`{"verdict":"confirmed","reasoning":"R"}`),
+		"nor must a decoy object with no verdict key — the executor lane's proven shape")
+	assert.False(t, carriesVerdict(`{"verdict":"maybe"}`+"\n"+`{"verdict":"also-bad"}`),
+		"but a section holding ONLY unusable objects still carries no envelope")
+}
+
+// TestVerdictFromAnswer_DecoyBeforeTheRealVerdictIsStillAnEnvelope is the shape
+// end to end: both sides carry an envelope, so the lane must refuse rather than
+// grade either one.
+func TestVerdictFromAnswer_DecoyBeforeTheRealVerdictIsStillAnEnvelope(t *testing.T) {
+	t.Parallel()
+	answer := `{"verdict":"refuted","reasoning":"DRAFT"}` + "\n" +
+		`</think>` + "\n" +
+		`An out-of-enum example is {"verdict":"maybe"}.` + "\n" +
+		`{"verdict":"confirmed","reasoning":"REAL"}`
+
+	v, ambiguous, _ := verdictFromAnswer(answer)
+
+	assert.True(t, ambiguous,
+		"a quoted example in front of the committed verdict must not collapse the section to empty")
+	assert.Nil(t, v, "a refusal returns no verdict")
+	if v != nil {
+		assert.NotEqual(t, verdictRefuted, v.Verdict,
+			"grading the abandoned draft is the durable damage: a draft refuted never blocks the gate")
+	}
+}
+
+// TestBothLanesAgreeOnTheOutOfEnumDecoyShape is the drift guard for the doc claim
+// that both predicates iterate. The executor half was already pinned by
+// TestExecutorFixFromAnswer_DecoyObjectBeforeTheFixIsStillAnEnvelope; this asserts
+// the skeptic half reaches the same answer on the byte-equivalent shape, so the two
+// cannot diverge again without a failure that says so.
+func TestBothLanesAgreeOnTheOutOfEnumDecoyShape(t *testing.T) {
+	t.Parallel()
+	verdictAnswer := `{"verdict":"refuted","reasoning":"DRAFT"}` + "\n" +
+		`</think>` + "\n" +
+		`An example is {"verdict":"maybe"}.` + "\n" +
+		`{"verdict":"confirmed","reasoning":"REAL"}`
+	fixAnswer := `{"fix":"DRAFT-PATCH","explanation":"draft"}` + "\n" +
+		`</think>` + "\n" +
+		`{"file":"internal/auth/token.go","line":42}` + "\n" +
+		`{"fix":"REAL-PATCH","explanation":"real"}`
+
+	_, verdictAmbiguous, _ := verdictFromAnswer(verdictAnswer)
+	_, fixAmbiguous, _ := executorFixFromAnswer(fixAnswer)
+
+	assert.True(t, fixAmbiguous, "the executor lane iterates past a decoy — the round-2 fix")
+	assert.Equal(t, fixAmbiguous, verdictAmbiguous,
+		"and the skeptic lane must too, or classifyUnopenedCloser's shared-invariant doc is false")
+}
+
+// TestInvokeSkeptic_AfterCloserGradeRecordsTheDiscardedPrefix closes the half of
+// TD internal/verify/invoke.go:683 that the carriesVerdict narrowing did NOT close.
+//
+// Excluding invalid_verdict: removed the misleading diagnostic — a note can no
+// longer quote a fragment as if it were the whole reply. It did nothing about the
+// silence: a grade taken from the post-closer section dropped everything ahead of
+// it with no note and no log line, so an operator could not tell that grade from
+// one read end to end. The text is deliberately not retained (it is a verdict the
+// model withdrew), so the length is the record.
+func TestInvokeSkeptic_AfterCloserGradeRecordsTheDiscardedPrefix(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	ctx := log.NewContext(context.Background(),
+		slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	cc := finalChat("weighing two approaches\n</think>\n" + `{"verdict":"confirmed","reasoning":"REAL"}`)
+
+	v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", cc, okDispatcher(), false)
+
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	require.Equal(t, verdictConfirmed, v.Verdict, "the committed verdict is after the closer and must be graded")
+
+	out := buf.String()
+	assert.Contains(t, out, "verdict_after_unopened_closer",
+		"the split must leave a record, or a fragment-sourced grade is indistinguishable from a whole-answer one")
+	assert.Contains(t, out, "discarded_prefix_bytes=",
+		"and the record must say how much was dropped, since the text itself is kept nowhere")
+	assert.NotContains(t, out, "level=WARN msg=\"skeptic answer taken after a bare closer\"",
+		"this is a successful grade on a legitimate reply shape — warning on it would train the reader to ignore the class")
+}
+
+// And the complement: an answer read end to end must NOT claim a discarded prefix,
+// or the record above becomes noise on every reply.
+func TestInvokeSkeptic_WholeAnswerGradeRecordsNoDiscard(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	ctx := log.NewContext(context.Background(),
+		slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	cc := finalChat(`{"verdict":"confirmed","reasoning":"REAL"}`)
+
+	v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", cc, okDispatcher(), false)
+
+	require.NoError(t, err)
+	require.Equal(t, verdictConfirmed, v.Verdict)
+	assert.NotContains(t, buf.String(), "verdict_after_unopened_closer",
+		"no closer, nothing discarded — the record must not fire on an ordinary reply")
 }
