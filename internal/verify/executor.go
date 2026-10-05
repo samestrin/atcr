@@ -395,11 +395,12 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 				// the class must not read as a provider/transport error — a refusal is a
 				// content-shape decline, not a dead provider — and the FixWarning stamp needs the same
 				// hasAnyFixAttribution guard the salvage, truncation and empty-completion
-				// arms carry. Those THREE are the siblings: the self-decline and the two
-				// pre-dispatch ceiling skips guard on the weaker `f.Fix == ""` instead, a
-				// distinction :420 below documents as load-bearing because `f.Fix == ""`
-				// cannot tell a reviewer's own suggestion from an earlier tier's generated
-				// fix. Without a guard here a later tier's refusal lands a warning beside
+				// arms carry. Those THREE are the siblings: the four arms that guard on the
+				// weaker `f.Fix == ""` instead are the self-decline, the two pre-dispatch
+				// ceiling skips, and the diff-smell double-HARD halt below. That distinction
+				// is load-bearing — see the NOTE on the truncation arm below — because
+				// `f.Fix == ""` cannot tell a reviewer's own suggestion from an earlier
+				// tier's generated fix. Without a guard here a later tier's refusal lands a warning beside
 				// that generated Fix — the "a good Fix never carries a FixWarning"
 				// invariant stated at internal/reconcile/emit.go:158.
 				//
