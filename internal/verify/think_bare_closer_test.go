@@ -230,9 +230,10 @@ func TestInvokeSkeptic_AmbiguousUnopenedCloserRefuses(t *testing.T) {
 // --auto-fix.
 func TestInvokeExecutor_AmbiguousUnopenedCloserRefuses(t *testing.T) {
 	t.Parallel()
-	cc := finalChat(`Reading the file. {"fix":"DRAFT-PATCH","explanation":"draft"}` + "\n" +
-		`</think>` + "\n" +
-		`{"fix":"REAL-PATCH","explanation":"real"}`)
+	// The literal is shared with executor_agent_refusal_test.go's ambiguousAgentReply
+	// so the two cannot drift apart while this comment claims they prove one shape
+	// (TD internal/verify/executor_agent_refusal_test.go:31).
+	cc := finalChat(ambiguousAgentReply())
 
 	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
 		eligibleFinding()[0], cc, okDispatcher(), 0, "")

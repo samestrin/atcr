@@ -2,10 +2,12 @@ package verify
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // An agent-mode refusal is a CONTENT-SHAPE decline, and until this change
@@ -70,8 +72,18 @@ func TestGenerateFixes_AgentRefusal_PreservesPriorTierFix(t *testing.T) {
 		Evidence: "Found by bruce; fix by sonnet",
 	}}
 
-	generateFixes(context.Background(), findings, agentExecConfig(), execRegistry("MEDIUM"),
+	// TD internal/verify/executor_agent_refusal_test.go:68: every other assertion in
+	// this test is an ABSENCE, and all of them hold if the finding is never
+	// dispatched at all — mutation-proven, a changed pre-dispatch guard at
+	// executor.go silently skipped the finding and the test still passed. Bind a
+	// logger and assert the refusal was actually logged, so the test fails when the
+	// finding never reaches postCheck.
+	ctx, buf := ceilingCtx()
+	generateFixes(ctx, findings, agentExecConfig(), execRegistry("MEDIUM"),
 		&recordingExecutor{}, finalChat(ambiguousAgentReply()), okDispatcher(), 0)
+
+	require.Contains(t, buf.String(), "executor_agent_refused",
+		"this test's whole premise is that the refusal REACHES postCheck — assert it did")
 
 	f := findings[0]
 	assert.Equal(t, "an earlier tier's good fix", f.Fix,
@@ -159,4 +171,31 @@ func TestGenerateFixes_ResumedBlockRefusal_LogsItsOwnClass(t *testing.T) {
 		"the reply arrived intact; a content-shape decline must not read as a provider/transport error")
 	assert.Empty(t, findings[0].Fix,
 		"the draft patch must never be adopted, so --auto-fix has nothing to write")
+}
+
+// TD internal/verify/executor.go:147: agentRefusalPrefix's doc states a rule with
+// no mechanical enforcement — "Any NEW content-shape decline in invokeExecutor
+// must open with this constant or it inherits the transport classification." A new
+// decline written as a bare string would silently log as executor_fix_failed and
+// lose the hasAnyFixAttribution guard, which is exactly the defect this epic fixed.
+// The two current producers are correct by grep; the exposure is the next edit.
+//
+// Pinned rather than commented: every known content-shape decline shape must come
+// back from invokeExecutor with a warn opening with agentRefusalPrefix.
+func TestInvokeExecutor_ContentShapeDeclinesOpenWithTheRefusalPrefix(t *testing.T) {
+	t.Parallel()
+	for name, reply := range map[string]string{
+		"ambiguous unopened closer": ambiguousAgentReply(),
+		"resumed think run":         resumedBlockReply(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
+				eligibleFinding()[0], finalChat(reply), okDispatcher(), 0, "")
+			assert.Empty(t, fix, "a refused reply yields no patch")
+			require.NotEmpty(t, warn, "the refusal must carry a warn")
+			assert.True(t, strings.HasPrefix(warn, agentRefusalPrefix),
+				"a content-shape decline must open with agentRefusalPrefix or it inherits the transport classification: "+warn)
+		})
+	}
 }
