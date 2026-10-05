@@ -161,3 +161,39 @@ func TestInvokeExecutor_LoneQuotedThinkOpenerInAValueStillReturnsTheFix(t *testi
 	assert.Equal(t, "REAL: add a bounds check", fix,
 		"a valid repair must not be dropped because the explanation named a think opener")
 }
+
+// The route the surviving-closer discriminator misses, in the skeptic lane. The judge
+// of a think-handling finding writes a scratch verdict inside a block it never closes,
+// then states the real one in prose. No `</think>` survives the mask to signal that a
+// pair was cut, so the arm publishes a copy whose opener was swallowed — and the
+// enclosure guard at internal/verify/invoke.go:201 is the only thing between the
+// discarded draft and `findings.json` (TD internal/llmclient/think.go:406).
+func TestInvokeSkeptic_SplitPairWithNoSurvivingCloserStillRefusesTheDraft(t *testing.T) {
+	t.Parallel()
+	raw := "The finding claims, \"the guard is missing\n" +
+		"\x3cthink\x3e" + `{"verdict":"refuted","reasoning":"draft, wrong"}` +
+		"\nThat was scratch work. " + `{"verdict":"confirmed","reasoning":"real answer"}`
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	assert.Equal(t, verdictUnverifiable, v.Verdict,
+		"the blanked run spans the draft's own `{`, so the mask's boundary was a guess — a draft "+
+			"`refuted` admitted here never blocks CI and is charged to the reviewer's survived_skeptic_rate")
+	assert.Equal(t, "think_markup_after_answer", v.Notes)
+}
+
+// Executor twin, where admitting the draft is a patch written to tracked source: the
+// same unclosed block, and `--auto-fix` would apply the DRAFT repair the model threw
+// away (TD internal/llmclient/think.go:406).
+func TestInvokeExecutor_SplitPairWithNoSurvivingCloserStillDropsTheRepair(t *testing.T) {
+	t.Parallel()
+	raw := "The finding claims, \"the guard is missing\n" +
+		"\x3cthink\x3e" + `{"fix":"DRAFT: delete the validation","explanation":"draft, wrong"}` +
+		"\nThat was scratch work. " + `{"fix":"REAL: add a bounds check","explanation":"real answer"}`
+	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
+		eligibleFinding()[0], finalChat(raw), okDispatcher(), 0, "")
+	assert.Empty(t, fix,
+		"the draft patch must never be returned as the fix -- --auto-fix would write it to the tree")
+	assert.Contains(t, warn, "think markup",
+		"the refusal must name its cause, so an operator is not left with a silent empty fix")
+}

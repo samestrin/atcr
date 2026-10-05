@@ -1577,3 +1577,38 @@ func TestSeatSilenceNotes_NamesBothCausesForASeatThatHaltedAndWasSuppressed(t *t
 	assert.Equal(t, []string{"proposer silent"},
 		seatSilenceNotes(nil, nil, []string{LabelProposer}))
 }
+
+// The route the surviving-closer discriminator misses, in the debate lane. Same split as
+// TestRunDebate_CommaIntroducedQuoteBeforeAThinkBlockStillRefusesTheDraft, but the judge
+// never closes the block — so no `</think>` survives the mask to signal that a pair was
+// cut, and the removal counts read exactly as a legitimately quoted lone opener does.
+//
+// No ruling object after the block, deliberately, for the reason the sibling test states:
+// with one, ClassifyUnopenedCloser could refuse by the ambiguous-closer route instead and
+// the test would pass with the mask fix reverted. With no closer at all there is no
+// unopened-closer route either, so the enclosure guard at internal/debate/debate.go:700
+// is the ONLY thing standing between the draft and a durable verdict
+// (TD internal/llmclient/think.go:406).
+func TestRunDebate_SplitPairWithNoSurvivingCloserStillRefusesTheDraft(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	judge := "The proposer wrote, \"the guard is missing\n" +
+		"\x3cthink\x3e" + `{"outcome":"overturn","reasoning":"draft never committed"}` +
+		"\nthat was my scratch reasoning, nothing committed."
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "the attack stands"},
+		{content: judge},
+	}}
+	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.Overturned,
+		"the blanked run spans the draft's own `{`, so the mask's boundary was a guess — the draft must "+
+			"not become the ruling merely because no closer survived to prove the pair was cut")
+	assert.Equal(t, 1, res.Unresolved,
+		"the mask cut a pair, so it is discarded and the enclosure test refuses the raw reply")
+
+	df, _, err := ReadDebateFile(dir)
+	require.NoError(t, err)
+	require.Len(t, df.Items, 1)
+	assert.Equal(t, ReasonJudgeThinkMarkup, df.Items[0].Reason)
+}
