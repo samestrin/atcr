@@ -322,6 +322,38 @@ func TestExecutorFixFromAnswer_DecoyBeforeTheFixOnACleanResumeKeepsTheFix(t *tes
 		"a plan object in front of the patch must not cost the repair")
 }
 
+// TestBothLanesAgreeOnTheOutOfEnumDecoyShape is the drift guard for the claim that
+// both envelope predicates iterate.
+//
+// TD internal/verify/think_bare_closer_test.go:578 corrected what this test may
+// claim: its fixtures are NOT byte-equivalent across the lanes — the skeptic half
+// uses an out-of-enum decoy while the executor half uses a no-key decoy — and it
+// exercises the AMBIGUOUS shape, where the lanes cannot diverge because the
+// predicate's answer is discarded in favour of a refusal. What it does prove is
+// that the two predicates agree on the ambiguous classification for a decoy of
+// each flavour; the CLEAN-RESUME availability case, where they genuinely diverged,
+// is covered by TestVerdictFromAnswer_DecoyBeforeTheVerdictOnACleanResumeKeepsTheVerdict
+// and its executor twin. Retained (not dropped) so the ambiguous-shape agreement
+// keeps a regression guard.
+func TestBothLanesAgreeOnTheOutOfEnumDecoyShape(t *testing.T) {
+	t.Parallel()
+	verdictAnswer := `{"verdict":"refuted","reasoning":"DRAFT"}` + "\n" +
+		closerTag() + "\n" +
+		`An example is {"verdict":"maybe"}.` + "\n" +
+		`{"verdict":"confirmed","reasoning":"REAL"}`
+	fixAnswer := `{"fix":"DRAFT-PATCH","explanation":"draft"}` + "\n" +
+		closerTag() + "\n" +
+		`{"file":"internal/auth/token.go","line":42}` + "\n" +
+		`{"fix":"REAL-PATCH","explanation":"real"}`
+
+	_, verdictAmbiguous, _ := verdictFromAnswer(verdictAnswer)
+	_, fixAmbiguous, _ := executorFixFromAnswer(fixAnswer)
+
+	assert.True(t, verdictAmbiguous, "skeptic lane refuses the decoy shape — an envelope sits on BOTH sides")
+	assert.Equal(t, verdictAmbiguous, fixAmbiguous,
+		"the lanes share classifyUnopenedCloser but not the envelope predicate; they must still agree on AMBIGUOUS")
+}
+
 // TestVerdictFromAnswer_DecoyBeforeTheVerdictOnACleanResumeKeepsTheVerdict is the
 // SKEPTIC twin of the executor case above — the availability half that had no
 // counterpart because it would have failed. TD internal/verify/think_bare_closer_test.go:578:
