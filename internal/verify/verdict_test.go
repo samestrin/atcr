@@ -272,3 +272,60 @@ func TestParseVerdict_BareJSONModeObject(t *testing.T) {
 		})
 	}
 }
+
+// TD internal/verify/invoke.go:782: carriesVerdict was taught to iterate past an
+// out-of-enum decoy, but parseVerdict — verdictFromAnswer's actual grader — still
+// SHORT-CIRCUITED on the first verdict-keyed object, in-enum or not. The predicate
+// and the grader therefore disagreed about what "the envelope" is, so for a reply
+// whose suffix holds a quoted out-of-enum example BEFORE the real verdict,
+// carriesVerdict(suffix) returned true, classifyUnopenedCloser picked
+// SectionAfterCloser, and parseVerdict then graded the DECOY — losing the
+// committed verdict to `unverifiable` and embedding only the post-closer fragment.
+// Either direction: iterate past the out-of-enum object the way
+// carriesVerdict/parseExecutorResponse do, so predicate and grader cannot disagree.
+func TestParseVerdict_IteratesPastAnOutOfEnumDecoy(t *testing.T) {
+	t.Parallel()
+	raw := `{"verdict":"maybe","reasoning":"an example"} ` + "\n" +
+		`{"verdict":"confirmed","reasoning":"REAL"}`
+
+	v, err := parseVerdict(raw)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	assert.Equal(t, verdictConfirmed, v.Verdict,
+		"the committed verdict sits BEHIND the quoted example and must be graded")
+	assert.Equal(t, "REAL", v.Notes)
+	assert.NotContains(t, v.Notes, "(raw:",
+		"the real verdict was graded, so no diagnostic raw-text embed should appear")
+}
+
+// The single-object shape must be unchanged: an out-of-enum verdict with nothing
+// usable after it still reports invalid_verdict, preserving the diagnostic an
+// operator reads.
+func TestParseVerdict_SoleOutOfEnumObjectStillDiagnosesInvalidVerdict(t *testing.T) {
+	t.Parallel()
+	v, err := parseVerdict(`{"verdict": "maybe", "reasoning": "unclear"}`)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	assert.Equal(t, verdictUnverifiable, v.Verdict)
+	assert.Contains(t, v.Notes, "invalid_verdict: maybe")
+}
+
+// The end-to-end shape from the finding, through verdictFromAnswer: a bare closer
+// with nothing usable before it, a quoted out-of-enum example after it, and the
+// real committed verdict last. The predicate must select that section and the
+// grader must read the committed verdict out of it.
+func TestVerdictFromAnswer_GradesPastAnOutOfEnumDecoyAfterTheCloser(t *testing.T) {
+	t.Parallel()
+	answer := "weighing two approaches \n " + string(rune(0x3c)) + "/think" + string(rune(0x3e)) + " \n" +
+		` An example is {"verdict":"maybe"}.` + "\n" +
+		`{"verdict":"refuted","reasoning":"REAL"}`
+
+	v, ambiguous, _ := verdictFromAnswer(answer)
+	require.False(t, ambiguous, "both sides carry a verdict, so the section is not ambiguous")
+	require.NotNil(t, v)
+	assert.Equal(t, verdictRefuted, v.Verdict,
+		"the committed refuted must not be lost to the quoted out-of-enum example")
+	assert.Equal(t, "REAL", v.Notes)
+	assert.NotContains(t, v.Notes, "(raw:",
+		"the post-closer fragment alone must not be the only text kept")
+}
