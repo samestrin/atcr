@@ -127,3 +127,36 @@ func TestGenerateFixes_AgentRefusal_TruncationStaysObservable(t *testing.T) {
 	assert.Contains(t, f.FixWarning, "truncat",
 		"the operator-facing warning must name the truncation, not present the shape mistake alone")
 }
+
+// resumedBlockReply is the HasEnclosingThinkBlock refusal shape: a stripped answer
+// that still carries think markup outside a JSON string, produced when a resumed
+// run leaves the draft envelope at the FRONT of the answer.
+func resumedBlockReply() string {
+	return "\u003cthink\u003eplanning\u003c/think\u003e" + "\n" +
+		`{"fix":"DRAFT: delete the validation","explanation":"draft, wrong"}` + "\n" +
+		"\u003cthink\u003eno wait\u003c/think\u003e" + "\n" +
+		`{"fix":"REAL: add a bounds check","explanation":"real answer"}`
+}
+
+// TD internal/verify/executor.go:848 (testing): of invokeExecutor's two refusal
+// sites, only the executorFixFromAnswer ambiguous arm was pinned. The
+// HasEnclosingThinkBlock arm at :848 had ZERO enforcement: rewriting its return
+// from agentRefusalPrefix + text to a literal string silently reclassified that
+// site as executor_fix_failed (a provider/transport error) and the whole
+// internal/verify suite still passed. This drives generateFixes — the only place
+// the log class a consumer reads is decided — for THAT shape.
+func TestGenerateFixes_ResumedBlockRefusal_LogsItsOwnClass(t *testing.T) {
+	ctx, buf := ceilingCtx()
+	findings := eligibleFinding()
+
+	generateFixes(ctx, findings, agentExecConfig(), execRegistry("MEDIUM"),
+		&recordingExecutor{}, finalChat(resumedBlockReply()), okDispatcher(), 0)
+
+	out := buf.String()
+	assert.Contains(t, out, "executor_agent_refused",
+		"the resumed-block refusal must be disclosed under its own class, not as a dead provider")
+	assert.NotContains(t, out, "executor_fix_failed",
+		"the reply arrived intact; a content-shape decline must not read as a provider/transport error")
+	assert.Empty(t, findings[0].Fix,
+		"the draft patch must never be adopted, so --auto-fix has nothing to write")
+}
