@@ -744,39 +744,14 @@ func carriesVerdict(s string) bool {
 	// internal/verify/invoke.go:782, :733).
 	found := false
 	forEachJSONObject(s, func(obj string) bool {
-		if usableVerdict(parseVerdict(obj)) {
+		_, cause := parseVerdictCause(obj)
+		if usableVerdictCause(cause) {
 			found = true
 			return true
 		}
 		return false
 	})
 	return found
-}
-
-// usableVerdict reports whether a parseVerdict result is a real verdict rather
-// than one of its three "nothing usable here" diagnostics. Split out so
-// carriesVerdict's per-candidate test and the diagnostics it rejects stay in one
-// place; it takes parseVerdict's pair directly so no caller can forget the error.
-func usableVerdict(v *reclib.Verification, err error) bool {
-	// Contract-only arm, kept not covered: parseVerdict returns a non-nil
-	// Verification on every path and its own doc records that the error "is always
-	// nil today", so neither half is reachable by construction. It guards the
-	// CONTRACT rather than an observed input — if parseVerdict ever grows a real
-	// error return, this predicate must read false, not dereference nil (TD
-	// internal/verify/invoke.go:698).
-	if err != nil || v == nil {
-		return false
-	}
-	// TWO diagnostics are reachable here, not three. The walk below hands
-	// parseVerdict only non-empty balanced objects — extractJSONObject never returns
-	// "" and always yields a string starting '{' — so parseVerdict's own
-	// TrimSpace(response)=="" arm cannot fire and Notes=="empty_response" is
-	// unreachable from this caller. The clause that used to test for it was dead
-	// code, and three prose blocks ("all THREE diagnostics") counted it as live,
-	// which is a coverage claim the suite does not hold (TD
-	// internal/verify/invoke.go:764, :698).
-	return !strings.HasPrefix(v.Notes, "malformed_output:") &&
-		!strings.HasPrefix(v.Notes, "invalid_verdict:")
 }
 
 // verdictFromAnswer parses the committed verdict out of a STRIPPED skeptic

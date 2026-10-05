@@ -52,6 +52,50 @@ func forEachJSONObject(s string, fn func(obj string) bool) {
 	}
 }
 
+// parseCause is the STRUCTURAL reason a parseVerdict result is or is not usable.
+// It exists so the envelope predicate (internal/verify/invoke.go's usableVerdict)
+// can classify a result without inspecting the human-readable Notes string.
+//
+// Keying on Notes text was a real defect: on a real verdict Notes carries the
+// MODEL'S OWN REASONING verbatim, so a reply whose reasoning began with
+// "malformed_output:" or "invalid_verdict:" was misread as carrying no envelope.
+// Worse than a lost signal — the candidate walk CONTINUES after a rejected
+// candidate, so the committed verdict could be skipped and a later decoy graded:
+// a silently wrong verdict (TD internal/verify/invoke.go:712).
+//
+// Deliberately unexported and internal to this package: reclib.Verification lives
+// in the separate reconcile module, so adding a field there would force the
+// tag-and-pin release procedure for a purely internal signal.
+type parseCause int
+
+const (
+	// parseCauseUsable: an in-enum verdict was found. Notes is the reasoning.
+	parseCauseUsable parseCause = iota
+	// parseCauseMalformed: no verdict-keyed object was found at all. Notes is a
+	// "malformed_output: ..." diagnostic.
+	parseCauseMalformed
+	// parseCauseInvalidEnum: an object carried a verdict key with an out-of-enum
+	// value and nothing usable followed. Notes is an "invalid_verdict: ..."
+	// diagnostic.
+	parseCauseInvalidEnum
+	// parseCauseEmpty: the input was blank, so there was nothing to parse. Notes is
+	// "empty_response".
+	parseCauseEmpty
+)
+
+// parseVerdictCause is parseVerdict plus the STRUCTURAL cause, for callers that
+// must classify the result without reading Notes. parseVerdict is a thin wrapper
+// over the same logic, so its signature — asserted require.NoError at every test
+// call site — is unchanged.
+func parseVerdictCause(response string) (*reclib.Verification, parseCause) {
+	return parseVerdictCore(response)
+}
+
+// usableVerdictCause reports whether a structural cause is a real verdict rather
+// than one of the three "nothing usable here" diagnostics. This is what the
+// envelope predicate keys on.
+func usableVerdictCause(c parseCause) bool { return c == parseCauseUsable }
+
 // parseVerdict extracts a verdict + reasoning from a raw skeptic response into a
 // reclib.Verification. It never fails on bad input: any unparseable, empty, or
 // out-of-enum response degrades to an "unverifiable" verdict with a diagnostic
@@ -64,8 +108,16 @@ func forEachJSONObject(s string, fn func(obj string) bool) {
 // first balanced {...} object. Extra JSON fields are ignored (default unmarshal
 // behavior).
 func parseVerdict(response string) (*reclib.Verification, error) {
+	v, _ := parseVerdictCause(response)
+	return v, nil
+}
+
+// parseVerdictCore does the parsing and reports the STRUCTURAL cause directly,
+// so no caller has to recover it by pattern-matching the human-readable Notes
+// string. See parseCause above for why that distinction is load-bearing.
+func parseVerdictCore(response string) (*reclib.Verification, parseCause) {
 	if strings.TrimSpace(response) == "" {
-		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "empty_response"}, nil
+		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "empty_response"}, parseCauseEmpty
 	}
 
 	// Iterate candidate balanced JSON objects. Skip candidates that fail to
@@ -109,7 +161,7 @@ func parseVerdict(response string) (*reclib.Verification, error) {
 		}
 	})
 	if result != nil {
-		return result, nil
+		return result, parseCauseUsable
 	}
 
 	if invalidEnum != nil {
@@ -118,10 +170,10 @@ func parseVerdict(response string) (*reclib.Verification, error) {
 		return &reclib.Verification{
 			Verdict: verdictUnverifiable,
 			Notes:   "invalid_verdict: " + *invalidEnum + " (raw: " + truncateForNotes(response) + ")",
-		}, nil
+		}, parseCauseInvalidEnum
 	}
 
-	return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "malformed_output: " + truncateForNotes(response)}, nil
+	return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "malformed_output: " + truncateForNotes(response)}, parseCauseMalformed
 }
 
 // notesRawCap bounds how much raw skeptic text is embedded in a Verification.Notes
