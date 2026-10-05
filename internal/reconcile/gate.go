@@ -218,9 +218,14 @@ func allUnverifiableCollapse(verPath string) error {
 	// out of it is a cause nobody can reach. ambiguous_unopened_closer is the third
 	// and the least guessable: the reply arrived whole and the window was ample, so
 	// the two causes named before it both read as "not my problem" — and doctor,
-	// which the message points at, inspects the roster and cannot see a reply shape
-	// (TD internal/reconcile/gate.go:216).
-	return fmt.Errorf("all %d verdict(s) came back unverifiable; the gate counts only VERIFIED findings, so it will pass over every one of them. Run 'atcr doctor': the usual cause is an agent whose declared context_window_tokens cannot fund one tool read, which makes every check it runs unverifiable. A skeptic reply cut off on finish_reason=length (response_truncated) collapses to unverifiable the same way without any window fault, so check for it before blaming the declaration. A third cause is the reply SHAPE, which doctor cannot see: a skeptic reply carrying a </think> that no <think> opened, with a verdict envelope on both sides, is refused as ambiguous_unopened_closer because neither envelope is provably the committed one", len(vf.Findings))
+	// which the message points at, is narrower than the blanket denial that used to
+	// sit here: doctor's thinking verdict DOES read reply content
+	// (internal/doctor/run.go:1066 inlineThinking), but only for agents that
+	// declare thinking or thinking_level (internal/doctor/run.go:329), and it never
+	// sees whether a verdict envelope sat on both sides of the closer. Claiming
+	// doctor is blind to reply shape routes the operator away from the one command
+	// that would show them the bare closer (TD internal/reconcile/gate.go:223).
+	return fmt.Errorf("all %d verdict(s) came back unverifiable; the gate counts only VERIFIED findings, so it will pass over every one of them. Run 'atcr doctor': the usual cause is an agent whose declared context_window_tokens cannot fund one tool read, which makes every check it runs unverifiable. A skeptic reply cut off on finish_reason=length (response_truncated) collapses to unverifiable the same way without any window fault, so check for it before blaming the declaration. A third cause is the reply SHAPE: a skeptic reply carrying a </think> that no <think> opened, with a verdict envelope on both sides, is refused as ambiguous_unopened_closer because neither envelope is provably the committed one. Note that 'atcr doctor' CAN surface that markup, but only for agents that declare thinking or thinking_level, and it never sees whether a verdict envelope sat on both sides of the closer — so doctor can name the markup without naming the ambiguity", len(vf.Findings))
 }
 
 // RunReconcile discovers sources under reviewDir/sources, runs the deterministic
