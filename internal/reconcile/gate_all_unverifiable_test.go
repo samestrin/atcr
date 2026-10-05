@@ -171,7 +171,9 @@ func TestAllUnverifiableCollapse_NamesResponseTruncated(t *testing.T) {
 // carrying a </think> no <think> opened, with a verdict envelope on both sides, is
 // refused by the skeptic lane (internal/verify/invoke.go:207) and collapses to
 // unverifiable with no window fault and no truncation — so neither cause the
-// message already named applies, and atcr doctor cannot see the reply shape.
+// message already named applies, and doctor's thinking verdict can only name the
+// markup (and only for agents that declare thinking or thinking_level), never the
+// ambiguity over which envelope is the committed one.
 //
 // gate.go's own comment records that RunReconcile has stripped every verification
 // block by the time this runs, so the notes naming the cause are gone: this message
