@@ -16,6 +16,42 @@ const (
 	verdictUnverifiable = "unverifiable"
 )
 
+// forEachJSONObject walks the candidate balanced JSON objects in s in order,
+// stepping past an unbalanced leading brace exactly as every caller's own loop
+// did, and calls fn on each. It stops when fn returns true or the input is
+// exhausted.
+//
+// This walk used to be hand-copied into parseVerdict, carriesVerdict and
+// parseExecutorResponse. The copies drifted — carriesVerdict learned to ITERATE
+// past an out-of-enum decoy while parseVerdict still short-circuited on the first
+// verdict-keyed object — and the divergence was a real defect: the predicate
+// selected a section its own grader then refused to read, losing a committed
+// verdict to `unverifiable` (TD internal/verify/invoke.go:782, :727, :733). One
+// walk, one advance rule, so the three readers cannot disagree about what "the
+// envelope" is.
+//
+// rest is advanced BEFORE fn runs, so a callback that only remembers state and
+// asks to continue can never leave the offset unmoved — the infinite loop a
+// callback-mutates-nothing shape would otherwise allow.
+func forEachJSONObject(s string, fn func(obj string) bool) {
+	rest := s
+	for {
+		obj := extractJSONObject(rest)
+		if obj == "" {
+			next := strings.IndexByte(rest, '{')
+			if next < 0 {
+				return
+			}
+			rest = rest[next+1:]
+			continue
+		}
+		rest = rest[strings.Index(rest, obj)+len(obj):]
+		if fn(obj) {
+			return
+		}
+	}
+}
+
 // parseVerdict extracts a verdict + reasoning from a raw skeptic response into a
 // reclib.Verification. It never fails on bad input: any unparseable, empty, or
 // out-of-enum response degrades to an "unverifiable" verdict with a diagnostic
@@ -35,52 +71,40 @@ func parseVerdict(response string) (*reclib.Verification, error) {
 	// Iterate candidate balanced JSON objects. Skip candidates that fail to
 	// unmarshal or lack the "verdict" key — a decoy brace pair (Go struct{},
 	// ${VAR}, example snippet) before the real verdict envelope should not
-	// degrade the verdict to unverifiable. On extractJSONObject returning ""
-	// (unbalanced leading brace), advance past the first '{' and retry.
-	rest := response
+	// degrade the verdict to unverifiable. The walk itself lives in
+	// forEachJSONObject so this reader, carriesVerdict and parseExecutorResponse
+	// cannot diverge on what "the envelope" is (TD internal/verify/invoke.go:782).
+	var result *reclib.Verification
 	var invalidEnum *string
-	for {
-		obj := extractJSONObject(rest)
-		if obj == "" {
-			next := strings.IndexByte(rest, '{')
-			if next < 0 {
-				break
-			}
-			rest = rest[next+1:]
-			continue
-		}
-		// Advance past this object BEFORE any decision on it: every branch below
-		// either returns or continues, and a continue that left rest unadvanced
-		// would spin forever.
-		rest = rest[strings.Index(rest, obj)+len(obj):]
+	forEachJSONObject(response, func(obj string) bool {
 		// Use a pointer for Verdict so json.Unmarshal can distinguish a present
 		// key (even empty) from an absent key — avoids a second unmarshal pass.
 		var candidate struct {
 			Verdict   *string `json:"verdict"`
 			Reasoning string  `json:"reasoning"`
 		}
-		if json.Unmarshal([]byte(obj), &candidate) == nil && candidate.Verdict != nil {
-			normVerdict := strings.ToLower(strings.TrimSpace(*candidate.Verdict))
-			switch normVerdict {
-			case verdictConfirmed, verdictRefuted, verdictUnverifiable:
-				return &reclib.Verification{Verdict: normVerdict, Notes: candidate.Reasoning}, nil
-			default:
-				// An out-of-enum value is NOT necessarily the committed verdict: it is
-				// just as often a quoted example ahead of the real one. Do not
-				// short-circuit — remember it and keep walking, so a committed verdict
-				// sitting behind a quoted out-of-enum example is still graded. This is
-				// the exact walk carriesVerdict (internal/verify/invoke.go) already does,
-				// and the divergence between the two was a real defect: the predicate
-				// selected a section its own grader then refused to read, losing the
-				// committed verdict to `unverifiable` and embedding only the fragment
-				// (TD internal/verify/invoke.go:782).
-				if invalidEnum == nil {
-					v := truncateForNotes(*candidate.Verdict)
-					invalidEnum = &v
-				}
-				continue
-			}
+		if json.Unmarshal([]byte(obj), &candidate) != nil || candidate.Verdict == nil {
+			return false
 		}
+		normVerdict := strings.ToLower(strings.TrimSpace(*candidate.Verdict))
+		switch normVerdict {
+		case verdictConfirmed, verdictRefuted, verdictUnverifiable:
+			result = &reclib.Verification{Verdict: normVerdict, Notes: candidate.Reasoning}
+			return true
+		default:
+			// An out-of-enum value is NOT necessarily the committed verdict: it is
+			// just as often a quoted example ahead of the real one. Do not
+			// short-circuit — remember it and keep walking, so a committed verdict
+			// sitting behind a quoted out-of-enum example is still graded.
+			if invalidEnum == nil {
+				v := truncateForNotes(*candidate.Verdict)
+				invalidEnum = &v
+			}
+			return false
+		}
+	})
+	if result != nil {
+		return result, nil
 	}
 
 	if invalidEnum != nil {

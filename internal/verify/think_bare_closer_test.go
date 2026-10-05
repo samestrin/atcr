@@ -547,6 +547,15 @@ func TestCarriesVerdict_IteratesPastAnOutOfEnumObject(t *testing.T) {
 		"nor must a decoy object with no verdict key — the executor lane's proven shape")
 	assert.False(t, carriesVerdict(`{"verdict":"maybe"}`+"\n"+`{"verdict":"also-bad"}`),
 		"but a section holding ONLY unusable objects still carries no envelope")
+	// TD internal/verify/invoke.go:727 (testing): the unbalanced-brace advance had
+	// no test — every iteration case above used balanced objects, so the
+	// `rest = rest[IndexByte(rest,'{')+1:]` branch could be deleted with the suite
+	// green. An unbalanced leading brace must not hide the verdict behind it.
+	assert.True(t, carriesVerdict(`here is an unbalanced { brace followed by `+
+		`{"verdict":"confirmed","reasoning":"REAL"}`),
+		"an unbalanced leading brace must be stepped past, not swallow the verdict after it")
+	assert.False(t, carriesVerdict(`an unbalanced { brace and nothing else`),
+		"and an unbalanced brace with no verdict behind it still carries no envelope")
 }
 
 // TestVerdictFromAnswer_DecoyBeforeTheRealVerdictIsStillAnEnvelope is the shape

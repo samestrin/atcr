@@ -725,25 +725,20 @@ func classifyUnopenedCloser(answer string, hasEnvelope func(string) bool) (close
 // pinned by TestCarriesVerdict_RecoveredVerdictReachesTheGateAsItself, which
 // asserts both directions against reconcile.IsFailing rather than describing them.
 func carriesVerdict(s string) bool {
-	// The candidate walk mirrors parseVerdict's own (extractJSONObject, advancing
-	// past the first '{' when the leading brace is unbalanced), but the DECISION is
-	// delegated per object so the two cannot disagree on what a usable verdict is.
-	rest := s
-	for {
-		obj := extractJSONObject(rest)
-		if obj == "" {
-			next := strings.IndexByte(rest, '{')
-			if next < 0 {
-				return false
-			}
-			rest = rest[next+1:]
-			continue
-		}
+	// The candidate walk is forEachJSONObject — the SAME walk parseVerdict and
+	// parseExecutorResponse drive — so the three readers cannot disagree about
+	// what "the envelope" is. The per-object DECISION stays here, delegated to
+	// parseVerdict so no second notion of "usable" exists (TD
+	// internal/verify/invoke.go:782, :733).
+	found := false
+	forEachJSONObject(s, func(obj string) bool {
 		if usableVerdict(parseVerdict(obj)) {
+			found = true
 			return true
 		}
-		rest = rest[strings.Index(rest, obj)+len(obj):]
-	}
+		return false
+	})
+	return found
 }
 
 // usableVerdict reports whether a parseVerdict result is a real verdict rather

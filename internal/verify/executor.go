@@ -1043,19 +1043,11 @@ func executorFixFromAnswer(answer string) (fix string, ambiguous bool, err error
 func parseExecutorResponse(response string) (string, error) {
 	var sawObject, sawEmptyFix bool
 	var malformed error
-	rest := response
-	for {
-		obj := extractJSONObject(rest)
-		if obj == "" {
-			// Unbalanced leading brace: step past it and retry, exactly as
-			// parseVerdict does, so one stray `{` cannot hide the envelope after it.
-			next := strings.IndexByte(rest, '{')
-			if next < 0 {
-				break
-			}
-			rest = rest[next+1:]
-			continue
-		}
+	var found string
+	// The candidate walk lives in forEachJSONObject so this parser, parseVerdict and
+	// carriesVerdict cannot diverge on what "the envelope" is; a stray `{` is
+	// stepped past the same way in all three (TD internal/verify/invoke.go:782).
+	forEachJSONObject(response, func(obj string) bool {
 		sawObject = true
 		var candidate struct {
 			Fix *string `json:"fix"`
@@ -1067,12 +1059,15 @@ func parseExecutorResponse(response string) (string, error) {
 			}
 		case candidate.Fix != nil:
 			if fix := strings.TrimSpace(*candidate.Fix); fix != "" {
-				return fix, nil
+				found = fix
+				return true
 			}
 			sawEmptyFix = true
 		}
-		idx := strings.Index(rest, obj)
-		rest = rest[idx+len(obj):]
+		return false
+	})
+	if found != "" {
+		return found, nil
 	}
 	switch {
 	case sawEmptyFix:
