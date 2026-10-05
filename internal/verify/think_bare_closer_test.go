@@ -314,3 +314,58 @@ func TestExecutorFixFromAnswer_DecoyBeforeTheFixOnACleanResumeKeepsTheFix(t *tes
 	assert.Equal(t, "REAL-PATCH", fix,
 		"a plan object in front of the patch must not cost the repair")
 }
+
+// --- the THIRD "nothing usable here" diagnostic the predicate missed ---
+//
+// carriesVerdict excluded two of parseVerdict's three such diagnostics —
+// empty_response and malformed_output: — but not invalid_verdict:, which
+// parseVerdict returns for an object that HAS a verdict key holding a value
+// outside the enum (verdict.go:65). So an out-of-enum verdict object counted as
+// an envelope, and the suffix it sat in looked committed.
+//
+// The cost is availability, in the one direction that matters most in this repo:
+// a reply about think handling. A real confirmed verdict, prose naming </think>,
+// and an out-of-enum example quoted after it is a reply this codebase's own
+// reviewers produce — and it collapsed to AMBIGUOUS, which gate.go:110 then
+// passes over under --require-verified (TD internal/verify/invoke.go:701).
+
+// TestCarriesVerdict_OutOfEnumVerdictIsNotAnEnvelope pins the predicate directly,
+// one case per diagnostic, so the clause cannot be removed without a failure that
+// names which diagnostic leaked.
+func TestCarriesVerdict_OutOfEnumVerdictIsNotAnEnvelope(t *testing.T) {
+	t.Parallel()
+
+	assert.False(t, carriesVerdict(`{"verdict":"maybe"}`),
+		"an out-of-enum verdict is parseVerdict's invalid_verdict: diagnostic, not a usable verdict")
+	assert.False(t, carriesVerdict(""),
+		"empty_response is not an envelope")
+	assert.False(t, carriesVerdict(`no object here at all`),
+		"malformed_output: is not an envelope")
+	assert.True(t, carriesVerdict(`{"verdict":"confirmed","reasoning":"REAL"}`),
+		"a real verdict IS an envelope — the predicate must not have been widened into refusing everything")
+}
+
+// TestVerdictFromAnswer_OutOfEnumExampleAfterTheCloserKeepsTheVerdict is the
+// proven input, graded end to end through the shared rule. Before the fix the
+// suffix's out-of-enum example counted as an envelope, both sides carried one,
+// and the lane refused a verdict it had already been given.
+//
+// The assertion direction is the whole safety argument for this change: the fix
+// can only narrow the AMBIGUOUS classification, so it can only turn refusals back
+// into graded verdicts — never a graded verdict into a refusal.
+func TestVerdictFromAnswer_OutOfEnumExampleAfterTheCloserKeepsTheVerdict(t *testing.T) {
+	t.Parallel()
+	answer := `{"verdict":"confirmed","reasoning":"REAL"}` + "\n" +
+		`A reply that ends on </think> began mid-thought.` + "\n" +
+		`An out-of-enum verdict is written {"verdict":"maybe"} and parses to nothing usable.`
+
+	v, ambiguous := verdictFromAnswer(answer)
+
+	require.False(t, ambiguous,
+		"the suffix holds no usable verdict, so the tag structure is whole-answer and nothing is ambiguous")
+	require.NotNil(t, v)
+	assert.Equal(t, verdictConfirmed, v.Verdict,
+		"the committed verdict was already given; quoting an invalid one after a bare closer must not withdraw it")
+	assert.Equal(t, "REAL", v.Notes,
+		"the graded verdict must be the real envelope's, not the quoted example's")
+}
