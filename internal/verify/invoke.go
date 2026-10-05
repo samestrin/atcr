@@ -610,19 +610,6 @@ func failureClass(res fanout.Result) string {
 	}
 }
 
-// logSkepticFailure emits a structured log line so a skeptic failure is visible
-// even though it is intentionally not propagated as an error. The skeptic name
-// and failure class go to Warn (visible at the default level); the diagnostic
-// detail — which can carry provider error bodies and path-bearing context — is
-// held to Debug so it does not leak at the default level (mirrors the path-at-
-// debug discipline used across the engine wiring).
-// maskJSONStrings blanks the contents of every JSON double-quoted string literal
-// in s, preserving length and every byte outside a literal. String-awareness
-// mirrors extractJSONObject: a backslash escapes the next byte, and an unclosed
-// literal masks to end of input. The result is used only for tag DETECTION — a
-// think tag that survives the mask is markup enclosing reply text, while a tag
-// that appears solely inside a string value is a quotation of the tag and must
-// not be read as thinking.
 // closerSection names which part of a stripped answer holds the committed
 // envelope when the reply carries a bare </think>.
 type closerSection int
@@ -722,6 +709,14 @@ func carriesVerdict(s string) bool {
 // answer, and reports whether the reply was ambiguous about which verdict it
 // committed to. The production path and the tests both call it, so the behaviour
 // pinned is the behaviour that ships.
+//
+// The evidence for that last sentence, named so a reader can check it rather than
+// trust it: TestInvokeSkeptic_AmbiguousUnopenedCloserRefuses drives invokeSkeptic
+// itself, so it reaches the `if ambiguous` arm below through the production path —
+// neutralising that arm fails the test. The claim went a full review round
+// unverified while the arm it describes was genuinely uncovered, which is the cost
+// of stating a coverage claim without pointing at its proof
+// (TD internal/verify/invoke.go:706).
 func verdictFromAnswer(answer string) (v *reclib.Verification, ambiguous bool) {
 	section, text := classifyUnopenedCloser(answer, carriesVerdict)
 	if section == sectionAmbiguous {
@@ -731,10 +726,23 @@ func verdictFromAnswer(answer string) (v *reclib.Verification, ambiguous bool) {
 	return parsed, false
 }
 
+// maskJSONStrings blanks the contents of every JSON double-quoted string literal
+// in s, preserving length and every byte outside a literal. String-awareness
+// mirrors extractJSONObject: a backslash escapes the next byte, and an unclosed
+// literal masks to end of input. The result is used only for tag DETECTION — a
+// think tag that survives the mask is markup enclosing reply text, while a tag
+// that appears solely inside a string value is a quotation of the tag and must
+// not be read as thinking.
 func maskJSONStrings(s string) string {
 	return llmclient.MaskJSONStrings(s)
 }
 
+// logSkepticFailure emits a structured log line so a skeptic failure is visible
+// even though it is intentionally not propagated as an error. The skeptic name
+// and failure class go to Warn (visible at the default level); the diagnostic
+// detail — which can carry provider error bodies and path-bearing context — is
+// held to Debug so it does not leak at the default level (mirrors the path-at-
+// debug discipline used across the engine wiring).
 func logSkepticFailure(logger *slog.Logger, skeptic, class, detail string) {
 	detail = strings.ReplaceAll(detail, "\n", " ")
 	logger.Warn("skeptic failed", "skeptic", skeptic, "class", class)
