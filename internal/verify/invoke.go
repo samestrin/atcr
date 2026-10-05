@@ -691,14 +691,31 @@ func classifyUnopenedCloser(answer string, hasEnvelope func(string) bool) (close
 }
 
 // carriesVerdict reports whether text parses to a real verdict, as opposed to
-// one of parseVerdict's two "nothing usable here" diagnostics. It is the
+// one of parseVerdict's three "nothing usable here" diagnostics. It is the
 // envelope test classifyUnopenedCloser needs for the skeptic lane.
+//
+// All THREE must be excluded, and invalid_verdict: is the one that is easy to
+// miss: unlike the other two it comes back from an object that DID carry a
+// verdict key, just holding a value outside the enum (verdict.go:65). Counting
+// it as an envelope made a quoted out-of-enum example look like a committed
+// answer, so a real verdict followed by prose naming </think> and such an
+// example collapsed to AMBIGUOUS — availability lost on exactly the reply shape
+// this repo's own reviewers produce (TD internal/verify/invoke.go:701).
 func carriesVerdict(s string) bool {
 	v, err := parseVerdict(s)
+	// Contract-only arm, kept not covered: parseVerdict returns a non-nil
+	// Verification on every path and its own doc records that the error "is always
+	// nil today", so neither half is reachable by construction. It guards the
+	// CONTRACT rather than an observed input — if parseVerdict ever grows a real
+	// error return, this predicate must read false, not dereference nil. Same
+	// class as internal/fanout/artifacts.go:252 and internal/debate/protocol.go:186
+	// (TD internal/verify/invoke.go:698).
 	if err != nil || v == nil {
 		return false
 	}
-	return v.Notes != "empty_response" && !strings.HasPrefix(v.Notes, "malformed_output:")
+	return v.Notes != "empty_response" &&
+		!strings.HasPrefix(v.Notes, "malformed_output:") &&
+		!strings.HasPrefix(v.Notes, "invalid_verdict:")
 }
 
 // verdictFromAnswer parses the committed verdict out of a STRIPPED skeptic

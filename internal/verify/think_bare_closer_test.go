@@ -369,3 +369,39 @@ func TestVerdictFromAnswer_OutOfEnumExampleAfterTheCloserKeepsTheVerdict(t *test
 	assert.Equal(t, "REAL", v.Notes,
 		"the graded verdict must be the real envelope's, not the quoted example's")
 }
+
+// TestVerdictFromAnswer_UnusableSuffixFallsBackToWholeAnswerForAllThree records
+// the residual this change INHERITS rather than creates, because the tag
+// structure of the shape it recovers is identical to a shape it cannot:
+//
+//	{real} … prose "</think>" {bad example}   → recovered (the point of the fix)
+//	{draft} </think> {bad}                    → grades the draft (the residual)
+//
+// Once a suffix holds no usable verdict, ClassifyUnopenedCloser returns
+// SectionWholeAnswer by construction and parseVerdict reads the answer end to
+// end — so a draft before the closer is graded. That was ALREADY true of
+// empty_response and malformed_output: before invalid_verdict: joined them, which
+// is why adding the third clause is consistency rather than a new hazard. All
+// three are asserted together here so the next reader can see that at a glance
+// instead of re-deriving it.
+//
+// Separating the two shapes is not possible at this layer: they differ only in
+// whether the pre-closer text was abandoned, which nothing in the tag structure
+// records — the same accepted loss SplitThink's own doc states.
+func TestVerdictFromAnswer_UnusableSuffixFallsBackToWholeAnswerForAllThree(t *testing.T) {
+	t.Parallel()
+	draft := `{"verdict":"refuted","reasoning":"DRAFT"}` + "\n</think>\n"
+
+	for name, suffix := range map[string]string{
+		"invalid_verdict":  `{"verdict":"maybe"}`,
+		"malformed_output": `not an object at all`,
+		"empty_response":   ``,
+	} {
+		v, ambiguous := verdictFromAnswer(draft + suffix)
+
+		require.False(t, ambiguous, name+": an unusable suffix carries no envelope, so nothing is ambiguous")
+		require.NotNil(t, v)
+		assert.Equal(t, verdictRefuted, v.Verdict,
+			name+": the whole-answer fallback reads the pre-closer text — identical across all three diagnostics")
+	}
+}
