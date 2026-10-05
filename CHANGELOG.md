@@ -7,7 +7,7 @@
 - A skeptic reply that quoted an out-of-enum verdict example after a bare `</think>` no longer collapses to `unverifiable`; the committed verdict is graded, and the envelope test now scans the whole section instead of judging only its first verdict-shaped object, so a committed verdict sitting behind a quoted example is still found rather than mistaken for an abandoned draft.
 - An agent-mode executor that declines a fix because of the reply's SHAPE is now reported under its own `executor_agent_refused` class instead of `executor_fix_failed`, which is documented as a provider or transport error, so a decline is no longer indistinguishable from a dead provider.
 - Such a decline can no longer overwrite the repair an earlier, stronger executor already produced — it records its warning only when no earlier fix is present.
-- The all-unverifiable gate collapse message now names the reply-shape cause (`ambiguous_unopened_closer`) beside the context-window and truncation causes it already listed. The message is the operator's only diagnosis at that point, and `atcr doctor` cannot see a reply shape.
+- The all-unverifiable gate collapse message now names the reply-shape cause (`ambiguous_unopened_closer`) beside the context-window and truncation causes it already listed. The message is the operator's only diagnosis at that point; `atcr doctor`'s thinking verdict CAN surface inline think markup, but only for agents that declare thinking or thinking_level, and it never sees whether a verdict envelope sat on both sides of the closer.
 - A verdict graded from the text after a bare `</think>` now records how much of the reply was discarded ahead of it, so that grade is distinguishable from one read end to end.
 
 ### Changed
