@@ -110,3 +110,48 @@ func TestHasAnyFixAttribution_DoesNotSplitOnABareSlash(t *testing.T) {
 		assert.False(t, hasAnyFixAttribution(tc.evidence), tc.why)
 	}
 }
+
+// TD internal/verify/executor.go:409: generateFixes cleared f.FixReview
+// UNCONDITIONALLY up front, so every arm that PRESERVES an earlier tier's Fix
+// behind hasAnyFixAttribution (the refusal, salvage, truncation and
+// empty-completion arms) shipped that preserved fix with its NEEDS_REVIEW
+// annotation stripped — a smell-flagged fix rendering unflagged. The clear's own
+// stated rationale covers only the WITHHELD-fix case, so its premise is false for
+// the four preservation arms: FixReview is documented (internal/reconcile/emit.go)
+// as the annotation on a fix that "was ACCEPTED" and is usable, and the earlier
+// tier's fix is exactly that.
+func TestGenerateFixes_PreservedPriorTierFixKeepsItsFixReviewAnnotation(t *testing.T) {
+	findings := []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified,
+		Fix:       "an earlier tier's good fix",
+		FixReview: "NEEDS_REVIEW: SOFT over-simplification (stub_body)",
+		Evidence:  "Found by bruce; fix by sonnet", // sonnet = a different tier than execConfig's opus
+	}}
+
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"),
+		&recordingExecutor{err: errors.New("provider boom")}, nil, okDispatcher(), 0)
+
+	f := findings[0]
+	assert.Equal(t, "an earlier tier's good fix", f.Fix,
+		"the earlier tier's fix is preserved")
+	assert.Equal(t, "NEEDS_REVIEW: SOFT over-simplification (stub_body)", f.FixReview,
+		"and its NEEDS_REVIEW annotation must survive with it — otherwise a smell-flagged fix renders unflagged")
+}
+
+// The withheld-fix half must NOT regress: with no prior-tier Fix, a failure arm
+// must still clear a stale FixReview, which is the case the up-front clear exists
+// to protect.
+func TestGenerateFixes_WithheldFixStillClearsAStaleFixReview(t *testing.T) {
+	findings := []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified,
+		FixReview: "NEEDS_REVIEW: stale from a prior run",
+	}}
+
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"),
+		&recordingExecutor{err: errors.New("provider boom")}, nil, okDispatcher(), 0)
+
+	f := findings[0]
+	assert.Empty(t, f.Fix, "no fix was produced")
+	assert.Empty(t, f.FixReview,
+		"a stale acceptance annotation must not render beside a withheld patch")
+}
