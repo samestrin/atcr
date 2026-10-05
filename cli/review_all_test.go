@@ -1040,7 +1040,7 @@ func TestCommitBaselineWriteback_NamesTheContributedNothingCause(t *testing.T) {
 		Repo: ".", Root: ".",
 		Branch: "main", Date: "2026-07-27", TimeSuffix: "000000", StartedAt: time.Now(),
 	}
-	prep, err := fanout.PrepareReviewFromRepo(context.Background(), cfg, req)
+	_, err = fanout.PrepareReviewFromRepo(context.Background(), cfg, req)
 	require.NoError(t, err)
 
 	// A SALVAGED reply: the provider returns empty content with reasoning_content
@@ -1060,7 +1060,7 @@ func TestCommitBaselineWriteback_NamesTheContributedNothingCause(t *testing.T) {
 
 	cfg2, err := fanout.LoadReviewConfig(".", registry.CLIOverrides{})
 	require.NoError(t, err)
-	prep, err = fanout.PrepareReviewFromRepo(context.Background(), cfg2, req)
+	prep, err := fanout.PrepareReviewFromRepo(context.Background(), cfg2, req)
 	require.NoError(t, err)
 
 	res, err := fanout.ExecuteReview(context.Background(), newCompleter(context.Background()), prep)
