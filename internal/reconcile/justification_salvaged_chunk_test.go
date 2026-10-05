@@ -334,3 +334,41 @@ func TestSalvagedSegmentLines_ReportsDesync(t *testing.T) {
 	_, desynced = salvagedSegmentLines(single, []int{1})
 	assert.True(t, desynced, "the proven defect input must now report desync")
 }
+
+// TD internal/reconcile/justification.go:441: excludedAnchorLines split the same
+// raw TWICE whenever salvagedBins was non-empty — once inside salvagedSegmentLines
+// (justification.go:401) and again inside draftLineSet (justification.go:503) —
+// and the fast-path label claimed the duplication was removed when it only hid it
+// on the bins==nil branch. The hoist is strictly non-worse AND removes the double
+// Split on the real salvaged-chunk path.
+//
+// This pins the observable contract that must hold either side of the refactor:
+// excludedAnchorLines returns the union of the refused leading run and every line
+// of a salvaged bin, for both a nil and a non-empty bin list.
+func TestExcludedAnchorLines_UnionIsUnchangedByTheHoist(t *testing.T) {
+	t.Parallel()
+	raw := chunkedReview("zero", "one", "two")
+
+	nilOut, nilDesynced := excludedAnchorLines(raw, nil)
+	assert.False(t, nilDesynced, "no named bin is not a desync")
+	// Only draftLineSet contributes on the nil path (salvagedSegmentLines returns
+	// early), so the result must equal draftLineSet alone.
+	assert.Equal(t, draftLineSet(raw), nilOut,
+		"a nil bin list excludes exactly the draft leading run")
+
+	out, desynced := excludedAnchorLines(raw, []int{2})
+	assert.False(t, desynced)
+	// Segment 2 is line 4; the union must include it.
+	assert.Contains(t, out, 4,
+		"a salvaged bin's every line is excluded, not just its first")
+	assert.Equal(t, draftLineSet(raw), map[int]struct{}{}, "fixture sanity: no draft run here")
+}
+
+// The desync signal must keep short-circuiting, whichever signature the two
+// helpers carry.
+func TestExcludedAnchorLines_DesyncStillShortCircuits(t *testing.T) {
+	t.Parallel()
+	out, desynced := excludedAnchorLines(chunkedReview("a"), []int{9})
+	assert.True(t, desynced, "an unaccountable bin index is a desynced pair")
+	assert.Nil(t, out, "and nothing is excluded on a desync — the caller withholds the whole file")
+}
