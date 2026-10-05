@@ -1,9 +1,11 @@
 package debate
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/samestrin/atcr/internal/reconcile"
 )
@@ -77,15 +79,26 @@ func TestCountsTowardWithholding_DenyListIsExactlyTheEnvironmentalFour(t *testin
 
 // TestCarryUnresolvedAttempts_InterruptedRunSpendsNoAttempt spans the writer's
 // arithmetic and the reader's floor together — the two halves the defect sat
-// between. It is not driven through runDebate, which is what the old name claimed
-// and why the name changed; the production call site is covered elsewhere.
+// between. It is NOT driven through runDebate, which is what the old name claimed
+// and why the name changed.
+//
+// The production call site (debate.go's unresolved writer arm) is covered only on
+// the COUNTING branch: TestRunDebate_UnresolvedAttemptsCarryForward
+// (internal/debate/debate_test.go) drives runDebate with ReasonSeatSilent, an item
+// -evidence reason. No runDebate-driven test forces an ENVIRONMENTAL reason
+// (ReasonContextCancelled / ReasonHarnessUnavailable) through the call site, so a
+// mis-wire that fed a counting reason into it would keep this test, the direct
+// arithmetic test, and the whole repo green while the SIGINT scenario this test's
+// headline describes regressed. Stated rather than implied, because an unqualified
+// reassurance is what stops the next reader looking (TD
+// internal/debate/withholding_reason_gate_test.go:81).
 //
 // The defect's headline consequence was that three Ctrl-C'd runs permanently
 // withheld every disputed item. cli/main.go cancels the root context on SIGINT
 // and runDebate has no ctx.Err() check between wg.Wait() and the artifact write,
 // so a cancelled run still persists a record for every selected item. That
 // record must now carry no attempt.
-func TestCarryUnresolvedAttempts_InterruptedRunSpendsNoAttempt(t *testing.T) {
+func TestInterruptedRunSpendsNoAttemptAndStaysDebatable(t *testing.T) {
 	// Three consecutive interrupted runs, each reading the previous one's record.
 	//
 	// The arithmetic runs through carryUnresolvedAttempts — the SAME function
@@ -115,8 +128,9 @@ func TestCarryUnresolvedAttempts_InterruptedRunSpendsNoAttempt(t *testing.T) {
 }
 
 // The complement, so the ceiling is proved to still WORK: three runs the item
-// itself defeated do withhold it.
-func TestRunDebate_ThreeItemEvidenceFailuresStillWithhold(t *testing.T) {
+// itself defeated do withhold it. Named for the functions it drives — this never
+// called runDebate (TD internal/debate/withholding_reason_gate_test.go:115).
+func TestCarryUnresolvedAttempts_ThreeItemEvidenceFailuresStillWithhold(t *testing.T) {
 	prior := map[FindingKey]int{}
 	key := FindingKey{File: "a.go", Line: 7, Problem: "disputed finding"}
 	for round := 1; round <= maxUnresolvedAttempts; round++ {
@@ -172,4 +186,40 @@ func TestCarryUnresolvedAttempts(t *testing.T) {
 			assert.Equal(t, tc.want, carryUnresolvedAttempts(tc.prior, tc.reason))
 		})
 	}
+}
+
+// TD internal/debate/withholding_reason_gate_test.go:81: the production call site
+// was covered only on the COUNTING branch (TestRunDebate_UnresolvedAttemptsCarry-
+// Forward drives ReasonSeatSilent). No test forced an ENVIRONMENTAL reason through
+// runDebate itself, so a mis-wire that fed a counting reason into the writer arm
+// would keep every test green while the SIGINT scenario regressed.
+//
+// A pre-cancelled context makes runDebate take its own `ctx.Err() != nil` arm
+// (debate.go:262), producing ReasonContextCancelled for every selected item — the
+// exact SIGINT shape — and the persisted record must carry NO new attempt.
+func TestRunDebate_InterruptedRunPersistsNoAttemptAtTheCallSite(t *testing.T) {
+	f := splitFinding()
+	dir := reviewDirWith(t, []reconcile.JSONFinding{f})
+	require.NoError(t, writeDebateFile(dir, DebateFile{
+		SchemaVersion: DebateSchemaVersion,
+		Items: []ItemResult{{
+			File: f.File, Line: f.Line, Kind: reconcile.KindSeveritySplit, Problem: f.Problem,
+			Outcome: OutcomeUnresolved, Reason: ReasonContextCancelled,
+			UnresolvedAttempts: 2,
+		}},
+	}))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // SIGINT before the run reaches its item loop
+
+	_, err := runDebate(ctx, dir, debateRoster(), Options{}, harness(&fakeChatCompleter{}))
+	require.NoError(t, err)
+
+	df, _, err := ReadDebateFile(dir)
+	require.NoError(t, err)
+	require.Len(t, df.Items, 1)
+	assert.Equal(t, 2, df.Items[0].UnresolvedAttempts,
+		"an interrupted run must carry the prior count unchanged — nothing about the item was learned")
+	assert.Equal(t, ReasonContextCancelled, df.Items[0].Reason,
+		"and the persisted reason must stay environmental, not a counting one")
 }

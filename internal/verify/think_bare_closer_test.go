@@ -342,6 +342,15 @@ func TestCarriesVerdict_OutOfEnumVerdictIsNotAnEnvelope(t *testing.T) {
 		"empty_response is not an envelope")
 	assert.False(t, carriesVerdict(`no object here at all`),
 		"malformed_output: is not an envelope")
+	// TD internal/verify/think_bare_closer_test.go:343: the assertion above is
+	// guaranteed by carriesVerdict's own no-brace early return and never reaches
+	// parseVerdict, so the malformed_output: clause could be dropped with the suite
+	// green. These two DO reach the parser and come back malformed_output: — a
+	// keyless balanced object and a brace-only object — so the clause is pinned.
+	assert.False(t, carriesVerdict(`{"file":"a.go","line":1}`),
+		"a parseable object with no verdict key is parseVerdict's malformed_output: — not an envelope")
+	assert.False(t, carriesVerdict(`{}`),
+		"a brace-only object is malformed_output: too — not an envelope")
 	assert.True(t, carriesVerdict(`{"verdict":"confirmed","reasoning":"REAL"}`),
 		"a real verdict IS an envelope — the predicate must not have been widened into refusing everything")
 }
@@ -398,12 +407,18 @@ func TestVerdictFromAnswer_UnusableSuffixFallsBackToWholeAnswerForAllThree(t *te
 		"malformed_output": `not an object at all`,
 		"empty_response":   ``,
 	} {
-		v, ambiguous, _ := verdictFromAnswer(draft + suffix)
+		// TD internal/verify/think_bare_closer_test.go:396: map iteration order is
+		// randomised and require.* aborts the whole test, so without a subtest only
+		// ONE regressed diagnostic would ever be reported. t.Run evaluates each row
+		// independently and reports them all.
+		t.Run(name, func(t *testing.T) {
+			v, ambiguous, _ := verdictFromAnswer(draft + suffix)
 
-		require.False(t, ambiguous, name+": an unusable suffix carries no envelope, so nothing is ambiguous")
-		require.NotNil(t, v)
-		assert.Equal(t, verdictRefuted, v.Verdict,
-			name+": the whole-answer fallback reads the pre-closer text — identical across all three diagnostics")
+			require.False(t, ambiguous, name+": an unusable suffix carries no envelope, so nothing is ambiguous")
+			require.NotNil(t, v)
+			assert.Equal(t, verdictRefuted, v.Verdict,
+				name+": the whole-answer fallback reads the pre-closer text — identical across all three diagnostics")
+		})
 	}
 }
 
@@ -438,15 +453,17 @@ func TestVerdictFromAnswer_ADiagnosticNoteNeverQuotesOnlyTheFragment(t *testing.
 		"malformed_output": `no object here`,
 		"empty_response":   ``,
 	} {
-		answer := prefix + "\n</think>\n" + suffix
-		section, _ := classifyUnopenedCloser(answer, carriesVerdict)
-		v, _, _ := verdictFromAnswer(answer)
+		t.Run(name, func(t *testing.T) {
+			answer := prefix + "\n response\n" + suffix
+			section, _ := classifyUnopenedCloser(answer, carriesVerdict)
+			v, _, _ := verdictFromAnswer(answer)
 
-		require.Equal(t, sectionWholeAnswer, section,
-			name+": an unusable suffix is not an envelope, so the whole answer is read")
-		require.NotNil(t, v)
-		assert.Contains(t, v.Notes, prefix,
-			name+": the raw embed must quote the COMPLETE reply, never the post-closer fragment alone")
+			require.Equal(t, sectionWholeAnswer, section,
+				name+": an unusable suffix is not an envelope, so the whole answer is read")
+			require.NotNil(t, v)
+			assert.Contains(t, v.Notes, prefix,
+				name+": the raw embed must quote the COMPLETE reply, never the post-closer fragment alone")
+		})
 	}
 
 	// And the one shape that DOES reach sectionAfterCloser carries no diagnostic to
@@ -494,12 +511,13 @@ func TestCarriesVerdict_RecoveredVerdictReachesTheGateAsItself(t *testing.T) {
 		"the pre-fix collapse graded unverifiable, which the default gate blocks on — the baseline both rows move from")
 
 	for _, tc := range []struct {
-		verdict     string
-		blocksAfter bool
-		why         string
+		verdict        string
+		blocksAfter    bool
+		blocksVerified bool
+		why            string
 	}{
-		{"confirmed", true, "a recovered confirmed still blocks — and is the only verdict that blocks under --require-verified"},
-		{"refuted", false, "a recovered refuted STOPS blocking: the skeptic disproved the finding, which is what the gate is told to honour"},
+		{"confirmed", true, true, "a recovered confirmed still blocks — and is the only verdict that blocks under --require-verified"},
+		{"refuted", false, false, "a recovered refuted STOPS blocking: the skeptic disproved the finding, which is what the gate is told to honour"},
 	} {
 		answer := `{"verdict":"` + tc.verdict + `","reasoning":"REAL"}` +
 			"\nA reply ending on </think> began mid-thought." + quoted
@@ -512,6 +530,13 @@ func TestCarriesVerdict_RecoveredVerdictReachesTheGateAsItself(t *testing.T) {
 
 		assert.Equal(t, tc.blocksAfter,
 			reconcile.IsFailing("HIGH", "", v, "MEDIUM", false), tc.why)
+		// TD internal/verify/think_bare_closer_test.go:501: the row comment claimed a
+		// --require-verified property that no assertion tested. Under the strict gate
+		// only a CONFIRMED finding counts, so the refuted row must stop blocking there
+		// too — which is the direction narrowing AMBIGUOUS actually moves.
+		assert.Equal(t, tc.blocksVerified,
+			reconcile.IsFailing("HIGH", "", v, "MEDIUM", true),
+			tc.verdict+": the --require-verified gate counts only confirmed findings")
 	}
 }
 
@@ -626,11 +651,20 @@ func TestInvokeSkeptic_AfterCloserGradeRecordsTheDiscardedPrefix(t *testing.T) {
 	require.NotNil(t, v)
 	require.Equal(t, verdictConfirmed, v.Verdict, "the committed verdict is after the closer and must be graded")
 
+	// TD internal/verify/think_bare_closer_test.go:623: the magnitude was unpinned —
+	// only the zero/non-zero split was guarded, so a 1000x-wrong count rode through
+	// green. The fixture is "weighing two approaches\n" + the closer + "\n" + the
+	// envelope, so exactly 32 prefix bytes are dropped. Asserted against
+	// verdictFromAnswer directly AND in the log.
+	_, _, discarded := verdictFromAnswer("weighing two approaches\n</think>\n" + `{"verdict":"confirmed","reasoning":"REAL"}`)
+	assert.Equal(t, 32, discarded,
+		"the dropped prefix length must be exact, not merely non-zero")
+
 	out := buf.String()
 	assert.Contains(t, out, "verdict_after_unopened_closer",
 		"the split must leave a record, or a fragment-sourced grade is indistinguishable from a whole-answer one")
-	assert.Contains(t, out, "discarded_prefix_bytes=",
-		"and the record must say how much was dropped, since the text itself is kept nowhere")
+	assert.Contains(t, out, "discarded_prefix_bytes=32",
+		"and the record must say exactly how much was dropped, since the text itself is kept nowhere")
 	assert.NotContains(t, out, "level=WARN msg=\"skeptic answer taken after a bare closer\"",
 		"this is a successful grade on a legitimate reply shape — warning on it would train the reader to ignore the class")
 }
