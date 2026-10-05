@@ -392,8 +392,8 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 				}
 				// An agent-mode refusal gets its own classification BEFORE the generic
 				// warn branch, for the two reasons the salvage arm above was split out:
-				// the class must not read as a provider/transport error for a reply that
-				// arrived intact, and the FixWarning stamp needs the same
+				// the class must not read as a provider/transport error — a refusal is a
+				// content-shape decline, not a dead provider — and the FixWarning stamp needs the same
 				// hasAnyFixAttribution guard the salvage, truncation and empty-completion
 				// arms carry. Those THREE are the siblings: the self-decline and the two
 				// pre-dispatch ceiling skips guard on the weaker `f.Fix == ""` instead, a
@@ -409,9 +409,21 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 				// the two would re-create the ambiguity this split exists to remove
 				// (TD internal/verify/executor.go:377).
 				if strings.HasPrefix(warn, agentRefusalPrefix) {
-					logPipelineWarning(log.FromContext(ctx), "executor_agent_refused", fmt.Sprintf("%s:%d: %s", f.File, f.Line, warn))
+					// The refusal arm returns before the `if truncated` branch below,
+					// yet invokeExecutor reports res.ResponseTruncated on BOTH refusal
+					// paths — a reply cut off on finish_reason=length is a LIKELY producer
+					// of unbalanced think markup, so a truncation discarded here tells the
+					// operator the model made a shape mistake when a token cap caused it.
+					// Fold it into the record instead: emit the truncation class alongside
+					// and name it in the warn (TD internal/verify/executor.go:411).
+					refusalWarn := warn
+					if truncated {
+						logPipelineWarning(log.FromContext(ctx), "executor_truncated_fix", fmt.Sprintf("%s:%d", f.File, f.Line))
+						refusalWarn += " (the response was also truncated on finish_reason=length, a likely cause of the unbalanced markup)"
+					}
+					logPipelineWarning(log.FromContext(ctx), "executor_agent_refused", fmt.Sprintf("%s:%d: %s", f.File, f.Line, refusalWarn))
 					if !hasAnyFixAttribution(f.Evidence) {
-						f.FixWarning = warn
+						f.FixWarning = refusalWarn
 					}
 					return "", false
 				}
