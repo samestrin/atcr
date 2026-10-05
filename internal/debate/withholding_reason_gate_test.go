@@ -75,8 +75,12 @@ func TestCountsTowardWithholding_DenyListIsExactlyTheEnvironmentalFour(t *testin
 	assert.Equal(t, 4, denied, "exactly the four environmental reasons are exempt from the ceiling")
 }
 
-// TestCarryUnresolvedAttempts_InterruptedRunSpendsNoAttempt is the end-to-end proof: the
-// defect's headline consequence was that three Ctrl-C'd runs permanently
+// TestCarryUnresolvedAttempts_InterruptedRunSpendsNoAttempt spans the writer's
+// arithmetic and the reader's floor together — the two halves the defect sat
+// between. It is not driven through runDebate, which is what the old name claimed
+// and why the name changed; the production call site is covered elsewhere.
+//
+// The defect's headline consequence was that three Ctrl-C'd runs permanently
 // withheld every disputed item. cli/main.go cancels the root context on SIGINT
 // and runDebate has no ctx.Err() check between wg.Wait() and the artifact write,
 // so a cancelled run still persists a record for every selected item. That

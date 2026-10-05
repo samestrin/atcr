@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/reconcile"
 )
 
 // A reply that carries a bare </think> — one no <think> opened — may have
@@ -461,4 +462,50 @@ func TestVerdictFromAnswer_ADiagnosticNoteNeverQuotesOnlyTheFragment(t *testing.
 		"the only section parsed from a fragment is the one that carries a real verdict, which has no raw embed")
 	assert.NotContains(t, v.Notes, "invalid_verdict:")
 	assert.NotContains(t, v.Notes, "malformed_output:")
+}
+
+// TestCarriesVerdict_RecoveredVerdictReachesTheGateAsItself is the consumer trace
+// for the T1 change, and it records the one consequence the risk analysis did not:
+// narrowing AMBIGUOUS does not only relax the gate in the strict direction.
+//
+// IsFailing (internal/reconcile/gate.go:96) is the consumer. Under the DEFAULT
+// gate (requireVerified=false) an `unverifiable` finding at or above the threshold
+// BLOCKS, while a `refuted` one never does. So for a reply whose real verdict was
+// refuted, recovering it FLIPS a blocking finding to a non-blocking one — a
+// relaxation, not a tightening.
+//
+// That is the correct outcome and the point of the fix: the skeptic disproved the
+// finding, and the old behaviour blocked CI on a verdict it had refused to read.
+// But "it can only turn refusals back into graded verdicts" reads as though the
+// gate can only get stricter, and on this path it does not. Asserted here so the
+// direction is a recorded decision rather than a surprise in a later review.
+func TestCarriesVerdict_RecoveredVerdictReachesTheGateAsItself(t *testing.T) {
+	t.Parallel()
+	const quoted = "\nAn out-of-enum example is written {\"verdict\":\"maybe\"}, which parses to nothing.\n"
+
+	for _, tc := range []struct {
+		verdict      string
+		blocksBefore bool
+		blocksAfter  bool
+		why          string
+	}{
+		{"confirmed", true, true, "a recovered confirmed blocks either way — and is the only one that blocks under --require-verified"},
+		{"refuted", true, false, "a recovered refuted STOPS blocking: the skeptic disproved the finding, which is what the gate is told to honour"},
+	} {
+		answer := `{"verdict":"` + tc.verdict + `","reasoning":"REAL"}` +
+			"\nA reply ending on </think> began mid-thought." + quoted
+
+		v, ambiguous := verdictFromAnswer(answer)
+
+		require.False(t, ambiguous, tc.verdict+": the quoted example is not an envelope")
+		require.NotNil(t, v)
+		require.Equal(t, tc.verdict, v.Verdict, tc.verdict+": the real verdict must be recovered intact")
+
+		// What the gate did BEFORE the fix: the same reply graded unverifiable.
+		before := reconcile.IsFailing("HIGH", "", &reconcile.Verification{Verdict: verdictUnverifiable}, "MEDIUM", false)
+		after := reconcile.IsFailing("HIGH", "", v, "MEDIUM", false)
+
+		assert.Equal(t, tc.blocksBefore, before, "the pre-fix AMBIGUOUS collapse always blocked the default gate")
+		assert.Equal(t, tc.blocksAfter, after, tc.why)
+	}
 }

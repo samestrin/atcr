@@ -688,6 +688,15 @@ func classifyUnopenedCloser(answer string, hasEnvelope func(string) bool) (close
 // answer, so a real verdict followed by prose naming </think> and such an
 // example collapsed to AMBIGUOUS — availability lost on exactly the reply shape
 // this repo's own reviewers produce (TD internal/verify/invoke.go:701).
+//
+// Narrowing AMBIGUOUS does not move the CI gate in only one direction, and the
+// exception is worth stating because it looks like a weakening: under the DEFAULT
+// gate an `unverifiable` finding at or above threshold BLOCKS while a `refuted`
+// one never does, so recovering a real `refuted` turns a blocking finding into a
+// passing one. That is the correct outcome — the skeptic disproved the finding and
+// the old behaviour blocked CI on a verdict it had declined to read — and it is
+// pinned by TestCarriesVerdict_RecoveredVerdictReachesTheGateAsItself, which
+// asserts both directions against reconcile.IsFailing rather than describing them.
 func carriesVerdict(s string) bool {
 	v, err := parseVerdict(s)
 	// Contract-only arm, kept not covered: parseVerdict returns a non-nil
