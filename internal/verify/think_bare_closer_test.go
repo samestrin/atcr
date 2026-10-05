@@ -34,6 +34,11 @@ import (
 // shape. Before the fix this returned `refuted` — the draft — and
 // internal/reconcile/gate.go treats `refuted` as "a skeptic disproved it" at ANY
 // severity, so a real CRITICAL finding silently stopped failing CI.
+// closerTag returns the bare think-closer tag as a string literal, kept in one
+// place so a test fixture cannot silently lose it to an editor or a tool that
+// treats the raw tag as markup.
+func closerTag() string { return "\u003c/think\u003e" }
+
 func TestVerdictFromAnswer_EnvelopeOnBothSidesIsRefused(t *testing.T) {
 	t.Parallel()
 	answer := `Checking the call sites. {"verdict":"refuted","reasoning":"DRAFT"}` + "\n" +
@@ -389,11 +394,17 @@ func TestVerdictFromAnswer_OutOfEnumExampleAfterTheCloserKeepsTheVerdict(t *test
 //
 // Once a suffix holds no usable verdict, ClassifyUnopenedCloser returns
 // SectionWholeAnswer by construction and parseVerdict reads the answer end to
-// end — so a draft before the closer is graded. That was ALREADY true of
-// empty_response and malformed_output: before invalid_verdict: joined them, which
-// is why adding the third clause is consistency rather than a new hazard. All
-// three are asserted together here so the next reader can see that at a glance
-// instead of re-deriving it.
+// end — so a draft before the closer is graded. The empty_response and
+// malformed_output rows are INHERITED: that was already true of them before this
+// change. The invalid_verdict row is NOT — it is a behaviour change this change
+// makes. Before the third clause existed, an out-of-enum object DID count as an
+// envelope, so a draft before the closer plus a quoted out-of-enum example after it
+// and the gate blocks on unverifiable); after it, the suffix carries no envelope,
+// the whole answer is read, and the draft is graded refuted (which never blocks).
+// Inherited and introduced rows are asserted together only so the reader can see
+// the set at a glance; read the invalid_verdict row as the one this diff moved
+// (TD internal/verify/invoke.go:766 holds the behaviour decision, and
+// invoke.go's relaxation note lists only the benign direction).
 //
 // Separating the two shapes is not possible at this layer: they differ only in
 // whether the pre-closer text was abandoned, which nothing in the tag structure
@@ -464,6 +475,26 @@ func TestVerdictFromAnswer_ADiagnosticNoteNeverQuotesOnlyTheFragment(t *testing.
 			assert.Contains(t, v.Notes, prefix,
 				name+": the raw embed must quote the COMPLETE reply, never the post-closer fragment alone")
 		})
+	}
+
+	// TD internal/verify/think_bare_closer_test.go:430: the invariant claimed above
+	// was false at HEAD and passed only because this table omitted the coupling
+	// breaker. A suffix holding a decoy out-of-enum object FOLLOWED BY a real verdict
+	// reaches sectionAfterCloser — the real verdict is usable, so the section is the
+	// suffix — and parseVerdict must grade the real verdict rather than embed a
+	// fragment-quoting diagnostic for the decoy. Asserted here so the invariant the
+	// comment claims is actually pinned.
+	{
+		suffix := `An example is {"verdict":"maybe"}.` + "\n" + `{"verdict":"confirmed","reasoning":"REAL"}`
+		answer := prefix + "\n" + closerTag() + "\n" + suffix
+		section, text := classifyUnopenedCloser(answer, carriesVerdict)
+		require.Equal(t, sectionAfterCloser, section,
+			"a usable verdict behind a decoy in the suffix IS the committed section")
+		parsed, _ := parseVerdict(text)
+		assert.Equal(t, verdictConfirmed, parsed.Verdict,
+			"the committed verdict, not the decoy, must be graded")
+		assert.NotContains(t, parsed.Notes, "(raw:",
+			"a real verdict carries no fragment-quoting raw embed")
 	}
 
 	// And the one shape that DOES reach sectionAfterCloser carries no diagnostic to
