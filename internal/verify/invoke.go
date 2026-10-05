@@ -704,13 +704,16 @@ func classifyUnopenedCloser(answer string, hasEnvelope func(string) bool) (close
 // Two things are load-bearing, and the second is what makes this more than a call
 // to parseVerdict.
 //
-// First, all THREE diagnostics must be excluded, and invalid_verdict: is the one
-// that is easy to miss: unlike the other two it comes back from an object that DID
-// carry a verdict key, just holding a value outside the enum (verdict.go:65).
-// Counting it as an envelope made a quoted out-of-enum example look like a
-// committed answer, so a real verdict followed by prose naming </think> and such an
-// example collapsed to AMBIGUOUS — availability lost on exactly the reply shape
-// this repo's own reviewers produce (TD internal/verify/invoke.go:701).
+// First, parseVerdict's unusable-result diagnostics must be excluded. TWO are
+// reachable from this walk, and invalid_verdict: is the easily-missed one: unlike
+// malformed_output it comes back from an object that DID carry a verdict key, just
+// holding a value outside the enum (verdict.go:65). The other two readers of a
+// parseVerdict result — and any future one — must treat a syntactically valid
+// object with an out-of-enum verdict as NOT an envelope. Counting it as one made a
+// quoted out-of-enum example look like a committed answer, so a real verdict
+// followed by prose naming a bare closer and such an example collapsed to
+// AMBIGUOUS — availability lost on exactly the reply shape this repo's own
+// reviewers produce (TD internal/verify/invoke.go:701, :764).
 //
 // Second, the walk must ITERATE rather than ask parseVerdict about the text as a
 // whole. parseVerdict short-circuits on the FIRST object carrying a verdict key,
@@ -759,14 +762,20 @@ func usableVerdict(v *reclib.Verification, err error) bool {
 	// Verification on every path and its own doc records that the error "is always
 	// nil today", so neither half is reachable by construction. It guards the
 	// CONTRACT rather than an observed input — if parseVerdict ever grows a real
-	// error return, this predicate must read false, not dereference nil. Same
-	// class as the arms behind TD internal/fanout/artifacts.go:252 and
-	// TD internal/debate/protocol.go:186 (TD internal/verify/invoke.go:698).
+	// error return, this predicate must read false, not dereference nil (TD
+	// internal/verify/invoke.go:698).
 	if err != nil || v == nil {
 		return false
 	}
-	return v.Notes != "empty_response" &&
-		!strings.HasPrefix(v.Notes, "malformed_output:") &&
+	// TWO diagnostics are reachable here, not three. The walk below hands
+	// parseVerdict only non-empty balanced objects — extractJSONObject never returns
+	// "" and always yields a string starting '{' — so parseVerdict's own
+	// TrimSpace(response)=="" arm cannot fire and Notes=="empty_response" is
+	// unreachable from this caller. The clause that used to test for it was dead
+	// code, and three prose blocks ("all THREE diagnostics") counted it as live,
+	// which is a coverage claim the suite does not hold (TD
+	// internal/verify/invoke.go:764, :698).
+	return !strings.HasPrefix(v.Notes, "malformed_output:") &&
 		!strings.HasPrefix(v.Notes, "invalid_verdict:")
 }
 
