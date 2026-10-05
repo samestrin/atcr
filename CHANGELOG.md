@@ -1,3 +1,19 @@
+## [Technical Debt] - 2026-10-05
+
+### Fixed
+
+- The think-tag mask no longer splits or un-masks a think pair: a whole-copy discard keeps a cleanly-quoted pair masked, a prose quote at a JSON position fails closed, a lone quoted opener is no longer refused as markup, and a cut pair is told apart by the blanked run's shape. The verify and executor lanes share the same fix.
+- The benchmark retention line counts only infrastructure slot failures and reports `unmeasured_slots` apart from `failed_slots`. The slot-warning wording and the coverage shortfall diagnostic now split `unmeasured_ok` from the other classes.
+- `atcr debate` and the `atcr_debate` MCP tool report `withheld` items apart from the cap `overflow`, because the two need opposite remedies.
+- `atcr debt backfill-justifications` splits its `unresolved` count into review trees that were pruned and records the review policy declined, and asks the policy for the cause instead of inferring it from a namesake file.
+- The contested report lists cap-overflow items with their carried attempt countdown.
+- The baseline withheld-coverage cause in `atcr review` is selected per run instead of emitted as a constant.
+- The contributed-nothing tally and `salvageCost` route through the whole-persona predicates. The walk-level `ThinkOnlyAttempts` total reaches the returned result, the `StatusOK` think-only warning branches on the attempt count, and the salvage is disclosed on the `UsageCompleter`-only path.
+- The truncated-failover arm routes through think-suppressed content handling.
+- The judge seat follows the suppression precedence, and a seat that halted and was also suppressed names both causes.
+- The overflow carry takes the max, so it never lowers an items count. The zero-budget fallback discloses the replay reserve.
+- Corrected stale docs: the `debate.json` artifacts row, the seat-token definitions in `docs/cross-examination.md`, the `unmeasured_ok` class and per-bin think-suppression rule in `docs/benchmark.md`, and the backfill example output in `docs/technical-debt.md`.
+
 ## [Technical Debt] - 2026-10-03
 
 ### Fixed
