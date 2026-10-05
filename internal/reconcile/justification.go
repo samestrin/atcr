@@ -379,7 +379,7 @@ func sourceSalvage(reviewPath string) (salvaged bool, chunks []int) {
 // segment excluded, one not), so it is a wrong exclusion rather than a widened
 // one.
 // Returns (lines to exclude, desynced).
-func salvagedSegmentLines(raw string, bins []int) (map[int]struct{}, bool) {
+func salvagedSegmentLines(lines []string, bins []int) (map[int]struct{}, bool) {
 	// Allocation FAST PATH, not a guard — labelled because it reads like one, and a
 	// future reader should not mistake a green mutation here for an untested guard.
 	// With no bins, `refused` is empty, so the walk below sets nothing and the range
@@ -388,8 +388,8 @@ func salvagedSegmentLines(raw string, bins []int) (map[int]struct{}, bool) {
 	// RANGES this map and merges it into draftLineSet's map — ranging a nil map
 	// yields nothing. It is NOT inert for a caller that writes into the return
 	// (m[x]=struct{}{} on a nil map panics), so a future caller that does must not
-	// receive the nil. Kept for the skipped allocation and the split, Split being
-	// the expensive part (TD internal/reconcile/justification.go:383, :389).
+	// receive the nil. Kept to skip the refused-map allocation (TD
+	// internal/reconcile/justification.go:383, :389).
 	if len(bins) == 0 {
 		return nil, false
 	}
@@ -398,7 +398,6 @@ func salvagedSegmentLines(raw string, bins []int) (map[int]struct{}, bool) {
 		refused[b] = struct{}{}
 	}
 	out := make(map[int]struct{})
-	lines := strings.Split(raw, "\n")
 	seg, start := 0, 0
 	for i := 0; i <= len(lines); i++ {
 		// A segment ends at a boundary marker or at end of input.
@@ -434,12 +433,19 @@ func salvagedSegmentLines(raw string, bins []int) (map[int]struct{}, bool) {
 // "exclude every line" are both representable there and a caller reading only the
 // map would take the first for the second.
 func excludedAnchorLines(raw string, salvagedBins []int) (map[int]struct{}, bool) {
-	lines, desynced := salvagedSegmentLines(raw, salvagedBins)
+	// ONE split for both consumers. Each of salvagedSegmentLines and draftLineSet
+	// used to split the same raw itself, so every salvaged chunked review — i.e.
+	// whenever salvagedBins is non-empty — paid two full strings.Split calls over
+	// the identical input. Both walk the slice the same way (0..len, boundary
+	// marker at each segment end), so one slice serves both
+	// (TD internal/reconcile/justification.go:441).
+	lines := strings.Split(raw, "\n")
+	excluded, desynced := salvagedSegmentLines(lines, salvagedBins)
 	if desynced {
 		return nil, true
 	}
-	out := draftLineSet(raw)
-	for l := range lines {
+	out := draftLineSet(lines)
+	for l := range excluded {
 		out[l] = struct{}{}
 	}
 	return out, false
@@ -499,8 +505,7 @@ func buildAnchorIndex(narratives []reviewNarrative) anchorIndex {
 // this reason; this one was not.
 //
 // An unchunked review.md has no marker, which is the single-segment case.
-func draftLineSet(raw string) map[int]struct{} {
-	lines := strings.Split(raw, "\n")
+func draftLineSet(lines []string) map[int]struct{} {
 	out := make(map[int]struct{})
 	start := 0
 	for i := 0; i <= len(lines); i++ {
