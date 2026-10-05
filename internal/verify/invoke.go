@@ -206,14 +206,23 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 	v, ambiguous, discardedPrefix := verdictFromAnswer(answer)
 	if discardedPrefix > 0 {
 		// The reply began mid-thought, so the verdict was taken from the text AFTER a
-		// bare </think> and the draft ahead of it was dropped. Debug, not Warn: this
-		// is a SUCCESSFUL grade and the shape is legitimate (a chat template put the
-		// opener in the prompt), so warning on it would train the reader to ignore the
-		// class. But it must be recorded somewhere — the dropped text is kept nowhere,
-		// and without this line an operator cannot tell this grade from one read end to
-		// end, nor see that anything was removed (TD internal/verify/invoke.go:683).
+		// bare closer and the draft ahead of it was dropped. Debug, not Warn: this is a
+		// SUCCESSFUL grade and the shape is legitimate (a chat template put the opener
+		// in the prompt), so warning on it would train the reader to ignore the class.
+		//
+		// Recorded on the Verification too, not only in the log: the Debug line is
+		// suppressed at the default level, and the emission deliberately did NOT touch
+		// the returned object, so an operator reading verification.json, findings.json
+		// or report.md could not tell a whole-answer grade from a fragment grade — the
+		// very gap this was written to close. A length is enough to see the split and
+		// how much it cost, and it holds no withdrawn verdict text, so the marker is
+		// safe to publish (TD internal/verify/invoke.go:683, :781).
 		logger.Debug("skeptic answer taken after a bare closer", "skeptic", skeptic.Name,
 			"class", "verdict_after_unopened_closer", "discarded_prefix_bytes", discardedPrefix)
+		if v != nil {
+			v.Notes = fmt.Sprintf("%s [verdict_after_unopened_closer: %d prefix byte(s) discarded]",
+				v.Notes, discardedPrefix)
+		}
 	}
 	if ambiguous {
 		// A bare </think> with an envelope on BOTH sides. Neither is provably the
