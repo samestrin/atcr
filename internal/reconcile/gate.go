@@ -213,7 +213,14 @@ func allUnverifiableCollapse(verPath string) error {
 	// records window_below_prompt_overhead) are gone by the time anyone could read
 	// them. An enrichment that never fires reads, in review, as one that works.
 	// Point at the command that CAN diagnose it instead.
-	return fmt.Errorf("all %d verdict(s) came back unverifiable; the gate counts only VERIFIED findings, so it will pass over every one of them. Run 'atcr doctor': the usual cause is an agent whose declared context_window_tokens cannot fund one tool read, which makes every check it runs unverifiable. A skeptic reply cut off on finish_reason=length (response_truncated) collapses to unverifiable the same way without any window fault, so check for it before blaming the declaration", len(vf.Findings))
+	//
+	// Which makes the ENUMERATION the operator's whole diagnosis, so a cause left
+	// out of it is a cause nobody can reach. ambiguous_unopened_closer is the third
+	// and the least guessable: the reply arrived whole and the window was ample, so
+	// the two causes named before it both read as "not my problem" — and doctor,
+	// which the message points at, inspects the roster and cannot see a reply shape
+	// (TD internal/reconcile/gate.go:216).
+	return fmt.Errorf("all %d verdict(s) came back unverifiable; the gate counts only VERIFIED findings, so it will pass over every one of them. Run 'atcr doctor': the usual cause is an agent whose declared context_window_tokens cannot fund one tool read, which makes every check it runs unverifiable. A skeptic reply cut off on finish_reason=length (response_truncated) collapses to unverifiable the same way without any window fault, so check for it before blaming the declaration. A third cause is the reply SHAPE, which doctor cannot see: a skeptic reply carrying a </think> that no <think> opened, with a verdict envelope on both sides, is refused as ambiguous_unopened_closer because neither envelope is provably the committed one", len(vf.Findings))
 }
 
 // RunReconcile discovers sources under reviewDir/sources, runs the deterministic

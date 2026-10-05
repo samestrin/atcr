@@ -405,3 +405,60 @@ func TestVerdictFromAnswer_UnusableSuffixFallsBackToWholeAnswerForAllThree(t *te
 			name+": the whole-answer fallback reads the pre-closer text — identical across all three diagnostics")
 	}
 }
+
+// TestVerdictFromAnswer_ADiagnosticNoteNeverQuotesOnlyTheFragment is the
+// invariant that closed TD internal/verify/invoke.go:683 without a disclosure
+// string, and the test that keeps it closed.
+//
+// The filed defect: on sectionAfterCloser, parseVerdict sees only the suffix, so
+// an `invalid_verdict: X (raw: …)` note embedded only the post-closer fragment
+// while the prefix was kept nowhere — and docs/verification.md says the skeptic
+// lane keeps removed text "nowhere", so that note was the only record. An
+// operator reading it concluded the fragment was the whole reply.
+//
+// Excluding invalid_verdict: from carriesVerdict closed it by CONSTRUCTION, which
+// is why no disclosure was added: a note explaining a truncation that can no
+// longer happen is the enrichment-that-never-fires that gate.go:210 warns reads,
+// in review, as one that works. All three of parseVerdict's "nothing usable here"
+// diagnostics are now excluded, so sectionAfterCloser is reachable ONLY when the
+// suffix holds a real verdict — and a real verdict carries no raw embed at all.
+//
+// The coupling is the fragile part, so it is asserted rather than commented: if a
+// future change lets ANY diagnostic count as an envelope again, the fragment-
+// quoting note comes straight back and this test is what says so.
+func TestVerdictFromAnswer_ADiagnosticNoteNeverQuotesOnlyTheFragment(t *testing.T) {
+	t.Parallel()
+	const prefix = "weighing two approaches"
+
+	// Every shape whose suffix is unusable must route to the WHOLE answer, so the
+	// raw embed is complete — it still contains the pre-closer text.
+	for name, suffix := range map[string]string{
+		"invalid_verdict":  `{"verdict":"maybe"}`,
+		"malformed_output": `no object here`,
+		"empty_response":   ``,
+	} {
+		answer := prefix + "\n</think>\n" + suffix
+		section, _ := classifyUnopenedCloser(answer, carriesVerdict)
+		v, _ := verdictFromAnswer(answer)
+
+		require.Equal(t, sectionWholeAnswer, section,
+			name+": an unusable suffix is not an envelope, so the whole answer is read")
+		require.NotNil(t, v)
+		assert.Contains(t, v.Notes, prefix,
+			name+": the raw embed must quote the COMPLETE reply, never the post-closer fragment alone")
+	}
+
+	// And the one shape that DOES reach sectionAfterCloser carries no diagnostic to
+	// truncate: a usable verdict's Notes is the model's reasoning, not a raw embed.
+	answer := prefix + "\n</think>\n" + `{"verdict":"confirmed","reasoning":"REAL"}`
+	section, _ := classifyUnopenedCloser(answer, carriesVerdict)
+	v, ambiguous := verdictFromAnswer(answer)
+
+	require.Equal(t, sectionAfterCloser, section, "a real verdict after a lone closer IS the committed section")
+	require.False(t, ambiguous)
+	assert.Equal(t, "REAL", v.Notes)
+	assert.NotContains(t, v.Notes, "(raw:",
+		"the only section parsed from a fragment is the one that carries a real verdict, which has no raw embed")
+	assert.NotContains(t, v.Notes, "invalid_verdict:")
+	assert.NotContains(t, v.Notes, "malformed_output:")
+}

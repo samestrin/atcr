@@ -166,6 +166,27 @@ func TestAllUnverifiableCollapse_NamesResponseTruncated(t *testing.T) {
 	assert.Contains(t, err.Error(), "response_truncated")
 }
 
+// TD internal/reconcile/gate.go:216: ambiguous_unopened_closer is a THIRD path to
+// the same wall, and the one the message was most misleading about. A reply
+// carrying a </think> no <think> opened, with a verdict envelope on both sides, is
+// refused by the skeptic lane (internal/verify/invoke.go:207) and collapses to
+// unverifiable with no window fault and no truncation — so neither cause the
+// message already named applies, and atcr doctor cannot see the reply shape.
+//
+// gate.go's own comment records that RunReconcile has stripped every verification
+// block by the time this runs, so the notes naming the cause are gone: this message
+// IS the operator's diagnosis. A cause missing from it is a cause nobody can reach.
+func TestAllUnverifiableCollapse_NamesAmbiguousUnopenedCloser(t *testing.T) {
+	dir := t.TempDir()
+	verPath := filepath.Join(dir, "verification.json")
+	require.NoError(t, os.WriteFile(verPath, []byte(`{"findings":[{"verdict":"unverifiable"}]}`), 0o600))
+
+	err := allUnverifiableCollapse(verPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ambiguous_unopened_closer",
+		"the third cause must be named, or the message sends the operator after a window or truncation fault that is not there")
+}
+
 // TestAllUnverifiableCollapse_UnreadableFileIsNotAnError covers the ReadFile
 // fallback the caller's os.Stat almost always makes unreachable.
 //
