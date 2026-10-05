@@ -73,6 +73,12 @@ func TestMaskJSONStrings_BraceBeforeAQuotedOpenerIsNotASplitPairAndStaysMasked(t
 			` handling","explanation":"the strip is leading-only"}`,
 		"brace in an earlier value": `{"note":"the shape is {a:b}","fix":"strip the ` + thinkOpen +
 			` prefix before parsing"}`,
+		// The reverse order, and the case that pins the per-literal reset of
+		// runHasOpener. Each literal is its own run: an opener in an EARLIER value must
+		// not attribute a LATER value's brace to itself. Without the reset this reply
+		// refuses, and nothing else in the suite notices.
+		"opener in an earlier value, brace in a later one": `{"a":"x ` + thinkOpen +
+			` y","b":"z {brace}"}`,
 	} {
 		masked := MaskJSONStrings(raw)
 
@@ -82,4 +88,31 @@ func TestMaskJSONStrings_BraceBeforeAQuotedOpenerIsNotASplitPairAndStaysMasked(t
 			"%s: the brace sits BEFORE the opener, so the mask's closing quote really did terminate the "+
 				"value — nothing was cut and the quoted tag must stay hidden", name)
 	}
+}
+
+// The SECOND trigger, pinned on its own. The run-shape signature cannot see this reply:
+// the quoted opener sits in a brace-free value, so nothing was swallowed that looks like
+// a cut, yet a genuine markup `</think>` survives OUTSIDE any literal. HasEnclosingThinkBlock
+// reads the raw reply as a block holding text, so the mask is discarded and the lanes refuse.
+//
+// Without this case the surviving-closer half of the arm survives deletion with the whole
+// suite green — an untested guard, which is how a guard ships broken. Keeping the trigger is
+// deliberate: dropping it would hand this reply to ClassifyUnopenedCloser instead, and that
+// is a behaviour change wider than the row it came from
+// (TD internal/llmclient/think.go:406).
+func TestMaskJSONStrings_QuotedOpenerBesideASurvivingMarkupCloserStillDiscardsTheMask(t *testing.T) {
+	t.Parallel()
+
+	raw := `{"a":"x ` + thinkOpen + ` y"} ` + thinkClose + ` tail`
+
+	require.True(t, HasEnclosingThinkBlock(raw),
+		"precondition — the raw reply reads as a block holding text")
+
+	masked := MaskJSONStrings(raw)
+
+	require.Len(t, masked, len(raw), "length must be preserved on every arm")
+
+	assert.True(t, HasEnclosingThinkBlock(masked),
+		"a swallowed opener beside a closer that survived the mask is the residue the second trigger "+
+			"exists for: the run held no container, so only the surviving closer says the mask is unsafe")
 }
