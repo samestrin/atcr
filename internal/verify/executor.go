@@ -130,6 +130,22 @@ func sanitizeDeclineReason(reason string) string {
 // is not re-generated on a verify re-run).
 const fixAttributionPrefix = "fix by "
 
+// agentRefusalPrefix opens every warn invokeExecutor returns for a CONTENT-SHAPE
+// decline, as opposed to a transport or parse failure. postCheck discriminates on
+// it to classify the refusal under its own log class and to apply the prior-tier
+// Fix guard the generic warn branch deliberately does not carry.
+//
+// A shared prefix constant rather than a flag threaded back through
+// invokeExecutor → generate → postCheck: the two refusal sites are the only
+// producers of this text in the package, the idiom is already established here by
+// fixAttributionPrefix above, and the sibling skeptic lane settles its own
+// "nothing usable" classes by prefix too (carriesVerdict, invoke.go). Adding a
+// return value would widen three signatures and re-sign every invokeExecutor call
+// site for a branch this reaches without them. Any NEW content-shape decline in
+// invokeExecutor must open with this constant or it inherits the transport
+// classification (TD internal/verify/executor.go:377).
+const agentRefusalPrefix = "agent_mode refused: "
+
 // anyFixEligible reports whether at least one finding qualifies for fix generation
 // on the same per-finding pre-dispatch gate generateFixes applies: confidence,
 // severity floor, AND the Sprint 32.1 complexity/severity ceilings. The pipeline uses
@@ -369,6 +385,27 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 				// (TD internal/verify/executor.go:346).
 				if salvaged {
 					logPipelineWarning(log.FromContext(ctx), "executor_salvaged_reasoning", fmt.Sprintf("%s:%d", f.File, f.Line))
+					if !hasAnyFixAttribution(f.Evidence) {
+						f.FixWarning = warn
+					}
+					return "", false
+				}
+				// An agent-mode refusal gets its own classification BEFORE the generic
+				// warn branch, for the two reasons the salvage arm above was split out:
+				// the class must not read as a provider/transport error for a reply that
+				// arrived intact, and the FixWarning stamp needs the same
+				// hasAnyFixAttribution guard its four sibling arms carry. Without it a
+				// later tier's refusal lands a warning beside an earlier tier's generated
+				// Fix — the "a good Fix never carries a FixWarning" invariant stated at
+				// internal/reconcile/emit.go:158.
+				//
+				// The class is deliberately NOT executor_salvaged_reasoning: that one
+				// names the snippet-path reasoning salvage and is pinned by the
+				// SnippetSalvaged_* tests. A refusal is a different cause, and collapsing
+				// the two would re-create the ambiguity this split exists to remove
+				// (TD internal/verify/executor.go:377).
+				if strings.HasPrefix(warn, agentRefusalPrefix) {
+					logPipelineWarning(log.FromContext(ctx), "executor_agent_refused", fmt.Sprintf("%s:%d: %s", f.File, f.Line, warn))
 					if !hasAnyFixAttribution(f.Evidence) {
 						f.FixWarning = warn
 					}
@@ -798,11 +835,11 @@ func invokeExecutor(ctx context.Context, ex *registry.ExecutorConfig, prov regis
 	// prose named </think> — dropping the repair entirely, which is a worse outcome
 	// here than in the verify lane (TD internal/verify/executor.go:794).
 	if llmclient.HasEnclosingThinkBlock(maskJSONStrings(answer)) {
-		return "", "agent_mode refused: think markup outside a JSON string survived the strip, so the first fix envelope may be a draft the model discarded", res.ResponseTruncated
+		return "", agentRefusalPrefix + "think markup outside a JSON string survived the strip, so the first fix envelope may be a draft the model discarded", res.ResponseTruncated
 	}
 	fix, ambiguous, err := executorFixFromAnswer(answer)
 	if ambiguous {
-		return "", "agent_mode refused: a </think> no <think> opened has a fix envelope on both sides, so neither is provably the patch the model committed to", res.ResponseTruncated
+		return "", agentRefusalPrefix + "a </think> no <think> opened has a fix envelope on both sides, so neither is provably the patch the model committed to", res.ResponseTruncated
 	}
 	if err != nil {
 		return "", "agent_mode parse error: " + err.Error(), res.ResponseTruncated
