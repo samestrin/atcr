@@ -329,3 +329,26 @@ func TestVerdictFromAnswer_GradesPastAnOutOfEnumDecoyAfterTheCloser(t *testing.T
 	assert.NotContains(t, v.Notes, "(raw:",
 		"the post-closer fragment alone must not be the only text kept")
 }
+
+// TD internal/verify/verdict.go:61 (security): notesRawCap exists because the raw
+// output flows into findings.json and the rendered report, so a runaway response
+// must not bloat the artifacts — but truncateForNotes was applied only to the
+// three DIAGNOSTIC Notes. On a SUCCESSFUL parse it assigned Notes:
+// candidate.Reasoning verbatim, with no cap, and invokeSkeptic stamps and returns
+// it. Model-controlled text then rides into findings.json, verification.json and
+// DisagreementItem.Detail unbounded. The one input class the cap was written for
+// is the one it did not cover.
+func TestParseVerdict_SuccessPathCapsModelControlledReasoning(t *testing.T) {
+	t.Parallel()
+	huge := strings.Repeat("x", notesRawCap+5000)
+	raw := `{"verdict":"confirmed","reasoning":"` + huge + `"}`
+
+	v, err := parseVerdict(raw)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	assert.Equal(t, verdictConfirmed, v.Verdict)
+	assert.Less(t, len(v.Notes), len(huge),
+		"the model-controlled reasoning must be capped in Notes, exactly as the diagnostics are")
+	assert.Contains(t, v.Notes, "…[truncated]",
+		"and the elision must be marked so a reader can tell it was cut")
+}
