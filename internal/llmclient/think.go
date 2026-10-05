@@ -329,11 +329,19 @@ func IndexAfterUnopenedCloser(content string) int {
 // cleanly quoted pair in a truncated reply, which is the decision
 // TestMaskJSONStrings_UnterminatedLiteralKeepsItsQuotedTagHidden pins.
 //
-// It is directional: masking that removes MORE OPENERS THAN CLOSERS has demonstrably
-// cut a pair in half, so the in/out-of-string state was a guess and the whole masked
-// copy is discarded. A genuinely quoted pair loses both halves together and stays
-// masked. The reverse asymmetry — a hidden closer beside a surviving opener — needs no
-// arm: the opener is still visible, so HasEnclosingThinkBlock refuses the reply anyway.
+// The discriminator is a SURVIVING CLOSER beside a swallowed opener. That is what a
+// cut pair leaves behind, and it is the residue the arm refuses: the in/out-of-string
+// state was a guess, so the whole masked copy is discarded. Three shapes are
+// deliberately NOT it, and the arm must leave each one masked:
+//
+//   - A genuinely quoted pair loses both halves together, so no closer survives.
+//   - A LONE opener named inside a cleanly-closed value removes one opener and zero
+//     closers — the same count asymmetry a cut pair shows — while cutting nothing.
+//     Acting on the counts alone un-hid a tag the model had only quoted, and all three
+//     lanes then refused a reply the position rule calls legal
+//     (TD internal/llmclient/think.go:392).
+//   - The reverse asymmetry — a hidden closer beside a surviving opener — needs no arm
+//     either: the opener is still visible, so HasEnclosingThinkBlock refuses anyway.
 //
 // The result is for tag DETECTION only, never for parsing: a think tag that
 // survives the mask is markup enclosing reply text, while one that appears solely
