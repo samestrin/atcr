@@ -166,6 +166,30 @@ func TestAllUnverifiableCollapse_NamesResponseTruncated(t *testing.T) {
 	assert.Contains(t, err.Error(), "response_truncated")
 }
 
+// TD internal/reconcile/gate.go:216: ambiguous_unopened_closer is a THIRD path to
+// the same wall, and the one the message was most misleading about. A reply
+// carrying a </think> no <think> opened, with a verdict envelope on both sides, is
+// refused by the skeptic lane (internal/verify/invoke.go:218's `if ambiguous` arm,
+// whose refusal return is :225) and collapses to
+// unverifiable with no window fault and no truncation — so neither cause the
+// message already named applies, and doctor's thinking verdict can only name the
+// markup (and only for agents that declare thinking or thinking_level), never the
+// ambiguity over which envelope is the committed one.
+//
+// gate.go's own comment records that RunReconcile has stripped every verification
+// block by the time this runs, so the notes naming the cause are gone: this message
+// IS the operator's diagnosis. A cause missing from it is a cause nobody can reach.
+func TestAllUnverifiableCollapse_NamesAmbiguousUnopenedCloser(t *testing.T) {
+	dir := t.TempDir()
+	verPath := filepath.Join(dir, "verification.json")
+	require.NoError(t, os.WriteFile(verPath, []byte(`{"findings":[{"verdict":"unverifiable"}]}`), 0o600))
+
+	err := allUnverifiableCollapse(verPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ambiguous_unopened_closer",
+		"the third cause must be named, or the message sends the operator after a window or truncation fault that is not there")
+}
+
 // TestAllUnverifiableCollapse_UnreadableFileIsNotAnError covers the ReadFile
 // fallback the caller's os.Stat almost always makes unreachable.
 //
@@ -181,4 +205,35 @@ func TestAllUnverifiableCollapse_UnreadableFileIsNotAnError(t *testing.T) {
 
 	assert.NoError(t, allUnverifiableCollapse(notAFile),
 		"the stage still ran, which is all this function ever claimed to check — an unreadable snapshot is not a gate failure")
+}
+
+// TD internal/reconcile/gate.go:224: the collapse message named ONE member of the
+// reply-shape family (ambiguous_unopened_closer) and framed it as "a third cause",
+// but internal/verify/invoke.go returns verdictUnverifiable with at least seven
+// Notes values and THREE of them are reply-shape causes:
+// think_markup_after_answer (invoke.go:204), think_only_reply (invoke.go:234), and
+// ambiguous_unopened_closer (invoke.go:225). An operator holding a
+// think_markup_after_answer run reads the single-member clause, finds it describes
+// a different shape, and concludes the shape family is not their case — so by the
+// message's own argument those causes are unreachable by construction.
+//
+// The fix generalises the clause to name the FAMILY. Table-driven so adding a new
+// shape note without naming it here is a visible omission, not a silent one.
+func TestAllUnverifiableCollapse_NamesEveryReplyShapeCause(t *testing.T) {
+	dir := t.TempDir()
+	verPath := filepath.Join(dir, "verification.json")
+	require.NoError(t, os.WriteFile(verPath, []byte(`{"findings":[{"verdict":"unverifiable"}]}`), 0o600))
+
+	err := allUnverifiableCollapse(verPath)
+	require.Error(t, err)
+
+	for _, shape := range []struct{ token, why string }{
+		{"think_markup_after_answer", "a reply with think markup after the answer collapses to unverifiable like the other shapes"},
+		{"think_only_reply", "a reply carrying only a think block collapses the same way"},
+		{"ambiguous_unopened_closer", "the member the message already named must stay named"},
+	} {
+		assert.Contains(t, err.Error(), shape.token, shape.why)
+	}
+	assert.Contains(t, err.Error(), "response_truncated",
+		"the truncated cause is a different member of the same enumeration and stays named beside the shape family")
 }

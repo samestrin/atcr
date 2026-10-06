@@ -23,9 +23,13 @@ import (
 func TestWritePool_RecordsSalvagedRepliesPerAgentAndInTheTally(t *testing.T) {
 	pool := filepath.Join(t.TempDir(), "pool")
 	results := []Result{
-		// Salvaged: the client promoted reasoning into Content, so parseFindings
-		// refuses it and the agent's zero findings are a refusal.
-		{Agent: "drafter", Status: StatusOK, Salvaged: true, UnparseableResponse: true,
+		// Salvaged AND truncated: the client promoted reasoning into Content and the
+		// provider cut the thought off, so parseFindings refuses it and the agent's
+		// zero findings are a refusal. Truncation is part of the fixture because since
+		// TD internal/fanout/engine.go:604 the refusal reads both flags; what this test
+		// pins is the DISCLOSURE, and the zero-findings line below is labelled a
+		// precondition for exactly that reason.
+		{Agent: "drafter", Status: StatusOK, Salvaged: true, ResponseTruncated: true, UnparseableResponse: true,
 			Content: "HIGH|a.go:1|draft I never committed to|f|correctness|5|e"},
 		{Agent: "clean", Status: StatusOK, Content: "HIGH|b.go:2|b|f|correctness|5|e|clean"},
 	}

@@ -138,9 +138,19 @@ func TestFindingsFormatDoc_StatesTheThinkStrip(t *testing.T) {
 		// shape and it keeps the literal on one line
 		// (TestFindingsFormatThinkStripDocTest_OneWrapPolicy).
 		findingsBlock := `[{"severity":"LOW","file_line":"a.go:1","problem":"p","fix":"f","category":"c","est_minutes":5,"evidence":"e"}]`
-		salvaged := &fanout.Result{Salvaged: true, Content: findingsBlock}
+		// ResponseTruncated is part of the fixture because the doc sentence it anchors
+		// is "yields no findings at all WHEN the provider ALSO stopped that reply on
+		// length" (TD internal/fanout/engine.go:604). The assertion is unchanged; the
+		// shape that earns it is now stated in full.
+		salvaged := &fanout.Result{Salvaged: true, ResponseTruncated: true, Content: findingsBlock}
 		assert.Equal(t, 0, salvaged.ParsedFindingCount(),
-			"a salvaged reply yields no findings even when its content would parse, which is precisely T6's reversal")
+			"a salvaged reply cut off on length yields no findings even when its content would parse, which is precisely T6's reversal")
+		// The other half of the same doc sentence, anchored so the stop-reason carve-out
+		// cannot drift either: a salvage the provider did NOT cut off is a finished
+		// answer on the reasoning channel and must parse.
+		salvagedOnStop := &fanout.Result{Salvaged: true, Content: findingsBlock}
+		assert.Equal(t, 1, salvagedOnStop.ParsedFindingCount(),
+			"a stop-reason salvage is a completed answer on the reasoning channel, so the doc's carve-out must hold in code")
 		unsalvaged := &fanout.Result{Content: findingsBlock}
 		assert.Equal(t, 1, unsalvaged.ParsedFindingCount(),
 			"the control: the same content unsalvaged DOES parse, so the zero above is the refusal and not a malformed fixture")

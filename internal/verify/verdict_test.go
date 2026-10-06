@@ -272,3 +272,143 @@ func TestParseVerdict_BareJSONModeObject(t *testing.T) {
 		})
 	}
 }
+
+// TD internal/verify/invoke.go:782: carriesVerdict was taught to iterate past an
+// out-of-enum decoy, but parseVerdict — verdictFromAnswer's actual grader — still
+// SHORT-CIRCUITED on the first verdict-keyed object, in-enum or not. The predicate
+// and the grader therefore disagreed about what "the envelope" is, so for a reply
+// whose suffix holds a quoted out-of-enum example BEFORE the real verdict,
+// carriesVerdict(suffix) returned true, classifyUnopenedCloser picked
+// SectionAfterCloser, and parseVerdict then graded the DECOY — losing the
+// committed verdict to `unverifiable` and embedding only the post-closer fragment.
+// Either direction: iterate past the out-of-enum object the way
+// carriesVerdict/parseExecutorResponse do, so predicate and grader cannot disagree.
+func TestParseVerdict_IteratesPastAnOutOfEnumDecoy(t *testing.T) {
+	t.Parallel()
+	raw := `{"verdict":"maybe","reasoning":"an example"} ` + "\n" +
+		`{"verdict":"confirmed","reasoning":"REAL"}`
+
+	v, err := parseVerdict(raw)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	assert.Equal(t, verdictConfirmed, v.Verdict,
+		"the committed verdict sits BEHIND the quoted example and must be graded")
+	assert.Equal(t, "REAL", v.Notes)
+	assert.NotContains(t, v.Notes, "(raw:",
+		"the real verdict was graded, so no diagnostic raw-text embed should appear")
+}
+
+// The single-object shape must be unchanged: an out-of-enum verdict with nothing
+// usable after it still reports invalid_verdict, preserving the diagnostic an
+// operator reads.
+func TestParseVerdict_SoleOutOfEnumObjectStillDiagnosesInvalidVerdict(t *testing.T) {
+	t.Parallel()
+	v, err := parseVerdict(`{"verdict": "maybe", "reasoning": "unclear"}`)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	assert.Equal(t, verdictUnverifiable, v.Verdict)
+	assert.Contains(t, v.Notes, "invalid_verdict: maybe")
+}
+
+// The end-to-end shape from the finding, through verdictFromAnswer: a bare closer
+// with nothing usable before it, a quoted out-of-enum example after it, and the
+// real committed verdict last. The predicate must select that section and the
+// grader must read the committed verdict out of it.
+func TestVerdictFromAnswer_GradesPastAnOutOfEnumDecoyAfterTheCloser(t *testing.T) {
+	t.Parallel()
+	answer := "weighing two approaches \n " + string(rune(0x3c)) + "/think" + string(rune(0x3e)) + " \n" +
+		` An example is {"verdict":"maybe"}.` + "\n" +
+		`{"verdict":"refuted","reasoning":"REAL"}`
+
+	v, ambiguous, _ := verdictFromAnswer(answer)
+	require.False(t, ambiguous, "both sides carry a verdict, so the section is not ambiguous")
+	require.NotNil(t, v)
+	assert.Equal(t, verdictRefuted, v.Verdict,
+		"the committed refuted must not be lost to the quoted out-of-enum example")
+	assert.Equal(t, "REAL", v.Notes)
+	assert.NotContains(t, v.Notes, "(raw:",
+		"the post-closer fragment alone must not be the only text kept")
+}
+
+// TD internal/verify/verdict.go:61 (security): notesRawCap exists because the raw
+// output flows into findings.json and the rendered report, so a runaway response
+// must not bloat the artifacts — but truncateForNotes was applied only to the
+// three DIAGNOSTIC Notes. On a SUCCESSFUL parse it assigned Notes:
+// candidate.Reasoning verbatim, with no cap, and invokeSkeptic stamps and returns
+// it. Model-controlled text then rides into findings.json, verification.json and
+// DisagreementItem.Detail unbounded. The one input class the cap was written for
+// is the one it did not cover.
+func TestParseVerdict_SuccessPathCapsModelControlledReasoning(t *testing.T) {
+	t.Parallel()
+	huge := strings.Repeat("x", notesRawCap+5000)
+	raw := `{"verdict":"confirmed","reasoning":"` + huge + `"}`
+
+	v, err := parseVerdict(raw)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	assert.Equal(t, verdictConfirmed, v.Verdict)
+	assert.Less(t, len(v.Notes), len(huge),
+		"the model-controlled reasoning must be capped in Notes, exactly as the diagnostics are")
+	assert.Contains(t, v.Notes, "…[truncated]",
+		"and the elision must be marked so a reader can tell it was cut")
+}
+
+// TD internal/verify/invoke.go:712: carriesVerdict and usableVerdict classified a
+// parseVerdict result by STRING PREFIX on Notes, but on a real verdict Notes holds
+// the model's own reasoning — so a reply whose reasoning begins "malformed_output:"
+// or "invalid_verdict:" was misread as carrying no envelope. Worse than a lost
+// availability signal: forEachJSONObject CONTINUES after a rejected candidate, so
+// the real committed verdict could be skipped and a later decoy accepted — a
+// silently wrong verdict, the class classifyUnopenedCloser's doc says must not
+// exist.
+//
+// The predicate must key on a STRUCTURAL cause, not on the human-readable Notes
+// string. The core stays unexported inside internal/verify so reclib (a separate
+// module) is untouched and parseVerdict's signature — asserted require.NoError at
+// 15 call sites — is unchanged.
+func TestUsableVerdict_StructuralCauseNotNotesPrefixes(t *testing.T) {
+	t.Parallel()
+
+	// A REAL verdict whose reasoning happens to open with a diagnostic prefix.
+	real, cause := parseVerdictCause(`{"verdict":"confirmed","reasoning":"malformed_output: this is the model explaining itself"}`)
+	require.NotNil(t, real)
+	assert.Equal(t, verdictConfirmed, real.Verdict)
+	assert.Equal(t, parseCauseUsable, cause,
+		"a real in-enum verdict is USABLE regardless of what its reasoning text begins with")
+	assert.True(t, usableVerdictCause(cause),
+		"the predicate must read the cause, not HasPrefix on Notes")
+
+	for name, tc := range map[string]struct {
+		raw   string
+		cause parseCause
+	}{
+		"malformed":                {`no object here at all`, parseCauseMalformed},
+		"invalid enum":             {`{"verdict":"maybe"}`, parseCauseInvalidEnum},
+		"empty":                    {``, parseCauseEmpty},
+		"usable":                   {`{"verdict":"refuted","reasoning":"ok"}`, parseCauseUsable},
+		"reasoning says malformed": {`{"verdict":"confirmed","reasoning":"malformed_output: coincidence"}`, parseCauseUsable},
+	} {
+		t.Run(name, func(t *testing.T) {
+			v, c := parseVerdictCause(tc.raw)
+			require.NotNil(t, v)
+			assert.Equal(t, tc.cause, c)
+			assert.Equal(t, tc.cause == parseCauseUsable, usableVerdictCause(c))
+		})
+	}
+}
+
+// The consumer trace: a committed verdict whose reasoning opens with a diagnostic
+// prefix must still count as an envelope AND be graded, end to end.
+func TestVerdictFromAnswer_ReasoningBeginningWithADiagnosticPrefixIsStillGraded(t *testing.T) {
+	t.Parallel()
+	answer := `{"verdict":"refuted","reasoning":"invalid_verdict: the example above is not mine"}`
+
+	v, ambiguous, _ := verdictFromAnswer(answer)
+
+	require.False(t, ambiguous, "the reply carries one usable verdict")
+	require.NotNil(t, v)
+	assert.Equal(t, verdictRefuted, v.Verdict,
+		"the model's reasoning text must not be able to reclassify its own verdict as unusable")
+	assert.Contains(t, v.Notes, "invalid_verdict:",
+		"the reasoning is carried verbatim into Notes")
+}
