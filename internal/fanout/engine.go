@@ -1088,11 +1088,20 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 		//
 		// A SALVAGED reply never reaches the sentinel read: it is uncommitted
 		// reasoning by design (T6), so it cannot be a committed no-findings report
-		// whatever its text — and its ParsedFindingCount is 0 by construction, so a
-		// sentinel-shaped salvage ("NO FINDINGS" on the reasoning channel) would
-		// otherwise score as a genuine clean review. Recorded unparseable, not
-		// failed over (TD-018 keeps widening failover out of scope). Pinned by
-		// TestInvokeSlot_SalvagedSentinelShapedReply_IsNotACleanReview.
+		// whatever its text — so a sentinel-shaped salvage ("NO FINDINGS" on the
+		// reasoning channel) would otherwise score as a genuine clean review.
+		// Recorded unparseable, not failed over (TD-018 keeps widening failover out of
+		// scope). Pinned by TestInvokeSlot_SalvagedSentinelShapedReply_IsNotACleanReview.
+		//
+		// This arm still reads Salvaged ALONE, and that is now an open question rather
+		// than a settled rule. Since TD internal/fanout/engine.go:604 a salvage counts as
+		// abandoned only when the provider ALSO stopped the reply on length, so
+		// ParsedFindingCount is no longer 0 "by construction" here: a stop-reason salvage
+		// that parsed never reaches this block, and one that genuinely found nothing does
+		// reach it and is scored unparseable even though its answer was committed.
+		// Whether a committed `NO FINDINGS` on the reasoning channel is a clean review is
+		// a SECOND behaviour change with its own pinned test, so it is deliberately not
+		// made here — it is carried as evidence on the TD-018 flag-split plan.
 		if r.Status == StatusOK && r.Content != "" && r.ParsedFindingCount() == 0 {
 			if r.Salvaged {
 				r.UnparseableResponse = true
