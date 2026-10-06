@@ -779,6 +779,41 @@ func TestResult_ParseFindings_TruncatedButNotSalvagedKeepsItsFindings(t *testing
 	assert.Equal(t, "real finding from a cut-off review", fr.Findings[0].Problem)
 }
 
+// THE OTHER BOUNDARY, and the one the Salvaged-only guard got wrong.
+// llmclient.CompleteWithMeta sets Salvaged purely on empty content plus non-empty
+// reasoning (client.go:428-455) — a CHANNEL fact, not an ABANDONMENT fact. On
+// finish_reason "stop" the model finished normally and its answer simply arrived on
+// reasoning_content, which is the standard shape for several reasoning deployments.
+// ResponseTruncated is FALSE there, so the Salvaged-only guard discarded a committed
+// review with no failover, no log line and FindingsCount 0 in status.json.
+//
+// Pairing the two flags is what separates the two cases: a salvage WITH truncation is
+// a thought the provider cut off mid-sentence (refuse it, as before), while a salvage
+// on a stop reason is a finished answer on the other channel (parse it). The sibling
+// test above pins Salvaged=false/Truncated=true; this one pins the inverse, so neither
+// flag can be dropped from the pair without a red test.
+func TestResult_ParseFindings_SalvagedOnStopKeepsItsFindings(t *testing.T) {
+	const real = "HIGH|d.go:4|committed finding delivered on the reasoning channel|f|correctness|3|e"
+
+	t.Run("stop reason: the answer is finished, just on the other channel", func(t *testing.T) {
+		r := Result{Agent: "bruce", Status: StatusOK, Content: real, Salvaged: true}
+
+		assert.Equal(t, 1, r.ParsedFindingCount(),
+			"a salvage with no truncation is a completed answer on the reasoning channel, not an abandoned draft")
+		fr := findingsFor(r, nil)
+		require.Len(t, fr.Findings, 1)
+		assert.Equal(t, "committed finding delivered on the reasoning channel", fr.Findings[0].Problem)
+	})
+
+	t.Run("cut off mid-thought: still refused, exactly as before", func(t *testing.T) {
+		r := Result{Agent: "bruce", Status: StatusOK, Content: real, Salvaged: true, ResponseTruncated: true}
+
+		assert.Equal(t, 0, r.ParsedFindingCount(),
+			"a salvage the provider cut off IS an abandoned draft and must still yield nothing")
+		assert.Empty(t, findingsFor(r, nil).Findings)
+	})
+}
+
 // No regression on the ordinary row: neither flag set, findings parse as before.
 func TestResult_ParseFindings_UnflaggedReplyIsUnaffected(t *testing.T) {
 	const real = "LOW|c.go:3|ordinary finding|f|correctness|1|e"
