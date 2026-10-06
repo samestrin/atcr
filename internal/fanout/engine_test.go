@@ -684,11 +684,20 @@ func TestResult_ParseFindings_SalvagedReplyYieldsNoFindings(t *testing.T) {
 		assert.Equal(t, 1, (&Result{Content: draft}).ParsedFindingCount(),
 			"the same content without the Salvaged marker really does parse to one finding")
 
+		// ResponseTruncated is part of the fixture, not an extra condition under test:
+		// since TD internal/fanout/engine.go:604 the unchunked refusal reads Salvaged
+		// AND ResponseTruncated, so truncation is what makes this reasoning ABANDONED
+		// rather than an answer that merely came back on the other channel. The
+		// assertions below are unchanged; only the shape that earns them is now stated
+		// in full. The inverse shape is pinned by
+		// TestResult_ParseFindings_SalvagedOnStopKeepsItsFindings.
+		//
 		// Fresh Result per assertion: ParsedFindingCount memoizes on first use.
-		assert.Equal(t, 0, (&Result{Content: draft, Salvaged: true}).ParsedFindingCount(),
-			"a salvaged reply's reasoning must not be counted as findings")
+		assert.Equal(t, 0, (&Result{Content: draft, Salvaged: true, ResponseTruncated: true}).ParsedFindingCount(),
+			"a salvaged reply cut off mid-thought must not be counted as findings")
 
-		fr := findingsFor(Result{Agent: "bruce", Status: StatusOK, Content: draft, Salvaged: true}, nil)
+		fr := findingsFor(Result{Agent: "bruce", Status: StatusOK, Content: draft,
+			Salvaged: true, ResponseTruncated: true}, nil)
 		assert.Empty(t, fr.Findings,
 			"findingsFor must see the guard too, not just the count gate — it is the path to the pool")
 	})
@@ -940,22 +949,34 @@ func TestMergeResultGroup_AllChunksSalvagedYieldsNoFindings(t *testing.T) {
 // content and reasoning present is salvaged with ResponseTruncated false. The two
 // shapes therefore land in different places and must not be collapsed.
 func TestInvokeSlot_SalvagedReply_ContributesNoFindings(t *testing.T) {
-	t.Run("salvaged, not truncated: recorded unparseable", func(t *testing.T) {
-		// StatusOK survives (only findings are refused, not the call), the count is
-		// zero, and the reasoning is not the clean-review sentinel — so the row reads
-		// unparseable, which ReviewerOutcome ranks above clean. Intended: "reviewed
-		// and found nothing" and "emitted reasoning no parser should trust" score the
-		// same and this marker is the only thing that tells them apart.
+	// AMENDED by TD internal/fanout/engine.go:604 (2026-10-05). The subtest below used
+	// to assert this shape contributed NOTHING and scored unparseable. That was T6's
+	// deliberate choice and it is now deliberately reversed: Salvaged is a CHANNEL
+	// fact, so on a stop reason this is a FINISHED review that merely arrived on
+	// reasoning_content — the standard shape for several reasoning deployments — and
+	// refusing it destroyed those reviewers' entire real output with no failover and
+	// no log line. The assertions move with the behaviour rather than being relaxed:
+	// each one is now the opposite claim, stated and tested, not dropped.
+	//
+	// The sibling subtest (salvaged AND truncated) is untouched, which is the point —
+	// the pair is what separates a cut-off thought from a completed answer.
+	t.Run("salvaged on a stop reason: a finished review on the other channel", func(t *testing.T) {
+		// StatusOK survives as before. What changed is the count and the marker: the
+		// reply parsed, so it is neither empty nor unparseable, and ReviewerOutcome
+		// scores it as the real review it is.
 		e := NewEngine(&metaTruncatingCompleter{
-			content:  "HIGH|a.go:1|draft from abandoned reasoning|f|correctness|5|e",
+			content:  "HIGH|a.go:1|committed finding delivered on the reasoning channel|f|correctness|5|e",
 			salvaged: true,
 		}, WithTruncationFailover())
 		r := e.invokeSlot(context.Background(), Slot{Primary: Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "m"}}})
 
 		assert.Equal(t, StatusOK, r.Status)
-		require.True(t, r.Salvaged)
-		assert.Equal(t, 0, r.ParsedFindingCount(), "the draft inside salvaged reasoning is refused")
-		assert.True(t, r.UnparseableResponse, "salvaged reasoning is not the clean-review sentinel")
+		require.True(t, r.Salvaged, "the disclosure marker still records which channel the answer came on")
+		require.False(t, r.ResponseTruncated, "precondition: a stop reason is not a truncation")
+		assert.Equal(t, 1, r.ParsedFindingCount(),
+			"a completed answer on the reasoning channel is a real review, not an abandoned draft")
+		assert.False(t, r.UnparseableResponse,
+			"it parsed, so it is not unparseable — scoring it so hid a reviewer's whole contribution")
 	})
 
 	t.Run("salvaged and truncated: demoted to failover", func(t *testing.T) {

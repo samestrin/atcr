@@ -597,16 +597,33 @@ type Result struct {
 //     and the truncationFailover gate exists to separate them from
 //     truncated-with-nothing. Pinned by
 //     TestResult_ParseFindings_TruncatedButNotSalvagedKeepsItsFindings and
-//     TestMergeResultGroup_SalvagedLaterChunkKeepsSiblingFindings; if the
-//     asymmetry ever looks wrong, file it as debt rather than widening the
-//     guard.
+//     TestMergeResultGroup_SalvagedLaterChunkKeepsSiblingFindings.
+//   - On the UNCHUNKED path that refusal is Salvaged AND ResponseTruncated, not
+//     Salvaged alone. Salvaged is a CHANNEL fact — llmclient.CompleteWithMeta sets
+//     it on empty content plus non-empty reasoning (client.go:428-455) — so on
+//     finish_reason "stop" it marks a FINISHED answer that merely arrived on
+//     reasoning_content, the standard shape for several reasoning deployments.
+//     Refusing on the channel destroyed those reviewers' entire real output with no
+//     failover and no log line (TD internal/fanout/engine.go:604). Truncation is what
+//     distinguishes a thought cut off mid-sentence from a completed answer on the
+//     other channel, so the two flags are read as a pair. Pinned by
+//     TestResult_ParseFindings_SalvagedOnStopKeepsItsFindings, whose two subtests are
+//     the two directions.
+//
+// The chunked arms below deliberately do NOT take that pairing. There is no
+// per-chunk truncation flag to pair chunkSalvaged with — mergeResultGroup OR-folds
+// ResponseTruncated across every bin (chunker.go:479), so one bin's truncation would
+// suppress a sibling bin's salvaged-but-complete findings, reintroducing the
+// persona-wide-fold defect the chunk contract exists to prevent. Making the chunked
+// path precise needs the client to report truncation per reply, which is the flag
+// split filed as TD-018 and scoped out of this change.
 func (r *Result) parseFindings() []stream.Finding {
 	if r.parsedFindingsSet {
 		return r.parsedFindings
 	}
 	var out []stream.Finding
 	if r.chunkContents == nil {
-		if r.Salvaged {
+		if r.Salvaged && r.ResponseTruncated {
 			return r.cacheParsedFindings(nil)
 		}
 		answer, _ := llmclient.SplitThink(r.Content)
