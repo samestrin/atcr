@@ -203,7 +203,27 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 		logger.Debug("skeptic failure detail", "skeptic", skeptic.Name, "class", "think_markup_after_answer", "detail", "think markup outside a JSON string is not leading, so the first verdict-keyed object may be a discarded draft")
 		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "think_markup_after_answer", Skeptic: skeptic.Name}, res.TrippedBudgets, nil
 	}
-	v, ambiguous := verdictFromAnswer(answer)
+	v, ambiguous, discardedPrefix := verdictFromAnswer(answer)
+	if discardedPrefix > 0 {
+		// The reply began mid-thought, so the verdict was taken from the text AFTER a
+		// bare closer and the draft ahead of it was dropped. Debug, not Warn: this is a
+		// SUCCESSFUL grade and the shape is legitimate (a chat template put the opener
+		// in the prompt), so warning on it would train the reader to ignore the class.
+		//
+		// Recorded on the Verification too, not only in the log: the Debug line is
+		// suppressed at the default level, and the emission deliberately did NOT touch
+		// the returned object, so an operator reading verification.json, findings.json
+		// or report.md could not tell a whole-answer grade from a fragment grade — the
+		// very gap this was written to close. A length is enough to see the split and
+		// how much it cost, and it holds no withdrawn verdict text, so the marker is
+		// safe to publish (TD internal/verify/invoke.go:683, :781).
+		logger.Debug("skeptic answer taken after a bare closer", "skeptic", skeptic.Name,
+			"class", "verdict_after_unopened_closer", "discarded_prefix_bytes", discardedPrefix)
+		if v != nil {
+			v.Notes = fmt.Sprintf("%s [verdict_after_unopened_closer: %d prefix byte(s) discarded]",
+				v.Notes, discardedPrefix)
+		}
+	}
 	if ambiguous {
 		// A bare </think> with an envelope on BOTH sides. Neither is provably the
 		// committed one, and grading the wrong one is durable: a draft `refuted`
@@ -610,19 +630,6 @@ func failureClass(res fanout.Result) string {
 	}
 }
 
-// logSkepticFailure emits a structured log line so a skeptic failure is visible
-// even though it is intentionally not propagated as an error. The skeptic name
-// and failure class go to Warn (visible at the default level); the diagnostic
-// detail — which can carry provider error bodies and path-bearing context — is
-// held to Debug so it does not leak at the default level (mirrors the path-at-
-// debug discipline used across the engine wiring).
-// maskJSONStrings blanks the contents of every JSON double-quoted string literal
-// in s, preserving length and every byte outside a literal. String-awareness
-// mirrors extractJSONObject: a backslash escapes the next byte, and an unclosed
-// literal masks to end of input. The result is used only for tag DETECTION — a
-// think tag that survives the mask is markup enclosing reply text, while a tag
-// that appears solely inside a string value is a quotation of the tag and must
-// not be read as thinking.
 // closerSection names which part of a stripped answer holds the committed
 // envelope when the reply carries a bare </think>.
 type closerSection int
@@ -690,34 +697,110 @@ func classifyUnopenedCloser(answer string, hasEnvelope func(string) bool) (close
 	}
 }
 
-// carriesVerdict reports whether text parses to a real verdict, as opposed to
-// one of parseVerdict's two "nothing usable here" diagnostics. It is the
-// envelope test classifyUnopenedCloser needs for the skeptic lane.
+// carriesVerdict reports whether text holds a USABLE verdict anywhere in it, as
+// opposed to only parseVerdict's three "nothing usable here" diagnostics. It is
+// the envelope test classifyUnopenedCloser needs for the skeptic lane.
+//
+// Two things are load-bearing, and the second is what makes this more than a call
+// to parseVerdict.
+//
+// First, parseVerdict's unusable-result diagnostics must be excluded. TWO are
+// reachable from this walk, and invalid_verdict: is the easily-missed one: unlike
+// malformed_output it comes back from an object that DID carry a verdict key, just
+// holding a value outside the enum (verdict.go:65). The other two readers of a
+// parseVerdict result — and any future one — must treat a syntactically valid
+// object with an out-of-enum verdict as NOT an envelope. Counting it as one made a
+// quoted out-of-enum example look like a committed answer, so a real verdict
+// followed by prose naming a bare closer and such an example collapsed to
+// AMBIGUOUS — availability lost on exactly the reply shape this repo's own
+// reviewers produce (TD internal/verify/invoke.go:701, :764).
+//
+// Second, the walk must ITERATE rather than ask parseVerdict about the text as a
+// whole. parseVerdict short-circuits on the FIRST object carrying a verdict key,
+// in-enum or not, so delegating the question to it answers "is the first
+// verdict-keyed object usable" — and a committed verdict sitting BEHIND a quoted
+// out-of-enum example then read as no envelope at all, collapsing the section to
+// the whole answer and grading the abandoned pre-closer draft. That is the decoy
+// defect the round-2 blocker closed on the executor lane
+// (TD internal/verify/executor.go:916), reappearing on the skeptic lane through the
+// fix for the first point above. It is the worse direction of the two: a draft
+// `refuted` never blocks the gate (reconcile.IsFailing), so a disclosed refusal was
+// replaced by a silently wrong verdict. classifyUnopenedCloser's "Both predicates
+// iterate now" is the invariant this half upholds.
+//
+// Narrowing AMBIGUOUS does not move the CI gate in only one direction, and the
+// exception is worth stating because it looks like a weakening: under the DEFAULT
+// gate an `unverifiable` finding at or above threshold BLOCKS while a `refuted`
+// one never does, so recovering a real `refuted` turns a blocking finding into a
+// passing one. That is the correct outcome — the skeptic disproved the finding and
+// the old behaviour blocked CI on a verdict it had declined to read — and it is
+// pinned by TestCarriesVerdict_RecoveredVerdictReachesTheGateAsItself, which
+// asserts both directions against reconcile.IsFailing rather than describing them.
 func carriesVerdict(s string) bool {
-	v, err := parseVerdict(s)
-	if err != nil || v == nil {
+	// The candidate walk is forEachJSONObject — the SAME walk parseVerdict and
+	// parseExecutorResponse drive — so the three readers cannot disagree about
+	// what "the envelope" is. The per-object DECISION stays here, delegated to
+	// parseVerdict so no second notion of "usable" exists (TD
+	// internal/verify/invoke.go:782, :733).
+	found := false
+	forEachJSONObject(s, func(obj string) bool {
+		_, cause := parseVerdictCause(obj)
+		if usableVerdictCause(cause) {
+			found = true
+			return true
+		}
 		return false
-	}
-	return v.Notes != "empty_response" && !strings.HasPrefix(v.Notes, "malformed_output:")
+	})
+	return found
 }
 
 // verdictFromAnswer parses the committed verdict out of a STRIPPED skeptic
 // answer, and reports whether the reply was ambiguous about which verdict it
 // committed to. The production path and the tests both call it, so the behaviour
 // pinned is the behaviour that ships.
-func verdictFromAnswer(answer string) (v *reclib.Verification, ambiguous bool) {
+//
+// The evidence for that last sentence, named so a reader can check it rather than
+// trust it: TestInvokeSkeptic_AmbiguousUnopenedCloserRefuses drives invokeSkeptic
+// itself, so it reaches the `if ambiguous` arm below through the production path —
+// neutralising that arm fails the test. The claim went a full review round
+// unverified while the arm it describes was genuinely uncovered, which is the cost
+// of stating a coverage claim without pointing at its proof
+// (TD internal/verify/invoke.go:706).
+func verdictFromAnswer(answer string) (v *reclib.Verification, ambiguous bool, discardedPrefix int) {
 	section, text := classifyUnopenedCloser(answer, carriesVerdict)
 	if section == sectionAmbiguous {
-		return nil, true
+		return nil, true, 0
 	}
 	parsed, _ := parseVerdict(text)
-	return parsed, false
+	// discardedPrefix is how many bytes were dropped ahead of the committed section,
+	// and it exists only so the caller can RECORD the drop. On sectionAfterCloser the
+	// reply began mid-thought and the abandoned pre-closer draft is kept nowhere —
+	// docs/verification.md says so of the whole lane — which left an operator unable
+	// to tell a whole-answer grade from one taken out of a fragment, with no record
+	// that anything was removed. The text itself is deliberately NOT carried: it is a
+	// draft the model discarded, and retaining it in a Verification would put a
+	// withdrawn verdict back into the artifacts. A length is enough to see the split
+	// happened and how much it cost (TD internal/verify/invoke.go:683).
+	return parsed, false, len(answer) - len(text)
 }
 
+// maskJSONStrings blanks the contents of every JSON double-quoted string literal
+// in s, preserving length and every byte outside a literal. String-awareness
+// mirrors extractJSONObject: a backslash escapes the next byte, and an unclosed
+// literal masks to end of input. The result is used only for tag DETECTION — a
+// think tag that survives the mask is markup enclosing reply text, while a tag
+// that appears solely inside a string value is a quotation of the tag and must
+// not be read as thinking.
 func maskJSONStrings(s string) string {
 	return llmclient.MaskJSONStrings(s)
 }
 
+// logSkepticFailure emits a structured log line so a skeptic failure is visible
+// even though it is intentionally not propagated as an error. The skeptic name
+// and failure class go to Warn (visible at the default level); the diagnostic
+// detail — which can carry provider error bodies and path-bearing context — is
+// held to Debug so it does not leak at the default level (mirrors the path-at-
+// debug discipline used across the engine wiring).
 func logSkepticFailure(logger *slog.Logger, skeptic, class, detail string) {
 	detail = strings.ReplaceAll(detail, "\n", " ")
 	logger.Warn("skeptic failed", "skeptic", skeptic, "class", class)

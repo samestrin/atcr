@@ -130,6 +130,22 @@ func sanitizeDeclineReason(reason string) string {
 // is not re-generated on a verify re-run).
 const fixAttributionPrefix = "fix by "
 
+// agentRefusalPrefix opens every warn invokeExecutor returns for a CONTENT-SHAPE
+// decline, as opposed to a transport or parse failure. postCheck discriminates on
+// it to classify the refusal under its own log class and to apply the prior-tier
+// Fix guard the generic warn branch deliberately does not carry.
+//
+// A shared prefix constant rather than a flag threaded back through
+// invokeExecutor → generate → postCheck: the two refusal sites are the only
+// producers of this text in the package, the idiom is already established here by
+// fixAttributionPrefix above, and the sibling skeptic lane settles its own
+// "nothing usable" classes by prefix too (carriesVerdict, invoke.go). Adding a
+// return value would widen three signatures and re-sign every invokeExecutor call
+// site for a branch this reaches without them. Any NEW content-shape decline in
+// invokeExecutor must open with this constant or it inherits the transport
+// classification (TD internal/verify/executor.go:377).
+const agentRefusalPrefix = "agent_mode refused: "
+
 // anyFixEligible reports whether at least one finding qualifies for fix generation
 // on the same per-finding pre-dispatch gate generateFixes applies: confidence,
 // severity floor, AND the Sprint 32.1 complexity/severity ceilings. The pipeline uses
@@ -290,10 +306,20 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 			// generateFixes owns FixReview end-to-end, mirroring FixWarning: every
 			// early return below (second HARD reject, truncation, empty completion,
 			// self-decline, transport failure) leaves the finding without a new fix,
-			// so a FixReview from a PRIOR run must be cleared up front — otherwise a
-			// withheld patch could render beside a stale acceptance annotation. The
-			// success path re-derives it unconditionally at the end of the goroutine.
-			f.FixReview = ""
+			// so a FixReview from a PRIOR run must be cleared — otherwise a
+			// withheld patch could render beside a stale acceptance annotation.
+			//
+			// Guarded by hasAnyFixAttribution, exactly as the FixWarning stamps in
+			// those arms are: when Evidence carries an earlier tier's "fix by <name>",
+			// the fix is NOT withheld — it is PRESERVED — so its NEEDS_REVIEW
+			// annotation must survive with it. Clearing unconditionally stripped the
+			// annotation off all four preservation arms (refusal, salvage, truncation,
+			// empty-completion) and shipped a smell-flagged fix unflagged
+			// (TD internal/verify/executor.go:409). The success path still re-derives
+			// it unconditionally at the end of the goroutine.
+			if !hasAnyFixAttribution(f.Evidence) {
+				f.FixReview = ""
+			}
 			// Two fix-generation paths share one set of post-processing rules below
 			// (empty-check, diff-smell gate, attribution, syntax guard): out carries the
 			// raw fix text; warn carries a non-empty failure reason that short-circuits
@@ -374,9 +400,55 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 					}
 					return "", false
 				}
+				// An agent-mode refusal gets its own classification BEFORE the generic
+				// warn branch, for the two reasons the salvage arm above was split out:
+				// the class must not read as a provider/transport error — a refusal is a
+				// content-shape decline, not a dead provider — and the FixWarning stamp needs the same
+				// hasAnyFixAttribution guard the salvage, truncation and empty-completion
+				// arms carry. Those THREE are the siblings: the four arms that guard on the
+				// weaker `f.Fix == ""` instead are the self-decline, the two pre-dispatch
+				// ceiling skips, and the diff-smell double-HARD halt below. That distinction
+				// is load-bearing — see the NOTE on the truncation arm below — because
+				// `f.Fix == ""` cannot tell a reviewer's own suggestion from an earlier
+				// tier's generated fix. Without a guard here a later tier's refusal lands a warning beside
+				// that generated Fix — the "a good Fix never carries a FixWarning"
+				// invariant stated at internal/reconcile/emit.go:158.
+				//
+				// The class is deliberately NOT executor_salvaged_reasoning: that one
+				// names the snippet-path reasoning salvage and is pinned by the
+				// SnippetSalvaged_* tests. A refusal is a different cause, and collapsing
+				// the two would re-create the ambiguity this split exists to remove
+				// (TD internal/verify/executor.go:377).
+				if strings.HasPrefix(warn, agentRefusalPrefix) {
+					// The refusal arm returns before the `if truncated` branch below,
+					// yet invokeExecutor reports res.ResponseTruncated on BOTH refusal
+					// paths — a reply cut off on finish_reason=length is a LIKELY producer
+					// of unbalanced think markup, so a truncation discarded here tells the
+					// operator the model made a shape mistake when a token cap caused it.
+					// Fold it into the record instead: emit the truncation class alongside
+					// and name it in the warn (TD internal/verify/executor.go:411).
+					refusalWarn := warn
+					if truncated {
+						logPipelineWarning(log.FromContext(ctx), "executor_truncated_fix", fmt.Sprintf("%s:%d", f.File, f.Line))
+						refusalWarn += " (the response was also truncated on finish_reason=length, a likely cause of the unbalanced markup)"
+					}
+					logPipelineWarning(log.FromContext(ctx), "executor_agent_refused", fmt.Sprintf("%s:%d: %s", f.File, f.Line, refusalWarn))
+					if !hasAnyFixAttribution(f.Evidence) {
+						f.FixWarning = refusalWarn
+					}
+					return "", false
+				}
+				// Transport and parse failures only, now that the refusal arm above has
+				// taken the content-shape declines. Guarded by hasAnyFixAttribution like
+				// every sibling arm, so a later tier whose provider dies cannot write a
+				// FixWarning beside an earlier tier's generated Fix — the emit.go:158
+				// invariant, which this branch used to violate (TD
+				// internal/verify/executor.go:377).
 				if warn != "" {
 					logPipelineWarning(log.FromContext(ctx), "executor_fix_failed", fmt.Sprintf("%s:%d: %s", f.File, f.Line, warn))
-					f.FixWarning = warn
+					if !hasAnyFixAttribution(f.Evidence) {
+						f.FixWarning = warn
+					}
 					return "", false
 				}
 				// Response truncation (Epic 19.5): a fix cut off on finish_reason=length is
@@ -699,13 +771,39 @@ func hasFixAttribution(evidence, name string) bool {
 // hasFixAttribution it matches whole tokens, so prose merely containing the
 // prefix mid-sentence ("reviewer suggested a fix by hand") does not qualify.
 func hasAnyFixAttribution(evidence string) bool {
-	for _, seg := range strings.Split(evidence, "; ") {
+	// Split on EVERY delimiter this field is actually assembled with, not just
+	// "; ": appendFixAttribution joins with "; " but returns a BARE attribution for
+	// empty Evidence, and internal/reconcile/merge.go's joinEvidence clusters with
+	// " / ". Splitting on only one of them left "Found by kai / fix by sonnet" as a
+	// single segment that failed the prefix test, so the guard saw no prior fix and
+	// the refusal/salvage/truncation/empty arms stamped a FixWarning beside a real
+	// generated fix — the emit.go:158 violation it exists to prevent
+	// (TD internal/verify/executor.go:748).
+	// The separators are the MULTI-character joins Evidence is actually assembled
+	// with: "; " (appendFixAttribution) and " / " (reconcile's joinEvidence). A
+	// bare "/" is deliberately NOT a separator — splitting on it would make
+	// "path/to/fix by hand" a match, and a false positive here withholds a warning
+	// that should have been stamped, trading a wrong warning for a silent one.
+	segs := strings.Split(evidence, evidenceSeparatorAlt)
+	out := make([]string, 0, len(segs))
+	for _, seg := range segs {
+		out = append(out, strings.Split(seg, evidenceSeparatorPrimary)...)
+	}
+	for _, seg := range out {
 		if strings.HasPrefix(strings.TrimSpace(seg), fixAttributionPrefix) {
 			return true
 		}
 	}
 	return false
 }
+
+// evidenceSeparatorPrimary / evidenceSeparatorAlt are the two joins Evidence is
+// assembled with: appendFixAttribution uses "; " and reconcile's joinEvidence
+// uses " / ". Kept as named constants so the guard and the producers cannot drift.
+const (
+	evidenceSeparatorPrimary = "; "
+	evidenceSeparatorAlt     = " / "
+)
 
 // appendFixAttribution appends "fix by <name>" to a finding's Evidence, joining
 // with the existing separator. It is idempotent: an Evidence already carrying the
@@ -798,11 +896,11 @@ func invokeExecutor(ctx context.Context, ex *registry.ExecutorConfig, prov regis
 	// prose named </think> — dropping the repair entirely, which is a worse outcome
 	// here than in the verify lane (TD internal/verify/executor.go:794).
 	if llmclient.HasEnclosingThinkBlock(maskJSONStrings(answer)) {
-		return "", "agent_mode refused: think markup outside a JSON string survived the strip, so the first fix envelope may be a draft the model discarded", res.ResponseTruncated
+		return "", agentRefusalPrefix + "think markup outside a JSON string survived the strip, so the first fix envelope may be a draft the model discarded", res.ResponseTruncated
 	}
 	fix, ambiguous, err := executorFixFromAnswer(answer)
 	if ambiguous {
-		return "", "agent_mode refused: a </think> no <think> opened has a fix envelope on both sides, so neither is provably the patch the model committed to", res.ResponseTruncated
+		return "", agentRefusalPrefix + "a </think> no <think> opened has a fix envelope on both sides, so neither is provably the patch the model committed to", res.ResponseTruncated
 	}
 	if err != nil {
 		return "", "agent_mode parse error: " + err.Error(), res.ResponseTruncated
@@ -981,19 +1079,11 @@ func executorFixFromAnswer(answer string) (fix string, ambiguous bool, err error
 func parseExecutorResponse(response string) (string, error) {
 	var sawObject, sawEmptyFix bool
 	var malformed error
-	rest := response
-	for {
-		obj := extractJSONObject(rest)
-		if obj == "" {
-			// Unbalanced leading brace: step past it and retry, exactly as
-			// parseVerdict does, so one stray `{` cannot hide the envelope after it.
-			next := strings.IndexByte(rest, '{')
-			if next < 0 {
-				break
-			}
-			rest = rest[next+1:]
-			continue
-		}
+	var found string
+	// The candidate walk lives in forEachJSONObject so this parser, parseVerdict and
+	// carriesVerdict cannot diverge on what "the envelope" is; a stray `{` is
+	// stepped past the same way in all three (TD internal/verify/invoke.go:782).
+	forEachJSONObject(response, func(obj string) bool {
 		sawObject = true
 		var candidate struct {
 			Fix *string `json:"fix"`
@@ -1005,12 +1095,15 @@ func parseExecutorResponse(response string) (string, error) {
 			}
 		case candidate.Fix != nil:
 			if fix := strings.TrimSpace(*candidate.Fix); fix != "" {
-				return fix, nil
+				found = fix
+				return true
 			}
 			sawEmptyFix = true
 		}
-		idx := strings.Index(rest, obj)
-		rest = rest[idx+len(obj):]
+		return false
+	})
+	if found != "" {
+		return found, nil
 	}
 	switch {
 	case sawEmptyFix:

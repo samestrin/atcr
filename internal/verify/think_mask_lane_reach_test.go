@@ -115,7 +115,7 @@ func TestInvokeSkeptic_QuotedTagWithATrailingUnbalancedQuoteStillParses(t *testi
 }
 
 // Executor twin of the signal-loss half. Here the cost of the false refusal is the
-// whole repair: the fix is dropped, postCheck logs executor_fix_failed, and the
+// whole repair: the fix is dropped, postCheck logs executor_agent_refused, and the
 // finding goes unrepaired.
 func TestInvokeExecutor_QuotedTagWithATrailingUnbalancedQuoteStillParses(t *testing.T) {
 	t.Parallel()
@@ -147,7 +147,7 @@ func TestInvokeSkeptic_LoneQuotedThinkOpenerInAValueStillParses(t *testing.T) {
 }
 
 // Executor twin, where the false refusal costs the whole repair: the fix is dropped,
-// postCheck logs executor_fix_failed, and the finding goes unrepaired. A fix string
+// postCheck logs executor_agent_refused, and the finding goes unrepaired. A fix string
 // that NAMES the opener is the ordinary shape for this repo's own think-handling
 // findings (TD internal/llmclient/think.go:392).
 func TestInvokeExecutor_LoneQuotedThinkOpenerInAValueStillReturnsTheFix(t *testing.T) {

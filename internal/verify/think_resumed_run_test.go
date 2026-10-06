@@ -108,7 +108,7 @@ func TestInvokeSkeptic_StillRefusesABlockAfterAnswerText(t *testing.T) {
 
 // TestInvokeExecutor_ProseNamingTheCloserStillParses is the executor's half of
 // the bare-closer defeat, where the cost is higher than a mis-scored verdict: the
-// refusal drops a VALID fix, postCheck logs executor_fix_failed, and the finding
+// refusal drops a VALID fix, postCheck logs executor_agent_refused, and the finding
 // goes unrepaired. A closer named in prose opens no block, so the envelope after
 // it is the committed fix, not a draft. Masking cannot save it — masking only
 // blanks JSON string values, and this closer is outside the object entirely.

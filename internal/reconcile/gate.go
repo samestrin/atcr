@@ -213,7 +213,21 @@ func allUnverifiableCollapse(verPath string) error {
 	// records window_below_prompt_overhead) are gone by the time anyone could read
 	// them. An enrichment that never fires reads, in review, as one that works.
 	// Point at the command that CAN diagnose it instead.
-	return fmt.Errorf("all %d verdict(s) came back unverifiable; the gate counts only VERIFIED findings, so it will pass over every one of them. Run 'atcr doctor': the usual cause is an agent whose declared context_window_tokens cannot fund one tool read, which makes every check it runs unverifiable. A skeptic reply cut off on finish_reason=length (response_truncated) collapses to unverifiable the same way without any window fault, so check for it before blaming the declaration", len(vf.Findings))
+	//
+	// Which makes the ENUMERATION the operator's whole diagnosis, so a cause left
+	// out of it is a cause nobody can reach. The reply-SHAPE family is the least
+	// guessable: the reply arrived whole and the window was ample, so the two causes
+	// named before it both read as "not my problem". Naming only one member of that
+	// family — the third cause used to be ambiguous_unopened_closer alone, and
+	// doctor used to be dismissed as blind to reply shape — is worse than silence
+	// for the others: an operator holding a think_markup_after_answer run reads the
+	// clause, finds it describes a different shape, and concludes the shape family
+	// is not their case. internal/verify/invoke.go returns verdictUnverifiable with
+	// at least seven Notes values and three of them are reply-shape causes:
+	// think_markup_after_answer (invoke.go:204), think_only_reply (invoke.go:234),
+	// and ambiguous_unopened_closer (invoke.go:225). Name the FAMILY, not one member
+	// (TD internal/reconcile/gate.go:224).
+	return fmt.Errorf("all %d verdict(s) came back unverifiable; the gate counts only VERIFIED findings, so it will pass over every one of them. Run 'atcr doctor': the usual cause is an agent whose declared context_window_tokens cannot fund one tool read, which makes every check it runs unverifiable. A skeptic reply cut off on finish_reason=length (response_truncated) collapses to unverifiable the same way without any window fault, so check for it before blaming the declaration. A third cause is the reply SHAPE, which no window fault and no truncation explains: a skeptic reply carrying think markup after its answer (think_markup_after_answer), a reply carrying only a think block (think_only_reply), or a reply carrying a bare closer with a verdict envelope on both sides (ambiguous_unopened_closer, since neither envelope is provably the committed one) all collapse to unverifiable. Note that 'atcr doctor' CAN surface inline think markup, but only for agents that declare thinking or thinking_level, and it never sees whether a verdict envelope sat on both sides of the closer — so doctor can name the markup without naming the ambiguity", len(vf.Findings))
 }
 
 // RunReconcile discovers sources under reviewDir/sources, runs the deterministic
