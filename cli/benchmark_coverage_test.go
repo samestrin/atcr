@@ -1037,6 +1037,59 @@ func TestCheckCoverage_AllowPartialWarnsAboutTheShrunkenDenominator(t *testing.T
 		"and that the missed cases cost it nothing, which is why the figure reads high")
 }
 
+// The partial-coverage note used to fold the unmeasured_ok rows into the slot
+// sentence, telling the operator those reviewers "lost individual reviewer slots"
+// and were averaged over the cases they were "shown" — both false for a reviewer
+// that WAS shown the case and answered ok, and the two classes carry opposite
+// remedies. Each class now gets its own sentence, as the error branch already
+// gives each its own remedy, and a reviewer carrying both is named in each.
+func TestCheckCoverage_AllowPartialGivesUnmeasuredOKItsOwnSentence(t *testing.T) {
+	rr := benchmark.RunResult{
+		SuiteCaseIDs: []string{"case-01", "case-02", "case-03", "case-04"},
+		Reviewers: []scorecard.PublicRecord{
+			{Model: "m1", Persona: "p1", Runs: 2},
+			{Model: "m2", Persona: "p2", Runs: 2},
+		},
+		Coverage: []benchmark.ReviewerCoverage{
+			{Model: "m1", Persona: "p1", CaseIDs: []string{"case-01", "case-04"}},
+			{Model: "m2", Persona: "p2", CaseIDs: []string{"case-01", "case-02"}},
+		},
+		SlotFailures: []benchmark.SlotFailure{
+			{Model: "m1", Persona: "p1", CaseID: "case-02", Reason: benchmark.SlotFailureTimeout},
+			{Model: "m1", Persona: "p1", CaseID: "case-03", Reason: benchmark.SlotFailureUnmeasuredOK},
+			{Model: "m2", Persona: "p2", CaseID: "case-03", Reason: benchmark.SlotFailureUnmeasuredOK},
+			{Model: "m2", Persona: "p2", CaseID: "case-04", Reason: benchmark.SlotFailureUnmeasuredOK},
+		},
+	}
+
+	var buf bytes.Buffer
+	require.NoError(t, checkCoverage(&buf, rr, "rr.json", true))
+
+	var slotLine, okLine string
+	for _, line := range strings.Split(buf.String(), "\n") {
+		switch {
+		case strings.Contains(line, "lost individual reviewer slots"):
+			slotLine = line
+		case strings.Contains(line, "unmeasured_ok"):
+			okLine = line
+		}
+	}
+	require.NotEmpty(t, slotLine, "the infrastructure-loss row keeps its slot sentence")
+	require.NotEmpty(t, okLine, "the unmeasured_ok rows get a sentence of their own")
+
+	assert.Contains(t, slotLine, "m1/p1", "m1/p1 lost a slot to a timeout")
+	assert.NotContains(t, slotLine, "m2/p2", "m2/p2 lost no slot; every short case of its was answered ok")
+	assert.NotContains(t, slotLine, "unmeasured_ok", "the slot sentence must not absorb the other class")
+
+	assert.Contains(t, okLine, "m1/p1", "a reviewer carrying both classes is named in each class's sentence")
+	assert.Contains(t, okLine, "m2/p2")
+	assert.NotContains(t, okLine, "lost individual reviewer slots",
+		"the call succeeded, so the reviewer lost no slot")
+	assert.NotContains(t, okLine, "shown",
+		"the reviewer WAS shown the case, so a denominator described by what it was shown misstates the cause")
+	assert.Contains(t, okLine, unmeasuredOKRemedy, "and it carries its own remedy, not the provider one")
+}
+
 // A run short only for CASE-level reasons does not get the slot caveat: every
 // reviewer lost the same cases, so the rows remain comparable to each other and the
 // extra sentence would be noise.
