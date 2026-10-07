@@ -1073,7 +1073,7 @@ func TestSeatSilenceNotes_LabelsEachSeatForItself(t *testing.T) {
 	// fall back to the weaker seat_silent token (TD internal/debate/debate.go:524).
 	assert.Equal(t, []string{"proposer suppressed", "challenger silent"},
 		seatSilenceNotes(nil, []string{LabelProposer}, []string{LabelProposer, LabelChallenger}))
-	assert.Equal(t, []string{"proposer suppressed, halted"},
+	assert.Equal(t, []string{"proposer suppressed+halted"},
 		seatSilenceNotes([]string{LabelProposer}, []string{LabelProposer}, []string{LabelProposer}),
 		"the sets are NOT disjoint (a budget-tripped seat whose forced answer was all think markup is both), and each cause carries its own remedy, so the note keeps both")
 	assert.False(t, allSeatsIn([]string{LabelProposer}, []string{LabelProposer, LabelChallenger}),
@@ -1549,6 +1549,17 @@ func TestRunDebate_AmbiguousCloserReasoningNamesTheTagIntact(t *testing.T) {
 		"the escaped/mangled shape must not ship to report.md")
 }
 
+// Seats are joined with ", " in ir.Reasoning, the transcript and the warn, so a
+// seat's own causes must use a different separator: with ", " at both levels a
+// suppressed-and-halted proposer next to a silent challenger read as
+// "proposer suppressed, halted, challenger silent" — three causes, two seats, and
+// no way to tell which cause belongs to which.
+func TestJoinSeatSilenceNotes_KeepsTheTwoNestingLevelsApart(t *testing.T) {
+	got := joinSeatSilenceNotes(seatSilenceNotes([]string{LabelProposer}, []string{LabelProposer},
+		[]string{LabelProposer, LabelChallenger}))
+	assert.Equal(t, "proposer suppressed+halted, challenger silent", got)
+}
+
 // Under non-disjointness a seat can be BOTH halted and suppressed. seatSilenceNotes is
 // a one-cause-per-seat switch, so it recorded only "suppressed" and dropped the halt —
 // but the halt is real (the seat tripped its tool_budget_bytes) and carries its own
@@ -1557,14 +1568,14 @@ func TestRunDebate_AmbiguousCloserReasoningNamesTheTagIntact(t *testing.T) {
 // must carry BOTH causes for a seat that is in both slices (TD internal/report/contested.go:115).
 func TestSeatSilenceNotes_NamesBothCausesForASeatThatHaltedAndWasSuppressed(t *testing.T) {
 	// one seat, both halted and suppressed
-	assert.Equal(t, []string{"proposer suppressed, halted"},
+	assert.Equal(t, []string{"proposer suppressed+halted"},
 		seatSilenceNotes([]string{LabelProposer}, []string{LabelProposer}, []string{LabelProposer}),
 		"a seat that halted AND was suppressed must report both causes, not just the stronger one")
 
 	// A genuinely mixed pair: one clean-suppressed seat and one halted-and-suppressed
 	// seat. The strong token now covers both, so the per-seat detail is where the
 	// difference must survive.
-	assert.Equal(t, []string{"proposer suppressed, halted", "challenger suppressed"},
+	assert.Equal(t, []string{"proposer suppressed+halted", "challenger suppressed"},
 		seatSilenceNotes([]string{LabelProposer}, []string{LabelProposer, LabelChallenger},
 			[]string{LabelProposer, LabelChallenger}),
 		"each seat keeps its own accurate label even when the item-level token is uniform")

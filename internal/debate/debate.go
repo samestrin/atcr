@@ -664,8 +664,8 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 		// challenger was never invoked, and rendering "challenger silent" into
 		// report.md, the transcript and the operator warn would state a cause for a
 		// seat that had no turn to go silent on (TD internal/debate/debate.go:614).
-		notes := seatSilenceNotes(rec.Halted, rec.Suppressed, blamed)
-		tr.RecordRuling(RulingEvent{Outcome: OutcomeUnresolved, Reasoning: "no statement: " + strings.Join(notes, ", ")})
+		seatsNote := joinSeatSilenceNotes(seatSilenceNotes(rec.Halted, rec.Suppressed, blamed))
+		tr.RecordRuling(RulingEvent{Outcome: OutcomeUnresolved, Reasoning: "no statement: " + seatsNote})
 		// The token in debate.json names one cause for the whole item and goes
 		// weak on a mixture; put the per-seat cause next to it and warn, so a seat
 		// that blanks every item (an inline-reasoning endpoint, most often) is
@@ -673,8 +673,8 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 		// The notes carry `suppressed` per seat even when the item-level token
 		// fell back to seat_silent, which is the only place a mixture's detail
 		// survives.
-		ir.Reasoning = "no statement: " + strings.Join(notes, ", ")
-		log.FromContext(ctx).Warn("debate: silent arguing seat(s), item unresolved", "seats", strings.Join(notes, ", "))
+		ir.Reasoning = "no statement: " + seatsNote
+		log.FromContext(ctx).Warn("debate: silent arguing seat(s), item unresolved", "seats", seatsNote)
 		return ir
 	}
 
@@ -875,9 +875,19 @@ func seatSilenceNotes(halted, suppressed, seats []string) []string {
 		if len(causes) == 0 {
 			causes = append(causes, "silent")
 		}
-		notes = append(notes, s+" "+strings.Join(causes, ", "))
+		// `+` within a seat, because the caller joins seats with ", ": reusing
+		// ", " here collapses the two nesting levels, so "proposer suppressed,
+		// halted, challenger silent" reads as three seats' worth of causes.
+		notes = append(notes, s+" "+strings.Join(causes, "+"))
 	}
 	return notes
+}
+
+// joinSeatSilenceNotes renders seatSilenceNotes for the transcript, ir.Reasoning
+// and the operator warn: ", " BETWEEN seats, which is why a seat's own causes are
+// joined with "+" — one separator per nesting level.
+func joinSeatSilenceNotes(notes []string) string {
+	return strings.Join(notes, ", ")
 }
 
 // carryUnresolvedAttempts returns the attempt total to record on an unresolved

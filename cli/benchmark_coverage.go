@@ -512,8 +512,7 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		// every slot is the only one with runs 0 and an empty covered set, and the
 		// closing sentence points the operator at that shape rather than asserting
 		// nothing on the submission carries it.
-		if len(slotShortRows) > 0 || len(unmeasuredOKRows) > 0 {
-			rows := append(append([]string{}, slotShortRows...), unmeasuredOKRows...)
+		if len(slotShortRows) > 0 {
 			msg += fmt.Sprintf(
 				"  note: %s lost individual reviewer slots, so each one's corroboration_rate is "+
 					"averaged over only the cases that reviewer was shown and is not penalised for the rest. "+
@@ -521,7 +520,21 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 					"reviewer was shown some cases, and 0.00 where every slot failed and it was shown none. "+
 					"The all-slots-lost row is distinguishable by its shape, not by the rate: runs 0 with an empty "+
 					"case_ids array (runs is always published and a covered set is always an array).\n",
-				strings.Join(rows, ", "))
+				strings.Join(slotShortRows, ", "))
+		}
+		// The unmeasured_ok rows get their OWN sentence, as the error branch below
+		// already gives them their own remedy: the reviewer WAS shown the case and
+		// answered ok, so "lost individual reviewer slots" and "shown" are both false
+		// for them, and their fix (the agent's thinking declaration; a re-run CAN
+		// differ) is the opposite of the provider investigation the slot sentence
+		// implies. A reviewer carrying both classes is named in each sentence.
+		if len(unmeasuredOKRows) > 0 {
+			msg += fmt.Sprintf(
+				"  note: %s had cases answered ok but left unmeasured (`unmeasured_ok`), so each one's "+
+					"corroboration_rate is averaged over only its measured cases and is not penalised for the rest. "+
+					"It is not comparable to a row scored over the full suite: it reads higher where some cases were "+
+					"measured, and 0.00 where none were. A re-run CAN differ: %s\n",
+				strings.Join(unmeasuredOKRows, ", "), unmeasuredOKRemedy)
 		}
 		_, _ = fmt.Fprint(w, msg)
 		return nil
