@@ -43,7 +43,7 @@
 - The reasoning reserve is recorded for a tool-loop agent even with a zero budget, moves with the matched set, and is no longer inherited by a re-derived merged record.
 - The total-loss salvage arm keys on the bin index, and the salvage arm is narrowed to a whole-persona refusal so partial salvage stays trust-eligible. The narrow `Complete` path refuses a reasoning salvage instead of returning a draft.
 - Seat suppression is recorded regardless of status and outranks `halted`, so a budget-tripped suppressed seat is no longer reported as halted.
-- The JSON-string mask returns its input unchanged when the quote count is unbalanced, so a draft ruling is no longer admitted.
+- The JSON-string mask opens a string only when a quote sits at a JSON position, and a masked copy whose blanked run cut a think pair is discarded so every tag stays visible, so a draft ruling is no longer admitted.
 - Withheld items list their attempt countdown, and the contested overflow count splits by cause with its own remedy.
 - Added tests for the uncovered guards across debate, fanout, reconcile and report, and removed an unreachable salvage append and a redundant empty-content guard.
 
