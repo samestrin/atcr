@@ -305,7 +305,7 @@ func TestDocs_CrossExaminationStatesTheSilentSeatRule(t *testing.T) {
 		"the three reasons are kept apart on purpose, and the rule that picks between them is what an operator needs: a mixed pair reports the weakest one, and a seat the run never reached is not a cause")
 	assert.Contains(t, bullet, "suppressed outranks halted",
 		"seat_suppressed and seat_halted can both be true of one seat, and the precedence between them is what an operator needs — the strip is what caused the silence")
-	assert.Contains(t, bullet, "entirely inline ` thinking` reasoning",
+	assert.Contains(t, bullet, "entirely inline `<think>` reasoning",
 		"seat_suppressed must publish WHY the statement was blank: the seat answered and the strip removed the answer, which a bare seat_silent hides")
 	// The FULL vocabulary enumeration moved to the reconciled/debate.json Artifacts
 	// row: it is a fact about that artifact, not about budgets, and the bullet was

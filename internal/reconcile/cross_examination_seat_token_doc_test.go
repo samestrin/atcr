@@ -6,7 +6,7 @@ import (
 )
 
 // docs/cross-examination.md's Per-seat-budgets bullet defines `seat_suppressed` as
-// "every asked seat RAN CLEAN and said something that was entirely inline ` thinking`
+// "every asked seat RAN CLEAN and said something that was entirely inline `<think>`
 // reasoning, which the strip removed" — but recordTurnCause (internal/debate/protocol.go)
 // now records Suppressed WITHOUT consulting status, so a seat that did NOT run clean
 // (a budget-tripped seat whose forced final answer was all think markup) also reports
