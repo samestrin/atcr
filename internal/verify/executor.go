@@ -900,7 +900,7 @@ func invokeExecutor(ctx context.Context, ex *registry.ExecutorConfig, prov regis
 	}
 	fix, ambiguous, err := executorFixFromAnswer(answer)
 	if ambiguous {
-		return "", agentRefusalPrefix + "a </think> no <think> opened has a fix envelope on both sides, so neither is provably the patch the model committed to", res.ResponseTruncated
+		return "", agentRefusalPrefix + "a </think> no <think> opened has a fix envelope before it and either another after it (both sides) or nothing usable after it, so no envelope is provably the patch the model committed to", res.ResponseTruncated
 	}
 	if err != nil {
 		return "", "agent_mode parse error: " + err.Error(), res.ResponseTruncated
@@ -1035,9 +1035,19 @@ func carriesFixEnvelope(s string) bool {
 //
 // The stakes here are the higher of the two: an abandoned draft becomes a patch
 // --auto-fix writes to tracked source, rather than merely a mis-scored verdict.
+// That is also why the lanes differ on the prefix-only section ({fix} </think>
+// {unusable}): the verify lane refuses it only for the one gate-clearing grade,
+// while this lane refuses it outright.
 func executorFixFromAnswer(answer string) (fix string, ambiguous bool, err error) {
 	section, text := classifyUnopenedCloser(answer, carriesFixEnvelope)
-	if section == sectionAmbiguous {
+	if section == sectionAmbiguous || section == sectionPrefixOnly {
+		// sectionPrefixOnly is refused for the same reason as both sides: only the
+		// pre-closer text carries a fix, and nothing in the tag structure says
+		// whether it was committed or abandoned. The verify lane narrows that
+		// section to the one gate-clearing grade; this lane has no grade to narrow
+		// on, because every non-empty fix is eligible to be written. The accepted
+		// loss is a real fix followed by prose quoting a bare closer, which is
+		// declined rather than applied (TD internal/verify/invoke.go:766).
 		return "", true, nil
 	}
 	parsed, perr := parseExecutorResponse(text)
