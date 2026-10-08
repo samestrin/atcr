@@ -489,35 +489,48 @@ const (
 // is the envelope BEFORE the closer — reasoning the model abandoned if the reply
 // really did start mid-thought — which a first-match parser takes as the answer.
 //
-// Three outcomes, because the structure genuinely supports three cases and only
-// two of them have a safe default:
+// Three sections, because the structure genuinely supports three cases and only
+// two of them have a safe default, plus a third return, prefixHasEnvelope, that
+// splits the whole-answer section in two:
 //
-//	{draft} </think> {real}   → ambiguous: so does {real} … "</think>" {example}
-//	         </think> {real}   → after-closer: nothing before it to confuse
-//	{real} … prose "</think>"  → whole answer: the suffix holds no envelope
+//	shape                           section       prefixHasEnvelope
+//	{draft}  </think> {real}      → ambiguous     true   so does {real} … "</think>" {example}
+//	         </think> {real}      → after-closer  false  nothing before it to confuse
+//	{usable} </think> {unusable}  → whole answer  true   the suffix holds no envelope
+//	no closer, or one quoted      → whole answer  false  there is no boundary at all
 //
 // The ambiguous case is REFUSED by the caller rather than resolved. Taking the
 // last section would let a quoted example override a real answer; taking the
 // first is the defect this rule exists to close. The two shapes have identical
 // tag structure, so no positional rule separates them.
 //
+// The third row is the one this function cannot settle. {usable} </think>
+// {unusable} is both a draft the model abandoned before an unparseable reply and
+// a real answer followed by prose quoting a bare closer: identical structure
+// again. So the shared rule picks no policy for it. prefixHasEnvelope reports the
+// structural fact — a boundary exists and the text before it carries an envelope
+// — and each lane decides, because what a wrong read costs differs per lane.
+// It is true exactly when a boundary exists and hasEnvelope(answer[:i]) holds, so
+// it is also true on the ambiguous section and false on the after-closer one.
+//
 // The offset is computed on the MASKED copy, so a closer quoted inside a JSON
 // string value is not a boundary, and sliced out of the UNMASKED answer so the
 // envelope reaches the parser intact. MaskJSONStrings blanks in place and
 // preserves length, so one offset is valid in both.
-func ClassifyUnopenedCloser(answer string, hasEnvelope func(string) bool) (CloserSection, string) {
+func ClassifyUnopenedCloser(answer string, hasEnvelope func(string) bool) (section CloserSection, text string, prefixHasEnvelope bool) {
 	i := IndexAfterUnopenedCloser(MaskJSONStrings(answer))
 	if i < 0 || i > len(answer) {
-		return SectionWholeAnswer, answer
+		return SectionWholeAnswer, answer, false
 	}
 	suffix := answer[i:]
+	prefixHasEnvelope = hasEnvelope(answer[:i])
 	if !hasEnvelope(suffix) {
-		return SectionWholeAnswer, answer
+		return SectionWholeAnswer, answer, prefixHasEnvelope
 	}
-	if hasEnvelope(answer[:i]) {
-		return SectionAmbiguous, suffix
+	if prefixHasEnvelope {
+		return SectionAmbiguous, suffix, true
 	}
-	return SectionAfterCloser, suffix
+	return SectionAfterCloser, suffix, false
 }
 
 // HasThinkMarkup reports whether the content carries inline think markup holding
