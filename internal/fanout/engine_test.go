@@ -941,6 +941,111 @@ func TestMergeResultGroup_AllChunksSalvagedYieldsNoFindings(t *testing.T) {
 	assert.True(t, merged.UnparseableResponse, "no bin produced anything a parser could use")
 }
 
+// The chunked arm now knows WHY each bin salvaged. A bin that salvaged on a stop
+// reason is a finished answer on the reasoning channel, so its findings count, while
+// a bin cut off mid-thought is still refused. Before the per-chunk reason existed the
+// chunked arm refused every salvaged bin, so the mixed persona parsed 0.
+func TestMergeResultGroup_StopReasonSalvagedChunkKeepsItsFindings(t *testing.T) {
+	const draft = "HIGH|a.go:1|draft|f|correctness|5|e"
+	const real = "MEDIUM|b.go:2|real finding on the reasoning channel|f|correctness|2|e"
+
+	t.Run("truncated bin refused, stop-reason bin kept", func(t *testing.T) {
+		merged := mergeResultGroup([]Result{
+			{Agent: "bruce", Status: StatusOK, Content: draft, Salvaged: true, ResponseTruncated: true},
+			{Agent: "bruce", Status: StatusOK, Content: real, Salvaged: true, SalvagedOnStop: true},
+		}, nil)
+
+		require.Equal(t, []bool{true, true}, merged.chunkSalvaged)
+		require.Equal(t, []bool{false, true}, merged.chunkSalvagedOnStop)
+		assert.Equal(t, 1, merged.ParsedFindingCount())
+		fr := findingsFor(merged, nil)
+		require.Len(t, fr.Findings, 1)
+		assert.Equal(t, "real finding on the reasoning channel", fr.Findings[0].Problem)
+	})
+
+	t.Run("both bins truncated: still nothing", func(t *testing.T) {
+		merged := mergeResultGroup([]Result{
+			{Agent: "bruce", Status: StatusOK, Content: draft, Salvaged: true, ResponseTruncated: true},
+			{Agent: "bruce", Status: StatusOK, Content: real, Salvaged: true, ResponseTruncated: true},
+		}, nil)
+
+		assert.Equal(t, 0, merged.ParsedFindingCount())
+		assert.Empty(t, findingsFor(merged, nil).Findings)
+	})
+
+	t.Run("empty middle bin keeps all three slices aligned", func(t *testing.T) {
+		merged := mergeResultGroup([]Result{
+			{Agent: "bruce", Status: StatusOK, Content: draft, Salvaged: true, ResponseTruncated: true},
+			{Agent: "bruce", Status: StatusOK, Content: "   "}, // dropped from all three slices
+			{Agent: "bruce", Status: StatusOK, Content: real, Salvaged: true, SalvagedOnStop: true},
+		}, nil)
+
+		require.Len(t, merged.chunkContents, 2)
+		require.Equal(t, []bool{true, true}, merged.chunkSalvaged)
+		require.Equal(t, []bool{false, true}, merged.chunkSalvagedOnStop)
+		assert.Equal(t, 1, merged.ParsedFindingCount())
+	})
+
+	t.Run("misaligned reason slice reads as not-on-stop", func(t *testing.T) {
+		r := Result{
+			Agent: "bruce", Status: StatusOK, Salvaged: true,
+			chunkContents:       []string{real},
+			chunkSalvaged:       []bool{true},
+			chunkSalvagedOnStop: nil,
+		}
+		assert.Equal(t, 0, r.ParsedFindingCount(), "no per-chunk reason means fail closed")
+	})
+}
+
+// salvageReasonCompleter returns a fixed Completion (or error) on the Meta path, so
+// invokeSlot's copy of the per-reply salvage reason can be observed directly.
+type salvageReasonCompleter struct {
+	comp llmclient.Completion
+	err  error
+}
+
+func (s salvageReasonCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
+	return s.comp.Content, s.err
+}
+
+func (s salvageReasonCompleter) CompleteWithMeta(_ context.Context, _ llmclient.Invocation) (llmclient.Completion, error) {
+	return s.comp, s.err
+}
+
+// invokeSlot carries the client's reason onto the Result, and the ErrSalvagedReply
+// arm, which has no Completion to read a reason from, leaves it false so that arm
+// stays fail-closed.
+func TestInvokeSlot_CarriesSalvagedOnStop(t *testing.T) {
+	slot := Slot{Primary: Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "m"}}}
+
+	t.Run("stop-reason salvage sets it", func(t *testing.T) {
+		e := NewEngine(salvageReasonCompleter{comp: llmclient.Completion{
+			Content:  "HIGH|a.go:1|finding|f|correctness|5|e",
+			Salvaged: true, SalvagedOnStop: true,
+		}})
+		r := e.invokeSlot(context.Background(), slot)
+		assert.True(t, r.Salvaged)
+		assert.True(t, r.SalvagedOnStop)
+	})
+
+	t.Run("truncated salvage leaves it false", func(t *testing.T) {
+		e := NewEngine(salvageReasonCompleter{comp: llmclient.Completion{
+			Content:  "HIGH|a.go:1|draft|f|correctness|5|e",
+			Salvaged: true, SalvagedTruncated: true, Truncated: true,
+		}})
+		r := e.invokeSlot(context.Background(), slot)
+		assert.True(t, r.Salvaged)
+		assert.False(t, r.SalvagedOnStop)
+	})
+
+	t.Run("ErrSalvagedReply arm leaves it false", func(t *testing.T) {
+		e := NewEngine(salvageReasonCompleter{err: llmclient.ErrSalvagedReply})
+		r := e.invokeSlot(context.Background(), slot)
+		assert.True(t, r.Salvaged)
+		assert.False(t, r.SalvagedOnStop, "no Completion reached this arm, so there is no reason to carry")
+	})
+}
+
 // PINNED, not asserted-unchanged (task-06 Test Strategy): the guard necessarily
 // MOVES what a salvaged row means downstream, so both shapes are recorded here.
 //

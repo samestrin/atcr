@@ -335,12 +335,14 @@ func neutraliseChunkBoundary(content string) string {
 }
 
 // chunkBin is one content-bearing chunk output of a merge group, captured with
-// its salvage flag at the moment the bin was emitted. Holding the pair in one
-// value keeps the derived chunkContents/chunkSalvaged slices aligned by
-// construction instead of by two appends sharing a branch.
+// its salvage flag and salvage reason at the moment the bin was emitted. Holding
+// them in one value keeps the derived chunkContents/chunkSalvaged/
+// chunkSalvagedOnStop slices aligned by construction instead of by appends
+// sharing a branch.
 type chunkBin struct {
 	content  string
 	salvaged bool
+	onStop   bool
 }
 
 // mergeResultGroup folds N chunk results for one persona into a single result.
@@ -437,7 +439,7 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 			servedModelPrimary[k] = servedModelPrimary[k] || !r.FallbackUsed
 		}
 		if strings.TrimSpace(r.Content) != "" {
-			bins = append(bins, chunkBin{content: r.Content, salvaged: r.Salvaged})
+			bins = append(bins, chunkBin{content: r.Content, salvaged: r.Salvaged, onStop: r.SalvagedOnStop})
 		}
 		out.TokensIn += r.TokensIn
 		out.TokensOut += r.TokensOut
@@ -535,14 +537,16 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 		}
 	}
 	var contents []string
-	var salvagedFlags []bool
+	var salvagedFlags, onStopFlags []bool
 	for _, b := range bins {
 		contents = append(contents, b.content)
 		salvagedFlags = append(salvagedFlags, b.salvaged)
+		onStopFlags = append(onStopFlags, b.onStop)
 	}
 	out.Content = joinChunkContents(contents)
 	out.chunkContents = contents
 	out.chunkSalvaged = salvagedFlags
+	out.chunkSalvagedOnStop = onStopFlags
 	// The persona-level flag keeps its documented meaning: content with zero
 	// parseable findings in total. One garbled chunk beside a chunk with findings
 	// is only counted, so the persona is not scored unparseable or dropped from
