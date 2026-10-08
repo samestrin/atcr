@@ -714,17 +714,33 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 	// trusted — a wrong ruling writes a durable verdict onto the finding, while an
 	// unresolved item leaves the pre-debate verdict standing (TD
 	// internal/debate/debate.go:653).
+	//
+	// The shared rule leaves one choice to the lane: a ruling only BEFORE the
+	// closer and nothing usable after it (whole answer, prefixHasEnvelope). That
+	// is both a draft abandoned before a committed `unresolved`, an out-of-enum
+	// outcome or an empty reply, and a real ruling followed by prose quoting a
+	// bare closer; the tag structure cannot tell them apart. This lane refuses
+	// both, for the same reason as the ambiguous pair: reading the draft writes a
+	// wrong verdict durably, while refusing a real ruling only leaves the
+	// pre-debate verdict standing (TD internal/verify/invoke.go:766).
 	judgeText := rec.JudgeRaw
-	section, text, _ := llmclient.ClassifyUnopenedCloser(rec.JudgeRaw, carriesRuling)
-	switch section {
-	case llmclient.SectionAmbiguous:
+	section, text, prefixHasEnvelope := llmclient.ClassifyUnopenedCloser(rec.JudgeRaw, carriesRuling)
+	switch {
+	case section == llmclient.SectionAmbiguous:
 		ir.Outcome = OutcomeUnresolved
 		ir.Reason = ReasonJudgeThinkMarkup
 		ir.Reasoning = "judge reply has a ruling envelope on both sides of a </think> no <think> opened; neither is provably committed"
 		tr.RecordRuling(RulingEvent{Outcome: OutcomeUnresolved, Reasoning: ir.Reasoning})
 		log.FromContext(ctx).Warn("debate: judge reply ambiguous around an unopened think closer, ruling refused", "judge", cast.Judge.Agent)
 		return ir
-	case llmclient.SectionAfterCloser:
+	case section == llmclient.SectionWholeAnswer && prefixHasEnvelope:
+		ir.Outcome = OutcomeUnresolved
+		ir.Reason = ReasonJudgeThinkMarkup
+		ir.Reasoning = "judge reply has a ruling envelope only before a </think> no <think> opened and none usable after it; the ruling may be an abandoned draft"
+		tr.RecordRuling(RulingEvent{Outcome: OutcomeUnresolved, Reasoning: ir.Reasoning})
+		log.FromContext(ctx).Warn("debate: judge ruling sits only before an unopened think closer, ruling refused", "judge", cast.Judge.Agent)
+		return ir
+	case section == llmclient.SectionAfterCloser:
 		judgeText = text
 	}
 
