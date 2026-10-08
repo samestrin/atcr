@@ -225,12 +225,13 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 		}
 	}
 	if ambiguous {
-		// A bare </think> with an envelope on BOTH sides. Neither is provably the
-		// committed one, and grading the wrong one is durable: a draft `refuted`
-		// clears the CI gate at any severity (internal/reconcile/gate.go) and is
-		// charged to the reviewer's survived_skeptic_rate.
+		// A bare </think> with an envelope on both sides, or a `refuted` one only
+		// before it. Neither is provably the committed one, and grading the wrong
+		// one is durable: a draft `refuted` clears the CI gate at any severity
+		// (internal/reconcile/gate.go) and is charged to the reviewer's
+		// survived_skeptic_rate.
 		logSkepticFailure(logger, skeptic.Name, "ambiguous_unopened_closer",
-			"a </think> no <think> opened has a verdict envelope on both sides; neither is provably committed")
+			"a </think> no <think> opened leaves no verdict envelope provably committed")
 		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "ambiguous_unopened_closer", Skeptic: skeptic.Name}, res.TrippedBudgets, nil
 	}
 	v.Skeptic = skeptic.Name
@@ -635,8 +636,8 @@ func failureClass(res fanout.Result) string {
 type closerSection int
 
 const (
-	// sectionWholeAnswer: no unopened closer, or nothing after it parses. The
-	// answer is read end to end, exactly as before this rule existed.
+	// sectionWholeAnswer: no unopened closer, or neither side of it carries an
+	// envelope. The answer is read end to end, exactly as before this rule existed.
 	sectionWholeAnswer closerSection = iota
 	// sectionAfterCloser: only the text AFTER the closer carries an envelope, so
 	// the reply began mid-thought and that text is the committed answer.
@@ -644,6 +645,11 @@ const (
 	// sectionAmbiguous: BOTH sides carry one. Nothing in the tag structure says
 	// which is committed, so neither is used.
 	sectionAmbiguous
+	// sectionPrefixOnly: only the text BEFORE the closer carries an envelope. The
+	// text returned is the whole answer, as on sectionWholeAnswer, but the shared
+	// rule cannot say whether that envelope was committed or abandoned, so each
+	// lane applies its own policy to it rather than inheriting one.
+	sectionPrefixOnly
 )
 
 // classifyUnopenedCloser decides which part of a STRIPPED answer to parse when a
@@ -666,12 +672,13 @@ const (
 // if the reply really did start mid-thought — which a first-match parser takes as
 // the answer.
 //
-// Three outcomes, because the structure genuinely supports three cases and only
+// Four outcomes, because the structure genuinely supports four cases and only
 // two of them have a safe default:
 //
-//	{draft} </think> {real}      → ambiguous: so does {real} … "</think>" {example}
+//	{draft}  </think> {real}      → ambiguous: so does {real} … "</think>" {example}
 //	         </think> {real}      → after-closer: nothing before it to confuse
-//	{real} … prose "</think>"     → whole answer: the suffix holds no envelope
+//	{usable} </think> {unusable}  → prefix-only: so does {real} … prose "</think>"
+//	no closer, or one quoted      → whole answer: there is no boundary at all
 //
 // The ambiguous case is REFUSED by the caller rather than resolved. Taking the
 // last section would let a quoted example override a real verdict; taking the
@@ -680,18 +687,28 @@ const (
 // SplitThink's doc records for its own accepted loss. An unverifiable verdict and
 // a declined fix are both disclosed outcomes; a silently wrong one is not.
 //
+// The prefix-only case has the same problem with no second envelope to show it:
+// a draft abandoned before an unparseable reply and a real answer followed by
+// prose quoting a bare closer are again identical structure. It used to collapse
+// into the whole-answer case, so a first-match parser graded the abandoned draft
+// — the exact outcome the paragraph above says the rule exists to prevent
+// (TD internal/verify/invoke.go:766). It is reported separately so each lane
+// decides what a wrong read costs it. The text returned is the whole answer.
+//
 // The offset is computed on the MASKED copy, so a closer quoted inside a JSON
 // string value is not a boundary (the model discussing think handling — the
 // likeliest input in this repo), and sliced out of the UNMASKED answer so the
 // envelope reaches the parser intact. maskJSONStrings blanks bytes in place and
 // preserves length, so one offset is valid in both.
 func classifyUnopenedCloser(answer string, hasEnvelope func(string) bool) (closerSection, string) {
-	section, text, _ := llmclient.ClassifyUnopenedCloser(answer, hasEnvelope)
-	switch section {
-	case llmclient.SectionAfterCloser:
+	section, text, prefixHasEnvelope := llmclient.ClassifyUnopenedCloser(answer, hasEnvelope)
+	switch {
+	case section == llmclient.SectionAfterCloser:
 		return sectionAfterCloser, text
-	case llmclient.SectionAmbiguous:
+	case section == llmclient.SectionAmbiguous:
 		return sectionAmbiguous, text
+	case prefixHasEnvelope:
+		return sectionPrefixOnly, text
 	default:
 		return sectionWholeAnswer, text
 	}
@@ -728,14 +745,20 @@ func classifyUnopenedCloser(answer string, hasEnvelope func(string) bool) (close
 // replaced by a silently wrong verdict. classifyUnopenedCloser's "Both predicates
 // iterate now" is the invariant this half upholds.
 //
-// Narrowing AMBIGUOUS does not move the CI gate in only one direction, and the
-// exception is worth stating because it looks like a weakening: under the DEFAULT
+// Narrowing AMBIGUOUS moves the CI gate in both directions, and verdictFromAnswer
+// carries the policy that keeps the move safe. Excluding unusable diagnostics
+// turns `{usable} </think> {unusable}` from AMBIGUOUS into the prefix-only
+// section, and that shape is BOTH a real verdict followed by a quoted out-of-enum
+// example and a draft abandoned before an unparseable reply. Under the DEFAULT
 // gate an `unverifiable` finding at or above threshold BLOCKS while a `refuted`
-// one never does, so recovering a real `refuted` turns a blocking finding into a
-// passing one. That is the correct outcome — the skeptic disproved the finding and
-// the old behaviour blocked CI on a verdict it had declined to read — and it is
-// pinned by TestCarriesVerdict_RecoveredVerdictReachesTheGateAsItself, which
-// asserts both directions against reconcile.IsFailing rather than describing them.
+// one never does, so grading the prefix there would let a withdrawn `refuted`
+// clear a gate that AMBIGUOUS had blocked (TD internal/verify/invoke.go:766). The
+// lane therefore refuses that section when its verdict is `refuted` and grades
+// it otherwise: a recovered `confirmed` or `unverifiable` blocks either way. The
+// accepted loss is a REAL `refuted` in the quoted-example shape, which is
+// refused as `ambiguous_unopened_closer` and so blocks CI where the skeptic had
+// disproved the finding. TestCarriesVerdict_RecoveredVerdictReachesTheGateAsItself
+// asserts both rows against reconcile.IsFailing rather than describing them.
 func carriesVerdict(s string) bool {
 	// The candidate walk is forEachJSONObject — the SAME walk parseVerdict and
 	// parseExecutorResponse drive — so the three readers cannot disagree about
@@ -772,6 +795,15 @@ func verdictFromAnswer(answer string) (v *reclib.Verification, ambiguous bool, d
 		return nil, true, 0
 	}
 	parsed, _ := parseVerdict(text)
+	if section == sectionPrefixOnly && parsed.Verdict == verdictRefuted {
+		// Only the pre-closer text carries a verdict, and nothing in the tag
+		// structure says whether it was committed or abandoned. `refuted` is the one
+		// grade that clears the gate (reconcile.IsFailing), so it is the one a
+		// withdrawn draft could pass CI on; refuse it like the both-sides case.
+		// `confirmed` and `unverifiable` block either way and are graded
+		// (TD internal/verify/invoke.go:766).
+		return nil, true, 0
+	}
 	// discardedPrefix is how many bytes were dropped ahead of the committed section,
 	// and it exists only so the caller can RECORD the drop. On sectionAfterCloser the
 	// reply began mid-thought and the abandoned pre-closer draft is kept nowhere —
