@@ -370,6 +370,21 @@ type AgentStatus struct {
 	// from a whole-persona one. Absent for an unchunked agent.
 	SalvagedChunks []int `json:"salvaged_chunks,omitempty"`
 
+	// SalvagedOnStop records WHY an unchunked reply salvaged: the provider stopped
+	// on a finish reason other than a length cutoff, so the salvaged content is a
+	// finished answer on the reasoning channel rather than an abandoned draft.
+	// Salvaged above keeps meaning every salvage; this narrows it. Set only for an
+	// unchunked agent: a chunked persona's per-bin reasons are in
+	// SalvagedOnStopChunks below. omitempty keeps older and clean status.json
+	// unchanged, and an absent key reads as false (reason unknown).
+	SalvagedOnStop bool `json:"salvaged_on_stop,omitempty"`
+
+	// SalvagedOnStopChunks names which of a chunked persona's salvaged bins
+	// salvaged on a stop reason, by index. It is always a subset of
+	// SalvagedChunks, which keeps naming every salvaged bin. Absent for an
+	// unchunked agent.
+	SalvagedOnStopChunks []int `json:"salvaged_on_stop_chunks,omitempty"`
+
 	// ThinkSuppressed refines UnparseableResponse: the reply's ENTIRE content was
 	// a leading think run (the strip left an empty answer), so the model produced
 	// reasoning only — a model/tag-habit signal distinct from a garbled reply.

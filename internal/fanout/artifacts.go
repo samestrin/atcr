@@ -235,6 +235,30 @@ func salvagedChunkIndices(r Result) []int {
 	return out
 }
 
+// salvagedOnStop returns the stop-reason half of a Result's salvage, in the two
+// shapes AgentStatus publishes it: the unchunked bit, and the indices of a chunked
+// persona's bins that salvaged on a stop reason. Derived from the same pair
+// parseFindings keeps a bin by (chunkSalvaged and chunkSalvagedOnStop), so the
+// published indices name exactly the salvaged bins whose findings were kept. A
+// bin flagged on-stop without being salvaged is not named, and a misaligned
+// triple publishes nothing. The bit is never set for a chunked result: the merge
+// starts from bin 0, so its SalvagedOnStop is that one bin's, not the persona's.
+func salvagedOnStop(r Result) (bool, []int) {
+	if r.chunkContents == nil {
+		return r.Salvaged && r.SalvagedOnStop, nil
+	}
+	if len(r.chunkSalvaged) != len(r.chunkContents) || len(r.chunkSalvagedOnStop) != len(r.chunkContents) {
+		return false, nil
+	}
+	var out []int
+	for i, onStop := range r.chunkSalvagedOnStop {
+		if onStop && r.chunkSalvaged[i] {
+			out = append(out, i)
+		}
+	}
+	return false, out
+}
+
 // tallySalvaged counts the agents whose reply was salvaged and labels each with what
 // the salvage actually cost it. Derived from the per-agent statuses for the same
 // reason tallyTruncatedZeroFindings is: the resume path rebuilds the pool from these
@@ -562,6 +586,7 @@ func writeAgentArtifacts(poolDir, dir string, r Result, fr findingsResult) error
 
 // statusFor builds the per-agent status.json record from a result.
 func statusFor(r Result, fr findingsResult) AgentStatus {
+	onStop, onStopChunks := salvagedOnStop(r)
 	st := AgentStatus{
 		Agent:                  r.Agent,
 		Status:                 r.Status,
@@ -581,6 +606,8 @@ func statusFor(r Result, fr findingsResult) AgentStatus {
 		ThinkSuppressed:        r.ThinkSuppressed,
 		Salvaged:               r.Salvaged,
 		SalvagedChunks:         salvagedChunkIndices(r),
+		SalvagedOnStop:         onStop,
+		SalvagedOnStopChunks:   onStopChunks,
 		UnparseableChunks:      r.UnparseableChunks,
 		CacheHit:               r.CacheHit,
 		UnreviewedChunks:       r.UnreviewedChunks,
