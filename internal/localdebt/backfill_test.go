@@ -1026,6 +1026,14 @@ func TestBackfillJustifications_IdGateProtectsRationaleTrailLineOnRegression(t *
 		"the effective open line keeps its stored text too — the whole id is out of the pass's scope")
 }
 
+// No test drives replayCandidates' "searching %s for review narratives" return, and
+// none can: it is unreachable by design. filepath.WalkDir returns only what its
+// closure returns, and the closure returns nil on every path — including a non-nil
+// walkErr, which it skips so one unreadable subtree cannot abort a repair pass over
+// the whole store, and including an unreadable root, which WalkDir reports through
+// that same walkErr. The return stays as a guard for a future closure that does
+// propagate an error; a test for it would have to change the closure first.
+
 // TD cli/debt_resolve.go:81 — a policy refusal must be distinguishable from a pruned
 // review tree.
 //
