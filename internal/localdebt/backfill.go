@@ -53,9 +53,9 @@ type BackfillResult struct {
 	// applies, and cli/debt_resolve.go's SCOPE paragraph inherited the same conflation.
 	//
 	// It counts a record for which the producer's policy PROVABLY declines a matching
-	// candidate: a non-regular file (symlink, FIFO, device) at the record's relative
-	// path, or one ReviewPolicyDeclinesFile refuses outright — over the size cap, a
-	// wholly salvaged reply, a desynced bin list. Those three are FILE-level, so the
+	// candidate: one ReviewPolicyDeclinesFile refuses outright — a non-regular file
+	// (symlink, FIFO, device), over the size cap, a wholly salvaged reply, a desynced
+	// bin list. Those four are FILE-level, so the
 	// VERDICT holds wherever the candidate sits — but attributing it to THIS record
 	// does not: a refused file in an unrelated review says nothing about whether the
 	// record's own review.md would help. So the candidate counts only when its review
@@ -383,25 +383,13 @@ func replayCandidates(reviewRoot string, rec Record) (replayResult, error) {
 		if walkErr != nil {
 			return nil
 		}
-		// IsRegular, not merely !IsDir: internal/reconcile's collectReviewNarratives
-		// deliberately excludes symlinks, FIFOs and devices named review.md, and
-		// ReExtractJustification's os.ReadFile would FOLLOW a link. A file the
-		// producer would never have stamped from must not become an authoritative
-		// candidate for the replay — the replay set may not exceed the stamp set.
 		if !pathHasSuffix(p, rel) {
 			return nil
 		}
-		// The stamp set is keyed on a REGULAR file: the producer refuses a symlink,
-		// FIFO or device named review.md, so all three are policy refusals rather
-		// than an absent tree and must not be filed under the "restore the file"
-		// remedy either. Recorded before ReExtractJustification so the presence is
-		// the walk's observation, independent of whatever the replay then decides.
-		if !d.Type().IsRegular() {
-			if owns(p) {
-				policyRefused = true
-			}
-			return nil
-		}
+		// No IsRegular check here: a symlink, FIFO or device named review.md is one
+		// of the file-level arms reconcile's reviewPolicy owns (it Lstats, so a link
+		// is refused rather than followed), and reaches the policy branch below like
+		// any other refusal.
 		text, _, ok, rerr := reconcile.ReExtractJustification(p, rec.File, rec.Line, rec.SourceReport.Line)
 		if rerr != nil || !ok {
 			// rerr here is "this candidate is unreadable", not "the backfill
@@ -435,8 +423,8 @@ func replayCandidates(reviewRoot string, rec Record) (replayResult, error) {
 	// tree read as unrepairable — telling the operator not to restore the one file
 	// that would have fixed it (TD internal/localdebt/backfill.go:389).
 	//
-	// What remains is a non-regular file at a matching path, and the file-level arms
-	// ReviewPolicyDeclinesFile names — and each counts only from a candidate whose
+	// What remains is the file-level arms ReviewPolicyDeclinesFile names (a
+	// non-regular file at a matching path among them) — and each counts only from a candidate whose
 	// review dir OWNS the record (reviewDirOwnsRun). The verdict on such a file is
 	// path-independent; attributing it to this record is not, and an unscoped walk
 	// otherwise lets a symlink or over-cap namesake in an unrelated review speak for a

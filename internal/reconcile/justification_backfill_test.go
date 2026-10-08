@@ -167,3 +167,36 @@ func TestReExtractJustification_AppliesTheProducerExclusions(t *testing.T) {
 		assert.Empty(t, text)
 	})
 }
+
+// collectReviewNarratives refuses a symlink named review.md (justification.go's
+// IsRegular check), so the exported predicate must too — otherwise it is incomplete
+// against its own doc, and a caller that does not repeat the IsRegular check itself
+// is told an in-cap link is a stampable file. os.Stat would follow the link and size
+// the TARGET, which is in-cap, so only an Lstat-based arm can see this.
+func TestReviewPolicyDeclinesFile_RefusesASymlinkToAnInCapReview(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.md")
+	require.NoError(t, os.WriteFile(target,
+		[]byte("## Findings\n\n- **internal/thing.go:42** the real narrative explaining the defect.\n"), 0o600))
+	link := filepath.Join(dir, "review.md")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	// Control: the target itself is a regular, in-cap, unsalvaged file the policy
+	// admits, so the only difference the link makes is that it is a link.
+	declined, err := ReviewPolicyDeclinesFile(target)
+	require.NoError(t, err)
+	require.False(t, declined, "the regular target must be admitted, or this test proves nothing about the link")
+
+	declined, err = ReviewPolicyDeclinesFile(link)
+	require.NoError(t, err, "a refused link is a policy verdict, not an unreadable source")
+	assert.True(t, declined, "the producer never stamps from a symlink, so the predicate must decline it")
+
+	// And the replay gate reads the same arm: the anchored line 3 matches, so the
+	// link is the only reason to refuse.
+	text, _, ok, err := ReExtractJustification(link, "internal/thing.go", 42, 3)
+	require.NoError(t, err)
+	assert.False(t, ok, "a symlink must not authorise a replay rewrite")
+	assert.Empty(t, text)
+}
