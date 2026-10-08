@@ -32,9 +32,9 @@ import (
 //
 // The two negative outcomes are deliberately distinct: err is "the source is gone or
 // unreadable" (prune the pointer or restore the file), ok=false is "this file is not
-// the one, its section is pure quoted example, or it is larger than the producer
-// would ever have stamped from" (try another candidate). Collapsing them would make a
-// pruned review dir indistinguishable from a mismatch.
+// the one, its section is pure quoted example, or the producer's file-level policy
+// would never have stamped from it" (try another candidate). Collapsing them would
+// make a pruned review dir indistinguishable from a mismatch.
 func ReExtractJustification(path, file string, line, anchorLine int) (text, section string, ok bool, err error) {
 	// path is a review.md the caller located by walking a directory it chose; the
 	// operator is deliberately replaying their own reviews, so there is no
@@ -88,9 +88,10 @@ func ReExtractJustification(path, file string, line, anchorLine int) (text, sect
 }
 
 // ReviewPolicyDeclinesFile reports whether the producer's FILE-LEVEL policy would
-// refuse to stamp any excerpt from this review.md at all — it is over the size cap, it
-// is a wholly salvaged reply (promoted chain-of-thought, which no lane reads findings
-// from), or its bin list names segments the document does not contain.
+// refuse to stamp any excerpt from this review.md at all — it is not a regular file
+// (a symlink, FIFO or device), it is over the size cap, it is a wholly salvaged reply
+// (promoted chain-of-thought, which no lane reads findings from), or its bin list
+// names segments the document does not contain.
 //
 // It answers a different question from ReExtractJustification's ok=false, and the
 // difference is the one an operator acts on. ok=false also covers "this candidate is
@@ -100,7 +101,7 @@ func ReExtractJustification(path, file string, line, anchorLine int) (text, sect
 // tells the operator not to bother restoring a file that restoring would fix
 // (TD internal/localdebt/backfill.go:389).
 //
-// The three arms here are FILE-level and therefore PATH-INDEPENDENT, which is what
+// The four arms here are FILE-level and therefore PATH-INDEPENDENT, which is what
 // lets a review-dir-unscoped walk use the answer at all: a file the policy refuses is
 // refused wherever it sits, so the caller need not establish which review directory
 // the candidate belongs to — the question SourceReport.Path cannot answer (see the
@@ -126,9 +127,11 @@ func ReviewPolicyDeclinesFile(path string) (bool, error) {
 	return declined, err
 }
 
-// reviewPolicy is the single definition of the FILE-LEVEL policy, serving both the
-// exported predicate and ReExtractJustification's own gate so the two cannot drift —
-// a policy arm added here reaches both callers at once.
+// reviewPolicy is the single definition of the FILE-LEVEL policy — the non-regular,
+// size-cap, salvaged and desynced arms all live here and nowhere else — serving both
+// the exported predicate and ReExtractJustification's own gate, so a policy arm added
+// here reaches both callers at once. Neither caller, nor replayCandidates above them,
+// re-checks any of the four.
 //
 // It also returns what it already had to derive: the raw content and the excluded
 // draft-anchor set, so ReExtractJustification pays neither a second stat+read nor a
@@ -136,13 +139,21 @@ func ReviewPolicyDeclinesFile(path string) (bool, error) {
 // rather than the exported predicate being called directly — and it leaves one call
 // site per computation, so neither can drift from the policy verdict built on it.
 func reviewPolicy(path string) (declined bool, raw string, excluded map[int]struct{}, err error) {
-	// The producer's size cap: collectReviewNarratives skips any review.md over
-	// maxReviewBytes, so a file it would never have stamped from must not yield an
-	// authoritative excerpt either.
-	fi, serr := os.Stat(path)
+	// Lstat, not Stat: the size cap and the read below must measure the candidate
+	// itself, and Stat would follow a link to its target.
+	fi, serr := os.Lstat(path)
 	if serr != nil {
 		return false, "", nil, fmt.Errorf("stat review narrative %s: %w", path, serr)
 	}
+	// The producer stamps only from a REGULAR file: collectReviewNarratives skips a
+	// symlink, FIFO or device named review.md, so each is refused here too. Checked
+	// before the read, which would otherwise follow a link or block on a FIFO.
+	if !fi.Mode().IsRegular() {
+		return true, "", nil, nil
+	}
+	// The producer's size cap: collectReviewNarratives skips any review.md over
+	// maxReviewBytes, so a file it would never have stamped from must not yield an
+	// authoritative excerpt either.
 	if fi.Size() > maxReviewBytes {
 		return true, "", nil, nil
 	}
