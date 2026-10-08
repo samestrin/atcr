@@ -859,7 +859,13 @@ func TestDebtBackfillJustifications_UnresolvedSplitsPolicyFromPrunedTree(t *test
 			`"source_report":{"path":"` + srPath + `","line":8}}`
 	}
 
-	rd := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+	// The review dir's summary.json carries the reconciled_at the run_id was minted
+	// from, so the over-cap file is the record's OWN file and its refusal attributable.
+	ownDir := filepath.Join(reviewRoot, "sprint-a", "multi-agent")
+	require.NoError(t, os.MkdirAll(filepath.Join(ownDir, "reconciled"), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(ownDir, "reconciled", "summary.json"),
+		[]byte(`{"reconciled_at":"2026-08-01T00:00:00Z"}`), 0o600))
+	rd := filepath.Join(ownDir, "sources", "pool", "raw", "agent", "dax")
 	require.NoError(t, os.MkdirAll(rd, 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"),
 		[]byte(strings.Repeat("padding to clear the producer's 1 MiB cap\n", 1<<16)), 0o600))
