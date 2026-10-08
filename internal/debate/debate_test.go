@@ -1433,6 +1433,70 @@ func TestRunDebate_UnopenedCloserWithRulingOnlyAfterItKeepsThatRuling(t *testing
 		"the reasoning must come from the committed object, not from the reasoning tail before the closer")
 }
 
+// The whole-answer row ClassifyUnopenedCloser leaves to each lane: a ruling before a
+// bare `</think>` and nothing usable after it. carriesRuling counts only a non-
+// unresolved outcome as an envelope, so the judge's own committed `unresolved`, an
+// out-of-enum outcome and an empty suffix all read as "no envelope", and the whole-
+// answer parse took the draft `overturn` before the closer as the durable ruling.
+// This lane refuses the shape instead: an unresolved item leaves the pre-debate
+// verdict standing (TD internal/verify/invoke.go:766).
+func TestRunDebate_DraftRulingBeforeUnopenedCloserWithUnusableSuffixIsRefused(t *testing.T) {
+	draft := `{"outcome":"overturn","reasoning":"DRAFT never committed"} ` + "\x3c/think\x3e"
+	for name, suffix := range map[string]string{
+		"explicit unresolved ruling": ` {"outcome":"unresolved","reasoning":"the evidence does not settle it"}`,
+		"out-of-enum outcome":        ` {"outcome":"maybe","reasoning":"not sure"}`,
+		"empty suffix":               ``,
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+			cc := &fakeChatCompleter{turns: []chatTurn{
+				{content: "proposer defends"},
+				{content: "the attack stands"},
+				{content: draft + suffix},
+			}}
+			res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+			require.NoError(t, err)
+			assert.Equal(t, 0, res.Overturned,
+				"the draft before the bare closer must not become the durable ruling")
+			assert.Equal(t, 1, res.Unresolved,
+				"the item stays unresolved so the pre-debate verdict stands")
+
+			df, _, err := ReadDebateFile(dir)
+			require.NoError(t, err)
+			require.Len(t, df.Items, 1)
+			assert.Equal(t, OutcomeUnresolved, df.Items[0].Outcome)
+			assert.Equal(t, ReasonJudgeThinkMarkup, df.Items[0].Reason)
+			assert.Contains(t, df.Items[0].Reasoning, "only before",
+				"the reasoning names the prefix-only shape, not the both-sides one")
+		})
+	}
+}
+
+// The accepted loss of refusing the row above. A committed ruling followed by prose
+// that quotes a bare closer has the same tag structure as an abandoned draft, so the
+// lane refuses it too: a lost ruling leaves the pre-debate verdict standing, whereas
+// reading the draft shape writes a wrong verdict onto the finding for good.
+func TestRunDebate_RealRulingFollowedByProseQuotingACloserIsRefused(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	judge := `{"outcome":"uphold","reasoning":"the attack does not land"} ` +
+		`The reviewer's point was the bare "` + "\x3c/think\x3e" + `" tag, which is handled elsewhere.`
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "the attack stands"},
+		{content: judge},
+	}}
+	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.Upheld,
+		"the tag structure cannot tell this ruling from an abandoned draft, so it is not kept")
+	assert.Equal(t, 1, res.Unresolved)
+
+	df, _, err := ReadDebateFile(dir)
+	require.NoError(t, err)
+	require.Len(t, df.Items, 1)
+	assert.Equal(t, ReasonJudgeThinkMarkup, df.Items[0].Reason)
+}
+
 // A seat can be BOTH halted and suppressed, and which of the two gets PUBLISHED is
 // the whole point of the precedence flip. recordTurnCause records both facts (that
 // much is pinned by TestRunTurn_RecordsSuppressedEvenWhenTheSeatAlsoHalted), and
