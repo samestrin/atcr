@@ -98,9 +98,15 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 	//
 	// The unresolved line states the SPLIT, because the two halves call for opposite
 	// remedies: a missing review.md may be restorable, while a policy refusal — a file
-	// over the producer's size cap, a symlink, a wholly-salvaged reply, a desynced bin
-	// list, a draft anchor line — cannot be repaired from the tree at all, not even
-	// when it is fully intact (TD cli/debt_resolve.go:81).
+	// over the producer's size cap, a non-regular file (symlink, FIFO, device), a
+	// wholly-salvaged reply, a desynced bin list — cannot be repaired from the tree at all, not even when it is fully intact
+	// (TD cli/debt_resolve.go:81). The policy half carries only those FILE-level arms,
+	// and only from a candidate in the record's own review dir
+	// (BackfillResult.PolicyUnrepairable). A record-level refusal — chiefly an anchor
+	// line the producer discarded as a draft — is equally unrepairable but prints under
+	// the pruned-tree half, as does a refusal in an own tree whose reconciled/summary.json
+	// is gone: the safe under-count, which sends the operator to look for a file rather
+	// than telling them not to restore one that would fix it.
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 		"%s%d scanned, %d rewritten (%d %s), %d unchanged, %d unresolved (%d review tree pruned, %d declined by policy), %d ambiguous (candidates disagreed), %d skipped (carries a rationale: resolved, wontfix, unreproducible or attempts-exhausted)\n",
 		prefix, res.Scanned, res.Rewritten, res.RewrittenLines, pluralLines(res.RewrittenLines),
