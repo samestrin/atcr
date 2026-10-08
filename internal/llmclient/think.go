@@ -340,10 +340,14 @@ func IndexAfterUnopenedCloser(content string) int {
 //
 //   - A genuinely quoted pair loses both halves together and holds no container.
 //   - A LONE opener named inside a cleanly-closed value removes one opener and zero
-//     closers — the same count asymmetry a cut pair shows — while cutting nothing.
-//     Acting on the counts alone un-hid a tag the model had only quoted, and all three
-//     lanes then refused a reply the position rule calls legal
-//     (TD internal/llmclient/think.go:392).
+//     closers — the same count asymmetry a cut pair shows — while cutting nothing, so
+//     the run-shape signature never fires on it. Acting on the counts alone un-hid a
+//     tag the model had only quoted, and all three lanes then refused a reply the
+//     position rule calls legal (TD internal/llmclient/think.go:392). The arm leaves
+//     this shape masked only while NO closer survives the mask: the surviving-closer
+//     signature tests that same count asymmetry plus a closer surviving anywhere in
+//     the reply, not beside the opener, so a lone quoted opener in a reply that also
+//     carries a closer as markup elsewhere still refuses.
 //   - A brace that sits BEFORE the quoted opener, in the same value or an earlier one.
 //     That is ordinary value text; the run really did end at its own terminator.
 //   - The reverse asymmetry — a hidden closer beside a surviving opener — needs no arm
@@ -437,12 +441,18 @@ func MaskJSONStrings(s string) string {
 	//     reply signature 1 cannot reach: a quoted opener in a brace-free value beside a
 	//     closer that is genuine markup. Dropping it would widen what the lanes admit.
 	//
-	// Neither fires on the three shapes the arm must leave masked: a genuinely quoted
-	// pair loses both halves and holds no container; a LONE opener named inside a
-	// cleanly-closed value removes one opener and zero closers, exactly as a cut pair
-	// does, while cutting nothing (TD internal/llmclient/think.go:392); and the reverse
-	// asymmetry needs no arm, since the opener stays visible and HasEnclosingThinkBlock
-	// refuses anyway.
+	// What each signature tests decides which shapes stay masked. Signature 1 tests the
+	// run shape, so it fires on none of these: a genuinely quoted pair loses both halves
+	// and holds no container; a LONE opener named inside a cleanly-closed value removes
+	// one opener and zero closers, exactly as a cut pair does, while cutting nothing
+	// (TD internal/llmclient/think.go:392); and the reverse asymmetry needs no arm, since
+	// the opener stays visible and HasEnclosingThinkBlock refuses anyway. Signature 2
+	// tests only that some closer survives the mask and that more openers than closers
+	// were removed. The quoted pair (one of each removed) and the reverse asymmetry (more
+	// closers removed) never satisfy the count, but the lone quoted opener does: it stays
+	// masked only when no closer survives, and refuses whenever a closer survives
+	// anywhere in the reply — the predicate does not ask where, so this is the same reply
+	// shape signature 2 exists to catch.
 	if cutPair ||
 		(strings.Contains(masked, thinkClose) &&
 			strings.Count(s, thinkOpen)-strings.Count(masked, thinkOpen) >
