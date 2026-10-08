@@ -1172,7 +1172,15 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 			// "exhausted the fallback chain" for one reply — a false claim, since no
 			// chain was walked. Branch on the count instead, so the wording matches
 			// what happened (TD internal/fanout/engine.go:1143).
-			if thinkOnlyAttempts > 1 {
+			//
+			// The count alone is not enough for the chain wording, though: the
+			// truncated-failover arm increments thinkOnlyAttempts WITHOUT setting
+			// r.ThinkSuppressed and continues the walk, so two truncated think-only
+			// attempts followed by a finding-bearing reply reach here with a count of
+			// 2 and a successful final reply. Nothing was exhausted and the walk
+			// bought findings, so that walk logs nothing; the r.ThinkSuppressed
+			// conjunct is live on this arm (TD internal/fanout/engine.go:1175).
+			if thinkOnlyAttempts > 1 && r.ThinkSuppressed {
 				log.FromContext(ctx).Warn("think-only replies exhausted the fallback chain: the walk bought zero findings",
 					"agent", s.Primary.Name, "attempts", len(chain), "think_only_attempts", thinkOnlyAttempts)
 			} else if r.ThinkSuppressed {

@@ -1118,3 +1118,34 @@ func TestBaselineWithheldCause_ContributedNothingOutranksOtherCauses(t *testing.
 	assert.Contains(t, got, "contributed nothing")
 	assert.NotContains(t, got, "failed chunks")
 }
+
+// One fixture per arm of baselineWithheldCause, each holding the other counters at
+// zero so the arm under test is the only one that can fire. The failed-slot arm is
+// the one the selector used to lack: a persona that failed WHOLLY leaves
+// ContributedNothingCount and UnreviewedChunks at zero (mergeResultGroup sets the
+// latter only for a MIX of succeeded and failed chunks), so it fell through to the
+// default and was reported as a re-pack it never did (TD cli/review.go:302).
+func TestBaselineWithheldCause_EachArmNamesItsOwnCause(t *testing.T) {
+	t.Run("contributed nothing", func(t *testing.T) {
+		got := baselineWithheldCause(fanout.Summary{ContributedNothingCount: 1})
+		assert.Contains(t, got, "contributed nothing")
+	})
+	t.Run("unreviewed chunks", func(t *testing.T) {
+		got := baselineWithheldCause(fanout.Summary{UnreviewedChunks: 1})
+		assert.Contains(t, got, "failed chunks")
+		assert.NotContains(t, got, "re-packed")
+	})
+	t.Run("failed slot", func(t *testing.T) {
+		got := baselineWithheldCause(fanout.Summary{Failed: 1})
+		assert.Contains(t, got, "slot failed",
+			"a wholly-failed persona must be named as a failed slot")
+		assert.NotContains(t, got, "re-packed",
+			"a failed slot re-packed nothing; the re-pack wording sends the operator to the wrong cause")
+		assert.NotContains(t, got, "salvaged or think-suppressed")
+	})
+	t.Run("re-packed is the last resort", func(t *testing.T) {
+		got := baselineWithheldCause(fanout.Summary{Succeeded: 2})
+		assert.Contains(t, got, "re-packed",
+			"with every slot ok and no other counter set, the re-packed subset is the only remaining cause")
+	})
+}
