@@ -715,7 +715,7 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 	// unresolved item leaves the pre-debate verdict standing (TD
 	// internal/debate/debate.go:653).
 	judgeText := rec.JudgeRaw
-	section, text := llmclient.ClassifyUnopenedCloser(rec.JudgeRaw, carriesRuling)
+	section, text, _ := llmclient.ClassifyUnopenedCloser(rec.JudgeRaw, carriesRuling)
 	switch section {
 	case llmclient.SectionAmbiguous:
 		ir.Outcome = OutcomeUnresolved

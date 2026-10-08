@@ -686,7 +686,7 @@ const (
 // envelope reaches the parser intact. maskJSONStrings blanks bytes in place and
 // preserves length, so one offset is valid in both.
 func classifyUnopenedCloser(answer string, hasEnvelope func(string) bool) (closerSection, string) {
-	section, text := llmclient.ClassifyUnopenedCloser(answer, hasEnvelope)
+	section, text, _ := llmclient.ClassifyUnopenedCloser(answer, hasEnvelope)
 	switch section {
 	case llmclient.SectionAfterCloser:
 		return sectionAfterCloser, text

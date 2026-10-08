@@ -382,3 +382,39 @@ func TestHasEnclosingThinkBlock_IsNarrowerThanHasThinkMarkup(t *testing.T) {
 	assert.True(t, HasThinkMarkup(bare), "the detector keeps the bare-closer rule for doctor's verdict")
 	assert.False(t, HasEnclosingThinkBlock(bare), "the enclosure predicate drops it — no opener, no draft")
 }
+
+// TestClassifyUnopenedCloser pins section, returned text and prefixHasEnvelope
+// for every shape the doc table names. The envelope predicate here is a stand-in
+// (a JSON object holding a "verdict" key with an in-enum value); each lane
+// supplies its own, so only the rule is under test, not any lane's parser.
+func TestClassifyUnopenedCloser(t *testing.T) {
+	usable := func(s string) bool {
+		return strings.Contains(s, `"verdict":"confirmed"`) || strings.Contains(s, `"verdict":"refuted"`)
+	}
+	cases := []struct {
+		name       string
+		answer     string
+		wantSect   CloserSection
+		wantText   string
+		wantPrefix bool
+	}{
+		{name: "no closer", answer: `{"verdict":"confirmed"}`,
+			wantSect: SectionWholeAnswer, wantText: `{"verdict":"confirmed"}`, wantPrefix: false},
+		{name: "closer with nothing before it", answer: `</think> {"verdict":"confirmed"}`,
+			wantSect: SectionAfterCloser, wantText: ` {"verdict":"confirmed"}`, wantPrefix: false},
+		{name: "draft before the closer, real after it", answer: `{"verdict":"refuted"} </think> {"verdict":"confirmed"}`,
+			wantSect: SectionAmbiguous, wantText: ` {"verdict":"confirmed"}`, wantPrefix: true},
+		{name: "usable before the closer, unusable after it", answer: `{"verdict":"refuted"} </think> {"verdict":"maybe"}`,
+			wantSect: SectionWholeAnswer, wantText: `{"verdict":"refuted"} </think> {"verdict":"maybe"}`, wantPrefix: true},
+		{name: "closer quoted inside a JSON string", answer: `{"verdict":"confirmed","reasoning":"the </think> tag"}`,
+			wantSect: SectionWholeAnswer, wantText: `{"verdict":"confirmed","reasoning":"the </think> tag"}`, wantPrefix: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sect, text, prefix := ClassifyUnopenedCloser(tc.answer, usable)
+			assert.Equal(t, tc.wantSect, sect, "section")
+			assert.Equal(t, tc.wantText, text, "returned text")
+			assert.Equal(t, tc.wantPrefix, prefix, "prefixHasEnvelope")
+		})
+	}
+}
