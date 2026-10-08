@@ -26,16 +26,21 @@ import (
 // (`sources/pool/raw/agent/dax/review.md`) and every review directory holds the same
 // relative paths, so a caller resolving it against a repo finds dozens of same-named
 // candidates. Re-scoring the line with anchorTier — the same test matchNarrative ranks
-// candidates by — is what tells the right file from a namesake, and returning ok=false
+// candidates by — is what tells the right file from a namesake, and returning OK=false
 // for the rest is what keeps a backfill from rewriting a record out of an unrelated
 // review. A caller with more than one surviving candidate must decline, not guess.
 //
 // The two negative outcomes are deliberately distinct: err is "the source is gone or
-// unreadable" (prune the pointer or restore the file), ok=false is "this file is not
+// unreadable" (prune the pointer or restore the file), OK=false is "this file is not
 // the one, its section is pure quoted example, or the producer's file-level policy
 // would never have stamped from it" (try another candidate). Collapsing them would
 // make a pruned review dir indistinguishable from a mismatch.
-func ReExtractJustification(path, file string, line, anchorLine int) (text, section string, ok bool, err error) {
+//
+// The result also carries the file-level policy verdict the call already had to
+// reach (Replay.PolicyDeclined), so a caller asking WHY a candidate yielded nothing
+// reads it here rather than paying for a second ReviewPolicyDeclinesFile evaluation
+// of the same file.
+func ReExtractJustification(path, file string, line, anchorLine int) (Replay, error) {
 	// path is a review.md the caller located by walking a directory it chose; the
 	// operator is deliberately replaying their own reviews, so there is no
 	// untrusted-input step here to guard.
@@ -59,32 +64,50 @@ func ReExtractJustification(path, file string, line, anchorLine int) (text, sect
 	// against this call's anchor.
 	declined, raw, excluded, err := reviewPolicy(path)
 	if err != nil {
-		return "", "", false, err
+		return Replay{}, err
 	}
 	if declined {
-		return "", "", false, nil
+		return Replay{PolicyDeclined: true}, nil
 	}
 	lines := strings.Split(raw, "\n")
 	idx := anchorLine - 1 // SourceReport.Line is 1-based; extractSection indexes from 0
 	if idx < 0 || idx >= len(lines) {
 		// The file changed length since the stamp. Not an error — this candidate is
 		// simply not the document the excerpt came from.
-		return "", "", false, nil
+		return Replay{}, nil
 	}
 	if _, draft := excluded[idx]; draft {
-		return "", "", false, nil
+		return Replay{}, nil
 	}
 	if anchorTier(lines[idx], file, line) < minAnchorTier {
-		return "", "", false, nil
+		return Replay{}, nil
 	}
-	text, section = extractSection(lines, idx)
+	text, section := extractSection(lines, idx)
 	if text == "" {
 		// extractSection suppresses a block that is entirely fenced example text.
 		// That is matchAllElided, not a match — and never a reason to blank a
 		// stored justification.
-		return "", "", false, nil
+		return Replay{}, nil
 	}
-	return text, section, true, nil
+	return Replay{Text: text, Section: section, OK: true}, nil
+}
+
+// Replay is what ReExtractJustification hands back for one candidate. A struct
+// rather than more positional returns, so a future outcome is a new field and not a
+// reshuffle of every call site.
+type Replay struct {
+	// Text and Section are the re-derived excerpt and its heading; both are empty
+	// unless OK.
+	Text, Section string
+	// OK is true only when this candidate yields an authoritative excerpt.
+	OK bool
+	// PolicyDeclined is the FILE-LEVEL verdict ReviewPolicyDeclinesFile would report
+	// for the same path, read from the one reviewPolicy evaluation the call already
+	// made. It is a subset of !OK: the record-level refusals (a draft anchor line, a
+	// namesake whose anchor does not match, an out-of-range line, an all-elided
+	// section) leave it false, for the reason ReviewPolicyDeclinesFile excludes them.
+	// It is never set alongside a non-nil error — "I could not look" is not a verdict.
+	PolicyDeclined bool
 }
 
 // ReviewPolicyDeclinesFile reports whether the producer's FILE-LEVEL policy would
@@ -93,8 +116,8 @@ func ReExtractJustification(path, file string, line, anchorLine int) (text, sect
 // (promoted chain-of-thought, which no lane reads findings from), or its bin list
 // names segments the document does not contain.
 //
-// It answers a different question from ReExtractJustification's ok=false, and the
-// difference is the one an operator acts on. ok=false also covers "this candidate is
+// It answers a different question from ReExtractJustification's OK=false, and the
+// difference is the one an operator acts on. OK=false also covers "this candidate is
 // simply not the one" — a namesake whose anchor does not match, a file that changed
 // length, a section that is pure quoted example. Those say nothing about whether the
 // record's own review.md survives, so a caller that treats them as a policy refusal
@@ -114,6 +137,10 @@ func ReExtractJustification(path, file string, line, anchorLine int) (text, sect
 // shape. It is a far narrower residue than "any candidate was present", which is what
 // it replaced, and closing it needs the record's own review dir, which the record does
 // not carry.
+//
+// A caller that also needs the excerpt should read Replay.PolicyDeclined from
+// ReExtractJustification instead of calling this as well: both read the same
+// reviewPolicy verdict, and calling both evaluates the file twice.
 //
 // The record-level arms are deliberately NOT included. A draft anchor line is
 // unrepairable too, but it is a property of one record's anchor rather than of the
@@ -146,6 +173,8 @@ func ReviewPolicyDeclinesFile(path string) (bool, error) {
 // second excludedAnchorLines pass. That is the whole reason this is a separate helper
 // rather than the exported predicate being called directly — and it leaves one call
 // site per computation, so neither can drift from the policy verdict built on it.
+// ReExtractJustification surfaces the verdict as Replay.PolicyDeclined, so a caller
+// evaluating a candidate pays for this once, not once per question it asks.
 func reviewPolicy(path string) (declined bool, raw string, excluded map[int]struct{}, err error) {
 	// Lstat, not Stat: the size cap and the read below must measure the candidate
 	// itself, and Stat would follow a link to its target.

@@ -28,7 +28,7 @@ type BackfillResult struct {
 	Rewritten int // replayed excerpt differed from the stored one and was written
 	Unchanged int // replayed excerpt was byte-identical
 	// Unresolved counts records no review.md yielded an excerpt for. It does NOT
-	// mean the file is gone. ReExtractJustification returns (ok=false, err=nil) both
+	// mean the file is gone. ReExtractJustification returns (OK=false, err=nil) both
 	// for "this file is not the one" and for the producer's own POLICY exclusions — a
 	// review.md over the size cap, or one that is not a regular file — so a review.md
 	// present and readable at the record's own source_report path lands here too. The
@@ -41,7 +41,7 @@ type BackfillResult struct {
 	// observation count and no existing consumer loses a row.
 	Unresolved int
 	// PolicyUnrepairable carves the "the file is there and still cannot help" half out
-	// of Unresolved. ReExtractJustification returns ok=false both because no candidate
+	// of Unresolved. ReExtractJustification returns OK=false both because no candidate
 	// survives at the record's own source_report path and because a candidate WAS there
 	// yet yielded no excerpt — the producer's policy exclusions (over the size cap, a
 	// symlink, a wholly-salvaged reply, a desynced bin list, a draft anchor line), a
@@ -390,8 +390,8 @@ func replayCandidates(reviewRoot string, rec Record) (replayResult, error) {
 		// of the file-level arms reconcile's reviewPolicy owns (it Lstats, so a link
 		// is refused rather than followed), and reaches the policy branch below like
 		// any other refusal.
-		text, _, ok, rerr := reconcile.ReExtractJustification(p, rec.File, rec.Line, rec.SourceReport.Line)
-		if rerr != nil || !ok {
+		r, rerr := reconcile.ReExtractJustification(p, rec.File, rec.Line, rec.SourceReport.Line)
+		if rerr != nil || !r.OK {
 			// rerr here is "this candidate is unreadable", not "the backfill
 			// failed" — another candidate may still resolve the record.
 			//
@@ -399,17 +399,19 @@ func replayCandidates(reviewRoot string, rec Record) (replayResult, error) {
 			// the producer's FILE-LEVEL policy explains is unrepairable wherever the
 			// file sits; a candidate that merely fails to carry this record's anchor
 			// is a namesake and says nothing about the record's own tree. Only the
-			// former may set policyRefused — see ReviewPolicyDeclinesFile — and only
-			// from a candidate whose review dir owns the record. A probe error is not
-			// evidence either way, so it leaves the flag alone.
-			if declined, perr := reconcile.ReviewPolicyDeclinesFile(p); perr == nil && declined && owns(p) {
+			// former may set policyRefused — see ReviewPolicyDeclinesFile, whose verdict
+			// the replay already computed and hands back as PolicyDeclined, so the
+			// policy is evaluated once per candidate — and only from a candidate whose
+			// review dir owns the record. An error is not evidence either way, and
+			// PolicyDeclined is never set alongside one, so it leaves the flag alone.
+			if rerr == nil && r.PolicyDeclined && owns(p) {
 				policyRefused = true
 			}
 			return nil
 		}
-		if !seen[text] {
-			seen[text] = true
-			out = append(out, text)
+		if !seen[r.Text] {
+			seen[r.Text] = true
+			out = append(out, r.Text)
 		}
 		return nil
 	})
