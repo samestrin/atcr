@@ -912,9 +912,10 @@ func summarizeCaseFailureReasons(failures []benchmark.CaseFailure) string {
 // count reviewers — one dead provider on a 200-case suite is 200 slots, not 1.
 //
 // Only INFRASTRUCTURE-class slots count. An unmeasured_salvaged_ok slot is a call
-// that SUCCEEDED, so folding it in reports a clean panel as failed_slots=N and (via
-// retainForSlotFailures, which reads the same predicate) retains a work dir nothing
-// reclaims. It is reported under its own key by unmeasuredSlotCount.
+// that SUCCEEDED, so folding it in reports a clean panel as failed_slots=N. It is
+// reported under its own key by unmeasuredSlotCount. Retention is a separate
+// decision with its own fail-direction: retainForSlotFailures does not read this
+// predicate, and keeps the work dir for every reason but unmeasured_salvaged_ok.
 func failedSlotCount(m map[reviewerKey][]benchmark.SlotFailure) int {
 	n := 0
 	for _, v := range m {

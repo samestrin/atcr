@@ -2870,7 +2870,7 @@ func TestSlotUnmeasuredReason(t *testing.T) {
 	}
 }
 
-// The retention trigger must count only INFRASTRUCTURE-class slot failures. With
+// The retention trigger must ignore unmeasured_salvaged_ok slot failures. With
 // unmeasured_salvaged_ok in the vocabulary, a reviewer that habitually answers on
 // its reasoning channel makes EVERY scheduled run "partial", so every run would
 // accumulate a full work dir that nothing reclaims — and the line would label it
