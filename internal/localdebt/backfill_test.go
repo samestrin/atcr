@@ -1,6 +1,7 @@
 package localdebt
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,9 +10,14 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	reclib "github.com/samestrin/atcr/reconcile"
+
+	"github.com/samestrin/atcr/internal/reconcile"
 )
 
 // danglingReview is a reviewer narrative whose fence is never closed. extractSection
@@ -1283,4 +1289,123 @@ func writeReconciledSummary(t *testing.T, reviewDir, reconciledAt string) {
 	require.NoError(t, os.MkdirAll(dir, 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "summary.json"),
 		[]byte(`{"reconciled_at":"`+reconciledAt+`"}`), 0o600))
+}
+
+// TestReviewDirOwnsRun pins every outcome of the ownership check, not just the
+// match and mismatch the replay tests reach. The "owns NOTHING" arms are the safe
+// under-count the doc promises: a regression that returned true on a missing,
+// unreadable or unparseable summary.json would attribute a policy refusal to a
+// record whose own review proves nothing, and every replay test would stay green.
+func TestReviewDirOwnsRun(t *testing.T) {
+	const at = "2026-08-04T10:00:00Z"
+	cases := []struct {
+		name    string
+		base    string                       // the review dir's base name
+		summary func(t *testing.T, d string) // stamps <reviewDir>/reconciled/summary.json; nil leaves it absent
+		runID   string
+		want    bool
+	}{
+		{
+			name:  "no summary.json owns nothing",
+			base:  "multi-agent",
+			runID: at + "-multi-agent",
+		},
+		{
+			name: "unreadable summary.json owns nothing",
+			base: "multi-agent",
+			summary: func(t *testing.T, d string) {
+				// A directory in the file's place fails os.ReadFile even as root,
+				// where a chmod 000 would not.
+				require.NoError(t, os.MkdirAll(filepath.Join(d, "reconciled", "summary.json"), 0o750))
+			},
+			runID: at + "-multi-agent",
+		},
+		{
+			name:    "invalid JSON owns nothing",
+			base:    "multi-agent",
+			summary: rawSummary(`{"reconciled_at":"` + at + `"`),
+			runID:   at + "-multi-agent",
+		},
+		{
+			name:    "empty object (no reconciled_at) owns nothing",
+			base:    "multi-agent",
+			summary: rawSummary(`{}`),
+			// The run_id an empty reconciled_at would mint: a check that compared
+			// without the emptiness guard would match it.
+			runID: "-multi-agent",
+		},
+		{
+			name:    "matching reconciled_at and base owns the run",
+			base:    "multi-agent",
+			summary: rawSummary(`{"reconciled_at":"` + at + `"}`),
+			runID:   at + "-multi-agent",
+			want:    true,
+		},
+		{
+			name:    "mismatching reconciled_at does not own the run",
+			base:    "multi-agent",
+			summary: rawSummary(`{"reconciled_at":"2026-08-04T10:00:01Z"}`),
+			runID:   at + "-multi-agent",
+		},
+		{
+			name:    "matching reconciled_at under a different dir base does not own the run",
+			base:    "single-agent",
+			summary: rawSummary(`{"reconciled_at":"` + at + `"}`),
+			runID:   at + "-multi-agent",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reviewDir := filepath.Join(t.TempDir(), tc.base)
+			require.NoError(t, os.MkdirAll(reviewDir, 0o750))
+			if tc.summary != nil {
+				tc.summary(t, reviewDir)
+			}
+			assert.Equal(t, tc.want, reviewDirOwnsRun(reviewDir, tc.runID))
+		})
+	}
+}
+
+// rawSummary returns a setup that writes body verbatim as the review's
+// reconciled/summary.json.
+func rawSummary(body string) func(t *testing.T, reviewDir string) {
+	return func(t *testing.T, reviewDir string) {
+		t.Helper()
+		dir := filepath.Join(reviewDir, "reconciled")
+		require.NoError(t, os.MkdirAll(dir, 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "summary.json"), []byte(body), 0o600))
+	}
+}
+
+// TestReviewDirOwnsRun_RealRunIDAndSummaryAgree pins the pair every other ownership
+// fixture hand-writes on both sides: the run_id PersistForReconcile mints and the
+// summary.json reconcile.RunReconcile emits, for the same review dir. If either
+// side changes its format (a different timestamp layout, a different separator, a
+// renamed field) the hand-written fixtures keep agreeing with each other while the
+// real pair stops matching, and every policy refusal silently falls into the
+// pruned-tree half.
+func TestReviewDirOwnsRun_RealRunIDAndSummaryAgree(t *testing.T) {
+	root := t.TempDir()
+	reviewDir := filepath.Join(t.TempDir(), "multi-agent")
+	sources := filepath.Join(reviewDir, "sources", "host")
+	require.NoError(t, os.MkdirAll(sources, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(sources, "findings.txt"),
+		[]byte("# atcr-findings/v1\nHIGH|a.go:1|the issue|fix it|security|10|ev|host\n"), 0o600))
+
+	// A wall-clock-shaped instant: sub-second precision in a non-UTC zone, as the
+	// CLI's time.Now() hands it over, so the test does not lean on a pre-normalized
+	// value both sides would trivially agree on.
+	at := time.Date(2026, 8, 4, 12, 0, 0, 123456789, time.FixedZone("CEST", 2*60*60))
+	res, err := reconcile.RunReconcile(context.Background(), reviewDir, nil, reclib.Options{ReconciledAt: at})
+	require.NoError(t, err)
+	require.FileExists(t, filepath.Join(reviewDir, "reconciled", "summary.json"),
+		"the real summary writer must have stamped the review")
+
+	PersistForReconcile(reviewDir, res, PersistOpts{Root: root})
+
+	recs, err := ReadAll(DefaultDir(root), ReadOpts{})
+	require.NoError(t, err)
+	require.Len(t, recs, 1, "the real mint must have persisted the one finding")
+	assert.True(t, reviewDirOwnsRun(reviewDir, recs[0].RunID),
+		"run_id %q was minted for this review dir, so its own summary.json must own it", recs[0].RunID)
 }
