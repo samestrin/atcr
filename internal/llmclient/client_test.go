@@ -1205,3 +1205,58 @@ func TestCompleteWithMeta_MarksReasoningSalvage(t *testing.T) {
 	assert.Equal(t, reasoning, comp2.Reasoning,
 		"the reasoning channel is reported even when Content is present — the two contracts are independent")
 }
+
+// TD-018 (Epic 35.16.11.2.2.4.5 T1): Salvaged is a CHANNEL fact ("the answer came
+// back on the reasoning channel"), not an ABANDONMENT fact. The Completion reports
+// WHY the salvage happened — SalvagedTruncated on finish_reason "length",
+// SalvagedOnStop on any other finish reason, including an absent one — so a caller
+// can tell a cut-off draft from a finished reasoning-channel answer in one field
+// read. Salvaged stays their OR for the disclosure sites, and the two narrow
+// signatures keep refusing both reasons because they can carry neither.
+func TestCompleteWithMeta_ReportsWhyAReplyWasSalvaged(t *testing.T) {
+	cases := []struct {
+		name          string
+		finishReason  string
+		content       string
+		wantTruncated bool
+		wantOnStop    bool
+	}{
+		{name: "length cutoff", finishReason: "length", wantTruncated: true},
+		{name: "stop", finishReason: "stop", wantOnStop: true},
+		{name: "finish_reason absent", finishReason: "", wantOnStop: true},
+		{name: "content on length", finishReason: "length", content: "partial answer"},
+		{name: "content on stop", finishReason: "stop", content: "real answer"},
+		{name: "content with finish_reason absent", finishReason: "", content: "real answer"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				resp := chatResponse{}
+				resp.Choices = append(resp.Choices, chatChoice{FinishReason: tc.finishReason, Message: message{Role: "assistant", Content: tc.content, ReasoningContent: reasoningText("chain of thought")}})
+				_ = json.NewEncoder(w).Encode(resp)
+			}))
+			defer srv.Close()
+			t.Setenv("TEST_KEY", testKey)
+			c := fastRetry(srv.Client())
+			inv := Invocation{BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "review"}
+
+			comp, err := c.CompleteWithMeta(context.Background(), inv)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantTruncated, comp.SalvagedTruncated, "SalvagedTruncated")
+			assert.Equal(t, tc.wantOnStop, comp.SalvagedOnStop, "SalvagedOnStop")
+			assert.Equal(t, comp.SalvagedTruncated || comp.SalvagedOnStop, comp.Salvaged,
+				"Salvaged is exactly the OR of the two reasons")
+			assert.False(t, comp.SalvagedTruncated && comp.SalvagedOnStop, "the two reasons are never both true")
+
+			_, err = c.Complete(context.Background(), inv)
+			_, _, _, cuErr := c.CompleteWithUsage(context.Background(), inv)
+			if tc.content == "" {
+				assert.ErrorIs(t, err, ErrSalvagedReply, "Complete refuses a salvage for either reason")
+				assert.ErrorIs(t, cuErr, ErrSalvagedReply, "CompleteWithUsage refuses a salvage for either reason")
+			} else {
+				assert.NoError(t, err, "a content-bearing reply is not refused")
+				assert.NoError(t, cuErr, "a content-bearing reply is not refused")
+			}
+		})
+	}
+}

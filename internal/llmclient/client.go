@@ -363,23 +363,40 @@ func (c *Client) CompleteWithUsage(ctx context.Context, inv Invocation) (string,
 // provider reported finish_reason "length" (token budget exhausted): the content
 // may be partial, or a salvaged reasoning_content, so it must NOT be treated as a
 // complete answer. Usage/CallRecords mirror CompleteWithUsage.
+//
+// The client trusts finish_reason as reported. A provider that reports "stop" on
+// a reply it actually cut off mid-thought is read as not truncated, so an
+// empty-content reply of that kind surfaces as a stop-reason salvage
+// (SalvagedOnStop), not a length cutoff. No corroborating signal is added: no
+// threshold on usage.completion_tokens against max_tokens separates a silent
+// cut-off from a reply that legitimately filled its budget, and usage may be
+// absent (EST-212 Q5).
 type Completion struct {
 	Content     string
 	Usage       UsageData
 	CallRecords []CallRecord
 	Truncated   bool
-	// Salvaged marks that Content was NOT the model's answer: the reply carried
-	// empty content and the empty-content salvage promoted its chain-of-thought
-	// (reasoning_content or reasoning) into Content. It fires on BOTH salvage
-	// paths — the length-cutoff one (where Truncated is also true) and, the
-	// dangerous one, a stop-reason reply whose only output was reasoning:
-	// StatusOK, not truncated, with chain-of-thought standing in for a review.
-	// Deliberately DISTINCT from Truncated, which is the finish_reason=length
-	// marker with its own consumer set; callers that trust Content as a statement
-	// (the debate seats), a verdict (the skeptic), a finding (fanout's findings
-	// parser) or a cacheable review (the engine's diff cache) must check this flag
-	// (TD internal/llmclient/client.go:394).
+	// Salvaged is the CHANNEL fact, for disclosure: the reply carried empty
+	// content and the empty-content salvage promoted its chain-of-thought
+	// (reasoning_content or reasoning) into Content, so the answer came back on
+	// the reasoning channel. It says nothing about whether the model abandoned
+	// the thought — that is what the two reasons below report, and Salvaged is
+	// always exactly SalvagedTruncated || SalvagedOnStop. Sites that only need
+	// "which channel" (status.json, review.md, doctor hints) read this flag; a
+	// site deciding whether to trust Content as a statement, verdict, finding or
+	// cacheable review should pick one of the two reasons and say why
+	// (TD internal/llmclient/client.go:394, TD-018).
 	Salvaged bool
+	// SalvagedTruncated is a salvage on finish_reason "length": the model ran
+	// out of output budget mid-thought, so Content is an abandoned draft.
+	// Truncated is also true. Never true together with SalvagedOnStop.
+	SalvagedTruncated bool
+	// SalvagedOnStop is a salvage on any other finish_reason, including an
+	// absent one: the model finished, and its only output was on the reasoning
+	// channel — the standard shape for several reasoning deployments. Truncated
+	// is false. Never true together with SalvagedTruncated. See the Completion
+	// doc for the residual risk of a provider that reports "stop" on a cut-off.
+	SalvagedOnStop bool
 	// Reasoning is the model's reasoning_content, reported on its own whether
 	// or not Content is empty. The empty-Content salvage still copies it into
 	// Content; this field does not change that.
@@ -438,18 +455,17 @@ func (c *Client) CompleteWithMeta(ctx context.Context, inv Invocation) (Completi
 		// refuse it — on a stop-reason reply Truncated is FALSE here, which is
 		// exactly the silent case (TD internal/llmclient/client.go:394).
 		//
-		// As of sprint 35.16.11.2.2.4 T6, EVERY such caller refuses it: verify
-		// (verify/invoke.go), each debate seat (debate/protocol.go), the diff cache
-		// and now findings parsing (fanout/engine.go). As of the client.go:415 TD
-		// fix, the refusal no longer DEPENDS on each caller remembering: the two
-		// narrow paths (Complete, CompleteWithUsage) cannot carry the Salvaged
-		// marker, so they return ErrSalvagedReply rather than the promoted draft —
-		// a wrapper that forgets CompleteWithMeta now fails closed instead of
-		// silently parsing abandoned chain-of-thought as findings (and, in the
-		// executor lane, writing it to disk as a patch). So this no longer means
-		// "the reviewer still contributes a partial review" — that was this block's
-		// original stated purpose and it is deliberately reversed, because a draft
-		// the model abandoned counted as a real finding is worse than no finding.
+		// The salvage is reported with its reason (SalvagedTruncated on a length
+		// cutoff, SalvagedOnStop otherwise) and each caller decides whether to
+		// trust it. Not every caller refuses it: since a112e61 fanout's UNCHUNKED
+		// findings parser keeps a stop-reason salvage's findings and refuses only a
+		// truncated one, while verify, the debate seats and the diff cache still
+		// refuse every salvage. What does NOT depend on a caller remembering is the
+		// narrow path: Complete and CompleteWithUsage cannot carry any of these
+		// markers, so they return ErrSalvagedReply for BOTH reasons rather than the
+		// promoted reasoning — a wrapper that forgets CompleteWithMeta fails closed
+		// instead of silently parsing chain-of-thought as findings (and, in the
+		// executor lane, writing it to disk as a patch).
 		content = reasoningOf(ch.Message.ReasoningContent, ch.Message.Reasoning)
 		salvaged = content != ""
 	}
@@ -460,7 +476,7 @@ func (c *Client) CompleteWithMeta(ctx context.Context, inv Invocation) (Completi
 		// would repeat the result.
 		return Completion{CallRecords: records, Truncated: truncated}, atcrerrors.NewSystemError(fmt.Errorf("provider returned an empty completion (no content or reasoning)"))
 	}
-	return Completion{Content: content, Usage: parsed.Usage, CallRecords: records, Truncated: truncated, Salvaged: salvaged, Reasoning: reasoningOf(ch.Message.ReasoningContent, ch.Message.Reasoning)}, nil
+	return Completion{Content: content, Usage: parsed.Usage, CallRecords: records, Truncated: truncated, Salvaged: salvaged, SalvagedTruncated: salvaged && truncated, SalvagedOnStop: salvaged && !truncated, Reasoning: reasoningOf(ch.Message.ReasoningContent, ch.Message.Reasoning)}, nil
 }
 
 // resolveKey reads the invocation's API key env var; the value is never logged.
