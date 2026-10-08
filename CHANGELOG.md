@@ -4,6 +4,7 @@
 
 - The baseline withheld-coverage warning in `atcr review` names a failed slot as a failed slot; a persona that failed wholly was reported as having re-packed its payload.
 - A fallback walk whose final reply carried findings no longer warns that think-only replies "exhausted the fallback chain"; the warning now fires only when the final reply was itself a think-only run.
+- `atcr benchmark` on a repo-state suite keeps the run's work dir when a slot failure carries an empty or unrecognized reason; only an `unmeasured_salvaged_ok` slot lets it be deleted. Every reason a current build writes behaves as before.
 
 ## [35.33.0] - 2026-10-05
 

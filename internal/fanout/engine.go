@@ -432,6 +432,15 @@ type Result struct {
 	// and then the StatusOK block — which unconditionally returns — swallowed the
 	// non-truncated arm entirely, so the walk-level warning could never fire for the
 	// finish_reason=stop shape it was written for (TD internal/fanout/engine.go:1083).
+	//
+	// An IN-PROCESS diagnostic by choice, not a published one: it is not copied into
+	// AgentStatus (artifacts.go), so status.json and summary.json never carry it, and
+	// its only reader is mergeResultGroup's per-persona sum (chunker.go). The walk's
+	// think-only cost reaches the operator through the warn line invokeSlot logs
+	// when the walk ends, and the reply shape through think_suppressed. Publishing the
+	// count would add a status.json field for a number that line already shows, so
+	// the stamps below exist for that sum, and for whatever in-process reader comes
+	// next (TD internal/fanout/engine.go:1160).
 	ThinkOnlyAttempts int
 
 	// UnparseableChunks counts a chunked persona's chunks that set
@@ -1190,7 +1199,8 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 			// Carry the WALK total onto the returned Result. `r` is fresh per chain
 			// member, so its own ThinkOnlyAttempts counts at most this member; the
 			// local is the only real total, and the field's doc promises exactly that
-			// (TD internal/fanout/engine.go:429).
+			// (TD internal/fanout/engine.go:429). In-process only: status.json does
+			// not carry it (see the field's doc).
 			r.ThinkOnlyAttempts = thinkOnlyAttempts
 			return r
 		}
@@ -1224,7 +1234,7 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 	last.DegradationAction = s.Primary.DegradationAction
 	// Same reason as the StatusOK exit above: the returned Result must describe the
 	// WALK, so stamp the local total rather than leaving `last`'s at-most-one
-	// (TD internal/fanout/engine.go:429).
+	// (TD internal/fanout/engine.go:429). In-process only, as above.
 	last.ThinkOnlyAttempts = thinkOnlyAttempts
 	last.DurationMS = time.Since(start).Milliseconds()
 	return last
