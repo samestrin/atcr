@@ -133,6 +133,14 @@ func ReviewPolicyDeclinesFile(path string) (bool, error) {
 // here reaches both callers at once. Neither caller, nor replayCandidates above them,
 // re-checks any of the four.
 //
+// The salvaged and desynced arms hand back the content they already read even though
+// they decline. Nothing downstream needs it — it is there so the caller's `declined`
+// early return is the ONLY thing standing between a declined file and anchorTier. An
+// empty raw would refuse on its own (the anchor line is out of range), masking a
+// deleted guard; with the content in hand, removing that return lets a declined file
+// through, and the exclusion tests catch it. The non-regular and over-cap arms return
+// before the read and stay empty — there is no content to hand back.
+//
 // It also returns what it already had to derive: the raw content and the excluded
 // draft-anchor set, so ReExtractJustification pays neither a second stat+read nor a
 // second excludedAnchorLines pass. That is the whole reason this is a separate helper
@@ -167,7 +175,7 @@ func reviewPolicy(path string) (declined bool, raw string, excluded map[int]stru
 	// real prose.
 	salvaged, bins := sourceSalvage(path)
 	if salvaged && len(bins) == 0 {
-		return true, "", nil, nil
+		return true, string(b), nil, nil
 	}
 	if !salvaged {
 		bins = nil
@@ -176,7 +184,7 @@ func reviewPolicy(path string) (declined bool, raw string, excluded map[int]stru
 	// lines were refused. Withhold, mirroring the producer.
 	lines, desynced := excludedAnchorLines(string(b), bins)
 	if desynced {
-		return true, "", nil, nil
+		return true, string(b), nil, nil
 	}
 	return false, string(b), lines, nil
 }
