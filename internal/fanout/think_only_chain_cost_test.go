@@ -275,3 +275,59 @@ func TestInvokeSlot_StatusOKReturnCarriesTheWalkTotal(t *testing.T) {
 	assert.Equal(t, 2, r.ThinkOnlyAttempts,
 		"one earlier truncated attempt plus the final non-truncated one is a walk total of 2")
 }
+
+// Two TRUNCATED think-only replies, then a finding-bearing reply. The truncated
+// arm counts each think-only attempt and continues the walk WITHOUT setting
+// r.ThinkSuppressed, so the final, successful member reaches the StatusOK block
+// with thinkOnlyAttempts == 2. That is the shape the chain wording must not fire
+// on: the walk ended in findings, so nothing was exhausted.
+type thinkOnlyThenFindingCompleter struct{ calls int }
+
+const thinkOnlyThenFindingRow = "MEDIUM|b.go:2|real finding|f|correctness|2|e"
+
+func (c *thinkOnlyThenFindingCompleter) reply() llmclient.Completion {
+	c.calls++
+	if c.calls <= 2 {
+		return llmclient.Completion{Content: "\x3cthink\x3ereasoning only, no answer", Truncated: true}
+	}
+	return llmclient.Completion{Content: thinkOnlyThenFindingRow}
+}
+
+func (c *thinkOnlyThenFindingCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
+	return c.reply().Content, nil
+}
+
+func (c *thinkOnlyThenFindingCompleter) CompleteWithMeta(_ context.Context, _ llmclient.Invocation) (llmclient.Completion, error) {
+	return c.reply(), nil
+}
+
+// The StatusOK-block chain wording used to branch on the count alone, so a walk
+// whose final reply carried findings still logged "think-only replies exhausted the
+// fallback chain: the walk bought zero findings" — two false claims on a
+// successful run (TD internal/fanout/engine.go:1175).
+func TestInvokeSlot_ThinkOnlyThenFindingLogsNoChainWarning(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	e := NewEngine(&thinkOnlyThenFindingCompleter{}, WithLogger(logger), WithTruncationFailover())
+
+	slot := Slot{
+		Primary: Agent{Name: "archer", Invocation: llmclient.Invocation{Model: "m"}},
+		Fallbacks: []Agent{
+			{Name: "archer", Invocation: llmclient.Invocation{Model: "b1"}},
+			{Name: "archer", Invocation: llmclient.Invocation{Model: "b2"}},
+		},
+	}
+	ctx := log.NewContext(context.Background(), logger)
+	r := e.invokeSlot(ctx, slot)
+
+	require.Equal(t, StatusOK, r.Status, "precondition: the final member's reply succeeded")
+	require.False(t, r.ThinkSuppressed, "precondition: the final reply was an answer, not a think run")
+	require.Equal(t, 2, r.ThinkOnlyAttempts, "precondition: both truncated attempts were counted")
+	assert.Equal(t, 1, r.ParsedFindingCount(), "the walk bought the final member's finding")
+
+	out := buf.String()
+	assert.NotContains(t, out, "exhausted the fallback chain",
+		"the walk ended in findings, so no chain was exhausted")
+	assert.NotContains(t, out, "bought zero findings",
+		"the walk bought a finding; a zero-findings warning on it is false")
+}

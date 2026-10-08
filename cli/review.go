@@ -289,15 +289,21 @@ func commitBaselineWriteback(ctx context.Context, baseline bool, prep *fanout.Pr
 //
 // Ordered by the counter the caller publishes beside it: when a slot really did
 // contribute nothing the salvage remedy is right, and that wins over the others
-// because it is the cause the surrounding comment exists to name. With no
-// contributed-nothing slot and no unreviewed chunks, every slot reported ok, which
-// leaves the re-packed subset as the only reason a file can go uncovered.
+// because it is the cause the surrounding comment exists to name. UnreviewedChunks
+// counts only a persona with a MIX of succeeded and failed chunks, so a persona that
+// failed WHOLLY reaches this selector with both counters at zero; Summary.Failed is
+// the counter that names it, and it must be read before the default, or a failed
+// slot is reported as a re-pack (TD cli/review.go:302). With none of the three set,
+// every slot reported ok, which leaves the re-packed subset as the only reason a
+// file can go uncovered.
 func baselineWithheldCause(s fanout.Summary) string {
 	switch {
 	case s.ContributedNothingCount > 0:
 		return "a salvaged or think-suppressed reply contributed nothing while still reporting ok"
 	case s.UnreviewedChunks > 0:
 		return "failed chunks left files unreviewed while the persona still reported ok"
+	case s.Failed > 0:
+		return "a slot failed, so none of its tagged files were reviewed"
 	default:
 		return "a slot re-packed its payload and reviewed only a subset of its tagged files"
 	}

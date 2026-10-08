@@ -1,3 +1,10 @@
+## [Unreleased]
+
+### Fixed
+
+- The baseline withheld-coverage warning in `atcr review` names a failed slot as a failed slot; a persona that failed wholly was reported as having re-packed its payload.
+- A fallback walk whose final reply carried findings no longer warns that think-only replies "exhausted the fallback chain"; the warning now fires only when the final reply was itself a think-only run.
+
 ## [35.33.0] - 2026-10-05
 
 *Epic 35.16.11.2.2.4.1 — post residue feature 35.16.11.2.2.4 think block stripping.*
