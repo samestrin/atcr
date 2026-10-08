@@ -62,6 +62,8 @@ func TestReExtractJustification(t *testing.T) {
 	t.Run("reports a missing review.md as an error, never as no-match", func(t *testing.T) {
 		_, _, _, err := ReExtractJustification(filepath.Join(dir, "gone.md"), "internal/thing.go", 42, 8)
 		require.Error(t, err, "a caller must be able to tell 'source pruned' from 'anchor did not match'")
+		require.ErrorContains(t, err, "stat review narrative",
+			"the error must come from the stat arm, not a later read failing on the same missing file")
 	})
 
 	t.Run("an out-of-range anchor line is no-match, not a panic", func(t *testing.T) {
