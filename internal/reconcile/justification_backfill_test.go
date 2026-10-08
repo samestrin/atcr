@@ -35,10 +35,12 @@ func TestReExtractJustification(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
 
 	t.Run("replays the excerpt for a verified anchor", func(t *testing.T) {
-		text, _, ok, err := ReExtractJustification(path, "internal/thing.go", 42, 8)
+		r, err := ReExtractJustification(path, "internal/thing.go", 42, 8)
 		require.NoError(t, err)
-		require.True(t, ok, "line 8 anchors internal/thing.go:42, so the replay must produce an excerpt")
+		text := r.Text
+		require.True(t, r.OK, "line 8 anchors internal/thing.go:42, so the replay must produce an excerpt")
 		assert.NotEmpty(t, text)
+		assert.False(t, r.PolicyDeclined, "an admitted file carries no policy refusal")
 		var marked bool
 		for _, l := range strings.Split(text, "\n") {
 			if isFenceMarker(l) {
@@ -54,22 +56,26 @@ func TestReExtractJustification(t *testing.T) {
 		// Line 3 is prose that never mentions the file: accepting it would let a
 		// backfill rewrite a record from an unrelated section of a same-named
 		// review.md in a different review directory.
-		_, _, ok, err := ReExtractJustification(path, "internal/thing.go", 42, 3)
+		r, err := ReExtractJustification(path, "internal/thing.go", 42, 3)
 		require.NoError(t, err)
-		assert.False(t, ok, "an unanchored line must not yield a replacement excerpt")
+		assert.False(t, r.OK, "an unanchored line must not yield a replacement excerpt")
+		assert.False(t, r.PolicyDeclined,
+			"a namesake mismatch is record-level, not a file-level policy refusal")
 	})
 
 	t.Run("reports a missing review.md as an error, never as no-match", func(t *testing.T) {
-		_, _, _, err := ReExtractJustification(filepath.Join(dir, "gone.md"), "internal/thing.go", 42, 8)
+		r, err := ReExtractJustification(filepath.Join(dir, "gone.md"), "internal/thing.go", 42, 8)
 		require.Error(t, err, "a caller must be able to tell 'source pruned' from 'anchor did not match'")
 		require.ErrorContains(t, err, "stat review narrative",
 			"the error must come from the stat arm, not a later read failing on the same missing file")
+		assert.False(t, r.PolicyDeclined, "'I could not look' is not a policy verdict")
 	})
 
 	t.Run("an out-of-range anchor line is no-match, not a panic", func(t *testing.T) {
-		_, _, ok, err := ReExtractJustification(path, "internal/thing.go", 42, 9999)
+		r, err := ReExtractJustification(path, "internal/thing.go", 42, 9999)
 		require.NoError(t, err)
-		assert.False(t, ok)
+		assert.False(t, r.OK)
+		assert.False(t, r.PolicyDeclined)
 	})
 
 	// A VERIFIED anchor whose whole block is quoted example text. extractSection
@@ -87,9 +93,11 @@ func TestReExtractJustification(t *testing.T) {
 		p := filepath.Join(dir, "elided.md")
 		require.NoError(t, os.WriteFile(p, []byte(elided), 0o600))
 
-		text, _, ok, err := ReExtractJustification(p, "internal/thing.go", 42, 4)
+		r, err := ReExtractJustification(p, "internal/thing.go", 42, 4)
 		require.NoError(t, err)
-		assert.False(t, ok,
+		text := r.Text
+		assert.False(t, r.PolicyDeclined)
+		assert.False(t, r.OK,
 			"an all-elided section carries no reviewer content, so it must not authorise a rewrite")
 		assert.Empty(t, text,
 			"returning ok=true here would blank a stored justification that no later reconcile can replace")
@@ -120,10 +128,11 @@ func TestReExtractJustification_AppliesTheProducerExclusions(t *testing.T) {
 
 		// Line 3 is the anchored narrative line, so the only reason to refuse is the
 		// salvaged status the producer honours.
-		text, _, ok, err := ReExtractJustification(p, "internal/thing.go", 42, 3)
+		r, err := ReExtractJustification(p, "internal/thing.go", 42, 3)
 		require.NoError(t, err)
-		assert.False(t, ok, "a source the producer refuses must not authorise a replay rewrite")
-		assert.Empty(t, text)
+		assert.False(t, r.OK, "a source the producer refuses must not authorise a replay rewrite")
+		assert.Empty(t, r.Text)
+		assert.True(t, r.PolicyDeclined, "a wholly salvaged reply is a file-level policy refusal")
 	})
 
 	// The third exclusion, and the one that shipped unexercised: a status.json naming
@@ -144,13 +153,14 @@ func TestReExtractJustification_AppliesTheProducerExclusions(t *testing.T) {
 		// Line 3 is the anchored narrative line, so the only reason to refuse is the
 		// desync. Withhold, mirroring the producer — and withhold as ok=false, not as
 		// an error: err is reserved for "the source is gone or unreadable".
-		text, section, ok, err := ReExtractJustification(p, "internal/thing.go", 42, 3)
+		r, err := ReExtractJustification(p, "internal/thing.go", 42, 3)
 		require.NoError(t, err,
 			"a desynced pair is a mismatch, not an unreadable source — collapsing the two "+
 				"would make a pruned review dir indistinguishable from this")
-		assert.False(t, ok, "a bin list the content cannot account for must not authorise a replay rewrite")
-		assert.Empty(t, text)
-		assert.Empty(t, section)
+		assert.False(t, r.OK, "a bin list the content cannot account for must not authorise a replay rewrite")
+		assert.Empty(t, r.Text)
+		assert.Empty(t, r.Section)
+		assert.True(t, r.PolicyDeclined, "a desynced bin list is a file-level policy refusal")
 	})
 
 	t.Run("a draft citation inside a leading think run is not an anchor", func(t *testing.T) {
@@ -163,10 +173,12 @@ func TestReExtractJustification_AppliesTheProducerExclusions(t *testing.T) {
 		// Line 1 carries the anchor, but it lives inside the leading run the
 		// findings parser refused — the model DISCARDED it. Publishing it as the
 		// finding's provenance is the damage draftLineSet exists to prevent.
-		text, _, ok, err := ReExtractJustification(p, "internal/thing.go", 42, 1)
+		r, err := ReExtractJustification(p, "internal/thing.go", 42, 1)
 		require.NoError(t, err)
-		assert.False(t, ok, "a draft-run line must not authorise a replay rewrite")
-		assert.Empty(t, text)
+		assert.False(t, r.OK, "a draft-run line must not authorise a replay rewrite")
+		assert.Empty(t, r.Text)
+		assert.False(t, r.PolicyDeclined,
+			"a draft anchor is record-level: the file itself is admitted, so it is not a policy refusal")
 	})
 }
 
@@ -197,8 +209,48 @@ func TestReviewPolicyDeclinesFile_RefusesASymlinkToAnInCapReview(t *testing.T) {
 
 	// And the replay gate reads the same arm: the anchored line 3 matches, so the
 	// link is the only reason to refuse.
-	text, _, ok, err := ReExtractJustification(link, "internal/thing.go", 42, 3)
+	r, err := ReExtractJustification(link, "internal/thing.go", 42, 3)
 	require.NoError(t, err)
-	assert.False(t, ok, "a symlink must not authorise a replay rewrite")
-	assert.Empty(t, text)
+	assert.False(t, r.OK, "a symlink must not authorise a replay rewrite")
+	assert.Empty(t, r.Text)
+	assert.True(t, r.PolicyDeclined, "the replay must hand back the same verdict the predicate reports")
+}
+
+// Replay.PolicyDeclined is what lets replayCandidates read the file-level verdict
+// from the replay it already ran instead of evaluating the policy a second time, so
+// it must agree with ReviewPolicyDeclinesFile on every file-level arm and stay false
+// on every record-level one. The over-cap arm is the one the subtests above do not
+// reach.
+func TestReExtractJustification_PolicyDeclinedMatchesThePredicate(t *testing.T) {
+	dir := t.TempDir()
+	big := filepath.Join(dir, "big.md")
+	body := "## Findings\n\n- **internal/thing.go:42** the real narrative explaining the defect.\n"
+	require.NoError(t, os.WriteFile(big,
+		[]byte(body+strings.Repeat("x", int(maxReviewBytes))), 0o600))
+	small := filepath.Join(dir, "small.md")
+	require.NoError(t, os.WriteFile(small, []byte(body), 0o600))
+
+	for _, tc := range []struct {
+		name   string
+		path   string
+		anchor int
+		want   bool
+	}{
+		{"over the size cap", big, 3, true},
+		{"admitted and anchored", small, 3, false},
+		{"admitted, namesake anchor", small, 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			predicate, err := ReviewPolicyDeclinesFile(tc.path)
+			require.NoError(t, err)
+			r, err := ReExtractJustification(tc.path, "internal/thing.go", 42, tc.anchor)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, predicate)
+			assert.Equal(t, predicate, r.PolicyDeclined,
+				"the replay's verdict must be the predicate's, or the walk's single evaluation reports a different answer")
+			if r.PolicyDeclined {
+				assert.False(t, r.OK, "a declined file never yields an excerpt")
+			}
+		})
+	}
 }
