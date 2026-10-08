@@ -237,8 +237,9 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		// failure the operator would need to diagnose it. The two are one condition:
 		// whatever went unmeasured, the paid artifacts are the only record of why.
 		//
-		// Only the INFRASTRUCTURE half of slotFailures triggers retention, via
-		// retainForSlotFailures: an unmeasured_salvaged_ok slot is a call that
+		// Every slotFailures reason except unmeasured_salvaged_ok triggers retention,
+		// via retainForSlotFailures (which also states the accepted loss of the
+		// delete): an unmeasured_salvaged_ok slot is a call that
 		// SUCCEEDED and contributed nothing, which a reviewer that habitually answers
 		// on its reasoning channel produces on EVERY run — so counting it here made
 		// every scheduled run retain a full work dir that nothing reclaims, and the
@@ -911,9 +912,10 @@ func summarizeCaseFailureReasons(failures []benchmark.CaseFailure) string {
 // count reviewers — one dead provider on a 200-case suite is 200 slots, not 1.
 //
 // Only INFRASTRUCTURE-class slots count. An unmeasured_salvaged_ok slot is a call
-// that SUCCEEDED, so folding it in reports a clean panel as failed_slots=N and (via
-// retainForSlotFailures, which reads the same predicate) retains a work dir nothing
-// reclaims. It is reported under its own key by unmeasuredSlotCount.
+// that SUCCEEDED, so folding it in reports a clean panel as failed_slots=N. It is
+// reported under its own key by unmeasuredSlotCount. Retention is a separate
+// decision with its own fail-direction: retainForSlotFailures does not read this
+// predicate, and keeps the work dir for every reason but unmeasured_salvaged_ok.
 func failedSlotCount(m map[reviewerKey][]benchmark.SlotFailure) int {
 	n := 0
 	for _, v := range m {
@@ -959,15 +961,32 @@ func failedReviewerCount(m map[reviewerKey][]benchmark.SlotFailure) int {
 }
 
 // retainForSlotFailures reports whether any recorded slot failure justifies keeping
-// the paid work dir. Only an INFRASTRUCTURE loss does: its status.json is the only
-// record of why the slot died, whereas an unmeasured_salvaged_ok slot's cause is
+// the paid work dir. Every reason but unmeasured_salvaged_ok does: an infrastructure
+// loss's status.json is the only record of why the slot died, whereas an
+// unmeasured_salvaged_ok slot's cause is
 // already fully described in the run-result and recur on every run for a reviewer
 // that answers on its reasoning channel — retaining for it would accumulate a full
 // work dir per scheduled run with nothing to diagnose.
+//
+// The fail-direction is this function's own, NOT SlotFailureIsInfrastructure's.
+// That predicate fails closed because it feeds tallies, where an unreadable reason
+// must not be counted as a failure. This one gates a DELETE, where the same
+// direction is inverted: an unknown or empty reason would remove the only copy of
+// a paid panel. So it retains unless the reason is exactly SlotFailureUnmeasuredOK;
+// a reason this build cannot name keeps the work dir. failedSlotCount and
+// failedReviewerCount keep the tally predicate (TD cli/benchmark_repostate.go:246).
+//
+// Accepted loss: an unmeasured_salvaged_ok slot's work dir is deleted, and with it
+// the status.json that told a wholly-salvaged slot (salvaged_chunks) from a
+// think-suppressed one. slotUnmeasuredReason folds both into one token, so the
+// run-result does not replace that distinction. It is given up on purpose: the
+// remedy for both is the same (the reviewer answers on its reasoning channel), so
+// no operator is sent the wrong way, and keeping the dir would grow the volume by
+// a full work dir on every scheduled run.
 func retainForSlotFailures(m map[reviewerKey][]benchmark.SlotFailure) bool {
 	for _, v := range m {
 		for _, sf := range v {
-			if benchmark.SlotFailureIsInfrastructure(sf.Reason) {
+			if sf.Reason != benchmark.SlotFailureUnmeasuredOK {
 				return true
 			}
 		}
