@@ -407,6 +407,16 @@ type Result struct {
 	// reply outright (T6, sprint 35.16.11.2.2.4).
 	Salvaged bool
 
+	// SalvagedOnStop is WHY a single reply salvaged: the provider stopped on a
+	// finish reason other than a length cutoff, so the salvage is a finished answer
+	// on the reasoning channel rather than an abandoned draft
+	// (llmclient.Completion.SalvagedOnStop). invokeSlot copies it from the
+	// Completion; the ErrSalvagedReply arm leaves it false, since no Completion
+	// reached it to read a reason from. It is a per-reply fact: mergeResultGroup
+	// does not fold it onto a merged result, it keeps it per bin in
+	// chunkSalvagedOnStop instead.
+	SalvagedOnStop bool
+
 	// UnparseableResponse marks a StatusOK reviewer response that carried content
 	// but yielded zero parseable findings. It is deliberately NOT a failure: that
 	// is exactly what a genuine clean review looks like, and failing it over
@@ -569,6 +579,12 @@ type Result struct {
 	// so parseFindings needs this to refuse only the bins the client salvaged
 	// rather than the whole persona. Nil for an unchunked result.
 	chunkSalvaged []bool
+
+	// chunkSalvagedOnStop is each bin's SalvagedOnStop, same length and same order
+	// as chunkSalvaged, written in the same mergeResultGroup branch. It tells
+	// parseFindings which salvaged bins finished on a stop reason (kept) and which
+	// were cut off (refused). Nil for an unchunked result.
+	chunkSalvagedOnStop []bool
 }
 
 // parseFindings returns the findings in r's model output: the union of each
@@ -619,13 +635,13 @@ type Result struct {
 //     TestResult_ParseFindings_SalvagedOnStopKeepsItsFindings, whose two subtests are
 //     the two directions.
 //
-// The chunked arms below deliberately do NOT take that pairing. There is no
-// per-chunk truncation flag to pair chunkSalvaged with — mergeResultGroup OR-folds
-// ResponseTruncated across every bin (chunker.go:479), so one bin's truncation would
-// suppress a sibling bin's salvaged-but-complete findings, reintroducing the
-// persona-wide-fold defect the chunk contract exists to prevent. Making the chunked
-// path precise needs the client to report truncation per reply, which is the flag
-// split filed as TD-018 and scoped out of this change.
+// The chunked arms make the same distinction per bin, but NOT by pairing
+// chunkSalvaged with ResponseTruncated: mergeResultGroup OR-folds ResponseTruncated
+// across every bin, so one bin's truncation would suppress a sibling bin's
+// salvaged-but-complete findings. They read chunkSalvagedOnStop instead, the
+// client's per-reply reason (TD-018), and skip a bin only when it salvaged AND
+// not on a stop reason. A missing or misaligned chunkSalvagedOnStop reads as
+// not-on-stop, so every salvaged bin is refused as before: fail closed.
 func (r *Result) parseFindings() []stream.Finding {
 	if r.parsedFindingsSet {
 		return r.parsedFindings
@@ -646,8 +662,9 @@ func (r *Result) parseFindings() []stream.Finding {
 	if !perChunk && r.Salvaged {
 		return r.cacheParsedFindings(nil)
 	}
+	onStop := perChunk && len(r.chunkSalvagedOnStop) == len(r.chunkContents)
 	for i, c := range r.chunkContents {
-		if perChunk && r.chunkSalvaged[i] {
+		if perChunk && r.chunkSalvaged[i] && (!onStop || !r.chunkSalvagedOnStop[i]) {
 			continue
 		}
 		answer, _ := llmclient.SplitThink(c)
@@ -1464,6 +1481,7 @@ func (e *Engine) invokeSingleShot(ctx context.Context, a Agent) Result {
 		records   []llmclient.CallRecord
 		truncated bool
 		salvaged  bool
+		onStop    bool
 		err       error
 	)
 	// Prefer the truncation-aware MetaCompleter so a finish_reason=length response
@@ -1474,7 +1492,7 @@ func (e *Engine) invokeSingleShot(ctx context.Context, a Agent) Result {
 		var comp llmclient.Completion
 		comp, err = mc.CompleteWithMeta(ctx, a.Invocation)
 		content, usage, records, truncated = comp.Content, comp.Usage, comp.CallRecords, comp.Truncated
-		salvaged = comp.Salvaged
+		salvaged, onStop = comp.Salvaged, comp.SalvagedOnStop
 	} else if uc, ok := e.completer.(UsageCompleter); ok {
 		content, usage, records, err = uc.CompleteWithUsage(ctx, a.Invocation)
 	} else {
@@ -1489,6 +1507,7 @@ func (e *Engine) invokeSingleShot(ctx context.Context, a Agent) Result {
 		MaxFindings:       a.MaxFindings,
 		ResponseTruncated: truncated,
 		Salvaged:          salvaged,
+		SalvagedOnStop:    onStop,
 		// Preserve the original tool request even on the single-shot path so a
 		// degraded tool agent (invokeDegraded reuses this) reports tools_requested.
 		ToolsRequested: a.Tools,
@@ -1508,6 +1527,9 @@ func (e *Engine) invokeSingleShot(ctx context.Context, a Agent) Result {
 		// (TD internal/fanout/engine.go:1433).
 		if errors.Is(err, llmclient.ErrSalvagedReply) {
 			r.Salvaged = true
+			// No Completion reached this arm, so there is no reason to read:
+			// SalvagedOnStop stays false and the reply stays fail-closed.
+			r.SalvagedOnStop = false
 		}
 		// Status stays StatusFailed, so the slot still walks the fallback chain —
 		// deliberately unchanged here. Flipping StatusOK on an error return would
