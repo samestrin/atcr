@@ -1068,7 +1068,11 @@ func TestBackfillJustifications_SeparatesPolicyRefusalsFromMissingTrees(t *testi
 	// POLICY: the review.md IS present and readable at its own path, over the size cap
 	// so the producer's policy excludes it. A whole-file arm of the cap, so the
 	// narrative body never matters.
-	rd := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+	// The review dir carries the reconciled_at both records' run_id was minted from,
+	// so the over-cap file is provably the record's OWN file, not a namesake.
+	ownDir := filepath.Join(reviewRoot, "sprint-a", "multi-agent")
+	writeReconciledSummary(t, ownDir, "2026-08-01T00:00:00Z")
+	rd := filepath.Join(ownDir, "sources", "pool", "raw", "agent", "dax")
 	require.NoError(t, os.MkdirAll(rd, 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"),
 		[]byte(strings.Repeat("padding to clear the producer's 1 MiB cap\n", 1<<16)), 0o600))
@@ -1179,7 +1183,11 @@ func TestBackfillJustifications_SymlinkCandidateIsAPolicyRefusalNotAnAbsentTree(
 	require.NoError(t, os.WriteFile(target,
 		[]byte("# review\n\n- **internal/thing.go:42** the narrative a follow would have stamped.\n"), 0o600))
 
-	rd := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+	// The symlink sits in the record's OWN review dir — its summary.json carries the
+	// reconciled_at the run_id was minted from — so the refusal is attributable.
+	ownDir := filepath.Join(reviewRoot, "sprint-a", "multi-agent")
+	writeReconciledSummary(t, ownDir, "2026-08-01T00:00:00Z")
+	rd := filepath.Join(ownDir, "sources", "pool", "raw", "agent", "dax")
 	require.NoError(t, os.MkdirAll(rd, 0o750))
 	require.NoError(t, os.Symlink(target, filepath.Join(rd, "review.md")))
 
@@ -1194,6 +1202,85 @@ func TestBackfillJustifications_SymlinkCandidateIsAPolicyRefusalNotAnAbsentTree(
 			"stamp from a file the producer refused, so the replay set would exceed the stamp set")
 	assert.Equal(t, 1, res.Unresolved, "nothing yielded an excerpt, so the observation count stands")
 	assert.Equal(t, 1, res.PolicyUnrepairable,
-		"a symlink named review.md is refused by policy wherever it sits, so restoring a file cannot "+
-			"fix it and the operator must not be sent looking for one")
+		"a symlink named review.md in the record's own review dir is refused by policy, so restoring "+
+			"a file cannot fix it and the operator must not be sent looking for one")
+}
+
+// TD internal/localdebt/backfill.go:382 — the namesake narrowing closed the ordinary
+// in-cap arm (TestBackfillJustifications_NamesakeInAnotherReviewIsNotAPolicyRefusal)
+// but left the symlink and over-cap arms speaking for a record they cannot be shown
+// to belong to. The policy VERDICT on those files is path-independent; attributing it
+// to this record is not. With the record's own tree pruned and a same-named file the
+// producer would refuse in an UNRELATED review, the operator was told "0 review tree
+// pruned, 1 declined by policy" — sent away from the one restore that would work.
+//
+// Ownership is checkable from disk: a record's run_id is
+// `<reconciled_at>-<base(reviewDir)>` (internal/localdebt/reconcile.go), and the same
+// reconciled_at lives in `<reviewDir>/reconciled/summary.json`. The unrelated review
+// here carries a summary.json with a DIFFERENT reconciled_at, so it is a real review
+// that provably does not own the record — not merely one missing its summary.
+func TestBackfillJustifications_PolicyRefusingNamesakeInAnotherReviewIsNotAttributed(t *testing.T) {
+	rec := `{"schema_version":3,"id":"aaaa0001","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
+		`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
+		`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+		`"justification":"- **internal/thing.go:42** a stale excerpt nothing can replay.",` +
+		`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":3}}`
+
+	cases := []struct {
+		name  string
+		plant func(t *testing.T, root, reviewMD string)
+	}{
+		{"symlink namesake", func(t *testing.T, root, reviewMD string) {
+			target := filepath.Join(root, "elsewhere", "review.md")
+			require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o750))
+			require.NoError(t, os.WriteFile(target,
+				[]byte("# review\n\n- **internal/thing.go:42** the narrative a follow would have stamped.\n"), 0o600))
+			require.NoError(t, os.Symlink(target, reviewMD))
+		}},
+		{"over-cap namesake", func(t *testing.T, _, reviewMD string) {
+			require.NoError(t, os.WriteFile(reviewMD,
+				[]byte(strings.Repeat("padding to clear the producer's 1 MiB cap\n", 1<<16)), 0o600))
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			store := filepath.Join(root, "debt")
+			reviewRoot := filepath.Join(root, "reviews")
+			require.NoError(t, os.MkdirAll(store, 0o750))
+
+			// The record's OWN review (2026-08-01) is gone. sprint-b is a different
+			// review — same base, different reconciled_at — holding a same-named file
+			// the producer's policy would refuse.
+			otherDir := filepath.Join(reviewRoot, "sprint-b", "multi-agent")
+			writeReconciledSummary(t, otherDir, "2026-08-09T00:00:00Z")
+			rd := filepath.Join(otherDir, "sources", "pool", "raw", "agent", "dax")
+			require.NoError(t, os.MkdirAll(rd, 0o750))
+			tc.plant(t, root, filepath.Join(rd, "review.md"))
+
+			writeShard(t, store, "2026-08", rec)
+
+			res, err := BackfillJustifications(store, reviewRoot, false)
+			require.NoError(t, err)
+
+			assert.Equal(t, 1, res.Scanned)
+			assert.Zero(t, res.Rewritten)
+			assert.Equal(t, 1, res.Unresolved, "nothing yielded an excerpt, so the observation count stands")
+			assert.Zero(t, res.PolicyUnrepairable,
+				"the refused file belongs to an unrelated review, so it is no evidence that restoring "+
+					"the record's own review.md cannot help")
+			assert.Equal(t, 1, res.Unresolved-res.PolicyUnrepairable,
+				"the record's own tree is pruned, so it belongs wholly to the missing-tree class")
+		})
+	}
+}
+
+// writeReconciledSummary stamps a minimal `<reviewDir>/reconciled/summary.json`
+// carrying reconciledAt — the one field replayCandidates' ownership check reads.
+func writeReconciledSummary(t *testing.T, reviewDir, reconciledAt string) {
+	t.Helper()
+	dir := filepath.Join(reviewDir, "reconciled")
+	require.NoError(t, os.MkdirAll(dir, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "summary.json"),
+		[]byte(`{"reconciled_at":"`+reconciledAt+`"}`), 0o600))
 }
