@@ -190,18 +190,19 @@ func TestInvokeSlot_SingleAttemptThinkOnlyDoesNotClaimAChainWasExhausted(t *test
 // descends and the truncated arm counts one attempt) and whose SUBSEQUENT calls are
 // NON-truncated think-only replies (so the walk returns out of the StatusOK block).
 // That is the only shape that drives the >1 arm of the StatusOK-block warning: at
-// least one earlier attempt was think-only AND the final reply was too.
-type truncatedThenCleanThinkOnlyCompleter struct{ calls int }
+// least one earlier attempt was think-only AND the final reply was too. No call
+// ever yields findings: every reply is wholly reasoning.
+//
+// Only CompleteWithMeta carries the truncation sequence. The engine routes through
+// it, so Complete exists to satisfy the interface and returns the same reasoning-only
+// reply without touching the call count.
+type truncatedThenUntruncatedThinkOnlyCompleter struct{ calls int }
 
-func (c *truncatedThenCleanThinkOnlyCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
-	c.calls++
-	if c.calls == 1 {
-		return "\x3cthink\x3ereasoning only, no answer\x3c/think\x3e", nil
-	}
+func (c *truncatedThenUntruncatedThinkOnlyCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
 	return "\x3cthink\x3ereasoning only, no answer\x3c/think\x3e", nil
 }
 
-func (c *truncatedThenCleanThinkOnlyCompleter) CompleteWithMeta(_ context.Context, _ llmclient.Invocation) (llmclient.Completion, error) {
+func (c *truncatedThenUntruncatedThinkOnlyCompleter) CompleteWithMeta(_ context.Context, _ llmclient.Invocation) (llmclient.Completion, error) {
 	c.calls++
 	return llmclient.Completion{Content: "\x3cthink\x3ereasoning only, no answer\x3c/think\x3e", Truncated: c.calls == 1}, nil
 }
@@ -211,7 +212,7 @@ func (c *truncatedThenCleanThinkOnlyCompleter) CompleteWithMeta(_ context.Contex
 func TestInvokeSlot_MultiAttemptThinkOnlyKeepsTheChainWording(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
-	e := NewEngine(&truncatedThenCleanThinkOnlyCompleter{}, WithLogger(logger), WithTruncationFailover())
+	e := NewEngine(&truncatedThenUntruncatedThinkOnlyCompleter{}, WithLogger(logger), WithTruncationFailover())
 
 	slot := Slot{
 		Primary:   Agent{Name: "archer", Invocation: llmclient.Invocation{Model: "m"}},
@@ -262,7 +263,7 @@ func TestInvokeSlot_ReturnsTheWalkTotalThinkOnlyAttempts(t *testing.T) {
 func TestInvokeSlot_StatusOKReturnCarriesTheWalkTotal(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
-	e := NewEngine(&truncatedThenCleanThinkOnlyCompleter{}, WithLogger(logger), WithTruncationFailover())
+	e := NewEngine(&truncatedThenUntruncatedThinkOnlyCompleter{}, WithLogger(logger), WithTruncationFailover())
 
 	slot := Slot{
 		Primary:   Agent{Name: "archer", Invocation: llmclient.Invocation{Model: "m"}},
