@@ -443,33 +443,28 @@ func TestVerdictFromAnswer_OutOfEnumExampleAfterTheCloserKeepsTheVerdict(t *test
 		"the graded verdict must be the real envelope's, not the quoted example's")
 }
 
-// TestVerdictFromAnswer_UnusableSuffixFallsBackToWholeAnswerForAllThree records
-// the residual this change INHERITS rather than creates, because the tag
-// structure of the shape it recovers is identical to a shape it cannot:
+// TestVerdictFromAnswer_UnusableSuffixAfterARefutedPrefixIsRefusedForAllThree
+// pins the verify lane's policy for the one shape ClassifyUnopenedCloser cannot
+// settle on structure alone:
 //
-//	{real} … prose "</think>" {bad example}   → recovered (the point of the fix)
-//	{draft} </think> {bad}                    → grades the draft (the residual)
+//	{real} … prose "</think>" {bad example}   → identical tag structure
+//	{draft} </think> {bad}                    → identical tag structure
 //
-// Once a suffix holds no usable verdict, ClassifyUnopenedCloser returns
-// SectionWholeAnswer by construction and parseVerdict reads the answer end to
-// end — so a draft before the closer is graded. The empty_response and
-// malformed_output rows are INHERITED: that was already true of them before this
-// change. The invalid_verdict row is NOT — it is a behaviour change this change
-// makes. Before the third clause existed, an out-of-enum object DID count as an
-// envelope, so a draft before the closer plus a quoted out-of-enum example after it
-// and the gate blocks on unverifiable); after it, the suffix carries no envelope,
-// the whole answer is read, and the draft is graded refuted (which never blocks).
-// Inherited and introduced rows are asserted together only so the reader can see
-// the set at a glance; read the invalid_verdict row as the one this diff moved
-// (TD internal/verify/invoke.go:766 holds the behaviour decision, and
-// invoke.go's relaxation note lists only the benign direction).
+// Once a suffix holds no usable verdict the shared rule returns the whole answer
+// and reports prefixHasEnvelope, so parseVerdict would grade the pre-closer text.
+// That used to ship: a withdrawn draft `refuted` was graded, and `refuted` is the
+// one grade that never blocks the gate (reconcile.IsFailing), so a CRITICAL that
+// AMBIGUOUS had blocked passed CI on a verdict the model withdrew
+// (TD internal/verify/invoke.go:766).
 //
-// Separating the two shapes is not possible at this layer: they differ only in
-// whether the pre-closer text was abandoned, which nothing in the tag structure
-// records — the same accepted loss SplitThink's own doc states.
-func TestVerdictFromAnswer_UnusableSuffixFallsBackToWholeAnswerForAllThree(t *testing.T) {
+// The lane now refuses that shape when, and only when, the whole-answer read is
+// `refuted`. The assertions MOVED here from verdictRefuted to the refusal for all
+// three unusable-suffix diagnostics; the two shapes above are still inseparable,
+// so the accepted loss is a REAL `refuted` in the first shape, which becomes a
+// disclosed `unverifiable` instead.
+func TestVerdictFromAnswer_UnusableSuffixAfterARefutedPrefixIsRefusedForAllThree(t *testing.T) {
 	t.Parallel()
-	draft := `{"verdict":"refuted","reasoning":"DRAFT"}` + "\n</think>\n"
+	draft := `{"verdict":"refuted","reasoning":"DRAFT"}` + "\n" + closerTag() + "\n"
 
 	for name, suffix := range map[string]string{
 		"invalid_verdict":  `{"verdict":"maybe"}`,
@@ -481,12 +476,73 @@ func TestVerdictFromAnswer_UnusableSuffixFallsBackToWholeAnswerForAllThree(t *te
 		// ONE regressed diagnostic would ever be reported. t.Run evaluates each row
 		// independently and reports them all.
 		t.Run(name, func(t *testing.T) {
-			v, ambiguous, _ := verdictFromAnswer(draft + suffix)
+			v, ambiguous, discarded := verdictFromAnswer(draft + suffix)
 
-			require.False(t, ambiguous, name+": an unusable suffix carries no envelope, so nothing is ambiguous")
+			assert.True(t, ambiguous,
+				name+": a refuted prefix before an unusable suffix is not provably committed, so the lane refuses")
+			assert.Nil(t, v, name+": a refusal grades nothing — the draft must not be returned")
+			assert.Zero(t, discarded, name+": a refusal discards no prefix")
+		})
+	}
+}
+
+// TestVerdictFromAnswer_UnusableSuffixAfterANonRefutedPrefixKeepsTheVerdict is
+// the other half of the narrowing: only `refuted` clears the gate, so it is the
+// only whole-answer grade the lane refuses. A `confirmed` or `unverifiable` read
+// blocks under the default gate whichever envelope it came from, so refusing it
+// would cost availability for no safety. AC2's quoted-example shape is the same
+// rule seen from the legitimate side
+// (TestVerdictFromAnswer_OutOfEnumExampleAfterTheCloserKeepsTheVerdict).
+func TestVerdictFromAnswer_UnusableSuffixAfterANonRefutedPrefixKeepsTheVerdict(t *testing.T) {
+	t.Parallel()
+
+	for _, verdict := range []string{verdictConfirmed, verdictUnverifiable} {
+		prefix := `{"verdict":"` + verdict + `","reasoning":"REAL"}` + "\n" + closerTag() + "\n"
+		for name, suffix := range map[string]string{
+			"invalid_verdict":  `{"verdict":"maybe"}`,
+			"malformed_output": `not an object at all`,
+			"empty_response":   ``,
+		} {
+			t.Run(verdict+"/"+name, func(t *testing.T) {
+				v, ambiguous, _ := verdictFromAnswer(prefix + suffix)
+
+				require.False(t, ambiguous, "a "+verdict+" read blocks the gate anyway, so it is graded, not refused")
+				require.NotNil(t, v)
+				assert.Equal(t, verdict, v.Verdict)
+				assert.Equal(t, "REAL", v.Notes)
+			})
+		}
+	}
+}
+
+// TestInvokeSkeptic_RefutedPrefixBeforeAnUnusableSuffixBlocksTheGate drives the
+// refused shape through the production path and on to the consumer the defect
+// was about. Before the change invokeSkeptic returned the draft `refuted`, and
+// reconcile.IsFailing returned false for a CRITICAL finding under the default
+// gate: CI passed on a verdict the model withdrew.
+func TestInvokeSkeptic_RefutedPrefixBeforeAnUnusableSuffixBlocksTheGate(t *testing.T) {
+	t.Parallel()
+
+	for name, suffix := range map[string]string{
+		"invalid_verdict":  `{"verdict":"maybe"}`,
+		"malformed_output": `not an object at all`,
+		"empty_response":   ``,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
+			cc := finalChat(`{"verdict":"refuted","reasoning":"DRAFT"}` + "\n" + closerTag() + "\n" + suffix)
+
+			v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", cc, okDispatcher(), false)
+
+			require.NoError(t, err)
 			require.NotNil(t, v)
-			assert.Equal(t, verdictRefuted, v.Verdict,
-				name+": the whole-answer fallback reads the pre-closer text — identical across all three diagnostics")
+			assert.Equal(t, verdictUnverifiable, v.Verdict, name+": the withdrawn draft must not be graded")
+			assert.Equal(t, "ambiguous_unopened_closer", v.Notes, name+": the refusal reuses the existing token")
+			assert.True(t, reconcile.IsFailing("CRITICAL", "", v, "MEDIUM", false),
+				name+": under the default gate the refused CRITICAL must block CI, as AMBIGUOUS did")
+			assert.Contains(t, buf.String(), "class=ambiguous_unopened_closer",
+				name+": the refusal must be disclosed under its own class")
 		})
 	}
 }
@@ -571,20 +627,20 @@ func TestVerdictFromAnswer_ADiagnosticNoteNeverQuotesOnlyTheFragment(t *testing.
 }
 
 // TestCarriesVerdict_RecoveredVerdictReachesTheGateAsItself is the consumer trace
-// for the T1 change, and it records the one consequence the risk analysis did not:
-// narrowing AMBIGUOUS does not only relax the gate in the strict direction.
+// for narrowing AMBIGUOUS, and it records that the narrowing moves the gate in
+// both directions — which is why the verify lane narrows it only part-way.
 //
 // IsFailing (internal/reconcile/gate.go:96) is the consumer. Under the DEFAULT
 // gate (requireVerified=false) an `unverifiable` finding at or above the threshold
-// BLOCKS, while a `refuted` one never does. So for a reply whose real verdict was
-// refuted, recovering it FLIPS a blocking finding to a non-blocking one — a
-// relaxation, not a tightening.
+// BLOCKS, while a `refuted` one never does. The shape below is a real verdict
+// followed by prose naming a bare closer and a quoted out-of-enum example; its tag
+// structure is identical to a draft abandoned before an unparseable reply.
 //
-// That is the correct outcome and the point of the fix: the skeptic disproved the
-// finding, and the old behaviour blocked CI on a verdict it had refused to read.
-// But "it can only turn refusals back into graded verdicts" reads as though the
-// gate can only get stricter, and on this path it does not. Asserted here so the
-// direction is a recorded decision rather than a surprise in a later review.
+// A recovered `confirmed` blocks either way, so it is graded. A recovered
+// `refuted` would STOP blocking, and in the draft shape that is a withdrawn
+// verdict clearing the gate (TD internal/verify/invoke.go:766) — so the lane
+// refuses it, and the refusal blocks exactly as the pre-narrowing AMBIGUOUS
+// collapse did. A real `refuted` in this shape is the accepted loss.
 func TestCarriesVerdict_RecoveredVerdictReachesTheGateAsItself(t *testing.T) {
 	t.Parallel()
 	const quoted = "\nAn out-of-enum example is written {\"verdict\":\"maybe\"}, which parses to nothing.\n"
@@ -592,37 +648,46 @@ func TestCarriesVerdict_RecoveredVerdictReachesTheGateAsItself(t *testing.T) {
 	// The baseline, stated once rather than re-asserted per row: whatever the real
 	// verdict was, the pre-fix AMBIGUOUS collapse graded it `unverifiable`, and the
 	// default gate BLOCKS on that. It is asserted here because it is what makes the
-	// per-row results below a change rather than a description — but it does not
-	// depend on the rows, so folding it into the loop would only make it look like it
-	// did.
+	// per-row results below a change or a non-change rather than a description —
+	// but it does not depend on the rows, so folding it into the loop would only
+	// make it look like it did.
+	refusal := &reconcile.Verification{Verdict: verdictUnverifiable, Notes: "ambiguous_unopened_closer"}
 	require.True(t,
-		reconcile.IsFailing("HIGH", "", &reconcile.Verification{Verdict: verdictUnverifiable}, "MEDIUM", false),
+		reconcile.IsFailing("HIGH", "", refusal, "MEDIUM", false),
 		"the pre-fix collapse graded unverifiable, which the default gate blocks on — the baseline both rows move from")
 
 	for _, tc := range []struct {
 		verdict        string
+		refused        bool
 		blocksAfter    bool
 		blocksVerified bool
 		why            string
 	}{
-		{"confirmed", true, true, "a recovered confirmed still blocks — and is the only verdict that blocks under --require-verified"},
-		{"refuted", false, false, "a recovered refuted STOPS blocking: the skeptic disproved the finding, which is what the gate is told to honour"},
+		{"confirmed", false, true, true, "a recovered confirmed still blocks — and is the only verdict that blocks under --require-verified"},
+		{"refuted", true, true, false, "a refuted prefix is refused, so it blocks as AMBIGUOUS did: grading it could clear the gate on a withdrawn draft"},
 	} {
 		answer := `{"verdict":"` + tc.verdict + `","reasoning":"REAL"}` +
 			"\nA reply ending on </think> began mid-thought." + quoted
 
 		v, ambiguous, _ := verdictFromAnswer(answer)
 
-		require.False(t, ambiguous, tc.verdict+": the quoted example is not an envelope")
-		require.NotNil(t, v)
-		require.Equal(t, tc.verdict, v.Verdict, tc.verdict+": the real verdict must be recovered intact")
+		require.Equal(t, tc.refused, ambiguous, tc.verdict+": only a refuted prefix-only read is refused")
+		if tc.refused {
+			require.Nil(t, v, tc.verdict+": a refusal grades nothing")
+			// invokeSkeptic turns the refusal into this Verification; that arm is
+			// pinned through the production path by
+			// TestInvokeSkeptic_RefutedPrefixBeforeAnUnusableSuffixBlocksTheGate.
+			v = refusal
+		} else {
+			require.NotNil(t, v)
+			require.Equal(t, tc.verdict, v.Verdict, tc.verdict+": the real verdict must be recovered intact")
+		}
 
 		assert.Equal(t, tc.blocksAfter,
 			reconcile.IsFailing("HIGH", "", v, "MEDIUM", false), tc.why)
 		// TD internal/verify/think_bare_closer_test.go:501: the row comment claimed a
 		// --require-verified property that no assertion tested. Under the strict gate
-		// only a CONFIRMED finding counts, so the refuted row must stop blocking there
-		// too — which is the direction narrowing AMBIGUOUS actually moves.
+		// only a CONFIRMED finding counts, so the refused row does not block there.
 		assert.Equal(t, tc.blocksVerified,
 			reconcile.IsFailing("HIGH", "", v, "MEDIUM", true),
 			tc.verdict+": the --require-verified gate counts only confirmed findings")
