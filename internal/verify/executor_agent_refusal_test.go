@@ -199,3 +199,40 @@ func TestInvokeExecutor_ContentShapeDeclinesOpenWithTheRefusalPrefix(t *testing.
 		})
 	}
 }
+
+// TD internal/verify/invoke.go:766, executor lane (epic 35.16.11.2.2.4.4 T3): a
+// draft fix before a bare </think> followed by NOTHING usable after it. The
+// suffix carries no envelope, so the shared rule fell back to the whole answer
+// and the first-match parser returned the abandoned draft as the patch --auto-fix
+// writes to tracked source. The verify lane can narrow on grade (only `refuted`
+// clears the gate); this lane cannot, because every non-empty fix is eligible to
+// be written. So any usable prefix + unusable suffix is refused. Driven through
+// invokeExecutor and generateFixes, the production call site, for each unusable
+// suffix shape.
+func TestGenerateFixes_PrefixOnlyDraftFixIsRefused(t *testing.T) {
+	for name, suffix := range map[string]string{
+		"present-but-empty fix": `{"fix":""}`,
+		"prose":                 `Actually, leave the file as it is.`,
+		"nothing":               ``,
+	} {
+		t.Run(name, func(t *testing.T) {
+			reply := `{"fix":"DRAFT PATCH"}` + "\n" + closerTag() + "\n" + suffix
+
+			fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
+				eligibleFinding()[0], finalChat(reply), okDispatcher(), 0, "")
+			assert.Empty(t, fix, "the draft before the closer is not provably committed, so no patch")
+			assert.True(t, strings.HasPrefix(warn, agentRefusalPrefix),
+				"a content-shape decline must open with agentRefusalPrefix: "+warn)
+
+			ctx, buf := ceilingCtx()
+			findings := eligibleFinding()
+			generateFixes(ctx, findings, agentExecConfig(), execRegistry("MEDIUM"),
+				&recordingExecutor{}, finalChat(reply), okDispatcher(), 0)
+			assert.Contains(t, buf.String(), "executor_agent_refused",
+				"the refusal is disclosed under its own class")
+			assert.NotEqual(t, "DRAFT PATCH", findings[0].Fix,
+				"the abandoned draft must never reach tracked source")
+			assert.Empty(t, findings[0].Fix)
+		})
+	}
+}

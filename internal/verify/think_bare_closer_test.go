@@ -147,20 +147,24 @@ func TestExecutorFixFromAnswer_OnlyAfterTheCloserTakesTheSuffix(t *testing.T) {
 	assert.Equal(t, "REAL-PATCH", fix)
 }
 
-// TestExecutorFixFromAnswer_TrailingProseNamingCloserKeepsItsFix is the
-// executor's no-regression half — the shape the sprint's HasEnclosingThinkBlock
-// switch was written to stop refusing. Losing the repair here is worse than in
-// the verify lane, because the fix is dropped entirely.
-func TestExecutorFixFromAnswer_TrailingProseNamingCloserKeepsItsFix(t *testing.T) {
+// TestExecutorFixFromAnswer_TrailingProseNamingCloserIsTheAcceptedLoss pins the
+// cost of refusing the prefix-only section on this lane. The shape was once kept
+// — the HasEnclosingThinkBlock switch was written to stop refusing it, and that
+// arm still passes it through — but it is structurally identical to a draft
+// abandoned before an unusable reply: {fix} </think> {nothing usable}. Grading
+// the prefix wrote the draft to tracked source in that twin, and no grade exists
+// to narrow on, so both are declined (TD internal/verify/invoke.go:766). A
+// declined repair is disclosed as executor_agent_refused; a wrong one is not.
+func TestExecutorFixFromAnswer_TrailingProseNamingCloserIsTheAcceptedLoss(t *testing.T) {
 	t.Parallel()
 	answer := `{"fix":"REAL-PATCH","explanation":"real"}` + "\n" +
 		`I left the bare </think> handling alone.`
 
 	fix, ambiguous, err := executorFixFromAnswer(answer)
 
-	require.False(t, ambiguous)
-	require.NoError(t, err)
-	assert.Equal(t, "REAL-PATCH", fix)
+	assert.True(t, ambiguous, "the prefix-only section is refused on this lane")
+	require.NoError(t, err, "a refusal, not a parse error")
+	assert.Empty(t, fix)
 }
 
 // TestExecutorFixFromAnswer_NoCloserIsUnchanged guards inertness on the
