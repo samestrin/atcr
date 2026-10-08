@@ -56,7 +56,10 @@ type BackfillResult struct {
 	// candidate: a non-regular file (symlink, FIFO, device) at the record's relative
 	// path, or one ReviewPolicyDeclinesFile refuses outright — over the size cap, a
 	// wholly salvaged reply, a desynced bin list. Those three are FILE-level, so the
-	// answer holds wherever the candidate sits.
+	// VERDICT holds wherever the candidate sits — but attributing it to THIS record
+	// does not: a refused file in an unrelated review says nothing about whether the
+	// record's own review.md would help. So the candidate counts only when its review
+	// dir owns the record (see the ownership rule below).
 	//
 	// It deliberately does NOT count "a candidate was present and nothing matched".
 	// That reading was the defect: pathHasSuffix is review-dir-UNSCOPED and
@@ -65,15 +68,18 @@ type BackfillResult struct {
 	// told not to restore the one file that would have fixed it
 	// (TD internal/localdebt/backfill.go:389).
 	//
-	// The record's own review dir is not derivable from the record (RunID is
-	// `<ReconciledAt>-<base(reviewDir)>`, and that base is `multi-agent` for nearly
-	// every review), so the scoped claim is unavailable and this narrower one is what
-	// the evidence supports. The cost is an UNDER-count: a record-level unrepairable —
-	// chiefly an anchor line the producer refused as a draft — lands in the absent-tree
-	// half instead. That direction is the safe one: it sends the operator to look for a
-	// file, which wastes a minute, rather than telling them not to, which loses the
-	// repair. `Unresolved - PolicyUnrepairable` is therefore "absent tree, or a
-	// record-level refusal this pass cannot attribute".
+	// Ownership rule: a candidate's review dir is its path with the record's relative
+	// source_report path trimmed off, and that dir owns the record when
+	// `<reviewDir>/reconciled/summary.json` carries a reconciled_at for which
+	// `reconciled_at + "-" + base(reviewDir)` equals the record's RunID — the exact
+	// form the run_id was minted in. A dir with a missing or unparseable summary.json
+	// owns nothing. The cost is an UNDER-count: a policy refusal in an own tree whose
+	// summary.json is gone, and every record-level unrepairable — chiefly an anchor
+	// line the producer refused as a draft — land in the absent-tree half instead.
+	// That direction is the safe one: it sends the operator to look for a file, which
+	// wastes a minute, rather than telling them not to, which loses the repair.
+	// `Unresolved - PolicyUnrepairable` is therefore "absent tree, or a refusal this
+	// pass cannot attribute to the record".
 	PolicyUnrepairable int
 	Ambiguous          int // several surviving candidates disagreed, so none was written
 
@@ -158,10 +164,15 @@ type JustificationChange struct {
 // reviewRoot is searched for each record's SourceReport.Path. That search is
 // necessary, not defensive: SourceReport.Path is review-dir-RELATIVE
 // (`sources/pool/raw/agent/dax/review.md`) and every review directory holds the same
-// relative paths, so the path alone selects dozens of namesakes. RunID cannot break
-// the tie either — its suffix is filepath.Base(reviewDir), which is `multi-agent` for
-// nearly every review. Only re-scoring the anchor line against the finding's own
-// file:line distinguishes them, and a record whose candidates disagree is left ALONE.
+// relative paths, so the path alone selects dozens of namesakes. RunID alone cannot
+// break the tie either — its suffix is filepath.Base(reviewDir), which is
+// `multi-agent` for nearly every review. Paired with the review dir's own
+// reconciled/summary.json it CAN name the owning dir (reviewDirOwnsRun), but the
+// replay does not select on that: a review dir whose summary.json is gone would then
+// decline a repair the anchor re-score makes safely, so ownership only gates the
+// PolicyUnrepairable attribution. Re-scoring the anchor line against the finding's
+// own file:line distinguishes candidates, and a record whose candidates disagree is
+// left ALONE.
 // Guessing there would rewrite a permanent dismissal's audit trail out of an
 // unrelated review, which is strictly worse than the stale text it replaces.
 //
@@ -358,6 +369,12 @@ func replayCandidates(reviewRoot string, rec Record) (replayResult, error) {
 	var out []string
 	seen := map[string]bool{}
 	policyRefused := false
+	// owns reports whether candidate p sits in the record's own review dir. Asked
+	// only once a candidate is already refused, so the summary.json read is paid on
+	// the rare path, not for every namesake.
+	owns := func(p string) bool {
+		return reviewDirOwnsRun(reviewDirOf(p, rel), rec.RunID)
+	}
 	err := filepath.WalkDir(reviewRoot, func(p string, d fs.DirEntry, walkErr error) error {
 		// An unreadable file or subtree is SKIPPED, not fatal: reviewRoot is an open
 		// tree — the same resilience stance collectReviewNarratives takes over
@@ -380,7 +397,9 @@ func replayCandidates(reviewRoot string, rec Record) (replayResult, error) {
 		// remedy either. Recorded before ReExtractJustification so the presence is
 		// the walk's observation, independent of whatever the replay then decides.
 		if !d.Type().IsRegular() {
-			policyRefused = true
+			if owns(p) {
+				policyRefused = true
+			}
 			return nil
 		}
 		text, _, ok, rerr := reconcile.ReExtractJustification(p, rec.File, rec.Line, rec.SourceReport.Line)
@@ -392,9 +411,10 @@ func replayCandidates(reviewRoot string, rec Record) (replayResult, error) {
 			// the producer's FILE-LEVEL policy explains is unrepairable wherever the
 			// file sits; a candidate that merely fails to carry this record's anchor
 			// is a namesake and says nothing about the record's own tree. Only the
-			// former may set policyRefused — see ReviewPolicyDeclinesFile. A probe
-			// error is not evidence either way, so it leaves the flag alone.
-			if declined, perr := reconcile.ReviewPolicyDeclinesFile(p); perr == nil && declined {
+			// former may set policyRefused — see ReviewPolicyDeclinesFile — and only
+			// from a candidate whose review dir owns the record. A probe error is not
+			// evidence either way, so it leaves the flag alone.
+			if declined, perr := reconcile.ReviewPolicyDeclinesFile(p); perr == nil && declined && owns(p) {
 				policyRefused = true
 			}
 			return nil
@@ -415,13 +435,46 @@ func replayCandidates(reviewRoot string, rec Record) (replayResult, error) {
 	// tree read as unrepairable — telling the operator not to restore the one file
 	// that would have fixed it (TD internal/localdebt/backfill.go:389).
 	//
-	// What remains is provable without knowing which review dir the candidate belongs
-	// to: a non-regular file at a matching path, and the file-level arms
-	// ReviewPolicyDeclinesFile names. The record's own dir is NOT derivable from the
-	// record — RunID is `<ReconciledAt>-<base(reviewDir)>` and that base is
-	// `multi-agent` for nearly every review — so a scoped answer is not on offer here
-	// and a narrower, honest claim is the right trade (TD cli/debt_resolve.go:81).
+	// What remains is a non-regular file at a matching path, and the file-level arms
+	// ReviewPolicyDeclinesFile names — and each counts only from a candidate whose
+	// review dir OWNS the record (reviewDirOwnsRun). The verdict on such a file is
+	// path-independent; attributing it to this record is not, and an unscoped walk
+	// otherwise lets a symlink or over-cap namesake in an unrelated review speak for a
+	// record whose own tree is pruned (TD internal/localdebt/backfill.go:382).
 	return replayResult{texts: out, policyRefused: policyRefused}, nil
+}
+
+// reviewDirOf trims the review-dir-relative rel off candidate p, leaving the review
+// dir the candidate sits in. p is known to end with rel on a segment boundary
+// (pathHasSuffix), so the trim cannot cut a segment in half.
+func reviewDirOf(p, rel string) string {
+	return filepath.Clean(strings.TrimSuffix(p, rel))
+}
+
+// reviewDirOwnsRun reports whether reviewDir is the review that minted runID.
+//
+// A record's RunID is `<reconciled_at>-<base(reviewDir)>` (internal/localdebt/
+// reconcile.go), and the same reconciled_at is stored in
+// `<reviewDir>/reconciled/summary.json`, so ownership is checkable from data already
+// on disk. The base alone cannot decide it — it is `multi-agent` for nearly every
+// review — but the base together with the reconciliation timestamp can: two reviews
+// collide only if they share a dir base AND were reconciled in the same second.
+//
+// A missing, unreadable or unparseable summary.json, or one with no reconciled_at,
+// owns NOTHING. That is the safe under-count: the record lands in the pruned-tree
+// half, which sends the operator to look for a file rather than telling them not to.
+func reviewDirOwnsRun(reviewDir, runID string) bool {
+	data, err := os.ReadFile(filepath.Join(reviewDir, "reconciled", "summary.json"))
+	if err != nil {
+		return false
+	}
+	var s struct {
+		ReconciledAt string `json:"reconciled_at"`
+	}
+	if json.Unmarshal(data, &s) != nil || s.ReconciledAt == "" {
+		return false
+	}
+	return s.ReconciledAt+"-"+filepath.Base(reviewDir) == runID
 }
 
 // replacement pairs the stale justification a record carries with the excerpt
