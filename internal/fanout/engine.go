@@ -664,7 +664,7 @@ func (r *Result) parseFindings() []stream.Finding {
 	}
 	onStop := perChunk && len(r.chunkSalvagedOnStop) == len(r.chunkContents)
 	for i, c := range r.chunkContents {
-		if perChunk && r.chunkSalvaged[i] && !(onStop && r.chunkSalvagedOnStop[i]) {
+		if perChunk && r.chunkSalvaged[i] && (!onStop || !r.chunkSalvagedOnStop[i]) {
 			continue
 		}
 		answer, _ := llmclient.SplitThink(c)
