@@ -48,8 +48,8 @@ type Summary struct {
 	// counted in UnreviewedChunks; but both are withheld from baseline coverage by
 	// uncoveredBaselineFiles' contributedNothing test. It exists so the baseline
 	// write-back's operator signal can NAME that cause: `excluded > 0` with every
-	// slot OK and UnreviewedChunks == 0 is reachable only through this path, and
-	// before this the two warning lines left the operator reading an unreviewed-chunk
+	// slot OK and UnreviewedChunks == 0 is a shape this path produces, and before
+	// this the two warning lines left the operator reading an unreviewed-chunk
 	// counter that said zero (TD cli/review.go:256).
 	ContributedNothingCount int
 }
