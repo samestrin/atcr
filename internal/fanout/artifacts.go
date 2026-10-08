@@ -68,9 +68,14 @@ type PoolSummary struct {
 	// "does this run contain any substitution worth reconciling" signal without
 	// walking every Agents entry.
 	FallbackCount int `json:"fallback_count"`
-	// SalvagedCount is the run-level tally of agents whose reply was salvaged —
-	// the client found no answer and promoted the reasoning channel into Content,
-	// so parseFindings refused it and the agent contributed nothing. Like
+	// SalvagedCount is the run-level tally of agents whose reply was salvaged.
+	// Result.Salvaged records that the reply came from the reasoning channel: on
+	// the production (CompleteWithMeta) path the client found no answer and
+	// promoted that channel into Content, and the ErrSalvagedReply arm sets the
+	// flag on a record whose Content stays "". It does not by itself mean nothing
+	// was parsed: parseFindings refuses a salvaged reply only when it was also
+	// truncated (Salvaged && ResponseTruncated), so an untruncated salvage is
+	// parsed like any other reply. Like
 	// TruncatedZeroFindings and FallbackCount it is ALWAYS present, so a 0 is
 	// distinguishable from an older summary.json that predates the field. Derived
 	// from the per-agent statuses (tallySalvaged) rather than from the results, so

@@ -106,17 +106,15 @@ func duplicateIdentityError(path, what string, key reviewerKey, prevModel, prevP
 // first few plus the count diagnose the row fully. Pinned by
 // TestCheckCoverage_EveryShortRowIsNamed and TestRunBFixture_RejectedByExportGate.
 //
-// The bound is PER HALF of a row's shortfall, not per row. describeMissing splits a
-// row into genuinely-missing, case-level-unmeasured and slot-level-unshown cases and
-// caps each independently, so a row carrying all three can name up to
-// 3*maxNamedMissingCases ids. That is deliberate: the halves call for different
-// responses (re-run the suite vs. investigate a case fault vs. investigate one
-// reviewer's provider), and capping them jointly would let one half's overflow hide
-// another half's existence — the same argument that keeps the outer list uncapped,
-// applied one level in.
+// The bound is PER LABEL of a row's shortfall, not per row. describeMissing splits a
+// row into labelled kinds of shortfall and caps each independently; its doc lists the
+// labels and states how many ids one row can therefore name. That is deliberate: the
+// labels call for different responses (each names a different actor and remedy), and
+// capping them jointly would let one label's overflow hide another label's existence —
+// the same argument that keeps the outer list uncapped, applied one level in.
 const maxNamedMissingCases = 3
 
-// halfSeparator divides describeMissing's halves. It is deliberately NOT the
+// halfSeparator divides describeMissing's labelled parts. It is deliberately NOT the
 // "; " checkCoverage uses between distinct short rows: the row list is the outer
 // nesting level, and a message that nests both must keep the two delimiters
 // distinguishable — otherwise a reader, or anything downstream that splits on it,
@@ -843,13 +841,15 @@ func summarizeMissing(missing []string) string {
 // folding `unmeasured_ok` into `unshown` sent the operator to the provider for a call
 // that succeeded (TD cli/benchmark_coverage.go:794).
 //
-// All three halves route through summarizeMissing, so each inherits the per-row cap and
-// the control-rune stripping described there rather than re-deriving them — the
-// reason is stripped with the id it is composed onto.
+// Every label's list routes through summarizeMissing, so each inherits the cap and the
+// control-rune stripping described there rather than re-deriving them — the reason is
+// stripped with the id it is composed onto.
 //
-// Each half is capped independently, so the bound is PER HALF and a row carrying all
-// three kinds of shortfall names up to 3*maxNamedMissingCases ids with three overflow
-// counts — see maxNamedMissingCases for why that is deliberate rather than an oversight.
+// Each label's list is capped independently, so the bound is PER LABEL, not per row: a
+// row carrying all four labels above names up to 4*maxNamedMissingCases ids with four
+// overflow counts. This is the one place that count is stated; see
+// maxNamedMissingCases for why the per-label bound is deliberate rather than an
+// oversight.
 //
 // PRECONDITION: missing is non-empty. An empty slice returns "", which the caller
 // composes into `m/p (2/3 cases, )` — a shortfall message with a blank explanation.
@@ -921,6 +921,15 @@ func describeMissing(missing []string, failed, slotFailed map[string]string) str
 // rendering of the id and everything after it in the same text node on the board,
 // and a zero-width rune makes two different ids render identically, defeating the
 // documented SET comparison at the human layer even while it holds programmatically.
+func firstNonPrintingRune(s string) (rune, bool) {
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return r, true
+		}
+	}
+	return 0, false
+}
+
 // unmeasuredOKRemedy is the operator action for a slot that was shown the case and
 // answered ok, yet contributed nothing. It reuses fanout.SalvagedRemedy — the run
 // path's own remedy for that condition — so the two surfaces cannot state different
@@ -936,15 +945,6 @@ func appendUnique(s []string, v string) []string {
 		}
 	}
 	return append(s, v)
-}
-
-func firstNonPrintingRune(s string) (rune, bool) {
-	for _, r := range s {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
-			return r, true
-		}
-	}
-	return 0, false
 }
 
 // validateScrubbedCaseIDs rejects a run-result whose case ids do not survive
