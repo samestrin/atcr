@@ -238,8 +238,9 @@ func salvagedChunkIndices(r Result) []int {
 // salvagedOnStop returns the stop-reason half of a Result's salvage, in the two
 // shapes AgentStatus publishes it: the unchunked bit, and the indices of a chunked
 // persona's bins that salvaged on a stop reason. Derived from the same pair
-// parseFindings keeps a bin by (chunkSalvaged and chunkSalvagedOnStop), so the
-// published indices name exactly the salvaged bins whose findings were kept. A
+// parseFindings reads: it keeps a salvaged bin only when chunkSalvagedOnStop marks
+// it, so the published indices name exactly the salvaged bins whose findings were
+// kept (every non-salvaged bin is kept too, and is not named here). A
 // bin flagged on-stop without being salvaged is not named, and a misaligned
 // triple publishes nothing. The bit is never set for a chunked result: the merge
 // starts from bin 0, so its SalvagedOnStop is that one bin's, not the persona's.
