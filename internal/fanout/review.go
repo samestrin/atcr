@@ -3504,6 +3504,19 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// degradation. Gating it left reasoning_reserve_tokens absent (omitempty) on that
 	// record while the identical condition on a primary disclosed it, so a consumer
 	// read "this agent held back no reserve" (TD internal/fanout/review.go:3497).
+	//
+	// The pairing rule, stated once here for every producer: reasoning_reserve_tokens
+	// MAY appear beside an absent reserved_output_tokens, and only on a record that
+	// describes ONE sizing by ONE model. There the half-present pair is the
+	// disclosure — the reserve is what closed the budget, so the cap could not be
+	// funded. The per-agent producers (the primary render, this site and the re-fit
+	// below) all emit such records, so they keep the reserve on a zero budget.
+	// mergeResultGroup (chunker.go) is the producer that differs, on purpose: its
+	// merged record collapses chunks that different chain members may have served,
+	// so on a zero merged budget it cannot say whose reserve closed it, and zeroes
+	// the reserve with the reservation and the cap rather than name the wrong agent's.
+	// A consumer may therefore read a lone reserve as "this reserve closed this
+	// agent's budget", and an absent one on a chunked record as "not attributable".
 	if fbToolLoop {
 		fbReasoningReserve = fbMaxTokens * payload.ReasoningReplayReserveCaps
 	}
@@ -3698,7 +3711,8 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 				// Ungated for the same reason as the inherited-payload site above and the
 				// primary render: the re-fit budget already has the reserve subtracted out,
 				// so a zero fbSizingBudget is the record the reserve explains
-				// (TD internal/fanout/review.go:3688).
+				// (TD internal/fanout/review.go:3688). Pairing rule: see the
+				// inherited-payload site above.
 				if fbToolLoop {
 					fbReasoningReserve = fbMaxTokens * payload.ReasoningReplayReserveCaps
 				}

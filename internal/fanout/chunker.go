@@ -751,6 +751,11 @@ func promoteRePackedDegradation(out *Result, g []Result) {
 		// reserve sitting on top of a field this same arm just zeroed — the
 		// self-contradictory-record class this block exists to prevent, and the one
 		// member of the triple that was missed (TD internal/fanout/chunker.go:709).
+		// This is where the merged record parts from the per-agent producers,
+		// which keep a lone reserve on a zero budget because it names the cause:
+		// here no single agent's reserve can be named as the cause. The rule is
+		// stated once, at the tool-loop fallback in review.go (TD
+		// internal/fanout/review.go:3507).
 		out.ReasoningReserveTokens = 0
 	}
 	if len(dropped) > 0 {

@@ -2874,8 +2874,9 @@ func TestSlotUnmeasuredReason(t *testing.T) {
 // unmeasured_salvaged_ok in the vocabulary, a reviewer that habitually answers on
 // its reasoning channel makes EVERY scheduled run "partial", so every run would
 // accumulate a full work dir that nothing reclaims — and the line would label it
-// failed_slots=N on a clean panel. Same root predicate as the exit gate
-// (cli/benchmark.go:311), reached through the same shared SlotFailureIsInfrastructure.
+// failed_slots=N on a clean panel. The fail-direction differs from the exit gate's
+// SlotFailureIsInfrastructure (cli/benchmark.go:311): this gates a delete, so only
+// SlotFailureUnmeasuredOK may let the work dir go.
 func TestRetainForSlotFailures_IgnoresUnmeasuredOKSlots(t *testing.T) {
 	unmeasuredOnly := map[reviewerKey][]benchmark.SlotFailure{
 		{}: {{CaseID: "c1", Reason: benchmark.SlotFailureUnmeasuredOK},
@@ -2889,6 +2890,21 @@ func TestRetainForSlotFailures_IgnoresUnmeasuredOKSlots(t *testing.T) {
 	}
 	assert.True(t, retainForSlotFailures(infra),
 		"a slot the infrastructure LOST is a reason to retain the diagnosis")
+
+	// The delete has its own fail-direction: a reason this build cannot name is not
+	// evidence the slot was measured, so it keeps the paid work dir rather than
+	// borrowing the tally predicate's fail-closed answer.
+	unrecognized := map[reviewerKey][]benchmark.SlotFailure{
+		{}: {{CaseID: "c1", Reason: "not_a_reason"}},
+	}
+	assert.True(t, retainForSlotFailures(unrecognized),
+		"an unrecognized reason must keep the work dir: deleting on a reason nothing can read destroys the only record of the slot")
+
+	empty := map[reviewerKey][]benchmark.SlotFailure{
+		{}: {{CaseID: "c1", Reason: ""}},
+	}
+	assert.True(t, retainForSlotFailures(empty),
+		"an empty reason must keep the work dir for the same reason")
 
 	assert.False(t, retainForSlotFailures(nil))
 }
