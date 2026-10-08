@@ -2,6 +2,7 @@
 
 ### Fixed
 
+- An abandoned draft sitting before a bare `</think>` (one no `<think>` opened) with nothing usable after it is no longer graded or applied as if committed. The skeptic lane refuses the shape as `ambiguous_unopened_closer` when the recovered verdict is `refuted` — the one grade that would clear the CI gate — and grades `confirmed` and `unverifiable` as before; the executor lane refuses any such fix as `executor_agent_refused`; and the debate lane leaves the item unresolved under `judge_think_markup`, keeping the pre-debate verdict standing. A real verdict, fix or ruling followed by prose that quotes the closer has identical tag structure, so the refusal is the disclosed trade: a real `refuted` in that shape now blocks CI, and a real fix or ruling there is declined.
 - The baseline withheld-coverage warning in `atcr review` names a failed slot as a failed slot; a persona that failed wholly was reported as having re-packed its payload.
 - A fallback walk whose final reply carried findings no longer warns that think-only replies "exhausted the fallback chain"; the warning now fires only when the final reply was itself a think-only run.
 - `atcr benchmark` on a repo-state suite keeps the run's work dir when a slot failure carries an empty or unrecognized reason; only an `unmeasured_salvaged_ok` slot lets it be deleted. Every reason a current build writes behaves as before.
