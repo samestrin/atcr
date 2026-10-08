@@ -1112,24 +1112,25 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 		// the false flag would reach the scorecard and the reviewer's trust prior.
 		// Stripped into a local: r.Content stays raw for review.md.
 		//
-		// A SALVAGED reply never reaches the sentinel read: it is uncommitted
-		// reasoning by design (T6), so it cannot be a committed no-findings report
-		// whatever its text — so a sentinel-shaped salvage ("NO FINDINGS" on the
-		// reasoning channel) would otherwise score as a genuine clean review.
-		// Recorded unparseable, not failed over (TD-018 keeps widening failover out of
-		// scope). Pinned by TestInvokeSlot_SalvagedSentinelShapedReply_IsNotACleanReview.
+		// A salvaged reply reaches the sentinel read only when it salvaged on a STOP
+		// reason (Epic 35.16.11.2.2.4.5 AC4). Salvaged is a channel fact — the answer
+		// arrived on reasoning_content — and SalvagedOnStop is why: the provider
+		// finished the reply rather than cutting it off. A finished reply whose whole
+		// answer is the sentinel is the model saying, in the specified form, that it
+		// found nothing; it is the same committed answer parseFindings already accepts
+		// from this shape when it carries findings (TD internal/fanout/engine.go:604),
+		// and scoring it unparseable ranked a correct clean review below clean. So it
+		// falls through to IsNoFindings like any other reply: exactly `NO FINDINGS`
+		// scores clean, and prose on the same channel still scores unparseable.
 		//
-		// This arm still reads Salvaged ALONE, and that is now an open question rather
-		// than a settled rule. Since TD internal/fanout/engine.go:604 a salvage counts as
-		// abandoned only when the provider ALSO stopped the reply on length, so
-		// ParsedFindingCount is no longer 0 "by construction" here: a stop-reason salvage
-		// that parsed never reaches this block, and one that genuinely found nothing does
-		// reach it and is scored unparseable even though its answer was committed.
-		// Whether a committed `NO FINDINGS` on the reasoning channel is a clean review is
-		// a SECOND behaviour change with its own pinned test, so it is deliberately not
-		// made here — it is carried as evidence on the TD-018 flag-split plan.
+		// Every other salvage stays fail-closed and is recorded unparseable whatever
+		// its text: a truncated salvage is a cut-off thought, not a committed report,
+		// and a salvage with no recorded reason (the ErrSalvagedReply arm, or a
+		// completer that cannot say) is treated as one. Not failed over — TD-018 keeps
+		// widening failover out of scope. Pinned, both halves, by
+		// TestInvokeSlot_SalvagedSentinelShapedReply_IsNotACleanReview.
 		if r.Status == StatusOK && r.Content != "" && r.ParsedFindingCount() == 0 {
-			if r.Salvaged {
+			if r.Salvaged && !r.SalvagedOnStop {
 				r.UnparseableResponse = true
 			} else {
 				answer, _ := llmclient.SplitThink(r.Content)
@@ -1444,6 +1445,14 @@ func (e *Engine) invokeCachedSingleShot(ctx context.Context, a Agent) Result {
 	// Never cache a salvaged response either (TD internal/llmclient/client.go:394):
 	// its Content is one model's chain-of-thought, not a review, and a later
 	// same-diff run would replay it as a clean StatusOK review.
+	// That holds for BOTH reasons a reply salvages, SalvagedTruncated and
+	// SalvagedOnStop, even though invokeSlot now accepts a stop-reason salvage as a
+	// committed answer. The store keeps Content only (internal/cache/store.go Put),
+	// and a hit is rebuilt above as a clean StatusOK Result, so a replay would drop
+	// Salvaged and SalvagedOnStop both: the disclosure marker would vanish, and the
+	// sentinel arm could no longer tell the reply's channel. Caching a stop-reason
+	// salvage would need the flag stored beside Content and a kv=3 bump of the key
+	// version in review.go so no kv=2 entry is read as carrying it.
 	// Never cache a truncated response (Epic 19.5). invokeSingleShot returns a
 	// truncated runaway as StatusOK here — the truncation-failover demotion happens
 	// LATER in invokeSlot — so caching on StatusOK alone would persist the runaway
