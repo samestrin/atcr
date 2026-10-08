@@ -1120,23 +1120,83 @@ func TestResult_ParseFindings_MemoizesTheParsedSlice(t *testing.T) {
 }
 
 // TestInvokeSlot_SalvagedSentinelShapedReply_IsNotACleanReview is the complement
-// of the non-sentinel subtest in TestInvokeSlot_SalvagedReply_ContributesNoFindings:
-// a salvaged reply whose promoted reasoning is literally the clean-review
-// sentinel ("NO FINDINGS") must not score as a genuine clean review. A salvaged
-// reply has ParsedFindingCount 0 by construction, so control reaches the
-// sentinel gate; if the gate read the sentinel-shaped salvage, the slot would be
-// recorded StatusOK with zero findings and no marker — the silent false
-// no-issues-found. A reply the design declares uncommitted (T6) cannot be a
-// committed no-findings report whatever its text.
+// of TestInvokeSlot_SalvagedReply_ContributesNoFindings for the clean-review
+// sentinel: a salvaged reply whose promoted reasoning is literally "NO FINDINGS".
+// The sentinel parses to zero findings, so control always reaches the sentinel arm
+// in invokeSlot; what the arm decides is whether the reply COMMITTED that answer.
+// A reply the provider cut off did not, so scoring it clean would be the silent
+// false no-issues-found — StatusOK, zero findings, no marker.
 func TestInvokeSlot_SalvagedSentinelShapedReply_IsNotACleanReview(t *testing.T) {
-	e := NewEngine(&metaTruncatingCompleter{
-		content:  "NO FINDINGS",
-		salvaged: true,
-	}, WithTruncationFailover())
-	r := e.invokeSlot(context.Background(), Slot{Primary: Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "m"}}})
+	slot := Slot{Primary: Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "m"}}}
 
-	assert.Equal(t, StatusOK, r.Status)
-	require.True(t, r.Salvaged)
-	assert.True(t, r.UnparseableResponse,
-		"a salvaged reply is never a committed clean review, sentinel-shaped or not")
+	t.Run("truncated salvage: not a committed clean review", func(t *testing.T) {
+		// No WithTruncationFailover, so the truncation gate does not demote it first
+		// and the sentinel arm is what decides.
+		e := NewEngine(salvageReasonCompleter{comp: llmclient.Completion{
+			Content:  "NO FINDINGS",
+			Salvaged: true, SalvagedTruncated: true, Truncated: true,
+		}})
+		r := e.invokeSlot(context.Background(), slot)
+
+		assert.Equal(t, StatusOK, r.Status)
+		require.True(t, r.Salvaged)
+		require.False(t, r.SalvagedOnStop)
+		assert.True(t, r.UnparseableResponse,
+			"a cut-off reply is never a committed clean review, sentinel-shaped or not")
+	})
+
+	t.Run("salvage with no recorded reason: fail-closed as before", func(t *testing.T) {
+		// The fixture this test pinned before the flag split: Salvaged with neither
+		// reason set reads as abandoned.
+		e := NewEngine(&metaTruncatingCompleter{
+			content:  "NO FINDINGS",
+			salvaged: true,
+		}, WithTruncationFailover())
+		r := e.invokeSlot(context.Background(), slot)
+
+		assert.Equal(t, StatusOK, r.Status)
+		require.True(t, r.Salvaged)
+		assert.True(t, r.UnparseableResponse,
+			"without a stop reason a salvage is never a committed clean review")
+	})
+
+	// AMENDED by Epic 35.16.11.2.2.4.5 AC4 (2026-10-08). This test used to assert
+	// that EVERY sentinel-shaped salvage scored unparseable. That is now deliberately
+	// reversed for a stop-reason salvage, as TD internal/fanout/engine.go:604 reversed
+	// it for one that carries findings: the provider finished the reply, so the
+	// sentinel is the model's committed answer on the reasoning channel. The claim is
+	// replaced by its opposite, stated and tested, not dropped.
+	t.Run("stop-reason salvage: a committed clean review", func(t *testing.T) {
+		e := NewEngine(salvageReasonCompleter{comp: llmclient.Completion{
+			Content:  "NO FINDINGS",
+			Salvaged: true, SalvagedOnStop: true,
+		}}, WithTruncationFailover())
+		r := e.invokeSlot(context.Background(), slot)
+
+		assert.Equal(t, StatusOK, r.Status)
+		require.True(t, r.Salvaged, "the disclosure marker still records which channel the answer came on")
+		require.True(t, r.SalvagedOnStop)
+		assert.False(t, r.UnparseableResponse,
+			"a finished NO FINDINGS is the specified clean report, whichever channel carried it")
+		assert.False(t, r.ThinkSuppressed)
+		// This arm no longer scores it unparseable. The published outcome is not yet
+		// clean: WholePersonaSalvaged still reads Salvaged alone and calls this an
+		// "incomplete" whole-persona loss until it learns the stop reason (AC5, T5).
+		assert.NotEqual(t, "unparseable", ReviewerOutcome(statusFor(r, findingsResult{}), 0))
+	})
+
+	t.Run("stop-reason salvage of prose: still unparseable", func(t *testing.T) {
+		// Falling through to the sentinel read is not a pass: IsNoFindings accepts the
+		// sentinel alone, so prose on the reasoning channel scores exactly as prose on
+		// the content channel does.
+		e := NewEngine(salvageReasonCompleter{comp: llmclient.Completion{
+			Content:  "I looked at the diff and nothing seems wrong to me.",
+			Salvaged: true, SalvagedOnStop: true,
+		}}, WithTruncationFailover())
+		r := e.invokeSlot(context.Background(), slot)
+
+		assert.Equal(t, StatusOK, r.Status)
+		require.True(t, r.SalvagedOnStop)
+		assert.True(t, r.UnparseableResponse)
+	})
 }
