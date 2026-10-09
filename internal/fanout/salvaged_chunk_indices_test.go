@@ -86,8 +86,8 @@ func TestStatusFor_SalvagedOnStopChunksNameOnlyTheStopReasonBins(t *testing.T) {
 }
 
 // TestStatusFor_SalvagedOnStopBitIsUnchunkedOnly pins the unchunked bit, and that
-// a merged Result never publishes it even though the merge copies bin 0's
-// SalvagedOnStop onto the persona record.
+// a merged Result never publishes it: the merge clears the SalvagedOnStop it
+// starts from bin 0 with, keeping the reason per bin in chunkSalvagedOnStop only.
 func TestStatusFor_SalvagedOnStopBitIsUnchunkedOnly(t *testing.T) {
 	stop := Result{Agent: "bruce", Status: StatusOK, Content: "x", Salvaged: true, SalvagedOnStop: true}
 	for name, st := range map[string]AgentStatus{
@@ -111,9 +111,45 @@ func TestStatusFor_SalvagedOnStopBitIsUnchunkedOnly(t *testing.T) {
 	assert.False(t, statusFor(stray, findingsResult{}).SalvagedOnStop)
 
 	merged := mergeResultGroup([]Result{stop, {Agent: "bruce", Status: StatusOK, Content: "y"}}, nil)
-	assert.True(t, merged.SalvagedOnStop, "precondition: the merge inherits bin 0's bit")
+	assert.False(t, merged.SalvagedOnStop, "the merge clears bin 0's per-reply bit")
 	assert.False(t, statusFor(merged, findingsResult{}).SalvagedOnStop)
 	assert.Equal(t, []int{0}, statusFor(merged, findingsResult{}).SalvagedOnStopChunks)
+}
+
+// TestMergeResultGroup_ClearsInheritedSalvagedOnStop pins that a merged Result
+// does not carry bin 0's per-reply SalvagedOnStop. The bit only matters when every
+// bin's content is whitespace-only: chunkContents is then nil, so salvagedOnStop
+// reads the unchunked branch, and an inherited bit would publish
+// salvaged_on_stop: true for a persona whose other bins were abandoned — making
+// WholePersonaSalvaged false and granting baseline coverage and trust eligibility.
+func TestMergeResultGroup_ClearsInheritedSalvagedOnStop(t *testing.T) {
+	merged := mergeResultGroup([]Result{
+		{Agent: "bruce", Status: StatusOK, Content: "  \n", Salvaged: true, SalvagedOnStop: true},
+		{Agent: "bruce", Status: StatusOK, Content: "\t", Salvaged: true, ResponseTruncated: true},
+	}, nil)
+	require.Nil(t, merged.chunkContents, "precondition: every bin is whitespace-only")
+	require.True(t, merged.Salvaged, "precondition: the fold is salvaged")
+	assert.False(t, merged.SalvagedOnStop, "the merge clears bin 0's per-reply bit")
+
+	bit, chunks := salvagedOnStop(merged)
+	assert.False(t, bit, "no on-stop claim survives for an all-empty merged persona")
+	assert.Nil(t, chunks)
+	st := statusFor(merged, findingsResult{})
+	assert.False(t, st.SalvagedOnStop)
+	assert.True(t, WholePersonaSalvaged(st), "every bin abandoned — a whole-persona loss")
+
+	// A bin-0-on-stop merge of non-empty bins still names bin 0 per bin.
+	kept := mergeResultGroup([]Result{
+		{Agent: "bruce", Status: StatusOK, Content: "MEDIUM|b.go:2|stop|f|correctness|2|e",
+			Salvaged: true, SalvagedOnStop: true},
+		{Agent: "bruce", Status: StatusOK, Content: "chain of thought only",
+			Salvaged: true, ResponseTruncated: true},
+	}, nil)
+	assert.False(t, kept.SalvagedOnStop)
+	bit, chunks = salvagedOnStop(kept)
+	assert.False(t, bit)
+	assert.Equal(t, []int{0}, chunks, "the on-stop bin is still published by index")
+	assert.Equal(t, []int{0}, statusFor(kept, findingsResult{}).SalvagedOnStopChunks)
 }
 
 // TestSalvagedOnStop_MisalignedPublishesNothing mirrors the salvagedChunkIndices

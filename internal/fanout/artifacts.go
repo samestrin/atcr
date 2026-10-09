@@ -242,8 +242,9 @@ func salvagedChunkIndices(r Result) []int {
 // it, so the published indices name exactly the salvaged bins whose findings were
 // kept (every non-salvaged bin is kept too, and is not named here). A
 // bin flagged on-stop without being salvaged is not named, and a misaligned
-// triple publishes nothing. The bit is never set for a chunked result: the merge
-// starts from bin 0, so its SalvagedOnStop is that one bin's, not the persona's.
+// triple publishes nothing. The bit is never set for a chunked result:
+// mergeResultGroup clears SalvagedOnStop, so a merged persona whose bins were all
+// whitespace-only (chunkContents nil, the unchunked branch below) reads false too.
 func salvagedOnStop(r Result) (bool, []int) {
 	if r.chunkContents == nil {
 		return r.Salvaged && r.SalvagedOnStop, nil
