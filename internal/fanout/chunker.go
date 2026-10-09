@@ -406,6 +406,13 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	// nothing.
 	out.servedChunkFiles = nil
 	out.servedRePacked = false
+	// SalvagedOnStop is a per-reply fact and the merged Result is a persona record:
+	// keeping g[0]'s bit would make bin 0's reason speak for every bin. The reason
+	// survives per bin in chunkSalvagedOnStop below. Left set, it fails open when
+	// every bin is whitespace-only: chunkContents is then nil, salvagedOnStop reads
+	// the unchunked branch, and status.json claims an on-stop salvage for a persona
+	// whose other bins were abandoned.
+	out.SalvagedOnStop = false
 
 	isSerial := serialSet[out.Agent]
 
