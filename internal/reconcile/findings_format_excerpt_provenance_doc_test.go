@@ -56,8 +56,8 @@ func TestFindingsFormatDoc_ExcerptProvenanceClaimsMatchTheCode(t *testing.T) {
 
 	t.Run("the salvaged-source omission cause is stated", func(t *testing.T) {
 		line := docLineContaining(t, doc, "- `justification` — the narrative section extracted")
-		assert.Contains(t, line, "omitted when the source's `status.json` says the reply was salvaged",
-			"a salvaged unchunked source can never yield an excerpt, so it is a second omission cause the doc must name")
+		assert.Contains(t, line, "omitted when the source's `status.json` records an abandoned salvage",
+			"an abandoned unchunked salvage can never yield an excerpt, so it is a second omission cause the doc must name")
 
 		// Code anchor: the producer's refusal, which is what makes the omission
 		// cause structural rather than incidental.
