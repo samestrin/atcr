@@ -1060,8 +1060,18 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 				thinkOnlyAttempts++
 				r.ThinkOnlyAttempts++
 			}
-			log.FromContext(ctx).Warn("reviewer response truncated with zero findings; failing over",
-				"agent", a.Name, "model", a.Invocation.Model)
+			// A salvaged truncation is named on the line (Epic 35.16.11.2.2.4.5.1 T5):
+			// the answer channel was empty and the cut-off reasoning was promoted in
+			// its place, which "truncated with zero findings" alone does not say. The
+			// unsalvaged line keeps its exact text, so existing greps still match.
+			if r.Salvaged {
+				log.FromContext(ctx).Warn("reviewer response truncated with zero findings; failing over",
+					"agent", a.Name, "model", a.Invocation.Model,
+					"salvaged", true, "reason", "truncated reply was a promoted reasoning draft")
+			} else {
+				log.FromContext(ctx).Warn("reviewer response truncated with zero findings; failing over",
+					"agent", a.Name, "model", a.Invocation.Model)
+			}
 		}
 		// The same runaway with no flag on it: a provider that returns a null or
 		// empty completion without ever setting finish_reason=length slips past
@@ -1080,15 +1090,16 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 		// failover would spend the backup model on every plausible clean review.
 		// It is recorded instead, just below.
 		//
-		// A SALVAGED reply is one shape that rationale does NOT cover, and it is
-		// still left alone. Its content is non-empty (the salvage filled it), so
-		// this gate misses it; and when the salvage came back on a stop reason it
-		// is not truncated either, so the gate above misses it too. Since T6 it
-		// provably contributes zero findings, so unlike a plausible clean review
-		// there is nothing to spend the backup call against — the reviewer is
-		// simply lost for the run, recorded unparseable. Deliberate for now,
-		// because widening failover is a behavior change this sprint's In Scope
-		// does not cover; filed as TD-018.
+		// A SALVAGED reply never reaches this gate either: its content is non-empty
+		// (the salvage filled it). A truncated salvage with no findings is already
+		// failed over by the truncation gate above. A stop-reason salvage is NOT
+		// failed over, by decision (TD-018, Epic 35.16.11.2.2.4.5.1): the provider
+		// finished it, so it is a committed answer that merely arrived on the
+		// reasoning channel — its findings parse, a bare NO FINDINGS scores clean,
+		// and prose scores unparseable just as prose on the content channel does.
+		// The rationale above applies unchanged: failing it over would spend the
+		// backup on every plausible clean review delivered on that channel. Pinned
+		// by TestInvokeSlot_TruncationFailoverLine_NamesTheSalvage.
 		if e.truncationFailover && r.Status == StatusOK && r.Content == "" {
 			r.Status = StatusFailed
 			r.Err = errEmptyResponse
@@ -1126,9 +1137,12 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 		// Every other salvage stays fail-closed and is recorded unparseable whatever
 		// its text: a truncated salvage is a cut-off thought, not a committed report,
 		// and a salvage with no recorded reason (the ErrSalvagedReply arm, or a
-		// completer that cannot say) is treated as one. Not failed over — TD-018 keeps
-		// widening failover out of scope. Pinned, both halves, by
-		// TestInvokeSlot_SalvagedSentinelShapedReply_IsNotACleanReview.
+		// completer that cannot say) is treated as one. This arm never fails a reply
+		// over, by decision (TD-018): a truncated salvage with zero findings was
+		// already routed to the backup by the truncation gate when failover is on,
+		// and a stop-reason salvage is a finished reply, scored, not retried. Pinned,
+		// both halves, by TestInvokeSlot_SalvagedSentinelShapedReply_IsNotACleanReview;
+		// the untouched backup by TestInvokeSlot_TruncationFailoverLine_NamesTheSalvage.
 		if r.Status == StatusOK && r.Content != "" && r.ParsedFindingCount() == 0 {
 			if r.Salvaged && !r.SalvagedOnStop {
 				r.UnparseableResponse = true

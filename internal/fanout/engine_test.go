@@ -1199,3 +1199,110 @@ func TestInvokeSlot_SalvagedSentinelShapedReply_IsNotACleanReview(t *testing.T) 
 		assert.True(t, r.UnparseableResponse)
 	})
 }
+
+// countingMetaCompleter is mapMetaCompleter with a per-model call count, so a test
+// can assert a fallback was never invoked rather than only that it did not win.
+type countingMetaCompleter struct {
+	mu      sync.Mutex
+	byModel map[string]llmclient.Completion
+	calls   map[string]int
+}
+
+func (c *countingMetaCompleter) Complete(ctx context.Context, inv llmclient.Invocation) (string, error) {
+	comp, err := c.CompleteWithMeta(ctx, inv)
+	return comp.Content, err
+}
+
+func (c *countingMetaCompleter) CompleteWithMeta(_ context.Context, inv llmclient.Invocation) (llmclient.Completion, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.calls == nil {
+		c.calls = map[string]int{}
+	}
+	c.calls[inv.Model]++
+	return c.byModel[inv.Model], nil
+}
+
+// failoverLogCapture returns a ctx whose logger writes Warn-and-above text lines,
+// time-stripped, to the returned buffer, so a line can be compared byte for byte.
+func failoverLogCapture() (context.Context, *bytes.Buffer) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{
+		Level: slog.LevelWarn,
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			if len(groups) == 0 && a.Key == slog.TimeKey {
+				return slog.Attr{}
+			}
+			return a
+		},
+	}))
+	return log.NewContext(context.Background(), logger), &buf
+}
+
+// The truncation-failover line names the salvage when the truncated reply was a
+// promoted reasoning draft (Epic 35.16.11.2.2.4.5.1 T5). Without it the operator
+// sees "truncated with zero findings" and cannot tell a reviewer that ran out of
+// tokens mid-answer from one whose answer channel was empty and whose cut-off
+// thinking was promoted in its place.
+func TestInvokeSlot_TruncationFailoverLine_NamesTheSalvage(t *testing.T) {
+	slot := Slot{
+		Primary:   Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "primary"}},
+		Fallbacks: []Agent{{Name: "bruce-fb", Invocation: llmclient.Invocation{Model: "fallback"}}},
+	}
+
+	t.Run("truncated salvage: walked to the backup, line names the salvage", func(t *testing.T) {
+		c := &countingMetaCompleter{byModel: map[string]llmclient.Completion{
+			"primary": {
+				Content:  "HIGH|a.go:1|draft from abandoned reasoning|f|correctness|5|e",
+				Salvaged: true, SalvagedTruncated: true, Truncated: true,
+			},
+			"fallback": {Content: "HIGH|a.go:1|bug|fix|correctness|5|ev|bruce"},
+		}}
+		ctx, buf := failoverLogCapture()
+		r := NewEngine(c, WithTruncationFailover()).invokeSlot(ctx, slot)
+
+		assert.Equal(t, StatusOK, r.Status, "the backup rescued the slot")
+		assert.True(t, r.FallbackUsed)
+		assert.Equal(t, 1, c.calls["fallback"])
+		assert.Equal(t,
+			`level=WARN msg="reviewer response truncated with zero findings; failing over" agent=bruce model=primary `+
+				`salvaged=true reason="truncated reply was a promoted reasoning draft"`+"\n",
+			buf.String())
+	})
+
+	t.Run("unsalvaged truncation: line is unchanged", func(t *testing.T) {
+		c := &countingMetaCompleter{byModel: map[string]llmclient.Completion{
+			"primary":  {Content: "I was thinking hard but never emitted a finding", Truncated: true},
+			"fallback": {Content: "HIGH|a.go:1|bug|fix|correctness|5|ev|bruce"},
+		}}
+		ctx, buf := failoverLogCapture()
+		r := NewEngine(c, WithTruncationFailover()).invokeSlot(ctx, slot)
+
+		assert.True(t, r.FallbackUsed)
+		assert.Equal(t,
+			`level=WARN msg="reviewer response truncated with zero findings; failing over" agent=bruce model=primary`+"\n",
+			buf.String())
+	})
+
+	// The decision this slice records: a stop-reason salvage is a FINISHED reply, so
+	// prose on the reasoning channel is scored exactly as prose on the content channel
+	// is — unparseable, and not retried. Failing it over would spend the backup on
+	// every plausible clean review that arrived on that channel.
+	t.Run("stop-reason salvage of prose: not failed over", func(t *testing.T) {
+		c := &countingMetaCompleter{byModel: map[string]llmclient.Completion{
+			"primary": {
+				Content:  "I looked at the diff and nothing seems wrong to me.",
+				Salvaged: true, SalvagedOnStop: true,
+			},
+			"fallback": {Content: "HIGH|a.go:1|bug|fix|correctness|5|ev|bruce"},
+		}}
+		ctx, buf := failoverLogCapture()
+		r := NewEngine(c, WithTruncationFailover()).invokeSlot(ctx, slot)
+
+		assert.Equal(t, StatusOK, r.Status)
+		assert.True(t, r.UnparseableResponse)
+		assert.False(t, r.FallbackUsed)
+		assert.Zero(t, c.calls["fallback"], "the backup must never be called")
+		assert.Empty(t, buf.String(), "no failover, so no failover line")
+	})
+}
