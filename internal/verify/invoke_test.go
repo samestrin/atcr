@@ -1866,6 +1866,31 @@ func TestInvokeSkeptic_SalvagedModelResponse(t *testing.T) {
 	assert.Empty(t, tripped, "a salvage is not a budget trip")
 }
 
+// TD-018 slice 2 (Epic 35.16.11.2.2.4.5.1 T1): the fixture above sets only
+// Salvaged, which is not the shape llmclient produces. A real stop-reason
+// salvage carries Salvaged AND SalvagedOnStop, with Truncated false. The
+// findings lane may parse that shape, but a verdict is terminal (a `refuted`
+// verdict clears the CI gate), so the skeptic must still refuse it.
+func TestInvokeSkeptic_StopReasonSalvageIsRefused(t *testing.T) {
+	t.Parallel()
+	sk := testSkeptic()
+	sk.Config.SupportsFC = false // single-shot path
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{meta: &llmclient.Completion{
+			Content:        `{"verdict":"refuted","reasoning":"draft parsed from chain-of-thought"}`,
+			Salvaged:       true,
+			SalvagedOnStop: true,
+			Truncated:      false,
+		}},
+	}}
+	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	assert.Equal(t, verdictUnverifiable, v.Verdict, "a stop-reason salvage must not yield a terminal verdict")
+	assert.Equal(t, "reasoning_salvaged", v.Notes, "the salvage note, not response_truncated: the reply was not cut off")
+	assert.Empty(t, tripped, "a salvage is not a budget trip")
+}
+
 // TestInvokeSkeptic_RefusesAVerdictParsedFromNonLeadingThinkMarkup pins the third
 // guard at the call site: markup the leading-only strip could not remove must not
 // be parsed at all.
