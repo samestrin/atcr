@@ -147,6 +147,12 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 	// with chain-of-thought as Content — the truncated-reply guard never fires
 	// and a draft verdict parsed from the reasoning would count toward precision
 	// as a full read (TD internal/llmclient/client.go:394). Collapse the same way.
+	//
+	// This lane keeps the derived Salvaged flag on purpose and refuses BOTH
+	// salvage reasons, stop-reason (SalvagedOnStop) as well as truncated: the
+	// findings lane may parse a stop-reason salvage, but a verdict is terminal —
+	// a `refuted` verdict clears the CI gate — so no verdict is taken from the
+	// reasoning channel whatever the provider's finish reason was.
 	if res.Salvaged {
 		logger.Warn("skeptic failed", "skeptic", skeptic.Name, "class", "reasoning_salvaged")
 		logger.Debug("skeptic failure detail", "skeptic", skeptic.Name, "class", "reasoning_salvaged", "detail", "provider returned empty content; the salvaged chain-of-thought is not a verdict")
