@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -235,4 +236,40 @@ func TestGenerateFixes_PrefixOnlyDraftFixIsRefused(t *testing.T) {
 			assert.Empty(t, findings[0].Fix)
 		})
 	}
+}
+
+// stopReasonSalvagingExecutor reports the shape llmclient produces for a
+// stop-reason salvage: Salvaged AND SalvagedOnStop, Truncated false. The content
+// is a well-formed fix envelope, so only the salvage guard keeps it out of Fix.
+type stopReasonSalvagingExecutor struct{}
+
+func (s *stopReasonSalvagingExecutor) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
+	return `{"fix":"DRAFT-PATCH","explanation":"from chain-of-thought"}`, nil
+}
+
+func (s *stopReasonSalvagingExecutor) CompleteWithMeta(_ context.Context, _ llmclient.Invocation) (llmclient.Completion, error) {
+	return llmclient.Completion{
+		Content:        `{"fix":"DRAFT-PATCH","explanation":"from chain-of-thought"}`,
+		Salvaged:       true,
+		SalvagedOnStop: true,
+		Truncated:      false,
+	}, nil
+}
+
+// TD-018 slice 2 (Epic 35.16.11.2.2.4.5.1 T1): the existing executor salvage
+// fixture sets only Salvaged. A real stop-reason salvage also sets SalvagedOnStop
+// and is not truncated; the findings lane may parse that shape, but an executor
+// patch is written to tracked source, so the executor must refuse it like any
+// other salvage.
+func TestGenerateFixes_StopReasonSalvage_NoPatchAndLogsSalvageClass(t *testing.T) {
+	ctx, buf := ceilingCtx()
+	findings := []reconcile.JSONFinding{truncFinding()}
+	generateFixes(ctx, findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), &stopReasonSalvagingExecutor{}, nil, okDispatcher(), 0)
+
+	f := findings[0]
+	assert.Empty(t, f.Fix, "a stop-reason salvage must NOT be recorded as a patch")
+	assert.Contains(t, f.FixWarning, "salvaged", "the FixWarning must name the salvage reason")
+	out := buf.String()
+	assert.Contains(t, out, "executor_salvaged_reasoning", "a stop-reason salvage logs the salvage class")
+	assert.NotContains(t, out, "executor_fix_failed", "a salvage is not a transport failure")
 }

@@ -373,6 +373,11 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 				// salvage flag rides separately (not folded into warn) because its
 				// postCheck branch carries the prior-tier Fix guard the generic warn
 				// branch must not grow (TD internal/verify/executor.go:346).
+				//
+				// salv is the derived Salvaged flag, kept on purpose: the executor
+				// refuses BOTH salvage reasons (stop-reason and truncated), because an
+				// executor patch is written to tracked source by --auto-fix, and no
+				// text from the reasoning channel may reach it on any finish reason.
 				if salv {
 					return "", "fix generation salvaged reasoning (empty content); the chain-of-thought is not a patch", tr, true
 				}
@@ -392,7 +397,9 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 				// failure warning beside an earlier tier's generated Fix, and its log
 				// class is distinct from executor_fix_failed (a provider/transport
 				// error) — a salvage is a content-shape outcome, not a transport one
-				// (TD internal/verify/executor.go:346).
+				// (TD internal/verify/executor.go:346). Like generate above, this arm
+				// refuses both salvage reasons: a patch lands in tracked source, so a
+				// stop-reason salvage is no safer here than a truncated one.
 				if salvaged {
 					logPipelineWarning(log.FromContext(ctx), "executor_salvaged_reasoning", fmt.Sprintf("%s:%d", f.File, f.Line))
 					if !hasAnyFixAttribution(f.Evidence) {
@@ -637,6 +644,8 @@ func callExecutor(ctx context.Context, complete executorCompleter, prov registry
 	// and never silently accepted as a clean patch (Epic 19.5).
 	if mc, ok := complete.(metaCompleter); ok {
 		comp, err := mc.CompleteWithMeta(callCtx, inv)
+		// Only the derived Salvaged propagates, not the reason split: the
+		// executor refuses a stop-reason salvage and a truncated one alike.
 		return comp.Content, comp.Truncated, comp.Salvaged, err
 	}
 	content, err := complete.Complete(callCtx, inv)
