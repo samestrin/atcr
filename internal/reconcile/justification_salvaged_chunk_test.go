@@ -402,3 +402,77 @@ func BenchmarkExcludedAnchorLines_SalvagedBins(b *testing.B) {
 		excludedAnchorLines(raw, bins)
 	}
 }
+
+// TestStampJustifications_OnlyAbandonedBinsAreExcluded: a chunked persona whose
+// bins 1 and 2 salvaged, bin 1 on a stop reason. Bin 1 is a finished answer and
+// stays indexed; only bin 2 (abandoned) is excluded.
+func TestStampJustifications_OnlyAbandonedBinsAreExcluded(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeReview(t, reviewDir, "dax", chunkedReview(
+		"## Findings\n\nNothing at the other file `internal/other.go:1` worth noting.",
+		"## Findings\n\nThe check at `internal/auth/token.go:42` accepts an unsigned token.",
+		"Maybe **`internal/auth/session.go:7`** is the spot. Still weighing it.",
+	))
+	dir := filepath.Join(reviewDir, "sources", "dax")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, statusFileName), []byte(
+		`{"agent":"dax","status":"ok","salvaged":true,"salvaged_chunks":[1,2],"salvaged_on_stop_chunks":[1]}`), 0o644))
+
+	jf := []JSONFinding{
+		{File: "internal/auth/token.go", Line: 42, Reviewers: []string{"dax"}},
+		{File: "internal/auth/session.go", Line: 7, Reviewers: []string{"dax"}},
+	}
+	stampJustifications(jf, reviewDir)
+
+	assert.Contains(t, jf[0].Justification, "accepts an unsigned token",
+		"bin 1 salvaged on a stop reason: its prose is a finished answer and stays indexed")
+	assert.Empty(t, jf[1].Justification, "bin 2 was abandoned: its lines stay excluded")
+	assert.Nil(t, jf[1].SourceReport)
+}
+
+// Every salvaged bin on a stop reason leaves nothing abandoned, so nothing is
+// withheld — and the empty remainder must not read as "salvaged with no bin
+// index", which would withhold the whole file.
+func TestStampJustifications_EveryBinOnStopWithholdsNothing(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeReview(t, reviewDir, "dax", chunkedReview(
+		"## Findings\n\nThe check at `internal/auth/token.go:42` accepts an unsigned token.",
+		"## Findings\n\nNo issue at `internal/other.go:1`.",
+	))
+	dir := filepath.Join(reviewDir, "sources", "dax")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, statusFileName), []byte(
+		`{"agent":"dax","status":"ok","salvaged":true,"salvaged_chunks":[0],"salvaged_on_stop_chunks":[0]}`), 0o644))
+
+	jf := []JSONFinding{{File: "internal/auth/token.go", Line: 42, Reviewers: []string{"dax"}}}
+	stampJustifications(jf, reviewDir)
+
+	assert.Contains(t, jf[0].Justification, "accepts an unsigned token")
+}
+
+// TestSourceSalvage_SubtractsStopReasonSalvages pins the decode of the stop-reason
+// keys: sourceSalvage reports only ABANDONED salvages.
+func TestSourceSalvage_SubtractsStopReasonSalvages(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	write := func(body string) string {
+		sub := filepath.Join(dir, strconv.Itoa(len(body)))
+		require.NoError(t, os.MkdirAll(sub, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(sub, statusFileName), []byte(body), 0o644))
+		return filepath.Join(sub, reviewFileName)
+	}
+
+	salvaged, chunks := sourceSalvage(write(`{"salvaged":true,"salvaged_on_stop":true}`))
+	assert.False(t, salvaged, "an unchunked stop-reason salvage is not abandoned")
+	assert.Empty(t, chunks)
+
+	salvaged, chunks = sourceSalvage(write(`{"salvaged":true,"salvaged_chunks":[1,2],"salvaged_on_stop_chunks":[1]}`))
+	assert.True(t, salvaged)
+	assert.Equal(t, []int{2}, chunks, "only the abandoned bin remains")
+
+	salvaged, chunks = sourceSalvage(write(`{"salvaged":true,"salvaged_chunks":[0,3],"salvaged_on_stop_chunks":[3,0]}`))
+	assert.False(t, salvaged, "every salvaged bin on a stop reason leaves nothing abandoned")
+	assert.Empty(t, chunks)
+
+	salvaged, chunks = sourceSalvage(write(`{"salvaged_on_stop":true}`))
+	assert.False(t, salvaged, "the reason key without the bit is not a refusal record")
+	assert.Empty(t, chunks)
+}

@@ -97,3 +97,55 @@ func TestStampJustifications_UnsalvagedAndStatuslessSourcesStillMatch(t *testing
 		})
 	}
 }
+
+// writeStatusBody writes a source leaf's status.json verbatim, for the
+// stop-reason shapes internal/fanout's statusFor now records.
+func writeStatusBody(t *testing.T, reviewDir, leaf, body string) {
+	t.Helper()
+	dir := filepath.Join(reviewDir, "sources", leaf)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "status.json"), []byte(body), 0o644))
+}
+
+// TestStampJustifications_StopReasonSalvageContributesItsNarrative: a reply
+// salvaged on a stop finish reason is a finished answer on the reasoning
+// channel, not an abandoned draft. Its findings ship (the unchunked findings
+// lane honours it), so its narrative is their provenance and must be indexed.
+// Before the change the bare salvaged bit withheld it whole.
+func TestStampJustifications_StopReasonSalvageContributesItsNarrative(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeReview(t, reviewDir, "host", ""+
+		"## Findings\n"+
+		"1. **`internal/auth/token.go:42` — JWT signature not verified.** The committed answer.\n")
+	writeStatusBody(t, reviewDir, "host",
+		`{"agent":"host","status":"ok","salvaged":true,"salvaged_on_stop":true}`)
+
+	jf := []JSONFinding{{File: "internal/auth/token.go", Line: 42, Reviewers: []string{"host"}}}
+	stampJustifications(jf, reviewDir)
+
+	assert.Contains(t, jf[0].Justification, "The committed answer",
+		"a stop-reason salvage is a finished answer; its narrative is real provenance")
+	require.NotNil(t, jf[0].SourceReport)
+	assert.Equal(t, "sources/host/review.md", jf[0].SourceReport.Path)
+}
+
+// The tier-outranking guard still holds for a truncated (abandoned) salvage
+// beside a stop-reason one: only the abandoned draft is withheld.
+func TestStampJustifications_AbandonedSalvageStillWithheldBesideStopReasonOne(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeReview(t, reviewDir, "aaa-truncated", ""+
+		"Thinking: **`internal/auth/token.go:42`** might be the spot. Draft only.\n")
+	writeSalvagedStatus(t, reviewDir, "aaa-truncated")
+	writeReview(t, reviewDir, "zzz-stopped", ""+
+		"## Findings\n"+
+		"1. **`internal/auth/token.go:42` — JWT signature not verified.** The committed answer.\n")
+	writeStatusBody(t, reviewDir, "zzz-stopped",
+		`{"agent":"zzz-stopped","status":"ok","salvaged":true,"salvaged_on_stop":true}`)
+
+	jf := []JSONFinding{{File: "internal/auth/token.go", Line: 42, Reviewers: []string{"aaa-truncated", "zzz-stopped"}}}
+	stampJustifications(jf, reviewDir)
+
+	require.NotNil(t, jf[0].SourceReport)
+	assert.Equal(t, "sources/zzz-stopped/review.md", jf[0].SourceReport.Path)
+	assert.NotContains(t, jf[0].Justification, "Draft only")
+}

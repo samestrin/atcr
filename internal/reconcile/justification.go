@@ -129,12 +129,12 @@ func stampJustifications(jf []JSONFinding, reviewDir string) {
 	narratives, salvageSkipped := collectReviewNarratives(filepath.Join(reviewDir, sourcesSubdir), reviewDir)
 	if len(narratives) == 0 {
 		// Every source was refused. Without this the run returns before ANY
-		// diagnostic, so a reviewer whose whole reply was salvaged reads as a review
+		// diagnostic, so a reviewer whose whole reply was an abandoned salvage reads as a review
 		// directory with nothing to match against — the silent corner the stale
 		// format-drift message was already bad enough at.
 		if salvageSkipped > 0 {
 			slog.Warn("justifications stamped", "matched", 0, "total", len(jf), "salvage_skipped", salvageSkipped,
-				"note", "every source review.md was skipped as salvaged (promoted chain-of-thought); there was no narrative to match, so this is not format drift")
+				"note", "every source review.md was skipped as an abandoned salvage (promoted, unfinished chain-of-thought); there was no narrative to match, so this is not format drift")
 		}
 		return
 	}
@@ -171,7 +171,7 @@ func stampJustifications(jf []JSONFinding, reviewDir string) {
 		// the operator after a parser problem is the same cost the elided arm exists
 		// to avoid (TD internal/reconcile/justification.go:161).
 		slog.Warn("justifications stamped", "matched", matched, "total", len(jf), "salvage_skipped", salvageSkipped,
-			"note", "review.md narratives existed but their source reply was salvaged (promoted chain-of-thought), which every lane refuses; this is not format drift")
+			"note", "review.md narratives existed but their source reply was salvaged and abandoned (promoted, unfinished chain-of-thought), which yields no findings; this is not format drift")
 	case elided > 0:
 		// Anchors matched; every candidate section was pure quoted example. Naming
 		// this "possible format drift" sent an operator hunting for a parser problem
@@ -221,9 +221,12 @@ func collectReviewNarratives(sourcesDir, reviewDir string) (out []reviewNarrativ
 		if rerr != nil {
 			return nil
 		}
-		// A SALVAGED reply is not a narrative. The provider returned no content and
-		// the client promoted the model's chain-of-thought into it, so every lane
-		// refuses it — parseFindings reads no findings from it at all. The leading-run
+		// An ABANDONED salvaged reply is not a narrative. The provider returned no
+		// content and stopped on a length cutoff, and the client promoted the model's
+		// unfinished chain-of-thought into it, so parseFindings reads no findings
+		// from it at all. (A salvage on a stop finish reason is a finished answer
+		// whose findings ship; sourceSalvage does not report it, so it is indexed
+		// like any other narrative.) The leading-run
 		// exclusion below cannot catch it: promoted reasoning carries no <think> tags,
 		// so SplitThink returns it unchanged and the whole file is indexed. Since
 		// matchNarrative ranks by tier before reviewer, one reasoning line citing the
@@ -283,7 +286,8 @@ func collectReviewNarratives(sourcesDir, reviewDir string) (out []reviewNarrativ
 }
 
 // sourceSalvage reports whether the status.json sibling of a review.md marks
-// the slot salvaged, and which of a chunked persona's bins were refused. Same shape and same decoupling as discover.go's
+// the slot as an ABANDONED salvage, and which of a chunked persona's bins were
+// refused as abandoned. Same shape and same decoupling as discover.go's
 // readSourceFallback: only the one field is decoded, so reconcile does not import
 // internal/fanout's AgentStatus.
 //
@@ -302,19 +306,50 @@ func collectReviewNarratives(sourcesDir, reviewDir string) (out []reviewNarrativ
 // parseFindings keeps (engine.go) and docs/findings-format.md publishes as kept.
 // localdebt seeds seen[id] for every open id, so that loss is permanent
 // (TD internal/reconcile/justification.go:201).
+//
+// ABANDONED salvages only. A salvage on a stop finish reason is a finished answer
+// on the reasoning channel, not a draft, and its findings ship, so its narrative
+// is their real provenance. salvaged_on_stop (unchunked) and
+// salvaged_on_stop_chunks (chunked) name those, and are subtracted here: an
+// unchunked reply is abandoned when salvaged && !salvaged_on_stop, a chunked
+// persona's abandoned bins are salvaged_chunks minus salvaged_on_stop_chunks, and
+// a chunked persona with no abandoned bin left reports false — never "salvaged
+// with no bin index", which callers read as withhold-the-whole-file. A record
+// without the stop keys decodes exactly as before.
 func sourceSalvage(reviewPath string) (salvaged bool, chunks []int) {
 	data, err := os.ReadFile(filepath.Join(filepath.Dir(reviewPath), statusFileName))
 	if err != nil {
 		return false, nil
 	}
 	var st struct {
-		Salvaged bool  `json:"salvaged"`
-		Chunks   []int `json:"salvaged_chunks"`
+		Salvaged     bool  `json:"salvaged"`
+		Chunks       []int `json:"salvaged_chunks"`
+		OnStop       bool  `json:"salvaged_on_stop"`
+		OnStopChunks []int `json:"salvaged_on_stop_chunks"`
 	}
 	if err := json.Unmarshal(data, &st); err != nil {
 		return false, nil
 	}
-	return st.Salvaged, st.Chunks
+	if !st.Salvaged {
+		return false, st.Chunks
+	}
+	if len(st.Chunks) == 0 {
+		return !st.OnStop, nil
+	}
+	if len(st.OnStopChunks) == 0 {
+		return true, st.Chunks
+	}
+	onStop := make(map[int]struct{}, len(st.OnStopChunks))
+	for _, b := range st.OnStopChunks {
+		onStop[b] = struct{}{}
+	}
+	var abandoned []int
+	for _, b := range st.Chunks {
+		if _, ok := onStop[b]; !ok {
+			abandoned = append(abandoned, b)
+		}
+	}
+	return len(abandoned) > 0, abandoned
 }
 
 // salvagedSegmentLines returns every 0-based line of a chunked review.md that
