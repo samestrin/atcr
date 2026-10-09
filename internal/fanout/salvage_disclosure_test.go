@@ -115,10 +115,10 @@ func TestWritePool_SalvagedBinBesideRealFindingsIsNotReportedAsTotalLoss(t *test
 // were new, with no restatement marker (TD internal/fanout/resume.go:780).
 func TestWarnSalvaged_DistinguishesTheResumeRestatement(t *testing.T) {
 	fresh := captureWarn(t, func(ctx context.Context) {
-		warnSalvaged(ctx, 1, []string{"drafter (contributed nothing)"}, false)
+		warnSalvaged(ctx, 1, []string{"drafter (contributed nothing)"}, salvageClasses{abandoned: true}, false)
 	})
 	cumulative := captureWarn(t, func(ctx context.Context) {
-		warnSalvaged(ctx, 1, []string{"drafter (contributed nothing)"}, true)
+		warnSalvaged(ctx, 1, []string{"drafter (contributed nothing)"}, salvageClasses{abandoned: true}, true)
 	})
 
 	require.NotEmpty(t, fresh)
@@ -129,7 +129,7 @@ func TestWarnSalvaged_DistinguishesTheResumeRestatement(t *testing.T) {
 		"the resumed wording must mark itself as a restatement, matching warnTruncatedZeroFindings")
 
 	// Silent at 0 in both modes — the shared contract with its sibling.
-	assert.Empty(t, captureWarn(t, func(ctx context.Context) { warnSalvaged(ctx, 0, nil, true) }))
+	assert.Empty(t, captureWarn(t, func(ctx context.Context) { warnSalvaged(ctx, 0, nil, salvageClasses{}, true) }))
 }
 
 // captureWarn runs fn with a context carrying an in-memory logger and returns the
@@ -241,4 +241,114 @@ func TestSalvageCost_AgreesWithWholePersonaSalvagedWhenChunkCountIsAbsent(t *tes
 	require.False(t, WholePersonaSalvaged(partial))
 	assert.Contains(t, salvageCost(partial), "siblings kept",
 		"a genuinely partial salvage keeps its bin detail and its siblings-kept wording")
+}
+
+// "Refused" keys on the salvage class, read from the status record (Epic
+// 35.16.11.2.2.4.5.1 T6). parseFindings keeps a stop-reason salvage's findings, so a
+// bin named in SalvagedOnStopChunks was parsed, not refused, and an unchunked
+// stop-reason salvage with zero findings committed NO FINDINGS: a clean review that
+// WholePersonaSalvaged already says is not a loss.
+func TestSalvageCost_KeysRefusedOnTheSalvageClass(t *testing.T) {
+	// A stop-reason bin renders "kept", never "refused".
+	onStop := salvageCost(AgentStatus{Agent: "otto", Salvaged: true,
+		SalvagedChunks: []int{1}, SalvagedOnStopChunks: []int{1}, ChunkCount: 4, FindingsCount: 3})
+	assert.Equal(t, " (chunk 1 kept (stop-reason salvage, parsed))", onStop)
+	assert.NotContains(t, onStop, "refused")
+
+	// Mixed: each bin is named in its own class.
+	mixed := salvageCost(AgentStatus{Agent: "otto", Salvaged: true,
+		SalvagedChunks: []int{0, 2}, SalvagedOnStopChunks: []int{2}, ChunkCount: 4, FindingsCount: 3})
+	assert.Equal(t, " (chunk 0 refused, chunk 2 kept (stop-reason salvage, parsed), its siblings kept)", mixed)
+
+	// Every bin salvaged on a stop reason is not a whole loss.
+	allOnStop := AgentStatus{Agent: "kai", Salvaged: true,
+		SalvagedChunks: []int{0, 1}, SalvagedOnStopChunks: []int{0, 1}, ChunkCount: 2, FindingsCount: 0}
+	require.False(t, WholePersonaSalvaged(allOnStop), "precondition")
+	assert.Equal(t, " (chunk 0/1 kept (stop-reason salvage, parsed))", salvageCost(allOnStop))
+
+	// Abandoned-only and legacy records (no on-stop keys) render exactly as before.
+	assert.Equal(t, " (chunk 1 refused, its siblings kept)", salvageCost(AgentStatus{Agent: "otto", Salvaged: true,
+		SalvagedChunks: []int{1}, ChunkCount: 4, FindingsCount: 5}))
+	assert.Equal(t, " (contributed nothing)", salvageCost(AgentStatus{Agent: "dax", Salvaged: true}))
+	assert.Empty(t, salvageCost(AgentStatus{Agent: "greta", Salvaged: true, FindingsCount: 4}))
+
+	// The unchunked stop-reason salvage: zero findings is a clean review, not a loss.
+	clean := AgentStatus{Agent: "dax", Salvaged: true, SalvagedOnStop: true, FindingsCount: 0}
+	require.False(t, WholePersonaSalvaged(clean), "precondition: the predicate already calls it a contribution")
+	assert.Equal(t, " (stop-reason salvage, parsed)", salvageCost(clean))
+	assert.Equal(t, " (stop-reason salvage, parsed)",
+		salvageCost(AgentStatus{Agent: "dax", Salvaged: true, SalvagedOnStop: true, FindingsCount: 2}))
+}
+
+func TestClassifySalvaged_ReadsTheClassFromTheStatusRecord(t *testing.T) {
+	cases := []struct {
+		name string
+		st   AgentStatus
+		want salvageClasses
+	}{
+		{"clean", AgentStatus{}, salvageClasses{}},
+		{"legacy unchunked", AgentStatus{Salvaged: true}, salvageClasses{abandoned: true}},
+		{"unchunked on stop", AgentStatus{Salvaged: true, SalvagedOnStop: true}, salvageClasses{onStop: true}},
+		{"legacy chunked", AgentStatus{Salvaged: true, SalvagedChunks: []int{1}, ChunkCount: 2}, salvageClasses{abandoned: true}},
+		{"chunked on stop", AgentStatus{Salvaged: true, SalvagedChunks: []int{1}, SalvagedOnStopChunks: []int{1}, ChunkCount: 2}, salvageClasses{onStop: true}},
+		{"chunked mixed", AgentStatus{Salvaged: true, SalvagedChunks: []int{0, 1}, SalvagedOnStopChunks: []int{1}, ChunkCount: 2}, salvageClasses{abandoned: true, onStop: true}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, classifySalvaged([]AgentStatus{tc.st}))
+		})
+	}
+}
+
+// The run-level warning states the consequence and the remedy that fit the class:
+// an abandoned salvage was refused and needs more output budget; a stop-reason
+// salvage was parsed, and the thinking: off advice fits it. Both still count, so the
+// stop-reason case stays visible on the console.
+func TestWarnSalvaged_KeysRefusedAndTheRemedyOnTheClass(t *testing.T) {
+	abandoned := captureWarn(t, func(ctx context.Context) {
+		warnSalvaged(ctx, 1, []string{"dax (contributed nothing)"}, salvageClasses{abandoned: true}, false)
+	})
+	assert.Contains(t, abandoned, "refused rather than parsed")
+	assert.Contains(t, abandoned, "max_tokens", "a cut-off draft needs more output budget")
+	assert.NotContains(t, abandoned, "stop_reason_remedy")
+
+	onStop := captureWarn(t, func(ctx context.Context) {
+		warnSalvaged(ctx, 1, []string{"dax (stop-reason salvage, parsed)"}, salvageClasses{onStop: true}, false)
+	})
+	require.NotEmpty(t, onStop, "a stop-reason salvage must stay visible on the console")
+	assert.NotContains(t, onStop, "refused", "a stop-reason salvage was parsed, not refused")
+	assert.Contains(t, onStop, "parsed and its findings kept")
+	assert.Contains(t, onStop, "thinking: off")
+	assert.NotContains(t, onStop, "max_tokens", "nothing was cut off, so more budget is not the fix")
+
+	mixed := captureWarn(t, func(ctx context.Context) {
+		warnSalvaged(ctx, 2, []string{"dax (contributed nothing)", "otto (stop-reason salvage, parsed)"},
+			salvageClasses{abandoned: true, onStop: true}, true)
+	})
+	assert.Contains(t, mixed, "refused rather than parsed")
+	assert.Contains(t, mixed, "parsed and its findings kept")
+	assert.Contains(t, mixed, "stop_reason_remedy")
+	assert.Contains(t, mixed, "cumulative")
+}
+
+// End to end through writePool: a stop-reason salvage is counted in salvaged_count
+// and named on the console, without the word "refused".
+func TestWritePool_StopReasonSalvageIsCountedButNotCalledRefused(t *testing.T) {
+	pool := filepath.Join(t.TempDir(), "pool")
+	var err error
+	out := captureWarnLog(t, func(ctx context.Context) {
+		_, err = writePool(ctx, pool, []Result{
+			{Agent: "finisher", Status: StatusOK, Salvaged: true, SalvagedOnStop: true, Content: "NO FINDINGS"},
+		}, nil, "")
+	})
+	require.NoError(t, err)
+	assert.Contains(t, out, "finisher (stop-reason salvage, parsed)")
+	assert.NotContains(t, out, "refused")
+	assert.NotContains(t, out, "contributed nothing")
+
+	data, err := os.ReadFile(filepath.Join(pool, "summary.json"))
+	require.NoError(t, err)
+	var ps PoolSummary
+	require.NoError(t, json.Unmarshal(data, &ps))
+	assert.Equal(t, 1, ps.SalvagedCount, "salvaged_count keeps counting the stop-reason class")
 }
