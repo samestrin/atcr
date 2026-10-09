@@ -777,7 +777,7 @@ func RebuildPool(ctx context.Context, poolDir string, roster []string) (Summary,
 	truncatedZeroFindings, truncatedZeroAgents := tallyTruncatedZeroFindings(statuses)
 	warnTruncatedZeroFindings(ctx, truncatedZeroFindings, truncatedZeroAgents, true)
 	salvagedCount, salvagedAgents := tallySalvaged(statuses)
-	warnSalvaged(ctx, salvagedCount, salvagedAgents, true)
+	warnSalvaged(ctx, salvagedCount, salvagedAgents, classifySalvaged(statuses), true)
 	ps := PoolSummary{
 		Agents:                statuses,
 		Total:                 sum.Total,
