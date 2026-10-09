@@ -52,11 +52,15 @@ const (
 	//   - chunking: fanout.AgentStatus.UnreviewedChunks counts the bins that failed
 	//     while the persona still reported StatusOK;
 	//   - salvage: fanout.AgentStatus.Salvaged marks a reply the provider returned
-	//     with no content, whose reasoning the client promoted into it. Every lane
-	//     refuses such a reply, so it contributes nothing — and it is StatusOK with
-	//     content, so none of the signals above catch it. For a chunked persona the
-	//     refusal is per bin (SalvagedChunks names which), and a salvaged bin is
-	//     StatusOK, so UnreviewedChunks does not count it either;
+	//     with no content, whose reasoning the client promoted into it. That is a
+	//     channel fact, not a loss: a salvage the provider finished on a stop reason
+	//     (SalvagedOnStop / SalvagedOnStopChunks) keeps its findings. Only an
+	//     ABANDONED salvage contributes nothing, and it is StatusOK with content, so
+	//     none of the signals above catch it. fanout.WholePersonaSalvaged applies
+	//     the rule: an unchunked persona is incomplete when Salvaged &&
+	//     !SalvagedOnStop; a chunked one only when its abandoned bins (SalvagedChunks
+	//     not in SalvagedOnStopChunks) cover every bin. A salvaged bin is StatusOK,
+	//     so UnreviewedChunks does not count it either;
 	//   - payload truncation: fanout.AgentStatus.Truncated marks a byte-budget shed,
 	//     by any of THREE routes — a per-agent shed to fit the model's window, a
 	//     re-fit fallback under on_overflow=truncate, or the DIFF-WIDE shed
