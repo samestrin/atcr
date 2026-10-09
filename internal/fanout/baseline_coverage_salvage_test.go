@@ -70,3 +70,22 @@ func TestUncoveredBaselineFiles_CleanRunStillShortCircuits(t *testing.T) {
 	assert.Nil(t, uncoveredBaselineFiles(context.Background(), slots, results, reviewed),
 		"every slot succeeded and contributed — the whole payload was covered")
 }
+
+// A stop-reason salvage is a finished answer whose findings parseFindings keeps, so
+// its files WERE read: contributedNothing must be false for it, while a truncated
+// salvage of the same slot stays a refusal (AC5).
+func TestContributedNothing_StopReasonSalvageContributes(t *testing.T) {
+	t.Parallel()
+	onStop := Result{Agent: "greta", Status: StatusOK, Salvaged: true, SalvagedOnStop: true}
+	assert.False(t, contributedNothing(onStop),
+		"the model finished its answer on the reasoning channel; its findings shipped")
+
+	truncated := Result{Agent: "greta", Status: StatusOK, Salvaged: true}
+	assert.True(t, contributedNothing(truncated),
+		"an abandoned draft is still refused, so its files were read by nobody")
+
+	slots := []Slot{{Primary: Agent{Name: "greta", chunkFiles: []string{"a.go"}}}}
+	onStop.servedChunkFiles = []string{"a.go"}
+	assert.Nil(t, uncoveredBaselineFiles(context.Background(), slots, []Result{onStop}, map[string]string{"a.go": "h1"}),
+		"a stop-reason salvage covered its payload")
+}

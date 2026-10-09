@@ -154,11 +154,20 @@ func ReviewerOutcome(a AgentStatus, raisedCount int) string {
 // The distinction is already on disk. `Salvaged` is an OR-fold over a chunked
 // persona's bins (internal/fanout/status.go), so it cannot say which bin refused;
 // `SalvagedChunks` names them, and `ChunkCount` says how many there were. A salvaged
-// status with no bin index is the unchunked persona, whose entire reply is promoted
-// chain-of-thought — a whole-persona refusal. A bin index covering every bin is the
-// same loss, spelled per bin. Anything less is a PARTIAL loss: the clean siblings'
-// findings are parsed, reconciled and shipped, so the persona got a fair attempt and
-// must keep its trust standing (TD internal/scorecard/trust.go:1019).
+// status with no bin index is the unchunked persona, whose entire reply arrived on the
+// reasoning channel. A bin index covering every bin is the same loss, spelled per bin.
+// Anything less is a PARTIAL loss: the clean siblings' findings are parsed, reconciled
+// and shipped, so the persona got a fair attempt and must keep its trust standing
+// (TD internal/scorecard/trust.go:1019).
+//
+// Only an ABANDONED salvage counts toward the loss. `Salvaged` is a channel fact;
+// `SalvagedOnStop` / `SalvagedOnStopChunks` say which salvages the provider finished
+// on a stop reason, and parseFindings keeps those findings, so such a reply is a
+// contribution, not a refusal. An unchunked persona is therefore a whole loss only
+// when `Salvaged && !SalvagedOnStop`; a chunked one only when the bins salvaged and
+// not on-stop cover every bin. A record written before the on-stop keys existed
+// carries neither, so every salvage in it reads as abandoned — exactly as it did —
+// and stored history is left as written rather than re-derived.
 //
 // Deliberately no new outcome value. The vocabulary is fail-closed across versions
 // at the export boundary (ValidReviewerOutcome, benchmark.ValidOutcome), and the
@@ -170,8 +179,15 @@ func WholePersonaSalvaged(a AgentStatus) bool {
 	}
 	if len(a.SalvagedChunks) == 0 {
 		// No bin index: the unchunked persona, or a chunked one whose refusal the
-		// producer could not attribute. Either way nothing narrows it, so it is whole.
-		return true
+		// producer could not attribute. Nothing narrows it unless the reply salvaged
+		// on a stop reason (set only for an unchunked agent), so otherwise it is whole.
+		return !a.SalvagedOnStop
+	}
+	abandoned := abandonedSalvagedChunks(a)
+	if abandoned == 0 {
+		// Every salvaged bin finished on a stop reason and kept its findings: there
+		// is no abandonment claim to measure, so nothing to fail closed on.
+		return false
 	}
 	// A bin index that names every bin is the whole-persona loss. ChunkCount is the
 	// denominator; when it is absent the index cannot be compared against a total, so
@@ -180,7 +196,28 @@ func WholePersonaSalvaged(a AgentStatus) bool {
 	if a.ChunkCount <= 0 {
 		return true
 	}
-	return len(a.SalvagedChunks) >= a.ChunkCount
+	return abandoned >= a.ChunkCount
+}
+
+// abandonedSalvagedChunks counts the entries of SalvagedChunks that are not also in
+// SalvagedOnStopChunks: the bins whose salvage was refused. It counts entries rather
+// than distinct indices so a legacy record (no on-stop key) reads as
+// len(SalvagedChunks), the count the predicate used before the key existed.
+func abandonedSalvagedChunks(a AgentStatus) int {
+	if len(a.SalvagedOnStopChunks) == 0 {
+		return len(a.SalvagedChunks)
+	}
+	onStop := make(map[int]struct{}, len(a.SalvagedOnStopChunks))
+	for _, i := range a.SalvagedOnStopChunks {
+		onStop[i] = struct{}{}
+	}
+	n := 0
+	for _, i := range a.SalvagedChunks {
+		if _, ok := onStop[i]; !ok {
+			n++
+		}
+	}
+	return n
 }
 
 // ReviewerOutcomePrecedence returns ReviewerOutcome's precedence, highest first

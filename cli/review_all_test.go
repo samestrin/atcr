@@ -1043,16 +1043,18 @@ func TestCommitBaselineWriteback_NamesTheContributedNothingCause(t *testing.T) {
 	_, err = fanout.PrepareReviewFromRepo(context.Background(), cfg, req)
 	require.NoError(t, err)
 
-	// A SALVAGED reply: the provider returns empty content with reasoning_content
-	// set, so the client promotes the chain-of-thought and every lane refuses it.
-	// The result is a persona that saw the whole diff, reported ok, and
-	// contributed nothing — so uncoveredBaselineFiles withholds its coverage while
-	// UnreviewedChunks stays 0. Nothing else reproduces that pair.
+	// A THINK-SUPPRESSED reply: the whole content is one leading think block, so the
+	// strip leaves no answer and the reply parses to nothing. The result is a persona
+	// that saw the whole diff, reported ok, and contributed nothing — so
+	// uncoveredBaselineFiles withholds its coverage while UnreviewedChunks stays 0.
+	// (A reasoning-channel salvage no longer reproduces that pair: a "stop" finish is
+	// a finished answer that counts as a contribution since WholePersonaSalvaged
+	// learned the stop reason, and a "length" finish is demoted to a failure.)
 	salvageSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.ReadAll(r.Body)
 		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{
 			"finish_reason": "stop",
-			"message":       map[string]string{"role": "assistant", "content": "", "reasoning_content": "I will consider a.txt:1 ..."},
+			"message":       map[string]string{"role": "assistant", "content": "<think>I will consider a.txt:1 ...</think>"},
 		}}})
 	}))
 	t.Cleanup(salvageSrv.Close)
@@ -1064,10 +1066,10 @@ func TestCommitBaselineWriteback_NamesTheContributedNothingCause(t *testing.T) {
 	require.NoError(t, err)
 
 	res, err := fanout.ExecuteReview(context.Background(), newCompleter(context.Background()), prep)
-	require.NoError(t, err, "a salvaged persona is still a succeeded run")
+	require.NoError(t, err, "a think-suppressed persona is still a succeeded run")
 	require.Positive(t, res.Summary.Succeeded)
 	require.Zero(t, res.Summary.UnreviewedChunks,
-		"a salvaged slot is StatusOK, so it is not an unreviewed chunk — the counter the old message pointed at")
+		"a think-suppressed slot is StatusOK, so it is not an unreviewed chunk — the counter the old message pointed at")
 	require.Positive(t, res.Summary.ContributedNothingCount,
 		"the cause must be tallied, or the operator lines still cannot name it")
 

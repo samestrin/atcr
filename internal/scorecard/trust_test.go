@@ -2998,3 +2998,28 @@ func TestOutcomeEligible_PartialSalvageKeepsTheLensStanding(t *testing.T) {
 	assert.Equal(t, partial.Outcome, kept[0].Outcome,
 		"the partial-salvage record is the one that survives the gate")
 }
+
+// A stop-reason salvage is a finished answer on the reasoning channel whose findings
+// shipped, so internal/fanout now stamps it "findings" rather than "incomplete"
+// (WholePersonaSalvaged counts only abandoned salvages, AC5). This pins the
+// consequence at the trust boundary: that stored outcome is eligible.
+//
+// History written before the salvaged_on_stop keys existed is LEFT AS WRITTEN: such a
+// record reads every salvage as abandoned, so its stored "incomplete" stays
+// ineligible and is not re-derived — rewriting stored outcomes would cross the
+// fail-closed vocabulary boundary (ValidReviewerOutcome) for no new evidence.
+func TestOutcomeEligible_StopReasonSalvageKeepsTheLensStanding(t *testing.T) {
+	onStop := reviewer_(runIDAt(time.Now(), "ss-001"), "greta", "m1", 2, 0)
+	onStop.Outcome = outcomeFindings
+	assert.True(t, outcomeEligible(onStop),
+		"a stop-reason salvage that shipped findings must stay trust-eligible")
+
+	legacy := reviewer_(runIDAt(time.Now(), "ss-002"), "greta", "m1", 0, 0)
+	legacy.Outcome = "incomplete"
+	assert.False(t, outcomeEligible(legacy),
+		"a pre-key salvage record keeps its stored outcome; history is not re-derived")
+
+	kept := eligibleOutcomeRuns([]Record{onStop, legacy})
+	require.Len(t, kept, 1)
+	assert.Equal(t, outcomeFindings, kept[0].Outcome)
+}
