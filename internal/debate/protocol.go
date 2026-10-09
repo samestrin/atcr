@@ -231,6 +231,13 @@ func driveSeat(ctx context.Context, seat Caster, prompt string, cc fanout.ChatCo
 	// The Salvaged marker covers the same failure on finish_reason=stop: empty
 	// content, reasoning promoted to Content, ResponseTruncated FALSE — the
 	// truncation gate above never fires on it (TD internal/llmclient/client.go:394).
+	//
+	// Deliberately keeps the derived Salvaged flag and refuses BOTH salvage
+	// reasons — SalvagedTruncated and SalvagedOnStop alike — even though the
+	// findings lane now parses a stop-reason salvage (TD-018). A seat statement
+	// is pasted verbatim into later seats' prompts and JudgeRaw becomes a
+	// durable ruling, so a promoted reasoning draft must never stand in for
+	// either, whatever finish_reason it arrived on.
 	if r.ResponseTruncated || r.Salvaged {
 		return "", "", fanout.StatusFailed
 	}

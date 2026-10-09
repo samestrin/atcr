@@ -472,21 +472,32 @@ func TestRunDebate_PreserveThinkingPerSeat(t *testing.T) {
 // Salvaged marked, ResponseTruncated FALSE. The existing truncated-seat guard
 // never fires on it, so one seat's raw reasoning is forwarded verbatim into the
 // next seat's prompt as a "statement". The guard must read Salvaged too.
+//
+// The salvaged_on_stop case pins that the debate lane keeps refusing a
+// stop-reason salvage (TD-018) even though the findings lane now parses one: the
+// guard reads the derived Salvaged flag, which covers both reasons.
 func TestRunDebate_SalvagedStopReasonSeatHaltsAndIsNotForwarded(t *testing.T) {
 	reasoning := "chain of thought salvaged from an empty-content stop reply"
-	cc := &fakeChatCompleter{turns: []chatTurn{
-		{meta: &llmclient.Completion{Content: reasoning, Salvaged: true}},
-		{content: "challenger attacks"},
-		{content: `{"outcome":"uphold","settled_severity":"HIGH","reasoning":"evidence holds"}`},
-	}}
-	cast := fcCast()
-	cast.Proposer.Config.SupportsFC = false
-	rec := RunDebate(context.Background(), debateItem(), cast, cc, &fakeDispatcher{}, nil)
+	for name, meta := range map[string]*llmclient.Completion{
+		"salvaged":         {Content: reasoning, Salvaged: true},
+		"salvaged_on_stop": {Content: reasoning, Salvaged: true, SalvagedOnStop: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cc := &fakeChatCompleter{turns: []chatTurn{
+				{meta: meta},
+				{content: "challenger attacks"},
+				{content: `{"outcome":"uphold","settled_severity":"HIGH","reasoning":"evidence holds"}`},
+			}}
+			cast := fcCast()
+			cast.Proposer.Config.SupportsFC = false
+			rec := RunDebate(context.Background(), debateItem(), cast, cc, &fakeDispatcher{}, nil)
 
-	assert.Equal(t, []string{LabelProposer}, rec.Halted, "a salvaged statement is no statement")
-	assert.Empty(t, rec.ProposerStatement)
-	for _, inv := range cc.invocations() {
-		assert.NotContains(t, inv.Prompt, reasoning)
+			assert.Equal(t, []string{LabelProposer}, rec.Halted, "a salvaged statement is no statement")
+			assert.Empty(t, rec.ProposerStatement)
+			for _, inv := range cc.invocations() {
+				assert.NotContains(t, inv.Prompt, reasoning)
+			}
+		})
 	}
 }
 
