@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Added
+
+- An agent's `status.json` now says why a reply was salvaged. `salvaged_on_stop: true` marks an unchunked reply that the model finished on a stop reason (rather than being cut off), and `salvaged_on_stop_chunks` names those bins of a chunked persona. `salvaged` and `salvaged_chunks` still name every salvaged reply and bin. Both keys are absent when they do not apply, and a `status.json` written before them reads as "reason unknown".
+
 ### Fixed
 
 - A reviewer that finished its reply with `NO FINDINGS` on the reasoning channel (the provider stopped normally, no visible content) is no longer marked `unparseable_response`; it is read as the clean report it is. A reply cut off on length, or one whose stop reason is unknown, is still marked unparseable, and prose on that channel still is.

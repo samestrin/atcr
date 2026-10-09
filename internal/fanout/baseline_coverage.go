@@ -198,12 +198,15 @@ func contributedNothing(r Result) bool {
 // of AgentStatus is irrelevant to the question "did this persona contribute
 // anything".
 func resultStatus(r Result) AgentStatus {
+	onStop, onStopChunks := salvagedOnStop(r)
 	return AgentStatus{
-		Salvaged:          r.Salvaged,
-		SalvagedChunks:    salvagedChunkIndices(r),
-		ThinkSuppressed:   r.ThinkSuppressed,
-		UnparseableChunks: r.UnparseableChunks,
-		ChunkCount:        r.ChunkCount,
+		Salvaged:             r.Salvaged,
+		SalvagedChunks:       salvagedChunkIndices(r),
+		SalvagedOnStop:       onStop,
+		SalvagedOnStopChunks: onStopChunks,
+		ThinkSuppressed:      r.ThinkSuppressed,
+		UnparseableChunks:    r.UnparseableChunks,
+		ChunkCount:           r.ChunkCount,
 	}
 }
 
