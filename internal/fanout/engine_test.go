@@ -1179,10 +1179,9 @@ func TestInvokeSlot_SalvagedSentinelShapedReply_IsNotACleanReview(t *testing.T) 
 		assert.False(t, r.UnparseableResponse,
 			"a finished NO FINDINGS is the specified clean report, whichever channel carried it")
 		assert.False(t, r.ThinkSuppressed)
-		// This arm no longer scores it unparseable. The published outcome is not yet
-		// clean: WholePersonaSalvaged still reads Salvaged alone and calls this an
-		// "incomplete" whole-persona loss until it learns the stop reason (AC5, T5).
-		assert.NotEqual(t, "unparseable", ReviewerOutcome(statusFor(r, findingsResult{}), 0))
+		// This arm no longer scores it unparseable, and WholePersonaSalvaged counts
+		// only abandoned salvages (AC5), so the published outcome is clean.
+		assert.Equal(t, "clean", ReviewerOutcome(statusFor(r, findingsResult{}), 0))
 	})
 
 	t.Run("stop-reason salvage of prose: still unparseable", func(t *testing.T) {

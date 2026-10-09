@@ -129,3 +129,73 @@ func TestReviewerOutcome_PartialSalvageStaysEligible(t *testing.T) {
 		})
 	}
 }
+
+// Salvaged is a CHANNEL fact — the answer arrived on reasoning_content — and only
+// the truncated half of it is an abandonment. A stop-reason salvage is a finished
+// answer whose findings parseFindings keeps, so counting it as a whole-persona loss
+// stamped "incomplete" on a lens that shipped findings and dropped it from the trust
+// tally (AC5). Only the ABANDONED bins (salvaged and not on-stop) count, against the
+// same ChunkCount denominator and fail-closed arms; a record written before the
+// on-stop keys existed carries neither, so it reads exactly as it did.
+func TestWholePersonaSalvaged_CountsOnlyAbandonedBins(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		st    AgentStatus
+		whole bool
+		want  string // ReviewerOutcome with raisedCount 1
+	}{
+		{
+			name:  "unchunked stop-reason salvage that raised findings is not a loss",
+			st:    AgentStatus{Status: StatusOK, Salvaged: true, SalvagedOnStop: true},
+			whole: false,
+			want:  "findings",
+		},
+		{
+			name:  "unchunked truncated salvage is still a whole loss",
+			st:    AgentStatus{Status: StatusOK, Salvaged: true},
+			whole: true,
+			want:  "incomplete",
+		},
+		{
+			name:  "legacy chunked record covering every bin reads as before",
+			st:    AgentStatus{Status: StatusOK, Salvaged: true, SalvagedChunks: []int{0, 1}, ChunkCount: 2},
+			whole: true,
+			want:  "incomplete",
+		},
+		{
+			name:  "every bin salvaged but one on-stop: not every bin abandoned",
+			st:    AgentStatus{Status: StatusOK, Salvaged: true, SalvagedChunks: []int{0, 1}, SalvagedOnStopChunks: []int{1}, ChunkCount: 2},
+			whole: false,
+			want:  "findings",
+		},
+		{
+			name:  "every bin salvaged on-stop: nothing abandoned",
+			st:    AgentStatus{Status: StatusOK, Salvaged: true, SalvagedChunks: []int{0, 1}, SalvagedOnStopChunks: []int{0, 1}, ChunkCount: 2},
+			whole: false,
+			want:  "findings",
+		},
+		{
+			name:  "on-stop bins without a denominator abandon nothing, so no claim to fail closed on",
+			st:    AgentStatus{Status: StatusOK, Salvaged: true, SalvagedChunks: []int{0}, SalvagedOnStopChunks: []int{0}},
+			whole: false,
+			want:  "findings",
+		},
+		{
+			name:  "an abandoned bin without a denominator still fails closed",
+			st:    AgentStatus{Status: StatusOK, Salvaged: true, SalvagedChunks: []int{0, 1}, SalvagedOnStopChunks: []int{1}},
+			whole: true,
+			want:  "incomplete",
+		},
+		{
+			name:  "unattributed chunked salvage still fails closed",
+			st:    AgentStatus{Status: StatusOK, Salvaged: true, ChunkCount: 3},
+			whole: true,
+			want:  "incomplete",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.whole, WholePersonaSalvaged(tc.st))
+			assert.Equal(t, tc.want, ReviewerOutcome(tc.st, 1))
+		})
+	}
+}
