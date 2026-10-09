@@ -627,6 +627,10 @@ func TestClassify_SalvagedReasoningMarkerIsWarningNotOK(t *testing.T) {
 	assert.Equal(t, StatusOKWarning, got.status,
 		"a salvaged reasoning-only reply must never classify as a clean OK")
 	assert.Contains(t, got.hint, "salvaged", "the hint must name the salvage, not the generic marker-absent remedy")
+	assert.Contains(t, got.hint, "the provider answered on the reasoning channel, not with content",
+		"the hint must state the channel fact")
+	assert.NotContains(t, got.hint, "the review lane cannot use",
+		"the old, false review-lane clause must not return")
 }
 
 // A NON-salvaged reply carrying the marker stays a clean StatusOK.
