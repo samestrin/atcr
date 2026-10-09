@@ -1,9 +1,13 @@
 package reconcile
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
@@ -113,11 +117,17 @@ func TestFindingsFormatDoc_StatesTheThinkStrip(t *testing.T) {
 			"a draft the model abandoned",
 			"that refusal is per chunk",
 			"sibling chunks' findings are kept",
-			// Where the refused bin is COUNTED depends on why it salvaged, and the
+			// The chunked path reads each bin's own stop reason (chunkSalvagedOnStop),
+			// not the persona-wide truncation fold, so a stop-reason bin is parsed
+			// and only a bin with no stop reason is refused. Pinned in-package by
+			// TestMergeResultGroup_StopReasonSalvagedChunkKeepsItsFindings.
+			"a bin that salvaged on a stop reason is parsed like any other chunk",
+			"a salvaged bin with no stop reason recorded is refused",
+			// Where a salvaged bin is COUNTED depends on why it salvaged, and the
 			// doc has to keep both halves: a stop-reason salvage stays ok and is
-			// unparseable, a length-cutoff one fails over and is unreviewed.
+			// scored like any chunk, a length-cutoff one fails over and is unreviewed.
 			"stop-reason salvage stays `ok`",
-			"counted in `unparseable_chunks`",
+			"counted in `unparseable_chunks` only when its answer is neither findings nor a clean review",
 			"fails over to the backup model",
 			"counted in `unreviewed_chunks`",
 		} {
@@ -171,6 +181,68 @@ func TestFindingsFormatDoc_StatesTheThinkStrip(t *testing.T) {
 		}
 	})
 
+	// Epic 35.16.11.2.2.4.5.1 T7. The salvage sentence in the chunk-contract
+	// paragraph used to say every salvaged reply was "refused rather than parsed".
+	// Slice 1 made the findings lane parse a stop-reason salvage and score its
+	// committed NO FINDINGS clean, and T3 indexed its narratives, so the sentence now
+	// names the abandoned-only refusal. Each clause carries a code anchor: a revert
+	// of any one of the three behaviors fails here even with the doc untouched.
+	t.Run("only an abandoned salvage is refused by the findings lane", func(t *testing.T) {
+		line := docLineContaining(t, doc, ffDroppedFindingMarker)
+		for _, want := range []string{
+			"Only an abandoned salvage is refused rather than parsed",
+			"one the provider cut off on length",
+			"A stop-reason salvage is the model's finished answer arriving on the reasoning channel",
+			"its findings are parsed",
+			"its narratives are indexed for `justification`",
+			"a committed `NO FINDINGS` on that channel is a clean review rather than `unparseable_response`",
+			"prose on that channel that yields no findings is still `unparseable_response`",
+			// The other lanes' refusal is unchanged (T1, T2) and must stay stated, so
+			// the findings-lane carve-out is not read as a repo-wide one.
+			"the verify, executor and debate lanes refuse a salvage of either kind",
+			"no salvage is ever cached",
+		} {
+			assert.Contains(t, line, want,
+				"findings-format.md must state the abandoned-only refusal: missing %q", want)
+		}
+
+		// Code anchor, "its findings are parsed": the same parseable block yields a
+		// finding on a stop-reason salvage and nothing on a length-cutoff one.
+		findingsBlock := `[{"severity":"LOW","file_line":"a.go:1","problem":"p","fix":"f","category":"c","est_minutes":5,"evidence":"e"}]`
+		assert.Equal(t, 1, (&fanout.Result{Salvaged: true, SalvagedOnStop: true, Content: findingsBlock}).ParsedFindingCount(),
+			"a stop-reason salvage's findings are parsed")
+		assert.Equal(t, 0, (&fanout.Result{Salvaged: true, ResponseTruncated: true, Content: findingsBlock}).ParsedFindingCount(),
+			"an abandoned salvage is refused")
+
+		// Code anchor, "a committed NO FINDINGS on that channel is a clean review":
+		// run a real slot so invokeSlot's sentinel arm decides, for the two salvage
+		// classes and for prose on the reasoning channel.
+		run := func(comp llmclient.Completion) fanout.Result {
+			e := fanout.NewEngine(salvageCompleter{comp: comp})
+			res := e.Run(context.Background(), []fanout.Slot{{Primary: fanout.Agent{Name: "r", Invocation: llmclient.Invocation{Model: "m"}}}})
+			require.Len(t, res, 1)
+			return res[0]
+		}
+		clean := run(llmclient.Completion{Content: "NO FINDINGS", Salvaged: true, SalvagedOnStop: true})
+		assert.Equal(t, fanout.StatusOK, clean.Status)
+		assert.False(t, clean.UnparseableResponse,
+			"a committed NO FINDINGS on the reasoning channel is a clean review")
+		prose := run(llmclient.Completion{Content: "I looked around.", Salvaged: true, SalvagedOnStop: true})
+		assert.True(t, prose.UnparseableResponse,
+			"prose on the reasoning channel that yields no findings is still unparseable")
+		cutOff := run(llmclient.Completion{Content: "NO FINDINGS", Salvaged: true, SalvagedTruncated: true, Truncated: true})
+		assert.True(t, cutOff.UnparseableResponse,
+			"a sentinel-shaped draft the provider cut off is not a committed clean review")
+
+		// Code anchor, "its narratives are indexed": sourceSalvage is the reader
+		// collectReviewNarratives withholds on, and it reports a stop-reason salvage
+		// as not salvaged. The full stamping path is pinned by
+		// TestStampJustifications_StopReasonSalvageContributesItsNarrative.
+		salvaged, bins := sourceSalvageOf(t, `{"salvaged":true,"salvaged_on_stop":true}`)
+		assert.False(t, salvaged, "a stop-reason salvage's narrative is indexed, not withheld")
+		assert.Empty(t, bins)
+	})
+
 	t.Run("the justification excerpt drift is disclosed", func(t *testing.T) {
 		line := docLineContaining(t, doc, ffJustificationMarker)
 		for _, want := range []string{
@@ -181,6 +253,58 @@ func TestFindingsFormatDoc_StatesTheThinkStrip(t *testing.T) {
 				"findings-format.md must disclose the excerpt-vs-parser drift: missing %q", want)
 		}
 	})
+
+	// Epic 35.16.11.2.2.4.5.1 T7 (code: T3). The justification paragraph said the
+	// producer refuses any salvaged unchunked reply whole; T3 made reconcile withhold
+	// only an ABANDONED salvage's narrative and index a stop-reason one's.
+	t.Run("only an abandoned salvage's narrative is withheld", func(t *testing.T) {
+		line := docLineContaining(t, doc, ffJustificationMarker)
+		for _, want := range []string{
+			"an abandoned salvaged bin's lines are skipped whole",
+			"a bin listed in `salvaged_on_stop_chunks` is indexed",
+			"`status.json` records an abandoned salvage",
+			"`salvaged` with no `salvaged_chunks` and no `salvaged_on_stop`",
+			"A stop-reason salvage is not omitted: its narratives are indexed like any other reply's",
+		} {
+			assert.Contains(t, line, want,
+				"findings-format.md must state which salvaged narratives are withheld: missing %q", want)
+		}
+
+		// Code anchor: the three shapes the sentence names, read by the same
+		// function collectReviewNarratives consults.
+		salvaged, bins := sourceSalvageOf(t, `{"salvaged":true}`)
+		assert.True(t, salvaged, "an unchunked salvage with no stop reason is abandoned and withheld whole")
+		assert.Empty(t, bins, "no bin index: the whole file is withheld")
+
+		salvaged, bins = sourceSalvageOf(t, `{"salvaged":true,"salvaged_on_stop":true}`)
+		assert.False(t, salvaged, "a stop-reason salvage is not omitted")
+		assert.Empty(t, bins)
+
+		salvaged, bins = sourceSalvageOf(t, `{"salvaged":true,"salvaged_chunks":[1,2],"salvaged_on_stop_chunks":[1]}`)
+		assert.True(t, salvaged)
+		assert.Equal(t, []int{2}, bins, "only the abandoned bin's lines are skipped; the on-stop bin is indexed")
+	})
+}
+
+// sourceSalvageOf writes status beside a review.md in a fresh dir and returns
+// what sourceSalvage reads from it.
+func sourceSalvageOf(t *testing.T, status string) (bool, []int) {
+	t.Helper()
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, statusFileName), []byte(status), 0o600))
+	return sourceSalvage(filepath.Join(dir, "review.md"))
+}
+
+// salvageCompleter returns one fixed Completion through the MetaCompleter path,
+// the only path that carries the salvage reason.
+type salvageCompleter struct{ comp llmclient.Completion }
+
+func (s salvageCompleter) Complete(context.Context, llmclient.Invocation) (string, error) {
+	return s.comp.Content, nil
+}
+
+func (s salvageCompleter) CompleteWithMeta(context.Context, llmclient.Invocation) (llmclient.Completion, error) {
+	return s.comp, nil
 }
 
 // docs/providers.md is the operator-facing provider guide, and its
@@ -218,16 +342,40 @@ func TestProvidersDoc_SalvageYieldsNoFindings(t *testing.T) {
 		}
 	})
 
-	t.Run("the refusal is stated for every lane", func(t *testing.T) {
+	// Epic 35.16.11.2.2.4.5.1 T7. This bullet said "every lane refuses it" and that a
+	// salvaged reply "yields no findings, verdict, ruling, or cache entry". Slice 1
+	// made the findings lane parse a stop-reason salvage, so the findings half is now
+	// abandoned-only, while verify, the executor and debate (T1, T2) and the diff
+	// cache still refuse both kinds — and the bullet must keep saying so.
+	t.Run("the findings lane refuses only an abandoned salvage; every other lane refuses both", func(t *testing.T) {
 		line := docLineContaining(t, doc, provNormalizationMarker)
 		for _, want := range []string{
-			"yields no findings, verdict, ruling, or cache entry",
-			"every lane refuses it",
+			"the findings lane refuses only an **abandoned** salvage, one the provider cut off on length",
 			"worse than no answer",
+			"A salvage on a stop reason is a finished answer",
+			"the findings lane parses its findings",
+			"a committed `NO FINDINGS` there is a clean review",
+			"Every other lane refuses both kinds",
+			"yields no verdict, ruling, executor patch, or cache entry",
 		} {
 			assert.Contains(t, line, want,
-				"providers.md must state that a salvaged reply is refused: missing %q", want)
+				"providers.md must state which lanes refuse a salvaged reply: missing %q", want)
 		}
+		assert.NotContains(t, line, "every lane refuses it",
+			"the blanket claim is false for the findings lane since slice 1")
+
+		// Code anchor on the findings-lane half: the same block parses on a
+		// stop-reason salvage and is refused on a length-cutoff one. The other
+		// lanes' refusal is pinned in their own packages
+		// (TestInvokeSkeptic_StopReasonSalvageIsRefused,
+		// TestGenerateFixes_StopReasonSalvage_NoPatchAndLogsSalvageClass,
+		// TestRunDebate_SalvagedStopReasonSeatHaltsAndIsNotForwarded), which this
+		// package cannot import without a cycle.
+		findingsBlock := `[{"severity":"LOW","file_line":"a.go:1","problem":"p","fix":"f","category":"c","est_minutes":5,"evidence":"e"}]`
+		assert.Equal(t, 1, (&fanout.Result{Salvaged: true, SalvagedOnStop: true, Content: findingsBlock}).ParsedFindingCount(),
+			"the findings lane parses a stop-reason salvage")
+		assert.Equal(t, 0, (&fanout.Result{Salvaged: true, ResponseTruncated: true, Content: findingsBlock}).ParsedFindingCount(),
+			"the findings lane refuses an abandoned salvage")
 	})
 
 	// The strip belongs in the same bullet because it is the other half of "what

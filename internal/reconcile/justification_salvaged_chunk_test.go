@@ -17,7 +17,7 @@ import (
 // SalvagedChunks below is what tells the two apart."
 //
 // internal/fanout/engine.go's parseFindings honours that per bin, and
-// docs/findings-format.md publishes it ("a salvaged chunk contributes nothing,
+// docs/findings-format.md publishes it ("a refused chunk contributes nothing,
 // while its sibling chunks' findings are kept"). So the clean bins' findings are
 // parsed, reconciled and shipped — and withholding the WHOLE narrative on the
 // persona-wide bit strips justification and source_report off exactly those real
