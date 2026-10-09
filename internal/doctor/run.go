@@ -24,7 +24,7 @@ import (
 // back in visible content; the rest are failure or warning classes.
 const (
 	StatusOK            = "ok"             // marker found in response content
-	StatusOKWarning     = "ok_warning"     // HTTP 200 but marker absent/empty, or found only in reasoning the review lane cannot use (salvaged or think-block)
+	StatusOKWarning     = "ok_warning"     // HTTP 200 but marker absent/empty, or found only in reasoning rather than content (salvaged or think-block)
 	StatusAuthFailed    = "auth_failed"    // 401/403
 	StatusNotFound      = "not_found"      // 404 (model or base_url)
 	StatusRateLimited   = "rate_limited"   // 429
@@ -42,9 +42,9 @@ const defaultConcurrency = 8
 
 // healthy reports whether a status counts as a working invocation path.
 // StatusOKWarning counts — including the salvaged-reasoning class, whose hint
-// says the review lane cannot use that agent's reply: the exit code is an
-// endpoint-reachability contract, so verdict and hint deliberately disagree
-// there (documented in docs/registry.md's status table; TD
+// says the agent answered on the reasoning channel rather than with content: the
+// exit code is an endpoint-reachability contract, so verdict and hint
+// deliberately differ there (documented in docs/registry.md's status table; TD
 // internal/doctor/run.go:581, clarified 2026-09-29: keep exit 0, no
 // verdict-semantics change).
 func healthy(status string) bool { return status == StatusOK || status == StatusOKWarning }
@@ -273,8 +273,8 @@ type probeResult struct {
 	thinkingStatus string
 	thinkingDetail string
 	// markerInReasoning reports a StatusOKWarning whose marker WAS found, but only in
-	// reasoning the review lane cannot use — salvaged chain-of-thought (the salvaged
-	// field names that case) or a leading inline think block the lane strips before
+	// reasoning rather than content — salvaged chain-of-thought (the salvaged field
+	// names that case) or a leading inline think block the lane strips before
 	// parsing — so consumers that read StatusOKWarning as "marker absent" can tell
 	// the two apart.
 	markerInReasoning bool
@@ -712,6 +712,9 @@ func probe(ctx context.Context, c Completer, tgt Target, opts Options) probeResu
 		PreserveThinking: tgt.PreserveThinking,
 	})
 	latency := time.Since(start).Milliseconds()
+	// comp.Salvaged is a channel fact (the reply came back on the reasoning
+	// channel), and the probe hint it drives states only that fact: the probe
+	// cannot see the stop reason each lane's own salvage decision turns on.
 	pr := classify(comp.Content, err, opts.Nonce, latency, tgt, budgetSrc, comp.Salvaged)
 	// TD-020: this call carries the thinking declaration, so a --max-tokens at or
 	// below an anthropic budget is rejected. Name the flag, since review at its own
@@ -745,13 +748,16 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 		if strings.Contains(stripped, Marker(nonce)) {
 			// A salvaged reply's Content is the promoted chain-of-thought, not the
 			// model's answer (TD internal/doctor/run.go:660). Even when the reasoning
-			// repeats the nonce marker, the review lane cannot use that reply, so it
-			// must not read as a clean OK — collapse to a warning naming the salvage.
+			// repeats the nonce marker, the provider answered on the reasoning channel,
+			// so it must not read as a clean OK — collapse to a warning naming the
+			// salvage. The hint states only that channel fact: whether a lane keeps
+			// such a reply is that lane's own per-site decision (the review lane keeps
+			// one that finished on a stop reason), which this probe does not see.
 			if salvaged {
 				return probeResult{
 					status:            StatusOKWarning,
 					latencyMS:         latencyMS,
-					hint:              "reply had no content; the nonce marker was found only in salvaged reasoning, which the review lane cannot use — repoint the agent to a model that answers with content",
+					hint:              "reply had no content; the nonce marker was found only in salvaged reasoning — the provider answered on the reasoning channel, not with content — repoint the agent to a model that answers with content",
 					markerInReasoning: true,
 					salvaged:          true,
 				}

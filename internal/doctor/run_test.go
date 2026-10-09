@@ -618,8 +618,9 @@ func TestRun_ResponseFormatTruncatedRemedyIsCutOffText(t *testing.T) {
 
 // TD internal/doctor/run.go:660: a salvaged reply (empty content; llmclient
 // promoted the chain-of-thought into Content) that repeats the nonce marker in
-// its REASONING must not report a clean StatusOK — the review lane cannot use
-// that reply. It must collapse to StatusOKWarning naming the salvage.
+// its REASONING must not report a clean StatusOK — the provider answered on the
+// reasoning channel, not with content. It must collapse to StatusOKWarning
+// naming the salvage.
 func TestClassify_SalvagedReasoningMarkerIsWarningNotOK(t *testing.T) {
 	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "K"}
 	got := classify(Marker(testNonce), nil, testNonce, 5, tgt, MaxTokensSourceDefault, true)

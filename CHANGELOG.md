@@ -14,6 +14,10 @@
 - `atcr benchmark` on a repo-state suite keeps the run's work dir when a slot failure carries an empty or unrecognized reason; only an `unmeasured_salvaged_ok` slot lets it be deleted. Every reason a current build writes behaves as before.
 - `atcr debt backfill-justifications` no longer counts a record as "declined by policy" because of a symlink or over-size `review.md` that sits in a different review. The refusal counts only when that file's review dir owns the record: its `reconciled/summary.json` must carry the `reconciled_at` that the record's `run_id` was built from. Before this, a record whose own review tree had been pruned could print "0 review tree pruned, 1 declined by policy", which told the operator not to restore the one file that would fix it. A review dir whose `summary.json` is missing owns nothing, so in that case the record is reported under the pruned-tree half.
 
+### Changed
+
+- `atcr doctor`'s salvaged-reasoning hint now states only what the probe saw: the reply had no content and the nonce marker came back on the reasoning channel. It no longer says the review lane cannot use the reply, since review keeps a salvaged reply that the model finished on a stop reason. The remedy (repoint the agent to a model that answers with content) and the `ok_warning` status are unchanged.
+
 ## [35.33.0] - 2026-10-05
 
 *Epic 35.16.11.2.2.4.1 — post residue feature 35.16.11.2.2.4 think block stripping.*
