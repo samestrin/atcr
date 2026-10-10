@@ -85,26 +85,25 @@ type fitPairRow struct {
 	Chunks       int
 
 	// FindingsByReplicate and TokensOutByReplicate are summed over the suite's
-	// cases, indexed by replicate number - 1.
+	// cases, indexed by replicate number - 1. ObservedReplicates marks the
+	// replicates the pair has a row for: a legacy checkpoint entry resumed with
+	// --replicates writes none for replicate 1, and its 0 was never measured.
 	FindingsByReplicate  []int
 	TokensOutByReplicate []int
+	ObservedReplicates   []bool
 }
 
 // buildFitReport groups reviewer_fit rows by (persona, model) and judges each pair.
 // A row whose outcome is outside the vocabulary fails the report rather than being
 // read as healthy: it was written by a newer atcr, and judging a call this binary
-// cannot classify would print a verdict nothing supports.
+// cannot classify would print a verdict nothing supports. So does a row no run
+// could have written (see checkFitRow): the file may be hand-edited.
 func buildFitReport(fits []benchmark.ReviewerFit) ([]fitPairRow, error) {
 	type key struct{ persona, model string }
 	byPair := map[key]*fitPairRow{}
 	for _, f := range fits {
-		if !benchmark.ValidOutcome(f.Outcome) {
-			return nil, fmt.Errorf("reviewer_fit row for %q on %q has outcome %q, which this atcr does not know",
-				stripTerminalControlRunes(f.Persona), stripTerminalControlRunes(f.CaseID), stripTerminalControlRunes(f.Outcome))
-		}
-		if f.Replicate < 1 {
-			return nil, fmt.Errorf("reviewer_fit row for %q on %q has replicate %d; replicates are numbered from 1",
-				stripTerminalControlRunes(f.Persona), stripTerminalControlRunes(f.CaseID), f.Replicate)
+		if err := checkFitRow(f, len(fits)); err != nil {
+			return nil, err
 		}
 		k := key{f.Persona, f.Model}
 		row := byPair[k]
@@ -127,6 +126,42 @@ func buildFitReport(fits []benchmark.ReviewerFit) ([]fitPairRow, error) {
 		return out[i].Model < out[j].Model
 	})
 	return out, nil
+}
+
+// checkFitRow rejects a reviewer_fit row the report cannot judge. maxReplicate is
+// the row count: a pair cannot hold more distinct replicates than there are rows,
+// and add sizes its per-replicate accumulators by the replicate number.
+func checkFitRow(f benchmark.ReviewerFit, maxReplicate int) error {
+	for _, id := range []struct{ name, value string }{{"persona", f.Persona}, {"model", f.Model}} {
+		// The identity is printed as a report column, where stripping the rune
+		// would show two different identities as one.
+		if r, bad := firstNonPrintingRune(id.value); bad {
+			return fmt.Errorf("reviewer_fit row has %s %q, which contains a non-printing rune (U+%04X)", id.name, id.value, r)
+		}
+	}
+	row := fmt.Sprintf("reviewer_fit row for %q on %q", f.Persona, stripTerminalControlRunes(f.CaseID))
+	if !benchmark.ValidOutcome(f.Outcome) {
+		return fmt.Errorf("%s has outcome %q, which this atcr does not know", row, stripTerminalControlRunes(f.Outcome))
+	}
+	if f.Replicate < 1 {
+		return fmt.Errorf("%s has replicate %d; replicates are numbered from 1", row, f.Replicate)
+	}
+	if f.Replicate > maxReplicate {
+		return fmt.Errorf("%s has replicate %d, above the %d rows in the run-result", row, f.Replicate, maxReplicate)
+	}
+	for _, n := range []struct {
+		name  string
+		value int
+	}{{"findings", f.Findings}, {"tokens_out", f.TokensOut}, {"chunk_count", f.ChunkCount}, {"silent_chunks", f.SilentChunks}} {
+		if n.value < 0 {
+			return fmt.Errorf("%s has %s %d; counts cannot be negative", row, n.name, n.value)
+		}
+	}
+	// A row with no chunk count reads as one chunk (see add).
+	if f.SilentChunks > max(f.ChunkCount, 1) {
+		return fmt.Errorf("%s has silent_chunks %d above chunk_count %d", row, f.SilentChunks, f.ChunkCount)
+	}
+	return nil
 }
 
 func (r *fitPairRow) add(f benchmark.ReviewerFit) {
@@ -154,7 +189,9 @@ func (r *fitPairRow) add(f benchmark.ReviewerFit) {
 	for len(r.FindingsByReplicate) < f.Replicate {
 		r.FindingsByReplicate = append(r.FindingsByReplicate, 0)
 		r.TokensOutByReplicate = append(r.TokensOutByReplicate, 0)
+		r.ObservedReplicates = append(r.ObservedReplicates, false)
 	}
+	r.ObservedReplicates[f.Replicate-1] = true
 	r.FindingsByReplicate[f.Replicate-1] += f.Findings
 	r.TokensOutByReplicate[f.Replicate-1] += f.TokensOut
 }
@@ -193,17 +230,23 @@ func writeFitReport(cmd *cobra.Command, rows []fitPairRow) error {
 			reason = "-"
 		}
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d/%d\t%s\t%s\t%s\n",
-			stripTerminalControlRunes(r.Persona), stripTerminalControlRunes(r.Model), r.Verdict,
+			r.Persona, r.Model, r.Verdict,
 			r.Calls, r.Truncated, r.Unparseable, r.Failed, r.TimedOut,
-			r.SilentChunks, r.Chunks, joinInts(r.FindingsByReplicate), joinInts(r.TokensOutByReplicate), reason)
+			r.SilentChunks, r.Chunks, joinReplicates(r.FindingsByReplicate, r.ObservedReplicates),
+			joinReplicates(r.TokensOutByReplicate, r.ObservedReplicates), reason)
 	}
 	return tw.Flush()
 }
 
-func joinInts(ns []int) string {
+// joinReplicates prints per-replicate values, with "-" for a replicate the pair
+// has no row for.
+func joinReplicates(ns []int, observed []bool) string {
 	parts := make([]string, len(ns))
 	for i, n := range ns {
-		parts[i] = strconv.Itoa(n)
+		parts[i] = "-"
+		if observed[i] {
+			parts[i] = strconv.Itoa(n)
+		}
 	}
 	return strings.Join(parts, ",")
 }

@@ -320,7 +320,14 @@ The verdict is **health-only**: findings are reported, never gated.
 The report is advisory and read-only: the exit code does not depend on the verdicts,
 and nothing is repointed. A run-result with no `reviewer_fit` rows (written before
 replicates existed) is refused, and so is a row whose outcome this binary does not
-know, rather than read as a healthy call.
+know, rather than read as a healthy call. The report also refuses a row no run could
+have written: a negative count, more `silent_chunks` than `chunk_count`, a replicate
+above the number of rows, or a persona or model holding a control or format character.
+
+A replicate the pair has no row for prints as `-` in FINDINGS/REPLICATE and
+TOKENS_OUT/REPLICATE, not as 0. A checkpoint written before replicates existed and
+resumed with `--replicates N` records no row for replicate 1, so its findings read
+`-,16`, not `0,16`.
 
 ---
 
