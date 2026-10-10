@@ -49,6 +49,7 @@ func TestRegistryDoc_ThinkingRows(t *testing.T) {
 			{"another style (for example `reasoning_effort`)", "a Claude model under another style loads and runs the same replay, not live-verified either (TD-015)"},
 			{"under `thinking_style: anthropic`, thinking on cannot be combined with `response_format: json_object`", "providers map response_format onto a forced tool_choice, which Anthropic rejects while extended thinking is on; the live-proxy probe was inconclusive, so the clause rests on the documented provider constraint"},
 			{"the tool loop sends each assistant turn's reasoning back on every later turn", "the replay, stated positively, not just the old caveat removed"},
+			{"unless the agent sets `replay_reasoning: off`", "Epic 35.16.11.2.2.9: the replay is no longer unconditional, so the row must name the opt-out"},
 			{"in the shape the provider returned it", "each provider's own member is replayed unedited, never converted"},
 			{"on assistant turns only", "reasoning never rides a user or tool-result turn"},
 			{"whatever the `thinking_style`", "the replay has no style gate (D1)"},
@@ -80,7 +81,7 @@ func TestRegistryDoc_ThinkingRows(t *testing.T) {
 			{"`off` sends `preserve_thinking: false`", "the qwen off value is an explicit signal, not nothing"},
 			{"`thinking: {\"type\":\"enabled\",\"clear_thinking\":false}`", "the glm on object; llmclient's thinking tests pin the wire bytes"},
 			{"`\"clear_thinking\":true`", "the glm off value is inverted"},
-			{"the loop sends it back with or without the flag", "the flag asks the model to use the replay, it does not turn the replay on"},
+			{"the loop sends it back with or without the flag, and stops only for an agent that also sets `replay_reasoning: off`", "the flag asks the model to use the replay, it does not turn the replay on; only replay_reasoning: off stops it (Epic 35.16.11.2.2.9)"},
 			{"Unset sends nothing", "an undeclared agent's body is unchanged"},
 			{"It is sent by the review fan-out, the skeptic, the debate seats, and `atcr doctor`", "the lanes that send the flag, matching the thinking row's lane list"},
 			{"accepted on the wire but its later-turn effect is not live-verified", "TD-022: GLM never reached turn 2 in any live run, so the rows must not read as verified"},
@@ -320,11 +321,33 @@ func TestRegistryDoc_ReasoningReplaySubsection(t *testing.T) {
 	assertStates(t, "reasoning replay subsection", replay, []struct{ token, why string }{
 		{"re-sends provider reasoning on every later turn", "the contract, stated for operators who never configured thinking"},
 		{"whether or not `thinking` is declared", "not gated by any thinking key"},
-		{"changes the turn-2+ request body for all tool-enabled agents", "the blast radius: every tool-loop roster, not just thinking ones"},
+		{"changes the turn-2+ request body for all tool-enabled agents that do not set `replay_reasoning: off`", "the blast radius: every tool-loop roster, not just thinking ones, minus the agents that opted out (Epic 35.16.11.2.2.9)"},
 	})
 	// The thinking row keeps its full contract text and points here, so a
 	// reader who arrives via the table still finds the top-level statement.
 	require.Contains(t, docRow(t, doc, "`thinking`"), "**Reasoning replay.**", "the thinking row must cross-reference the top-level replay subsection")
+}
+
+// Epic 35.16.11.2.2.9: the replay_reasoning row is the operator-facing
+// statement of the opt-out. Its one legal value is read from the registry
+// constant, and each claim it makes about scope is pinned as a token, so a
+// later slice that widens the lanes must update the row.
+func TestRegistryDoc_ReplayReasoningRow(t *testing.T) {
+	doc := readRepoFile(t, "../../docs/registry.md")
+	row := docRow(t, doc, "`replay_reasoning`")
+	assertStates(t, "replay_reasoning row", row, []struct{ token, why string }{
+		{"must be unset or `" + registry.ReplayReasoningOff + "` (exact, case-sensitive)", "the one legal value validateAgent accepts, read from the registry constant"},
+		{"`on` included, fails the load with an error naming the agent", "validateAgent's strict equality: on is not an alias, and the error names the agent"},
+		{"needs no `thinking_style`", "the key is independent of the thinking keys"},
+		{"re-sends each earlier assistant turn without its reasoning members", "what off does at the loop's replay seam"},
+		{"Unset keeps the replay", "the default is unchanged"},
+		{"never trips `reasoning_replay_bytes`", "bytes are counted after the drop (loop.go)"},
+		{"never inherited through `fallback:`", "buildFallbackAgent reads the fallback's own value, not the primary's"},
+		{"rejected on a community persona", "rejectMachineLocalFields bans the key"},
+		{"only the review lanes honor it until slice 35.16.11.2.2.9.1", "the skeptic and debate lanes are the follow-up slice"},
+		{"The skeptic and the debate seats still replay reasoning for an `off` agent", "the lanes that do not honor it yet, named so an operator does not assume they do"},
+		{"does nothing for an agent that never runs the tool loop", "the key only acts in the loop; it is not rejected for a non-tool agent"},
+	})
 }
 
 // TD-018: the replay-shape key list in the `thinking` row is not restated
