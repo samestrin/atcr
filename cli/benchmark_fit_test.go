@@ -160,3 +160,90 @@ func TestBuildFitReport_Rules(t *testing.T) {
 	_, err = buildFitReport([]benchmark.ReviewerFit{{Model: "m", Persona: "p", CaseID: "a", Replicate: 0, Outcome: benchmark.OutcomeClean}})
 	require.ErrorContains(t, err, "replicate 0")
 }
+
+// A replicate number no run could have produced fails the report before anything
+// is sized by it: one hand-edited row must not allocate per-replicate accumulators
+// up to its value.
+func TestBuildFitReport_RejectsUnboundedReplicate(t *testing.T) {
+	_, err := buildFitReport([]benchmark.ReviewerFit{
+		{Model: "m", Persona: "p", CaseID: "a", Replicate: 1, Outcome: benchmark.OutcomeClean, ChunkCount: 1},
+		{Model: "m", Persona: "p", CaseID: "a", Replicate: 2000000000, Outcome: benchmark.OutcomeClean, ChunkCount: 1},
+	})
+	require.ErrorContains(t, err, "replicate 2000000000")
+
+	// The ceiling is the row count: two rows can hold at most replicates 1 and 2.
+	_, err = buildFitReport([]benchmark.ReviewerFit{
+		{Model: "m", Persona: "p", CaseID: "a", Replicate: 1, Outcome: benchmark.OutcomeClean, ChunkCount: 1},
+		{Model: "m", Persona: "p", CaseID: "a", Replicate: 3, Outcome: benchmark.OutcomeClean, ChunkCount: 1},
+	})
+	require.ErrorContains(t, err, "replicate 3")
+}
+
+// A negative count, or more silent chunks than chunks, fails the report: a row with
+// silent_chunks -2 would otherwise cancel two real silent chunks and flip a warning
+// to fit.
+func TestBuildFitReport_RejectsNegativeOrInconsistentCounts(t *testing.T) {
+	silent := benchmark.ReviewerFit{Model: "m", Persona: "p", CaseID: "a", Replicate: 1, Outcome: benchmark.OutcomeFindings, Findings: 1, ChunkCount: 4, SilentChunks: 2}
+	for name, tc := range map[string]struct {
+		mutate func(*benchmark.ReviewerFit)
+		want   string
+	}{
+		"silent_chunks": {func(f *benchmark.ReviewerFit) { f.SilentChunks = -2 }, "silent_chunks -2"},
+		"chunk_count":   {func(f *benchmark.ReviewerFit) { f.ChunkCount = -1 }, "chunk_count -1"},
+		"findings":      {func(f *benchmark.ReviewerFit) { f.Findings = -1 }, "findings -1"},
+		"tokens_out":    {func(f *benchmark.ReviewerFit) { f.TokensOut = -1 }, "tokens_out -1"},
+		"silent above chunks": {func(f *benchmark.ReviewerFit) {
+			f.ChunkCount, f.SilentChunks = 2, 3
+		}, "silent_chunks 3 above chunk_count 2"},
+		// A row with no chunk count reads as one chunk, so it may hold one silent chunk but not two.
+		"silent above unrecorded chunks": {func(f *benchmark.ReviewerFit) {
+			f.ChunkCount, f.SilentChunks = 0, 2
+		}, "silent_chunks 2 above chunk_count 0"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := benchmark.ReviewerFit{Model: "m", Persona: "p", CaseID: "b", Replicate: 1, Outcome: benchmark.OutcomeClean, ChunkCount: 4}
+			tc.mutate(&bad)
+			_, err := buildFitReport([]benchmark.ReviewerFit{silent, bad})
+			require.ErrorContains(t, err, tc.want)
+			require.ErrorContains(t, err, `"p" on "b"`)
+		})
+	}
+}
+
+// A persona or model holding a control or format rune fails the report instead of
+// printing: stripping the rune would show two different identities as one.
+func TestBuildFitReport_RejectsNonPrintingIdentity(t *testing.T) {
+	for _, f := range []benchmark.ReviewerFit{
+		{Model: "m", Persona: "p\nforged", CaseID: "a", Replicate: 1, Outcome: benchmark.OutcomeClean, ChunkCount: 1},
+		{Model: "m\tforged", Persona: "p", CaseID: "a", Replicate: 1, Outcome: benchmark.OutcomeClean, ChunkCount: 1},
+		{Model: "m\u202eforged", Persona: "p", CaseID: "a", Replicate: 1, Outcome: benchmark.OutcomeClean, ChunkCount: 1},
+	} {
+		_, err := buildFitReport([]benchmark.ReviewerFit{f})
+		require.ErrorContains(t, err, "non-printing rune")
+		assert.NotContains(t, err.Error(), "\n")
+		assert.NotContains(t, err.Error(), "\t")
+	}
+}
+
+// A replicate with no row for the pair (a legacy checkpoint entry resumed with
+// --replicates N writes none for replicate 1) prints as "-", not as a measured 0.
+func TestBenchmarkFit_UnobservedReplicatePrintsDash(t *testing.T) {
+	in := writeFitRunResult(t, `{"suite":"s","suite_version":"1","reviewer_fit":[`+
+		`{"model":"m","persona":"p","case_id":"c","replicate":2,"outcome":"findings","findings":16,"tokens_out":5000,"chunk_count":1,"silent_chunks":0},`+
+		`{"model":"m","persona":"q","case_id":"c","replicate":1,"outcome":"clean","findings":0,"tokens_out":0,"chunk_count":1,"silent_chunks":0},`+
+		`{"model":"m","persona":"q","case_id":"c","replicate":2,"outcome":"clean","findings":0,"tokens_out":0,"chunk_count":1,"silent_chunks":0}]}`)
+	code, out, stderr := execCmdSplit(t, "benchmark", "fit", "--in", in)
+	require.Equal(t, 0, code, out+stderr)
+	rows := map[string][]string{}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n")[1:] {
+		cols := fitColumnSep.Split(strings.TrimSpace(line), -1)
+		require.Len(t, cols, 12, line)
+		rows[cols[0]] = cols
+	}
+	assert.Equal(t, fitVerdictFit, rows["p"][2])
+	assert.Equal(t, "-,16", rows["p"][9])
+	assert.Equal(t, "-,5000", rows["p"][10])
+	// A measured zero still prints as 0.
+	assert.Equal(t, "0,0", rows["q"][9])
+	assert.Equal(t, "0,0", rows["q"][10])
+}
