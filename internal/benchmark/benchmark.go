@@ -514,6 +514,49 @@ type RunResult struct {
 	// omitempty so a run with no slot failure serializes identically to a run-result
 	// written before this field existed, and both unmarshal to nil.
 	SlotFailures []SlotFailure `json:"slot_failures,omitempty"`
+
+	// Fit records every replicate each (persona, model) pair ran, one row per
+	// (identity, case, replicate), for `atcr benchmark fit` (Epic 35.16.11.2.2.8).
+	// Replicate 1 is the run the score above was folded from; replicates 2..N
+	// (`benchmark run --replicates N`) appear ONLY here, so the scored fold still
+	// sees one outcome per (identity, case) and the score is that of an N=1 run.
+	//
+	// Run-result-only, on the same terms as SlotFailures: it judges whether a pair
+	// produces a healthy call, which the operator needs before a repoint and the
+	// public board does not score. BuildSubmission does not carry it, locked by
+	// TestBuildSubmission_DoesNotPublishFit, so export is byte-identical to a run
+	// without replicates.
+	//
+	// omitempty so a run-result with no fit data (one written before the field
+	// existed, or a fully replayed legacy checkpoint, which never recorded it)
+	// serializes as it did before.
+	Fit []ReviewerFit `json:"reviewer_fit,omitempty"`
+}
+
+// ReviewerFit is one replicate of one reviewer on one case: the call-health facts
+// `atcr benchmark fit` judges a (persona, model) pair on. Model and Persona are the
+// REALIZED, scrubbed identity, the same pair ReviewerCoverage carries, so a row
+// joins to its coverage row by identity.
+type ReviewerFit struct {
+	Model   string `json:"model"`
+	Persona string `json:"persona"`
+	CaseID  string `json:"case_id"`
+	// Replicate is 1-based; replicate 1 is the scored one.
+	Replicate int `json:"replicate"`
+	// Outcome is a benchmark.Outcome* value, as in ReviewerCoverage.Outcomes.
+	Outcome string `json:"outcome"`
+	// Findings is the number of findings the reviewer raised on this replicate.
+	Findings  int `json:"findings"`
+	TokensOut int `json:"tokens_out"`
+	// ChunkCount is the number of chunks the persona reviewed (1 for a single-shot
+	// persona), and SilentChunks how many of them were silent lanes
+	// (fanout.AgentStatus.SilentChunks). The persona was wholly silent on this
+	// replicate when SilentChunks >= ChunkCount.
+	ChunkCount   int `json:"chunk_count"`
+	SilentChunks int `json:"silent_chunks"`
+	// TimedOut marks a replicate whose call hit the timeout. Its Outcome is
+	// failed; this tells a timeout from any other failure.
+	TimedOut bool `json:"timed_out,omitempty"`
 }
 
 // ReviewerCoverage names the cases behind one reviewer row of the same run-result,

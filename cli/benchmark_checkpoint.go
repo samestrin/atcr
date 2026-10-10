@@ -82,6 +82,28 @@ type checkpointCase struct {
 	// gate state. A plain bool would default to false and assert "the gate was off"
 	// about cases nobody observed.
 	GroundingEnabled *bool `json:"grounding_enabled,omitempty"`
+
+	// Replicate is which run of this case the entry records (`benchmark run
+	// --replicates N`, Epic 35.16.11.2.2.8): 1 is the scored run, 2..N are fit-only.
+	// The integrity check keys duplicates on (Index, Replicate).
+	//
+	// PURELY ADDITIVE. A checkpoint written before the field existed omits it and
+	// decodes to 0, which reads as replicate 1 — the only run such a binary made —
+	// and also marks the entry as one that recorded no fit fields, so its replay
+	// folds the score exactly as before and adds no reviewer_fit rows. Every entry
+	// this binary writes carries a value of at least 1.
+	Replicate int `json:"replicate,omitempty"`
+}
+
+// replicate returns the entry's replicate number, reading a legacy 0 as 1.
+func (c checkpointCase) replicate() int {
+	return max(c.Replicate, 1)
+}
+
+// caseRun keys one checkpointed run of a case: its suite index and replicate.
+type caseRun struct {
+	index     int
+	replicate int
 }
 
 // checkpointReviewer captures exactly the per-reviewer fields the run loop folds
@@ -118,6 +140,18 @@ type checkpointReviewer struct {
 	// than the slot's configured primary. Kept beside Outcome, not inside it: the
 	// substitution is orthogonal to how the review turned out.
 	FallbackUsed bool `json:"fallback_used,omitempty"`
+
+	// The fit fields (Epic 35.16.11.2.2.8): the per-replicate call-health facts a
+	// benchmark.ReviewerFit row carries beyond Outcome and len(Raised). Recorded so a
+	// resumed --replicates run reports the same reviewer_fit rows as an
+	// uninterrupted one. PURELY ADDITIVE and omitempty; they are read only from an
+	// entry whose checkpointCase.Replicate is set, so a legacy entry's zeros are
+	// never mistaken for a measured silent or zero-token call.
+	TokensOut int `json:"tokens_out,omitempty"`
+	// ChunkCount is stored normalized: 1 for a single-shot persona.
+	ChunkCount   int  `json:"chunk_count,omitempty"`
+	SilentChunks int  `json:"silent_chunks,omitempty"`
+	TimedOut     bool `json:"timed_out,omitempty"`
 }
 
 // errCheckpointSuiteMismatch reports that a checkpoint's recorded suite identity
@@ -209,18 +243,30 @@ func validateCheckpointIntegrity(cp *runCheckpoint) error {
 	if cp.RosterFormat != "" && cp.RosterFormat != rosterFormatUnion {
 		return fmt.Errorf("%w: unknown roster_format %q", errCheckpointCorrupt, cp.RosterFormat)
 	}
-	seen := make(map[int]struct{}, len(cp.Cases))
+	seen := make(map[caseRun]struct{}, len(cp.Cases))
 	for i, c := range cp.Cases {
 		if c.Index < 0 {
 			return fmt.Errorf("%w: case %d has negative index %d", errCheckpointCorrupt, i, c.Index)
 		}
+		if c.Replicate < 0 {
+			return fmt.Errorf("%w: case %d has negative replicate %d", errCheckpointCorrupt, i, c.Replicate)
+		}
 		if c.CaseID == "" {
 			return fmt.Errorf("%w: case %d has empty case_id", errCheckpointCorrupt, i)
 		}
-		if _, ok := seen[c.Index]; ok {
-			return fmt.Errorf("%w: duplicate case index %d", errCheckpointCorrupt, c.Index)
+		// Keyed on the NORMALIZED replicate, so a legacy entry (0) and an explicit
+		// replicate 1 for the same index collide: both claim the scored run, and
+		// doneIndex would last-write-win between them.
+		key := caseRun{index: c.Index, replicate: c.replicate()}
+		if _, ok := seen[key]; ok {
+			if c.replicate() == 1 {
+				// Byte-identical to the pre-replicate message for the only shape an
+				// older checkpoint can hold.
+				return fmt.Errorf("%w: duplicate case index %d", errCheckpointCorrupt, c.Index)
+			}
+			return fmt.Errorf("%w: duplicate case index %d replicate %d", errCheckpointCorrupt, c.Index, c.replicate())
 		}
-		seen[c.Index] = struct{}{}
+		seen[key] = struct{}{}
 		for j, r := range c.Reviewers {
 			// Named causes and a terminating remedy, matching the sibling tally
 			// rejection at cli/benchmark_coverage.go:246. The vocabulary GROWS, and
@@ -261,12 +307,13 @@ func saveCheckpoint(path string, cp *runCheckpoint) error {
 	return writeExportFile(path, data)
 }
 
-// doneIndex maps each completed case's index to its recorded entry, so the run loop
-// can skip-and-replay a checkpointed case in O(1).
-func (cp *runCheckpoint) doneIndex() map[int]checkpointCase {
-	done := make(map[int]checkpointCase, len(cp.Cases))
+// doneIndex maps each completed case run — (index, replicate), a legacy entry read
+// as replicate 1 — to its recorded entry, so the run loop can skip-and-replay a
+// checkpointed run in O(1).
+func (cp *runCheckpoint) doneIndex() map[caseRun]checkpointCase {
+	done := make(map[caseRun]checkpointCase, len(cp.Cases))
 	for _, c := range cp.Cases {
-		done[c.Index] = c
+		done[caseRun{index: c.Index, replicate: c.replicate()}] = c
 	}
 	return done
 }
