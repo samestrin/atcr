@@ -275,6 +275,24 @@ func validatePublishableReviewerRoster(cfg *fanout.ReviewConfig) error {
 // directory that is removed before the function returns; only the scored findings
 // flow into the result, so the temp path never affects output.
 func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, completer fanout.Completer, suitePath string, generatedAt time.Time, checkpointPath string) (*benchmark.RunResult, error) {
+	return executeBenchmarkRunReplicates(ctx, cfg, completer, suitePath, generatedAt, checkpointPath, 1)
+}
+
+// executeBenchmarkRunReplicates is executeBenchmarkRun with `--replicates N`
+// (Epic 35.16.11.2.2.8): every case is reviewed N times. Replicate 1 runs exactly as
+// an N=1 run does, in the same order with the same cost and latency inputs, and is
+// the only one folded into the score and coverage, so the scored fold still sees one
+// outcome per (identity, case) and export is byte-identical to an N=1 run.
+// Replicates 2..N are recorded only as benchmark.ReviewerFit rows, beside replicate
+// 1's, in RunResult.Fit.
+//
+// Replicates 2..N bypass diff-cache reads: the cache lives under the run's work dir
+// and is keyed on the payload, so without the bypass every later replicate would
+// replay replicate 1's reply instead of making a call.
+func executeBenchmarkRunReplicates(ctx context.Context, cfg *fanout.ReviewConfig, completer fanout.Completer, suitePath string, generatedAt time.Time, checkpointPath string, replicates int) (*benchmark.RunResult, error) {
+	if replicates < 1 {
+		return nil, fmt.Errorf("--replicates must be at least 1, got %d", replicates)
+	}
 	m, err := benchmark.Load(suitePath)
 	if err != nil {
 		return nil, err
@@ -296,7 +314,7 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 	// paid work of the cases that already completed. An empty path keeps the 10.2
 	// behavior verbatim (no read, no write).
 	var cp *runCheckpoint
-	var done map[int]checkpointCase
+	var done map[caseRun]checkpointCase
 	if checkpointPath != "" {
 		curHash, herr := benchmark.ReproHashManifest(m, suitePath)
 		if herr != nil {
@@ -330,15 +348,30 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 		// against a different case list — left unchecked it would be counted in the
 		// replayed total yet never replayed by the loop below, silently vanishing
 		// from the score and rendering a negative remaining count.
-		for idx := range done {
-			if idx < 0 || idx >= len(m.Cases) {
+		maxReplicate := 0
+		for run := range done {
+			if idx := run.index; idx < 0 || idx >= len(m.Cases) {
 				return nil, fmt.Errorf("%w: case index %d outside [0, %d)", errCheckpointCorrupt, idx, len(m.Cases))
 			}
+			maxReplicate = max(maxReplicate, run.replicate)
+		}
+		// A replicate beyond this run's N was paid for by a run with a larger
+		// --replicates. Dropping it would lose that fit data in silence, so the resume
+		// is refused with the value that keeps every recorded replicate — the maximum,
+		// so the message does not depend on map iteration order.
+		if maxReplicate > replicates {
+			return nil, fmt.Errorf("checkpoint records replicates up to %d, but this run asks for --replicates %d; "+
+				"resume with --replicates %d or more to keep them, or remove the checkpoint to start fresh",
+				maxReplicate, replicates, maxReplicate)
 		}
 		if existing != nil {
 			replayed := len(done)
-			remaining := len(m.Cases) - replayed
-			fmt.Fprintf(os.Stderr, "Resuming benchmark: replayed %d case(s), %d remaining to execute\n", replayed, remaining)
+			remaining := len(m.Cases)*replicates - replayed
+			if replicates == 1 {
+				fmt.Fprintf(os.Stderr, "Resuming benchmark: replayed %d case(s), %d remaining to execute\n", replayed, remaining)
+			} else {
+				fmt.Fprintf(os.Stderr, "Resuming benchmark: replayed %d case run(s), %d remaining to execute (%d replicates per case)\n", replayed, remaining, replicates)
+			}
 		}
 	}
 
@@ -350,113 +383,148 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 
 	accs := map[reviewerKey]*reviewerAcc{}
 	var order []reviewerKey // realized identities in first-sighting order; buildRunResult sorts them for deterministic aggregation
+	// fits holds every replicate's fit row, pre-scrub, in (case, replicate, agent)
+	// order — the same order fresh execution and checkpoint replay both produce.
+	var fits []benchmark.ReviewerFit
 
 	for i, c := range m.Cases {
-		// Resume: a case already in the checkpoint is replayed into the accumulator
-		// without re-executing (and re-paying for) it (AC2). Replaying in case-index
-		// order preserves the deterministic aggregation the reproducibility contract
-		// depends on (AC3).
-		if entry, ok := done[i]; ok {
-			// ReproHash is order-independent (it sorts cases by id), so a reordered
-			// suite shares the hash but remaps indices. Guard the per-index identity
-			// too: a checkpoint entry whose recorded id no longer matches the suite's
-			// case at this index means the suite changed — fail closed rather than
-			// replay a score against the wrong case.
-			if entry.CaseID != c.ID {
-				return nil, fmt.Errorf("%w: checkpoint case at index %d is %q but the suite has %q there; remove the checkpoint to start fresh",
-					errCheckpointCaseMismatch, i, entry.CaseID, c.ID)
-			}
-			if err := replayCheckpointCase(accs, &order, entry, c.ExpectedCategories); err != nil {
-				return nil, err
-			}
-			continue
-		}
-
-		diff, err := os.ReadFile(filepath.Join(suitePath, c.Diff))
-		if err != nil {
-			return nil, fmt.Errorf("reading case %q diff: %w", c.ID, err)
-		}
-
-		// Range-less request writing to an isolated per-case dir: no git range, no
-		// .atcr/latest repoint (OutputDir suppresses it). The dir is keyed by case
-		// INDEX, not id, so two distinct ids that share a path basename (a case id
-		// may legally contain '/') can never collide and overwrite each other's
-		// review. The date/suffix only feed the review id, never the RunResult, so
-		// fixed values keep the run hermetic.
-		req := fanout.ReviewRequest{
-			Root:       tmp,
-			OutputDir:  filepath.Join(tmp, fmt.Sprintf("case-%d", i)),
-			Branch:     "benchmark",
-			Date:       "2026-01-01",
-			TimeSuffix: "000000",
-			StartedAt:  time.Unix(0, 0).UTC(),
-		}
-		prep, err := fanout.PrepareReviewFromDiff(ctx, cfg, req, string(diff))
-		if err != nil {
-			return nil, fmt.Errorf("preparing case %q: %w", c.ID, err)
-		}
-		// The reviewer count is the FULL roster, both lanes: fanout builds slots for
-		// SerialAgents exactly as it does for Agents, so counting the parallel lane
-		// alone under-reports every serial reviewer on every case.
-		log.FromContext(ctx).Info("benchmark case executing", "case", c.ID, "reviewers", len(reviewerRoster(cfg)))
-		res, err := fanout.ExecuteReview(ctx, completer, prep)
-		if err != nil {
-			return nil, fmt.Errorf("executing case %q: %w", c.ID, err)
-		}
-
-		summary, err := fanout.ReadPoolSummary(res.Dir)
-		if err != nil {
-			return nil, fmt.Errorf("reading pool summary for case %q: %w", c.ID, err)
-		}
-		raisedByReviewer, err := readCaseFindings(res.Dir)
-		if err != nil {
-			return nil, fmt.Errorf("reading findings for case %q: %w", c.ID, err)
-		}
-
-		// Iterate the full agent roster (including failed agents, which raised
-		// nothing) so every reviewer is scored on every case — a missed case is
-		// recall 0, not an absent record.
-		var caseReviewers []checkpointReviewer
-		for _, a := range summary.Agents {
-			model := reviewerModel(cfg, a)
-			persona := reviewerPersona(cfg, a.Agent)
-			raised := raisedByReviewer[a.Agent]
-			// Cost + latency are usage-gated: a completer that reports no token
-			// usage (the test stub) contributes neither, keeping the score
-			// deterministic. status.json records tokens only when usage > 0.
-			usageReported := a.TokensIn > 0 || a.TokensOut > 0
-			var cost float64
-			var latency int64
-			if usageReported {
-				cost = llmclient.ComputeCostUSD(a.Model, a.TokensIn, a.TokensOut)
-				latency = a.DurationMS
+		var diff []byte
+		diffRead := false
+		for rep := 1; rep <= replicates; rep++ {
+			// caseLabel names the run in errors. Replicate 1 keeps the bare case id,
+			// so an N=1 run's messages are unchanged.
+			caseLabel := fmt.Sprintf("%q", c.ID)
+			if rep > 1 {
+				caseLabel += fmt.Sprintf(" replicate %d", rep)
 			}
 
-			outcome := fanout.ReviewerOutcome(a, len(raised))
-
-			if err := applyReviewerOutcome(accs, &order, reviewerCaseOutcome{
-				model:         model,
-				persona:       persona,
-				caseID:        c.ID,
-				expected:      c.ExpectedCategories,
-				raised:        raised,
-				usageReported: usageReported,
-				costUSD:       cost,
-				latencyMS:     latency,
-				outcome:       outcome,
-				fallbackUsed:  a.FallbackUsed,
-				agent:         a.Agent,
-				// The gate state this case actually ran under, read from the same
-				// PoolSummary the agents were read from. The range-less standard-v1
-				// path fails the gate open and fanout records false, so this is what
-				// turns an absent key from "unmeasured" into the claim it should be.
-				groundingEnabled: summary.GroundingEnabled,
-			}); err != nil {
-				return nil, fmt.Errorf("scoring case %q: %w", c.ID, err)
+			// Resume: a case already in the checkpoint is replayed into the accumulator
+			// without re-executing (and re-paying for) it (AC2). Replaying in case-index
+			// order preserves the deterministic aggregation the reproducibility contract
+			// depends on (AC3).
+			if entry, ok := done[caseRun{index: i, replicate: rep}]; ok {
+				// ReproHash is order-independent (it sorts cases by id), so a reordered
+				// suite shares the hash but remaps indices. Guard the per-index identity
+				// too: a checkpoint entry whose recorded id no longer matches the suite's
+				// case at this index means the suite changed — fail closed rather than
+				// replay a score against the wrong case.
+				if entry.CaseID != c.ID {
+					return nil, fmt.Errorf("%w: checkpoint case at index %d is %q but the suite has %q there; remove the checkpoint to start fresh",
+						errCheckpointCaseMismatch, i, entry.CaseID, c.ID)
+				}
+				// Only replicate 1 is scored; a later replicate replays its fit rows only.
+				if rep == 1 {
+					if err := replayCheckpointCase(accs, &order, entry, c.ExpectedCategories); err != nil {
+						return nil, err
+					}
+				}
+				fits = append(fits, checkpointFitRows(entry)...)
+				continue
 			}
 
-			if cp != nil {
-				caseReviewers = append(caseReviewers, checkpointReviewer{
+			if !diffRead {
+				diff, err = os.ReadFile(filepath.Join(suitePath, c.Diff))
+				if err != nil {
+					return nil, fmt.Errorf("reading case %q diff: %w", c.ID, err)
+				}
+				diffRead = true
+			}
+
+			// Range-less request writing to an isolated per-case dir: no git range, no
+			// .atcr/latest repoint (OutputDir suppresses it). The dir is keyed by case
+			// INDEX, not id, so two distinct ids that share a path basename (a case id
+			// may legally contain '/') can never collide and overwrite each other's
+			// review. The date/suffix only feed the review id, never the RunResult, so
+			// fixed values keep the run hermetic. A later replicate gets its own dir,
+			// and NoCache so it makes a call rather than replaying replicate 1's reply
+			// from the run's diff cache.
+			outputDir := filepath.Join(tmp, fmt.Sprintf("case-%d", i))
+			if rep > 1 {
+				outputDir = filepath.Join(tmp, fmt.Sprintf("case-%d-r%d", i, rep))
+			}
+			req := fanout.ReviewRequest{
+				Root:       tmp,
+				OutputDir:  outputDir,
+				Branch:     "benchmark",
+				Date:       "2026-01-01",
+				TimeSuffix: "000000",
+				StartedAt:  time.Unix(0, 0).UTC(),
+				NoCache:    rep > 1,
+			}
+			prep, err := fanout.PrepareReviewFromDiff(ctx, cfg, req, string(diff))
+			if err != nil {
+				return nil, fmt.Errorf("preparing case %s: %w", caseLabel, err)
+			}
+			// The reviewer count is the FULL roster, both lanes: fanout builds slots for
+			// SerialAgents exactly as it does for Agents, so counting the parallel lane
+			// alone under-reports every serial reviewer on every case.
+			logArgs := []any{"case", c.ID, "reviewers", len(reviewerRoster(cfg))}
+			if replicates > 1 {
+				logArgs = append(logArgs, "replicate", rep, "replicates", replicates)
+			}
+			log.FromContext(ctx).Info("benchmark case executing", logArgs...)
+			res, err := fanout.ExecuteReview(ctx, completer, prep)
+			if err != nil {
+				return nil, fmt.Errorf("executing case %s: %w", caseLabel, err)
+			}
+
+			summary, err := fanout.ReadPoolSummary(res.Dir)
+			if err != nil {
+				return nil, fmt.Errorf("reading pool summary for case %s: %w", caseLabel, err)
+			}
+			raisedByReviewer, err := readCaseFindings(res.Dir)
+			if err != nil {
+				return nil, fmt.Errorf("reading findings for case %s: %w", caseLabel, err)
+			}
+
+			// Iterate the full agent roster (including failed agents, which raised
+			// nothing) so every reviewer is scored on every case — a missed case is
+			// recall 0, not an absent record.
+			var caseReviewers []checkpointReviewer
+			for _, a := range summary.Agents {
+				model := reviewerModel(cfg, a)
+				persona := reviewerPersona(cfg, a.Agent)
+				raised := raisedByReviewer[a.Agent]
+				// Cost + latency are usage-gated: a completer that reports no token
+				// usage (the test stub) contributes neither, keeping the score
+				// deterministic. status.json records tokens only when usage > 0.
+				usageReported := a.TokensIn > 0 || a.TokensOut > 0
+				var cost float64
+				var latency int64
+				if usageReported {
+					cost = llmclient.ComputeCostUSD(a.Model, a.TokensIn, a.TokensOut)
+					latency = a.DurationMS
+				}
+
+				outcome := fanout.ReviewerOutcome(a, len(raised))
+
+				// Only replicate 1 is folded into the score, so the fold still sees one
+				// outcome per (identity, case) and never trips the duplicate-case
+				// rejection; a later replicate is a fit row only.
+				if rep == 1 {
+					if err := applyReviewerOutcome(accs, &order, reviewerCaseOutcome{
+						model:         model,
+						persona:       persona,
+						caseID:        c.ID,
+						expected:      c.ExpectedCategories,
+						raised:        raised,
+						usageReported: usageReported,
+						costUSD:       cost,
+						latencyMS:     latency,
+						outcome:       outcome,
+						fallbackUsed:  a.FallbackUsed,
+						agent:         a.Agent,
+						// The gate state this case actually ran under, read from the same
+						// PoolSummary the agents were read from. The range-less standard-v1
+						// path fails the gate open and fanout records false, so this is what
+						// turns an absent key from "unmeasured" into the claim it should be.
+						groundingEnabled: summary.GroundingEnabled,
+					}); err != nil {
+						return nil, fmt.Errorf("scoring case %q: %w", c.ID, err)
+					}
+				}
+
+				rec := checkpointReviewer{
 					Agent:         a.Agent,
 					Model:         model,
 					Persona:       persona,
@@ -466,28 +534,101 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 					LatencyMS:     latency,
 					Outcome:       outcome,
 					FallbackUsed:  a.FallbackUsed,
-				})
+					TokensOut:     a.TokensOut,
+					ChunkCount:    max(a.ChunkCount, 1),
+					SilentChunks:  a.SilentChunks,
+					TimedOut:      a.Status == fanout.StatusTimeout,
+				}
+				// The fit row is derived from the same record the checkpoint stores, so a
+				// resumed run reports exactly the rows an uninterrupted one does.
+				fits = append(fits, fitRow(c.ID, rep, rec))
+				if cp != nil {
+					caseReviewers = append(caseReviewers, rec)
+				}
 			}
-		}
 
-		// Checkpoint the scored case before the loop advances to case i+1 (AC1): the
-		// atomic write means a process killed mid-suite leaves a checkpoint holding
-		// exactly the cases that completed.
-		if cp != nil {
-			cp.Cases = append(cp.Cases, checkpointCase{
-				Index: i, CaseID: c.ID, Expected: c.ExpectedCategories, Reviewers: caseReviewers,
-				// Recorded so a resume reproduces the uninterrupted run's coverage rows
-				// byte-for-byte; without it a fully replayed run publishes no gate tag
-				// where a fresh one publishes false.
-				GroundingEnabled: summary.GroundingEnabled,
-			})
-			if werr := saveCheckpoint(checkpointPath, cp); werr != nil {
-				return nil, fmt.Errorf("writing checkpoint for case %q: %w", c.ID, werr)
+			// Checkpoint the scored case before the loop advances (AC1): the atomic
+			// write means a process killed mid-suite leaves a checkpoint holding exactly
+			// the case runs that completed.
+			if cp != nil {
+				cp.Cases = append(cp.Cases, checkpointCase{
+					Index: i, CaseID: c.ID, Expected: c.ExpectedCategories, Reviewers: caseReviewers,
+					// Recorded so a resume reproduces the uninterrupted run's coverage rows
+					// byte-for-byte; without it a fully replayed run publishes no gate tag
+					// where a fresh one publishes false.
+					GroundingEnabled: summary.GroundingEnabled,
+					Replicate:        rep,
+				})
+				if werr := saveCheckpoint(checkpointPath, cp); werr != nil {
+					return nil, fmt.Errorf("writing checkpoint for case %s: %w", caseLabel, werr)
+				}
 			}
 		}
 	}
 
-	return buildRunResult(accs, order, m, generatedAt)
+	rr, err := buildRunResult(accs, order, m, generatedAt)
+	if err != nil {
+		return nil, err
+	}
+	rr.Fit = publicFit(fits)
+	return rr, nil
+}
+
+// fitRow projects one reviewer's record of one case run onto its pre-scrub
+// benchmark.ReviewerFit row. It is the single projection shared by fresh execution
+// and checkpoint replay.
+func fitRow(caseID string, replicate int, r checkpointReviewer) benchmark.ReviewerFit {
+	return benchmark.ReviewerFit{
+		Model:        r.Model,
+		Persona:      r.Persona,
+		CaseID:       caseID,
+		Replicate:    replicate,
+		Outcome:      r.Outcome,
+		Findings:     len(r.Raised),
+		TokensOut:    r.TokensOut,
+		ChunkCount:   max(r.ChunkCount, 1),
+		SilentChunks: r.SilentChunks,
+		TimedOut:     r.TimedOut,
+	}
+}
+
+// checkpointFitRows replays a checkpointed case run's fit rows. A legacy entry
+// (Replicate absent, written before the fit fields existed) yields none: its zero
+// token and silent counts were never measured, and reporting them would assert a
+// silent zero-token call nobody recorded. It also keeps a fully replayed legacy
+// checkpoint's run-result byte-identical to the one it produced before.
+func checkpointFitRows(entry checkpointCase) []benchmark.ReviewerFit {
+	if entry.Replicate == 0 {
+		return nil
+	}
+	rows := make([]benchmark.ReviewerFit, 0, len(entry.Reviewers))
+	for _, r := range entry.Reviewers {
+		rows = append(rows, fitRow(entry.CaseID, entry.Replicate, r))
+	}
+	return rows
+}
+
+// publicFit scrubs each fit row's identity with the same pass buildRunResult applies
+// to the coverage rows, so a fit row joins its coverage row by identity, then orders
+// the rows by (model, persona). The sort is stable, so within one identity the rows
+// keep their (case, replicate, agent) order. nil for no rows, so the key is omitted.
+func publicFit(rows []benchmark.ReviewerFit) []benchmark.ReviewerFit {
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]benchmark.ReviewerFit, len(rows))
+	for i, r := range rows {
+		s := scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: r.Model, Persona: r.Persona})
+		r.Model, r.Persona = s.Model, s.Persona
+		out[i] = r
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Model != out[j].Model {
+			return out[i].Model < out[j].Model
+		}
+		return out[i].Persona < out[j].Persona
+	})
+	return out
 }
 
 // buildRunResult folds the finished accumulator into the suite-tagged RunResult:
