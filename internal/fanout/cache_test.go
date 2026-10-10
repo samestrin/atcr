@@ -658,6 +658,52 @@ func TestBuildAgents_ReplayReasoningIsPerAgent(t *testing.T) {
 	assert.True(t, fb.ReplayReasoningOff, "the fallback sends its own opt-out")
 }
 
+// Epic 35.16.11.2.2.9 T3: replay_reasoning gets its own cache-key clause; unset
+// appends nothing, so every key written before the field existed stays valid.
+func TestDiffCacheKey_ReplayReasoningToken(t *testing.T) {
+	hash := cache.HashText("p")
+	key := func(rr string) string {
+		return diffCacheKey("p", cacheKeyInputs{Model: "m", MaxTokens: defaultMaxTokens, ReplayReasoning: rr})
+	}
+	assert.Equal(t, cache.Key(hash, "m", "default\x00kv=2"), key(""), "unset keeps today's key")
+	assert.Equal(t, cache.Key(hash, "m", "default\x00rr=off\x00kv=2"), key(registry.ReplayReasoningOff))
+}
+
+// Epic 35.16.11.2.2.9 T3: the primary and its fallback each key on their OWN
+// replay_reasoning, at both call sites.
+func TestBuildAgents_ReplayReasoningKeysPerAgent(t *testing.T) {
+	build := func(primary, fallback string) (Agent, Agent) {
+		cfg := toolCfg()
+		g, k := cfg.Registry.Agents["greta"], cfg.Registry.Agents["kai"]
+		g.ReplayReasoning, k.ReplayReasoning = primary, fallback
+		cfg.Registry.Agents["greta"], cfg.Registry.Agents["kai"] = g, k
+		payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
+		p, _, err := buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+		require.NoError(t, err)
+		fb, _, err := buildFallbackAgent(cfg, p, "kai", true, fallbackRefit{})
+		require.NoError(t, err)
+		return p, fb
+	}
+	recompute := func(a Agent, rr string) string {
+		sizing := fmt.Sprintf("%d:%d", a.EffectiveBudget, a.chunkMaxLines)
+		return diffCacheKey(a.Prompt, cacheKeyInputs{Model: a.Invocation.Model, BaseURL: a.Invocation.BaseURL, Temperature: a.Invocation.Temperature, Sizing: sizing, MaxTokens: a.ResolvedMaxTokens, ResponseFormat: a.Invocation.ResponseFormat, ReplayReasoning: rr})
+	}
+
+	p0, fb0 := build("", "")
+	assert.Equal(t, recompute(p0, ""), p0.CacheKey, "unset keeps the primary's existing key")
+	assert.Equal(t, recompute(fb0, ""), fb0.CacheKey, "unset keeps the fallback's existing key")
+
+	p, fb := build(registry.ReplayReasoningOff, "")
+	assert.Equal(t, recompute(p, registry.ReplayReasoningOff), p.CacheKey, "the primary keys on its own opt-out")
+	assert.NotEqual(t, p0.CacheKey, p.CacheKey)
+	assert.Equal(t, fb0.CacheKey, fb.CacheKey, "the primary's opt-out must not move the fallback's key")
+
+	p, fb = build("", registry.ReplayReasoningOff)
+	assert.Equal(t, p0.CacheKey, p.CacheKey)
+	assert.Equal(t, recompute(fb, registry.ReplayReasoningOff), fb.CacheKey, "the fallback keys on its own opt-out")
+	assert.NotEqual(t, fb0.CacheKey, fb.CacheKey)
+}
+
 // TD internal/fanout/review.go:2948: the pt= clause keys non-tool agents too.
 // The flag is inert on a single-shot agent (no tool loop means no reasoning
 // replay), but the declaration still keys apart — a spurious miss, never a
@@ -793,6 +839,7 @@ func TestBuildAgents_EveryKeyedFieldChangesTheCacheKey(t *testing.T) {
 			a.PreserveThinking = "on"
 			cfg.Registry.Agents["greta"] = a
 		}},
+		{"replay_reasoning", onGreta(func(a *registry.AgentConfig) { a.ReplayReasoning = registry.ReplayReasoningOff })},
 	}
 	fallbackVariants := []struct {
 		name   string
@@ -810,6 +857,7 @@ func TestBuildAgents_EveryKeyedFieldChangesTheCacheKey(t *testing.T) {
 			a.PreserveThinking = "on"
 			cfg.Registry.Agents["kai"] = a
 		}},
+		{"replay_reasoning", onKai(func(a *registry.AgentConfig) { a.ReplayReasoning = registry.ReplayReasoningOff })},
 	}
 
 	for _, tc := range []struct {
