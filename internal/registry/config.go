@@ -229,6 +229,11 @@ func ThinkingStyles() []string { return slices.Clone(thinkingStyles) }
 // Like the other accessors it returns a fresh copy.
 func PreserveThinkingStyles() []string { return slices.Clone(preserveThinkingStyles) }
 
+// ReplayReasoningOff is the one legal AgentConfig.ReplayReasoning value (Epic
+// 35.16.11.2.2.9): the tool loop does not send the model's earlier reasoning
+// back on later turns. Unset keeps the replay.
+const ReplayReasoningOff = "off"
+
 // DefaultMaxTokens is the output cap the review applies to an agent that
 // declares no max_tokens. It mirrors payload.DefaultOutputTokens, which this
 // leaf package cannot import; a test in internal/doctor pins the two together.
@@ -666,6 +671,15 @@ type AgentConfig struct {
 	ThinkingLevel    string `yaml:"thinking_level,omitempty"`
 	ThinkingStyle    string `yaml:"thinking_style,omitempty"`
 	PreserveThinking string `yaml:"preserve_thinking,omitempty"`
+
+	// ReplayReasoning opts this agent out of the tool loop's reasoning replay
+	// (Epic 35.16.11.2.2.9): ReplayReasoningOff drops the model's earlier
+	// reasoning from the history sent on later turns, for an endpoint that
+	// rejects a replayed reasoning member. The only legal value is
+	// ReplayReasoningOff; unset (the default) keeps the replay. It is
+	// independent of the thinking keys and, like them, never inherited by a
+	// fallback.
+	ReplayReasoning string `yaml:"replay_reasoning,omitempty"`
 
 	// Review-constraint guardrails (Epic 2.2). All optional and
 	// backward-compatible: an unset field imposes no constraint, so a 1.x/2.0
@@ -1460,6 +1474,11 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 	// near-miss must fail loudly here rather than reach a live review.
 	if a.ResponseFormat != "" && a.ResponseFormat != ResponseFormatJSONObject {
 		errs = append(errs, agentErrf(name, "agent '%s': invalid response_format %q: must be %q or unset", name, a.ResponseFormat, ResponseFormatJSONObject))
+	}
+	// replay_reasoning (Epic 35.16.11.2.2.9): strict equality like
+	// response_format, so a bare YAML bool or an on fails at load.
+	if a.ReplayReasoning != "" && a.ReplayReasoning != ReplayReasoningOff {
+		errs = append(errs, agentErrf(name, "agent '%s': invalid replay_reasoning %q: must be %q or unset", name, a.ReplayReasoning, ReplayReasoningOff))
 	}
 	terrs, twarns := validateThinking(name, a)
 	errs = append(errs, terrs...)
