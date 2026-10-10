@@ -83,6 +83,21 @@ func TestBuildSkepticAgent_ForwardsProviderAndBudgets(t *testing.T) {
 	assert.Equal(t, "the prompt", a.Invocation.Prompt)
 }
 
+// TestBuildSkepticAgent_ForwardsReplayReasoningOff (Epic 35.16.11.2.2.9.1): a
+// skeptic declaring replay_reasoning: off is built with the opt-out set, so its
+// tool loop re-sends earlier turns without their reasoning members; a default
+// skeptic keeps the replay.
+func TestBuildSkepticAgent_ForwardsReplayReasoningOff(t *testing.T) {
+	t.Parallel()
+	off := testSkeptic()
+	off.Config.ReplayReasoning = registry.ReplayReasoningOff
+	a, _ := buildSkepticAgent(off, "prompt", false)
+	assert.True(t, a.ReplayReasoningOff, "replay_reasoning: off must reach the skeptic's agent")
+
+	a, _ = buildSkepticAgent(testSkeptic(), "prompt", false)
+	assert.False(t, a.ReplayReasoningOff, "a default skeptic keeps replaying reasoning")
+}
+
 // TestBuildSkepticAgent_ThinkingBudgetFitsUnderOutputCap locks the single-shot
 // half of the budget/cap invariant: an anthropic thinking declaration sends
 // budget_tokens, and Anthropic rejects budget_tokens >= max_tokens. A skeptic

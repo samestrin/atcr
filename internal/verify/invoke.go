@@ -479,10 +479,12 @@ func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool) (agent fanout.
 		// Exec (Epic 11.0): in an --exec run, the skeptic is offered the
 		// run_tests/run_script tools so it can reproduce a finding by executing
 		// code. False keeps the read-only tool set (the default).
-		Exec:            exec,
-		SupportsFC:      c.SupportsFC,
-		MaxTurns:        derefInt(c.MaxTurns),
-		ToolBudgetBytes: budget,
+		Exec:       exec,
+		SupportsFC: c.SupportsFC,
+		// Epic 35.16.11.2.2.9.1: the skeptic's own replay_reasoning opt-out.
+		ReplayReasoningOff: c.ReplayReasoning == registry.ReplayReasoningOff,
+		MaxTurns:           derefInt(c.MaxTurns),
+		ToolBudgetBytes:    budget,
 		// Retry/backoff (Epic 4.6): forward the skeptic's per-agent budget the same
 		// way as the other per-finding budgets. A nil pointer becomes 0; the engine
 		// applies the override only when InitialBackoffMs > 0, so an unset budget
