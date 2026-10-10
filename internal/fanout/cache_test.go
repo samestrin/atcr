@@ -633,6 +633,31 @@ func TestBuildAgents_PreserveThinkingIsPerAgent(t *testing.T) {
 	assert.Equal(t, recompute(fb, "glm", "off"), fb.CacheKey)
 }
 
+// Epic 35.16.11.2.2.9 AC2: the primary and its fallback each carry their OWN
+// replay_reasoning, never the other's.
+func TestBuildAgents_ReplayReasoningIsPerAgent(t *testing.T) {
+	build := func(primary, fallback string) (Agent, Agent) {
+		cfg := toolCfg()
+		g, k := cfg.Registry.Agents["greta"], cfg.Registry.Agents["kai"]
+		g.ReplayReasoning, k.ReplayReasoning = primary, fallback
+		cfg.Registry.Agents["greta"], cfg.Registry.Agents["kai"] = g, k
+		payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
+		p, _, err := buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+		require.NoError(t, err)
+		fb, _, err := buildFallbackAgent(cfg, p, "kai", true, fallbackRefit{})
+		require.NoError(t, err)
+		return p, fb
+	}
+
+	p, fb := build(registry.ReplayReasoningOff, "")
+	assert.True(t, p.ReplayReasoningOff, "the primary carries its own opt-out")
+	assert.False(t, fb.ReplayReasoningOff, "the primary's opt-out must not reach the fallback")
+
+	p, fb = build("", registry.ReplayReasoningOff)
+	assert.False(t, p.ReplayReasoningOff)
+	assert.True(t, fb.ReplayReasoningOff, "the fallback sends its own opt-out")
+}
+
 // TD internal/fanout/review.go:2948: the pt= clause keys non-tool agents too.
 // The flag is inert on a single-shot agent (no tool loop means no reasoning
 // replay), but the declaration still keys apart — a spurious miss, never a

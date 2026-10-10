@@ -73,6 +73,23 @@ func TestLoop_UnsizedAgentNeverTripsOnReasoning(t *testing.T) {
 	assert.Equal(t, "final answer", r.Content)
 }
 
+// Epic 35.16.11.2.2.9 AC4: an agent with replay_reasoning: off re-sends none of
+// its reasoning, so reasoning past the cap that would trip a default agent
+// never trips it: the bytes are counted after the drop.
+func TestLoop_ReplayReasoningOffNeverTripsOnReasoningItDidNotResend(t *testing.T) {
+	const maxTokens = 100
+	cc, d := reasoningLoop(int(payload.TokensToBytes(maxTokens)) + 1)
+	a := sizedToolAgent(maxTokens)
+	a.ReplayReasoningOff = true
+
+	r := toolEngine(cc, d).invokeAgent(context.Background(), a)
+	require.Equal(t, StatusOK, r.Status)
+	assert.NotContains(t, r.TrippedBudgets, budgetReasoningReplay)
+	assert.Equal(t, "final answer", r.Content)
+	assert.Equal(t, 3, cc.chatCalls, "the loop ran every scripted turn")
+	assert.Equal(t, 2, d.callCount())
+}
+
 // A sized agent whose reserve closed its budget is recorded with EffectiveBudget
 // 0 but still runs the loop under chunk/truncate; the resolved window, not the
 // byte budget, says it was sized, so the trip still applies.
