@@ -17,6 +17,7 @@ import (
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/samestrin/atcr/internal/payload"
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/stream"
 	"github.com/samestrin/atcr/internal/tools"
 )
@@ -34,6 +35,18 @@ var errTruncatedZeroFindings = errors.New("response truncated (finish_reason=len
 // This is the case agent brad hit on four cases of the 35.16.2 dry-run while
 // kai, which DID set the truncation flag, failed over correctly.
 var errEmptyResponse = errors.New("reviewer returned an empty response")
+
+// The silent-lane thresholds (Epic 35.16.11.2.2.7 T1). A thinking-declared
+// reviewer that answers the clean-review sentinel in fewer than
+// silentLaneMaxTokensOut output tokens on more than silentLaneMinTokensIn input
+// tokens most likely skipped its review rather than finished it: ronin-backup
+// replied NO FINDINGS in 10 tokens on about 158k in. Both bounds are strict.
+// Named, not inlined, because Epic 35.16.11.2.2.8 scores its `silent` outcome
+// on the same two numbers.
+const (
+	silentLaneMaxTokensOut = 50
+	silentLaneMinTokensIn  = 10000
+)
 
 // Completer abstracts the LLM chat call so the engine can be driven by a fake in
 // tests (deterministic concurrency/fallback assertions) while production uses
@@ -1148,6 +1161,21 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 				r.UnparseableResponse = true
 			} else {
 				answer, _ := llmclient.SplitThink(r.Content)
+				// Silent lane (Epic 35.16.11.2.2.7 T1): a clean review this short
+				// on a payload this large is more likely a reasoner that skipped
+				// the review than one that finished it. A warning only — status,
+				// findings and status.json are untouched, and the slot is not
+				// failed over, which would spend the backup on every real clean
+				// review. Gated on declared thinking: a non-reasoning model's
+				// genuine clean review IS the ~3-token sentinel. Checked per
+				// attempt, so a chunk is judged before chunker.go sums tokens.
+				if stream.IsNoFindings(answer) && r.TokensOut < silentLaneMaxTokensOut &&
+					r.TokensIn > silentLaneMinTokensIn &&
+					registry.ThinkingEnabled(a.Invocation.Thinking, a.Invocation.ThinkingLevel) {
+					log.FromContext(ctx).Warn("reviewer answered NO FINDINGS in very few tokens on a large payload; the lane may have skipped its review",
+						"agent", a.Name, "model", a.Invocation.Model,
+						"tokens_in", r.TokensIn, "tokens_out", r.TokensOut)
+				}
 				if !stream.IsNoFindings(answer) {
 					r.UnparseableResponse = true
 					// Distinct signal (TD engine.go:533): the strip consumed the WHOLE
