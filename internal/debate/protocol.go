@@ -13,6 +13,7 @@ import (
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/tools"
 )
 
@@ -308,16 +309,18 @@ func buildDebateAgent(seat Caster, prompt string) fanout.Agent {
 		responseFormat = c.ResponseFormat
 	}
 	return fanout.Agent{
-		Name:             seat.Agent,
-		Provider:         c.Provider,
-		Prompt:           prompt,
-		TimeoutSecs:      derefInt(c.TimeoutSecs),
-		Tools:            true,
-		SupportsFC:       c.SupportsFC,
-		MaxTurns:         derefInt(c.MaxTurns),
-		ToolBudgetBytes:  derefInt64(c.ToolBudgetBytes),
-		MaxRetries:       derefInt(c.MaxRetries),
-		InitialBackoffMs: derefInt(c.InitialBackoffMs),
+		Name:        seat.Agent,
+		Provider:    c.Provider,
+		Prompt:      prompt,
+		TimeoutSecs: derefInt(c.TimeoutSecs),
+		Tools:       true,
+		SupportsFC:  c.SupportsFC,
+		// Epic 35.16.11.2.2.9.1: the seat's own replay_reasoning opt-out.
+		ReplayReasoningOff: c.ReplayReasoning == registry.ReplayReasoningOff,
+		MaxTurns:           derefInt(c.MaxTurns),
+		ToolBudgetBytes:    derefInt64(c.ToolBudgetBytes),
+		MaxRetries:         derefInt(c.MaxRetries),
+		InitialBackoffMs:   derefInt(c.InitialBackoffMs),
 		Invocation: llmclient.Invocation{
 			BaseURL:     seat.Provider.BaseURL,
 			APIKeyEnv:   seat.Provider.APIKeyEnv,
