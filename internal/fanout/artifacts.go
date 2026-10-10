@@ -711,6 +711,7 @@ func statusFor(r Result, fr findingsResult) AgentStatus {
 		SalvagedOnStop:         onStop,
 		SalvagedOnStopChunks:   onStopChunks,
 		UnparseableChunks:      r.UnparseableChunks,
+		SilentChunks:           r.SilentChunks,
 		CacheHit:               r.CacheHit,
 		UnreviewedChunks:       r.UnreviewedChunks,
 		// Diagnosability (Epic 19.10 F8): pure pass-through of the per-agent sizing /

@@ -393,6 +393,7 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	out.parsedFindings = nil
 	out.parsedFindingsSet = false
 	out.UnparseableChunks = 0 // counted below over every chunk, g[0] included
+	out.SilentChunks = 0      // summed below over every chunk, g[0] included
 	// ThinkOnlyAttempts is a PER-WALK diagnostic and the merged record describes a
 	// different walk; leaving g[0]'s value would attribute one chunk's wasted spend to
 	// the whole persona. Summed with the other chunk-level counts below.
@@ -505,6 +506,10 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 		if r.UnparseableResponse {
 			out.UnparseableChunks++
 		}
+		// Summed beside it: each chunk's reply was judged on its own tokens in
+		// invokeSlot, before the token sums below lose the per-chunk shape. A
+		// persona is wholly silent when SilentChunks >= ChunkCount.
+		out.SilentChunks += r.SilentChunks
 		// Folded for the same reason as Salvaged, and it was the one member of that
 		// pair left out. ThinkSuppressed refines UnparseableResponse (engine.go:420),
 		// so a suppressed bin is already counted just above — but the persona-level
