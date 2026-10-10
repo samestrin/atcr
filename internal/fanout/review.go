@@ -3164,10 +3164,12 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 		InitialBackoffMs: ac.EffectiveInitialBackoffMs(cfg.Settings),
 		Tools:            ac.Tools,
 		SupportsFC:       ac.SupportsFC,
-		MaxTurns:         derefMaxTurns(ac.MaxTurns),
-		ToolBudgetBytes:  derefInt64(ac.ToolBudgetBytes),
-		MinSeverity:      ac.MinSeverity,
-		MaxFindings:      ac.MaxFindings,
+		// Epic 35.16.11.2.2.9: the agent's own replay_reasoning opt-out.
+		ReplayReasoningOff: ac.ReplayReasoning == registry.ReplayReasoningOff,
+		MaxTurns:           derefMaxTurns(ac.MaxTurns),
+		ToolBudgetBytes:    derefInt64(ac.ToolBudgetBytes),
+		MinSeverity:        ac.MinSeverity,
+		MaxFindings:        ac.MaxFindings,
 		// Per-agent sizing record (Epic 19.10 F6/F8): threaded from buildSlots so
 		// invokeAgent can scale the deadline by ChunkTotal and stamp the
 		// diagnosability fields onto the Result. chunkMaxLines is kept for
@@ -3795,6 +3797,10 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		// NOT the primary's, so the degrade decision is re-evaluated per agent
 		// (AC 04-03 EC3 — lane governs Tools, the model governs capability).
 		SupportsFC: ac.SupportsFC,
+		// replay_reasoning is per-agent too (Epic 35.16.11.2.2.9): whether an
+		// endpoint tolerates a replayed reasoning member is a property of the
+		// fallback's OWN provider, so it sends its own value, not the primary's.
+		ReplayReasoningOff: ac.ReplayReasoning == registry.ReplayReasoningOff,
 		// Review constraints follow the slot, not the substitute model (Epic 2.2):
 		// a fallback answers in the primary's place, so the primary's min_severity
 		// and max_findings still govern the output.

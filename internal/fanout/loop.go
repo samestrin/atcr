@@ -32,6 +32,20 @@ func replayedReasoningBytes(m llmclient.Message) int64 {
 	return int64(len(m.ReasoningContent) + len(m.Reasoning) + len(m.ReasoningDetails) + len(m.ThinkingBlocks))
 }
 
+// replayable is the form of an assistant turn this agent re-sends as far as
+// reasoning goes: unchanged by default, and with every reasoning member
+// (ReasoningContent, Reasoning, ReasoningDetails, ThinkingBlocks) dropped for an
+// agent with replay_reasoning: off (Epic 35.16.11.2.2.9), restoring the
+// pre-replay body for a provider that rejects a replayed member. The drop is
+// here, after Chat returns, not in llmclient: ChatResponse.Reasoning (the
+// reporting text) is computed from the same members and must survive it.
+func (l *toolLoop) replayable(m llmclient.Message) llmclient.Message {
+	if l.agent.ReplayReasoningOff {
+		m.ReasoningContent, m.Reasoning, m.ReasoningDetails, m.ThinkingBlocks = nil, nil, nil, nil
+	}
+	return m
+}
+
 // historyMessage is the form of an assistant turn that is safe to re-send as
 // conversation history: inline <think> reasoning stripped off its Content. Without
 // it, a model that reasons inline gets its own discarded draft replayed back as
@@ -51,8 +65,8 @@ func replayedReasoningBytes(m llmclient.Message) int64 {
 // also strip l.res.Content — the raw reply review.md writes — which is outside
 // this strip's scope. Only Content is touched: the reasoning members
 // (ReasoningContent, Reasoning, ReasoningDetails, ThinkingBlocks) are a separate,
-// deliberate replay channel and ride through unchanged, as does the nil Content a
-// pure tool-call turn carries.
+// deliberate replay channel (gated per agent by replayable, not here) and ride
+// through unchanged, as does the nil Content a pure tool-call turn carries.
 //
 // Content that is blank BECAUSE the strip removed a leading think run becomes
 // nil, not "" — the canonical assistant tool-call turn shape (llmclient.Message's
@@ -233,7 +247,10 @@ func (l *toolLoop) run(ctx context.Context) Result {
 		l.res.Turns++
 		l.res.addUsage(resp.Usage)
 		l.res.addCallRecords(resp.CallRecords)
-		l.reasoningBytes += replayedReasoningBytes(resp.Message)
+		// Counted after the drop: an off agent never trips reasoning_replay_bytes
+		// over reasoning it does not re-send.
+		replay := l.replayable(resp.Message)
+		l.reasoningBytes += replayedReasoningBytes(replay)
 
 		// Final message (no tool_calls): the model finished within budget.
 		//
@@ -265,7 +282,7 @@ func (l *toolLoop) run(ctx context.Context) Result {
 
 		// Only a turn that WILL be replayed enters history, so historyMessage's strip
 		// and clone are paid exactly when they buy something.
-		l.messages = append(l.messages, historyMessage(resp.Message))
+		l.messages = append(l.messages, historyMessage(replay))
 
 		// Record the requested tool_calls before deciding whether to execute them,
 		// so the transcript is a faithful record even when the turn is skipped by a
