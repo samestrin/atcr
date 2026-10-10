@@ -286,6 +286,25 @@ func TestBuildDebateAgent_ForwardsDeclaredMaxTokens(t *testing.T) {
 	assert.Equal(t, 24000, *got)
 }
 
+// TestBuildDebateAgent_ForwardsReplayReasoningOff pins Epic 35.16.11.2.2.9.1:
+// a debate seat's own replay_reasoning: off reaches fanout.Agent, so the tool
+// loop drops the earlier turns' reasoning members; an undeclared seat keeps the
+// replay.
+func TestBuildDebateAgent_ForwardsReplayReasoningOff(t *testing.T) {
+	seat := Caster{
+		Label:  LabelProposer,
+		Agent:  "proposer-1",
+		Config: registry.AgentConfig{Provider: "p", Model: "m", SupportsFC: true},
+	}
+
+	assert.False(t, buildDebateAgent(seat, "prompt").ReplayReasoningOff,
+		"an undeclared seat keeps the reasoning replay")
+
+	seat.Config.ReplayReasoning = registry.ReplayReasoningOff
+	assert.True(t, buildDebateAgent(seat, "prompt").ReplayReasoningOff,
+		"the seat's replay_reasoning: off must reach the tool loop")
+}
+
 // judgeSeatResponseFormats runs one debate over cast and returns the
 // response_format each seat's request carried, in seat order.
 func judgeSeatResponseFormats(t *testing.T, cast Cast) []string {
