@@ -104,6 +104,9 @@ type communityPersonaFile struct {
 // response_format below: which request field a model honors is a fact about
 // the endpoint the consumer resolves, not about the persona.
 //
+// replay_reasoning follows it too: whether an endpoint tolerates a replayed
+// reasoning member is a fact about the endpoint the consumer resolves.
+//
 // response_format is another: its own doc (config.go's ResponseFormat) defines
 // it as a claim about the endpoint the CONSUMER resolves — "this agent's model
 // honors the OpenAI-compatible response_format request field". A published
@@ -141,6 +144,11 @@ func rejectMachineLocalFields(name string, cfg AgentConfig) error {
 				"whether and how a model's thinking behavior is honored is specific to the "+
 				"endpoint each consumer resolves, so each consumer declares it on their own agents", name, f.key))
 		}
+	}
+	if cfg.ReplayReasoning != "" {
+		errs = append(errs, fmt.Errorf("community persona %q must not declare replay_reasoning: "+
+			"whether an endpoint tolerates a replayed reasoning member is specific to the "+
+			"endpoint each consumer resolves, so each consumer declares it on their own agents", name))
 	}
 	return errors.Join(errs...)
 }
