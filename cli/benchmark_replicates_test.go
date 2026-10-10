@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -311,4 +314,118 @@ func TestBenchmarkRunCmd_RejectsReplicatesForARepoStateSuite(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--replicates is not supported for a repo-state-v1 suite")
 	assert.Zero(t, calls.Load(), "refused before a completer is built")
+}
+
+// dirWatchCompleter snapshots the benchmark work dir's case dirs on every call,
+// so a test can see which review trees a run still holds while a later case
+// run executes.
+type dirWatchCompleter struct {
+	root  string
+	mu    sync.Mutex
+	snaps [][]string
+}
+
+func (d *dirWatchCompleter) Complete(ctx context.Context, inv llmclient.Invocation) (string, error) {
+	work, err := filepath.Glob(filepath.Join(d.root, "atcr-benchmark-*"))
+	if err != nil || len(work) != 1 {
+		return "", fmt.Errorf("want one benchmark work dir under %s, got %v (%v)", d.root, work, err)
+	}
+	cases, err := filepath.Glob(filepath.Join(work[0], "case-*"))
+	if err != nil {
+		return "", err
+	}
+	names := make([]string, 0, len(cases))
+	for _, c := range cases {
+		names = append(names, filepath.Base(c))
+	}
+	sort.Strings(names)
+	d.mu.Lock()
+	d.snaps = append(d.snaps, names)
+	d.mu.Unlock()
+	return stubCompleter{}.Complete(ctx, inv)
+}
+
+// A later replicate's review tree is removed once its fit rows are folded, so a
+// --replicates N run holds one replicate tree at a time rather than cases x N of
+// them. Replicate 1's tree keeps its run lifetime, and the run-result is
+// byte-identical to a run that keeps every tree.
+func TestExecuteBenchmarkRun_ReplicatesRemoveLaterReplicateDirs(t *testing.T) {
+	for _, withCheckpoint := range []bool{false, true} {
+		t.Run(fmt.Sprintf("checkpoint=%v", withCheckpoint), func(t *testing.T) {
+			cfg := benchCfg([3]string{"greta", "m-greta", "greta"}, [3]string{"kai", "m-kai", "kai"})
+			ckpt := func() string {
+				if !withCheckpoint {
+					return ""
+				}
+				return filepath.Join(t.TempDir(), "ckpt.json")
+			}
+
+			// The reference run keeps every replicate tree, as the run did before.
+			orig := removeReplicateDir
+			removeReplicateDir = func(string) error { return nil }
+			kept, err := executeBenchmarkRunReplicates(context.Background(), cfg, stubCompleter{}, suiteValidPath, replicatesGen, ckpt(), 3)
+			removeReplicateDir = orig
+			require.NoError(t, err)
+
+			root := t.TempDir()
+			t.Setenv("TMPDIR", root)
+			w := &dirWatchCompleter{root: root}
+			rr, err := executeBenchmarkRunReplicates(context.Background(), cfg, w, suiteValidPath, replicatesGen, ckpt(), 3)
+			require.NoError(t, err)
+
+			// 2 cases x 3 replicates x 2 reviewers; the two reviewers of one case run
+			// share its snapshot, so look at one per case run.
+			require.Len(t, w.snaps, 12)
+			want := [][]string{
+				{"case-0"},
+				{"case-0", "case-0-r2"},
+				{"case-0", "case-0-r3"},
+				{"case-0", "case-1"},
+				{"case-0", "case-1", "case-1-r2"},
+				{"case-0", "case-1", "case-1-r3"},
+			}
+			for run, names := range want {
+				assert.Equal(t, names, w.snaps[2*run], "case run %d", run)
+				assert.Equal(t, names, w.snaps[2*run+1], "case run %d", run)
+			}
+
+			assert.Equal(t, mustJSON(t, kept), mustJSON(t, rr), "removing the trees must not change the run-result")
+		})
+	}
+}
+
+// cancelOnCallCompleter cancels the run on its nth call and fails that call, so
+// the case run in flight takes an error return.
+type cancelOnCallCompleter struct {
+	n      int32
+	calls  atomic.Int32
+	cancel context.CancelFunc
+}
+
+func (c *cancelOnCallCompleter) Complete(ctx context.Context, inv llmclient.Invocation) (string, error) {
+	if c.calls.Add(1) == c.n {
+		c.cancel()
+		return "", context.Canceled
+	}
+	return stubCompleter{}.Complete(ctx, inv)
+}
+
+// A later replicate that fails still removes its review tree on the way out.
+func TestExecuteBenchmarkRun_FailedReplicateRemovesItsDir(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+	var removed []string
+	orig := removeReplicateDir
+	t.Cleanup(func() { removeReplicateDir = orig })
+	removeReplicateDir = func(dir string) error {
+		removed = append(removed, filepath.Base(dir))
+		return orig(dir)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c := &cancelOnCallCompleter{n: 2, cancel: cancel}
+	_, err := executeBenchmarkRunReplicates(ctx, cfg, c, suiteValidPath, replicatesGen, "", 3)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "replicate 2")
+	assert.Equal(t, []string{"case-0-r2"}, removed, "the failed replicate's tree is removed; replicate 1's is not")
 }
