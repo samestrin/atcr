@@ -346,14 +346,36 @@ func TestToolLoop_NoReasoningBodiesUnchanged(t *testing.T) {
 	}
 }
 
+// reasoningSamples is a non-empty value for each reasoning member, in the shape
+// its provider returns it. A reasoning member with no entry here fails the
+// fixture below rather than being silently left out of it.
+var reasoningSamples = map[string]string{
+	"reasoning_content": `"because X"`,
+	"reasoning":         `"chain of thought"`,
+	"reasoning_details": `[{"type":"reasoning.text","text":"step 1","index":0}]`,
+	"thinking_blocks":   `[{"type":"thinking","thinking":"step 1","signature":"EqQBCkgIARABGAIiQL+/zzA0Xq9b=="}]`,
+}
+
+// everyReasoningMember is a reply carrying every member in reasoningKeys, so a
+// member added to llmclient.Message reaches the wire tests without an edit to
+// them.
+func everyReasoningMember(t *testing.T) string {
+	t.Helper()
+	parts := make([]string, 0, len(reasoningKeys))
+	for _, k := range reasoningKeys {
+		v, ok := reasoningSamples[k]
+		require.True(t, ok, "reasoning member %q has no sample in reasoningSamples", k)
+		parts = append(parts, `"`+k+`":`+v)
+	}
+	return strings.Join(parts, ",")
+}
+
 // Epic 35.16.11.2.2.9 AC3: an agent with replay_reasoning: off re-sends each
 // assistant turn with no reasoning member on every later request, whatever
 // shape the provider returned, while a default agent still re-sends it. Every
 // other part of the off agent's history is the pre-replay wire body.
 func TestToolLoop_ReplayReasoningOffSendsNoReasoningMember(t *testing.T) {
-	all := `"reasoning_content":"because X","reasoning":"chain of thought",` +
-		`"reasoning_details":[{"type":"reasoning.text","text":"step 1","index":0}],` +
-		`"thinking_blocks":[{"type":"thinking","thinking":"step 1","signature":"EqQBCkgIARABGAIiQL+/zzA0Xq9b=="}]`
+	all := everyReasoningMember(t)
 	members := func(int) string { return all }
 	run := func(off bool) []string {
 		return runWireToolLoopAgent(t, llmclient.Invocation{Model: "m"}, func(a *Agent) { a.ReplayReasoningOff = off }, members)
@@ -364,16 +386,65 @@ func TestToolLoop_ReplayReasoningOffSendsNoReasoningMember(t *testing.T) {
 		for j, m := range wireMessages(t, body) {
 			assert.Empty(t, reasoningOn(m), "off agent: request %d message %d", i+2, j)
 		}
-		for _, key := range []string{"reasoning_content", "reasoning", "reasoning_details", "thinking_blocks"} {
+		for _, key := range reasoningKeys {
 			assert.NotContains(t, body, `"`+key+`"`, "off agent: request %d", i+2)
 		}
 	}
 	assert.Equal(t, goldenForcedFinalBody, off[3], "an off agent's history is the pre-replay body")
 
 	def := run(false)
-	turn2 := wireMessages(t, def[1])
-	require.Len(t, turn2, 3, "prompt, assistant tool call, tool result")
-	assert.Len(t, reasoningOn(turn2[1]), 4, "a default agent still re-sends every reasoning member")
+	require.Len(t, def, len(off))
+	for i, body := range def[1:] {
+		msgs := wireMessages(t, body)
+		require.GreaterOrEqual(t, len(msgs), 3, "default agent: request %d", i+2)
+		for j, m := range msgs {
+			var role string
+			require.NoError(t, json.Unmarshal(m["role"], &role))
+			if role == "assistant" {
+				assert.Len(t, reasoningOn(m), len(reasoningKeys),
+					"default agent: request %d message %d still re-sends every reasoning member", i+2, j)
+			}
+		}
+	}
+	assert.NotEqual(t, off[1], def[1], "the off and default turn-2 bodies must differ")
+}
+
+// Epic 35.16.11.2.2.9 F1: replayable's drop set is the reflected reasoning
+// members, not a hand-kept list. A member added to llmclient.Message (and so
+// replayed by history()) that replayable does not clear fails here, before it
+// can bring back a provider 400 on turn 2 for an agent that opted out.
+func TestReplayable_DropsEveryReflectedReasoningMember(t *testing.T) {
+	var m llmclient.Message
+	v := reflect.ValueOf(&m).Elem()
+	reasoning := map[string]int{}
+	for i := 0; i < v.NumField(); i++ {
+		k := strings.Split(v.Type().Field(i).Tag.Get("json"), ",")[0]
+		for _, rk := range reasoningKeys {
+			if k == rk {
+				reasoning[k] = i
+			}
+		}
+	}
+	require.Len(t, reasoning, len(reasoningKeys))
+	for k, i := range reasoning {
+		f := v.Field(i)
+		require.Equal(t, reflect.TypeOf(json.RawMessage(nil)), f.Type(), "reasoning member %q: extend this guard for its type", k)
+		f.Set(reflect.ValueOf(json.RawMessage(`"` + k + `"`)))
+	}
+
+	kept := (&toolLoop{agent: Agent{}}).replayable(m)
+	assert.Equal(t, m, kept, "a default agent re-sends every reasoning member unchanged")
+
+	dropped := reflect.ValueOf((&toolLoop{agent: Agent{ReplayReasoningOff: true}}).replayable(m))
+	for k, i := range reasoning {
+		assert.True(t, dropped.Field(i).IsZero(), "replay_reasoning: off must drop %q", k)
+	}
+
+	var want int64
+	for k := range reasoning {
+		want += int64(len(`"` + k + `"`))
+	}
+	assert.Equal(t, want, replayedReasoningBytes(m), "replayedReasoningBytes must count every reasoning member")
 }
 
 // AC 04-01 Edge Case 3: a fallback starts a fresh history, so its first
