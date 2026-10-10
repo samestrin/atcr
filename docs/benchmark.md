@@ -331,6 +331,58 @@ TOKENS_OUT/REPLICATE, not as 0. A checkpoint written before replicates existed a
 resumed with `--replicates N` records no row for replicate 1, so its findings read
 `-,16`, not `0,16`.
 
+### Checking a persona + model pair before repointing an agent
+
+Run the fit check on a candidate pair **before** you point a live agent at it, not
+after the agent starts running to its token cap in real reviews. The workflow is:
+
+1. **Put the candidate pairs in an overlay roster.** In a scratch project directory,
+   write `.atcr/registry.yaml` (see
+   [Project registry overlay](registry.md#project-registry-overlay)) with one agent per
+   pair: the persona and model you want to judge, plus the settings the live agent
+   would use (`max_tokens`, `temperature`, `context_window_tokens`). List those agents,
+   and only those, in that directory's `.atcr/config.yaml` roster. `benchmark run`
+   reads `.atcr/` from the working directory, so run it from there.
+2. **The overlay must omit `fallback:`.** A fallback that serves a case is scored
+   under the backup's identity (the realized model, counted in `fallback_cases`), so
+   a primary that failed would be reported through its backup and the verdict would be
+   about the wrong pair. With no `fallback:`, a failed call stays a failed call of the
+   pair you are judging.
+3. **Check the agents answer at all:** `atcr doctor --agents <name>,<name>`.
+4. **Run the `fit-v1` suite with replicates**, then read the report:
+
+   ```bash
+   # from the scratch directory; the suite ships in the atcr repository
+   atcr benchmark run --suite-path <atcr-repo>/benchmarks/fit-v1 --replicates 3 \
+     --checkpoint fit.checkpoint.json --output run-result.json
+   atcr benchmark fit --in run-result.json
+   ```
+
+5. **Repoint only a pair that reads `fit` or `fit (warning)`.** An `unfit` pair
+   says why in its reason column; check whether that was the model (truncation,
+   unparseable output, silence) or the provider (an HTTP error) before you drop it.
+
+**`fit-v1` is not for submission.** It is one large case (502,071 bytes, 112 files
+of atcr's own history) that exists to make a reviewer split its payload into chunks.
+Its one expected category is a placeholder the manifest format requires, so its
+recall measures nothing: do not `benchmark export` a `fit-v1` run-result as a
+leaderboard submission. Provenance is in
+[`benchmarks/fit-v1/NOTICE.md`](../benchmarks/fit-v1/NOTICE.md).
+
+**`fit-v1` needs `review_strategy: chunked`** in the scratch `.atcr/config.yaml`.
+Under the default `bulk` strategy a 128k-window reviewer cannot hold the case, sheds
+files, and every lane reads `incomplete`, which hides the fit signal; under `chunked`
+it splits the case into at least 2 chunks. **`payload_byte_budget` must be at least
+502,071**: the default of 524,288 is enough, and a lower budget truncates the case and
+marks every lane `incomplete`. A scratch config for the run:
+
+```yaml
+# .atcr/config.yaml in the scratch project directory
+agents: [candidate-a, candidate-b]
+review_strategy: chunked
+payload_byte_budget: 524288
+```
+
 ---
 
 ## Running a `repo-state-v1` suite
