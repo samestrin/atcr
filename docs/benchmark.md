@@ -293,7 +293,9 @@ same pair can finish one call and run to its token cap on the next. `--replicate
   each case; it recorded no fit data, so its cases add no `reviewer_fit` rows, and a
   full replay of it produces the same run-result it did before.
 - Each replicate is a full extra pass over the suite, so `--replicates 3` costs three
-  times as much. The flag is `standard-v1` only: a `repo-state-v1` suite refuses
+  times as much in calls. It does not hold three times the disk: a later replicate's
+  review tree is removed from the run's temp work dir as soon as its fit rows are
+  recorded (or its case run fails), so only one is kept at a time. The flag is `standard-v1` only: a `repo-state-v1` suite refuses
   `--replicates` above 1 before any reviewer runs.
 
 ### `atcr benchmark fit --in <run-result.json>`

@@ -442,6 +442,19 @@ func executeBenchmarkRunReplicates(ctx context.Context, cfg *fanout.ReviewConfig
 			if rep > 1 {
 				outputDir = filepath.Join(tmp, fmt.Sprintf("case-%d-r%d", i, rep))
 			}
+			// A later replicate's tree is removed once its fit rows are folded (and
+			// checkpointed), or on an error return, so the run holds one replicate tree
+			// at a time rather than cases x N of them. Replicate 1's tree keeps its run
+			// lifetime, so an N=1 run is unchanged.
+			dropReplicateDir := func() {
+				if rep > 1 {
+					_ = removeReplicateDir(outputDir)
+				}
+			}
+			fail := func(err error) (*benchmark.RunResult, error) {
+				dropReplicateDir()
+				return nil, err
+			}
 			req := fanout.ReviewRequest{
 				Root:       tmp,
 				OutputDir:  outputDir,
@@ -453,7 +466,7 @@ func executeBenchmarkRunReplicates(ctx context.Context, cfg *fanout.ReviewConfig
 			}
 			prep, err := fanout.PrepareReviewFromDiff(ctx, cfg, req, string(diff))
 			if err != nil {
-				return nil, fmt.Errorf("preparing case %s: %w", caseLabel, err)
+				return fail(fmt.Errorf("preparing case %s: %w", caseLabel, err))
 			}
 			// The reviewer count is the FULL roster, both lanes: fanout builds slots for
 			// SerialAgents exactly as it does for Agents, so counting the parallel lane
@@ -465,16 +478,16 @@ func executeBenchmarkRunReplicates(ctx context.Context, cfg *fanout.ReviewConfig
 			log.FromContext(ctx).Info("benchmark case executing", logArgs...)
 			res, err := fanout.ExecuteReview(ctx, completer, prep)
 			if err != nil {
-				return nil, fmt.Errorf("executing case %s: %w", caseLabel, err)
+				return fail(fmt.Errorf("executing case %s: %w", caseLabel, err))
 			}
 
 			summary, err := fanout.ReadPoolSummary(res.Dir)
 			if err != nil {
-				return nil, fmt.Errorf("reading pool summary for case %s: %w", caseLabel, err)
+				return fail(fmt.Errorf("reading pool summary for case %s: %w", caseLabel, err))
 			}
 			raisedByReviewer, err := readCaseFindings(res.Dir)
 			if err != nil {
-				return nil, fmt.Errorf("reading findings for case %s: %w", caseLabel, err)
+				return fail(fmt.Errorf("reading findings for case %s: %w", caseLabel, err))
 			}
 
 			// Iterate the full agent roster (including failed agents, which raised
@@ -520,7 +533,7 @@ func executeBenchmarkRunReplicates(ctx context.Context, cfg *fanout.ReviewConfig
 						// turns an absent key from "unmeasured" into the claim it should be.
 						groundingEnabled: summary.GroundingEnabled,
 					}); err != nil {
-						return nil, fmt.Errorf("scoring case %q: %w", c.ID, err)
+						return fail(fmt.Errorf("scoring case %q: %w", c.ID, err))
 					}
 				}
 
@@ -560,9 +573,10 @@ func executeBenchmarkRunReplicates(ctx context.Context, cfg *fanout.ReviewConfig
 					Replicate:        rep,
 				})
 				if werr := saveCheckpoint(checkpointPath, cp); werr != nil {
-					return nil, fmt.Errorf("writing checkpoint for case %s: %w", caseLabel, werr)
+					return fail(fmt.Errorf("writing checkpoint for case %s: %w", caseLabel, werr))
 				}
 			}
+			dropReplicateDir()
 		}
 	}
 
@@ -573,6 +587,10 @@ func executeBenchmarkRunReplicates(ctx context.Context, cfg *fanout.ReviewConfig
 	rr.Fit = publicFit(fits)
 	return rr, nil
 }
+
+// removeReplicateDir removes a later replicate's review tree once its fit rows are
+// folded. A var so a test can keep the trees and compare the run-result.
+var removeReplicateDir = os.RemoveAll
 
 // fitRow projects one reviewer's record of one case run onto its pre-scrub
 // benchmark.ReviewerFit row. It is the single projection shared by fresh execution
