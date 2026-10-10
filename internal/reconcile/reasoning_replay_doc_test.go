@@ -106,13 +106,13 @@ func TestRegistryDoc_ReasoningReplayExcludesInlineThink(t *testing.T) {
 
 	// Epic 35.16.11.2.2.9 made the replay switchable per agent, so the paragraph's
 	// old "they do not switch the replay on or off" became false. It must name the
-	// one key that does, and must not promise it for lanes that ignore it yet.
+	// one key that does, and (since Epic 35.16.11.2.2.9.1) name all four lanes that
+	// honor it.
 	t.Run("the replay contract names the replay_reasoning opt-out", func(t *testing.T) {
 		line := paragraph
 		for _, want := range []string{
 			"do not switch the replay off. The one key that does is `replay_reasoning: off`",
-			"Only the review lanes honor it until slice 35.16.11.2.2.9.1",
-			"the skeptic and the debate seats still replay",
+			"All four tool-loop lanes honor it: the review agents, their fallbacks, the skeptic, and the debate seats",
 		} {
 			assert.Contains(t, line, want,
 				"registry.md's Reasoning replay paragraph must name the replay_reasoning opt-out and its scope: missing %q", want)
