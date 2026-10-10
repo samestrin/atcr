@@ -48,6 +48,16 @@ const (
 	silentLaneMinTokensIn  = 10000
 )
 
+// isSilentLane is the one silent-lane predicate (Epic 35.16.11.2.2.8 T1): the
+// 35.16.11.2.2.7 warning and the per-chunk SilentChunks count both call it, so
+// the two cannot drift. answer is the think-stripped reply; tokens are the one
+// attempt's, never a chunked persona's sum.
+func isSilentLane(answer string, tokensIn, tokensOut int, inv llmclient.Invocation) bool {
+	return stream.IsNoFindings(answer) && tokensOut < silentLaneMaxTokensOut &&
+		tokensIn > silentLaneMinTokensIn &&
+		registry.ThinkingEnabled(inv.Thinking, inv.ThinkingLevel)
+}
+
 // Completer abstracts the LLM chat call so the engine can be driven by a fake in
 // tests (deterministic concurrency/fallback assertions) while production uses
 // *llmclient.Client. The engine consumes the interface; the client returns a
@@ -470,6 +480,13 @@ type Result struct {
 	// UnparseableResponse. mergeResultGroup sets it; the merged
 	// UnparseableResponse means zero parseable findings persona-wide.
 	UnparseableChunks int
+
+	// SilentChunks counts the chunks whose reply met the silent-lane predicate
+	// (isSilentLane): a thinking-declared reviewer answering NO FINDINGS in very
+	// few tokens on a large payload. invokeSlot sets it to 1 on such a reply, so a
+	// single-shot persona carries it directly; mergeResultGroup sums it over a
+	// chunked persona's chunks. A fit signal only — no outcome reads it.
+	SilentChunks int
 
 	// Tool-loop accounting (Epic 2.0). Tools records that this was a tool-enabled
 	// agent (so status.json emits explicit zero counters even on the degrade
@@ -1169,9 +1186,11 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 				// review. Gated on declared thinking: a non-reasoning model's
 				// genuine clean review IS the ~3-token sentinel. Checked per
 				// attempt, so a chunk is judged before chunker.go sums tokens.
-				if stream.IsNoFindings(answer) && r.TokensOut < silentLaneMaxTokensOut &&
-					r.TokensIn > silentLaneMinTokensIn &&
-					registry.ThinkingEnabled(a.Invocation.Thinking, a.Invocation.ThinkingLevel) {
+				//
+				// The same predicate counts the chunk as silent (Epic 35.16.11.2.2.8
+				// T1), so the warning and the fit signal cannot drift.
+				if isSilentLane(answer, r.TokensIn, r.TokensOut, a.Invocation) {
+					r.SilentChunks = 1
 					log.FromContext(ctx).Warn("reviewer answered NO FINDINGS in very few tokens on a large payload; the lane may have skipped its review",
 						"agent", a.Name, "model", a.Invocation.Model,
 						"tokens_in", r.TokensIn, "tokens_out", r.TokensOut)

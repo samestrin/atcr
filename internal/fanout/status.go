@@ -351,6 +351,15 @@ type AgentStatus struct {
 	// findings in total. omitempty keeps the common status.json unchanged.
 	UnparseableChunks int `json:"unparseable_chunks,omitempty"`
 
+	// SilentChunks counts the chunks (1 for a single-shot persona) whose reply was
+	// a silent lane: a thinking-declared reviewer answering NO FINDINGS in fewer
+	// than 50 tokens out on more than 10k tokens in — more likely a skipped review
+	// than a finished one (Epic 35.16.11.2.2.8 T1). A persona is wholly silent when
+	// it reaches ChunkCount. A fit signal for `atcr benchmark`, not an outcome:
+	// ReviewerOutcome does not read it. omitempty keeps the common status.json
+	// unchanged.
+	SilentChunks int `json:"silent_chunks,omitempty"`
+
 	// Salvaged records that the client promoted reasoning into Content because the
 	// reply carried no answer — so parseFindings refused that content, and a zero
 	// findings count here is a REFUSAL, not an empty review. Without it,
