@@ -2903,6 +2903,7 @@ func sizingToken(effectiveBudget int64, maxLines int) string {
 //   - Thinking/ThinkingLevel "" = undeclared; ThinkingStyle "" = not sent (its
 //     clause is gated on registry.ThinkingDeclared, and a style alone sends no
 //     field); PreserveThinking "" = not sent (gated on registry.ThinkingEnabled).
+//   - ReplayReasoning "" = default (the tool loop replays reasoning).
 //   - Model and BaseURL are always set by production builders; BaseURL "" only
 //     occurs in bare test constructions and collapses to the pre-backend token.
 type cacheKeyInputs struct {
@@ -2916,6 +2917,7 @@ type cacheKeyInputs struct {
 	ThinkingLevel    string
 	ThinkingStyle    string
 	PreserveThinking string
+	ReplayReasoning  string
 }
 
 // diffCacheKey derives the Epic 5.2 diff-cache key for a review call. It keys on
@@ -3023,6 +3025,14 @@ func diffCacheKey(prompt string, in cacheKeyInputs) string {
 	// costs only a spurious miss, never a collision.
 	if in.PreserveThinking != "" && registry.ThinkingEnabled(in.Thinking, in.ThinkingLevel) {
 		tuning = tuning + "\x00pt=" + in.PreserveThinking
+	}
+	// replay_reasoning: off (Epic 35.16.11.2.2.9) drops the reasoning members
+	// the tool loop would replay, so it keys apart like preserve_thinking.
+	// Unset appends nothing, so every key written before the field existed
+	// stays valid. Tool agents are never cached, so on a single-shot agent
+	// the clause costs only a spurious miss, never a collision.
+	if in.ReplayReasoning != "" {
+		tuning = tuning + "\x00rr=" + in.ReplayReasoning
 	}
 	// Key-version segment (TD internal/fanout/review.go:2901): unconditional, so
 	// every entry written before the Salvaged cache gate existed is invalidated in
@@ -3202,6 +3212,7 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 			ThinkingLevel:    ac.ThinkingLevel,
 			ThinkingStyle:    ac.ThinkingStyle,
 			PreserveThinking: ac.PreserveThinking,
+			ReplayReasoning:  ac.ReplayReasoning,
 		}),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
@@ -3858,6 +3869,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 			ThinkingLevel:    ac.ThinkingLevel,
 			ThinkingStyle:    ac.ThinkingStyle,
 			PreserveThinking: ac.PreserveThinking,
+			ReplayReasoning:  ac.ReplayReasoning,
 		}),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
