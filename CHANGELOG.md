@@ -3,6 +3,7 @@
 ### Added
 
 - `atcr review` warns on stderr when a reviewer that declares thinking on answers `NO FINDINGS` in fewer than 50 output tokens on more than 10,000 input tokens: "reviewer answered NO FINDINGS in very few tokens on a large payload; the lane may have skipped its review", with the agent, model, `tokens_in` and `tokens_out`. Such a lane looked like a clean review with nothing to tell it apart. It is a warning only: the result, its findings and `status.json` are unchanged, and the slot is not failed over. Each chunk of a chunked persona is checked on its own, so the line can repeat per chunk.
+- `atcr review` warns on stderr when a reviewer attempt fails and the slot moves on to its next agent: "reviewer attempt failed; failing over", with the failed agent, its model and the error. A provider error used to hand the slot to a backup with no line saying why. The line is not printed when no next agent exists or the run is already cancelled or timed out, since no failover follows; truncated and empty replies keep their own existing failover line, so each failover prints exactly one.
 - An agent's `status.json` now says why a reply was salvaged. `salvaged_on_stop: true` marks an unchunked reply that the model finished on a stop reason (rather than being cut off), and `salvaged_on_stop_chunks` names those bins of a chunked persona. `salvaged` and `salvaged_chunks` still name every salvaged reply and bin. Both keys are absent when they do not apply, and a `status.json` written before them reads as "reason unknown".
 
 ### Fixed

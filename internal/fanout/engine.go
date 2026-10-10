@@ -1264,6 +1264,20 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 			r.ThinkOnlyAttempts = thinkOnlyAttempts
 			return r
 		}
+		// Failover reason (Epic 35.16.11.2.2.7 T2): any other failed attempt — a
+		// provider error, a timeout on this call alone — used to move to the next
+		// agent with no line at all, so the operator saw a backup serve the slot and
+		// never learned why. Logged only when a failover actually follows: a next
+		// agent exists and the context is still live (the loop breaks at its top on
+		// a done context, so a line here would claim a failover that never runs).
+		// The two demotions above already log their own line; skipping them keeps
+		// each failover at exactly one line. r.Err is bounded (4 KiB error snippet)
+		// and the context logger's handler redacts keys and tokens.
+		if i+1 < len(chain) && ctx.Err() == nil &&
+			!errors.Is(r.Err, errTruncatedZeroFindings) && !errors.Is(r.Err, errEmptyResponse) {
+			log.FromContext(ctx).Warn("reviewer attempt failed; failing over",
+				"agent", a.Name, "model", a.Invocation.Model, "err", r.Err)
+		}
 		last = r
 	}
 	// Slot failed: stamp the primary's identity, payload provenance, and F8
