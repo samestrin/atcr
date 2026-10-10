@@ -29,4 +29,12 @@ func TestRegistryDocStatesTheReplayReserve(t *testing.T) {
 		"and the doc must say the funded-budget case is NOT the exemption")
 	require.NotContains(t, string(doc), "no sizing record (no funded budget)",
 		"the superseded wording named the wrong case")
+
+	// Epic 35.16.11.2.2.9: replay_reasoning: off drops the reasoning before the
+	// loop counts it, so the agent cannot trip the budget, but review still
+	// sizes its payload with the reserve.
+	require.Contains(t, string(doc), "An agent with `replay_reasoning: off` re-sends no reasoning, so its replayed bytes stay at zero and it never trips `reasoning_replay_bytes`",
+		"the Replay budget paragraph must say an off agent never trips the budget")
+	require.Contains(t, string(doc), "its payload is still sized with the reserve",
+		"and that the reserve is still held back for it")
 }
