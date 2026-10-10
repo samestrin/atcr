@@ -386,26 +386,39 @@ payload_byte_budget: 524288
 #### Live validation, 2026-10-10 (atcr commit 23d0934)
 
 The three pairs re-pointed on 2026-09-29 were re-run against `fit-v1` with
-`--replicates 3` from an overlay roster with no `fallback:`. Each verdict is stated
-against its 2026-09-29 verdict (`fit` and `fit (warning)` both count as fit). The
-payloads differ between the two dates: the 2026-09-29 probes reviewed
-`4c588b6b..c08f657c` (96 files); `fit-v1` is `4c588b6b..8576a42` without Markdown
-(112 files). Every pair split the case into `chunk_count` 2 on every replicate.
+`--replicates 3` from an overlay roster with no `fallback:`. Each pair ran with a
+declared `context_window_tokens` and `max_tokens` (window / output cap per call,
+below), and `chunk_count` depends on the window: nemotron-3-super-120b's 131072
+was pinned in the overlay roster rather than read from the provider's declared
+window, so the case chunks as the CI chunking test
+(`cli/benchmark_fit_suite_test.go`, a pinned 128k declared window) pins it. Each
+verdict is stated against its 2026-09-29 verdict (`fit` and `fit (warning)` both
+count as fit). The payloads differ between the two dates: the 2026-09-29 probes
+reviewed `4c588b6b..c08f657c` (96 files); `fit-v1` is `4c588b6b..8576a42` without
+Markdown (112 files). Every pair split the case into `chunk_count` 2 on every
+replicate. The `silent_chunks` column is a count from the run, stated separately
+from the verdict; the nemotron row's silent-chunk count was not recorded.
 
-| Persona | Model | Verdict | Findings per replicate | Tokens out per replicate | vs 2026-09-29 |
-|---------|-------|---------|------------------------|--------------------------|----------------|
-| ronin | nemotron-3-super-120b | unfit (truncated 1/3) | 0, 3, 0 | 48376, 53539, 31906 | matches (unfit) |
-| ronin | minimax-m2.7 | fit | 7, 3, 2 | 18407, 17457, 8426 | matches (fit) |
-| pace | gpt-oss-120b | fit | 7, 3, 9 | 3438, 3032, 3584 | matches (fit) |
+| Persona | Model | Window / max_tokens | Verdict | Findings per replicate | Tokens out per replicate | silent_chunks / chunk_count | vs 2026-09-29 |
+|---------|-------|---------------------|---------|------------------------|--------------------------|-----------------------------|----------------|
+| ronin | nemotron-3-super-120b | 131072 / 32768 | unfit (truncated 1/3) | 0, 3, 0 | 48376, 53539, 31906 | not recorded | matches (unfit) |
+| ronin | minimax-m2.7 | 128000 / 32768 | fit | 7, 3, 2 | 18407, 17457, 8426 | 0 / 6 | matches: `fit (warning)` on 2026-09-29 (1 silent chunk), `fit` here; both count as fit |
+| pace | gpt-oss-120b | 131072 / 32768 | fit | 7, 3, 9 | 3438, 3032, 3584 | 0 / 6 | matches (fit) |
 
 ronin + nemotron-3-super-120b's `unfit` cause is truncation, not a provider error,
-unparseable output or silence: one replicate of three ran past the output cap and
-its salvaged reply was refused, and the other two still spent 53,539 and 31,906
-output tokens on 3 and 0 findings. ronin + minimax-m2.7's per-replicate findings
-(7, 3, 2) are lower than the 2026-09-29 probes' (16, 16); that is consistent with
-the payload difference above rather than a verdict change. pace + gpt-oss-120b's
-3–9 findings per replicate sit inside the 3–7 band the 2026-09-29 verdict accepted
-(the 9 is on the new payload, which carries 16 more files).
+unparseable output or silence: replicate 1 of the three ran past the output cap
+and its salvaged reply was refused, while replicates 2 and 3 completed and spent
+53,539 and 31,906 output tokens on 3 and 0 findings. That replicate 1 spent more
+output tokens (48,376) than a replicate that did not truncate is not a
+contradiction: the `max_tokens` cap applies per call, and a chunked run makes one
+call per chunk (`internal/fanout` builds one invocation per chunk slot, each
+carrying the agent's resolved `max_tokens`), so a truncated replicate's token
+total can reach the cap times its chunk count. ronin + minimax-m2.7's
+per-replicate findings (7, 3, 2) are lower than the 2026-09-29 probes' (16, 16);
+that is consistent with the payload difference above rather than a verdict
+change. pace + gpt-oss-120b's 7 and 3 sit inside the 3–7 band the 2026-09-29
+verdict accepted; the 9 exceeds that band, on the new payload, which carries 16
+more files.
 
 ---
 
