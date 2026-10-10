@@ -61,10 +61,56 @@ func TestRunCheckpoint_DoneIndex(t *testing.T) {
 	}}
 	done := cp.doneIndex()
 	require.Len(t, done, 2)
-	assert.Equal(t, "a", done[0].CaseID)
-	assert.Equal(t, "c", done[2].CaseID)
-	_, ok := done[1]
+	assert.Equal(t, "a", done[caseRun{0, 1}].CaseID, "a legacy entry (no replicate) is replicate 1")
+	assert.Equal(t, "c", done[caseRun{2, 1}].CaseID)
+	_, ok := done[caseRun{1, 1}]
 	assert.False(t, ok, "index 1 was never checkpointed")
+}
+
+// Replicates of one case are distinct runs: doneIndex keys them by (index,
+// replicate), and an explicit replicate 1 lands on the same key a legacy entry does.
+func TestRunCheckpoint_DoneIndexKeysReplicates(t *testing.T) {
+	cp := &runCheckpoint{Cases: []checkpointCase{
+		{Index: 0, CaseID: "a", Replicate: 1},
+		{Index: 0, CaseID: "a", Replicate: 2},
+		{Index: 0, CaseID: "a", Replicate: 3},
+	}}
+	done := cp.doneIndex()
+	require.Len(t, done, 3)
+	for r := 1; r <= 3; r++ {
+		assert.Equal(t, r, done[caseRun{0, r}].Replicate)
+	}
+}
+
+// The duplicate check is keyed (index, replicate): replicates of one index are
+// legal, while a repeated replicate — or a legacy entry beside an explicit
+// replicate 1, which both claim the scored run — is corrupt.
+func TestValidateCheckpointIntegrity_ReplicateKey(t *testing.T) {
+	ok := &runCheckpoint{Cases: []checkpointCase{
+		{Index: 0, CaseID: "a", Replicate: 1},
+		{Index: 0, CaseID: "a", Replicate: 2},
+		{Index: 1, CaseID: "b"},
+	}}
+	require.NoError(t, validateCheckpointIntegrity(ok))
+
+	for _, tc := range []struct {
+		name  string
+		cases []checkpointCase
+		want  string
+	}{
+		{"repeated replicate", []checkpointCase{{Index: 0, CaseID: "a", Replicate: 2}, {Index: 0, CaseID: "a", Replicate: 2}},
+			"duplicate case index 0 replicate 2"},
+		{"legacy beside replicate 1", []checkpointCase{{Index: 0, CaseID: "a"}, {Index: 0, CaseID: "a", Replicate: 1}},
+			"duplicate case index 0"},
+		{"negative replicate", []checkpointCase{{Index: 0, CaseID: "a", Replicate: -1}},
+			"negative replicate -1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateCheckpointIntegrity(&runCheckpoint{Cases: tc.cases})
+			require.ErrorIs(t, err, errCheckpointCorrupt)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
 }
 
 // validateCheckpoint accepts a matching suite identity and rejects any drift in

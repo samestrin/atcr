@@ -131,7 +131,7 @@ Behavior:
 
 ---
 
-## `atcr benchmark run --suite-path <dir> [--output <path>] [--checkpoint <path>]`
+## `atcr benchmark run --suite-path <dir> [--output <path>] [--checkpoint <path>] [--replicates <n>]`
 
 Execute a suite through the **review pipeline** and write a scored run-result.
 
@@ -139,6 +139,7 @@ Execute a suite through the **review pipeline** and write a scored run-result.
 atcr benchmark run --suite-path ./my-suite --output run.json
 atcr benchmark run --suite-path ./my-suite          # run-result to stdout
 atcr benchmark run --suite-path ./my-suite --checkpoint run.ckpt.json   # resumable
+atcr benchmark run --suite-path ./my-suite --replicates 3                # 3 runs per case
 ```
 
 For each case, `run` ingests the case's diff through the same diff-file ingestion
@@ -263,6 +264,36 @@ already-paid-for work of cases `1..N-1` would otherwise be lost.
 Checkpointing is **opt-in**: without `--checkpoint`, behavior is unchanged — a
 total-roster case failure still aborts the run (a transient infrastructure failure
 is never scored as a genuine missed defect).
+
+### Replicates (`--replicates <n>`)
+
+One run of a persona + model pair says little about whether the pair is healthy: the
+same pair can finish one call and run to its token cap on the next. `--replicates <n>`
+(default 1, at least 1) reviews every case `n` times.
+
+- **Replicate 1 is the scored run.** It runs exactly as a run without the flag, and it
+  alone feeds the reviewer rows, `reviewer_coverage` and the outcome tallies. So
+  `benchmark export` of a `--replicates 3` run is **byte-identical** to the export of a
+  run without the flag.
+- **Replicates 2..n are fit-only.** Each makes a fresh call (diff-cache reads are
+  bypassed for it, so it never replays replicate 1's reply) and is recorded only in the
+  run-result's `reviewer_fit[]` array.
+- `reviewer_fit[]` has one row per (reviewer, case, replicate), replicate 1 included:
+  `{"model", "persona", "case_id", "replicate", "outcome", "findings", "tokens_out",
+  "chunk_count", "silent_chunks", "timed_out"}`. `outcome` uses the outcome vocabulary
+  below, and the reviewer was wholly silent on that replicate when `silent_chunks`
+  reaches `chunk_count` (1 for an unchunked reviewer). The identity is the public,
+  post-scrub one, so a row joins its `reviewer_coverage` row. The array is
+  **run-result-only**: `benchmark export` does not publish it.
+- With `--checkpoint`, every replicate is checkpointed as it completes, keyed by case
+  index and replicate, and a resume re-pays for none of them. A checkpoint that records
+  more replicates than the run asks for is refused with the `--replicates` value that
+  keeps them. A checkpoint written before replicates existed resumes as replicate 1 of
+  each case; it recorded no fit data, so its cases add no `reviewer_fit` rows, and a
+  full replay of it produces the same run-result it did before.
+- Each replicate is a full extra pass over the suite, so `--replicates 3` costs three
+  times as much. The flag is `standard-v1` only: a `repo-state-v1` suite refuses
+  `--replicates` above 1 before any reviewer runs.
 
 ---
 
