@@ -159,7 +159,7 @@ func TestLiveRecordLeaks(t *testing.T) {
 		{"github token", "ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"},
 		{"aws access key", "AKIAIOSFODNN7EXAMPLE"},
 		{"bearer token", "Authorization: Bearer abc.def.ghi"},
-		{"key assignment", "api_key=abcdef123456"},
+		{"key assignment", "api_key=xxxxxxxx"},
 		{"long opaque token", "token 9f8e7d6c5b4a39281706f5e4d3c2b1a0ffeeddccbbaa"},
 	}
 	for _, tc := range bad {
