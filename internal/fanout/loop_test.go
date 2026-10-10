@@ -57,6 +57,13 @@ func runWireToolLoopWith(t *testing.T, responseFormat string, members func(turn 
 // BaseURL and APIKeyEnv are pointed at the stub server.
 func runWireToolLoopInv(t *testing.T, inv llmclient.Invocation, members func(turn int) string) []string {
 	t.Helper()
+	return runWireToolLoopAgent(t, inv, func(*Agent) {}, members)
+}
+
+// runWireToolLoopAgent is runWireToolLoopInv with mutate applied to the tool
+// agent before it runs.
+func runWireToolLoopAgent(t *testing.T, inv llmclient.Invocation, mutate func(*Agent), members func(turn int) string) []string {
+	t.Helper()
 	var (
 		mu     sync.Mutex
 		bodies []string
@@ -83,6 +90,7 @@ func runWireToolLoopInv(t *testing.T, inv llmclient.Invocation, members func(tur
 	a := toolAgent("a", 3, 0)
 	inv.BaseURL, inv.APIKeyEnv = srv.URL, "ATCR_TEST_KEY"
 	a.Invocation = inv
+	mutate(&a)
 
 	r := toolEngine(llmclient.New(llmclient.WithHTTPClient(srv.Client())), d).invokeAgent(context.Background(), a)
 	require.Equal(t, StatusOK, r.Status)
@@ -336,6 +344,36 @@ func TestToolLoop_NoReasoningBodiesUnchanged(t *testing.T) {
 			assert.Equal(t, absent, got)
 		})
 	}
+}
+
+// Epic 35.16.11.2.2.9 AC3: an agent with replay_reasoning: off re-sends each
+// assistant turn with no reasoning member on every later request, whatever
+// shape the provider returned, while a default agent still re-sends it. Every
+// other part of the off agent's history is the pre-replay wire body.
+func TestToolLoop_ReplayReasoningOffSendsNoReasoningMember(t *testing.T) {
+	all := `"reasoning_content":"because X","reasoning":"chain of thought",` +
+		`"reasoning_details":[{"type":"reasoning.text","text":"step 1","index":0}],` +
+		`"thinking_blocks":[{"type":"thinking","thinking":"step 1","signature":"EqQBCkgIARABGAIiQL+/zzA0Xq9b=="}]`
+	members := func(int) string { return all }
+	run := func(off bool) []string {
+		return runWireToolLoopAgent(t, llmclient.Invocation{Model: "m"}, func(a *Agent) { a.ReplayReasoningOff = off }, members)
+	}
+
+	off := run(true)
+	for i, body := range off[1:] {
+		for j, m := range wireMessages(t, body) {
+			assert.Empty(t, reasoningOn(m), "off agent: request %d message %d", i+2, j)
+		}
+		for _, key := range []string{"reasoning_content", "reasoning", "reasoning_details", "thinking_blocks"} {
+			assert.NotContains(t, body, `"`+key+`"`, "off agent: request %d", i+2)
+		}
+	}
+	assert.Equal(t, goldenForcedFinalBody, off[3], "an off agent's history is the pre-replay body")
+
+	def := run(false)
+	turn2 := wireMessages(t, def[1])
+	require.Len(t, turn2, 3, "prompt, assistant tool call, tool result")
+	assert.Len(t, reasoningOn(turn2[1]), 4, "a default agent still re-sends every reasoning member")
 }
 
 // AC 04-01 Edge Case 3: a fallback starts a fresh history, so its first

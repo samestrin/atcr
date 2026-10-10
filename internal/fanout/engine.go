@@ -275,6 +275,11 @@ type Agent struct {
 	// from the registry (per-agent, not per-lane). A tools:true agent whose model
 	// lacks it degrades to single-shot regardless of the harness being wired.
 	SupportsFC bool
+	// ReplayReasoningOff is this agent's own replay_reasoning: off (Epic
+	// 35.16.11.2.2.9), threaded from the registry per agent, never from a
+	// primary to its fallback. When true the tool loop re-sends each assistant
+	// turn without its reasoning members and counts no replayed reasoning bytes.
+	ReplayReasoningOff bool
 
 	// Exec marks an execution-enabled agent (Epic 11.0). When true AND the
 	// dispatcher has a sandbox backend wired (EnableExecution), this agent is
