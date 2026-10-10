@@ -11,7 +11,8 @@ This page documents the in-repo tooling:
 - the **suite-manifest contract** (`internal/benchmark`),
 - `atcr benchmark verify` — validate a suite and print its reproducibility hash,
 - `atcr benchmark run` — execute a suite through the review pipeline and write a scored run-result,
-- `atcr benchmark export` — emit a suite-tagged public submission record from a run-result, gated on full-suite coverage.
+- `atcr benchmark export` — emit a suite-tagged public submission record from a run-result, gated on full-suite coverage,
+- `atcr benchmark fit` — judge each persona + model pair of a run-result on call health (see [below](#atcr-benchmark-fit---in-run-resultjson)).
 
 The full loop is **`run` → `export`**: `run` produces a run-result by reviewing
 every case's diff and scoring the findings; `export` wraps that run-result in the
@@ -294,6 +295,32 @@ same pair can finish one call and run to its token cap on the next. `--replicate
 - Each replicate is a full extra pass over the suite, so `--replicates 3` costs three
   times as much. The flag is `standard-v1` only: a `repo-state-v1` suite refuses
   `--replicates` above 1 before any reviewer runs.
+
+### `atcr benchmark fit --in <run-result.json>`
+
+Reads the run-result's `reviewer_fit[]` rows and prints one row per (persona, model)
+pair: its calls, how many were truncated, unparseable, failed and timed out, its
+silent chunks out of the chunks it reviewed, its findings and output tokens per
+replicate (summed over the suite's cases), a verdict and the reason for it.
+
+```bash
+atcr benchmark run --suite-path ./my-suite --replicates 3 --output run-result.json
+atcr benchmark fit --in run-result.json
+```
+
+The verdict is **health-only**: findings are reported, never gated.
+
+- **unfit** — any call was truncated, unparseable or failed (a timeout counts as a
+  failure), or any call was silent on every chunk it reviewed (`silent_chunks`
+  reaches `chunk_count`).
+- **fit (warning)** — no call failed that way, but some chunks were silent beside a
+  productive chunk.
+- **fit** — every call was healthy.
+
+The report is advisory and read-only: the exit code does not depend on the verdicts,
+and nothing is repointed. A run-result with no `reviewer_fit` rows (written before
+replicates existed) is refused, and so is a row whose outcome this binary does not
+know, rather than read as a healthy call.
 
 ---
 
