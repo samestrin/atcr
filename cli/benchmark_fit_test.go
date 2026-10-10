@@ -216,7 +216,7 @@ func TestBuildFitReport_RejectsNonPrintingIdentity(t *testing.T) {
 	for _, f := range []benchmark.ReviewerFit{
 		{Model: "m", Persona: "p\nforged", CaseID: "a", Replicate: 1, Outcome: benchmark.OutcomeClean, ChunkCount: 1},
 		{Model: "m\tforged", Persona: "p", CaseID: "a", Replicate: 1, Outcome: benchmark.OutcomeClean, ChunkCount: 1},
-		{Model: "m‮forged", Persona: "p", CaseID: "a", Replicate: 1, Outcome: benchmark.OutcomeClean, ChunkCount: 1},
+		{Model: "m\u202eforged", Persona: "p", CaseID: "a", Replicate: 1, Outcome: benchmark.OutcomeClean, ChunkCount: 1},
 	} {
 		_, err := buildFitReport([]benchmark.ReviewerFit{f})
 		require.ErrorContains(t, err, "non-printing rune")
