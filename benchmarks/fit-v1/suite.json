@@ -1,0 +1,13 @@
+{
+  "suite": "fit-v1",
+  "suite_version": "1.0.0",
+  "cases": [
+    {
+      "id": "atcr-4c588b6b-8576a42",
+      "diff": "atcr-4c588b6b-8576a42.diff",
+      "expected_categories": [
+        "correctness"
+      ]
+    }
+  ]
+}
