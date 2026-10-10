@@ -1,0 +1,101 @@
+{
+  "suite": "fit-probe",
+  "suite_version": "1.0.0",
+  "generated_at": "2026-09-29T00:00:00Z",
+  "suite_case_ids": [
+    "atcr-4c588b6b-c08f657c"
+  ],
+  "reviewers": [],
+  "reviewer_fit": [
+    {
+      "model": "glm-5.2",
+      "persona": "ronin",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 1,
+      "outcome": "truncated",
+      "findings": 0,
+      "tokens_out": 32768,
+      "chunk_count": 2,
+      "silent_chunks": 1
+    },
+    {
+      "model": "glm-5.2",
+      "persona": "ronin",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 2,
+      "outcome": "truncated",
+      "findings": 0,
+      "tokens_out": 32768,
+      "chunk_count": 2,
+      "silent_chunks": 1
+    },
+    {
+      "model": "gpt-oss-120b",
+      "persona": "ronin",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 1,
+      "outcome": "findings",
+      "findings": 17,
+      "tokens_out": 6100,
+      "chunk_count": 2,
+      "silent_chunks": 1
+    },
+    {
+      "model": "gpt-oss-120b",
+      "persona": "ronin",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 2,
+      "outcome": "unparseable",
+      "findings": 0,
+      "tokens_out": 7300,
+      "chunk_count": 2,
+      "silent_chunks": 0
+    },
+    {
+      "model": "minimax-m2.7",
+      "persona": "ronin",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 1,
+      "outcome": "findings",
+      "findings": 16,
+      "tokens_out": 5200,
+      "chunk_count": 2,
+      "silent_chunks": 0
+    },
+    {
+      "model": "minimax-m2.7",
+      "persona": "ronin",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 2,
+      "outcome": "findings",
+      "findings": 16,
+      "tokens_out": 5000,
+      "chunk_count": 2,
+      "silent_chunks": 1
+    },
+    {
+      "model": "nemotron-3-ultra",
+      "persona": "ronin",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 1,
+      "outcome": "failed",
+      "findings": 0,
+      "tokens_out": 0,
+      "chunk_count": 0,
+      "silent_chunks": 0,
+      "timed_out": true
+    },
+    {
+      "model": "nemotron-3-ultra",
+      "persona": "ronin",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 2,
+      "outcome": "failed",
+      "findings": 0,
+      "tokens_out": 0,
+      "chunk_count": 0,
+      "silent_chunks": 0,
+      "timed_out": true
+    }
+  ]
+}

@@ -25,7 +25,8 @@ import (
 // public Model-Eval Leaderboard (Epic 10.0 / 10.2). `verify` validates a suite
 // manifest and prints its reproducibility hash; `run` executes a suite through the
 // review pipeline and writes a scored run-result; `export` wraps a run-result in
-// the suite-tagged public submission envelope. The curated standard-v1 suite
+// the suite-tagged public submission envelope; `fit` judges each persona + model
+// pair of a run-result on call health. The curated standard-v1 suite
 // content is bundled at benchmarks/standard-v1/ in this repo.
 func newBenchmarkCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -36,11 +37,12 @@ func newBenchmarkCmd() *cobra.Command {
 			"reproducibility hash; `run` executes the suite through the review pipeline\n" +
 			"and writes a scored run-result; `export` produces a suite-tagged public\n" +
 			"submission record (distinct from `leaderboard --export`, so suite runs are\n" +
-			"distinguishable from production runs on the public board).",
+			"distinguishable from production runs on the public board); `fit` judges\n" +
+			"each persona + model pair of a run-result on call health.",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
-	cmd.AddCommand(newBenchmarkVerifyCmd(), newBenchmarkRunCmd(), newBenchmarkExportCmd())
+	cmd.AddCommand(newBenchmarkVerifyCmd(), newBenchmarkRunCmd(), newBenchmarkExportCmd(), newBenchmarkFitCmd())
 	return cmd
 }
 
