@@ -383,6 +383,30 @@ review_strategy: chunked
 payload_byte_budget: 524288
 ```
 
+#### Live validation, 2026-10-10 (atcr commit 23d0934)
+
+The three pairs re-pointed on 2026-09-29 were re-run against `fit-v1` with
+`--replicates 3` from an overlay roster with no `fallback:`. Each verdict is stated
+against its 2026-09-29 verdict (`fit` and `fit (warning)` both count as fit). The
+payloads differ between the two dates: the 2026-09-29 probes reviewed
+`4c588b6b..c08f657c` (96 files); `fit-v1` is `4c588b6b..8576a42` without Markdown
+(112 files). Every pair split the case into `chunk_count` 2 on every replicate.
+
+| Persona | Model | Verdict | Findings per replicate | Tokens out per replicate | vs 2026-09-29 |
+|---------|-------|---------|------------------------|--------------------------|----------------|
+| ronin | nemotron-3-super-120b | unfit (truncated 1/3) | 0, 3, 0 | 48376, 53539, 31906 | matches (unfit) |
+| ronin | minimax-m2.7 | fit | 7, 3, 2 | 18407, 17457, 8426 | matches (fit) |
+| pace | gpt-oss-120b | fit | 7, 3, 9 | 3438, 3032, 3584 | matches (fit) |
+
+ronin + nemotron-3-super-120b's `unfit` cause is truncation, not a provider error,
+unparseable output or silence: one replicate of three ran past the output cap and
+its salvaged reply was refused, and the other two still spent 53,539 and 31,906
+output tokens on 3 and 0 findings. ronin + minimax-m2.7's per-replicate findings
+(7, 3, 2) are lower than the 2026-09-29 probes' (16, 16); that is consistent with
+the payload difference above rather than a verdict change. pace + gpt-oss-120b's
+3–9 findings per replicate sit inside the 3–7 band the 2026-09-29 verdict accepted
+(the 9 is on the new payload, which carries 16 more files).
+
 ---
 
 ## Running a `repo-state-v1` suite
