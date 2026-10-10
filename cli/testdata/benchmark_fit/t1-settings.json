@@ -1,0 +1,176 @@
+{
+  "suite": "fit-probe",
+  "suite_version": "1.0.0",
+  "generated_at": "2026-09-29T00:00:00Z",
+  "suite_case_ids": [
+    "atcr-4c588b6b-c08f657c"
+  ],
+  "reviewers": [],
+  "reviewer_fit": [
+    {
+      "model": "llm-large",
+      "persona": "mira-strict",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 1,
+      "outcome": "findings",
+      "findings": 4,
+      "tokens_out": 2100,
+      "chunk_count": 2,
+      "silent_chunks": 0
+    },
+    {
+      "model": "llm-large",
+      "persona": "mira-strict",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 2,
+      "outcome": "findings",
+      "findings": 4,
+      "tokens_out": 2100,
+      "chunk_count": 2,
+      "silent_chunks": 0
+    },
+    {
+      "model": "llm-large",
+      "persona": "mira-strict",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 3,
+      "outcome": "findings",
+      "findings": 4,
+      "tokens_out": 2100,
+      "chunk_count": 2,
+      "silent_chunks": 0
+    },
+    {
+      "model": "nemotron-3-super-120b",
+      "persona": "pace",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 1,
+      "outcome": "findings",
+      "findings": 2,
+      "tokens_out": 900,
+      "chunk_count": 2,
+      "silent_chunks": 0
+    },
+    {
+      "model": "nemotron-3-super-120b",
+      "persona": "pace",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 2,
+      "outcome": "findings",
+      "findings": 1,
+      "tokens_out": 900,
+      "chunk_count": 2,
+      "silent_chunks": 0
+    },
+    {
+      "model": "nemotron-3-super-120b",
+      "persona": "pace",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 3,
+      "outcome": "findings",
+      "findings": 1,
+      "tokens_out": 900,
+      "chunk_count": 2,
+      "silent_chunks": 0
+    },
+    {
+      "model": "nemotron-3-super-120b",
+      "persona": "ronin",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 1,
+      "outcome": "truncated",
+      "findings": 0,
+      "tokens_out": 32768,
+      "chunk_count": 2,
+      "silent_chunks": 0
+    },
+    {
+      "model": "nemotron-3-super-120b",
+      "persona": "ronin",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 2,
+      "outcome": "truncated",
+      "findings": 0,
+      "tokens_out": 32768,
+      "chunk_count": 2,
+      "silent_chunks": 0
+    },
+    {
+      "model": "nemotron-3-super-120b",
+      "persona": "ronin",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 3,
+      "outcome": "truncated",
+      "findings": 0,
+      "tokens_out": 32768,
+      "chunk_count": 2,
+      "silent_chunks": 0
+    },
+    {
+      "model": "qwen3.8-flash",
+      "persona": "archer",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 1,
+      "outcome": "findings",
+      "findings": 3,
+      "tokens_out": 1500,
+      "chunk_count": 2,
+      "silent_chunks": 0
+    },
+    {
+      "model": "qwen3.8-flash",
+      "persona": "archer",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 2,
+      "outcome": "findings",
+      "findings": 6,
+      "tokens_out": 1500,
+      "chunk_count": 2,
+      "silent_chunks": 0
+    },
+    {
+      "model": "qwen3.8-flash",
+      "persona": "archer",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 3,
+      "outcome": "unparseable",
+      "findings": 0,
+      "tokens_out": 4865,
+      "chunk_count": 2,
+      "silent_chunks": 0
+    },
+    {
+      "model": "qwen3.8-flash",
+      "persona": "archer-strict",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 1,
+      "outcome": "findings",
+      "findings": 5,
+      "tokens_out": 1900,
+      "chunk_count": 2,
+      "silent_chunks": 0
+    },
+    {
+      "model": "qwen3.8-flash",
+      "persona": "archer-strict",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 2,
+      "outcome": "findings",
+      "findings": 5,
+      "tokens_out": 1900,
+      "chunk_count": 2,
+      "silent_chunks": 0
+    },
+    {
+      "model": "qwen3.8-flash",
+      "persona": "archer-strict",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 3,
+      "outcome": "findings",
+      "findings": 3,
+      "tokens_out": 1700,
+      "chunk_count": 2,
+      "silent_chunks": 0
+    }
+  ]
+}

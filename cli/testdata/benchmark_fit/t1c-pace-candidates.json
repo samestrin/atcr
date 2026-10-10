@@ -1,0 +1,143 @@
+{
+  "suite": "fit-probe",
+  "suite_version": "1.0.0",
+  "generated_at": "2026-09-29T00:00:00Z",
+  "suite_case_ids": [
+    "atcr-4c588b6b-c08f657c"
+  ],
+  "reviewers": [],
+  "reviewer_fit": [
+    {
+      "model": "gpt-oss-120b",
+      "persona": "pace",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 1,
+      "outcome": "findings",
+      "findings": 3,
+      "tokens_out": 3600,
+      "chunk_count": 2,
+      "silent_chunks": 0
+    },
+    {
+      "model": "gpt-oss-120b",
+      "persona": "pace",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 2,
+      "outcome": "findings",
+      "findings": 7,
+      "tokens_out": 4400,
+      "chunk_count": 2,
+      "silent_chunks": 0
+    },
+    {
+      "model": "gpt-oss-120b",
+      "persona": "pace",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 3,
+      "outcome": "findings",
+      "findings": 4,
+      "tokens_out": 3800,
+      "chunk_count": 2,
+      "silent_chunks": 0
+    },
+    {
+      "model": "gpt-oss-120b",
+      "persona": "pace",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 4,
+      "outcome": "findings",
+      "findings": 6,
+      "tokens_out": 4200,
+      "chunk_count": 2,
+      "silent_chunks": 0
+    },
+    {
+      "model": "gpt-oss-120b",
+      "persona": "pace",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 5,
+      "outcome": "findings",
+      "findings": 3,
+      "tokens_out": 3600,
+      "chunk_count": 2,
+      "silent_chunks": 0
+    },
+    {
+      "model": "minimax-m2.7",
+      "persona": "pace",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 1,
+      "outcome": "findings",
+      "findings": 5,
+      "tokens_out": 2400,
+      "chunk_count": 2,
+      "silent_chunks": 0
+    },
+    {
+      "model": "minimax-m2.7",
+      "persona": "pace",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 2,
+      "outcome": "findings",
+      "findings": 2,
+      "tokens_out": 2400,
+      "chunk_count": 2,
+      "silent_chunks": 1
+    },
+    {
+      "model": "minimax-m2.7",
+      "persona": "pace",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 3,
+      "outcome": "clean",
+      "findings": 0,
+      "tokens_out": 12,
+      "chunk_count": 2,
+      "silent_chunks": 2
+    },
+    {
+      "model": "minimax-m2.7",
+      "persona": "pace",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 4,
+      "outcome": "clean",
+      "findings": 0,
+      "tokens_out": 12,
+      "chunk_count": 2,
+      "silent_chunks": 2
+    },
+    {
+      "model": "minimax-m2.7",
+      "persona": "pace",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 5,
+      "outcome": "clean",
+      "findings": 0,
+      "tokens_out": 12,
+      "chunk_count": 2,
+      "silent_chunks": 2
+    },
+    {
+      "model": "nemotron-3-ultra",
+      "persona": "pace",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 1,
+      "outcome": "findings",
+      "findings": 5,
+      "tokens_out": 2600,
+      "chunk_count": 2,
+      "silent_chunks": 0
+    },
+    {
+      "model": "nemotron-3-ultra",
+      "persona": "pace",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 2,
+      "outcome": "clean",
+      "findings": 0,
+      "tokens_out": 1450,
+      "chunk_count": 2,
+      "silent_chunks": 1
+    }
+  ]
+}

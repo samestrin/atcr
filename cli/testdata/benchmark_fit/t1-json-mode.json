@@ -1,0 +1,44 @@
+{
+  "suite": "fit-probe",
+  "suite_version": "1.0.0",
+  "generated_at": "2026-09-29T00:00:00Z",
+  "suite_case_ids": [
+    "atcr-4c588b6b-c08f657c"
+  ],
+  "reviewers": [],
+  "reviewer_fit": [
+    {
+      "model": "qwen3.8-flash",
+      "persona": "archer",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 1,
+      "outcome": "findings",
+      "findings": 6,
+      "tokens_out": 1700,
+      "chunk_count": 2,
+      "silent_chunks": 0
+    },
+    {
+      "model": "qwen3.8-flash",
+      "persona": "archer",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 2,
+      "outcome": "findings",
+      "findings": 8,
+      "tokens_out": 1900,
+      "chunk_count": 2,
+      "silent_chunks": 0
+    },
+    {
+      "model": "qwen3.8-flash",
+      "persona": "archer",
+      "case_id": "atcr-4c588b6b-c08f657c",
+      "replicate": 3,
+      "outcome": "clean",
+      "findings": 0,
+      "tokens_out": 14,
+      "chunk_count": 2,
+      "silent_chunks": 2
+    }
+  ]
+}
