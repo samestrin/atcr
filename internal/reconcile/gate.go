@@ -353,6 +353,12 @@ func RunReconcile(ctx context.Context, reviewDir string, allow []string, opts Op
 	// path validation, before Emit, so the anchor rides into findings.json and the
 	// downstream TD README.
 	stampSymbolAnchors(jf, grouper)
+	// Stamp each finding's wire ID (Epic 35.16.11.3) over the anchored Problem.
+	// jf came from the derived path, which already stamped pre-anchor IDs; this
+	// overwrites them now that Problem is final. Nothing below rewrites File, Line
+	// or Problem, so the ID matches what findings.json emits and what
+	// localdebt.StampID stores.
+	stampFindingIDs(jf)
 	// Correlate each finding to the narrative its originating source wrote in
 	// review.md (Epic 18.2), stamping the extracted section onto Justification and
 	// a SourceReport back-reference. Best-effort file:line match against every
