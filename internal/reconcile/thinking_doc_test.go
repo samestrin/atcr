@@ -344,8 +344,8 @@ func TestRegistryDoc_ReplayReasoningRow(t *testing.T) {
 		{"never trips `reasoning_replay_bytes`", "bytes are counted after the drop (loop.go)"},
 		{"never inherited through `fallback:`", "buildFallbackAgent reads the fallback's own value, not the primary's"},
 		{"rejected on a community persona", "rejectMachineLocalFields bans the key"},
-		{"only the review lanes honor it until slice 35.16.11.2.2.9.1", "the skeptic and debate lanes are the follow-up slice"},
-		{"The skeptic and the debate seats still replay reasoning for an `off` agent", "the lanes that do not honor it yet, named so an operator does not assume they do"},
+		{"all four tool-loop lanes honor it: a review agent, its fallback, the skeptic, and the debate seats", "Epic 35.16.11.2.2.9.1 wired the skeptic (buildSkepticAgent) and the debate seats (buildDebateAgent); every lane is named so an operator does not have to guess"},
+		{"Each lane reads the value from its own agent's entry", "each builder reads its own AgentConfig, never a primary's"},
 		{"does nothing for an agent that never runs the tool loop", "the key only acts in the loop; it is not rejected for a non-tool agent"},
 	})
 }
