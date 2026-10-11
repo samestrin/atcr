@@ -33,9 +33,10 @@ type axiPaginatedPayload struct {
 // runes, U+2028/U+2029, Unicode Cf format characters (U+202E bidi overrides,
 // U+200B zero-width space) and invalid UTF-8, but a stripped escape leaves its
 // CSI parameter text ("[31m") as residue, since sequences are not consumed as
-// units. That exact scope is pinned by TestRenderAXI_SanitizationScope. go-axi writes nothing on failure —
-// verified against v0.3.1 (Sanitize → full Marshal → one writeLine, so a marshal
-// fault precedes any byte) and pinned by TestEncodeAXI_WritesNothingOnFailure;
+// units. That exact scope is pinned by TestRenderAXI_SanitizationScope.
+// go-axi writes nothing on failure — verified against v0.4.0 (EncodeChecked:
+// Sanitize → full Marshal → one writeLine, so a marshal fault precedes any
+// byte) and pinned by TestEncodeAXI_WritesNothingOnFailure;
 // its typed failures (*KeyCollisionError, *CycleError) are wrapped with %w so
 // callers can still reach them via errors.As.
 //
