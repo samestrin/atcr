@@ -1,6 +1,6 @@
 # atcr development history (before v0.1.0)
 
-These are the epic- and sprint-numbered development notes written before the first tagged release, `v0.1.0` (2026-07-24). The numbers are epic numbers, not versions; no git tag was cut for any of them. They are kept verbatim. For changes since `v0.1.0`, see [CHANGELOG.md](../CHANGELOG.md).
+These are the epic- and sprint-numbered development notes written before the first tagged release, `v0.1.0` (2026-07-24). The numbers are epic numbers, not versions; no git tag was cut for any of them. They are kept verbatim. For changes since `v0.1.0`, see [CHANGELOG.md](CHANGELOG.md).
 
 ### [33.2.0] - 2026-07-24
 

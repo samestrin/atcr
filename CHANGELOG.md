@@ -9,7 +9,7 @@ All notable changes to `atcr` are recorded here. The format follows [Keep a Chan
 - Write for a user of `atcr`: what changed for them, not how the work was organized.
 - When a release is cut, `[Unreleased]` is renamed to `[X.Y.Z] - YYYY-MM-DD` matching the tag, and a new empty `[Unreleased]` goes above it.
 
-Development notes from before the first tagged release (`v0.1.0`, 2026-07-24) are in [docs/changelog-history.md](docs/changelog-history.md).
+Development notes from before the first tagged release (`v0.1.0`, 2026-07-24) are in [CHANGELOG-history.md](CHANGELOG-history.md).
 
 ## [Unreleased]
 
@@ -640,7 +640,7 @@ Development notes from before the first tagged release (`v0.1.0`, 2026-07-24) ar
 
 ### Changed
 
-- First **git-tagged** release. The tag series restarts at `0.1.0` (independent semantic versioning) so the `atcr` module is importable by other modules — under Go semantic-import versioning a `v2.0.0+` tag would require a `/vN` module-path suffix, which `github.com/samestrin/atcr` does not have. The epic-numbered entries in [docs/changelog-history.md](docs/changelog-history.md) (`[1.0.0]`–`[33.2.0]`) are untagged historical **development** notes and are no longer 1:1 with git tags; see [docs/release-process.md](docs/release-process.md). No behavior change to the `atcr` binary versus `[33.2.0]`.
+- First **git-tagged** release. The tag series restarts at `0.1.0` (independent semantic versioning) so the `atcr` module is importable by other modules — under Go semantic-import versioning a `v2.0.0+` tag would require a `/vN` module-path suffix, which `github.com/samestrin/atcr` does not have. The epic-numbered entries in [CHANGELOG-history.md](CHANGELOG-history.md) (`[1.0.0]`–`[33.2.0]`) are untagged historical **development** notes and are no longer 1:1 with git tags; see [docs/release-process.md](docs/release-process.md). No behavior change to the `atcr` binary versus `[33.2.0]`.
 - Extracted the entire `cmd/atcr` command tree into a new importable, top-level package `github.com/samestrin/atcr/cli` (exporting `NewRootCmd`/`NewRootCmdWithClient` plus a single `cli.Main(ctx, stdout, stderr) int` entry point), reducing `cmd/atcr/main.go` to a thin shim. This lets a second binary — the private `atcr-enterprise` wrapper — build the identical CLI without vendoring `package main`, with zero behavior change to the public `atcr` binary (Sprint 34.0, Task 03).
 
 ### Fixed

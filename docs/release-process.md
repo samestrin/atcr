@@ -37,7 +37,7 @@ range. Reaching `v2.0.0` later would require adding a `/v2` module-path suffix
 repo-wide — a deliberate, separate decision, not an automatic bump.
 
 The epic/sprint headings from before `v0.1.0` (`## [1.0.0]` … `## [33.2.0]`) are
-kept verbatim in [`docs/changelog-history.md`](changelog-history.md) as the
+kept verbatim in [`CHANGELOG-history.md`](../CHANGELOG-history.md) as the
 historical **development** changelog; they were never git tags. Since 2026-10-11,
 `CHANGELOG.md` has one `## [X.Y.Z]` section per release tag, plus `## [Unreleased]`
 for changes not yet tagged. Cutting a release renames `[Unreleased]` to the new
