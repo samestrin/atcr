@@ -38,6 +38,16 @@ func TestMergeJSONFindings_SingleIsIdentity(t *testing.T) {
 	assert.Equal(t, f, MergeJSONFindings([]JSONFinding{f}))
 }
 
+// TestMergeJSONFindings_SurvivorTakesFirstMemberID: the merged record carries
+// group[0]'s ID, not one derived from its merged fields (Epic 35.16.11.3 T2).
+func TestMergeJSONFindings_SurvivorTakesFirstMemberID(t *testing.T) {
+	group := []JSONFinding{
+		{Severity: "LOW", File: "x.go", Line: 1, Problem: "short", Reviewers: []string{"a"}, ID: "id-first"},
+		{Severity: "HIGH", File: "x.go", Line: 1, Problem: "a much longer problem", Reviewers: []string{"b"}, ID: "id-second"},
+	}
+	assert.Equal(t, "id-first", MergeJSONFindings(group).ID)
+}
+
 // TestMergeJSONFindings_VerificationPrecedence: a confirmed member verdict wins
 // over a refuted one (confirmed > unverifiable > refuted) so a real issue is never
 // masked by a refuted sibling, and every member's skeptic provenance is unioned.
