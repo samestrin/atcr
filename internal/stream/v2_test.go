@@ -142,6 +142,10 @@ func TestWriteSourceV2_SanitizeBoundary(t *testing.T) {
 		{"C1 control", "a\u0085b", "ab"},
 		{"line and paragraph separators", "a\u2028b\u2029c", "abc"},
 		{"invalid UTF-8", "a\xffb", "ab"},
+		{"bidi override U+202E", "a\u202eb", "ab"},
+		{"zero-width space U+200B", "a\u200bb", "ab"},
+		{"zero-width no-break space U+FEFF", "a\ufeffb", "ab"},
+		{"tag character U+E0041", "a\U000E0041b", "ab"},
 		{"tab, LF, and CR are kept", "a\tb\nc\r\nd", "a\tb\nc\r\nd"},
 	}
 	for _, c := range cases {
@@ -239,7 +243,7 @@ func TestV2Fixtures_MatchV2RowTags(t *testing.T) {
 
 func TestEncodeV2_FallsBackToJSONEnvelope(t *testing.T) {
 	rows := []lossyRow{
-		{Severity: "HIGH", FileLine: "a.go:1", Problem: "a | b", Fix: "x\ny", Category: "c", EstMinutes: 3, Evidence: "ctl\x1bbyte", Reviewer: "bruce"},
+		{Severity: "HIGH", FileLine: "a.go:1", Problem: "a | b", Fix: "x\ny", Category: "c", EstMinutes: 3, Evidence: "ctl\x1bbyte\u202e", Reviewer: "bruce"},
 		// Only this row carries the lossy value, yet the WHOLE document flips:
 		// go-axi decides TOON-vs-JSON per document, never per field or row.
 		{Severity: "LOW", FileLine: "b.go:2", Problem: "q", Reviewer: "kai", Extra: textish{"t"}},
@@ -250,6 +254,8 @@ func TestEncodeV2_FallsBackToJSONEnvelope(t *testing.T) {
 	body := v2Body(t, b.String())
 	require.True(t, strings.HasPrefix(body, `{"axi_format"`), "fallback must start with the routable prefix: %s", body)
 	assert.NotContains(t, body, "\x1b", "the envelope carries the sanitized value")
+	// encoding/json does not escape U+202E, so only the sanitizer keeps it out.
+	assert.NotContains(t, body, "\u202e", "the envelope strips bidi controls")
 	assert.NotContains(t, body, `"Findings"`)
 	assert.NotContains(t, body, `"Key"`)
 
