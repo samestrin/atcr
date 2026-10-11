@@ -269,3 +269,76 @@ func TestCorpus_NeutralContent(t *testing.T) {
 		}
 	}
 }
+
+// TestCorpus_RepairBar measures Repair against the corpus and holds it to the
+// bar (epic 35.16.11.2.2.10 T5): every damaged fixture repairs to its expected
+// value, every valid control comes back unchanged, and every cut-off fixture
+// is declined so its final element stays dropped. It logs the pass rate; run
+// it with -v to read it. A miss here means the plain repair is not enough and
+// the fallback (adopting kaptinlin/jsonrepair) is due.
+//
+// recoveredBeforeRepair lists fixtures the findings parser's element recovery
+// already reads in full, so Repair is never asked: Repair must decline them,
+// since closing a top-level object open at end of input could admit a cut-off
+// element. internal/stream's corpus test checks the parser's decode for them.
+var recoveredBeforeRepair = map[string]bool{
+	"missing_closer_wrapper": true,
+}
+
+func TestCorpus_RepairBar(t *testing.T) {
+	pass, total := 0, 0
+	for _, f := range loadCorpus(t) {
+		total++
+		in, want := readFixture(t, f)
+		text := in
+		if f.Lane == "verdict" {
+			// Repair sees the candidate object the verdict parser extracts.
+			text = ""
+			if i, j := strings.IndexByte(in, '{'), strings.LastIndexByte(in, '}'); i >= 0 && j > i {
+				text = in[i : j+1]
+			}
+		}
+		out, ok := Repair(text)
+		var miss string
+		switch {
+		case f.Class == "valid":
+			if ok || out != text {
+				miss = "valid control was altered"
+			}
+		case f.CutOff || recoveredBeforeRepair[f.Name]:
+			if ok {
+				miss = "repaired a value open at end of input; a cut-off element must stay dropped"
+			}
+		case !ok:
+			miss = "repair declined"
+		default:
+			var got any
+			if err := json.Unmarshal([]byte(out), &got); err != nil {
+				miss = "repaired text does not decode: " + err.Error()
+			} else if f.Lane == "findings" && !reflect.DeepEqual(findingsOf(got), want) {
+				miss = "repaired value differs from the expected decode"
+			} else if f.Lane == "verdict" && !reflect.DeepEqual(got, want) {
+				miss = "repaired verdict differs from the expected decode"
+			}
+		}
+		if miss != "" {
+			t.Errorf("%s/%s (%s): %s", f.Lane, f.Name, f.Class, miss)
+			continue
+		}
+		pass++
+	}
+	t.Logf("jsonrepair corpus: %d/%d fixtures meet the bar", pass, total)
+}
+
+// findingsOf reads a repaired findings value as the findings parser does: a
+// {"findings": [...]} wrapper yields its array and a lone object yields itself.
+func findingsOf(v any) any {
+	obj, ok := v.(map[string]any)
+	if !ok {
+		return v
+	}
+	if arr, ok := obj["findings"]; ok {
+		return arr
+	}
+	return []any{obj}
+}

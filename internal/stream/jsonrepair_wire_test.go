@@ -27,14 +27,6 @@ func TestJSONRepairedFindingsKey_MatchesMetricsKey(t *testing.T) {
 	assert.Equal(t, metrics.Key("atcr_json_repaired_total", "lane", "findings"), jsonRepairedFindingsKey)
 }
 
-// knownRepairGaps maps a findings fixture jsonrepair.Repair declines today to
-// how many leading findings element recovery still keeps. A closer that
-// mismatches inside a middle element is read as the array's closer, so the
-// elements after it trail a finished value (epic 35.16.11.2.2.10 T5 records it).
-var knownRepairGaps = map[string]int{
-	"mismatched_closer_in_element": 1,
-}
-
 // TestParseModelOutput_RepairCorpus runs every findings-lane fixture through a
 // fenced reply and checks the decode against its .want.json: damage inside an
 // element between intact ones keeps all of them, a lone damaged object yields
@@ -80,13 +72,6 @@ func TestParseModelOutput_RepairCorpus(t *testing.T) {
 			}
 			metrics.DefaultRegistry.Reset()
 			got := ParseModelOutput([]byte(reply))
-			if gap, ok := knownRepairGaps[f.Name]; ok {
-				// Repair declines this fixture today; element recovery still
-				// keeps the findings before the damage. T5 measures the gap.
-				assert.Equal(t, want[:gap], got)
-				assert.Zero(t, repairedFindings())
-				return
-			}
 			assert.Equal(t, want, got)
 
 			// The counter moves only when the repaired value is what was
