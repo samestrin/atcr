@@ -13,6 +13,7 @@ import (
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/tools"
@@ -802,7 +803,7 @@ func verdictFromAnswer(answer string) (v *reclib.Verification, ambiguous bool, d
 	if section == sectionAmbiguous {
 		return nil, true, 0
 	}
-	parsed, _ := parseVerdict(text)
+	parsed, _, repaired := parseVerdictCore(text)
 	if section == sectionPrefixOnly && parsed.Verdict == verdictRefuted {
 		// Only the pre-closer text carries a verdict, and nothing in the tag
 		// structure says whether it was committed or abandoned. `refuted` is the one
@@ -811,6 +812,13 @@ func verdictFromAnswer(answer string) (v *reclib.Verification, ambiguous bool, d
 		// `confirmed` and `unverifiable` block either way and are graded
 		// (TD internal/verify/invoke.go:766).
 		return nil, true, 0
+	}
+	// Counted here and nowhere else: this is where the verdict is accepted, after
+	// the refusal above. carriesVerdict asks the same parser about single objects
+	// while classifying the reply, so counting inside the parser would count one
+	// reply several times.
+	if repaired {
+		metrics.Counter(jsonRepairedVerdictMetric).Inc()
 	}
 	// discardedPrefix is how many bytes were dropped ahead of the committed section,
 	// and it exists only so the caller can RECORD the drop. On sectionAfterCloser the
