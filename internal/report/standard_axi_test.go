@@ -190,11 +190,11 @@ func TestAXIRowKeysMatchColumnHeader(t *testing.T) {
 }
 
 // TestRenderAXI_SanitizationScope pins the EXACT sanitization guarantee go-axi
-// v0.3 provides, so the encodeAXI doc comment cannot overstate it and a go-axi
+// v0.4 provides, so the encodeAXI doc comment cannot overstate it and a go-axi
 // bump that tightens or loosens the behavior is a visible diff: single control
-// bytes (ESC, C1), U+2028/U+2029 and invalid UTF-8 are stripped, but Unicode Cf
-// format characters (U+202E bidi override, U+200B zero-width space) pass through
-// raw and a stripped escape leaves its CSI parameter text ("[31m") as residue.
+// bytes (ESC, C1), U+2028/U+2029, invalid UTF-8 and Unicode Cf format characters
+// (U+202E bidi override, U+200B zero-width space) are stripped, but a stripped
+// escape leaves its CSI parameter text ("[31m") as residue.
 func TestRenderAXI_SanitizationScope(t *testing.T) {
 	in := "\x1b[31mred\x1b[0m \u202Ebidi\u202C \u200bzw"
 	var b bytes.Buffer
@@ -204,8 +204,9 @@ func TestRenderAXI_SanitizationScope(t *testing.T) {
 	out := b.String()
 	assert.NotContains(t, out, "\x1b", "raw ESC bytes are stripped")
 	assert.Contains(t, out, "[31mred[0m", "CSI parameter text survives as residue (sequences are not consumed as units)")
-	assert.Contains(t, out, "\u202E", "U+202E bidi-override format char passes through")
-	assert.Contains(t, out, "\u200b", "U+200B zero-width space passes through")
+	assert.NotContains(t, out, "\u202E", "U+202E bidi-override format char is stripped")
+	assert.NotContains(t, out, "\u200b", "U+200B zero-width space is stripped")
+	assert.Contains(t, out, "bidi zw", "text around stripped format chars survives")
 }
 
 // TestEncodeAXI_WritesNothingOnFailure pins the "writes nothing on failure"
