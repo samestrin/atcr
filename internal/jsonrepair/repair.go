@@ -23,9 +23,10 @@ import (
 // output is valid, so a second call returns it unchanged with false) and runs
 // in time linear in len(s).
 //
-// A closer that matches no open container is first dropped as an extra closer;
-// only if that leaves invalid JSON is it read as a wrong closer for the
-// innermost open container. Missing closers are inserted only where a later
+// A closer that matches no open container is first dropped as an extra closer,
+// and one that matches a container further out first closes every container
+// down to it; only if that leaves invalid JSON is either read as a wrong closer
+// for the innermost open container. Missing closers are inserted only where a later
 // closer proves the container ended, or at end of input for a top-level array
 // whose last element is complete. Any other container still open at end of
 // input is a cut-off element, and Repair declines.
@@ -62,10 +63,11 @@ type frame struct {
 }
 
 // repairPass makes one linear scan over s. replaceUnmatched picks how a closer
-// that matches no open container is read: false drops it as extra, true reads
-// it as the innermost container's closer. sawUnmatched reports whether such a
-// closer was met inside a container, so the caller knows a second pass could
-// differ.
+// that does not fit the innermost container is read: false drops it as extra
+// (or, if it matches a container further out, closes down to that one), true
+// reads it as the innermost container's closer. sawUnmatched reports whether
+// such a closer was met inside a container, so the caller knows a second pass
+// could differ.
 func repairPass(s string, replaceUnmatched bool) (out string, ok, sawUnmatched bool) {
 	b := make([]byte, 0, len(s)+8)
 	var stack []frame
@@ -209,7 +211,18 @@ func repairPass(s string, replaceUnmatched bool) (out string, ok, sawUnmatched b
 				want = '['
 			}
 			switch {
+			case len(stack) > 0 && stack[len(stack)-1].open != want && replaceUnmatched:
+				// The second pass reads a closer that does not fit the
+				// innermost container as that container's wrong closer, even
+				// when it matches one further out.
+				sawUnmatched = true
+				if !closeTop() {
+					return "", false, sawUnmatched
+				}
 			case openCount[kindIndex(want)] > 0:
+				if stack[len(stack)-1].open != want {
+					sawUnmatched = true
+				}
 				// Close every container above the match, then the match.
 				for {
 					top := stack[len(stack)-1].open

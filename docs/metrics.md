@@ -51,6 +51,7 @@ every review that exits normally.
 |--------|------|-------------|
 | `atcr_findings_total` | counter | Findings kept after guardrails (min-severity floor + max-findings cap). |
 | `atcr_findings_by_severity{severity}` | counter | Kept findings, labeled `CRITICAL`/`HIGH`/`MEDIUM`/`LOW` (anything outside that set is bucketed as `UNKNOWN`). |
+| `atcr_json_repaired_total{lane}` | counter | Model replies accepted only after the last-try JSON repair fixed their syntax. `lane="findings"` counts once per fenced findings value whose repaired decode was used ([Findings format](findings-format.md#what-reviewer-models-emit)); `lane="verdict"` counts once per skeptic verdict taken from a repaired object ([Verification](verification.md)). It carries no reply text. |
 
 ### Circuit breaker
 

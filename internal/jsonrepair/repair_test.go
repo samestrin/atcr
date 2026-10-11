@@ -59,6 +59,8 @@ func TestRepair_Defects(t *testing.T) {
 		// mismatched closers
 		{"wrong closer for an object", `{"a":1]`, `{"a":1}`},
 		{"wrong closer for an inner object", `{"x":{"a":1]}`, `{"x":{"a":1}}`},
+		{"wrong closer for an object inside an array", `[{"a":1],{"b":2}]`, `[{"a":1},{"b":2}]`},
+		{"wrong closer for an array inside an object", `{"a":[1,2},"b":3}`, `{"a":[1,2],"b":3}`},
 
 		// several at once
 		{
@@ -118,7 +120,6 @@ func TestRepair_Declines(t *testing.T) {
 		`{"a":01}`,                    // invalid number is not edited
 		`{"a":1 / 2}`,                 // a lone slash
 		`[{"a":1},{"b":2,"c":{"d":3}`, // nested cut-off element
-		`[{"a":1],{"b":2}]`,           // the ']' ends the array, so the rest is trailing text
 	} {
 		got, ok := Repair(in)
 		assert.False(t, ok, "Repair(%q) should decline, got %q", in, got)
