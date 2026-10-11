@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -118,4 +119,70 @@ func TestJSONFinding_NoIDRemarshalsByteIdentical(t *testing.T) {
 	var buf bytes.Buffer
 	require.NoError(t, renderIndentedJSON(&buf, findings))
 	assert.Equal(t, legacy, buf.String())
+}
+
+// TestJSONFinding_ReaderWithoutIDDecodesOtherFields pins the middle leg of the
+// name-mapped guarantee: a consumer whose struct predates the id field decodes
+// every other v1 field of a findings.json that carries id, because
+// encoding/json maps keys by name and ignores the one it does not know.
+func TestJSONFinding_ReaderWithoutIDDecodesOtherFields(t *testing.T) {
+	root := gitRepoWithSources(t, map[string]string{
+		"internal/tok/renew.go": "package tok\n\nfunc RenewToken() error {\n\tx := 1\n\t_ = x\n\treturn nil\n}\n",
+	})
+
+	reviewDir := t.TempDir()
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+		"HIGH|internal/tok/renew.go:4|RenewToken drops the refresh error|check it|correctness|20|ev|greta\n"+
+			"LOW|internal/tok/renew.go:1|package tok has no doc comment|add one|style|2|ev|greta\n")
+
+	_, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+
+	want, err := ReadReconciledFindings(reviewDir)
+	require.NoError(t, err)
+	require.Len(t, want, 2)
+	withID := 0
+	for _, f := range want {
+		if f.ID != "" {
+			withID++
+		}
+	}
+	require.NotZero(t, withID, "the fixture must carry an id, or decoding past it proves nothing")
+
+	type legacyReader struct {
+		Severity   string   `json:"severity"`
+		File       string   `json:"file"`
+		Line       int      `json:"line"`
+		Problem    string   `json:"problem"`
+		Fix        string   `json:"fix"`
+		Category   string   `json:"category"`
+		EstMinutes int      `json:"est_minutes"`
+		Evidence   string   `json:"evidence"`
+		Reviewers  []string `json:"reviewers"`
+		Confidence string   `json:"confidence"`
+	}
+	data, err := os.ReadFile(filepath.Join(reviewDir, reconciledSubdir, FindingsJSON))
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"id":`, "the file on disk carries the id key")
+
+	var got []legacyReader
+	require.NoError(t, json.Unmarshal(data, &got))
+	require.Len(t, got, len(want))
+	for i, w := range want {
+		assert.Equal(t, legacyReader{
+			Severity:   w.Severity,
+			File:       w.File,
+			Line:       w.Line,
+			Problem:    w.Problem,
+			Fix:        w.Fix,
+			Category:   w.Category,
+			EstMinutes: w.EstMinutes,
+			Evidence:   w.Evidence,
+			Reviewers:  w.Reviewers,
+			Confidence: w.Confidence,
+		}, got[i], "record %d decodes every non-id field by name", i)
+	}
 }
