@@ -4,15 +4,18 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	reclib "github.com/samestrin/atcr/reconcile"
 
+	"github.com/samestrin/atcr/internal/history"
 	"github.com/samestrin/atcr/internal/reconcile"
 )
 
@@ -514,4 +517,135 @@ func TestPersistForReconcile_PreservesFullReviewersWithModelSubset(t *testing.T)
 	assert.Equal(t, "claude-sonnet-4-6", recs[0].Model)
 	assert.Equal(t, []string{"security-reviewer"}, recs[0].ModelReviewers,
 		"the model-attributable subset is recorded WITHOUT narrowing Reviewers")
+}
+
+// gitRepoWithFiles commits files into a fresh git repo and returns its root, so
+// RunReconcile's path validation has a tracked file set and its grouper has real
+// source to anchor symbols against.
+func gitRepoWithFiles(t *testing.T, files map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	run := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		out, err := cmd.CombinedOutput()
+		require.NoErrorf(t, err, "git %v: %s", args, out)
+	}
+	run("init", "-q")
+	run("config", "user.email", "t@t.t")
+	run("config", "user.name", "t")
+	for rel, src := range files {
+		abs := filepath.Join(root, filepath.FromSlash(rel))
+		require.NoError(t, os.MkdirAll(filepath.Dir(abs), 0o755))
+		require.NoError(t, os.WriteFile(abs, []byte(src), 0o644))
+	}
+	run("add", "-A")
+	run("commit", "-q", "-m", "init")
+	return root
+}
+
+// TestPersistForReconcile_StoredIDEqualsStreamID pins Epic 35.16.11.3 T4: the id a
+// finding carries on the wire (res.JSONFindings(), which findings.json emits) is
+// the id of its .atcr/debt/ record. Both sides hash history.FindingID over the
+// same post-anchor record, but each stamps it on its own (stampFindingIDs and
+// Record.StampID), so nothing but this test keeps them from drifting.
+//
+// The fixture runs the real RunReconcile so the symbol-anchored and path-warned
+// cases come from the pipeline, not from hand-built records. The anchored finding
+// is the one that catches a divergence of INPUTS: persisting from res.Findings
+// instead of res.JSONFindings() would hash the reviewer's bare problem. The
+// duplicate is two records that survive merge as separate findings (they differ
+// only in category) yet hash to one id, so they share one row. The out-of-scope,
+// refuted and path-warned findings are still emitted with an id, and the store
+// writes no row for it: the id is an address, not a promise of a stored row.
+func TestPersistForReconcile_StoredIDEqualsStreamID(t *testing.T) {
+	root := gitRepoWithFiles(t, map[string]string{
+		"internal/tok/renew.go": "package tok\n\nfunc RenewToken() error {\n\tx := 1\n\t_ = x\n\treturn nil\n}\n",
+	})
+	reviewDir := t.TempDir()
+	writeSource := func(rel, body string) {
+		p := filepath.Join(reviewDir, "sources", filepath.FromSlash(rel))
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte("# atcr-findings/v1\n"+body), 0o644))
+	}
+	const (
+		inScope    = "package tok has no doc comment"
+		anchored   = "RenewToken drops the refresh error"
+		outOfScope = "vendored import sits outside the diff"
+		refuted    = "package tok exports no constructor"
+		pathWarned = "renw.go never closes the token file"
+	)
+	writeSource("greta/findings.txt",
+		"LOW|internal/tok/renew.go:1|"+inScope+"|add one|style|2|ev|greta\n"+
+			"LOW|internal/tok/renew.go:1|"+inScope+"|add one|maintainability|2|ev|greta\n"+
+			"HIGH|internal/tok/renew.go:4|"+anchored+"|check it|correctness|20|ev|greta\n"+
+			"LOW|internal/tok/renew.go:1|"+outOfScope+"|ignore|out-of-scope|2|ev|greta\n"+
+			"MEDIUM|internal/tok/renew.go:1|"+refuted+"|add one|design|5|ev|greta\n"+
+			"MEDIUM|internal/tok/renw.go:1|"+pathWarned+"|close it|correctness|5|ev|greta\n")
+
+	res, err := reconcile.RunReconcile(context.Background(), reviewDir, nil, reconcile.Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+
+	emitted := res.JSONFindings()
+	require.Len(t, emitted, 6, "every fixture finding must survive merge as its own record")
+	find := func(problemSuffix, category string) int {
+		t.Helper()
+		for i, f := range emitted {
+			if strings.HasSuffix(f.Problem, problemSuffix) && (category == "" || f.Category == category) {
+				return i
+			}
+		}
+		require.Failf(t, "fixture finding not emitted", "%q (%s)", problemSuffix, category)
+		return -1
+	}
+	// Refutation is stamped by the verify stage on the very records
+	// res.JSONFindings() returns, so the fixture sets it there too.
+	emitted[find(refuted, "")].Verification = &reclib.Verification{Verdict: reclib.VerdictRefuted, Skeptic: "sam"}
+
+	iAnchored := find(anchored, "")
+	require.Equal(t, "(RenewToken) "+anchored, emitted[iAnchored].Problem,
+		"the fixture must anchor this finding, or it proves nothing about the inputs diverging")
+	require.NotEmpty(t, emitted[find(pathWarned, "")].PathWarning,
+		"the fixture must path-warn this finding")
+	dupA, dupB := emitted[find(inScope, "style")], emitted[find(inScope, "maintainability")]
+	require.Equal(t, dupA.ID, dupB.ID, "the duplicate pair must hash to one id")
+
+	for _, f := range emitted {
+		require.NotEmpty(t, f.ID, "every emitted finding carries an id: %+v", f)
+		assert.Equal(t, history.FindingID(f.File, f.Line, f.Problem), f.ID,
+			"the stream id is history.FindingID over the emitted (file, line, problem)")
+	}
+
+	PersistForReconcile(reviewDir, res, PersistOpts{Root: root})
+	recs, err := ReadAll(DefaultDir(root), ReadOpts{})
+	require.NoError(t, err)
+
+	stored := map[string]Record{}
+	for _, r := range recs {
+		assert.Equal(t, history.FindingID(r.File, r.Line, r.Problem), r.ID,
+			"the stored id is history.FindingID over the persisted (file, line, problem)")
+		_, dup := stored[r.ID]
+		assert.False(t, dup, "one row per id: %s", r.ID)
+		stored[r.ID] = r
+	}
+
+	persisted := map[string]bool{
+		emitted[find(inScope, "style")].ID: true,
+		emitted[iAnchored].ID:              true,
+	}
+	for _, f := range emitted {
+		r, ok := stored[f.ID]
+		if !persisted[f.ID] {
+			assert.False(t, ok, "%q is emitted with id %s but must have no stored row", f.Problem, f.ID)
+			continue
+		}
+		require.True(t, ok, "%q is emitted with id %s but no record carries it", f.Problem, f.ID)
+		assert.Equal(t, f.File, r.File)
+		assert.Equal(t, f.Line, r.Line)
+		assert.Equal(t, f.Problem, r.Problem, "the stored row is the emitted finding, anchor included")
+	}
+	assert.Len(t, recs, len(persisted), "the store holds exactly the in-scope, anchored and deduplicated rows")
 }
