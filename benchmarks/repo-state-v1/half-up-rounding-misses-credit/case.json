@@ -1,0 +1,19 @@
+{
+  "id": "half-up-rounding-misses-credit",
+  "format": "repo-state-v1",
+  "base_tree": "base",
+  "commit_message": "commit-message.txt",
+  "diff": "change.diff",
+  "expected_findings": [
+    {
+      "id": "credit-still-rounds-half-even",
+      "file": "billing/credit.py",
+      "line_start": 7,
+      "line_end": 7,
+      "line_tolerance": 3,
+      "outside_diff": true,
+      "category": "correctness",
+      "summary": "downgrade_credit() still rounds its Decimal share with round(), which rounds half-to-even, so a credit of exactly 10.625 comes out as 10.62 instead of 10.63; the change switches refund_amount() to half-up only, contradicting the commit message's claim that every amount owed back to a customer now rounds half-up."
+    }
+  ]
+}

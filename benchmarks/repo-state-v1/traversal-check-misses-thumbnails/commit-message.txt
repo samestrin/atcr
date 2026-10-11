@@ -1,0 +1,8 @@
+fix(media): refuse an upload name that escapes the upload root
+
+download_path() joined the client-supplied name onto UPLOAD_ROOT as-is, so
+a name like "../../etc/passwd" or "/etc/passwd" served a file from anywhere
+on disk.
+
+- the joined path is resolved and must stay inside UPLOAD_ROOT
+- a client-supplied name can no longer reach a file outside the media store

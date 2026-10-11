@@ -1,0 +1,8 @@
+fix(billing): round money owed to a customer half-up to the cent
+
+refund_amount() rounded with round(), which rounds a Decimal half-to-even,
+so a share ending in exactly half a cent (2.125) came out as 2.12 instead
+of 2.13 and the customer was paid a cent short.
+
+- refund_amount() quantizes half-up to the cent
+- every amount owed back to a customer now rounds half-up, never half-even

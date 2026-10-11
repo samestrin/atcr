@@ -1,5 +1,7 @@
-# Spot-check — `repo-state-v1` 1.1.2
+# Spot-check — `repo-state-v1` 1.2.0
 
+> Extended 2026-10-11 at `suite_version` 1.2.0: four **resemblance-only** cases added for epic 35.16.12's measurement gate (`archived-guard-misses-transfer`, `traversal-check-misses-thumbnails`, `page-size-cap-misses-orders`, `half-up-rounding-misses-credit`). Each was hand-checked on the day it was added and is recorded below; the four original cases are unchanged. The AC8 run recorded further down covers the original four only.
+>
 > Revised 2026-09-17 at `suite_version` 1.1.1 (tolerance and summary corrections, recorded below) and 1.1.2 (the two `error_handling` categories corrected to `error-handling` — the closed vocabulary's member is hyphenated and normalize() folds no separators, so no reviewer could ever have raised them; half the suite's category-recall denominator was unwinnable as spelled). The original hand-check and the AC8 panel run were performed at 1.1.0; **the recorded AC8 numbers predate all of these corrections — in particular the category-recall column is not comparable with a run against 1.1.2**, because the corrected expectations can now be satisfied at all.
 
 [`../standard-v1/SPOT-CHECK.md`](../standard-v1/SPOT-CHECK.md) records the invariant that makes that suite trustworthy: *each case's planted defect must be genuinely present in its committed diff.* This tier exists precisely because that invariant excludes the defect class it targets, so it needs its own, and a stricter one:
@@ -8,11 +10,11 @@
 
 The second clause is the one with teeth. An `outside_diff: true` finding whose cited line is actually an added line would score the tier's headline metric while measuring nothing — the tier would report success at detecting out-of-diff reasoning from a reviewer who had read only the diff.
 
-**Checked:** 2026-09-16, against all 4 cases at `suite_version` 1.1.0. Unlike `standard-v1`, this is not a sample: the suite is small enough to check exhaustively, and every case is hand-written rather than imported, so there is no upstream record to recover.
+**Checked:** 2026-09-16, against all 4 cases at `suite_version` 1.1.0; the four cases added at 1.2.0 were checked 2026-10-11. Unlike `standard-v1`, this is not a sample: the suite is small enough to check exhaustively, and every case is hand-written rather than imported, so there is no upstream record to recover.
 
 ## Method
 
-Three of the four checks are **mechanical and enforced by the Go test suite**, so they cannot rot silently. The fourth is genuinely manual.
+Three of the four checks are **mechanical and enforced by the Go test suite**, so they cannot rot silently. The fourth is genuinely manual. The resemblance-only cases add a fifth, also mechanical.
 
 | # | Check | How |
 |---|---|---|
@@ -20,6 +22,7 @@ Three of the four checks are **mechanical and enforced by the Go test suite**, s
 | 2 | The diff applies cleanly to `base/`, and every `expected_findings[].file` exists in the resulting head tree | `TestMaterializeCase_ShippedCaseMaterializes` (`internal/benchmark/materialize_test.go`) |
 | 3 | Every `outside_diff: true` finding's cited line is genuinely **not** an added line of that case's own diff | `TestParseDiffLineMap_ShippedCasesOutsideDiffValuesAreTrue` (`internal/benchmark/difflines_test.go`) |
 | 4 | The **pruning check**: the file that consumes the changed symbol survived the prune, so the case is hard rather than unwinnable | By hand, recorded per case below |
+| 5 | Resemblance-only cases only: 35.16.8 reference retrieval does **not** reach the sibling, and the payload, diff and commit message never name it | `TestShippedResemblanceCases_SiblingIsUnreachableByReferenceRetrieval`, with `TestShippedRepoState_ReferenceRetrievalReachesAConsumer` as its control (`cli/benchmark_repostate_resemblance_test.go`) |
 
 Check 4 cannot be automated, and it is the one that matters most. `FORMAT.md` asks a base tree to be pruned to what a reviewer genuinely needs. Prune away the consumer of the changed symbol and the case silently stops being winnable by anyone — the exact defect class this tier exists to detect, reproduced in the tier's own fixtures. Nothing about a case that has been over-pruned looks wrong: it parses, it materializes, it scores everyone zero, and it reads as a very hard case.
 
@@ -63,15 +66,51 @@ Check 4 cannot be automated, and it is the one that matters most. `FORMAT.md` as
 
 **Pruning check: passes.** `base/router/intake.py` calls the changed symbol `dispatch` and is present.
 
+### `archived-guard-misses-transfer` — 1 finding (1 outside, 0 within)
+
+| Finding | Location (head) | `outside_diff` | Verified |
+|---|---|---|---|
+| `transfer-still-writes-archived-projects` | `projects/transfer.py:6-7` | `true` | The diff touches `projects/rename.py` only. Running the head tree, `transfer_project()` on an archived project reassigns its owner. |
+
+**Resemblance check: passes.** The changed symbols are `ProjectArchived` and `rename_project`; `projects/transfer.py` contains neither and imports nothing from `rename.py`. Check 5 confirms pre-fetch retrieves no span of it.
+
+### `traversal-check-misses-thumbnails` — 1 finding (1 outside, 0 within)
+
+| Finding | Location (head) | `outside_diff` | Verified |
+|---|---|---|---|
+| `thumbnail-path-escapes-the-store` | `media/thumbnail.py:9` | `true` | The diff touches `media/download.py` only. Running the head tree, `thumbnail_path("/etc/passwd")` returns `/etc/passwd`. |
+
+**Resemblance check: passes.** The changed symbols are `UnsafePath` and `download_path`; `media/thumbnail.py` contains neither and the two modules import nothing from each other.
+
+### `page-size-cap-misses-orders` — 1 finding (1 outside, 0 within)
+
+| Finding | Location (head) | `outside_diff` | Verified |
+|---|---|---|---|
+| `orders-limit-is-still-unbounded` | `api/orders.py:7-8` | `true` | The diff touches `api/paging.py` and `api/users.py` only. Running the head tree, `list_orders()` passes `?limit=10000000` and `?limit=-1` through; an in-memory SQLite check confirms `LIMIT -1` returns every row. |
+
+**Resemblance check: passes, and it is the closest call.** `api/orders.py` imports `DEFAULT_PAGE_SIZE` from `api/paging.py`, a changed file. That name is not a changed symbol (the diff does not touch its line), so the import does not make the sibling reachable. A probe that made the sibling reference `MAX_PAGE_SIZE` also stayed unreachable, because a Python module-level assignment encloses in no named declaration and pre-fetch extracts no symbol from it.
+
+### `half-up-rounding-misses-credit` — 1 finding (1 outside, 0 within)
+
+| Finding | Location (head) | `outside_diff` | Verified |
+|---|---|---|---|
+| `credit-still-rounds-half-even` | `billing/credit.py:7` | `true` | The diff touches `billing/refund.py` only. Running the head tree on the same 10.625 share, `refund_amount()` returns 10.63 and `downgrade_credit()` returns 10.62. |
+
+**Resemblance check: passes.** The changed symbol is `refund_amount`; `billing/credit.py` does not contain it, does not contain `CENT` as a whole word, and imports nothing from `refund.py`.
+
+**No pruning check applies to these four.** Check 4 asks that the consumer of the changed symbol survive the prune. In these cases the finding is deliberately *not* in a consumer, and check 5 is the inverse: it proves no consumer path leads to the sibling.
+
+**Recorded honestly:** like `mock-outlives-the-contract`, none of the four has an `outside_diff: false` finding. Every added line is correct, so a reviewer reading only the diff has nothing to report.
+
 ## Suite balance
 
 | | Findings |
 |---|---|
-| `outside_diff: true` | 5 |
+| `outside_diff: true` | 9 |
 | `outside_diff: false` | 3 |
-| **Total** | **8** |
+| **Total** | **12** |
 
-Both shapes are represented in the suite and in three of the four cases individually, so out-of-diff recall and within-diff recall each have a real denominator.
+Both shapes are represented in the suite and in three of the original four cases individually, so out-of-diff recall and within-diff recall each have a real denominator. The four resemblance-only cases add only to the out-of-diff side.
 
 ## AC8 — the panel result
 
@@ -107,6 +146,7 @@ Across all four cases, out-of-diff recall was **4 hits out of 55 reviewer-findin
 ## Caveats recorded honestly
 
 - **The Epic 14.1 grounding gate is ON during a repo-state run, by design.** A finding whose cited file the patch never touched is dropped before scoring unless context-aware pre-fetching (epic 35.16.8) actually retrieved the cited span. The real reachability rule is narrower than "calls a changed symbol": pre-fetch retrieves with `git grep -F -w` over the changed symbols (`internal/payload/prefetch.go`), so a finding is reachable when its function body contains a whole-word reference to a changed symbol — a function whose NAME merely contains the symbol, or that calls nothing at all, is not. One case leans on exactly that distinction: in `mock-outlives-the-contract`, `fake_lookup_rate` calls nothing (it is a stub returning a literal), and `git grep -w lookup_rate` does not match the name `fake_lookup_rate` (underscore is a word character); the only in-body hit inside the expected 4–6 window is the word `lookup_rate` in the stub's **docstring** on line 5. The case's survival of the gate rests on that docstring reference, not on a call. A case whose out-of-diff finding sat somewhere pre-fetching could never reach would be unwinnable, not hard.
+- **The four resemblance-only cases are unwinnable today, on purpose.** They are exactly the exception the previous bullet warns about: each sibling is somewhere pre-fetching can never reach (check 5 proves it), so the grounding gate drops every finding on it, even a correct one. That is what epic 35.16.12's measurement gate asks for: a defect absent from the payload and reachable only by resemblance. Read their scores accordingly. With 35.16.8 alone a miss is guaranteed, so a run of these cases confirms the gap exists; it does not show that reviewers would find the defect if similarity retrieval showed them the sibling. Do not average them into the original four cases' out-of-diff recall.
 - **Persona changes break run-to-run comparability.** Epic 35.16.9 edited every persona file, so a result recorded before it is not directly comparable with one recorded after. Every stored result below names which sibling epics had landed.
 - **`--checkpoint` is not supported for this tier.** `atcr benchmark run` rejects the flag on a `repo-state-v1` suite rather than accepting and ignoring it (`checkRepoStateFlags`, `cli/benchmark_repostate.go`). This supersedes the epic 35.16.10 plan's AC8 instruction to "run it in the background with `--checkpoint"" — that instruction is impossible as written for this tier, and a reader following it gets an error on the first invocation. **The recorded AC8 run below was driven in the foreground with no checkpoint and no resume**, in one uninterrupted pass.
 - **The trees are synthetic.** See [`NOTICE.md`](NOTICE.md). No case contains third-party code, and no case is derived from a real defect in a real repository — each is hand-built to plant one specific shape.

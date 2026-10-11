@@ -1,0 +1,21 @@
+diff --git a/billing/refund.py b/billing/refund.py
+index c593315..3398866 100644
+--- a/billing/refund.py
++++ b/billing/refund.py
+@@ -1,7 +1,14 @@
+ """Refund owed when a customer cancels a subscription mid-period."""
++from decimal import ROUND_HALF_UP, Decimal
++
++CENT = Decimal("0.01")
+ 
+ 
+ def refund_amount(paid, days_used, days_in_period):
+-    """Return the unused share of paid (a Decimal), rounded to the cent."""
++    """Return the unused share of paid (a Decimal), rounded half-up to the cent.
++
++    round() on a Decimal rounds half-to-even, so a share of exactly 2.125
++    came back as 2.12 and the customer was paid a cent short.
++    """
+     unused = paid * (days_in_period - days_used) / days_in_period
+-    return round(unused, 2)
++    return unused.quantize(CENT, rounding=ROUND_HALF_UP)
