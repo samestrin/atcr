@@ -1,0 +1,19 @@
+{
+  "id": "traversal-check-misses-thumbnails",
+  "format": "repo-state-v1",
+  "base_tree": "base",
+  "commit_message": "commit-message.txt",
+  "diff": "change.diff",
+  "expected_findings": [
+    {
+      "id": "thumbnail-path-escapes-the-store",
+      "file": "media/thumbnail.py",
+      "line_start": 9,
+      "line_end": 9,
+      "line_tolerance": 3,
+      "outside_diff": true,
+      "category": "security",
+      "summary": "thumbnail_path() joins the client-supplied name onto THUMB_ROOT with no containment check, so '../../../etc/passwd' or '/etc/passwd' resolves to /etc/passwd; the change adds the realpath/commonpath check to download_path() only, contradicting the commit message's claim that a client-supplied name can no longer reach a file outside the media store."
+    }
+  ]
+}

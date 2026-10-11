@@ -1,0 +1,19 @@
+{
+  "id": "page-size-cap-misses-orders",
+  "format": "repo-state-v1",
+  "base_tree": "base",
+  "commit_message": "commit-message.txt",
+  "diff": "change.diff",
+  "expected_findings": [
+    {
+      "id": "orders-limit-is-still-unbounded",
+      "file": "api/orders.py",
+      "line_start": 7,
+      "line_end": 8,
+      "line_tolerance": 3,
+      "outside_diff": true,
+      "category": "input-validation",
+      "summary": "list_orders() passes the client's ?limit= straight into the query with no clamp, so ?limit=10000000 or ?limit=-1 (no limit in SQLite) still reads the whole orders table; the change clamps list_users() only, contradicting the commit message's claim that a client can no longer make a list endpoint read an unbounded page."
+    }
+  ]
+}
