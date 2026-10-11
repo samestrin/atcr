@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/samestrin/atcr/internal/atomicfs"
+	"github.com/samestrin/atcr/internal/history"
 	"github.com/samestrin/atcr/internal/stream"
 	reclib "github.com/samestrin/atcr/reconcile"
 )
@@ -188,6 +189,24 @@ type JSONFinding struct {
 	// re-deriving the mapping. Set alongside Justification by stampJustifications;
 	// nil (omitempty) when no narrative matched, keeping output byte-identical.
 	SourceReport *SourceReport `json:"source_report,omitempty"`
+	// ID is the finding's stable address on the wire (Epic 35.16.11.3):
+	// history.FindingID over the EMITTED File, Line and Problem — the same function
+	// localdebt.Record.StampID uses, so a consumer can hand it to
+	// `atcr debt resolve <id>`. It is opaque; consumers must not recompute it. On
+	// the RunReconcile path it is stamped after stampSymbolAnchors, so the hashed
+	// Problem is the "(symbol) "-anchored text. omitempty keeps a findings.json
+	// written before this epic byte-identical when re-marshaled.
+	ID string `json:"id,omitempty"`
+}
+
+// stampFindingIDs sets each record's ID to history.FindingID of its current
+// File, Line and Problem. It must run after the last stamp that rewrites any of
+// those three fields (stampSymbolAnchors on the RunReconcile path), or the ID
+// names a Problem that is never emitted and matches no stored debt row.
+func stampFindingIDs(jf []JSONFinding) {
+	for i := range jf {
+		jf[i].ID = history.FindingID(jf[i].File, jf[i].Line, jf[i].Problem)
+	}
 }
 
 // SourceReport is the back-reference (Epic 18.2) from a reconciled finding to the
@@ -263,6 +282,9 @@ func (r Result) JSONFindings() []JSONFinding {
 			// If this derived path is ever used for a stamped finding, carry it here.
 		})
 	}
+	// No symbol anchoring happens on this path, so the merged Problem is the
+	// emitted one. RunReconcile re-stamps after anchoring before it caches.
+	stampFindingIDs(out)
 	return out
 }
 
