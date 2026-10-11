@@ -2,9 +2,11 @@ package verify
 
 import (
 	"encoding/json"
-	reclib "github.com/samestrin/atcr/reconcile"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/samestrin/atcr/internal/jsonrepair"
+	reclib "github.com/samestrin/atcr/reconcile"
 )
 
 // Verdict enum values — the only values reclib.Verification.Verdict may hold.
@@ -88,7 +90,8 @@ const (
 // over the same logic, so its signature — asserted require.NoError at every test
 // call site — is unchanged.
 func parseVerdictCause(response string) (*reclib.Verification, parseCause) {
-	return parseVerdictCore(response)
+	v, cause, _ := parseVerdictCore(response)
+	return v, cause
 }
 
 // usableVerdictCause reports whether a structural cause is a real verdict rather
@@ -112,12 +115,32 @@ func parseVerdict(response string) (*reclib.Verification, error) {
 	return v, nil
 }
 
+// jsonRepairedVerdictMetric counts verdicts accepted only after jsonrepair fixed
+// their syntax. The marker is a count and nothing else: no reply text rides on
+// it, and nothing is added to findings.json (epic 35.16.11.2.2.10).
+const jsonRepairedVerdictMetric = `atcr_json_repaired_total{lane="verdict"}`
+
 // parseVerdictCore does the parsing and reports the STRUCTURAL cause directly,
 // so no caller has to recover it by pattern-matching the human-readable Notes
 // string. See parseCause above for why that distinction is load-bearing.
-func parseVerdictCore(response string) (*reclib.Verification, parseCause) {
+//
+// repaired reports that the usable verdict came from a candidate jsonrepair had
+// to fix. It is false for every other result. The caller that accepts the
+// verdict counts it (verdictFromAnswer); this function does not, because
+// carriesVerdict asks it about single objects while classifying a reply and
+// would count one reply several times.
+//
+// Two passes, and repair is a last try across the WHOLE reply: the first pass
+// reads every candidate strictly, and only when none of them yields a usable
+// verdict does the second pass read the same candidates through
+// jsonrepair.Repair. Repairing each candidate in place would let a loosely
+// written quoted example ahead of the real verdict win, where strict parsing
+// skips it. Candidate extraction is unchanged, so a reply missing a closing
+// brace is still out of reach, and the truncation guard in invokeSkeptic refuses
+// a cut-off reply before it gets here.
+func parseVerdictCore(response string) (v *reclib.Verification, cause parseCause, repaired bool) {
 	if strings.TrimSpace(response) == "" {
-		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "empty_response"}, parseCauseEmpty
+		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "empty_response"}, parseCauseEmpty, false
 	}
 
 	// Iterate candidate balanced JSON objects. Skip candidates that fail to
@@ -128,7 +151,7 @@ func parseVerdictCore(response string) (*reclib.Verification, parseCause) {
 	// cannot diverge on what "the envelope" is (TD internal/verify/invoke.go:782).
 	var result *reclib.Verification
 	var invalidEnum *string
-	forEachJSONObject(response, func(obj string) bool {
+	read := func(obj string) bool {
 		// Use a pointer for Verdict so json.Unmarshal can distinguish a present
 		// key (even empty) from an absent key — avoids a second unmarshal pass.
 		var candidate struct {
@@ -159,9 +182,19 @@ func parseVerdictCore(response string) (*reclib.Verification, parseCause) {
 			}
 			return false
 		}
-	})
+	}
+	forEachJSONObject(response, read)
+	if result == nil {
+		// Second pass. Repair returns ok=false for a candidate that is already
+		// valid JSON, so the strict pass's candidates are not read twice.
+		forEachJSONObject(response, func(obj string) bool {
+			fixed, ok := jsonrepair.Repair(obj)
+			return ok && read(fixed)
+		})
+		repaired = result != nil
+	}
 	if result != nil {
-		return result, parseCauseUsable
+		return result, parseCauseUsable, repaired
 	}
 
 	if invalidEnum != nil {
@@ -170,10 +203,10 @@ func parseVerdictCore(response string) (*reclib.Verification, parseCause) {
 		return &reclib.Verification{
 			Verdict: verdictUnverifiable,
 			Notes:   "invalid_verdict: " + *invalidEnum + " (raw: " + truncateForNotes(response) + ")",
-		}, parseCauseInvalidEnum
+		}, parseCauseInvalidEnum, false
 	}
 
-	return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "malformed_output: " + truncateForNotes(response)}, parseCauseMalformed
+	return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "malformed_output: " + truncateForNotes(response)}, parseCauseMalformed, false
 }
 
 // notesRawCap bounds how much raw skeptic text is embedded in a Verification.Notes
