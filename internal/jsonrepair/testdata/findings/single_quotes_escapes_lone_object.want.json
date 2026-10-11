@@ -1,0 +1,1 @@
+[{"severity": "LOW", "file_line": "notes/readme.txt:2", "problem": "The heading says 'Setup' but the section is about \"install\".", "fix": "Rename the heading to \"Install\".", "category": "docs", "est_minutes": 2, "evidence": "line 2: ## Setup"}]

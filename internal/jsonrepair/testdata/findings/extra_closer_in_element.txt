@@ -1,0 +1,5 @@
+[
+  {"severity": "HIGH", "file_line": "shop/cart.go:42", "problem": "Quantity is read before the nil check, so an empty cart panics.", "fix": "Move the nil check above the quantity read.", "category": "correctness", "est_minutes": 10, "evidence": "line 42 reads c.items[0].Qty; the nil check is on line 44"},
+  {"severity": "MEDIUM", "file_line": "billing/invoice.py:118", "problem": "Each line item is rounded on its own, so the total drifts by a cent on large orders.", "fix": "Sum the exact amounts and round once at the end.", "category": "correctness", "est_minutes": 20, "evidence": "round() is called inside the loop at line 118"}},
+  {"severity": "LOW", "file_line": "web/static/app.js:7", "problem": "The request URL is built by string concatenation.", "fix": "Build it with the URL constructor.", "category": "maintainability", "est_minutes": 5, "evidence": "fetch(\"https://example.test/api/items/\" + id)"}
+]

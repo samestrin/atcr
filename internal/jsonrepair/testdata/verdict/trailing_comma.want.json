@@ -1,0 +1,1 @@
+{"verdict": "refuted", "reasoning": "The amounts are summed exactly and rounded once after the loop, at line 120."}
