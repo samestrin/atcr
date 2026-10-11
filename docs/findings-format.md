@@ -137,7 +137,7 @@ module external tools embed. Treat them as a reader's aid that can lag
 
 ## AXI TOON encoding (`atcr report --format axi`)
 
-`atcr report --format axi` re-encodes these same reconciled findings as a token-dense, specification-compliant [TOON](https://toonformat.dev/) tabular array for agent consumption, encoded by [`go-axi` v0.3.1](https://github.com/samestrin/go-axi). It is a **re-encoding of this contract, not a competing schema** — the columns map to the reconciled 9-column stream field-for-field:
+`atcr report --format axi` re-encodes these same reconciled findings as a token-dense, specification-compliant [TOON](https://toonformat.dev/) tabular array for agent consumption, encoded by [`go-axi` v0.4.0](https://github.com/samestrin/go-axi). It is a **re-encoding of this contract, not a competing schema** — the columns map to the reconciled 9-column stream field-for-field:
 
 ```
 findings[2]{severity,"file:line",problem,fix,category,est_minutes,evidence,reviewers,confidence}:
@@ -255,7 +255,7 @@ v2 is a per-source format only. There is no reconciled v2 shape: `reconciled/fin
 
 ### File layout
 
-The first non-blank line is the header `# atcr-findings/v2`. The rest of the file is one [go-axi](https://github.com/samestrin/go-axi) v0.3.1 document holding the findings, in one of two encodings:
+The first non-blank line is the header `# atcr-findings/v2`. The rest of the file is one [go-axi](https://github.com/samestrin/go-axi) v0.4.0 document holding the findings, in one of two encodings:
 
 - a TOON table named `findings` (what atcr writes), or
 - the go-axi JSON envelope `{"axi_format":"json","axi_notice":"...","data":{"findings":[...]}}` (what the skill-driven host reviewer writes).
