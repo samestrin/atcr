@@ -16,6 +16,9 @@ import (
 	"strings"
 
 	goaxi "github.com/samestrin/go-axi"
+
+	"github.com/samestrin/atcr/internal/jsonrepair"
+	"github.com/samestrin/atcr/internal/metrics"
 )
 
 // VersionV2 is the header of the lossless findings file (findings.toon). The
@@ -438,15 +441,24 @@ func fenceOffsets(lines []string, textLen int) []int {
 	return out
 }
 
-// decodeJSONFindings reads the JSON value at the start of a ```json block.
+// decodeJSONFindings reads the JSON value at the start of a ```json block. It
+// is the one caller that repairs: when the value does not decode strictly, it
+// is run through jsonrepair.Repair as a last try (decodeJSONValueRepair).
 func decodeJSONFindings(text string) []Finding {
-	found, _ := decodeJSONValue(text)
+	found, _ := decodeJSONValueRepair(text, true)
 	return found
 }
 
 // findingsWrapperRe matches the opening of a {"findings":[...]} wrapper, so a
 // cut-off wrapper can still recover the complete objects inside it.
 var findingsWrapperRe = regexp.MustCompile(`^\{\s*"findings"\s*:\s*\[`)
+
+// jsonRepairedFindingsKey is the counter a fenced findings value bumps when the
+// value is accepted only after jsonrepair.Repair fixed its syntax. It carries
+// no reply text.
+// It is metrics.Key("atcr_json_repaired_total", "lane", "findings") spelled
+// out, because v2.go declares no package-level var but compiled regexps.
+const jsonRepairedFindingsKey = `atcr_json_repaired_total{lane="findings"}`
 
 // decodeJSONValue reads the JSON value at the start of text (after whitespace)
 // and returns its valid finding objects plus the bytes it consumed. The value is
@@ -455,38 +467,72 @@ var findingsWrapperRe = regexp.MustCompile(`^\{\s*"findings"\s*:\s*\[`)
 // malformed — it keeps every complete element before the damage and drops the
 // rest (recoverElements), and consumes all of text. Objects with an unknown
 // severity or no location are dropped, as the pipe path drops degenerate rows.
+// It never repairs: a bare value outside a fence stays strict.
 func decodeJSONValue(text string) ([]Finding, int) {
+	return decodeJSONValueRepair(text, false)
+}
+
+// decodeJSONValueRepair is decodeJSONValue with an optional last try. When
+// repair is set and the strict decode fails, text is run through
+// jsonrepair.Repair after element recovery; the repaired value is decoded
+// strictly and replaces the recovered elements when it yields more findings,
+// so damage inside one element no longer drops it and every element
+// after it. Repair never closes an open string or a cut-off element, so a
+// cut-off value still ends at its last complete element. Each accepted repair
+// bumps atcr_json_repaired_total{lane="findings"} once.
+func decodeJSONValueRepair(text string, repair bool) ([]Finding, int) {
 	body := strings.TrimLeft(text, " \t\r\n")
-	lead := len(text) - len(body)
-	consumed := len(text)
-	var elems []json.RawMessage
-	switch {
-	case strings.HasPrefix(body, "["):
-		dec := json.NewDecoder(strings.NewReader(body))
-		if err := dec.Decode(&elems); err != nil {
-			elems = recoverElements(body)
-		} else {
-			consumed = lead + int(dec.InputOffset())
-		}
-	case strings.HasPrefix(body, "{"):
-		dec := json.NewDecoder(strings.NewReader(body))
-		var raw json.RawMessage
-		if err := dec.Decode(&raw); err == nil {
-			consumed = lead + int(dec.InputOffset())
-			var wrap struct {
-				Findings *[]json.RawMessage `json:"findings"`
-			}
-			if json.Unmarshal(raw, &wrap) == nil && wrap.Findings != nil {
-				elems = *wrap.Findings
-			} else {
-				elems = []json.RawMessage{raw}
-			}
-		} else if loc := findingsWrapperRe.FindStringIndex(body); loc != nil {
-			elems = recoverElements(body[loc[1]-1:])
-		}
-	default:
+	if !strings.HasPrefix(body, "[") && !strings.HasPrefix(body, "{") {
 		return nil, 0
 	}
+	elems, n, ok := decodeFindingElems(body)
+	if ok {
+		return findingsFromElems(elems), len(text) - len(body) + n
+	}
+	out := findingsFromElems(elems)
+	if repair {
+		if fixed, changed := jsonrepair.Repair(body); changed {
+			if relems, _, rok := decodeFindingElems(fixed); rok {
+				if found := findingsFromElems(relems); len(found) > len(out) {
+					metrics.Counter(jsonRepairedFindingsKey).Inc()
+					out = found
+				}
+			}
+		}
+	}
+	return out, len(text)
+}
+
+// decodeFindingElems decodes the JSON value at the start of body, which starts
+// with '[' or '{', into its finding elements. ok reports a strict decode, with
+// n the bytes it consumed; otherwise elems holds what recoverElements kept.
+func decodeFindingElems(body string) (elems []json.RawMessage, n int, ok bool) {
+	dec := json.NewDecoder(strings.NewReader(body))
+	if strings.HasPrefix(body, "[") {
+		if err := dec.Decode(&elems); err != nil {
+			return recoverElements(body), 0, false
+		}
+		return elems, int(dec.InputOffset()), true
+	}
+	var raw json.RawMessage
+	if err := dec.Decode(&raw); err != nil {
+		if loc := findingsWrapperRe.FindStringIndex(body); loc != nil {
+			return recoverElements(body[loc[1]-1:]), 0, false
+		}
+		return nil, 0, false
+	}
+	var wrap struct {
+		Findings *[]json.RawMessage `json:"findings"`
+	}
+	if json.Unmarshal(raw, &wrap) == nil && wrap.Findings != nil {
+		return *wrap.Findings, int(dec.InputOffset()), true
+	}
+	return []json.RawMessage{raw}, int(dec.InputOffset()), true
+}
+
+// findingsFromElems converts decoded elements to findings, dropping any that
+// do not have a finding's shape.
+func findingsFromElems(elems []json.RawMessage) []Finding {
 	var out []Finding
 	for _, e := range elems {
 		var m modelFinding
@@ -513,7 +559,7 @@ func decodeJSONValue(text string) ([]Finding, int) {
 			Evidence:   m.Evidence,
 		})
 	}
-	return out, consumed
+	return out
 }
 
 // splitLocation reads a location a model split into "file" and "line" keys
