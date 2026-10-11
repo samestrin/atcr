@@ -72,7 +72,7 @@ var goldenCases = []struct {
 	{"json", FormatJSON, "findings.json", nil},
 	{"checklist", FormatChecklist, "checklist.md", nil},
 	{"sarif", FormatSarif, "report.sarif.json", sampleSarif()},
-	{"axi", FormatAXI, "report.axi", nil},
+	{"axi", FormatAXI, "report.axi", withFindingIDs(sample())},
 }
 
 // TestRender_GoldenFiles compares each format's full render output byte-for-byte
@@ -725,14 +725,15 @@ func axiHeaderFields(t *testing.T, out string) []string {
 // TestRenderAXI_HeaderAndV1FieldSet pins AC 01-02 Scenarios 1 & 2 on the
 // standard TOON path: the header declares the count with the default comma
 // delimiter (findings[N]{...}:) and its field list mirrors the atcr-findings/v1
-// reconciled 9-column contract field-for-field.
+// reconciled 9-column contract field-for-field, followed by the finding's id
+// (Epic 35.16.11.3).
 func TestRenderAXI_HeaderAndV1FieldSet(t *testing.T) {
 	var b strings.Builder
 	require.NoError(t, Render(&b, sample(), FormatAXI))
 	header := strings.SplitN(b.String(), "\n", 2)[0]
 	assert.Equal(t,
-		`findings[2]{severity,"file:line",problem,fix,category,est_minutes,evidence,reviewers,confidence}:`,
-		header, "header field list mirrors the atcr-findings/v1 9-column contract")
+		`findings[2]{severity,"file:line",problem,fix,category,est_minutes,evidence,reviewers,confidence,id}:`,
+		header, "header field list mirrors the atcr-findings/v1 9-column contract, then id")
 }
 
 // TestRenderAXI_VerificationEvidenceRoundTrip is AC 01-02 Edge Cases 1-3: a

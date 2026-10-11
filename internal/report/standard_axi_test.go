@@ -15,8 +15,20 @@ import (
 
 	reclib "github.com/samestrin/atcr/reconcile"
 
+	"github.com/samestrin/atcr/internal/history"
 	"github.com/samestrin/atcr/internal/reconcile"
 )
+
+// withFindingIDs returns a copy of findings with each ID stamped the way the
+// reconcile emitter stamps it (history.FindingID over file, line and problem),
+// so a golden shows a filled id column rather than an empty one.
+func withFindingIDs(findings []reconcile.JSONFinding) []reconcile.JSONFinding {
+	out := append([]reconcile.JSONFinding(nil), findings...)
+	for i := range out {
+		out[i].ID = history.FindingID(out[i].File, out[i].Line, out[i].Problem)
+	}
+	return out
+}
 
 // TestRenderAXI_SanitizesViaGoAxi pins that the standard TOON path cleans text
 // with go-axi rather than the legacy hand-rolled stripper: go-axi drops an
@@ -145,11 +157,13 @@ func TestRenderAXIPaginated_NonPositiveMaxLinesClampsToDefault(t *testing.T) {
 }
 
 // TestAXIRowKeysMatchColumnHeader pins that the standard encoder's column set —
-// the literal keys axiRow builds — equals axiColumns.header() for EVERY
-// combination of the optional signal flags. The two are independent literals
-// (header() serves the legacy pipe encoder; axiRow serves the standard path), so
-// only this equality keeps a rename in one place from silently desyncing
-// --format axi and --format pipe.
+// the literal keys axiRow builds — equals axiColumns.header() plus the id column
+// after confidence, for EVERY combination of the optional signal flags. The two
+// are independent literals (header() serves the legacy pipe encoder; axiRow
+// serves the standard path), so only this equality keeps a rename in one place
+// from silently desyncing --format axi and --format pipe. id is the one column
+// the standard path adds: the legacy pipe bytes are frozen, so header() never
+// carries it.
 func TestAXIRowKeysMatchColumnHeader(t *testing.T) {
 	blocks := []struct {
 		name string
@@ -184,8 +198,11 @@ func TestAXIRowKeysMatchColumnHeader(t *testing.T) {
 		for _, col := range strings.Split(header[open+1:close_], ",") {
 			got = append(got, strings.Trim(strings.TrimSpace(col), `"`))
 		}
-		assert.Equalf(t, axiColumnsFor(findings).header(), got,
-			"mask=%d: standard row keys diverge from axiColumns.header()", mask)
+		legacy := axiColumnsFor(findings).header()
+		require.Equal(t, "confidence", legacy[8], "the id column follows the nine base columns")
+		want := append(append(append([]string{}, legacy[:9]...), "id"), legacy[9:]...)
+		assert.Equalf(t, want, got,
+			"mask=%d: standard row keys diverge from axiColumns.header() plus id", mask)
 	}
 }
 
@@ -295,17 +312,17 @@ var standardAXIGoldenCases = []struct {
 	golden string
 	render func(w io.Writer) error
 }{
-	{"findings_edge", "findings_edge.axi", func(w io.Writer) error { return renderAXI(w, legacyPipeEdgeFindings()) }},
+	{"findings_edge", "findings_edge.axi", func(w io.Writer) error { return renderAXI(w, withFindingIDs(legacyPipeEdgeFindings())) }},
 	{"findings_empty", "findings_empty.axi", func(w io.Writer) error { return renderAXI(w, nil) }},
 	{"paginated_under", "paginated_under.axi", func(w io.Writer) error {
-		return RenderAXIPaginated(w, sample(), AXIMaxLinesDefault)
+		return RenderAXIPaginated(w, withFindingIDs(sample()), AXIMaxLinesDefault)
 	}},
 	{"paginated_truncated", "paginated_truncated.axi", func(w io.Writer) error {
 		many := make([]reconcile.JSONFinding, 5)
 		for i := range many {
 			many[i] = reconcile.JSONFinding{Severity: "LOW", File: "a.go", Line: i, Problem: "p", Confidence: "LOW"}
 		}
-		return RenderAXIPaginated(w, many, 3)
+		return RenderAXIPaginated(w, withFindingIDs(many), 3)
 	}},
 	{"paginated_empty", "paginated_empty.axi", func(w io.Writer) error {
 		return RenderAXIPaginated(w, nil, AXIMaxLinesDefault)
@@ -358,4 +375,106 @@ func TestEncodeAXI_FailsLoudlyOnLossyValue(t *testing.T) {
 	err := encodeAXI(&b, dirty)
 	require.Error(t, err, "a lossy value must fail the encode at runtime, not silently drop the cell")
 	assert.Empty(t, b.String(), "a failed encode must leave the writer untouched")
+}
+
+// TestRenderAXI_IDColumnDeclaredAndFilled pins the id column on both standard
+// payloads: the header declares it by name, every row carries the finding's
+// JSONFinding.ID, and a finding with no ID (a findings.json written before the
+// field existed) decodes to an empty cell rather than shifting the row.
+func TestRenderAXI_IDColumnDeclaredAndFilled(t *testing.T) {
+	findings := withFindingIDs(sample())
+	findings = append(findings, reconcile.JSONFinding{Severity: "LOW", File: "old.go", Line: 1, Problem: "p", Confidence: "LOW"})
+
+	var plain, paged bytes.Buffer
+	require.NoError(t, renderAXI(&plain, findings))
+	require.NoError(t, RenderAXIPaginated(&paged, findings, AXIMaxLinesDefault))
+	for name, payload := range map[string][]byte{"renderAXI": plain.Bytes(), "RenderAXIPaginated": paged.Bytes()} {
+		doc := decodeAXI(t, payload)
+		assert.Containsf(t, doc.Fields, "id", "%s must declare the id column", name)
+		require.Lenf(t, doc.Rows, 3, "%s", name)
+		for i, f := range findings {
+			assert.Equalf(t, f.ID, doc.Rows[i]["id"], "%s row %d", name, i)
+		}
+		assert.Equalf(t, "", doc.Rows[2]["id"], "%s: a finding without an ID gets an empty cell", name)
+	}
+}
+
+// TestRenderAXI_NameMappedConsumerWithoutIDField is AC3 for the axi surface: a
+// consumer that reads the payload by NAME into a struct that has no id field
+// still reads every other column correctly, base and additive alike. Adding the
+// column is therefore not a breaking change for a name-mapped consumer.
+func TestRenderAXI_NameMappedConsumerWithoutIDField(t *testing.T) {
+	f := reconcile.JSONFinding{
+		Severity: "HIGH", File: "a.go", Line: 12, Problem: "token never expires", Fix: "check expiry",
+		Category: "security", EstMinutes: 15, Evidence: "expiresAt unread",
+		Reviewers: []string{"greta", "otto"}, Confidence: "HIGH", Disagreement: "LOW vs HIGH",
+		Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "sk", Notes: "n", ChallengeSurvived: true},
+		EvidenceExec: &reconcile.EvidenceExec{Command: "go test", ExitCode: 1, OutputExcerpt: "FAIL"},
+		FixWarning:   "w", FixReview: "r",
+	}
+	findings := withFindingIDs([]reconcile.JSONFinding{f})
+	require.NotEmpty(t, findings[0].ID)
+
+	type row struct {
+		Severity          string `toon:"severity"`
+		FileLine          string `toon:"file:line"`
+		Problem           string `toon:"problem"`
+		Fix               string `toon:"fix"`
+		Category          string `toon:"category"`
+		EstMinutes        int    `toon:"est_minutes"`
+		Evidence          string `toon:"evidence"`
+		Reviewers         string `toon:"reviewers"`
+		Confidence        string `toon:"confidence"`
+		Disagreement      string `toon:"disagreement"`
+		Verdict           string `toon:"verification.verdict"`
+		Skeptic           string `toon:"verification.skeptic"`
+		Notes             string `toon:"verification.notes"`
+		ChallengeSurvived *bool  `toon:"verification.challenge_survived"`
+		Command           string `toon:"evidence_exec.command"`
+		ExitCode          *int   `toon:"evidence_exec.exit_code"`
+		OutputExcerpt     string `toon:"evidence_exec.output_excerpt"`
+		FixWarning        string `toon:"fix_warning"`
+		FixReview         string `toon:"fix_review"`
+	}
+	var b bytes.Buffer
+	require.NoError(t, RenderAXIPaginated(&b, findings, AXIMaxLinesDefault))
+	require.Contains(t, strings.SplitN(b.String(), "\n", 2)[0], ",id,", "the payload under test must carry the id column")
+	var doc struct {
+		Findings  []row `toon:"findings"`
+		Total     int   `toon:"total"`
+		Truncated bool  `toon:"truncated"`
+	}
+	require.NoErrorf(t, toon.Unmarshal(b.Bytes(), &doc), "a consumer without an id field must decode the payload:\n%s", b.String())
+	require.Len(t, doc.Findings, 1)
+	got := doc.Findings[0]
+	require.NotNil(t, got.ChallengeSurvived)
+	require.NotNil(t, got.ExitCode)
+	assert.Equal(t, row{
+		Severity: "HIGH", FileLine: "a.go:12", Problem: f.Problem, Fix: f.Fix, Category: f.Category,
+		EstMinutes: 15, Evidence: f.Evidence, Reviewers: "greta,otto", Confidence: "HIGH",
+		Disagreement: f.Disagreement, Verdict: "confirmed", Skeptic: "sk", Notes: "n",
+		ChallengeSurvived: got.ChallengeSurvived, Command: "go test", ExitCode: got.ExitCode,
+		OutputExcerpt: "FAIL", FixWarning: "w", FixReview: "r",
+	}, got)
+	assert.True(t, *got.ChallengeSurvived)
+	assert.Equal(t, 1, *got.ExitCode)
+	assert.Equal(t, 1, doc.Total)
+}
+
+// TestLegacyPipe_IgnoresFindingID pins that the frozen --format pipe /
+// --legacy-pipe bytes do not change when findings carry an ID: the id column is
+// a standard-path addition only.
+func TestLegacyPipe_IgnoresFindingID(t *testing.T) {
+	without := legacyPipeEdgeFindings()
+	with := withFindingIDs(without)
+	var a, b bytes.Buffer
+	require.NoError(t, Render(&a, without, FormatPipe))
+	require.NoError(t, Render(&b, with, FormatPipe))
+	assert.Equal(t, a.String(), b.String(), "--format pipe bytes must not change with an ID")
+	a.Reset()
+	b.Reset()
+	require.NoError(t, RenderPipeAXIPaginated(&a, without, AXIMaxLinesDefault))
+	require.NoError(t, RenderPipeAXIPaginated(&b, with, AXIMaxLinesDefault))
+	assert.Equal(t, a.String(), b.String(), "paginated legacy pipe bytes must not change with an ID")
+	assert.NotContains(t, b.String(), with[0].ID)
 }

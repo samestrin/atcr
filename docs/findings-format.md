@@ -140,9 +140,9 @@ module external tools embed. Treat them as a reader's aid that can lag
 `atcr report --format axi` re-encodes these same reconciled findings as a token-dense, specification-compliant [TOON](https://toonformat.dev/) tabular array for agent consumption, encoded by [`go-axi` v0.4.0](https://github.com/samestrin/go-axi). It is a **re-encoding of this contract, not a competing schema** — the columns map to the reconciled 9-column stream field-for-field:
 
 ```
-findings[2]{severity,"file:line",problem,fix,category,est_minutes,evidence,reviewers,confidence}:
-  CRITICAL,"auth.go:42",token never expires,check expiry,security,15,expiresAt unread,"greta,host",HIGH
-  LOW,"util.go:7",unused var,"",style,0,"",otto,MEDIUM
+findings[2]{severity,"file:line",problem,fix,category,est_minutes,evidence,reviewers,confidence,id}:
+  CRITICAL,"auth.go:42",token never expires,check expiry,security,15,expiresAt unread,"greta,host",HIGH,cf9a121839d95a37
+  LOW,"util.go:7",unused var,"",style,0,"",otto,MEDIUM,dcf65c25aac8f0d4
 ```
 
 - **Delimiter:** the standard TOON comma. Any off-the-shelf TOON decoder reads the payload with no custom delimiter option.
