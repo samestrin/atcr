@@ -28,7 +28,10 @@ import (
 // reviewer count. Verification is combined by mergeVerification (verdict
 // precedence confirmed > unverifiable > refuted, skeptic provenance unioned) and
 // the Epic 5.0 path-validation fields carry the first member's — the members are
-// co-located, so their path status is identical. The caller sets ClusterMerged on
+// co-located, so their path status is identical. ID is the first member's, not a
+// hash of the merged fields: persistence ran before this merge and stored only
+// the members, so only a member's ID names a real debt row (Epic 35.16.11.3). The
+// caller sets ClusterMerged on
 // the result. A zero- or one-member group is returned as-is (the apply path never
 // unions fewer than two records, but the helper stays total).
 func MergeJSONFindings(group []JSONFinding) JSONFinding {
@@ -56,6 +59,7 @@ func MergeJSONFindings(group []JSONFinding) JSONFinding {
 	disagreement = widestDisagreement(maxSev, disagreement, group)
 	reviewers := unionReviewers(group)
 	merged := JSONFinding{
+		ID:           group[0].ID,
 		Severity:     maxSev,
 		File:         group[0].File,
 		Line:         group[0].Line,
