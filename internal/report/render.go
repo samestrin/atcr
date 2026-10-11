@@ -128,7 +128,9 @@ func renderJSON(w io.Writer, findings []reconcile.JSONFinding) error {
 // JSON contract uses. Shared by the standard and legacy pipe encoders — though
 // only these boolean flags are shared: the column names/order are duplicated in
 // header() (legacy) and axiRow's literal keys (standard), an equality pinned by
-// TestAXIRowKeysMatchColumnHeader rather than guaranteed by construction.
+// TestAXIRowKeysMatchColumnHeader rather than guaranteed by construction. The
+// one intended difference is the standard path's id column after confidence,
+// which header() omits so the frozen legacy pipe bytes do not change.
 type axiColumns struct {
 	disagreement, verification, evidence, fixWarning, fixReview bool
 }

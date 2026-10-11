@@ -59,8 +59,9 @@ func encodeAXI(w io.Writer, v any) error {
 // renderAXI re-encodes findings as a standard TOON (Token-Optimized Object
 // Notation) tabular array — the token-dense machine payload for the
 // agent-experience (--axi) mode. The base columns mirror the atcr-findings/v1
-// reconciled 9-column contract field-for-field, so the payload is a re-encoding
-// of the same machine contract a --format json consumer sees, not a new schema.
+// reconciled 9-column contract field-for-field, then add the finding's id, so the
+// payload is a re-encoding of the same machine contract a --format json consumer
+// sees, not a new schema.
 //
 // The optional per-finding signals (disagreement, verification.*,
 // evidence_exec.*, fix_warning, fix_review) are additive columns declared only
@@ -98,7 +99,11 @@ func axiRows(findings []reconcile.JSONFinding) []toon.Object {
 	return rows
 }
 
-// axiRow encodes one finding. est_minutes, exit_code and challenge_survived are
+// axiRow encodes one finding. The id column (JSONFinding.ID, Epic 35.16.11.3)
+// follows the nine base columns and precedes the additive ones; it is always
+// declared, and a finding with no ID (a findings.json written before the field
+// existed) encodes it as "". The legacy pipe encoder's header() deliberately
+// omits it, since those bytes are frozen. est_minutes, exit_code and challenge_survived are
 // typed numbers/booleans; every free-text field is capped by axiText. In a mixed
 // payload (only some findings carry a declared block) an absent block encodes
 // as null — TOON's absence form — so a stock typed decoder with pointer fields
@@ -116,6 +121,7 @@ func axiRow(f reconcile.JSONFinding, cols axiColumns) toon.Object {
 		{Key: "evidence", Value: axiText(f.Evidence)},
 		{Key: "reviewers", Value: axiText(strings.Join(f.Reviewers, ","))},
 		{Key: "confidence", Value: axiText(f.Confidence)},
+		{Key: "id", Value: axiText(f.ID)},
 	}
 	if cols.disagreement {
 		fields = append(fields, toon.Field{Key: "disagreement", Value: axiText(f.Disagreement)})
