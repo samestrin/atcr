@@ -70,7 +70,8 @@ func TestParseModelOutput_TruncationRecovery(t *testing.T) {
 		{"a cut-off block is closed by the next chunk's opener", "```json\n[" + objA + ",\n" + cut + "\nChunk two prose.\n" + jsonBlock("["+objC+"]"), []Finding{findA, findC}},
 		{"unterminated fence with a closed array", "```json\n[" + objA + "]\n", []Finding{findA}},
 		{"braces and brackets inside strings are not structure", "```json\n[" + `{"severity":"LOW","file_line":"d.go:1","problem":"}] {[ \"}\"","fix":"","category":"","est_minutes":1,"evidence":""}` + ",\n" + cut, []Finding{{Severity: "LOW", File: "d.go", Line: 1, Problem: `}] {[ "}"`, EstMinutes: 1}}},
-		{"interior syntax error keeps the elements before it", jsonBlock("[" + objA + ",\n" + `{"severity":"LOW","file_line":"x.go:1",}` + ",\n" + objB + "]"), []Finding{findA}},
+		{"interior syntax error is repaired and keeps every element", jsonBlock("[" + objA + ",\n" + `{"severity":"LOW","file_line":"x.go:1",}` + ",\n" + objB + "]"), []Finding{findA, {Severity: "LOW", File: "x.go", Line: 1}, findB}},
+		{"an unrepairable interior element keeps the elements before it", jsonBlock("[" + objA + ",\n" + `{"severity":"LOW","file_line":"x.go:1" "fix"}` + ",\n" + objB + "]"), []Finding{findA}},
 		{"nothing recoverable", jsonBlock("[{\"severity\":"), nil},
 		{"not JSON at all", jsonBlock("this is not json"), nil},
 	}
