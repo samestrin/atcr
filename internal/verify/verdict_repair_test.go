@@ -152,6 +152,42 @@ func TestParseVerdictCore_FencedRepairBeatsLooseProseExample(t *testing.T) {
 	assert.True(t, carriesVerdict(in))
 }
 
+// TestParseVerdictCore_FenceRuleMatchesTheFindingsParser: the repair pass
+// recognizes a ```json fence by the same rule as the findings parser
+// (stream.IsJSONFence opens, stream.IsFenceMarker closes, both on whole lines),
+// so a genuinely fenced damaged `refuted` is graded in every form that rule
+// accepts, and a ```json that does not open a fence there does not open one here.
+func TestParseVerdictCore_FenceRuleMatchesTheFindingsParser(t *testing.T) {
+	t.Parallel()
+	const damaged = "{'verdict': 'refuted', 'reasoning': 'rounded once at line 120',}"
+	for name, in := range map[string]string{
+		"indented opener":         "Checked it.\n  ```json\n" + damaged + "\n  ```\n",
+		"upper-case info string":  "Checked it.\n```JSON\n" + damaged + "\n```\n",
+		"info string after json":  "Checked it.\n```json title=verdict\n" + damaged + "\n```\n",
+		"tilde closer":            "Checked it.\n```json\n" + damaged + "\n~~~\n",
+		"backticks inside string": "Checked it.\n```json\n{'verdict': 'refuted', 'reasoning': 'the ``` in the doc is inline',}\n```\n",
+	} {
+		v, cause, repaired := parseVerdictCore(in)
+		assert.Equal(t, parseCauseUsable, cause, "%s: notes %s", name, v.Notes)
+		assert.Equal(t, verdictRefuted, v.Verdict, name)
+		assert.True(t, repaired, name)
+		assert.True(t, carriesVerdict(in), name)
+	}
+
+	for name, in := range map[string]string{
+		"```json mentioned mid-line in prose": "Wrap it in ```json fences like " + damaged + " next time.\n```\n",
+		"opener with no line after it":        damaged + " is my draft.\n```json",
+		"opener never closed":                 "Checked it.\n```json\n" + damaged + " is a draft",
+		"inside a non-json fence":             "Format:\n```text\n" + damaged + "\n```\nI did not finish.",
+	} {
+		v, cause, repaired := parseVerdictCore(in)
+		assert.Equal(t, parseCauseMalformed, cause, "%s: notes %s", name, v.Notes)
+		assert.Equal(t, verdictUnverifiable, v.Verdict, name)
+		assert.False(t, repaired, name)
+		assert.False(t, carriesVerdict(in), name)
+	}
+}
+
 // TestJSONRepairedVerdictMetric_MatchesMetricsKey pins the spelled-out counter
 // key in verdict.go to the one metrics.Key builds.
 func TestJSONRepairedVerdictMetric_MatchesMetricsKey(t *testing.T) {

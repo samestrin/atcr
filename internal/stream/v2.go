@@ -418,6 +418,15 @@ func isJSONFence(line string) bool {
 	return len(info) > 0 && strings.EqualFold(info[0], "json")
 }
 
+// IsJSONFence is isJSONFence for other packages: internal/verify's verdict
+// repair pass recognizes a ```json fence by this rule, so the two lanes cannot
+// disagree about what a fenced reply is.
+func IsJSONFence(line string) bool { return isJSONFence(line) }
+
+// IsFenceMarker is isFenceMarker for other packages: a line that opens or
+// closes any fenced block.
+func IsFenceMarker(line string) bool { return isFenceMarker(line) }
+
 // maxBareScanFactor bounds the bytes ParseModelOutput's failed bare-value
 // attempts may scan, as a multiple of the text's length. Model output is
 // untrusted and each failed attempt can scan to the next fence, so an unbounded

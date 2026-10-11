@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/samestrin/atcr/internal/jsonrepair"
+	"github.com/samestrin/atcr/internal/stream"
 	reclib "github.com/samestrin/atcr/reconcile"
 )
 
@@ -290,34 +291,42 @@ func hasVerdictKey(obj string) bool {
 }
 
 // jsonFenceSpans returns the [start, end) byte ranges of the contents of every
-// closed ```json fence in s. The opener is "```json" at the start of a line; the
-// contents run from the line after it to the next "```". An unclosed fence is not
+// closed ```json fence in s, by the findings parser's rule: a line that
+// stream.IsJSONFence accepts opens one (leading spaces, any case of "json", an
+// info string after it), and the next line stream.IsFenceMarker accepts closes
+// it. Both are whole-line tests, so a ```json mentioned mid-line in prose opens
+// nothing, and a backtick run inside the verdict's reasoning closes nothing.
+// Contents of a fence of any other kind are not a span. As in the findings
+// parser, any fence marker line closes the open fence. An unclosed fence is not
 // a span, so nothing in it counts as fenced.
 func jsonFenceSpans(s string) [][2]int {
 	var spans [][2]int
-	off := 0
-	for {
-		i := strings.Index(s[off:], "```json")
-		if i < 0 {
-			return spans
+	inFence, inJSON := false, false
+	start := 0
+	for off := 0; off < len(s); {
+		end := strings.IndexByte(s[off:], '\n')
+		next := len(s)
+		if end >= 0 {
+			end += off
+			next = end + 1
+		} else {
+			end = len(s)
 		}
-		open := off + i
-		off = open + len("```json")
-		if open > 0 && s[open-1] != '\n' {
-			continue
+		line := strings.TrimRight(s[off:end], "\r")
+		switch {
+		case inFence && stream.IsFenceMarker(line):
+			if inJSON {
+				spans = append(spans, [2]int{start, off})
+			}
+			inFence, inJSON = false, false
+		case stream.IsJSONFence(line):
+			inFence, inJSON, start = true, true, next
+		case stream.IsFenceMarker(line):
+			inFence = true
 		}
-		nl := strings.IndexByte(s[off:], '\n')
-		if nl < 0 {
-			return spans
-		}
-		start := off + nl + 1
-		end := strings.Index(s[start:], "```")
-		if end < 0 {
-			return spans
-		}
-		spans = append(spans, [2]int{start, start + end})
-		off = start + end + len("```")
+		off = next
 	}
+	return spans
 }
 
 // notesRawCap bounds how much raw skeptic text is embedded in a Verification.Notes
