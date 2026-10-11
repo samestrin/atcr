@@ -1,0 +1,1 @@
+[{"severity": "MEDIUM", "file_line": "billing/invoice.py:118", "problem": "Each line item is rounded on its own, so the total drifts by a cent on large orders.", "fix": "Sum the exact amounts and round once at the end.", "category": "correctness", "est_minutes": 20, "evidence": "round() is called inside the loop at line 118"}]

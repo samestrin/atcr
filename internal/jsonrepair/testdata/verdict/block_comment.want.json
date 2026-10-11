@@ -1,0 +1,1 @@
+{"verdict": "unverifiable", "reasoning": "The helper that builds the URL lives in a file the diff does not include."}

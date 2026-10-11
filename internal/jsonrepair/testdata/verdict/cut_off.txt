@@ -1,0 +1,2 @@
+```json
+{"verdict": "confirmed", "reasoning": "Line 42 reads c.items[0].Qty before the nil
