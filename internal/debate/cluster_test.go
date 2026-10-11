@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/samestrin/atcr/internal/history"
 	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
@@ -94,6 +95,35 @@ func TestRunDebate_GrayZoneMergeUnionsFindings(t *testing.T) {
 	assert.Equal(t, 10, f[0].Line)
 	assert.Equal(t, "loop boundary error causes overflow", f[0].Problem,
 		"the merged survivor keeps the longest member problem (the union's representative)")
+}
+
+// TestRunDebate_GrayZoneMergeSurvivorKeepsFirstMemberID: persistence runs before
+// the debate stage and dedupes by ID, so the inline-merge survivor's own hash
+// names no stored debt row. The survivor must carry the first member's stamped ID
+// (Epic 35.16.11.3 T2) so `atcr debt resolve <id>` closes a real row, and that ID
+// must differ from history.FindingID over the survivor's own file/line/problem
+// (the longest-problem rule picks the second member's text here).
+func TestRunDebate_GrayZoneMergeSurvivorKeepsFirstMemberID(t *testing.T) {
+	first := grayFinding("a.go", 10, "off by one in loop", "MEDIUM", "alice")
+	first.ID = history.FindingID(first.File, first.Line, first.Problem)
+	second := grayFinding("a.go", 10, "loop boundary error causes overflow", "HIGH", "bob")
+	second.ID = history.FindingID(second.File, second.Line, second.Problem)
+	cluster := grayCluster("amb-1", "a.go", 10,
+		"off by one in loop", "MEDIUM", "alice",
+		"loop boundary error causes overflow", "HIGH", "bob")
+	dir := reviewDirWithGray(t, []reconcile.JSONFinding{first, second}, cluster)
+
+	cc := &fakeChatCompleter{turns: grayJudgeTurns("merge")}
+	_, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+
+	f := readFindings(t, dir)
+	require.Len(t, f, 1)
+	assert.Equal(t, first.ID, f[0].ID, "the survivor must keep the first member's stored-row ID")
+	assert.NotEqual(t, history.FindingID(f[0].File, f[0].Line, f[0].Problem), f[0].ID,
+		"the survivor's ID must not be recomputed from its merged problem")
+	assert.True(t, f[0].ClusterMerged)
+	assert.Equal(t, "amb-1", f[0].ClusterID)
 }
 
 // TestRunDebate_GrayZoneSeparateLeavesUnmerged: a judge "separate" ruling leaves
