@@ -741,9 +741,9 @@ func classifyUnopenedCloser(answer string, hasEnvelope func(string) bool) (close
 // AMBIGUOUS — availability lost on exactly the reply shape this repo's own
 // reviewers produce (TD internal/verify/invoke.go:701, :764).
 //
-// Second, the walk must ITERATE rather than ask parseVerdict about the text as a
-// whole. parseVerdict short-circuits on the FIRST object carrying a verdict key,
-// in-enum or not, so delegating the question to it answers "is the first
+// Second, the walk must ITERATE past a verdict-keyed object that is not usable.
+// parseVerdict used to short-circuit on the FIRST object carrying a verdict key,
+// in-enum or not, so delegating the question to it answered "is the first
 // verdict-keyed object usable" — and a committed verdict sitting BEHIND a quoted
 // out-of-enum example then read as no envelope at all, collapsing the section to
 // the whole answer and grading the abandoned pre-closer draft. That is the decoy
@@ -769,21 +769,16 @@ func classifyUnopenedCloser(answer string, hasEnvelope func(string) bool) (close
 // disproved the finding. TestCarriesVerdict_RecoveredVerdictReachesTheGateAsItself
 // asserts both rows against reconcile.IsFailing rather than describing them.
 func carriesVerdict(s string) bool {
-	// The candidate walk is forEachJSONObject — the SAME walk parseVerdict and
-	// parseExecutorResponse drive — so the three readers cannot disagree about
-	// what "the envelope" is. The per-object DECISION stays here, delegated to
-	// parseVerdict so no second notion of "usable" exists (TD
-	// internal/verify/invoke.go:782, :733).
-	found := false
-	forEachJSONObject(s, func(obj string) bool {
-		_, cause := parseVerdictCause(obj)
-		if usableVerdictCause(cause) {
-			found = true
-			return true
-		}
-		return false
-	})
-	return found
+	// The question is put to parseVerdictCause on the WHOLE text. Its strict pass
+	// is the forEachJSONObject walk, iterating past out-of-enum decoys rather than
+	// short-circuiting, so the second point above holds through it. Asking about
+	// single objects used to be equivalent, but the repair pass decides by where a
+	// candidate sits in the reply (a ```json fence, the only verdict-keyed object,
+	// the whole reply), and a lone object always passes those tests. Walking objects
+	// here would repair a prose example parseVerdictCore refuses, and the two would
+	// disagree about the envelope (epic 35.16.11.2.2.10 F1).
+	_, cause := parseVerdictCause(s)
+	return usableVerdictCause(cause)
 }
 
 // verdictFromAnswer parses the committed verdict out of a STRIPPED skeptic
@@ -814,8 +809,8 @@ func verdictFromAnswer(answer string) (v *reclib.Verification, ambiguous bool, d
 		return nil, true, 0
 	}
 	// Counted here and nowhere else: this is where the verdict is accepted, after
-	// the refusal above. carriesVerdict asks the same parser about single objects
-	// while classifying the reply, so counting inside the parser would count one
+	// the refusal above. carriesVerdict asks the same parser about sections of the
+	// reply while classifying it, so counting inside the parser would count one
 	// reply several times.
 	if repaired {
 		metrics.Counter(jsonRepairedVerdictMetric).Inc()
