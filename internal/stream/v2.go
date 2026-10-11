@@ -29,7 +29,9 @@ import (
 // is mostly a delete. Nothing here may call escapeField or fieldReplacer: v2
 // substitutes nothing, so '|', quotes, and line breaks survive. The one rewrite
 // is go-axi's sanitizer, which runs on both paths and strips control bytes
-// (other than tab, LF, CR), U+2028/U+2029, and invalid UTF-8.
+// (other than tab, LF, CR), U+2028/U+2029, Unicode format characters (category
+// Cf: bidi controls such as U+202E, zero-width characters such as U+200B and
+// U+FEFF, tag characters), and invalid UTF-8.
 const VersionV2 = "# atcr-findings/v2"
 
 // v2Row is one per-source finding in the v2 body. The json tags equal the toon
