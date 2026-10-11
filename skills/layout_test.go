@@ -163,9 +163,9 @@ func TestLayout_NoStaleSkillPathReferences(t *testing.T) {
 	// tracked, so ask git rather than maintaining skip lists that drift.
 	var offenders []string
 	for _, rel := range trackedFiles(t, root) {
-		// CHANGELOG.md is exempt: historical entries record the paths as they
-		// were and are not rewritten.
-		if rel == "CHANGELOG.md" {
+		// CHANGELOG.md and CHANGELOG-history.md are exempt: historical entries
+		// record the paths as they were and are not rewritten.
+		if rel == "CHANGELOG.md" || rel == "CHANGELOG-history.md" {
 			continue
 		}
 		raw, readErr := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
