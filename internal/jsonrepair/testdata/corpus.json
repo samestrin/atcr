@@ -1,0 +1,31 @@
+{
+  "provenance": "Every fixture is a synthetic reconstruction written by hand on made-up content (a shop, a billing script, a web page). None is a verbatim reply from any run.",
+  "fixtures": [
+    {"name": "valid_array", "lane": "findings", "class": "valid", "position": "array", "note": "Valid control: three intact findings. Repair must leave it unchanged."},
+    {"name": "valid_tricky_strings", "lane": "findings", "class": "valid", "position": "array", "note": "Valid control whose strings hold //, /* */, apostrophes, braces and ,] . Repair must not touch text inside a string."},
+    {"name": "trailing_comma_in_element", "lane": "findings", "class": "trailing_comma", "position": "between_intact", "note": "A comma after the last key of the middle finding."},
+    {"name": "trailing_comma_lone_object", "lane": "findings", "class": "trailing_comma", "position": "lone", "note": "A single finding object with a comma after its last key."},
+    {"name": "single_quotes_in_element", "lane": "findings", "class": "single_quotes", "position": "between_intact", "note": "The middle finding uses single quotes for every key and value."},
+    {"name": "single_quotes_escapes_lone_object", "lane": "findings", "class": "single_quotes", "position": "lone", "note": "Single-quoted strings holding an escaped \\' and a bare double quote, which must come out as \\\"."},
+    {"name": "line_comment_in_element", "lane": "findings", "class": "line_comment", "position": "between_intact", "note": "// comments after a value and on a line of their own inside the middle finding. The next finding has // inside a URL string."},
+    {"name": "block_comment_in_element", "lane": "findings", "class": "block_comment", "position": "between_intact", "note": "/* */ comments after a value and between a key and its value inside the middle finding."},
+    {"name": "unquoted_keys_in_element", "lane": "findings", "class": "unquoted_keys", "position": "between_intact", "note": "The middle finding has bare identifier keys."},
+    {"name": "mismatched_closer_in_element", "lane": "findings", "class": "mismatched_closer", "position": "between_intact", "note": "The middle finding closes with ] instead of }."},
+    {"name": "extra_closer_in_element", "lane": "findings", "class": "extra_closer", "position": "between_intact", "note": "The middle finding closes with }} ."},
+    {"name": "mixed_defects_in_element", "lane": "findings", "class": "mixed", "position": "between_intact", "note": "One finding with unquoted keys, single quotes, a line comment, a block comment and a trailing comma together."},
+    {"name": "missing_closer_array", "lane": "findings", "class": "missing_closer", "position": "array", "note": "Three complete findings; the array's ] is missing. Every element is complete, so all three are kept."},
+    {"name": "missing_closer_wrapper", "lane": "findings", "class": "missing_closer", "position": "wrapper", "note": "A {\"findings\":[...]} wrapper whose array is closed but whose outer } is missing."},
+    {"name": "cut_off_open_string", "lane": "findings", "class": "cut_off", "position": "array", "cut_off": true, "note": "The reply stops inside a string of the third finding. The open string is never closed, so the third finding stays dropped."},
+    {"name": "cut_off_after_value", "lane": "findings", "class": "cut_off", "position": "array", "cut_off": true, "note": "The reply stops after a complete value of the third finding, with no open string. The element is cut off by end of input, so it stays dropped."},
+    {"name": "cut_off_lone_object", "lane": "findings", "class": "cut_off", "position": "lone", "cut_off": true, "note": "A lone finding object cut off after a complete value. It is never closed, so nothing is decoded."},
+
+    {"name": "valid_fenced", "lane": "verdict", "class": "valid", "note": "Valid control: a fenced verdict after a line of prose."},
+    {"name": "valid_tricky_strings", "lane": "verdict", "class": "valid", "note": "Valid control whose reasoning holds a URL, an apostrophe, ,} and /* */ . Repair must not touch text inside a string."},
+    {"name": "trailing_comma", "lane": "verdict", "class": "trailing_comma", "note": "A comma after the reasoning value, in a fence after prose."},
+    {"name": "single_quotes", "lane": "verdict", "class": "single_quotes", "note": "Single quotes for both keys and values; no brace or apostrophe inside a string, so extraction still finds the object."},
+    {"name": "line_comment", "lane": "verdict", "class": "line_comment", "note": "A // comment after the verdict value."},
+    {"name": "block_comment", "lane": "verdict", "class": "block_comment", "note": "A /* */ comment between the verdict key and its value."},
+    {"name": "unquoted_keys", "lane": "verdict", "class": "unquoted_keys", "note": "Bare identifier keys, after a line of prose."},
+    {"name": "cut_off", "lane": "verdict", "class": "cut_off", "cut_off": true, "note": "The reply stops inside the reasoning string. No verdict is taken from it."}
+  ]
+}

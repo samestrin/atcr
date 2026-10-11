@@ -1,0 +1,1 @@
+{"severity": "LOW", "file_line": "web/static/app.js:7", "problem": "The request URL is built by string concatenation."

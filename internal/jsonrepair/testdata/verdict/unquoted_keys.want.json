@@ -1,0 +1,1 @@
+{"verdict": "confirmed", "reasoning": "Line 42 reads c.items[0].Qty before the nil check on line 44, so an empty cart panics."}

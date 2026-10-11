@@ -1,0 +1,3 @@
+[
+  {"severity": "MEDIUM", "file_line": "docs/setup.md:3", "problem": "The example says 'set it once' but the next step sets it again, {twice}.", "fix": "Drop the second step /* or merge the two */.", "category": "docs", "est_minutes": 5, "evidence": "line 3: \"// TODO, }\" and a trailing ,] in the snippet"}
+]

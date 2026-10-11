@@ -1,0 +1,1 @@
+{"verdict": "refuted", "reasoning": "The URL https://example.test/api/ is a constant; the comment says 'keep it' and the ,} only appears inside a string /* not code */."}
