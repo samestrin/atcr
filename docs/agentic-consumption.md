@@ -31,7 +31,7 @@ emits only a compact run summary, not the findings.
 
 ### Standard TOON and the legacy pipe fallback
 
-Every AXI payload is canonical, specification-compliant TOON, encoded by [`go-axi` v0.3.1](https://github.com/samestrin/go-axi) (the version pinned in atcr's `go.mod`): comma-delimited tabular arrays, strict TOON quoting, and only the five valid escapes (`\\ \" \n \r \t`). Any off-the-shelf TOON decoder reads it with no custom delimiter option. Code in `problem`, `fix`, or `evidence` that carries `|`, `||`, quotes, or newlines survives verbatim, for fields of at most 500 runes (longer free-text fields are capped).
+Every AXI payload is canonical, specification-compliant TOON, encoded by [`go-axi` v0.4.0](https://github.com/samestrin/go-axi) (the version pinned in atcr's `go.mod`): comma-delimited tabular arrays, strict TOON quoting, and only the five valid escapes (`\\ \" \n \r \t`). Any off-the-shelf TOON decoder reads it with no custom delimiter option. Code in `problem`, `fix`, or `evidence` that carries `|`, `||`, quotes, or newlines survives verbatim, for fields of at most 500 runes (longer free-text fields are capped).
 
 Before this, atcr emitted a custom pipe-delimited variant (`findings[N|]{a|b}:`). That encoding is deprecated but still available for consumers that have not migrated yet:
 
